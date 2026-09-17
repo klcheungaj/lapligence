@@ -1,11 +1,19 @@
 
 // ── IEEE stochastic analysis queues ─────────────────────────────────────────
 
+/* Output publication can invoke a callback that never returns. Keep its
+ * packed operand discoverable by process cleanup rather than on the C stack. */
+static void llg_q_write_integer(sv4_t* target, int64_t number) {
+    if (!target) return;
+    llg_value_scope_t* scope = llg_value_scope_begin(1);
+    sv4_t* value = llg_value_scope_values(scope);
+    sv4_replace(value, sv4_from_i64(number, target->width));
+    llg_ba(target, *value);
+    llg_value_scope_end(scope);
+}
+
 static void llg_q_set_status(sv4_t* status, int code) {
-    if (!status) return;
-    sv4_t value = sv4_from_i64((int64_t)code, status->width);
-    llg_ba(status, value);
-    sv4_destroy(&value);
+    llg_q_write_integer(status, (int64_t)code);
 }
 
 static int llg_q_read_integer(sv4_t value, int64_t* result,
@@ -76,9 +84,7 @@ static int llg_q_write_stat(sv4_t* target, uint64_t value) {
         g.finish = 1;
         return 0;
     }
-    sv4_t packed = sv4_from_i64((int64_t)value, target->width);
-    llg_ba(target, packed);
-    sv4_destroy(&packed);
+    llg_q_write_integer(target, (int64_t)value);
     return 1;
 }
 
@@ -233,16 +239,8 @@ void llg_q_remove(sv4_t q_id_value, sv4_t* job_id, sv4_t* inform_id,
         previous->next = NULL;
         queue->tail = previous;
     }
-    if (job_id) {
-        sv4_t value = sv4_from_i64(entry->job_id, job_id->width);
-        llg_ba(job_id, value);
-        sv4_destroy(&value);
-    }
-    if (inform_id) {
-        sv4_t value = sv4_from_i64(entry->inform_id, inform_id->width);
-        llg_ba(inform_id, value);
-        sv4_destroy(&value);
-    }
+    const int64_t job = entry->job_id;
+    const int64_t information = entry->inform_id;
     if (queue->head == entry) queue->head = entry->next;
     if (queue->tail == entry) queue->tail = NULL;
     --queue->length;
@@ -253,6 +251,10 @@ void llg_q_remove(sv4_t q_id_value, sv4_t* job_id, sv4_t* inform_id,
         queue->has_shortest_wait = 1;
     }
     free(entry);
+    /* Finish the dequeue before publication can reenter the queue or exit.
+     * The snapshots are native scalars, so there is no detached entry owner. */
+    llg_q_write_integer(job_id, job);
+    llg_q_write_integer(inform_id, information);
 }
 
 sv4_t llg_q_full(sv4_t q_id_value, sv4_t* status) {

@@ -11,6 +11,6 @@ module tb;
     initial begin
         #8;
         $display("finish");
-        $finish;
+        $finish(0);
     end
 endmodule

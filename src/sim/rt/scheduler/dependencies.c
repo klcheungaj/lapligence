@@ -47,9 +47,13 @@ void llg_dependency_bind_real(double* target, sv4_t* dependency) {
 void llg_dependency_changed(sv4_t* dependency) {
     if (!dependency) return;
     uint64_t bit = dependency->width ? dependency->bits[0] & 1u : 0;
-    sv4_t value = sv4_from_u64(bit ^ 1u, 1, 0);
-    sig_write(dependency, value);
-    sv4_destroy(&value);
+    /* Native strings and containers publish through this marker. A subscriber
+     * may terminate the writer without returning through this function. */
+    llg_value_scope_t* scope = llg_value_scope_begin(1);
+    sv4_t* value = llg_value_scope_values(scope);
+    value[0] = sv4_from_u64(bit ^ 1u, 1, 0);
+    sig_write(dependency, value[0]);
+    llg_value_scope_end(scope);
 }
 
 void llg_dependency_notify(sv4_t* contents, sv4_t* shape, int change) {
@@ -258,12 +262,14 @@ static int expression_update(llg_wait_t* wait, int index, sv4_t* sig,
         wait->real_last[index] = value;
         return matched && expression_qualifies(spec);
     }
-    sv4_t value = SV4_EMPTY;
-    if (spec->eval) spec->eval(&value, spec->eval_context);
-    else if (spec->sig) sv4_copy(&value, spec->sig);
-    else return 0;
-    int matched = ev_matches(wait->last[index], value, spec->kind);
-    sv4_move(&wait->last[index], &value);
+    if (!spec->eval && !spec->sig) return 0;
+    llg_value_scope_t* scope = llg_value_scope_begin(1);
+    sv4_t* value = llg_value_scope_values(scope);
+    if (spec->eval) spec->eval(value, spec->eval_context);
+    else sv4_copy(value, spec->sig);
+    int matched = ev_matches(wait->last[index], *value, spec->kind);
+    sv4_move(&wait->last[index], value);
+    llg_value_scope_end(scope);
     return matched && expression_qualifies(spec);
 }
 
@@ -280,12 +286,14 @@ static int deferred_expression_update(llg_deferred_trigger_t* trigger,
         trigger->real_last[index] = value;
         return matched && expression_qualifies(spec);
     }
-    sv4_t value = SV4_EMPTY;
-    if (spec->eval) spec->eval(&value, spec->eval_context);
-    else if (spec->sig) sv4_copy(&value, spec->sig);
-    else return 0;
-    int matched = ev_matches(trigger->last[index], value, spec->kind);
-    sv4_move(&trigger->last[index], &value);
+    if (!spec->eval && !spec->sig) return 0;
+    llg_value_scope_t* scope = llg_value_scope_begin(1);
+    sv4_t* value = llg_value_scope_values(scope);
+    if (spec->eval) spec->eval(value, spec->eval_context);
+    else sv4_copy(value, spec->sig);
+    int matched = ev_matches(trigger->last[index], *value, spec->kind);
+    sv4_move(&trigger->last[index], value);
+    llg_value_scope_end(scope);
     return matched && expression_qualifies(spec);
 }
 
@@ -387,14 +395,16 @@ static void deferred_trigger_event(llg_event_object_t* ev) {
 
 static void sig_write(sv4_t* target, sv4_t value) {
     if (!region_can_mutate("signal write")) return;
-    // Own the proposed value across reentrant callbacks. Normalization must
-    // not mutate the caller's borrowed storage.
-    value = sv4_clone(&value);
-    if (target->width == value.width && sv4_same(*target, value)) {
-        sv4_destroy(&value);
-        return;
-    }
-    sv4_t old = sv4_clone(target);
+    if (target->width == value.width && sv4_same(*target, value)) return;
+    // Callbacks can finish/disable the writer without returning through here.
+    // Heap-backed registered owners survive both suspension and stack discard.
+    llg_value_scope_t* target_pin = value_target_pin(target);
+    llg_value_scope_t* snapshots = llg_value_scope_begin(2);
+    sv4_t* owned = llg_value_scope_values(snapshots);
+    sv4_copy(&owned[0], &value);
+    sv4_copy(&owned[1], target);
+    value = owned[0]; /* Borrows the registered snapshot until scope end. */
+    sv4_t old = owned[1];
     clocking_record_edge(target, old, value);
     clocking_drive_signal_match(target, old, value);
     sv4_copy(target, &value);
@@ -469,8 +479,8 @@ static void sig_write(sv4_t* target, sv4_t value) {
         if (binding->target == target) llg_dependency_changed(binding->dependency);
     }
     force_dependency_changed(target, NULL, 0);
-    sv4_destroy(&old);
-    sv4_destroy(&value);
+    llg_value_scope_end(snapshots);
+    if (target_pin) llg_value_scope_end(target_pin);
 }
 
 // Real equality is bitwise: repeated NaNs with the same payload are
@@ -479,6 +489,9 @@ static void real_write(double* target, double value) {
     if (!region_can_mutate("real write")) return;
     double old = *target;
     if (real_same(old, value)) return;
+    /* Real locals have stable native owner slots, just like packed descriptors.
+     * Keep the slot alive if a callback cancels its receiving process. */
+    llg_value_scope_t* target_pin = value_target_pin(target);
     *target = value;
     if (g.mon.active) {
         for (int i = 0; i < g.mon.n_typed_reads; i++) {
@@ -517,6 +530,7 @@ static void real_write(double* target, double value) {
         if (binding->real_target == target) llg_dependency_changed(binding->dependency);
     }
     force_dependency_changed(NULL, target, 1);
+    if (target_pin) llg_value_scope_end(target_pin);
 }
 
 // ── Procedural force / release ───────────────────────────────────────────────

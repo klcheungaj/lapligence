@@ -12,15 +12,30 @@ pub(in crate::sim::emit_c) fn main(execution: &ExecutionModel) -> Result<String,
          int llg_model_close(void);\n");
     if model.waveform { out.push_str("static int llg_model_wave_live;\n"); }
     out.push_str(&format!("int llg_model_start(int argc, char** argv) {{\n    if (llg_model_live) return 1;\n    llg_model_live = 1;\n    llg_model_done = llg_model_status = 0;\n    llg_rt_init_with_args_precision_and_stack(argc, argv, {}ULL, LLG_MODEL_STACK_VALUES);\n    if (llg_rt_failed()) goto start_failed;\n    llg_model_storage_defaults();\n    llg_model_initializers();\n    if (llg_rt_failed()) goto start_failed;\n", model.precision_fs));
+    out.push_str("    (void)llg_owned_string_drop; (void)llg_owned_process_drop;\n");
     // Mark otherwise unused generated function definitions as intentional.
-    for function in &model.funcs { out.push_str(&format!("    (void){};\n", function.c_name)); }
+    for function in &model.funcs {
+        if !inline_event_template(function) { out.push_str(&format!("    (void){};\n", function.c_name)); }
+    }
+    if !model.virtual_interfaces.is_empty() {
+        out.push_str("    (void)llg_vif_member; (void)llg_vif_read;\n");
+        for (interface_id, interface) in model.virtual_interfaces.iter().enumerate() {
+            for instance in &interface.instances { out.push_str(&format!("    (void){};\n", instance.c_name)); }
+            for method in 0..interface.methods.len() {
+                out.push_str(&format!("    (void)llg_vif_call_{interface_id}_{method};\n"));
+            }
+        }
+    }
+    out.push_str("    if (!llg_model_assertions_init()) goto start_failed;\n");
     if model.waveform {
         out.push_str(&format!("    llg_wave_final_time = 0;\n    llg_model_wave_live = 1;\n    if (llg_wave_model_init({}ULL) != 0) goto start_failed;\n", model.precision_fs));
-        for signal in &model.signals {
-            if signal.omit && signal.net_driver.is_none() { continue; }
+        for (index, signal) in model.signals.iter().enumerate() {
+            if signal.omit && signal.net_driver.is_none() && signal.net_alias.is_empty() { continue; }
             let Some(name) = &signal.hdl_name else { continue; };
             let call = match signal.ty {
-                IrType::Packed { width, .. } => format!("llg_wave_register_sv4({}, &{}, {width})", c_string_literal(name), signal.c_name),
+                IrType::Packed { width, .. } => format!("llg_wave_register_sv4({}, {}, {width})", c_string_literal(name),
+                    if signal.net_alias.is_empty() { format!("&{}", signal.c_name) }
+                    else { format!("&llg_net_alias_{index}.visible") }),
                 IrType::Real { .. } => format!("llg_wave_register_real({}, &{})", c_string_literal(name), signal.c_name),
             };
             out.push_str(&format!("    if ({call} != 0) goto start_failed;\n"));
@@ -34,7 +49,12 @@ pub(in crate::sim::emit_c) fn main(execution: &ExecutionModel) -> Result<String,
             }
         }
     }
-    out.push_str(&format!("    if (!llg_vpi_model_init({}, llg_vpi_objects, llg_vpi_object_count) || !llg_vpi_startup()) goto start_failed;\n    llg_vpi_start_simulation();\n    if (llg_vpi_failed()) goto start_failed;\n", c_string_literal(model.design_name())));
+    out.push_str(&format!("    if (!llg_vpi_model_init({}, llg_vpi_objects, llg_vpi_object_count) || !llg_vpi_startup()) goto start_failed;\n", c_string_literal(model.design_name())));
+    for (index, call) in model.vpi_compile_calls.iter().enumerate() {
+        out.push_str(&format!("    if (!llg_vpi_compile_call_site({index}ULL, {}, llg_vpi_compile_args_{index}, {}, {}ULL)) goto start_failed;\n",
+            c_string_literal(&call.name), call.args.len(), call.time_unit_fs));
+    }
+    out.push_str("    llg_vpi_start_simulation();\n    if (llg_vpi_failed()) goto start_failed;\n");
     for (name, fallback_label) in model.spawn_list() {
         let process = execution.processes().iter().find(|item| model.processes[item.semantic_process].c_name == name);
         let semantic = process.map(|item| &model.processes[item.semantic_process]);

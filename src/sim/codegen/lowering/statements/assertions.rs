@@ -294,6 +294,7 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
                 scope,
                 location,
                 fatal_finish_number,
+                runtime_failure,
             } => {
                 if level.is_fatal() {
                     return Err(
@@ -323,6 +324,7 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
                     scope,
                     location,
                     fatal_finish_number,
+                    runtime_failure,
                 })
             }
             IrStmt::FileControl { op, descriptor } => Ok(IrStmt::FileControl {

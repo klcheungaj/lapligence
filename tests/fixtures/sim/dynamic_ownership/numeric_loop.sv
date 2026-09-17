@@ -7,5 +7,6 @@ module tb;
         value = 65'd7;
         repeat (1000) value = increment(value);
         $display("%0d", value);
+        $finish(0);
     end
 endmodule

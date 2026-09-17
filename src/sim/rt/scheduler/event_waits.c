@@ -333,6 +333,11 @@ void llg_wait_expressions(const llg_expr_event_spec_t* specs, int n) {
             memcpy(w->expressions[i].dependencies, specs[i].dependencies,
                    (size_t)specs[i].n_dependencies * sizeof(llg_wait_dependency_t));
         }
+    }
+    // Adopt every descriptor/context before invoking user code. An evaluator
+    // can finish the process on its first call; teardown must also discover
+    // contexts belonging to later entries which have not been evaluated yet.
+    for (int i = 0; i < n; i++) {
         if (specs[i].event) {
             llg_event_object_t* object = specs[i].event->object;
             int seen = 0;

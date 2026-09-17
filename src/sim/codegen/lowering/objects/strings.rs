@@ -77,7 +77,6 @@ impl Codegen<'_> {
             let formals = meta.formals.clone();
             let actuals = self.call_argument_nodes(node);
             let bound = self.bind_call_args(self.inst, &formals, &actuals)?;
-            let mut arg_codes = vec![None; formals.len()];
             let mut arg_irs = vec![None; formals.len()];
             let mut out_args = Vec::new();
             let mut in_args = Vec::new();
@@ -148,12 +147,11 @@ impl Codegen<'_> {
                         self.lower_string(path, bound[idx].expr)?,
                     ));
                 } else {
-                    let (_, arg) = self.lower_bound_arg_code(
+                    let arg = self.lower_bound_arg(
                         path,
                         &formals,
                         &bound,
                         idx,
-                        &mut arg_codes,
                         &mut arg_irs,
                     )?;
                     in_args.push(IrCallArg::Val(arg));

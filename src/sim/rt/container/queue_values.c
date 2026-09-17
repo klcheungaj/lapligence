@@ -145,12 +145,7 @@ static llg_value_t llg_value_from_packed_container(
     return result;
 }
 
-static void llg_queue_value_set_value(llg_queue_value_array_t* queue,
-                                      size_t index, const llg_value_t* source) {
-    llg_value_copy(&queue->data[index], queue->element, source);
-    llg_notify(queue->notify, queue->contents_dependency,
-               queue->shape_dependency, LLG_CONTAINER_CHANGED_CONTENTS);
-}
+
 
 void llg_queue_value_init(llg_queue_value_array_t* queue,
                           const llg_value_desc_t* element,
@@ -368,7 +363,7 @@ static int llg_queue_value_changed(llg_value_t* target,
 
 static int llg_queue_value_set_source(llg_queue_value_array_t* queue,
                                       sv4_t index,
-                                      const llg_value_t* source) {
+                                      const llg_value_t* source, int* change) {
     size_t native;
     if (!llg_index(index, queue->size, 1, &native)) return 0;
     if (native == queue->size) {
@@ -382,48 +377,64 @@ static int llg_queue_value_set_source(llg_queue_value_array_t* queue,
         llg_value_copy(&queue->data[queue->size], queue->element, source);
         ++queue->size;
         llg_queue_value_invalidate_refs(queue);
-        llg_notify(queue->notify, queue->contents_dependency,
-                   queue->shape_dependency,
-                   LLG_CONTAINER_CHANGED_CONTENTS |
-                       LLG_CONTAINER_CHANGED_SHAPE);
+        *change |= LLG_CONTAINER_CHANGED_CONTENTS |
+                       LLG_CONTAINER_CHANGED_SHAPE;
         return 1;
     }
-    if (!llg_queue_value_changed(&queue->data[native], source))
-        llg_queue_value_set_value(queue, native, source);
+    if (!llg_queue_value_changed(&queue->data[native], source)) {
+        llg_value_copy(&queue->data[native], queue->element, source);
+        *change |= LLG_CONTAINER_CHANGED_CONTENTS;
+    }
     return 1;
 }
 
 int llg_queue_value_set(llg_queue_value_array_t* queue, sv4_t index,
                         sv4_t value) {
+    int change = 0;
     if (queue->element->kind != LLG_VALUE_PACKED)
         return 0;
     llg_value_t source = llg_value_from_packed(queue->element, value);
-    int result = llg_queue_value_set_source(queue, index, &source);
+    int result = llg_queue_value_set_source(queue, index, &source, &change);
     llg_value_drop(&source);
+    /* No temporary owner may remain live across the callback. */
+    llg_notify(queue->notify, queue->contents_dependency,
+               queue->shape_dependency, change);
     return result;
 }
 
 int llg_queue_value_set_real(llg_queue_value_array_t* queue, sv4_t index,
                              double value) {
+    int change = 0;
     llg_value_t source = llg_value_from_real(queue->element, value);
-    int result = llg_queue_value_set_source(queue, index, &source);
+    int result = llg_queue_value_set_source(queue, index, &source, &change);
     llg_value_drop(&source);
+    /* No temporary owner may remain live across the callback. */
+    llg_notify(queue->notify, queue->contents_dependency,
+               queue->shape_dependency, change);
     return result;
 }
 
 int llg_queue_value_set_string(llg_queue_value_array_t* queue, sv4_t index,
                                llg_string_t value) {
+    int change = 0;
     llg_value_t source = llg_value_from_string(queue->element, value);
-    int result = llg_queue_value_set_source(queue, index, &source);
+    int result = llg_queue_value_set_source(queue, index, &source, &change);
     llg_value_drop(&source);
+    /* No temporary owner may remain live across the callback. */
+    llg_notify(queue->notify, queue->contents_dependency,
+               queue->shape_dependency, change);
     return result;
 }
 
 int llg_queue_value_set_chandle(llg_queue_value_array_t* queue, sv4_t index,
                                 void* value) {
+    int change = 0;
     llg_value_t source = llg_value_from_chandle(queue->element, value);
-    int result = llg_queue_value_set_source(queue, index, &source);
+    int result = llg_queue_value_set_source(queue, index, &source, &change);
     llg_value_drop(&source);
+    /* No temporary owner may remain live across the callback. */
+    llg_notify(queue->notify, queue->contents_dependency,
+               queue->shape_dependency, change);
     return result;
 }
 
@@ -460,69 +471,85 @@ void* llg_queue_value_get_nested_chandle(
 
 static int llg_queue_value_set_nested_source(
     llg_queue_value_array_t* queue, const sv4_t* indices, size_t count,
-    const llg_value_t* source) {
+    const llg_value_t* source, int* change) {
     llg_value_t* target = llg_queue_value_nested_at(queue, indices, count);
     if (!target || !source || !llg_value_desc_compatible(target->desc,
                                                          source->desc))
         return 0;
     if (llg_value_equal(target, source)) return 1;
     llg_value_copy(target, target->desc, source);
-    llg_notify(queue->notify, queue->contents_dependency,
-               queue->shape_dependency, LLG_CONTAINER_CHANGED_CONTENTS);
+    *change |= LLG_CONTAINER_CHANGED_CONTENTS;
     return 1;
 }
 
 int llg_queue_value_set_nested(llg_queue_value_array_t* queue,
                                const sv4_t* indices, size_t count, sv4_t value) {
+    int change = 0;
     llg_value_t* target = llg_queue_value_nested_at(queue, indices, count);
     if (!target || target->desc->kind != LLG_VALUE_PACKED) return 0;
     llg_value_t source = llg_value_from_packed(target->desc, value);
-    int result = llg_queue_value_set_nested_source(queue, indices, count, &source);
+    int result = llg_queue_value_set_nested_source(queue, indices, count, &source, &change);
     llg_value_drop(&source);
+    /* No temporary owner may remain live across the callback. */
+    llg_notify(queue->notify, queue->contents_dependency,
+               queue->shape_dependency, change);
     return result;
 }
 
 int llg_queue_value_set_nested_real(llg_queue_value_array_t* queue,
                                     const sv4_t* indices, size_t count,
                                     double value) {
+    int change = 0;
     llg_value_t* target = llg_queue_value_nested_at(queue, indices, count);
     if (!target || target->desc->kind != LLG_VALUE_REAL) return 0;
     llg_value_t source = llg_value_from_real(target->desc, value);
-    int result = llg_queue_value_set_nested_source(queue, indices, count, &source);
+    int result = llg_queue_value_set_nested_source(queue, indices, count, &source, &change);
     llg_value_drop(&source);
+    /* No temporary owner may remain live across the callback. */
+    llg_notify(queue->notify, queue->contents_dependency,
+               queue->shape_dependency, change);
     return result;
 }
 
 int llg_queue_value_set_nested_string(
     llg_queue_value_array_t* queue, const sv4_t* indices, size_t count,
     llg_string_t value) {
+    int change = 0;
     llg_value_t* target = llg_queue_value_nested_at(queue, indices, count);
     if (!target || target->desc->kind != LLG_VALUE_STRING) {
         llg_string_destroy(&value);
         return 0;
     }
     llg_value_t source = llg_value_from_string(target->desc, value);
-    int result = llg_queue_value_set_nested_source(queue, indices, count, &source);
+    int result = llg_queue_value_set_nested_source(queue, indices, count, &source, &change);
     llg_value_drop(&source);
+    /* No temporary owner may remain live across the callback. */
+    llg_notify(queue->notify, queue->contents_dependency,
+               queue->shape_dependency, change);
     return result;
 }
 
 int llg_queue_value_set_nested_chandle(
     llg_queue_value_array_t* queue, const sv4_t* indices, size_t count,
     void* value) {
+    int change = 0;
     llg_value_t* target = llg_queue_value_nested_at(queue, indices, count);
     if (!target || (target->desc->kind != LLG_VALUE_CHANDLE &&
                     target->desc->kind != LLG_VALUE_EVENT))
         return 0;
     llg_value_t source = llg_value_from_chandle(target->desc, value);
-    int result = llg_queue_value_set_nested_source(queue, indices, count, &source);
+    int result = llg_queue_value_set_nested_source(queue, indices, count, &source, &change);
     llg_value_drop(&source);
+    /* No temporary owner may remain live across the callback. */
+    llg_notify(queue->notify, queue->contents_dependency,
+               queue->shape_dependency, change);
     return result;
 }
 
 int llg_queue_value_set_nested_container(
     llg_queue_value_array_t* queue, const sv4_t* indices, size_t count,
     const llg_dyn_value_array_t* source) {
+    int change = 0;
     llg_value_t* target = llg_queue_value_nested_at(queue, indices, count);
     if (!target || target->desc->kind != LLG_VALUE_CONTAINER || !source ||
         !llg_value_desc_compatible(target->desc->element, source->element))
@@ -531,13 +558,17 @@ int llg_queue_value_set_nested_container(
     source_value.desc = target->desc;
     source_value.value.container = (llg_dyn_value_array_t*)source;
     int result = llg_queue_value_set_nested_source(queue, indices, count,
-                                                   &source_value);
+                                                   &source_value, &change);
+    /* No temporary owner may remain live across the callback. */
+    llg_notify(queue->notify, queue->contents_dependency,
+               queue->shape_dependency, change);
     return result;
 }
 
 int llg_queue_value_set_nested_container_from_packed(
     llg_queue_value_array_t* queue, const sv4_t* indices, size_t count,
     const llg_dyn_array_t* source) {
+    int change = 0;
     llg_value_t* target = llg_queue_value_nested_at(queue, indices, count);
     if (!target || target->desc->kind != LLG_VALUE_CONTAINER || !source ||
         !target->desc->element ||
@@ -551,7 +582,10 @@ int llg_queue_value_set_nested_container_from_packed(
     source_value.desc = target->desc;
     source_value.value.container = &converted;
     int result = llg_queue_value_set_nested_source(queue, indices, count,
-                                                   &source_value);
+                                                   &source_value, &change);
     llg_dyn_value_destroy(&converted);
+    /* No temporary owner may remain live across the callback. */
+    llg_notify(queue->notify, queue->contents_dependency,
+               queue->shape_dependency, change);
     return result;
 }

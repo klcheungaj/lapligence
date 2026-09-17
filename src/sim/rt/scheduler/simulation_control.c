@@ -63,6 +63,10 @@ void llg_rt_request_finish(void) {
     g.finish = 1;
 }
 
+void llg_rt_mark_failed(void) {
+    llg_last_failure = 1;
+}
+
 static void report_stop(int verbosity, const char* location) {
     if (verbosity >= 1) {
         fprintf(stderr, "llg: $stop at time %llu",

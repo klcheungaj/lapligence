@@ -82,10 +82,8 @@ void llg_dyn_value_delete(llg_dyn_value_array_t* array) {
                        : 0);
 }
 
-void llg_dyn_value_new(llg_dyn_value_array_t* dst, sv4_t requested_size,
-                       const llg_dyn_value_array_t* initializer) {
-    size_t size = llg_checked_count(llg_dynamic_size(requested_size),
-                                    sizeof(llg_value_t));
+static void llg_dyn_value_new_count(llg_dyn_value_array_t* dst, size_t size,
+                              const llg_dyn_value_array_t* initializer) {
     if (initializer &&
         !llg_value_desc_compatible(dst->element, initializer->element))
         llg_container_fatal("incompatible recursive container element types");
@@ -103,12 +101,17 @@ void llg_dyn_value_new(llg_dyn_value_array_t* dst, sv4_t requested_size,
     llg_dyn_value_commit(dst, data, size);
 }
 
+void llg_dyn_value_new(llg_dyn_value_array_t* dst, sv4_t requested_size,
+                 const llg_dyn_value_array_t* initializer) {
+    size_t size = llg_checked_count(llg_dynamic_size(requested_size), sizeof(llg_value_t));
+    llg_dyn_value_new_count(dst, size, initializer);
+}
+
 void llg_dyn_value_copy(llg_dyn_value_array_t* dst,
                         const llg_dyn_value_array_t* src) {
     if (dst == src) return;
-    sv4_t size = sv4_from_u64((uint64_t)src->size, 64, 0);
-    llg_dyn_value_new(dst, size, src);
-    sv4_destroy(&size);
+    size_t size = llg_checked_count((uint64_t)src->size, sizeof(llg_value_t));
+    llg_dyn_value_new_count(dst, size, src);
 }
 
 void llg_dyn_value_assign_reals(llg_dyn_value_array_t* dst,

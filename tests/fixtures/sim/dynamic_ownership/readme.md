@@ -18,10 +18,23 @@ skip or an expected-success substitute.
 | `yielding_task.sv` | Automatic task locals and output copy-out across a wait; `47` |
 | `finish_cleanup.sv` | Nonreturning finish with another live process; `finish` |
 
+The review-correction fixtures additionally cover:
+
+| Fixture | Required result / ownership boundary |
+| --- | --- |
+| `function_numeric_input.sv` | Runtime numeric input conversion; `42` |
+| `numeric_default_argument.sv` | Default referring to an earlier stable numeric argument; `42` |
+| `numeric_inout_argument.sv` | Numeric inout copy-in and output copy-out across a delay; `42 43` |
+| `event_array_owners.sv` | Indexed named-event wait; an X-index waiter stays dormant; `event` |
+| `evaluated_event_owners.sv` | Evaluated arithmetic event and `iff` qualification; `qualified` |
+| `captured_fork_owners.sv` | Detached numeric automatic captures preserve `0`, `1`, `2` |
+
 These output checks alone do not establish zero leaks. Pair them with allocation
 measurement and supported sanitizer configurations. Real coroutine ASan coverage
 remains a separate gate; do not infer it from the sanitizer-safe component suite.
 
 Run: `cargo test --locked --no-default-features --test sim_dynamic_ownership`.
-The host-lifecycle IR test is separately opted in with
-`cargo test --locked --lib --no-default-features structured_owned_model_ -- --ignored`.
+These fixtures terminate with `$finish(0)` because their exact stderr contract
+excludes informational termination messages; runtime diagnostics are not filtered.
+The active host-lifecycle IR tests can also be selected directly with
+`cargo test --locked --lib --no-default-features structured_owned_model_`.

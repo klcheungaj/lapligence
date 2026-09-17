@@ -15,5 +15,6 @@ module tb;
         other = {65{1'bz}};
         value = 1'bx ? value : other;
         $display("%0d", value === {65{1'bz}});
+        $finish(0);
     end
 endmodule

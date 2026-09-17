@@ -3,6 +3,10 @@ use super::*;
 use crate::sim::execution::ExecutionModel;
 
 mod toolchain;
+mod nextest_regressions;
+mod native_values;
+mod native_boundaries;
+mod review_regressions;
 
 fn number(value: u64, width: u32) -> IrExpr {
     let count = ((width + 63) / 64) as usize;
@@ -119,8 +123,8 @@ fn declaration_calls_remain_rejected_outside_coroutine_context() {
 }
 
 #[test]
-#[ignore = "requires the Rust project build, a C compiler, and CMake"]
 fn structured_owned_model_executes_numeric_loop() {
+    if !crate::sim::build::cmake_available() { eprintln!("SKIP: CMake is unavailable"); return; }
     let execution = ExecutionModel::lower(numeric_model()).unwrap();
     let source = super::super::model::render(&execution).unwrap();
     let directory = toolchain::Directory::new("numeric");
@@ -131,8 +135,8 @@ fn structured_owned_model_executes_numeric_loop() {
 }
 
 #[test]
-#[ignore = "requires the Rust project build, a C compiler, and CMake"]
 fn structured_owned_model_reinitializes_with_host() {
+    if !crate::sim::build::cmake_available() { eprintln!("SKIP: CMake is unavailable"); return; }
     let mut model = numeric_model();
     model.signals.push(
         IrSignal::new(
@@ -186,3 +190,43 @@ int main(void) {
     );
     assert_eq!(String::from_utf8_lossy(&result.stdout), "1007\n".repeat(16));
 }
+
+#[test]
+fn evaluator_callbacks_reject_side_effect_capable_calls() {
+    let mut model = numeric_model();
+    model.funcs[0].automatic = true;
+    model.funcs[0].body.insert(0, IrStmt::Assign {
+        lhs: IrLhs::Whole(0), rhs: number(9, 65), nba: false,
+    });
+    let ctx = RCtx { model: &model, func: None, sampled: false, activation_label: None };
+    let mut frame = Frame::new(&ctx);
+    frame.read_only_callback = true;
+    let call = IrExpr::new(IrExprKind::CallFn(Box::new(IrCallExpr::new(
+        0, vec![IrCallArg::Val(number(3, 65))], IrDepth::PROC, false))), 65, false, None);
+    let error = frame.expression(&add(number(1, 65), call, 65)).err().unwrap();
+    assert!(error.contains("side-effect-capable evaluator expressions"), "{error}");
+}
+
+#[test]
+fn event_array_indices_are_owned_and_invalid_handles_are_inert() {
+    let mut model = IrModel::new("event_array".to_owned(), 1).unwrap();
+    model.events.push(IrEvent::new("event_one".to_owned()));
+    model.events.push(IrEvent::new("event_two".to_owned()));
+    model.events.push(IrEvent::new_array("event_table".to_owned(), vec![(2, 1)], vec![0, 1]));
+    let ctx = RCtx { model: &model, func: None, sampled: false, activation_label: None };
+    let mut frame = Frame::new(&ctx);
+    frame.wait_events(&[(IrWaitSrc::Event(IrEventRef::Array {
+        array: 2, indices: vec![number(1, 32)],
+    }), IrEdge::Any)]).unwrap();
+    assert!(frame.slots.iter().all(|used| !used));
+    let body = frame.body();
+    let select = body.find("llg_event_array_select(event_table__elements").unwrap();
+    let destroy = body[select..].find("sv4_destroy(").unwrap() + select;
+    let wait = body.find("llg_wait_expressions(").unwrap();
+    assert!(select < destroy && destroy < wait);
+    assert!(body.contains("llg_event_t _llg_null_event_"));
+    assert!(body.contains("{ NULL }"));
+    assert!(!body.contains(".event = NULL"));
+}
+
+mod batch120;

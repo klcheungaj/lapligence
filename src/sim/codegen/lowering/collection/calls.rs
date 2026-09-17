@@ -108,7 +108,6 @@ impl<'a> Codegen<'a> {
 
         let mut out_args: Vec<IrCallArg> = Vec::new();
         let mut in_args: Vec<IrCallArg> = Vec::new();
-        let mut arg_codes: Vec<Option<String>> = vec![None; formals.len()];
         let mut arg_irs: Vec<Option<IrExpr>> = vec![None; formals.len()];
         for (idx, (io, is_out)) in formals.iter().enumerate() {
             if matches!(
@@ -168,7 +167,6 @@ impl<'a> Codegen<'a> {
                 }
                 if !bound[idx].string {
                     let read_ir = self.lower_expr(scope_path, bound[idx].expr)?;
-                    arg_codes[idx] = Some(self.render_ir_code(&read_ir)?);
                     arg_irs[idx] = Some(read_ir);
                 }
                 continue;
@@ -210,7 +208,7 @@ impl<'a> Codegen<'a> {
                 let tname = format!("_t{}_{}", h.0, idx);
                 let (wb, actual_read, selector_inits) =
                     self.lower_call_actual(scope_path, bound[idx].expr, &format!("{}_{idx}", h.0))?;
-                let (_init_code, init_ir) =
+                let init_ir =
                     self.lower_call_temp_init_from_expr(*io, &bound[idx], actual_read)?;
                 let storage = self.static_formals.get(&(callee_inst, *io)).cloned();
                 let (storage_addr, storage_lhs, storage_read) = if let Some(storage) = storage {
@@ -226,7 +224,6 @@ impl<'a> Codegen<'a> {
                 };
                 // The temp is the correctly-sized value of the formal while
                 // the call runs (all-X for outputs, the actual for inouts).
-                arg_codes[idx] = Some(tname.clone());
                 arg_irs[idx] = Some(IrExpr::new(
                     IrExprKind::LocalRead(tname.clone()),
                     bound[idx].width,
@@ -266,12 +263,11 @@ impl<'a> Codegen<'a> {
                     ));
                     continue;
                 }
-                let (_code, ir) = self.lower_bound_arg_code(
+                let ir = self.lower_bound_arg(
                     scope_path,
                     &formals,
                     &bound,
                     idx,
-                    &mut arg_codes,
                     &mut arg_irs,
                 )?;
                 in_args.push(IrCallArg::Val(ir));

@@ -15,6 +15,8 @@ pub(super) struct Target {
     pub width: u32,
     pub signed: bool,
     pub net: Option<(String, usize)>,
+    pub sequence_local: bool,
+    pub reference: Option<String>,
 }
 
 impl<'a, 'm> Frame<'a, 'm> {
@@ -106,7 +108,17 @@ impl<'a, 'm> Frame<'a, 'm> {
                 let selection = self.selection(elem_sel)?;
                 (binding, valid, selection, None)
             }
-            IrLhs::Ref { .. } => return Err(pending("reference-formal writes")),
+            IrLhs::Ref { addr, width, signed, two_state, const_ref, bit } => {
+                if *const_ref { return Err("cannot write a const reference".to_owned()); }
+                let address = self.reference_address(addr)?;
+                let selection = bit.as_ref().map(|index| self.index(index).map(Selection::Bit)).transpose()?;
+                return Ok(Target {
+                    binding: Binding { address: "NULL".to_owned(), width: *width, signed: *signed, two_state: *two_state, shortreal: false, automatic: true },
+                    valid: "1".to_owned(), width: if selection.is_some() { 1 } else { *width },
+                    signed: if selection.is_some() { false } else { *signed }, selection,
+                    net: None, sequence_local: false, reference: Some(address),
+                });
+            }
             IrLhs::Stream { .. } => return Err(pending("streaming lvalues")),
         };
         let (width, signed) = match &selection {
@@ -115,7 +127,8 @@ impl<'a, 'm> Frame<'a, 'm> {
             Some(Selection::Part(left, right)) => ((left.abs_diff(*right) + 1) as u32, false),
             Some(Selection::Indexed(_, width, _)) => (*width, false),
         };
-        Ok(Target { binding, valid, selection, width, signed, net })
+        let sequence_local = matches!(lhs, IrLhs::WholeRef { addr, .. } if self.sequence_addresses.contains_key(addr));
+        Ok(Target { binding, valid, selection, width, signed, net, sequence_local, reference: None })
     }
 
     pub(super) fn release_target(&mut self, target: Target) {
@@ -132,6 +145,12 @@ impl<'a, 'm> Frame<'a, 'm> {
     }
 
     pub(super) fn read_target(&mut self, target: &Target) -> Value {
+        if let Some(reference) = &target.reference {
+            let whole = self.value(format!("llg_ref_read({reference})"), target.binding.width, target.binding.signed);
+            if target.selection.is_none() { return whole; }
+            let code = self.select_code(target, &whole.code);
+            return self.replace(whole, code, target.width, target.signed);
+        }
         let code = if target.width == 0 { format!("({}) ? *({}) : 0.0", target.valid, target.binding.address) }
             else { format!("({}) ? {} : {}", target.valid,
                 self.select_code(target, &format!("*({})", target.binding.address)),
@@ -139,7 +158,7 @@ impl<'a, 'm> Frame<'a, 'm> {
         self.value(code, target.width, target.signed)
     }
 
-    fn set_selected(&mut self, selection: &Selection, destination: &str, source: &str) {
+    pub(super) fn set_selected(&mut self, selection: &Selection, destination: &str, source: &str) {
         self.line(match selection {
             Selection::Bit(index) => format!("sv4_bit_select_set(&{destination}, {index}, {source});"),
             Selection::Part(left, right) => format!("sv4_part_select_set(&{destination}, {left}LL, {right}LL, {source});"),
@@ -154,7 +173,20 @@ impl<'a, 'm> Frame<'a, 'm> {
         }
         let value = self.convert(value, target.width, target.signed, binding.two_state, binding.shortreal);
         self.line(format!("if ({}) {{", target.valid));
-        if target.width == 0 {
+        if let Some(reference) = &target.reference {
+            if nba { return Err(pending("nonblocking writes through reference formals")); }
+            match &target.selection {
+                None => self.line(format!("llg_ref_write({reference}, {});", value.code)),
+                Some(Selection::Bit(index)) => {
+                    // target() already captured the checked native index once.
+                    self.line(format!("llg_ref_write_bit({reference}, {index}, {});", value.code));
+                }
+                _ => return Err("invalid reference sub-selection".to_owned()),
+            }
+        } else if target.sequence_local {
+            if nba { return Err("sequence locals cannot be nonblocking targets".to_owned()); }
+            self.line(format!("llg_sequence_local_write({}, {});", binding.address, value.code));
+        } else if target.width == 0 {
             let call = if nba { format!("llg_nba_d_after({}, {}, {ticks});", binding.address, value.code) }
                 else { format!("llg_ba_d({}, {});", binding.address, value.code) };
             self.line(call);
@@ -186,7 +218,7 @@ impl<'a, 'm> Frame<'a, 'm> {
         }
         self.line("}");
         self.discard(value);
-        Ok(())
+        self.cancellation_check()
     }
 
     pub(super) fn array_read(&mut self, array: usize, indices: &[IrExpr], selection: &IrElemSel, _expr: &IrExpr) -> Result<Value, String> {

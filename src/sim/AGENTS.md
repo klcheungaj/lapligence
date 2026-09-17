@@ -51,8 +51,8 @@ scopes, and model startup/teardown. Unsupported storage, captures and callbacks
 must return a feature-specific error without falling back to legacy fragments.
 The detached expression/statement APIs remain fail-closed because a string alone
 cannot convey setup and cleanup. See [emitter coverage](emit_c/owned/readme.md)
-and [runtime ownership](rt/value/ownership.md). Legacy selftests remain fenced;
-the standalone owner suite is the active C check. The new Rust emitter still
+and [runtime ownership](rt/value/ownership.md). Original runtime/waveform selftests use explicit ownership and remain active;
+the standalone owner suite includes their relevant assertions. The new Rust emitter still
 requires a Rust build and generated-model validation before acceptance.
 
 Treat `IrModelParts` as untrusted until `IrModel::from_parts` validates table

@@ -50,9 +50,11 @@ static int pca_real_active(double* target) {
 }
 
 static void pca_set_enable(sv4_t* enable, int active) {
-    sv4_t value = sv4_from_u64(active ? 1 : 0, enable->width, enable->is_signed);
-    sig_write(enable, value);
-    sv4_destroy(&value);
+    llg_value_scope_t* scope = llg_value_scope_begin(1);
+    sv4_t* value = llg_value_scope_values(scope);
+    sv4_replace(value, sv4_from_u64(active ? 1 : 0, enable->width, enable->is_signed));
+    sig_write(enable, *value);
+    llg_value_scope_end(scope);
 }
 
 void llg_pca_assign(sv4_t* target, sv4_t* enable, uint64_t site, sv4_t value) {
@@ -281,12 +283,13 @@ static llg_net_t* force_net_for_target(sv4_t* target, llg_net_t* fallback) {
 static void force_recompute_target(sv4_t* target, llg_net_t* net) {
     net = force_net_for_target(target, net);
     if (net && net->propagation) inertial_unlink_pending(net->propagation);
-    sv4_t value;
+    llg_value_scope_t* scope = llg_value_scope_begin(1);
+    sv4_t* value = llg_value_scope_values(scope);
     if (net) {
-        value = llg_net_compute(net);
+        sv4_replace(value, llg_net_compute(net));
     } else {
         llg_pca_binding_t* pca = pca_binding(target);
-        value = sv4_clone(pca && pca->active ? &pca->value : target);
+        sv4_copy(value, pca && pca->active ? &pca->value : target);
     }
     for (int i = 0; i < g.force_count; i++) {
         llg_force_entry_t* entry = &g.force_table[i];
@@ -297,13 +300,13 @@ static void force_recompute_target(sv4_t* target, llg_net_t* net) {
         for (int j = 0; j < entry->n_parts; j++) {
             llg_force_part_t* part = &entry->parts[j];
             if (part->target == target)
-                force_apply_part(&value, part, &entry->masks[j], &streamed);
+                force_apply_part(value, part, &entry->masks[j], &streamed);
         }
         sv4_destroy(&streamed);
     }
-    sig_write(target, value);
+    sig_write(target, *value);
     if (net) llg_net_alias_refresh_all(net);
-    sv4_destroy(&value);
+    llg_value_scope_end(scope);
 }
 
 static void force_entry_targets(const llg_force_entry_t* entry) {
@@ -324,9 +327,11 @@ static void force_evaluate_entry(llg_force_entry_t* entry) {
         real_write(entry->real_target, entry->real_value);
     } else {
         if (entry->eval) {
-            sv4_t evaluated = SV4_EMPTY;
-            entry->eval(&evaluated);
-            sv4_move(&entry->value, &evaluated);
+            llg_value_scope_t* scope = llg_value_scope_begin(1);
+            sv4_t* evaluated = llg_value_scope_values(scope);
+            entry->eval(evaluated);
+            sv4_move(&entry->value, evaluated);
+            llg_value_scope_end(scope);
         }
         force_entry_targets(entry);
     }

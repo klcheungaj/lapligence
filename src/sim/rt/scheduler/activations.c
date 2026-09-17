@@ -97,6 +97,17 @@ void llg_ref_scope_end(llg_ref_scope_t* scope) {
     free(scope);
 }
 
+static void reference_owner_destroy(void* payload) {
+    llg_ref_scope_t* scope = *(llg_ref_scope_t**)payload;
+    if (scope) llg_ref_scope_end(scope);
+}
+
+void llg_ref_scope_begin_owned(void) {
+    llg_value_scope_t* owner = llg_value_scope_begin_object(
+        sizeof(llg_ref_scope_t*), reference_owner_destroy);
+    *(llg_ref_scope_t**)llg_value_scope_object(owner) = llg_ref_scope_begin();
+}
+
 llg_ref_t* llg_ref_queue(llg_queue_t* queue, uint64_t index) {
     llg_proc_t* proc = llg_current();
     llg_ref_scope_t* scope = proc ? proc->reference_top : root_reference_top;

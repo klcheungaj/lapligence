@@ -19,7 +19,7 @@ fn packed_const(value: u64) -> IrExpr {
 }
 
 #[test]
-fn dpi_string_snapshots_precede_all_copyouts_and_input_destruction() {
+fn dpi_string_snapshots_precede_copyouts_and_preserve_borrowed_inputs() {
     use crate::sim::ir::{IrDpiImport, IrFormal, IrFormalMode};
 
     for return_kind in 0..3 {
@@ -54,20 +54,22 @@ fn dpi_string_snapshots_precede_all_copyouts_and_input_destruction() {
         });
         let c = render_dpi_thunk(&function).unwrap();
         let call = c.find("foreign_alias(").unwrap();
-        let first_copyout = c.find("llg_string_move(o1, _dpi_s1)").unwrap();
+        let first_copyout = c.find("llg_string_move(o1, llg_string_take(_dpi_s1))").unwrap();
         for idx in 1..=3 {
-            let declaration = format!("llg_string_t _dpi_s{idx} =");
+            let declaration = format!("*_dpi_s{idx} = (_dpi_o{idx}) ?");
             assert_eq!(c.matches(declaration.as_str()).count(), 1, "{c}");
             let snapshot = c.find(declaration.as_str()).unwrap();
             assert!(call < snapshot && snapshot < first_copyout, "{c}");
         }
-        let last_copyout = c.find("llg_string_move(o3, _dpi_s3)").unwrap();
-        let destroy_input = c.find("llg_string_destroy(&a0)").unwrap();
-        assert!(last_copyout < destroy_input, "{c}");
+        let last_copyout = c.find("llg_string_move(o3, llg_string_take(_dpi_s3))").unwrap();
+        let cleanup = c.find("llg_value_scopes_end_since(_dpi_mark)").unwrap();
+        assert!(last_copyout < cleanup, "{c}");
+        assert!(!c.contains("llg_string_destroy(&a0)"), "borrowed input: {c}");
+        assert!(c.contains("llg_owned_string_drop"), "{c}");
         if function.ret_string {
-            let snapshot = c.find("llg_string_t _dpi_string_ret =").unwrap();
+            let snapshot = c.find("*_dpi_string_ret = (_dpi_ret) ?").unwrap();
             assert!(call < snapshot && snapshot < first_copyout, "{c}");
-            assert!(c.contains("return _dpi_string_ret;"), "{c}");
+            assert!(c.contains("llg_string_take(_dpi_string_ret)"), "{c}");
         } else {
             assert!(!c.contains("_dpi_string_ret"), "{c}");
         }
@@ -86,7 +88,11 @@ fn non_waveform_model_has_no_waveform_integration() {
     assert!(c.contains(
         "llg_rt_init_with_args_precision_and_stack(argc, argv, 1ULL, LLG_MODEL_STACK_VALUES)"
     ));
-    assert!(c.ends_with("    return 0;\n}\n"));
+    assert!(c.contains("int llg_model_start(int argc, char** argv)"));
+    assert!(c.contains("int llg_model_advance(void)"));
+    assert!(c.contains("int llg_model_close(void)"));
+    assert!(c.contains("if (llg_model_close() != 0) status = 1;"));
+    assert!(c.ends_with("    return status;\n}\n#endif\n"));
 }
 
 #[test]
@@ -197,7 +203,8 @@ fn waveform_model_emits_controls_hierarchy_and_final_time_close() {
     assert!(c.contains("#include \"llg_wave.h\""));
     assert!(c.contains("llg_wave_file(\"trace\\\\\\\"name.vcd\", llg_time());"));
     assert!(c.contains("llg_wave_dumpvars_select(llg_time(), 0u"));
-    assert!(c.contains("llg_wave_names[] = {\"top\\037g[0]\\037value\"}"));
+    assert!(c.contains("const char* _llg_wave_names_"));
+    assert!(c.contains("[] = { \"top\\037g[0]\\037value\" };"));
     assert!(c.contains("llg_wave_on(llg_time());"));
     assert!(c.contains("llg_wave_off(llg_time());"));
     assert!(c.contains("llg_wave_dumpall(llg_time());"));
@@ -211,5 +218,8 @@ fn waveform_model_emits_controls_hierarchy_and_final_time_close() {
     assert!(c.contains("llg_wave_register_sv4(\"top\\037mem[3]\", &G_top_mem[0], 8)"));
     assert!(c.contains("llg_wave_register_sv4(\"top\\037mem[2]\", &G_top_mem[1], 8)"));
     assert!(c.contains("llg_spawn_final(llg_wave_capture_final_time"));
-    assert!(c.contains("return llg_wave_close(llg_wave_final_time);"));
+    assert!(c.contains("llg_wave_close(llg_model_done ? llg_wave_final_time : llg_time())"));
+    let wave_close = c.find("status = llg_wave_close(").unwrap();
+    let teardown = c[wave_close..].find("llg_model_storage_destroy();").unwrap() + wave_close;
+    assert!(wave_close < teardown, "wave writer must finish before model values are destroyed");
 }

@@ -147,12 +147,13 @@ static void mailbox_deliver(const llg_mailbox_value_t* value,
     if (!target->target.handle && target->kind == LLG_MAILBOX_HANDLE) return;
     switch (target->kind) {
     case LLG_MAILBOX_PACKED: {
-        sv4_t converted = sv4_cast(value->value.packed, target->width,
-                                   target->is_signed);
-        if (target->two_state) sv4_replace(&converted, sv4_to_two_state(converted));
-        if (target->reference) llg_ref_write(target->reference, converted);
-        else llg_ba(target->target.packed, converted);
-        sv4_destroy(&converted);
+        llg_value_scope_t* scope = llg_value_scope_begin(1);
+        sv4_t* converted = llg_value_scope_values(scope);
+        sv4_replace(converted, sv4_cast(value->value.packed, target->width, target->is_signed));
+        if (target->two_state) sv4_replace(converted, sv4_to_two_state(*converted));
+        if (target->reference) llg_ref_write(target->reference, *converted);
+        else llg_ba(target->target.packed, *converted);
+        llg_value_scope_end(scope);
         break;
     }
     case LLG_MAILBOX_REAL:
@@ -193,6 +194,30 @@ static llg_mailbox_message_t* mailbox_message_pop(llg_mailbox_t* mailbox) {
     message->next = NULL;
     mailbox->length--;
     return message;
+}
+
+static void mailbox_snapshot_destroy(void* payload) {
+    mailbox_value_destroy((llg_mailbox_value_t*)payload);
+}
+
+/* Freeze a successful delivery before publishing to HDL. A peek needs an
+ * independent copy because a reentrant get can destroy the queue's head. */
+static llg_value_scope_t* mailbox_snapshot(llg_mailbox_t* mailbox, int peek) {
+    llg_value_scope_t* owner = llg_value_scope_begin_object(
+        sizeof(llg_mailbox_value_t), mailbox_snapshot_destroy);
+    llg_mailbox_value_t* value = llg_value_scope_object(owner);
+    llg_mailbox_message_t* message = peek ? mailbox->head : mailbox_message_pop(mailbox);
+    *value = message->value;
+    if (peek) {
+        if (value->kind == LLG_MAILBOX_PACKED)
+            value->value.packed = sv4_clone(&message->value.value.packed);
+        else if (value->kind == LLG_MAILBOX_STRING)
+            value->value.string = llg_string_clone(&message->value.value.string);
+    } else {
+        memset(&message->value, 0, sizeof(message->value));
+        free(message);
+    }
+    return owner;
 }
 
 static void mailbox_unlink_wait(llg_wait_t* wait) {
@@ -262,13 +287,13 @@ static void mailbox_service_waiters(llg_mailbox_t* mailbox) {
                 mailbox_type_error();
                 return;
             }
-            mailbox_deliver(&message->value, &get->mailbox_target);
-            if (!get->mailbox_peek) {
-                message = mailbox_message_pop(mailbox);
-                mailbox_value_destroy(&message->value);
-                free(message);
-            }
+            llg_mailbox_target_t target = get->mailbox_target;
+            llg_value_scope_t* owner = mailbox_snapshot(mailbox, get->mailbox_peek);
+            /* wake_proc queues, but never runs, the continuation. Copy the
+             * destination before wakeup clears the wait record. */
             mailbox_remove_and_wake(get);
+            mailbox_deliver(llg_value_scope_object(owner), &target);
+            llg_value_scope_end(owner);
             continue;
         }
         if (mailbox->put_head &&
@@ -402,13 +427,9 @@ static int mailbox_take_value(llg_mailbox_t* mailbox,
                               llg_mailbox_target_t target, int peek) {
     if (!mailbox || !mailbox->head) return 0;
     if (!mailbox_target_matches(&mailbox->head->value, &target)) return -1;
-    llg_mailbox_message_t* message = mailbox->head;
-    mailbox_deliver(&message->value, &target);
-    if (!peek) {
-        message = mailbox_message_pop(mailbox);
-        mailbox_value_destroy(&message->value);
-        free(message);
-    }
+    llg_value_scope_t* owner = mailbox_snapshot(mailbox, peek);
+    mailbox_deliver(llg_value_scope_object(owner), &target);
+    llg_value_scope_end(owner);
     mailbox_service_waiters(mailbox);
     return 1;
 }

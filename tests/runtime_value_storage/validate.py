@@ -94,7 +94,7 @@ def rust_acceptance(runner: Runner, args) -> None:
                                    "sim::emit_c::owned::tests"], True),
         ("rust-abi-cache", ["test", "--locked", "--lib", "--no-default-features", "sim::build::tests"], True),
         ("rust-emitted-c", ["test", "--locked", "--lib", "--no-default-features",
-                            "structured_owned_model_", "--", "--ignored"], True),
+                            "structured_owned_model_"], True),
         ("hdl-ownership", ["test", "--locked", "--no-default-features", "--test", "sim_dynamic_ownership",
                             "--", "--test-threads=1"], True),
         ("repository-suite", ["test", "--locked", "--all-features", "--", "--test-threads=1"], True),

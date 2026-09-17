@@ -3,36 +3,36 @@ use super::*;
 
 impl Frame<'_, '_> {
     pub(super) fn formatted_arguments(&mut self, args: &[IrDisplayArg], time_unit: u64) -> Result<String, String> {
+        enum Prepared { Numeric(Value), Text(super::native::NativeValue) }
         let mut values = Vec::new();
         for arg in args {
             values.push(match arg {
-                IrDisplayArg::Packed(expr) | IrDisplayArg::Real(expr) => Some(self.expression(expr)?),
-                IrDisplayArg::String(IrStringExpr::Literal(_)) => None,
-                _ => return Err(pending("nonliteral native-string format arguments")),
+                IrDisplayArg::Packed(expr) | IrDisplayArg::Real(expr) => Prepared::Numeric(self.expression(expr)?),
+                IrDisplayArg::String(text) => Prepared::Text(self.string(text)?),
             });
         }
         if args.is_empty() { return Ok("NULL".to_owned()); }
         let array = self.name("format_args");
         self.line(format!("llg_fmt_arg_t {array}[{}] = {{0}};", args.len()));
-        // From here through the consuming formatter there are no calls which
-        // can yield. Stack descriptors therefore never hide canceled owners.
+        // Every user expression has finished. Transfer at the final consuming
+        // boundary; no call which can yield runs with a partial output array.
         for (index, (arg, value)) in args.iter().zip(values).enumerate() {
             self.line(format!("{array}[{index}].time_unit_fs = {time_unit}ULL;"));
             match (arg, value) {
-                (IrDisplayArg::Packed(_), Some(value)) => {
+                (IrDisplayArg::Packed(_), Prepared::Numeric(value)) => {
                     self.line(format!("{array}[{index}].kind = LLG_FMT_PACKED;"));
                     self.line(format!("sv4_move(&{array}[{index}].value.packed, &{});", value.code));
                     self.discard(value);
                 }
-                (IrDisplayArg::Real(_), Some(value)) => {
+                (IrDisplayArg::Real(_), Prepared::Numeric(value)) => {
                     self.line(format!("{array}[{index}].kind = LLG_FMT_REAL;"));
                     self.line(format!("{array}[{index}].value.real = {};", value.real()));
                     self.discard(value);
                 }
-                (IrDisplayArg::String(IrStringExpr::Literal(bytes)), None) => {
-                    let literal = bytes.iter().map(|byte| format!("\\{byte:03o}")).collect::<String>();
+                (IrDisplayArg::String(_), Prepared::Text(value)) => {
                     self.line(format!("{array}[{index}].kind = LLG_FMT_STRING;"));
-                    self.line(format!("{array}[{index}].value.string = llg_string_bytes(\"{literal}\", {});", bytes.len()));
+                    self.line(format!("{array}[{index}].value.string = {};", value.take_string()));
+                    self.native_discard(value);
                 }
                 _ => unreachable!("format argument classification"),
             }

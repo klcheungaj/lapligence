@@ -16,15 +16,14 @@ pub enum IrObjectType {
     Process,
 }
 
-/// C layout of one nominal SystemVerilog class. Handles are represented by a
-/// pointer to the emitted struct; the layout is kept in the execution IR so
-/// both optimized and unoptimized renderings share one source of truth.
+/// Nominal SystemVerilog class layout. Handles point to a common runtime object
+/// header; fields are individually typed slots in declaration order. The same
+/// validated layout drives both optimized and unoptimized emission.
 #[derive(Clone, Debug, PartialEq)]
 pub struct IrClass {
     pub(in crate::sim) c_name: String,
-    /// Base class layout index, if this is a derived class.  Emitted structs
-    /// flatten the base fields in declaration order so a base receiver points
-    /// at the same object prefix as its derived allocation.
+    /// Base class layout index, if this is a derived class. Fields flatten the
+    /// base prefix in declaration order; no unrelated C struct alias is used.
     pub(in crate::sim) base: Option<usize>,
     pub(in crate::sim) fields: Vec<IrClassField>,
 }
@@ -236,8 +235,14 @@ impl IrDisplayArg {
 /// Native-pointer values; arithmetic and packed conversion are not represented.
 pub enum IrChandleExpr {
     Null,
-    /// A lowering-produced C fragment. Class allocation and member reads use
-    /// this escape hatch until they need a richer object-expression node.
+    /// Runtime-owned semaphore; its argument is evaluated by the emitter.
+    SemaphoreNew(Box<IrExpr>),
+    /// Model-owned allocation recipe. No C text or frontend pointers are stored.
+    Construct(usize),
+    /// Address of a validated, concrete virtual-interface instance.
+    InterfaceInstance { interface: usize, instance: usize },
+    /// Legacy fragment retained for explicit rejection. New allocation and
+    /// member lowering use typed recipes, never executable strings.
     Verbatim(String),
     Read(usize),
     LocalRead(String),
@@ -370,6 +375,8 @@ pub enum IrProcessControl {
 /// Queries produce packed or real values, never integer encodings of objects.
 #[derive(Clone, Debug, PartialEq)]
 pub enum IrObjectQuery {
+    /// A typed opaque activation capture. Legal only in opaque capture slots.
+    HandleCapture(IrChandleExpr),
     StringLen(IrStringExpr),
     StringGetc(IrStringExpr, Box<IrExpr>),
     StringCompare(IrStringExpr, IrStringExpr, bool),
@@ -685,15 +692,7 @@ impl IrStringExpr {
                 if let Some(receiver) = receiver {
                     receiver.expressions(visit);
                 }
-                for arg in args {
-                    match arg {
-                        super::IrCallArg::StringVal(value) => value.expressions(visit),
-                        super::IrCallArg::StringOutTemp {
-                            init: Some(value), ..
-                        } => value.expressions(visit),
-                        _ => {}
-                    }
-                }
+                for arg in args { arg.expressions(visit); }
             }
             Self::Concat(parts) => {
                 for part in parts {
@@ -745,15 +744,7 @@ impl IrStringExpr {
                 if let Some(receiver) = receiver {
                     receiver.expressions_mut(visit);
                 }
-                for arg in args {
-                    match arg {
-                        super::IrCallArg::StringVal(value) => value.expressions_mut(visit),
-                        super::IrCallArg::StringOutTemp {
-                            init: Some(value), ..
-                        } => value.expressions_mut(visit),
-                        _ => {}
-                    }
-                }
+                for arg in args { arg.expressions_mut(visit); }
             }
             Self::Concat(parts) => {
                 for part in parts {
@@ -1068,6 +1059,7 @@ impl IrObjectQuery {
         string_return: Option<bool>,
     ) -> Result<(), super::IrValidationError> {
         match self {
+            Self::HandleCapture(handle) => handle.validate(model, formals, chandle_return),
             Self::StringAtoi(_, base) if !matches!(base, 2 | 8 | 10 | 16) => Err(
                 super::IrValidationError::new("string", "invalid numeric base"),
             ),
@@ -1139,6 +1131,7 @@ impl IrObjectQuery {
     }
     pub(in crate::sim) fn expressions(&self, visit: &mut impl FnMut(&IrExpr)) {
         match self {
+            Self::HandleCapture(handle) => handle.expressions(visit),
             Self::StringLen(value)
             | Self::StringAtoi(value, _)
             | Self::StringAtoreal(value)
@@ -1188,6 +1181,7 @@ impl IrObjectQuery {
     }
     pub(in crate::sim) fn expressions_mut(&mut self, visit: &mut impl FnMut(&mut IrExpr)) {
         match self {
+            Self::HandleCapture(handle) => handle.expressions_mut(visit),
             Self::StringLen(value)
             | Self::StringAtoi(value, _)
             | Self::StringAtoreal(value)
@@ -1551,6 +1545,18 @@ impl IrChandleExpr {
         chandle_return: Option<bool>,
     ) -> Result<(), super::IrValidationError> {
         match self {
+            Self::SemaphoreNew(keys) => {
+                if keys.is_real() { return Err(super::IrValidationError::new("semaphore", "key count must be integral")); }
+                Ok(())
+            }
+            Self::Construct(index) => {
+                if *index < model.class_allocations.len() { Ok(()) }
+                else { Err(super::IrValidationError::new("class allocation", "recipe index is out of bounds")) }
+            }
+            Self::InterfaceInstance { interface, instance } => {
+                if model.virtual_interfaces.get(*interface).and_then(|v| v.instances.get(*instance)).is_some() { Ok(()) }
+                else { Err(super::IrValidationError::new("virtual interface", "instance index is out of bounds")) }
+            }
             Self::Null => Ok(()),
             Self::Verbatim(code) if !code.is_empty() => Ok(()),
             Self::Verbatim(_) => Err(super::IrValidationError::new(
@@ -1739,19 +1745,14 @@ impl IrChandleExpr {
 
     pub(in crate::sim) fn expressions(&self, visit: &mut impl FnMut(&IrExpr)) {
         match self {
-            Self::ContainerGet { index, .. } => visit(index),
+            Self::AssociativeGet { key, .. } => key.expressions(visit),
+            Self::SemaphoreNew(index) | Self::ContainerGet { index, .. } => visit(index),
             Self::ContainerGetNested { indices, .. } => indices.iter().for_each(visit),
             Self::Call { args, receiver, .. } => {
                 if let Some(receiver) = receiver {
                     receiver.expressions(visit);
                 }
-                for arg in args {
-                    match arg {
-                        IrCallArg::Val(value) => visit(value),
-                        IrCallArg::ChandleVal(value) => value.expressions(visit),
-                        _ => {}
-                    }
-                }
+                for arg in args { arg.expressions(visit); }
             }
             _ => {}
         }
@@ -1759,19 +1760,14 @@ impl IrChandleExpr {
 
     pub(in crate::sim) fn expressions_mut(&mut self, visit: &mut impl FnMut(&mut IrExpr)) {
         match self {
-            Self::ContainerGet { index, .. } => visit(index),
+            Self::AssociativeGet { key, .. } => key.expressions_mut(visit),
+            Self::SemaphoreNew(index) | Self::ContainerGet { index, .. } => visit(index),
             Self::ContainerGetNested { indices, .. } => indices.iter_mut().for_each(visit),
             Self::Call { args, receiver, .. } => {
                 if let Some(receiver) = receiver {
                     receiver.expressions_mut(visit);
                 }
-                for arg in args {
-                    match arg {
-                        IrCallArg::Val(value) => visit(value),
-                        IrCallArg::ChandleVal(value) => value.expressions_mut(visit),
-                        _ => {}
-                    }
-                }
+                for arg in args { arg.expressions_mut(visit); }
             }
             _ => {}
         }

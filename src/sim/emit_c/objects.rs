@@ -229,6 +229,7 @@ fn render_string_format(
 
 pub(super) fn chandle(ctx: &RCtx<'_>, value: &IrChandleExpr) -> Result<String, String> {
     Ok(match value {
+        IrChandleExpr::SemaphoreNew(_) | IrChandleExpr::Construct(_) | IrChandleExpr::InterfaceInstance { .. } => return Err("typed native operations require whole-model ownership emission".to_owned()),
         IrChandleExpr::Null => "NULL".to_owned(),
         IrChandleExpr::Verbatim(code) => code.clone(),
         IrChandleExpr::Read(index) => ctx.model.objects[*index].c_name.clone(),
@@ -478,6 +479,7 @@ pub(super) fn query(
     signed: bool,
 ) -> Result<String, String> {
     Ok(match query {
+        IrObjectQuery::HandleCapture(_) => return Err("opaque captures require whole-model ownership emission".to_owned()),
         IrObjectQuery::StringLen(value) => format!("llg_string_len({})", string(ctx, value)?),
         IrObjectQuery::StringGetc(value, index) => format!(
             "llg_string_getc({}, {})",

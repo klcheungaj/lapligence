@@ -106,7 +106,7 @@ freeing persistent model owners.
 P03/P04 changed the main representation without a fixed-size compatibility layer.
 P05 now has a structured numeric whole-model path, registered expression/local
 lifetimes and explicit model start/advance/close. Unmigrated features and all
-legacy fragment APIs remain fail-closed; old C selftests remain fenced. The new
+legacy fragment APIs remain fail-closed; the original C selftests now use explicit owners. The new
 Rust emitter was not compiled in this delivery environment. See
 [exact emitter coverage](../../emit_c/owned/readme.md).
 
@@ -120,3 +120,51 @@ Full HDL execution, exact Rust/C parity, native macOS/MSVC and performance
 measurement remain acceptance gates. Hand-authored C output-shape probes are
 not Rust-emitted-model tests. See the delivery validation report for executed
 checks and their limitations.
+
+## Registered native payloads and publication callbacks
+
+`llg_value_scope_begin_object(bytes, destroy)` allocates zero-initialized, stable
+native payload storage; `llg_value_scope_object(scope)` borrows it. The supplied
+destructor releases payload contents only. It must not free the payload itself,
+yield, or publish simulator notifications. Scope teardown invokes the destructor
+and then frees the payload. Such scopes share the ordinary lexical/process/root
+unwind stack, but are not packed NBA destination descriptors. A string owner uses
+`llg_string_destroy`; a process-handle owner releases its retained handle.
+
+`llg_string_take` moves an expression owner's descriptor and clears the source.
+It is not a write to an HDL string variable: writes use `llg_string_move` to preserve
+destination dependency metadata. Both returned expressions and callee input copies
+must be owned, not shallow aliases. Native return slots precede call cleanup marks.
+
+`llg_queue_pop_front_into`/`llg_queue_pop_back_into` adopt the removed packed value
+into the caller's registered result slot before notifying readers. Converted generic
+queue/associative inputs, default values and normalized keys are released before
+notification, while newly installed elements remain owned by the container. Mutation
+helpers report change flags to their public wrappers; notification stays synchronous
+and preserves no-change suppression, but occurs only after wrapper cleanup. The
+container runtime remains scheduler-independent.
+
+Reference writes, scanner tokens/values and dependency-marker updates may span
+callbacks and therefore use registered owners. File line buffers and plusarg format
+pieces are freed before destination publication. A nonreturning callback must never
+be the only reason a runtime-local owner is abandoned without cleanup.
+
+## Addressable real locals and exact native destination pins
+
+Addressable automatic real variables use individual registered `double` payloads.
+A pointer to a plain C stack local is not a persistent mailbox destination on
+libaco's shared stack: another coroutine's write can be overwritten when the
+receiving coroutine's saved stack is restored. Real arithmetic temporaries that
+are not retained by another activation may remain C scalars.
+
+The private exact-address index includes both packed descriptors and native
+payload base addresses. It does not index interior native fields or retain every
+address reachable from a payload. Packed and real signal publication use a
+registered pin on the writer while callbacks run. If a callback cancels the
+receiving process, the destination stays alive until publication completes; if
+the writer exits nonlocally, its pin is unwound. Global/model storage remains
+owned by the model. These pins do not add support for queued automatic real or
+string writes: their emitter guards and queued-write contracts remain unchanged.
+
+A selected reference write passes its already captured `uint64_t` index to
+`llg_ref_write_bit`; it does not wrap that index in an owning `sv4_t` descriptor.

@@ -25,3 +25,8 @@ owned data and emits typed IR, not C source.
 
 See [the parent README](../readme.md) and
 [the detailed source map](../../../../docs/source_layout.md).
+
+Bound numeric arguments and inout copy-in produce converted typed `IrExpr`
+values only. Defaults resolve earlier formals through the typed argument map.
+Do not request detached C strings in argument binding: owner setup/cleanup is
+emitted later by the structured whole-model renderer.

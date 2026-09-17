@@ -7,6 +7,28 @@ fn render(model: &IrModel) -> Result<String, EmitError> {
     super::render(&execution)
 }
 
+// Ownership setup and teardown are whole-procedure operations. Positive tests
+// exercise public model rendering; detached fragments remain rejection tests.
+fn add_test_process(model: &mut IrModel, statement: IrStmt) {
+    model.processes.push(crate::sim::ir::IrProcess::new(
+        "p_owner_test".into(), "owner-test".into(),
+        crate::sim::ir::IrShape::RunOnce, vec![], vec![statement],
+    ));
+    model.spawns.push("p_owner_test".into());
+}
+
+fn render_expression_model(mut model: IrModel, expression: IrExpr) -> String {
+    let result = model.signals.len();
+    model.signals.push(crate::sim::ir::IrSignal::new(
+        "owner_result".into(), None,
+        crate::sim::ir::IrType::packed(expression.width, expression.signed).unwrap(), None,
+    ).unwrap());
+    add_test_process(&mut model, IrStmt::Assign {
+        lhs: crate::sim::ir::IrLhs::Whole(result), rhs: expression, nba: false,
+    });
+    render(&model).unwrap()
+}
+
 #[test]
 fn executable_sensitivity_blocks_drive_process_emission() {
     use crate::sim::ir::{IrModelParts, IrProcess, IrShape, IrSignal, IrType};
@@ -42,7 +64,7 @@ fn executable_sensitivity_blocks_drive_process_emission() {
     let rendered = super::render(&execution).unwrap();
 
     assert_eq!(rendered.matches("llg_rt_finish();").count(), 1);
-    let loop_start = rendered.find("for (;;) {").unwrap();
+    let loop_start = rendered.find("_llg_exec_0_b0: ;").unwrap();
     let wait = rendered.find("llg_wait_any").unwrap();
     let finish = rendered.find("llg_rt_finish();").unwrap();
     assert!(loop_start < finish && finish < wait);
@@ -73,7 +95,7 @@ fn executable_loop_blocks_have_cooperative_budget_points() {
     let rendered = render(&model).unwrap();
 
     assert!(rendered
-        .contains("llg_budget_point(\"<synthetic: manually constructed process top.loop>\");"));
+        .contains("llg_budget_point(\"top.loop\");"));
 }
 
 #[test]
@@ -226,24 +248,16 @@ fn indexed_read_uses_its_elaborated_extent() {
     )
     .unwrap();
     assert_eq!(model.expression_capacity(&expression, None).unwrap(), 96);
-    let rendered = render_expr(
-        &RCtx {
-            model: &model,
-            func: None,
-            sampled: false,
-            activation_label: None,
-        },
-        &expression,
-    )
-    .unwrap();
-    assert!(rendered.code.ends_with(", 96, 0)"));
-    assert!(!rendered.code.contains("sv4_checked_width"));
+    let rendered = render_expression_model(model, expression);
+    assert!(rendered.contains("sv4_idx_part_select_value("));
+    assert!(rendered.contains(", 96, 0)"));
+    assert!(!rendered.contains("sv4_checked_width"));
 }
 
 #[test]
 fn selected_net_driver_preserves_member_state_conversion() {
     use crate::sim::ir::{IrLhs, IrModelParts, IrNetGroup, IrNetKind, IrSignal, IrType};
-    let model = IrModel::from_parts(
+    let mut model = IrModel::from_parts(
         "member_driver".to_owned(),
         1,
         IrModelParts {
@@ -266,18 +280,14 @@ fn selected_net_driver_preserves_member_state_conversion() {
         rhs: IrExpr::try_new(IrExprKind::Fill(2), 4, false, Some(2)).unwrap(),
         nba: false,
     };
-    let rendered = render_stmt(
-        &RCtx {
-            model: &model,
-            func: None,
-            sampled: false,
-            activation_label: None,
-        },
-        &statement,
-    )
-    .unwrap();
-    assert!(rendered.contains("sv4_to_two_state(sv4_fill(2, 4, 0))"));
-    assert!(rendered.contains("llg_net_write(&net, 0, _t)"));
+    add_test_process(&mut model, statement);
+    let rendered = render(&model).unwrap();
+    let fill = rendered.find("sv4_fill(2, 4, 0)").unwrap();
+    let conversion = rendered.find("sv4_to_two_state(").unwrap();
+    let update = rendered.find("sv4_part_select_set(").unwrap();
+    let write = rendered.find("llg_net_write(&net, 0, _llg_t[").unwrap();
+    assert!(fill < conversion && conversion < update && update < write);
+    assert!(!rendered.contains("sv4_to_two_state(sv4_"));
 }
 
 #[test]
@@ -346,7 +356,7 @@ fn output_temporary_uses_its_declared_formal_after_c_argument_reordering() {
         Vec::new(),
         Vec::new(),
     );
-    let model = IrModel::from_parts(
+    let mut model = IrModel::from_parts(
         "mixed".to_owned(),
         1,
         IrModelParts {
@@ -388,21 +398,14 @@ fn output_temporary_uses_its_declared_formal_after_c_argument_reordering() {
         false,
     );
     let expression = IrExpr::try_new(IrExprKind::CallFn(Box::new(call)), 1, false, None).unwrap();
-    let rendered = render_expr(
-        &RCtx {
-            model: &model,
-            func: None,
-            sampled: false,
-            activation_label: None,
-        },
-        &expression,
-    )
-    .unwrap();
-    assert!(
-        rendered.code.contains("sv4_t _out = sv4_x(16, 1)"),
-        "{}",
-        rendered.code
-    );
+    model.signals.push(crate::sim::ir::IrSignal::new(
+        "target".into(), None, IrType::packed(16, true).unwrap(), None,
+    ).unwrap());
+    let rendered = render_expression_model(model, expression);
+    let process = &rendered[rendered.find("static void p_owner_test(").unwrap()..];
+    assert!(process.lines().any(|line| line.contains("sv4_replace(_llg_local_")
+        && line.contains("sv4_x(16, 1)")), "{process}");
+    assert!(process.contains("mixed("));
 }
 
 #[test]
@@ -464,11 +467,12 @@ fn captured_fork_emits_owned_frame_lifecycle() {
     .unwrap();
 
     let rendered = render(&model).unwrap();
-    assert!(rendered.contains("llg_frame_new(1)"));
-    assert!(rendered.contains("llg_frame_capture_value(_frame_2, 0u"));
+    assert!(rendered.contains("llg_frame_new(1ULL)"));
+    assert!(rendered.contains("llg_frame_capture_value(_llg_capture_frame_"));
     assert!(rendered.contains("llg_fork_with_frame(p_capture_branch"));
     assert!(rendered.contains("llg_frame_read_value(llg_proc_frame(self), 0u)"));
-    assert!(rendered.contains("llg_frame_release(_frame_2)"));
+    assert!(rendered.contains("llg_frame_release(_llg_capture_frame_"));
+    assert!(rendered.contains("sv4_replace(_llg_local_"));
 }
 
 #[test]
@@ -507,7 +511,7 @@ fn evaluated_event_emits_owned_context_and_contextual_callback() {
             specs: vec![(
                 crate::sim::ir::IrWaitSrc::Evaluated {
                     eval: "p_eval".into(),
-                    condition: None,
+                    condition: Some("p_eval".into()),
                     reads: vec![IrDependency::Scalar("signal".into())],
                 },
                 crate::sim::ir::IrEdge::Any,
@@ -534,10 +538,16 @@ fn evaluated_event_emits_owned_context_and_contextual_callback() {
 
     let rendered = render(&model).unwrap();
     assert!(rendered.contains("static void p_eval(sv4_t* out, void* context)"));
-    assert!(rendered.contains("out[0] = llg_frame_read_value((const llg_frame_t*)context, 0u);"));
-    assert!(rendered.contains("llg_frame_t* _event_frame_4 = llg_frame_new(1u);"));
-    assert!(rendered.contains(".eval_context = _event_frame_4"));
-    assert!(rendered.contains("llg_wait_expressions(_events, 1);"));
+    assert!(rendered.contains("llg_frame_read_value((const llg_frame_t*)context, 0u)"));
+    assert!(rendered.contains("sv4_move(&out[0], &_llg_t["));
+    assert!(rendered.contains("llg_frame_new(1ULL)"));
+    assert!(rendered.contains(".eval_context = _llg_event_frame_"));
+    assert_eq!(rendered.matches("llg_frame_new(1ULL)").count(), 1);
+    assert_eq!(rendered.matches("llg_frame_retain(_llg_event_frame_").count(), 2);
+    assert_eq!(rendered.matches("llg_frame_release(_llg_event_frame_").count(), 1);
+    assert!(rendered.contains(".condition_context = _llg_event_frame_"));
+    assert!(rendered.contains("llg_wait_expressions(_llg_events_"));
+    assert!(!rendered.contains("out[0] ="));
 }
 
 #[test]

@@ -10,5 +10,6 @@ module tb;
         total = 0;
         repeat (128) total = total + descend(16);
         $display("%0d", total);
+        $finish(0);
     end
 endmodule

@@ -137,31 +137,29 @@ impl<'a> Codegen<'a> {
         }
     }
 
-    /// Lower the C value expression for bound argument `idx` of a call and
-    /// record it in `arg_codes[idx]` (rendered, for the legacy string paths)
-    /// and `arg_irs[idx]` (IR) for later formals' default expressions to
-    /// reference.
+    /// Lower a bound numeric argument to typed IR and record it for later
+    /// formals' default expressions. C emission happens only after lowering;
+    /// an expression fragment cannot represent packed-value ownership.
     ///
     /// A formal's default expression (`input logic b = a + 1`) is written in
     /// the callee's scope and may reference earlier formals; it is lowered
     /// under a temporary formal-aware context mapping those formals to their
     /// already-lowered argument expressions.  Caller provided arguments are
     /// lowered in the caller's own context.
-    pub(in super::super) fn lower_bound_arg_code(
+    pub(in super::super) fn lower_bound_arg(
         &mut self,
         scope_path: &str,
         formals: &[(NodeId, bool)],
         bound: &[BoundArg],
         idx: usize,
-        arg_codes: &mut [Option<String>],
         arg_irs: &mut Vec<Option<IrExpr>>,
-    ) -> Result<(String, IrExpr), String> {
+    ) -> Result<IrExpr, String> {
         let (w, s, two_state) = (bound[idx].width, bound[idx].signed, bound[idx].two_state);
         let e_ir = if bound[idx].is_default {
             let mut arg_read: HashMap<NodeId, ArgMap> = HashMap::new();
             let mut arg_ir: HashMap<NodeId, IrExpr> = HashMap::new();
             for (j, (io, _)) in formals.iter().enumerate().take(idx) {
-                if arg_codes[j].is_some() {
+                if let Some(ir) = &arg_irs[j] {
                     let (wj, sj) = (bound[j].width, bound[j].signed);
                     arg_read.insert(
                         *io,
@@ -171,9 +169,7 @@ impl<'a> Codegen<'a> {
                             two_state: bound[j].two_state,
                         },
                     );
-                    if let Some(ir) = arg_irs[j].clone() {
-                        arg_ir.insert(*io, ir);
-                    }
+                    arg_ir.insert(*io, ir.clone());
                 }
             }
             let temp_func = FuncCtx {
@@ -227,13 +223,11 @@ impl<'a> Codegen<'a> {
         } else {
             ir_to_storage(e_ir, w, s, two_state)?
         };
-        let code = self.render_ir_code(&conv_ir)?;
-        arg_codes[idx] = Some(code.clone());
         if arg_irs.len() <= idx {
             arg_irs.resize(idx + 1, None);
         }
         arg_irs[idx] = Some(conv_ir.clone());
-        Ok((code, conv_ir))
+        Ok(conv_ir)
     }
 
     fn ir_constant_i128(value: &IrExpr) -> Option<i128> {
@@ -430,304 +424,54 @@ impl<'a> Codegen<'a> {
                 ));
             }
             let index = self.lower_queue_index(scope_path, container, index_node)?;
-            let index_code = self.render_ir_code(&index)?;
-            let queue = &self.model.containers[container];
             let lhs = IrLhs::WholeRef {
-                // This typed placeholder is used for dependency/type analysis;
-                // the emitted descriptor deliberately uses `.queue` instead
-                // of this address because the data pointer is relocatable.
-                addr: format!("&{}.data[sv4_to_index({index_code})]", queue.c_name),
-                width,
-                signed,
-                two_state,
-                shortreal: false,
+                // Dependency/type placeholder only. The typed read below keeps
+                // the queue identity and selector for retained-cell emission.
+                addr: format!("&{}", self.model.containers[container].c_name),
+                width, signed, two_state, shortreal: false,
             };
-            let descriptor = format!(
-                "llg_ref_queue(&{}, sv4_to_index({index_code}))",
-                queue.c_name
-            );
+            let read = IrExpr::new(IrExprKind::Container(Box::new(IrContainerExpr::Get {
+                container, index: Box::new(index),
+            })), width, signed, None);
             return Ok(IrCallArg::RefAddr {
-                addr: descriptor,
-                width,
-                signed,
-                two_state,
-                const_ref,
-                lhs: Box::new(lhs),
-                read: Box::new(self.lower_expr(scope_path, bound.expr)?),
+                addr: "typed_queue_reference".to_owned(), width, signed, two_state,
+                const_ref, lhs: Box::new(lhs), read: Box::new(read),
             });
         }
 
         let lhs = self.lower_ref_actual_lhs(scope_path, bound.expr)?;
         let read = self.lower_expr(scope_path, bound.expr)?;
-        let (base, width, signed, two_state, actual_const, kind, fields) = match &lhs {
-            IrLhs::Whole(index) => {
-                let signal = self.model.signals.get(*index).ok_or_else(|| {
-                    format!("reference actual signal {index} is out of bounds in `{scope_path}`")
-                })?;
-                if signal.net_driver.is_some() {
-                    return Err(format!(
-                        "ref actual in `{scope_path}` must be a variable, not a net"
-                    ));
-                }
-                let IrType::Packed {
-                    width,
-                    signed,
-                    two_state,
-                } = signal.ty
-                else {
-                    return Err(format!(
-                        "ref actual in `{scope_path}` must have a packed integral type"
-                    ));
-                };
-                (
-                    format!("&{}", signal.c_name),
-                    width,
-                    signed,
-                    two_state,
-                    false,
-                    "LLG_REF_WHOLE",
-                    String::new(),
-                )
-            }
-            IrLhs::WholeRef {
-                addr,
-                width,
-                signed,
-                two_state,
-                ..
-            } => (
-                addr.clone(),
-                *width,
-                *signed,
-                *two_state,
-                false,
-                "LLG_REF_WHOLE",
-                String::new(),
-            ),
-            IrLhs::Ref {
-                addr,
-                width,
-                signed,
-                two_state,
-                const_ref: actual_const,
-                bit: None,
-            } => (
-                addr.clone(),
-                *width,
-                *signed,
-                *two_state,
-                *actual_const,
-                "LLG_REF_NESTED",
-                String::new(),
-            ),
-            IrLhs::Ref { bit: Some(_), .. } => {
-                return Err("packed bit selects cannot be passed by reference".to_owned());
-            }
-            IrLhs::Bit(index, bit, two_state) => {
-                let signal = self.model.signals.get(*index).ok_or_else(|| {
-                    format!("reference actual signal {index} is out of bounds in `{scope_path}`")
-                })?;
-                if signal.net_driver.is_some() {
-                    return Err(format!("ref actual in `{scope_path}` must be a variable"));
-                }
-                let IrType::Packed { .. } = signal.ty else {
-                    return Err(format!("ref actual in `{scope_path}` must be integral"));
-                };
-                let bit = self.render_ir_code(bit)?;
-                (
-                    format!("&{}", signal.c_name),
-                    1,
-                    false,
-                    *two_state,
-                    false,
-                    "LLG_REF_BIT",
-                    format!(".index = sv4_to_index({bit})"),
-                )
-            }
-            IrLhs::Part(index, left, right, two_state) => {
-                let signal = self.model.signals.get(*index).ok_or_else(|| {
-                    format!("reference actual signal {index} is out of bounds in `{scope_path}`")
-                })?;
-                if signal.net_driver.is_some() {
-                    return Err(format!("ref actual in `{scope_path}` must be a variable"));
-                }
-                let IrType::Packed { .. } = signal.ty else {
-                    return Err(format!("ref actual in `{scope_path}` must be integral"));
-                };
-                let width = left.abs_diff(*right) as u32 + 1;
-                (
-                    format!("&{}", signal.c_name),
-                    width,
-                    false,
-                    *two_state,
-                    false,
-                    "LLG_REF_PART",
-                    format!(".left = {left}, .right = {right}"),
-                )
-            }
-            IrLhs::IdxPart(index, base_index, _, width, negative, two_state) => {
-                let signal = self.model.signals.get(*index).ok_or_else(|| {
-                    format!("reference actual signal {index} is out of bounds in `{scope_path}`")
-                })?;
-                if signal.net_driver.is_some() {
-                    return Err(format!("ref actual in `{scope_path}` must be a variable"));
-                }
-                let IrType::Packed { .. } = signal.ty else {
-                    return Err(format!("ref actual in `{scope_path}` must be integral"));
-                };
-                let base_index = self.render_ir_code(base_index)?;
-                (
-                    format!("&{}", signal.c_name),
-                    *width,
-                    false,
-                    *two_state,
-                    false,
-                    "LLG_REF_INDEXED",
-                    format!(
-                        ".index = sv4_to_index({base_index}), .indexed_width = {width}, \
-                         .indexed_negative = {}",
-                        *negative as u8
-                    ),
-                )
-            }
-            IrLhs::ArrayElem {
-                arr,
-                indices,
-                elem_sel,
-            } => {
-                let array = self.model.arrays.get(*arr).ok_or_else(|| {
-                    format!("reference actual array {arr} is out of bounds in `{scope_path}`")
-                })?;
-                let array_info = ArrayInfo {
-                    global: array.c_name.clone(),
-                    elem_width: array.elem_width,
-                    signed: array.signed,
-                    real: array.real,
-                    shortreal: array.shortreal,
-                    is_net: false,
-                    dims: array.dims.clone(),
-                    init: None,
-                    ir: *arr,
-                };
-                let constant_linear = Self::array_constant_linear_index(&array_info, indices);
-                if matches!(elem_sel, IrElemSel::Whole) && constant_linear.is_none() {
-                    if indices
-                        .iter()
-                        .all(|index| Self::ir_constant_i128(index).is_some())
-                    {
-                        return Err(format!(
-                            "ref actual array index in `{scope_path}` must be a constant in range"
-                        ));
-                    }
-                    let index_codes = indices
-                        .iter()
-                        .map(|index| self.render_ir_code(index))
-                        .collect::<Result<Vec<_>, _>>()?;
-                    let (decls, condition, linear) =
-                        array_guard(array, &index_codes).ok_or_else(|| {
-                            format!("ref actual array index in `{scope_path}` has no dimensions")
-                        })?;
-                    let index = format!(
-                        "({{ {decls} ({condition}) ? (uint64_t)({linear}) : UINT64_MAX; }})"
-                    );
-                    (
-                        array.c_name.clone(),
-                        array.elem_width,
-                        array.signed,
-                        array.two_state,
-                        false,
-                        "LLG_REF_ARRAY",
-                        format!(".array_size = {}ULL, .index = {index}", array.total),
-                    )
-                } else {
-                    let linear = Self::array_constant_linear_index(&array_info, indices)
-                        .ok_or_else(|| {
-                            format!(
-                        "ref actual array index in `{scope_path}` must be a constant in range"
-                    )
-                        })?;
-                    let base = format!("&{}[{}]", array.c_name, linear);
-                    match elem_sel {
-                        IrElemSel::Whole => (
-                            base,
-                            array.elem_width,
-                            array.signed,
-                            array.two_state,
-                            false,
-                            "LLG_REF_WHOLE",
-                            String::new(),
-                        ),
-                        IrElemSel::Part(left, right) => (
-                            base,
-                            left.abs_diff(*right) as u32 + 1,
-                            false,
-                            array.two_state,
-                            false,
-                            "LLG_REF_PART",
-                            format!(".left = {left}, .right = {right}"),
-                        ),
-                        IrElemSel::Bit(index) => {
-                            let index = self.render_ir_code(index)?;
-                            (
-                                base,
-                                1,
-                                false,
-                                array.two_state,
-                                false,
-                                "LLG_REF_BIT",
-                                format!(".index = sv4_to_index({index})"),
-                            )
-                        }
-                        IrElemSel::Indexed {
-                            base: index,
-                            width,
-                            negative,
-                        } => {
-                            let index = self.render_ir_code(index)?;
-                            (
-                                base,
-                                *width,
-                                false,
-                                array.two_state,
-                                false,
-                                "LLG_REF_INDEXED",
-                                format!(
-                                    ".index = sv4_to_index({index}), .indexed_width = {width}, \
-                                 .indexed_negative = {}",
-                                    *negative as u8
-                                ),
-                            )
-                        }
-                    }
-                }
-            }
-            IrLhs::Stream { .. } => {
-                return Err(format!(
-                    "streaming concatenation is not a legal ref actual in `{scope_path}`"
-                ));
-            }
-        };
-        if width != bound.width || signed != bound.signed || two_state != bound.two_state {
-            return Err(format!(
-                "ref actual type does not exactly match formal in `{scope_path}`"
-            ));
-        }
+        let actual_const = matches!(&lhs, IrLhs::Ref { const_ref: true, .. });
         if actual_const && !const_ref {
-            return Err(format!(
-                "const ref actual cannot bind to writable ref formal in `{scope_path}`"
-            ));
+            return Err(format!("const ref actual cannot bind to writable ref formal in `{scope_path}`"));
         }
-        let descriptor = if kind == "LLG_REF_NESTED" {
-            base
-        } else {
-            format!(
-                "&(llg_ref_t){{ .base = {base}, .width = {width}, .is_signed = {}, \
-                 .two_state = {}, .kind = {kind}, {fields} }}",
-                signed as u8, two_state as u8
-            )
+        let (width, signed, two_state) = match &lhs {
+            IrLhs::Whole(index) | IrLhs::Bit(index, ..) | IrLhs::Part(index, ..) | IrLhs::IdxPart(index, ..) => {
+                let signal = &self.model.signals[*index];
+                if signal.net_driver.is_some() || !signal.net_alias.is_empty() {
+                    return Err(format!("ref actual in `{scope_path}` must be a variable"));
+                }
+                let IrType::Packed { two_state, .. } = signal.ty else {
+                    return Err(format!("ref actual in `{scope_path}` must be integral"));
+                };
+                let selected_two_state = match &lhs {
+                    IrLhs::Bit(_, _, state) | IrLhs::Part(_, _, _, state) | IrLhs::IdxPart(_, _, _, _, _, state) => *state,
+                    _ => two_state,
+                };
+                (read.width, read.signed, selected_two_state)
+            }
+            IrLhs::WholeRef { width, signed, two_state, .. } |
+            IrLhs::Ref { width, signed, two_state, bit: None, .. } => (*width, *signed, *two_state),
+            IrLhs::ArrayElem { arr, .. } => (read.width, read.signed, self.model.arrays[*arr].two_state),
+            IrLhs::Ref { bit: Some(_), .. } => return Err("packed bit selects cannot be passed by reference".to_owned()),
+            IrLhs::Stream { .. } => return Err(format!("streaming concatenation is not a legal ref actual in `{scope_path}`")),
         };
+        if width == 0 || (width, signed, two_state) != (bound.width, bound.signed, bound.two_state) {
+            return Err(format!("ref actual type does not exactly match formal in `{scope_path}`"));
+        }
+
         Ok(IrCallArg::RefAddr {
-            addr: descriptor,
+            addr: "typed_reference".to_owned(),
             width,
             signed,
             two_state,
@@ -745,7 +489,7 @@ impl<'a> Codegen<'a> {
         io: NodeId,
         b: &BoundArg,
         e: IrExpr,
-    ) -> Result<(String, Option<IrExpr>), String> {
+    ) -> Result<Option<IrExpr>, String> {
         match self.kind(io) {
             NodeKind::FuncArg {
                 direction: DbDirection::Inout,
@@ -765,11 +509,9 @@ impl<'a> Codegen<'a> {
                 } else {
                     ir_to_storage(e, b.width, b.signed, b.two_state)?
                 };
-                let code = self.render_ir_code(&conv)?;
-                Ok((code, Some(conv)))
+                Ok(Some(conv))
             }
-            _ if b.real => Ok(("0.0".to_string(), None)),
-            _ => Ok((format!("sv4_x({}, {})", b.width, b.signed as u8), None)),
+            _ => Ok(None),
         }
     }
 

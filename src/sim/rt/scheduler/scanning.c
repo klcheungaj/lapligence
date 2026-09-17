@@ -294,8 +294,7 @@ static int llg_scan_assign(const unsigned char* bytes, size_t length, char conve
         if (target->kind == LLG_FILE_INPUT_PACKED && target->packed) {
             sv4_t value = SV4_EMPTY;
             llg_scan_bytes_to_packed(bytes, length, width, is_signed, &value);
-            llg_ref_write(target->packed, value);
-            sv4_destroy(&value);
+            llg_ref_write_owned(target->packed, value);
             return 1;
         }
         return 0;
@@ -315,18 +314,23 @@ static int llg_scan_assign(const unsigned char* bytes, size_t length, char conve
         }
         if (target->kind == LLG_FILE_INPUT_PACKED && target->packed) {
             sv4_t packed = sv4_from_real(value, width, (int8_t)is_signed);
-            llg_ref_write(target->packed, packed);
-            sv4_destroy(&packed);
+            llg_ref_write_owned(target->packed, packed);
             return 1;
         }
         return 0;
     }
     if (target->kind != LLG_FILE_INPUT_PACKED || !target->packed) return 0;
     sv4_t value = SV4_EMPTY;
-    if (!llg_scan_integer(bytes, length, conversion, width, is_signed, &value)) return 0;
-    llg_ref_write(target->packed, value);
-            sv4_destroy(&value);
+    if (!llg_scan_integer(bytes, length, conversion, width, is_signed, &value)) {
+        sv4_destroy(&value);
+        return 0;
+    }
+    llg_ref_write_owned(target->packed, value);
     return 1;
+}
+
+static void llg_scan_token_destroy(void* object) {
+    free(*(unsigned char**)object);
 }
 
 static int llg_scan_conversion(llg_scan_input_t* input, char conversion,
@@ -355,8 +359,11 @@ static int llg_scan_conversion(llg_scan_input_t* input, char conversion,
     }
     uint32_t target_width = target->packed ? target->packed->width : 32u;
     int target_signed = target->packed ? target->packed->is_signed : 1;
+    llg_value_scope_t* token_scope = llg_value_scope_begin_object(
+        sizeof(unsigned char*), llg_scan_token_destroy);
+    *(unsigned char**)llg_value_scope_object(token_scope) = bytes;
     ok = llg_scan_assign(bytes, length, conversion, target, target_width, target_signed);
-    free(bytes);
+    llg_value_scope_end(token_scope);
     return ok ? 1 : 0;
 }
 
@@ -463,8 +470,8 @@ int llg_file_read_packed(uint32_t descriptor, llg_ref_t* target) {
             llg_scan_set_bit(&value, (uint32_t)(bit_base + bit), (byte >> bit) & 1u);
         read++;
     }
-    if (read) llg_ref_write(target, value);
-    sv4_destroy(&value);
+    if (read) llg_ref_write_owned(target, value);
+    else sv4_destroy(&value);
     return read;
 }
 
@@ -518,8 +525,11 @@ int llg_file_read_array(uint32_t descriptor, sv4_t* values, uint32_t elem_width,
         if (!read) { sv4_destroy(&value); break; }
         value.is_signed = (int8_t)elem_signed;
         if (elem_two_state) sv4_replace(&value, sv4_to_two_state(value));
-        llg_ba(&values[offset + element], value);
-        sv4_destroy(&value);
+        llg_value_scope_t* value_scope = llg_value_scope_begin(1);
+        sv4_t* owned = llg_value_scope_values(value_scope);
+        owned[0] = value;
+        llg_ba(&values[offset + element], owned[0]);
+        llg_value_scope_end(value_scope);
         result += read;
         if ((size_t)read < bytes_per_element) break;
     }

@@ -111,7 +111,33 @@ impl Frame<'_, '_> {
                     }
                     matched
                 }
-                IrInsideItem::Container { .. } => return Err(pending("inside over containers")),
+                IrInsideItem::Container { container } => {
+                    let container = self.ctx.model.containers[*container].clone();
+                    let Some((width, signed, _)) = container.element.packed() else {
+                        return Err("inside container requires packed elements".to_owned());
+                    };
+                    let matched = self.value("sv4_from_u64(0, 1, 0)".to_owned(), 1, false);
+                    let index = self.name("inside_index");
+                    let (size, get, ordinal) = match container.kind {
+                        IrContainerKind::Dynamic => ("llg_dyn_size", "llg_dyn_get", false),
+                        IrContainerKind::Queue { .. } => ("llg_queue_size", "llg_queue_get", false),
+                        IrContainerKind::Associative { .. } => ("llg_assoc_count", "llg_assoc_value_at", true),
+                    };
+                    self.line(format!("for (size_t {index} = 0; {index} < {size}(&{}) && !{}; ++{index}) {{", container.c_name, matched.truth()));
+                    let key = if ordinal { None } else {
+                        Some(self.value(format!("sv4_from_u64((uint64_t){index}, 64, 0)"), 64, false))
+                    };
+                    let argument = key.as_ref().map(|value| value.code.clone()).unwrap_or(index);
+                    let item = self.value(format!("{get}(&{}, {argument})", container.c_name), width, signed);
+                    let code = if source.width == 0 { format!("sv4_from_u64(({} == {}), 1, 0)", source.real(), item.real()) }
+                        else { format!("sv4_wild_eq({}, {})", source.code, item.code) };
+                    let check = self.replace(item, code, 1, false);
+                    self.line(format!("sv4_replace(&{}, sv4_logor({}, {}));", matched.code, matched.code, check.code));
+                    self.discard(check);
+                    if let Some(key) = key { self.discard(key); }
+                    self.line("}");
+                    matched
+                }
             };
             self.line(format!("sv4_replace(&{}, sv4_logor({}, {}));", result.code, result.code, matched.code));
             self.discard(matched);

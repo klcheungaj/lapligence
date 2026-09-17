@@ -275,6 +275,7 @@ impl EmitCtx<'_, '_> {
                 scope: self.path.clone(),
                 location: self.finish_location(h),
                 fatal_finish_number,
+                runtime_failure: false,
             }]);
         }
         if let Some((task_kind, default_radix)) = display_task_variant(name) {

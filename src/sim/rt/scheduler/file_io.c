@@ -366,8 +366,11 @@ int llg_file_gets(uint32_t descriptor, llg_string_t* target) {
         free(bytes);
         return 0;
     }
-    llg_string_move(target, llg_string_bytes((const char*)bytes, length));
+    llg_string_t line = llg_string_bytes((const char*)bytes, length);
     free(bytes);
+    /* Commit owns the string before it notifies; no line buffer remains on
+     * the abandoned stack if a dependency callback calls $finish. */
+    llg_string_move(target, line);
     return length > (size_t)INT_MAX ? INT_MAX : (int)length;
 }
 
@@ -375,7 +378,7 @@ int llg_file_gets_packed(uint32_t descriptor, llg_ref_t* target) {
     if (!target || target->width == 0) return 0;
     llg_string_t value = {0};
     int result = llg_file_gets(descriptor, &value);
-    if (result) llg_ref_write(target, llg_string_to_packed(value, target->width,
+    if (result) llg_ref_write_owned(target, llg_string_to_packed(value, target->width,
                                                             target->is_signed));
     else llg_string_destroy(&value);
     return result;

@@ -177,7 +177,7 @@ static void llg_queue_resize_default(llg_queue_t* queue, size_t size) {
                LLG_CONTAINER_CHANGED_CONTENTS | LLG_CONTAINER_CHANGED_SHAPE);
 }
 
-void llg_queue_unstream_assign(llg_queue_t* dst, sv4_t source,
+static void llg_queue_unstream_assign_impl(llg_queue_t* dst, sv4_t source,
                                uint32_t slice, int right_to_left,
                                int selector_kind, sv4_t first, sv4_t second) {
     int64_t left;
@@ -223,6 +223,24 @@ void llg_queue_unstream_assign(llg_queue_t* dst, sv4_t source,
         cursor = right_bit;
     }
     sv4_destroy(&unpacked);
+}
+
+void llg_queue_unstream_assign(llg_queue_t* dst, sv4_t source,
+                                  uint32_t slice, int right_to_left,
+                                  int selector_kind, sv4_t first, sv4_t second) {
+    llg_container_notify_fn notify = dst->notify;
+    sv4_t* contents = dst->contents_dependency;
+    sv4_t* shape = dst->shape_dependency;
+    sv4_t changes = SV4_EMPTY;
+    dst->notify = llg_stream_collect_change;
+    dst->contents_dependency = &changes;
+    dst->shape_dependency = NULL;
+    llg_queue_unstream_assign_impl(dst, source, slice, right_to_left,
+                                     selector_kind, first, second);
+    dst->notify = notify;
+    dst->contents_dependency = contents;
+    dst->shape_dependency = shape;
+    llg_notify(notify, contents, shape, changes.width);
 }
 
 static int llg_queue_source_range(const llg_queue_source_t* source,
@@ -484,8 +502,11 @@ int llg_queue_delete_index(llg_queue_t* queue, sv4_t index) {
     return 1;
 }
 
-sv4_t llg_queue_pop_front(llg_queue_t* queue) {
-    sv4_t result = llg_queue_front(queue);
+void llg_queue_pop_front_into(llg_queue_t* queue, sv4_t* out) {
+    /* Publish ownership before notifying. Generated callers provide a
+     * registered destination, so callback termination cannot strand it. */
+    if (!out) llg_container_fatal("queue pop requires output storage");
+    sv4_replace(out, llg_queue_front(queue));
     if (queue->size) {
         llg_queue_disconnect(queue, queue->element_ids[0]);
         sv4_destroy(&queue->data[0]);
@@ -501,11 +522,20 @@ sv4_t llg_queue_pop_front(llg_queue_t* queue) {
                    LLG_CONTAINER_CHANGED_CONTENTS |
                        LLG_CONTAINER_CHANGED_SHAPE);
     }
+
+}
+
+sv4_t llg_queue_pop_front(llg_queue_t* queue) {
+    sv4_t result = SV4_EMPTY;
+    llg_queue_pop_front_into(queue, &result);
     return result;
 }
 
-sv4_t llg_queue_pop_back(llg_queue_t* queue) {
-    sv4_t result = llg_queue_back(queue);
+void llg_queue_pop_back_into(llg_queue_t* queue, sv4_t* out) {
+    /* Publish ownership before notifying. Generated callers provide a
+     * registered destination, so callback termination cannot strand it. */
+    if (!out) llg_container_fatal("queue pop requires output storage");
+    sv4_replace(out, llg_queue_back(queue));
     if (queue->size) {
         llg_queue_disconnect(queue, queue->element_ids[queue->size - 1]);
         sv4_destroy(&queue->data[queue->size - 1]);
@@ -515,6 +545,12 @@ sv4_t llg_queue_pop_back(llg_queue_t* queue) {
                    LLG_CONTAINER_CHANGED_CONTENTS |
                        LLG_CONTAINER_CHANGED_SHAPE);
     }
+
+}
+
+sv4_t llg_queue_pop_back(llg_queue_t* queue) {
+    sv4_t result = SV4_EMPTY;
+    llg_queue_pop_back_into(queue, &result);
     return result;
 }
 

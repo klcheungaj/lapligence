@@ -91,14 +91,44 @@ separate. This is not the repository's Rust/C parity gate.
 
 ## Integration boundary
 
-The structured numeric whole-model path has owned initialization and cleanup,
-but unmigrated features and legacy fragment APIs still reject emission. The old
-runtime/wave selftests are explicitly fenced because their nested temporary and
-static-initializer assumptions are unsafe with owners. They must be migrated,
-not silently run without leak checks. Full generated HDL, complete Rust/C parity,
-native macOS/MSVC and performance benchmarks are still outstanding. A component
-suite passing does not certify unexecuted paths or prove a whole-runtime speedup.
+The original standalone value, container and file-I/O probes are shared by their
+Cargo drivers and this CMake project as `*_isolation_probe.c` sources. Their
+behavioral assertions are retained. `test_value_temporaries.h` is a test-only
+borrowed-expression adapter, drained after each vector; it is not production
+storage. Callback result descriptors remain independently owned, and consuming
+formatting calls must receive fresh arguments on every invocation. The value
+normalization check iterates only the descriptor's actual limb count.
 
+`nextest_control_probe.c` exercises real native cancellation, staged task outputs,
+nested activation cleanup, inertial writes, typed strobe and force callbacks over
+repeated runtime starts. It is handwritten C, not evidence that the Rust emitter
+produced or executed that source. The corresponding Rust emitter tests are a
+separate acceptance gate.
+
+The original runtime/waveform fixtures are built from `src/sim/rt`, not copied
+or replaced with smaller component expectations. They keep their behavioral
+assertions while using explicit packed owners and shared cleanup. The pure
+value-vector subset and waveform fixture run under the component sanitizers;
+region, stop/resume, budget and complete scheduler modes require native coroutine
+switching. `llg_rt_selftest.c` uses a fixture-only temporary-owner list for nested
+numeric vectors, emptied at test boundaries; production emission does not use
+that test adapter.
+
+`scope_index_probe.c` covers growth, tombstones, out-of-order releases and
+multiple queued writes retaining a cell past scope exit. `callback_finish_probe.c`
+covers finish before/after evaluator output, first-evaluator exit before later
+contexts run, shared eval/condition frames and force/qualifier result cleanup.
+`event_array_probe.c` covers mixed ascending/descending index dimensions,
+out-of-range/negative/X selection and inert invalid-index waits. Select-only
+mode is sanitizer-safe; waiting modes require native fibers.
+
+The tracked packed allocator serializes coherent counters with a C11 atomic flag
+because waveform values may be destroyed on a writer thread. This is test
+instrumentation, not a change to the production allocation policy.
+
+C component success does not certify Rust generation, frontend feature parity,
+native macOS/Windows behavior or whole-simulator performance. See the maintained
+[feature boundary](../../docs/sim_features.md#dynamic-value-migration-acceptance-boundary).
 
 ## P05/P06 increment
 
@@ -116,20 +146,24 @@ fiber-switch hooks. The sanitizer configuration excludes both coroutine probes;
 it still tests production scheduler queue/cleanup paths without stack switches.
 The C test suite does not compile or execute the new Rust emitter.
 
-New Rust tests are in `src/sim/emit_c/owned/tests.rs`. The ignored execution test
-renders a numeric `ExecutionModel`, builds its C and checks a 1,000-iteration
-result. It is not a frontend/HDL integration test. These tests and the new build
-ABI/cache tests were not run in the delivery environment (no Rust toolchain).
+Rust emitter tests are in `src/sim/emit_c/owned/tests.rs` and its
+`tests/nextest_regressions.rs` submodule. The active emitted-model tests render
+numeric `ExecutionModel` values, build the resulting C and check runtime results
+and repeated start/close behavior. Additional regression models cover cancelled
+task copyout, nested activation exits, inertial commits, strobe snapshots and
+force/release. These are not frontend/HDL tests. They require a working Rust
+build and native CMake toolchain; component-only validation does not execute them.
 
 ```sh
 cargo test --lib --no-default-features sim::emit_c::owned::tests
-cargo test --lib --no-default-features structured_owned_model_executes_numeric_loop -- --ignored
+cargo test --lib --no-default-features structured_owned_model_
 ```
 
 The structured renderer keeps feature-specific guards until captured objects,
 callbacks and other outstanding ownership paths are implemented; see its
-[coverage matrix](../../src/sim/emit_c/owned/readme.md). Do not treat the old
-fenced runtime fixtures or unexecuted legacy golden tests as passing this ABI.
+[feature boundary](../../docs/sim_features.md#dynamic-value-migration-acceptance-boundary).
+The active original C fixtures are part of this suite; unexecuted Rust/golden
+expectations are not evidence of successful HDL compilation.
 
 The following standard-library Python helper verifies private fragment embedding
 order, compiles the three flat runtime translation units in strict C11, and
@@ -159,7 +193,7 @@ Command timeouts terminate their process groups on POSIX or process trees on
 Windows. Python 3.10 or later and CMake/CTest are required.
 
 Add `--full` to require Cargo/Rust formatting and checking, structured emitter
-unit tests, ABI/cache tests, both ignored Rust-emitted C tests (numeric loop and
+unit tests, ABI/cache tests, both active Rust-emitted C tests (numeric loop and
 16 start/advance/close cycles with a maximum-legal-width global), the public HDL
 ownership suite in both optimizer modes, and the full all-feature repository
 suite. Missing Rust is **blocked**, not passed; a successful Cargo command with
@@ -207,3 +241,49 @@ python3 tests/runtime_value_storage/check_flat_runtime.py --compiler gcc --compi
 The flat-source checker also accepts `cl`/`clang-cl` and
 `--without-scheduler` for portable value/container-only compilation. It first
 requires the current ABI to compile, then requires the stale ABI to fail.
+
+### Native scalar and input callback ownership
+
+`native_ownership_probe.c` is a C runtime probe, not Rust-emitted C. Its
+`native_value_scopes` case checks repeated root cleanup, independent string copies
+and transfers. `native_input_callbacks` uses native coroutine switching: an
+expression-event callback terminates the writer during selected reference writes,
+packed scans, line/binary reads, packed queue pops, string scans/plusargs and generic
+queue/associative mutations. Fifteen operation modes each run eight times. Scope
+registries and tracked packed allocations/bytes must return to zero, and explicit
+string/process destructors must run. Packed counters do not count all native heap
+allocations. The coroutine case is excluded from the sanitizer lane because libaco
+has no supported sanitizer fiber-switch integration. Waveform coverage is independent.
+
+The standalone fixtures remain shared with Cargo. `owned/tests/native_values.rs`
+adds source-structure contracts for native return/copy/cleanup order, container
+operands, key borrowing, file scans, enum owners and read-only callback gates. Those
+Rust tests require a Rust-capable host; a green C lane is not their execution.
+
+### Native reference/mailbox/stream publication probes
+
+`native_boundaries_probe.c` is a runtime-only regression. `native_reference_scopes`
+runs root-owned reference cleanup in both normal and sanitizer builds, including
+queue relocation/removal and detached reference writes. `native_mailbox_stream_callbacks`
+runs only in the native-coroutine lane. It repeats nine modes eight times: consuming
+and peeking immediate/blocking mailbox delivery with reentrant puts and finish,
+receiver cancellation during publication, and full/selected dynamic-array and queue
+streaming termination. The probe checks packed counters and scope cleanup; these
+are not end-to-end HDL tests and do not count arbitrary native allocations.
+
+## Post-batch-5 review regressions
+
+`review_lifetimes_probe.c` has two CTest entry points.
+`review_native_index_and_reference_bits` runs without coroutine switching and
+checks native payload indexing, retained/detached scope cleanup, index tombstones,
+zero-sized payloads, and high/invalid reference-bit indices. It runs in the
+sanitizer lane as well. `review_real_coroutine_storage` is native-only: it checks
+real/shortreal mailbox delivery into stable automatic slots, cancellation of the
+receiver during publication, and nonlocal termination of the publisher. The
+cancellation case is a defensive runtime-API probe, not an assertion that a
+read-only HDL evaluator can legally perform those side effects.
+
+Neither C entry point invokes the Rust emitter. Source-emission assertions are
+in `src/sim/emit_c/owned/tests/review_regressions.rs` and require separate Rust
+execution. Passing the component suite does not establish that emitted models
+compile or that the old nextest failures have disappeared.

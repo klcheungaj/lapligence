@@ -26,9 +26,9 @@ pub enum IrCallArg {
     /// `&G_sig`, a whole-reference address (`o0`, `&_l0`) or a caller-side
     /// temp declared separately (`&_t5`); passed to the callee verbatim.
     OutAddr(String),
-    /// Reference formal bound to a canonical lvalue descriptor.  The string
-    /// is a complete `llg_ref_t*` expression and remains valid for the call;
-    /// the remaining fields retain the checked actual shape in typed IR.
+    /// Reference formal bound to a canonical typed lvalue. `addr` is diagnostic
+    /// provenance only; the ownership emitter constructs its descriptor from
+    /// `lhs` and `read` at the call boundary, never by executing a C fragment.
     RefAddr {
         addr: String,
         width: u32,
@@ -41,8 +41,8 @@ pub enum IrCallArg {
         /// descriptor evaluates the address separately at the call boundary.
         read: Box<IrExpr>,
     },
-    /// Output/inout formal bound to a caller-side temp inside an
-    /// expression-position GNU statement expression.  `init` is `None` for
+    /// Output/inout formal bound to a registered caller-side temporary.
+    /// `init` is `None` for
     /// outputs (all-X temp sized by the formal's type) and the actual's
     /// current value for inouts; `writeback` copies the temp back into the
     /// actual after the call.
@@ -71,9 +71,9 @@ pub enum IrCallArg {
     },
 }
 
-/// A function/task call used in expression position (functions only): rendered
-/// as a plain call when no output formal needs a temp, otherwise as one GNU
-/// statement expression `({ temps; call/writeback chain; result })`.
+/// A function/task call used in expression position. The ownership emitter
+/// sequences argument capture, invocation, cancellation and copy-back as C11
+/// statements, returning an independently owned result slot.
 #[derive(Clone, Debug, PartialEq)]
 pub struct IrCallExpr {
     /// Callee index into [`IrModel::funcs`].
@@ -264,5 +264,49 @@ impl IrDepth {
 
     pub fn inline_nesting(&self) -> u32 {
         self.nest
+    }
+}
+
+
+impl IrCallArg {
+    pub(in crate::sim) fn expressions(&self, visit: &mut impl FnMut(&IrExpr)) {
+        match self {
+            Self::Val(value) => visit(value),
+            Self::StringVal(value) => value.expressions(visit),
+            Self::ChandleVal(value) => value.expressions(visit),
+            Self::RefAddr { lhs, read, .. } => { lhs.expressions(visit); visit(read); }
+            Self::OutTemp { init, writeback, storage_lhs, storage_read, selector_inits, .. } => {
+                if let Some(value) = init { visit(value); }
+                writeback.expressions(visit);
+                if let Some(lhs) = storage_lhs { lhs.expressions(visit); }
+                if let Some(value) = storage_read { visit(value); }
+                for (_, _, _, _, value) in selector_inits { visit(value); }
+            }
+            Self::StringOutTemp { init, storage_read, .. } => {
+                if let Some(value) = init { value.expressions(visit); }
+                if let Some(value) = storage_read { value.expressions(visit); }
+            }
+            _ => {}
+        }
+    }
+    pub(in crate::sim) fn expressions_mut(&mut self, visit: &mut impl FnMut(&mut IrExpr)) {
+        match self {
+            Self::Val(value) => visit(value),
+            Self::StringVal(value) => value.expressions_mut(visit),
+            Self::ChandleVal(value) => value.expressions_mut(visit),
+            Self::RefAddr { lhs, read, .. } => { lhs.expressions_mut(visit); visit(read); }
+            Self::OutTemp { init, writeback, storage_lhs, storage_read, selector_inits, .. } => {
+                if let Some(value) = init { visit(value); }
+                writeback.expressions_mut(visit);
+                if let Some(lhs) = storage_lhs { lhs.expressions_mut(visit); }
+                if let Some(value) = storage_read { visit(value); }
+                for (_, _, _, _, value) in selector_inits { visit(value); }
+            }
+            Self::StringOutTemp { init, storage_read, .. } => {
+                if let Some(value) = init { value.expressions_mut(visit); }
+                if let Some(value) = storage_read { value.expressions_mut(visit); }
+            }
+            _ => {}
+        }
     }
 }

@@ -24,9 +24,10 @@ pub(super) fn render_virtual_interface_runtime(model: &IrModel, out: &mut String
              uint32_t member_count;\n\
              sv4_t *members[LLG_VIF_MAX_MEMBERS];\n\
          }} llg_vif_env_t;\n\n\
-         static void llg_vif_fail(const char *site) {{\n\
+         static _Noreturn void llg_vif_fail(const char *site) {{\n\
              fprintf(stderr, \"llg: virtual interface access failed: %s\\n\", site);\n\
-             exit(EXIT_FAILURE);\n\
+             llg_rt_mark_failed();\n\
+             llg_rt_fatal_typed(0, \"virtual interface access failed\", NULL, 0, \"\", site);\n\
          }}\n\n\
          static sv4_t *llg_vif_member(void *raw, uint32_t interface_id,\n\
                                       uint32_t slot, const char *site) {{\n\
@@ -84,7 +85,8 @@ fn signal_storage_name(model: &IrModel, index: usize) -> String {
     model
         .signals
         .get(index)
-        .map(|signal| signal.c_name().to_owned())
+        .map(|signal| if signal.net_alias.is_empty() { signal.c_name().to_owned() }
+            else { format!("llg_net_alias_{index}.visible") })
         .unwrap_or_else(|| "NULL".to_owned())
 }
 

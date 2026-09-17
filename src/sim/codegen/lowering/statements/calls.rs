@@ -153,7 +153,6 @@ impl EmitCtx<'_, '_> {
         // argument list in that order, not by formal declaration index.
         let mut out_args: Vec<IrCallArg> = Vec::new();
         let mut in_args: Vec<IrCallArg> = Vec::new();
-        let mut arg_codes: Vec<Option<String>> = vec![None; formals.len()];
         let mut arg_irs: Vec<Option<IrExpr>> = vec![None; formals.len()];
         let mut before = Vec::new();
         let mut after = Vec::new();
@@ -222,7 +221,6 @@ impl EmitCtx<'_, '_> {
                 }
                 if !bound[idx].string {
                     let read_ir = self.cg.lower_expr(&self.path, bound[idx].expr)?;
-                    arg_codes[idx] = Some(self.cg.render_ir_code(&read_ir)?);
                     arg_irs[idx] = Some(read_ir);
                 }
                 continue;
@@ -307,12 +305,11 @@ impl EmitCtx<'_, '_> {
                     nba: false,
                 });
                 arg_irs[idx] = Some(read);
-                arg_codes[idx] = Some(storage.global.clone());
                 out_args.push(IrCallArg::OutAddr(format!("&{}", storage.global)));
                 continue;
             }
             let tname = format!("_a{}_{}", h.0, idx);
-            let (_init_code, init_ir) =
+            let init_ir =
                 self.cg
                     .lower_call_temp_init_from_expr(*io, &bound[idx], actual_read)?;
             temps.push((tname.clone(), idx, init_ir));
@@ -323,7 +320,6 @@ impl EmitCtx<'_, '_> {
                 bound[idx].signed,
                 None,
             ));
-            arg_codes[idx] = Some(tname.clone());
             out_args.push(IrCallArg::OutAddr(format!("&{tname}")));
         }
         for (idx, (io, is_out)) in formals.iter().enumerate() {
@@ -346,12 +342,11 @@ impl EmitCtx<'_, '_> {
                         self.cg.lower_string(&self.path, bound[idx].expr)?,
                     ));
                 } else {
-                    let (_code, ir) = self.cg.lower_bound_arg_code(
+                    let ir = self.cg.lower_bound_arg(
                         &self.path,
                         formals,
                         bound,
                         idx,
-                        &mut arg_codes,
                         &mut arg_irs,
                     )?;
                     in_args.push(IrCallArg::Val(ir));
@@ -450,7 +445,6 @@ impl EmitCtx<'_, '_> {
         let mut string_read = HashMap::new();
         let mut string_write = HashMap::new();
         let mut string_addr = HashMap::new();
-        let mut arg_codes: Vec<Option<String>> = vec![None; formals.len()];
         let mut arg_irs: Vec<Option<IrExpr>> = vec![None; formals.len()];
         let mut before = Vec::new();
         let mut after = Vec::new();
@@ -737,7 +731,6 @@ impl EmitCtx<'_, '_> {
                         "const ref actual cannot bind to writable ref formal in `{tname}`"
                     ));
                 }
-                arg_codes[idx] = Some(self.cg.render_ir_code(&read_ir)?);
                 arg_ir.insert(*io, read_ir.clone());
                 arg_dependencies.insert(*io, self.cg.collect_read_signals(&self.path, b.expr)?);
                 arg_read.insert(
@@ -782,12 +775,11 @@ impl EmitCtx<'_, '_> {
                     }
                 );
                 if !*is_out {
-                    let (_, value) = self.cg.lower_bound_arg_code(
+                    let value = self.cg.lower_bound_arg(
                         &self.path,
                         formals,
                         bound,
                         idx,
-                        &mut arg_codes,
                         &mut arg_irs,
                     )?;
                     before.push(IrStmt::Assign {
@@ -855,7 +847,6 @@ impl EmitCtx<'_, '_> {
                 let init = if is_inout {
                     self.cg
                         .lower_call_temp_init_from_expr(*io, b, actual_read)?
-                        .1
                 } else {
                     None
                 };
@@ -893,14 +884,12 @@ impl EmitCtx<'_, '_> {
                     },
                 );
                 arg_irs[idx] = Some(read_ir.clone());
-                arg_codes[idx] = Some(self.cg.render_ir_code(&read_ir)?);
             } else {
-                let (_code, ir) = self.cg.lower_bound_arg_code(
+                let ir = self.cg.lower_bound_arg(
                     &self.path,
                     formals,
                     bound,
                     idx,
-                    &mut arg_codes,
                     &mut arg_irs,
                 )?;
                 let cname = format!("_il{}_{}", h.0, idx);

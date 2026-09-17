@@ -23,6 +23,8 @@
 //!   post-simulation phase).
 
 mod containers;
+mod native_access;
+pub use native_access::{IrNativeAccess, IrNativeAccessKind, IrClassAllocation};
 mod objects;
 mod validate;
 pub use containers::{
@@ -373,6 +375,9 @@ pub struct IrModel {
     pub(in crate::sim) objects: Vec<IrObject>,
     /// Nominal class layouts used by class handles and method receivers.
     pub(in crate::sim) classes: Vec<IrClass>,
+    /// Typed dynamic member lvalues, resolved at each use rather than C fragments.
+    pub(in crate::sim) native_accesses: Vec<IrNativeAccess>,
+    pub(in crate::sim) class_allocations: Vec<IrClassAllocation>,
     /// Virtual-interface descriptors and their concrete instance bindings.
     pub(in crate::sim) virtual_interfaces: Vec<IrVirtualInterface>,
     pub(in crate::sim) events: Vec<IrEvent>,
@@ -417,6 +422,8 @@ pub struct IrModelParts {
     pub containers: Vec<IrContainer>,
     pub objects: Vec<IrObject>,
     pub classes: Vec<IrClass>,
+    pub native_accesses: Vec<IrNativeAccess>,
+    pub class_allocations: Vec<IrClassAllocation>,
     pub virtual_interfaces: Vec<IrVirtualInterface>,
     pub events: Vec<IrEvent>,
     pub funcs: Vec<IrFunc>,
@@ -456,6 +463,8 @@ impl IrModel {
             containers: parts.containers,
             objects: parts.objects,
             classes: parts.classes,
+            native_accesses: parts.native_accesses,
+            class_allocations: parts.class_allocations,
             virtual_interfaces: parts.virtual_interfaces,
             events: parts.events,
             funcs: parts.funcs,

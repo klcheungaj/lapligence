@@ -1,44 +1,48 @@
 //! Ownership-safe procedures and model lifetime boundaries.
 use super::*;
+use super::native::{NativeKind, NativeBinding};
 use crate::sim::execution::{ExecutionModel, ExecutionProcess, ExecutionTerminator, TriggerPlan};
 
+mod callbacks;
 mod initialization;
 mod lifecycle;
 pub(in crate::sim::emit_c) use initialization::storage_lifecycle;
 pub(in crate::sim::emit_c) use lifecycle::main;
 
+/// Named-event formals are expanded by typed inline lowering. Their retained
+/// definitions are templates, not procedures using the numeric C ABI.
+pub(in crate::sim::emit_c) fn inline_event_template(function: &IrFunc) -> bool {
+    function.formals.iter().any(|formal| formal.event)
+}
+
 pub(in crate::sim::emit_c) fn check_function(function: &IrFunc) -> Result<(), String> {
-    if function.dpi.is_some() || function.receiver_class.is_some() || function.virtual_slot.is_some()
-        || function.ret_string || function.ret_chandle {
-        return Err(pending("DPI, class, and native-object procedures"));
-    }
-    if function.formals.iter().any(|formal| formal.string || formal.chandle || formal.event || formal.is_ref())
-        || function.locals.iter().any(|local| local.string) {
+    if function.formals.iter().any(|formal| formal.event) {
         return Err(pending("native-object and ref formal/local owners"));
     }
     Ok(())
 }
 
 pub(in crate::sim::emit_c) fn check_model(model: &IrModel) -> Result<(), String> {
-    if !model.classes.is_empty() || !model.objects.is_empty() || !model.containers.is_empty() || !model.virtual_interfaces.is_empty() {
-        return Err(pending("class, container, object and virtual-interface model storage"));
+    for function in &model.funcs {
+        if !inline_event_template(function) { check_function(function)?; }
     }
-    if !model.assertions.is_empty() || !model.sampled_domains.is_empty() || !model.vpi_compile_calls.is_empty() {
-        return Err(pending("assertion/sampling or VPI system-call callbacks"));
+    for interface in &model.virtual_interfaces {
+        for method in &interface.methods {
+            let function = model.func(method.function);
+            if inline_event_template(function) {
+                return Err(pending("event-formal virtual-interface dispatch"));
+            }
+        }
     }
-    if model.signals.iter().any(|signal| !signal.net_alias.is_empty()) {
-        return Err(pending("true-net-alias model storage"));
-    }
-    if model.events.iter().any(|event| event.is_array()) {
-        return Err(pending("event-array descriptors"));
-    }
-    for function in &model.funcs { check_function(function)?; }
     Ok(())
 }
 
 pub(in crate::sim::emit_c) fn persistent_returns(model: &IrModel, out: &mut String) {
     for (index, function) in model.funcs.iter().enumerate() {
         if !function.automatic {
+            if function.ret_string || function.ret_chandle {
+                out.push_str(&format!("static {} _llg_native_ret_{index} = {{0}};\n", if function.ret_string { "llg_string_t" } else { "void*" }));
+            }
             if let Some(ty) = function.ret {
                 out.push_str(&format!("static {} _llg_ret_{index} = {};\n",
                     if ty.width() == 0 { "double" } else { "sv4_t" },
@@ -50,8 +54,21 @@ pub(in crate::sim::emit_c) fn persistent_returns(model: &IrModel, out: &mut Stri
 
 pub(in crate::sim::emit_c) fn function(ctx: &RCtx<'_>, function: &IrFunc) -> Result<String, String> {
     check_function(function)?;
-    let return_type = match function.ret { None => "void", Some(IrType::Real { .. }) => "double", _ => "sv4_t" };
+    if function.dpi.is_some() { return super::super::model::owned_dpi_thunk(function); }
+    let return_type = if function.ret_string { "llg_string_t" } else if function.ret_chandle { "void*" }
+        else { match function.ret { None => "void", Some(IrType::Real { .. }) => "double", _ => "sv4_t" } };
     let mut frame = Frame::new(ctx);
+    frame.cancellation_return = true;
+    if function.receiver_class.is_some() { frame.line("(void)llg_class_require(_this, \"method call\");"); }
+    if function.ret_string || function.ret_chandle {
+        let kind = if function.ret_string { NativeKind::String } else { NativeKind::Chandle };
+        if function.automatic { frame.native_local("_ret", kind); }
+        else {
+            let index = ctx.model.funcs.iter().position(|candidate| candidate.c_name == function.c_name)
+                .ok_or_else(|| "native function is missing from model".to_owned())?;
+            frame.native_bindings[0].insert("_ret".to_owned(), NativeBinding { address: format!("&_llg_native_ret_{index}"), kind, automatic: false });
+        }
+    }
     if let Some(ty) = function.ret {
         if function.automatic {
             frame.local("_ret", ty.width(), ty.signed(), ty.two_state(), None)?;
@@ -69,8 +86,17 @@ pub(in crate::sim::emit_c) fn function(ctx: &RCtx<'_>, function: &IrFunc) -> Res
         frame.return_address = Some("&_ret".to_owned());
     }
     for (index, formal) in function.formals.iter().enumerate() {
-        if formal.is_address() { frame.line(format!("(void)o{index};")); continue; }
+        if formal.is_address() {
+            frame.line(format!("(void){}{index};", if formal.is_ref() { "r" } else { "o" })); continue;
+        }
         let name = format!("a{index}");
+        if formal.string || formal.chandle {
+            let kind = if formal.string { NativeKind::String } else { NativeKind::Chandle };
+            let binding = frame.native_local(&name, kind);
+            let initial = if formal.string { format!("llg_string_clone(&a{index})") } else { format!("a{index}") };
+            frame.line(format!("*({}) = {initial};", binding.address));
+            continue;
+        }
         frame.local(&name, if formal.real { 0 } else { formal.width }, formal.signed, formal.two_state, None)?;
         if let Some(binding) = frame.bindings[0].get_mut(&name) {
             binding.shortreal = formal.shortreal;
@@ -82,7 +108,14 @@ pub(in crate::sim::emit_c) fn function(ctx: &RCtx<'_>, function: &IrFunc) -> Res
     frame.block(&function.body)?;
     frame.line("goto _llg_return;");
     frame.line("_llg_return: ;");
-    if let Some(ty) = function.ret {
+    if function.ret_string || function.ret_chandle {
+        let kind = if function.ret_string { NativeKind::String } else { NativeKind::Chandle };
+        let binding = frame.native_lookup("_ret", kind)?;
+        let value = if function.ret_string { format!("llg_string_clone({})", binding.address) } else { format!("*({})", binding.address) };
+        frame.line(format!("{return_type} _llg_returned = {value};"));
+        frame.line("llg_value_scopes_end_since(_llg_frame_base);");
+        frame.line("return _llg_returned;");
+    } else if let Some(ty) = function.ret {
         let binding = frame.lookup("_ret").ok_or_else(|| "return owner was not created".to_owned())?;
         if ty.width() == 0 {
             frame.line(format!("double _llg_returned = {};", round_shortreal(format!("*({})", binding.address), matches!(ty, IrType::Real { shortreal: true }))));
@@ -94,7 +127,9 @@ pub(in crate::sim::emit_c) fn function(ctx: &RCtx<'_>, function: &IrFunc) -> Res
         frame.line("llg_value_scopes_end_since(_llg_frame_base);");
         frame.line("return _llg_returned;");
     } else { frame.line("llg_value_scopes_end_since(_llg_frame_base);"); frame.line("return;"); }
-    let guard = if function.ret.is_some() { format!("return {};", function.ret_x()) } else { "return;".to_owned() };
+    let guard = if function.ret_string { "return (llg_string_t){0};".to_owned() }
+        else if function.ret_chandle { "return NULL;".to_owned() }
+        else if function.ret.is_some() { format!("return {};", function.ret_x()) } else { "return;".to_owned() };
     Ok(format!("static {return_type} {}({}) {{\n    if (depth >= 256) {{ fprintf(stderr, \"llg: recursion limit exceeded\\n\"); {guard} }}\n{}{}\n}}\n",
         function.c_name, super::super::model::owned_func_params(function), frame.prologue(), frame.body()))
 }
@@ -128,15 +163,5 @@ pub(in crate::sim::emit_c) fn process(ctx: &RCtx<'_>, process: &IrProcess, execu
 }
 
 pub(in crate::sim::emit_c) fn pre_function(ctx: &RCtx<'_>, pre: &IrPreFn) -> Result<String, String> {
-    let IrPreFn::Branch { c_name, body } = pre else {
-        return Err(pending("captured branches and deferred/evaluated callbacks"));
-    };
-    let mut frame = Frame::new(ctx);
-    frame.block(body)?;
-    frame.line("goto _llg_return;");
-    frame.line("_llg_return: ;");
-    frame.line("llg_value_scopes_end_since(_llg_frame_base);");
-    frame.line("llg_proc_done(self);");
-    frame.line("return;");
-    Ok(format!("static void {c_name}(llg_proc_t* self) {{\n{}{}\n}}\n", frame.prologue(), frame.body()))
+    callbacks::render(ctx, pre)
 }

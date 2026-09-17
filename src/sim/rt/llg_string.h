@@ -18,6 +18,9 @@ typedef struct {
 llg_string_t llg_string_bytes(const char *bytes, size_t len);
 llg_string_t llg_string_clone(const llg_string_t *value);
 void llg_string_destroy(llg_string_t *value);
+/* Transfer an expression owner and clear its slot before a consuming call.
+ * This is not a storage write: no dependency notification is performed. */
+llg_string_t llg_string_take(llg_string_t *value);
 void llg_string_move(llg_string_t *target, llg_string_t value);
 llg_string_t llg_string_concat(llg_string_t a, llg_string_t b);
 llg_string_t llg_string_repeat(llg_string_t value, sv4_t count);

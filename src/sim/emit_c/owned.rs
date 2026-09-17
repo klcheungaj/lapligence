@@ -10,14 +10,35 @@ use super::constants::{c_string_literal, emit_const, round_shortreal};
 use super::context::RCtx;
 use crate::sim::ir::*;
 
+pub(super) mod native;
+mod native_access;
+mod mailboxes;
+mod references;
+mod strings;
+mod objects;
+pub(super) mod containers;
+mod input;
 mod expressions;
 mod control;
 mod system;
 mod stores;
 mod statements;
+mod qualifiers;
+mod assertion_tasks;
+mod activations;
+mod runtime_tasks;
+mod native_tasks;
+mod inertial;
+mod force;
 mod calls;
+mod pure_calls;
+mod streaming;
+mod captures;
 mod events;
+mod event_waits;
+mod clocking;
 mod formatting;
+pub(super) mod assertions;
 pub(super) mod model;
 
 #[must_use]
@@ -54,17 +75,34 @@ struct Binding {
     automatic: bool,
 }
 
+struct Activation {
+    exit: String,
+    handle: String,
+    lexical_depth: usize,
+}
+
 pub(super) struct Frame<'a, 'm> {
     ctx: &'a RCtx<'m>,
     code: String,
     slots: Vec<bool>,
     next_name: usize,
     bindings: Vec<HashMap<String, Binding>>,
+    event_bindings: Vec<HashMap<String, String>>,
+    native_bindings: Vec<HashMap<String, native::NativeBinding>>,
+    formal_overrides: Vec<Vec<Binding>>,
     marks: Vec<String>,
     labels: Vec<HashMap<String, bool>>,
     temp_roots: Vec<Vec<bool>>,
     return_address: Option<String>,
     allow_calls: bool,
+    read_only_callback: bool,
+    sampled_reads: bool,
+    item_callback: bool,
+    sequence_addresses: HashMap<String, Binding>,
+    activations: Vec<Activation>,
+    cancellation_return: bool,
+    access_stack: Vec<String>,
+    construction_stack: Vec<usize>,
 }
 
 fn pending(feature: &str) -> String {
@@ -74,8 +112,8 @@ fn pending(feature: &str) -> String {
 impl<'a, 'm> Frame<'a, 'm> {
     pub(super) fn new(ctx: &'a RCtx<'m>) -> Self {
         Self { ctx, code: String::new(), slots: Vec::new(), next_name: 0,
-            bindings: vec![HashMap::new()], marks: Vec::new(), labels: Vec::new(),
-            temp_roots: Vec::new(), return_address: None, allow_calls: true }
+            bindings: vec![HashMap::new()], event_bindings: vec![HashMap::new()], native_bindings: vec![HashMap::new()], formal_overrides: Vec::new(), marks: Vec::new(), labels: Vec::new(),
+            temp_roots: Vec::new(), return_address: None, allow_calls: true, read_only_callback: false, sampled_reads: ctx.sampled, item_callback: false, sequence_addresses: HashMap::new(), activations: Vec::new(), cancellation_return: false, access_stack: Vec::new(), construction_stack: Vec::new() }
     }
     fn line(&mut self, text: impl AsRef<str>) {
         self.code.push_str("    ");
@@ -158,7 +196,12 @@ impl<'a, 'm> Frame<'a, 'm> {
                     automatic: false });
             }
         }
-        for signal in &self.ctx.model.signals {
+        for (index, signal) in self.ctx.model.signals.iter().enumerate() {
+            if !signal.net_alias.is_empty() && name == format!("llg_net_alias_{index}.visible") {
+                return Some(Binding { address: format!("&llg_net_alias_{index}.visible"),
+                    width: signal.ty.width(), signed: signal.ty.signed(), two_state: signal.ty.two_state(),
+                    shortreal: false, automatic: false });
+            }
             if signal.c_name == name && (!signal.omit || signal.net_driver.is_some()) {
                 return Some(Binding { address: format!("&{name}"), width: signal.ty.width(),
                     signed: signal.ty.signed(), two_state: matches!(signal.ty, IrType::Packed { two_state: true, .. }),
@@ -167,9 +210,10 @@ impl<'a, 'm> Frame<'a, 'm> {
         }
         None
     }
-    fn address(&self, address: &str) -> Result<Binding, String> {
+    fn address(&mut self, address: &str) -> Result<Binding, String> {
+        if let Some(binding) = self.sequence_addresses.get(address) { return Ok(binding.clone()); }
         if let Some(name) = address.strip_prefix('&') {
-            return self.lookup(name).ok_or_else(|| pending(&format!("unresolved local address {address}")));
+            return self.resolve_lookup(name);
         }
         if let Some(func) = self.ctx.func {
             for (index, formal) in func.formals.iter().enumerate() {
@@ -190,8 +234,13 @@ impl<'a, 'm> Frame<'a, 'm> {
     fn local(&mut self, name: &str, width: u32, signed: bool, two_state: bool, init: Option<&IrExpr>) -> Result<(), String> {
         let pointer = self.name("local");
         let address = if width == 0 {
-            self.line(format!("double {pointer} = 0.0;"));
-            format!("&{pointer}")
+            // Another coroutine may publish through this address while ours is
+            // suspended. libaco's shared stack is not stable variable storage.
+            let owner = self.scalar("llg_value_scope_t*",
+                "llg_value_scope_begin_object(sizeof(double), NULL)".to_owned());
+            self.line(format!("double* {pointer} = (double*)llg_value_scope_object({owner});"));
+            self.line(format!("*{pointer} = 0.0;"));
+            pointer
         } else {
             self.line(format!("sv4_t* {pointer} = llg_value_scope_values(llg_value_scope_begin(1));"));
             pointer

@@ -3,79 +3,6 @@
 use super::*;
 
 impl Codegen<'_> {
-    fn virtual_interface_handle_code(&self, handle: &IrChandleExpr) -> Result<String, String> {
-        match handle {
-            IrChandleExpr::Null => Ok("NULL".to_owned()),
-            IrChandleExpr::Verbatim(code) | IrChandleExpr::LocalRead(code) => Ok(code.clone()),
-            IrChandleExpr::Read(index) => Ok(self.model.objects[*index].c_name.clone()),
-            IrChandleExpr::FormalRead(index) => Ok(
-                if self
-                    .cur_fn_ir
-                    .and_then(|function| self.model.funcs.get(function))
-                    .and_then(|function| function.formals.get(*index))
-                    .is_some_and(IrFormal::is_ref)
-                {
-                    format!("*r{index}")
-                } else if self
-                    .cur_fn_ir
-                    .and_then(|function| self.model.funcs.get(function))
-                    .and_then(|function| function.formals.get(*index))
-                    .is_some_and(|formal| formal.is_out)
-                {
-                    format!("*o{index}")
-                } else {
-                    format!("a{index}")
-                },
-            ),
-            IrChandleExpr::ContainerGet { container, index } => {
-                let getter = match self.model.containers[*container].kind {
-                    crate::sim::ir::IrContainerKind::Dynamic => "llg_dyn_value_get_chandle",
-                    crate::sim::ir::IrContainerKind::Queue { .. } => "llg_queue_value_get_chandle",
-                    crate::sim::ir::IrContainerKind::Associative { .. } => {
-                        return Err(
-                            "virtual interface associative element receivers are unsupported"
-                                .to_owned(),
-                        )
-                    }
-                };
-                Ok(format!(
-                    "{}(&{}, {})",
-                    getter,
-                    self.model.containers[*container].c_name,
-                    self.render_ir_code(index)?
-                ))
-            }
-            IrChandleExpr::ContainerGetNested { container, indices } => {
-                let getter = match self.model.containers[*container].kind {
-                    crate::sim::ir::IrContainerKind::Dynamic => "llg_dyn_value_get_nested_chandle",
-                    crate::sim::ir::IrContainerKind::Queue { .. } => {
-                        "llg_queue_value_get_nested_chandle"
-                    }
-                    crate::sim::ir::IrContainerKind::Associative { .. } => {
-                        return Err(
-                            "virtual interface associative element receivers are unsupported"
-                                .to_owned(),
-                        )
-                    }
-                };
-                let count = indices.len();
-                let indices = indices
-                    .iter()
-                    .map(|index| self.render_ir_code(index))
-                    .collect::<Result<Vec<_>, _>>()?
-                    .join(", ");
-                Ok(format!(
-                    "{}(&{}, (const sv4_t[]){{ {} }}, {})",
-                    getter, self.model.containers[*container].c_name, indices, count
-                ))
-            }
-            IrChandleExpr::AssociativeGet { .. } | IrChandleExpr::Call { .. } => Err(
-                "virtual interface member receiver must be a named handle or array element"
-                    .to_owned(),
-            ),
-        }
-    }
-
     fn virtual_interface_access(
         &mut self,
         path: &str,
@@ -189,22 +116,10 @@ impl Codegen<'_> {
         else {
             return Ok(None);
         };
-        let handle = self.virtual_interface_handle_code(&handle)?;
-        Ok(Some(IrExpr::new(
-            IrExprKind::Verbatim {
-                code: format!(
-                    "llg_vif_read((void *){handle}, {descriptor}, {slot}, {}, {}, \"{}\")",
-                    width,
-                    signed as u8,
-                    self.node(node).full_name.replace('"', "'"),
-                ),
-                width,
-                signed,
-            },
-            width,
-            signed,
-            None,
-        )))
+        let site = format!("{path}.{}", self.model.virtual_interfaces[descriptor].members[slot].name);
+        let name = self.native_access_symbol_at(handle,
+            crate::sim::ir::IrNativeAccessKind::InterfaceMember { interface: descriptor, member: slot }, Some(site));
+        Ok(Some(IrExpr::new(IrExprKind::LocalRead(name), width, signed, None)))
     }
 
     pub(in super::super) fn virtual_interface_member_lhs(
@@ -217,16 +132,11 @@ impl Codegen<'_> {
         else {
             return Ok(None);
         };
-        let handle = self.virtual_interface_handle_code(&handle)?;
+        let site = format!("{path}.{}", self.model.virtual_interfaces[descriptor].members[slot].name);
+        let name = self.native_access_symbol_at(handle,
+            crate::sim::ir::IrNativeAccessKind::InterfaceMember { interface: descriptor, member: slot }, Some(site));
         Ok(Some(IrLhs::WholeRef {
-            addr: format!(
-                "llg_vif_member((void *){handle}, {descriptor}, {slot}, \"{}\")",
-                self.node(node).full_name.replace('"', "'"),
-            ),
-            width,
-            signed,
-            two_state,
-            shortreal: false,
+            addr: format!("&{name}"), width, signed, two_state, shortreal: false,
         }))
     }
 }

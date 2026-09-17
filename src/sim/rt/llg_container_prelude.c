@@ -319,3 +319,11 @@ static uint64_t llg_dynamic_size(sv4_t value) {
         llg_container_fatal("dynamic-array size is not host-representable");
     return size;
 }
+
+/* Streaming is one container assignment. Accumulate dependency flags while
+ * building it, then publish only after all temporary packed values are freed.
+ * The record is a descriptor used only for its width field, not a value owner. */
+static void llg_stream_collect_change(sv4_t* record, sv4_t* unused, int flags) {
+    (void)unused;
+    record->width |= (uint32_t)flags;
+}

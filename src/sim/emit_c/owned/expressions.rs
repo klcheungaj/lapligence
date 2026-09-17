@@ -4,6 +4,15 @@ use super::*;
 impl Frame<'_, '_> {
     pub(super) fn expression(&mut self, expr: &IrExpr) -> Result<Value, String> {
         super::super::check_capacity(u128::from(expr.width)).map_err(|error| error.to_string())?;
+        // Reentrant writes can retire the active wait. Only expression-bodied
+        // automatic functions proven below are inlined into this frame.
+        if self.read_only_callback {
+            match &expr.kind {
+                IrExprKind::CallFn(call) => return self.pure_callback_call(call),
+                IrExprKind::Mutation(_) => return Err(pending("side-effect-capable evaluator expressions")),
+                _ => {}
+            }
+        }
         let result = match &expr.kind {
             IrExprKind::Const(constant) => {
                 let mut value = self.value(emit_const(constant), constant.width, constant.signed);
@@ -17,22 +26,32 @@ impl Frame<'_, '_> {
             }
             IrExprKind::SigRead(index) => {
                 let signal = self.ctx.model.signal(*index);
-                let code = if matches!(signal.ty, IrType::Real { .. }) {
-                    signal.c_name.clone()
-                } else if self.ctx.sampled {
+                if self.sampled_reads && signal.ty.width() != 0 {
                     let addr = if signal.net_alias.is_empty() { format!("&{}", signal.c_name) }
                         else { format!("&llg_net_alias_{index}.visible") };
-                    format!("sv4_clone(llg_sampled_value({addr}))")
-                } else if signal.net_alias.is_empty() {
-                    format!("sv4_clone(&{})", signal.c_name)
-                } else { format!("llg_net_alias_read(&llg_net_alias_{index})") };
-                self.value(code, signal.ty.width(), signal.ty.signed())
+                    let value = self.reserve(signal.ty.width(), signal.ty.signed());
+                    self.line(format!("llg_sampled_copy({addr}, &{});", value.code));
+                    value
+                } else {
+                    let code = if matches!(signal.ty, IrType::Real { .. }) { signal.c_name.clone() }
+                        else if signal.net_alias.is_empty() { format!("sv4_clone(&{})", signal.c_name) }
+                        else { format!("llg_net_alias_read(&llg_net_alias_{index})") };
+                    self.value(code, signal.ty.width(), signal.ty.signed())
+                }
+            }
+            IrExprKind::LocalRead(name) if self.item_callback &&
+                matches!(name.as_str(), "__llg_method_item" | "__llg_method_index") => {
+                self.value(format!("sv4_clone(&{name})"), expr.width, expr.signed)
             }
             IrExprKind::LocalRead(name) => {
-                let binding = self.lookup(name).ok_or_else(|| pending(&format!("unresolved local read {name}")))?;
+                let binding = self.resolve_lookup(name)?;
                 self.read_binding(&binding)
             }
             IrExprKind::FormalRead(index) => {
+                if let Some(formals) = self.formal_overrides.last() {
+                    let binding = formals.get(*index).cloned().ok_or_else(|| "invalid inline formal index".to_owned())?;
+                    return Ok(self.read_binding(&binding));
+                }
                 let func = self.ctx.func.ok_or_else(|| "formal read outside a function".to_owned())?;
                 let formal = func.formals.get(*index).ok_or_else(|| "invalid formal index".to_owned())?;
                 if formal.is_ref() {
@@ -148,10 +167,10 @@ impl Frame<'_, '_> {
                 self.value(format!("sv4_from_u64(llg_event_triggered({event}), 1, 0)"), 1, false)
             }
             IrExprKind::Mutation(mutation) => self.mutation(mutation, expr)?,
-            IrExprKind::Container(_) => return Err(pending("container expressions")),
-            IrExprKind::ObjectQuery(_) => return Err(pending("object expressions")),
-            IrExprKind::EnumMethod(_) => return Err(pending("enum navigation")),
-            IrExprKind::DynamicCast(_) => return Err(pending("dynamic casts")),
+            IrExprKind::Container(operation) => self.container_expression(operation, expr)?,
+            IrExprKind::ObjectQuery(query) => self.object_query(query, expr)?,
+            IrExprKind::EnumMethod(query) => self.enum_query(query, expr)?,
+            IrExprKind::DynamicCast(cast) => self.dynamic_cast(cast)?,
             IrExprKind::Verbatim { .. } => return Err(pending("opaque C expressions")),
         };
         Ok(result)

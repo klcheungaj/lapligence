@@ -12,7 +12,7 @@ impl Codegen<'_> {
     ) -> Result<(ChandleTarget, IrChandleExpr), String> {
         let read = self.lower_chandle(path, node)?;
         if let Some(address) = self.class_field_chandle_lvalue(path, node)? {
-            return Ok((ChandleTarget::Local(format!("*({address})")), read));
+            return Ok((ChandleTarget::Local(address), read));
         }
         let target = match self.kind(node) {
             NodeKind::Expr(ExprKind::Ref { target }) => *target,
@@ -108,7 +108,7 @@ impl Codegen<'_> {
     pub(in super::super) fn chandle_target_address(&self, target: &ChandleTarget) -> String {
         match target {
             ChandleTarget::Object(index) => format!("&{}", self.model.objects[*index].c_name),
-            ChandleTarget::Local(name) if name.starts_with('*') => format!("&({name})"),
+            ChandleTarget::Local(name) if name.starts_with('*') => name[1..].to_owned(),
             ChandleTarget::Local(name) => format!("&{name}"),
         }
     }
@@ -164,7 +164,8 @@ impl Codegen<'_> {
                             self.node(*target).full_name
                         )
                     })?;
-                return Ok(IrChandleExpr::Verbatim(format!("(void *)&{}", env.c_name)));
+                let _ = env;
+                return Ok(IrChandleExpr::InterfaceInstance { interface: *descriptor, instance: *instance });
             }
             if matches!(
                 self.kind(*target),
@@ -180,7 +181,7 @@ impl Codegen<'_> {
             }
         }
         if let Some(address) = self.class_field_chandle_lvalue(path, node)? {
-            return Ok(IrChandleExpr::Verbatim(address));
+            return Ok(IrChandleExpr::LocalRead(address));
         }
         let target = match self.kind(node) {
             NodeKind::Expr(ExprKind::Ref { target }) => *target,
@@ -291,7 +292,6 @@ impl Codegen<'_> {
             let bound = self.bind_call_args(self.inst, &meta.formals, &args)?;
             let mut out_args = Vec::new();
             let mut in_args = Vec::new();
-            let mut arg_codes = vec![None; meta.formals.len()];
             let mut arg_irs = vec![None; meta.formals.len()];
             for (idx, (formal, is_out)) in meta.formals.iter().enumerate() {
                 let is_chandle = matches!(
@@ -324,12 +324,11 @@ impl Codegen<'_> {
                         self.lower_chandle(path, bound[idx].expr)?,
                     ));
                 } else {
-                    let (_, value) = self.lower_bound_arg_code(
+                    let value = self.lower_bound_arg(
                         path,
                         &meta.formals,
                         &bound,
                         idx,
-                        &mut arg_codes,
                         &mut arg_irs,
                     )?;
                     in_args.push(IrCallArg::Val(value));

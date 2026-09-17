@@ -154,6 +154,8 @@ fn model_with(body: Vec<IrStmt>, signals: Vec<IrSignal>) -> IrModel {
         arrays: Vec::new(),
         objects: Vec::new(),
         classes: Vec::new(),
+        native_accesses: Vec::new(),
+        class_allocations: Vec::new(),
         containers: Vec::new(),
         events: Vec::new(),
         funcs: Vec::new(),

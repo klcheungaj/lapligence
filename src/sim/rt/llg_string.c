@@ -46,6 +46,12 @@ void llg_string_destroy(llg_string_t *value) {
     value->len = 0;
 }
 
+llg_string_t llg_string_take(llg_string_t *value) {
+    llg_string_t result = *value;
+    *value = (llg_string_t){0};
+    return result;
+}
+
 void llg_string_move(llg_string_t *target, llg_string_t value) {
     int changed = !string_same(target, &value);
     llg_string_notify_fn notify = target->notify;

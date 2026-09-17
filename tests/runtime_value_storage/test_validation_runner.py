@@ -19,6 +19,32 @@ class InventoryTests(unittest.TestCase):
     def test_exact_portable_inventory(self):
         self.assertEqual(verify_inventory(self.inventory(), self.capabilities()), sorted(BASE_TESTS))
 
+    def test_original_fixtures_follow_enabled_runtime_components(self):
+        scheduler = {"vpi_ownership", "scheduler_ownership", "generated_scope_patterns",
+                     "scope_address_index", "runtime_value_vectors", "event_array_selection",
+                     "file_input_isolation", "file_output_isolation", "native_value_scopes"}
+        coroutines = {"coroutine_ownership", "generated_coroutine_patterns", "callback_finish_ownership",
+                      "runtime_original_selftest", "runtime_region", "runtime_stop-resume",
+                      "runtime_budget-finite", "event_array_waits", "nextest_control_ownership", "native_input_callbacks"}
+        for waveforms in (False, True):
+            for has_scheduler in (False, True):
+                for has_coroutines in (False, True):
+                    if has_coroutines and not has_scheduler:
+                        continue
+                    caps = self.capabilities()
+                    caps.update(waveforms=waveforms, scheduler=has_scheduler, coroutines=has_coroutines)
+                    names = set(BASE_TESTS)
+                    if waveforms:
+                        names.add("waveform_snapshot_lifecycle")
+                    if has_scheduler:
+                        names.update(scheduler)
+                        if waveforms:
+                            names.add("waveform_original_selftest")
+                    if has_coroutines:
+                        names.update(coroutines)
+                    inventory = {"tests": [{"name": name} for name in sorted(names)]}
+                    self.assertEqual(verify_inventory(inventory, caps), sorted(names))
+
     def test_no_tests_is_not_a_pass(self):
         with self.assertRaises(ValueError):
             verify_inventory({"tests": []}, self.capabilities())

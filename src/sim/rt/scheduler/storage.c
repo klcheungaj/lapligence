@@ -22,7 +22,7 @@ typedef enum {
 } llg_wait_kind_t;
 
 static void value_scope_release(llg_value_scope_t* scope);
-static llg_value_scope_t* value_scope_retain_target(sv4_t* target);
+static llg_value_scope_t* value_scope_retain_target(const void* target);
 
 typedef struct llg_nba {
     struct llg_nba* next;
@@ -252,6 +252,8 @@ struct llg_value_scope {
     llg_proc_t* owner;
     size_t count;
     sv4_t* values;
+    void* object;
+    void (*destroy_object)(void*);
 };
 static llg_value_scope_t* root_value_scopes;
 static llg_value_scope_t* all_value_scopes;

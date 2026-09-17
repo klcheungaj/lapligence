@@ -3,7 +3,36 @@ use super::*;
 
 impl Frame<'_, '_> {
     pub(super) fn system_expression(&mut self, function: &IrSysFunc, expr: &IrExpr) -> Result<Value, String> {
+        if self.read_only_callback && matches!(function,
+            IrSysFunc::VpiCall { .. } | IrSysFunc::LegacyRandom { .. } | IrSysFunc::QFull { .. }
+            | IrSysFunc::Urandom { .. } | IrSysFunc::UrandomRange { .. }) {
+            return Err(pending("side-effecting system calls in read-only callbacks"));
+        }
         let result = match function {
+            IrSysFunc::VpiCall { site, name, args } => self.vpi_call(*site, name, args, Some((expr.width, expr.signed)))?
+                .ok_or_else(|| "VPI function returned no value".to_owned())?,
+            IrSysFunc::LegacyRandom { kind, seed, args } => self.legacy_random(*kind, seed.as_deref(), args)?,
+            IrSysFunc::QFull { q_id, status } => self.queue_full(q_id, status)?,
+            IrSysFunc::System(command) => self.system_command(command.as_ref())?,
+            IrSysFunc::Sampled(call) => match call.kind {
+                IrSampledFunc::Sampled => {
+                    let previous = self.sampled_reads;
+                    self.sampled_reads = true;
+                    let value = self.expression(&call.argument);
+                    self.sampled_reads = previous;
+                    value?
+                }
+                IrSampledFunc::Past => {
+                    let domain = call.domain.ok_or_else(|| "sampled past call has no domain".to_owned())?;
+                    self.value(format!("llg_sampled_domain_past({domain}, {}ULL)", call.ticks), expr.width, expr.signed)
+                }
+                kind => {
+                    let domain = call.domain.ok_or_else(|| "sampled status call has no domain".to_owned())?;
+                    let status = match kind { IrSampledFunc::Rose => 0, IrSampledFunc::Fell => 1,
+                        IrSampledFunc::Stable => 2, IrSampledFunc::Changed => 3, _ => unreachable!("handled above") };
+                    self.value(format!("sv4_from_u64(llg_sampled_domain_status({domain}, {status}), 1, 0)"), 1, false)
+                }
+            },
             IrSysFunc::Bits(arg) => self.value(format!("sv4_from_u64({}, 32, 1)", arg.width), 32, true),
             IrSysFunc::Time { precision_fs, unit_fs, kind } => self.value(format!("sv4_from_u64(llg_time_scaled({precision_fs}ULL, {unit_fs}ULL), {}, 0)", kind.width()), kind.width(), false),
             IrSysFunc::Realtime { precision_fs, unit_fs } => self.value(format!("((double)llg_time() * {precision_fs}.0 / {unit_fs}.0)"), 0, true),
@@ -65,7 +94,11 @@ impl Frame<'_, '_> {
                 for value in values { self.discard(value); }
                 result
             }
-            IrSysFunc::TestPlusArgs { pattern: IrPlusArgText::Literal(pattern) } => self.value(format!("sv4_from_u64(llg_test_plusargs({}), 32, 1)", c_string_literal(pattern)), 32, true),
+            IrSysFunc::TestPlusArgs { pattern } => self.test_plusargs(pattern)?,
+            IrSysFunc::ValuePlusArgs { format, target } => self.value_plusargs(format, target)?,
+            IrSysFunc::FileInput(input) => self.file_input(input)?,
+            IrSysFunc::FileOpen { .. } | IrSysFunc::FileTell(_) | IrSysFunc::FileSeek { .. }
+            | IrSysFunc::FileError { .. } | IrSysFunc::FileEof(_) => self.file_expression(function, expr)?,
             _ => return Err(pending("this system-function ownership contract")),
         };
         Ok(result)

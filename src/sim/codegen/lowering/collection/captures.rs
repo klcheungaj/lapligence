@@ -1,6 +1,7 @@
 //! Captures.
 
 use super::*;
+use crate::sim::ir::*;
 
 impl<'a> Codegen<'a> {
     pub(in super::super) fn capture_source(&self, target: NodeId) -> Option<CaptureSource> {
@@ -46,15 +47,8 @@ impl<'a> Codegen<'a> {
                         static_signal: None,
                     },
                     initial: IrExpr::new(
-                        IrExprKind::Verbatim {
-                            code: name.to_owned(),
-                            width: 1,
-                            signed: false,
-                        },
-                        1,
-                        false,
-                        None,
-                    ),
+                        IrExprKind::ObjectQuery(Box::new(IrObjectQuery::HandleCapture(
+                            IrChandleExpr::LocalRead(name.to_owned())))), 1, false, None),
                     lifetime: StorageLifetime::Automatic,
                     kind: StorageKind::Opaque,
                 });

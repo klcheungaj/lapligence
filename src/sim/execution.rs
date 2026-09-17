@@ -632,6 +632,9 @@ fn collect_effects(
                 {
                     effects.push(ExecutionEffect::ImmediateStore);
                 }
+                if let Some(receiver) = &call.receiver {
+                    collect_chandle_effects(ir, receiver, effects, visited_calls);
+                }
                 if let Some(virtual_call) = &call.virtual_call {
                     collect_chandle_effects(ir, &virtual_call.receiver, effects, visited_calls);
                 }
@@ -961,57 +964,7 @@ fn collect_statement_expression_effects(
         }
         IrStmt::Call(call) => {
             for argument in call.args() {
-                match argument {
-                    IrCallArg::Val(expression) => {
-                        collect_expression_effects(ir, expression, effects, visited_calls)
-                    }
-                    IrCallArg::StringVal(value) => {
-                        collect_string_effects(ir, value, effects, visited_calls)
-                    }
-                    IrCallArg::ChandleVal(value) => {
-                        collect_chandle_effects(ir, value, effects, visited_calls)
-                    }
-                    IrCallArg::OutTemp {
-                        init,
-                        writeback,
-                        storage_lhs,
-                        storage_read,
-                        selector_inits,
-                        ..
-                    } => {
-                        if let Some(init) = init {
-                            collect_expression_effects(ir, init, effects, visited_calls);
-                        }
-                        collect_lhs_expression_effects(ir, writeback, effects, visited_calls);
-                        if let Some(storage_lhs) = storage_lhs {
-                            collect_lhs_expression_effects(ir, storage_lhs, effects, visited_calls);
-                        }
-                        if let Some(storage_read) = storage_read {
-                            collect_expression_effects(ir, storage_read, effects, visited_calls);
-                        }
-                        for (_, _, _, _, init) in selector_inits {
-                            collect_expression_effects(ir, init, effects, visited_calls);
-                        }
-                    }
-                    IrCallArg::OutAddr(_)
-                    | IrCallArg::StringOutAddr(_)
-                    | IrCallArg::StringRefAddr { .. }
-                    | IrCallArg::ChandleAddr(_)
-                    | IrCallArg::ChandleRefAddr(_) => {}
-                    IrCallArg::RefAddr { read, .. } => {
-                        collect_expression_effects(ir, read, effects, visited_calls)
-                    }
-                    IrCallArg::StringOutTemp {
-                        init, storage_read, ..
-                    } => {
-                        if let Some(init) = init {
-                            collect_string_effects(ir, init, effects, visited_calls);
-                        }
-                        if let Some(read) = storage_read {
-                            collect_string_effects(ir, read, effects, visited_calls);
-                        }
-                    }
-                }
+                collect_argument_effects(ir, argument, effects, visited_calls);
             }
             for (_, _, init) in call.temps() {
                 if let Some(init) = init {
@@ -1050,6 +1003,62 @@ fn collect_stream_selector_effects(
     }
 }
 
+fn collect_native_access_effects(
+    ir: &IrModel,
+    name: &str,
+    effects: &mut Vec<ExecutionEffect>,
+    visited_calls: &mut HashSet<usize>,
+) {
+    let name = name.strip_prefix('&').unwrap_or(name);
+    let Some((index, access)) = ir.native_accesses.iter().enumerate().find(|(_, access)| access.name == name) else {
+        return;
+    };
+    // Storage recipes occupy a disjoint recursion namespace after procedures
+    // and allocation recipes. Malformed cycles cannot recurse indefinitely.
+    let Some(key) = ir.funcs.len().checked_add(ir.class_allocations.len()).and_then(|base| base.checked_add(index)) else {
+        effects.push(ExecutionEffect::RuntimeService);
+        return;
+    };
+    if visited_calls.insert(key) {
+        collect_chandle_effects(ir, &access.receiver, effects, visited_calls);
+        visited_calls.remove(&key);
+    }
+}
+
+fn collect_argument_effects(
+    ir: &IrModel,
+    argument: &IrCallArg,
+    effects: &mut Vec<ExecutionEffect>,
+    visited_calls: &mut HashSet<usize>,
+) {
+    match argument {
+        IrCallArg::Val(value) => collect_expression_effects(ir, value, effects, visited_calls),
+        IrCallArg::StringVal(value) => collect_string_effects(ir, value, effects, visited_calls),
+        IrCallArg::ChandleVal(value) => collect_chandle_effects(ir, value, effects, visited_calls),
+        IrCallArg::OutAddr(address) | IrCallArg::StringOutAddr(address)
+        | IrCallArg::ChandleAddr(address) | IrCallArg::ChandleRefAddr(address)
+        | IrCallArg::StringRefAddr { addr: address, .. } =>
+            collect_native_access_effects(ir, address, effects, visited_calls),
+        IrCallArg::RefAddr { lhs, read, .. } => {
+            collect_lhs_expression_effects(ir, lhs, effects, visited_calls);
+            collect_expression_effects(ir, read, effects, visited_calls);
+        }
+        IrCallArg::OutTemp { init, writeback, storage_lhs, storage_read, selector_inits, .. } => {
+            if let Some(value) = init { collect_expression_effects(ir, value, effects, visited_calls); }
+            collect_lhs_expression_effects(ir, writeback, effects, visited_calls);
+            if let Some(lhs) = storage_lhs { collect_lhs_expression_effects(ir, lhs, effects, visited_calls); }
+            if let Some(value) = storage_read { collect_expression_effects(ir, value, effects, visited_calls); }
+            for (_, _, _, _, value) in selector_inits { collect_expression_effects(ir, value, effects, visited_calls); }
+        }
+        IrCallArg::StringOutTemp { init, storage_read, writeback, storage_addr, .. } => {
+            if let Some(value) = init { collect_string_effects(ir, value, effects, visited_calls); }
+            if let Some(value) = storage_read { collect_string_effects(ir, value, effects, visited_calls); }
+            collect_native_access_effects(ir, writeback, effects, visited_calls);
+            if let Some(address) = storage_addr { collect_native_access_effects(ir, address, effects, visited_calls); }
+        }
+    }
+}
+
 fn collect_expression_effects(
     ir: &IrModel,
     expression: &IrExpr,
@@ -1066,6 +1075,9 @@ fn collect_expression_effects(
             effects.push(ExecutionEffect::ImmediateStore);
             collect_lhs_expression_effects(ir, &cast.lhs, effects, visited_calls);
             collect_expression_effects(ir, &cast.rhs, effects, visited_calls);
+            if let Some(source) = &cast.class_source {
+                collect_chandle_effects(ir, source, effects, visited_calls);
+            }
             for value in &cast.valid_values {
                 collect_expression_effects(ir, value, effects, visited_calls);
             }
@@ -1084,61 +1096,14 @@ fn collect_expression_effects(
                 effects.push(ExecutionEffect::ImmediateStore);
             }
             collect_callee_effects(ir, call.function_index(), effects, visited_calls);
+            if let Some(receiver) = &call.receiver {
+                collect_chandle_effects(ir, receiver, effects, visited_calls);
+            }
             if let Some(virtual_call) = &call.virtual_call {
                 collect_chandle_effects(ir, &virtual_call.receiver, effects, visited_calls);
             }
             for argument in call.args() {
-                match argument {
-                    IrCallArg::Val(value) => {
-                        collect_expression_effects(ir, value, effects, visited_calls)
-                    }
-                    IrCallArg::StringVal(value) => {
-                        collect_string_effects(ir, value, effects, visited_calls)
-                    }
-                    IrCallArg::ChandleVal(value) => {
-                        collect_chandle_effects(ir, value, effects, visited_calls)
-                    }
-                    IrCallArg::OutTemp {
-                        init,
-                        writeback,
-                        storage_lhs,
-                        storage_read,
-                        selector_inits,
-                        ..
-                    } => {
-                        if let Some(init) = init {
-                            collect_expression_effects(ir, init, effects, visited_calls);
-                        }
-                        collect_lhs_expression_effects(ir, writeback, effects, visited_calls);
-                        if let Some(storage_lhs) = storage_lhs {
-                            collect_lhs_expression_effects(ir, storage_lhs, effects, visited_calls);
-                        }
-                        if let Some(storage_read) = storage_read {
-                            collect_expression_effects(ir, storage_read, effects, visited_calls);
-                        }
-                        for (_, _, _, _, init) in selector_inits {
-                            collect_expression_effects(ir, init, effects, visited_calls);
-                        }
-                    }
-                    IrCallArg::OutAddr(_)
-                    | IrCallArg::StringOutAddr(_)
-                    | IrCallArg::StringRefAddr { .. }
-                    | IrCallArg::ChandleAddr(_)
-                    | IrCallArg::ChandleRefAddr(_) => {}
-                    IrCallArg::RefAddr { read, .. } => {
-                        collect_expression_effects(ir, read, effects, visited_calls)
-                    }
-                    IrCallArg::StringOutTemp {
-                        init, storage_read, ..
-                    } => {
-                        if let Some(init) = init {
-                            collect_string_effects(ir, init, effects, visited_calls);
-                        }
-                        if let Some(read) = storage_read {
-                            collect_string_effects(ir, read, effects, visited_calls);
-                        }
-                    }
-                }
+                collect_argument_effects(ir, argument, effects, visited_calls);
             }
         }
         IrExprKind::Container(operation) => {
@@ -1437,9 +1402,9 @@ fn collect_expression_effects(
                 collect_expression_effects(ir, &call.argument, effects, visited_calls);
             }
         },
+        IrExprKind::LocalRead(name) => collect_native_access_effects(ir, name, effects, visited_calls),
         IrExprKind::Const(_)
         | IrExprKind::SigRead(_)
-        | IrExprKind::LocalRead(_)
         | IrExprKind::FormalRead(_)
         | IrExprKind::Fill(_)
         | IrExprKind::EventTriggered(_)
@@ -1545,6 +1510,7 @@ fn collect_object_query_effects(
                 }
             }
         }
+        IrObjectQuery::HandleCapture(handle) => collect_chandle_effects(ir, handle, effects, visited_calls),
         IrObjectQuery::ChandleEq(a, b) => {
             collect_chandle_effects(ir, a, effects, visited_calls);
             collect_chandle_effects(ir, b, effects, visited_calls);
@@ -1647,25 +1613,7 @@ fn collect_string_effects(
             effects.push(ExecutionEffect::RuntimeService);
             collect_callee_effects(ir, *function, effects, visited_calls);
             for argument in args {
-                match argument {
-                    IrCallArg::StringVal(value) => {
-                        collect_string_effects(ir, value, effects, visited_calls)
-                    }
-                    IrCallArg::Val(value) => {
-                        collect_expression_effects(ir, value, effects, visited_calls)
-                    }
-                    IrCallArg::StringOutTemp {
-                        init, storage_read, ..
-                    } => {
-                        if let Some(init) = init {
-                            collect_string_effects(ir, init, effects, visited_calls);
-                        }
-                        if let Some(read) = storage_read {
-                            collect_string_effects(ir, read, effects, visited_calls);
-                        }
-                    }
-                    _ => {}
-                }
+                collect_argument_effects(ir, argument, effects, visited_calls);
             }
         }
         IrStringExpr::Concat(parts) => {
@@ -1718,9 +1666,9 @@ fn collect_string_effects(
             }
         }
         IrStringExpr::RandomState => effects.push(ExecutionEffect::RuntimeService),
+        IrStringExpr::LocalRead(name) => collect_native_access_effects(ir, name, effects, visited_calls),
         IrStringExpr::Literal(_)
         | IrStringExpr::Read(_)
-        | IrStringExpr::LocalRead(_)
         | IrStringExpr::FormalRead(_) => {}
     }
 }
@@ -1732,6 +1680,26 @@ fn collect_chandle_effects(
     visited_calls: &mut HashSet<usize>,
 ) {
     match value {
+        IrChandleExpr::Construct(index) => {
+            // Constructor bodies are separately typed; allocation remains an
+            // observable runtime operation even when its handle is discarded.
+            effects.push(ExecutionEffect::RuntimeService);
+            if let Some(allocation) = ir.class_allocations.get(*index) {
+                // Recipe identities use a disjoint namespace from procedures.
+                // A recursive constructor call must not recurse in this analysis.
+                if let Some(key) = ir.funcs.len().checked_add(*index) {
+                    if visited_calls.insert(key) {
+                        collect_effects(ir, &allocation.body, effects, visited_calls);
+                        visited_calls.remove(&key);
+                    }
+                }
+            }
+        }
+        IrChandleExpr::LocalRead(name) => collect_native_access_effects(ir, name, effects, visited_calls),
+        IrChandleExpr::SemaphoreNew(index) => {
+            effects.push(ExecutionEffect::RuntimeService);
+            collect_expression_effects(ir, index, effects, visited_calls)
+        }
         IrChandleExpr::ContainerGet { index, .. } => {
             collect_expression_effects(ir, index, effects, visited_calls)
         }
@@ -1755,25 +1723,7 @@ fn collect_chandle_effects(
             effects.push(ExecutionEffect::RuntimeService);
             collect_callee_effects(ir, *function, effects, visited_calls);
             for argument in args {
-                match argument {
-                    IrCallArg::StringVal(value) => {
-                        collect_string_effects(ir, value, effects, visited_calls)
-                    }
-                    IrCallArg::ChandleVal(value) => {
-                        collect_chandle_effects(ir, value, effects, visited_calls)
-                    }
-                    IrCallArg::Val(value) => {
-                        collect_expression_effects(ir, value, effects, visited_calls)
-                    }
-                    IrCallArg::ChandleAddr(_)
-                    | IrCallArg::ChandleRefAddr(_)
-                    | IrCallArg::StringOutAddr(_)
-                    | IrCallArg::StringRefAddr { .. }
-                    | IrCallArg::OutAddr(_)
-                    | IrCallArg::RefAddr { .. }
-                    | IrCallArg::OutTemp { .. }
-                    | IrCallArg::StringOutTemp { .. } => {}
-                }
+                collect_argument_effects(ir, argument, effects, visited_calls);
             }
         }
         _ => {}
@@ -1807,7 +1757,11 @@ fn collect_lhs_expression_effects(
                 collect_lhs_expression_effects(ir, part, effects, visited_calls);
             }
         }
-        IrLhs::Whole(_) | IrLhs::WholeRef { .. } | IrLhs::Ref { .. } | IrLhs::Part(..) => {}
+        IrLhs::WholeRef { addr, .. } => collect_native_access_effects(ir, addr, effects, visited_calls),
+        IrLhs::Ref { bit, .. } => {
+            if let Some(bit) = bit { collect_expression_effects(ir, bit, effects, visited_calls); }
+        }
+        IrLhs::Whole(_) | IrLhs::Part(..) => {}
     }
 }
 
@@ -2109,10 +2063,10 @@ mod tests {
         model.refresh_effects().unwrap();
 
         let c = crate::sim::emit_c::render(&model).unwrap();
-        let entry = c.find("_llg_exec_0_b0: {").unwrap();
+        let entry = c.find("_llg_exec_0_b0: ;").unwrap();
         let wait = c.find("llg_wait_time(3ULL);").unwrap();
         let resume = wait + c[wait..].find("goto _llg_exec_0_b1;").unwrap();
-        let resumed_block = c.find("_llg_exec_0_b1: {").unwrap();
+        let resumed_block = c.find("_llg_exec_0_b1: ;").unwrap();
         let finish = c.find("llg_rt_finish();").unwrap();
         assert!(entry < wait && wait < resume && resume < resumed_block && resumed_block < finish);
 

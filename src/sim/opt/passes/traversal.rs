@@ -75,8 +75,8 @@ fn walk_call_args_mut(args: &mut [IrCallArg], f: &mut impl FnMut(&mut IrExpr)) {
                     read.expressions_mut(&mut |child| walk_expr_mut(child, f));
                 }
             }
-            IrCallArg::ChandleVal(_) | IrCallArg::ChandleAddr(_) | IrCallArg::ChandleRefAddr(_) => {
-            }
+            IrCallArg::ChandleVal(value) => value.expressions_mut(&mut |child| walk_expr_mut(child, f)),
+            IrCallArg::ChandleAddr(_) | IrCallArg::ChandleRefAddr(_) => {}
         }
     }
 }
@@ -163,6 +163,9 @@ fn walk_expr_mut(e: &mut IrExpr, f: &mut impl FnMut(&mut IrExpr)) {
         }
         IrExprKind::CallFn(call) => {
             walk_call_args_mut(&mut call.args, f);
+            if let Some(receiver) = &mut call.receiver {
+                receiver.expressions_mut(&mut |child| walk_expr_mut(child, f));
+            }
             if let Some(virtual_call) = &mut call.virtual_call {
                 virtual_call
                     .receiver
@@ -540,6 +543,9 @@ fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
         IrStmt::WaveLimit(limit) => walk_expr_mut(limit, f),
         IrStmt::Call(call) => {
             walk_call_args_mut(&mut call.args, f);
+            if let Some(receiver) = &mut call.receiver {
+                receiver.expressions_mut(&mut |child| walk_expr_mut(child, f));
+            }
             if let Some(virtual_call) = &mut call.virtual_call {
                 virtual_call
                     .receiver
@@ -633,6 +639,8 @@ fn walk_pre_fn_mut(pre: &mut IrPreFn, f: &mut impl FnMut(&mut IrExpr)) {
 }
 
 pub(super) fn walk_model_exprs_mut(model: &mut IrModel, f: &mut impl FnMut(&mut IrExpr)) {
+    for access in &mut model.native_accesses { access.receiver.expressions_mut(&mut |expr| walk_expr_mut(expr, f)); }
+    for allocation in &mut model.class_allocations { walk_stmts_mut(&mut allocation.body, f); }
     for func in &mut model.funcs {
         for local in &mut func.locals {
             if let Some(initial) = &mut local.initial {

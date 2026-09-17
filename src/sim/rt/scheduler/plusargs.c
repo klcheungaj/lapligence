@@ -447,7 +447,10 @@ int llg_value_plusargs_string(const char* format_text, llg_string_t* out) {
     const char* value = NULL;
     size_t value_len = 0;
     int converted = llg_plusarg_find(&format, &value, &value_len);
-    if (converted) llg_string_move(out, llg_string_bytes(value, value_len));
+    llg_string_t result = {0};
+    if (converted) result = llg_string_bytes(value, value_len);
     llg_plusarg_format_free(&format);
+    /* No parser-owned buffers may remain across a notifying string write. */
+    if (converted) llg_string_move(out, result);
     return converted;
 }

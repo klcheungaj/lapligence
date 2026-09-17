@@ -16,6 +16,97 @@ end-to-end runs of `llg` (marked **(probed)** below). Section numbers follow the
 [SystemVerilog reference](specification/spec-reference-sv.md) and
 [verification reference](specification/spec-reference-verification.md) (§1800-2009 y.z).
 
+## Dynamic value migration acceptance boundary
+
+**The dynamic-value backend has not regained the complete historical coverage
+listed below.** The historical supported markers and audit task states are not
+acceptance evidence for this ABI until the corresponding public HDL regression
+passes again. Do not flip those markers from source inspection or component
+results. This boundary takes precedence over historical feature descriptions.
+
+The numeric ownership path has typed argument lowering without detached C
+fragments, registered temporary/local owners and explicit copy/move/destruction.
+Numeric input/default/output/inout lowering is now connected to that path.
+Source additions restore owned packed/real captured fork branches, runtime-indexed
+named-event arrays and read-only packed/real evaluated/filtered waits. Evaluator
+captures are cloned once before publication; each runtime context field receives
+its own reference, even when fields share a frame. Arbitrary user function calls
+and mutations within evaluators remain rejected because their reentrant effects
+need separate runtime/ownership acceptance. These Rust/emitter additions require
+Rust compilation and public HDL execution; the correction's C-only validation is
+not that acceptance.
+
+Additional owned-emitter source paths now cover named activation/fork targets,
+cooperative cancellation before task copyout, persistent packed inertial updates,
+literal-path memory tasks, numeric procedural continuous assignments, numeric
+force/release and typed monitor/strobe callbacks, immediate assertions and ordered
+event waits. Activation exits unwind lexical packed owners; loop budgets count
+executed iterations rather than the final false condition. New generated-model
+regressions are active but still require Rust/HDL acceptance; native C output-shape
+probes alone do not establish that these source additions pass the public pipeline.
+
+The third source-repair batch connects concurrent assertion/sampling registration
+and callbacks, numeric deferred actions, true-net-alias lifecycles and dependency
+addresses, VPI call sites, clocking operations and event-controlled NBA scheduling.
+It adds qualified branch diagnostics, packed streaming destinations, inline event
+formal identity, concrete-interface metadata, literal-text runtime tasks and numeric
+random/queue operations. A bounded callback inliner admits automatic numeric
+expression-only functions without private state or side effects. The 120 selected
+input failures are source repair targets, not confirmed post-patch passes. Rust
+formatting, compilation, testing and HDL execution were not performed for this
+batch; C runtime/API syntax checks do not establish those results.
+
+The fourth source-repair batch targets 60 additional named input failures, disjoint
+from the third batch, without claiming post-patch passes. It connects container
+storage/operations/dependencies, method callback item owners, byte-string
+expressions and string/chandle procedure boundaries, process handles, enum/array
+queries, scalar dynamic casts, file input/output, plusargs and nonliteral runtime
+task strings. Native payload scopes unwind with packed owners. Converted container
+values and normalized keys are destroyed before callback publication. Fixed-array
+shape failures use typed fatal IR instead of opaque C fragments. Nine new Rust
+structural tests were added but not executed. Native and sanitizer-safe C component
+runs exercise the runtime only; they do not validate the Rust/HDL pipeline.
+
+The fifth source-repair batch targets the final 60 unselected names from the same
+240-failure input log, not a measured current failure count. It adds typed class
+allocation/member recipes, semaphore and mailbox boundaries, reference-call
+descriptors, virtual-interface handles/member dispatch, scalar DPI thunks, packed
+container membership and mixed packed/container streaming writes. Receiver effects
+and typed native operands participate in validation, capacity, traversal and storage
+analysis. Nine new Rust structural tests were added but not run. C runtime probes
+exercise registered references, reentrant mailbox delivery, cancellation of a
+receiver during publication, and full/selected container streaming notifications.
+Native C and sanitizer-safe results do not validate these Rust/emitter additions.
+
+Class storage remains model-owned until close (including unreachable/cyclic objects);
+it is not a garbage collector. Packed fields allocate their own widths. Mailbox
+payload snapshots and converted outputs remain registered across publication;
+consumed messages are unlinked before reentrant callbacks. Deferred streaming
+notifications run after intermediate values are destroyed. Automatic packed signal
+publication pins the destination scope until its callbacks finish.
+
+Remaining boundaries include broader native/shared captures, complex or side-effecting
+evaluator function bodies, timing-bearing class/virtual-interface methods, generalized
+aggregate reference procedures and resizable streaming forms not represented by the
+bounded typed IR. Selected reference file destinations and process-handle formals
+retain explicit rejection. Automatic string destinations for delayed NBA still
+require native descriptor retention; persistent string NBA destinations have a
+source path. Inline event definitions remain lowering templates. Pre-process
+initializer calls remain gated because no yielding coroutine can be assumed there.
+Unsupported definitions can reject a whole model even when unused. Detached C
+renderers are not a safe fallback. All source-repaired combinations still require
+Rust compilation and public HDL acceptance; this is not completed P05 or full parity.
+
+The original runtime and waveform C self-tests now use explicit owners and remain
+active, with their numerical and scheduling assertions retained. Standalone value,
+container and file-I/O probes are also shared with the component suite, including
+actual-width normalization, owned callback outputs and fresh consumed format
+arguments. Additional probes
+check nonlocal callback cleanup, multi-context adoption, exact-address NBA scope
+lookup, retained delayed targets and event-array selection/wait semantics.
+See [tests/readme.md](../tests/readme.md#dynamic-ownership-validation) for test
+commands and the difference between component, generated-model and platform gates.
+
 ## Status markers
 
 - ✅ supported — test anchor in parens; `(probed)` = verified by a manual
@@ -30,11 +121,11 @@ end-to-end runs of `llg` (marked **(probed)** below). Section numbers follow the
   **[SV-2009]** = added by 1800-2009 · **[1364-2005]** = IEEE 1364-2005
   interim revision, between our bands; used only as an inline annotation
 
-Numeric limits: packed-vector capacity is selected per generated model;
-`LLG_MODEL_MAX_WIDTH` is an exclusive-backend capacity below `1 << 20` bits,
-and runtime widths are `uint32_t`. Division/modulo/power and packed/real
-conversions use the model-sized limb capacity; the IR has no separate 1024/64
-bit semantic cap. Function/task recursion depth ≤ 256;
+Numeric limits: packed values use exact-width dynamic storage with widths below
+the exclusive `LLG_SUPPORTED_WIDTH_LIMIT` (`1 << 20` bits); runtime widths are
+`uint32_t`. The model/runtime contract is value ABI 3, not a model-maximum inline
+array. Division/modulo/power and packed/real conversions use the operand/result
+limb counts; the IR has no separate 1024/64-bit semantic cap. Function/task recursion depth ≤ 256;
 zero-time scheduler and per-process loop guards default to 10M steps and are
 configurable with `LLG_ZERO_LOOP_LIMIT` and `LLG_PROCESS_STEP_LIMIT` (the
 `LLG_NONCONVERGENCE_LIMIT` alias is also accepted);

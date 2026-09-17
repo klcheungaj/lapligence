@@ -11,5 +11,6 @@ module tb;
         $display("%0d", target[64 +: 65]);
         #2;
         $display("%0d", target[64 +: 65]);
+        $finish(0);
     end
 endmodule

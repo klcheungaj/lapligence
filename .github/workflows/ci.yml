@@ -82,7 +82,7 @@ jobs:
         run: cargo test --locked --doc --all-features
 
       - name: Owned renderer generated-model and host-lifecycle acceptance
-        run: cargo test --locked --lib --no-default-features structured_owned_model_ -- --ignored
+        run: cargo test --locked --lib --no-default-features structured_owned_model_
 
       - name: Report runner resources
         if: always()

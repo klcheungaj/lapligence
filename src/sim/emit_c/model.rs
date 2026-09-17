@@ -47,6 +47,7 @@ use initialization::render_main;
 const LLG_MAX_FUNC_DEPTH: u32 = 256;
 
 pub(super) fn owned_func_params(function: &IrFunc) -> String { func_params(function) }
+pub(super) fn owned_dpi_thunk(function: &IrFunc) -> Result<String, String> { render_dpi_thunk(function) }
 
 // ── Model rendering ───────────────────────────────────────────────────────────
 
@@ -109,8 +110,9 @@ fn render_model(execution: &ExecutionModel) -> Result<String, String> {
             }
         )
     }) {
-        out.push_str(super::containers::string_adapters());
+        out.push_str(super::owned::containers::key_adapters());
     }
+    super::owned::native::helpers(&mut out);
     render_class_decls(model, &mut out);
     render_signal_decls(model, &mut out);
     render_vpi_metadata(model, &mut out);
@@ -130,7 +132,7 @@ fn render_model(execution: &ExecutionModel) -> Result<String, String> {
         let ty = match object.ty {
             crate::sim::ir::IrObjectType::String => "llg_string_t",
             crate::sim::ir::IrObjectType::Chandle => "void *",
-            crate::sim::ir::IrObjectType::Semaphore => "llg_semaphore_t *",
+            crate::sim::ir::IrObjectType::Semaphore => "void *",
             crate::sim::ir::IrObjectType::Process => "llg_process_handle_t *",
         };
         out.push_str(&format!("static {ty} {} = {{0}};\n", object.c_name));
@@ -177,6 +179,7 @@ fn render_model(execution: &ExecutionModel) -> Result<String, String> {
         out.push_str(dpi_helpers());
     }
     for f in &model.funcs {
+        if super::owned::model::inline_event_template(f) { continue; }
         out.push_str(&func_prototype(f)?);
     }
     render_virtual_dispatch_prototypes(model, &mut out);
@@ -189,6 +192,7 @@ fn render_model(execution: &ExecutionModel) -> Result<String, String> {
         activation_label: None,
     };
     for f in &model.funcs {
+        if super::owned::model::inline_event_template(f) { continue; }
         let fctx = RCtx {
             model,
             func: Some(f),
@@ -211,6 +215,8 @@ fn render_model(execution: &ExecutionModel) -> Result<String, String> {
         }
         out.push_str(&super::owned::model::process(&ctx, p, executable)?);
     }
+    out.push_str(&super::owned::assertions::callbacks(model)?);
+    out.push_str(&super::owned::assertions::registrations(model)?);
     super::owned::model::storage_lifecycle(model, &mut out)?;
     out.push_str(&super::owned::model::main(execution)?);
     Ok(out)

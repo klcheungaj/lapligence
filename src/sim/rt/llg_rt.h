@@ -188,6 +188,10 @@ typedef struct llg_value_scope llg_value_scope_t;
 llg_value_scope_t* llg_value_scope_begin(size_t count);
 sv4_t* llg_value_scope_values(llg_value_scope_t* scope);
 void llg_value_scope_end(llg_value_scope_t* scope);
+// Zeroed native storage shares lexical/nonlocal cleanup with packed scopes.
+// The destructor borrows the storage; it must not free it, yield or notify HDL.
+llg_value_scope_t* llg_value_scope_begin_object(size_t size, void (*destroy)(void*));
+void* llg_value_scope_object(llg_value_scope_t* scope);
 // A mark borrows the current active-scope head. It is valid until its enclosing
 // scope ends. End-since performs lexical return/goto cleanup, excluding mark.
 llg_value_scope_t* llg_value_scope_mark(void);
@@ -382,6 +386,8 @@ int llg_region_is_read_only(void);
 // Request scheduler termination from a non-coroutine callback. Unlike
 // llg_rt_finish, this returns to the callback and is safe outside a process.
 void llg_rt_request_finish(void);
+// Mark a simulator-generated failure before terminating through a severity task.
+void llg_rt_mark_failed(void);
 // Terminate the current simulation process and mark the scheduler for exit;
 // neither entry point returns to generated HDL. The legacy entry point is a
 // quiet level-0 finish without source metadata.
@@ -1177,6 +1183,8 @@ void llg_ba(sv4_t* target, sv4_t value);
 typedef struct llg_ref_scope llg_ref_scope_t;
 llg_ref_scope_t* llg_ref_scope_begin(void);
 void llg_ref_scope_end(llg_ref_scope_t* scope);
+// Call-local queue cells released by normal and nonlocal value-scope cleanup.
+void llg_ref_scope_begin_owned(void);
 llg_ref_t* llg_ref_queue(llg_queue_t* queue, uint64_t index);
 void llg_ref_write(llg_ref_t* ref, sv4_t value);
 // Modify one packed bit through the original descriptor, preserving alias

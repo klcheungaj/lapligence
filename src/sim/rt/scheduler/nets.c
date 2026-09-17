@@ -9,21 +9,23 @@ static sv4_t llg_net_compute(const llg_net_t* net) {
 
 static void llg_net_alias_refresh(llg_net_alias_t* alias) {
     if (!alias || !alias->storage) return;
-    sv4_t value = sv4_clone(alias->storage);
+    llg_value_scope_t* scope = llg_value_scope_begin(1);
+    sv4_t* owned = llg_value_scope_values(scope);
+    sv4_copy(&owned[0], alias->storage);
     for (uint32_t i = 0; i < alias->n_parts; i++) {
         const llg_net_alias_part_t* part = &alias->parts[i];
-        if (!part->net || part->signal_bit >= value.width ||
+        if (!part->net || part->signal_bit >= owned[0].width ||
             part->group_bit >= part->net->resolved.width)
             continue;
         sv4_t bit = sv4_bit_select(part->net->resolved, part->group_bit);
-        sv4_bit_select_set(&value, part->signal_bit, bit);
+        sv4_bit_select_set(&owned[0], part->signal_bit, bit);
         sv4_destroy(&bit);
     }
     // The visible cell is a first-class dependency/waveform target. Route
     // updates through the ordinary signal writer so waiters and waveform
     // callbacks observe canonical alias changes.
-    sig_write(&alias->visible, value);
-    sv4_destroy(&value);
+    sig_write(&alias->visible, owned[0]);
+    llg_value_scope_end(scope);
 
 }
 
@@ -50,9 +52,11 @@ void llg_net_resolve(llg_net_t* net) {
     if (llg_is_forced(&net->resolved)) {
         force_recompute_target(&net->resolved, net);
     } else {
-        sv4_t resolved = llg_net_compute(net);
-        llg_net_publish(net, resolved);
-        sv4_destroy(&resolved);
+        llg_value_scope_t* scope = llg_value_scope_begin(1);
+        sv4_t* owned = llg_value_scope_values(scope);
+        sv4_replace(&owned[0], llg_net_compute(net));
+        llg_net_publish(net, owned[0]);
+        llg_value_scope_end(scope);
     }
 }
 
@@ -96,6 +100,11 @@ sv4_t llg_net_alias_read(llg_net_alias_t* alias) {
 
 void llg_net_alias_write(llg_net_alias_t* alias, sv4_t value) {
     if (!alias || !alias->parts || !region_can_mutate("net alias write")) return;
+    /* A publication callback may reenter or terminate the current process.
+     * Both the input snapshot and each contribution must outlive that edge. */
+    llg_value_scope_t* scope = llg_value_scope_begin(2);
+    sv4_t* owned = llg_value_scope_values(scope);
+    sv4_copy(&owned[0], &value);
     for (uint32_t i = 0; i < alias->n_parts; i++) {
         const llg_net_alias_part_t* part = &alias->parts[i];
         if (!part->net) continue;
@@ -105,20 +114,21 @@ void llg_net_alias_write(llg_net_alias_t* alias, sv4_t value) {
             if (prior->net == part->net && prior->slot == part->slot) seen = 1;
         }
         if (seen) continue;
-        sv4_t contribution = sv4_fill(3, part->net->width, part->net->is_signed);
+        sv4_replace(&owned[1], sv4_fill(3, part->net->width, part->net->is_signed));
         for (uint32_t j = i; j < alias->n_parts; j++) {
             const llg_net_alias_part_t* mapped = &alias->parts[j];
             if (mapped->net != part->net || mapped->slot != part->slot ||
-                mapped->signal_bit >= value.width ||
-                mapped->group_bit >= contribution.width)
+                mapped->signal_bit >= owned[0].width ||
+                mapped->group_bit >= owned[1].width)
                 continue;
-            sv4_t bit = sv4_bit_select(value, mapped->signal_bit);
-            sv4_bit_select_set(&contribution, mapped->group_bit, bit);
+            sv4_t bit = sv4_bit_select(owned[0], mapped->signal_bit);
+            sv4_bit_select_set(&owned[1], mapped->group_bit, bit);
             sv4_destroy(&bit);
         }
-        llg_net_write(part->net, part->slot, contribution);
-        sv4_destroy(&contribution);
+        llg_net_write(part->net, part->slot, owned[1]);
+        sv4_destroy(&owned[1]);
     }
+    llg_value_scope_end(scope);
 }
 
 static int inertial_bit(const sv4_t* value, uint32_t bit) {

@@ -231,7 +231,7 @@ fn dpi_library_options_are_explicit_and_prevalidated() {
     };
     sim::build::generate_model_sources_with_opts(
         directory.path(),
-        &[("model.c", "int main(void) { return 0; }\n")],
+        &[("model.c", "#define LLG_MODEL_VALUE_ABI 3\nint main(void) { return 0; }\n")],
         &opts,
     )
     .expect("valid regular library path");
@@ -252,7 +252,7 @@ fn dpi_library_options_are_explicit_and_prevalidated() {
     };
     let error = sim::build::generate_model_sources_with_opts(
         directory.path(),
-        &[("model.c", "int main(void) { return 0; }\n")],
+        &[("model.c", "#define LLG_MODEL_VALUE_ABI 3\nint main(void) { return 0; }\n")],
         &bad_opts,
     )
     .expect_err("missing library must fail before generation");

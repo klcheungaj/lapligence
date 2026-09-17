@@ -12,6 +12,9 @@ scopes when a pending write might outlive the declaration.
 
 The active numeric path covers ordinary packed/real model storage, fixed arrays,
 numeric procedures, loops, basic waits, assignments, and typed numeric output.
+Further source paths cover assertion/sampling callbacks, aliases, clocking and
+qualified branching; their bounded contracts and unverified acceptance status are
+recorded in `owned/readme.md`.
 It is an incremental migration, not full HDL support. Unsupported feature
 families return an error without legacy fallback. The legacy expression and
 statement fragment APIs remain gated. Read the exact boundary in
@@ -41,7 +44,7 @@ initialization implementations are not a fallback for `owned/`. Existing
 legacy test subjects. New ownership responsibilities are split into the modules
 listed in `owned/readme.md`.
 
-The new Rust structural and opt-in numeric-model execution tests are checked in
+The Rust structural and numeric-model execution tests are checked in
 but were not executable in the delivery environment (no Rust toolchain).
 Standalone C ownership tests exercise hand-authored output patterns; they do
 not establish that the Rust renderer builds or emits compiling models. Full

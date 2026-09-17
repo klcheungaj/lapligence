@@ -80,7 +80,7 @@ impl Validator<'_> {
                     self.string_return.get(),
                 )?;
                 let expected = match query.as_ref() {
-                    IrObjectQuery::ChandleEq(..) => Some((1, false)),
+                    IrObjectQuery::ChandleEq(..) | IrObjectQuery::HandleCapture(..) => Some((1, false)),
                     IrObjectQuery::SemaphoreTryGet(..) => Some((32, true)),
                     IrObjectQuery::ProcessEq(..) => Some((1, false)),
                     IrObjectQuery::StringGetc(..) => Some((8, true)),

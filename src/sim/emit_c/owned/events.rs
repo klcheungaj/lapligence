@@ -22,14 +22,35 @@ impl Frame<'_, '_> {
         Ok(match event {
             IrEventRef::Static(index) => format!("&{}", self.ctx.model.event(*index).c_name()),
             IrEventRef::Null => "NULL".to_owned(),
-            _ => return Err(pending("event-array or captured event handles")),
+            IrEventRef::Array { array, indices } => {
+                let descriptor = self.ctx.model.event(*array);
+                let dims = descriptor.array_dims().ok_or_else(|| "event handle is not an array".to_owned())?;
+                if dims.len() != indices.len() || indices.is_empty() {
+                    return Err("event array index rank does not match its dimensions".to_owned());
+                }
+                let name = descriptor.c_name().to_owned();
+                let count = descriptor.array_elements().len();
+                let mut values = Vec::new();
+                for index in indices { values.push(self.expression(index)?); }
+                let args = self.name("event_indices");
+                self.line(format!("const sv4_t {args}[] = {{ {} }}; /* borrowed descriptors */",
+                    values.iter().map(|value| value.code.as_str()).collect::<Vec<_>>().join(", ")));
+                let address = self.scalar("llg_event_t*", format!(
+                    "llg_event_array_select({name}__elements, {count}ULL, {name}__left, {name}__right, {args}, {})",
+                    values.len()));
+                for value in values { self.discard(value); }
+                address
+            }
+            IrEventRef::Captured(name) => self.event_bindings.iter().rev()
+                .find_map(|scope| scope.get(name)).cloned()
+                .ok_or_else(|| pending(&format!("unresolved captured event handle {name}")))?,
         })
     }
 
-    fn dependency(&self, dependency: &IrDependency) -> Result<String, String> {
+    pub(super) fn dependency(&mut self, dependency: &IrDependency) -> Result<String, String> {
         Ok(match dependency {
             IrDependency::Scalar(name) | IrDependency::Real(name) => {
-                let binding = self.lookup(name).ok_or_else(|| format!("unknown dependency {name}"))?;
+                let binding = self.resolve_lookup(name)?;
                 format!("{{ .{} = {} }}", if binding.width == 0 { "real" } else { "sig" }, binding.address)
             }
             IrDependency::ArrayElement { array, index } => {
@@ -41,7 +62,7 @@ impl Frame<'_, '_> {
             IrDependency::PackedRange { storage, lsb, width } => {
                 let (trigger, value) = match storage.as_ref() {
                     IrDependency::Scalar(name) => {
-                        let binding = self.lookup(name).ok_or_else(|| format!("unknown dependency {name}"))?;
+                        let binding = self.resolve_lookup(name)?;
                         (binding.address.clone(), binding.address)
                     }
                     IrDependency::ArrayElement { array, index } => {
@@ -52,7 +73,13 @@ impl Frame<'_, '_> {
                 };
                 format!("{{ .sig = {trigger}, .value = {value}, .lsb = {lsb}u, .width = {width}u }}")
             }
-            _ => return Err(pending("container/object dependencies")),
+            IrDependency::ContainerContents(index) => format!("{{ .sig = &{}_llg_contents_dep }}", self.ctx.model.containers[*index].c_name),
+            IrDependency::ContainerShape(index) => format!("{{ .sig = &{}_llg_shape_dep }}", self.ctx.model.containers[*index].c_name),
+            IrDependency::Object(index) => {
+                let object = &self.ctx.model.objects[*index];
+                if object.ty != IrObjectType::String { return Err(pending("non-string object dependencies")); }
+                format!("{{ .sig = &{}_llg_dep }}", object.c_name)
+            }
         })
     }
 
@@ -65,29 +92,7 @@ impl Frame<'_, '_> {
             self.line(format!("llg_wait_dependency_t {array}[] = {{ {} }};", values.join(", ")));
             self.line(format!("llg_wait_any_dependencies({array}, {});", sens.len()));
         }
-        Ok(())
+        self.cancellation_check()
     }
 
-    pub(super) fn wait_events(&mut self, specs: &[(IrWaitSrc, IrEdge)]) -> Result<(), String> {
-        if specs.is_empty() { self.line("llg_wait_expressions(NULL, 0);"); return Ok(()); }
-        let mut values = Vec::new();
-        for (source, edge) in specs {
-            let edge = match edge { IrEdge::Any => "LLG_EV_ANY", IrEdge::Posedge => "LLG_EV_POSEDGE", IrEdge::Negedge => "LLG_EV_NEGEDGE" };
-            let (sig, real, event) = match source {
-                IrWaitSrc::Sig(name) | IrWaitSrc::Real(name) => {
-                    let binding = self.lookup(name).ok_or_else(|| pending("opaque wait address"))?;
-                    if binding.width == 0 { ("NULL".to_owned(), binding.address, "NULL".to_owned()) }
-                    else { (binding.address, "NULL".to_owned(), "NULL".to_owned()) }
-                }
-                IrWaitSrc::Event(event) => ("NULL".to_owned(), "NULL".to_owned(), self.event_address(event)?),
-                _ => return Err(pending("evaluated/filtered event callbacks")),
-            };
-            let is_real = u8::from(real != "NULL");
-            values.push(format!("{{ .sig = {sig}, .real_sig = {real}, .kind = {edge}, .event = {event}, .real = {is_real} }}"));
-        }
-        let name = self.name("events");
-        self.line(format!("llg_expr_event_spec_t {name}[] = {{ {} }};", values.join(", ")));
-        self.line(format!("llg_wait_expressions({name}, {});", specs.len()));
-        Ok(())
-    }
 }

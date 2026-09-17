@@ -1,7 +1,6 @@
 //! Conservative coroutine-stack sizing from the validated simulator IR.
 
 use crate::sim::execution::ExecutionModel;
-#[cfg(test)]
 use crate::sim::ir::IrModel;
 use crate::sim::ir::{
     IrCall, IrCallArg, IrElemSel, IrExpr, IrExprKind, IrFunc, IrInsideItem, IrLhs, IrPlusArgText,
@@ -44,6 +43,9 @@ pub(super) fn stack_value_slots(model: &IrModel) -> Result<u64, String> {
         }
     }
 
+    let native = native_recipe_slots(model)?;
+    max_func = checked_add(max_func, native, "native function frame slots")?;
+    max_proc = checked_add(max_proc, native, "native process frame slots")?;
     let recursive = checked_mul(max_func, MAX_FUNC_DEPTH, "recursive function stack slots")?;
     let model_slots = checked_add(recursive, max_proc, "model stack slots")?;
     Ok(
@@ -77,12 +79,34 @@ pub(super) fn execution_stack_value_slots(model: &ExecutionModel) -> Result<u64,
             max_proc = max_proc.max(pre_fn_frame_slots(pre_fn)?);
         }
     }
+    let native = native_recipe_slots(ir)?;
+    max_func = checked_add(max_func, native, "native function frame slots")?;
+    max_proc = checked_add(max_proc, native, "native process frame slots")?;
     let recursive = checked_mul(max_func, MAX_FUNC_DEPTH, "recursive function stack slots")?;
     let model_slots = checked_add(recursive, max_proc, "model stack slots")?;
     Ok(
         checked_mul(model_slots, ABI_SAFETY_FACTOR, "guarded model stack slots")?
             .max(MIN_VALUE_SLOTS),
     )
+}
+
+// Inline native recipes are outside a procedure's ordinary statement tree.
+// Charge their total once per possible frame, rather than silently ignoring
+// the C return-by-value/spill storage they can introduce. All arithmetic is
+// checked; the exact-width packed payloads themselves remain heap-owned.
+fn native_recipe_slots(model: &IrModel) -> Result<u64, String> {
+    let mut total = 0;
+    for recipe in &model.class_allocations {
+        total = checked_add(total, stmt_frame_slots(&recipe.body)?, "constructor recipe slots")?;
+    }
+    for access in &model.native_accesses {
+        let mut result = Ok(total);
+        access.receiver.expressions(&mut |expr| {
+            result = result.clone().and_then(|count| checked_add(count, expr_slots(expr)?, "native receiver slots"));
+        });
+        total = result?;
+    }
+    Ok(total)
 }
 
 fn function_frame_slots(func: &IrFunc) -> Result<u64, String> {

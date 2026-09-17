@@ -48,6 +48,12 @@ fn mark_dependency_read(dependency: &IrDependency, model: &IrModel, rw: &mut Rw)
 
 pub(super) fn mark_unused_storage(model: &mut IrModel, execution: Option<&[ExecutionProcess]>) {
     let mut rw = Rw::default();
+    for access in &model.native_accesses {
+        access.receiver.expressions(&mut |child| collect_expr_reads(child, model, &mut rw));
+    }
+    for allocation in &model.class_allocations {
+        collect_stmts_rw(&allocation.body, model, &mut rw);
+    }
     for object in &model.objects {
         if let Some(initial) = &object.initial {
             initial.expressions(&mut |child| collect_expr_reads(child, model, &mut rw));

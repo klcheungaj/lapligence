@@ -1,18 +1,25 @@
 # `sim/rt`
 
-## Dynamic runtime integration status
+## Dynamic-value ownership boundaries
 
-The main value is already dynamically owned. The structured numeric whole-model
-emitter now has explicit lifetime code; feature-specific gates still reject
-unmigrated paths. This is an intermediate migration, not restored full HDL
-simulation. See [ownership](value/ownership.md) and
-[emitter coverage](../emit_c/owned/readme.md). Runtime scopes support lexical
-marks and retained packed NBA/clocking target cells. The active model/cache ABI
-is version 3 and no longer depends on model maximum width.
+The active model/cache contract is value ABI 3, independent of model maximum
+width. See [ownership](value/ownership.md) and the authoritative
+[feature boundary](../../../docs/sim_features.md#dynamic-value-migration-acceptance-boundary).
+A standalone C runtime probe is not a test of the Rust emitter or HDL lowering.
 
-The new Rust emitter requires compilation/integration validation; standalone C
-probes are not proof that emitted source compiles. Any historical renderer
-capability descriptions below remain subject to the current feature gates.
+`value_scopes.c` indexes live packed descriptor addresses with an exact-key hash
+table. Pointer identity comparisons use equality, not ordering of unrelated
+objects. Lexical release does not remove an NBA-retained cell: removal happens
+only at final scope release. Emptying the registry releases the index. The index
+adds per-cell bookkeeping in exchange for avoiding a full-scope scan on global
+or automatic NBA targets; workload throughput and total memory still require
+measurement.
+
+Signal-write snapshots, evaluator results and force/PCA values spanning callbacks
+are registered owners. Normal returns end their scopes; process termination can
+unwind those scopes without returning through a C stack frame. Multi-source event
+registration adopts every descriptor/context before invoking the first evaluator;
+each eval/condition context field owns a reference, including shared pointers.
 
 ## Runtime components
 

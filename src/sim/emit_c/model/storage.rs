@@ -8,7 +8,7 @@ pub(super) fn render_signal_decls(model: &IrModel, out: &mut String) {
     for sig in &model.signals {
         if sig.net_driver.is_some()
             || sig.alias.is_some()
-            || sig.omit
+            || (sig.omit && sig.net_alias.is_empty())
             || !emitted.insert(sig.c_name.as_str())
         {
             // Net-group members: storage is emitted with its group; omitted

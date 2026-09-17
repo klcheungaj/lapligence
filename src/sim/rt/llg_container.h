@@ -385,6 +385,11 @@ int llg_queue_insert(llg_queue_t* queue, sv4_t index, sv4_t value);
 int llg_queue_delete_index(llg_queue_t* queue, sv4_t index);
 void llg_queue_push_front(llg_queue_t* queue, sv4_t value);
 void llg_queue_push_back(llg_queue_t* queue, sv4_t value);
+/* Output forms publish into caller-owned storage before notifying. Use a
+ * registered output when notifications may terminate a coroutine. The returned
+ * value convenience forms require notifications to return normally. */
+void llg_queue_pop_front_into(llg_queue_t* queue, sv4_t* out);
+void llg_queue_pop_back_into(llg_queue_t* queue, sv4_t* out);
 sv4_t llg_queue_pop_front(llg_queue_t* queue);
 sv4_t llg_queue_pop_back(llg_queue_t* queue);
 sv4_t llg_queue_front(const llg_queue_t* queue);

@@ -8,6 +8,8 @@ impl Frame<'_, '_> {
         self.line(format!("llg_value_scope_t* {marker} = llg_value_scope_mark();"));
         self.marks.push(marker);
         self.bindings.push(HashMap::new());
+        self.event_bindings.push(HashMap::new());
+        self.native_bindings.push(HashMap::new());
         self.temp_roots.push(self.slots.clone());
         self.labels.push(body.iter().filter_map(|stmt| match stmt {
             IrStmt::Label(name) => Some((name.clone(), false)), _ => None,
@@ -16,7 +18,7 @@ impl Frame<'_, '_> {
     pub(super) fn end_block(&mut self) {
         let marker = self.marks.pop().expect("matched lexical scope");
         self.line(format!("llg_value_scopes_end_since({marker});"));
-        self.bindings.pop(); self.labels.pop(); self.temp_roots.pop();
+        self.bindings.pop(); self.event_bindings.pop(); self.native_bindings.pop(); self.labels.pop(); self.temp_roots.pop();
         self.line("}");
     }
     pub(super) fn block(&mut self, body: &[IrStmt]) -> Result<(), String> {
@@ -28,16 +30,17 @@ impl Frame<'_, '_> {
     fn budget(&mut self) {
         self.line(format!("llg_budget_point({});", c_string_literal(self.ctx.func.map(|f| f.c_name.as_str()).unwrap_or(self.ctx.model.design_name()))));
     }
-    fn condition(&mut self, expr: &IrExpr) -> Result<String, String> {
+    pub(super) fn condition(&mut self, expr: &IrExpr) -> Result<String, String> {
         let value = self.expression(expr)?;
         let result = self.scalar("int", value.truth());
         self.discard(value);
         Ok(result)
     }
-    fn goto(&mut self, label: &str) -> Result<(), String> {
+    pub(super) fn goto(&mut self, label: &str) -> Result<(), String> {
         let target = self.labels.iter().rposition(|labels| labels.contains_key(label))
             .ok_or_else(|| pending("jumps into another lexical scope"))?;
         if self.labels[target][label] { return Err(pending("backward unstructured jumps")); }
+        self.leave_activations(Some(target));
         let preserved = self.temp_roots[target].clone();
         for slot in 0..self.slots.len() {
             if self.slots[slot] && !preserved.get(slot).copied().unwrap_or(false) {
@@ -56,33 +59,93 @@ impl Frame<'_, '_> {
     pub(super) fn statement(&mut self, statement: &IrStmt) -> Result<(), String> {
         match statement {
             IrStmt::Nop => self.line(";"),
+            IrStmt::Container(operation) => self.container_statement(operation)?,
+            IrStmt::StreamAssign { source, slice, direction, targets } =>
+                self.stream_assignment(source, *slice, *direction, targets)?,
+            IrStmt::Object(operation) => self.object_statement(operation)?,
+            IrStmt::DeclString { name, init } => {
+                let binding = self.native_local(name, super::native::NativeKind::String);
+                if let Some(value) = init { self.string_assign(&binding.address, value)?; }
+            }
+            IrStmt::DelayedStringAssign { target, rhs, ticks } => {
+                let binding = self.native_lookup(target, super::native::NativeKind::String)?;
+                if binding.automatic { return Err(pending("delayed writes to automatic string storage")); }
+                let value = self.string(rhs)?;
+                let ticks = self.delay(ticks)?;
+                self.line(format!("llg_string_nba_after({}, {}, {ticks});", binding.address, value.take_string()));
+                self.native_discard(value);
+            }
+            IrStmt::RandomSeed { seed } => {
+                let seed = self.expression(seed)?;
+                self.line(format!("llg_process_srandom({});", seed.code)); self.discard(seed);
+            }
+            IrStmt::RandomStateSet { state } => {
+                let state = self.string(state)?;
+                self.line(format!("(void)llg_process_set_randstate({});", state.take_string()));
+                self.native_discard(state);
+            }
+            IrStmt::VpiCall { site, name, args } => { self.vpi_call(*site, name, args, None)?; }
+            IrStmt::System(command) => { let value = self.system_command(command.as_ref())?; self.discard(value); }
+            IrStmt::Stochastic(op) => self.stochastic(op)?,
+            IrStmt::PrintTimescale { unit_fs, precision_fs, label } => self.line(format!(
+                "printf(\"%s: timescale is {}/{}\\n\", {});", super::super::constants::fs_to_timescale_str(*unit_fs),
+                super::super::constants::fs_to_timescale_str(*precision_fs), c_string_literal(label))),
+            IrStmt::TimeFormat { units, precision, suffix, minimum_field_width } =>
+                self.time_format(units, precision, suffix, minimum_field_width)?,
             IrStmt::Block(body) => self.block(body)?,
+            IrStmt::EventCapture { name, source } => {
+                // Snapshot object identity, not the address of an alias that
+                // may be rebound while the inline task is suspended.
+                let address = self.event_address(source)?;
+                let pointer = self.scalar("llg_event_t*", address);
+                let local = self.name("event_capture");
+                self.line(format!("llg_event_t {local} = {{ {pointer} ? {pointer}->object : NULL }};"));
+                self.event_bindings.last_mut().expect("event scope").insert(name.clone(), format!("&{local}"));
+            }
             IrStmt::DeclLocal { name, width, signed, init, two_state } =>
                 self.local(name, *width, *signed, *two_state, init.as_deref())?,
+            IrStmt::InertialAssign { lhs, rhs, delay } => self.inertial_assign(lhs, rhs, *delay)?,
+            IrStmt::PcaAssign { .. } | IrStmt::PcaDrive { .. } => self.pca_task(statement)?,
+            IrStmt::PcaDeassign { sig } => {
+                let signal = self.ctx.model.signal(*sig);
+                let suffix = if signal.ty.width() == 0 { "_d" } else { "" };
+                self.line(format!("llg_pca_deassign{suffix}(&{});", signal.c_name));
+            }
+            IrStmt::Force { lhs, eval, reads, .. } => self.force_task(lhs, Some(eval), reads)?,
+            IrStmt::Release { lhs } => self.force_task(lhs, None, &[])?,
+            IrStmt::Memory { .. } => self.memory_task(statement)?,
+            IrStmt::MonitorSet { .. } => self.monitor_task(statement)?,
+            IrStmt::MonitorEnable(enabled) => self.line(format!("llg_monitor_set({});", u8::from(*enabled))),
+            IrStmt::FileControl { op, descriptor } => self.file_control(*op, descriptor.as_ref())?,
             IrStmt::Assign { lhs, rhs, nba } => {
                 let value = self.expression(rhs)?;
-                let target = self.target(lhs)?;
-                self.store(&target, value, *nba, "0")?;
-                self.release_target(target);
+                let writes = self.prepare_assignment(lhs, value)?;
+                for (target, value) in writes {
+                    self.store(&target, value, *nba, "0")?;
+                    self.release_target(target);
+                }
             }
             IrStmt::DelayedAssign { lhs, rhs, ticks } => {
                 let value = self.expression(rhs)?;
-                let target = self.target(lhs)?;
+                let writes = self.prepare_assignment(lhs, value)?;
                 let ticks = self.delay(ticks)?;
-                self.store(&target, value, true, &ticks)?;
-                self.release_target(target);
+                for (target, value) in writes {
+                    self.store(&target, value, true, &ticks)?;
+                    self.release_target(target);
+                }
             }
             IrStmt::If { cond, then_, els, check } => {
-                if !check.is_none() { return Err(pending("unique/priority diagnostics")); }
+                if !check.is_none() { self.qualified_if(cond, then_, els.as_deref(), check)?; self.cancellation_check()?; return Ok(()); }
                 let condition = self.condition(cond)?;
                 self.line(format!("if ({condition})"));
                 self.block(then_)?;
                 if let Some(body) = els { self.line("else"); self.block(body)?; }
             }
             IrStmt::While { cond, body } => {
-                self.line("for (;;) {"); self.budget();
+                self.line("for (;;) {");
                 let condition = self.condition(cond)?;
                 self.line(format!("if (!{condition}) break;"));
+                self.budget();
                 self.block(body)?; self.line("}");
             }
             IrStmt::Forever { body } => {
@@ -92,9 +155,10 @@ impl Frame<'_, '_> {
             IrStmt::For { init, cond, incr, body } => {
                 self.begin_block(init);
                 for statement in init { self.statement(statement)?; }
-                self.line("for (;;) {"); self.budget();
+                self.line("for (;;) {");
                 let condition = self.condition(cond)?;
                 self.line(format!("if (!{condition}) break;"));
+                self.budget();
                 self.block(body)?; self.block(incr)?;
                 self.line("}"); self.end_block();
             }
@@ -111,7 +175,7 @@ impl Frame<'_, '_> {
                 self.discard(one); self.line("}"); self.discard(count);
             }
             IrStmt::Case { sel, kind, items, check } => {
-                if !check.is_none() { return Err(pending("qualified case diagnostics")); }
+                if !check.is_none() { self.qualified_case(sel, *kind, items, check)?; self.cancellation_check()?; return Ok(()); }
                 let selector = self.expression(sel)?;
                 let matched = self.scalar("int", "0".to_owned());
                 for item in items.iter().filter(|item| !item.exprs.is_empty()) {
@@ -152,6 +216,63 @@ impl Frame<'_, '_> {
                 self.wait_any(sens, None)?; self.line("}"); self.block(body)?;
             }
             IrStmt::WaitEvents { specs } => self.wait_events(specs)?,
+            IrStmt::ClockingSample { source, sample, mode } => {
+                let source = self.canonical_signal(*source);
+                let sample = self.canonical_signal(*sample);
+                self.line(match mode {
+                    IrClockingSampleMode::OneStep => format!("(void)llg_sampled_copy({source}, {sample});"),
+                    IrClockingSampleMode::Observed => format!("(void)llg_clocking_sample_observed({source}, {sample});"),
+                    IrClockingSampleMode::History(ticks) => format!("(void)llg_clocking_sample_history({source}, {sample}, {ticks}ULL);"),
+                });
+            }
+            IrStmt::ClockingEventTrigger { ev } => {
+                let event = self.event_address(ev)?;
+                self.line(format!("(void)llg_clocking_event_observed({event});"));
+            }
+            IrStmt::ClockingDrive { lhs, rhs, ticks, specs } => self.clocking_drive(lhs, rhs, ticks, specs)?,
+            IrStmt::ClockingCycleWait { count, specs } => {
+                let count = self.expression(count)?;
+                if count.width == 0 { return Err("clocking cycle count must be integral".to_owned()); }
+                let sources = self.clocking_sources(specs)?;
+                self.line(format!("llg_wait_clocking_cycles({sources}, {}, {});", specs.len(), count.code));
+                self.discard(count);
+            }
+            IrStmt::NonblockingEventTriggerWhen { ev, specs, repeat } => {
+                let target = self.event_address(ev)?;
+                let target = self.scalar("llg_event_t*", target);
+                let handle = self.name("event_target");
+                self.line(format!("llg_event_t {handle} = {{ ({target}) ? ({target})->object : NULL }};"));
+                let count = self.event_repeat(repeat.as_ref())?;
+                let sources = self.event_specs(specs)?;
+                self.line(format!("llg_nba_event_when({sources}, {}, &{handle}, {count});", specs.len()));
+            }
+            IrStmt::NonblockingEventAssignWhen { specs, repeat, action, captures, .. } => {
+                // An intra-assignment control captures its RHS and destination
+                // selectors before evaluating the repeat/delay control.
+                let captures = self.prepare_captures(captures.iter().map(|c| (c.storage(), c.initial())))?;
+                let count = self.event_repeat(repeat.as_ref())?;
+                // Context expressions can exit nonlocally. Keep action values
+                // in registered slots until they, too, have finished.
+                let sources = self.event_specs(specs)?;
+                let frame = self.name("event_action");
+                self.publish_captures(&frame, captures);
+                self.line(format!("llg_nba_event_assign_when({sources}, {}, {count}, {action}, {frame});", specs.len()));
+            }
+            IrStmt::WaitOrder { events, success, failure } => {
+                if events.is_empty() { return Err("wait_order requires at least one event".to_owned()); }
+                let mut addresses = Vec::new();
+                for event in events { addresses.push(self.event_address(event)?); }
+                let list = if addresses.is_empty() { "NULL".to_owned() } else {
+                    let list = self.name("ordered_events");
+                    self.line(format!("const llg_event_t* {list}[] = {{ {} }};", addresses.join(", ")));
+                    list
+                };
+                let success_flag = self.scalar("int", "0".to_owned());
+                self.line(format!("llg_wait_order({list}, {}, &{success_flag});", events.len()));
+                self.cancellation_check()?;
+                self.line(format!("if ({success_flag} > 0)")); self.block(success)?;
+                self.line(format!("else if ({success_flag} < 0)")); self.block(failure)?;
+            }
             IrStmt::EventTrigger { ev } => {
                 let event = self.event_address(ev)?; self.line(format!("llg_event_trigger({event});"));
             }
@@ -168,17 +289,23 @@ impl Frame<'_, '_> {
             }
             IrStmt::WaitEventTriggered { event, body } => {
                 let event = self.event_address(event)?;
-                self.line(format!("llg_wait_event_triggered({event});")); self.block(body)?;
+                self.line(format!("llg_wait_event_triggered({event});"));
+                self.cancellation_check()?; self.block(body)?;
             }
             IrStmt::Fork { join_kind, branches, target } => {
-                if target.is_some() { return Err(pending("named fork activation cleanup")); }
                 let kind = match join_kind { IrJoinKind::Join => "LLG_JOIN", IrJoinKind::Any => "LLG_JOIN_ANY", IrJoinKind::None => "LLG_JOIN_NONE" };
-                let group = self.scalar("llg_fork_group_t*", format!("llg_fork_group_new({kind})"));
+                let group = self.fork_group(kind, *target);
                 for (function, label) in branches {
                     self.line(format!("llg_fork({function}, {}, {group});", c_string_literal(label)));
                 }
                 self.line(format!("llg_join({group});"));
             }
+            IrStmt::CapturedFork { join_kind, branches, target } => {
+                self.captured_fork(*join_kind, branches, *target)?;
+            }
+            IrStmt::ActivationScope { target, exit, body } => self.activation_scope(*target, exit, body)?,
+            IrStmt::DisableTarget { target } => self.line(format!(
+                "llg_disable_target({}u, {}u);", target.declaration(), target.instance())),
             IrStmt::WaitFork => self.line("llg_wait_fork();"),
             IrStmt::DisableFork => self.line("llg_disable_fork();"),
             IrStmt::Display { fmt, args, newline, .. } => {
@@ -187,11 +314,37 @@ impl Frame<'_, '_> {
             }
             IrStmt::DisplayTyped { fmt, args, scope, newline, descriptor, time_unit_fs, .. } =>
                 self.display(fmt, args, scope, *newline, descriptor.as_ref(), *time_unit_fs)?,
-            IrStmt::Severity { level, fmt, args, scope, location, fatal_finish_number } => {
+            IrStmt::AssertionControl { kind, args, scopes } => self.assertion_control(*kind, args, scopes)?,
+            IrStmt::Expect { identity } => {
+                self.line(format!("if (!llg_assertion_expect_start({identity}ULL)) {{"));
+                self.leave_activations(None);
+                self.line("goto _llg_return; }");
+                self.line(format!("llg_wait_assertion({identity}ULL);"));
+            }
+            IrStmt::DeferredImmediateAssertion { .. } => self.deferred_assertion(statement)?,
+            IrStmt::ImmediateAssertion { kind, condition, if_true, if_false, label, location, identity } => {
+                let condition = self.condition(condition)?;
+                let label = c_string_literal(label);
+                let location = c_string_literal(location);
+                self.line(format!("if ({condition}) {{"));
+                if *kind == IrImmediateAssertionKind::Cover {
+                    self.line(format!("llg_assertion_cover({identity}ULL, {label}, {location});"));
+                }
+                if let Some(body) = if_true { self.block(body)?; }
+                self.line("} else {");
+                if let Some(body) = if_false { self.block(body)?; }
+                else if *kind != IrImmediateAssertionKind::Cover {
+                    let kind = if *kind == IrImmediateAssertionKind::Assert { "LLG_ASSERTION_ASSERT" } else { "LLG_ASSERTION_ASSUME" };
+                    self.line(format!("llg_assertion_failure({kind}, {identity}ULL, {label}, {location});"));
+                }
+                self.line("}");
+            }
+            IrStmt::Severity { level, fmt, args, scope, location, fatal_finish_number, runtime_failure } => {
                 let values = self.formatted_arguments(args, self.ctx.model.precision_fs)?;
                 let (scope, location) = (c_string_literal(scope), c_string_literal(location));
                 if *level == IrSeverityLevel::Fatal {
                     let number = fatal_finish_number.ok_or_else(|| "fatal task missing finish number".to_owned())?;
+                    if *runtime_failure { self.line("llg_rt_mark_failed();"); }
                     self.line(format!("llg_rt_fatal_typed({number}, {fmt}, {values}, {}, {scope}, {location});", args.len()));
                 } else {
                     let level = match level { IrSeverityLevel::Info => "LLG_SEVERITY_INFO", IrSeverityLevel::Warning => "LLG_SEVERITY_WARNING", _ => "LLG_SEVERITY_ERROR" };
@@ -210,6 +363,7 @@ impl Frame<'_, '_> {
                     else { self.line(format!("sv4_move({}, &{});", target.address, value.code)); }
                     self.discard(value);
                 }
+                self.leave_activations(None);
                 self.line("goto _llg_return;");
             }
             IrStmt::Label(label) => {
@@ -250,6 +404,6 @@ impl Frame<'_, '_> {
             IrStmt::ProgramExit => self.line("llg_program_exit();"),
             _ => return Err(pending("this statement's capture/cleanup path")),
         }
-        Ok(())
+        self.cancellation_check()
     }
 }

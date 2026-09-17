@@ -264,7 +264,7 @@ for other unit-test and implementation domains.
 - Run `python3 tests/runtime_value_storage/validate.py --compiler gcc --sanitizers`
   for native Debug/Release components, strict flat C/ABI checks, independent
   oracles and exact live-allocation plateau measurements.
-  - Add `--full` to require Rust checks, both opted-in emitted-model tests,
+  - Add `--full` to require Rust checks, both active emitted-model tests,
     public HDL cases in both optimizer modes, and the repository suite.
   - New or empty output directories retain `report.json` and actual command logs;
     missing prerequisites and excluded platform components never count as passes.
@@ -276,3 +276,44 @@ for other unit-test and implementation domains.
   Linux, macOS and Windows component checks plus a manual Linux full-host gate.
   Reports and command logs are printed to workflow logs; it uploads no artifacts.
   CI configuration is not native-platform execution evidence.
+
+The dynamic component inventory also builds the original runtime and waveform
+self-tests with allocation accounting. Numeric vectors and waveform cleanup run
+in the sanitizer-safe lane; complete scheduler/region/stop-resume/budget probes
+use native coroutines. Callback-finish probes cover packed snapshot/result cleanup
+and all-context adoption, including shared eval/condition frames. Exact-address
+scope-index and event-array probes cover retained targets, index churn and invalid
+handle waits without weakening existing assertions. The checked inventory must
+include these tests when their scheduler/waveform prerequisites are enabled.
+
+The positive HDL ownership fixtures include numeric inputs/defaults/inout copy-in,
+owned captured forks, evaluated/filtered waits and indexed events. They run through
+`llg` with both optimizer settings; source addition or a migration diagnostic is
+not a passing result. Whole-model Rust emitter tests also verify shared-context
+reference counts and ordered index destruction, rather than accepting detached
+expression fragments as owners.
+
+The standalone value, container and file-I/O Cargo probes share their C sources
+with the component suite (`*_isolation_probe.c`), so component validation includes
+the original assertions and per-vector ownership cleanup. Run these individually:
+
+```sh
+cargo test --locked --test runtime_values --test runtime_containers --test runtime_file_io
+cargo test --locked --lib --no-default-features sim::emit_c::owned::tests
+cargo test --locked --no-default-features --test sim_dynamic_ownership -- --test-threads=1
+```
+
+The active `owned/tests/nextest_regressions.rs` models exercise the real emitter's
+cancellation-before-copyout, lexical activation exit, inertial, strobe and force
+paths. `nextest_control_probe.c` checks similar runtime patterns without Rust;
+its native pass does not substitute for those generated-model tests. The full
+runner and main CI select the active tests without `--ignored`.
+
+### Native ownership source-repair regressions
+
+The native-value follow-up uses the existing public container/string/file/process
+HDL suites without weakening their expected results. Nine structural tests in
+`src/sim/emit_c/owned/tests/native_values.rs` check emitter ownership contracts.
+The component guide documents `native_value_scopes` and `native_input_callbacks`;
+these are runtime probes and must not be reported as Rust/HDL passes. Failure-target
+manifests are delivery inventories, not the maintained language feature checklist.

@@ -105,7 +105,7 @@ fn null_class_handle_access_fails_at_runtime_in_both_optimizer_modes() {
             .map_err(|error| format!("{variant} C model build: {error}"))?;
             let error = sim_harness::run_executable_output(&executable)
                 .expect_err("null class access must terminate the model");
-            if !error.contains("llg: null class handle access: Box.value") {
+            if !error.contains("llg: null class handle access: method call") {
                 return Err(format!(
                     "{variant}: unexpected null-handle diagnostic: {error}"
                 ));

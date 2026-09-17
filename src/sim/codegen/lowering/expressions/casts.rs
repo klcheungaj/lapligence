@@ -227,11 +227,10 @@ impl<'a> Codegen<'a> {
                         shortreal: false,
                     },
                     rhs: IrExpr::new(
-                        IrExprKind::Verbatim {
-                            code: "0".to_owned(),
-                            width: 1,
-                            signed: false,
-                        },
+                        IrExprKind::Const(IrConst {
+                            bits: vec![0], x: vec![0], z: vec![0], width: 1,
+                            signed: false, real: None, fill: None,
+                        }),
                         1,
                         false,
                         None,

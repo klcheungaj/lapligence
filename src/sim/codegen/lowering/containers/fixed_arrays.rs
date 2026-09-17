@@ -802,25 +802,17 @@ impl<'a> Codegen<'a> {
                 nba: !blocking,
             });
         }
-        let mismatch = IrExpr::new(
-            IrExprKind::Verbatim {
-                code: "({ fprintf(stderr, \"fixed unpacked-array assignment size mismatch\\n\"); abort(); sv4_from_u64(0, 1, 0); })".to_owned(),
-                width: 1,
-                signed: false,
-            },
-            1,
-            false,
-            None,
-        );
         captures.push(IrStmt::If {
             cond: condition,
             then_: then_body,
-            els: Some(vec![IrStmt::DeclLocal {
-                name: format!("_p30_size_error_{}_{}", lhs.0, rhs.0),
-                width: 1,
-                signed: false,
-                init: Some(Box::new(mismatch)),
-                two_state: false,
+            els: Some(vec![IrStmt::Severity {
+                level: crate::sim::ir::IrSeverityLevel::Fatal,
+                fmt: "\"fixed unpacked-array assignment size mismatch\"".to_owned(),
+                args: Vec::new(),
+                scope: path.to_owned(),
+                location: self.source_location(lhs),
+                fatal_finish_number: Some(0),
+                runtime_failure: true,
             }]),
             check: IrUniquePriorityCheck::None,
         });
@@ -972,25 +964,17 @@ impl<'a> Codegen<'a> {
             });
             cursor = right;
         }
-        let mismatch = IrExpr::new(
-            IrExprKind::Verbatim {
-                code: "({ fprintf(stderr, \"fixed bit-stream cast size mismatch\\n\"); abort(); sv4_from_u64(0, 1, 0); })".to_owned(),
-                width: 1,
-                signed: false,
-            },
-            1,
-            false,
-            None,
-        );
         captures.push(IrStmt::If {
             cond: condition,
             then_: then_body,
-            els: Some(vec![IrStmt::DeclLocal {
-                name: format!("_bitstream_size_error_{}_{}", lhs.0, rhs.0),
-                width: 1,
-                signed: false,
-                init: Some(Box::new(mismatch)),
-                two_state: false,
+            els: Some(vec![IrStmt::Severity {
+                level: crate::sim::ir::IrSeverityLevel::Fatal,
+                fmt: "\"fixed bit-stream cast size mismatch\"".to_owned(),
+                args: Vec::new(),
+                scope: path.to_owned(),
+                location: self.source_location(lhs),
+                fatal_finish_number: Some(0),
+                runtime_failure: true,
             }]),
             check: IrUniquePriorityCheck::None,
         });

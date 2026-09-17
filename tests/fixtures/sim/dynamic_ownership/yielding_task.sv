@@ -16,5 +16,6 @@ module tb;
             value = result;
         end
         $display("%0d", value);
+        $finish(0);
     end
 endmodule

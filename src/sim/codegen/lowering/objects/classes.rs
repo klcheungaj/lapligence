@@ -132,34 +132,25 @@ impl Codegen<'_> {
             .ok_or_else(|| "class method call has no receiver".to_owned())
     }
 
-    fn class_receiver_code(&self, receiver: &IrChandleExpr) -> String {
-        match receiver {
-            IrChandleExpr::Null => "NULL".to_owned(),
-            IrChandleExpr::Verbatim(code) => code.clone(),
-            IrChandleExpr::Read(index) => self.model.objects[*index].c_name.clone(),
-            IrChandleExpr::LocalRead(name) => name.clone(),
-            IrChandleExpr::FormalRead(index) => {
-                let Some(function) = self.func.as_ref() else {
-                    return format!("a{index}");
-                };
-                let Some((formal, _)) = function
-                    .chandle_read
-                    .iter()
-                    .find(|(_, value)| matches!(value, IrChandleExpr::FormalRead(formal) if formal == index))
-                else {
-                    return format!("a{index}");
-                };
-                if let Some(ChandleTarget::Local(name)) = function.chandle_write.get(formal) {
-                    name.clone()
-                } else {
-                    format!("*r{index}")
-                }
-            }
-            IrChandleExpr::ContainerGet { .. }
-            | IrChandleExpr::ContainerGetNested { .. }
-            | IrChandleExpr::AssociativeGet { .. }
-            | IrChandleExpr::Call { .. } => "NULL".to_owned(),
-        }
+    pub(super) fn native_access_symbol(
+        &mut self,
+        receiver: IrChandleExpr,
+        kind: crate::sim::ir::IrNativeAccessKind,
+    ) -> String {
+        self.native_access_symbol_at(receiver, kind, None)
+    }
+
+    pub(super) fn native_access_symbol_at(
+        &mut self,
+        receiver: IrChandleExpr,
+        kind: crate::sim::ir::IrNativeAccessKind,
+        site: Option<String>,
+    ) -> String {
+        let name = format!("_llg_access_{}", self.model.native_accesses.len());
+        self.model.native_accesses.push(crate::sim::ir::IrNativeAccess {
+            name: name.clone(), receiver, kind, site, function: self.cur_fn_ir,
+        });
+        name
     }
 
     fn class_receiver_for(
@@ -276,28 +267,14 @@ impl Codegen<'_> {
         {
             return Ok(None);
         }
-        let Some((class, _index, class_field)) = self.class_field_layout(field) else {
+        let Some((class, index, _)) = self.class_field_layout(field) else {
             return Ok(None);
         };
-        let (width, signed, _two_state) = self.class_field_value_shape(field)?;
-        let field_name = class_field.c_name.clone();
+        let (width, signed, _) = self.class_field_value_shape(field)?;
         let receiver = self.class_receiver_for(path, node, field)?;
-        let receiver = self.class_receiver_code(&receiver);
-        let code = format!(
-            "((llg_class_{class}_t*)llg_class_require({receiver}, \"{}\"))->{}",
-            self.node(field).full_name,
-            field_name
-        );
-        Ok(Some(IrExpr::new(
-            IrExprKind::Verbatim {
-                code,
-                width,
-                signed,
-            },
-            width,
-            signed,
-            None,
-        )))
+        let name = self.native_access_symbol(receiver,
+            crate::sim::ir::IrNativeAccessKind::ClassField { class, field: index });
+        Ok(Some(IrExpr::new(IrExprKind::LocalRead(name), width, signed, None)))
     }
 
     pub(in super::super) fn class_field_lhs(
@@ -318,29 +295,15 @@ impl Codegen<'_> {
         {
             return Ok(None);
         }
-        let Some((class, _index, class_field)) = self.class_field_layout(field) else {
+        let Some((class, index, layout)) = self.class_field_layout(field) else {
             return Ok(None);
         };
+        let shortreal = matches!(layout.ty, IrClassFieldType::Real { shortreal: true });
         let (width, signed, two_state) = self.class_field_value_shape(field)?;
-        let field_name = class_field.c_name.clone();
-        let shortreal = matches!(
-            class_field.ty,
-            crate::sim::ir::IrClassFieldType::Real { shortreal: true }
-        );
         let receiver = self.class_receiver_for(path, node, field)?;
-        let receiver = self.class_receiver_code(&receiver);
-        let addr = format!(
-            "&(((llg_class_{class}_t*)llg_class_require({receiver}, \"{}\"))->{})",
-            self.node(field).full_name,
-            field_name
-        );
-        Ok(Some(IrLhs::WholeRef {
-            addr,
-            width,
-            signed,
-            two_state,
-            shortreal,
-        }))
+        let name = self.native_access_symbol(receiver,
+            crate::sim::ir::IrNativeAccessKind::ClassField { class, field: index });
+        Ok(Some(IrLhs::WholeRef { addr: format!("&{name}"), width, signed, two_state, shortreal }))
     }
 
     pub(super) fn class_field_chandle_lvalue(
@@ -354,17 +317,10 @@ impl Codegen<'_> {
         if !matches!(self.kind(field), NodeKind::Var { ty } if is_handle_kind(&ty.kind)) {
             return Ok(None);
         }
-        let Some((class, _index, class_field)) = self.class_field_layout(field) else {
-            return Ok(None);
-        };
-        let field_name = class_field.c_name.clone();
-        let field_full_name = self.node(field).full_name.clone();
+        let Some((class, index, _)) = self.class_field_layout(field) else { return Ok(None); };
         let receiver = self.class_receiver_for(path, node, field)?;
-        let receiver = self.class_receiver_code(&receiver);
-        Ok(Some(format!(
-            "((llg_class_{class}_t*)llg_class_require({receiver}, \"{}\"))->{}",
-            field_full_name, field_name
-        )))
+        Ok(Some(self.native_access_symbol(receiver,
+            crate::sim::ir::IrNativeAccessKind::ClassField { class, field: index })))
     }
 
     pub(in super::super) fn class_field_string_lvalue(
@@ -378,16 +334,10 @@ impl Codegen<'_> {
         if !matches!(self.kind(field), NodeKind::Var { ty } if ty.kind == "string") {
             return Ok(None);
         }
-        let Some((class, _, layout)) = self.class_field_layout(field) else {
-            return Ok(None);
-        };
-        let name = layout.c_name.clone();
+        let Some((class, index, _)) = self.class_field_layout(field) else { return Ok(None); };
         let receiver = self.class_receiver_for(path, node, field)?;
-        Ok(Some(format!(
-            "((llg_class_{class}_t*)llg_class_require({}, \"string property\"))->{}",
-            self.class_receiver_code(&receiver),
-            name,
-        )))
+        Ok(Some(self.native_access_symbol(receiver,
+            crate::sim::ir::IrNativeAccessKind::ClassField { class, field: index })))
     }
 
     pub(super) fn lower_new_class(
@@ -420,10 +370,7 @@ impl Codegen<'_> {
                     ))
                 }
             };
-            return Ok(IrChandleExpr::Verbatim(format!(
-                "llg_semaphore_new({})",
-                self.render_ir_code(&keys)?
-            )));
+            return Ok(IrChandleExpr::SemaphoreNew(Box::new(keys)));
         }
         let name = class_name.unwrap_or("<specialized class>");
         let class_node = class_type
@@ -459,30 +406,7 @@ impl Codegen<'_> {
         // language properties ahead of that sequence.
         let object_name = format!("_llg_obj_{}", node.index());
         let receiver = IrChandleExpr::LocalRead(object_name.clone());
-        let mut code = format!(
-            "({{ llg_class_{class}_t *{object_name} = (llg_class_{class}_t*)calloc(1, sizeof(llg_class_{class}_t)); "
-        );
-        code.push_str(&format!(
-            "if (!{object_name}) {{ fprintf(stderr, \"llg: class allocation failed\\n\"); exit(EXIT_FAILURE); }} {object_name}->_llg_class_id = {class}; "
-        ));
-        // Initialize representation metadata, not explicit language defaults.
-        // Base constructors may access as-yet uninitialized derived properties;
-        // those reads must never encounter a zero-width/unallocated sv4 cell.
-        for field in &self.model.classes[class].fields {
-            if let IrClassFieldType::Packed {
-                width,
-                signed,
-                two_state,
-            } = field.ty
-            {
-                let value = if two_state {
-                    format!("sv4_from_u64(0, {width}, {})", signed as u8)
-                } else {
-                    format!("sv4_x({width}, {})", signed as u8)
-                };
-                code.push_str(&format!("{object_name}->{} = {value}; ", field.c_name));
-            }
-        }
+        let mut body = Vec::new();
         if let Some(constructor) = constructor {
             let (name, callee) = match self.kind(constructor) {
                 NodeKind::FuncCall { name, callee, .. } => (name.clone(), *callee),
@@ -493,18 +417,15 @@ impl Codegen<'_> {
                 call.receiver = Some(receiver);
                 call.virtual_dispatch = false;
             }
-            code.push_str(&format!("{}; ", self.render_ir_code(&call)?));
+            body.push(IrStmt::PlusArg(call));
         } else {
-            let statements = self.lower_implicit_class_construction(path, class_node, receiver)?;
-            for statement in statements {
-                code.push_str(&crate::sim::emit_c::render_stmt(
-                    &self.render_ctx(),
-                    &statement,
-                )?);
-            }
+            body = self.lower_implicit_class_construction(path, class_node, receiver)?;
         }
-        code.push_str(&format!("(void*){object_name}; }})"));
-        Ok(IrChandleExpr::Verbatim(code))
+        let index = self.model.class_allocations.len();
+        self.model.class_allocations.push(crate::sim::ir::IrClassAllocation {
+            class, local: object_name, body, function: self.cur_fn_ir,
+        });
+        Ok(IrChandleExpr::Construct(index))
     }
 
     /// Property defaults belong to the new instance, not an enclosing factory
@@ -528,11 +449,8 @@ impl Codegen<'_> {
             let mut statements = Vec::new();
             for (node, index) in fields {
                 let field = self.model.classes[class].fields[index].clone();
-                let target = format!(
-                    "((llg_class_{class}_t*)({}))->{}",
-                    self.class_receiver_code(&receiver),
-                    field.c_name
-                );
+                let target = self.native_access_symbol(receiver.clone(),
+                    crate::sim::ir::IrNativeAccessKind::ClassField { class, field: index });
                 let initializer = self.db.var_initializer(node);
                 match field.ty {
                     IrClassFieldType::Packed {
@@ -544,24 +462,12 @@ impl Codegen<'_> {
                             let value = self.lower_expr(path, initializer)?;
                             ir_to_storage(value, width, signed, two_state)?
                         } else {
-                            IrExpr::new(
-                                IrExprKind::Verbatim {
-                                    code: if two_state {
-                                        format!("sv4_from_u64(0, {width}, {})", signed as u8)
-                                    } else {
-                                        format!("sv4_x({width}, {})", signed as u8)
-                                    },
-                                    width,
-                                    signed,
-                                },
-                                width,
-                                signed,
-                                None,
-                            )
+                            IrExpr::new(IrExprKind::Fill(if two_state { 0 } else { 2 }),
+                                width, signed, None)
                         };
                         statements.push(IrStmt::Assign {
                             lhs: IrLhs::WholeRef {
-                                addr: format!("&({target})"),
+                                addr: format!("&{target}"),
                                 width,
                                 signed,
                                 two_state,
@@ -576,20 +482,13 @@ impl Codegen<'_> {
                             .map(|node| self.lower_expr(path, node))
                             .transpose()?
                             .unwrap_or_else(|| {
-                                IrExpr::new(
-                                    IrExprKind::Verbatim {
-                                        code: "0.0".to_owned(),
-                                        width: 0,
-                                        signed: true,
-                                    },
-                                    0,
-                                    true,
-                                    None,
-                                )
+                                IrExpr::new(IrExprKind::CastToReal {
+                                    a: Box::new(lhs_integer_expr(0)), shortreal,
+                                }, 0, false, None)
                             });
                         statements.push(IrStmt::Assign {
                             lhs: IrLhs::WholeRef {
-                                addr: format!("&({target})"),
+                                addr: format!("&{target}"),
                                 width: 0,
                                 signed: false,
                                 two_state: false,

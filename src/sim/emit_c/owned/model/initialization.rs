@@ -7,7 +7,7 @@ pub(in crate::sim::emit_c) fn storage_lifecycle(model: &IrModel, out: &mut Strin
     let mut destroy = String::new();
     let mut emitted = HashSet::new();
     for signal in &model.signals {
-        if signal.net_driver.is_some() || signal.alias.is_some() || signal.omit || !emitted.insert(signal.c_name.clone()) { continue; }
+        if signal.net_driver.is_some() || signal.alias.is_some() || (signal.omit && signal.net_alias.is_empty()) || !emitted.insert(signal.c_name.clone()) { continue; }
         defaults(&mut initialize, &mut destroy, &signal.c_name, signal.ty.width(), signal.ty.signed(), signal.ty.two_state());
     }
     emitted.clear();
@@ -21,16 +21,36 @@ pub(in crate::sim::emit_c) fn storage_lifecycle(model: &IrModel, out: &mut Strin
         initialize.push_str(&format!("    sv4_replace(&{}.resolved, sv4_fill({fill}, {}, {}));\n", group.c_name, group.width, u8::from(group.signed)));
         destroy.push_str(&format!("    sv4_destroy(&{}.resolved);\n    {}.propagation = NULL;\n", group.c_name, group.c_name));
     }
+    for (index, signal) in model.signals.iter().enumerate() {
+        if signal.net_alias.is_empty() { continue; }
+        initialize.push_str(&format!("    sv4_copy(&llg_net_alias_{index}.visible, &{});\n", signal.c_name));
+        destroy.push_str(&format!("    sv4_destroy(&llg_net_alias_{index}.visible);\n"));
+    }
+    for group in &model.net_groups {
+        initialize.push_str(&format!("    {}.n_aliases = 0;\n", group.c_name));
+        destroy.push_str(&format!("    {}.n_aliases = 0;\n", group.c_name));
+    }
+    for (index, signal) in model.signals.iter().enumerate() {
+        if !signal.net_alias.is_empty() {
+            initialize.push_str(&format!("    llg_net_alias_bind(&llg_net_alias_{index});\n"));
+        }
+    }
     emitted.clear();
     for (index, function) in model.funcs.iter().enumerate() {
         if !function.automatic {
+            if function.ret_string {
+                string_defaults(&mut initialize, &mut destroy, &format!("_llg_native_ret_{index}"));
+            } else if function.ret_chandle {
+                initialize.push_str(&format!("    _llg_native_ret_{index} = NULL;\n"));
+            }
             if let Some(ty) = function.ret {
                 defaults(&mut initialize, &mut destroy, &format!("_llg_ret_{index}"), ty.width(), ty.signed(), ty.two_state());
             }
         }
         for local in &function.locals {
             if emitted.insert(local.c_name().to_owned()) {
-                defaults(&mut initialize, &mut destroy, local.c_name(), if local.real { 0 } else { local.width() }, local.signed(), local.two_state);
+                if local.string { string_defaults(&mut initialize, &mut destroy, local.c_name()); }
+                else { defaults(&mut initialize, &mut destroy, local.c_name(), if local.real { 0 } else { local.width() }, local.signed(), local.two_state); }
             }
         }
     }
@@ -44,17 +64,53 @@ pub(in crate::sim::emit_c) fn storage_lifecycle(model: &IrModel, out: &mut Strin
         initialize.push_str(&format!("    {bind}(&{}[_i], &{}_llg_element_deps[_i]);\n    {bind}(&{}[_i], &{}_llg_contents_dep);\n    }}\n", array.c_name, array.c_name, array.c_name, array.c_name));
         destroy.push_str("    }\n");
     }
-    for event in &model.events {
+    for container in &model.containers {
+        let name = &container.c_name;
+        defaults(&mut initialize, &mut destroy, &format!("{name}_llg_contents_dep"), 1, false, true);
+        defaults(&mut initialize, &mut destroy, &format!("{name}_llg_shape_dep"), 1, false, true);
+        initialize.push_str(&super::super::super::containers::declaration_and_init(container)?.1);
+        destroy.push_str(&super::super::super::containers::destroy(container));
+        if let Some(size) = container.initial_size {
+            let function = if container.element.is_packed() { "llg_dyn_new" } else { "llg_dyn_value_new" };
+            initialize.push_str(&format!("    {{ sv4_t size = sv4_from_u64({size}ULL, 64, 0); {function}(&{name}, size, NULL); sv4_destroy(&size); }}\n"));
+        }
+    }
+    for object in &model.objects {
+        let name = &object.c_name;
+        match object.ty {
+            IrObjectType::String => {
+                string_defaults(&mut initialize, &mut destroy, name);
+                defaults(&mut initialize, &mut destroy, &format!("{name}_llg_dep"), 1, false, true);
+                initialize.push_str(&format!("    {name}.notify = llg_dependency_changed; {name}.dependency = &{name}_llg_dep;\n"));
+            }
+            IrObjectType::Chandle => initialize.push_str(&format!("    {name} = NULL;\n")),
+            IrObjectType::Process => {
+                initialize.push_str(&format!("    {name} = NULL;\n"));
+                destroy.push_str(&format!("    llg_process_assign(&{name}, NULL);\n"));
+            }
+            IrObjectType::Semaphore => initialize.push_str(&format!("    {name} = NULL;\n")),
+        }
+    }
+    for event in model.events.iter().filter(|event| !event.is_array()) {
         initialize.push_str(&format!("    {}__object = (llg_event_object_t){{0}};\n    {}.object = &{}__object;\n", event.c_name, event.c_name, event.c_name));
     }
+    if !model.classes.is_empty() { destroy.push_str("    llg_class_storage_destroy();\n"); }
     out.push_str(&format!("static void llg_model_storage_defaults(void) {{\n{initialize}}}\n\nstatic void llg_model_storage_destroy(void) {{\n{destroy}}}\n\n"));
     let ctx = RCtx { model, func: None, sampled: false, activation_label: None };
     let mut frame = Frame::new(&ctx);
     frame.allow_calls = false;
     for step in &model.init_steps { initialization_step(&mut frame, step)?; }
+    for object in &model.objects {
+        if let Some(initial) = &object.initial { frame.string_assign(&format!("&{}", object.c_name), initial)?; }
+    }
     frame.line("llg_value_scopes_end_since(_llg_frame_base);");
     out.push_str(&format!("static void llg_model_initializers(void) {{\n{}{}\n}}\n\n", frame.prologue(), frame.body()));
     Ok(())
+}
+
+fn string_defaults(init: &mut String, destroy: &mut String, name: &str) {
+    init.push_str(&format!("    {name} = (llg_string_t){{0}};\n"));
+    destroy.push_str(&format!("    llg_string_destroy(&{name}); {name} = (llg_string_t){{0}};\n"));
 }
 
 fn defaults(init: &mut String, destroy: &mut String, name: &str, width: u32, signed: bool, two_state: bool) {
@@ -107,7 +163,7 @@ fn initialization_step(frame: &mut Frame<'_, '_>, step: &IrInitStep) -> Result<(
         IrInitStep::RegisterSampled(index) => {
             let signal = model.signal(*index);
             if signal.ty.width() == 0 { return Err(pending("real-valued sampling registrations")); }
-            frame.line(format!("llg_sampled_register(&{});", signal.c_name));
+            frame.line(format!("llg_sampled_register({});", frame.canonical_signal(*index)));
         }
         IrInitStep::WriteNet { group, slot, value } => {
             let net = model.net_group(*group);

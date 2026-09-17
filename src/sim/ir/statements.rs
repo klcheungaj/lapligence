@@ -511,6 +511,8 @@ pub enum IrStmt {
         /// Source context shown in the runtime diagnostic prefix.
         location: String,
         fatal_finish_number: Option<u8>,
+        /// Simulator-generated failures set the process exit status.
+        runtime_failure: bool,
     },
     /// `$asserton`, `$assertoff`, `$assertkill`, or the bounded
     /// `$assertcontrol` form. Integral arguments are evaluated at the call
