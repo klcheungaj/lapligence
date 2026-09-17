@@ -25,7 +25,7 @@ The [source map](../../docs/source_layout.md) locates responsibility modules.
 - `opt.rs` uses `OptConfig { fold_constants, identities, prune_branches,
   unused_storage }`, `default()`/`none()` and per-pass bisection. Constant
   folding reuses X/Z-correct `core::elab::Value`; shortreal rounds through `f32`,
-  div/mod/pow retain model-sized known operands. Shape-guard identities; prune
+  and div/mod/pow operate over the actual operand/result limb counts. Shape-guard identities; prune
   only proven branches/cases, never past nonconstant items or to default unless
   ALL items are proven unmatched. Omit unused storage without remapping indices.
   Read collection covers processes, functions, init, spawns, monitor evaluators,

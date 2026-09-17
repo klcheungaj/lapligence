@@ -7,6 +7,16 @@ modules live under `lowering/`; shared state stays in `lowering.rs`. Preserve
 the smallest existing visibility boundary. See the
 [source map](../../../docs/source_layout.md).
 
+## Dynamic ownership and emitter boundary
+
+Packed values use exact-width runtime storage. `LLG_MAX_WIDTH` is the Rust-side
+upper bound (`LLG_SUPPORTED_WIDTH_LIMIT - 1`), not a per-model allocation
+capacity; div/mod/pow and conversions use the operand or result width they need.
+The structured owned emitter is the active C11 path and keeps feature guards when
+it cannot establish setup, ownership, or cleanup. A few legacy lowerer paths still
+produce `Verbatim` IR for the fenced fragment emitter; do not add new detached C
+fragments or extend those paths as a workaround.
+
 ## Processes, expressions and delays
 
 - Continuous assigns and `always_comb`/`always_latch`/`@*` evaluate at t=0, then
@@ -31,11 +41,11 @@ the smallest existing visibility boundary. See the
 - Parse `$display` formats during lowering. `%t` accepts integral/real values
   (usually `$time`/`$realtime`) with their owning physical unit; `$timeformat`
   arguments remain runtime expressions updating design-wide state.
-- Check constants, parameters, signals, concat and replication against model
-  `LLG_MAX_WIDTH`, aligned with generated `llg_value.h`. The exclusive backend
-  limit is `1 << 20`; IR has no fixed 1024-/64-bit arithmetic cap. Div/mod/pow
-  retain model-sized limbs. Keep backend/runtime checks; never silently truncate
-  `sv4_concat`.
+- Check constants, parameters, signals, concat and replication against the
+  backend `LLG_MAX_WIDTH` (`LLG_SUPPORTED_WIDTH_LIMIT - 1`), aligned with
+  generated `llg_value.h`. The exclusive backend limit is `1 << 20`; IR has no
+  fixed 1024-/64-bit arithmetic cap. Keep backend/runtime checks; never silently
+  truncate `sv4_concat`.
 - Get `for` initializer/condition/increment/body relationships from typed owned
   data, not syntax or frontend numeric codes. Statement/intra-assignment
   delays retain expression `NodeId`; continuous/primitive delays retain ordered
@@ -48,15 +58,18 @@ the smallest existing visibility boundary. See the
   issue; event/repeat timing uses an independent `join_none` waiter whose final
   trigger remains an NBA. Detached repeat counts must be constant until
   activation capture is represented.
-- Select-LHS write-back uses GNU statement-expressions `({ ... })`: gcc/clang,
-  not strict ISO C. Packed streams retain resolved direction, slice size,
-  ordered operands, aggregate width and unsigned result. Streaming targets
-  retain typed component LHSs/widths and evaluate RHS once before unpacking.
+- Select-LHS targets retain typed indices, ranges and write-back metadata in IR.
+  The old fragment emitter still has GNU statement-expression code for some
+  legacy paths, but the structured owned emitter rejects those fragments and
+  emits standard C11 setup/calls/cleanup. Packed streams retain resolved
+  direction, slice size, ordered operands, aggregate width and unsigned result.
+  Streaming targets retain typed component LHSs/widths and evaluate RHS once
+  before unpacking.
   Stream `with` selectors remain unsupported. `inside` evaluates selector and
   every scalar/range endpoint once; scalars use wildcard equality, ranges
   ordinary inclusive comparison.
 - Dynamic arrays, queues and associative arrays have distinct IR/storage and
-  model-width packed elements. The bounded slice covers one resizable dimension,
+  exact-width packed elements bounded by the backend limit. The bounded slice covers one resizable dimension,
   dynamic `new`/copy/delete, positional dynamic/queue patterns, queue elements
   and methods, `sum`/`product`/`and`/`or`/`xor` reductions, and integral/string-key
   associative access/delete/existence/traversal. Reject resizable-element NBAs
@@ -153,15 +166,16 @@ See `tests/sim_net_defaults.rs`.
   storage. Resolve each explicit local qualifier: static-in-automatic persists,
   automatic-in-static is per-call. Reject unavailable/ambiguous provenance;
   never infer it from spelling or the enclosing routine.
-- Delay-free chandle-returning functions with chandle inputs retain `void *`
-  through IR/C calls; static inputs use definition-wide object storage. Reject
-  output/inout chandle, mixed packed/chandle signatures, chandle locals and
-  timed chandle tasks; never encode pointers as integers.
-- Automatic delay-free string-returning functions with packed inputs return
-  owned `llg_string_t`. Reject static string returns, string/chandle formals,
-  output/inout formals and general local strings until persistent ownership and
-  typed object-formal copies exist. Automatic string-key `foreach` iterators
-  are the bounded loop-scoped exception.
+- Admitted chandle-returning functions and chandle inputs/locals/fields retain
+  `void *` through IR/C calls; static inputs use definition-wide object storage.
+  Output/inout/ref/const-ref aliases and bounded delayed tasks use typed native
+  ownership. Reject ports, packed containment, arithmetic, continuous/sensitivity
+  paths and unsupported timed/native captures; never encode pointers as integers.
+- Admitted string expressions, locals, returns, string/chandle addresses and
+  scalar string formals use typed native ownership in the structured emitter.
+  Automatic string NBA destinations, unsupported aggregate/continuous paths and
+  arbitrary native/shared captures remain rejected. Automatic string-key
+  `foreach` iterators are the bounded loop-scoped exception.
 - DPI-C imports use canonical `svdpi.h` thunks for scalar `bit`/`logic`/`reg`,
   two-state integral atoms, real/shortreal, chandle and string formals. Preserve
   owned C names and pure/context qualifiers. Missing/conflicting explicit
@@ -188,8 +202,10 @@ See `tests/sim_net_defaults.rs`.
   Packed edges use the LSB; real controls are any-change IEEE-bit comparisons
   (signed zero wakes, identical NaN payloads do not). Evaluate `iff` at trigger
   before resuming. Qualified named/mixed events register atomically. Evaluators
-  use owned IR; reject array dependencies, function calls and callbacks
-  capturing procedural/subroutine locals/formals. See
+  use owned IR; bounded automatic numeric expression-only/const-ref calls with
+  no side effects may be evaluated in owned frames, while array dependencies,
+  mutating or otherwise effectful callbacks and unsupported captures remain
+  rejected. See
   `tests/sim_partial_features.rs`.
 - Force uses live evaluators with packed/real dependencies; procedural writes
   remain beneath it and net slots keep updating. Release retains a variable's
@@ -228,10 +244,11 @@ updates. `$write` omits the newline. `%d` respects two's-complement
 `$dumpvars` depth/source identities and match the catalog before the fixed
 header. Omit waveform runtime/libfst from models without controls. Reject
 `$dumpports`; warn/skip `$displayon`/`$displayoff`. Bounded module/generate
-SystemVerilog `string` declarations, assignment/copy, casts, display and
-automatic packed-input returns are supported. Reject string ports, general
-subprogram storage/formals and continuous/sensitivity paths. `atoreal` parses
-a decimal prefix; `realtoa` converts its real argument before replacement.
+SystemVerilog `string` declarations, assignment/copy, casts, display,
+formals/locals/returns and automatic packed-input returns are supported.
+Automatic string NBA destinations, general aggregate/continuous/sensitivity
+paths and unsupported native captures remain rejected. `atoreal` parses a
+decimal prefix; `realtoa` converts its real argument before replacement.
 Packed Verilog literals remain separate unsigned byte vectors (leftmost byte
 most significant). Decode owned bytes before width checks; empty is one zero
 byte. Assignments pad/truncate; explicitly packed parameters may initialize
@@ -241,7 +258,7 @@ packed storage. See `tests/fixtures/sim/data_types_next/readme.md`.
 
 Preserve X/Z distinction for display, literal equality, casez/casex (LRM
 12.5.1); Z behaves as X elsewhere (LRM 11.4.5), except identity/copy preserves
-it. Keep the model-width rules above and runtime value contracts.
+it. Keep the backend supported-width rules above and runtime value contracts.
 
 Unbased fills (`'0/'1/'x/'z`) expand in context-determined arithmetic/bitwise,
 comparison, conditional, assignment and argument operands. Ordinary
@@ -253,7 +270,7 @@ must retain wide div/mod/pow (`tests/sim_fill_literals.rs`).
 `==?`/`!=?` makes only RHS X/Z wildcard after common width/sign conversion.
 A known mismatch beats an unknown elsewhere; otherwise unmasked LHS X/Z → X.
 Reject reals. `$countones`, `$onehot`, `$onehot0`, `$isunknown` evaluate one
-model-width packed argument once and retain optimizer/sensitivity dependencies.
+exact-width packed argument once and retain optimizer/sensitivity dependencies.
 One-counts ignore X/Z; unknown query detects either. Counts are signed 32-bit,
 predicates unsigned one-bit; reject real arguments. Tests:
 `tests/sim_wildcard_eq.rs`, `tests/sim_bit_queries.rs`.
@@ -263,8 +280,8 @@ real parameters, blocking/NBA, scalar ports, mixed arithmetic, relational/logica
 operations, ordinary real `case`, conditionals/casts, `if`/`while`/`for`/`wait`,
 comb sensitivity, any-change events, and `%f`/`%e`/`%g` width/precision.
 Shortreal assignments round through C `float`; real-to-packed rounds nearest,
-halves away from zero, up to model width. Packed-to-real accepts model width
-with X/Z positions zero. IEEE-bit event comparison observes signed-zero and
+halves away from zero, up to the exclusive supported-width limit. Packed-to-real
+accepts every legal runtime width with X/Z positions zero. IEEE-bit event comparison observes signed-zero and
 changed NaN payloads, not identical NaNs. Consume typed conversions/resolved
 real parameters directly; never reconstruct comparisons from source text.
 
@@ -329,7 +346,8 @@ concat/case-equality operations. Reject before C compilation;
   do not write. `sv4_to_index_i64` retains sign, rejects high-limb overflow,
   checks bounds before offset subtraction, then computes flat addresses.
   Reject unresolved bounds, partial slices (`a[i]` on 2-D), nonconstant
-  initializer elements, and element widths beyond `LLG_MAX_WIDTH`.
+  initializer elements, and element widths at or beyond the exclusive backend
+  limit (`LLG_MAX_WIDTH + 1`).
 - NBAs capture address/RHS at issue. Bit/part/indexed masks merge into current
   storage at commit, preserving disjoint/intervening writes; packed selections
   and constant/runtime-delay NBAs share this rule. Future NBAs outlive the

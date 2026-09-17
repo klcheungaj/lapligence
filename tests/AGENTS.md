@@ -66,7 +66,8 @@ LSP publication/config coverage for the same rule IDs.
   run through `llg` with and without optimization. Migration rejections fail the
   test; never turn them into skips or expected successes. It covers numeric and
   recursive results, branch side effects, wide intermediates, selected NBA
-  capture, task suspension/copy-out and finish cleanup.
+  capture, task suspension/copy-out, finish cleanup, numeric input/default/inout
+  ownership, indexed/evaluated event waits and detached numeric fork captures.
 - `runtime_value_storage/validate.py` records host-scoped C, ABI, independent
   oracle, allocation plateau and optional Rust/HDL evidence. It checks the exact
   CTest inventory and distinguishes pass/failure/blocked/excluded results. A

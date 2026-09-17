@@ -11,7 +11,7 @@ Fixture inventory:
 - `four_state_truth.v`: all 16 ordered 0/1/X/Z pairs for bitwise/logical
   operations, case/logical equality, X/Z conditional merging, reductions,
   mixed-state bytes, and high-bit comparisons; independent Rust tables check
-  every printed bit across model-sized widths.
+  every printed bit across exact-width dynamic values.
 - `wide_arithmetic.v`: positional carry, borrow, multiply, limb-boundary
   shifts, signed/unsigned comparisons, high-bit reductions, concat, and select.
 - `casts.sv`: signedness, extension/truncation, select signedness, predefined
@@ -19,14 +19,14 @@ Fixture inventory:
 - `two_state*.sv`: X/Z-to-zero conversion while preserving known bits across
   scalar, vector, atom assignments, and isolated cast paths.
 - `wide_division.v`, `wide_modulo.v`, `wide_power.v`: positional arithmetic
-  oracles across wide model-sized operands without a separate 64-bit limit.
+  oracles across wide exact-width operands without a separate 64-bit limit.
 - `casts_conformance.sv`: expected size and parameterized typedef casts.
 - `equality_unknown.v`: known mismatch determines logical equality despite an
   additional X/Z bit, including across the first machine-word boundary.
 
 The truth-table fixture prints one wide result per line, keeping output
 formatting limits separate from value semantics. Runtime vector widths are
-`uint32_t` and retain defensive model-capacity checks.
+`uint32_t` and retain defensive supported-width checks.
 
 Datatype fixture authors derive expected behavior from the local
 `docs/specification/` files without reading production implementation code.
@@ -35,13 +35,13 @@ The campaign accepts only complete exact `PASS` markers. Self-checking HDL
 uses case inequality so unexpected X/Z values cannot become unknown `if`
 conditions. The original 40-case campaign is active without ignored tests and
 has regular and sanitizer coverage. Independent truth-table, positional
-arithmetic, cast, and partial-limb oracles cover model-sized widths. Packed
+arithmetic, cast, and partial-limb oracles cover exact-width values. Packed
 all-bit/mixed-state structs and multidimensional packed-bit arrays are covered
 at exercised widths; packed unions, unpacked aggregates, and unsupported
 net/member contexts remain unclaimed.
 
-The C backend capacity is strictly below `1 << 20` bits; the near-limit
-campaign uses 1,048,575 bits. Selected widths exercise configured capacity but
+The C backend supported width is strictly below `1 << 20` bits; the near-limit
+campaign uses 1,048,575 bits. Selected widths exercise the supported boundary but
 do not establish unbounded support. Wide division/modulo/power, two-state X/Z
 coercion, wide real conversion, and logical equality with a known mismatch are
 active oracle contracts.

@@ -21,7 +21,9 @@
 
 Children use narrow visibility within the existing owner rather than exposing
 new public state. Slang capture remains confined to `core::db`; lowering uses
-owned data and emits typed IR, not C source.
+owned data and emits typed IR, not C source. Legacy `Verbatim` nodes may still be
+constructed by fenced compatibility paths; the structured owned emitter rejects
+them rather than treating embedded C text as an ownership-safe result.
 
 See [the parent README](../readme.md) and
 [the detailed source map](../../../../docs/source_layout.md).

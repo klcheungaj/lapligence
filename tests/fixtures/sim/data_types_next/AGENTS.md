@@ -36,8 +36,10 @@ Inventory:
 - `container_assignment_contexts.sv`: packed queue/dynamic element contexts,
   method-argument conversions, and invalid associative keys.
 - `string.sv`, `string_conversions.sv`, `dynamic_string_formatting.sv`, and
-  `chandle.sv`: values, conversions, casts/copy/display, and foreign handles;
-  string formals remain unsupported.
+  `chandle.sv`: values, conversions, casts/copy/display, typed string formals,
+  locals, returns and foreign handles. Automatic string NBA destinations,
+  broader aggregate/continuous paths and unsupported native captures remain
+  restricted.
 - `cast_probe.sv`, `bitstream_probe.sv`, and `bitstream_containers_probe.sv`:
   dynamic cast status/failure, enum validation, static enum coercion, and
   bounded aggregate/array/container bit-stream order and two-state conversion.

@@ -16,97 +16,6 @@ end-to-end runs of `llg` (marked **(probed)** below). Section numbers follow the
 [SystemVerilog reference](specification/spec-reference-sv.md) and
 [verification reference](specification/spec-reference-verification.md) (§1800-2009 y.z).
 
-## Dynamic value migration acceptance boundary
-
-**The dynamic-value backend has not regained the complete historical coverage
-listed below.** The historical supported markers and audit task states are not
-acceptance evidence for this ABI until the corresponding public HDL regression
-passes again. Do not flip those markers from source inspection or component
-results. This boundary takes precedence over historical feature descriptions.
-
-The numeric ownership path has typed argument lowering without detached C
-fragments, registered temporary/local owners and explicit copy/move/destruction.
-Numeric input/default/output/inout lowering is now connected to that path.
-Source additions restore owned packed/real captured fork branches, runtime-indexed
-named-event arrays and read-only packed/real evaluated/filtered waits. Evaluator
-captures are cloned once before publication; each runtime context field receives
-its own reference, even when fields share a frame. Arbitrary user function calls
-and mutations within evaluators remain rejected because their reentrant effects
-need separate runtime/ownership acceptance. These Rust/emitter additions require
-Rust compilation and public HDL execution; the correction's C-only validation is
-not that acceptance.
-
-Additional owned-emitter source paths now cover named activation/fork targets,
-cooperative cancellation before task copyout, persistent packed inertial updates,
-literal-path memory tasks, numeric procedural continuous assignments, numeric
-force/release and typed monitor/strobe callbacks, immediate assertions and ordered
-event waits. Activation exits unwind lexical packed owners; loop budgets count
-executed iterations rather than the final false condition. New generated-model
-regressions are active but still require Rust/HDL acceptance; native C output-shape
-probes alone do not establish that these source additions pass the public pipeline.
-
-The third source-repair batch connects concurrent assertion/sampling registration
-and callbacks, numeric deferred actions, true-net-alias lifecycles and dependency
-addresses, VPI call sites, clocking operations and event-controlled NBA scheduling.
-It adds qualified branch diagnostics, packed streaming destinations, inline event
-formal identity, concrete-interface metadata, literal-text runtime tasks and numeric
-random/queue operations. A bounded callback inliner admits automatic numeric
-expression-only functions without private state or side effects. The 120 selected
-input failures are source repair targets, not confirmed post-patch passes. Rust
-formatting, compilation, testing and HDL execution were not performed for this
-batch; C runtime/API syntax checks do not establish those results.
-
-The fourth source-repair batch targets 60 additional named input failures, disjoint
-from the third batch, without claiming post-patch passes. It connects container
-storage/operations/dependencies, method callback item owners, byte-string
-expressions and string/chandle procedure boundaries, process handles, enum/array
-queries, scalar dynamic casts, file input/output, plusargs and nonliteral runtime
-task strings. Native payload scopes unwind with packed owners. Converted container
-values and normalized keys are destroyed before callback publication. Fixed-array
-shape failures use typed fatal IR instead of opaque C fragments. Nine new Rust
-structural tests were added but not executed. Native and sanitizer-safe C component
-runs exercise the runtime only; they do not validate the Rust/HDL pipeline.
-
-The fifth source-repair batch targets the final 60 unselected names from the same
-240-failure input log, not a measured current failure count. It adds typed class
-allocation/member recipes, semaphore and mailbox boundaries, reference-call
-descriptors, virtual-interface handles/member dispatch, scalar DPI thunks, packed
-container membership and mixed packed/container streaming writes. Receiver effects
-and typed native operands participate in validation, capacity, traversal and storage
-analysis. Nine new Rust structural tests were added but not run. C runtime probes
-exercise registered references, reentrant mailbox delivery, cancellation of a
-receiver during publication, and full/selected container streaming notifications.
-Native C and sanitizer-safe results do not validate these Rust/emitter additions.
-
-Class storage remains model-owned until close (including unreachable/cyclic objects);
-it is not a garbage collector. Packed fields allocate their own widths. Mailbox
-payload snapshots and converted outputs remain registered across publication;
-consumed messages are unlinked before reentrant callbacks. Deferred streaming
-notifications run after intermediate values are destroyed. Automatic packed signal
-publication pins the destination scope until its callbacks finish.
-
-Remaining boundaries include broader native/shared captures, complex or side-effecting
-evaluator function bodies, timing-bearing class/virtual-interface methods, generalized
-aggregate reference procedures and resizable streaming forms not represented by the
-bounded typed IR. Selected reference file destinations and process-handle formals
-retain explicit rejection. Automatic string destinations for delayed NBA still
-require native descriptor retention; persistent string NBA destinations have a
-source path. Inline event definitions remain lowering templates. Pre-process
-initializer calls remain gated because no yielding coroutine can be assumed there.
-Unsupported definitions can reject a whole model even when unused. Detached C
-renderers are not a safe fallback. All source-repaired combinations still require
-Rust compilation and public HDL acceptance; this is not completed P05 or full parity.
-
-The original runtime and waveform C self-tests now use explicit owners and remain
-active, with their numerical and scheduling assertions retained. Standalone value,
-container and file-I/O probes are also shared with the component suite, including
-actual-width normalization, owned callback outputs and fresh consumed format
-arguments. Additional probes
-check nonlocal callback cleanup, multi-context adoption, exact-address NBA scope
-lookup, retained delayed targets and event-array selection/wait semantics.
-See [tests/readme.md](../tests/readme.md#dynamic-ownership-validation) for test
-commands and the difference between component, generated-model and platform gates.
-
 ## Status markers
 
 - ✅ supported — test anchor in parens; `(probed)` = verified by a manual
@@ -140,6 +49,12 @@ final blocks ≤ 1024.
 - Testing methods, limits and commands are in [tests/readme.md](../tests/readme.md).
 
 ## Review corrections awaiting acceptance
+
+The latest ownership review correction is described above. Its source-level fixes
+are present in the current tree, but the generated Rust/HDL acceptance gate is
+still open.
+
+### Earlier batch-04 corrections
 
 The batch-04 source corrections address nominal mailbox message types, retained
 packed queue-element references, empty-sequence concatenation, negative guards
@@ -247,7 +162,7 @@ SystemVerilog era:
 - ✅ **Array declaration initializers** `'{…}` patterns applied element-wise in linear-index order — §1800-2009 10.9.1 **[SV-2005]** constant elements only (sim_memory.rs)
 - ✅ **enum-typed scalar variables and runtime methods** — §1800-2009 6.19/6.19.5 **[SV-2005]** stored at the elaborated packed base width; enum constants fold through the frontend, and declaration-order first/last/next/prev/num/name methods retain sparse signed values, wrapping step counts, owned names, and the four-/two-state invalid-value defaults (sim_operator_semantics.rs, sim_data_types_next.rs)
 - 🟨 **packed/unpacked struct and union aggregates** — §1800-2009 7.2–7.3, 7.4 **[SV-2005]** packed/unpacked struct assignment patterns support positional, named, default, built-in, and packed-integral typedef keys with exact range/state/signedness matching and member overrides. Packed unions support direct width-matched initialization, overlapping views, and nested multidimensional member reads/writes with ascending/descending ranges across wide vectors. Fixed nested unpacked structs/arrays with packed, real, and string leaves support recursive initialization, deep value copy, member updates, and unequal-width untagged-union storage (`sim_data_types_completion`). Recursive defaults, resizable/object members, aggregate ports/nets/subprogram storage, tagged unions, and general aggregate slices remain unsupported; the bounded `sim_data_types_next` and `sim_data_types_completion` inventories are not an exhaustive conformance claim
-- 🟨 **string type/signals/params** — §1800-2009 6.16 **[SV-2005]** focused basic declaration, cast/copy, display-extra, automatic string-return-with-packed-input, and 128/512-bit `.atoreal`/`.realtoa` conversion cases are covered in both modes; string formals are not supported. Module/generate storage and other core methods remain bounded; string subroutine forms, ports, continuous-assignment/sensitivity paths, and unverified formatted/real methods remain outside this claim
+- 🟨 **string type/signals/params** — §1800-2009 6.16 **[SV-2005]** focused declaration, cast/copy, display, native string formals/locals/returns and 128/512-bit `.atoreal`/`.realtoa` conversion paths have source coverage; automatic string NBA destinations, broader ports/aggregate forms, continuous-assignment/sensitivity paths and unverified formatted/real methods remain outside this claim. Public acceptance of the migration-dependent source paths is still pending.
 - 🟨 **event data type** scalar and fixed unpacked `event` declarations, runtime-indexed selects, hierarchical references, null/default handles, and task-formal aliases preserve stable event-object identity — §1800-2009 6.17 **[SV-2005]**; dynamic/associative/queue event storage remains outside the bounded subset
 - 🟨 **dynamic arrays / associative arrays / queues** — §1800-2009 7.5/7.8/7.10/7.12 **[SV-2005]** bounded dynamic-array and queue cases cover packed-element reductions (including width-changing `with` expressions with typed `item`/`item.index()` bindings), locator/min/max/unique result queues, sort/rsort mutation with typed ordering callbacks, and reverse/shuffle mutation; packed associative arrays also support locator/min/max/unique result queues (integral-key index results) and reductions with `with` clauses. Unsupported generic/nested/object elements, associative string-key index result queues, declaration initializers, keyed/default patterns, subroutine/port storage, and external automatic captures in callbacks remain explicitly rejected. Shuffle uses the shared deterministic RNG service through its existing container seed API; it is not yet tied to process/object stream hierarchy
 - 🟨 **chandle** — §1800-2009 6.14 **[SV-2005]** focused native-chandle storage and call cases pass in both modes: null/default and identity-preserving copy, compare/Boolean operations, automatic/static locals, represented aggregate members, mixed packed-plus-chandle signatures, input/output/inout/ref/const-ref aliases, delayed tasks, and chandle-input→chandle-return functions. Ports, packed containment, arithmetic, continuous assignment, and sensitivity remain unsupported
@@ -306,7 +221,7 @@ SystemVerilog era:
 - 🟨 **Program blocks and `$exit`** — §1800-2009 24.3, 24.3.1 and 24.7 **[SV-2005]** program initial processes launch in Reactive, and #0/NBA remain in the reactive region set. Initials and descendants retain an elaborated program-instance origin: `$exit` cancels only that origin; calls outside a program-initial origin are ignored. Last-initial completion cancels that program's detached descendants; all program initials ending is an immediate implicit finish boundary. Source corrections and regression sources are present (`sim_program.rs`, `sim_review_batch2.rs`); this review did not execute them or close the whole phase.
 - 🟨 **Fine-grain process control** `process::self()`, `status()`, `kill()`, `suspend()`, `resume()`, and `await()` — §1800-2009 9.7 **[SV-2005]** stable reference-counted handles preserve waiting conditions, recursively clean descendants, and retain terminal status (sim_process_control.rs). Process formals, process arrays, and the broader class API remain outside the bounded subset.
 - 🟨 **Semaphores** `new`, `get`, `put`, and `try_get` — §1800-2009 15.3 **[SV-2005]** runtime-owned key counts, zero-key operations, specified FIFO blocking order, cancellation-safe waiter cleanup, and automatic task-handle arguments are covered in both optimizer modes (sim_semaphore.rs). Semaphore arrays, process-handle formals/arrays, and broader synchronization remain outside the bounded subset.
-- 🟨 **Mailboxes** `new`, `num`, `put`, `get`, `peek`, `try_put`, `try_get`, and `try_peek` — §1800-2009 15.4 **[SV-2005]** typed/untyped bounded/unbounded message storage and FIFO producer/consumer wait lists are present (`sim_mailboxes.rs`). Scalar retrieval now distinguishes empty (0), mismatched (-1 for try calls; a runtime error for blocking calls), and success; mismatches do not consume messages or change targets. Packed width/sign/state domain and real/shortreal are checked. Nominal enum/class/other handle type identity is not yet retained in the message ABI, so full type-equivalence support remains incomplete. New regressions in `sim_review_batch2.rs` are unexecuted.
+- 🟨 **Mailboxes** `new`, `num`, `put`, `get`, `peek`, `try_put`, `try_get`, and `try_peek` — §1800-2009 15.4 **[SV-2005]** typed/untyped bounded/unbounded message storage and FIFO producer/consumer wait lists are present (`sim_mailboxes.rs`). Scalar retrieval now distinguishes empty (0), mismatched (-1 for try calls; a runtime error for blocking calls), and success; mismatches do not consume messages or change targets. Packed width/sign/state domain and real/shortreal are checked. Typed message/target records now retain nominal enum/class/handle identity, while arrays, broader aggregate messages and arbitrary native/shared captures remain outside the bounded path. New regressions in `sim_review_batch2.rs` are unexecuted.
 
 ## 5. Procedural statements
 
@@ -361,8 +276,8 @@ SystemVerilog era:
 
 Verilog era:
 
-- 🟨 **Arithmetic** `+ - * / %` — §1364-2001 4.1.5 **[1995]** add/subtract/multiply/division/modulo preserve model-sized limbs; the generated backend rejects widths at its exclusive `1 << 20` capacity, while runtime constructors remain defensive
-- 🟨 **Power** `**` — §1364-2001 4.1.5 **[2001]** model-sized operands are supported; backend capacity remains exclusive at `1 << 20`
+- 🟨 **Arithmetic** `+ - * / %` — §1364-2001 4.1.5 **[1995]** add/subtract/multiply/division/modulo operate over exact-width dynamic operands and results below the exclusive `LLG_SUPPORTED_WIDTH_LIMIT`; runtime constructors remain defensive
+- 🟨 **Power** `**` — §1364-2001 4.1.5 **[2001]** exact-width operands are supported below the exclusive `LLG_SUPPORTED_WIDTH_LIMIT`
 - ✅ **Bitwise** `& | ^ ~ ^~` — §1364-2001 4.1.10 **[1995]**
 - ✅ **Logical** `&& || ! -> <->` — §1364-2001 4.1.9 / §1800-2009 11.4.7 **[1995/SV-2009]** ordinary expression implication short-circuits a known-false antecedent; equivalence evaluates both operands and both preserve four-state X/Z truth (sim_logical_ops.rs). SVA property implication `|->`/`|=>` remains in the assertion boundary.
 - ✅ **Reductions** `& ~& | ~| ^ ~^` — §1364-2001 4.1.11 **[1995]**
@@ -387,7 +302,7 @@ SystemVerilog era:
 - 🟨 **Static casts** `int'(e)`, `signed'()`, `unsigned'()`, size casts `n'(e)` — §1800-2009 6.24.1 **[SV-2005]** Slang retains explicit/implicit conversion identity and resolved target width, signedness, and state domain. Scalar/vector typed and numeric size casts are covered through declaration, runtime-expression, and function contexts; unsupported aggregate/net paths remain outside this claim (sim_data_types.rs, sim_data_type_edges.rs, sim_data_types_next.rs)
 - 🟨 **Increment/decrement** `++ --` — §1800-2009 11.4.2 **[SV-2005]** statement-position pre/post forms on whole scalar variables plus expression-valued forms over packed selects/members, fixed-array elements, and real targets are supported; non-lvalues and unsupported aggregate/object targets remain rejected (sim_operator_semantics.rs, sim_expression_mutations.rs)
 - 🟨 **Assignment operators** `+= -= *= /= %= &= |= ^= <<= >>= <<<= >>>=` — §1800-2009 11.4.1 **[SV-2005]** whole scalar statement forms plus expression-valued forms over packed selects/members, fixed-array elements, and real targets are supported; statement-position selected/array forms remain outside this claim (sim_operator_semantics.rs, sim_expression_mutations.rs)
-- ✅ **Wildcard equality** `==? !=?` — §1800-2009 11.4.6 **[SV-2005]** RHS X/Z bits are wildcards; remaining LHS unknown bits yield X unless a known mismatch decides the result. Common-width/signed extension and model-sized operands are covered with optimization on/off (sim_wildcard_eq.rs).
+- ✅ **Wildcard equality** `==? !=?` — §1800-2009 11.4.6 **[SV-2005]** RHS X/Z bits are wildcards; remaining LHS unknown bits yield X unless a known mismatch decides the result. Common-width/signed extension and exact-width operands are covered with optimization on/off (sim_wildcard_eq.rs).
 - 🟨 **Set membership** `inside {…}` — §1800-2009 11.4.13 **[SV-2005]** scalar/range/wildcard cases are reported passing in both modes; aggregate and broader contextual forms remain outside the focused claim
 - 🟨 **Streaming operators** `{<<{}}`, `{>>{}}` — §1800-2009 11.4.14 **[SV-2005]** packed and fixed/resizable packed-element RHS/LHS streams preserve declaration order, non-divisible slices, static fixed-array selectors, runtime resizable-array `with` selectors, overlap temporaries, and X/Z in optimized and unoptimized models (`streaming_general.sv`); runtime fixed-array selectors, recursive/object forms, and native `string` stream operands remain outside the supported subset
 - ❌ **let expressions** — §1800-2009 11.13 **[SV-2009]**
@@ -505,7 +420,7 @@ SystemVerilog era:
   Severity counters are reported with level-2 finish statistics — §1800-2009
   20.9/20.10 **[SV-2005]** (sim_partial_features/severity.rs)
 - ✅ **$sformatf** — §1800-2009 21.3.3 **[SV-2005]** returns an owned formatted string, supports dynamic and nested format expressions, and evaluates typed arguments once in source order
-- ✅ **Bit-vector helpers** `$onehot/$onehot0/$countones/$isunknown` — §1800-2009 20.6 **[SV-2005]** packed operands through the generated model width, X/Z-aware counting, parameters and constant declaration initializers, single argument evaluation, and combinational dependencies; real operands rejected (sim_bit_queries.rs, optimization on/off)
+- ✅ **Bit-vector helpers** `$onehot/$onehot0/$countones/$isunknown` — §1800-2009 20.6 **[SV-2005]** packed operands use exact-width dynamic storage below the supported limit, with X/Z-aware counting, parameters and constant declaration initializers, single argument evaluation, and combinational dependencies; real operands rejected (sim_bit_queries.rs, optimization on/off)
 - ⚠️ **Sampled-value functions** `$sampled/$rose/$fell/$stable/$changed/$past` and the 2009 global-clock status/history forms — §1800-2009 16.9.3, 16.9.4, 20.13 **[SV-2005]** explicit direct edge clocks, default clocking, gated history, initial history, Preponed values, packed expressions, and LSB/X/Z edge rules are supported in both optimizer modes; future global forms, complex event controls, real operands, and sequence `.triggered` status remain fail-closed, while bounded sequence `.matched` endpoints are supported
 - ✅ **Shortreal conversion** `$bitstoshortreal/$shortrealtobits` — §1800-2009 20.5 **[SV-2005]** 32-bit IEEE-754 reinterpretation and shortreal rounding; `$bitstoshortreal` requires 32 bits and maps X/Z positions to zero (sim_real_conversions.rs, optimization on/off)
 - ✅ **$system** — §1800-2009 20.18 **[SV-2009]** task and function forms lower
@@ -580,7 +495,7 @@ capabilities, not individual keywords, system functions or standard clauses.
 | 1 | Missing | Charge-storage nets | `trireg`, charge strengths, charge decay and charge sharing. |
 | 2 | Missing | Tagged unions | Tagged storage, construction and matching. |
 | 3 | Partial | Real types | Scalar `real`/`realtime`/`shortreal` ports, combinational reads, event/wait controls, typed changed-write notifications, continuous assignments, and real monitor/strobe arguments are covered. General ports, aggregate/container storage, and reference-real subroutine forms remain. |
-| 4 | Partial | Strings | General string ports, formals, locals, static string-returning functions, continuous assignments and sensitivity; bounded DPI-C string imports are covered separately. |
+| 4 | Partial | Strings | Bounded string expressions, formals, locals, returns, native addresses and DPI-C imports have source paths. Automatic string NBA destinations, broader ports/aggregate storage, continuous assignments, sensitivity and unsupported native captures remain incomplete. |
 | 5 | Partial | Chandles | Ports, packed containment, arithmetic, continuous assignment and sensitivity remain unsupported; the bounded implementation covers null/copy/comparison and Boolean operations, automatic/static locals, represented aggregate members, mixed signatures, output/inout/ref/const-ref aliases, delay-bearing tasks and chandle-input→chandle-return functions. |
 | 6 | Partial | Structures and untagged unions | Nested unpacked/object members, recursive defaults and nominal type keys, anonymous copies without type identity, unequal-width unpacked unions, ordinary aggregate copy ports/nets and general subroutine storage. |
 | 7 | Partial | Fixed unpacked arrays | Whole-array procedural assignment and concatenation, slices/partial indexing, general element types, multidimensional copy-port forms and runtime-indexed copy-port actuals. Fixed-array reference ports and element indexed part-selects now have file-based read/write, range, state-conversion, wide/invalid-index and delayed-NBA coverage. |
@@ -638,7 +553,7 @@ capabilities, not individual keywords, system functions or standard clauses.
 | 59 | Completed | Runtime severity tasks | `$fatal/$error/$warning/$info` use typed, exactly-once message evaluation with source-context prefixes; `$fatal` validates constant finish number 0/1/2, runs the existing termination/final handoff, and level-2 finish statistics include stable severity counters. Elaboration-time frontend diagnostics remain a separate capability. |
 | 60 | Completed | Host command execution | `$system` task/function forms preserve omitted (`system(NULL)`) versus explicit-empty commands, use one optional owned string and explicit generated-process permission, and return raw host `system()` status; shell syntax and status encoding remain platform-specific. |
 | 61 | Partial | Waveform selection and extended VCD | `$dumpvars` depth/scope/variable filtering is implemented for ordinary VCD/FST catalogs; the `$dumpports` extended-VCD family remains unsupported. |
-| 62 | Partial | Classes | Nominal class handles, heap `new`, packed/real properties, default/explicit constructors, base layout and constructor chaining, static packed/real properties and methods, this-bound methods, virtual/super dispatch, checked nominal casts, parameterized layouts, pure virtual methods, out-of-block definitions, forward class typedefs, const properties, frontend-validated protected/local access, null checks, and shallow handle aliasing are covered by `sim_classes.rs` in both optimizer modes. String/chandle/class properties, timing-bearing class tasks, and constrained randomization remain missing. |
+| 62 | Partial | Classes | Nominal class handles, heap `new`, packed/real properties, admitted string/chandle fields, default/explicit constructors, base layout and constructor chaining, static packed/real properties and methods, this-bound methods, virtual/super dispatch, checked nominal casts, parameterized layouts, pure virtual methods, out-of-block definitions, forward class typedefs, const properties, frontend-validated protected/local access, null checks, and shallow handle aliasing have source paths. Timing-bearing class tasks, broader field/capture layouts and constrained randomization remain restricted. |
 | 63 | Partial | Program blocks | Reactive initial launch and region behavior are represented; origin-specific `$exit`, separate initial/descendant counts, last-initial descendant cancellation, and immediate all-program completion are corrected in source. Regression sources are in `sim_program.rs` and `sim_review_batch2.rs`; acceptance is pending. |
 | 64 | Partial | Clocking declarations, sampling and synchronous drives | Clocking declarations, default/global clocking, input directions/aliases, clocking events and constant `#1step`/`#0`/positive input skews use owned sample storage and optimizer-parity runtime scheduling. Constant output/inout skews use captured Re-NBA drives (off-event drives defer to the next event, including resolved net slots), simple signal output edge qualifiers and selected targets are supported, and integral `##N` waits repeat the resolved default clocking event. Legal assertion sequence/property clock-flow across `##0`/`##1` boundaries and default-clock inheritance are also supported; dynamic output skews, unsupported cross-clock delays/combinators and frontend-rejected concatenated clockvar lvalues remain unsupported. |
 | 65 | Partial | Advanced interprocess synchronization | Process handles support stable `self()` identity, observable running/waiting/suspended/finished/killed status, suspend/resume without losing an outstanding wait, recursive kill cleanup, and await for already-ended or later-ending processes (`sim_process_control.rs`). Bounded semaphore construction, zero-key operations, specified FIFO blocking `get`, `put`/`try_get`, cancellation-safe waiter cleanup, suspended wakes, and automatic task-handle arguments are covered by `sim_semaphore.rs` (§1800-2009 15.3). Typed/untyped bounded and unbounded mailboxes support FIFO copy/handle messages, `num`/`put`/`get`/`peek` and `try_*` operations, producer/consumer suspension, and cancellation cleanup (`sim_mailboxes.rs`). Mailbox messages now retain declared enum/class/handle type identity; equivalent virtual-interface types share an owned identity. Scalar mismatch handling, FIFO service and nominal comparisons have unexecuted regression sources in `sim_review_batch2.rs` and `sim_review_batch4.rs`. Semaphore/mailbox arrays, process-handle formals/arrays, and other advanced synchronization remain outside the bounded subset; event `.triggered` and `wait_order` are covered in the named-events row, as are direct nonblocking named-event triggers. |
