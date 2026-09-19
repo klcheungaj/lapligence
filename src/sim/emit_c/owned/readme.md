@@ -65,8 +65,8 @@ are never reparsed or treated as safe owners.
 - `pure_calls.rs`: bounded callback inlining of automatic numeric functions;
   each expansion renames its internal labels and reserves its escaping result
   in the caller scope before creating private callee storage.
-- `streaming.rs`: snapshot the packed RHS, capture destinations and reject
-  insufficient source bits before publishing staged writes. Fixed-selector
+- `streaming.rs`: snapshot the packed RHS, then evaluate, check and publish each
+  destination in stream order. A selector can observe preceding unpacked fields. Fixed-selector
   loop indices use registered packed temporary slots and are destroyed on
   each iteration. Bounds errors retain in-range writes and mark failure.
 - `tests.rs`, `tests/batch120.rs`, `tests/native_values.rs`: Rust structural and
@@ -109,7 +109,7 @@ this does not enable dynamic virtual-interface handle storage. The callback inli
 accepts automatic numeric expression-only functions with value formals whose bodies
 contain no timing, scheduler, or externally visible writes: automatic locals, loops
 and nested eligible calls are allowed as long as every write stays activation-local.
-Other callback calls still fail closed. Packed streaming destinations are captured before any store.
+Other callback calls still fail closed. The current stream ordering contract is described below.
 
 This third-batch boundary is historical; the current acceptance boundary is
 maintained in the linked feature checklist. New combinations can expose a later
@@ -163,8 +163,8 @@ Signal publication pins an automatic packed destination until callbacks return.
 
 DPI inputs are borrowed. Snapshot every foreign string result before the first
 copy-out, retain packed results through publication, and check cancellation before
-copying outputs. Mixed packed/container streaming captures all target selectors and
-source pieces before writing. Container unstream helpers defer notification until
+copying outputs. Mixed packed/container streaming snapshots the RHS before evaluating and
+publishing destination components in order. Container unstream helpers defer notification until
 intermediate owners have been destroyed and the complete assignment is installed.
 
 These are source changes for 60 previously unselected input failures, not a claim
@@ -175,11 +175,18 @@ results are not public HDL or actual Rust-emitter validation.
 
 ## Fixed-stream selector scope
 
-The current stream emitter still captures all selectors before publishing any
-stream destination. This repair batch adds size checks to that existing subset;
-it does not implement `with` selectors that depend on values unpacked earlier in
-the same assignment (IEEE 1800-2009 11.4.14.4). Do not use this staging policy as
-a general language rule or claim full streaming conformance from these tests.
+The emitter retains one RHS snapshot and evaluates each `with` selector just
+before that operand is unpacked (IEEE 1800-2009 11.4.14.4). Source-size checks
+precede that component's writes. Earlier components can therefore update the
+values used by later selectors. Bounds diagnostics preserve valid destination
+positions. This sequencing also applies to mixed packed/container streams.
+
+Fixed array and aggregate calls keep declaration-order payloads in activation
+storage. Input/default arguments are captured once in formal order; composite
+output destinations are captured before invocation. References use call-scope
+owned composite/view descriptors whose leaves retain the caller's storage.
+Masked reference writes publish only selected leaves, and return/cancellation
+paths release descriptor scopes with their value owners.
 
 ## Captured packed-element selections
 

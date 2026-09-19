@@ -62,6 +62,12 @@ LSP publication/config coverage for the same rule IDs.
 
 ## Suite map
 
+- `sim_rtl_completion.rs` exercises the practical RTL repairs through both public
+  optimizer modes: elaborated parameter values, ordered streaming/defaults,
+  fixed activation values/references/unions, defaults and initialization phases,
+  aggregate ports and sensitivity, and resolved array/interface/inout composition.
+  Its independent oracles and clause references live with `fixtures/sim/rtl_completion/`.
+
 - `sim_dynamic_ownership.rs` is a positive P07 CLI gate: checked-in HDL fixtures
   run through `llg` with and without optimization. Migration rejections fail the
   test; never turn them into skips or expected successes. It covers numeric and

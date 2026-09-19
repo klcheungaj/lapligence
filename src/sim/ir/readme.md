@@ -33,13 +33,14 @@ Evaluator contexts and assertion actions carry activation-owned storage
 identities rather than transient C addresses.
 Packed bit writes through subroutine references retain a typed index on the
 reference lvalue. Validation, operand traversal, optimization and stack sizing
-include that index; selected references cannot be forwarded as ref actuals.
+include that index. Unpacked member/element references can forward selected
+views; frontend-illegal packed bit/part reference actuals remain rejected.
 True-net aliases retain bit-level bindings to canonical resolved net groups so
 optimized storage pruning cannot disconnect alias reads, dependencies, force/
 release descriptors, or waveform observations.
 `IrInitialization` keeps declaration identity, `StorageLifetime`, source origin,
-and the Verilog/SystemVerilog execution phase attached to scalar static
-initializers. Automatic declaration values remain activation-local operations;
+and the Verilog/SystemVerilog execution phase attached to scalar and fixed
+composite static initializers. Fixed targets retain checked persistent lvalues. Automatic declaration values remain activation-local operations;
 static local storage is never initialized lazily by a first subprogram call.
 Procedural delays retain either constant ticks or a typed runtime expression
 with module-unit and precision scales. Validation, effect analysis, optimization
@@ -74,3 +75,9 @@ optimization, effects/dependency discovery, address snapshots and stack sizing
 must retain this traversal. Folding a base expression must not erase intermediate
 bounds or merge adjacent steps. Runtime clipping is defined by the selected value
 at each step, even if the root storage has further accessible bits.
+
+Fixed formals retain recursive shape metadata and an exact-width payload. Union
+shapes use their maximum member width; struct/array shapes use declaration
+order. Default constants preserve each unpacked leaf's state domain and explicit
+member initializer. Net arrays bind cells to canonical resolved signal/alias
+storage; validators check the cell bounds and electrical target width.

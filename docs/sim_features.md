@@ -2,8 +2,8 @@
 
 This is the maintained feature inventory for the `llg` simulator. It records
 implementation scope separately from acceptance evidence. Revision tags and
-standard references retain the existing inventory's terminology; this update is
-a source-status audit, not a new clause-by-clause standards-conformance review.
+standard references retain the existing inventory's terminology. Host regression
+results establish their tested scopes, not clause-by-clause conformance.
 The file remains the sole maintained simulator feature-status document.
 
 Section numbers retain the original inventory's Verilog (§1364-2001 x.y),
@@ -14,24 +14,10 @@ Detailed source investigations and run records belong in local `persistence/`.
 
 ## Dynamic value migration acceptance boundary
 
-**Source snapshot audited: 2026-09-17.** This document describes the current
-repository tree and the following cumulative patch sequence recorded by the
-review notes:
-
-```text
-lapligence_dynamic_array_fixes.patch
-lapligence_nextest_followup.patch
-lapligence_nextest_batch3.patch
-lapligence_nextest_batch4.patch
-lapligence_nextest_batch5.patch
-lapligence_review_corrections.patch
-```
-
-The audit inspected the current feature rows, semantic/lowering paths, typed IR,
-whole-model emitter, runtime contracts, explicit rejection branches and regression
-sources. No Rust formatter, build, Cargo/nextest run or HDL-to-generated-C
-execution was performed for this update. Source inspection cannot establish that
-all cumulative Rust changes compile or that their HDL tests pass.
+**Implementation and host validation updated: 2026-09-19.** The current
+Linux regression, build and runtime results are recorded below. The frontend,
+IR/runtime, fixed RTL lowering, net connectivity and formatting changes are
+separate commits; execution evidence applies to their combined final sources.
 
 **The ownership migration remains partial.** The old blanket model gates for
 containers, native objects, classes, aliases, assertions, sampling and VPI have
@@ -53,38 +39,40 @@ queue and temporary-storage costs still matter.
 
 ### Available acceptance evidence
 
-| Evidence layer | Available result | Interpretation for this snapshot |
+| Evidence layer | Result | Scope and limitation |
 | --- | --- | --- |
-| Latest supplied host HDL suite, `nextest2.log` | 1,907 tests run: 1,667 passed, 240 failed, 1 skipped | Run after the first two patches, before batches 3–5 and the review correction. It is historical evidence, not the current failure count. |
-| Repair target manifests, batches 3–5 | 120 + 60 + 60 disjoint names from those 240 failures | Source repair assignments only; not 240 confirmed fixes or passes. |
-| Retained review-correction C evidence | GCC native: 34/34; Clang ASan/UBSan: 22/22; waveforms disabled in both | Recorded runtime-component results, not rerun here. Native coroutine cases are excluded from the sanitizer lane. Configurations overlap. |
-| Retained validation-runner evidence | 15/15 Python tests; GCC/Clang flattened-runtime and ABI checks passed | Runner/C-boundary evidence only, not execution of the Rust emitter. |
-| Current cumulative Rust/HDL acceptance and platform execution | No supplied post-correction result | No current whole-suite pass count, Windows/macOS acceptance, or full-waveform acceptance is claimed. |
+| Linux all-feature Rust/HDL nextest | **2,176 passed, 1 skipped** | The only skip is the manual C-vector generator. All three formerly ignored positive RTL defects are enabled. |
+| Build and integration checks | Formatting, warnings-denied Clippy, all-target/all-feature and minimal-feature checks, documentation tests and fixture integrity passed | Documentation tests contain no runnable examples. These checks do not establish other host platforms. |
+| Native runtime/waveform ownership components | **39/39 passed** with GCC ASan/UBSan | Includes composite/view references, queued masks and allocation plateaus. Real coroutine stack-switch probes are excluded from this component lane. |
+| Selected generated-model regressions | **37/37 passed** with GCC UBSan | Public CLI cases run in both optimizer modes. |
+| Generated-model GCC ASan/UBSan lane | **4 passed, 33 failed** | libaco stack-switch warnings from `__asan_handle_no_return` fail exact stderr checks. No sanitizer memory-error report appeared, but this is not an ASan acceptance pass. |
+| Flattened runtime and ownership ABI | GCC and Clang strict-C11 checks passed | Both accept ABI 4 and reject stale ABI 3. These are component compilation checks. |
+| Native Windows/macOS generated simulators | Not executed in this validation | Configured release jobs and historical linkage checks do not qualify these hosts. |
 
-The component counts above are transcribed from the review notes supplied with
-this workspace. They are not independent HDL feature totals. Test methodology
-and commands remain in the
-[test guide](../tests/readme.md#dynamic-ownership-validation).
+Test commands and methodology are maintained in the
+[test guide](../tests/readme.md#dynamic-ownership-validation). Full-suite counts
+are test inventory, not counts of distinct supported syntax forms. Group 1
+release qualification remains open for generated ASan and native platform evidence.
 
 ## Status markers
 
 - 🟦 **Source-implemented**: an implementation path exists for the stated scope;
-  current-snapshot public HDL acceptance is unverified. This replaces historical
-  green support markers; it does not mean the feature was removed.
+  active regression cases are included in the host inventory above. That does
+  not establish every context in the feature family.
 - 🟨 **Partial**: bounded implementation exists, with remaining unsupported forms,
   emitter/lifetime restrictions or unresolved integration boundaries stated on
-  the row. Acceptance is also pending for the cumulative snapshot.
+  the row. A passing bounded regression does not close those remaining forms.
 - ❌ **Not implemented / rejected**: no supported execution path is established,
   or the named form is deliberately rejected. Language-illegal forms are identified
   separately and are not implementation backlog.
 - ⬜ **Out of scope**: an unimplemented/de-prioritized advanced form; bounded
   implementations in the same family are described separately.
 - ✅ **Accepted** is reserved for a stated scope with matching post-change HDL
-  evidence. No row is newly promoted to accepted by this source-only audit.
+  evidence. No whole language family is promoted solely from a suite count.
 
-Parenthetical test names identify regression **sources**, not passing results on
-this snapshot. `(historical probe)` records a pre-existing manual-audit claim,
-not a run performed for this update. A missing test anchor does not imply suite
+Parenthetical test names identify regression sources and their actual bounded
+cases. `(historical probe)` records an earlier manual-audit claim; it is not
+independent evidence for an untested context. A missing test anchor does not imply suite
 coverage. Source links in the grouped inventory identify implementation or
 rejection owners; a file or match arm alone is not a conformance proof.
 
@@ -94,7 +82,7 @@ Revision tags: **[1995]** = IEEE 1364-1995 baseline; **[2001]** = 1364-2001;
 
 Numeric limits: packed values use exact-width dynamic storage below the exclusive
 `LLG_SUPPORTED_WIDTH_LIMIT` (`1 << 20` bits), with `uint32_t` runtime widths.
-The model/runtime contract is **value ABI 3**, not a model-maximum inline array.
+The model/runtime contract is **value ABI 4**, not a model-maximum inline array.
 Zero-width packed descriptors are empty; IR real values use their separate native
 representation. Arithmetic and conversions operate over actual limb counts.
 The generated subroutine recursion guard is 256. Scheduler and process budgets
@@ -117,29 +105,18 @@ and every growth path is checked rather than unbounded. See
 
 ## Group 1 (practical synthesizable subset) execution update — 2026-09-19
 
-The original implementation delta reported a Linux nextest/fmt/clippy run, but
-its test artifact omitted fixtures and six advertised suites. That historical
-result is not reproducible from the submission and is not a release acceptance
-record. Group 1 remains **partially implemented / acceptance pending**.
+The practical RTL work uses the existing owned database, validated IR and C11
+runtime. Fixed integral arrays and aggregates now have activation-owned value,
+return and reference paths, with file-backed tests in both optimizer modes.
+The original defparam, signed-return, fixed-formal, packed-member, dependent
+argument-default, stream-selector, and compilation-unit ordering defects have
+regressions in `sim_rtl_completion`, `sim_rtl_composition`, and `sim_edition`.
 
-Review repairs R01-R15 now have source changes and focused regression inputs.
-R01 supplies newly authored replacement witnesses for missing inputs referenced
-by the delivered suites and removes the descriptions of unavailable suites;
-it does not recover their original contents. The fixture-index gate runs before
-the expensive native CI build. R09/R14 replace synthetic global packed formal
-cells with activation-relative member plans: value inputs are privately owned,
-output/inout arguments retain copy-out semantics, and whole-variable references
-retain immediate aliasing. Genuine const, net/select reference and automatic/ref
-NBA restrictions remain enforced. R13 uses a shared edition capability inventory,
-including preprocessor-directive provenance and explicit extension registration.
+The Group 1 release gate remains open until its task-to-evidence audit and the
+required native platform runs are complete. A Linux test result does not prove
+Windows/macOS generated-simulator support or every language/context combination.
 
-No Rust/frontend/HDL execution or macOS/Windows acceptance was performed while
-preparing these repairs. Standalone C results are component evidence only; run
-the public CLI suites in both optimizer modes before accepting these paths.
-`tests/sim_group1_formal_repairs.rs` and `tests/sim_group1_repairs.rs` are the
-focused review suites; the latter includes the packed-selection regressions.
-
-Source implementation inventory (not acceptance claims):
+Implemented scope:
 
 - Fixed unpacked arrays: reversed/negative bounds by logical coordinates,
   overlapping slice self-assignment, array/struct module ports with per-leaf
@@ -161,15 +138,20 @@ Source implementation inventory (not acceptance claims):
   exclusion, transitive function reads, conflicting-writer diagnosis.
 - Control flow: nested `foreach` cleanup, case/casez/casex/`case inside`
   wildcard rules, qualified string `case inside`, unique/priority diagnostics.
-- Resolved nets: exhaustive small-width resolution truth matrix, disjoint
-  array/per-element drivers, hierarchical and concatenated wired LHS, alias
-  chains with force/strength, delayed alias wakeup and Postponed reads.
+- Resolved nets: small-width resolution truth matrix, fixed wired arrays with
+  pull/supply defaults, interface instance identity, selected scalar/array inouts,
+  shared and nested inout peers, aggregate net members, hierarchical/concatenated
+  drivers, alias strengths, delayed wakeup and Postponed reads.
 - Gates: terminal matrix, gate-array distribution, tri-state X/Z enables.
-- Calls: defaults evaluated only when omitted, output/inout copy-out at return,
-  `ref` aliasing with the illegal-actual set still rejected, recursive automatic
-  functions; packed struct/union formals and packed struct returns.
-- Initialization: legal zero-time user function calls in SV static declaration
-  initialization, before `initial` observes the variable.
+- Calls: defaults evaluate only when omitted and can read earlier captured
+  inputs without repeating side effects. Fixed integral arrays/structs/unions
+  support value inputs, locals, returns, output/inout copyout, recursive `ref`
+  and selected `const ref` forwarding. Illegal packed bit/part reference actuals
+  and NBAs through subroutine reference formals remain rejected.
+- Initialization: legal zero-time user calls for scalar and fixed composite
+  declarations finish before SystemVerilog processes start. Explicit struct
+  member defaults and mixed two/four-state leaf defaults survive arrays,
+  automatic/static locals, output formals and returns.
 - Let expressions, constant functions in generate/width contexts, located
   rejection of a reached `case ... matches` pattern, and a three-axis
   synthesis classification (simulation support vs synthesis policy).
@@ -184,23 +166,16 @@ Source implementation inventory (not acceptance claims):
 - Capacity: the net driver/alias, process, final, named-event waiter, PCA and
   force registries all grow with checked allocation.
 
-Retained limits and known defects (not claimed as accepted):
+Retained boundaries:
 
-- Unpacked struct/array **function formals** and aggregate locals still need a
-  real IR formal-leaf cell; the scenarios remain precise rejections.
-- A signed function-name assignment does not adopt the declared return type as
-  assignment context, producing a wrong value for `int`-typed returns.
-- Packed-struct assignment into a packed member of an unpacked struct is
-  rejected.
-- Interface wired-net and inout-array connectivity composition still needs
-  acceptance evidence. Direct multidimensional `with` operands are outside the
-  one-dimensional operand form described by the targeted streaming clause.
-  Selectors dependent on values unpacked earlier in the same assignment still
-  need a sequential execution plan; the current streaming emitter stages them.
-- Fixed-array port actuals require a constant element index.
-- The delivered Rust/HDL suites and full release matrix still need a clean-tree
-  run. Linux C component execution does not establish Rust/frontend correctness
-  or macOS/Windows acceptance.
+- Fixed port connectivity uses constant elaborated array coordinates; incompatible
+  resolution kinds and unsupported dynamic resolved-net targets remain explicit.
+- Streaming `with` selectors follow the admitted one-dimensional operand forms;
+  native/string/object extensions remain separate from fixed integral RTL.
+- Dynamic/native aggregate fields, tagged unions and later verification/foreign
+  facilities retain the restrictions in their owning rows below.
+- No complete IEEE syntax percentage or cross-platform release acceptance is
+  inferred from this regression inventory.
 
 ## Coverage and remaining work
 
@@ -227,10 +202,10 @@ remain subject to current HDL acceptance; their presence is not a completion mar
 
 | Boundary | Implemented scope and remaining restriction | Source owner |
 | --- | --- | --- |
-| Pre-process initialization | Non-call typed expressions are emitted before processes. User subprogram calls there remain rejected; ordinary coroutine calls are separate. | [calls](../src/sim/emit_c/owned/calls.rs), [initialization](../src/sim/emit_c/owned/model/initialization.rs) |
+| Pre-process initialization | Typed scalar and fixed composite initializers, including zero-time user calls, execute before SystemVerilog processes. Timing-bearing initializer calls remain illegal. | [calls](../src/sim/emit_c/owned/calls.rs), [initialization](../src/sim/emit_c/owned/model/initialization.rs) |
 | Native delayed destinations | Addressable automatic real/string values have registered storage, but queued writes to automatic real cells and delayed writes to automatic strings remain rejected. Persistent destinations have source paths. | [stores](../src/sim/emit_c/owned/stores.rs), [statements](../src/sim/emit_c/owned/statements.rs) |
-| Reference writes | Packed variable/fixed-array and retained packed queue references have typed paths. NBAs through reference formals, general real/aggregate reference arguments and selected reference file destinations are not enabled. | [references](../src/sim/emit_c/owned/references.rs), [stores](../src/sim/emit_c/owned/stores.rs), [input](../src/sim/emit_c/owned/input.rs) |
-| Read-only evaluators | Only the recognized automatic numeric expression-only function shape is inlined: no private locals/helpers, native receiver, DPI or nested body calls; numeric value/const-ref formals are bounded. Arbitrary pure HDL functions are not thereby accepted. | [pure calls](../src/sim/emit_c/owned/pure_calls.rs), [callbacks](../src/sim/emit_c/owned/model/callbacks.rs) |
+| Reference writes | Packed and fixed aggregate/array references retain canonical leaf views; retained packed queue references have separate cells. NBAs through subroutine reference formals, general native/resizable aggregate arguments and selected reference file destinations remain restricted. | [references](../src/sim/emit_c/owned/references.rs), [stores](../src/sim/emit_c/owned/stores.rs), [input](../src/sim/emit_c/owned/input.rs) |
+| Read-only evaluators | Automatic numeric helpers can use private locals, loops and nested eligible calls; numeric value/const-ref formals are bounded. Visible writes, unsupported native receivers and DPI calls remain excluded from read-only callbacks. | [pure calls](../src/sim/emit_c/owned/pure_calls.rs), [callbacks](../src/sim/emit_c/owned/model/callbacks.rs) |
 | Activation captures | Owned packed/real values and recognized opaque handle snapshots are implemented. Borrowed/shared ownership and arbitrary native/string/process captures remain rejected. | [captures](../src/sim/emit_c/owned/captures.rs) |
 | Monitor dependencies | Persistent packed, real, string and container markers have paths. Automatic monitor dependencies remain rejected; read-only evaluator limits also apply. | [runtime tasks](../src/sim/emit_c/owned/runtime_tasks.rs) |
 | Array methods and queries | Generic storage does not imply generic callbacks: `with` callbacks require packed items and cannot capture automatic locals/formals. Non-packed queue endpoint/pop expressions and several nested scalar-query forms remain rejected. | [containers](../src/sim/emit_c/owned/containers.rs), [callback lowering](../src/sim/codegen/lowering/containers/callbacks.rs) |
@@ -478,7 +453,7 @@ SystemVerilog era:
 - 🟨 **Assignment operators** `+= -= *= /= %= &= |= ^= <<= >>= <<<= >>>=` — §1800-2009 11.4.1 **[SV-2005]** whole scalar statement forms plus expression-valued forms over packed selects/members, fixed-array elements, and real targets have source paths; statement-position selected/array forms remain outside this claim (sim_operator_semantics.rs, sim_expression_mutations.rs)
 - 🟦 **Wildcard equality** `==? !=?` — §1800-2009 11.4.6 **[SV-2005]** RHS X/Z bits are wildcards; remaining LHS unknown bits yield X unless a known mismatch decides the result. Common-width/signed extension and exact-width packed operands have regression sources for optimization on/off (sim_wildcard_eq.rs).
 - 🟨 **Set membership** `inside {…}` — §1800-2009 11.4.13 **[SV-2005]** scalar/range/wildcard matching and admitted real/string/fixed aggregate contexts have typed lowering; packed dynamic/queue/associative membership enumerates values into owned operands. General recursive/native-object membership remains restricted, and one represented combination does not establish all aggregate contexts (sim_data_types_next.rs, owned/tests/native_boundaries.rs).
-- 🟨 **Streaming operators** `{<<{}}`, `{>>{}}` — §1800-2009 11.4.14 **[SV-2005]** source paths cover packed and bounded fixed/resizable packed-element packing/unpacking, static fixed-array and runtime container selectors, non-divisible slices and alias-safe capture-before-write. Mixed assignments permit at most one resizable destination. Dynamic/queue notifications occur after intermediate cleanup. Runtime fixed-array `with` selectors, associative destinations, native strings, recursive/object streams and general reference/aggregate forms remain restricted (sim_data_types_next.rs, owned/streaming.rs).
+- 🟨 **Streaming operators** `{<<{}}`, `{>>{}}` — §1800-2009 11.4.14 **[SV-2005]** source paths cover packed and bounded fixed/resizable packed-element packing/unpacking, runtime fixed-array and container selectors, non-divisible slices and one RHS snapshot followed by ordered destination publication. Mixed assignments permit at most one resizable destination. Dynamic/queue notifications occur after intermediate cleanup. Associative destinations, native strings, recursive object streams and unsupported native/reference combinations remain restricted (sim_data_types_next.rs, owned/streaming.rs).
 - ❌ **let expressions** — §1800-2009 11.13 **[SV-2009]**
 
 ## 8. Continuous assignments & structural
@@ -517,7 +492,7 @@ forms remain rejected. Existing regression sources are not current acceptance.
 Verilog era:
 
 - 🟨 **Function declaration/return value/call in expressions** — §1364-2001 10.3 **[1995]** typed numeric/native calls, selected actual capture, automatic/static returns and bounded output/inout storage have source paths. Depth 256 reports a diagnostic and returns the type default. Pre-process declaration-initializer calls, event-formal value calls and unsupported native/aggregate/evaluator combinations remain guarded (sim_function.rs, sim_dynamic_ownership.rs).
-- 🟨 **Tasks incl. output/inout args** — §1364-2001 10.2 **[1995]** delay-only supported tasks can suspend through native C calls; event-formal/event-controlled and relevant timed-cancellation tasks use call-site expansion. Values and captured selectors survive suspension and cancellation is checked before copy-out. Static formal/local persistence and static NBA paths are represented. Recursive timed tasks, timing-bearing class/interface methods, illegal automatic-subroutine NBAs and unrepresented aggregate arguments remain restricted (sim_function.rs, sim_dynamic_ownership.rs).
+- 🟨 **Tasks incl. output/inout args** — §1364-2001 10.2 **[1995]** delay-only supported tasks can suspend through native C calls; event-formal/event-controlled and relevant timed-cancellation tasks use call-site expansion. Values and captured selectors survive suspension and cancellation is checked before copy-out. Static formal/local persistence and static NBA paths are represented. Recursive timed tasks, timing-bearing class/interface methods, illegal automatic-subroutine NBAs and native/resizable aggregate arguments outside the fixed-value ABI remain restricted (sim_function.rs, sim_dynamic_ownership.rs).
 - 🟦 **automatic reentrant functions/tasks** — §1364-2001 10.2.3/10.3.1 **[2001]** recursion supported
 - 🟦 **Constant functions in parameter expressions** — §1364-2001 10.3.5 **[2001]** evaluated by elab Resolver; typed parameters required (historical probe)
 - ❌ **Task calls inside function bodies** — §1364-2001 10.3.4 **[1995]** rejected
@@ -531,7 +506,7 @@ SystemVerilog era:
 - 🟦 **void functions** `function void f();` — §1800-2009 13.4.1 **[SV-2005]**
 - 🟦 **Default argument values** incl. references to earlier formals — §1800-2009 13.5.3 **[SV-2005]**
 - 🟦 **Named argument binding** `f(.b(x), .a(y))` order-independent — §1800-2009 13.5.4 **[SV-2005]** (historical probe)
-- 🟨 **ref arguments** typed `ref`/`const ref` descriptors alias matching packed variables, fixed-array elements and retained packed queue cells — §1800-2009 13.5.2 **[SV-2005]**. Queue removal/reallocation preserves the original detached cell rather than retargeting a later element; registered reference scopes release on return/cancellation. String/chandle references use typed native-address paths. General real/aggregate/resizable references, NBAs through reference formals and selected-reference file destinations remain restricted. Frontend-illegal packed bit/part actuals in the 2009 policy are not promoted to legal HDL by internal descriptor support (sim_reference_args.rs, sim_review_batch4.rs).
+- 🟨 **ref arguments** typed `ref`/`const ref` descriptors alias matching packed variables, fixed integral arrays/structs/unions, legal unpacked members/elements and retained packed queue cells — §1800-2009 13.5.2 **[SV-2005]**. Queue removal/reallocation preserves the original detached cell rather than retargeting a later element; registered reference scopes release on return/cancellation. String/chandle references use typed native-address paths. General native/resizable aggregate references, NBAs through reference formals and selected-reference file destinations remain restricted. Frontend-illegal packed bit/part actuals in the 2009 policy are not promoted to legal HDL by internal descriptor support (sim_reference_args.rs, sim_review_batch4.rs).
 
 ## 10. System tasks & functions relevant to simulation
 
@@ -718,8 +693,8 @@ is rejected by the frontend; parsing or declaration capture is not execution.
 | 39 | Missing | Pattern matching | General `case ... matches` and conditional pattern matching; the historical audit reported a packed-struct case with no required branch output; this observation was not rerun here. | [control_flow.rs](../src/sim/codegen/lowering/statements/control_flow.rs), [semantic.rs](../src/sim/semantic.rs) |
 | 40 | Partial | Side-effecting operators | Expression-valued `++/--` and compound assignments preserve one-time selected/array target evaluation, prefix/postfix results, packed state conversion and real updates; statement-position selected/array forms and broader aggregate targets remain. | [stores.rs](../src/sim/emit_c/owned/stores.rs), [operations.rs](../src/sim/codegen/lowering/expressions/operations.rs) |
 | 41 | Partial | Set membership | Typed scalar/range/wildcard and admitted real/string/fixed-aggregate contexts, plus packed dynamic/queue/associative value membership, have paths. General recursive/native-object and unrepresented aggregate contexts remain restricted. | [membership.rs](../src/sim/codegen/lowering/expressions/membership.rs), [expressions.rs](../src/sim/emit_c/owned/expressions.rs) |
-| 42 | Partial | Streaming | Packed and bounded fixed/resizable packed-element streams capture the full RHS and every destination before publication. Mixed targets allow at most one dynamic/queue destination. Deferred container notifications run after intermediate cleanup. Runtime fixed-array with-selectors, associative destinations, native strings and general recursive/reference/object forms remain restricted. | [streaming.rs](../src/sim/emit_c/owned/streaming.rs), [streaming.rs](../src/sim/codegen/lowering/containers/streaming.rs) |
-| 43 | Partial | Reference subroutine arguments | Packed variable/fixed-array descriptors and packed queue-element cells retain original identity across removal and cancellation. Native string/chandle references have separate address paths. General real/aggregate/resizable references, non-packed queue references, reference-formal NBAs and selected-reference file destinations remain restricted. Internal selected descriptors do not make frontend-illegal packed bit/part actuals legal HDL. | [references.rs](../src/sim/emit_c/owned/references.rs), [reference_writes.c](../src/sim/rt/scheduler/reference_writes.c) |
+| 42 | Partial | Streaming | Packed and bounded fixed/resizable packed-element streams capture the full RHS, then evaluate and publish destination operands in stream order. Mixed targets allow at most one dynamic/queue destination. Deferred container notifications run after intermediate cleanup. Runtime fixed-array with-selectors, associative destinations, native strings and general recursive/reference/object forms remain restricted. | [streaming.rs](../src/sim/emit_c/owned/streaming.rs), [streaming.rs](../src/sim/codegen/lowering/containers/streaming.rs) |
+| 43 | Partial | Reference subroutine arguments | Packed and fixed aggregate/array descriptors and packed queue-element cells retain original identity across removal and cancellation. Native string/chandle references have separate address paths. General native/resizable aggregate references, non-packed queue references, reference-formal NBAs and selected-reference file destinations remain restricted. Internal selected descriptors do not make frontend-illegal packed bit/part actuals legal HDL. | [references.rs](../src/sim/emit_c/owned/references.rs), [reference_writes.c](../src/sim/rt/scheduler/reference_writes.c) |
 | 44 | Missing | Recursive timed tasks | Recursion through delay/wait-bearing tasks. | [calls.rs](../src/sim/codegen/lowering/statements/calls.rs) |
 | 45 | Partial | Parallel subroutine bodies | Owned packed/real branch frames and recognized handle snapshots, delay-only native task suspension, event/cancellation-sensitive inline task paths and cancellation-before-copyout are represented. Recursive timed calls, timing-bearing class/interface tasks and arbitrary shared/native captures remain outside the bounded implementation. Ordinary blocking timing in functions is illegal. | [calls.rs](../src/sim/codegen/lowering/statements/calls.rs), [captures.rs](../src/sim/emit_c/owned/captures.rs) |
 | 46 | Partial | Cross-instance subroutine calls | Resolved callee identity can select an owning module/interface/package environment, including hierarchical/parent and per-instance dispatch. Existing regression sources include sim_hierarchical_subroutine_instances_and_parent_dispatch in sim_function.rs. Unresolved targets, event-formal value calls, timing-bearing class/interface methods and general aggregate/native combinations remain restricted; blanket cross-instance rejection is obsolete. | [call_contracts.rs](../src/sim/codegen/lowering/collection/call_contracts.rs), [sim_function.rs](../tests/sim_function.rs) |

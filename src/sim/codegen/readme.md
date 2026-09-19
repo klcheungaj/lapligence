@@ -15,6 +15,10 @@
   typed operations with owned declaration identity, storage lifetime, source
   origin, and edition-specific scheduling phase; the C backend consumes only
   the resulting execution model.
+- **Fixed values:** `lowering/collection/fixed_values.rs` owns checked widths and paths;
+  its sibling `fixed_defaults.rs`, `fixed_patterns.rs`, and `fixed_projections.rs` handle
+  defaults, one-time pattern/cast inputs, and activation/member views.
+  `net_arrays.rs` maps fixed net cells and selected ports onto resolved bits.
 - **Reuse:** `generate_from_db_with_opts` supports multiple optimization
   variants from one owned database.
 - **Enum methods:** scalar enum first/last/next/prev/num/name calls capture

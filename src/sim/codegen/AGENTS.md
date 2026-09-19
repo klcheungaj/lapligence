@@ -35,7 +35,8 @@ fragments or extend those paths as a workaround.
   once; explicitly open inputs ignore defaults. Matching whole packed-variable
   `ref` ports, including nested references, share canonical storage without
   copy links. Scalar `real`/`shortreal` links use doubles and notify changed
-  real dependents. Reject selected/object/array ref actuals. Inouts use their
+  real dependents. Fixed array/aggregate reference ports retain canonical member
+  views, including constant selected array elements. Inouts use their
   net group, not a link. Interface/modport references and body processes use
   storage on the actual interface instance bound by Slang.
 - Parse `$display` formats during lowering. `%t` accepts integral/real values
@@ -86,10 +87,10 @@ Collapse each inout's parent/child nets into one `llg_net_t` (LRM §23.3.3.7),
 with one driver slot per member. Whole writes use `llg_net_write`; refs,
 `$display`/`$monitor`, sensitivity and other reads use `resolved`. Apply Table
 6-2 and Table 28-7 strength endpoints: all-Z → Z, one non-Z → its value,
-equal-strength conflicts → X. Warn and skip groups with non-net members,
-mixed widths, unsupported wand/wor/tri0/tri1/reg types, or select-LHS/NBA/task-
-actual writes. Inouts emit no links; warn and skip input/output links touching
-members.
+equal-strength conflicts → X. Reject non-net members, incompatible widths or
+resolution kinds and unsupported driver contexts. Selected inouts use canonical
+bit bindings. Inouts emit no value-copy links; input/output links keep their own
+structural driver identity when they feed a resolved group.
 
 Standalone packed `wand/triand` and `wor/trior` use one group per declaration,
 with one contribution slot per whole-net continuous-assignment site (including
@@ -98,8 +99,11 @@ driver/strength tables are sized exactly at elaboration, so there is no fixed
 per-net driver ceiling. Synthetic slots have no
 waveform names; reads/sensitivity observe only the resolved cell. All-Z/no
 sources → Z; wired-AND 0 dominates X, wired-OR 1 dominates X. Retain scalar
-  continuous, gate and port strengths. Reject port/interface/array wired nets,
-  procedural writes, force/release and function/task-output drivers; a resolved
+  continuous, gate and port strengths. Fixed wired-net arrays and interface
+  instances retain per-site drivers and pull/supply defaults. Array inouts and
+  selected scalar ports join canonical electrical bits, with resolved array
+  publication notifying array dependencies. Reject incompatible net kinds,
+  procedural writes and function/task-output drivers; a resolved
   hierarchical or concatenated continuous-assignment LHS is admitted as a
   structural driver site, and only the unresolved source-text fallback still fails.
   Keep the older per-member wire/inout model unchanged. Tests:
@@ -145,8 +149,8 @@ See `tests/sim_net_defaults.rs`.
   `int x = 5;`, `logic [7:0] v = 8'ha5;` through `Db::vars_init`). Fold collected
   parameters (`int y = P + 1;`). Runtime-dependent scalar initializers
   (`logic z = a;`) use owned declaration identity and edition-specific phase
-  for supported packed type/lifetime combinations. Reject recursive aggregates
-  and unsupported subprogram storage.
+  for supported type/lifetime combinations. Fixed integral aggregate initializers
+  use persistent typed destinations; reject unrepresented native/resizable storage.
 - Use Slang's resolved lifetime, not explicit qualifier spelling alone. Static
   block locals use hidden model signals initialized once before processes;
   automatic locals use lexical C storage initialized per entry. Include
@@ -161,6 +165,15 @@ See `tests/sim_net_defaults.rs`.
 ## Subprograms, control flow and procedural drivers
 
 - Functions/tasks support recursion and defaults referencing earlier formals.
+  Capture each input once before lowering subsequent default reads. Fixed integral
+  arrays/structs/unions use exact-width activation payloads with recursive shape
+  and default metadata; automatic locals/returns remain independent, while
+  static storage persists. Composite output destinations are captured before
+  invocation. `ref` and `const ref` retain original leaf identities through
+  selected views and nested calls; never synthesize global cells for automatic
+  formals. Packed members nested in unpacked storage remain one vector owner.
+  Struct member defaults come from the owned type capture, and fixed declaration
+  initializer calls finish before SystemVerilog processes start.
   Inline delay/wait-bearing tasks; reject recursive delay-bearing tasks and
   task calls from functions. Per 1800-2009 §§6.21/13.4.2 and 1364-2001
   §§10.2.3/10.3.1, static formals/locals/returns retain definition-wide storage;
@@ -340,11 +353,12 @@ concat/case-equality operations. Reject before C compilation;
 
 ## Unpacked arrays and memories
 
-- Flatten to `sv4_t G_<path>_<name>[N]`, where `N` multiplies each dimension's
-  `|left - right| + 1`. `main()` loops fill four-state variables with X,
-  two-state with zero, ordinary nets with Z (calls are invalid static
-  initializers). Apply declaration `= '{…}` relationships captured by
-  `core::db` before processes, with constant operands in linear-index order.
+- Model-global arrays flatten to `sv4_t G_<path>_<name>[N]`, where `N` multiplies
+  each dimension's `|left - right| + 1`. Fixed activation values use one owned
+  declaration-order payload. Defaults preserve captured state domains and member
+  initializers; ordinary nets start Z and resolved cells retain pull/supply defaults.
+  Fixed integral initializer expressions, including zero-time calls, execute in
+  the typed declaration-initialization phase before SystemVerilog processes.
 - Support reads/writes of `mem[i]`, `a[i][j]`, `mem[i][3:0]`, `mem[i][2]`,
   and `mem[i][base +: width]`. Indexed widths are constant; normalize runtime
   base/direction against packed bounds. Row-major order makes the **leftmost
@@ -352,18 +366,18 @@ concat/case-equality operations. Reject before C compilation;
 - Out-of-range/X/Z indices read the element default (X or two-state zero) and
   do not write. `sv4_to_index_i64` retains sign, rejects high-limb overflow,
   checks bounds before offset subtraction, then computes flat addresses.
-  Reject unresolved bounds, partial slices (`a[i]` on 2-D), nonconstant
-  initializer elements, and element widths at or beyond the exclusive backend
-  limit (`LLG_MAX_WIDTH + 1`).
+  Partial indexing and constant unpacked slices retain their remaining dimensions.
+  Reject unresolved bounds and packed payload widths at or beyond the exclusive
+  backend limit (`LLG_MAX_WIDTH + 1`).
 - NBAs capture address/RHS at issue. Bit/part/indexed masks merge into current
   storage at commit, preserving disjoint/intervening writes; packed selections
   and constant/runtime-delay NBAs share this rule. Future NBAs outlive the
   issuer without suspension. Blocking delayed assignment captures then
   suspends; real/shortreal values use local doubles before assignment conversion.
-- Retain the comb-array limitation: `always_comb`/`@*` reads wake on index
-  signals, not array writes. `llg_ba`/`llg_nba` notifies exact-element waiters,
-  but generated comb processes do not watch elements. Use `always_ff`/`@(...)`
-  for memory reads.
+- Array reads retain exact-element or contents dependencies plus selector reads.
+  `always_comb`/`@*` must wake on the underlying cells, including aggregate value
+  arguments and reference-port views. Preserve static member prefixes when
+  excluding a process's written expressions from implicit sensitivity.
 
 ## Structures and unions
 
@@ -371,17 +385,12 @@ Packed untagged structs/unions are packed values. Union members overlay bit
 zero, require equal widths, and preserve named member signedness/two-state
 conversion. Reject tagged unions.
 
-The unpacked slice supports module/generate variables with fixed-width packed
-integral members: structs use independent typed signals, equal-width untagged
-unions share storage. Support named reads/writes, constant member bit/part
-selects, fieldwise compatible named struct copies and shared-storage union
-copies. Declaration/procedural patterns support positional, complete named,
-default and simple integral type keys. Match exact packed dimensions, sign and
-state domain; member keys beat type keys, last matching type key beats default.
-Explicit nested packed-member patterns recurse. Reject recursive default/type-
-key distribution and nominal aggregate keys until owned lexical type identity
-exists; reject anonymous copies without identity. Also reject aggregate nets/ports,
-nested aggregate/unpacked-array members, unequal unpacked unions,
-unpacked-aggregate subprogram formals/locals, compound assignment and whole
-aggregates in scalar expressions; fixed packed struct/union formals and returns
-are supported.
+Fixed integral unpacked structures and untagged unions use owned recursive
+layouts across variables, arrays, subprogram values and module value/ref ports.
+Struct leaves retain state-specific conversions; untagged unions share one
+maximum-width payload and preserve common initial struct sequences. Fixed
+aggregate nets use a packed backing owner with typed member projections.
+Patterns preserve nominal member/type keys and recursive default distribution;
+shared source nodes evaluate once before fan-out. Explicit member defaults are
+part of captured type metadata. Keep unsupported native/resizable combinations
+and tagged unions explicit; never infer aggregate identity from a display name.

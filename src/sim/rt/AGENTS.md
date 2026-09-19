@@ -6,7 +6,7 @@ Runtime values are unique owners. Whole-model rendering uses the structured
 numeric emitter and rejects unmigrated feature families; legacy fragment APIs
 remain fenced. Runtime/wave selftests retain their original assertions with
 explicit owner cleanup; keep them active. Do not bypass a feature guard or link
-stale generated C. The ABI marker is `LLG_VALUE_ABI_VERSION` (currently 3),
+stale generated C. The ABI marker is `LLG_VALUE_ABI_VERSION` (currently 4),
 not a model width. Use `tests/runtime_value_storage` for component checks;
 Rust-emitted model integration, full parity and native-platform gates remain.
 See [coverage](../../../docs/sim_features.md#dynamic-value-migration-acceptance-boundary) and [ownership](value/ownership.md).

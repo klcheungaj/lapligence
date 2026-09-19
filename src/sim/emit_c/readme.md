@@ -30,7 +30,7 @@ close explicitly cancels a suspended run. Define `LLG_MODEL_NO_MAIN` when a host
 provides `main`. One model instance may be live at a time; this is not a new
 thread-safe or multi-instance runtime.
 
-The generated `LLG_MODEL_VALUE_ABI` must equal `LLG_VALUE_ABI_VERSION` (3).
+The generated `LLG_MODEL_VALUE_ABI` must equal `LLG_VALUE_ABI_VERSION` (4).
 Model capacity is not an allocation size or a build/cache dimension. The width
 scan enforces only the exclusive backend limit. `LLG_MODEL_STACK_VALUES` remains
 a checked conservative descriptor/stack-headroom estimate. CMake requests C11
