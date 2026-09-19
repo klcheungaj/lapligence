@@ -130,7 +130,9 @@ pub(in super::super) fn render_assign(
             IrLhs::WholeRef { width, signed, .. } | IrLhs::Ref { width, signed, .. } => {
                 (*width, *signed)
             }
-            IrLhs::PackedSelect { steps, signed, .. } => (steps.last().map_or(0, |step| step.width), *signed),
+            IrLhs::PackedSelect { steps, signed, .. } => {
+                (steps.last().map_or(0, |step| step.width), *signed)
+            }
             IrLhs::Bit(..) => (1, false),
             IrLhs::Part(_, left, right, _) => (((left - right).abs() + 1) as u32, false),
             IrLhs::IdxPart(_, _, _, width, _, _) => (*width, false),
@@ -355,7 +357,8 @@ pub(in super::super) fn render_assign(
             ctx.model.signal(*idx).ty.two_state() || *selected_two_state
         }
         IrLhs::PackedSelect { two_state, .. }
-        | IrLhs::WholeRef { two_state, .. } | IrLhs::Ref { two_state, .. } => *two_state,
+        | IrLhs::WholeRef { two_state, .. }
+        | IrLhs::Ref { two_state, .. } => *two_state,
         _ => false,
     };
     // Assignment padding follows the RHS's OWN signedness (LRM §10.7);
@@ -376,7 +379,9 @@ pub(in super::super) fn render_assign(
         )
     };
     let args = match lh {
-        IrLhs::PackedSelect { .. } => return Err("packed activation selects require structured owned emission".to_owned()),
+        IrLhs::PackedSelect { .. } => {
+            return Err("packed activation selects require structured owned emission".to_owned())
+        }
         IrLhs::Whole(idx) => {
             let sig = ctx.model.signal(*idx);
             format!(

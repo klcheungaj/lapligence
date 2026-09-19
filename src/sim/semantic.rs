@@ -424,26 +424,30 @@ impl<'db> SemanticModel<'db> {
                 NodeKind::ClassDef => Some(SynthesisIssueKind::RuntimeObject),
                 NodeKind::NamedEvent => Some(SynthesisIssueKind::EventOperation),
                 NodeKind::Array { ty } => match self.db.array_meta(id) {
-                    Some(meta) if matches!(meta.kind(), ArrayKind::Static) => classify_node_type(self.db, id, ty)
-                        .or_else(|| {
-                            (meta.dimensions().is_empty()
-                                || meta.dimensions().iter().any(Option::is_none))
-                            .then_some(SynthesisIssueKind::UnknownType)
-                        })
-                        .or_else(|| {
-                            meta.initializer()
-                                .map(|_| SynthesisIssueKind::StorageInitialization)
-                        }),
+                    Some(meta) if matches!(meta.kind(), ArrayKind::Static) => {
+                        classify_node_type(self.db, id, ty)
+                            .or_else(|| {
+                                (meta.dimensions().is_empty()
+                                    || meta.dimensions().iter().any(Option::is_none))
+                                .then_some(SynthesisIssueKind::UnknownType)
+                            })
+                            .or_else(|| {
+                                meta.initializer()
+                                    .map(|_| SynthesisIssueKind::StorageInitialization)
+                            })
+                    }
                     Some(_) => Some(SynthesisIssueKind::DynamicContainer),
                     None => Some(SynthesisIssueKind::UnknownType),
                 },
-                NodeKind::Net { ty, net_type, .. } => classify_node_type(self.db, id, ty).or_else(|| {
-                    (!matches!(
-                        net_type,
-                        NetType::Wire | NetType::Uwire | NetType::Logic | NetType::Reg
-                    ))
-                    .then_some(SynthesisIssueKind::ResolvedNet)
-                }),
+                NodeKind::Net { ty, net_type, .. } => {
+                    classify_node_type(self.db, id, ty).or_else(|| {
+                        (!matches!(
+                            net_type,
+                            NetType::Wire | NetType::Uwire | NetType::Logic | NetType::Reg
+                        ))
+                        .then_some(SynthesisIssueKind::ResolvedNet)
+                    })
+                }
                 NodeKind::Var { ty } => classify_node_type(self.db, id, ty).or_else(|| {
                     self.db
                         .var_initializer(id)
@@ -451,7 +455,8 @@ impl<'db> SemanticModel<'db> {
                 }),
                 NodeKind::Param {
                     ty, value: None, ..
-                } => classify_node_type(self.db, id, ty).or(Some(SynthesisIssueKind::UnresolvedExpression)),
+                } => classify_node_type(self.db, id, ty)
+                    .or(Some(SynthesisIssueKind::UnresolvedExpression)),
                 NodeKind::Param {
                     ty, value: Some(_), ..
                 } => classify_node_type(self.db, id, ty),
@@ -997,9 +1002,15 @@ fn supported_gate_strength(strength: Strength) -> bool {
 }
 
 fn classify_node_type(db: &Db, node: NodeId, ty: &TypeInfo) -> Option<SynthesisIssueKind> {
-    if db.type_descriptor(node).and_then(|descriptor| descriptor.fixed_size_bits()).is_some_and(|width| width > 0) {
+    if db
+        .type_descriptor(node)
+        .and_then(|descriptor| descriptor.fixed_size_bits())
+        .is_some_and(|width| width > 0)
+    {
         None
-    } else { classify_type(ty) }
+    } else {
+        classify_type(ty)
+    }
 }
 
 fn classify_type(ty: &TypeInfo) -> Option<SynthesisIssueKind> {

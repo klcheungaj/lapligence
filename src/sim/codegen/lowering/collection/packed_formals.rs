@@ -37,7 +37,10 @@ impl<'a> Codegen<'a> {
                     current = *base;
                 }
                 NodeKind::Expr(ExprKind::IndexedPartSelect {
-                    base, base_expr, width_expr, neg,
+                    base,
+                    base_expr,
+                    width_expr,
+                    neg,
                 }) => {
                     selectors.push((*base, Select::Indexed(*base_expr, *width_expr, *neg)));
                     current = *base;
@@ -52,7 +55,8 @@ impl<'a> Codegen<'a> {
                     }) else {
                         return Ok(None);
                     };
-                    let Some(member) = self.packed_member_layout(root, &parts[position + 1..]) else {
+                    let Some(member) = self.packed_member_layout(root, &parts[position + 1..])
+                    else {
                         return Ok(None);
                     };
                     break (root, member);
@@ -69,7 +73,12 @@ impl<'a> Codegen<'a> {
         for (base, select) in selectors.into_iter().rev() {
             self.packed_selection_steps(path, base, select, &mut width, &mut steps)?;
         }
-        Ok(Some(Projection { root, member, steps, selected }))
+        Ok(Some(Projection {
+            root,
+            member,
+            steps,
+            selected,
+        }))
     }
 
     pub(in super::super) fn packed_formal_read(
@@ -84,8 +93,16 @@ impl<'a> Codegen<'a> {
         let mut value = if let Some(value) = function.arg_ir.get(&projection.root) {
             value.clone()
         } else {
-            let ret = function.ret.as_ref().ok_or_else(|| "packed return has no storage".to_owned())?;
-            IrExpr::new(IrExprKind::LocalRead(ret.c_name.clone()), ret.width, ret.signed, None)
+            let ret = function
+                .ret
+                .as_ref()
+                .ok_or_else(|| "packed return has no storage".to_owned())?;
+            IrExpr::new(
+                IrExprKind::LocalRead(ret.c_name.clone()),
+                ret.width,
+                ret.signed,
+                None,
+            )
         };
         for (index, step) in projection.steps.into_iter().enumerate() {
             value = packed_step_read(value, step);
@@ -112,10 +129,16 @@ impl<'a> Codegen<'a> {
         };
         let function = self.func.as_ref().expect("projection has an activation");
         if function.const_refs.contains(&projection.root) {
-            return Err(format!("cannot write through const ref `{}` in `{path}`", self.node(projection.root).name));
+            return Err(format!(
+                "cannot write through const ref `{}` in `{path}`",
+                self.node(projection.root).name
+            ));
         }
         let target = self.func_write_target(projection.root, "").ok_or_else(|| {
-            format!("packed formal `{}` has no writable activation in `{path}`", self.node(projection.root).name)
+            format!(
+                "packed formal `{}` has no writable activation in `{path}`",
+                self.node(projection.root).name
+            )
         })?;
         Ok(Some(IrLhs::PackedSelect {
             target: Box::new(self.lhs_to_ir(target)?),

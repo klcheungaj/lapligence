@@ -1045,7 +1045,11 @@ fn lhs_slots(lhs: &IrLhs) -> Result<u64, String> {
         IrLhs::PackedSelect { target, steps, .. } => {
             let mut slots = checked_add(lhs_slots(target)?, 3, "packed activation select storage")?;
             for step in steps {
-                slots = checked_add(slots, expr_slots(&step.base)?, "packed activation select slots")?;
+                slots = checked_add(
+                    slots,
+                    expr_slots(&step.base)?,
+                    "packed activation select slots",
+                )?;
             }
             Ok(slots)
         }

@@ -646,7 +646,9 @@ impl<'a> Codegen<'a> {
     /// independent of how many member or indexing nodes the frontend emits.
     fn assignment_storage_root(&self, node: NodeId) -> Option<NodeId> {
         match self.kind(node) {
-            NodeKind::Var { .. } | NodeKind::Array { .. } | NodeKind::FuncArg { .. }
+            NodeKind::Var { .. }
+            | NodeKind::Array { .. }
+            | NodeKind::FuncArg { .. }
             | NodeKind::FuncTask { .. } => Some(node),
             NodeKind::Expr(ExprKind::Ref { target }) => *target,
             NodeKind::Expr(
@@ -655,10 +657,17 @@ impl<'a> Codegen<'a> {
                 | ExprKind::IndexedPartSelect { base, .. }
                 | ExprKind::ArraySelect { base, .. },
             ) => self.assignment_storage_root(*base),
-            NodeKind::Expr(ExprKind::HierPath { refs, .. }) => refs.iter().flatten()
-                .copied().find(|target| matches!(self.kind(*target),
-                    NodeKind::Var { .. } | NodeKind::Array { .. }
-                    | NodeKind::FuncArg { .. } | NodeKind::FuncTask { .. })),
+            NodeKind::Expr(ExprKind::HierPath { refs, .. }) => {
+                refs.iter().flatten().copied().find(|target| {
+                    matches!(
+                        self.kind(*target),
+                        NodeKind::Var { .. }
+                            | NodeKind::Array { .. }
+                            | NodeKind::FuncArg { .. }
+                            | NodeKind::FuncTask { .. }
+                    )
+                })
+            }
             _ => None,
         }
     }

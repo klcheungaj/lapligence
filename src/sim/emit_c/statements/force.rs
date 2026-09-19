@@ -60,7 +60,9 @@ fn force_part(
     out: &mut Vec<String>,
 ) -> Result<(), String> {
     match lhs {
-        IrLhs::PackedSelect { .. } => return Err("packed activation selects require structured owned emission".to_owned()),
+        IrLhs::PackedSelect { .. } => {
+            return Err("packed activation selects require structured owned emission".to_owned())
+        }
         IrLhs::Whole(index) => {
             let signal = ctx.model.signal(*index);
             if matches!(signal.ty, IrType::Real { .. }) {

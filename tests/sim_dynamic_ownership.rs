@@ -111,7 +111,12 @@ fn nba_illegal_lifetime_stays_rejected() {
     );
     for optimized in [false, true] {
         let output = sim_cli::invoke_with_env(
-            "feature_completion/g1_19", "nba_ref_formal", optimized, &[], &[], &[],
+            "feature_completion/g1_19",
+            "nba_ref_formal",
+            optimized,
+            &[],
+            &[],
+            &[],
         );
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(!output.status.success(), "NBA through a ref was accepted");

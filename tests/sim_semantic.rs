@@ -32,10 +32,13 @@ fn fixed_unpacked_types_have_known_sizes_and_a_portable_rtl_view() {
          module top(input packet_t a, output packet_t y);\n\
          always_comb y = a;\nendmodule",
     );
-    let descriptor = db.node_ids().find_map(|node| {
-        let descriptor = db.type_descriptor(node)?;
-        (descriptor.info.kind == "struct").then_some(descriptor)
-    }).expect("captured unpacked struct");
+    let descriptor = db
+        .node_ids()
+        .find_map(|node| {
+            let descriptor = db.type_descriptor(node)?;
+            (descriptor.info.kind == "struct").then_some(descriptor)
+        })
+        .expect("captured unpacked struct");
     assert_eq!(descriptor.fixed_size_bits(), Some(17));
     assert!(!descriptor.two_state);
     let semantic = SemanticModel::from_db(&db);

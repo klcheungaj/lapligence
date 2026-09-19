@@ -649,7 +649,9 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
             };
             let (code, width, signed) = match elem_sel {
                 IrElemSel::PackedChain(_) => {
-                    return Err("packed selection chains require structured owned emission".to_owned());
+                    return Err(
+                        "packed selection chains require structured owned emission".to_owned()
+                    );
                 }
                 IrElemSel::Whole => (elem, ai.elem_width, ai.signed),
                 IrElemSel::Part(l, r) => (

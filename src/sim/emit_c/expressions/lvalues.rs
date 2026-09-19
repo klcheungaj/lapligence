@@ -106,7 +106,9 @@ pub(super) fn lhs_shape(ctx: &RCtx<'_>, lhs: &IrLhs) -> (u32, bool) {
         IrLhs::WholeRef { width, signed, .. } | IrLhs::Ref { width, signed, .. } => {
             (*width, *signed)
         }
-        IrLhs::PackedSelect { steps, signed, .. } => (steps.last().map_or(0, |step| step.width), *signed),
+        IrLhs::PackedSelect { steps, signed, .. } => {
+            (steps.last().map_or(0, |step| step.width), *signed)
+        }
         IrLhs::Bit(..) => (1, false),
         IrLhs::Part(_, left, right, _) => (left.abs_diff(*right) as u32 + 1, false),
         IrLhs::IdxPart(_, _, _, width, _, _) => (*width, false),
@@ -156,7 +158,8 @@ fn lhs_two_state(ctx: &RCtx<'_>, lhs: &IrLhs) -> bool {
     match lhs {
         IrLhs::Whole(index) => ctx.model.signal(*index).ty.two_state(),
         IrLhs::PackedSelect { two_state, .. }
-        | IrLhs::WholeRef { two_state, .. } | IrLhs::Ref { two_state, .. } => *two_state,
+        | IrLhs::WholeRef { two_state, .. }
+        | IrLhs::Ref { two_state, .. } => *two_state,
         IrLhs::Bit(index, _, selected_two_state)
         | IrLhs::Part(index, .., selected_two_state)
         | IrLhs::IdxPart(index, .., selected_two_state) => {
@@ -184,7 +187,9 @@ pub(super) fn render_lhs_value(
     signed: bool,
 ) -> Result<RenderedExpr, String> {
     let value = match lhs {
-        IrLhs::PackedSelect { .. } => return Err("packed activation selects require structured owned emission".to_owned()),
+        IrLhs::PackedSelect { .. } => {
+            return Err("packed activation selects require structured owned emission".to_owned())
+        }
         IrLhs::Whole(index) => {
             let signal = ctx.model.signal(*index);
             IrExpr::new(
@@ -360,7 +365,11 @@ pub(super) fn capture_lhs_indices_with_prefix(
         index_prefix: &str,
     ) -> Result<(), String> {
         match lhs {
-            IrLhs::PackedSelect { .. } => return Err("packed activation selects require structured owned emission".to_owned()),
+            IrLhs::PackedSelect { .. } => {
+                return Err(
+                    "packed activation selects require structured owned emission".to_owned(),
+                )
+            }
             IrLhs::Ref {
                 bit: Some(index), ..
             } => {
@@ -387,7 +396,9 @@ pub(super) fn capture_lhs_indices_with_prefix(
                         **base = capture(ctx, base, declarations, next, index_prefix)?;
                     }
                     IrElemSel::PackedChain(_) => {
-                        return Err("packed selection chains require structured owned emission".to_owned());
+                        return Err(
+                            "packed selection chains require structured owned emission".to_owned()
+                        );
                     }
                     IrElemSel::Whole | IrElemSel::Part(..) => {}
                 }
