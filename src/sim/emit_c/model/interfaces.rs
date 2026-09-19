@@ -85,8 +85,13 @@ fn signal_storage_name(model: &IrModel, index: usize) -> String {
     model
         .signals
         .get(index)
-        .map(|signal| if signal.net_alias.is_empty() { signal.c_name().to_owned() }
-            else { format!("llg_net_alias_{index}.visible") })
+        .map(|signal| {
+            if signal.net_alias.is_empty() {
+                signal.c_name().to_owned()
+            } else {
+                format!("llg_net_alias_{index}.visible")
+            }
+        })
         .unwrap_or_else(|| "NULL".to_owned())
 }
 

@@ -11,21 +11,34 @@ fn render(model: &IrModel) -> Result<String, EmitError> {
 // exercise public model rendering; detached fragments remain rejection tests.
 fn add_test_process(model: &mut IrModel, statement: IrStmt) {
     model.processes.push(crate::sim::ir::IrProcess::new(
-        "p_owner_test".into(), "owner-test".into(),
-        crate::sim::ir::IrShape::RunOnce, vec![], vec![statement],
+        "p_owner_test".into(),
+        "owner-test".into(),
+        crate::sim::ir::IrShape::RunOnce,
+        vec![],
+        vec![statement],
     ));
     model.spawns.push("p_owner_test".into());
 }
 
 fn render_expression_model(mut model: IrModel, expression: IrExpr) -> String {
     let result = model.signals.len();
-    model.signals.push(crate::sim::ir::IrSignal::new(
-        "owner_result".into(), None,
-        crate::sim::ir::IrType::packed(expression.width, expression.signed).unwrap(), None,
-    ).unwrap());
-    add_test_process(&mut model, IrStmt::Assign {
-        lhs: crate::sim::ir::IrLhs::Whole(result), rhs: expression, nba: false,
-    });
+    model.signals.push(
+        crate::sim::ir::IrSignal::new(
+            "owner_result".into(),
+            None,
+            crate::sim::ir::IrType::packed(expression.width, expression.signed).unwrap(),
+            None,
+        )
+        .unwrap(),
+    );
+    add_test_process(
+        &mut model,
+        IrStmt::Assign {
+            lhs: crate::sim::ir::IrLhs::Whole(result),
+            rhs: expression,
+            nba: false,
+        },
+    );
     render(&model).unwrap()
 }
 
@@ -94,8 +107,7 @@ fn executable_loop_blocks_have_cooperative_budget_points() {
 
     let rendered = render(&model).unwrap();
 
-    assert!(rendered
-        .contains("llg_budget_point(\"top.loop\");"));
+    assert!(rendered.contains("llg_budget_point(\"top.loop\");"));
 }
 
 #[test]
@@ -398,13 +410,23 @@ fn output_temporary_uses_its_declared_formal_after_c_argument_reordering() {
         false,
     );
     let expression = IrExpr::try_new(IrExprKind::CallFn(Box::new(call)), 1, false, None).unwrap();
-    model.signals.push(crate::sim::ir::IrSignal::new(
-        "target".into(), None, IrType::packed(16, true).unwrap(), None,
-    ).unwrap());
+    model.signals.push(
+        crate::sim::ir::IrSignal::new(
+            "target".into(),
+            None,
+            IrType::packed(16, true).unwrap(),
+            None,
+        )
+        .unwrap(),
+    );
     let rendered = render_expression_model(model, expression);
     let process = &rendered[rendered.find("static void p_owner_test(").unwrap()..];
-    assert!(process.lines().any(|line| line.contains("sv4_replace(_llg_local_")
-        && line.contains("sv4_x(16, 1)")), "{process}");
+    assert!(
+        process
+            .lines()
+            .any(|line| line.contains("sv4_replace(_llg_local_") && line.contains("sv4_x(16, 1)")),
+        "{process}"
+    );
     assert!(process.contains("mixed("));
 }
 
@@ -543,8 +565,18 @@ fn evaluated_event_emits_owned_context_and_contextual_callback() {
     assert!(rendered.contains("llg_frame_new(1ULL)"));
     assert!(rendered.contains(".eval_context = _llg_event_frame_"));
     assert_eq!(rendered.matches("llg_frame_new(1ULL)").count(), 1);
-    assert_eq!(rendered.matches("llg_frame_retain(_llg_event_frame_").count(), 2);
-    assert_eq!(rendered.matches("llg_frame_release(_llg_event_frame_").count(), 1);
+    assert_eq!(
+        rendered
+            .matches("llg_frame_retain(_llg_event_frame_")
+            .count(),
+        2
+    );
+    assert_eq!(
+        rendered
+            .matches("llg_frame_release(_llg_event_frame_")
+            .count(),
+        1
+    );
     assert!(rendered.contains(".condition_context = _llg_event_frame_"));
     assert!(rendered.contains("llg_wait_expressions(_llg_events_"));
     assert!(!rendered.contains("out[0] ="));

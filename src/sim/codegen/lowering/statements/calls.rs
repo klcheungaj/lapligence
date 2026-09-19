@@ -309,9 +309,9 @@ impl EmitCtx<'_, '_> {
                 continue;
             }
             let tname = format!("_a{}_{}", h.0, idx);
-            let init_ir =
-                self.cg
-                    .lower_call_temp_init_from_expr(*io, &bound[idx], actual_read)?;
+            let init_ir = self
+                .cg
+                .lower_call_temp_init_from_expr(*io, &bound[idx], actual_read)?;
             temps.push((tname.clone(), idx, init_ir));
             copyouts.push((lh, tname.clone(), bound[idx].width, bound[idx].signed));
             arg_irs[idx] = Some(IrExpr::new(
@@ -342,13 +342,9 @@ impl EmitCtx<'_, '_> {
                         self.cg.lower_string(&self.path, bound[idx].expr)?,
                     ));
                 } else {
-                    let ir = self.cg.lower_bound_arg(
-                        &self.path,
-                        formals,
-                        bound,
-                        idx,
-                        &mut arg_irs,
-                    )?;
+                    let ir =
+                        self.cg
+                            .lower_bound_arg(&self.path, formals, bound, idx, &mut arg_irs)?;
                     in_args.push(IrCallArg::Val(ir));
                 }
             }
@@ -775,13 +771,9 @@ impl EmitCtx<'_, '_> {
                     }
                 );
                 if !*is_out {
-                    let value = self.cg.lower_bound_arg(
-                        &self.path,
-                        formals,
-                        bound,
-                        idx,
-                        &mut arg_irs,
-                    )?;
+                    let value =
+                        self.cg
+                            .lower_bound_arg(&self.path, formals, bound, idx, &mut arg_irs)?;
                     before.push(IrStmt::Assign {
                         rhs: apply_lhs_assignment_context(&self.cg.model, &storage_lhs, value),
                         lhs: storage_lhs,
@@ -885,13 +877,9 @@ impl EmitCtx<'_, '_> {
                 );
                 arg_irs[idx] = Some(read_ir.clone());
             } else {
-                let ir = self.cg.lower_bound_arg(
-                    &self.path,
-                    formals,
-                    bound,
-                    idx,
-                    &mut arg_irs,
-                )?;
+                let ir = self
+                    .cg
+                    .lower_bound_arg(&self.path, formals, bound, idx, &mut arg_irs)?;
                 let cname = format!("_il{}_{}", h.0, idx);
                 arg_write.insert(*io, format!("&{cname}"));
                 arg_ir.insert(

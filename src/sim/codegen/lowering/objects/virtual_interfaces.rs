@@ -116,10 +116,24 @@ impl Codegen<'_> {
         else {
             return Ok(None);
         };
-        let site = format!("{path}.{}", self.model.virtual_interfaces[descriptor].members[slot].name);
-        let name = self.native_access_symbol_at(handle,
-            crate::sim::ir::IrNativeAccessKind::InterfaceMember { interface: descriptor, member: slot }, Some(site));
-        Ok(Some(IrExpr::new(IrExprKind::LocalRead(name), width, signed, None)))
+        let site = format!(
+            "{path}.{}",
+            self.model.virtual_interfaces[descriptor].members[slot].name
+        );
+        let name = self.native_access_symbol_at(
+            handle,
+            crate::sim::ir::IrNativeAccessKind::InterfaceMember {
+                interface: descriptor,
+                member: slot,
+            },
+            Some(site),
+        );
+        Ok(Some(IrExpr::new(
+            IrExprKind::LocalRead(name),
+            width,
+            signed,
+            None,
+        )))
     }
 
     pub(in super::super) fn virtual_interface_member_lhs(
@@ -132,11 +146,24 @@ impl Codegen<'_> {
         else {
             return Ok(None);
         };
-        let site = format!("{path}.{}", self.model.virtual_interfaces[descriptor].members[slot].name);
-        let name = self.native_access_symbol_at(handle,
-            crate::sim::ir::IrNativeAccessKind::InterfaceMember { interface: descriptor, member: slot }, Some(site));
+        let site = format!(
+            "{path}.{}",
+            self.model.virtual_interfaces[descriptor].members[slot].name
+        );
+        let name = self.native_access_symbol_at(
+            handle,
+            crate::sim::ir::IrNativeAccessKind::InterfaceMember {
+                interface: descriptor,
+                member: slot,
+            },
+            Some(site),
+        );
         Ok(Some(IrLhs::WholeRef {
-            addr: format!("&{name}"), width, signed, two_state, shortreal: false,
+            addr: format!("&{name}"),
+            width,
+            signed,
+            two_state,
+            shortreal: false,
         }))
     }
 }

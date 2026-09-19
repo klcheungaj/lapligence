@@ -48,7 +48,12 @@ impl<'a> Codegen<'a> {
                     },
                     initial: IrExpr::new(
                         IrExprKind::ObjectQuery(Box::new(IrObjectQuery::HandleCapture(
-                            IrChandleExpr::LocalRead(name.to_owned())))), 1, false, None),
+                            IrChandleExpr::LocalRead(name.to_owned()),
+                        ))),
+                        1,
+                        false,
+                        None,
+                    ),
                     lifetime: StorageLifetime::Automatic,
                     kind: StorageKind::Opaque,
                 });

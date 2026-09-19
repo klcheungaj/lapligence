@@ -165,7 +165,10 @@ impl Codegen<'_> {
                         )
                     })?;
                 let _ = env;
-                return Ok(IrChandleExpr::InterfaceInstance { interface: *descriptor, instance: *instance });
+                return Ok(IrChandleExpr::InterfaceInstance {
+                    interface: *descriptor,
+                    instance: *instance,
+                });
             }
             if matches!(
                 self.kind(*target),
@@ -324,13 +327,8 @@ impl Codegen<'_> {
                         self.lower_chandle(path, bound[idx].expr)?,
                     ));
                 } else {
-                    let value = self.lower_bound_arg(
-                        path,
-                        &meta.formals,
-                        &bound,
-                        idx,
-                        &mut arg_irs,
-                    )?;
+                    let value =
+                        self.lower_bound_arg(path, &meta.formals, &bound, idx, &mut arg_irs)?;
                     in_args.push(IrCallArg::Val(value));
                 }
             }

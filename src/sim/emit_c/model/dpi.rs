@@ -260,50 +260,125 @@ fn dpi_output_init(form: &crate::sim::ir::IrFormal, idx: usize) -> Result<String
 /// Inputs are borrowed from the caller's registered slots. Every foreign result
 /// is staged before any output publication can reenter HDL or invalidate inputs.
 pub(super) fn render_dpi_thunk(f: &IrFunc) -> Result<String, String> {
-    let dpi = f.dpi_import().ok_or_else(|| "DPI thunk requested for ordinary function".to_owned())?;
+    let dpi = f
+        .dpi_import()
+        .ok_or_else(|| "DPI thunk requested for ordinary function".to_owned())?;
     let ret = dpi_return_scalar(f)?;
-    let mut out = format!("static {} {}({}) {{\n", internal_return_type(f), f.c_name, func_params(f));
-    let guard = if f.ret_string { "return (llg_string_t){0};".to_owned() }
-        else if f.ret_chandle { "return NULL;".to_owned() }
-        else if f.ret.is_some() { format!("return {};", f.ret_x()) } else { "return;".to_owned() };
+    let mut out = format!(
+        "static {} {}({}) {{\n",
+        internal_return_type(f),
+        f.c_name,
+        func_params(f)
+    );
+    let guard = if f.ret_string {
+        "return (llg_string_t){0};".to_owned()
+    } else if f.ret_chandle {
+        "return NULL;".to_owned()
+    } else if f.ret.is_some() {
+        format!("return {};", f.ret_x())
+    } else {
+        "return;".to_owned()
+    };
     out.push_str(&format!("    if (depth >= {LLG_MAX_FUNC_DEPTH}) {{ fprintf(stderr, \"llg: recursion limit exceeded\\n\"); {guard} }}\n"));
     out.push_str("    llg_value_scope_t* _dpi_mark = llg_value_scope_mark();\n");
     // Exact descriptor count, independent of the model's largest packed width.
     out.push_str(&format!("    llg_value_scope_t* _dpi_scope = llg_value_scope_begin({});\n    sv4_t* _dpi_values = llg_value_scope_values(_dpi_scope);\n    (void)_dpi_values;\n", f.formals.len() + 1));
-    for (index, formal) in f.formals.iter().enumerate().filter(|(_, formal)| formal.is_address()) {
+    for (index, formal) in f
+        .formals
+        .iter()
+        .enumerate()
+        .filter(|(_, formal)| formal.is_address())
+    {
         let scalar = dpi_scalar(formal)?;
-        let ty = if matches!(scalar, DpiScalar::String) { "char*" } else { dpi_scalar_c_type(scalar) };
-        out.push_str(&format!("    {ty} _dpi_o{index} = {};\n", dpi_output_init(formal, index)?));
+        let ty = if matches!(scalar, DpiScalar::String) {
+            "char*"
+        } else {
+            dpi_scalar_c_type(scalar)
+        };
+        out.push_str(&format!(
+            "    {ty} _dpi_o{index} = {};\n",
+            dpi_output_init(formal, index)?
+        ));
     }
-    let arguments = f.formals.iter().enumerate().map(|(index, formal)| {
-        if formal.is_address() { Ok(format!("&_dpi_o{index}")) } else { dpi_input_expr(formal, index) }
-    }).collect::<Result<Vec<_>, String>>()?;
+    let arguments = f
+        .formals
+        .iter()
+        .enumerate()
+        .map(|(index, formal)| {
+            if formal.is_address() {
+                Ok(format!("&_dpi_o{index}"))
+            } else {
+                dpi_input_expr(formal, index)
+            }
+        })
+        .collect::<Result<Vec<_>, String>>()?;
     let call = format!("{}({})", dpi.c_name(), arguments.join(", "));
-    if let Some(scalar) = ret { out.push_str(&format!("    {} _dpi_ret = {call};\n", dpi_scalar_c_type(scalar))); }
-    else { out.push_str(&format!("    {call};\n")); }
-    let string_snapshot = |name: &str, source: &str| format!(
-        "    llg_value_scope_t* {name}_owner = llg_value_scope_begin_object(sizeof(llg_string_t), llg_owned_string_drop);\n    llg_string_t* {name} = (llg_string_t*)llg_value_scope_object({name}_owner);\n    *{name} = ({source}) ? llg_string_bytes(({source}), strlen({source})) : (llg_string_t){{0}};\n");
-    if matches!(ret, Some(DpiScalar::String)) { out.push_str(&string_snapshot("_dpi_string_ret", "_dpi_ret")); }
-    for (index, formal) in f.formals.iter().enumerate().filter(|(_, formal)| formal.is_address()) {
-        if formal.string { out.push_str(&string_snapshot(&format!("_dpi_s{index}"), &format!("_dpi_o{index}"))); }
-        else if !formal.chandle && !formal.real {
-            let value = dpi_packed_result(dpi_scalar(formal)?, &format!("_dpi_o{index}"), formal.signed)?;
-            out.push_str(&format!("    sv4_replace(&_dpi_values[{index}], {value});\n"));
+    if let Some(scalar) = ret {
+        out.push_str(&format!(
+            "    {} _dpi_ret = {call};\n",
+            dpi_scalar_c_type(scalar)
+        ));
+    } else {
+        out.push_str(&format!("    {call};\n"));
+    }
+    let string_snapshot = |name: &str, source: &str| {
+        format!(
+        "    llg_value_scope_t* {name}_owner = llg_value_scope_begin_object(sizeof(llg_string_t), llg_owned_string_drop);\n    llg_string_t* {name} = (llg_string_t*)llg_value_scope_object({name}_owner);\n    *{name} = ({source}) ? llg_string_bytes(({source}), strlen({source})) : (llg_string_t){{0}};\n")
+    };
+    if matches!(ret, Some(DpiScalar::String)) {
+        out.push_str(&string_snapshot("_dpi_string_ret", "_dpi_ret"));
+    }
+    for (index, formal) in f
+        .formals
+        .iter()
+        .enumerate()
+        .filter(|(_, formal)| formal.is_address())
+    {
+        if formal.string {
+            out.push_str(&string_snapshot(
+                &format!("_dpi_s{index}"),
+                &format!("_dpi_o{index}"),
+            ));
+        } else if !formal.chandle && !formal.real {
+            let value = dpi_packed_result(
+                dpi_scalar(formal)?,
+                &format!("_dpi_o{index}"),
+                formal.signed,
+            )?;
+            out.push_str(&format!(
+                "    sv4_replace(&_dpi_values[{index}], {value});\n"
+            ));
         }
     }
     let result_slot = f.formals.len();
     if let Some(scalar) = ret {
-        if matches!(scalar, DpiScalar::Bit | DpiScalar::Logic | DpiScalar::Int { .. }) {
-            let value = dpi_packed_result(scalar, "_dpi_ret", f.ret.as_ref().is_some_and(IrType::signed))?;
-            out.push_str(&format!("    sv4_replace(&_dpi_values[{result_slot}], {value});\n"));
+        if matches!(
+            scalar,
+            DpiScalar::Bit | DpiScalar::Logic | DpiScalar::Int { .. }
+        ) {
+            let value = dpi_packed_result(
+                scalar,
+                "_dpi_ret",
+                f.ret.as_ref().is_some_and(IrType::signed),
+            )?;
+            out.push_str(&format!(
+                "    sv4_replace(&_dpi_values[{result_slot}], {value});\n"
+            ));
         }
     }
     // A cancelled yielding context import does not copy anything out. Each
     // publication is another cancellation/reentrancy boundary.
-    for (index, formal) in f.formals.iter().enumerate().filter(|(_, formal)| formal.is_address()) {
+    for (index, formal) in f
+        .formals
+        .iter()
+        .enumerate()
+        .filter(|(_, formal)| formal.is_address())
+    {
         out.push_str("    if (llg_activation_cancelled()) goto _dpi_return;\n");
         let statement = match dpi_scalar(formal)? {
-            DpiScalar::String => format!("llg_string_move(o{index}, llg_string_take(_dpi_s{index}));"),
+            DpiScalar::String => {
+                format!("llg_string_move(o{index}, llg_string_take(_dpi_s{index}));")
+            }
             DpiScalar::Chandle => format!("*o{index} = _dpi_o{index};"),
             DpiScalar::Real { .. } => format!("llg_ba_d(o{index}, (double)_dpi_o{index});"),
             _ => format!("llg_ba(o{index}, _dpi_values[{index}]);"),
@@ -311,17 +386,29 @@ pub(super) fn render_dpi_thunk(f: &IrFunc) -> Result<String, String> {
         out.push_str(&format!("    {statement}\n"));
     }
     // A label must precede a statement, not a declaration, in C11.
-    if f.formals.iter().any(|formal| formal.is_address()) { out.push_str("_dpi_return: ;\n"); }
+    if f.formals.iter().any(|formal| formal.is_address()) {
+        out.push_str("_dpi_return: ;\n");
+    }
     let result = match ret {
-        Some(DpiScalar::String) => Some("llg_string_t _dpi_result = llg_string_take(_dpi_string_ret);".to_owned()),
+        Some(DpiScalar::String) => {
+            Some("llg_string_t _dpi_result = llg_string_take(_dpi_string_ret);".to_owned())
+        }
         Some(DpiScalar::Chandle) => Some("void* _dpi_result = _dpi_ret;".to_owned()),
         Some(DpiScalar::Real { .. }) => Some("double _dpi_result = (double)_dpi_ret;".to_owned()),
-        Some(_) => Some(format!("sv4_t _dpi_result = SV4_EMPTY; sv4_move(&_dpi_result, &_dpi_values[{result_slot}]);")),
+        Some(_) => Some(format!(
+            "sv4_t _dpi_result = SV4_EMPTY; sv4_move(&_dpi_result, &_dpi_values[{result_slot}]);"
+        )),
         None => None,
     };
-    if let Some(result) = &result { out.push_str(&format!("    {result}\n")); }
+    if let Some(result) = &result {
+        out.push_str(&format!("    {result}\n"));
+    }
     out.push_str("    llg_value_scopes_end_since(_dpi_mark);\n");
-    out.push_str(if result.is_some() { "    return _dpi_result;\n}\n\n" } else { "    return;\n}\n\n" });
+    out.push_str(if result.is_some() {
+        "    return _dpi_result;\n}\n\n"
+    } else {
+        "    return;\n}\n\n"
+    });
     Ok(out)
 }
 
@@ -329,8 +416,14 @@ fn dpi_packed_result(scalar: DpiScalar, source: &str, signed: bool) -> Result<St
     Ok(match scalar {
         DpiScalar::Bit => format!("sv4_from_u64((uint64_t){source}, 1, {})", u8::from(signed)),
         DpiScalar::Logic => format!("llg_dpi_sv4_from_logic({source}, {})", u8::from(signed)),
-        DpiScalar::Int { width, signed: true } => format!("sv4_from_i64((int64_t){source}, {width})"),
-        DpiScalar::Int { width, signed: false } => format!("sv4_from_u64((uint64_t){source}, {width}, 0)"),
+        DpiScalar::Int {
+            width,
+            signed: true,
+        } => format!("sv4_from_i64((int64_t){source}, {width})"),
+        DpiScalar::Int {
+            width,
+            signed: false,
+        } => format!("sv4_from_u64((uint64_t){source}, {width}, 0)"),
         _ => return Err("DPI result is not packed".to_owned()),
     })
 }

@@ -21,9 +21,17 @@ fn descriptor_masks_and_boundaries_are_portable() {
     sim_harness::with_frontend_temp_cwd("runtime-file-io", |dir| {
         fs::write(dir.join("runtime_file_io_probe.c"), FILE_PROBE)
             .map_err(|error| error.to_string())?;
-        let executable =
-            sim::build::build_model_cmake(dir, &[("runtime_file_io_probe.c", FILE_PROBE), ("test_value_temporaries.h", include_str!("runtime_value_storage/test_value_temporaries.h"))])
-                .map_err(|error| error.to_string())?;
+        let executable = sim::build::build_model_cmake(
+            dir,
+            &[
+                ("runtime_file_io_probe.c", FILE_PROBE),
+                (
+                    "test_value_temporaries.h",
+                    include_str!("runtime_value_storage/test_value_temporaries.h"),
+                ),
+            ],
+        )
+        .map_err(|error| error.to_string())?;
         let output = sim_harness::run_executable_output(&executable)?;
         assert_eq!(output.stdout, b"probe=7\n");
         assert!(output.stderr.is_empty(), "{output:?}");
@@ -39,9 +47,17 @@ fn formatted_character_line_and_binary_input_are_portable() {
         return;
     }
     sim_harness::with_frontend_temp_cwd("runtime-file-input", |dir| {
-        let executable =
-            sim::build::build_model_cmake(dir, &[("runtime_file_input_probe.c", FILE_INPUT_PROBE), ("test_value_temporaries.h", include_str!("runtime_value_storage/test_value_temporaries.h"))])
-                .map_err(|error| error.to_string())?;
+        let executable = sim::build::build_model_cmake(
+            dir,
+            &[
+                ("runtime_file_input_probe.c", FILE_INPUT_PROBE),
+                (
+                    "test_value_temporaries.h",
+                    include_str!("runtime_value_storage/test_value_temporaries.h"),
+                ),
+            ],
+        )
+        .map_err(|error| error.to_string())?;
         let output = sim_harness::run_executable_output(&executable)?;
         assert!(output.stdout.is_empty(), "{output:?}");
         assert!(output.stderr.is_empty(), "{output:?}");

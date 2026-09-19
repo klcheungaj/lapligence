@@ -11,10 +11,8 @@ impl Directory {
         static NEXT: AtomicU64 = AtomicU64::new(0);
         for _ in 0..128 {
             let serial = NEXT.fetch_add(1, Ordering::Relaxed);
-            let path = std::env::temp_dir().join(format!(
-                "llg-owned-{label}-{}-{serial}",
-                std::process::id()
-            ));
+            let path = std::env::temp_dir()
+                .join(format!("llg-owned-{label}-{}-{serial}", std::process::id()));
             match std::fs::create_dir(&path) {
                 Ok(()) => return Self(path),
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
@@ -45,7 +43,11 @@ pub(super) fn execute(binary: &Path) -> Output {
     let started = Instant::now();
     loop {
         match child.try_wait() {
-            Ok(Some(_)) => return child.wait_with_output().expect("collect emitted-model output"),
+            Ok(Some(_)) => {
+                return child
+                    .wait_with_output()
+                    .expect("collect emitted-model output")
+            }
             Ok(None) if started.elapsed() < Duration::from_secs(60) => {
                 std::thread::sleep(Duration::from_millis(10));
             }

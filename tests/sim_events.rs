@@ -222,7 +222,13 @@ endmodule
     let (stdout, _warnings, model) = run_sim(sv, "tb", "mixed").expect("simulation should run");
     assert_eq!(stdout, "first wake (0) at 4000\nsecond wake (1) at 8000\n");
     assert_eq!(
-        model.lines().filter(|line| line.trim_start().starts_with("llg_wait_expressions(") && line.trim_end().ends_with(", 2);")).count(),
+        model
+            .lines()
+            .filter(
+                |line| line.trim_start().starts_with("llg_wait_expressions(")
+                    && line.trim_end().ends_with(", 2);")
+            )
+            .count(),
         2,
         "each of the two @(a or ev) statements must lower to EXACTLY ONE \
          atomic llg_wait_expressions call (never a split into sub-waits)"

@@ -1,6 +1,11 @@
 //! Container calls consume only explicitly prepared operand snapshots.
 use super::*;
-pub(super) fn render(frame: &mut Frame<'_, '_>, operation: &IrContainerStmt, owners: &mut Vec<Value>, strings: &mut Vec<NativeValue>) -> Result<String, String> {
+pub(super) fn render(
+    frame: &mut Frame<'_, '_>,
+    operation: &IrContainerStmt,
+    owners: &mut Vec<Value>,
+    strings: &mut Vec<NativeValue>,
+) -> Result<String, String> {
     let ctx = frame.ctx;
     Ok(match operation {
         IrContainerStmt::StreamAssign {

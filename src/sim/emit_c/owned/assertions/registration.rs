@@ -3,8 +3,11 @@ use super::*;
 
 pub(super) fn signal_name(model: &IrModel, index: usize) -> String {
     let signal = model.signal(index);
-    if signal.net_alias.is_empty() { signal.c_name.clone() }
-    else { format!("llg_net_alias_{index}.visible") }
+    if signal.net_alias.is_empty() {
+        signal.c_name.clone()
+    } else {
+        format!("llg_net_alias_{index}.visible")
+    }
 }
 
 pub(in crate::sim::emit_c) fn render(model: &IrModel) -> Result<String, String> {
@@ -12,7 +15,10 @@ pub(in crate::sim::emit_c) fn render(model: &IrModel) -> Result<String, String> 
     if !model.assertions.is_empty() || !model.sampled_domains.is_empty() {
         for (index, signal) in model.signals.iter().enumerate() {
             if (!signal.omit || !signal.net_alias.is_empty()) && signal.ty.width() != 0 {
-                out.push_str(&format!("    llg_sampled_register(&{});\n", signal_name(model, index)));
+                out.push_str(&format!(
+                    "    llg_sampled_register(&{});\n",
+                    signal_name(model, index)
+                ));
             }
         }
     }

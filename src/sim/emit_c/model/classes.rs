@@ -6,7 +6,9 @@ use super::*;
 /// Class handles remain `void *` at the ABI boundary, while fields retain
 /// their exact packed/real/object representation inside the allocation.
 pub(super) fn render_class_decls(model: &IrModel, out: &mut String) {
-    if model.classes.is_empty() { return; }
+    if model.classes.is_empty() {
+        return;
+    }
     // All class receivers use one actual C type. Casting separately flattened
     // derived structs to unrelated base structs would violate C alias rules.
     out.push_str(r#"
@@ -47,8 +49,11 @@ static void llg_class_storage_destroy(void) {
 "#);
     out.push_str("static int llg_class_is_a(void* object, uint32_t expected) {\n    if (!object) return 0;\n    uint32_t id = llg_class_id(object);\n    for (;;) {\n        if (id == expected) return 1;\n        switch (id) {\n");
     for (index, class) in model.classes.iter().enumerate() {
-        if let Some(base) = class.base { out.push_str(&format!("        case {index}: id = {base}; break;\n")); }
-        else { out.push_str(&format!("        case {index}: return 0;\n")); }
+        if let Some(base) = class.base {
+            out.push_str(&format!("        case {index}: id = {base}; break;\n"));
+        } else {
+            out.push_str(&format!("        case {index}: return 0;\n"));
+        }
     }
     out.push_str("        default: return 0;\n        }\n    }\n}\n");
     out.push_str(r#"

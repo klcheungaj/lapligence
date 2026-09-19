@@ -54,17 +54,24 @@ fn dpi_string_snapshots_precede_copyouts_and_preserve_borrowed_inputs() {
         });
         let c = render_dpi_thunk(&function).unwrap();
         let call = c.find("foreign_alias(").unwrap();
-        let first_copyout = c.find("llg_string_move(o1, llg_string_take(_dpi_s1))").unwrap();
+        let first_copyout = c
+            .find("llg_string_move(o1, llg_string_take(_dpi_s1))")
+            .unwrap();
         for idx in 1..=3 {
             let declaration = format!("*_dpi_s{idx} = (_dpi_o{idx}) ?");
             assert_eq!(c.matches(declaration.as_str()).count(), 1, "{c}");
             let snapshot = c.find(declaration.as_str()).unwrap();
             assert!(call < snapshot && snapshot < first_copyout, "{c}");
         }
-        let last_copyout = c.find("llg_string_move(o3, llg_string_take(_dpi_s3))").unwrap();
+        let last_copyout = c
+            .find("llg_string_move(o3, llg_string_take(_dpi_s3))")
+            .unwrap();
         let cleanup = c.find("llg_value_scopes_end_since(_dpi_mark)").unwrap();
         assert!(last_copyout < cleanup, "{c}");
-        assert!(!c.contains("llg_string_destroy(&a0)"), "borrowed input: {c}");
+        assert!(
+            !c.contains("llg_string_destroy(&a0)"),
+            "borrowed input: {c}"
+        );
         assert!(c.contains("llg_owned_string_drop"), "{c}");
         if function.ret_string {
             let snapshot = c.find("*_dpi_string_ret = (_dpi_ret) ?").unwrap();
@@ -220,6 +227,12 @@ fn waveform_model_emits_controls_hierarchy_and_final_time_close() {
     assert!(c.contains("llg_spawn_final(llg_wave_capture_final_time"));
     assert!(c.contains("llg_wave_close(llg_model_done ? llg_wave_final_time : llg_time())"));
     let wave_close = c.find("status = llg_wave_close(").unwrap();
-    let teardown = c[wave_close..].find("llg_model_storage_destroy();").unwrap() + wave_close;
-    assert!(wave_close < teardown, "wave writer must finish before model values are destroyed");
+    let teardown = c[wave_close..]
+        .find("llg_model_storage_destroy();")
+        .unwrap()
+        + wave_close;
+    assert!(
+        wave_close < teardown,
+        "wave writer must finish before model values are destroyed"
+    );
 }

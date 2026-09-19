@@ -147,13 +147,7 @@ impl Codegen<'_> {
                         self.lower_string(path, bound[idx].expr)?,
                     ));
                 } else {
-                    let arg = self.lower_bound_arg(
-                        path,
-                        &formals,
-                        &bound,
-                        idx,
-                        &mut arg_irs,
-                    )?;
+                    let arg = self.lower_bound_arg(path, &formals, &bound, idx, &mut arg_irs)?;
                     in_args.push(IrCallArg::Val(arg));
                 }
             }

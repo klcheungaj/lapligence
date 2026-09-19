@@ -1,15 +1,27 @@
 //! Sequence tables retain the original graph layout; callbacks own temporary values.
 use super::*;
 
-pub(super) fn render(model: &IrModel, index: usize, role: &str, sequence: &IrSequence) -> Result<String, String> {
-    let ctx = RCtx { model, func: None, sampled: true, activation_label: None };
+pub(super) fn render(
+    model: &IrModel,
+    index: usize,
+    role: &str,
+    sequence: &IrSequence,
+) -> Result<String, String> {
+    let ctx = RCtx {
+        model,
+        func: None,
+        sampled: true,
+        activation_label: None,
+    };
     let mut frame = callback_frame(&ctx);
     bind_sequence(&mut frame, sequence);
     frame.line("switch (atom) {");
     for (atom_index, atom) in sequence.atoms().iter().enumerate() {
         frame.line(format!("case {atom_index}u: {{"));
         let value = frame.expression(atom)?;
-        if value.width == 0 { return Err("sequence atom must be packed".to_owned()); }
+        if value.width == 0 {
+            return Err("sequence atom must be packed".to_owned());
+        }
         let result = frame.scalar("int", value.truth());
         frame.discard(value);
         frame.line("llg_value_scopes_end_since(_llg_frame_base);");
@@ -19,19 +31,30 @@ pub(super) fn render(model: &IrModel, index: usize, role: &str, sequence: &IrSeq
     frame.line("llg_value_scopes_end_since(_llg_frame_base);");
     frame.line("return 0;");
     let atom_name = format!("llg_assertion_sequence_{index}_{role}_atom");
-    let mut out = format!("static int {atom_name}(uint32_t atom, void* data) {{\n{}{}\n}}\n\n", frame.prologue(), frame.body());
+    let mut out = format!(
+        "static int {atom_name}(uint32_t atom, void* data) {{\n{}{}\n}}\n\n",
+        frame.prologue(),
+        frame.body()
+    );
     let init_name = format!("llg_assertion_sequence_{index}_{role}_init");
     if !sequence.initializers().is_empty() {
         let mut frame = callback_frame(&ctx);
         bind_sequence(&mut frame, sequence);
         for (i, expression) in sequence.initializers().iter().enumerate() {
-            frame.line(format!("if (!llg_sequence_local_inherited(data, {}u)) {{", sequence.initializer_slots[i]));
+            frame.line(format!(
+                "if (!llg_sequence_local_inherited(data, {}u)) {{",
+                sequence.initializer_slots[i]
+            ));
             let value = frame.expression(expression)?;
             frame.discard(value);
             frame.line("}");
         }
         frame.line("llg_value_scopes_end_since(_llg_frame_base);");
-        out.push_str(&format!("static void {init_name}(void* data) {{\n{}{}\n}}\n\n", frame.prologue(), frame.body()));
+        out.push_str(&format!(
+            "static void {init_name}(void* data) {{\n{}{}\n}}\n\n",
+            frame.prologue(),
+            frame.body()
+        ));
     }
     let match_name = format!("llg_assertion_sequence_{index}_{role}_match");
     if !sequence.match_items().is_empty() {
@@ -46,7 +69,11 @@ pub(super) fn render(model: &IrModel, index: usize, role: &str, sequence: &IrSeq
         }
         frame.line("default: break; }");
         frame.line("llg_value_scopes_end_since(_llg_frame_base);");
-        out.push_str(&format!("static void {match_name}(uint32_t item, void* data) {{\n{}{}\n}}\n\n", frame.prologue(), frame.body()));
+        out.push_str(&format!(
+            "static void {match_name}(uint32_t item, void* data) {{\n{}{}\n}}\n\n",
+            frame.prologue(),
+            frame.body()
+        ));
     }
     let transition_name = format!(
         "{name}_transitions",

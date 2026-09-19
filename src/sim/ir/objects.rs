@@ -240,7 +240,10 @@ pub enum IrChandleExpr {
     /// Model-owned allocation recipe. No C text or frontend pointers are stored.
     Construct(usize),
     /// Address of a validated, concrete virtual-interface instance.
-    InterfaceInstance { interface: usize, instance: usize },
+    InterfaceInstance {
+        interface: usize,
+        instance: usize,
+    },
     /// Legacy fragment retained for explicit rejection. New allocation and
     /// member lowering use typed recipes, never executable strings.
     Verbatim(String),
@@ -692,7 +695,9 @@ impl IrStringExpr {
                 if let Some(receiver) = receiver {
                     receiver.expressions(visit);
                 }
-                for arg in args { arg.expressions(visit); }
+                for arg in args {
+                    arg.expressions(visit);
+                }
             }
             Self::Concat(parts) => {
                 for part in parts {
@@ -744,7 +749,9 @@ impl IrStringExpr {
                 if let Some(receiver) = receiver {
                     receiver.expressions_mut(visit);
                 }
-                for arg in args { arg.expressions_mut(visit); }
+                for arg in args {
+                    arg.expressions_mut(visit);
+                }
             }
             Self::Concat(parts) => {
                 for part in parts {
@@ -1546,16 +1553,41 @@ impl IrChandleExpr {
     ) -> Result<(), super::IrValidationError> {
         match self {
             Self::SemaphoreNew(keys) => {
-                if keys.is_real() { return Err(super::IrValidationError::new("semaphore", "key count must be integral")); }
+                if keys.is_real() {
+                    return Err(super::IrValidationError::new(
+                        "semaphore",
+                        "key count must be integral",
+                    ));
+                }
                 Ok(())
             }
             Self::Construct(index) => {
-                if *index < model.class_allocations.len() { Ok(()) }
-                else { Err(super::IrValidationError::new("class allocation", "recipe index is out of bounds")) }
+                if *index < model.class_allocations.len() {
+                    Ok(())
+                } else {
+                    Err(super::IrValidationError::new(
+                        "class allocation",
+                        "recipe index is out of bounds",
+                    ))
+                }
             }
-            Self::InterfaceInstance { interface, instance } => {
-                if model.virtual_interfaces.get(*interface).and_then(|v| v.instances.get(*instance)).is_some() { Ok(()) }
-                else { Err(super::IrValidationError::new("virtual interface", "instance index is out of bounds")) }
+            Self::InterfaceInstance {
+                interface,
+                instance,
+            } => {
+                if model
+                    .virtual_interfaces
+                    .get(*interface)
+                    .and_then(|v| v.instances.get(*instance))
+                    .is_some()
+                {
+                    Ok(())
+                } else {
+                    Err(super::IrValidationError::new(
+                        "virtual interface",
+                        "instance index is out of bounds",
+                    ))
+                }
             }
             Self::Null => Ok(()),
             Self::Verbatim(code) if !code.is_empty() => Ok(()),
@@ -1752,7 +1784,9 @@ impl IrChandleExpr {
                 if let Some(receiver) = receiver {
                     receiver.expressions(visit);
                 }
-                for arg in args { arg.expressions(visit); }
+                for arg in args {
+                    arg.expressions(visit);
+                }
             }
             _ => {}
         }
@@ -1767,7 +1801,9 @@ impl IrChandleExpr {
                 if let Some(receiver) = receiver {
                     receiver.expressions_mut(visit);
                 }
-                for arg in args { arg.expressions_mut(visit); }
+                for arg in args {
+                    arg.expressions_mut(visit);
+                }
             }
             _ => {}
         }

@@ -35,8 +35,7 @@ fn dynamic_storage_and_waveform_snapshots() {
         .arg("--build")
         .arg(dir.path())
         .args(["--config", "Debug"]);
-    let ctest =
-        Path::new(&cmake).with_file_name(format!("ctest{}", std::env::consts::EXE_SUFFIX));
+    let ctest = Path::new(&cmake).with_file_name(format!("ctest{}", std::env::consts::EXE_SUFFIX));
     let mut test = Command::new(ctest);
     test.arg("--test-dir")
         .arg(dir.path())

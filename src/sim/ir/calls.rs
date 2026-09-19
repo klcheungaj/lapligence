@@ -267,24 +267,47 @@ impl IrDepth {
     }
 }
 
-
 impl IrCallArg {
     pub(in crate::sim) fn expressions(&self, visit: &mut impl FnMut(&IrExpr)) {
         match self {
             Self::Val(value) => visit(value),
             Self::StringVal(value) => value.expressions(visit),
             Self::ChandleVal(value) => value.expressions(visit),
-            Self::RefAddr { lhs, read, .. } => { lhs.expressions(visit); visit(read); }
-            Self::OutTemp { init, writeback, storage_lhs, storage_read, selector_inits, .. } => {
-                if let Some(value) = init { visit(value); }
-                writeback.expressions(visit);
-                if let Some(lhs) = storage_lhs { lhs.expressions(visit); }
-                if let Some(value) = storage_read { visit(value); }
-                for (_, _, _, _, value) in selector_inits { visit(value); }
+            Self::RefAddr { lhs, read, .. } => {
+                lhs.expressions(visit);
+                visit(read);
             }
-            Self::StringOutTemp { init, storage_read, .. } => {
-                if let Some(value) = init { value.expressions(visit); }
-                if let Some(value) = storage_read { value.expressions(visit); }
+            Self::OutTemp {
+                init,
+                writeback,
+                storage_lhs,
+                storage_read,
+                selector_inits,
+                ..
+            } => {
+                if let Some(value) = init {
+                    visit(value);
+                }
+                writeback.expressions(visit);
+                if let Some(lhs) = storage_lhs {
+                    lhs.expressions(visit);
+                }
+                if let Some(value) = storage_read {
+                    visit(value);
+                }
+                for (_, _, _, _, value) in selector_inits {
+                    visit(value);
+                }
+            }
+            Self::StringOutTemp {
+                init, storage_read, ..
+            } => {
+                if let Some(value) = init {
+                    value.expressions(visit);
+                }
+                if let Some(value) = storage_read {
+                    value.expressions(visit);
+                }
             }
             _ => {}
         }
@@ -294,17 +317,41 @@ impl IrCallArg {
             Self::Val(value) => visit(value),
             Self::StringVal(value) => value.expressions_mut(visit),
             Self::ChandleVal(value) => value.expressions_mut(visit),
-            Self::RefAddr { lhs, read, .. } => { lhs.expressions_mut(visit); visit(read); }
-            Self::OutTemp { init, writeback, storage_lhs, storage_read, selector_inits, .. } => {
-                if let Some(value) = init { visit(value); }
-                writeback.expressions_mut(visit);
-                if let Some(lhs) = storage_lhs { lhs.expressions_mut(visit); }
-                if let Some(value) = storage_read { visit(value); }
-                for (_, _, _, _, value) in selector_inits { visit(value); }
+            Self::RefAddr { lhs, read, .. } => {
+                lhs.expressions_mut(visit);
+                visit(read);
             }
-            Self::StringOutTemp { init, storage_read, .. } => {
-                if let Some(value) = init { value.expressions_mut(visit); }
-                if let Some(value) = storage_read { value.expressions_mut(visit); }
+            Self::OutTemp {
+                init,
+                writeback,
+                storage_lhs,
+                storage_read,
+                selector_inits,
+                ..
+            } => {
+                if let Some(value) = init {
+                    visit(value);
+                }
+                writeback.expressions_mut(visit);
+                if let Some(lhs) = storage_lhs {
+                    lhs.expressions_mut(visit);
+                }
+                if let Some(value) = storage_read {
+                    visit(value);
+                }
+                for (_, _, _, _, value) in selector_inits {
+                    visit(value);
+                }
+            }
+            Self::StringOutTemp {
+                init, storage_read, ..
+            } => {
+                if let Some(value) = init {
+                    value.expressions_mut(visit);
+                }
+                if let Some(value) = storage_read {
+                    value.expressions_mut(visit);
+                }
             }
             _ => {}
         }

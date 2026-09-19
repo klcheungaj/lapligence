@@ -147,9 +147,15 @@ impl Codegen<'_> {
         site: Option<String>,
     ) -> String {
         let name = format!("_llg_access_{}", self.model.native_accesses.len());
-        self.model.native_accesses.push(crate::sim::ir::IrNativeAccess {
-            name: name.clone(), receiver, kind, site, function: self.cur_fn_ir,
-        });
+        self.model
+            .native_accesses
+            .push(crate::sim::ir::IrNativeAccess {
+                name: name.clone(),
+                receiver,
+                kind,
+                site,
+                function: self.cur_fn_ir,
+            });
         name
     }
 
@@ -272,9 +278,19 @@ impl Codegen<'_> {
         };
         let (width, signed, _) = self.class_field_value_shape(field)?;
         let receiver = self.class_receiver_for(path, node, field)?;
-        let name = self.native_access_symbol(receiver,
-            crate::sim::ir::IrNativeAccessKind::ClassField { class, field: index });
-        Ok(Some(IrExpr::new(IrExprKind::LocalRead(name), width, signed, None)))
+        let name = self.native_access_symbol(
+            receiver,
+            crate::sim::ir::IrNativeAccessKind::ClassField {
+                class,
+                field: index,
+            },
+        );
+        Ok(Some(IrExpr::new(
+            IrExprKind::LocalRead(name),
+            width,
+            signed,
+            None,
+        )))
     }
 
     pub(in super::super) fn class_field_lhs(
@@ -301,9 +317,20 @@ impl Codegen<'_> {
         let shortreal = matches!(layout.ty, IrClassFieldType::Real { shortreal: true });
         let (width, signed, two_state) = self.class_field_value_shape(field)?;
         let receiver = self.class_receiver_for(path, node, field)?;
-        let name = self.native_access_symbol(receiver,
-            crate::sim::ir::IrNativeAccessKind::ClassField { class, field: index });
-        Ok(Some(IrLhs::WholeRef { addr: format!("&{name}"), width, signed, two_state, shortreal }))
+        let name = self.native_access_symbol(
+            receiver,
+            crate::sim::ir::IrNativeAccessKind::ClassField {
+                class,
+                field: index,
+            },
+        );
+        Ok(Some(IrLhs::WholeRef {
+            addr: format!("&{name}"),
+            width,
+            signed,
+            two_state,
+            shortreal,
+        }))
     }
 
     pub(super) fn class_field_chandle_lvalue(
@@ -317,10 +344,17 @@ impl Codegen<'_> {
         if !matches!(self.kind(field), NodeKind::Var { ty } if is_handle_kind(&ty.kind)) {
             return Ok(None);
         }
-        let Some((class, index, _)) = self.class_field_layout(field) else { return Ok(None); };
+        let Some((class, index, _)) = self.class_field_layout(field) else {
+            return Ok(None);
+        };
         let receiver = self.class_receiver_for(path, node, field)?;
-        Ok(Some(self.native_access_symbol(receiver,
-            crate::sim::ir::IrNativeAccessKind::ClassField { class, field: index })))
+        Ok(Some(self.native_access_symbol(
+            receiver,
+            crate::sim::ir::IrNativeAccessKind::ClassField {
+                class,
+                field: index,
+            },
+        )))
     }
 
     pub(in super::super) fn class_field_string_lvalue(
@@ -334,10 +368,17 @@ impl Codegen<'_> {
         if !matches!(self.kind(field), NodeKind::Var { ty } if ty.kind == "string") {
             return Ok(None);
         }
-        let Some((class, index, _)) = self.class_field_layout(field) else { return Ok(None); };
+        let Some((class, index, _)) = self.class_field_layout(field) else {
+            return Ok(None);
+        };
         let receiver = self.class_receiver_for(path, node, field)?;
-        Ok(Some(self.native_access_symbol(receiver,
-            crate::sim::ir::IrNativeAccessKind::ClassField { class, field: index })))
+        Ok(Some(self.native_access_symbol(
+            receiver,
+            crate::sim::ir::IrNativeAccessKind::ClassField {
+                class,
+                field: index,
+            },
+        )))
     }
 
     pub(super) fn lower_new_class(
@@ -422,9 +463,14 @@ impl Codegen<'_> {
             body = self.lower_implicit_class_construction(path, class_node, receiver)?;
         }
         let index = self.model.class_allocations.len();
-        self.model.class_allocations.push(crate::sim::ir::IrClassAllocation {
-            class, local: object_name, body, function: self.cur_fn_ir,
-        });
+        self.model
+            .class_allocations
+            .push(crate::sim::ir::IrClassAllocation {
+                class,
+                local: object_name,
+                body,
+                function: self.cur_fn_ir,
+            });
         Ok(IrChandleExpr::Construct(index))
     }
 
@@ -449,8 +495,13 @@ impl Codegen<'_> {
             let mut statements = Vec::new();
             for (node, index) in fields {
                 let field = self.model.classes[class].fields[index].clone();
-                let target = self.native_access_symbol(receiver.clone(),
-                    crate::sim::ir::IrNativeAccessKind::ClassField { class, field: index });
+                let target = self.native_access_symbol(
+                    receiver.clone(),
+                    crate::sim::ir::IrNativeAccessKind::ClassField {
+                        class,
+                        field: index,
+                    },
+                );
                 let initializer = self.db.var_initializer(node);
                 match field.ty {
                     IrClassFieldType::Packed {
@@ -462,8 +513,12 @@ impl Codegen<'_> {
                             let value = self.lower_expr(path, initializer)?;
                             ir_to_storage(value, width, signed, two_state)?
                         } else {
-                            IrExpr::new(IrExprKind::Fill(if two_state { 0 } else { 2 }),
-                                width, signed, None)
+                            IrExpr::new(
+                                IrExprKind::Fill(if two_state { 0 } else { 2 }),
+                                width,
+                                signed,
+                                None,
+                            )
                         };
                         statements.push(IrStmt::Assign {
                             lhs: IrLhs::WholeRef {
@@ -482,9 +537,15 @@ impl Codegen<'_> {
                             .map(|node| self.lower_expr(path, node))
                             .transpose()?
                             .unwrap_or_else(|| {
-                                IrExpr::new(IrExprKind::CastToReal {
-                                    a: Box::new(lhs_integer_expr(0)), shortreal,
-                                }, 0, false, None)
+                                IrExpr::new(
+                                    IrExprKind::CastToReal {
+                                        a: Box::new(lhs_integer_expr(0)),
+                                        shortreal,
+                                    },
+                                    0,
+                                    false,
+                                    None,
+                                )
                             });
                         statements.push(IrStmt::Assign {
                             lhs: IrLhs::WholeRef {
