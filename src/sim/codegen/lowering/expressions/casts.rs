@@ -5,6 +5,10 @@ use super::*;
 impl<'a> Codegen<'a> {
     fn dynamic_cast_lhs_shape(&self, lhs: &IrLhs) -> Result<(u32, bool, bool, bool), String> {
         Ok(match lhs {
+            IrLhs::PackedSelect { target, steps, two_state, .. } => (
+                steps.last().map_or(0, |step| step.width), false,
+                *two_state || self.dynamic_cast_lhs_shape(target)?.2, false,
+            ),
             IrLhs::Whole(index) => match self.model.signal(*index).ty {
                 IrType::Real { shortreal } => (0, true, false, shortreal),
                 IrType::Packed {
@@ -44,6 +48,12 @@ impl<'a> Codegen<'a> {
                     ),
                     IrElemSel::Bit(_) => (1, false, array.two_state, false),
                     IrElemSel::Indexed { width, .. } => (*width, false, array.two_state, false),
+                    IrElemSel::PackedChain(steps) => (
+                        steps.last().map_or(0, |step| step.width),
+                        false,
+                        array.two_state,
+                        false,
+                    ),
                 }
             }
             IrLhs::Stream { .. } => {
@@ -228,8 +238,13 @@ impl<'a> Codegen<'a> {
                     },
                     rhs: IrExpr::new(
                         IrExprKind::Const(IrConst {
-                            bits: vec![0], x: vec![0], z: vec![0], width: 1,
-                            signed: false, real: None, fill: None,
+                            bits: vec![0],
+                            x: vec![0],
+                            z: vec![0],
+                            width: 1,
+                            signed: false,
+                            real: None,
+                            fill: None,
                         }),
                         1,
                         false,

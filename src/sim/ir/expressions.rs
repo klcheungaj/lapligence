@@ -128,6 +128,15 @@ pub enum IrExprKind {
         slice: u32,
         direction: IrStreamDirection,
     },
+    /// Packed streaming source read from a fixed unpacked array selected by a
+    /// runtime `with` selector. The selected extent, and hence the packed
+    /// width, is only known when the selector runs, so the enclosing
+    /// expression records `LLG_MAX_WIDTH` and the runtime value carries the
+    /// actual width.
+    FixedStream {
+        array: usize,
+        selector: Box<IrStreamSelector>,
+    },
     /// Integral set-membership expression. The selector and each endpoint
     /// are evaluated once by the emitter.
     Inside {

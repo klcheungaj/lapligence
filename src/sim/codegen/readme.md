@@ -101,3 +101,24 @@ concerns, not backend text-generation helpers.
 
 See [lowering domains](lowering/readme.md) and
 [the source map](../../../docs/source_layout.md).
+
+## Packed selections of fixed-array elements
+
+`lowering/collection/packed_elements.rs` resolves a fully indexed fixed unpacked
+array root and records each following packed selection separately. Logical
+indices are converted using that dimension's declared direction and right bound;
+part-select counts include the complete remaining packed-element stride. The
+result is `IrElemSel::PackedChain`, shared by reads and writable targets.
+
+Coordinate arithmetic is widened before subtraction and multiplication. Index
+operands are self-determined, including unbased fill literals; an unsigned high
+bit must not wrap into a valid lane. Width admission remains checked against the
+existing packed limit. Each chain step is relative to the preceding selected
+value, not the root allocation, so invalid or partially invalid intermediate
+selections retain their X/no-write positions. Do not replace the chain with one
+summed offset without retaining all intermediate bounds.
+
+Ordinary assignments, compound updates and NBA issue capture use the same target
+recipe. Whole-array values and the existing packed formal/reference restrictions
+are separate contracts. This source repair does not close the Group 1 release
+gate; public HDL regressions are in `tests/sim_group1_repairs.rs`.

@@ -97,12 +97,18 @@ pub(super) fn execution_stack_value_slots(model: &ExecutionModel) -> Result<u64,
 fn native_recipe_slots(model: &IrModel) -> Result<u64, String> {
     let mut total = 0;
     for recipe in &model.class_allocations {
-        total = checked_add(total, stmt_frame_slots(&recipe.body)?, "constructor recipe slots")?;
+        total = checked_add(
+            total,
+            stmt_frame_slots(&recipe.body)?,
+            "constructor recipe slots",
+        )?;
     }
     for access in &model.native_accesses {
         let mut result = Ok(total);
         access.receiver.expressions(&mut |expr| {
-            result = result.clone().and_then(|count| checked_add(count, expr_slots(expr)?, "native receiver slots"));
+            result = result
+                .clone()
+                .and_then(|count| checked_add(count, expr_slots(expr)?, "native receiver slots"));
         });
         total = result?;
     }
@@ -341,6 +347,9 @@ fn stmt_temp_slots(stmt: &IrStmt) -> Result<u64, String> {
                         .map(stream_selector_slots)
                         .transpose()?
                         .unwrap_or_default(),
+                    IrStreamTarget::FixedSelector { selector, .. } => {
+                        stream_selector_slots(selector)?
+                    }
                 };
                 slots = checked_add(slots, target_slots, "streaming statement slots")?;
             }
@@ -852,6 +861,7 @@ fn expr_slots(expr: &IrExpr) -> Result<u64, String> {
             expr_sum(parts, "concatenation expression slots")?
         }
         IrExprKind::Stream { value, .. } => expr_slots(value)?,
+        IrExprKind::FixedStream { selector, .. } => stream_selector_slots(selector)?,
         IrExprKind::Inside { value, items } => {
             let mut slots = expr_slots(value)?;
             for item in items {
@@ -1032,6 +1042,13 @@ fn string_expr_slots(value: &IrStringExpr) -> Result<u64, String> {
 
 fn lhs_slots(lhs: &IrLhs) -> Result<u64, String> {
     match lhs {
+        IrLhs::PackedSelect { target, steps, .. } => {
+            let mut slots = checked_add(lhs_slots(target)?, 3, "packed activation select storage")?;
+            for step in steps {
+                slots = checked_add(slots, expr_slots(&step.base)?, "packed activation select slots")?;
+            }
+            Ok(slots)
+        }
         IrLhs::Ref {
             bit: Some(index), ..
         } => expr_slots(index),
@@ -1079,6 +1096,13 @@ fn elem_sel_slots(select: &IrElemSel) -> Result<u64, String> {
     match select {
         IrElemSel::Bit(index) | IrElemSel::Indexed { base: index, .. } => expr_slots(index),
         IrElemSel::Whole | IrElemSel::Part(..) => Ok(0),
+        IrElemSel::PackedChain(steps) => {
+            let mut slots = 0;
+            for step in steps {
+                slots = checked_add(slots, expr_slots(&step.base)?, "packed selection slots")?;
+            }
+            Ok(slots)
+        }
     }
 }
 

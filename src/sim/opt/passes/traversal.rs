@@ -17,9 +17,7 @@ pub(super) fn walk_lhs_mut(l: &mut IrLhs, f: &mut impl FnMut(&mut IrExpr)) {
             for i in indices {
                 walk_expr_mut(i, f);
             }
-            if let IrElemSel::Bit(idx) | IrElemSel::Indexed { base: idx, .. } = elem_sel {
-                walk_expr_mut(idx, f);
-            }
+            elem_sel.expressions_mut(&mut |idx| walk_expr_mut(idx, f));
         }
         IrLhs::Stream { parts, .. } => {
             for (part, _) in parts {
@@ -75,7 +73,9 @@ fn walk_call_args_mut(args: &mut [IrCallArg], f: &mut impl FnMut(&mut IrExpr)) {
                     read.expressions_mut(&mut |child| walk_expr_mut(child, f));
                 }
             }
-            IrCallArg::ChandleVal(value) => value.expressions_mut(&mut |child| walk_expr_mut(child, f)),
+            IrCallArg::ChandleVal(value) => {
+                value.expressions_mut(&mut |child| walk_expr_mut(child, f))
+            }
             IrCallArg::ChandleAddr(_) | IrCallArg::ChandleRefAddr(_) => {}
         }
     }
@@ -115,6 +115,7 @@ fn walk_expr_mut(e: &mut IrExpr, f: &mut impl FnMut(&mut IrExpr)) {
             }
         }
         IrExprKind::Stream { value, .. } => walk_expr_mut(value, f),
+        IrExprKind::FixedStream { selector, .. } => walk_stream_selector_mut(selector, f),
         IrExprKind::Inside { value, items } => {
             walk_expr_mut(value, f);
             for item in items {
@@ -157,9 +158,7 @@ fn walk_expr_mut(e: &mut IrExpr, f: &mut impl FnMut(&mut IrExpr)) {
             for i in indices {
                 walk_expr_mut(i, f);
             }
-            if let IrElemSel::Bit(idx) | IrElemSel::Indexed { base: idx, .. } = elem_sel {
-                walk_expr_mut(idx, f);
-            }
+            elem_sel.expressions_mut(&mut |idx| walk_expr_mut(idx, f));
         }
         IrExprKind::CallFn(call) => {
             walk_call_args_mut(&mut call.args, f);
@@ -316,6 +315,9 @@ fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
                         if let Some(selector) = selector {
                             walk_stream_selector_mut(selector, f);
                         }
+                    }
+                    IrStreamTarget::FixedSelector { selector, .. } => {
+                        walk_stream_selector_mut(selector, f);
                     }
                 }
             }
@@ -639,8 +641,14 @@ fn walk_pre_fn_mut(pre: &mut IrPreFn, f: &mut impl FnMut(&mut IrExpr)) {
 }
 
 pub(super) fn walk_model_exprs_mut(model: &mut IrModel, f: &mut impl FnMut(&mut IrExpr)) {
-    for access in &mut model.native_accesses { access.receiver.expressions_mut(&mut |expr| walk_expr_mut(expr, f)); }
-    for allocation in &mut model.class_allocations { walk_stmts_mut(&mut allocation.body, f); }
+    for access in &mut model.native_accesses {
+        access
+            .receiver
+            .expressions_mut(&mut |expr| walk_expr_mut(expr, f));
+    }
+    for allocation in &mut model.class_allocations {
+        walk_stmts_mut(&mut allocation.body, f);
+    }
     for func in &mut model.funcs {
         for local in &mut func.locals {
             if let Some(initial) = &mut local.initial {

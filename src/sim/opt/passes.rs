@@ -30,7 +30,7 @@ use std::collections::HashSet;
 use crate::core::elab::{self, Bit, Value};
 use crate::sim::execution::{ExecutionModel, ExecutionProcess, TriggerPlan};
 use crate::sim::ir::{
-    IrBinOp, IrCallArg, IrCaseKind, IrConst, IrDependency, IrElemSel, IrExpr, IrExprKind, IrFormal,
+    IrBinOp, IrCallArg, IrCaseKind, IrConst, IrDependency, IrExpr, IrExprKind, IrFormal,
     IrInsideItem, IrLhs, IrModel, IrPreFn, IrRealBinOp, IrRealUnOp, IrStmt, IrStochasticStmt,
     IrStreamSelector, IrStreamTarget, IrSysFunc, IrUnOp, IrWaitSrc,
 };

@@ -24,7 +24,7 @@
 
 mod containers;
 mod native_access;
-pub use native_access::{IrNativeAccess, IrNativeAccessKind, IrClassAllocation};
+pub use native_access::{IrClassAllocation, IrNativeAccess, IrNativeAccessKind};
 mod objects;
 mod validate;
 pub use containers::{
@@ -52,7 +52,7 @@ pub use expressions::{
     IrSampledDomain, IrSampledFunc, IrSysFunc, IrTimeKind, IrUnOp,
 };
 mod lvalues;
-pub use lvalues::{IrElemSel, IrInsideItem, IrLhs, IrStreamDirection, IrStreamTarget};
+pub use lvalues::{IrElemSel, IrInsideItem, IrLhs, IrPackedSelect, IrStreamDirection, IrStreamTarget};
 mod calls;
 pub use calls::{IrCall, IrCallArg, IrCallExpr, IrDepth, IrVirtualCall};
 mod statements;

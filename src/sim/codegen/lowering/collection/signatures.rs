@@ -78,9 +78,11 @@ impl<'a> Codegen<'a> {
                                     } else if dpi.is_some() {
                                         ty.width.unwrap_or(0)
                                     } else {
-                                        ty.width
-                                            .map(|width| {
-                                                self.effective_decl_width(*io, inst, width)
+                                        self.packed_formal_width(*io)
+                                            .or_else(|| {
+                                                ty.width.map(|width| {
+                                                    self.effective_decl_width(*io, inst, width)
+                                                })
                                             })
                                             .unwrap_or(0)
                                     },

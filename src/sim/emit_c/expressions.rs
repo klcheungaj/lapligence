@@ -418,6 +418,11 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
                 fill: None,
             }
         }
+        IrExprKind::FixedStream { .. } => {
+            return Err(
+                "fixed-array runtime streaming sources require whole-model emission".to_owned(),
+            );
+        }
         IrExprKind::Inside { value, items } => {
             let value = w(value)?;
             let value_local = RenderedExpr {
@@ -643,6 +648,9 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
                 guarded_array_read(ai, &index_codes)
             };
             let (code, width, signed) = match elem_sel {
+                IrElemSel::PackedChain(_) => {
+                    return Err("packed selection chains require structured owned emission".to_owned());
+                }
                 IrElemSel::Whole => (elem, ai.elem_width, ai.signed),
                 IrElemSel::Part(l, r) => (
                     format!("sv4_part_select({elem}, {l}, {r})"),

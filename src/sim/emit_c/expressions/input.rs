@@ -40,6 +40,7 @@ fn render_file_lhs_ref_with_prefix(
 ) -> Result<(String, String), String> {
     let (declarations, lhs) = capture_lhs_indices_with_prefix(ctx, lhs, index_prefix)?;
     let init = match lhs {
+        IrLhs::PackedSelect { .. } => return Err("packed activation selects require structured owned emission".to_owned()),
         IrLhs::Whole(index) => {
             let signal = ctx.model.signal(index);
             if signal.net_driver.is_some() || !matches!(signal.ty, IrType::Packed { .. }) {

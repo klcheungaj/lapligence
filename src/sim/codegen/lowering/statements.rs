@@ -337,7 +337,7 @@ fn validate_force_lhs(model: &IrModel, lhs: &IrLhs, path: &str) -> Result<bool, 
             })?;
             Ok(matches!(signal.ty, IrType::Real { .. }))
         }
-        IrLhs::WholeRef { .. } => Err(format!(
+        IrLhs::PackedSelect { .. } | IrLhs::WholeRef { .. } => Err(format!(
             "force/release target in `{path}` does not have persistent canonical storage"
         )),
         IrLhs::Ref { .. } => Err(format!(

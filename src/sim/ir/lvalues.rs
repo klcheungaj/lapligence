@@ -6,6 +6,10 @@ use super::*;
 /// or element write (`mem[i]`, `mem[i][3:0]`, `mem[i][j]`).
 #[derive(Clone, Debug, PartialEq)]
 pub enum IrElemSel {
+    /// Successive normalized slices. Each step is relative to the preceding
+    /// selected value, not to the enclosing storage. Keeping the boundaries
+    /// prevents an out-of-range inner select from accessing an adjacent lane.
+    PackedChain(Vec<IrPackedSelect>),
     /// Whole element.
     Whole,
     /// Part-select `[left:right]` of the element.
@@ -18,6 +22,41 @@ pub enum IrElemSel {
         width: u32,
         negative: bool,
     },
+}
+
+/// One unsigned contiguous packed slice in physical LSB-first coordinates.
+/// `base` is evaluated once, before adding any later selector; it can be
+/// negative or unknown. `width` includes the complete residual element stride.
+#[derive(Clone, Debug, PartialEq)]
+pub struct IrPackedSelect {
+    pub base: IrExpr,
+    pub width: u32,
+}
+
+impl IrElemSel {
+    pub(in crate::sim) fn expressions(&self, visit: &mut impl FnMut(&IrExpr)) {
+        match self {
+            Self::Bit(index) | Self::Indexed { base: index, .. } => visit(index),
+            Self::PackedChain(steps) => {
+                for step in steps {
+                    visit(&step.base);
+                }
+            }
+            Self::Whole | Self::Part(..) => {}
+        }
+    }
+
+    pub(in crate::sim) fn expressions_mut(&mut self, visit: &mut impl FnMut(&mut IrExpr)) {
+        match self {
+            Self::Bit(index) | Self::Indexed { base: index, .. } => visit(index),
+            Self::PackedChain(steps) => {
+                for step in steps {
+                    visit(&mut step.base);
+                }
+            }
+            Self::Whole | Self::Part(..) => {}
+        }
+    }
 }
 
 /// Direction of a packed streaming concatenation (LRM 1800-2009 §11.4.14).
@@ -49,6 +88,17 @@ pub enum IrInsideItem {
 /// Assignment target, mirroring the pre-IR LHS analysis outcomes.
 #[derive(Clone, Debug, PartialEq)]
 pub enum IrLhs {
+    /// A packed selection of an activation-bound local, formal, reference or
+    /// persistent variable. The root retains its existing binding identity;
+    /// each selection step is relative to the preceding value. No global cell
+    /// or executable address spelling is synthesized for a member.
+    PackedSelect {
+        target: Box<IrLhs>,
+        steps: Vec<IrPackedSelect>,
+        /// A whole member keeps its declared sign; any further packed select is unsigned.
+        signed: bool,
+        two_state: bool,
+    },
     /// Whole signal (packed global, real companion, or a collapsed-net member
     /// reached through `model.signals[..].net_driver`).
     Whole(usize),
@@ -117,11 +167,36 @@ pub enum IrStreamTarget {
         container: usize,
         selector: Option<IrStreamSelector>,
     },
+    /// A fixed unpacked array selected by a runtime `with` selector. The
+    /// selected extent is only known at runtime, so the emitter computes the
+    /// actual segment width before storing and never trusts the selector
+    /// bounds' own storage width.
+    FixedSelector {
+        array: usize,
+        selector: IrStreamSelector,
+    },
 }
 
 impl IrLhs {
+    /// A deferred operation must not retain a local owner or reference formal.
+    /// Selected members inherit the lifetime of their root capability.
+    pub(in crate::sim) fn has_activation_root(&self) -> bool {
+        match self {
+            Self::WholeRef { .. } | Self::Ref { .. } => true,
+            Self::PackedSelect { target, .. } => target.has_activation_root(),
+            Self::Stream { parts, .. } => parts.iter().any(|(part, _)| part.has_activation_root()),
+            _ => false,
+        }
+    }
+
     pub(in crate::sim) fn expressions(&self, visit: &mut impl FnMut(&IrExpr)) {
         match self {
+            Self::PackedSelect { target, steps, .. } => {
+                target.expressions(visit);
+                for step in steps {
+                    visit(&step.base);
+                }
+            }
             Self::Ref {
                 bit: Some(index), ..
             } => visit(index),
@@ -136,11 +211,7 @@ impl IrLhs {
                 for index in indices {
                     visit(index);
                 }
-                match elem_sel {
-                    IrElemSel::Bit(index) => visit(index),
-                    IrElemSel::Indexed { base, .. } => visit(base),
-                    IrElemSel::Whole | IrElemSel::Part(..) => {}
-                }
+                elem_sel.expressions(visit);
             }
             Self::Stream { parts, .. } => {
                 for (part, _) in parts {
@@ -153,6 +224,12 @@ impl IrLhs {
 
     pub(in crate::sim) fn expressions_mut(&mut self, visit: &mut impl FnMut(&mut IrExpr)) {
         match self {
+            Self::PackedSelect { target, steps, .. } => {
+                target.expressions_mut(visit);
+                for step in steps {
+                    visit(&mut step.base);
+                }
+            }
             Self::Ref {
                 bit: Some(index), ..
             } => visit(index),
@@ -167,11 +244,7 @@ impl IrLhs {
                 for index in indices {
                     visit(index);
                 }
-                match elem_sel {
-                    IrElemSel::Bit(index) => visit(index),
-                    IrElemSel::Indexed { base, .. } => visit(base),
-                    IrElemSel::Whole | IrElemSel::Part(..) => {}
-                }
+                elem_sel.expressions_mut(visit);
             }
             Self::Stream { parts, .. } => {
                 for (part, _) in parts {

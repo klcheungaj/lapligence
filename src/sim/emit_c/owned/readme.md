@@ -47,6 +47,9 @@ are never reparsed or treated as safe owners.
 - `model/callbacks.rs`: captured numeric branches and read-only evaluator entry points.
 - `statements.rs`: lexical/loop/control-flow cleanup.
 - `model.rs`, `model/`: procedures, persistent storage, initialization and host API.
+  The model initialization frame admits legal zero-time user calls needed by
+  declaration initializers; timing-bearing callees remain impossible because
+  functions cannot contain timing.
 - `assertions/`, `assertions.rs`, `assertion_tasks.rs`: sequence-local bindings,
   sampled predicates/history, registration, assertion controls and deferred actions.
 - `clocking.rs`: issue-time clocking operands, selected masks and borrowed runtime calls.
@@ -59,12 +62,19 @@ are never reparsed or treated as safe owners.
 - `native_access.rs`, `references.rs`, `mailboxes.rs`: use-site member resolution,
   registered reference descriptors, synchronization handles and message transfers.
 - `native_tasks.rs`: owned text consumption, numeric queue/random calls and VPI arguments.
-- `pure_calls.rs`: bounded callback inlining of automatic numeric expression-only functions.
-- `streaming.rs`: snapshot the packed RHS and capture every destination before publication.
+- `pure_calls.rs`: bounded callback inlining of automatic numeric functions;
+  each expansion renames its internal labels and reserves its escaping result
+  in the caller scope before creating private callee storage.
+- `streaming.rs`: snapshot the packed RHS, capture destinations and reject
+  insufficient source bits before publishing staged writes. Fixed-selector
+  loop indices use registered packed temporary slots and are destroyed on
+  each iteration. Bounds errors retain in-range writes and mark failure.
 - `tests.rs`, `tests/batch120.rs`, `tests/native_values.rs`: Rust structural and
   numeric-IR-to-C regressions. `tests/native_boundaries.rs` adds batch 5 contracts.
   `tests/review_regressions.rs` checks forwarded reference resolution, native
   reference-bit indices and stable, lexically owned real local addresses.
+  `tests/group1_repairs.rs` checks inline label namespaces, caller-scope real
+  results, streaming index ownership and pre-publication source-size checks.
 
 ## Verification
 
@@ -96,9 +106,10 @@ VPI argument arrays borrow registered expression slots for the duration of a cal
 Inline event formals snapshot event object identity and are not emitted as numeric
 C procedures. Concrete interface metadata may describe borrowed member addresses;
 this does not enable dynamic virtual-interface handle storage. The callback inliner
-accepts only automatic numeric expression-only functions with value formals and no
-local state, native receivers, nested body calls or mutations. Other callback calls
-still fail closed. Packed streaming destinations are captured before any store.
+accepts automatic numeric expression-only functions with value formals whose bodies
+contain no timing, scheduler, or externally visible writes: automatic locals, loops
+and nested eligible calls are allowed as long as every write stays activation-local.
+Other callback calls still fail closed. Packed streaming destinations are captured before any store.
 
 This third-batch boundary is historical; the current acceptance boundary is
 maintained in the linked feature checklist. New combinations can expose a later
@@ -161,3 +172,57 @@ that those tests pass. No Rust formatting, build or execution was performed for
 batch 5. `native_boundaries_probe.c` separately exercises runtime reference cleanup,
 reentrant mailbox delivery, receiver cancellation and streaming callbacks. Its C
 results are not public HDL or actual Rust-emitter validation.
+
+## Fixed-stream selector scope
+
+The current stream emitter still captures all selectors before publishing any
+stream destination. This repair batch adds size checks to that existing subset;
+it does not implement `with` selectors that depend on values unpacked earlier in
+the same assignment (IEEE 1800-2009 11.4.14.4). Do not use this staging policy as
+a general language rule or claim full streaming conformance from these tests.
+
+## Captured packed-element selections
+
+The active emitter converts `IrElemSel::PackedChain` into a local
+`sv4_select_plan_t`. It evaluates each selector once into a registered packed
+owner, refines the plan, then releases that owner. The plan contains only integer
+coordinates and widths: it owns no values and contains no destination pointer.
+Reads apply the plan to an independent whole-element snapshot, supplying an
+unpacked element's default first when its unpacked index is invalid. Inner
+out-of-bounds positions then become X; two-state assignment conversion remains
+a separate step.
+
+Blocking and compound writes modify only the plan's valid interval. Nonblocking
+writes snapshot the corresponding full-width value and mask at issue time and
+use the existing masked-NBA commit path. No pointer to a local plan survives a
+suspension or is stored in the NBA queue. Synchronous file-input targets may use
+`LLG_REF_PACKED_PLAN`, whose `retained` field borrows the plan only for that input
+call. Such descriptors are not queue-cell reference owners, are not registered
+as retained references, and must never be forwarded as subroutine `ref` actuals.
+The guarded legacy expression-fragment emitters still reject this typed form;
+they are not a fallback for the active owned path.
+
+The component probes in `tests/runtime_value_storage/packed_selection_*.c` use
+production runtime helpers, not output from the Rust emitter. Structural Rust
+checks and HDL regressions in `sim_group1_repairs` remain distinct acceptance
+layers.
+
+## Packed formal member bindings (R09/R14)
+
+`IrLhs::PackedSelect` preserves an activation-relative root and normalized member
+selection steps. WholeRef/Ref roots are resolved through the current local/formal
+binding map, including inline callback overrides. There are no synthetic
+`__llg_abi_formal_leaf` model signals or optimizer exceptions. Inputs use the
+existing private value owner; member writes must never mutate the borrowed C
+input descriptor. Reference member writes clone/read the referenced parent,
+apply a selection plan, and publish through the original descriptor immediately.
+Output/inout writebacks freeze their member indices once and retain copy-out at
+return. Const references and NBA into activation storage remain errors.
+
+Two-state member read conversion happens before subsequent selects add missing
+X positions. Read-modify-write converts only the selected result at the store
+boundary and preserves other four-state fields of the parent. Every index value
+and temporary owner uses the existing registered lifecycle and cleanup paths.
+`packed_formal_probe.c` is a hand-written runtime contract transcription; it is
+not generated-C acceptance. The file-backed formal suite and owned-emitter unit
+tests must still run in the actual frontend/Rust environment.

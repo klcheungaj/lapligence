@@ -167,10 +167,24 @@ impl<'a> Codegen<'a> {
         else {
             return Ok(None);
         };
-        if !streams
-            .iter()
-            .any(|stream| self.stream_target_contains_container(stream.value))
-        {
+        let mut needs_mixed = false;
+        for stream in streams {
+            if self.stream_target_contains_container(stream.value) {
+                needs_mixed = true;
+                break;
+            }
+            if let Some(with_node) = stream.with_expr {
+                if self.array_of(stream.value).is_some()
+                    && self
+                        .static_stream_selector_indices(path, with_node)?
+                        .is_none()
+                {
+                    needs_mixed = true;
+                    break;
+                }
+            }
+        }
+        if !needs_mixed {
             return Ok(None);
         }
         if !blocking {
@@ -222,6 +236,32 @@ impl<'a> Codegen<'a> {
                     }
                     pending.extend(operands.into_iter().rev());
                     continue;
+                }
+
+                if let Some(with_node) = stream.with_expr {
+                    if let Some(array) = self.array_of(value).cloned() {
+                        if array.real {
+                            return Err(format!(
+                                "real array streaming assignment target is not supported in `{path}`"
+                            ));
+                        }
+                        if self
+                            .static_stream_selector_indices(path, with_node)?
+                            .is_none()
+                        {
+                            if array.dims.len() != 1 {
+                                return Err(format!(
+                                    "runtime `with` selector on a multidimensional fixed streaming target is not supported in `{path}`"
+                                ));
+                            }
+                            let selector = self.lower_stream_selector(path, with_node)?;
+                            targets.push(IrStreamTarget::FixedSelector {
+                                array: array.ir,
+                                selector,
+                            });
+                            continue;
+                        }
+                    }
                 }
 
                 if let Some(fixed_parts) =

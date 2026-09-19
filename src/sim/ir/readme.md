@@ -56,3 +56,21 @@ object domains remain separate. `validate.rs` owns the validation context;
 its `validate/` children check individual domains against that shared context.
 
 See [the source map](../../../docs/source_layout.md).
+
+## Bounded packed selection chains
+
+`IrElemSel::PackedChain(Vec<IrPackedSelect>)` describes successive packed slices
+inside a fixed-array element. Each step contains a typed integral physical-LSB
+base and a positive result width. Its base is relative to the immediately
+preceding value; its width includes any remaining element stride. Bases may be
+negative, unknown, or outside the selected value. These are language-level
+X/no-write cases, not invalid IR.
+
+Validation rejects empty chains, real selectors/elements, zero step widths and
+read results whose unsigned width disagrees with the final step. It also checks
+all nested expression references and includes their widths in capacity accounting.
+The `IrElemSel::expressions` and `expressions_mut` visitors cover every step;
+optimization, effects/dependency discovery, address snapshots and stack sizing
+must retain this traversal. Folding a base expression must not erase intermediate
+bounds or merge adjacent steps. Runtime clipping is defined by the selected value
+at each step, even if the root storage has further accessible bits.

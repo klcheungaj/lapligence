@@ -130,3 +130,19 @@ fn fixed_array_dynamic_shape_mismatch_is_runtime_error() {
         "fixed unpacked-array assignment size mismatch",
     );
 }
+
+#[test]
+fn fixed_array_reversed_bounds() {
+    run_fixture(
+        "fixed_array_reversed_bounds.sv",
+        "PASS fixed_array_reversed_bounds\n",
+    );
+}
+
+#[test]
+fn fixed_array_overlap_slice() {
+    run_fixture(
+        "fixed_array_overlap_slice.sv",
+        "PASS fixed_array_overlap_slice\n",
+    );
+}

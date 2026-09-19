@@ -292,6 +292,21 @@ impl<'a> Codegen<'a> {
                 NodeKind::FuncArg { ty, .. } => {
                     if is_real_kind(&ty.kind) {
                         (0, false, false, true, ty.kind == "shortreal")
+                    } else if let Some(w) = self.packed_formal_width(*io) {
+                        if w > LLG_MAX_WIDTH {
+                            return Err(format!(
+                                "formal `{}` of `{c_name}` is {w} bits wide; the runtime \
+                             maximum supported width is {LLG_MAX_WIDTH}",
+                                self.node(*io).name
+                            ));
+                        }
+                        (
+                            w,
+                            ty.signed,
+                            self.db.is_two_state_type(*io) || is_two_state_kind(&ty.kind),
+                            false,
+                            false,
+                        )
                     } else {
                         match ty.width {
                             Some(w) if w <= LLG_MAX_WIDTH => (

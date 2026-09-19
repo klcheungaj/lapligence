@@ -96,9 +96,7 @@ fn ident_children(e: &mut IrExpr) {
             for i in indices {
                 ident_expr(i);
             }
-            if let IrElemSel::Bit(idx) | IrElemSel::Indexed { base: idx, .. } = elem_sel {
-                ident_expr(idx);
-            }
+            elem_sel.expressions_mut(&mut |idx| ident_expr(idx));
         }
         IrExprKind::EnumMethod(query) => {
             query.expressions_mut(&mut |child| ident_expr(child));
@@ -255,9 +253,7 @@ fn ident_lhs(l: &mut IrLhs) {
             for i in indices {
                 ident_expr(i);
             }
-            if let IrElemSel::Bit(idx) | IrElemSel::Indexed { base: idx, .. } = elem_sel {
-                ident_expr(idx);
-            }
+            elem_sel.expressions_mut(&mut |idx| ident_expr(idx));
         }
         IrLhs::Stream { parts, .. } => {
             for (part, _) in parts {

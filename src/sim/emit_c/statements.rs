@@ -37,7 +37,6 @@ mod formatting;
 use formatting::{render_severity, render_typed_display};
 mod callbacks;
 pub use callbacks::render_pre_fn;
-pub(super) use callbacks::render_pre_fn_impl;
 mod force;
 use force::{render_force, render_release};
 
@@ -128,7 +127,8 @@ fn render_stream_assignment(
                             IrStreamTarget::Packed { width, .. } => total
                                 .checked_add(*width)
                                 .ok_or_else(|| "streaming target width overflows".to_owned()),
-                            IrStreamTarget::Container { .. } => {
+                            IrStreamTarget::Container { .. }
+                            | IrStreamTarget::FixedSelector { .. } => {
                                 Err("streaming assignment supports at most one resizable target"
                                     .to_owned())
                             }
@@ -172,6 +172,11 @@ fn render_stream_assignment(
                     "if (_stream_segment_width_{index} != 0) {{ sv4_t {segment_name} = sv4_part_select(_stream_value, _stream_cursor - 1, _stream_cursor - _stream_segment_width_{index}); {function}(&{}, {segment_name}, 1, 0, {selector_kind}, {first}, {second}); }} _stream_cursor -= _stream_segment_width_{index};",
                     model.c_name
                 ));
+            }
+            IrStreamTarget::FixedSelector { .. } => {
+                return Err(
+                    "fixed-array runtime streaming selectors require the owned emitter".to_owned(),
+                );
             }
         }
     }

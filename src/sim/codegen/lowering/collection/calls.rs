@@ -5,6 +5,10 @@ use super::*;
 impl<'a> Codegen<'a> {
     pub(in super::super) fn ref_lhs_type(&self, lhs: &IrLhs) -> Option<(u32, bool, bool, bool)> {
         match lhs {
+            IrLhs::PackedSelect { target, steps, signed, two_state } => Some((
+                steps.last()?.width, *signed, *two_state || self.ref_lhs_type(target)?.2,
+                self.ref_lhs_type(target)?.3,
+            )),
             IrLhs::Whole(index) => match self.model.signal(*index).ty {
                 IrType::Packed {
                     width,
@@ -40,6 +44,9 @@ impl<'a> Codegen<'a> {
                     IrElemSel::Part(left, right) => (left.abs_diff(*right) as u32 + 1, false),
                     IrElemSel::Bit(_) => (1, false),
                     IrElemSel::Indexed { width, .. } => (*width, false),
+                    IrElemSel::PackedChain(steps) => {
+                        (steps.last().map_or(0, |step| step.width), false)
+                    }
                 };
                 Some((width, signed, array.two_state, false))
             }
@@ -208,8 +215,7 @@ impl<'a> Codegen<'a> {
                 let tname = format!("_t{}_{}", h.0, idx);
                 let (wb, actual_read, selector_inits) =
                     self.lower_call_actual(scope_path, bound[idx].expr, &format!("{}_{idx}", h.0))?;
-                let init_ir =
-                    self.lower_call_temp_init_from_expr(*io, &bound[idx], actual_read)?;
+                let init_ir = self.lower_call_temp_init_from_expr(*io, &bound[idx], actual_read)?;
                 let storage = self.static_formals.get(&(callee_inst, *io)).cloned();
                 let (storage_addr, storage_lhs, storage_read) = if let Some(storage) = storage {
                     let lhs = IrLhs::Whole(storage.ir);
@@ -263,13 +269,7 @@ impl<'a> Codegen<'a> {
                     ));
                     continue;
                 }
-                let ir = self.lower_bound_arg(
-                    scope_path,
-                    &formals,
-                    &bound,
-                    idx,
-                    &mut arg_irs,
-                )?;
+                let ir = self.lower_bound_arg(scope_path, &formals, &bound, idx, &mut arg_irs)?;
                 in_args.push(IrCallArg::Val(ir));
             }
         }

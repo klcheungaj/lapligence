@@ -185,6 +185,9 @@ impl<'a> Codegen<'a> {
     }
 
     pub(in super::super) fn analyze_lhs(&mut self, path: &str, lhs: NodeId) -> Result<Lhs, String> {
+        if let Some(target) = self.packed_formal_lhs(path, lhs)? {
+            return Ok(Lhs::Canonical(target));
+        }
         if let Some(target) = self
             .clocking_var_target(lhs)
             .or_else(|| self.db.is_clocking_var(lhs).then_some(lhs))
@@ -352,6 +355,9 @@ impl<'a> Codegen<'a> {
                 }))
             }
             NodeKind::Expr(ExprKind::BitSelect { base, index }) => {
+                if let Some(lhs) = self.packed_element_lhs_ir(path, lhs)? {
+                    return Ok(Lhs::Canonical(lhs));
+                }
                 let target = match self.kind(*base) {
                     NodeKind::Expr(ExprKind::Ref {
                         target: Some(target),
@@ -446,6 +452,9 @@ impl<'a> Codegen<'a> {
                 Ok(Lhs::Bit(info, index, two_state))
             }
             NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
+                if let Some(lhs) = self.packed_element_lhs_ir(path, lhs)? {
+                    return Ok(Lhs::Canonical(lhs));
+                }
                 if let Some((_target, _kind, member_info)) = self.unpacked_member_info(lhs) {
                     let member = member_info.member;
                     let info = member_info.signal.ok_or_else(|| {
@@ -549,6 +558,9 @@ impl<'a> Codegen<'a> {
                 ))
             }
             NodeKind::Expr(ExprKind::PartSelect { base, left, right }) => {
+                if let Some(lhs) = self.packed_element_lhs_ir(path, lhs)? {
+                    return Ok(Lhs::Canonical(lhs));
+                }
                 if let Some((info, member, lsb, width)) = self.packed_member_range_info(
                     *base,
                     self.eval_bound_i128(*left)?,
@@ -610,6 +622,9 @@ impl<'a> Codegen<'a> {
                 width_expr,
                 neg,
             }) => {
+                if let Some(lhs) = self.packed_element_lhs_ir(path, lhs)? {
+                    return Ok(Lhs::Canonical(lhs));
+                }
                 if let Some(mut element) = self.array_element_lhs(path, *base)? {
                     if element.arr.real {
                         return Err(format!(

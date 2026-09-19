@@ -10,6 +10,9 @@
   clocking, system tasks and calls.
 - **`expressions.rs` / `expressions/`:** lower typed expressions, operations,
   conversions, aggregates, streaming, membership and system-function queries.
+  `expressions/aggregates/copies.rs` separates selected-value type compatibility
+  from root storage and pairs fixed-array leaves in declaration order. Source
+  leaves are captured before any destination leaf is written.
 - **`containers.rs` / `containers/`:** container initialization, indexing,
   queries, fixed-array views, streaming, assignment, methods and callbacks.
 - **`objects.rs` / `objects/`:** non-integral class/interface, mailbox, process,
@@ -32,3 +35,12 @@ Bound numeric arguments and inout copy-in produce converted typed `IrExpr`
 values only. Defaults resolve earlier formals through the typed argument map.
 Do not request detached C strings in argument binding: owner setup/cleanup is
 emitted later by the structured whole-model renderer.
+
+Storage collection lowers constant declaration initializers eagerly, but a
+scalar declaration initializer whose expression contains a user function call is
+deferred until subroutine prototypes have assigned every callee a model entry.
+Deferred initializers are replayed in the model initialization frame with process
+recursion depth zero; a failed replay aborts code generation rather than emitting
+a partial model. A default that references an earlier side-effecting actual is
+rejected because no caller-side input staging exists yet to evaluate that actual
+once.

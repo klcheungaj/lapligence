@@ -65,7 +65,10 @@ fragments or extend those paths as a workaround.
   direction, slice size, ordered operands, aggregate width and unsigned result.
   Streaming targets retain typed component LHSs/widths and evaluate RHS once
   before unpacking.
-  Stream `with` selectors remain unsupported. `inside` evaluates selector and
+  Runtime `with` selectors lower on one-dimensional fixed-array destinations
+  (`IrStreamTarget::FixedSelector`) and fixed-array sources (`IrExprKind::FixedStream`);
+  decorators on nested concatenations and multidimensional array targets remain rejected.
+  `inside` evaluates selector and
   every scalar/range endpoint once; scalars use wildcard equality, ranges
   ordinary inclusive comparison.
 - Dynamic arrays, queues and associative arrays have distinct IR/storage and
@@ -377,7 +380,8 @@ default and simple integral type keys. Match exact packed dimensions, sign and
 state domain; member keys beat type keys, last matching type key beats default.
 Explicit nested packed-member patterns recurse. Reject recursive default/type-
 key distribution and nominal aggregate keys until owned lexical type identity
-exists; reject anonymous copies without identity. Also reject aggregate nets/
-ports, nested aggregate/unpacked-array members, unequal unpacked unions,
-aggregate subprogram formals/locals, compound assignment and whole aggregates
-in scalar expressions.
+exists; reject anonymous copies without identity. Also reject aggregate nets/ports,
+nested aggregate/unpacked-array members, unequal unpacked unions,
+unpacked-aggregate subprogram formals/locals, compound assignment and whole
+aggregates in scalar expressions; fixed packed struct/union formals and returns
+are supported.

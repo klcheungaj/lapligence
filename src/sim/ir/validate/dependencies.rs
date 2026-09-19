@@ -9,6 +9,7 @@ impl Validator<'_> {
             max_width: Cell::new(0),
             chandle_return: Cell::new(None),
             string_return: Cell::new(None),
+            function: Cell::new(None),
         }
     }
 

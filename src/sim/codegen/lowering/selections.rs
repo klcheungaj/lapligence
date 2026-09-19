@@ -88,6 +88,17 @@ impl<'a> Codegen<'a> {
         };
         let (target, base_index) = self.hier_path_signal_target(parts, refs)?;
         let info = self.signal_of(target)?.clone();
+        Some((
+            info,
+            self.packed_member_layout(target, &parts[base_index + 1..])?,
+        ))
+    }
+
+    pub(super) fn packed_member_layout(
+        &self,
+        target: NodeId,
+        parts: &[String],
+    ) -> Option<PackedMember> {
         let mut layout = self.db.aggregate_layout(target)?;
         if !matches!(
             layout.kind,
@@ -97,7 +108,7 @@ impl<'a> Codegen<'a> {
         }
         let mut absolute_lsb = 0u32;
         let mut selected: Option<&AggregateMember> = None;
-        for (part_index, member_name) in parts.iter().enumerate().skip(base_index + 1) {
+        for (part_index, member_name) in parts.iter().enumerate() {
             let index = layout
                 .members
                 .iter()
@@ -128,17 +139,14 @@ impl<'a> Codegen<'a> {
             }
         }
         let member = selected?;
-        Some((
-            info,
-            PackedMember {
-                name: member.name.clone(),
-                lsb: absolute_lsb,
-                width: member.ty.width?,
-                signed: member.ty.signed,
-                two_state: member.two_state,
-                packed_ranges: member.packed_ranges.clone(),
-            },
-        ))
+        Some(PackedMember {
+            name: member.name.clone(),
+            lsb: absolute_lsb,
+            width: member.ty.width?,
+            signed: member.ty.signed,
+            two_state: member.two_state,
+            packed_ranges: member.packed_ranges.clone(),
+        })
     }
 
     pub(super) fn unpacked_aggregate_target(&self, node: NodeId) -> Option<NodeId> {

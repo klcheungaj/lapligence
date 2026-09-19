@@ -80,7 +80,9 @@ impl Validator<'_> {
                     self.string_return.get(),
                 )?;
                 let expected = match query.as_ref() {
-                    IrObjectQuery::ChandleEq(..) | IrObjectQuery::HandleCapture(..) => Some((1, false)),
+                    IrObjectQuery::ChandleEq(..) | IrObjectQuery::HandleCapture(..) => {
+                        Some((1, false))
+                    }
                     IrObjectQuery::SemaphoreTryGet(..) => Some((32, true)),
                     IrObjectQuery::ProcessEq(..) => Some((1, false)),
                     IrObjectQuery::StringGetc(..) => Some((8, true)),
@@ -423,6 +425,42 @@ impl Validator<'_> {
                     );
                 }
             }
+            IrExprKind::FixedStream { array, selector } => {
+                let source = self.model.arrays.get(*array).ok_or_else(|| {
+                    IrValidationError::new(path, format!("array index {array} is out of bounds"))
+                })?;
+                if source.real || source.dims.len() != 1 || source.elem_width == 0 {
+                    return self.fail(
+                        path,
+                        "fixed stream source requires a packed one-dimensional array",
+                    );
+                }
+                if expr.width == 0 || expr.signed {
+                    return self.fail(
+                        path,
+                        "fixed stream source must produce an unsigned packed value",
+                    );
+                }
+                validate_stream_selector(selector)?;
+                let mut result = Ok(());
+                let mut visit = |child: &IrExpr| {
+                    result = result.clone().and_then(|_| {
+                        self.validate_expr(child, formals, &format!("{path}.selector"))
+                    });
+                };
+                match selector.as_ref() {
+                    IrStreamSelector::Index(index) => visit(index),
+                    IrStreamSelector::Range { left, right } => {
+                        visit(left);
+                        visit(right);
+                    }
+                    IrStreamSelector::Indexed { base, width, .. } => {
+                        visit(base);
+                        visit(width);
+                    }
+                }
+                result?;
+            }
             IrExprKind::Inside { value, items } => {
                 if items.is_empty() {
                     return self.fail(path, "inside expression requires at least one set item");
@@ -524,6 +562,17 @@ impl Validator<'_> {
                     self.validate_expr(index, formals, &format!("{path}.indices[{idx}]"))?;
                 }
                 self.validate_elem_sel(elem_sel, formals, &format!("{path}.elem_sel"))?;
+                if let IrElemSel::PackedChain(steps) = elem_sel {
+                    if array.real
+                        || expr.signed
+                        || steps.last().map(|step| step.width) != Some(expr.width)
+                    {
+                        return self.fail(
+                            path,
+                            "packed selection chain result shape disagrees with its steps",
+                        );
+                    }
+                }
             }
             IrExprKind::Fill(fill) => {
                 if *fill > 3 {

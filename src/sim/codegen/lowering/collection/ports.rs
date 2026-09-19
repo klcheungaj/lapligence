@@ -342,7 +342,7 @@ impl<'a> Codegen<'a> {
             IrLhs::Stream { parts, .. } => parts
                 .iter()
                 .find_map(|(part, _)| self.structural_group_for_lhs(part)),
-            IrLhs::WholeRef { .. } | IrLhs::Ref { .. } | IrLhs::ArrayElem { .. } => None,
+            IrLhs::PackedSelect { .. } | IrLhs::WholeRef { .. } | IrLhs::Ref { .. } | IrLhs::ArrayElem { .. } => None,
         }
     }
 
@@ -437,7 +437,7 @@ impl<'a> Codegen<'a> {
             IrLhs::Stream { parts, .. } => parts
                 .iter()
                 .find_map(|(part, _)| self.unmapped_structural_group_for(part, mapped)),
-            IrLhs::WholeRef { .. } | IrLhs::Ref { .. } | IrLhs::ArrayElem { .. } => None,
+            IrLhs::PackedSelect { .. } | IrLhs::WholeRef { .. } | IrLhs::Ref { .. } | IrLhs::ArrayElem { .. } => None,
         }
     }
 

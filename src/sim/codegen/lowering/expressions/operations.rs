@@ -582,7 +582,11 @@ impl<'a> Codegen<'a> {
         }
     }
 
-    fn lower_mutation_expression(
+    /// Lower a compound assignment or increment/decrement to the canonical
+    /// mutation expression. The target is resolved once by the mutation
+    /// emitter; the caller may keep the yielded value or discard it in
+    /// statement position.
+    pub(in super::super) fn lower_mutation_expression(
         &mut self,
         scope_path: &str,
         op: Operation,

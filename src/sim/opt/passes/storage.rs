@@ -49,7 +49,9 @@ fn mark_dependency_read(dependency: &IrDependency, model: &IrModel, rw: &mut Rw)
 pub(super) fn mark_unused_storage(model: &mut IrModel, execution: Option<&[ExecutionProcess]>) {
     let mut rw = Rw::default();
     for access in &model.native_accesses {
-        access.receiver.expressions(&mut |child| collect_expr_reads(child, model, &mut rw));
+        access
+            .receiver
+            .expressions(&mut |child| collect_expr_reads(child, model, &mut rw));
     }
     for allocation in &model.class_allocations {
         collect_stmts_rw(&allocation.body, model, &mut rw);
@@ -397,6 +399,9 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
                             collect_stream_selector_reads(selector, model, rw);
                         }
                     }
+                    IrStreamTarget::FixedSelector { selector, .. } => {
+                        collect_stream_selector_reads(selector, model, rw);
+                    }
                 }
             }
         }
@@ -671,6 +676,27 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
         IrStmt::WaveLimit(limit) => collect_expr_reads(limit, model, rw),
         IrStmt::Call(call) => collect_call_rw(call, model, rw),
         IrStmt::Return { value: Some(value) } => collect_expr_reads(value, model, rw),
+        // Task-position `$system` and process RNG statements carry owned string
+        // or packed expressions whose signal reads must keep their storage.
+        IrStmt::System(Some(command)) => {
+            command.expressions(&mut |child| collect_expr_reads(child, model, rw))
+        }
+        IrStmt::RandomSeed { seed } => collect_expr_reads(seed, model, rw),
+        IrStmt::RandomStateSet { state } => {
+            state.expressions(&mut |child| collect_expr_reads(child, model, rw))
+        }
+        IrStmt::DeclString {
+            init: Some(init), ..
+        } => init.expressions(&mut |child| collect_expr_reads(child, model, rw)),
+        // Captures are evaluated at the fork site in the parent process, before
+        // any detached branch runs; their initializers are ordinary reads.
+        IrStmt::CapturedFork { branches, .. } => {
+            for branch in branches {
+                for capture in &branch.captures {
+                    collect_expr_reads(capture.initial(), model, rw);
+                }
+            }
+        }
         _ => {}
     }
 }
@@ -781,6 +807,10 @@ fn collect_call_rw(call: &crate::sim::ir::IrCall, model: &IrModel, rw: &mut Rw) 
 
 fn collect_lhs_rw(l: &IrLhs, model: &IrModel, rw: &mut Rw) {
     match l {
+        IrLhs::PackedSelect { target, steps, .. } => {
+            collect_lhs_rw(target, model, rw);
+            for step in steps { collect_expr_reads(&step.base, model, rw); }
+        }
         IrLhs::Whole(i) => rw.write(*i),
         IrLhs::WholeRef { .. } => {}
         IrLhs::Ref { bit, .. } => {
@@ -804,9 +834,7 @@ fn collect_lhs_rw(l: &IrLhs, model: &IrModel, rw: &mut Rw) {
             for idx in indices {
                 collect_expr_reads(idx, model, rw);
             }
-            if let IrElemSel::Bit(idx) | IrElemSel::Indexed { base: idx, .. } = elem_sel {
-                collect_expr_reads(idx, model, rw);
-            }
+            elem_sel.expressions(&mut |idx| collect_expr_reads(idx, model, rw));
         }
         IrLhs::Stream { parts, .. } => {
             for (part, _) in parts {
@@ -818,6 +846,10 @@ fn collect_lhs_rw(l: &IrLhs, model: &IrModel, rw: &mut Rw) {
 
 fn collect_lhs_read(l: &IrLhs, model: &IrModel, rw: &mut Rw) {
     match l {
+        IrLhs::PackedSelect { target, steps, .. } => {
+            collect_lhs_read(target, model, rw);
+            for step in steps { collect_expr_reads(&step.base, model, rw); }
+        }
         IrLhs::Whole(i) | IrLhs::Bit(i, ..) | IrLhs::Part(i, ..) | IrLhs::IdxPart(i, ..) => {
             rw.read(*i);
             match l {
@@ -836,9 +868,7 @@ fn collect_lhs_read(l: &IrLhs, model: &IrModel, rw: &mut Rw) {
             for index in indices {
                 collect_expr_reads(index, model, rw);
             }
-            if let IrElemSel::Bit(index) | IrElemSel::Indexed { base: index, .. } = elem_sel {
-                collect_expr_reads(index, model, rw);
-            }
+            elem_sel.expressions(&mut |index| collect_expr_reads(index, model, rw));
         }
         IrLhs::Stream { parts, .. } => {
             for (part, _) in parts {
@@ -877,6 +907,9 @@ fn collect_children_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
         IrExprKind::ObjectQuery(query) => {
             query.expressions(&mut |child| collect_expr_reads(child, model, rw))
         }
+        IrExprKind::EnumMethod(query) => {
+            query.expressions(&mut |child| collect_expr_reads(child, model, rw))
+        }
         IrExprKind::Bin { a, b, .. } | IrExprKind::RealBin { a, b, .. } => {
             collect_expr_reads(a, model, rw);
             collect_expr_reads(b, model, rw);
@@ -900,6 +933,9 @@ fn collect_children_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
             }
         }
         IrExprKind::Stream { value, .. } => collect_expr_reads(value, model, rw),
+        IrExprKind::FixedStream { selector, .. } => {
+            collect_stream_selector_reads(selector, model, rw)
+        }
         IrExprKind::Inside { value, items } => {
             collect_expr_reads(value, model, rw);
             for item in items {
@@ -959,9 +995,7 @@ fn collect_children_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
             for i in indices {
                 collect_expr_reads(i, model, rw);
             }
-            if let IrElemSel::Bit(idx) | IrElemSel::Indexed { base: idx, .. } = elem_sel {
-                collect_expr_reads(idx, model, rw);
-            }
+            elem_sel.expressions(&mut |idx| collect_expr_reads(idx, model, rw));
         }
         IrExprKind::CallFn(call) => {
             collect_call_rw_readonly(call.function_index(), &call.args, model, rw);

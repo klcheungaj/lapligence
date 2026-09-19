@@ -130,6 +130,7 @@ pub(in super::super) fn render_assign(
             IrLhs::WholeRef { width, signed, .. } | IrLhs::Ref { width, signed, .. } => {
                 (*width, *signed)
             }
+            IrLhs::PackedSelect { steps, signed, .. } => (steps.last().map_or(0, |step| step.width), *signed),
             IrLhs::Bit(..) => (1, false),
             IrLhs::Part(_, left, right, _) => (((left - right).abs() + 1) as u32, false),
             IrLhs::IdxPart(_, _, _, width, _, _) => (*width, false),
@@ -141,6 +142,7 @@ pub(in super::super) fn render_assign(
                 IrElemSel::Part(left, right) => (((left - right).abs() + 1) as u32, false),
                 IrElemSel::Bit(_) => (1, false),
                 IrElemSel::Indexed { width, .. } => (*width, false),
+                IrElemSel::PackedChain(steps) => (steps.last().map_or(0, |step| step.width), false),
             },
             IrLhs::Stream { width, .. } => (*width, false),
         };
@@ -209,6 +211,9 @@ pub(in super::super) fn render_assign(
         let elem_target = |lin: &str| -> Result<(String, String), String> {
             let target = format!("&{base}[({lin})]");
             Ok(match elem_sel {
+                IrElemSel::PackedChain(_) => {
+                    return Err("packed selection chains require the owned emitter".to_owned());
+                }
                 IrElemSel::Whole => (target, resize(ai.elem_width, ai.signed)),
                 IrElemSel::Part(l, r) => {
                     let w = ((l - r).abs() + 1) as u32;
@@ -349,7 +354,8 @@ pub(in super::super) fn render_assign(
         | IrLhs::IdxPart(idx, .., selected_two_state) => {
             ctx.model.signal(*idx).ty.two_state() || *selected_two_state
         }
-        IrLhs::WholeRef { two_state, .. } | IrLhs::Ref { two_state, .. } => *two_state,
+        IrLhs::PackedSelect { two_state, .. }
+        | IrLhs::WholeRef { two_state, .. } | IrLhs::Ref { two_state, .. } => *two_state,
         _ => false,
     };
     // Assignment padding follows the RHS's OWN signedness (LRM §10.7);
@@ -370,6 +376,7 @@ pub(in super::super) fn render_assign(
         )
     };
     let args = match lh {
+        IrLhs::PackedSelect { .. } => return Err("packed activation selects require structured owned emission".to_owned()),
         IrLhs::Whole(idx) => {
             let sig = ctx.model.signal(*idx);
             format!(

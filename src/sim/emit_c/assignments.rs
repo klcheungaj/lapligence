@@ -171,6 +171,9 @@ fn render_selected_array(
     let (decls, condition, linear) =
         array_guard(array, &index_codes).unwrap_or_else(|| (String::new(), "1".into(), "0".into()));
     let (selected_width, mut selector_decls, mut update) = match elem_sel {
+        IrElemSel::PackedChain(_) => {
+            return Err("packed selection chains require structured owned emission".to_owned());
+        }
         IrElemSel::Whole => (
             array.elem_width,
             String::new(),
@@ -463,6 +466,7 @@ fn render_nba_inner(
             IrElemSel::Whole => (array.elem_width, array.signed),
             IrElemSel::Bit(_) => (1, false),
             IrElemSel::Indexed { width, .. } => (*width, false),
+            IrElemSel::PackedChain(steps) => (steps.last().map_or(0, |step| step.width), false),
             IrElemSel::Part(left, right) => (left.abs_diff(*right) as u32 + 1, false),
         };
         let rhs = packed_value(&value, width, signed, array.two_state);
@@ -474,6 +478,9 @@ fn render_nba_inner(
             array_guard(array, &indices).unwrap_or_else(|| (String::new(), "1".into(), "0".into()));
         let target = format!("&{}[({linear})]", array.c_name);
         let assignment = match elem_sel {
+            IrElemSel::PackedChain(_) => {
+                return Err("packed selection chains require structured owned emission".to_owned());
+            }
             IrElemSel::Whole => store(&target, "_array_rhs", ticks, allow_net),
             IrElemSel::Part(left, right) => selected_store(
                 &target,

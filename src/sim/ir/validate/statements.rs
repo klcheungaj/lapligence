@@ -3,6 +3,39 @@
 use super::*;
 
 impl Validator<'_> {
+    fn has_transient_target(&self, lhs: &IrLhs) -> bool {
+        match lhs {
+            IrLhs::WholeRef {
+                addr,
+                width,
+                signed,
+                two_state,
+                shortreal,
+            } => {
+                let Some(function) = self.function.get() else {
+                    return true;
+                };
+                // IrFunc::locals contains only static declarations, including
+                // explicit static locals in automatic routines. Their owners
+                // are initialized and destroyed with the generated model.
+                !function.locals.iter().any(|local| {
+                    addr.strip_prefix('&') == Some(local.c_name.as_str())
+                        && !local.string
+                        && *width == local.width
+                        && *signed == local.signed
+                        && *two_state == local.two_state
+                        && *shortreal == local.shortreal
+                })
+            }
+            IrLhs::Ref { .. } => true,
+            IrLhs::PackedSelect { target, .. } => self.has_transient_target(target),
+            IrLhs::Stream { parts, .. } => parts
+                .iter()
+                .any(|(part, _)| self.has_transient_target(part)),
+            _ => false,
+        }
+    }
+
     pub(super) fn validate_stmt(
         &self,
         stmt: &IrStmt,
@@ -220,6 +253,57 @@ impl Validator<'_> {
                                 }
                             }
                         }
+                        IrStreamTarget::FixedSelector { array, selector } => {
+                            let Some(array) = self.model.arrays.get(*array) else {
+                                return self.fail(
+                                    format!("{path}.targets[{index}]"),
+                                    "streaming fixed-array target index is out of bounds",
+                                );
+                            };
+                            if array.real || array.dims.is_empty() || array.elem_width == 0 {
+                                return self.fail(
+                                    format!("{path}.targets[{index}]"),
+                                    "streaming fixed-array target requires a packed nonzero element",
+                                );
+                            }
+                            validate_stream_selector(selector).map_err(|error| {
+                                IrValidationError::new(
+                                    format!("{path}.targets[{index}].selector"),
+                                    error.detail(),
+                                )
+                            })?;
+                            match selector {
+                                IrStreamSelector::Index(bound) => self.validate_expr(
+                                    bound,
+                                    formals,
+                                    &format!("{path}.targets[{index}].selector.index"),
+                                )?,
+                                IrStreamSelector::Range { left, right } => {
+                                    self.validate_expr(
+                                        left,
+                                        formals,
+                                        &format!("{path}.targets[{index}].selector.left"),
+                                    )?;
+                                    self.validate_expr(
+                                        right,
+                                        formals,
+                                        &format!("{path}.targets[{index}].selector.right"),
+                                    )?;
+                                }
+                                IrStreamSelector::Indexed { base, width, .. } => {
+                                    self.validate_expr(
+                                        base,
+                                        formals,
+                                        &format!("{path}.targets[{index}].selector.base"),
+                                    )?;
+                                    self.validate_expr(
+                                        width,
+                                        formals,
+                                        &format!("{path}.targets[{index}].selector.width"),
+                                    )?;
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -428,6 +512,7 @@ impl Validator<'_> {
                 }
                 fn persistent(lhs: &IrLhs) -> bool {
                     match lhs {
+                        IrLhs::PackedSelect { target, .. } => persistent(target),
                         IrLhs::WholeRef { .. } | IrLhs::Ref { .. } => false,
                         IrLhs::Stream { parts, .. } => {
                             parts.iter().all(|(part, _)| persistent(part))
@@ -444,6 +529,9 @@ impl Validator<'_> {
             IrStmt::Assign { lhs, rhs, .. }
             | IrStmt::DelayedAssign { lhs, rhs, .. }
             | IrStmt::InertialAssign { lhs, rhs, .. } => {
+                if matches!(stmt, IrStmt::Assign { nba: true, .. }) && self.has_transient_target(lhs) {
+                    return self.fail(path, "nonblocking assignment requires persistent target storage");
+                }
                 if matches!(stmt, IrStmt::InertialAssign { .. }) {
                     let packed_driver = match lhs {
                         IrLhs::Whole(index)
@@ -467,16 +555,7 @@ impl Validator<'_> {
                     }
                 }
                 if matches!(stmt, IrStmt::DelayedAssign { .. }) {
-                    fn persistent(lhs: &IrLhs) -> bool {
-                        match lhs {
-                            IrLhs::WholeRef { .. } | IrLhs::Ref { .. } => false,
-                            IrLhs::Stream { parts, .. } => {
-                                parts.iter().all(|(part, _)| persistent(part))
-                            }
-                            _ => true,
-                        }
-                    }
-                    if !persistent(lhs) {
+                    if self.has_transient_target(lhs) {
                         return self.fail(path, "delayed NBA requires persistent target storage");
                     }
                 }

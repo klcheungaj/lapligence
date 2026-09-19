@@ -181,6 +181,59 @@ fn delayed_nba_rejects_unproven_pointer_lifetimes() {
 }
 
 #[test]
+fn queued_writes_accept_only_registered_static_local_storage() {
+    let mut model = valid_model();
+    let root = IrLhs::WholeRef {
+        addr: "&stored".into(),
+        width: 8,
+        signed: false,
+        two_state: false,
+        shortreal: false,
+    };
+    let selected = IrLhs::PackedSelect {
+        target: Box::new(root.clone()),
+        steps: vec![IrPackedSelect {
+            base: packed_const(0, 32),
+            width: 8,
+        }],
+        signed: false,
+        two_state: false,
+    };
+    let statements = vec![
+        IrStmt::Assign {
+            lhs: root,
+            rhs: packed_const(1, 8),
+            nba: true,
+        },
+        IrStmt::DelayedAssign {
+            lhs: selected,
+            rhs: packed_const(2, 8),
+            ticks: IrDelay::Constant(1),
+        },
+    ];
+    let function = IrFunc::new(
+        "task".into(),
+        None,
+        vec![],
+        vec![IrLocal::new("stored".into(), 8, false).unwrap()],
+        vec![],
+        statements.clone(),
+    );
+    for statement in &statements {
+        model.validate_stmt(statement, Some(&function)).unwrap();
+        assert!(model.validate_stmt(statement, None).is_err());
+        let mut automatic = function.clone();
+        automatic.locals.clear();
+        assert!(model.validate_stmt(statement, Some(&automatic)).is_err());
+        let mut mismatched = function.clone();
+        mismatched.locals[0].width = 16;
+        assert!(model.validate_stmt(statement, Some(&mismatched)).is_err());
+    }
+    model.funcs.push(function);
+    model.validate().unwrap();
+}
+
+#[test]
 fn inertial_updates_require_persistent_packed_drivers() {
     let model = valid_model();
     let statement = |lhs, rhs| IrStmt::InertialAssign {
@@ -784,4 +837,116 @@ fn string_calls_validate_packed_arguments_and_depth_context() {
     model
         .validate_stmt(&statement(128, IrDepth::FUNC), Some(&function))
         .unwrap();
+}
+
+#[test]
+fn ir_invalid_cross_reference_rejects_out_of_bounds_tables() {
+    let model = valid_model();
+
+    // A container expression that names a container outside the model table.
+    let container = IrExpr::new(
+        IrExprKind::Container(Box::new(IrContainerExpr::Size(9))),
+        32,
+        true,
+        None,
+    );
+    let error = model.validate_expr(&container, None).unwrap_err();
+    assert!(
+        error.detail().contains("index 9 is out of bounds"),
+        "{error}"
+    );
+
+    // An object statement that names an object outside the model table.
+    let error = model
+        .validate_stmt(
+            &IrStmt::Object(IrObjectStmt::StringAssign(
+                9,
+                IrStringExpr::Literal(b"text".to_vec()),
+            )),
+            None,
+        )
+        .unwrap_err();
+    assert!(error.detail().contains("index 9"), "{error}");
+
+    // A statement call that names a function outside the model table.
+    let error = model
+        .validate_stmt(
+            &IrStmt::Call(IrCall::new(
+                9,
+                Vec::new(),
+                IrDepth::PROC,
+                Vec::new(),
+                Vec::new(),
+            )),
+            None,
+        )
+        .unwrap_err();
+    assert!(error.detail().contains("function index 9"), "{error}");
+
+    // A sampled `$past` that names a history domain outside the model table.
+    let past = IrExpr::new(
+        IrExprKind::SysFunc(IrSysFunc::Sampled(IrSampledCall::new(
+            IrSampledFunc::Past,
+            packed_const(1, 8),
+            Some(9),
+            1,
+        ))),
+        8,
+        false,
+        None,
+    );
+    let error = model.validate_expr(&past, None).unwrap_err();
+    assert!(error.detail().contains("history metadata"), "{error}");
+
+    // An array-element lvalue that names an array outside the model table.
+    let error = model
+        .validate_stmt(
+            &IrStmt::Assign {
+                lhs: IrLhs::ArrayElem {
+                    arr: 9,
+                    indices: vec![packed_const(0, 32)],
+                    elem_sel: IrElemSel::Whole,
+                },
+                rhs: packed_const(1, 8),
+                nba: false,
+            },
+            None,
+        )
+        .unwrap_err();
+    assert!(error.detail().contains("array"), "{error}");
+}
+
+
+#[test]
+fn activation_packed_selection_validates_each_step_and_visits_its_indices() {
+    let model = valid_model();
+    let mut lhs = IrLhs::PackedSelect {
+        target: Box::new(IrLhs::WholeRef {
+            addr: "&a0".to_owned(), width: 16, signed: false, two_state: false, shortreal: false,
+        }),
+        steps: vec![IrPackedSelect { base: packed_const(0, 129), width: 8 }],
+        signed: false,
+        two_state: false,
+    };
+    let statement = |lhs| IrStmt::Assign { lhs, rhs: packed_const(7, 8), nba: false };
+    assert_eq!(model.statement_capacity(&statement(lhs.clone()), None).unwrap(), 129);
+    let mut visits = 0;
+    lhs.expressions(&mut |_| visits += 1);
+    assert_eq!(visits, 1);
+    lhs.expressions_mut(&mut |expr| *expr = IrExpr::new(IrExprKind::SigRead(7), 1, false, None));
+    assert!(model.validate_stmt(&statement(lhs), None).unwrap_err().detail().contains("signal index 7"));
+}
+
+#[test]
+fn activation_packed_selection_rejects_empty_plans_and_queued_local_writes() {
+    let model = valid_model();
+    let root = IrLhs::WholeRef {
+        addr: "&a0".to_owned(), width: 16, signed: false, two_state: false, shortreal: false,
+    };
+    let empty = IrLhs::PackedSelect { target: Box::new(root.clone()), steps: vec![], signed: false, two_state: false };
+    assert!(model.validate_stmt(&IrStmt::Assign { lhs: empty, rhs: packed_const(0, 8), nba: false }, None).is_err());
+    let selected = IrLhs::PackedSelect { target: Box::new(root),
+        steps: vec![IrPackedSelect { base: packed_const(0, 32), width: 8 }], signed: false, two_state: false };
+    let error = model.validate_stmt(&IrStmt::Assign { lhs: selected, rhs: packed_const(1, 8), nba: true }, None).unwrap_err();
+    assert!(error.detail().contains("persistent target storage"), "{error}");
 }

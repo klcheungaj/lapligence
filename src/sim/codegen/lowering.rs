@@ -248,8 +248,8 @@ use crate::core::model::TypeInfo;
 use crate::core::value::ValueData;
 use crate::ffi::slang::LanguageEdition;
 use crate::sim::emit_c::{
-    array_guard, escaped_char, event_global_name, global_name, ident, real_global_name,
-    render_expr, strip_lib, RCtx, LLG_MAX_WIDTH,
+    escaped_char, event_global_name, global_name, ident, real_global_name, render_expr, strip_lib,
+    RCtx, LLG_MAX_WIDTH,
 };
 use crate::sim::ir::{
     FrameId, IrAssocKey, IrAssocTraversal, IrBinOp, IrBitQuery, IrCall, IrCallArg, IrCallExpr,
@@ -2081,6 +2081,7 @@ fn sig_read_expr_full(info: &SignalInfo) -> IrExpr {
 fn packed_lhs_width(model: &IrModel, lhs: &IrLhs) -> Option<u32> {
     let width = match lhs {
         IrLhs::Whole(idx) => model.signal(*idx).ty.width(),
+        IrLhs::PackedSelect { steps, .. } => steps.last().map_or(0, |step| step.width),
         IrLhs::WholeRef { width, .. } | IrLhs::Ref { width, .. } => *width,
         IrLhs::Bit(..) => 1,
         IrLhs::Part(_, left, right, _) => ((left - right).abs() + 1) as u32,
@@ -2090,6 +2091,7 @@ fn packed_lhs_width(model: &IrModel, lhs: &IrLhs) -> Option<u32> {
             IrElemSel::Part(left, right) => ((left - right).abs() + 1) as u32,
             IrElemSel::Bit(_) => 1,
             IrElemSel::Indexed { width, .. } => *width,
+            IrElemSel::PackedChain(steps) => steps.last().map_or(0, |step| step.width),
         },
         IrLhs::Stream { width, .. } => *width,
     };

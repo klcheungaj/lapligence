@@ -76,12 +76,16 @@ fn lhs_signed(model: &IrModel, lhs: &IrLhs) -> Option<bool> {
         IrLhs::WholeRef { width, signed, .. } | IrLhs::Ref { width, signed, .. } => {
             (*width != 0).then_some(*signed)
         }
+        IrLhs::PackedSelect { signed, .. } => Some(*signed),
         IrLhs::Bit(..) | IrLhs::Part(..) | IrLhs::IdxPart(..) | IrLhs::Stream { .. } => Some(false),
         IrLhs::ArrayElem { arr, elem_sel, .. } => {
             let array = model.arrays.get(*arr)?;
             match elem_sel {
                 IrElemSel::Whole => (!array.real).then_some(array.signed),
-                IrElemSel::Part(..) | IrElemSel::Bit(..) | IrElemSel::Indexed { .. } => Some(false),
+                IrElemSel::Part(..)
+                | IrElemSel::Bit(..)
+                | IrElemSel::Indexed { .. }
+                | IrElemSel::PackedChain(_) => Some(false),
             }
         }
     }
@@ -89,6 +93,8 @@ fn lhs_signed(model: &IrModel, lhs: &IrLhs) -> Option<bool> {
 
 fn lhs_two_state(model: &IrModel, lhs: &IrLhs) -> Option<bool> {
     match lhs {
+        IrLhs::PackedSelect { target, two_state, .. } =>
+            lhs_two_state(model, target).map(|state| state || *two_state),
         IrLhs::Whole(index) => model
             .signals
             .get(*index)
@@ -168,6 +174,7 @@ struct Validator<'model> {
     /// None outside a C function; otherwise whether that function returns chandle.
     chandle_return: Cell<Option<bool>>,
     string_return: Cell<Option<bool>>,
+    function: Cell<Option<&'model IrFunc>>,
 }
 
 impl IrModel {
@@ -203,6 +210,7 @@ impl IrModel {
         function: Option<&IrFunc>,
     ) -> Result<u128, IrValidationError> {
         let validator = Validator::new(self);
+        validator.function.set(function);
         validator
             .chandle_return
             .set(function.map(|function| function.ret_chandle));
@@ -229,6 +237,7 @@ impl IrModel {
         function: Option<&IrFunc>,
     ) -> Result<u128, IrValidationError> {
         let validator = Validator::new(self);
+        validator.function.set(function);
         validator
             .chandle_return
             .set(function.map(|function| function.ret_chandle));
@@ -276,3 +285,6 @@ impl IrModel {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod packed_selection_tests;

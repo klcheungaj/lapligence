@@ -40,6 +40,13 @@ impl<'a> Codegen<'a> {
                 width: lower_integral(self, *width_expr)?,
                 negative: *neg,
             }),
+            // A single-index selector on a fixed array is captured as the
+            // element select `array[index]`; only its index is the selector.
+            NodeKind::Expr(ExprKind::ArraySelect { base, indices })
+                if indices.len() == 1 && self.array_of(*base).is_some() =>
+            {
+                Ok(IrStreamSelector::Index(lower_integral(self, indices[0])?))
+            }
             _ => Err(format!("unsupported streaming `with` selector in `{path}`")),
         }
     }
@@ -114,6 +121,13 @@ impl<'a> Codegen<'a> {
                 }
                 .ok_or_else(|| format!("streaming selector overflows in `{path}`"))?;
                 range(base, end).map(Some)
+            }
+            // A single-index selector on a fixed array is captured as the
+            // element select `array[index]`; only its index is the selector.
+            NodeKind::Expr(ExprKind::ArraySelect { base, indices })
+                if indices.len() == 1 && self.array_of(*base).is_some() =>
+            {
+                Ok(constant(self, indices[0]).map(|index| vec![index]))
             }
             _ => Err(format!("unsupported streaming `with` selector in `{path}`")),
         }
@@ -276,18 +290,37 @@ impl<'a> Codegen<'a> {
         }
         if let Some(array) = self.array_of(value_node).cloned() {
             let selected = match with_node {
-                Some(with_node) => Some(
-                    self.static_stream_selector_indices(path, with_node)?
-                        .ok_or_else(|| {
-                            format!(
-                                "runtime `with` selector on a fixed array is not supported in `{path}`"
-                    )
-                        })?,
-                ),
+                Some(with_node) => self.static_stream_selector_indices(path, with_node)?,
                 None => None,
             };
-            let parts = self.fixed_stream_parts(path, &array, selected.as_deref())?;
-            return Self::join_bitstream_parts(path, parts);
+            if let Some(selected) = selected {
+                let parts = self.fixed_stream_parts(path, &array, Some(&selected))?;
+                return Self::join_bitstream_parts(path, parts);
+            }
+            let Some(with_node) = with_node else {
+                let parts = self.fixed_stream_parts(path, &array, None)?;
+                return Self::join_bitstream_parts(path, parts);
+            };
+            if array.real {
+                return Err(format!(
+                    "real array streaming operand is not supported in `{path}`"
+                ));
+            }
+            if array.dims.len() != 1 {
+                return Err(format!(
+                    "runtime `with` selector on a multidimensional fixed streaming source is not supported in `{path}`"
+                ));
+            }
+            let selector = self.lower_stream_selector(path, with_node)?;
+            return Ok(IrExpr::new(
+                IrExprKind::FixedStream {
+                    array: array.ir,
+                    selector: Box::new(selector),
+                },
+                LLG_MAX_WIDTH,
+                false,
+                None,
+            ));
         }
         if with_node.is_some() {
             return Err(format!(

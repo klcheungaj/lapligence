@@ -27,3 +27,18 @@ fn expression_mutations_preserve_target_capture_and_value_conversions() {
         &[],
     );
 }
+
+#[test]
+fn selected_lvalue_selectors_evaluate_exactly_once() {
+    sim_cli::run_case(
+        "feature_completion/g1_06",
+        "resolve_once",
+        concat!(
+            "bit=08 bit_index=4\n",
+            "part=0c part_index=3\n",
+            "array=a5 ref=a5 index=4 calls=2\n",
+        ),
+        "",
+        &[],
+    );
+}

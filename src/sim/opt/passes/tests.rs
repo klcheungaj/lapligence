@@ -1146,6 +1146,138 @@ fn unused_storage_counts_call_temp_inits_and_copyouts() {
     assert!(m.signals[0].omit, "untouched signal is omitted");
 }
 
+// ── external observation (optimizer storage pruning) ──────────────────
+
+#[test]
+fn opt_external_observation_keeps_foreign_and_callback_storage() {
+    // s0 is written; s3 is dead; s1 is referenced only by a VPI descriptor
+    // (foreign handle) and s2 only by a monitor evaluator (callback). Neither
+    // observer has a textual signal read for the collector to discover, so
+    // the pass must retain both declarations.
+    let mut m = model_with(vec![assign(IrLhs::Whole(0), konst(1, 8))], sigs(4));
+    m.vpi_objects.push(crate::sim::ir::IrVpiObject {
+        time_unit_fs: 0,
+        full_name: "t.s1".to_string(),
+        name: "s1".to_string(),
+        definition_name: None,
+        file: None,
+        line: 0,
+        kind: crate::sim::ir::IrVpiObjectKind::Reg,
+        width: 8,
+        signed: false,
+        real: false,
+        net: false,
+        signal: Some(1),
+        array: None,
+    });
+    m.processes[0].pre_fns.push(IrPreFn::MonEval {
+        c_name: "mon".to_string(),
+        args: vec![IrExpr::new(IrExprKind::SigRead(2), 8, false, None)],
+        context: None,
+        item: false,
+    });
+
+    run(&mut m, &storage_only());
+
+    assert!(!m.signals[0].omit, "written signal stays");
+    assert!(!m.signals[1].omit, "VPI-visible signal keeps storage");
+    assert!(!m.signals[2].omit, "callback-only signal keeps storage");
+    assert!(m.signals[3].omit, "truly unobserved signal is omitted");
+}
+
+#[test]
+fn opt_external_observation_keeps_enum_query_receiver_reads() {
+    // A signal read only as an enum navigation receiver/step must survive:
+    // the query renders code that dereferences its storage.
+    let query = IrExpr::new(
+        IrExprKind::EnumMethod(Box::new(crate::sim::ir::IrEnumQuery {
+            method: crate::sim::ir::IrEnumMethod::Next,
+            receiver: Some(Box::new(IrExpr::new(
+                IrExprKind::SigRead(1),
+                2,
+                false,
+                None,
+            ))),
+            step: Some(Box::new(konst(1, 2))),
+            members: vec![crate::sim::ir::IrEnumMember {
+                value: konst(0, 2),
+                name: b"A".to_vec(),
+            }],
+            default: konst(0, 2),
+        })),
+        2,
+        false,
+        None,
+    );
+    let mut m = model_with(vec![assign(IrLhs::Whole(0), query)], sigs(3));
+
+    run(&mut m, &storage_only());
+
+    assert!(!m.signals[1].omit, "enum receiver read keeps storage");
+    assert!(m.signals[2].omit, "unreferenced signal is omitted");
+}
+
+#[test]
+fn opt_external_observation_keeps_string_and_random_statement_reads() {
+    let signal_text = || {
+        crate::sim::ir::IrStringExpr::FromPacked(Box::new(IrExpr::new(
+            IrExprKind::SigRead(1),
+            8,
+            false,
+            None,
+        )))
+    };
+    let body = vec![
+        IrStmt::System(Some(signal_text())),
+        IrStmt::RandomStateSet {
+            state: signal_text(),
+        },
+        IrStmt::DeclString {
+            name: "text".to_string(),
+            init: Some(signal_text()),
+        },
+        IrStmt::RandomSeed {
+            seed: IrExpr::new(IrExprKind::SigRead(2), 32, true, None),
+        },
+    ];
+    let mut m = model_with(body, sigs(3));
+
+    run(&mut m, &storage_only());
+
+    assert!(!m.signals[1].omit, "string statement read keeps storage");
+    assert!(!m.signals[2].omit, "random seed read keeps storage");
+    assert!(m.signals[0].omit, "unreferenced signal is omitted");
+}
+
+#[test]
+fn opt_external_observation_keeps_captured_fork_reads() {
+    let capture = crate::sim::ir::IrCapture::new(
+        crate::sim::ir::StorageRef::new(
+            crate::sim::ir::FrameId::new(0),
+            0,
+            crate::sim::ir::StorageLifetime::Automatic,
+            crate::sim::ir::StorageOwnership::Owned,
+        ),
+        IrExpr::new(IrExprKind::SigRead(1), 8, false, None),
+    );
+    let body = vec![IrStmt::CapturedFork {
+        join_kind: crate::sim::ir::IrJoinKind::Join,
+        branches: vec![crate::sim::ir::IrCapturedBranch::new(
+            "b0".to_string(),
+            "l0".to_string(),
+            crate::sim::ir::FrameId::new(0),
+            vec![capture],
+        )],
+        target: None,
+    }];
+    let mut m = model_with(body, sigs(2));
+
+    run(&mut m, &storage_only());
+
+    assert!(!m.signals[1].omit, "fork-site capture read keeps storage");
+    assert!(m.signals[0].omit, "unreferenced signal is omitted");
+}
+
 // ── shortreal cast folding ────────────────────────────────────────────
 
 #[test]
@@ -1420,4 +1552,52 @@ fn fold_and_identities_interleave_to_fixpoint() {
     let mut m = model_with(vec![assign(IrLhs::Whole(0), shift())], sigs(1));
     run(&mut m, &both);
     assert!(matches!(first_assign_rhs(&m).kind, IrExprKind::SigRead(0)));
+}
+
+#[test]
+fn packed_selection_walkers_keep_selector_only_storage_live() {
+    use crate::sim::ir::{IrArray, IrElemSel, IrPackedSelect};
+    let selection = IrElemSel::PackedChain(vec![
+        IrPackedSelect { base: IrExpr::new(IrExprKind::SigRead(1), 8, false, None), width: 8 },
+        IrPackedSelect { base: IrExpr::new(IrExprKind::SigRead(2), 8, false, None), width: 4 },
+    ]);
+    for read in [false, true] {
+        let operations = if read {
+            vec![assign(IrLhs::Whole(0), IrExpr::new(IrExprKind::ArrayRead {
+                arr: 0, indices: vec![konst(0, 32)], elem_sel: selection.clone(),
+            }, 4, false, None))]
+        } else {
+            vec![assign(IrLhs::ArrayElem {
+                arr: 0, indices: vec![konst(0, 32)], elem_sel: selection.clone(),
+            }, konst(15, 4))]
+        };
+        let mut model = model_with(operations, sigs(4));
+        model.arrays.push(IrArray::new("memory".to_owned(), "memory".to_owned(), 16, false, vec![(0, 0)]).unwrap());
+        run_ir(&mut model, &storage_only());
+        assert!(!model.signals[1].omit && !model.signals[2].omit);
+        assert!(model.signals[3].omit);
+    }
+}
+
+#[test]
+fn packed_selection_walkers_fold_each_step_without_flattening_its_bounds() {
+    use crate::sim::ir::{IrArray, IrElemSel, IrPackedSelect};
+    let select = IrElemSel::PackedChain(vec![
+        IrPackedSelect { base: bin(IrBinOp::Add, konst(2, 32), konst(6, 32), 32), width: 8 },
+        IrPackedSelect { base: bin(IrBinOp::Add, konst(3, 32), konst(3, 32), 32), width: 4 },
+    ]);
+    let lhs = IrLhs::ArrayElem { arr: 0, indices: vec![konst(0, 32)], elem_sel: select.clone() };
+    let read = IrExpr::new(IrExprKind::ArrayRead { arr: 0, indices: vec![konst(0, 32)], elem_sel: select }, 4, false, None);
+    let mut model = model_with(vec![assign(lhs, read)], sigs(0));
+    model.arrays.push(IrArray::new("memory".to_owned(), "memory".to_owned(), 16, false, vec![(0, 0)]).unwrap());
+    run_ir(&mut model, &fold_only());
+    let IrStmt::Assign { lhs: IrLhs::ArrayElem { elem_sel: left, .. }, rhs, .. } = &model.processes[0].body[0] else { panic!("lost target") };
+    let IrExprKind::ArrayRead { elem_sel: right, .. } = &rhs.kind else { panic!("lost read") };
+    for selection in [left, right] {
+        let IrElemSel::PackedChain(steps) = selection else { panic!("lost chain") };
+        assert_eq!(steps.len(), 2);
+        assert_eq!((steps[0].width, steps[1].width), (8, 4));
+        assert_eq!(const_payload(&steps[0].base), Some((8, 32)));
+        assert_eq!(const_payload(&steps[1].base), Some((6, 32)));
+    }
 }

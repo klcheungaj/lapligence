@@ -20,6 +20,54 @@ impl<'a> Codegen<'a> {
         }
     }
 
+    /// A call argument expression with an observable effect. Reusing such an
+    /// expression for a later formal's default would execute it twice.
+    fn arg_has_side_effect(&self, node: NodeId) -> bool {
+        match self.kind(node) {
+            NodeKind::FuncCall { .. } | NodeKind::MethodCall { .. } => return true,
+            NodeKind::Expr(ExprKind::Operation {
+                op:
+                    Operation::Assignment
+                    | Operation::PostIncrement
+                    | Operation::PreIncrement
+                    | Operation::PostDecrement
+                    | Operation::PreDecrement,
+                ..
+            }) => return true,
+            _ => {}
+        }
+        self.node(node)
+            .children
+            .iter()
+            .any(|child| self.arg_has_side_effect(*child))
+    }
+
+    /// Whether a default expression reads the given formal declaration.
+    fn default_references_formal(&self, node: NodeId, formal: NodeId) -> bool {
+        let formal = self.canonical_func_target(formal).unwrap_or(formal);
+        match self.kind(node) {
+            NodeKind::Expr(ExprKind::Ref {
+                target: Some(target),
+            }) => {
+                if self.canonical_func_target(*target).unwrap_or(*target) == formal {
+                    return true;
+                }
+            }
+            NodeKind::Expr(ExprKind::HierPath { refs, .. })
+                if refs.iter().flatten().any(|target| {
+                    self.canonical_func_target(*target).unwrap_or(*target) == formal
+                }) =>
+            {
+                return true;
+            }
+            _ => {}
+        }
+        self.node(node)
+            .children
+            .iter()
+            .any(|child| self.default_references_formal(*child, formal))
+    }
+
     /// Bind a call's positional arguments to the callee's formals, in formal
     /// order. Missing (or frontend-synthesized) arguments fall back to the
     /// formal's default expression; a formal without a default errors.
@@ -42,6 +90,16 @@ impl<'a> Codegen<'a> {
                     } else {
                         if is_real_kind(&ty.kind) {
                             (0, false, false, true, ty.kind == "shortreal", false, false)
+                        } else if let Some(w) = self.packed_formal_width(*io) {
+                            (
+                                w,
+                                ty.signed,
+                                self.db.is_two_state_type(*io) || is_two_state_kind(&ty.kind),
+                                false,
+                                false,
+                                false,
+                                false,
+                            )
                         } else {
                             match ty.width {
                                 Some(w) if w <= LLG_MAX_WIDTH => (
@@ -170,6 +228,21 @@ impl<'a> Codegen<'a> {
                         },
                     );
                     arg_ir.insert(*io, ir.clone());
+                }
+            }
+            // A default reads an earlier formal's already-evaluated value. If
+            // that earlier actual has side effects, reusing its expression
+            // would evaluate it twice; require explicit staging that this
+            // boundary does not yet implement.
+            for (j, (io, _)) in formals.iter().enumerate().take(idx) {
+                if arg_ir.contains_key(io)
+                    && self.arg_has_side_effect(bound[j].expr)
+                    && self.default_references_formal(bound[idx].expr, *io)
+                {
+                    return Err(format!(
+                        "default argument in `{scope_path}` references an earlier formal \
+                         whose argument has side effects; input staging is not supported"
+                    ));
                 }
             }
             let temp_func = FuncCtx {
@@ -428,25 +501,50 @@ impl<'a> Codegen<'a> {
                 // Dependency/type placeholder only. The typed read below keeps
                 // the queue identity and selector for retained-cell emission.
                 addr: format!("&{}", self.model.containers[container].c_name),
-                width, signed, two_state, shortreal: false,
+                width,
+                signed,
+                two_state,
+                shortreal: false,
             };
-            let read = IrExpr::new(IrExprKind::Container(Box::new(IrContainerExpr::Get {
-                container, index: Box::new(index),
-            })), width, signed, None);
+            let read = IrExpr::new(
+                IrExprKind::Container(Box::new(IrContainerExpr::Get {
+                    container,
+                    index: Box::new(index),
+                })),
+                width,
+                signed,
+                None,
+            );
             return Ok(IrCallArg::RefAddr {
-                addr: "typed_queue_reference".to_owned(), width, signed, two_state,
-                const_ref, lhs: Box::new(lhs), read: Box::new(read),
+                addr: "typed_queue_reference".to_owned(),
+                width,
+                signed,
+                two_state,
+                const_ref,
+                lhs: Box::new(lhs),
+                read: Box::new(read),
             });
         }
 
         let lhs = self.lower_ref_actual_lhs(scope_path, bound.expr)?;
         let read = self.lower_expr(scope_path, bound.expr)?;
-        let actual_const = matches!(&lhs, IrLhs::Ref { const_ref: true, .. });
+        let actual_const = matches!(
+            &lhs,
+            IrLhs::Ref {
+                const_ref: true,
+                ..
+            }
+        );
         if actual_const && !const_ref {
-            return Err(format!("const ref actual cannot bind to writable ref formal in `{scope_path}`"));
+            return Err(format!(
+                "const ref actual cannot bind to writable ref formal in `{scope_path}`"
+            ));
         }
         let (width, signed, two_state) = match &lhs {
-            IrLhs::Whole(index) | IrLhs::Bit(index, ..) | IrLhs::Part(index, ..) | IrLhs::IdxPart(index, ..) => {
+            IrLhs::Whole(index)
+            | IrLhs::Bit(index, ..)
+            | IrLhs::Part(index, ..)
+            | IrLhs::IdxPart(index, ..) => {
                 let signal = &self.model.signals[*index];
                 if signal.net_driver.is_some() || !signal.net_alias.is_empty() {
                     return Err(format!("ref actual in `{scope_path}` must be a variable"));
@@ -455,19 +553,46 @@ impl<'a> Codegen<'a> {
                     return Err(format!("ref actual in `{scope_path}` must be integral"));
                 };
                 let selected_two_state = match &lhs {
-                    IrLhs::Bit(_, _, state) | IrLhs::Part(_, _, _, state) | IrLhs::IdxPart(_, _, _, _, _, state) => *state,
+                    IrLhs::Bit(_, _, state)
+                    | IrLhs::Part(_, _, _, state)
+                    | IrLhs::IdxPart(_, _, _, _, _, state) => *state,
                     _ => two_state,
                 };
                 (read.width, read.signed, selected_two_state)
             }
-            IrLhs::WholeRef { width, signed, two_state, .. } |
-            IrLhs::Ref { width, signed, two_state, bit: None, .. } => (*width, *signed, *two_state),
-            IrLhs::ArrayElem { arr, .. } => (read.width, read.signed, self.model.arrays[*arr].two_state),
-            IrLhs::Ref { bit: Some(_), .. } => return Err("packed bit selects cannot be passed by reference".to_owned()),
-            IrLhs::Stream { .. } => return Err(format!("streaming concatenation is not a legal ref actual in `{scope_path}`")),
+            IrLhs::WholeRef {
+                width,
+                signed,
+                two_state,
+                ..
+            }
+            | IrLhs::Ref {
+                width,
+                signed,
+                two_state,
+                bit: None,
+                ..
+            } => (*width, *signed, *two_state),
+            IrLhs::ArrayElem { arr, .. } => {
+                (read.width, read.signed, self.model.arrays[*arr].two_state)
+            }
+            IrLhs::PackedSelect { .. } => {
+                return Err("packed members and selections cannot be passed by reference".to_owned())
+            }
+            IrLhs::Ref { bit: Some(_), .. } => {
+                return Err("packed bit selects cannot be passed by reference".to_owned())
+            }
+            IrLhs::Stream { .. } => {
+                return Err(format!(
+                    "streaming concatenation is not a legal ref actual in `{scope_path}`"
+                ))
+            }
         };
-        if width == 0 || (width, signed, two_state) != (bound.width, bound.signed, bound.two_state) {
-            return Err(format!("ref actual type does not exactly match formal in `{scope_path}`"));
+        if width == 0 || (width, signed, two_state) != (bound.width, bound.signed, bound.two_state)
+        {
+            return Err(format!(
+                "ref actual type does not exactly match formal in `{scope_path}`"
+            ));
         }
 
         Ok(IrCallArg::RefAddr {
@@ -653,7 +778,10 @@ impl<'a> Codegen<'a> {
         let mut captures = Vec::new();
         let mut sequence = 0usize;
         let (lhs, read) = self.freeze_call_lhs(lhs, tag, &mut sequence, &mut captures)?;
-        let read = read.unwrap_or(self.lower_expr(path, actual)?);
+        let read = match read {
+            Some(read) => read,
+            None => self.lower_expr(path, actual)?,
+        };
         Ok((lhs, read, captures))
     }
 
@@ -767,6 +895,17 @@ impl<'a> Codegen<'a> {
                     .map(&mut capture)
                     .collect::<Result<Vec<_>, _>>()?;
                 let elem_sel = match elem_sel {
+                    IrElemSel::PackedChain(steps) => IrElemSel::PackedChain(
+                        steps
+                            .into_iter()
+                            .map(|step| {
+                                Ok(crate::sim::ir::IrPackedSelect {
+                                    base: capture(step.base)?,
+                                    width: step.width,
+                                })
+                            })
+                            .collect::<Result<Vec<_>, String>>()?,
+                    ),
                     IrElemSel::Whole => IrElemSel::Whole,
                     IrElemSel::Part(left, right) => IrElemSel::Part(left, right),
                     IrElemSel::Bit(index) => IrElemSel::Bit(Box::new(capture(*index)?)),
@@ -794,6 +933,9 @@ impl<'a> Codegen<'a> {
                     ),
                     IrElemSel::Bit(_) => (1, false),
                     IrElemSel::Indexed { width, .. } => (width, false),
+                    IrElemSel::PackedChain(ref steps) => {
+                        (steps.last().map_or(0, |step| step.width), false)
+                    }
                 };
                 let read = IrExpr::new(
                     IrExprKind::ArrayRead {
@@ -814,9 +956,57 @@ impl<'a> Codegen<'a> {
                     Some(read),
                 ))
             }
-            lhs @ (IrLhs::WholeRef { .. } | IrLhs::Ref { .. } | IrLhs::Stream { .. }) => {
-                Ok((lhs, None))
+            IrLhs::PackedSelect { target, steps, signed, two_state } => {
+                // Freeze a selected root (e.g. an array cell) before its member
+                // bounds. Each expression is captured only at this callsite.
+                let (target, read) = self.freeze_call_lhs(*target, tag, sequence, captures)?;
+                let mut frozen = Vec::with_capacity(steps.len());
+                for step in steps {
+                    let name = format!("_call_idx_{tag}_{}", *sequence);
+                    *sequence += 1;
+                    let width = step.base.width;
+                    let signed = step.base.signed;
+                    if step.base.is_real() {
+                        return Err("packed formal selector must be integral".to_owned());
+                    }
+                    captures.push((name.clone(), width, signed, false, step.base));
+                    frozen.push(crate::sim::ir::IrPackedSelect {
+                        base: IrExpr::new(IrExprKind::LocalRead(name), width, signed, None),
+                        width: step.width,
+                    });
+                }
+                let steps = frozen;
+                let read = read.map(|mut value| {
+                    for (index, step) in steps.iter().cloned().enumerate() {
+                        value = super::packed_formals::packed_step_read(value, step);
+                        if index == 0 && two_state { value = IrExpr::to_two_state(value); }
+                    }
+                    let width = value.width;
+                    IrExpr::resize_to(value, width, signed)
+                });
+                Ok((IrLhs::PackedSelect { target: Box::new(target), steps, signed, two_state }, read))
             }
+            lhs @ IrLhs::WholeRef { .. } => {
+                let IrLhs::WholeRef { addr, width, signed, .. } = &lhs else { unreachable!() };
+                let kind = if let Some(name) = addr.strip_prefix('&') {
+                    IrExprKind::LocalRead(name.to_owned())
+                } else if let Some(index) = addr.strip_prefix('o').and_then(|i| i.parse::<usize>().ok()) {
+                    IrExprKind::FormalRead(index)
+                } else {
+                    return Err(format!("output actual has no typed activation binding: {addr}"));
+                };
+                let read = IrExpr::new(kind, *width, *signed, None);
+                Ok((lhs, Some(read)))
+            }
+            lhs @ IrLhs::Ref { .. } => {
+                let IrLhs::Ref { addr, width, signed, bit, .. } = &lhs else { unreachable!() };
+                if bit.is_some() { return Ok((lhs, None)); }
+                let index = addr.strip_prefix('r').and_then(|i| i.parse::<usize>().ok())
+                    .ok_or_else(|| "reference actual has no typed formal binding".to_owned())?;
+                let read = IrExpr::new(IrExprKind::FormalRead(index), *width, *signed, None);
+                Ok((lhs, Some(read)))
+            }
+            lhs @ IrLhs::Stream { .. } => Ok((lhs, None)),
         }
     }
 }

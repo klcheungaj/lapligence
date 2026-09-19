@@ -17,6 +17,8 @@ use llg::core::{compile, db::Db};
 use llg::sim;
 use llg::sim::opt::OptConfig;
 
+#[path = "support/sim_cli.rs"]
+mod sim_cli;
 #[path = "support/sim.rs"]
 mod sim_harness;
 
@@ -1006,4 +1008,111 @@ endmodule
 
     run_source_both_opts(sv, "top", "interface-modport-subroutine", "if=5,9\n")
         .expect("interface modport subroutine dispatch should preserve widths");
+}
+
+/// G1-17: default arguments are evaluated only when omitted and output/inout
+/// copy-out happens once, at return.
+#[test]
+fn sim_fixed_call_defaults_copyout() {
+    sim_cli::run_case(
+        "feature_completion/g1_17",
+        "fixed_call_defaults_copyout",
+        "defaults=1 y=5\n\
+         defaults=1 s=15 c=107\n\
+         defaults=1 s=11 c=112\n\
+         inside=7\n\
+         inside2=7\n\
+         after=99\n",
+        "",
+        &[],
+    );
+}
+
+/// G1-17: a default that references an earlier side-effecting actual is
+/// rejected rather than silently evaluating that actual twice.
+#[test]
+fn sim_default_ref_side_effect_formal_rejected() {
+    sim_cli::reject_case(
+        "feature_completion/g1_17",
+        "ref_default_side_effect_rejected",
+        "input staging is not supported",
+    );
+}
+
+/// G1-17: recursive automatic activations keep independent locals and return
+/// slots.
+#[test]
+fn sim_automatic_recursive_function() {
+    sim_cli::run_case(
+        "feature_completion/g1_17",
+        "automatic_recursive_function",
+        "sum=60\n",
+        "",
+        &[],
+    );
+}
+
+/// G1-15/G1-17: a fixed packed struct formal keeps per-activation member
+/// storage, copy-in for inputs and copy-out at return for output/inout.
+#[test]
+fn sim_packed_struct_formal_abi() {
+    sim_cli::run_case(
+        "feature_completion/g1_17",
+        "packed_struct_formal_abi",
+        "mix=15 src=1005 acc=2007 out=2007\n\
+         fill=7a00\n\
+         combine=1005,1005 src=1005\n",
+        "",
+        &[],
+    );
+}
+
+/// G1-15/G1-17: packed union members overlay one formal activation value,
+/// including a nested packed struct member.
+#[test]
+fn sim_packed_union_formal_overlay() {
+    sim_cli::run_case(
+        "feature_completion/g1_17",
+        "packed_union_formal_overlay",
+        "swap=3412 raw=1234 lo=34\n",
+        "",
+        &[],
+    );
+}
+
+/// R14: a whole packed variable is a true alias, visible before return.
+#[test]
+fn sim_packed_aggregate_formal_ref_aliases() {
+    sim_cli::run_case(
+        "feature_completion/g1_17",
+        "packed_aggregate_formal_ref_rejected",
+        "packed ref passed\n",
+        "",
+        &[],
+    );
+}
+
+/// R14: the historical rejection fixture now requires private writable inputs.
+#[test]
+fn sim_packed_aggregate_input_write_is_isolated() {
+    sim_cli::run_case(
+        "feature_completion/g1_17",
+        "packed_aggregate_input_write_rejected",
+        "packed input copy passed\n",
+        "",
+        &[],
+    );
+}
+
+/// G1-17/G1-15: a fixed packed struct return value is an activation-owned
+/// slot; the caller copies the whole result and the input formal is unchanged.
+#[test]
+fn sim_packed_struct_return() {
+    sim_cli::run_case(
+        "feature_completion/g1_17",
+        "packed_struct_return",
+        "swap=3412 widen=13cb src=1234\n",
+        "",
+        &[],
+    );
 }

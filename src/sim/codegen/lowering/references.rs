@@ -15,6 +15,9 @@ impl<'a> Codegen<'a> {
             seen: &mut HashSet<usize>,
         ) -> Result<IrLhs, String> {
             match lhs {
+                IrLhs::PackedSelect { target, steps, signed, two_state } => Ok(IrLhs::PackedSelect {
+                    target: Box::new(resolve(cg, *target, seen)?), steps, signed, two_state,
+                }),
                 IrLhs::Whole(index) => {
                     let Some(target) = cg.reference_signals.get(&index).cloned() else {
                         return Ok(IrLhs::Whole(index));
@@ -176,6 +179,11 @@ impl<'a> Codegen<'a> {
 
     pub(in super::super) fn reference_lhs_type(&self, lhs: &IrLhs) -> Option<IrType> {
         match lhs {
+            IrLhs::PackedSelect { target, steps, signed, two_state } => Some(IrType::Packed {
+                width: steps.last()?.width,
+                signed: *signed,
+                two_state: *two_state || self.reference_lhs_type(target)?.two_state(),
+            }),
             IrLhs::Whole(index) => self.model.signals.get(*index).map(|signal| signal.ty),
             IrLhs::Bit(index, ..) => self.model.signals.get(*index).map(|signal| IrType::Packed {
                 width: 1,
@@ -231,6 +239,11 @@ impl<'a> Codegen<'a> {
                         signed: false,
                         two_state: array.two_state,
                     }),
+                    IrElemSel::PackedChain(steps) => Some(IrType::Packed {
+                        width: steps.last()?.width,
+                        signed: false,
+                        two_state: array.two_state,
+                    }),
                 }
             }
             IrLhs::WholeRef {
@@ -274,7 +287,7 @@ impl<'a> Codegen<'a> {
                     .find(|info| info.ir == array)
                     .is_some_and(|info| !info.is_net)
             }
-            IrLhs::WholeRef { .. } | IrLhs::Ref { .. } | IrLhs::Stream { .. } => false,
+            IrLhs::PackedSelect { .. } | IrLhs::WholeRef { .. } | IrLhs::Ref { .. } | IrLhs::Stream { .. } => false,
         }
     }
 
@@ -382,7 +395,9 @@ impl<'a> Codegen<'a> {
                     IrElemSel::Part(left, right) => left.abs_diff(*right) as u32 + 1,
                     IrElemSel::Bit(_) => 1,
                     IrElemSel::Indexed { width, .. } => *width,
+                    IrElemSel::PackedChain(steps) => steps.last().map_or(0, |step| step.width),
                 };
+                let signed = matches!(elem_sel, IrElemSel::Whole) && array.signed;
                 Ok(IrExpr::new(
                     IrExprKind::ArrayRead {
                         arr: self.reference_array(arr),
@@ -390,11 +405,11 @@ impl<'a> Codegen<'a> {
                         elem_sel,
                     },
                     width,
-                    array.signed,
+                    signed,
                     None,
                 ))
             }
-            IrLhs::WholeRef { .. } | IrLhs::Ref { .. } | IrLhs::Stream { .. } => {
+            IrLhs::PackedSelect { .. } | IrLhs::WholeRef { .. } | IrLhs::Ref { .. } | IrLhs::Stream { .. } => {
                 Err("reference port target is not a scalar readable storage".to_owned())
             }
         }
@@ -435,7 +450,7 @@ impl<'a> Codegen<'a> {
                     IrDependency::ArrayElement { array: arr, index }
                 })
             }
-            IrLhs::WholeRef { .. } | IrLhs::Ref { .. } | IrLhs::Stream { .. } => {
+            IrLhs::PackedSelect { .. } | IrLhs::WholeRef { .. } | IrLhs::Ref { .. } | IrLhs::Stream { .. } => {
                 IrDependency::scalar(info.global.clone())
             }
         }

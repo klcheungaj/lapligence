@@ -73,3 +73,33 @@ fn reference_argument_rejects_automatic_ref_static_storage() {
         "cannot pass automatic variables",
     );
 }
+
+#[test]
+fn fixed_ref_alias_visibility() {
+    sim_cli::run_case(
+        "feature_completion/g1_17",
+        "fixed_ref_alias_visibility",
+        "v=42\nm2=11\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
+fn fixed_ref_actuals_stay_rejected() {
+    sim_cli::reject_case(
+        "feature_completion/g1_17",
+        "ref_net_actual",
+        "pass by reference",
+    );
+    sim_cli::reject_case(
+        "feature_completion/g1_17",
+        "ref_packed_select_actual",
+        "pass by reference",
+    );
+    sim_cli::reject_case(
+        "feature_completion/g1_17",
+        "ref_type_mismatch_actual",
+        "inequivalent type",
+    );
+}

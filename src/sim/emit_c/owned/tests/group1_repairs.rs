@@ -116,3 +116,81 @@ fn real_callback_results_are_declared_in_the_callers_scope() {
         assert!(frame.slots.iter().all(|used| !used));
     }
 }
+
+fn stream_model() -> IrModel {
+    let mut model = IrModel::new("review_stream".to_owned(), 1).unwrap();
+    for name in ["G_a", "G_b"] {
+        model.arrays.push(
+            IrArray::new(name.to_owned(), name.to_owned(), 8, false, vec![(0, 3)]).unwrap(),
+        );
+    }
+    model
+}
+
+#[test]
+fn fixed_stream_index_owners_use_registered_slots_and_are_destroyed() {
+    let model = stream_model();
+    let ctx = RCtx {
+        model: &model,
+        func: None,
+        sampled: false,
+        activation_label: None,
+    };
+    let mut frame = Frame::new(&ctx);
+    let targets: Vec<_> = (0..2)
+        .map(|array| IrStreamTarget::FixedSelector {
+            array,
+            selector: IrStreamSelector::Range { left: number(0, 32), right: number(1, 32) },
+        })
+        .collect();
+    frame.stream_assignment(&number(0x1234_5678, 32), 1, IrStreamDirection::LeftToRight, &targets).unwrap();
+    let source = frame.body();
+    let mut indexes = 0;
+    for (position, line) in source.lines().enumerate() {
+        if !line.contains("sv4_from_i64(llg_fixed_stream_index_at(") {
+            continue;
+        }
+        indexes += 1;
+        let owner = line.trim().strip_prefix("sv4_replace(&").unwrap()
+            .split(',').next().unwrap();
+        assert!(owner.starts_with("_llg_t["), "unregistered packed owner: {line}");
+        let release = format!("sv4_destroy(&{owner});");
+        assert!(source.lines().skip(position + 1).any(|line| line.trim() == release));
+    }
+    assert_eq!(indexes, 2);
+    assert!(!source.contains("sv4_t _llg_scalar_"));
+    assert!(frame.slots.iter().all(|used| !used));
+    assert!(frame.bindings.iter().all(|scope| scope.is_empty()));
+}
+
+#[test]
+fn every_stream_size_check_precedes_publication_and_uses_the_actual_source_width() {
+    let model = stream_model();
+    let ctx = RCtx {
+        model: &model,
+        func: None,
+        sampled: false,
+        activation_label: None,
+    };
+    let mut frame = Frame::new(&ctx);
+    let targets = [
+        IrStreamTarget::FixedSelector {
+            array: 0,
+            selector: IrStreamSelector::Range { left: number(0, 32), right: number(1, 32) },
+        },
+        IrStreamTarget::FixedSelector {
+            array: 1,
+            selector: IrStreamSelector::Range { left: number(0, 32), right: number(1, 32) },
+        },
+    ];
+    frame.stream_assignment(&number(0x123456, 24), 1, IrStreamDirection::LeftToRight, &targets).unwrap();
+    let source = frame.body();
+    assert!(source.contains(".width;"));
+    assert_eq!(source.matches("llg_stream_require_bits(").count(), 2);
+    let first_write_loop = source.find("for (size_t _llg_fs_offset_").unwrap();
+    assert!(source.rfind("llg_stream_require_bits(").unwrap() < first_write_loop);
+    let first_report = source.find("llg_rt_mark_failed();").unwrap();
+    assert!(source.rfind("llg_stream_require_bits(").unwrap() < first_report);
+    assert!(first_report < first_write_loop);
+    assert!(frame.slots.iter().all(|used| !used));
+}

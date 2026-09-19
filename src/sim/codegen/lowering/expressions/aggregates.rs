@@ -2,6 +2,8 @@
 
 use super::*;
 
+mod copies;
+
 impl<'a> Codegen<'a> {
     /// Lower an assignment LHS: the pre-IR [`Self::analyze_lhs`] decisions
     /// converted to [`IrLhs`] (identical by construction during the seam
@@ -180,17 +182,41 @@ impl<'a> Codegen<'a> {
     ) -> Result<Option<IrStmt>, String> {
         let lhs_aggregate = self.unpacked_aggregate_info(lhs);
         let rhs_aggregate = self.unpacked_aggregate_info(rhs);
+        let lhs_sub = self.resolve_unpacked_aggregate(lhs);
+        let rhs_sub = self.resolve_unpacked_aggregate(rhs);
         let rhs_is_pattern = matches!(
             self.kind(rhs),
             NodeKind::Expr(ExprKind::Operation { op, .. })
                 if *op == Operation::AssignmentPattern
         );
-        if lhs_aggregate.is_none() && rhs_aggregate.is_none() {
+        if lhs_aggregate.is_none() && rhs_aggregate.is_none() && lhs_sub.is_none() {
+            // Not an aggregate destination: packed patterns and every other
+            // assignment shape keep their existing lowering.
             return Ok(None);
         }
-        let (lhs_target, lhs_aggregate) = lhs_aggregate.ok_or_else(|| {
-            format!("unpacked aggregate used as a scalar assignment RHS in `{path}`")
-        })?;
+        if rhs_is_pattern {
+            return Ok(Some(
+                self.lower_unpacked_pattern_assignment(path, lhs, rhs, nba, op)?,
+            ));
+        }
+        if lhs_aggregate.is_none() || (rhs_aggregate.is_none() && rhs_sub.is_some()) {
+            // Either side may denote a selected sub-value. The enclosing root
+            // locates storage, but the selected descriptor determines its type.
+            let lhs_selection = lhs_sub.ok_or_else(|| {
+                format!("unpacked aggregate used as a scalar assignment RHS in `{path}`")
+            })?;
+            let rhs_selection = rhs_sub.ok_or_else(|| {
+                format!("unpacked aggregate used as a scalar assignment LHS in `{path}`")
+            })?;
+            return Ok(Some(self.lower_unpacked_subaggregate_copy(
+                path,
+                &lhs_selection,
+                &rhs_selection,
+                nba,
+                op,
+            )?));
+        }
+        let (lhs_target, lhs_aggregate) = lhs_aggregate.expect("whole aggregate destination");
         let bitstream_cast_operand = match self.kind(rhs) {
             NodeKind::Expr(ExprKind::Cast { operand, .. }) => Some(*operand),
             _ => None,
@@ -293,89 +319,6 @@ impl<'a> Codegen<'a> {
                 let rhs = apply_lhs_assignment_context(&self.model, &lhs, value);
                 captures.push(IrStmt::Assign { lhs, rhs, nba });
             }
-            return Ok(Some(IrStmt::Block(captures)));
-        }
-        if rhs_is_pattern {
-            if op != Operation::Assignment {
-                return Err(format!(
-                    "compound assignment of unpacked aggregate pattern in `{path}` is not supported"
-                ));
-            }
-            let layout = self.db.aggregate_layout(lhs_target).ok_or_else(|| {
-                format!(
-                    "unpacked aggregate `{}` in `{path}` has no captured layout",
-                    self.node(lhs_target).name
-                )
-            })?;
-            let mut values = Vec::new();
-            self.aggregate_pattern_leaf_values(path, rhs, layout, &[], &mut values)?;
-            let mut assignments = Vec::with_capacity(values.len());
-            let mut captures = Vec::new();
-            let mut captured = HashMap::<NodeId, (String, u32, bool)>::new();
-            for (member_path, value_node) in values {
-                let left = lhs_aggregate
-                    .leaves
-                    .iter()
-                    .find(|leaf| leaf.path == member_path)
-                    .ok_or_else(|| {
-                        format!(
-                            "aggregate pattern path `{}` has no destination in `{path}`",
-                            aggregate_path_suffix(&member_path)
-                        )
-                    })?;
-                if let Some(index) = left.object {
-                    if nba {
-                        return Err(format!(
-                            "nonblocking assignment to object aggregate member `{}` is not supported in `{path}`",
-                            aggregate_path_suffix(&member_path)
-                        ));
-                    }
-                    let operation = match self.model.objects[index].ty {
-                        IrObjectType::String => {
-                            IrObjectStmt::StringAssign(index, self.lower_string(path, value_node)?)
-                        }
-                        IrObjectType::Chandle => IrObjectStmt::ChandleAssign(
-                            index,
-                            self.lower_chandle(path, value_node)?,
-                        ),
-                        IrObjectType::Semaphore => IrObjectStmt::ChandleAssign(
-                            index,
-                            self.lower_chandle(path, value_node)?,
-                        ),
-                        IrObjectType::Process => {
-                            return Err(format!(
-                                "process aggregate member assignment is not supported in `{path}`"
-                            ));
-                        }
-                    };
-                    assignments.push(IrStmt::Object(operation));
-                    continue;
-                }
-                let lhs = self.aggregate_leaf_lhs(left)?;
-                let value = if let Some((name, width, signed)) = captured.get(&value_node) {
-                    IrExpr::new(IrExprKind::LocalRead(name.clone()), *width, *signed, None)
-                } else {
-                    let source = self.lower_expr(path, value_node)?;
-                    let name = format!("_agg{}_{}", lhs_target.0, value_node.0);
-                    let (width, signed) = (source.width, source.signed);
-                    captures.push(IrStmt::DeclLocal {
-                        name: name.clone(),
-                        width,
-                        signed,
-                        two_state: false,
-                        init: Some(Box::new(source)),
-                    });
-                    captured.insert(value_node, (name.clone(), width, signed));
-                    IrExpr::new(IrExprKind::LocalRead(name), width, signed, None)
-                };
-                let value = apply_lhs_assignment_context(&self.model, &lhs, value);
-                assignments.push(IrStmt::Assign {
-                    lhs,
-                    rhs: value,
-                    nba,
-                });
-            }
-            captures.extend(assignments);
             return Ok(Some(IrStmt::Block(captures)));
         }
         if lhs_aggregate.kind == AggregateKind::UnpackedStruct
@@ -545,6 +488,192 @@ impl<'a> Codegen<'a> {
             });
         }
         Ok(Some(IrStmt::Block(assignments)))
+    }
+
+    /// Lower an unpacked aggregate assignment pattern.  A whole aggregate
+    /// destination resolves pattern member names against its captured layout;
+    /// a nested destination (an array element or nested struct member)
+    /// resolves against the recursive descriptor at that path so one walker
+    /// serves both.  Source expressions are staged before any destination
+    /// write so overlapping or side-effecting values evaluate exactly once.
+    fn lower_unpacked_pattern_assignment(
+        &mut self,
+        path: &str,
+        lhs: NodeId,
+        rhs: NodeId,
+        nba: bool,
+        op: Operation,
+    ) -> Result<IrStmt, String> {
+        if op != Operation::Assignment {
+            return Err(format!(
+                "compound assignment of unpacked aggregate pattern in `{path}` is not supported"
+            ));
+        }
+        let Some((target, aggregate)) = self.unpacked_aggregate_info(lhs) else {
+            return self.lower_unpacked_subaggregate_pattern(path, lhs, rhs, nba);
+        };
+        let layout = self.db.aggregate_layout(target).ok_or_else(|| {
+            format!(
+                "unpacked aggregate `{}` in `{path}` has no captured layout",
+                self.node(target).name
+            )
+        })?;
+        let mut values = Vec::new();
+        self.aggregate_pattern_leaf_values(path, rhs, layout, &[], &mut values)?;
+        self.assign_unpacked_pattern_values(path, target, &aggregate, values, nba)
+    }
+
+    /// Resolve a pattern whose destination is a sub-value of an unpacked
+    /// aggregate (for example `s.items[0]`).  The declaration-relative path
+    /// keeps the destination prefix separate from the pattern leaf paths.
+    fn lower_unpacked_subaggregate_pattern(
+        &mut self,
+        path: &str,
+        lhs: NodeId,
+        rhs: NodeId,
+        nba: bool,
+    ) -> Result<IrStmt, String> {
+        let (target, prefix) = self.unpacked_path_for_expr(lhs).ok_or_else(|| {
+            format!("unpacked aggregate pattern destination in `{path}` has no captured storage")
+        })?;
+        let aggregate = self
+            .unpacked_aggregates
+            .get(&target)
+            .cloned()
+            .ok_or_else(|| {
+                format!("unpacked aggregate pattern destination in `{path}` has no captured leaves")
+            })?;
+        let root = self.query_descriptor(target).cloned().ok_or_else(|| {
+            format!(
+                "unpacked aggregate `{}` in `{path}` has no recursive type descriptor",
+                self.node(target).name
+            )
+        })?;
+        let descriptor = Self::descriptor_at_path(&root, &prefix).ok_or_else(|| {
+            format!(
+                "unpacked aggregate pattern destination in `{path}` has no matching recursive type"
+            )
+        })?;
+        let mut values = Vec::new();
+        self.aggregate_descriptor_pattern_values(path, rhs, &descriptor, &prefix, &mut values)?;
+        self.assign_unpacked_pattern_values(path, target, &aggregate, values, nba)
+    }
+
+    fn assign_unpacked_pattern_values(
+        &mut self,
+        path: &str,
+        target: NodeId,
+        aggregate: &UnpackedAggregateInfo,
+        values: Vec<(Vec<AggregatePathPart>, NodeId)>,
+        nba: bool,
+    ) -> Result<IrStmt, String> {
+        let mut assignments = Vec::with_capacity(values.len());
+        let mut captures = Vec::new();
+        let mut captured = HashMap::<NodeId, (String, u32, bool)>::new();
+        for (member_path, value_node) in values {
+            let left = aggregate
+                .leaves
+                .iter()
+                .find(|leaf| leaf.path == member_path)
+                .ok_or_else(|| {
+                    format!(
+                        "aggregate pattern path `{}` has no destination in `{path}`",
+                        aggregate_path_suffix(&member_path)
+                    )
+                })?;
+            if let Some(index) = left.object {
+                if nba {
+                    return Err(format!(
+                        "nonblocking assignment to object aggregate member `{}` is not supported in `{path}`",
+                        aggregate_path_suffix(&member_path)
+                    ));
+                }
+                let operation = match self.model.objects[index].ty {
+                    IrObjectType::String => {
+                        IrObjectStmt::StringAssign(index, self.lower_string(path, value_node)?)
+                    }
+                    IrObjectType::Chandle => {
+                        IrObjectStmt::ChandleAssign(index, self.lower_chandle(path, value_node)?)
+                    }
+                    IrObjectType::Semaphore => {
+                        IrObjectStmt::ChandleAssign(index, self.lower_chandle(path, value_node)?)
+                    }
+                    IrObjectType::Process => {
+                        return Err(format!(
+                            "process aggregate member assignment is not supported in `{path}`"
+                        ));
+                    }
+                };
+                assignments.push(IrStmt::Object(operation));
+                continue;
+            }
+            let lhs = self.aggregate_leaf_lhs(left)?;
+            let value = if let Some((name, width, signed)) = captured.get(&value_node) {
+                IrExpr::new(IrExprKind::LocalRead(name.clone()), *width, *signed, None)
+            } else {
+                let source = self.lower_expr(path, value_node)?;
+                let name = format!("_agg{}_{}", target.0, value_node.0);
+                let (width, signed) = (source.width, source.signed);
+                captures.push(IrStmt::DeclLocal {
+                    name: name.clone(),
+                    width,
+                    signed,
+                    two_state: false,
+                    init: Some(Box::new(source)),
+                });
+                captured.insert(value_node, (name.clone(), width, signed));
+                IrExpr::new(IrExprKind::LocalRead(name), width, signed, None)
+            };
+            let value = apply_lhs_assignment_context(&self.model, &lhs, value);
+            assignments.push(IrStmt::Assign {
+                lhs,
+                rhs: value,
+                nba,
+            });
+        }
+        captures.extend(assignments);
+        Ok(IrStmt::Block(captures))
+    }
+
+    /// Walk a recursive type descriptor by an aggregate path.  Atom and
+    /// handle leaves have no further shape, so a path that descends past them
+    /// is not a pattern destination.
+    fn descriptor_at_path(
+        descriptor: &TypeDescriptor,
+        path: &[AggregatePathPart],
+    ) -> Option<TypeDescriptor> {
+        let mut current = descriptor.clone();
+        for part in path {
+            match (&current.shape, part) {
+                (TypeShape::Aggregate(layout), AggregatePathPart::Member(name)) => {
+                    let member = layout.members.iter().find(|member| member.name == *name)?;
+                    current = member.descriptor.clone();
+                }
+                (
+                    TypeShape::FixedArray {
+                        dimensions,
+                        element,
+                    },
+                    AggregatePathPart::Index(_),
+                ) => {
+                    if dimensions.len() <= 1 {
+                        current = element.as_ref().clone();
+                    } else {
+                        current = TypeDescriptor {
+                            id: current.id,
+                            name: current.name.clone(),
+                            info: current.info.clone(),
+                            shape: TypeShape::FixedArray {
+                                dimensions: dimensions[1..].to_vec(),
+                                element: element.clone(),
+                            },
+                        };
+                    }
+                }
+                _ => return None,
+            }
+        }
+        Some(current)
     }
 
     /// Compare two complete fixed unpacked aggregate values without
@@ -881,10 +1010,13 @@ impl<'a> Codegen<'a> {
                     NodeKind::Expr(ExprKind::Operation { op, .. })
                         if *op == Operation::AssignmentPattern
                 ) {
+                    // A scalar default applied to an array member recurses
+                    // through every element, so the full array descriptor
+                    // (not the element) drives the fan-out.
                     return self.aggregate_descriptor_default_values(
                         path,
                         pattern_node,
-                        &next,
+                        descriptor,
                         prefix,
                         out,
                     );
@@ -1200,7 +1332,9 @@ impl<'a> Codegen<'a> {
     /// model indices.
     pub(in super::super) fn lhs_to_ir(&self, lh: Lhs) -> Result<IrLhs, String> {
         Ok(match lh {
-            Lhs::Whole(info) => self.reference_lhs(IrLhs::Whole(info.ir))?,
+            Lhs::Whole(info) => {
+                self.reference_lhs(IrLhs::Whole(info.ir))?
+            }
             Lhs::WholeRef {
                 addr,
                 width,
@@ -1237,9 +1371,11 @@ impl<'a> Codegen<'a> {
                     checked_select_bounds(left, right, "assignment part select")?;
                 self.reference_lhs(IrLhs::Part(info.ir, left, right, two_state))?
             }
-            Lhs::IdxPart(info, base, width_expr, width, neg, two_state) => self.reference_lhs(
-                IrLhs::IdxPart(info.ir, base, width_expr, width, neg, two_state),
-            )?,
+            Lhs::IdxPart(info, base, width_expr, width, neg, two_state) => {
+                self.reference_lhs(IrLhs::IdxPart(
+                    info.ir, base, width_expr, width, neg, two_state,
+                ))?
+            }
             Lhs::ArrayElem(ae) => self.reference_lhs(IrLhs::ArrayElem {
                 arr: self.reference_array(ae.arr.ir),
                 indices: ae.indices,

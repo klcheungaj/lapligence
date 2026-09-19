@@ -201,6 +201,18 @@ impl EmitCtx<'_, '_> {
             return Ok(aggregate_assignment);
         }
         let lh = self.cg.lower_lhs(&self.path, lhs)?;
+        if op != Operation::Assignment
+            && matches!(
+                lh,
+                IrLhs::Bit(..) | IrLhs::Part(..) | IrLhs::IdxPart(..) | IrLhs::ArrayElem { .. }
+                | IrLhs::PackedSelect { .. }
+            )
+        {
+            // The canonical mutation expression resolves and stores the
+            // select once; its yielded value is discarded in statement
+            // position. This keeps `mem[i++] += f()` incrementing once.
+            return self.lower_discarded_mutation(op, &[lhs, rhs]);
+        }
         let rhs_ir = match self
             .cg
             .lower_packed_aggregate_pattern(&self.path, lhs, rhs, op)?
@@ -214,6 +226,29 @@ impl EmitCtx<'_, '_> {
             rhs: rhs_ir,
             nba: !blocking,
         })
+    }
+
+    /// Emit a compound assignment or increment/decrement to a select or array
+    /// element in statement position. The mutation expression performs the
+    /// one resolved read/modify/store; capturing its discarded result in a
+    /// fresh local keeps every selector evaluation at exactly one site.
+    fn lower_discarded_mutation(
+        &mut self,
+        op: Operation,
+        operands: &[NodeId],
+    ) -> Result<IrStmt, String> {
+        let mutation = self
+            .cg
+            .lower_mutation_expression(&self.path, op, operands, false)?;
+        let (width, signed) = (mutation.width, mutation.signed);
+        let name = format!("_mut{}", operands[0].0);
+        Ok(IrStmt::Block(vec![IrStmt::DeclLocal {
+            name,
+            width,
+            signed,
+            two_state: false,
+            init: Some(Box::new(mutation)),
+        }]))
     }
 
     /// Lower the value written by a normal or compound procedural
@@ -269,6 +304,15 @@ impl EmitCtx<'_, '_> {
             }
         };
         let lhs = self.cg.lower_lhs(&self.path, operand)?;
+        if matches!(
+            lhs,
+            IrLhs::Bit(..) | IrLhs::Part(..) | IrLhs::IdxPart(..) | IrLhs::ArrayElem { .. }
+                | IrLhs::PackedSelect { .. }
+        ) {
+            // Statement-position pre/post increment discards the yielded value,
+            // so both forms commit the same single resolved store.
+            return self.lower_discarded_mutation(op, operands);
+        }
         if !matches!(
             lhs,
             IrLhs::Whole(_) | IrLhs::WholeRef { .. } | IrLhs::Ref { bit: None, .. }
@@ -401,7 +445,8 @@ impl EmitCtx<'_, '_> {
         let rhs_ir = self.lower_assignment_rhs(lhs, rhs, op, &lh)?;
         let rhs_ir = apply_lhs_assignment_context(&self.cg.model, &lh, rhs_ir);
         if !blocking {
-            if self.cg.proc_local_target(lhs).is_some() || matches!(lh, IrLhs::WholeRef { .. }) {
+            if self.cg.proc_local_target(lhs).is_some() || self.cg.subroutine_auto_target(lhs)
+                || lh.has_activation_root() {
                 return Err(
                     "nonblocking delayed assignment requires persistent target storage".into(),
                 );
@@ -528,7 +573,7 @@ impl EmitCtx<'_, '_> {
 
         if self.cg.proc_local_target(lhs).is_some()
             || self.cg.subroutine_auto_target(lhs)
-            || matches!(lh, IrLhs::WholeRef { .. } | IrLhs::Ref { .. })
+            || lh.has_activation_root()
         {
             return Err(
                 "nonblocking event/repeat intra-assignment timing requires persistent target storage"
@@ -654,6 +699,15 @@ impl EmitCtx<'_, '_> {
         lhs: IrLhs,
     ) -> Result<IrLhs, String> {
         Ok(match lhs {
+            IrLhs::PackedSelect { target, steps, signed, two_state } => IrLhs::PackedSelect {
+                target: Box::new(self.capture_event_assignment_lhs(frame, captures, *target)?),
+                steps: steps.into_iter().map(|mut step| {
+                    step.base = self.capture_event_assignment_expr(frame, captures, step.base);
+                    step
+                }).collect(),
+                signed,
+                two_state,
+            },
             IrLhs::Bit(index, select, two_state) => IrLhs::Bit(
                 index,
                 self.capture_event_assignment_expr(frame, captures, select),
@@ -680,6 +734,16 @@ impl EmitCtx<'_, '_> {
                     .map(|index| self.capture_event_assignment_expr(frame, captures, index))
                     .collect(),
                 elem_sel: match elem_sel {
+                    IrElemSel::PackedChain(steps) => IrElemSel::PackedChain(
+                        steps
+                            .into_iter()
+                            .map(|mut step| {
+                                step.base =
+                                    self.capture_event_assignment_expr(frame, captures, step.base);
+                                step
+                            })
+                            .collect(),
+                    ),
                     IrElemSel::Whole => IrElemSel::Whole,
                     IrElemSel::Part(left, right) => IrElemSel::Part(left, right),
                     IrElemSel::Bit(index) => IrElemSel::Bit(Box::new(
@@ -736,6 +800,15 @@ impl EmitCtx<'_, '_> {
 
         fn target(h: NodeId, slots: &mut Vec<IrStmt>, lhs: IrLhs) -> IrLhs {
             match lhs {
+                IrLhs::PackedSelect { target: root, steps, signed, two_state } => IrLhs::PackedSelect {
+                    target: Box::new(target(h, slots, *root)),
+                    steps: steps.into_iter().map(|mut step| {
+                        step.base = selector(h, slots, step.base);
+                        step
+                    }).collect(),
+                    signed,
+                    two_state,
+                },
                 IrLhs::Bit(index, select, two_state) => {
                     IrLhs::Bit(index, selector(h, slots, select), two_state)
                 }
@@ -760,6 +833,15 @@ impl EmitCtx<'_, '_> {
                         .map(|index| selector(h, slots, index))
                         .collect(),
                     elem_sel: match elem_sel {
+                        IrElemSel::PackedChain(steps) => IrElemSel::PackedChain(
+                            steps
+                                .into_iter()
+                                .map(|mut step| {
+                                    step.base = selector(h, slots, step.base);
+                                    step
+                                })
+                                .collect(),
+                        ),
                         IrElemSel::Whole => IrElemSel::Whole,
                         IrElemSel::Part(left, right) => IrElemSel::Part(left, right),
                         IrElemSel::Bit(index) => {

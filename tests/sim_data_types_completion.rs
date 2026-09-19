@@ -176,6 +176,16 @@ fn resizable_assignment_patterns() {
 }
 
 #[test]
+fn pattern_nested_default() {
+    run_fixture("pattern_nested_default.sv", "pattern_nested_default");
+}
+
+#[test]
+fn pattern_side_effect_count() {
+    run_fixture("pattern_side_effect_count.sv", "pattern_side_effect_count");
+}
+
+#[test]
 fn dynamic_array_reductions_preserve_element_width() {
     run_fixture("dynamic_array_reductions.sv", "dynamic_array_reductions");
 }
@@ -201,6 +211,14 @@ fn array_methods_preserve_order_and_with_clause_values() {
 #[test]
 fn reduction_with_preserves_width_changing_expression() {
     run_fixture("reduction_with_unsupported.sv", "reduction_with");
+}
+
+#[test]
+fn pattern_bad_keys() {
+    run_assignment_pattern_rejection_fixture(
+        "pattern_bad_keys.sv",
+        &["multiple keys", "duplicate"],
+    );
 }
 
 #[test]

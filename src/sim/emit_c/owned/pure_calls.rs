@@ -106,6 +106,7 @@ fn callback_safe_statements(body: &[IrStmt]) -> Result<(), String> {
 pub(super) fn private_callback_target(lhs: &IrLhs) -> bool {
     match lhs {
         IrLhs::WholeRef { .. } => true,
+        IrLhs::PackedSelect { target, .. } => private_callback_target(target),
         _ => false,
     }
 }

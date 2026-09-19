@@ -695,27 +695,55 @@ impl Validator<'_> {
         for (index, access) in self.model.native_accesses.iter().enumerate() {
             let path = format!("native_accesses[{index}]");
             if access.name != format!("_llg_access_{index}") {
-                return self.fail(&path, "native access identity does not match its table index");
+                return self.fail(
+                    &path,
+                    "native access identity does not match its table index",
+                );
             }
             match access.kind {
                 IrNativeAccessKind::ClassField { class, field } => {
-                    if !self.model.classes.get(class).is_some_and(|class| field < class.fields.len()) {
+                    if !self
+                        .model
+                        .classes
+                        .get(class)
+                        .is_some_and(|class| field < class.fields.len())
+                    {
                         return self.fail(&path, "class member reference is out of bounds");
                     }
                 }
                 IrNativeAccessKind::InterfaceMember { interface, member } => {
-                    if !self.model.virtual_interfaces.get(interface).is_some_and(|interface| member < interface.members.len()) {
+                    if !self
+                        .model
+                        .virtual_interfaces
+                        .get(interface)
+                        .is_some_and(|interface| member < interface.members.len())
+                    {
                         return self.fail(&path, "interface member reference is out of bounds");
                     }
                 }
             }
-            let function = access.function.map(|index| self.model.funcs.get(index).ok_or_else(|| IrValidationError::new(&path, "function reference is out of bounds"))).transpose()?;
+            let function = access
+                .function
+                .map(|index| {
+                    self.model.funcs.get(index).ok_or_else(|| {
+                        IrValidationError::new(&path, "function reference is out of bounds")
+                    })
+                })
+                .transpose()?;
             let formals = function.map_or(&[][..], |function| function.formals.as_slice());
-            self.chandle_return.set(function.map(|function| function.ret_chandle));
-            self.string_return.set(function.map(|function| function.ret_string));
-            access.receiver.validate(self.model, formals, self.chandle_return.get())?;
+            self.chandle_return
+                .set(function.map(|function| function.ret_chandle));
+            self.string_return
+                .set(function.map(|function| function.ret_string));
+            access
+                .receiver
+                .validate(self.model, formals, self.chandle_return.get())?;
             let mut result = Ok(());
-            access.receiver.expressions(&mut |expr| { result = result.clone().and_then(|_| self.validate_expr(expr, formals, &path)); });
+            access.receiver.expressions(&mut |expr| {
+                result = result
+                    .clone()
+                    .and_then(|_| self.validate_expr(expr, formals, &path));
+            });
             result?;
         }
         for (index, allocation) in self.model.class_allocations.iter().enumerate() {
@@ -723,14 +751,24 @@ impl Validator<'_> {
             if allocation.class >= self.model.classes.len() || allocation.local.is_empty() {
                 return self.fail(&path, "invalid class allocation identity");
             }
-            let function = allocation.function.map(|index| self.model.funcs.get(index).ok_or_else(|| IrValidationError::new(&path, "function reference is out of bounds"))).transpose()?;
+            let function = allocation
+                .function
+                .map(|index| {
+                    self.model.funcs.get(index).ok_or_else(|| {
+                        IrValidationError::new(&path, "function reference is out of bounds")
+                    })
+                })
+                .transpose()?;
             let formals = function.map_or(&[][..], |function| function.formals.as_slice());
-            self.chandle_return.set(function.map(|function| function.ret_chandle));
-            self.string_return.set(function.map(|function| function.ret_string));
+            self.chandle_return
+                .set(function.map(|function| function.ret_chandle));
+            self.string_return
+                .set(function.map(|function| function.ret_string));
             self.validate_stmts(&allocation.body, formals, &format!("{path}.body"))?;
         }
 
         for (idx, func) in self.model.funcs.iter().enumerate() {
+            self.function.set(Some(func));
             self.chandle_return.set(Some(func.ret_chandle));
             self.string_return.set(Some(func.ret_string));
             let path = format!("funcs[{idx}]");
@@ -796,6 +834,7 @@ impl Validator<'_> {
 
         self.chandle_return.set(None);
         self.string_return.set(None);
+        self.function.set(None);
         for (idx, process) in self.model.processes.iter().enumerate() {
             let path = format!("processes[{idx}]");
             for (write_idx, write) in process.writes.iter().enumerate() {

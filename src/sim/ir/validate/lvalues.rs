@@ -10,6 +10,20 @@ impl Validator<'_> {
         path: &str,
     ) -> ValidationResult {
         match sel {
+            IrElemSel::PackedChain(steps) => {
+                if steps.is_empty() {
+                    return self.fail(path, "packed selection chain must not be empty");
+                }
+                for (index, step) in steps.iter().enumerate() {
+                    let path = format!("{path}.steps[{index}]");
+                    self.validate_width(step.width, &format!("{path}.width"))?;
+                    if step.base.is_real() {
+                        return self.fail(format!("{path}.base"), "packed selector must be integral");
+                    }
+                    self.validate_expr(&step.base, formals, &format!("{path}.base"))?;
+                }
+                Ok(())
+            }
             IrElemSel::Whole => Ok(()),
             IrElemSel::Part(left, right) => self.validate_select_width(*left, *right, path),
             IrElemSel::Bit(expr) => self.validate_expr(expr, formals, path),
@@ -33,6 +47,7 @@ impl Validator<'_> {
 
     pub(super) fn lhs_packed_width(&self, lhs: &IrLhs) -> Option<u32> {
         let width = match lhs {
+            IrLhs::PackedSelect { steps, .. } => steps.last()?.width,
             IrLhs::Whole(signal) => self.model.signals.get(*signal)?.ty.width(),
             IrLhs::WholeRef { width, .. }
             | IrLhs::Ref { width, .. }
@@ -45,6 +60,7 @@ impl Validator<'_> {
                 IrElemSel::Part(left, right) => ((left - right).abs() + 1) as u32,
                 IrElemSel::Bit(_) => 1,
                 IrElemSel::Indexed { width, .. } => *width,
+                IrElemSel::PackedChain(steps) => steps.last().map_or(0, |step| step.width),
             },
         };
         (width != 0).then_some(width)
@@ -85,6 +101,16 @@ impl Validator<'_> {
         path: &str,
     ) -> ValidationResult {
         match lhs {
+            IrLhs::PackedSelect { target, steps, .. } => {
+                self.validate_lhs(target, formals, &format!("{path}.target"))?;
+                if self.lhs_packed_width(target).is_none() || !matches!(target.as_ref(),
+                    IrLhs::Whole(_) | IrLhs::WholeRef { width: 1.., .. }
+                    | IrLhs::Ref { bit: None, .. }
+                    | IrLhs::ArrayElem { elem_sel: IrElemSel::Whole, .. }) {
+                    return self.fail(path, "packed activation select requires an unselected packed root");
+                }
+                self.validate_elem_sel(&IrElemSel::PackedChain(steps.clone()), formals, path)?;
+            }
             IrLhs::Whole(signal) | IrLhs::Part(signal, ..) => {
                 if *signal >= self.model.signals.len() {
                     return self.fail(path, format!("signal index {signal} is out of bounds"));
@@ -149,6 +175,9 @@ impl Validator<'_> {
                     self.validate_expr(index, formals, &format!("{path}.indices[{idx}]"))?;
                 }
                 self.validate_elem_sel(elem_sel, formals, &format!("{path}.elem_sel"))?;
+                if array.real && matches!(elem_sel, IrElemSel::PackedChain(_)) {
+                    return self.fail(path, "packed selection chain requires packed array elements");
+                }
             }
             IrLhs::Stream {
                 parts,

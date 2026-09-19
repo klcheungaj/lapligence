@@ -198,6 +198,33 @@ endmodule
     .expect("same-width packed nominal type keys must not match by width");
 }
 
+#[test]
+fn packed_union_illegal_width() {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/sim/data_types_next/packed_union_illegal_width.sv");
+    sim_harness::with_frontend_temp_cwd("packed-union-illegal-width", |dir| {
+        let source_path = dir.join("packed_union_illegal_width.sv");
+        std::fs::copy(&fixture, &source_path).map_err(|error| error.to_string())?;
+        let options = compile::CompileOpts {
+            files: vec![source_path.to_string_lossy().into_owned()],
+            top: Some("tb".to_owned()),
+            ..Default::default()
+        };
+        let partial = compile::compile(&options).map_err(|error| error.to_string())?;
+        if partial.ok() {
+            return Err("unequal-width packed union was not rejected".into());
+        }
+        let diagnostic = format!("{:?}", partial.diagnostics).to_ascii_lowercase();
+        if !diagnostic.contains("same width") {
+            return Err(format!(
+                "unequal-width packed union produced an unexpected diagnostic: {diagnostic}"
+            ));
+        }
+        Ok(())
+    })
+    .expect("unequal-width untagged packed unions must remain a diagnostic");
+}
+
 macro_rules! datatype_case {
     ($name:ident, $file:literal, $label:literal) => {
         #[test]
@@ -216,6 +243,16 @@ datatype_case!(
     packed_aggregate_nested_selections,
     "packed_aggregate_selections.sv",
     "packed_aggregate_selections"
+);
+datatype_case!(
+    packed_union_alias_views,
+    "packed_union_alias_views.sv",
+    "packed_union_alias_views"
+);
+datatype_case!(
+    packed_member_state_boundary,
+    "packed_member_state_boundary.sv",
+    "packed_member_state_boundary"
 );
 datatype_case!(
     packed_streaming_slice_order,

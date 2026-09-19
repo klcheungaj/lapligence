@@ -46,7 +46,6 @@ pub use expressions::render_expr;
 pub use model::render;
 pub use statements::{render_pre_fn, render_stmt};
 
-pub(crate) use expressions::array_guard;
 pub(crate) use names::{
     escaped_char, event_global_name, global_name, ident, real_global_name, strip_lib,
 };

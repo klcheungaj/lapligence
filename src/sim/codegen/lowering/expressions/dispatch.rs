@@ -5,6 +5,7 @@ use super::*;
 impl<'a> Codegen<'a> {
     /// Render context for the IR built so far (the enclosing function, when
     /// any, resolves formal reads).
+    #[allow(dead_code)] // retained for fragment callers pending the lowering migration
     pub(in super::super) fn render_ctx(&self) -> RCtx<'_> {
         RCtx {
             model: &self.model,
@@ -15,6 +16,7 @@ impl<'a> Codegen<'a> {
     }
 
     /// Render a lowered expression to its C code.
+    #[allow(dead_code)] // retained for fragment callers pending the lowering migration
     pub(in super::super) fn render_ir_code(&self, ir: &IrExpr) -> Result<String, String> {
         let ctx = self.render_ctx();
         Ok(render_expr(&ctx, ir)?.code)
@@ -27,6 +29,9 @@ impl<'a> Codegen<'a> {
         scope_path: &str,
         h: NodeId,
     ) -> Result<IrExpr, String> {
+        if let Some(value) = self.packed_formal_read(scope_path, h)? {
+            return Ok(value);
+        }
         if let Some(value) = self.lower_container_query(scope_path, h)? {
             return Ok(value);
         }
@@ -101,6 +106,9 @@ impl<'a> Codegen<'a> {
             }
             NodeKind::Expr(ExprKind::Ref { target }) => self.lower_ref_expr(scope_path, h, *target),
             NodeKind::Expr(ExprKind::BitSelect { base, index }) => {
+                if let Some(value) = self.packed_element_read_ir(scope_path, h)? {
+                    return Ok(value);
+                }
                 self.ensure_clocking_readable(*base)?;
                 if let Some(ai) = self.array_of(*base).cloned() {
                     if ai.real {
@@ -180,6 +188,9 @@ impl<'a> Codegen<'a> {
                 ))
             }
             NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
+                if let Some(value) = self.packed_element_read_ir(scope_path, h)? {
+                    return Ok(value);
+                }
                 self.ensure_clocking_readable(*base)?;
                 if let Some((_target, _kind, member_info)) = self.unpacked_member_info(h) {
                     let member = member_info.member;
@@ -330,6 +341,9 @@ impl<'a> Codegen<'a> {
                 ))
             }
             NodeKind::Expr(ExprKind::PartSelect { base, left, right }) => {
+                if let Some(value) = self.packed_element_read_ir(scope_path, h)? {
+                    return Ok(value);
+                }
                 self.ensure_clocking_readable(*base)?;
                 let base_value = self.lower_expr(scope_path, *base)?;
                 if base_value.is_real() {
@@ -393,6 +407,9 @@ impl<'a> Codegen<'a> {
                 width_expr,
                 neg,
             }) => {
+                if let Some(value) = self.packed_element_read_ir(scope_path, h)? {
+                    return Ok(value);
+                }
                 self.ensure_clocking_readable(*base)?;
                 let base_value = self.lower_expr(scope_path, *base)?;
                 if base_value.is_real() {
@@ -1068,6 +1085,45 @@ impl<'a> Codegen<'a> {
             }
             _ => Err("unsupported constant value format".to_string()),
         }
+    }
+
+    /// Read the same bounded slice chain the lvalue path builds for packed
+    /// index / part / bit / indexed-part selections beneath a fixed-array
+    /// element. Returns `None` when the select is not such a composition, so
+    /// the ordinary packed and array-select arms keep owning it.
+    fn packed_element_read_ir(
+        &mut self,
+        scope_path: &str,
+        node: NodeId,
+    ) -> Result<Option<IrExpr>, String> {
+        let Some(IrLhs::ArrayElem {
+            arr,
+            indices,
+            elem_sel,
+        }) = self.packed_element_lhs_ir(scope_path, node)?
+        else {
+            return Ok(None);
+        };
+        let width = match &elem_sel {
+            IrElemSel::Part(left, right) => left
+                .abs_diff(*right)
+                .checked_add(1)
+                .and_then(|width| u32::try_from(width).ok()),
+            IrElemSel::Indexed { width, .. } => Some(*width),
+            IrElemSel::PackedChain(steps) => steps.last().map(|step| step.width),
+            _ => return Ok(None),
+        }
+        .ok_or_else(|| format!("packed element select width overflows in `{scope_path}`"))?;
+        Ok(Some(IrExpr::new(
+            IrExprKind::ArrayRead {
+                arr,
+                indices,
+                elem_sel,
+            },
+            width,
+            false,
+            None,
+        )))
     }
 
     pub(in super::super) fn indexed_part_select_width(

@@ -26,6 +26,8 @@ mod locals;
 mod lvalues;
 mod names;
 mod nets;
+mod packed_elements;
+pub(super) mod packed_formals;
 mod ports;
 mod processes;
 mod signatures;

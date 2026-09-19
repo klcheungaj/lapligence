@@ -3,6 +3,25 @@
 use super::*;
 
 impl<'a> Codegen<'a> {
+    /// Packed width of a struct/union formal. These keep the
+    /// existing scalar `sv4_t` ABI, but their member selects must resolve to
+    /// the formal's activation storage rather than a module signal.
+    pub(super) fn packed_formal_width(&self, io: NodeId) -> Option<u32> {
+        let layout = self.db.aggregate_layout(io)?;
+        match layout.kind {
+            AggregateKind::PackedStruct => layout
+                .members
+                .iter()
+                .try_fold(0u32, |sum, member| sum.checked_add(member.ty.width?)),
+            AggregateKind::PackedUnion => layout
+                .members
+                .iter()
+                .filter_map(|member| member.ty.width)
+                .max(),
+            _ => None,
+        }
+    }
+
     pub(super) fn collect_aggregate(&mut self, path: &str, node: NodeId) -> Result<bool, String> {
         let Some(layout) = self.db.aggregate_layout(node).cloned() else {
             return Ok(false);
@@ -434,6 +453,12 @@ impl<'a> Codegen<'a> {
             "real" | "shortreal" => (0, true, ty.kind == "shortreal"),
             "int" | "integer" | "time" | "longint" | "byte" | "shortint" | "logic" | "reg"
             | "bit" => (ty.width.unwrap_or(1), false, false),
+            "struct" | "union" => {
+                let width = self.packed_formal_width(node).ok_or_else(|| {
+                    format!("array `{name}` in `{path}` requires a packed aggregate element type")
+                })?;
+                (width, false, false)
+            }
             _ => {
                 return Err(format!(
                     "array `{name}` in `{path}` has unsupported element type `{}`",
