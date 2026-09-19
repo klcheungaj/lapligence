@@ -101,14 +101,106 @@ The generated subroutine recursion guard is 256. Scheduler and process budgets
 default to 10,000,000 and use `LLG_ZERO_LOOP_LIMIT`, `LLG_PROCESS_STEP_LIMIT`
 and the latter's `LLG_NONCONVERGENCE_LIMIT` alias.
 
-Other runtime table limits remain: 16 drivers and 256 alias registrations per net
-group, 64 force entries, 4,096 packed PCA bindings and 4,096 real PCA bindings,
-4,096 process-registry entries (completed entries are reusable), 64 ordinary
-and 64 triggered waiters per named event, and 1,024 final blocks. These are
-resource limits, not packed-value capacities. See
+The net-group driver and alias tables are no longer fixed: driver tables are
+emitted at the exact elaborated size and the alias table grows on demand with
+checked allocation, so neither the old 16-driver nor the 256-alias ceiling
+applies. The process registry, final-block registry, named-event ordinary and
+persistent-trigger waiter tables, packed/real PCA binding tables and the
+force/release entry table likewise grow on demand; `LLG_MAX_PROCS` survives
+only as the standalone runtime self-test's sequential-fork base and is not a
+concurrency ceiling. These are resource limits, not packed-value capacities,
+and every growth path is checked rather than unbounded. See
 [`llg_value.h`](../src/sim/rt/llg_value.h),
-[`llg_rt.h`](../src/sim/rt/llg_rt.h) and
+[`llg_rt.h`](../src/sim/rt/llg_rt.h),
+[`src/sim/rt/readme.md`](../src/sim/rt/readme.md) and
 [`process_registry.c`](../src/sim/rt/scheduler/process_registry.c).
+
+## Group 1 (practical synthesizable subset) execution update — 2026-09-19
+
+The original implementation delta reported a Linux nextest/fmt/clippy run, but
+its test artifact omitted fixtures and six advertised suites. That historical
+result is not reproducible from the submission and is not a release acceptance
+record. Group 1 remains **partially implemented / acceptance pending**.
+
+Review repairs R01-R15 now have source changes and focused regression inputs.
+R01 supplies newly authored replacement witnesses for missing inputs referenced
+by the delivered suites and removes the descriptions of unavailable suites;
+it does not recover their original contents. The fixture-index gate runs before
+the expensive native CI build. R09/R14 replace synthetic global packed formal
+cells with activation-relative member plans: value inputs are privately owned,
+output/inout arguments retain copy-out semantics, and whole-variable references
+retain immediate aliasing. Genuine const, net/select reference and automatic/ref
+NBA restrictions remain enforced. R13 uses a shared edition capability inventory,
+including preprocessor-directive provenance and explicit extension registration.
+
+No Rust/frontend/HDL execution or macOS/Windows acceptance was performed while
+preparing these repairs. Standalone C results are component evidence only; run
+the public CLI suites in both optimizer modes before accepting these paths.
+`tests/sim_group1_formal_repairs.rs` and `tests/sim_group1_repairs.rs` are the
+focused review suites; the latter includes the packed-selection regressions.
+
+Source implementation inventory (not acceptance claims):
+
+- Fixed unpacked arrays: reversed/negative bounds by logical coordinates,
+  overlapping slice self-assignment, array/struct module ports with per-leaf
+  notification, memory declaration initialization and slicing.
+- Packed structs and untagged packed unions: cross-view aliasing, per-member
+  two/four-state conversion, unequal-width members still rejected.
+- Assignment patterns: nested keyed/default patterns (including a default that
+  fans out over a fixed-array member), positional side effects, duplicate explicit-index and
+  missing key rejections; sub-aggregate patterns and deep copies.
+- Packed selections: constant and runtime packed-dimension/part/bit/indexed-part
+  chains beneath a fixed-array element, for reads and writes, with host-safe X/Z and
+  out-of-range behavior: X read positions and in-range-only writes.
+- Streaming: slice tails, runtime `with` selectors on fixed-array destinations
+  and (1-D) sources, staged overlap-safe stores; size/type mismatches rejected.
+- Packed variable blocking/nonblocking assignment: issue-time capture, source-ordered commit,
+  overlapping masked updates; NBA to automatic variables and through `ref`
+  formals remains rejected per IEEE 1800-2009 §6.21/§10.4.2.
+- always_comb/always_latch/always_ff: time-zero execution, written-expression
+  exclusion, transitive function reads, conflicting-writer diagnosis.
+- Control flow: nested `foreach` cleanup, case/casez/casex/`case inside`
+  wildcard rules, qualified string `case inside`, unique/priority diagnostics.
+- Resolved nets: exhaustive small-width resolution truth matrix, disjoint
+  array/per-element drivers, hierarchical and concatenated wired LHS, alias
+  chains with force/strength, delayed alias wakeup and Postponed reads.
+- Gates: terminal matrix, gate-array distribution, tri-state X/Z enables.
+- Calls: defaults evaluated only when omitted, output/inout copy-out at return,
+  `ref` aliasing with the illegal-actual set still rejected, recursive automatic
+  functions; packed struct/union formals and packed struct returns.
+- Initialization: legal zero-time user function calls in SV static declaration
+  initialization, before `initial` observes the variable.
+- Let expressions, constant functions in generate/width contexts, located
+  rejection of a reached `case ... matches` pattern, and a three-axis
+  synthesis classification (simulation support vs synthesis policy).
+- Zero-time effect summaries: callback-safe helpers with locals/loops/nested
+  calls in evaluated event controls; impure helpers rejected distinctly.
+- Edition enforcement: standard builtin/keyword inventories plus kind-scoped
+  later-form rejection. `$asserton`/`$assertoff` are admitted under 2009, not 2001;
+  `$assertcontrol` is not a standard builtin of either requested edition.
+  Unknown system names require explicit registration. Admission is distinct from
+  simulation support; this is not a proof of complete edition conformance.
+  `defparam` re-elaboration and source-indexed module instance arrays.
+- Capacity: the net driver/alias, process, final, named-event waiter, PCA and
+  force registries all grow with checked allocation.
+
+Retained limits and known defects (not claimed as accepted):
+
+- Unpacked struct/array **function formals** and aggregate locals still need a
+  real IR formal-leaf cell; the scenarios remain precise rejections.
+- A signed function-name assignment does not adopt the declared return type as
+  assignment context, producing a wrong value for `int`-typed returns.
+- Packed-struct assignment into a packed member of an unpacked struct is
+  rejected.
+- Interface wired-net and inout-array connectivity composition still needs
+  acceptance evidence. Direct multidimensional `with` operands are outside the
+  one-dimensional operand form described by the targeted streaming clause.
+  Selectors dependent on values unpacked earlier in the same assignment still
+  need a sequential execution plan; the current streaming emitter stages them.
+- Fixed-array port actuals require a constant element index.
+- The delivered Rust/HDL suites and full release matrix still need a clean-tree
+  run. Linux C component execution does not establish Rust/frontend correctness
+  or macOS/Windows acceptance.
 
 ## Coverage and remaining work
 
