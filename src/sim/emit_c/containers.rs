@@ -1060,6 +1060,7 @@ pub(super) fn statement(ctx: &RCtx<'_>, operation: &IrContainerStmt) -> Result<S
 
 /// Adapters consume owned string-expression results while the container runtime
 /// remains independent of the string runtime's representation.
+#[allow(dead_code)] // legacy emitter helper retained until the owned-emission migration removes it
 pub(super) fn string_adapters() -> &'static str {
     "static sv4_t llg_model_assoc_get_string(const llg_assoc_t *array, llg_string_t key) {\n\
      \x20   sv4_t result = llg_assoc_get_string(array, key.data, key.len);\n\

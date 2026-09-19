@@ -1,19 +1,15 @@
 //! Whole-model assembly, storage declarations, processes, and initialization.
 
 use super::constants::{
-    c_string_literal, emit_all_known_init, emit_all_x_init, emit_all_z_init, emit_const,
-    emit_const_for_real, emit_const_for_vector, round_shortreal,
+    c_string_literal, emit_const, emit_const_for_real, emit_const_for_vector, round_shortreal,
 };
 use super::context::RCtx;
 use super::expressions::{coerce_two_state, packed_default};
-use super::statements::{
-    render_pre_fn_impl as render_pre_fn, render_stmt_impl as render_stmt, wait_any_text_in_region,
-};
+use super::statements::{render_stmt_impl as render_stmt, wait_any_text_in_region};
 use super::EmitError;
 use crate::sim::execution::{ExecutionModel, ExecutionTerminator, ScheduleRegion, TriggerPlan};
 use crate::sim::ir::{
-    IrConcurrentAssertionKind, IrFunc, IrModel, IrNetKind, IrProcessKind, IrSequence, IrType,
-    IrVpiObjectKind,
+    IrConcurrentAssertionKind, IrFunc, IrModel, IrProcessKind, IrSequence, IrType, IrVpiObjectKind,
 };
 
 mod interfaces;
@@ -26,28 +22,28 @@ use classes::{
     render_class_decls, render_virtual_dispatch_bodies, render_virtual_dispatch_prototypes,
 };
 mod assertions;
-use assertions::{
-    assertion_predicate_name, assertion_sequence_name, render_assertion_callbacks,
-    render_sampled_domain_callbacks, sampled_domain_callback_name,
-};
+use assertions::{assertion_predicate_name, assertion_sequence_name, sampled_domain_callback_name};
 mod storage;
 use storage::{render_signal_decls, render_static_local_decls};
 mod vpi;
 use vpi::{render_vpi_compile_calls, render_vpi_metadata};
 mod functions;
-use functions::{block_stmts_of, func_params, func_prototype, render_func_body};
+use functions::{block_stmts_of, func_params, func_prototype};
 mod dpi;
 use dpi::{dpi_external_prototype, dpi_helpers, internal_return_type, render_dpi_thunk};
 mod processes;
-use processes::{process_runtime_name, render_process_fn};
+use processes::process_runtime_name;
 mod initialization;
-use initialization::render_main;
 
 /// The recursion depth guard shared by emitted functions and DPI thunks.
 const LLG_MAX_FUNC_DEPTH: u32 = 256;
 
-pub(super) fn owned_func_params(function: &IrFunc) -> String { func_params(function) }
-pub(super) fn owned_dpi_thunk(function: &IrFunc) -> Result<String, String> { render_dpi_thunk(function) }
+pub(super) fn owned_func_params(function: &IrFunc) -> String {
+    func_params(function)
+}
+pub(super) fn owned_dpi_thunk(function: &IrFunc) -> Result<String, String> {
+    render_dpi_thunk(function)
+}
 
 // ── Model rendering ───────────────────────────────────────────────────────────
 
@@ -76,7 +72,10 @@ fn render_model(execution: &ExecutionModel) -> Result<String, String> {
         "// llg-generated C11 model for design `{}`\n",
         model.design_name
     );
-    out.push_str(&format!("#define LLG_MODEL_VALUE_ABI {}\n", super::VALUE_ABI_VERSION));
+    out.push_str(&format!(
+        "#define LLG_MODEL_VALUE_ABI {}\n",
+        super::VALUE_ABI_VERSION
+    ));
     out.push_str(&format!(
         "#define LLG_MODEL_STACK_VALUES {}\n",
         super::stack::execution_stack_value_slots(execution)?
@@ -179,7 +178,9 @@ fn render_model(execution: &ExecutionModel) -> Result<String, String> {
         out.push_str(dpi_helpers());
     }
     for f in &model.funcs {
-        if super::owned::model::inline_event_template(f) { continue; }
+        if super::owned::model::inline_event_template(f) {
+            continue;
+        }
         out.push_str(&func_prototype(f)?);
     }
     render_virtual_dispatch_prototypes(model, &mut out);
@@ -192,7 +193,9 @@ fn render_model(execution: &ExecutionModel) -> Result<String, String> {
         activation_label: None,
     };
     for f in &model.funcs {
-        if super::owned::model::inline_event_template(f) { continue; }
+        if super::owned::model::inline_event_template(f) {
+            continue;
+        }
         let fctx = RCtx {
             model,
             func: Some(f),

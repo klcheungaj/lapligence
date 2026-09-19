@@ -44,6 +44,7 @@ pub(in super::super) fn wait_any_text(ctx: &RCtx<'_>, sens: &[IrDependency]) -> 
 /// Render a typed sensitivity wait whose continuation is explicitly assigned
 /// to a different execution region. Body-controlled waits retain the runtime's
 /// current-region inference; only executable signal terminators use this path.
+#[allow(dead_code)] // legacy event helper retained until the owned-emission migration removes it
 pub(in super::super) fn wait_any_text_in_region(
     ctx: &RCtx<'_>,
     sens: &[IrDependency],

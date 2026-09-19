@@ -108,6 +108,7 @@ pub(crate) fn emit_const(c: &IrConst) -> String {
 /// real payloads go through `sv4_from_real` (at most 64 bits), everything else
 /// through the value-preserving `sv4_cast` keyed on the constant's own
 /// signedness (LRM §10.7 assignment padding).
+#[allow(dead_code)] // legacy emitter helper retained until the owned-emission migration removes it
 pub(crate) fn emit_const_for_vector(
     c: &IrConst,
     width: u32,
@@ -124,6 +125,7 @@ pub(crate) fn emit_const_for_vector(
     })
 }
 
+#[allow(dead_code)] // legacy emitter helper retained until the owned-emission migration removes it
 pub(crate) fn emit_const_for_real(c: &IrConst) -> String {
     match c.real {
         Some(value) => emit_real_literal(value),
@@ -144,6 +146,7 @@ pub(crate) fn round_shortreal(code: String, shortreal: bool) -> String {
 /// mirroring the runtime's `sv4_x(w, 0)`: X bits fill the width's limbs,
 /// limbs beyond the width are zero.  A brace initializer (not a function
 /// call) so the generated C stays a valid static initializer.
+#[allow(dead_code)] // legacy emitter helper retained until the owned-emission migration removes it
 pub(crate) fn emit_all_x_init(width: u32, signed: bool) -> String {
     let nlimbs = (width as usize).div_ceil(64);
     let mut xz = Vec::with_capacity(nlimbs);
@@ -172,6 +175,7 @@ pub(crate) fn emit_all_x_init(width: u32, signed: bool) -> String {
 /// All-Z constant expression for a `w`-bit global initializer, mirroring
 /// [`emit_all_x_init`] (the `SV4_Z` macro clamps to 64 bits, so wide nets use
 /// this brace initializer to stay a valid static initializer).
+#[allow(dead_code)] // legacy emitter helper retained until the owned-emission migration removes it
 pub(crate) fn emit_all_z_init(width: u32) -> String {
     let nlimbs = (width as usize).div_ceil(64);
     let mut zz = Vec::with_capacity(nlimbs);
@@ -195,6 +199,7 @@ pub(crate) fn emit_all_z_init(width: u32) -> String {
 }
 
 /// All-zero/all-one known value for a file-scope resolved-net initializer.
+#[allow(dead_code)] // legacy emitter helper retained until the owned-emission migration removes it
 pub(crate) fn emit_all_known_init(width: u32, signed: bool, ones: bool) -> String {
     let nlimbs = (width as usize).div_ceil(64);
     let mut bits = Vec::with_capacity(nlimbs);

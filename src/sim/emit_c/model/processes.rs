@@ -2,6 +2,7 @@
 
 use super::*;
 
+#[allow(dead_code)] // legacy model renderer superseded by owned::model
 fn process_origin_location(p: &crate::sim::ir::IrProcess) -> String {
     match p.origin() {
         crate::sim::semantic::Origin::Source {
@@ -13,10 +14,12 @@ fn process_origin_location(p: &crate::sim::ir::IrProcess) -> String {
     }
 }
 
+#[allow(dead_code)] // legacy model renderer superseded by owned::model
 pub(super) fn process_runtime_name(p: &crate::sim::ir::IrProcess) -> String {
     format!("{} at {}", p.label(), process_origin_location(p))
 }
 
+#[allow(dead_code)] // legacy model renderer superseded by owned::model
 pub(super) fn render_process_fn(
     ctx: &RCtx<'_>,
     p: &crate::sim::ir::IrProcess,

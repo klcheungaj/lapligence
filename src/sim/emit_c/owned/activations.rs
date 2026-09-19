@@ -11,10 +11,17 @@ impl Frame<'_, '_> {
         // The exit belongs to the wrapper, not its nested body: cancellation
         // must drop all body locals, including scopes created by a pending call.
         self.begin_block(&[IrStmt::Label(exit.to_owned())]);
-        let handle = self.scalar("llg_activation_t*", format!(
-            "llg_activation_enter({}u, {}u)", target.declaration(), target.instance()));
+        let handle = self.scalar(
+            "llg_activation_t*",
+            format!(
+                "llg_activation_enter({}u, {}u)",
+                target.declaration(),
+                target.instance()
+            ),
+        );
         self.activations.push(Activation {
-            exit: exit.to_owned(), handle: handle.clone(),
+            exit: exit.to_owned(),
+            handle: handle.clone(),
             lexical_depth: self.labels.len() - 1,
         });
         self.block(body)?;
@@ -40,17 +47,30 @@ impl Frame<'_, '_> {
     }
 
     pub(super) fn leave_activations(&mut self, target_depth: Option<usize>) {
-        let handles = self.activations.iter().rev()
-            .take_while(|activation| target_depth.map_or(true, |depth| activation.lexical_depth > depth))
-            .map(|activation| activation.handle.clone()).collect::<Vec<_>>();
-        for handle in handles { self.line(format!("llg_activation_exit({handle});")); }
+        let handles = self
+            .activations
+            .iter()
+            .rev()
+            .take_while(|activation| {
+                target_depth.is_none_or(|depth| activation.lexical_depth > depth)
+            })
+            .map(|activation| activation.handle.clone())
+            .collect::<Vec<_>>();
+        for handle in handles {
+            self.line(format!("llg_activation_exit({handle});"));
+        }
     }
 
     pub(super) fn fork_group(&mut self, kind: &str, target: Option<IrActivationTarget>) -> String {
         let initializer = if let Some(target) = target {
-            format!("llg_fork_group_new_target({kind}, {}u, {}u)",
-                target.declaration(), target.instance())
-        } else { format!("llg_fork_group_new({kind})") };
+            format!(
+                "llg_fork_group_new_target({kind}, {}u, {}u)",
+                target.declaration(),
+                target.instance()
+            )
+        } else {
+            format!("llg_fork_group_new({kind})")
+        };
         self.scalar("llg_fork_group_t*", initializer)
     }
 }

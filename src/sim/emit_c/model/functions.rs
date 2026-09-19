@@ -89,6 +89,7 @@ pub(super) fn func_prototype(f: &IrFunc) -> Result<String, String> {
     ))
 }
 
+#[allow(dead_code)] // legacy model renderer superseded by owned::model
 pub(super) fn render_func_body(ctx: &RCtx<'_>, f: &IrFunc) -> Result<String, String> {
     if f.dpi_import().is_some() {
         return render_dpi_thunk(f);
@@ -206,6 +207,7 @@ pub(super) fn render_func_body(ctx: &RCtx<'_>, f: &IrFunc) -> Result<String, Str
     Ok(out)
 }
 
+#[allow(dead_code)] // legacy model renderer superseded by owned::model
 pub(super) fn block_stmts_of(
     ctx: &RCtx<'_>,
     stmts: &[crate::sim::ir::IrStmt],

@@ -2,10 +2,12 @@
 
 use super::*;
 
+#[allow(dead_code)] // legacy model renderer superseded by owned::assertions
 pub(super) fn assertion_predicate_name(index: usize, role: &str) -> String {
     format!("llg_assertion_{index}_{role}")
 }
 
+#[allow(dead_code)] // legacy model renderer superseded by owned::assertions
 fn render_assertion_predicate(
     model: &IrModel,
     index: usize,
@@ -33,22 +35,27 @@ fn render_assertion_predicate(
     ))
 }
 
+#[allow(dead_code)] // legacy model renderer superseded by owned::assertions
 pub(super) fn assertion_sequence_name(index: usize, role: &str) -> String {
     format!("llg_assertion_sequence_{index}_{role}")
 }
 
+#[allow(dead_code)] // legacy model renderer superseded by owned::assertions
 fn assertion_sequence_atom_name(index: usize, role: &str) -> String {
     format!("llg_assertion_sequence_{index}_{role}_atom")
 }
 
+#[allow(dead_code)] // legacy model renderer superseded by owned::assertions
 fn assertion_sequence_match_name(index: usize, role: &str) -> String {
     format!("llg_assertion_sequence_{index}_{role}_match")
 }
 
+#[allow(dead_code)] // legacy model renderer superseded by owned::assertions
 fn assertion_sequence_init_name(index: usize, role: &str) -> String {
     format!("llg_assertion_sequence_{index}_{role}_init")
 }
 
+#[allow(dead_code)] // legacy model renderer superseded by owned::assertions
 fn render_assertion_sequence(
     model: &IrModel,
     index: usize,
@@ -223,10 +230,12 @@ fn render_assertion_sequence(
     Ok(out)
 }
 
+#[allow(dead_code)] // legacy model renderer superseded by owned::assertions
 pub(super) fn sampled_domain_callback_name(index: usize, role: &str) -> String {
     format!("llg_sampled_domain_{index}_{role}")
 }
 
+#[allow(dead_code)] // legacy model renderer superseded by owned::assertions
 pub(super) fn render_sampled_domain_callbacks(model: &IrModel) -> Result<String, String> {
     let mut out = String::new();
     for (index, domain) in model.sampled_domains().iter().enumerate() {
@@ -262,6 +271,7 @@ pub(super) fn render_sampled_domain_callbacks(model: &IrModel) -> Result<String,
     Ok(out)
 }
 
+#[allow(dead_code)] // legacy model renderer superseded by owned::assertions
 pub(super) fn render_assertion_callbacks(model: &IrModel) -> Result<String, String> {
     let mut out = String::new();
     for (index, assertion) in model.assertions().iter().enumerate() {

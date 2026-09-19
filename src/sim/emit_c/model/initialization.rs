@@ -2,6 +2,7 @@
 
 use super::*;
 
+#[allow(dead_code)] // legacy model renderer superseded by owned::model
 pub(super) fn render_main(execution: &ExecutionModel) -> Result<String, String> {
     use crate::sim::ir::IrInitStep;
     let model = execution.ir();

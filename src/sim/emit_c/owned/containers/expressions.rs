@@ -1,6 +1,11 @@
 //! Container calls consume only explicitly prepared operand snapshots.
 use super::*;
-pub(super) fn render(frame: &mut Frame<'_, '_>, operation: &IrContainerExpr, owners: &mut Vec<Value>, strings: &mut Vec<NativeValue>) -> Result<String, String> {
+pub(super) fn render(
+    frame: &mut Frame<'_, '_>,
+    operation: &IrContainerExpr,
+    owners: &mut Vec<Value>,
+    strings: &mut Vec<NativeValue>,
+) -> Result<String, String> {
     let ctx = frame.ctx;
     Ok(match operation {
         IrContainerExpr::Stream {
@@ -219,7 +224,7 @@ pub(super) fn render(frame: &mut Frame<'_, '_>, operation: &IrContainerExpr, own
                 "llg_owned_assoc_value_traverse_string"
             },
             name(ctx, *container),
-            format!("&{}", ctx.model.objects[*key_object].c_name),
+            format_args!("&{}", ctx.model.objects[*key_object].c_name),
             match direction {
                 IrAssocTraversal::First => 0,
                 IrAssocTraversal::Last => 1,
