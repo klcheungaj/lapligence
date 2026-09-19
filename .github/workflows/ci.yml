@@ -42,6 +42,11 @@ jobs:
           # build.rs compiles vendor/ directly; required for cargo check too.
           submodules: recursive
 
+      - name: Check tracked simulation fixture inputs
+        run: |
+          python3 scripts/check_sim_fixture_integrity.py --tracked
+          python3 -m unittest discover -s scripts -p test_sim_fixture_integrity.py
+
       - uses: dtolnay/rust-toolchain@1.98.0
         with:
           components: rustfmt, clippy

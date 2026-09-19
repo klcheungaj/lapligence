@@ -119,6 +119,21 @@ diagnostics. Keep the existing per-suite frontend, skip, timeout, and sanitizer 
   specification-derived output in both optimizer modes through `llg` / `llg --no-opt`, rejecting
   unexpected lowering warnings. Its HDL lives in `fixtures/sim/type_conformance/`. The human
   coverage map and limits are in [readme.md](readme.md).
+- `sim_group1_formal_repairs.rs` checks activation-relative packed members,
+  private input mutation, recursion, selected output/inout copy-out addresses,
+  whole packed-variable references, and const/NBA negatives in both optimizer modes.
+- `sim_group1_repairs.rs` carries the other Group 1
+  review regressions. Use the checked-in fixtures; do not replace them with parser-only
+  checks or generated substring assertions.
+- The original Group 1 delta advertised six extra closure/constant/control/composition/
+  capacity suites which were not delivered. Those unavailable suites are not part of
+  the current test inventory and their supposed executions must not be counted.
+  Recreated inputs for the delivered topic suites live in `fixtures/sim/feature_completion/`
+  and the existing topic directories. They are replacement witnesses, not recovered originals.
+- Before publishing a patch, run `python3 scripts/check_sim_fixture_integrity.py --tracked`
+  from the repository root. It checks the static CLI, per-topic helper and datatype-macro
+  references in Git's index, including additions; it cannot discover arbitrary dynamically
+  constructed Rust paths. Extend its recognizers when adding a new fixture harness.
 - `sim_partial_features.rs` covers expression/default/ref ports, trigger-time event
   qualification, expression/LSB edges, constant waits, delayed and selected NBAs, runtime
   procedural delays, real blocking captures, declared packed ranges and array indexed
@@ -224,7 +239,8 @@ diagnostics. Keep the existing per-suite frontend, skip, timeout, and sanitizer 
 - `runtime_random.rs` compiles the scheduler-independent stream service and checks
   hierarchy-stable child derivation, state replay, and inclusive range endpoints.
   `sim_net_resolution.rs` covers per-site wired drivers, aliases, repeated updates, optimizer
-  parity, driver limits and unsupported-context rejection. `sim_net_defaults.rs` covers implicit
+  parity, driver/alias registry growth past the retired ceilings and unsupported-context
+  rejection. `sim_net_defaults.rs` covers implicit
   pull/supply ordering, initial defaults, driver release and unchanged resolved-value
   notifications.
 - `model_tests.rs` covers the explorer-facing model projection: formal ports are not duplicated

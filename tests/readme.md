@@ -19,7 +19,35 @@
 - Use focused in-memory sources for frontend, database and IR unit tests.
 - Run generated C under GCC ASan/UBSan; sanitizer coverage does not instrument the vendored Slang archive.
 
+### Fixture integrity before a native build
+
+Run `python3 scripts/check_sim_fixture_integrity.py --tracked` after staging every
+new fixture. The gate checks the known static harness shapes, not arbitrary Rust
+expressions. Its unit tests run with
+`python3 -m unittest discover -s scripts -p test_sim_fixture_integrity.py`.
+CI runs both before the native build. Missing files and files absent from Git's
+index are errors; do not silently skip their tests.
+
+The Group 1 repair supplies 51 newly authored replacements for missing HDL
+inputs in the delivered topic suites. They preserve those suites' independent
+value/diagnostic expectations, except where this repair deliberately converts
+R14's legal packed-input/ref rejection cases into positive tests. The original
+missing contents and six advertised-but-absent suites were not recovered.
+Their historical pass counts are not part of the current acceptance record.
+
 ### Coverage
+
+- `sim_group1_formal_repairs`: R09/R14 packed activation isolation, recursion,
+  callbacks, member state conversion, immediate references, captured copy-out
+  addresses and preserved const/NBA negatives. `sim_edition` exercises the shared
+  execution/navigation edition policy, macro/directive context, standard timing
+  checks and explicit registered extensions. The new tests are unexecuted until
+  run in the pinned native/Rust environment.
+
+- `sim_group1_repairs`: file-backed callback, instance-index, selected aggregate
+  and fixed-streaming regressions for the first Group 1 review repair batch.
+  Runs both optimizer modes and uses its own `group1_repairs` fixture directory. Added tests are not acceptance evidence
+  until executed on the target toolchain.
 
 - [Datatype/net matrices](fixtures/sim/type_conformance/readme.md): mixed operators, resolution truth tables, casts, two/four-state storage and X/Z-to-zero conversion.
 - [Feature regressions](fixtures/sim/partial_features/readme.md): ports, events, timing, packed selections, real sensitivity/math, time formatting, immediate and deferred four-state assertions, gated host commands, and resumable `$stop` control.
@@ -74,7 +102,7 @@
 - Passing fixtures establish exercised behavior, not complete IEEE conformance.
 - Wide probes cover representative operations at 65,536 and 1,048,575 bits; they do not exhaust every value or context.
 - Capacity tests check rejection at 1,048,576 bits; fixed-size atoms retain their specified widths.
-- Driver-boundary tests cover the 16-site resolved-net limit.
+- Driver-boundary tests exercise registry growth past the retired per-net ceilings.
 - Two-state net declarations are language errors (§1800-2009 6.7); two-state conversion tests apply to variables and expressions.
 - Platform build configuration alone is not evidence of successful native execution.
 - Feature restrictions and implementation limits are maintained in [sim_features.md](../docs/sim_features.md).
