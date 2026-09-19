@@ -8,6 +8,15 @@ fn event_callbacks_reject_function_side_effects_before_emission() {
 }
 
 #[test]
+fn effectful_event_helpers_keep_a_distinct_impure_rejection() {
+    super::sim_cli::reject_case(
+        "feature_completion/g1_06",
+        "effects_impure_helper",
+        "function body writes external or persistent storage",
+    );
+}
+
+#[test]
 fn vector_edges_use_only_the_least_significant_bit() {
     run_case("event_vector_lsb", "3 3 1\n");
 }

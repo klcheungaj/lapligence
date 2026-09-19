@@ -131,20 +131,7 @@ impl<'a> Codegen<'a> {
         let Some(function) = function else {
             return false;
         };
-        let target = match self.kind(lhs) {
-            NodeKind::Expr(ExprKind::Ref { target }) => *target,
-            NodeKind::Expr(
-                ExprKind::BitSelect { base, .. }
-                | ExprKind::PartSelect { base, .. }
-                | ExprKind::IndexedPartSelect { base, .. }
-                | ExprKind::ArraySelect { base, .. },
-            ) => match self.kind(*base) {
-                NodeKind::Expr(ExprKind::Ref { target }) => *target,
-                _ => None,
-            },
-            NodeKind::Var { .. } => Some(lhs),
-            _ => None,
-        };
+        let target = self.assignment_storage_root(lhs);
         let Some(target) = target else {
             return false;
         };
@@ -350,19 +337,7 @@ impl<'a> Codegen<'a> {
         }) = self.kind(node)
         {
             if let Some(lhs) = self.node(node).children.first().copied() {
-                let target = match self.kind(lhs) {
-                    NodeKind::Expr(ExprKind::Ref { target }) => *target,
-                    NodeKind::Expr(ExprKind::BitSelect { base, .. })
-                    | NodeKind::Expr(ExprKind::PartSelect { base, .. })
-                    | NodeKind::Expr(ExprKind::IndexedPartSelect { base, .. })
-                    | NodeKind::Expr(ExprKind::ArraySelect { base, .. }) => {
-                        match self.kind(*base) {
-                            NodeKind::Expr(ExprKind::Ref { target }) => *target,
-                            _ => Some(*base),
-                        }
-                    }
-                    _ => None,
-                };
+                let target = self.assignment_storage_root(lhs);
                 let declaration = target.or_else(|| {
                     let name = self
                         .node(lhs)
@@ -654,20 +629,7 @@ impl<'a> Codegen<'a> {
         if !self.function_is_automatic(function) {
             return None;
         }
-        let target = match self.kind(node) {
-            NodeKind::Var { .. } => node,
-            NodeKind::Expr(ExprKind::Ref { target }) => target.unwrap_or(node),
-            NodeKind::Expr(
-                ExprKind::BitSelect { base, .. }
-                | ExprKind::PartSelect { base, .. }
-                | ExprKind::IndexedPartSelect { base, .. }
-                | ExprKind::ArraySelect { base, .. },
-            ) => match self.kind(*base) {
-                NodeKind::Expr(ExprKind::Ref { target }) => target.unwrap_or(*base),
-                _ => *base,
-            },
-            _ => return None,
-        };
+        let target = self.assignment_storage_root(node)?;
         let target = self.canonical_func_target(target).unwrap_or(target);
         if function.persistent.contains_key(&target) {
             return None;
@@ -677,6 +639,28 @@ impl<'a> Codegen<'a> {
             || function.arg_write.contains_key(&target)
             || function.ret_node == Some(target))
         .then_some(target)
+    }
+
+    /// Return the storage declaration before any packed members/selectors.
+    /// Walking to the root keeps callback purity and automatic-lifetime checks
+    /// independent of how many member or indexing nodes the frontend emits.
+    fn assignment_storage_root(&self, node: NodeId) -> Option<NodeId> {
+        match self.kind(node) {
+            NodeKind::Var { .. } | NodeKind::Array { .. } | NodeKind::FuncArg { .. }
+            | NodeKind::FuncTask { .. } => Some(node),
+            NodeKind::Expr(ExprKind::Ref { target }) => *target,
+            NodeKind::Expr(
+                ExprKind::BitSelect { base, .. }
+                | ExprKind::PartSelect { base, .. }
+                | ExprKind::IndexedPartSelect { base, .. }
+                | ExprKind::ArraySelect { base, .. },
+            ) => self.assignment_storage_root(*base),
+            NodeKind::Expr(ExprKind::HierPath { refs, .. }) => refs.iter().flatten()
+                .copied().find(|target| matches!(self.kind(*target),
+                    NodeKind::Var { .. } | NodeKind::Array { .. }
+                    | NodeKind::FuncArg { .. } | NodeKind::FuncTask { .. })),
+            _ => None,
+        }
     }
 
     /// Normalize a Slang instantiated subroutine declaration identity to the

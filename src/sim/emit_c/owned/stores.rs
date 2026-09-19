@@ -171,6 +171,54 @@ impl<'a, 'm> Frame<'a, 'm> {
         if nba && binding.width == 0 && binding.automatic {
             return Err(pending("queued writes to automatic real cells"));
         }
+        // A read-only evaluator may only write its own automatic frame. These
+        // writes are private calculations, so they copy directly instead of
+        // passing through `llg_ba`, which notifies waiters and is suppressed in
+        // read-only scheduling regions.
+        if self.read_only_callback {
+            if !binding.automatic
+                || nba
+                || target.reference.is_some()
+                || target.net.is_some()
+                || target.sequence_local
+            {
+                return Err(pending(
+                    "side-effect-capable evaluator expressions: callback helper writes visible state",
+                ));
+            }
+            let value = self.convert(
+                value,
+                target.width,
+                target.signed,
+                binding.two_state,
+                binding.shortreal,
+            );
+            match (&target.selection, target.width) {
+                (None, 0) => self.line(format!(
+                    "if ({}) {{ *({}) = {}; }}",
+                    target.valid, binding.address, value.code
+                )),
+                (None, _) => self.line(format!(
+                    "if ({}) {{ sv4_move({}, &{}); }}",
+                    target.valid, binding.address, value.code
+                )),
+                (Some(selection), _) => {
+                    let updated = self.value(
+                        format!("sv4_clone({})", binding.address),
+                        binding.width,
+                        binding.signed,
+                    );
+                    self.set_selected(selection, &updated.code, &value.code);
+                    self.line(format!(
+                        "if ({}) {{ sv4_move({}, &{}); }}",
+                        target.valid, binding.address, updated.code
+                    ));
+                    self.discard(updated);
+                }
+            }
+            self.discard(value);
+            return Ok(());
+        }
         let value = self.convert(value, target.width, target.signed, binding.two_state, binding.shortreal);
         self.line(format!("if ({}) {{", target.valid));
         if let Some(reference) = &target.reference {

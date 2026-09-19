@@ -9,7 +9,11 @@ impl Frame<'_, '_> {
         if self.read_only_callback {
             match &expr.kind {
                 IrExprKind::CallFn(call) => return self.pure_callback_call(call),
-                IrExprKind::Mutation(_) => return Err(pending("side-effect-capable evaluator expressions")),
+                IrExprKind::Mutation(mutation)
+                    if self.formal_overrides.is_empty()
+                        || !super::pure_calls::private_callback_target(&mutation.lhs) => {
+                    return Err(pending("side-effect-capable evaluator expressions"))
+                }
                 _ => {}
             }
         }

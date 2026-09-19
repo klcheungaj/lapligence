@@ -5,6 +5,7 @@ use crate::sim::execution::ExecutionModel;
 mod toolchain;
 mod nextest_regressions;
 mod native_values;
+mod group1_repairs;
 mod native_boundaries;
 mod review_regressions;
 
