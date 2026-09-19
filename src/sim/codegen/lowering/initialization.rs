@@ -234,6 +234,7 @@ impl<'a> Codegen<'a> {
         initialization: &IrInitialization,
     ) -> Result<IrLhs, String> {
         match &initialization.target {
+            IrInitTarget::Fixed(lhs) => Ok(*lhs.clone()),
             IrInitTarget::Signal(signal) => {
                 if *signal >= model.signals.len() {
                     return Err(format!(

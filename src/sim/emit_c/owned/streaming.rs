@@ -1,49 +1,90 @@
-//! Capture every streaming destination before publishing any write. The RHS and
-//! unpacked pieces remain registered owners if a selector calls or suspends.
+//! Capture fixed-value copyouts and stream an owned RHS in language order.
 use super::stores::Target;
 use super::*;
 
+pub(super) enum CapturedAssignment {
+    Target(Box<Target>),
+    Stream {
+        parts: Vec<(CapturedAssignment, u32)>,
+        width: u32,
+        slice: u32,
+        direction: IrStreamDirection,
+    },
+}
+
 impl Frame<'_, '_> {
-    pub(super) fn prepare_assignment(
-        &mut self,
-        lhs: &IrLhs,
-        value: Value,
-    ) -> Result<Vec<(Target, Value)>, String> {
-        let IrLhs::Stream {
+    pub(super) fn capture_assignment(&mut self, lhs: &IrLhs) -> Result<CapturedAssignment, String> {
+        if let IrLhs::Stream {
             parts,
             width,
             slice,
             direction,
         } = lhs
-        else {
-            return Ok(vec![(self.target(lhs)?, value)]);
+        {
+            let parts = parts
+                .iter()
+                .map(|(part, width)| Ok((self.capture_assignment(part)?, *width)))
+                .collect::<Result<Vec<_>, String>>()?;
+            Ok(CapturedAssignment::Stream {
+                parts,
+                width: *width,
+                slice: *slice,
+                direction: *direction,
+            })
+        } else {
+            Ok(CapturedAssignment::Target(Box::new(self.target(lhs)?)))
+        }
+    }
+
+    pub(super) fn prepare_assignment(
+        &mut self,
+        lhs: &IrLhs,
+        value: Value,
+    ) -> Result<Vec<(Target, Value)>, String> {
+        let target = self.capture_assignment(lhs)?;
+        self.prepare_captured_assignment(target, value)
+    }
+
+    pub(super) fn prepare_captured_assignment(
+        &mut self,
+        target: CapturedAssignment,
+        value: Value,
+    ) -> Result<Vec<(Target, Value)>, String> {
+        let (parts, width, slice, direction) = match target {
+            CapturedAssignment::Target(target) => return Ok(vec![(*target, value)]),
+            CapturedAssignment::Stream {
+                parts,
+                width,
+                slice,
+                direction,
+            } => (parts, width, slice, direction),
         };
-        let mut remaining = *width;
-        if *width == 0 || *slice == 0 || parts.is_empty() {
+        if width == 0 || slice == 0 || parts.is_empty() {
             return Err("invalid streaming assignment shape".to_owned());
         }
-        let value = self.convert(value, *width, false, false, false);
+        let mut remaining = width;
+        let value = self.convert(value, width, false, false, false);
         let code = format!(
             "sv4_unstream({}, {slice}, {})",
             value.code,
-            u8::from(*direction == IrStreamDirection::RightToLeft)
+            u8::from(direction == IrStreamDirection::RightToLeft)
         );
-        let value = self.replace(value, code, *width, false);
+        let value = self.replace(value, code, width, false);
         let mut writes = Vec::new();
         for (part, part_width) in parts {
             remaining = remaining
-                .checked_sub(*part_width)
-                .ok_or_else(|| "streaming target width overflow".to_owned())?;
-            if *part_width == 0 {
+                .checked_sub(part_width)
+                .ok_or("streaming target width overflow")?;
+            if part_width == 0 {
                 return Err("empty streaming target part".to_owned());
             }
             let high = remaining + part_width - 1;
             let piece = self.value(
                 format!("sv4_part_select({}, {high}ULL, {remaining}ULL)", value.code),
-                *part_width,
+                part_width,
                 false,
             );
-            writes.extend(self.prepare_assignment(part, piece)?);
+            writes.extend(self.prepare_captured_assignment(part, piece)?);
         }
         if remaining != 0 {
             return Err("streaming target widths do not cover the source".to_owned());
@@ -54,8 +95,8 @@ impl Frame<'_, '_> {
 }
 
 impl Frame<'_, '_> {
-    /// Materialize the complete source and every selector/address before the
-    /// first write. Container commits cannot change a later target expression.
+    /// Snapshot the RHS, then evaluate and publish components from left to right.
+    /// A with-selector can read a value unpacked by an earlier component.
     pub(super) fn stream_assignment(
         &mut self,
         source: &IrExpr,
@@ -110,8 +151,8 @@ impl Frame<'_, '_> {
         // The descriptor's width is authoritative for a resizable source.
         let cursor = self.scalar("int64_t", format!("(int64_t){}.width", value.code));
         let mut owners = Vec::new();
-        let mut writes = Vec::new();
         for (position, target) in targets.iter().enumerate() {
+            let mut writes = Vec::new();
             match target {
                 IrStreamTarget::Packed { lhs, width } => {
                     self.line(format!("llg_stream_require_bits({cursor}, {width});"));
@@ -236,90 +277,89 @@ impl Frame<'_, '_> {
                     });
                 }
             }
-        }
-        self.discard(value);
-        for write in writes {
-            match write {
-                Write::Packed(target, value) => {
-                    self.store(&target, value, false, "0")?;
-                    self.release_target(target);
-                }
-                Write::Container {
-                    name,
-                    function,
-                    value,
-                    kind,
-                    first,
-                    second,
-                    width,
-                } => {
-                    // An unselected empty segment empties the destination. A
-                    // zero-width explicit selection is inert.
-                    self.line(format!("if ({width} || {kind} == 0) {function}(&{name}, {}, 1, 0, {kind}, {first}, {second});", value.code));
-                    self.discard(value);
-                }
-                Write::FixedSelector {
-                    array,
-                    segment,
-                    left,
-                    right,
-                    count,
-                    segment_width,
-                    element_width,
-                    in_bounds,
-                } => {
-                    // SV 11.4.14.4 requires the valid portion of an out-of-
-                    // range fixed destination to be unpacked as well as an
-                    // error. Mark failure before stores can invoke callbacks;
-                    // array-element stores already guard invalid indices.
-                    self.line(format!("if (!{in_bounds}) {{"));
-                    self.line("fputs(\"llg: fixed streaming target selector is unknown, empty, or outside declared bounds\\n\", stderr);");
-                    self.line("llg_rt_mark_failed();");
-                    self.line("}");
-                    let array_index = array;
-                    let offset = self.name("fs_offset");
-                    self.line(format!(
-                        "for (size_t {offset} = 0; {offset} < {count}; ++{offset}) {{"
-                    ));
-                    // This is an owning packed value, not a C scalar. Keep it
-                    // in the frame's registered temporary slots so cancellation
-                    // also releases the original (the captured address clones it).
-                    let index = self.value(
-                        format!(
+            for write in writes {
+                match write {
+                    Write::Packed(target, value) => {
+                        self.store(&target, value, false, "0")?;
+                        self.release_target(target);
+                    }
+                    Write::Container {
+                        name,
+                        function,
+                        value,
+                        kind,
+                        first,
+                        second,
+                        width,
+                    } => {
+                        // An unselected empty segment empties the destination. A
+                        // zero-width explicit selection is inert.
+                        self.line(format!("if ({width} || {kind} == 0) {function}(&{name}, {}, 1, 0, {kind}, {first}, {second});", value.code));
+                        self.discard(value);
+                    }
+                    Write::FixedSelector {
+                        array,
+                        segment,
+                        left,
+                        right,
+                        count,
+                        segment_width,
+                        element_width,
+                        in_bounds,
+                    } => {
+                        // SV 11.4.14.4 requires the valid portion of an out-of-
+                        // range fixed destination to be unpacked as well as an
+                        // error. Mark failure before stores can invoke callbacks;
+                        // array-element stores already guard invalid indices.
+                        self.line(format!("if (!{in_bounds}) {{"));
+                        self.line("fputs(\"llg: fixed streaming target selector is unknown, empty, or outside declared bounds\\n\", stderr);");
+                        self.line("llg_rt_mark_failed();");
+                        self.line("}");
+                        let array_index = array;
+                        let offset = self.name("fs_offset");
+                        self.line(format!(
+                            "for (size_t {offset} = 0; {offset} < {count}; ++{offset}) {{"
+                        ));
+                        // This is an owning packed value, not a C scalar. Keep it
+                        // in the frame's registered temporary slots so cancellation
+                        // also releases the original (the captured address clones it).
+                        let index = self.value(
+                            format!(
                             "sv4_from_i64(llg_fixed_stream_index_at({left}, {right}, {offset}), 64)"
                         ),
-                        64,
-                        true,
-                    );
-                    let index_name = self.name("fs_index");
-                    self.bindings
-                        .last_mut()
-                        .expect("frame always has a binding scope")
-                        .insert(
-                            index_name.clone(),
-                            Binding {
-                                address: format!("&{}", index.code),
-                                width: 64,
-                                signed: true,
-                                two_state: true,
-                                shortreal: false,
-                                automatic: true,
-                            },
-                        );
-                    let lhs = IrLhs::ArrayElem {
-                        arr: array_index,
-                        indices: vec![IrExpr::new(
-                            IrExprKind::LocalRead(index_name.clone()),
                             64,
                             true,
-                            None,
-                        )],
-                        elem_sel: IrElemSel::Whole,
-                    };
-                    let target = self.target(&lhs)?;
-                    let unit_high =
-                        format!("((int64_t){segment_width} - (int64_t){offset} * {element_width})");
-                    let piece = self.value(
+                        );
+                        let index_name = self.name("fs_index");
+                        self.bindings
+                            .last_mut()
+                            .expect("frame always has a binding scope")
+                            .insert(
+                                index_name.clone(),
+                                Binding {
+                                    address: format!("&{}", index.code),
+                                    width: 64,
+                                    signed: true,
+                                    two_state: true,
+                                    shortreal: false,
+                                    automatic: true,
+                                },
+                            );
+                        let lhs = IrLhs::ArrayElem {
+                            arr: array_index,
+                            indices: vec![IrExpr::new(
+                                IrExprKind::LocalRead(index_name.clone()),
+                                64,
+                                true,
+                                None,
+                            )],
+                            elem_sel: IrElemSel::Whole,
+                        };
+                        let target = self.target(&lhs)?;
+                        let unit_high = format!(
+                            "((int64_t){segment_width} - (int64_t){offset} * {element_width})"
+                        );
+                        let piece = self.value(
                         format!(
                             "sv4_part_select({}, ({unit_high}) - 1, ({unit_high}) - {element_width})",
                             segment.code
@@ -327,19 +367,21 @@ impl Frame<'_, '_> {
                         element_width,
                         false,
                     );
-                    self.store(&target, piece, false, "0")?;
-                    self.release_target(target);
-                    self.discard(index);
-                    self.bindings
-                        .last_mut()
-                        .expect("frame always has a binding scope")
-                        .remove(&index_name);
-                    self.line("}");
-                    self.discard(segment);
+                        self.store(&target, piece, false, "0")?;
+                        self.release_target(target);
+                        self.discard(index);
+                        self.bindings
+                            .last_mut()
+                            .expect("frame always has a binding scope")
+                            .remove(&index_name);
+                        self.line("}");
+                        self.discard(segment);
+                    }
                 }
+                self.cancellation_check()?;
             }
-            self.cancellation_check()?;
         }
+        self.discard(value);
         for value in owners {
             self.discard(value);
         }

@@ -69,7 +69,7 @@ const GENERATOR: &str = "Unix Makefiles";
 
 /// Minimal stand-in model source; only used where cmake must fail *before*
 /// compiling anything.
-const STUB_MODEL_C: &str = "#define LLG_MODEL_VALUE_ABI 3\nint main(void) { return 0; }\n";
+const STUB_MODEL_C: &str = "#define LLG_MODEL_VALUE_ABI 4\nint main(void) { return 0; }\n";
 
 fn fresh_dir(tag: &str) -> sim_harness::TempDir {
     sim_harness::TempDir::new(&format!("sim-cmake-{tag}")).expect("create temp dir")

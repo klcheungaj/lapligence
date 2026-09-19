@@ -45,8 +45,57 @@ static sv4_t private_value_call(sv4_t borrowed) {
     return result;
 }
 
+static void composite_views(void) {
+    sv4_t cells[2] = {sv4_from_u64(0x1234, 16, 0), sv4_from_u64(0xabcd, 16, 0)};
+    llg_ref_t high = {.base = &cells[0], .width = 16, .kind = LLG_REF_WHOLE};
+    llg_ref_t low = {.base = &cells[1], .width = 16, .kind = LLG_REF_WHOLE};
+    llg_ref_t* parts[] = {&high, &low};
+    llg_ref_composite_t composite = {.count = 2, .parts = parts};
+    llg_ref_t root = {.width = 32, .kind = LLG_REF_COMPOSITE, .retained = &composite};
+    llg_ref_view_t cross = {.parent = &root, .plan = member_plan(32, 12, 8)};
+    llg_ref_t cross_ref = {.width = 8, .kind = LLG_REF_VIEW, .retained = &cross};
+    llg_ref_view_t nested = {.parent = &cross_ref, .plan = member_plan(8, 2, 4)};
+    llg_ref_t nested_ref = {.width = 4, .kind = LLG_REF_VIEW, .retained = &nested};
+    const size_t baseline = value_test_live();
+    const size_t baseline_bytes = value_test_bytes();
+    for (unsigned i = 0; i < 4096; ++i) {
+        sv4_t input = sv4_from_u64(0xf, 4, 0);
+        llg_ref_write(&nested_ref, input);
+        sv4_destroy(&input);
+        expect_number(llg_ref_read(&root), 0x1237ebcd);
+        CHECK(value_test_live() == baseline && value_test_bytes() == baseline_bytes);
+        CHECK(value_scope_count == 0);
+    }
+    sv4_t input = sv4_from_u64(0xfeedbeef, 32, 0);
+    sv4_t mask = sv4_from_u64(0xffff, 32, 0);
+    llg_ref_write_masked(&root, input, mask);
+    CHECK(sv4_to_u64(cells[0]) == 0x1237);
+    CHECK(sv4_to_u64(cells[1]) == 0xbeef);
+    g.current_region = LLG_REGION_ACTIVE;
+    sv4_replace(&input, sv4_from_u64(3, 4, 0));
+    sv4_replace(&mask, sv4_from_u64(15, 4, 0));
+    llg_ref_nba_masked(&nested_ref, input, mask, 1);
+    nested.plan = member_plan(8, 0, 4);
+    sv4_replace(&cells[0], sv4_from_u64(0xabcd, 16, 0));
+    sv4_replace(&cells[1], sv4_from_u64(0x5678, 16, 0));
+    sv4_destroy(&input);
+    sv4_destroy(&mask);
+    ++g.now;
+    commit_nbas(LLG_REGION_NBA);
+    expect_number(llg_ref_read(&root), 0xabccd678);
+    nested_ref.two_state = 1;
+    sv4_replace(&input, sv4_x(4, 0));
+    llg_ref_write(&nested_ref, input);
+    expect_number(llg_ref_read(&nested_ref), 0);
+    sv4_destroy(&input);
+    sv4_destroy(&mask);
+    sv4_destroy(&cells[0]);
+    sv4_destroy(&cells[1]);
+}
+
 int main(void) {
     llg_rt_init();
+    composite_views();
     sv4_t original = sv4_from_u64(0x1304, 16, 0);
     const size_t baseline = value_test_live();
     const size_t baseline_bytes = value_test_bytes();

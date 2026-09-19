@@ -12,8 +12,10 @@ pub enum IrInitPhase {
 }
 
 /// Storage targeted by a typed declaration initializer.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum IrInitTarget {
+    /// A fixed composite variable whose persistent leaves initialize together.
+    Fixed(Box<IrLhs>),
     /// A model signal (module or synthesized static storage).
     Signal(usize),
     /// A persistent local belonging to one lowered function.

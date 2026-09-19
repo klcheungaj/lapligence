@@ -62,6 +62,7 @@ impl<'a> Codegen<'a> {
                     ir,
                 };
                 self.model.signals.push(IrSignal {
+                    fixed_default: None,
                     c_name: signal.global.clone(),
                     hdl_name: None,
                     ty: if real {

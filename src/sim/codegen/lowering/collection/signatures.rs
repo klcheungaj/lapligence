@@ -69,6 +69,8 @@ impl<'a> Codegen<'a> {
                                     }
                                 };
                                 Ok(IrFormal {
+                                    fixed_shape: None,
+                                    fixed_default: None,
                                     is_out: *is_out,
                                     mode,
                                     const_ref: *const_ref,
@@ -154,6 +156,7 @@ impl<'a> Codegen<'a> {
                             ir: signal,
                         };
                         self.model.signals.push(IrSignal {
+                            fixed_default: None,
                             c_name: info.global.clone(),
                             hdl_name: None,
                             ty: if info.real {
@@ -257,6 +260,7 @@ impl<'a> Codegen<'a> {
                             ir: signal,
                         };
                         self.model.signals.push(IrSignal {
+                            fixed_default: None,
                             c_name: info.global.clone(),
                             hdl_name: None,
                             ty: if width == 0 {
@@ -311,6 +315,7 @@ impl<'a> Codegen<'a> {
                 // renderers resolve through it).
                 let ir = self.model.funcs.len();
                 self.model.funcs.push(crate::sim::ir::IrFunc {
+                    return_default: None,
                     c_name,
                     automatic,
                     ret_chandle: matches!(

@@ -5,6 +5,7 @@ use super::*;
 /// One lowered signal (or real companion): a global `sv4_t`/`double`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct IrSignal {
+    pub(in crate::sim) fixed_default: Option<IrConst>,
     pub(in crate::sim) c_name: String,
     /// Original HDL hierarchy, with ASCII unit-separator bytes between path
     /// components. `None` marks synthesized storage that must not be
@@ -38,6 +39,7 @@ impl IrSignal {
         Ok(Self {
             c_name,
             hdl_name,
+            fixed_default: None,
             ty,
             net_driver,
             net_alias: Vec::new(),
@@ -194,6 +196,10 @@ impl IrNetGroup {
 /// A lowered unpacked array: flat `sv4_t` storage plus linearization data.
 #[derive(Clone, Debug, PartialEq)]
 pub struct IrArray {
+    /// Array cells that observe a canonical resolved net signal.
+    pub(in crate::sim) net_elements: Vec<(u64, usize)>,
+    /// Typed default for a fixed aggregate element, before declaration initialization.
+    pub(in crate::sim) element_default: Option<IrConst>,
     pub(in crate::sim) c_name: String,
     /// Original HDL hierarchical name (before C-identifier sanitization).
     pub(in crate::sim) hdl_name: String,
@@ -238,6 +244,8 @@ impl IrArray {
         Ok(Self {
             c_name,
             hdl_name,
+            net_elements: Vec::new(),
+            element_default: None,
             elem_width,
             signed,
             two_state: false,

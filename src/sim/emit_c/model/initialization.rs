@@ -151,6 +151,9 @@ pub(super) fn render_main(execution: &ExecutionModel) -> Result<String, String> 
                 let value =
                     super::super::expressions::render_expr_impl(&ctx, initialization.value())?.code;
                 match initialization.target() {
+                    crate::sim::ir::IrInitTarget::Fixed(_) => {
+                        return Err("fixed initializers require the owned emitter".into());
+                    }
                     crate::sim::ir::IrInitTarget::Signal(signal) => {
                         let signal = model.signal(*signal);
                         let value = match signal.ty {

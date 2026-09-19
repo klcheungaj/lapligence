@@ -256,7 +256,12 @@ impl Validator<'_> {
                             "const reference cannot bind to a writable ref formal",
                         );
                     }
-                    self.validate_ref_actual_lhs(lhs, formals, &format!("{arg_path}.lhs"))?;
+                    self.validate_ref_actual_lhs(
+                        lhs,
+                        formals,
+                        &format!("{arg_path}.lhs"),
+                        formal.const_ref,
+                    )?;
                     self.validate_expr(read, formals, &format!("{arg_path}.read"))?;
                     if read.width != *width || read.signed != *signed {
                         return self.fail(
@@ -330,11 +335,31 @@ impl Validator<'_> {
         lhs: &IrLhs,
         formals: &[IrFormal],
         path: &str,
+        allow_const: bool,
     ) -> ValidationResult {
         match lhs {
+            IrLhs::PackedSelect { target, steps, .. } => {
+                self.validate_ref_actual_lhs(
+                    target,
+                    formals,
+                    &format!("{path}.target"),
+                    allow_const,
+                )?;
+                if self.lhs_packed_width(target).is_none() {
+                    return self.fail(path, "reference view requires packed backing storage");
+                }
+                self.validate_elem_sel(&IrElemSel::PackedChain(steps.clone()), formals, path)
+            }
             IrLhs::Ref {
-                addr, width, bit, ..
+                addr,
+                width,
+                bit,
+                const_ref,
+                ..
             } => {
+                if *const_ref && !allow_const {
+                    return self.fail(path, "const reference cannot bind to a writable ref formal");
+                }
                 if bit.is_some() {
                     return self.fail(path, "packed bit selects cannot be passed by reference");
                 }

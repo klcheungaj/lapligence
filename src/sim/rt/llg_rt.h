@@ -154,6 +154,8 @@ struct llg_net_alias {
     int8_t is_signed;
     const llg_net_alias_part_t* parts;
     uint32_t n_parts;
+    /* Optional array-cell publication target; borrowed from model storage. */
+    sv4_t* publication_target;
 };
 
 void llg_net_resolve(llg_net_t* net); /* strength-aware resolution, per limb */
@@ -1221,6 +1223,10 @@ void llg_ref_scope_end(llg_ref_scope_t* scope);
 void llg_ref_scope_begin_owned(void);
 llg_ref_t* llg_ref_queue(llg_queue_t* queue, uint64_t index);
 void llg_ref_write(llg_ref_t* ref, sv4_t value);
+/* Borrow value and mask; update only the selected logical reference bits. */
+void llg_ref_write_masked(llg_ref_t* ref, sv4_t value, sv4_t mask);
+/* Capture persistent fixed leaves now; the descriptor graph may expire before commit. */
+void llg_ref_nba_masked(llg_ref_t* ref, sv4_t value, sv4_t mask, uint64_t ticks);
 // Modify one packed bit through the original descriptor, preserving alias
 // notification and retained queue-element identity. Invalid indices no-op.
 void llg_ref_write_bit(llg_ref_t* ref, uint64_t index, sv4_t value);

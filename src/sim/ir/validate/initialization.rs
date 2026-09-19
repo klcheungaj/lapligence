@@ -196,6 +196,15 @@ impl Validator<'_> {
                 }
             }
             IrInitStep::Initialize(initialization) => match &initialization.target {
+                IrInitTarget::Fixed(lhs) => {
+                    self.validate_lhs(lhs, &[], &format!("{path}.target"))?;
+                    if self.has_transient_target(lhs) {
+                        return self.fail(
+                            path,
+                            "fixed declaration initializer requires persistent storage",
+                        );
+                    }
+                }
                 IrInitTarget::Signal(signal) => {
                     if *signal >= self.model.signals.len() {
                         return self.fail(path, format!("signal index {signal} is out of bounds"));
@@ -253,6 +262,16 @@ impl Validator<'_> {
                     );
                 }
                 match &initialization.target {
+                    IrInitTarget::Fixed(lhs) => {
+                        if initialization.value.is_real()
+                            || self.lhs_packed_width(lhs) != Some(initialization.value.width)
+                        {
+                            return self.fail(
+                                path,
+                                "fixed declaration initializer width disagrees with its target",
+                            );
+                        }
+                    }
                     IrInitTarget::Signal(signal) => {
                         let ty = self.model.signal(*signal).ty;
                         match ty {

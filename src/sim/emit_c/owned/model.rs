@@ -114,7 +114,21 @@ pub(in crate::sim::emit_c) fn function(
     }
     if let Some(ty) = function.ret {
         if function.automatic {
-            frame.local("_ret", ty.width(), ty.signed(), ty.two_state(), None)?;
+            let default = function.return_default.as_ref().map(|value| {
+                IrExpr::new(
+                    IrExprKind::Const(value.clone()),
+                    value.width,
+                    value.signed,
+                    None,
+                )
+            });
+            frame.local(
+                "_ret",
+                ty.width(),
+                ty.signed(),
+                ty.two_state(),
+                default.as_ref(),
+            )?;
             if let Some(binding) = frame.bindings[0].get_mut("_ret") {
                 binding.shortreal = matches!(ty, IrType::Real { shortreal: true });
             }

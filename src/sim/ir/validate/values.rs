@@ -3,6 +3,23 @@
 use super::*;
 
 impl Validator<'_> {
+    pub(super) fn validate_storage_default(
+        &self,
+        value: &IrConst,
+        width: u32,
+        signed: bool,
+        path: &str,
+    ) -> ValidationResult {
+        if width == 0 || value.width != width || value.signed != signed || value.real.is_some() {
+            return self.fail(path, "fixed storage default has the wrong type");
+        }
+        self.validate_expr(
+            &IrExpr::new(IrExprKind::Const(value.clone()), width, signed, None),
+            &[],
+            path,
+        )
+    }
+
     pub(super) fn validate_type(&self, ty: &IrType, path: &str) -> ValidationResult {
         if let IrType::Packed { width, .. } = ty {
             self.validate_width(*width, path)?;

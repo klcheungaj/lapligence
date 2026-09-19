@@ -98,7 +98,7 @@ impl Frame<'_, '_> {
         if args.len() != function.formals.len() {
             return Err("call arity mismatch".to_owned());
         }
-        for ((_, formal), argument) in order.zip(args) {
+        for ((index, formal), argument) in order.zip(args) {
             match argument {
                 IrCallArg::Val(expr) => {
                     let value = self.expression(expr)?;
@@ -109,6 +109,20 @@ impl Frame<'_, '_> {
                         formal.two_state,
                         formal.shortreal,
                     );
+                    self.bindings
+                        .last_mut()
+                        .expect("call binding scope")
+                        .insert(
+                            crate::sim::ir::call_argument_name(index),
+                            Binding {
+                                address: format!("&({})", value.code),
+                                width: value.width,
+                                signed: value.signed,
+                                two_state: formal.two_state,
+                                shortreal: formal.shortreal,
+                                automatic: true,
+                            },
+                        );
                     parameters.push(value.code.clone());
                     owners.push(value);
                 }
@@ -168,17 +182,25 @@ impl Frame<'_, '_> {
                     for (name, width, signed, two_state, initial) in selector_inits {
                         self.local(name, *width, *signed, *two_state, Some(initial))?;
                     }
+                    let default = formal.fixed_default.as_ref().map(|value| {
+                        IrExpr::new(
+                            IrExprKind::Const(value.clone()),
+                            value.width,
+                            value.signed,
+                            None,
+                        )
+                    });
                     self.local(
                         name,
                         if formal.real { 0 } else { formal.width },
                         formal.signed,
                         formal.two_state,
-                        init.as_deref(),
+                        init.as_deref().or(default.as_ref()),
                     )?;
                     let temporary = self
                         .lookup(name)
                         .ok_or_else(|| "missing call temporary".to_owned())?;
-                    let target = self.target(writeback)?;
+                    let target = self.capture_assignment(writeback)?;
                     let storage = if let Some(address) = storage_addr {
                         let storage = self.address(address)?;
                         let initial = self.read_binding(&temporary);
@@ -236,8 +258,10 @@ impl Frame<'_, '_> {
         }
         for (target, storage) in copyouts {
             let value = self.read_binding(&storage);
-            self.store(&target, value, false, "0")?;
-            self.release_target(target);
+            for (target, piece) in self.prepare_captured_assignment(target, value)? {
+                self.store(&target, piece, false, "0")?;
+                self.release_target(target);
+            }
             self.cancellation_check()?;
         }
         for (target, storage) in string_copyouts {
@@ -310,17 +334,25 @@ impl Frame<'_, '_> {
         let function = self.ctx.model.func(call.f).clone();
         for (name, index, initial) in &call.temps {
             let formal = &function.formals[*index];
+            let default = formal.fixed_default.as_ref().map(|value| {
+                IrExpr::new(
+                    IrExprKind::Const(value.clone()),
+                    value.width,
+                    value.signed,
+                    None,
+                )
+            });
             self.local(
                 name,
                 if formal.real { 0 } else { formal.width },
                 formal.signed,
                 formal.two_state,
-                initial.as_ref(),
+                initial.as_ref().or(default.as_ref()),
             )?;
         }
         let mut captured = Vec::new();
         for (lhs, name, width, signed) in &call.copyouts {
-            captured.push((self.target(lhs)?, name, *width, *signed));
+            captured.push((self.capture_assignment(lhs)?, name, *width, *signed));
         }
         if let Some(value) = self.call_target(
             call.f,
@@ -341,8 +373,10 @@ impl Frame<'_, '_> {
                 .ok_or_else(|| format!("unknown copyout {name}"))?;
             let value = self.read_binding(&binding);
             let value = self.convert(value, width, signed, false, false);
-            self.store(&target, value, false, "0")?;
-            self.release_target(target);
+            for (target, piece) in self.prepare_captured_assignment(target, value)? {
+                self.store(&target, piece, false, "0")?;
+                self.release_target(target);
+            }
             self.cancellation_check()?;
         }
         self.end_block();

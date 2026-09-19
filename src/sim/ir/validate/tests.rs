@@ -3,6 +3,7 @@ use super::*;
 fn valid_model() -> IrModel {
     let mut model = IrModel::new("top".to_string(), 1).unwrap();
     model.signals = vec![IrSignal {
+        fixed_default: None,
         c_name: "sig".to_string(),
         hdl_name: Some("sig".to_string()),
         ty: IrType::Packed {
@@ -27,6 +28,93 @@ fn packed_const(value: u64, width: u32) -> IrExpr {
         false,
         None,
     )
+}
+
+#[test]
+fn fixed_storage_defaults_and_shapes_must_match_payload_widths() {
+    let mut model = valid_model();
+    model.signals[0].fixed_default =
+        Some(IrConst::packed(vec![0], vec![], vec![], 8, false, None).unwrap());
+    assert!(model.validate().is_err());
+    model.signals[0].fixed_default = None;
+    let mut formal = IrFormal::new(false, 8, false).unwrap();
+    formal.fixed_shape = Some(IrContainerElement::FixedArray {
+        dimensions: vec![(1, 0)],
+        element: Box::new(IrContainerElement::Packed {
+            width: 8,
+            signed: false,
+            two_state: false,
+        }),
+    });
+    model.funcs.push(IrFunc::new(
+        "callee".into(),
+        None,
+        vec![formal],
+        vec![],
+        vec![],
+        vec![],
+    ));
+    assert!(model.validate().is_err());
+}
+
+#[test]
+fn resolved_array_elements_require_matching_net_storage() {
+    let mut model = valid_model();
+    let mut array = IrArray::new("a".into(), "a".into(), 1, false, vec![(0, 1)]).unwrap();
+    array.net_elements.push((0, 0));
+    model.arrays.push(array);
+    assert!(model.validate().is_err());
+}
+
+#[test]
+fn selected_const_references_cannot_hide_a_writable_binding() {
+    let mut model = valid_model();
+    let mut formal = IrFormal::new(false, 1, false).unwrap();
+    formal.mode = IrFormalMode::Ref;
+    model.funcs.push(IrFunc::new(
+        "callee".into(),
+        None,
+        vec![formal],
+        vec![],
+        vec![],
+        vec![],
+    ));
+    let lhs = IrLhs::PackedSelect {
+        target: Box::new(IrLhs::Ref {
+            addr: "r0".into(),
+            width: 8,
+            signed: false,
+            two_state: false,
+            const_ref: true,
+            bit: None,
+        }),
+        steps: vec![IrPackedSelect {
+            base: packed_const(0, 32),
+            width: 1,
+        }],
+        signed: false,
+        two_state: false,
+    };
+    let call = IrExpr::new(
+        IrExprKind::CallFn(Box::new(IrCallExpr::new(
+            0,
+            vec![IrCallArg::RefAddr {
+                addr: "view".into(),
+                width: 1,
+                signed: false,
+                two_state: false,
+                const_ref: false,
+                lhs: Box::new(lhs),
+                read: Box::new(packed_const(0, 1)),
+            }],
+            IrDepth::PROC,
+            true,
+        ))),
+        1,
+        false,
+        None,
+    );
+    assert!(model.validate_expr(&call, None).is_err());
 }
 
 #[test]
@@ -103,6 +191,8 @@ fn reference_bit_targets_validate_shape_and_visit_the_index() {
 fn rejects_array_total_that_disagrees_with_dimensions() {
     let mut model = valid_model();
     model.arrays.push(IrArray {
+        net_elements: Vec::new(),
+        element_default: None,
         c_name: "memory".to_string(),
         hdl_name: "memory".to_string(),
         elem_width: 8,
@@ -916,37 +1006,93 @@ fn ir_invalid_cross_reference_rejects_out_of_bounds_tables() {
     assert!(error.detail().contains("array"), "{error}");
 }
 
-
 #[test]
 fn activation_packed_selection_validates_each_step_and_visits_its_indices() {
     let model = valid_model();
     let mut lhs = IrLhs::PackedSelect {
         target: Box::new(IrLhs::WholeRef {
-            addr: "&a0".to_owned(), width: 16, signed: false, two_state: false, shortreal: false,
+            addr: "&a0".to_owned(),
+            width: 16,
+            signed: false,
+            two_state: false,
+            shortreal: false,
         }),
-        steps: vec![IrPackedSelect { base: packed_const(0, 129), width: 8 }],
+        steps: vec![IrPackedSelect {
+            base: packed_const(0, 129),
+            width: 8,
+        }],
         signed: false,
         two_state: false,
     };
-    let statement = |lhs| IrStmt::Assign { lhs, rhs: packed_const(7, 8), nba: false };
-    assert_eq!(model.statement_capacity(&statement(lhs.clone()), None).unwrap(), 129);
+    let statement = |lhs| IrStmt::Assign {
+        lhs,
+        rhs: packed_const(7, 8),
+        nba: false,
+    };
+    assert_eq!(
+        model
+            .statement_capacity(&statement(lhs.clone()), None)
+            .unwrap(),
+        129
+    );
     let mut visits = 0;
     lhs.expressions(&mut |_| visits += 1);
     assert_eq!(visits, 1);
     lhs.expressions_mut(&mut |expr| *expr = IrExpr::new(IrExprKind::SigRead(7), 1, false, None));
-    assert!(model.validate_stmt(&statement(lhs), None).unwrap_err().detail().contains("signal index 7"));
+    assert!(model
+        .validate_stmt(&statement(lhs), None)
+        .unwrap_err()
+        .detail()
+        .contains("signal index 7"));
 }
 
 #[test]
 fn activation_packed_selection_rejects_empty_plans_and_queued_local_writes() {
     let model = valid_model();
     let root = IrLhs::WholeRef {
-        addr: "&a0".to_owned(), width: 16, signed: false, two_state: false, shortreal: false,
+        addr: "&a0".to_owned(),
+        width: 16,
+        signed: false,
+        two_state: false,
+        shortreal: false,
     };
-    let empty = IrLhs::PackedSelect { target: Box::new(root.clone()), steps: vec![], signed: false, two_state: false };
-    assert!(model.validate_stmt(&IrStmt::Assign { lhs: empty, rhs: packed_const(0, 8), nba: false }, None).is_err());
-    let selected = IrLhs::PackedSelect { target: Box::new(root),
-        steps: vec![IrPackedSelect { base: packed_const(0, 32), width: 8 }], signed: false, two_state: false };
-    let error = model.validate_stmt(&IrStmt::Assign { lhs: selected, rhs: packed_const(1, 8), nba: true }, None).unwrap_err();
-    assert!(error.detail().contains("persistent target storage"), "{error}");
+    let empty = IrLhs::PackedSelect {
+        target: Box::new(root.clone()),
+        steps: vec![],
+        signed: false,
+        two_state: false,
+    };
+    assert!(model
+        .validate_stmt(
+            &IrStmt::Assign {
+                lhs: empty,
+                rhs: packed_const(0, 8),
+                nba: false
+            },
+            None
+        )
+        .is_err());
+    let selected = IrLhs::PackedSelect {
+        target: Box::new(root),
+        steps: vec![IrPackedSelect {
+            base: packed_const(0, 32),
+            width: 8,
+        }],
+        signed: false,
+        two_state: false,
+    };
+    let error = model
+        .validate_stmt(
+            &IrStmt::Assign {
+                lhs: selected,
+                rhs: packed_const(1, 8),
+                nba: true,
+            },
+            None,
+        )
+        .unwrap_err();
+    assert!(
+        error.detail().contains("persistent target storage"),
+        "{error}"
+    );
 }

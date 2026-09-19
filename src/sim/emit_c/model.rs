@@ -152,6 +152,42 @@ fn render_model(execution: &ExecutionModel) -> Result<String, String> {
             a.c_name, a.c_name, a.total
         ));
     }
+    for (array_index, array) in model.arrays.iter().enumerate() {
+        for (index, signal) in &array.net_elements {
+            let signal = &model.signals[*signal];
+            let name = format!("llg_array_net_{array_index}_{index}");
+            let bindings = if let Some((group, slot)) = signal.net_driver {
+                (0..array.elem_width)
+                    .map(|bit| crate::sim::ir::IrNetAliasBinding {
+                        group,
+                        slot,
+                        signal_bit: bit,
+                        group_bit: bit,
+                    })
+                    .collect::<Vec<_>>()
+            } else {
+                signal.net_alias.clone()
+            };
+            let parts = bindings
+                .iter()
+                .map(|binding| {
+                    format!(
+                        "{{ &{}, {}, {}, {} }}",
+                        model.net_groups[binding.group].c_name,
+                        binding.slot,
+                        binding.signal_bit,
+                        binding.group_bit
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            out.push_str(&format!(
+                "static const llg_net_alias_part_t {name}_parts[] = {{ {parts} }};\n"
+            ));
+            out.push_str(&format!("static llg_net_alias_t {name} = {{ .storage = &{}[{index}], .width = {}, .is_signed = {}, .parts = {name}_parts, .n_parts = {}, .publication_target = &{}[{index}] }};\n",
+                array.c_name, array.elem_width, u8::from(array.signed), array.elem_width, array.c_name));
+        }
+    }
     for container in &model.containers {
         out.push_str(&format!(
             "static sv4_t {}_llg_contents_dep = SV4_EMPTY;\n\

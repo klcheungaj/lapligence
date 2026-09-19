@@ -52,8 +52,11 @@ pub use expressions::{
     IrSampledDomain, IrSampledFunc, IrSysFunc, IrTimeKind, IrUnOp,
 };
 mod lvalues;
-pub use lvalues::{IrElemSel, IrInsideItem, IrLhs, IrPackedSelect, IrStreamDirection, IrStreamTarget};
+pub use lvalues::{
+    IrElemSel, IrInsideItem, IrLhs, IrPackedSelect, IrStreamDirection, IrStreamTarget,
+};
 mod calls;
+pub(in crate::sim) use calls::call_argument_name;
 pub use calls::{IrCall, IrCallArg, IrCallExpr, IrDepth, IrVirtualCall};
 mod statements;
 pub use statements::{

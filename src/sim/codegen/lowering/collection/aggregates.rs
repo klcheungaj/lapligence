@@ -414,6 +414,7 @@ impl<'a> Codegen<'a> {
             ir,
         };
         self.model.signals.push(IrSignal {
+            fixed_default: None,
             c_name: global,
             hdl_name: Some(hdl_name),
             ty: if width == 0 {

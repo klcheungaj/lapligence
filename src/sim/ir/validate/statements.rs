@@ -3,7 +3,7 @@
 use super::*;
 
 impl Validator<'_> {
-    fn has_transient_target(&self, lhs: &IrLhs) -> bool {
+    pub(super) fn has_transient_target(&self, lhs: &IrLhs) -> bool {
         match lhs {
             IrLhs::WholeRef {
                 addr,
@@ -529,8 +529,13 @@ impl Validator<'_> {
             IrStmt::Assign { lhs, rhs, .. }
             | IrStmt::DelayedAssign { lhs, rhs, .. }
             | IrStmt::InertialAssign { lhs, rhs, .. } => {
-                if matches!(stmt, IrStmt::Assign { nba: true, .. }) && self.has_transient_target(lhs) {
-                    return self.fail(path, "nonblocking assignment requires persistent target storage");
+                if matches!(stmt, IrStmt::Assign { nba: true, .. })
+                    && self.has_transient_target(lhs)
+                {
+                    return self.fail(
+                        path,
+                        "nonblocking assignment requires persistent target storage",
+                    );
                 }
                 if matches!(stmt, IrStmt::InertialAssign { .. }) {
                     let packed_driver = match lhs {
@@ -554,10 +559,8 @@ impl Validator<'_> {
                         );
                     }
                 }
-                if matches!(stmt, IrStmt::DelayedAssign { .. }) {
-                    if self.has_transient_target(lhs) {
-                        return self.fail(path, "delayed NBA requires persistent target storage");
-                    }
+                if matches!(stmt, IrStmt::DelayedAssign { .. }) && self.has_transient_target(lhs) {
+                    return self.fail(path, "delayed NBA requires persistent target storage");
                 }
                 self.validate_lhs(lhs, formals, &format!("{path}.lhs"))?;
                 self.validate_expr(rhs, formals, &format!("{path}.rhs"))?;

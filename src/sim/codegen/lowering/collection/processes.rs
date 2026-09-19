@@ -458,6 +458,7 @@ impl<'a> Codegen<'a> {
         let c_name = format!("G_{}_pca${}_en", ident(path), n);
         let ir = self.model.signals.len();
         self.model.signals.push(IrSignal {
+            fixed_default: None,
             c_name,
             hdl_name: None,
             ty: IrType::Packed {

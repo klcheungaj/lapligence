@@ -974,6 +974,7 @@ impl Codegen<'_> {
             ));
         };
         let Some(IrSignal {
+            fixed_default: None,
             ty: IrType::Packed { .. },
             omit: false,
             ..

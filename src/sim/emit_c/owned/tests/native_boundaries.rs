@@ -278,7 +278,7 @@ fn container_inside_uses_owned_items_and_ordinal_associative_reads() {
 }
 
 #[test]
-fn mixed_stream_captures_all_selectors_before_publication() {
+fn mixed_stream_publishes_each_component_before_selecting_the_next() {
     let mut model = numeric_model();
     model.containers.push(IrContainer {
         c_name: "G_queue".to_owned(),
@@ -318,8 +318,8 @@ fn mixed_stream_captures_all_selectors_before_publication() {
         .unwrap();
     let source = frame.body();
     assert!(
-        source.rfind("sv4_part_select(").unwrap()
-            < source.find("llg_queue_unstream_assign(").unwrap()
+        source.find("llg_queue_unstream_assign(").unwrap()
+            < source.rfind("sv4_part_select(").unwrap()
     );
     assert!(source.contains("llg_ba("));
     assert!(frame.slots.iter().all(|slot| !slot));

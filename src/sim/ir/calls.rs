@@ -7,7 +7,8 @@ use super::*;
 /// the formal's width/signedness (defaults substituted at lowering).
 #[derive(Clone, Debug, PartialEq)]
 pub enum IrCallArg {
-    /// Input formal value.
+    /// Input formal value, captured once before the next input is evaluated.
+    /// Later defaults can read its call-local binding from `call_argument_name`.
     Val(IrExpr),
     /// Input native string formal. String bytes stay owned and typed.
     StringVal(IrStringExpr),
@@ -356,4 +357,9 @@ impl IrCallArg {
             _ => {}
         }
     }
+}
+
+/// Reserved local binding for a captured input in the current call frame.
+pub(in crate::sim) fn call_argument_name(index: usize) -> String {
+    format!("__llg_call_argument_{index}")
 }

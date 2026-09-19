@@ -24,7 +24,7 @@ extern "C" {
 
 // ── 4-state values ────────────────────────────────────────────────────────────
 
-#define LLG_VALUE_ABI_VERSION 3u
+#define LLG_VALUE_ABI_VERSION 4u
 #define LLG_SUPPORTED_WIDTH_LIMIT (1u << 20)
 
 // A live value owns exactly one allocation, addressed by bits; x and z are
@@ -103,6 +103,8 @@ typedef enum {
     // Synchronous file-input target; retained borrows a sv4_select_plan_t.
     // Neither the descriptor nor its plan may escape the input call.
     LLG_REF_PACKED_PLAN = 6,
+    LLG_REF_COMPOSITE = 7,
+    LLG_REF_VIEW = 8,
 } llg_ref_kind_t;
 
 typedef struct {
@@ -125,6 +127,18 @@ typedef struct {
     sv4_t (*retained_read)(const void*);
     int (*retained_write)(void*, sv4_t);
 } llg_ref_t;
+
+/* Borrowed descriptor graphs. Generated call scopes own the graph storage;
+ * leaves retain their original variable identity across calls and suspension. */
+typedef struct {
+    size_t count;
+    llg_ref_t** parts;
+} llg_ref_composite_t;
+
+typedef struct {
+    llg_ref_t* parent;
+    sv4_select_plan_t plan;
+} llg_ref_view_t;
 
 sv4_t llg_ref_read(const llg_ref_t* ref);
 

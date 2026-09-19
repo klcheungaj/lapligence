@@ -1239,6 +1239,11 @@ fn value_descriptor(container: &crate::sim::ir::IrContainer) -> Result<(String, 
             IrContainerElement::String => ("LLG_VALUE_STRING", 0, 0, 0, 0, 0, 0),
             IrContainerElement::Chandle => ("LLG_VALUE_CHANDLE", 0, 0, 0, 0, 0, 0),
             IrContainerElement::Event => ("LLG_VALUE_EVENT", 0, 0, 0, 0, 0, 0),
+            IrContainerElement::Union { .. } => {
+                return Err(
+                    "unpacked unions in resizable containers require overlay storage".into(),
+                );
+            }
             IrContainerElement::Aggregate { type_id, members } => {
                 ("LLG_VALUE_AGGREGATE", *type_id, 0, 0, 0, 0, members.len())
             }

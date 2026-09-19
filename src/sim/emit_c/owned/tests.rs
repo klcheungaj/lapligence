@@ -6,8 +6,8 @@ mod group1_repairs;
 mod native_boundaries;
 mod native_values;
 mod nextest_regressions;
-mod packed_selections;
 mod packed_formals;
+mod packed_selections;
 mod review_regressions;
 mod toolchain;
 
@@ -163,7 +163,7 @@ fn conditional_fill_arms_are_owned_and_context_sized() {
 fn model_has_dynamic_start_close_and_no_width_abi() {
     let execution = ExecutionModel::lower(numeric_model()).unwrap();
     let source = super::super::model::render(&execution).unwrap();
-    assert!(source.contains("#define LLG_MODEL_VALUE_ABI 3"));
+    assert!(source.contains("#define LLG_MODEL_VALUE_ABI 4"));
     assert!(source.contains("sv4_t G_value = SV4_EMPTY;"));
     assert!(source.contains("sv4_t _llg_returned = sv4_clone("));
     assert!(source.contains("int llg_model_start("));
@@ -270,8 +270,8 @@ fn structured_owned_model_reinitializes_with_host() {
     );
     let execution = ExecutionModel::lower(model).unwrap();
     let source = super::super::model::render(&execution).unwrap().replacen(
-        "#define LLG_MODEL_VALUE_ABI 3",
-        "#define LLG_MODEL_VALUE_ABI 3\n#define LLG_MODEL_NO_MAIN 1",
+        "#define LLG_MODEL_VALUE_ABI 4",
+        "#define LLG_MODEL_VALUE_ABI 4\n#define LLG_MODEL_NO_MAIN 1",
         1,
     );
     let host = r#"

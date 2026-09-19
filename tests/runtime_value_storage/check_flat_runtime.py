@@ -40,10 +40,10 @@ def main() -> int:
             (output / name).write_text("".join((runtime / item).read_text(encoding="utf-8")
                                               for item in fragments), encoding="utf-8")
             print(f"{name}: {len(fragments)} fragments match embedding order")
-        probe = ('#include "llg_value.h"\n#define LLG_MODEL_VALUE_ABI 3\n'
+        probe = ('#include "llg_value.h"\n#define LLG_MODEL_VALUE_ABI 4\n'
                  '_Static_assert(LLG_MODEL_VALUE_ABI == LLG_VALUE_ABI_VERSION, "ABI mismatch");\n')
         (output / "abi_probe.c").write_text(probe, encoding="utf-8")
-        (output / "stale_abi.c").write_text(probe.replace("ABI 3", "ABI 2"), encoding="utf-8")
+        (output / "stale_abi.c").write_text(probe.replace("ABI 4", "ABI 3"), encoding="utf-8")
         units = ["llg_value.c", "llg_container.c"]
         if not args.without_scheduler:
             units.append("llg_rt.c")
@@ -61,7 +61,7 @@ def main() -> int:
                 print(f"{compiler}: {name} PASS")
             run(command("abi_probe.c"), cwd=output)
             run(command("stale_abi.c"), expect_success=False, cwd=output)
-            print(f"{compiler}: accepted ABI 3 and rejected stale ABI 2")
+            print(f"{compiler}: accepted ABI 4 and rejected stale ABI 3")
         if args.without_scheduler:
             print("EXCLUDED: scheduler compilation (native libaco support not requested)")
     print("Runtime/ABI probes only; no Rust compilation or generated-HDL execution.")

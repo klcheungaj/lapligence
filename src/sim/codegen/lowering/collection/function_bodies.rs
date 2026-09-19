@@ -584,6 +584,7 @@ impl<'a> Codegen<'a> {
                 .filter(|(_, (c_name, ..))| emitted.insert(c_name.clone()))
                 .map(|(local, (c_name, width, signed, two_state, shortreal))| {
                     Ok(crate::sim::ir::IrLocal {
+                        fixed_default: None,
                         c_name,
                         width,
                         signed,

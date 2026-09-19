@@ -37,9 +37,13 @@ fn callback_safe_statements(body: &[IrStmt]) -> Result<(), String> {
                 }
                 let mut failure = None;
                 lhs.expressions(&mut |value| {
-                    if let Err(error) = callback_safe_expression(value) { failure = Some(error); }
+                    if let Err(error) = callback_safe_expression(value) {
+                        failure = Some(error);
+                    }
                 });
-                if let Some(error) = failure { return Err(error); }
+                if let Some(error) = failure {
+                    return Err(error);
+                }
                 callback_safe_expression(rhs)?;
             }
             IrStmt::If {
@@ -115,15 +119,21 @@ fn callback_safe_expression(expr: &IrExpr) -> Result<(), String> {
     match &expr.kind {
         IrExprKind::Mutation(mutation) => {
             if !private_callback_target(&mutation.lhs) {
-                return Err(pending("side-effect-capable evaluator expressions: mutation writes visible state"));
+                return Err(pending(
+                    "side-effect-capable evaluator expressions: mutation writes visible state",
+                ));
             }
             let mut failure = None;
             mutation.lhs.expressions(&mut |value| {
-                if let Err(error) = callback_safe_expression(value) { failure = Some(error); }
+                if let Err(error) = callback_safe_expression(value) {
+                    failure = Some(error);
+                }
             });
-            if let Some(error) = failure { return Err(error); }
+            if let Some(error) = failure {
+                return Err(error);
+            }
             callback_safe_expression(&mutation.value)
-        },
+        }
         _ => Ok(()),
     }
 }
@@ -255,6 +265,7 @@ impl Frame<'_, '_> {
         if function.formals.len() != call.args.len() {
             return Err("inline evaluator call arity mismatch".to_owned());
         }
+        self.bindings.push(HashMap::new());
         let mut owners = Vec::new();
         let mut bindings = vec![None; function.formals.len()];
         // Evaluate actuals before installing callee formal bindings, including
@@ -293,6 +304,13 @@ impl Frame<'_, '_> {
                 shortreal: formal.shortreal,
                 automatic: true,
             });
+            self.bindings
+                .last_mut()
+                .expect("callback argument scope")
+                .insert(
+                    crate::sim::ir::call_argument_name(index),
+                    bindings[index].clone().expect("captured input"),
+                );
             owners.push(value);
         }
         let result = IrLhs::WholeRef {
@@ -322,7 +340,21 @@ impl Frame<'_, '_> {
             .last_mut()
             .expect("private callback frame")
             .insert(label.clone(), false);
-        self.local("_ret", ty.width(), ty.signed(), ty.two_state(), None)?;
+        let default = function.return_default.as_ref().map(|value| {
+            IrExpr::new(
+                IrExprKind::Const(value.clone()),
+                value.width,
+                value.signed,
+                None,
+            )
+        });
+        self.local(
+            "_ret",
+            ty.width(),
+            ty.signed(),
+            ty.two_state(),
+            default.as_ref(),
+        )?;
         if let Some(binding) = self
             .bindings
             .last_mut()
@@ -415,6 +447,7 @@ impl Frame<'_, '_> {
         for owner in owners {
             self.discard(owner);
         }
+        self.bindings.pop();
         Ok(escaped)
     }
 }

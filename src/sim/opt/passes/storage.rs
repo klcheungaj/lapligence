@@ -178,8 +178,10 @@ pub(super) fn mark_unused_storage(model: &mut IrModel, execution: Option<&[Execu
             crate::sim::ir::IrInitStep::SetScalar { sig, .. } => rw.write(*sig),
             crate::sim::ir::IrInitStep::Initialize(initialization) => {
                 collect_expr_reads(&initialization.value, model, &mut rw);
-                if let crate::sim::ir::IrInitTarget::Signal(sig) = &initialization.target {
-                    rw.write(*sig);
+                match &initialization.target {
+                    crate::sim::ir::IrInitTarget::Signal(sig) => rw.write(*sig),
+                    crate::sim::ir::IrInitTarget::Fixed(lhs) => collect_lhs_rw(lhs, model, &mut rw),
+                    crate::sim::ir::IrInitTarget::StaticLocal { .. } => {}
                 }
             }
             _ => {}
@@ -809,7 +811,9 @@ fn collect_lhs_rw(l: &IrLhs, model: &IrModel, rw: &mut Rw) {
     match l {
         IrLhs::PackedSelect { target, steps, .. } => {
             collect_lhs_rw(target, model, rw);
-            for step in steps { collect_expr_reads(&step.base, model, rw); }
+            for step in steps {
+                collect_expr_reads(&step.base, model, rw);
+            }
         }
         IrLhs::Whole(i) => rw.write(*i),
         IrLhs::WholeRef { .. } => {}
@@ -848,7 +852,9 @@ fn collect_lhs_read(l: &IrLhs, model: &IrModel, rw: &mut Rw) {
     match l {
         IrLhs::PackedSelect { target, steps, .. } => {
             collect_lhs_read(target, model, rw);
-            for step in steps { collect_expr_reads(&step.base, model, rw); }
+            for step in steps {
+                collect_expr_reads(&step.base, model, rw);
+            }
         }
         IrLhs::Whole(i) | IrLhs::Bit(i, ..) | IrLhs::Part(i, ..) | IrLhs::IdxPart(i, ..) => {
             rw.read(*i);

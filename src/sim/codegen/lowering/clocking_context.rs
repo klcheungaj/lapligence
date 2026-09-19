@@ -236,6 +236,7 @@ impl<'a> Codegen<'a> {
                     ir,
                 };
                 self.model.signals.push(IrSignal {
+                    fixed_default: None,
                     c_name: global,
                     hdl_name: None,
                     ty: IrType::Packed {

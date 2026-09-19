@@ -1590,7 +1590,37 @@ sv4_t llg_ref_read(const llg_ref_t* ref) {
         if (ref->two_state) sv4_replace(&value, sv4_to_two_state(value));
         return value;
     }
-    if (!ref->base) return sv4_x(1, 0);
+    if ((llg_ref_kind_t)ref->kind == LLG_REF_COMPOSITE) {
+        const llg_ref_composite_t* composite = (const llg_ref_composite_t*)ref->retained;
+        if (!composite || !composite->parts || !composite->count)
+            { fputs("llg runtime fatal: invalid composite reference\n", stderr); abort(); }
+        uint32_t remaining = ref->width;
+        sv4_t result = sv4_x(ref->width, ref->is_signed);
+        for (size_t i = 0; i < composite->count; i++) {
+            const llg_ref_t* part = composite->parts[i];
+            if (!part || !part->width || part->width > remaining)
+                { fputs("llg runtime fatal: invalid composite reference width\n", stderr); abort(); }
+            remaining -= part->width;
+            sv4_t value = llg_ref_read(part);
+            sv4_part_select_set(&result, (int64_t)remaining + part->width - 1,
+                               remaining, value);
+            sv4_destroy(&value);
+        }
+        if (remaining) { fputs("llg runtime fatal: incomplete composite reference\n", stderr); abort(); }
+        return result;
+    }
+    if ((llg_ref_kind_t)ref->kind == LLG_REF_VIEW) {
+        const llg_ref_view_t* view = (const llg_ref_view_t*)ref->retained;
+        if (!view || !view->parent) { fputs("llg runtime fatal: invalid reference view\n", stderr); abort(); }
+        sv4_t parent = llg_ref_read(view->parent);
+        sv4_t result = sv4_select_plan_read(parent, &view->plan);
+        sv4_destroy(&parent);
+        if (ref->two_state) sv4_replace(&result, sv4_to_two_state(result));
+        sv4_replace(&result, sv4_cast(result, ref->width, ref->is_signed));
+        return result;
+    }
+    if (!ref->base) return ref->two_state ? sv4_zero(ref->width, ref->is_signed)
+                                        : sv4_x(ref->width ? ref->width : 1, ref->is_signed);
     sv4_t value;
     switch ((llg_ref_kind_t)ref->kind) {
     case LLG_REF_WHOLE:

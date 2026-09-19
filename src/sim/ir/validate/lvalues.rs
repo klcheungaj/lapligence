@@ -18,7 +18,8 @@ impl Validator<'_> {
                     let path = format!("{path}.steps[{index}]");
                     self.validate_width(step.width, &format!("{path}.width"))?;
                     if step.base.is_real() {
-                        return self.fail(format!("{path}.base"), "packed selector must be integral");
+                        return self
+                            .fail(format!("{path}.base"), "packed selector must be integral");
                     }
                     self.validate_expr(&step.base, formals, &format!("{path}.base"))?;
                 }
@@ -103,11 +104,23 @@ impl Validator<'_> {
         match lhs {
             IrLhs::PackedSelect { target, steps, .. } => {
                 self.validate_lhs(target, formals, &format!("{path}.target"))?;
-                if self.lhs_packed_width(target).is_none() || !matches!(target.as_ref(),
-                    IrLhs::Whole(_) | IrLhs::WholeRef { width: 1.., .. }
-                    | IrLhs::Ref { bit: None, .. }
-                    | IrLhs::ArrayElem { elem_sel: IrElemSel::Whole, .. }) {
-                    return self.fail(path, "packed activation select requires an unselected packed root");
+                if self.lhs_packed_width(target).is_none()
+                    || !matches!(
+                        target.as_ref(),
+                        IrLhs::Whole(_)
+                            | IrLhs::WholeRef { width: 1.., .. }
+                            | IrLhs::Ref { bit: None, .. }
+                            | IrLhs::ArrayElem {
+                                elem_sel: IrElemSel::Whole,
+                                ..
+                            }
+                            | IrLhs::Stream { .. }
+                    )
+                {
+                    return self.fail(
+                        path,
+                        "packed activation select requires an unselected packed root",
+                    );
                 }
                 self.validate_elem_sel(&IrElemSel::PackedChain(steps.clone()), formals, path)?;
             }
@@ -176,7 +189,10 @@ impl Validator<'_> {
                 }
                 self.validate_elem_sel(elem_sel, formals, &format!("{path}.elem_sel"))?;
                 if array.real && matches!(elem_sel, IrElemSel::PackedChain(_)) {
-                    return self.fail(path, "packed selection chain requires packed array elements");
+                    return self.fail(
+                        path,
+                        "packed selection chain requires packed array elements",
+                    );
                 }
             }
             IrLhs::Stream {

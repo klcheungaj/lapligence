@@ -25,6 +25,13 @@ pub(in crate::sim::emit_c) fn storage_lifecycle(
             signal.ty.signed(),
             signal.ty.two_state(),
         );
+        if let Some(value) = &signal.fixed_default {
+            initialize.push_str(&format!(
+                "    sv4_replace(&{}, {});\n",
+                signal.c_name,
+                emit_const(value)
+            ));
+        }
     }
     emitted.clear();
     for group in &model.net_groups {
@@ -100,6 +107,12 @@ pub(in crate::sim::emit_c) fn storage_lifecycle(
                     ty.signed(),
                     ty.two_state(),
                 );
+                if let Some(value) = &function.return_default {
+                    initialize.push_str(&format!(
+                        "    sv4_replace(&_llg_ret_{index}, {});\n",
+                        emit_const(value)
+                    ));
+                }
             }
         }
         for local in &function.locals {
@@ -115,6 +128,13 @@ pub(in crate::sim::emit_c) fn storage_lifecycle(
                         local.signed(),
                         local.two_state,
                     );
+                    if let Some(value) = &local.fixed_default {
+                        initialize.push_str(&format!(
+                            "    sv4_replace(&{}, {});\n",
+                            local.c_name(),
+                            emit_const(value)
+                        ));
+                    }
                 }
             }
         }
@@ -144,6 +164,13 @@ pub(in crate::sim::emit_c) fn storage_lifecycle(
             array.signed,
             array.two_state,
         );
+        if let Some(value) = &array.element_default {
+            initialize.push_str(&format!(
+                "    sv4_replace(&{}[_i], {});\n",
+                array.c_name,
+                emit_const(value)
+            ));
+        }
         defaults(
             &mut initialize,
             &mut destroy,
@@ -159,6 +186,16 @@ pub(in crate::sim::emit_c) fn storage_lifecycle(
         };
         initialize.push_str(&format!("    {bind}(&{}[_i], &{}_llg_element_deps[_i]);\n    {bind}(&{}[_i], &{}_llg_contents_dep);\n    }}\n", array.c_name, array.c_name, array.c_name, array.c_name));
         destroy.push_str("    }\n");
+    }
+    for (array_index, array) in model.arrays.iter().enumerate() {
+        for (index, _) in &array.net_elements {
+            let name = format!("llg_array_net_{array_index}_{index}");
+            initialize.push_str(&format!(
+                "    sv4_copy(&{name}.visible, &{}[{index}]);\n    llg_net_alias_bind(&{name});\n",
+                array.c_name
+            ));
+            destroy.push_str(&format!("    sv4_destroy(&{name}.visible);\n"));
+        }
     }
     for container in &model.containers {
         let name = &container.c_name;
@@ -312,6 +349,8 @@ fn initialization_step(frame: &mut Frame<'_, '_>, step: &IrInitStep) -> Result<(
                     array.elem_width,
                     u8::from(array.signed)
                 )
+            } else if let Some(value) = &array.element_default {
+                emit_const(value)
             } else {
                 super::super::super::expressions::packed_default(
                     array.elem_width,
@@ -329,6 +368,9 @@ fn initialization_step(frame: &mut Frame<'_, '_>, step: &IrInitStep) -> Result<(
                 frame.line(format!("sv4_replace(&{}[_i], {value});", array.c_name));
             }
             frame.line("}");
+            for (element, _) in &array.net_elements {
+                frame.line(format!("sv4_replace(&{}[{element}], llg_net_alias_read(&llg_array_net_{index}_{element}));", array.c_name));
+            }
         }
         IrInitStep::SetScalar { sig, value } => {
             let signal = model.signal(*sig);
@@ -383,7 +425,15 @@ fn initialization_step(frame: &mut Frame<'_, '_>, step: &IrInitStep) -> Result<(
             if initialization.phase() != IrInitPhase::BeforeProcesses {
                 return Ok(());
             }
+            if let IrInitTarget::Fixed(lhs) = initialization.target() {
+                return frame.statement(&IrStmt::Assign {
+                    lhs: *lhs.clone(),
+                    rhs: initialization.value().clone(),
+                    nba: false,
+                });
+            }
             let target = match initialization.target() {
+                IrInitTarget::Fixed(_) => unreachable!("fixed initializer emitted above"),
                 IrInitTarget::Signal(index) => {
                     let signal = model.signal(*index);
                     Binding {

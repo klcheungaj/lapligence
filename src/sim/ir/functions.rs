@@ -12,13 +12,17 @@ pub enum IrFormalMode {
 }
 
 /// A formal argument of a lowered function/task.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct IrFormal {
     /// `true` for output/inout formals (passed as `sv4_t* o{idx}`); `false`
     /// for inputs (passed by value as `sv4_t a{idx}`).  Indices are the
     /// formal's declaration position.
     pub(in crate::sim) is_out: bool,
     pub(in crate::sim) mode: IrFormalMode,
+    /// Recursive fixed-value shape; its declaration-order payload uses `width` bits.
+    pub(in crate::sim) fixed_shape: Option<IrContainerElement>,
+    /// Default fixed payload, preserving each unpacked leaf's state domain.
+    pub(in crate::sim) fixed_default: Option<IrConst>,
     /// `true` only for a `const ref` formal.
     pub(in crate::sim) const_ref: bool,
     /// `true` only for a `ref static` formal.
@@ -80,6 +84,8 @@ impl IrFormal {
             },
             const_ref: false,
             ref_static: false,
+            fixed_shape: None,
+            fixed_default: None,
             width,
             signed,
             two_state: false,
@@ -126,6 +132,7 @@ impl IrFormal {
 /// Persistent function/task local (`_l{n}` or `_i{site}_{n}`).
 #[derive(Clone, Debug, PartialEq)]
 pub struct IrLocal {
+    pub(in crate::sim) fixed_default: Option<IrConst>,
     pub(in crate::sim) c_name: String,
     pub(in crate::sim) width: u32,
     pub(in crate::sim) signed: bool,
@@ -152,6 +159,7 @@ impl IrLocal {
             shortreal: false,
             string: false,
             initial: None,
+            fixed_default: None,
         })
     }
 
@@ -170,6 +178,7 @@ impl IrLocal {
 /// recursion-depth guard.
 #[derive(Clone, Debug, PartialEq)]
 pub struct IrFunc {
+    pub(in crate::sim) return_default: Option<IrConst>,
     pub(in crate::sim) c_name: String,
     /// Automatic subprograms use fresh C locals per call; static subprograms
     /// retain their return/local storage across calls.
@@ -211,6 +220,7 @@ impl IrFunc {
         Self {
             c_name,
             automatic: true,
+            return_default: None,
             ret_chandle: false,
             ret_string: false,
             ret,

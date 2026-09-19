@@ -129,6 +129,7 @@ fn assign(lhs: IrLhs, rhs: IrExpr) -> IrStmt {
 fn sigs(n: usize) -> Vec<IrSignal> {
     (0..n)
         .map(|i| IrSignal {
+            fixed_default: None,
             c_name: format!("G_s{i}"),
             hdl_name: Some(format!("t.s{i}")),
             ty: IrType::Packed {
@@ -1558,21 +1559,51 @@ fn fold_and_identities_interleave_to_fixpoint() {
 fn packed_selection_walkers_keep_selector_only_storage_live() {
     use crate::sim::ir::{IrArray, IrElemSel, IrPackedSelect};
     let selection = IrElemSel::PackedChain(vec![
-        IrPackedSelect { base: IrExpr::new(IrExprKind::SigRead(1), 8, false, None), width: 8 },
-        IrPackedSelect { base: IrExpr::new(IrExprKind::SigRead(2), 8, false, None), width: 4 },
+        IrPackedSelect {
+            base: IrExpr::new(IrExprKind::SigRead(1), 8, false, None),
+            width: 8,
+        },
+        IrPackedSelect {
+            base: IrExpr::new(IrExprKind::SigRead(2), 8, false, None),
+            width: 4,
+        },
     ]);
     for read in [false, true] {
         let operations = if read {
-            vec![assign(IrLhs::Whole(0), IrExpr::new(IrExprKind::ArrayRead {
-                arr: 0, indices: vec![konst(0, 32)], elem_sel: selection.clone(),
-            }, 4, false, None))]
+            vec![assign(
+                IrLhs::Whole(0),
+                IrExpr::new(
+                    IrExprKind::ArrayRead {
+                        arr: 0,
+                        indices: vec![konst(0, 32)],
+                        elem_sel: selection.clone(),
+                    },
+                    4,
+                    false,
+                    None,
+                ),
+            )]
         } else {
-            vec![assign(IrLhs::ArrayElem {
-                arr: 0, indices: vec![konst(0, 32)], elem_sel: selection.clone(),
-            }, konst(15, 4))]
+            vec![assign(
+                IrLhs::ArrayElem {
+                    arr: 0,
+                    indices: vec![konst(0, 32)],
+                    elem_sel: selection.clone(),
+                },
+                konst(15, 4),
+            )]
         };
         let mut model = model_with(operations, sigs(4));
-        model.arrays.push(IrArray::new("memory".to_owned(), "memory".to_owned(), 16, false, vec![(0, 0)]).unwrap());
+        model.arrays.push(
+            IrArray::new(
+                "memory".to_owned(),
+                "memory".to_owned(),
+                16,
+                false,
+                vec![(0, 0)],
+            )
+            .unwrap(),
+        );
         run_ir(&mut model, &storage_only());
         assert!(!model.signals[1].omit && !model.signals[2].omit);
         assert!(model.signals[3].omit);
@@ -1583,18 +1614,60 @@ fn packed_selection_walkers_keep_selector_only_storage_live() {
 fn packed_selection_walkers_fold_each_step_without_flattening_its_bounds() {
     use crate::sim::ir::{IrArray, IrElemSel, IrPackedSelect};
     let select = IrElemSel::PackedChain(vec![
-        IrPackedSelect { base: bin(IrBinOp::Add, konst(2, 32), konst(6, 32), 32), width: 8 },
-        IrPackedSelect { base: bin(IrBinOp::Add, konst(3, 32), konst(3, 32), 32), width: 4 },
+        IrPackedSelect {
+            base: bin(IrBinOp::Add, konst(2, 32), konst(6, 32), 32),
+            width: 8,
+        },
+        IrPackedSelect {
+            base: bin(IrBinOp::Add, konst(3, 32), konst(3, 32), 32),
+            width: 4,
+        },
     ]);
-    let lhs = IrLhs::ArrayElem { arr: 0, indices: vec![konst(0, 32)], elem_sel: select.clone() };
-    let read = IrExpr::new(IrExprKind::ArrayRead { arr: 0, indices: vec![konst(0, 32)], elem_sel: select }, 4, false, None);
+    let lhs = IrLhs::ArrayElem {
+        arr: 0,
+        indices: vec![konst(0, 32)],
+        elem_sel: select.clone(),
+    };
+    let read = IrExpr::new(
+        IrExprKind::ArrayRead {
+            arr: 0,
+            indices: vec![konst(0, 32)],
+            elem_sel: select,
+        },
+        4,
+        false,
+        None,
+    );
     let mut model = model_with(vec![assign(lhs, read)], sigs(0));
-    model.arrays.push(IrArray::new("memory".to_owned(), "memory".to_owned(), 16, false, vec![(0, 0)]).unwrap());
+    model.arrays.push(
+        IrArray::new(
+            "memory".to_owned(),
+            "memory".to_owned(),
+            16,
+            false,
+            vec![(0, 0)],
+        )
+        .unwrap(),
+    );
     run_ir(&mut model, &fold_only());
-    let IrStmt::Assign { lhs: IrLhs::ArrayElem { elem_sel: left, .. }, rhs, .. } = &model.processes[0].body[0] else { panic!("lost target") };
-    let IrExprKind::ArrayRead { elem_sel: right, .. } = &rhs.kind else { panic!("lost read") };
+    let IrStmt::Assign {
+        lhs: IrLhs::ArrayElem { elem_sel: left, .. },
+        rhs,
+        ..
+    } = &model.processes[0].body[0]
+    else {
+        panic!("lost target")
+    };
+    let IrExprKind::ArrayRead {
+        elem_sel: right, ..
+    } = &rhs.kind
+    else {
+        panic!("lost read")
+    };
     for selection in [left, right] {
-        let IrElemSel::PackedChain(steps) = selection else { panic!("lost chain") };
+        let IrElemSel::PackedChain(steps) = selection else {
+            panic!("lost chain")
+        };
         assert_eq!(steps.len(), 2);
         assert_eq!((steps[0].width, steps[1].width), (8, 4));
         assert_eq!(const_payload(&steps[0].base), Some((8, 32)));

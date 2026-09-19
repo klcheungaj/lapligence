@@ -28,7 +28,7 @@ fn dpi_string_snapshots_precede_copyouts_and_preserve_borrowed_inputs() {
         let mut inout = IrFormal::new(true, 1, false).unwrap();
         inout.string = true;
         inout.mode = IrFormalMode::Inout;
-        let mut output = inout;
+        let mut output = inout.clone();
         output.mode = IrFormalMode::Output;
         let mut function = IrFunc::new(
             "string_alias_thunk".to_owned(),
@@ -41,7 +41,7 @@ fn dpi_string_snapshots_precede_copyouts_and_preserve_borrowed_inputs() {
             } else {
                 None
             },
-            vec![input, inout, output, inout],
+            vec![input, inout.clone(), output, inout],
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -120,6 +120,7 @@ fn waveform_model_emits_controls_hierarchy_and_final_time_close() {
     model.waveform = true;
     model.signals = vec![
         IrSignal {
+            fixed_default: None,
             c_name: "G_top_g_0__value".to_string(),
             hdl_name: Some("top\u{1f}g[0]\u{1f}value".to_string()),
             ty: IrType::Packed {
@@ -133,6 +134,7 @@ fn waveform_model_emits_controls_hierarchy_and_final_time_close() {
             omit: false,
         },
         IrSignal {
+            fixed_default: None,
             c_name: "g_net_0.resolved".to_string(),
             hdl_name: Some("top\u{1f}alias".to_string()),
             ty: IrType::Packed {
@@ -146,6 +148,7 @@ fn waveform_model_emits_controls_hierarchy_and_final_time_close() {
             omit: false,
         },
         IrSignal {
+            fixed_default: None,
             c_name: "D_top_r".to_string(),
             hdl_name: Some("top\u{1f}r".to_string()),
             ty: IrType::Real { shortreal: false },
@@ -155,6 +158,7 @@ fn waveform_model_emits_controls_hierarchy_and_final_time_close() {
             omit: false,
         },
         IrSignal {
+            fixed_default: None,
             c_name: "G_top_pca$0_en".to_string(),
             hdl_name: None,
             ty: IrType::Packed {
@@ -178,6 +182,8 @@ fn waveform_model_emits_controls_hierarchy_and_final_time_close() {
         propagation_delay: None,
     }];
     model.arrays = vec![IrArray {
+        net_elements: Vec::new(),
+        element_default: None,
         c_name: "G_top_mem".to_string(),
         hdl_name: "top\u{1f}mem".to_string(),
         elem_width: 8,

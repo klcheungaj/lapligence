@@ -668,6 +668,9 @@ pub(super) fn walk_model_exprs_mut(model: &mut IrModel, f: &mut impl FnMut(&mut 
     }
     for step in &mut model.init_steps {
         if let crate::sim::ir::IrInitStep::Initialize(initialization) = step {
+            if let crate::sim::ir::IrInitTarget::Fixed(lhs) = &mut initialization.target {
+                walk_lhs_mut(lhs, f);
+            }
             walk_expr_mut(&mut initialization.value, f);
         }
     }

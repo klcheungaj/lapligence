@@ -24,6 +24,11 @@ pub enum IrContainerElement {
         type_id: u64,
         members: Vec<IrContainerMember>,
     },
+    /// Fixed untagged overlay. Members share one payload sized to the largest.
+    Union {
+        type_id: u64,
+        members: Vec<IrContainerMember>,
+    },
     FixedArray {
         dimensions: Vec<(i32, i32)>,
         element: Box<IrContainerElement>,
@@ -46,6 +51,33 @@ pub struct IrContainerMember {
 }
 
 impl IrContainerElement {
+    /// Exact payload width for fixed integral shapes, checked before frame allocation.
+    pub fn fixed_packed_width(&self) -> Option<u32> {
+        match self {
+            Self::Packed { width, .. } => Some(*width),
+            Self::Aggregate { members, .. } => members.iter().try_fold(0u32, |sum, member| {
+                sum.checked_add(member.element.fixed_packed_width()?)
+            }),
+            Self::Union { members, .. } => members.iter().try_fold(0u32, |largest, member| {
+                Some(largest.max(member.element.fixed_packed_width()?))
+            }),
+            Self::FixedArray {
+                dimensions,
+                element,
+            } => {
+                dimensions
+                    .iter()
+                    .try_fold(element.fixed_packed_width()?, |width, (left, right)| {
+                        let count = i64::from(*left)
+                            .abs_diff(i64::from(*right))
+                            .checked_add(1)?;
+                        u32::try_from(u64::from(width).checked_mul(count)?).ok()
+                    })
+            }
+            _ => None,
+        }
+    }
+
     pub fn packed(&self) -> Option<(u32, bool, bool)> {
         match self {
             Self::Packed {
@@ -97,9 +129,8 @@ impl IrContainerElement {
             | (Self::String, Self::String)
             | (Self::Chandle, Self::Chandle)
             | (Self::Event, Self::Event) => true,
-            (Self::Aggregate { type_id: dst, .. }, Self::Aggregate { type_id: src, .. }) => {
-                dst == src
-            }
+            (Self::Aggregate { type_id: dst, .. }, Self::Aggregate { type_id: src, .. })
+            | (Self::Union { type_id: dst, .. }, Self::Union { type_id: src, .. }) => dst == src,
             (
                 Self::FixedArray {
                     dimensions: dst_dims,

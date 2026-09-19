@@ -155,6 +155,7 @@ impl<'a> Codegen<'a> {
                         ir,
                     };
                     self.model.signals.push(IrSignal {
+                        fixed_default: None,
                         c_name: info.global.clone(),
                         hdl_name: Some(self.waveform_name(nid)),
                         ty: if info.real {
@@ -412,6 +413,7 @@ impl<'a> Codegen<'a> {
                         ir,
                     };
                     self.model.signals.push(IrSignal {
+                        fixed_default: None,
                         c_name: info.global.clone(),
                         hdl_name: Some(self.waveform_name(nid)),
                         ty: if info.real {

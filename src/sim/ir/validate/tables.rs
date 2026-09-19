@@ -167,6 +167,9 @@ impl Validator<'_> {
         for (idx, signal) in self.model.signals.iter().enumerate() {
             let path = format!("signals[{idx}]");
             self.validate_type(&signal.ty, &format!("{path}.ty"))?;
+            if let Some(value) = &signal.fixed_default {
+                self.validate_storage_default(value, signal.ty.width(), signal.ty.signed(), &path)?;
+            }
             if !signal.net_alias.is_empty() {
                 if !matches!(signal.ty, IrType::Packed { .. }) {
                     return self.fail(
@@ -657,7 +660,47 @@ impl Validator<'_> {
         }
 
         for (idx, array) in self.model.arrays.iter().enumerate() {
+            let mut elements = HashSet::new();
+            for (element, signal) in &array.net_elements {
+                let signal = self.model.signals.get(*signal).ok_or_else(|| {
+                    IrValidationError::new(
+                        "array.net_elements",
+                        "net signal index is out of bounds",
+                    )
+                })?;
+                if array.real
+                    || *element >= array.total
+                    || !elements.insert(*element)
+                    || (signal.net_driver.is_none() && signal.net_alias.is_empty())
+                    || signal.ty.width() != array.elem_width
+                {
+                    return self.fail(
+                        "array.net_elements",
+                        "invalid resolved array element binding",
+                    );
+                }
+            }
+
             let path = format!("arrays[{idx}]");
+            if let Some(value) = &array.element_default {
+                if value.width != array.elem_width
+                    || value.signed != array.signed
+                    || value.real.is_some()
+                {
+                    return self.fail(&path, "array element default has the wrong type");
+                }
+                self.validate_expr(
+                    &IrExpr::new(
+                        IrExprKind::Const(value.clone()),
+                        array.elem_width,
+                        array.signed,
+                        None,
+                    ),
+                    &[],
+                    &path,
+                )?;
+            }
+
             if array.real {
                 if array.elem_width != 0 {
                     return self.fail(
@@ -777,10 +820,29 @@ impl Validator<'_> {
             {
                 return self.fail(&path, "function has incompatible return types");
             }
+            if let Some(value) = &func.return_default {
+                let ty = func.ret.as_ref().ok_or_else(|| {
+                    IrValidationError::new(&path, "void function has a default value")
+                })?;
+                self.validate_storage_default(value, ty.width(), ty.signed(), &path)?;
+            }
             if let Some(ret) = &func.ret {
                 self.validate_type(ret, &format!("{path}.ret"))?;
             }
             for (formal_idx, formal) in func.formals.iter().enumerate() {
+                if let Some(value) = &formal.fixed_default {
+                    self.validate_storage_default(value, formal.width, formal.signed, &path)?;
+                }
+                if let Some(shape) = &formal.fixed_shape {
+                    validate_container_element(
+                        shape,
+                        &format!("{path}.formals[{formal_idx}].fixed_shape"),
+                    )?;
+                    if shape.fixed_packed_width() != Some(formal.width) {
+                        return self
+                            .fail(&path, "fixed formal shape disagrees with its payload width");
+                    }
+                }
                 if formal.const_ref && !formal.is_ref() {
                     return self.fail(
                         format!("{path}.formals[{formal_idx}].const_ref"),
@@ -807,6 +869,9 @@ impl Validator<'_> {
             }
             for (local_idx, local) in func.locals.iter().enumerate() {
                 let local_path = format!("{path}.locals[{local_idx}]");
+                if let Some(value) = &local.fixed_default {
+                    self.validate_storage_default(value, local.width, local.signed, &local_path)?;
+                }
                 if !local.real && !local.string {
                     self.validate_width(local.width, &format!("{local_path}.width"))?;
                 } else if local.width != 0 {

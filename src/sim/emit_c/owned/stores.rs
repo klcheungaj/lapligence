@@ -10,6 +10,7 @@ pub(super) enum Selection {
 }
 
 pub(super) struct Target {
+    pub reference_scopes: Vec<String>,
     pub binding: Binding,
     pub valid: String,
     pub selection: Option<Selection>,
@@ -92,7 +93,7 @@ impl<'a, 'm> Frame<'a, 'm> {
         ))
     }
 
-    fn selection(
+    pub(super) fn selection(
         &mut self,
         selection: &IrElemSel,
         storage_width: u32,
@@ -134,13 +135,22 @@ impl<'a, 'm> Frame<'a, 'm> {
 
     pub(super) fn target(&mut self, lhs: &IrLhs) -> Result<Target, String> {
         let (binding, valid, selection, net) = match lhs {
-            IrLhs::PackedSelect { target, steps, signed, two_state } => {
+            IrLhs::PackedSelect {
+                target,
+                steps,
+                signed,
+                two_state,
+            } => {
                 let mut target = self.target(target)?;
-                if target.selection.is_some() || target.binding.width == 0 || target.net.is_some() {
-                    return Err("packed activation select requires an unselected variable root".to_owned());
+                if target.selection.is_some() || target.binding.width == 0 {
+                    return Err("packed selection requires an unselected packed root".to_owned());
                 }
-                target.selection = self.selection(&IrElemSel::PackedChain(steps.clone()), target.binding.width)?;
-                target.width = steps.last().ok_or_else(|| "empty packed activation selection".to_owned())?.width;
+                target.selection =
+                    self.selection(&IrElemSel::PackedChain(steps.clone()), target.binding.width)?;
+                target.width = steps
+                    .last()
+                    .ok_or_else(|| "empty packed activation selection".to_owned())?
+                    .width;
                 target.signed = *signed;
                 target.binding.two_state |= *two_state;
                 return Ok(target);
@@ -232,6 +242,7 @@ impl<'a, 'm> Frame<'a, 'm> {
                     .map(|index| self.index(index).map(Selection::Bit))
                     .transpose()?;
                 return Ok(Target {
+                    reference_scopes: Vec::new(),
                     binding: Binding {
                         address: "NULL".to_owned(),
                         width: *width,
@@ -249,7 +260,36 @@ impl<'a, 'm> Frame<'a, 'm> {
                     reference: Some(address),
                 });
             }
-            IrLhs::Stream { .. } => return Err(pending("streaming lvalues")),
+            IrLhs::Stream { width, .. } => {
+                let read = IrExpr::new(IrExprKind::Fill(0), *width, false, Some(0));
+                let mut scopes = Vec::new();
+                let pointer = self.reference_argument_with_scopes(
+                    lhs,
+                    &read,
+                    *width,
+                    false,
+                    false,
+                    &mut scopes,
+                )?;
+                return Ok(Target {
+                    reference_scopes: scopes,
+                    binding: Binding {
+                        address: "NULL".into(),
+                        width: *width,
+                        signed: false,
+                        two_state: false,
+                        shortreal: false,
+                        automatic: false,
+                    },
+                    valid: "1".into(),
+                    selection: None,
+                    width: *width,
+                    signed: false,
+                    net: None,
+                    sequence_local: false,
+                    reference: Some(pointer),
+                });
+            }
         };
         let (width, signed) = match &selection {
             None => (binding.width, binding.signed),
@@ -261,6 +301,7 @@ impl<'a, 'm> Frame<'a, 'm> {
         };
         let sequence_local = matches!(lhs, IrLhs::WholeRef { addr, .. } if self.sequence_addresses.contains_key(addr));
         Ok(Target {
+            reference_scopes: Vec::new(),
             binding,
             valid,
             selection,
@@ -275,6 +316,9 @@ impl<'a, 'm> Frame<'a, 'm> {
     pub(super) fn release_target(&mut self, target: Target) {
         if let Some(Selection::Indexed(base, ..)) = target.selection {
             self.discard(base);
+        }
+        for scope in target.reference_scopes.into_iter().rev() {
+            self.line(format!("llg_value_scope_end({scope});"));
         }
     }
 
@@ -343,8 +387,13 @@ impl<'a, 'm> Frame<'a, 'm> {
             // Convert a two-state member view before selecting. Converting
             // the root copy is equivalent for every valid member bit; the
             // selection plan subsequently supplies X for invalid positions.
-            let whole = self.convert(whole, target.binding.width,
-                target.binding.signed, target.binding.two_state, false);
+            let whole = self.convert(
+                whole,
+                target.binding.width,
+                target.binding.signed,
+                target.binding.two_state,
+                false,
+            );
             let code = self.select_code(target, &whole.code);
             let value = self.replace(whole, code, target.width, false);
             return self.convert(value, target.width, target.signed, false, false);
@@ -453,26 +502,76 @@ impl<'a, 'm> Frame<'a, 'm> {
         );
         self.line(format!("if ({}) {{", target.valid));
         if let Some(reference) = &target.reference {
-            if nba {
+            if nba && target.reference_scopes.is_empty() {
                 return Err(pending("nonblocking writes through reference formals"));
             }
-            match &target.selection {
-                None => self.line(format!("llg_ref_write({reference}, {});", value.code)),
-                Some(Selection::Bit(index)) => {
-                    // target() already captured the checked native index once.
-                    self.line(format!(
-                        "llg_ref_write_bit({reference}, {index}, {});",
-                        value.code
-                    ));
+            if nba {
+                let payload = self.value(
+                    format!("sv4_zero({}, {})", binding.width, u8::from(binding.signed)),
+                    binding.width,
+                    binding.signed,
+                );
+                let mask = self.value(
+                    format!("sv4_zero({}, 0)", binding.width),
+                    binding.width,
+                    false,
+                );
+                let ones = self.value(
+                    format!("sv4_fill(1, {}, 0)", target.width),
+                    target.width,
+                    false,
+                );
+                if let Some(selection) = &target.selection {
+                    self.set_selected(selection, &payload.code, &value.code);
+                    self.set_selected(selection, &mask.code, &ones.code);
+                } else {
+                    self.line(format!("sv4_copy(&{}, &{});", payload.code, value.code));
+                    self.line(format!("sv4_copy(&{}, &{});", mask.code, ones.code));
                 }
-                Some(selection) => {
-                    let updated = self.value(format!("llg_ref_read({reference})"),
-                        binding.width, binding.signed);
-                    self.set_selected(selection, &updated.code, &value.code);
-                    self.line(format!("llg_ref_write({reference}, {});", updated.code));
-                    self.discard(updated);
+                self.line(format!(
+                    "llg_ref_nba_masked({reference}, {}, {}, {ticks});",
+                    payload.code, mask.code
+                ));
+                self.discard(ones);
+                self.discard(mask);
+                self.discard(payload);
+            } else {
+                match &target.selection {
+                    None => self.line(format!("llg_ref_write({reference}, {});", value.code)),
+                    Some(Selection::Bit(index)) => {
+                        // target() already captured the checked native index once.
+                        self.line(format!(
+                            "llg_ref_write_bit({reference}, {index}, {});",
+                            value.code
+                        ));
+                    }
+                    Some(selection) => {
+                        let updated = self.value(
+                            format!("llg_ref_read({reference})"),
+                            binding.width,
+                            binding.signed,
+                        );
+                        self.set_selected(selection, &updated.code, &value.code);
+                        let mask = self.value(
+                            format!("sv4_zero({}, 0)", binding.width),
+                            binding.width,
+                            false,
+                        );
+                        let ones = self.value(
+                            format!("sv4_fill(1, {}, 0)", target.width),
+                            target.width,
+                            false,
+                        );
+                        self.set_selected(selection, &mask.code, &ones.code);
+                        self.line(format!(
+                            "llg_ref_write_masked({reference}, {}, {});",
+                            updated.code, mask.code
+                        ));
+                        self.discard(ones);
+                        self.discard(mask);
+                        self.discard(updated);
+                    }
                 }
-
             }
         } else if target.sequence_local {
             if nba {

@@ -93,8 +93,9 @@ fn lhs_signed(model: &IrModel, lhs: &IrLhs) -> Option<bool> {
 
 fn lhs_two_state(model: &IrModel, lhs: &IrLhs) -> Option<bool> {
     match lhs {
-        IrLhs::PackedSelect { target, two_state, .. } =>
-            lhs_two_state(model, target).map(|state| state || *two_state),
+        IrLhs::PackedSelect {
+            target, two_state, ..
+        } => lhs_two_state(model, target).map(|state| state || *two_state),
         IrLhs::Whole(index) => model
             .signals
             .get(*index)
@@ -125,7 +126,8 @@ fn validate_container_element(element: &IrContainerElement, path: &str) -> Valid
         | IrContainerElement::Chandle
         | IrContainerElement::Event
         | IrContainerElement::Opaque { .. } => Ok(()),
-        IrContainerElement::Aggregate { members, .. } => {
+        IrContainerElement::Aggregate { members, .. }
+        | IrContainerElement::Union { members, .. } => {
             for (index, member) in members.iter().enumerate() {
                 if member.name.is_empty() {
                     return Err(IrValidationError::new(
