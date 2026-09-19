@@ -150,14 +150,8 @@ impl EmitCtx<'_, '_> {
             .copied()
             .ok_or_else(|| "case without selector".to_string())?;
         if case_type == DbCaseKind::Inside && self.cg.is_string_expr(&self.path, sel) {
-            if !qualifier.is_none() {
-                return Err(format!(
-                    "qualified string case inside is unsupported in `{}`",
-                    self.path
-                ));
-            }
             let selector = self.cg.lower_string(&self.path, sel)?;
-            return self.lower_case_inside_string(items, selector);
+            return self.lower_case_inside_string(items, selector, qualifier);
         }
         let mut sel_ir = self.cg.lower_expr(&self.path, sel)?;
         if case_type == DbCaseKind::Inside {
@@ -396,10 +390,12 @@ impl EmitCtx<'_, '_> {
         &mut self,
         items: &[crate::core::db::CaseItem],
         selector: IrStringExpr,
+        check: IrUniquePriorityCheck,
     ) -> Result<Vec<IrStmt>, String> {
         let selector_name = self.new_label("cis");
         let selector_read = IrStringExpr::LocalRead(selector_name.clone());
         let mut branches = Vec::new();
+        let mut ir_items = Vec::new();
         let mut default = None;
         for item in items {
             let body = match item.body {
@@ -407,6 +403,13 @@ impl EmitCtx<'_, '_> {
                 None => Vec::new(),
             };
             if item.exprs.is_empty() {
+                if !check.is_none() {
+                    ir_items.push(IrCaseItem {
+                        exprs: Vec::new(),
+                        body,
+                    });
+                    continue;
+                }
                 if default.replace(body).is_some() {
                     return Err(format!(
                         "case inside has multiple default items in `{}`",
@@ -424,7 +427,32 @@ impl EmitCtx<'_, '_> {
                 1,
                 false,
             );
+            if !check.is_none() {
+                ir_items.push(IrCaseItem {
+                    exprs: vec![condition],
+                    body,
+                });
+                continue;
+            }
             branches.push((condition, body));
+        }
+        // A qualified string `case inside` has no packed selector to compare
+        // against, so the runtime qualifier walks the membership predicates as
+        // `Inside` case items and evaluates the selector exactly once through
+        // the captured string local.
+        if !check.is_none() {
+            return Ok(vec![
+                IrStmt::DeclString {
+                    name: selector_name,
+                    init: Some(selector),
+                },
+                IrStmt::Case {
+                    sel: loop_index_expr(0),
+                    kind: IrCaseKind::Inside,
+                    items: ir_items,
+                    check,
+                },
+            ]);
         }
         let mut tail = default;
         for (cond, then_) in branches.into_iter().rev() {
