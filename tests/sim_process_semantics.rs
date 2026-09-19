@@ -160,3 +160,48 @@ fn called_function_writer_conflict_is_rejected_without_lint() {
         "multiple writers",
     );
 }
+
+#[test]
+fn comb_transitive_function_reads_include_array_and_member_leaves() {
+    sim_cli::run_case(
+        "feature_completion/g1_20",
+        "comb_transitive_reads",
+        "t1 mem=1 member=2 reads=2/2\n\
+         t2 mem=5 member=2 reads=3/2\n\
+         t3 mem=5 member=7 reads=3/3\n\
+         t4 mem=5 member=7 reads=4/3\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
+fn comb_time_zero_and_write_exclusion() {
+    sim_cli::run_case(
+        "feature_completion/g1_20",
+        "comb_time_zero_exclusion",
+        "t1 q=0 o=0\nt2 q=1 o=1\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
+fn ff_conflicting_procedural_writer_reports_both_origins() {
+    for optimized in [false, true] {
+        let output = sim_cli::invoke_with_env(
+            "feature_completion/g1_20",
+            "ff_conflicting_writer",
+            optimized,
+            &[],
+            &[],
+            &[],
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(1), "{stderr}");
+        assert!(output.stdout.is_empty(), "{output:?}");
+        assert!(stderr.contains("multiple writers"), "{stderr}");
+        assert!(stderr.contains("tb.always_ff"), "{stderr}");
+        assert!(stderr.contains("tb.always_comb"), "{stderr}");
+    }
+}

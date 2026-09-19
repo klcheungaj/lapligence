@@ -95,3 +95,28 @@ fn codegen_builds_ir_not_c_text() {
         "the backend entry point renders a complete ExecutionModel"
     );
 }
+
+/// The simulator core must not link the LSP's transport/async stack: the LSP
+/// is a consumer of `sim`, never the reverse. `cargo check --lib
+/// --no-default-features` is the executable gate; this pins the source shape.
+#[test]
+fn simulator_sources_do_not_reference_lsp_dependencies() {
+    let mut sources = Vec::new();
+    collect_rust_sources(
+        &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/sim"),
+        &mut sources,
+    );
+    assert!(
+        !sources.is_empty(),
+        "simulator sources should be discovered"
+    );
+    for (path, source) in &sources {
+        for banned in ["tower_lsp", "tokio", "dashmap"] {
+            assert!(
+                !source.contains(banned),
+                "{} must not reference LSP dependency `{banned}`",
+                path.display()
+            );
+        }
+    }
+}
