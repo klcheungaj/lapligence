@@ -710,9 +710,11 @@ impl<'a> Codegen<'a> {
                     }) => *target,
                     _ => *arg,
                 };
-                let is_unbounded = matches!(self.kind(target), NodeKind::Expr(ExprKind::Unbounded))
+                let target_kind = self.kind(target);
+                let is_unbounded = matches!(target_kind, NodeKind::Expr(ExprKind::Unbounded))
+                    || matches!(target_kind, NodeKind::Param { value: None, .. })
                     || matches!(
-                        self.kind(target),
+                        target_kind,
                         NodeKind::Param { ty, .. }
                             if ty.kind == "unbounded"
                                 || ty.type_name.as_deref() == Some("$")
@@ -722,9 +724,18 @@ impl<'a> Codegen<'a> {
                             || descriptor.name == "$"
                             || descriptor.name.contains("unbounded")
                     });
-                if !is_unbounded && !matches!(self.kind(target), NodeKind::Param { .. }) {
+                // IEEE 1800-2009 20.6.3 takes a constant_expression: an
+                // elaborated parameter or literal is legal and reports
+                // false unless it denotes `$`; a runtime variable is not.
+                let is_constant = matches!(
+                    target_kind,
+                    NodeKind::Param { .. }
+                        | NodeKind::Expr(ExprKind::Constant { .. })
+                        | NodeKind::Expr(ExprKind::Unbounded)
+                );
+                if !is_constant {
                     return Err(format!(
-                        "$isunbounded requires a parameter or unbounded literal in `{scope_path}`"
+                        "$isunbounded requires a constant parameter or unbounded literal in `{scope_path}`"
                     ));
                 }
                 Ok(IrExpr::new(

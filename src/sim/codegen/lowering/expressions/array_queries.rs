@@ -23,10 +23,11 @@ impl<'a> Codegen<'a> {
         match &descriptor.shape {
             TypeShape::PackedAtom { ranges } => {
                 if ranges.is_empty() {
+                    // IEEE 1800-2009 20.7 reports one dimension for every
+                    // simple bit-vector type, including a 1-bit scalar.
                     descriptor
                         .info
                         .width
-                        .filter(|width| *width > 1)
                         .map(|width| {
                             vec![IrArrayDimension {
                                 left: Some(i128::from(width) - 1),
@@ -48,12 +49,18 @@ impl<'a> Codegen<'a> {
                 if matches!(
                     layout.kind,
                     AggregateKind::PackedStruct | AggregateKind::PackedUnion
-                ) && descriptor.info.width.is_some_and(|width| width > 1) =>
+                ) =>
             {
-                vec![IrArrayDimension {
-                    left: descriptor.info.width.map(|width| i128::from(width) - 1),
-                    right: Some(0),
-                }]
+                descriptor
+                    .info
+                    .width
+                    .map(|width| {
+                        vec![IrArrayDimension {
+                            left: Some(i128::from(width) - 1),
+                            right: Some(0),
+                        }]
+                    })
+                    .unwrap_or_default()
             }
             TypeShape::FixedArray {
                 dimensions,
