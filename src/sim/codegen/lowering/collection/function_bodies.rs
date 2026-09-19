@@ -515,6 +515,10 @@ impl<'a> Codegen<'a> {
             }];
         }
         let mut declaration_initializations = Vec::new();
+        // Static subprogram initializers run in the model initialization
+        // frame, not inside the function body, so a call they contain starts
+        // at process recursion depth zero rather than this body's depth.
+        self.depth_arg = "0".to_string();
         for (local, (c_name, width, signed, two_state, shortreal)) in &locals {
             if self.db.variable_lifetime(*local) != VariableLifetime::Static {
                 continue;

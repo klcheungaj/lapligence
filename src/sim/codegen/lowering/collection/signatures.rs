@@ -375,6 +375,10 @@ impl<'a> Codegen<'a> {
     /// Emit every function/task body. Timing-capable tasks are ordinary C
     /// calls whose waits suspend the current libaco coroutine.
     pub(in super::super) fn emit_func_bodies(&mut self, inst: NodeId) -> Result<(), String> {
+        // Every prototype in the design (tops, packages and compilation
+        // units) has a model entry by now, so scalar declaration initializers
+        // that call a zero-time function can be lowered.
+        self.flush_deferred_declaration_inits()?;
         let class_methods;
         let children = if self.class_nodes.contains_key(&inst) {
             class_methods = self.class_method_nodes(inst);

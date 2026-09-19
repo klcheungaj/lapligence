@@ -1034,6 +1034,11 @@ struct Codegen<'a> {
     /// storage fills so runtime-dependent initializers never fall back to
     /// compile-time evaluation.
     declaration_inits: Vec<IrInitialization>,
+    /// Scalar declaration initializers whose expression contains a user
+    /// function call. Subroutine metadata does not exist until prototypes are
+    /// emitted, so lowering is deferred until then. Each tuple is
+    /// `(declaration, initializer, owning instance, resolved storage)`.
+    deferred_declaration_inits: Vec<(NodeId, NodeId, NodeId, SignalInfo)>,
     /// ContAssign arena nodes already collected as scalar variable
     /// declaration initializers; skipped at emission. True-net declaration
     /// assignments remain event-driven continuous-assignment processes.
@@ -1228,6 +1233,7 @@ impl<'a> Codegen<'a> {
             scalar_init_ca: HashSet::new(),
             var_inits: Vec::new(),
             declaration_inits: Vec::new(),
+            deferred_declaration_inits: Vec::new(),
             scope_array_names: HashMap::new(),
             param_vals: HashMap::new(),
             scope_sig_names: HashMap::new(),

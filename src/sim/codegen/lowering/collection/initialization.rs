@@ -46,6 +46,14 @@ impl<'a> Codegen<'a> {
                 }
             }
             let name = self.node(*c).name.clone();
+            if self.initializer_contains_call(init) {
+                // Subroutine metadata is not built until prototypes are
+                // emitted, after collection. Lower this initializer once the
+                // callee's model entry exists so a legal zero-time function
+                // call can run before processes observe the variable.
+                self.deferred_declaration_inits.push((*c, init, inst, info));
+                continue;
+            }
             let initializer = self.lower_declaration_initializer(
                 path,
                 *c,
@@ -63,6 +71,45 @@ impl<'a> Codegen<'a> {
                     Err(_) => return Err(lowering_error),
                 },
             }
+        }
+        Ok(())
+    }
+
+    /// Whether a declaration initializer subtree contains a user function
+    /// call. Calls cannot be lowered during collection because the callee's
+    /// model entry is only created when subroutine prototypes are emitted.
+    fn initializer_contains_call(&self, node: NodeId) -> bool {
+        if matches!(self.kind(node), NodeKind::FuncCall { .. }) {
+            return true;
+        }
+        self.node(node)
+            .children
+            .iter()
+            .any(|child| self.initializer_contains_call(*child))
+    }
+
+    /// Lower declaration initializers deferred by [`collect_var_inits`] now
+    /// that every subroutine has a model entry. Called after prototype
+    /// emission and before any process body is lowered.
+    pub(super) fn flush_deferred_declaration_inits(&mut self) -> Result<(), String> {
+        let deferred = std::mem::take(&mut self.deferred_declaration_inits);
+        for (declaration, initializer, inst, info) in deferred {
+            let path = self.instance_path_of(inst);
+            self.inst = inst;
+            // Declaration initializers execute in the model initialization
+            // frame, so calls start at process recursion depth zero.
+            self.depth_arg = "0".to_string();
+            let lowered = self.lower_declaration_initializer(
+                &path,
+                declaration,
+                initializer,
+                IrInitTarget::Signal(info.ir),
+                info.width,
+                info.signed,
+                info.two_state,
+                info.real,
+            )?;
+            self.declaration_inits.push(lowered);
         }
         Ok(())
     }

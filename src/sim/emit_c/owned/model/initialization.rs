@@ -233,7 +233,10 @@ pub(in crate::sim::emit_c) fn storage_lifecycle(
         activation_label: None,
     };
     let mut frame = Frame::new(&ctx);
-    frame.allow_calls = false;
+    // SV static initialization may call legal zero-time user functions. The
+    // runtime is already initialized and the frame is not a coroutine, so
+    // timing-bearing callees remain impossible (functions cannot contain
+    // timing); the recursion-depth guard still bounds any user call.
     for step in &model.init_steps {
         initialization_step(&mut frame, step)?;
     }

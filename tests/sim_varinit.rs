@@ -8,6 +8,8 @@
 //! test runs with the CWD pointed at a fresh temp dir (serialized through a
 //! mutex, to avoid process-wide CWD races).
 
+#[path = "support/sim_cli.rs"]
+mod sim_cli;
 #[path = "support/sim.rs"]
 mod sim_harness;
 
@@ -161,4 +163,41 @@ endmodule
 
     let stdout = run_sim(sv, "varnonconst").expect("simulation should run");
     assert_eq!(stdout, "a=1 z=x\n");
+}
+
+/// G1-18: a legal zero-time function used by a static declaration initializer
+/// runs (with its side effects) before initial procedures observe it.
+#[test]
+fn initializer_function_before_initial() {
+    sim_cli::run_case(
+        "feature_completion/g1_18",
+        "initializer_function_before_initial",
+        "x=42 observed=41\n",
+        "",
+        &[],
+    );
+}
+
+/// G1-18: a static local initializes once, while an automatic local is
+/// recreated on each activation.
+#[test]
+fn static_local_once_automatic_local_per_activation() {
+    sim_cli::run_case(
+        "feature_completion/g1_18",
+        "static_vs_automatic_loop",
+        "201 301 402\nside=1\n",
+        "",
+        &[],
+    );
+}
+
+/// G1-18: an initializer that cannot be lowered aborts code generation with no
+/// runnable model.
+#[test]
+fn init_failure_cleanup_emits_no_model() {
+    sim_cli::reject_case(
+        "feature_completion/g1_18",
+        "init_failure_cleanup",
+        "automatic subprogram variable",
+    );
 }
