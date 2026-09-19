@@ -216,6 +216,7 @@ mod tests {
 
     fn atom(id: u64) -> TypeDescriptor {
         TypeDescriptor {
+            two_state: false,
             id: TypeId(id),
             name: "logic [7:0]".to_owned(),
             info: TypeInfo {
@@ -230,6 +231,7 @@ mod tests {
 
     fn array(bounds: Vec<(i32, i32)>, element: TypeDescriptor) -> TypeDescriptor {
         TypeDescriptor {
+            two_state: false,
             id: TypeId(100),
             name: "array".to_owned(),
             info: TypeInfo::default(),
@@ -260,6 +262,7 @@ mod tests {
     #[test]
     fn nominal_aggregate_identity_is_not_replaced_by_storage_width() {
         let descriptor = |id| TypeDescriptor {
+            two_state: false,
             id: TypeId(id),
             name: "anonymous struct".to_owned(),
             info: TypeInfo::default(),

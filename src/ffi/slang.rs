@@ -26,7 +26,7 @@ use values::{
     decode_constants, decode_instances, decode_parameters, decode_types, validate_parameter_windows,
 };
 
-const ABI_VERSION: u32 = 3;
+const ABI_VERSION: u32 = 4;
 const INVALID_ID: u64 = u64::MAX;
 
 const STATUS_OK: u32 = 0;
@@ -468,6 +468,8 @@ pub struct TypeMember {
     pub type_id: u64,
     pub bit_offset: u64,
     pub bit_width: u64,
+    /// Constant-table identity of an explicit aggregate member initializer.
+    pub initializer_constant_id: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -929,6 +931,9 @@ pub struct LexicalToken {
     pub is_macro_expansion: bool,
     /// Token belongs to a preprocessor directive, not its expansion at a use site.
     pub is_directive: bool,
+    /// Resolved compilation-unit value is declared after this reference,
+    /// using native compilation-unit order across includes and source buffers.
+    pub is_unit_forward_reference: bool,
     pub semantic_id: Option<u64>,
     pub text: String,
 }
@@ -1118,6 +1123,7 @@ struct RawTypeMember {
     type_id: u64,
     bit_offset: u64,
     bit_width: u64,
+    initializer_constant_id: u64,
 }
 
 #[repr(C)]

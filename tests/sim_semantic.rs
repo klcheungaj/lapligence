@@ -26,6 +26,24 @@ fn elaborated_combinational_design_has_a_portable_rtl_view() {
 }
 
 #[test]
+fn fixed_unpacked_types_have_known_sizes_and_a_portable_rtl_view() {
+    let db = owned_design(
+        "typedef struct { logic [7:0] lanes[2]; bit valid; } packet_t;\n\
+         module top(input packet_t a, output packet_t y);\n\
+         always_comb y = a;\nendmodule",
+    );
+    let descriptor = db.node_ids().find_map(|node| {
+        let descriptor = db.type_descriptor(node)?;
+        (descriptor.info.kind == "struct").then_some(descriptor)
+    }).expect("captured unpacked struct");
+    assert_eq!(descriptor.fixed_size_bits(), Some(17));
+    assert!(!descriptor.two_state);
+    let semantic = SemanticModel::from_db(&db);
+    let result = semantic.validate_synthesizable(SynthesisProfile::PortableRtl);
+    assert!(result.is_ok(), "{result:?}");
+}
+
+#[test]
 fn simulation_timing_remains_owned_and_reports_its_source_origin() {
     let db = owned_design("module top;\nlogic q;\ninitial begin\n#2 q = 1'b1;\nend\nendmodule");
     let semantic = SemanticModel::from_db(&db);

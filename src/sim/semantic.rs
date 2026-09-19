@@ -424,7 +424,7 @@ impl<'db> SemanticModel<'db> {
                 NodeKind::ClassDef => Some(SynthesisIssueKind::RuntimeObject),
                 NodeKind::NamedEvent => Some(SynthesisIssueKind::EventOperation),
                 NodeKind::Array { ty } => match self.db.array_meta(id) {
-                    Some(meta) if matches!(meta.kind(), ArrayKind::Static) => classify_type(ty)
+                    Some(meta) if matches!(meta.kind(), ArrayKind::Static) => classify_node_type(self.db, id, ty)
                         .or_else(|| {
                             (meta.dimensions().is_empty()
                                 || meta.dimensions().iter().any(Option::is_none))
@@ -437,25 +437,25 @@ impl<'db> SemanticModel<'db> {
                     Some(_) => Some(SynthesisIssueKind::DynamicContainer),
                     None => Some(SynthesisIssueKind::UnknownType),
                 },
-                NodeKind::Net { ty, net_type, .. } => classify_type(ty).or_else(|| {
+                NodeKind::Net { ty, net_type, .. } => classify_node_type(self.db, id, ty).or_else(|| {
                     (!matches!(
                         net_type,
                         NetType::Wire | NetType::Uwire | NetType::Logic | NetType::Reg
                     ))
                     .then_some(SynthesisIssueKind::ResolvedNet)
                 }),
-                NodeKind::Var { ty } => classify_type(ty).or_else(|| {
+                NodeKind::Var { ty } => classify_node_type(self.db, id, ty).or_else(|| {
                     self.db
                         .var_initializer(id)
                         .map(|_| SynthesisIssueKind::StorageInitialization)
                 }),
                 NodeKind::Param {
                     ty, value: None, ..
-                } => classify_type(ty).or(Some(SynthesisIssueKind::UnresolvedExpression)),
+                } => classify_node_type(self.db, id, ty).or(Some(SynthesisIssueKind::UnresolvedExpression)),
                 NodeKind::Param {
                     ty, value: Some(_), ..
-                } => classify_type(ty),
-                NodeKind::FuncTask { ret: Some(ty), .. } => classify_type(ty),
+                } => classify_node_type(self.db, id, ty),
+                NodeKind::FuncTask { ret: Some(ty), .. } => classify_node_type(self.db, id, ty),
                 NodeKind::Process {
                     kind: ProcessKind::Initial,
                 } if initial_is_constant_storage_initialization(self.db, id) => {
@@ -492,13 +492,13 @@ impl<'db> SemanticModel<'db> {
                 {
                     Some(SynthesisIssueKind::UnknownConstruct)
                 }
-                NodeKind::Port { ty, .. } => classify_type(ty),
-                NodeKind::Genvar { ty } => classify_type(ty),
+                NodeKind::Port { ty, .. } => classify_node_type(self.db, id, ty),
+                NodeKind::Genvar { ty } => classify_node_type(self.db, id, ty),
                 NodeKind::FuncArg {
                     direction: Direction::Mixed | Direction::None | Direction::Unsupported,
                     ..
                 } => Some(SynthesisIssueKind::UnknownConstruct),
-                NodeKind::FuncArg { ty, .. } => classify_type(ty),
+                NodeKind::FuncArg { ty, .. } => classify_node_type(self.db, id, ty),
                 NodeKind::ContAssign { delay: Some(_), .. } => {
                     Some(SynthesisIssueKind::TimingControl)
                 }
@@ -996,6 +996,12 @@ fn supported_gate_strength(strength: Strength) -> bool {
     )
 }
 
+fn classify_node_type(db: &Db, node: NodeId, ty: &TypeInfo) -> Option<SynthesisIssueKind> {
+    if db.type_descriptor(node).and_then(|descriptor| descriptor.fixed_size_bits()).is_some_and(|width| width > 0) {
+        None
+    } else { classify_type(ty) }
+}
+
 fn classify_type(ty: &TypeInfo) -> Option<SynthesisIssueKind> {
     if matches!(
         ty.kind.as_str(),
@@ -1288,13 +1294,13 @@ fn synthesis_inline_node_issue(
         NodeKind::SysCall { .. } | NodeKind::MethodCall { .. } => {
             Some(SynthesisIssueKind::RuntimeService)
         }
-        NodeKind::Var { ty } => classify_type(ty).or_else(|| {
+        NodeKind::Var { ty } => classify_node_type(db, id, ty).or_else(|| {
             db.var_initializer(id)
                 .map(|_| SynthesisIssueKind::StorageInitialization)
         }),
         NodeKind::Array { ty } => match db.array_meta(id) {
             Some(meta) if matches!(meta.kind(), ArrayKind::Static) => {
-                classify_type(ty).or_else(|| {
+                classify_node_type(db, id, ty).or_else(|| {
                     (meta.dimensions().is_empty() || meta.dimensions().iter().any(Option::is_none))
                         .then_some(SynthesisIssueKind::UnknownType)
                 })
@@ -1302,12 +1308,12 @@ fn synthesis_inline_node_issue(
             Some(_) => Some(SynthesisIssueKind::DynamicContainer),
             None => Some(SynthesisIssueKind::UnknownType),
         },
-        NodeKind::FuncArg { ty, .. } => classify_type(ty),
-        NodeKind::FuncTask { ret: Some(ty), .. } => classify_type(ty),
+        NodeKind::FuncArg { ty, .. } => classify_node_type(db, id, ty),
+        NodeKind::FuncTask { ret: Some(ty), .. } => classify_node_type(db, id, ty),
         NodeKind::Param {
             ty, value: None, ..
-        } => classify_type(ty).or(Some(SynthesisIssueKind::UnresolvedExpression)),
-        NodeKind::Param { ty, .. } => classify_type(ty),
+        } => classify_node_type(db, id, ty).or(Some(SynthesisIssueKind::UnresolvedExpression)),
+        NodeKind::Param { ty, .. } => classify_node_type(db, id, ty),
         NodeKind::NamedEvent => Some(SynthesisIssueKind::EventOperation),
         NodeKind::ClassDef => Some(SynthesisIssueKind::RuntimeObject),
         NodeKind::Other => Some(SynthesisIssueKind::UnknownConstruct),

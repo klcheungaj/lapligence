@@ -58,6 +58,7 @@ pub(super) fn decode_types(
     raw: &[RawType],
     raw_ranges: &[RawTypeRange],
     raw_members: &[RawTypeMember],
+    constant_len: usize,
 ) -> Result<DecodedTypes, SlangError> {
     let ids: HashSet<_> = raw.iter().map(|item| item.id).collect();
     if ids.len() != raw.len() || ids.contains(&INVALID_ID) {
@@ -91,7 +92,17 @@ pub(super) fn decode_types(
             if !ids.contains(&member.type_id) {
                 return Err(invalid_native("type member refers to an unknown type"));
             }
+            let initializer_constant_id = (member.initializer_constant_id != INVALID_ID)
+                .then_some(member.initializer_constant_id);
+            if initializer_constant_id
+                .is_some_and(|id| usize::try_from(id).map_or(true, |id| id >= constant_len))
+            {
+                return Err(invalid_native(
+                    "type member initializer refers to an unknown constant",
+                ));
+            }
             Ok(TypeMember {
+                initializer_constant_id,
                 // SAFETY: native strings borrow from the live snapshot.
                 name: unsafe { copy_string(member.name, "type member name")? },
                 type_id: member.type_id,

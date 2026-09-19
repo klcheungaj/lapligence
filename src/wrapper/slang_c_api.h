@@ -13,7 +13,7 @@
 extern "C" {
 #endif
 
-#define LLG_SLANG_ABI_VERSION 3u
+#define LLG_SLANG_ABI_VERSION 4u
 #define LLG_SLANG_INVALID_ID UINT64_MAX
 
 typedef struct LlgSlangSnapshot LlgSlangSnapshot;
@@ -258,6 +258,8 @@ typedef struct {
   uint64_t type_id;
   uint64_t bit_offset;
   uint64_t bit_width;
+  /* Snapshot constant ID for an explicit member default, or INVALID_ID. */
+  uint64_t initializer_constant_id;
 } LlgSlangTypeMember;
 
 enum {
@@ -857,7 +859,8 @@ enum {
   LLG_SLANG_LEXICAL_MISSING = 1u << 0,
   LLG_SLANG_LEXICAL_SKIPPED = 1u << 1,
   LLG_SLANG_LEXICAL_MACRO_EXPANSION = 1u << 2,
-  LLG_SLANG_LEXICAL_DIRECTIVE = 1u << 3
+  LLG_SLANG_LEXICAL_DIRECTIVE = 1u << 3,
+  LLG_SLANG_LEXICAL_UNIT_FORWARD_REFERENCE = 1u << 4
 };
 
 typedef struct {

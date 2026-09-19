@@ -391,7 +391,8 @@ fn compile_source_groups(
     })
     .map_err(startup_from_slang)?;
     let mut diagnostics = project_diagnostics(&snapshot);
-    let edition_diagnostics = edition_diagnostics(&snapshot, opts.edition, &opts.system_subroutines);
+    let edition_diagnostics =
+        edition_diagnostics(&snapshot, opts.edition, &opts.system_subroutines);
     let owned_errors = edition_diagnostics
         .iter()
         .any(|diagnostic| diagnostic.severity == Severity::Error);

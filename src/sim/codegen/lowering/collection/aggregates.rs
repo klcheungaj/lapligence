@@ -304,6 +304,7 @@ impl<'a> Codegen<'a> {
                     None
                 } else {
                     Some(TypeDescriptor {
+                        two_state: descriptor.two_state,
                         id: descriptor.id,
                         name: descriptor.name.clone(),
                         info: descriptor.info.clone(),

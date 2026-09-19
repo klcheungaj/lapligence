@@ -231,18 +231,32 @@ fn edition_later_forms_cli_contrast() {
     );
 }
 
-
-fn strict_profile_rejects_in_both_snapshot_modes(source: &str, edition: LanguageEdition, label: &str) {
+fn strict_profile_rejects_in_both_snapshot_modes(
+    source: &str,
+    edition: LanguageEdition,
+    label: &str,
+) {
     for library_units in [false, true] {
         let output = compile::compile(&CompileOpts {
             sources: vec![OwnedSource::compilation_unit("strict-profile.sv", source)],
-            top: Some("tb".to_owned()), edition, library_units,
+            top: Some("tb".to_owned()),
+            edition,
+            library_units,
             ..CompileOpts::default()
-        }).expect("compile strict-profile source");
-        assert!(!output.ok(), "library_units={library_units}: {label} was accepted");
-        let diagnostic = output.diagnostics.iter().find(|diagnostic| {
-            diagnostic.message.contains("strict edition profile") && diagnostic.message.contains(label)
-        }).unwrap_or_else(|| panic!("library_units={library_units}: {:?}", output.diagnostics));
+        })
+        .expect("compile strict-profile source");
+        assert!(
+            !output.ok(),
+            "library_units={library_units}: {label} was accepted"
+        );
+        let diagnostic = output
+            .diagnostics
+            .iter()
+            .find(|diagnostic| {
+                diagnostic.message.contains("strict edition profile")
+                    && diagnostic.message.contains(label)
+            })
+            .unwrap_or_else(|| panic!("library_units={library_units}: {:?}", output.diagnostics));
         assert_eq!(diagnostic.file.as_deref(), Some("strict-profile.sv"));
         assert!(diagnostic.line > 0 && diagnostic.col > 0, "{diagnostic:?}");
     }
@@ -265,27 +279,51 @@ fn one_step_clocking_skew_is_admitted_in_both_systemverilog_snapshot_modes() {
 
 #[test]
 fn assertion_controls_have_the_same_edition_policy_in_navigation_and_execution() {
-    for name in ["$asserton", "$assertoff", "$assertkill", "$assertpasson", "$assertpassoff",
-        "$assertfailon", "$assertfailoff", "$assertnonvacuouson", "$assertvacuousoff"] {
+    for name in [
+        "$asserton",
+        "$assertoff",
+        "$assertkill",
+        "$assertpasson",
+        "$assertpassoff",
+        "$assertfailon",
+        "$assertfailoff",
+        "$assertnonvacuouson",
+        "$assertvacuousoff",
+    ] {
         let text = format!("module tb;\n  initial {name}();\nendmodule\n");
         strict_profile_rejects_in_both_snapshot_modes(&text, LanguageEdition::Verilog2001, name);
         for library_units in [false, true] {
             let output = compile::compile(&CompileOpts {
                 sources: vec![OwnedSource::compilation_unit("controls.sv", &text)],
-                top: Some("tb".to_owned()), edition: LanguageEdition::SystemVerilog2009,
-                library_units, ..CompileOpts::default()
-            }).expect("compile 2009 control task");
-            assert!(output.ok(), "{name}, navigation={library_units}: {:?}", output.diagnostics);
+                top: Some("tb".to_owned()),
+                edition: LanguageEdition::SystemVerilog2009,
+                library_units,
+                ..CompileOpts::default()
+            })
+            .expect("compile 2009 control task");
+            assert!(
+                output.ok(),
+                "{name}, navigation={library_units}: {:?}",
+                output.diagnostics
+            );
         }
     }
 }
 
 #[test]
 fn newer_builtins_cannot_leak_through_either_snapshot_profile() {
-    for (name, statement) in [("$assertcontrol", "$assertcontrol(1);"),
-        ("$countbits", "$display(\"%0d\", $countbits(4'b0011, 1'b1));")] {
+    for (name, statement) in [
+        ("$assertcontrol", "$assertcontrol(1);"),
+        (
+            "$countbits",
+            "$display(\"%0d\", $countbits(4'b0011, 1'b1));",
+        ),
+    ] {
         let text = format!("module tb;\n  initial begin {statement} end\nendmodule\n");
-        for edition in [LanguageEdition::Verilog2001, LanguageEdition::SystemVerilog2009] {
+        for edition in [
+            LanguageEdition::Verilog2001,
+            LanguageEdition::SystemVerilog2009,
+        ] {
             strict_profile_rejects_in_both_snapshot_modes(&text, edition, name);
         }
     }
@@ -312,14 +350,26 @@ endmodule
     for library_units in [false, true] {
         let output = compile::compile(&CompileOpts {
             sources: vec![OwnedSource::compilation_unit("token-context.sv", text)],
-            top: Some("tb".to_owned()), library_units, ..CompileOpts::default()
-        }).expect("compile token-context probe");
-        assert!(output.ok(), "navigation={library_units}: {:?}", output.diagnostics);
-        assert!(output.snapshot.lexical_tokens.iter().any(|token| token.is_directive));
+            top: Some("tb".to_owned()),
+            library_units,
+            ..CompileOpts::default()
+        })
+        .expect("compile token-context probe");
+        assert!(
+            output.ok(),
+            "navigation={library_units}: {:?}",
+            output.diagnostics
+        );
+        assert!(output
+            .snapshot
+            .lexical_tokens
+            .iter()
+            .any(|token| token.is_directive));
     }
     strict_profile_rejects_in_both_snapshot_modes(
         "`define CALL $assertoff\nmodule tb; initial `CALL(); endmodule\n",
-        LanguageEdition::Verilog2001, "$assertoff",
+        LanguageEdition::Verilog2001,
+        "$assertoff",
     );
 }
 
@@ -334,27 +384,41 @@ fn begin_keywords_cannot_admit_later_constructs() {
     }
     strict_profile_rejects_in_both_snapshot_modes(
         "`begin_keywords \"1800-2009\"\nmodule tb; logic x; endmodule\n`end_keywords\n",
-        LanguageEdition::Verilog2001, "logic",
+        LanguageEdition::Verilog2001,
+        "logic",
     );
 }
 
 #[test]
 fn registered_system_extensions_do_not_become_standard_capabilities() {
-    for edition in [LanguageEdition::Verilog2001, LanguageEdition::SystemVerilog2009] {
+    for edition in [
+        LanguageEdition::Verilog2001,
+        LanguageEdition::SystemVerilog2009,
+    ] {
         for library_units in [false, true] {
             let output = compile::compile(&CompileOpts {
-                sources: vec![OwnedSource::compilation_unit("registered.sv",
-                    "module tb; integer result; initial result = $my_registered(3); endmodule\n")],
-                top: Some("tb".to_owned()), edition, library_units,
+                sources: vec![OwnedSource::compilation_unit(
+                    "registered.sv",
+                    "module tb; integer result; initial result = $my_registered(3); endmodule\n",
+                )],
+                top: Some("tb".to_owned()),
+                edition,
+                library_units,
                 system_subroutines: vec!["function int $my_registered(input int x);".to_owned()],
                 ..CompileOpts::default()
-            }).expect("compile registered extension");
-            assert!(output.ok(), "{edition}, navigation={library_units}: {:?}", output.diagnostics);
+            })
+            .expect("compile registered extension");
+            assert!(
+                output.ok(),
+                "{edition}, navigation={library_units}: {:?}",
+                output.diagnostics
+            );
         }
     }
     strict_profile_rejects_in_both_snapshot_modes(
         "module tb; integer result; initial result = $my_registered(3); endmodule\n",
-        LanguageEdition::SystemVerilog2009, "$my_registered",
+        LanguageEdition::SystemVerilog2009,
+        "$my_registered",
     );
 }
 
@@ -362,7 +426,10 @@ fn registered_system_extensions_do_not_become_standard_capabilities() {
 fn standard_timing_checks_are_not_mistaken_for_system_extensions() {
     let source = "module tb(input a, b); specify $setup(posedge a, posedge b, 1); \
                   $hold(posedge b, posedge a, 1); endspecify endmodule\n";
-    for edition in [LanguageEdition::Verilog2001, LanguageEdition::SystemVerilog2009] {
+    for edition in [
+        LanguageEdition::Verilog2001,
+        LanguageEdition::SystemVerilog2009,
+    ] {
         for library_units in [false, true] {
             let output = compile::compile(&CompileOpts {
                 sources: vec![OwnedSource::compilation_unit("timing.v", source)],
@@ -370,8 +437,34 @@ fn standard_timing_checks_are_not_mistaken_for_system_extensions() {
                 edition,
                 library_units,
                 ..CompileOpts::default()
-            }).expect("compile standard timing checks");
-            assert!(output.ok(), "{edition}, navigation={library_units}: {:?}", output.diagnostics);
+            })
+            .expect("compile standard timing checks");
+            assert!(
+                output.ok(),
+                "{edition}, navigation={library_units}: {:?}",
+                output.diagnostics
+            );
+        }
+    }
+}
+
+#[test]
+fn compilation_unit_value_order_is_checked_in_both_snapshot_modes() {
+    for library_units in [false, true] {
+        for (source, rejected) in [
+            ("module tb; initial $display($unit::v); endmodule int v=7;", true),
+            ("`define READ $unit::v\nmodule tb; initial $display(`READ); endmodule\nint v=7;", true),
+            ("int v=7; module tb; initial $display($unit::v); endmodule", false),
+            ("module tb; initial $display($unit::f()); endmodule function int f(); return 7; endfunction", false),
+        ] {
+            let opts = CompileOpts { sources: vec![OwnedSource::compilation_unit("unit-order.sv", source)],
+                top: Some("tb".to_owned()), library_units, ..CompileOpts::default() };
+            let output = compile::compile(&opts).unwrap();
+            assert_eq!(output.ok(), !rejected, "navigation={library_units}: {:?}", output.diagnostics);
+            if rejected {
+                assert!(output.diagnostics.iter().any(|d| d.message.contains("compilation-unit forward reference") && d.line > 0));
+                assert!(compile::compile_checked(&opts).is_err());
+            }
         }
     }
 }

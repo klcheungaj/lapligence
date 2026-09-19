@@ -78,7 +78,7 @@ use connections::{
 mod values;
 use values::{
     net_type_from_subkind, operation_from_slang, primitive_type_from_subkind, strength_from_slang,
-    time_exponent, time_literal_scale, val_from_slang, value_data_from_slang,
+    time_exponent, time_literal_scale, val_from_slang,
 };
 mod assertion_import;
 use assertion_import::assertion_expr_from_slang;
@@ -760,3 +760,5 @@ impl Db {
         self.overridden_parameters.contains(&id)
     }
 }
+
+pub(super) use values::value_data_from_slang;

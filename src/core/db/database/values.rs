@@ -2,7 +2,7 @@
 
 use super::*;
 
-pub(super) fn value_data_from_slang(value: &SlangConstantValue) -> ValueData {
+pub(in crate::core::db) fn value_data_from_slang(value: &SlangConstantValue) -> ValueData {
     match value {
         SlangConstantValue::None => ValueData::None,
         SlangConstantValue::Integer {

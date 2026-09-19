@@ -139,6 +139,7 @@ fn leaf_member(base: &AggregateMember, descriptor: &TypeDescriptor) -> Aggregate
         _ => base.packed_ranges.clone(),
     };
     AggregateMember {
+        initializer: base.initializer.clone(),
         name: base.name.clone(),
         ty: descriptor.info.clone(),
         two_state: base.two_state,

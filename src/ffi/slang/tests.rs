@@ -121,24 +121,33 @@ fn malformed_native_tags_and_related_windows_are_rejected() {
 fn malformed_type_component_and_windows_are_rejected() {
     let mut ty = raw_type(0);
     ty.element_type_id = 17;
-    let error = decode_types(&[ty], &[], &[]).expect_err("unknown element type must fail");
+    let error = decode_types(&[ty], &[], &[], 0).expect_err("unknown element type must fail");
     assert_eq!(error.kind(), SlangErrorKind::InvalidNativeData);
 
     let mut ty = raw_type(0);
     ty.range_count = 1;
     let error =
-        decode_types(&[ty], &[], &[]).expect_err("out-of-bounds type range window must fail");
+        decode_types(&[ty], &[], &[], 0).expect_err("out-of-bounds type range window must fail");
     assert_eq!(error.kind(), SlangErrorKind::InvalidNativeData);
 
     let mut ty = raw_type(0);
     ty.member_count = 1;
     let member = RawTypeMember {
+        initializer_constant_id: INVALID_ID,
         name: empty_raw_string(),
         type_id: 9,
         bit_offset: 0,
         bit_width: 1,
     };
-    let error = decode_types(&[ty], &[], &[member]).expect_err("unknown member type must fail");
+    let error = decode_types(&[ty], &[], &[member], 0).expect_err("unknown member type must fail");
+    assert_eq!(error.kind(), SlangErrorKind::InvalidNativeData);
+    let member = RawTypeMember {
+        type_id: 0,
+        initializer_constant_id: 0,
+        ..member
+    };
+    let error = decode_types(&[ty], &[], &[member], 0)
+        .expect_err("unknown member initializer constant must fail");
     assert_eq!(error.kind(), SlangErrorKind::InvalidNativeData);
 }
 

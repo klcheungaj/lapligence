@@ -10,7 +10,7 @@ pub(super) fn decode_lexical_tokens(
     let semantic_ids: HashSet<_> = semantic_nodes.iter().map(|node| node.id).collect();
     raw.iter()
         .map(|token| {
-            if token.reserved != 0 || token.flags & !0b1111 != 0 {
+            if token.reserved != 0 || token.flags & !0b1_1111 != 0 {
                 return Err(invalid_native("lexical token has unknown flags"));
             }
             let semantic_id = (token.semantic_id != INVALID_ID).then_some(token.semantic_id);
@@ -33,6 +33,7 @@ pub(super) fn decode_lexical_tokens(
                 is_skipped: token.flags & 2 != 0,
                 is_macro_expansion: token.flags & 4 != 0,
                 is_directive: token.flags & 8 != 0,
+                is_unit_forward_reference: token.flags & 16 != 0,
                 semantic_id,
                 // SAFETY: native strings borrow from the live snapshot.
                 text: unsafe { copy_string(token.text, "lexical token text")? },
@@ -79,7 +80,11 @@ mod tests {
     #[test]
     fn directive_provenance_is_decoded_without_weakening_flag_checks() {
         let mut token = RawLexicalToken {
-            range: RawRange { file_id: INVALID_ID, start: 0, end: 0 },
+            range: RawRange {
+                file_id: INVALID_ID,
+                start: 0,
+                end: 0,
+            },
             kind: 19,
             role: 4,
             flags: 8,
@@ -95,6 +100,8 @@ mod tests {
         assert!(!tokens[0].is_directive);
         assert!(tokens[0].is_macro_expansion);
         token.flags = 16;
+        assert!(decode_lexical_tokens(&[token], &[], &[]).unwrap()[0].is_unit_forward_reference);
+        token.flags = 32;
         assert!(decode_lexical_tokens(&[token], &[], &[]).is_err());
         token.flags = 8;
         token.reserved = 1;

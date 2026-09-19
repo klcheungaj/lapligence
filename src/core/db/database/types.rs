@@ -105,6 +105,8 @@ pub enum TypeShape {
 #[derive(Clone, Debug, PartialEq)]
 pub struct TypeDescriptor {
     pub id: TypeId,
+    /// Captured state domain, including enum bases and recursive fixed members.
+    pub two_state: bool,
     /// Exact frontend-rendered type spelling, retained for `$typename` and
     /// diagnostics without requiring a frontend object at simulation time.
     pub name: String,
@@ -143,12 +145,7 @@ impl TypeDescriptor {
     pub fn default_semantics(&self) -> ValueDefaultSemantics {
         match self.shape {
             TypeShape::PackedAtom { .. } => {
-                if self.info.kind == "bit"
-                    || matches!(
-                        self.info.kind.as_str(),
-                        "int" | "integer" | "longint" | "byte" | "shortint" | "time"
-                    )
-                {
+                if self.two_state {
                     ValueDefaultSemantics::TwoStateZero
                 } else {
                     ValueDefaultSemantics::FourStateX
@@ -193,12 +190,12 @@ impl TypeDescriptor {
         match &self.shape {
             TypeShape::PackedAtom { .. } => self.info.width.map(u64::from),
             TypeShape::Aggregate(layout) => match layout.kind {
-                AggregateKind::PackedStruct => {
+                AggregateKind::PackedStruct | AggregateKind::UnpackedStruct => {
                     layout.members.iter().try_fold(0u64, |total, member| {
                         total.checked_add(member.descriptor.fixed_size_bits()?)
                     })
                 }
-                AggregateKind::PackedUnion => layout
+                AggregateKind::PackedUnion | AggregateKind::UnpackedUnion => layout
                     .members
                     .iter()
                     .map(|member| member.descriptor.fixed_size_bits())
@@ -259,6 +256,8 @@ pub enum AggregateKind {
 /// One declared member of an unpacked aggregate.
 #[derive(Clone, Debug, PartialEq)]
 pub struct AggregateMember {
+    /// Explicit constant member default, including flattened fixed array values.
+    pub initializer: Option<ValueData>,
     pub name: String,
     pub ty: TypeInfo,
     pub two_state: bool,

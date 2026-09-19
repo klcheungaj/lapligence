@@ -266,8 +266,12 @@ pub(super) fn decode_snapshot(
 
     let related = decode_related(raw_related, &files)?;
     let diagnostics = decode_diagnostics(raw_diagnostics, &related, &files)?;
-    let (types, type_ranges, type_members) =
-        decode_types(raw_types, raw_type_ranges, raw_type_members)?;
+    let (types, type_ranges, type_members) = decode_types(
+        raw_types,
+        raw_type_ranges,
+        raw_type_members,
+        raw_constants.len(),
+    )?;
     let constants = decode_constants(raw_constants, value_words, limits)?;
     let instances = decode_instances(raw_instances, &files, raw_parameters.len())?;
     let parameters =

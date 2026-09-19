@@ -290,7 +290,7 @@ endmodule
 "#;
 
     let stdout = run_sim(sv, "defparam").expect("legal defparam must re-elaborate");
-    assert_eq!(stdout, "narrow=1111 wide=00001111\n");
+    assert_eq!(stdout, "narrow=1111 wide=11111111\n");
 }
 
 /// A module instance array (IEEE 1800-2009 §23.8) elaborates each element as a

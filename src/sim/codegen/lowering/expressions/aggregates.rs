@@ -660,6 +660,7 @@ impl<'a> Codegen<'a> {
                         current = element.as_ref().clone();
                     } else {
                         current = TypeDescriptor {
+                            two_state: current.two_state,
                             id: current.id,
                             name: current.name.clone(),
                             info: current.info.clone(),
@@ -996,6 +997,7 @@ impl<'a> Codegen<'a> {
                     element.as_ref().clone()
                 } else {
                     TypeDescriptor {
+                        two_state: descriptor.two_state,
                         id: descriptor.id,
                         name: descriptor.name.clone(),
                         info: descriptor.info.clone(),
@@ -1112,6 +1114,7 @@ impl<'a> Codegen<'a> {
                     element.as_ref().clone()
                 } else {
                     TypeDescriptor {
+                        two_state: descriptor.two_state,
                         id: descriptor.id,
                         name: descriptor.name.clone(),
                         info: descriptor.info.clone(),

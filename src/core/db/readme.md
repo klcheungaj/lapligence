@@ -3,7 +3,7 @@
 - `database.rs`: the `NodeId` arena, Slang snapshot projection, normalized
   instance hierarchy, and read-only consumer API.
 - `slang_types.rs`: validated type, array, packed-range, and aggregate
-  projection from typed ABI tables.
+  projection from typed ABI tables, including explicit constant member defaults.
 - `domain.rs`: frontend-independent semantic enums.
 - `validate.rs`: arena, root, side-table, embedded-reference, and cycle checks.
 

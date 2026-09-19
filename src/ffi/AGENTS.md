@@ -29,7 +29,7 @@ APIs from this directory and must not call the C ABI.
 - Fallible APIs use their module error types. Preserve native failure status and message where
   available; malformed native output is a separate `InvalidNativeData` failure.
 
-## Slang ABI v3 contract
+## Slang ABI v4 contract
 
 - `CompileRequest` borrows admitted source buffers and typed options for one blocking
   `llg_slang_compile` call. Input arrays and strings remain alive until it returns. Sources are
@@ -56,6 +56,12 @@ APIs from this directory and must not call the C ABI.
   repetition kinds are rejected as `InvalidNativeData`.
 - Preserve the unconditional static link attributes for `llg_slang_wrapper`, `svlang`, and
   `fmt`; they carry the native archives through the Rust library target.
+
+Aggregate member records carry an optional checked constant-table ID for their
+explicit default initializer. Fixed array defaults are flattened to exact
+bitstream constants before crossing the ABI. Compilation-unit variable lexical
+uses retain declaration-order violations, including macro-expanded references,
+for the owned edition policy. Unknown lexical flag bits remain invalid.
 
 The owned snapshot contains admitted files; compiler and analysis diagnostics with related
 locations; elaborated instances, parameters, types, and constant values; a flat semantic

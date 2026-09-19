@@ -22,6 +22,8 @@
 
 #include "slang/analysis/AnalysisManager.h"
 #include "slang/ast/ASTVisitor.h"
+#include "slang/ast/Bitstream.h"
+#include "slang/ast/EvalContext.h"
 #include "slang/ast/Compilation.h"
 #include "slang/ast/Lookup.h"
 #include "slang/ast/Scope.h"
@@ -316,6 +318,7 @@ struct Capture {
   std::unordered_map<const syntax::SyntaxNode*, std::vector<uint64_t>>
       sourceIdentityGroups;
   std::unordered_set<const ParameterSymbol*> overriddenParameters;
+  std::unordered_map<uint64_t, SourceLocation> unitValueDeclarations;
   uint64_t valueBits = 0;
   uint64_t semanticEdgeCount = 0;
   bool declarationOnly = false;
@@ -669,8 +672,22 @@ struct Capture {
                                                    maxTypeMembers()))
         throw BridgeFailure(LLG_SLANG_STATUS_LIMIT_EXCEEDED,
                             "type member limit exceeded");
+      uint64_t initializerId = LLG_SLANG_INVALID_ID;
+      if (const Expression* initializer = field->getInitializer()) {
+        ASTContext context(*field->getParentScope(), LookupLocation::before(*field));
+        ConstantValue value = context.eval(*initializer);
+        if (value.isUnpacked() && field->getType().isFixedSize()) {
+          if (value.getBitstreamWidth() > maxValueBits() - std::min(valueBits, maxValueBits()))
+            throw BridgeFailure(LLG_SLANG_STATUS_LIMIT_EXCEEDED,
+                                "member initializer constant bit limit exceeded");
+          EvalContext evaluation(context);
+          value = Bitstream::convertToBitVector(std::move(value), initializer->sourceRange,
+                                               evaluation);
+        }
+        initializerId = constant(value);
+      }
       members.push_back({storeString(output, field->name), type(field->getType()),
-                         field->bitOffset, field->getType().getBitWidth()});
+                         field->bitOffset, field->getType().getBitWidth(), initializerId});
     }
     const uint64_t memberStart = output.type_members.size();
     chargeRecord(output, members.size() * sizeof(LlgSlangTypeMember));
@@ -768,7 +785,7 @@ struct Capture {
         constantId = constant(parameter.getValue());
         const auto* syntax = parameter.getSyntax();
         const auto* overrides = instance.body.hierarchyOverrideNode;
-        if (instance.isTopLevel() && syntax &&
+        if (syntax &&
             ((overrides && overrides->paramOverrides.find(syntax) !=
                               overrides->paramOverrides.end()) ||
              parameter.isOverridden()))
@@ -1622,8 +1639,12 @@ public:
         ? capture.span(symbol.location, symbol.name.size())
         : (symbol.getSyntax() ? capture.span(symbol.getSyntax()->sourceRange())
                               : LlgSlangSourceRange{LLG_SLANG_INVALID_ID, 0, 0});
-    if constexpr (std::derived_from<T, ValueSymbol>)
+    if constexpr (std::derived_from<T, ValueSymbol>) {
       result.type_id = capture.type(symbol.getType());
+      const Scope* parent = symbol.getParentScope();
+      if (parent && parent->asSymbol().kind == SymbolKind::CompilationUnit)
+        capture.unitValueDeclarations.emplace(id, symbol.location);
+    }
     if constexpr (std::same_as<T, GenvarSymbol>) {
       const Scope* parentScope = symbol.getParentScope();
       if (!parentScope)
@@ -3564,7 +3585,9 @@ public:
     }
 
     for (auto& token : capture.output.lexical_tokens) {
-      if (token.kind != LLG_SLANG_LEXICAL_IDENTIFIER ||
+      const bool expandedMacro = token.kind == LLG_SLANG_LEXICAL_MACRO &&
+          (token.flags & LLG_SLANG_LEXICAL_MACRO_EXPANSION) != 0;
+      if ((token.kind != LLG_SLANG_LEXICAL_IDENTIFIER && !expandedMacro) ||
           token.range.file_id == LLG_SLANG_INVALID_ID)
         continue;
       uint64_t semanticId = LLG_SLANG_INVALID_ID;
@@ -3656,6 +3679,18 @@ public:
           }
         }
       }
+      if (role == LLG_SLANG_LEXICAL_ROLE_REFERENCE ||
+          role == LLG_SLANG_LEXICAL_ROLE_CONNECTION_ACTUAL) {
+        auto declaration = capture.unitValueDeclarations.find(semanticId);
+        auto location = tokenLocations.find(
+            std::tuple{token.range.file_id, token.range.start, token.range.end});
+        if (declaration != capture.unitValueDeclarations.end() &&
+            location != tokenLocations.end() &&
+            capture.sourceManager.isBeforeInCompilationUnit(
+                location->second, declaration->second).value_or(false))
+          token.flags |= LLG_SLANG_LEXICAL_UNIT_FORWARD_REFERENCE;
+      }
+      if (expandedMacro) continue;
       if (role != LLG_SLANG_LEXICAL_ROLE_NONE) {
         token.role = role;
         if (boundKind != LLG_SLANG_LEXICAL_UNKNOWN)
@@ -3674,6 +3709,7 @@ private:
   Capture& capture;
   std::unordered_set<const syntax::SyntaxNode*> directives;
   uint32_t directiveDepth = 0;
+  std::map<std::tuple<uint64_t, uint64_t, uint64_t>, SourceLocation> tokenLocations;
 
   void addToken(parsing::Token token, uint32_t extraFlags) {
     const std::string_view text = token.rawText();
@@ -3711,6 +3747,9 @@ private:
         (directiveDepth != 0 ||
          (flags & LLG_SLANG_LEXICAL_MACRO_EXPANSION) != 0))
       kind = LLG_SLANG_LEXICAL_MACRO;
+    const auto range = capture.span(token.range());
+    tokenLocations.try_emplace(std::tuple{range.file_id, range.start, range.end},
+                              token.location());
     chargeRecord(capture.output, sizeof(LlgSlangLexicalToken));
     capture.output.lexical_tokens.push_back({
         capture.span(token.range()), kind,

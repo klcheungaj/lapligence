@@ -37,6 +37,7 @@ pub(super) struct SlangTypeProjector<'a> {
     types: HashMap<u64, &'a SlangType>,
     ranges: &'a [TypeRange],
     members: &'a [TypeMember],
+    constants: &'a [crate::ffi::slang::Constant],
 }
 
 impl<'a> SlangTypeProjector<'a> {
@@ -53,6 +54,7 @@ impl<'a> SlangTypeProjector<'a> {
             types,
             ranges: &snapshot.type_ranges,
             members: &snapshot.type_members,
+            constants: &snapshot.constants,
         })
     }
 
@@ -315,7 +317,20 @@ impl<'a> SlangTypeProjector<'a> {
             .map(|member| {
                 let member_ty = self.ty(member.type_id)?;
                 let descriptor = self.descriptor(member_ty, visiting)?;
+                let initializer = member
+                    .initializer_constant_id
+                    .map(|id| {
+                        usize::try_from(id)
+                            .ok()
+                            .and_then(|id| self.constants.get(id))
+                            .map(|constant| super::database::value_data_from_slang(&constant.value))
+                            .ok_or_else(|| {
+                                "aggregate member initializer constant is missing".to_string()
+                            })
+                    })
+                    .transpose()?;
                 Ok(AggregateMember {
+                    initializer,
                     name: member.name.clone(),
                     ty: self.type_info(member_ty)?,
                     two_state: !member_ty.is_four_state,
@@ -421,6 +436,7 @@ impl<'a> SlangTypeProjector<'a> {
         };
         visiting.remove(&ty.id);
         Ok(TypeDescriptor {
+            two_state: !ty.is_four_state,
             id: TypeId(ty.id),
             name: ty.display_name.clone(),
             info,
@@ -588,6 +604,7 @@ mod tests {
             },
         ];
         let projector = SlangTypeProjector {
+            constants: &[],
             types: types.iter().map(|ty| (ty.id, ty)).collect(),
             ranges: &ranges,
             members: &[],
@@ -644,12 +661,14 @@ mod tests {
             kind: TypeRangeKind::Packed,
         }];
         let members = [TypeMember {
+            initializer_constant_id: None,
             name: "data".to_owned(),
             type_id: 1,
             bit_offset: 0,
             bit_width: 8,
         }];
         let projector = SlangTypeProjector {
+            constants: &[],
             types: types.iter().map(|ty| (ty.id, ty)).collect(),
             ranges: &ranges,
             members: &members,
@@ -689,12 +708,14 @@ mod tests {
         let types = [leaf, inner, outer];
         let members = [
             TypeMember {
+                initializer_constant_id: None,
                 name: "leaf".to_owned(),
                 type_id: 0,
                 bit_offset: 0,
                 bit_width: 8,
             },
             TypeMember {
+                initializer_constant_id: None,
                 name: "inner".to_owned(),
                 type_id: 1,
                 bit_offset: 0,
@@ -702,6 +723,7 @@ mod tests {
             },
         ];
         let projector = SlangTypeProjector {
+            constants: &[],
             types: types.iter().map(|ty| (ty.id, ty)).collect(),
             ranges: &[],
             members: &members,
@@ -735,6 +757,7 @@ mod tests {
             aggregate.member_count = 1;
             types.push(aggregate);
             members.push(TypeMember {
+                initializer_constant_id: None,
                 name: format!("level_{index}"),
                 type_id: if index == 0 { 0 } else { id - 1 },
                 bit_offset: 0,
@@ -742,6 +765,7 @@ mod tests {
             });
         }
         let projector = SlangTypeProjector {
+            constants: &[],
             types: types.iter().map(|ty| (ty.id, ty)).collect(),
             ranges: &[],
             members: &members,
@@ -762,12 +786,14 @@ mod tests {
         let types = [byte, word, union];
         let members = [
             TypeMember {
+                initializer_constant_id: None,
                 name: "byte".to_owned(),
                 type_id: 0,
                 bit_offset: 0,
                 bit_width: 8,
             },
             TypeMember {
+                initializer_constant_id: None,
                 name: "word".to_owned(),
                 type_id: 1,
                 bit_offset: 0,
@@ -775,6 +801,7 @@ mod tests {
             },
         ];
         let projector = SlangTypeProjector {
+            constants: &[],
             types: types.iter().map(|ty| (ty.id, ty)).collect(),
             ranges: &[],
             members: &members,
@@ -785,6 +812,7 @@ mod tests {
             .descriptor;
         assert_eq!(union.fixed_size_bits(), Some(16));
         let fixed = TypeDescriptor {
+            two_state: false,
             id: TypeId(3),
             name: "union_array".to_owned(),
             info: union.info.clone(),
@@ -801,6 +829,7 @@ mod tests {
         let record = ty(7, TypeKind::UnpackedStruct, 0);
         let types = [record];
         let projector = SlangTypeProjector {
+            constants: &[],
             types: types.iter().map(|ty| (ty.id, ty)).collect(),
             ranges: &[],
             members: &[],
@@ -822,6 +851,7 @@ mod tests {
         second.display_name = "record_t".to_owned();
         let types = [first, second];
         let projector = SlangTypeProjector {
+            constants: &[],
             types: types.iter().map(|ty| (ty.id, ty)).collect(),
             ranges: &[],
             members: &[],
@@ -867,6 +897,7 @@ mod tests {
             kind: TypeRangeKind::Packed,
         }];
         let projector = SlangTypeProjector {
+            constants: &[],
             types: types.iter().map(|ty| (ty.id, ty)).collect(),
             ranges: &ranges,
             members: &[],
