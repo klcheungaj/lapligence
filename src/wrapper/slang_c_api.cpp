@@ -47,6 +47,7 @@
 #include "slang/syntax/SyntaxVisitor.h"
 #include "slang/text/SourceManager.h"
 #include "slang/util/Bag.h"
+#include "slang/util/SmallVector.h"
 
 using namespace slang;
 using namespace slang::ast;
@@ -1130,8 +1131,8 @@ uint32_t semanticStatementKind(StatementKind kind) {
     case StatementKind::Disable: return LLG_SLANG_STMT_DISABLE;
     case StatementKind::DisableFork: return LLG_SLANG_STMT_DISABLE_FORK;
     case StatementKind::Conditional: return LLG_SLANG_STMT_IF;
-    case StatementKind::Case:
-    case StatementKind::PatternCase: return LLG_SLANG_STMT_CASE;
+    case StatementKind::Case: return LLG_SLANG_STMT_CASE;
+    case StatementKind::PatternCase: return LLG_SLANG_STMT_PATTERN_CASE;
     case StatementKind::ForLoop: return LLG_SLANG_STMT_FOR;
     case StatementKind::ForeachLoop: return LLG_SLANG_STMT_FOREACH;
     case StatementKind::RepeatLoop: return LLG_SLANG_STMT_REPEAT;
@@ -1672,6 +1673,26 @@ public:
     }
     if constexpr (std::same_as<T, InstanceSymbol>) {
       result.subkind = LLG_SLANG_INSTANCE_SINGLE;
+      if (!symbol.arrayPath.empty()) {
+        // arrayPath is canonical, ascending storage order. Preserve each
+        // declared logical index before array containers are flattened by Db.
+        // This is the same mapping used by Slang's hierarchical path printer.
+        SmallVector<ConstantRange, 8> dimensions;
+        symbol.getArrayDimensions(dimensions);
+        if (dimensions.size() != symbol.arrayPath.size())
+          throw BridgeFailure(LLG_SLANG_STATUS_INTERNAL_ERROR,
+                              "instance array path and dimensions disagree");
+        std::string indexedName(symbol.getArrayName());
+        for (size_t i = 0; i < dimensions.size(); ++i) {
+          if (symbol.arrayPath[i] >= dimensions[i].width())
+            throw BridgeFailure(LLG_SLANG_STATUS_INTERNAL_ERROR,
+                                "instance array position is outside its dimension");
+          const int64_t index = int64_t(dimensions[i].lower()) +
+                                int64_t(symbol.arrayPath[i]);
+          indexedName += "[" + std::to_string(index) + "]";
+        }
+        result.name = storeString(capture.output, indexedName);
+      }
       result.definition_name = storeString(capture.output,
                                            symbol.getDefinition().name);
       addDefinitionKind(result, symbol.getDefinition().definitionKind);
@@ -3678,6 +3699,9 @@ private:
       kind = LLG_SLANG_LEXICAL_NUMBER;
 
     uint32_t flags = extraFlags;
+    // Directive replacement text is not executable source until expanded.
+    if (directiveDepth != 0)
+      flags |= LLG_SLANG_LEXICAL_DIRECTIVE;
     if (token.isMissing())
       flags |= LLG_SLANG_LEXICAL_MISSING;
     if (token.location().valid() &&

@@ -556,3 +556,78 @@ fn include_admission_enforces_the_shared_source_byte_budget() {
     assert!(error.message().contains("source") || error.message().contains("include"));
     fs::remove_dir_all(root).expect("remove P52 limit fixture");
 }
+
+/// IEEE 1800-2009 §22.5: a diagnostic inside a macro-expanded token must point
+/// at the expansion site and retain the defining header as a related location,
+/// without admitting any unauthorized include.
+#[test]
+fn macro_expansion_diagnostics_retain_the_defining_header_origin() {
+    use llg::ffi::slang::{self, CompileOptions, CompileRequest, Source};
+    let sources = [
+        Source::compilation_unit(
+            "top.sv",
+            "`include \"header.svh\"\nmodule tb;\n  initial begin\n    int y = `BAD_MACRO(3);\n  end\nendmodule\n",
+        ),
+        Source::include("header.svh", "`define BAD_MACRO(x) (x +)\n"),
+    ];
+    let snapshot = slang::compile(&CompileRequest {
+        sources: &sources,
+        options: &CompileOptions::default(),
+    })
+    .expect("macro expansion diagnostics are not a startup failure");
+    assert!(snapshot.has_errors());
+    let diagnostic = snapshot
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.name == "ExpectedExpression")
+        .expect("expected-expression diagnostic");
+    // Primary location is the expansion site in the root source.
+    let file_name = |id: u64| {
+        snapshot
+            .files
+            .iter()
+            .find(|file| file.id == id)
+            .map(|file| file.name.as_str())
+    };
+    let primary = diagnostic.primary.expect("primary range");
+    assert_eq!(file_name(primary.file_id), Some("top.sv"));
+    // The defining header is retained as a related location.
+    assert!(
+        diagnostic
+            .related
+            .iter()
+            .filter_map(|related| related.range)
+            .filter_map(|range| file_name(range.file_id))
+            .any(|name| name == "header.svh"),
+        "related origins: {:?}",
+        diagnostic.related
+    );
+}
+
+/// IEEE 1800-2009 §5.6: escaped identifiers terminate at whitespace, may
+/// contain punctuation that would otherwise be a hierarchy separator, and must
+/// survive to emission without colliding with the C name of a plain
+/// identifier.
+#[test]
+fn escaped_identifiers_roundtrip_without_c_name_collisions() {
+    let output = compile::compile(&CompileOpts {
+        sources: vec![OwnedSource::compilation_unit(
+            "escaped.sv",
+            "module tb;\n  logic \\a.b ;\n  logic a_b;\n  logic \\a-b ;\n  initial begin\n    \\a.b  = 1'b1;\n    a_b = 1'b0;\n    \\a-b  = 1'b1;\n    $display(\"dot=%0b under=%0b dash=%0b\", \\a.b , a_b, \\a-b );\n    $finish;\n  end\nendmodule\n",
+        )],
+        top: Some("tb".to_owned()),
+        ..CompileOpts::default()
+    })
+    .expect("escaped identifiers are legal Verilog identifiers");
+    assert!(output.ok(), "{:?}", output.diagnostics);
+    let database = llg::core::db::Db::from_slang(&output.snapshot).expect("owned database");
+    let mut names: Vec<String> = database
+        .node_ids()
+        .filter(|id| matches!(database.node_kind(*id), llg::core::db::NodeKind::Var { .. }))
+        .map(|id| database.node(id).name.clone())
+        .collect();
+    names.sort();
+    assert_eq!(names, vec!["a-b", "a.b", "a_b"]);
+    let unique: std::collections::HashSet<_> = names.iter().collect();
+    assert_eq!(unique.len(), 3, "{names:?}");
+}

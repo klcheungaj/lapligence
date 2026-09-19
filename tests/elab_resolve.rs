@@ -3,6 +3,39 @@
 use llg::core::compile::{self, OwnedSource};
 use llg::ffi::slang::{ConstantValue, Snapshot};
 
+#[test]
+fn multidimensional_member_selects_keep_the_aggregate_owner_path() {
+    use llg::core::db::{Db, ExprKind, NodeKind};
+
+    let snapshot = compile(
+        "tb",
+        r#"
+module tb;
+    typedef struct { logic [7:0] lanes[4:3][0:1]; } group_t;
+    group_t first, second;
+    initial begin
+        first.lanes[4][0] = 8'h31;
+        second.lanes[3][1] = first.lanes[4][0];
+    end
+endmodule
+"#,
+    );
+    let database = Db::from_slang(&snapshot).expect("owned array member paths");
+    let mut owners = Vec::new();
+    for id in database.node_ids() {
+        if matches!(database.node_kind(id), NodeKind::Expr(ExprKind::ArraySelect { indices, .. }) if indices.len() == 2)
+        {
+            let (owner, path) = database
+                .array_select_path(id)
+                .expect("multidimensional member path");
+            assert_eq!(path, ["lanes"]);
+            owners.push(database.node(owner).name.as_str());
+        }
+    }
+    owners.sort_unstable();
+    assert_eq!(owners, ["first", "first", "second"]);
+}
+
 const PARAMS_SV: &str = r#"module param_child #(
     parameter int W = 4,
     parameter logic [3:0] INIT = 4'h0
@@ -37,6 +70,34 @@ const FILL_SV: &str = r#"module fill_mod;
     localparam logic [7:0] G = 'x;
 endmodule
 module fill_top; fill_mod u(); endmodule
+"#;
+
+const DEFPARAM_SV: &str = r#"module defparam_child #(parameter int W = 4) (output logic [W-1:0] o);
+    assign o = {W{1'b1}};
+endmodule
+module defparam_top(output logic [3:0] narrow, output logic [7:0] wide);
+    defparam_child c_narrow (narrow);
+    defparam_child c_wide (wide);
+    defparam c_wide.W = 8;
+endmodule
+"#;
+
+const DEFPARAM_LOCALPARAM_SV: &str = r#"module localparam_child #(parameter int W = 4);
+    localparam int L = W + 1;
+endmodule
+module localparam_top;
+    localparam_child c0 ();
+    defparam c0.L = 8;
+endmodule
+"#;
+
+const INSTANCE_ARRAY_SV: &str = r#"module array_leaf (input logic [3:0] a, output logic [3:0] y);
+    assign y = ~a;
+endmodule
+module array_top;
+    logic [3:0] a0, a1, y0, y1;
+    array_leaf u[1:0] (.a({a1, a0}), .y({y1, y0}));
+endmodule
 "#;
 
 fn compile(top: &str, text: &str) -> Snapshot {
@@ -181,4 +242,119 @@ fn unsized_fill_literals_resolve_in_context() {
     };
     assert_eq!(*bit_width, 8);
     assert_eq!(unknown_words.first().map(|word| word & 0xff), Some(0xff));
+}
+
+/// IEEE 1364-2001 §12.2.1 / IEEE 1800-2009 §23.10: a `defparam` overrides a
+/// parameter at elaboration time, so the selected instance must see the new
+/// value while an un-overridden sibling keeps its default.
+#[test]
+fn defparam_overrides_re_elaborate_the_selected_instance() {
+    let snapshot = compile("defparam_top", DEFPARAM_SV);
+    assert_bits(&snapshot, "c_narrow", "W", 4, 32);
+    assert_bits(&snapshot, "c_wide", "W", 8, 32);
+}
+
+/// IEEE 1800-2009 §23.10: a `localparam` cannot be the target of a `defparam`.
+#[test]
+fn defparam_to_a_localparam_is_a_blocking_frontend_diagnostic() {
+    let out = compile::compile_sources(
+        &[OwnedSource::compilation_unit(
+            "localparam_override.sv",
+            DEFPARAM_LOCALPARAM_SV,
+        )],
+        &compile::CompileOpts {
+            top: Some("localparam_top".to_owned()),
+            ..compile::CompileOpts::default()
+        },
+    )
+    .expect("localparam override is an HDL diagnostic, not a startup failure");
+    assert!(!out.ok());
+    assert!(
+        out.snapshot.diagnostics.iter().any(|diagnostic| diagnostic
+            .message
+            .contains("localparam and so cannot be the target of a defparam")),
+        "diagnostics: {:?}",
+        out.snapshot.diagnostics
+    );
+}
+
+/// IEEE 1800-2009 §23.8 / IEEE 1364-2001 §12.1.1: every element of a module
+/// instance array is a distinct elaborated instance. Flattening must not
+/// collapse the unnamed elements onto one hierarchy path.
+#[test]
+fn instance_array_elements_keep_distinct_owned_identities() {
+    use llg::core::db::{Db, NodeKind};
+
+    let out = compile::compile_sources_checked(
+        &[OwnedSource::compilation_unit("test.sv", INSTANCE_ARRAY_SV)],
+        &compile::CompileOpts {
+            top: Some("array_top".to_owned()),
+            ..compile::CompileOpts::default()
+        },
+    )
+    .expect("instance array must elaborate");
+    let database = Db::from_slang(&out.snapshot).expect("owned database");
+    let mut elements: Vec<(String, String)> = database
+        .node_ids()
+        .filter_map(|id| match database.node_kind(id) {
+            NodeKind::ModuleInst { def_name, .. }
+                if def_name == "array_leaf" && database.semantic_detail(id) == Some("Instance") =>
+            {
+                Some((database.node(id).name.clone(), database.instance_path(id)))
+            }
+            _ => None,
+        })
+        .filter(|(_, path)| path.starts_with("array_top."))
+        .collect();
+    elements.sort();
+    assert_eq!(
+        elements,
+        vec![
+            ("u[0]".to_owned(), "array_top.u[0]".to_owned()),
+            ("u[1]".to_owned(), "array_top.u[1]".to_owned()),
+        ]
+    );
+}
+
+#[test]
+fn instance_array_indices_survive_native_capture_and_owned_flattening() {
+    use llg::core::db::{Db, NodeKind};
+
+    let snapshot = compile(
+        "tb",
+        include_str!("fixtures/sim/group1_repairs/instance_indices.sv"),
+    );
+    let database = Db::from_slang(&snapshot).expect("owned instance-index database");
+    let mut actual: Vec<_> = database
+        .node_ids()
+        .filter_map(|id| match database.node_kind(id) {
+            NodeKind::ModuleInst { def_name, .. }
+                if def_name == "indexed_leaf"
+                    && database.semantic_detail(id) == Some("Instance") =>
+            {
+                Some(database.instance_path(id))
+            }
+            _ => None,
+        })
+        .filter(|path| path.starts_with("tb."))
+        .collect();
+    let mut expected = Vec::new();
+    for index in 4..=5 {
+        expected.push(format!("tb.offset_array[{index}]"));
+    }
+    for index in -2..=1 {
+        expected.push(format!("tb.negative_array[{index}]"));
+    }
+    for index in 0..=3 {
+        expected.push(format!("tb.ascending_array[{index}]"));
+        expected.push(format!("tb.descending_array[{index}]"));
+    }
+    for outer in 1..=2 {
+        for inner in 0..=1 {
+            expected.push(format!("tb.matrix[{outer}][{inner}]"));
+        }
+    }
+    actual.sort();
+    expected.sort();
+    assert_eq!(actual, expected);
 }

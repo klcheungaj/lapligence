@@ -100,6 +100,11 @@ pub(super) fn statement_from_slang(
                 items,
             }
         }
+        // Until G3-01 implements matching, a surviving pattern case is an
+        // explicit unsupported construct, never an empty ordinary case.
+        crate::ffi::slang::SEMANTIC_STMT_PATTERN_CASE => StmtKind::Unsupported {
+            object_type: ObjectType::PatternCaseStatement,
+        },
         35 => StmtKind::For {
             vars: Vec::new(),
             init: edge_targets(ids, edges, SemanticEdgeRole::Initializer)?,

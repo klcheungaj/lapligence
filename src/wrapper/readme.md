@@ -7,6 +7,8 @@
     edges, resolved type and constant tables, source ranges, and lexical tokens
     with declaration/reference/connection-label bindings. DPI-C import aliases
     and context/pure flags are copied into the owned subroutine records.
+    Instance-array element names retain every declared source index, including
+    negative/nonzero bounds and nested dimensions, before owned DB flattening.
   - `slang/CMakeLists.txt`: isolated Slang and C ABI shim build.
   - `mimalloc_shim.c`: musl-link allocation redirection.
 - Boundary: C++ ownership and exceptions stop here; Rust uses C-compatible APIs.
@@ -22,3 +24,10 @@
 - Consumer: [Rust FFI layer](../ffi/readme.md).
 - Build: wrapper changes rebuild the bridge; vendored Slang changes rebuild the
   frontend. musl targets use the selected musl C++ compiler and static runtime.
+
+Lexical flag bit 3 (`LLG_SLANG_LEXICAL_DIRECTIVE`, owned `is_directive`) identifies
+preprocessor directive text, including unexpanded macro replacement bodies.
+It is independent of macro-expansion and skipped-token flags. The Rust decoder
+accepts only these four known flag bits and still rejects unknown bits/reserved
+fields. Update both sides together: source edition checks use the provenance to
+avoid rejecting a directive body which never becomes executable source.

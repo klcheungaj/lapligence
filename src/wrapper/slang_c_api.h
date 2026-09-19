@@ -478,6 +478,10 @@ enum {
   LLG_SLANG_STMT_CONCURRENT_ASSUME = 65,
   LLG_SLANG_STMT_CONCURRENT_COVER = 66,
   LLG_SLANG_STMT_CONCURRENT_EXPECT = 67,
+  /* Pattern-matching case statements are kept distinct from ordinary case so
+   * the owned database cannot reduce a surviving pattern to an empty case
+   * before G3-01 implements matching. */
+  LLG_SLANG_STMT_PATTERN_CASE = 233,
   /* AssertionExprKind tags. */
   LLG_SLANG_ASSERTION_EXPR_INVALID = 1,
   LLG_SLANG_ASSERTION_EXPR_SIMPLE = 2,
@@ -852,7 +856,8 @@ enum {
 enum {
   LLG_SLANG_LEXICAL_MISSING = 1u << 0,
   LLG_SLANG_LEXICAL_SKIPPED = 1u << 1,
-  LLG_SLANG_LEXICAL_MACRO_EXPANSION = 1u << 2
+  LLG_SLANG_LEXICAL_MACRO_EXPANSION = 1u << 2,
+  LLG_SLANG_LEXICAL_DIRECTIVE = 1u << 3
 };
 
 typedef struct {

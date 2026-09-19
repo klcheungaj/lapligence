@@ -111,6 +111,6 @@ semantic_enum! {
 semantic_enum! {
     pub enum ObjectType {
         UnsupportedStatement, ReturnStatement, RepeatControl, OrderedWait, ForeachStatement,
-        ExpectStatement, ImmediateAssert, ImmediateAssume, ImmediateCover
+        ExpectStatement, ImmediateAssert, ImmediateAssume, ImmediateCover, PatternCaseStatement
     }
 }

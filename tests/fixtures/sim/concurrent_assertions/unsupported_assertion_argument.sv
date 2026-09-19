@@ -1,7 +1,4 @@
-// llg-test-fixture: tests/fixtures/sim/concurrent_assertions/unsupported_assertion_argument.sv
-// IEEE 1800-2009 §20.11 covers the assertion-control family; the post-2009
-// `$assertcontrol` adapter accepts only ON, OFF, and KILL control types and
-// rejects other integral arguments.
+// Post-2009 $assertcontrol must be rejected by the strict 2009 profile.
 module tb;
     logic clk;
 

@@ -512,7 +512,28 @@ impl Db {
                 }
             }
             if semantic.kind == SemanticKind::Expression && semantic.subkind == 73 {
-                if let Some(base) = edge_target(&ids, edges, SemanticEdgeRole::Base)? {
+                if let Some(mut base) = edge_target(&ids, edges, SemanticEdgeRole::Base)? {
+                    // ArraySelect flattens successive element indices. Its
+                    // aggregate owner path must come from the original member
+                    // access, not from an intervening element-select node.
+                    let mut depth = 0;
+                    while snapshot.semantic_nodes[base.index()].kind == SemanticKind::Expression
+                        && snapshot.semantic_nodes[base.index()].subkind == 73
+                    {
+                        if depth >= snapshot.semantic_nodes.len() {
+                            return Err(DbError::InvalidSnapshot(
+                                "array select chain contains a cycle".into(),
+                            ));
+                        }
+                        depth += 1;
+                        let base_edges =
+                            semantic_edges(snapshot, &snapshot.semantic_nodes[base.index()])?;
+                        let Some(parent) = edge_target(&ids, base_edges, SemanticEdgeRole::Base)?
+                        else {
+                            break;
+                        };
+                        base = parent;
+                    }
                     if let Some((parts, refs)) = member_path_from_slang(
                         snapshot,
                         &type_projector,

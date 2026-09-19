@@ -12,3 +12,13 @@
 Native ownership ends in `ffi::slang`; core and all downstream consumers use
 owned Rust data. Admitted source text stays in memory and is never recovered
 by reopening frontend paths.
+
+Strict source admission is centralized in `compile/editions.rs`, over owned
+semantic records and classified lexical tokens. The table is shared by ordinary
+and navigation compilations. Builtin and keyword admission is distinct from
+simulator implementation. Names not in the requested edition require an explicit
+`CompileOpts::system_subroutines` prototype; registering an extension does not
+make it a standard builtin. Directive replacement text is excluded until used;
+missing, skipped, string and escaped-identifier tokens are not treated as code.
+Keep the table tests, located frontend tests and both compilation modes aligned
+when updating edition capabilities.

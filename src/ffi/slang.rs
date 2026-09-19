@@ -593,6 +593,10 @@ pub const SEMANTIC_STMT_CONCURRENT_ASSERT: u32 = 64;
 pub const SEMANTIC_STMT_CONCURRENT_ASSUME: u32 = 65;
 pub const SEMANTIC_STMT_CONCURRENT_COVER: u32 = 66;
 pub const SEMANTIC_STMT_CONCURRENT_EXPECT: u32 = 67;
+/// Pattern-matching case statements are tagged apart from ordinary case so
+/// lowering rejects them with their source location instead of treating a
+/// surviving pattern as an empty case.
+pub const SEMANTIC_STMT_PATTERN_CASE: u32 = 233;
 
 pub const SEMANTIC_ASSERTION_EXPR_INVALID: u32 = 1;
 pub const SEMANTIC_ASSERTION_EXPR_SIMPLE: u32 = 2;
@@ -923,6 +927,8 @@ pub struct LexicalToken {
     pub is_missing: bool,
     pub is_skipped: bool,
     pub is_macro_expansion: bool,
+    /// Token belongs to a preprocessor directive, not its expansion at a use site.
+    pub is_directive: bool,
     pub semantic_id: Option<u64>,
     pub text: String,
 }

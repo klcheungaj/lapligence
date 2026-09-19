@@ -37,3 +37,10 @@ snapshot capture, semantic records, tokens, diagnostics and value decoding.
 They remain inside the same FFI safety boundary; consumers receive owned data.
 
 See [the source map](../../docs/source_layout.md).
+
+Lexical flag bit 3 (`LLG_SLANG_LEXICAL_DIRECTIVE`, owned `is_directive`) identifies
+preprocessor directive text, including unexpanded macro replacement bodies.
+It is independent of macro-expansion and skipped-token flags. The Rust decoder
+accepts only these four known flag bits and still rejects unknown bits/reserved
+fields. Update both sides together: source edition checks use the provenance to
+avoid rejecting a directive body which never becomes executable source.

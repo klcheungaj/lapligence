@@ -262,3 +262,87 @@ endmodule
     let stdout = run_sim(sv, "declnonconst").expect("simulation should run");
     assert_eq!(stdout, "a=1 w=x\n");
 }
+
+/// A legal `defparam` (IEEE 1364-2001 §12.2.1) overrides one elaborated
+/// instance's parameter; an un-overridden sibling keeps the default, so the
+/// two children produce different widths. The `defparam` declaration itself
+/// must be consumed at elaboration and must not become an executable node.
+#[test]
+fn sim_defparam_re_elaborates_only_the_selected_instance() {
+    if !llg::sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let sv = r#"module defparam_child #(parameter W = 4) (output [W-1:0] o);
+    assign o = {W{1'b1}};
+endmodule
+module tb;
+    wire [3:0] narrow;
+    wire [7:0] wide;
+    defparam_child c_narrow (narrow);
+    defparam_child c_wide (wide);
+    defparam c_wide.W = 8;
+    initial begin
+        $display("narrow=%b wide=%b", narrow, wide);
+        $finish;
+    end
+endmodule
+"#;
+
+    let stdout = run_sim(sv, "defparam").expect("legal defparam must re-elaborate");
+    assert_eq!(stdout, "narrow=1111 wide=00001111\n");
+}
+
+/// A module instance array (IEEE 1800-2009 §23.8) elaborates each element as a
+/// distinct instance. Before element naming was recovered, lowering rejected
+/// the design as an unnamed child instance.
+#[test]
+fn sim_module_instance_array_elaborates_each_element() {
+    if !llg::sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let sv = r#"module array_leaf (input [3:0] a, output [3:0] y);
+    assign y = ~a;
+endmodule
+module tb;
+    wire [3:0] a0 = 4'h0;
+    wire [3:0] a1 = 4'h1;
+    wire [3:0] y0;
+    wire [3:0] y1;
+    array_leaf u[1:0] (.a({a1, a0}), .y({y1, y0}));
+    initial begin
+        #1 $display("y0=%h y1=%h", y0, y1);
+        $finish;
+    end
+endmodule
+"#;
+
+    let stdout = run_sim(sv, "modarray").expect("instance array must elaborate");
+    assert_eq!(stdout, "y0=f y1=e\n");
+}
+
+/// IEEE 1800-2009 §5.6 / IEEE 1364-2001 §2.7: escaped identifiers terminate at
+/// whitespace and may contain characters (`a.b`, `a-b`) that collide with the
+/// punctuation-encoded forms of other source names. The generated C must keep
+/// each declaration distinct and load the intended value into each.
+#[test]
+fn sim_escaped_identifiers_roundtrip_without_c_name_collisions() {
+    if !llg::sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let sv = r#"module tb;
+    reg \a.b  = 1'b1;
+    reg a_b    = 1'b0;
+    reg \a-b   = 1'b1;
+    initial begin
+        $display("dot=%0b under=%0b dash=%0b", \a.b , a_b, \a-b );
+        $finish;
+    end
+endmodule
+"#;
+
+    let stdout = run_sim(sv, "escapedident").expect("escaped identifiers must emit safely");
+    assert_eq!(stdout, "dot=1 under=0 dash=1\n");
+}

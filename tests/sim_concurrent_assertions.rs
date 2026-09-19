@@ -317,11 +317,11 @@ fn concurrent_assertions_reject_unresolved_control_scopes() {
 }
 
 #[test]
-fn concurrent_assertions_reject_unsupported_control_arguments() {
+fn concurrent_assertions_reject_post_2009_control_builtin() {
     sim_cli::reject_case(
         "concurrent_assertions",
         "unsupported_assertion_argument",
-        "bounded $assertcontrol supports only ON, OFF, and KILL",
+        "is not available in IEEE 2009",
     );
 }
 

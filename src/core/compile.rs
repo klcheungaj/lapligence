@@ -14,6 +14,8 @@ pub use crate::ffi::slang::{
     CompilationUnitMode, Diagnostic as SlangDiagnostic, DiagnosticProvider, DiagnosticSeverity,
     DiagnosticSubsystem, LanguageEdition, Snapshot, Source, SourceRange,
 };
+mod editions;
+use editions::edition_diagnostics;
 
 /// A source buffer owned by a compile request.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -142,11 +144,15 @@ impl std::error::Error for StartupError {}
 pub struct CompileOut {
     pub diagnostics: Vec<Diag>,
     pub snapshot: Snapshot,
+    /// Set when the owned edition profile rejected a form that the newer
+    /// Slang grammar accepted. Such a rejection is not visible in
+    /// `snapshot.has_errors()`, so it must be carried explicitly.
+    owned_errors: bool,
 }
 
 impl CompileOut {
     pub fn ok(&self) -> bool {
-        !self.snapshot.has_errors()
+        !self.snapshot.has_errors() && !self.owned_errors
     }
 }
 
@@ -384,10 +390,16 @@ fn compile_source_groups(
         options: &options,
     })
     .map_err(startup_from_slang)?;
-    let diagnostics = project_diagnostics(&snapshot);
+    let mut diagnostics = project_diagnostics(&snapshot);
+    let edition_diagnostics = edition_diagnostics(&snapshot, opts.edition, &opts.system_subroutines);
+    let owned_errors = edition_diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.severity == Severity::Error);
+    diagnostics.extend(edition_diagnostics);
     Ok(CompileOut {
         diagnostics,
         snapshot,
+        owned_errors,
     })
 }
 

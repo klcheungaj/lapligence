@@ -224,6 +224,7 @@ fn current_statement_and_expression_subkinds_are_admitted() {
     assert!(validate_semantic_subkind(18, SEMANTIC_STMT_CONCURRENT_ASSUME).is_ok());
     assert!(validate_semantic_subkind(18, SEMANTIC_STMT_CONCURRENT_COVER).is_ok());
     assert!(validate_semantic_subkind(18, SEMANTIC_STMT_CONCURRENT_EXPECT).is_ok());
+    assert!(validate_semantic_subkind(18, SEMANTIC_STMT_PATTERN_CASE).is_ok());
     assert!(validate_semantic_subkind(19, 86).is_ok());
     assert!(validate_semantic_subkind(19, 89).is_ok());
     assert!(validate_semantic_subkind(19, SEMANTIC_EXPR_ASSERTION_INSTANCE).is_ok());

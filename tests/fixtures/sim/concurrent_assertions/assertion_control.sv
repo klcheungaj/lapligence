@@ -1,7 +1,6 @@
 // llg-test-fixture: tests/fixtures/sim/concurrent_assertions/assertion_control.sv
 // IEEE 1800-2009 §20.11: assertion control tasks select named concurrent
-// assertions by hierarchy; the post-2009 `$assertcontrol` form supplies the
-// full control_type/assertion_type/directive_type/levels prefix.
+// assertions by hierarchy. Use the edition-appropriate $asserton task.
 module tb;
     logic clk;
     logic value;
@@ -26,7 +25,7 @@ module tb;
             clk = 1'b0;
             $assertkill(0, kill_case);
             $assertoff(0, kill_case);
-            $assertcontrol(3, 1, 1, 0, off_case);
+            $asserton(0, off_case);
         end
         #1 clk = 1'b1;
         $asserton();
