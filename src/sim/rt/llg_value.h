@@ -64,6 +64,25 @@ size_t sv4_bytes(const sv4_t* value);
 sv4_t sv4_from_masks(uint64_t bits, uint64_t x, uint64_t z,
                      uint32_t width, int8_t is_signed);
 
+// Captured packed-select coordinates; contains no owners or storage pointer.
+// The valid interval maps result[value_lsb + i] to storage[storage_lsb + i].
+// Refinement clips to the previous interval before advancing to the next slice.
+typedef struct {
+    uint32_t storage_width;
+    uint32_t width;
+    uint32_t storage_lsb;
+    uint32_t value_lsb;
+    uint32_t count;
+} sv4_select_plan_t;
+
+sv4_select_plan_t sv4_select_plan_init(uint32_t storage_width);
+// All bases are borrowed. Unknown or unrepresentable bases select no bits.
+void sv4_select_plan_step(sv4_select_plan_t* plan, sv4_t base, uint32_t width);
+// Read returns an independent unsigned owner, with X at missing positions.
+sv4_t sv4_select_plan_read(sv4_t source, const sv4_select_plan_t* plan);
+// Set borrows source; supports aliasing and changes only the valid interval.
+void sv4_select_plan_set(sv4_t* destination, const sv4_select_plan_t* plan, sv4_t source);
+
 typedef struct llg_queue_t llg_queue_t;
 typedef sv4_t (*llg_queue_ref_read_fn)(const llg_queue_t* queue,
                                        uint64_t identity);
@@ -81,6 +100,9 @@ typedef enum {
     LLG_REF_INDEXED = 3,
     LLG_REF_ARRAY = 4,
     LLG_REF_QUEUE = 5,
+    // Synchronous file-input target; retained borrows a sv4_select_plan_t.
+    // Neither the descriptor nor its plan may escape the input call.
+    LLG_REF_PACKED_PLAN = 6,
 } llg_ref_kind_t;
 
 typedef struct {

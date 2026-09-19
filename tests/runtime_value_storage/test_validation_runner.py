@@ -22,10 +22,12 @@ class InventoryTests(unittest.TestCase):
     def test_original_fixtures_follow_enabled_runtime_components(self):
         scheduler = {"vpi_ownership", "scheduler_ownership", "generated_scope_patterns",
                      "scope_address_index", "runtime_value_vectors", "event_array_selection",
-                     "file_input_isolation", "file_output_isolation", "native_value_scopes"}
+                     "file_input_isolation", "file_output_isolation", "native_value_scopes", "native_reference_scopes", "review_native_index_and_reference_bits",
+                     "packed_selection_nba", "packed_selection_input"}
         coroutines = {"coroutine_ownership", "generated_coroutine_patterns", "callback_finish_ownership",
                       "runtime_original_selftest", "runtime_region", "runtime_stop-resume",
-                      "runtime_budget-finite", "event_array_waits", "nextest_control_ownership", "native_input_callbacks"}
+                      "runtime_budget-finite", "event_array_waits", "nextest_control_ownership", "native_input_callbacks",
+                      "native_mailbox_stream_callbacks", "review_real_coroutine_storage"}
         for waveforms in (False, True):
             for has_scheduler in (False, True):
                 for has_coroutines in (False, True):

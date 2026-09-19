@@ -202,8 +202,8 @@ static void llg_stream_bounds(int selector_kind, sv4_t first, sv4_t second,
         }
         *left = base;
         *right = selector_kind == LLG_STREAM_SELECTOR_INDEXED_PLUS
-                     ? base + width - 1
-                     : base - width + 1;
+                     ? base + (width - 1)
+                     : base - (width - 1);
     } else {
         llg_container_fatal("invalid streaming selector kind");
     }
@@ -230,19 +230,100 @@ uint32_t llg_stream_selector_width(int selector_kind, sv4_t first,
     return (uint32_t)(count * element_width);
 }
 
+void llg_fixed_stream_bounds(int selector_kind, sv4_t first, sv4_t second,
+                             int64_t* left, int64_t* right, size_t* count) {
+    llg_stream_bounds(selector_kind, first, second, 0, left, right, count);
+}
+
+uint32_t llg_fixed_stream_width(int selector_kind, sv4_t first, sv4_t second,
+                                uint32_t element_width) {
+    return llg_stream_selector_width(selector_kind, first, second,
+                                     element_width);
+}
+
 static int64_t llg_stream_index_at(int64_t left, int64_t right,
                                    size_t offset) {
     if (offset > (size_t)INT64_MAX)
         llg_container_fatal("streaming selector offset is too large");
     int64_t delta = (int64_t)offset;
     if (left > right) {
-        if ((uint64_t)delta > (uint64_t)left - (uint64_t)INT64_MIN)
+        if (left < INT64_MIN + delta)
             llg_container_fatal("streaming selector index overflows host index");
         return left - delta;
     }
-    if (delta > INT64_MAX - left)
+    if (left > INT64_MAX - delta)
         llg_container_fatal("streaming selector index overflows host index");
     return left + delta;
+}
+
+/* Reject insufficient source bits before the emitter publishes staged pieces.
+ * Fixed-array bounds errors differ: in-range elements must still be written. */
+void llg_stream_require_bits(int64_t available, uint32_t required) {
+    if (available < 0 || (uint64_t)required > (uint64_t)available)
+        llg_container_fatal("streaming unpack source has insufficient bits");
+}
+
+int llg_fixed_stream_target_in_bounds(int64_t declaration_left,
+                                      int64_t declaration_right,
+                                      int64_t left, int64_t right, size_t count) {
+    if (!count) return 0;
+    int64_t low = declaration_left < declaration_right
+                      ? declaration_left : declaration_right;
+    int64_t high = declaration_left > declaration_right
+                       ? declaration_left : declaration_right;
+    return left >= low && left <= high && right >= low && right <= high;
+}
+
+int64_t llg_fixed_stream_index_at(int64_t left, int64_t right, size_t offset) {
+    return llg_stream_index_at(left, right, offset);
+}
+
+sv4_t llg_fixed_stream_source(const sv4_t* values, int64_t declaration_left,
+                              int64_t declaration_right, uint32_t element_width,
+                              int element_two_state, int selector_kind,
+                              sv4_t first, sv4_t second) {
+    llg_check_element_type(element_width);
+    if (selector_kind == LLG_STREAM_SELECTOR_NONE)
+        llg_container_fatal("whole fixed-array streaming source has no selector");
+    int64_t left;
+    int64_t right;
+    size_t count;
+    llg_stream_bounds(selector_kind, first, second, 0, &left, &right, &count);
+    if (!count) {
+        sv4_t empty;
+        memset(&empty, 0, sizeof(empty));
+        return empty;
+    }
+    if (count > (size_t)((LLG_SUPPORTED_WIDTH_LIMIT - 1u) / element_width))
+        llg_container_fatal("streaming source reaches supported width limit");
+    uint32_t width = (uint32_t)(count * element_width);
+    sv4_t packed = sv4_zero(width, 0);
+    uint32_t cursor = width;
+    for (size_t i = 0; i < count; ++i) {
+        int64_t logical = llg_fixed_stream_index_at(left, right, i);
+        int in_range;
+        uint64_t offset;
+        if (declaration_left >= declaration_right) {
+            in_range = logical >= declaration_right && logical <= declaration_left;
+            offset = in_range ? (uint64_t)(declaration_left - logical) : 0;
+        } else {
+            in_range = logical >= declaration_left && logical <= declaration_right;
+            offset = in_range ? (uint64_t)(logical - declaration_left) : 0;
+        }
+        if (in_range) {
+            sv4_part_select_set(&packed, (int64_t)cursor - 1,
+                                (int64_t)(cursor - element_width), values[offset]);
+        } else {
+            sv4_t fallback = element_two_state
+                                 ? sv4_zero(element_width, 0)
+                                 : sv4_x(element_width, 0);
+            sv4_part_select_set(&packed, (int64_t)cursor - 1,
+                                (int64_t)(cursor - element_width), fallback);
+            sv4_destroy(&fallback);
+        }
+        cursor -= element_width;
+    }
+    return packed;
 }
 
 static sv4_t llg_pack_stream_values(const sv4_t* values, size_t count,

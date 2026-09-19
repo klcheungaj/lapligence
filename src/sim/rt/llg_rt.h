@@ -666,6 +666,30 @@ int llg_value_plusargs_string(const char* format, llg_string_t* out);
 // regardless of whether execution is permitted.
 sv4_t llg_system(llg_string_t command, int has_command);
 
+// ── Fixed-array streaming selectors ─────────────────────────────────────────
+// A runtime `with` selector on a fixed unpacked destination array is resolved
+// in the generated translation unit. These helpers expose the container
+// selector math without requiring the generated model to include the
+// container header. `first`/`second` carry the selector's source-language
+// bounds; the returned bit width is the actual selected extent, never the
+// index expression's storage width.
+void llg_fixed_stream_bounds(int selector_kind, sv4_t first, sv4_t second,
+                             int64_t* left, int64_t* right, size_t* count);
+uint32_t llg_fixed_stream_width(int selector_kind, sv4_t first, sv4_t second,
+                                uint32_t element_width);
+void llg_stream_require_bits(int64_t available, uint32_t required);
+int llg_fixed_stream_target_in_bounds(int64_t declaration_left,
+                                      int64_t declaration_right,
+                                      int64_t left, int64_t right, size_t count);
+int64_t llg_fixed_stream_index_at(int64_t left, int64_t right, size_t offset);
+/* Pack the runtime-selected elements of a fixed unpacked array into one
+ * packed value in stream order, using the element type default for logical
+ * indices outside the declared bounds. */
+sv4_t llg_fixed_stream_source(const sv4_t* values, int64_t declaration_left,
+                              int64_t declaration_right, uint32_t element_width,
+                              int element_two_state, int selector_kind,
+                              sv4_t first, sv4_t second);
+
 // ── File descriptors and output ─────────────────────────────────────────────
 // A mode-string fopen returns a bit-31-tagged FD. Preopened FDs 0x80000000,
 // 0x80000001 and 0x80000002 name stdin, stdout and stderr. A one-argument

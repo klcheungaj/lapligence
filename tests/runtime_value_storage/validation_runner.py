@@ -9,8 +9,20 @@ from pathlib import Path
 BASE_TESTS = {
     "storage_lifecycle", "storage_reject_limit", "storage_reject_uint32-max",
     "storage_reject_oom", "storage_reject_oom-copy", "value_ownership",
-    "container_ownership", "four_state", "value_allocation_plateau",
+    "container_ownership", "four_state", "owner_allocation_plateau",
     "value_isolation", "container_isolation",
+    "stream_preflight",
+    "stream_reject_short",
+    "stream_reject_multi-short",
+    "stream_reject_negative-remaining",
+    "stream_reject_plus-overflow",
+    "stream_reject_minus-overflow",
+    "stream_reject_zero-width",
+    "stream_reject_negative-width",
+    "packed_selection_map",
+    "packed_selection_reject_zero",
+    "packed_selection_reject_storage",
+    "packed_selection_reject_value",
 }
 
 
@@ -26,13 +38,13 @@ def verify_inventory(inventory: dict, capabilities: dict) -> list[str]:
     if capabilities["waveforms"]:
         expected.add("waveform_snapshot_lifecycle")
     if capabilities["scheduler"]:
-        expected.update(("vpi_ownership", "scheduler_ownership", "generated_scope_patterns", "scope_address_index", "runtime_value_vectors", "event_array_selection", "file_input_isolation", "file_output_isolation", "native_value_scopes"))
+        expected.update(("vpi_ownership", "scheduler_ownership", "generated_scope_patterns", "scope_address_index", "runtime_value_vectors", "event_array_selection", "file_input_isolation", "file_output_isolation", "native_value_scopes", "native_reference_scopes", "review_native_index_and_reference_bits", "packed_selection_nba", "packed_selection_input"))
         if capabilities["waveforms"]:
             expected.add("waveform_original_selftest")
     if capabilities["coroutines"]:
         expected.update(("coroutine_ownership", "generated_coroutine_patterns", "callback_finish_ownership",
                          "runtime_original_selftest", "runtime_region",
-                         "runtime_stop-resume", "runtime_budget-finite", "event_array_waits", "nextest_control_ownership", "native_input_callbacks"))
+                         "runtime_stop-resume", "runtime_budget-finite", "event_array_waits", "nextest_control_ownership", "native_input_callbacks", "native_mailbox_stream_callbacks", "review_real_coroutine_storage"))
     tests = inventory.get("tests", [])
     actual = {test["name"] for test in tests}
     if not actual or actual != expected or len(actual) != len(tests):

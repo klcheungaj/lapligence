@@ -163,6 +163,32 @@ enum {
 uint32_t llg_stream_selector_width(int selector_kind, sv4_t first,
                                    sv4_t second, uint32_t element_width);
 
+/* Fixed-unpacked-array streaming targets resolve their runtime `with`
+ * selector in the generated translation unit, which cannot see the static
+ * selector helpers above. `llg_fixed_stream_bounds` returns the requested
+ * logical index range and element count; `llg_fixed_stream_index_at` maps a
+ * stream offset to the logical index at that offset. Preflight source size
+ * before publishing staged writes. A false `target_in_bounds` result requires
+ * an error AND writes to the in-range elements, not a silent clipped success.
+ * Operands are borrowed; these helpers neither allocate nor publish writes. */
+void llg_fixed_stream_bounds(int selector_kind, sv4_t first, sv4_t second,
+                             int64_t* left, int64_t* right, size_t* count);
+uint32_t llg_fixed_stream_width(int selector_kind, sv4_t first, sv4_t second,
+                                uint32_t element_width);
+void llg_stream_require_bits(int64_t available, uint32_t required);
+int llg_fixed_stream_target_in_bounds(int64_t declaration_left,
+                                      int64_t declaration_right,
+                                      int64_t left, int64_t right, size_t count);
+int64_t llg_fixed_stream_index_at(int64_t left, int64_t right, size_t offset);
+/* Pack the selected fixed-array elements into one value in stream order. The
+ * declared bounds map a logical index to storage order; out-of-range elements
+ * contribute their type default and the selector bounds are independent of
+ * the array size. */
+sv4_t llg_fixed_stream_source(const sv4_t* values, int64_t declaration_left,
+                              int64_t declaration_right, uint32_t element_width,
+                              int element_two_state, int selector_kind,
+                              sv4_t first, sv4_t second);
+
 enum {
     LLG_CONTAINER_METHOD_FIND = 0,
     LLG_CONTAINER_METHOD_FIND_INDEX = 1,

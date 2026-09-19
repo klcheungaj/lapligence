@@ -32,6 +32,9 @@ void llg_ref_write(llg_ref_t* ref, sv4_t value) {
     case LLG_REF_PART:
         sv4_part_select_set(&values[1], ref->left, ref->right, values[0]);
         break;
+    case LLG_REF_PACKED_PLAN:
+        sv4_select_plan_set(&values[1], (const sv4_select_plan_t*)ref->retained, values[0]);
+        break;
     case LLG_REF_INDEXED:
         sv4_idx_part_select_set(&values[1], ref->index, ref->indexed_width,
                                 ref->indexed_negative, values[0]);

@@ -51,6 +51,7 @@ stack switching.
 | Probe | Checks |
 | --- | --- |
 | `storage_probe.c` | Exact allocation size, contiguous planes, top masking, independent clones, replacement/self-copy/self-move, repeated destruction, 10,000 replacements, zero width, exclusive maximum, and failure-atomic OOM replacement. Fatal child-process cases require the expected diagnostic. |
+| `stream_preflight_probe.c` | Signed endpoint arithmetic at INT64_MIN/MAX, source-size rejection (including a later short segment), unknown selectors, nonfatal fixed-bound classification and zero live packed owners after valid probes. These are direct runtime tests, not emitted-model executions. |
 | `value_ownership_probe.c` | Independent results/input nonmutation across binary/unary operations and widths 0..257, selected self-alias writes, max-width construction/addition, conversions and string roundtrips. Allocation counters check steady live owners after each cycle. |
 | `container_ownership_probe.c` | Recursive copies, alias-safe replacement, queue shifts/pops, pinned detached refs, wildcard associative key normalization, defaults, repeated replacements and teardown. |
 | `scheduler_ownership_probe.c` | NBA capture/commit/masked cancellation, scopes, frames, inertial replacement, force baselines, sequence locals/endpoints, sampling, mailbox transfers, cleanup/reinit; wide typed formatting, long leading-zero plusargs and exact time-scaling vectors. |
@@ -287,3 +288,44 @@ Neither C entry point invokes the Rust emitter. Source-emission assertions are
 in `src/sim/emit_c/owned/tests/review_regressions.rs` and require separate Rust
 execution. Passing the component suite does not establish that emitted models
 compile or that the old nextest failures have disappeared.
+
+## G1-05 exact-width ownership acceptance
+
+`owner_allocation_plateau` (the tracked `value_lifetime_benchmark`) checks that
+repeated equal-size activity returns to the exact live-allocation/payload-byte
+baseline and keeps a bounded peak; `storage_reject_oom` and
+`storage_reject_oom-copy` check that a failed allocation leaves destructible,
+unchanged state. The public HDL scenarios `owner_publication_snapshot`,
+`owner_cancel_unwind` and `owner_allocation_plateau` live in
+`tests/sim_dynamic_ownership.rs` and run through both optimizer modes with
+independent stdout oracles.
+
+## Nested packed-selection regression probes
+
+`packed_selection_probe.c` compares production read/write helpers with an
+independent per-bit address oracle over 7,056 two-step chains, checking each again
+after a third refinement. It also covers limb boundaries, aliased RHS values,
+unknown/wide indices, integer endpoints, allocation cleanup and the R03/R04/R05
+whole-parent examples. `packed_selection_scheduler_probe.c` checks captured NBA
+masks and synchronous scanner descriptors against the production scheduler without
+performing coroutine stack switching.
+
+The six CTest entries are `packed_selection_map`,
+`packed_selection_reject_zero`, `packed_selection_reject_storage`,
+`packed_selection_reject_value`, `packed_selection_nba` and
+`packed_selection_input`. The last two require scheduler sources. The validation
+runner's expected inventory includes these and the earlier delivered streaming
+preflight entries. Counts are capability-dependent; do not equate C runtime cases
+with accepted HDL features. Public HDL coverage is separately orchestrated by
+`tests/sim_group1_repairs.rs` using the checked-in `packed_*.sv` fixtures in
+`tests/fixtures/sim/group1_repairs/`, with both optimization modes.
+
+### Packed formal runtime contracts
+
+`packed_formal_probe.c` exercises production private-owner/reference operations:
+4,096 private input mutations preserve their caller and return to the same live
+allocation/byte baseline; whole-variable reference publication is immediately
+visible; two-state member operations preserve other four-state union fields;
+nested partial writes preserve their neighboring field. This hand-written
+transcription does not execute the Rust emitter. CTest includes it in the normal
+and sanitizer-safe scheduler subsets (it performs no coroutine stack switching).

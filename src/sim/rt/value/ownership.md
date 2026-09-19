@@ -168,3 +168,25 @@ string writes: their emitter guards and queued-write contracts remain unchanged.
 
 A selected reference write passes its already captured `uint64_t` index to
 `llg_ref_write_bit`; it does not wrap that index in an owning `sv4_t` descriptor.
+
+## Packed selection plans
+
+`sv4_select_plan_t` is an owner-free coordinate descriptor. Start with
+`sv4_select_plan_init(storage_width)` and apply borrowed integral bases through
+`sv4_select_plan_step`. Each step intersects with the preceding valid interval;
+invalid prefixes cannot become valid again through later offsets. Unknown or
+unrepresentable bases produce an empty valid interval. Width/shape mismatches
+remain controlled fatal runtime errors.
+
+`sv4_select_plan_read` borrows the whole source and returns an independent unsigned
+packed owner with X in invalid positions. `sv4_select_plan_set` borrows both the
+plan and RHS; it snapshots an aliased RHS before modifying the destination and
+writes only the valid interval. All payload allocation follows actual widths.
+Neither operation publishes scheduler notifications. The scheduler/emitter owns
+publication after values are installed.
+
+The additive `LLG_REF_PACKED_PLAN` tag is reserved for synchronous scanner/input
+operations; its `retained` field borrows a plan rather than owning a queue cell.
+Do not pass it to retained-reference scope cleanup or keep it after its input
+call. Existing `sv4_t` and `llg_ref_t` layouts and ownership ABI version 3 are
+unchanged. Regenerate models with the matching runtime sources.

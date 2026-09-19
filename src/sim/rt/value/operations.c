@@ -1607,6 +1607,9 @@ sv4_t llg_ref_read(const llg_ref_t* ref) {
                                     ref->indexed_width,
                                     ref->indexed_negative);
         break;
+    case LLG_REF_PACKED_PLAN:
+        value = sv4_select_plan_read(*ref->base, (const sv4_select_plan_t*)ref->retained);
+        break;
     case LLG_REF_ARRAY:
         if (ref->index == UINT64_MAX || ref->index >= ref->array_size)
             return ref->two_state ? sv4_from_u64(0, ref->width, ref->is_signed)

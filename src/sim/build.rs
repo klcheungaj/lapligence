@@ -767,7 +767,11 @@ fn runtime_cache_key(
             }
         }
     }
-    format!("owned-v{}-wave{}-{hash:016x}", super::emit_c::VALUE_ABI_VERSION, u8::from(waveform))
+    format!(
+        "owned-v{}-wave{}-{hash:016x}",
+        super::emit_c::VALUE_ABI_VERSION,
+        u8::from(waveform)
+    )
 }
 
 fn compiler_identity(cc: &str) -> String {
@@ -860,7 +864,9 @@ fn validate_model_abi(extra: &[(&str, &str)]) -> Result<(), BuildError> {
                 abi = parsed;
             }
         }
-        let generated = Path::new(name).file_name().is_some_and(|base| base == "model.c")
+        let generated = Path::new(name)
+            .file_name()
+            .is_some_and(|base| base == "model.c")
             || source.starts_with("// llg-generated C11 model");
         if generated && abi.is_none() {
             return Err(BuildError::InvalidModelAbi(format!("missing in {name}")));
@@ -1045,11 +1051,21 @@ mod tests {
     fn model_metadata_requires_current_ownership_abi() {
         assert!(validate_model_abi(&[]).is_ok());
         assert_eq!(model_stack_values(&[]).unwrap(), 256);
-        let source = format!("#define LLG_MODEL_VALUE_ABI {}\n#define LLG_MODEL_STACK_VALUES 4096\n", super::super::emit_c::VALUE_ABI_VERSION);
+        let source = format!(
+            "#define LLG_MODEL_VALUE_ABI {}\n#define LLG_MODEL_STACK_VALUES 4096\n",
+            super::super::emit_c::VALUE_ABI_VERSION
+        );
         assert!(validate_model_abi(&[("model.c", &source)]).is_ok());
         assert_eq!(model_stack_values(&[("model.c", &source)]).unwrap(), 4096);
-        for invalid in ["", "#define LLG_MODEL_VALUE_ABI 0\n", "#define LLG_MODEL_VALUE_ABI 2\n"] {
-            assert!(matches!(validate_model_abi(&[("model.c", invalid)]), Err(BuildError::InvalidModelAbi(_))));
+        for invalid in [
+            "",
+            "#define LLG_MODEL_VALUE_ABI 0\n",
+            "#define LLG_MODEL_VALUE_ABI 2\n",
+        ] {
+            assert!(matches!(
+                validate_model_abi(&[("model.c", invalid)]),
+                Err(BuildError::InvalidModelAbi(_))
+            ));
         }
         let duplicate = format!("{source}{source}");
         assert!(validate_model_abi(&[("model.c", &duplicate)]).is_err());
@@ -1062,11 +1078,46 @@ mod tests {
     fn runtime_cache_key_varies_with_toolchain_and_waveforms_not_model_width() {
         let defaults = CmakeBuildOpts::default();
         let base = runtime_cache_key(false, "cc", "-O2", "cmake", &defaults);
-        assert_eq!(base, runtime_cache_key(false, "cc", "-O2", "cmake", &defaults));
+        assert_eq!(
+            base,
+            runtime_cache_key(false, "cc", "-O2", "cmake", &defaults)
+        );
         assert!(base.starts_with("owned-v"));
-        assert_ne!(base, runtime_cache_key(true, "cc", "-O2", "cmake", &defaults));
-        let launched = CmakeBuildOpts { launcher: Some("ccache".to_owned()), ..Default::default() };
-        assert_ne!(base, runtime_cache_key(false, "cc", "-O2", "cmake", &launched));
+        assert_ne!(
+            base,
+            runtime_cache_key(true, "cc", "-O2", "cmake", &defaults)
+        );
+        let launched = CmakeBuildOpts {
+            launcher: Some("ccache".to_owned()),
+            ..Default::default()
+        };
+        assert_ne!(
+            base,
+            runtime_cache_key(false, "cc", "-O2", "cmake", &launched)
+        );
+    }
+
+    #[test]
+    fn runtime_cache_key_fences_the_value_ownership_abi() {
+        let defaults = CmakeBuildOpts::default();
+        let key = runtime_cache_key(false, "cc", "-O2", "cmake", &defaults);
+        assert!(
+            key.starts_with(&format!(
+                "owned-v{}-wave0-",
+                super::super::emit_c::VALUE_ABI_VERSION
+            )),
+            "runtime cache key must carry the ownership ABI: {key}"
+        );
+        // Generated models declaring any other ABI are rejected, so an ABI
+        // bump cannot silently reuse an incompatible cached archive.
+        let abi = super::super::emit_c::VALUE_ABI_VERSION;
+        for version in [abi.wrapping_sub(1), abi + 1] {
+            let stale = format!("#define LLG_MODEL_VALUE_ABI {version}\n");
+            assert!(matches!(
+                validate_model_abi(&[("model.c", &stale)]),
+                Err(BuildError::InvalidModelAbi(_))
+            ));
+        }
     }
 
     #[test]

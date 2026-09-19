@@ -94,6 +94,47 @@ foreach(probe IN ITEMS value_isolation container_isolation)
   set_tests_properties(${probe} PROPERTIES TIMEOUT 60)
 endforeach()
 
+add_executable(packed_selection_probe packed_selection_probe.c)
+target_link_libraries(packed_selection_probe PRIVATE tracked_value)
+strict_c(packed_selection_probe)
+add_test(NAME packed_selection_map COMMAND packed_selection_probe)
+set_tests_properties(packed_selection_map PROPERTIES TIMEOUT 60)
+foreach(mode IN ITEMS zero storage value)
+  if(mode STREQUAL "zero")
+    set(expected "invalid packed selection plan")
+  elseif(mode STREQUAL "storage")
+    set(expected "packed selection storage width mismatch")
+  else()
+    set(expected "packed selection assignment width mismatch")
+  endif()
+  add_test(NAME packed_selection_reject_${mode}
+    COMMAND "${CMAKE_COMMAND}"
+      "-DPROBE=$<TARGET_FILE:packed_selection_probe>" "-DMODE=${mode}"
+      "-DEXPECTED=${expected}" -P "${CMAKE_CURRENT_SOURCE_DIR}/expect_failure.cmake")
+  set_tests_properties(packed_selection_reject_${mode} PROPERTIES TIMEOUT 60)
+endforeach()
+
+add_executable(stream_preflight_probe stream_preflight_probe.c)
+target_link_libraries(stream_preflight_probe PRIVATE owner_probe_container)
+strict_c(stream_preflight_probe)
+add_test(NAME stream_preflight COMMAND stream_preflight_probe)
+set_tests_properties(stream_preflight PROPERTIES TIMEOUT 60)
+foreach(mode IN ITEMS short multi-short negative-remaining plus-overflow minus-overflow
+                      zero-width negative-width)
+  if(mode MATCHES "overflow")
+    set(expected "streaming selector range overflows host index")
+  elseif(mode MATCHES "width")
+    set(expected "streaming indexed selector width is invalid")
+  else()
+    set(expected "streaming unpack source has insufficient bits")
+  endif()
+  add_test(NAME stream_reject_${mode}
+    COMMAND "${CMAKE_COMMAND}"
+      "-DPROBE=$<TARGET_FILE:stream_preflight_probe>" "-DMODE=${mode}"
+      "-DEXPECTED=${expected}" -P "${CMAKE_CURRENT_SOURCE_DIR}/expect_failure.cmake")
+  set_tests_properties(stream_reject_${mode} PROPERTIES TIMEOUT 60)
+endforeach()
+
 foreach(probe IN ITEMS value_ownership container_ownership four_state)
   add_executable(${probe}_probe ${probe}_probe.c)
   target_link_libraries(${probe}_probe PRIVATE tracked_value)
@@ -124,6 +165,18 @@ if(LLG_STORAGE_TEST_SCHEDULER)
     strict_c(vpi_ownership_probe)
     add_test(NAME vpi_ownership COMMAND vpi_ownership_probe)
     set_tests_properties(vpi_ownership PROPERTIES TIMEOUT 60)
+    add_executable(packed_selection_scheduler_probe packed_selection_scheduler_probe.c)
+    target_link_libraries(packed_selection_scheduler_probe PRIVATE owner_probe_aco owner_probe_container)
+    strict_c(packed_selection_scheduler_probe)
+    foreach(mode IN ITEMS nba input)
+      add_test(NAME packed_selection_${mode} COMMAND packed_selection_scheduler_probe ${mode})
+      set_tests_properties(packed_selection_${mode} PROPERTIES TIMEOUT 60)
+    endforeach()
+    add_executable(packed_formal_probe packed_formal_probe.c)
+    target_link_libraries(packed_formal_probe PRIVATE owner_probe_aco owner_probe_container)
+    strict_c(packed_formal_probe)
+    add_test(NAME packed_formal_owner_contracts COMMAND packed_formal_probe)
+    set_tests_properties(packed_formal_owner_contracts PROPERTIES TIMEOUT 60)
     add_executable(scheduler_ownership_probe scheduler_ownership_probe.c)
     target_link_libraries(scheduler_ownership_probe PRIVATE owner_probe_aco owner_probe_container)
     strict_c(scheduler_ownership_probe)
@@ -239,9 +292,11 @@ endif()
 add_executable(value_lifetime_benchmark value_lifetime_benchmark.c)
 target_link_libraries(value_lifetime_benchmark PRIVATE tracked_value)
 strict_c(value_lifetime_benchmark)
-add_test(NAME value_allocation_plateau
+# G1-05 owner_allocation_plateau: repeated equal-size activity must return to
+# the exact live-allocation/payload-byte baseline every round.
+add_test(NAME owner_allocation_plateau
   COMMAND value_lifetime_benchmark --slots 1024 --rounds 16)
-set_tests_properties(value_allocation_plateau PROPERTIES TIMEOUT 60)
+set_tests_properties(owner_allocation_plateau PROPERTIES TIMEOUT 60)
 
 file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/ownership-capabilities.json"
   CONTENT "{\"schema\":\"llg.owner-probes/v1\",\"waveforms\":${LLG_TEST_HAS_WAVEFORMS},\"scheduler\":${LLG_TEST_HAS_SCHEDULER},\"coroutines\":${LLG_TEST_HAS_COROUTINES},\"sanitizers\":${LLG_TEST_HAS_SANITIZERS}}\n")

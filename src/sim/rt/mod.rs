@@ -95,6 +95,7 @@ pub fn value_sources() -> (&'static str, &'static str) {
             include_str!("llg_value_prelude.c"),
             include_str!("value/storage.c"),
             include_str!("value/operations.c"),
+            include_str!("value/selection_plan.c"),
         ),
     )
 }
