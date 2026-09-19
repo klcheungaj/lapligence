@@ -77,6 +77,11 @@ fn unpacked_aggregate_ports_copy_packed_and_real_members() {
 }
 
 #[test]
+fn unpacked_struct_array_port_copies_and_notifies_each_leaf() {
+    run_case("port_struct_array", "PASS port_struct_array\n");
+}
+
+#[test]
 fn resizable_value_ports_copy_contents_and_shape() {
     run_case("port_resizable_values", "10 20 30\n10 77 30\n");
 }
