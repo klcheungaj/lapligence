@@ -4,6 +4,46 @@ static void force_recompute_target(sv4_t* target, llg_net_t* net);
 static void llg_net_alias_refresh_all(llg_net_t* net);
 static void inertial_unlink_pending(llg_inertial_t* driver);
 
+// Grow one live-binding table to hold at least `needed` entries. The grown copy
+// is completed before it replaces the old table, so an allocation failure
+// aborts without a partially rebound registry. Only `used` entries are copied.
+static void force_table_reserve(int needed) {
+    if (needed <= g.force_capacity) return;
+    int capacity = llg_registry_capacity(g.force_capacity, needed);
+    llg_force_entry_t* grown = (llg_force_entry_t*)llg_checked_calloc(
+        (size_t)capacity, sizeof(*grown), "force table");
+    if (g.force_table)
+        memcpy(grown, g.force_table, (size_t)g.force_count * sizeof(*grown));
+    free(g.force_table);
+    g.force_table = grown;
+    g.force_capacity = capacity;
+}
+
+static void pca_table_reserve(int needed) {
+    if (needed <= g.pca_capacity) return;
+    int capacity = llg_registry_capacity(g.pca_capacity, needed);
+    llg_pca_binding_t* grown = (llg_pca_binding_t*)llg_checked_calloc(
+        (size_t)capacity, sizeof(*grown), "PCA table");
+    if (g.pca_table)
+        memcpy(grown, g.pca_table, (size_t)g.pca_count * sizeof(*grown));
+    free(g.pca_table);
+    g.pca_table = grown;
+    g.pca_capacity = capacity;
+}
+
+static void pca_real_table_reserve(int needed) {
+    if (needed <= g.pca_real_capacity) return;
+    int capacity = llg_registry_capacity(g.pca_real_capacity, needed);
+    llg_pca_real_binding_t* grown = (llg_pca_real_binding_t*)llg_checked_calloc(
+        (size_t)capacity, sizeof(*grown), "real PCA table");
+    if (g.pca_real_table)
+        memcpy(grown, g.pca_real_table,
+               (size_t)g.pca_real_count * sizeof(*grown));
+    free(g.pca_real_table);
+    g.pca_real_table = grown;
+    g.pca_real_capacity = capacity;
+}
+
 // Is `sig` currently covered by a packed force part? Procedural writes are
 // dropped while a signal is forced; net driver slots remain writable so their
 // current resolved value can be exposed on release.
@@ -61,11 +101,11 @@ void llg_pca_assign(sv4_t* target, sv4_t* enable, uint64_t site, sv4_t value) {
     if (!region_can_mutate("procedural continuous assignment")) return;
     llg_pca_binding_t* binding = pca_binding(target);
     if (!binding) {
-        if (g.pca_count >= LLG_MAX_PCA) {
-            fprintf(stderr, "llg: too many procedural continuous assignments (limit %d)\n",
-                    LLG_MAX_PCA);
+        if (g.pca_count == INT_MAX) {
+            fprintf(stderr, "llg runtime fatal: PCA binding count overflow\n");
             abort();
         }
+        pca_table_reserve(g.pca_count + 1);
         binding = &g.pca_table[g.pca_count++];
         memset(binding, 0, sizeof(*binding));
         binding->target = target;
@@ -104,11 +144,11 @@ void llg_pca_assign_d(double* target, sv4_t* enable, uint64_t site, double value
     if (!region_can_mutate("procedural continuous assignment")) return;
     llg_pca_real_binding_t* binding = pca_real_binding(target);
     if (!binding) {
-        if (g.pca_real_count >= LLG_MAX_PCA) {
-            fprintf(stderr, "llg: too many procedural continuous real assignments (limit %d)\n",
-                    LLG_MAX_PCA);
+        if (g.pca_real_count == INT_MAX) {
+            fprintf(stderr, "llg runtime fatal: real PCA binding count overflow\n");
             abort();
         }
+        pca_real_table_reserve(g.pca_real_count + 1);
         binding = &g.pca_real_table[g.pca_real_count++];
         memset(binding, 0, sizeof(*binding));
         binding->target = target;
@@ -191,7 +231,11 @@ static void force_remove_coverage(const llg_force_part_t* parts, int n_parts) {
 static int force_find_free_slot(void) {
     for (int i = 0; i < g.force_count; i++)
         if (!g.force_table[i].active) return i;
-    if (g.force_count >= LLG_MAX_FORCE) return -1;
+    if (g.force_count == INT_MAX) {
+        fprintf(stderr, "llg runtime fatal: force entry count overflow\n");
+        abort();
+    }
+    force_table_reserve(g.force_count + 1);
     return g.force_count++;
 }
 
@@ -205,10 +249,6 @@ static llg_force_entry_t* force_prepare_packed(
     }
     force_remove_coverage(parts, n_parts);
     int slot = force_find_free_slot();
-    if (slot < 0) {
-        fprintf(stderr, "llg: too many forced targets (limit %d)\n", LLG_MAX_FORCE);
-        abort();
-    }
     llg_force_entry_t* entry = &g.force_table[slot];
     memset(entry, 0, sizeof(*entry));
     entry->parts = (llg_force_part_t*)llg_checked_malloc(
@@ -375,10 +415,6 @@ void llg_force_real(double* target, llg_force_real_eval_fn eval,
     }
     if (!entry) {
         int slot = force_find_free_slot();
-        if (slot < 0) {
-            fprintf(stderr, "llg: too many forced targets (limit %d)\n", LLG_MAX_FORCE);
-            abort();
-        }
         entry = &g.force_table[slot];
         memset(entry, 0, sizeof(*entry));
     }

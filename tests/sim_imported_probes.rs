@@ -63,7 +63,32 @@ fn time_query_rounds_each_local_unit() {
 }
 
 #[test]
-#[ignore = "net alias connectivity is not yet supported by the simulator"]
 fn net_alias_connectivity() {
     sim_cli::run_case(SUITE, "Net_Alias_Connectivity", "CHECK: b=1\n", "", &[]);
+}
+
+#[test]
+fn alias_delayed_wakeup_notifies_waiters() {
+    // `wire #2 original` plus `alias original = mirror`: the delayed network
+    // publication must still wake an `@`/wait observer of the alias name.
+    sim_cli::run_case(
+        "imported_probes/counterexamples",
+        "Alias_Delayed_Wakeup",
+        "",
+        "",
+        &[],
+    );
+}
+
+#[test]
+fn alias_postponed_read_is_pure() {
+    // A `$strobe` reader of an alias in the Postponed region must observe the
+    // published value without refreshing storage as a side effect of the read.
+    sim_cli::run_case(
+        "imported_probes/counterexamples",
+        "Alias_Postponed_Read",
+        "alias=1\n",
+        "",
+        &[],
+    );
 }

@@ -100,8 +100,11 @@ static void check_net_region_and_mask(void) {
     sv4_t driver = sv4_zero(65, 0);
     sv4_t value = sv4_from_u64(170, 65, 0);
     sv4_t mask = sv4_from_u64(15, 65, 0);
+    sv4_t* driver_table[] = {&driver};
+    const uint8_t strength0[] = {6};
+    const uint8_t strength1[] = {6};
     llg_net_t net = {.resolved = SV4_EMPTY, .width = 65, .n_drivers = 1,
-        .drivers = {&driver}, .strength0 = {6}, .strength1 = {6}};
+        .drivers = driver_table, .strength0 = strength0, .strength1 = strength1};
     sv4_replace(&net.resolved, sv4_zero(65, 0));
     llg_nba_net_after(&net, 0, value, 1);
     value.bits[0] = 85;

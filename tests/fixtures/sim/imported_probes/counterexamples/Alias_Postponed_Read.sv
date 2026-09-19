@@ -1,4 +1,4 @@
-// Static-review counterexample; NOT EXECUTED.
+// Executed by tests/sim_imported_probes.rs::alias_postponed_read_is_pure.
 module tb;
   wire [1:0] original;
   wire mirror;

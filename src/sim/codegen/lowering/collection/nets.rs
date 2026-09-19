@@ -704,7 +704,7 @@ impl<'a> Codegen<'a> {
             }
             if members.len() > LLG_MAX_NET_DRIVERS {
                 return Err(format!(
-                    "{shown}: {} members exceed the {LLG_MAX_NET_DRIVERS} driver-slot limit at {}:{}:{}",
+                    "{shown}: {} members exceed the runtime driver-count range at {}:{}:{}",
                     members.len(),
                     self.node(first_net).file.as_deref().unwrap_or("<unknown>"),
                     self.node(first_net).line,
@@ -854,10 +854,10 @@ impl<'a> Codegen<'a> {
                     self.node(*bad).col,
                 ));
             }
-            // 4. The runtime struct has a fixed driver-slot array.
+            // 4. Driver counts must fit the emitted runtime integer field.
             if members.len() > LLG_MAX_NET_DRIVERS {
                 return Err(format!(
-                    "{joined}: {}-member group exceeds the {LLG_MAX_NET_DRIVERS} driver-slot limit at {}:{}:{}",
+                    "{joined}: {}-member group exceeds the runtime driver-count range at {}:{}:{}",
                     members.len(),
                     self.node(members[0]).file.as_deref().unwrap_or("<unknown>"),
                     self.node(members[0]).line,
@@ -1003,8 +1003,8 @@ impl<'a> Codegen<'a> {
         let slot = net.n_drivers;
         if slot >= LLG_MAX_NET_DRIVERS {
             return Err(format!(
-                "resolved net `{}` has too many structural drivers (limit {})",
-                net.c_name, LLG_MAX_NET_DRIVERS
+                "resolved net `{}` has more structural drivers than the runtime can represent",
+                net.c_name
             ));
         }
         net.n_drivers += 1;
@@ -1283,6 +1283,10 @@ impl<'a> Codegen<'a> {
         for (net, kind) in standalone {
             let shown = self.display_name(net);
             let member_set = HashSet::from([net]);
+            // An interface wired net may be instantiated more than once with a
+            // shared definition net but per-instance storage; the whole-net
+            // member scan below cannot yet distinguish those instances, so keep
+            // it fail-closed rather than risk collapsing two instances.
             if self.node(net).parent.is_some_and(|parent| {
                 matches!(
                     self.kind(parent),
@@ -1307,14 +1311,14 @@ impl<'a> Codegen<'a> {
                         let Some(lhs) = self.node(*id).children.first().copied() else {
                             continue;
                         };
-                        if matches!(self.kind(lhs), NodeKind::Expr(ExprKind::HierPath { .. }))
-                            && self.member_write_base(lhs, &member_set).is_some()
+                        // A hierarchical LHS that the owned database resolved to
+                        // this net is a real driver identity and is admitted
+                        // through the HierPath site below. The source-text
+                        // fallback only rejects an unresolved top-self path
+                        // (no owned target) so it cannot silently drop a driver.
+                        if self.member_write_base(lhs, &member_set).is_none()
+                            && self.cont_assign_source_has_hier_lhs(*id, net)
                         {
-                            return Err(format!(
-                                "hierarchical continuous assignment to wired net `{shown}` is not supported"
-                            ));
-                        }
-                        if self.cont_assign_source_has_hier_lhs(*id, net) {
                             return Err(format!(
                                 "hierarchical continuous assignment to wired net `{shown}` is not supported"
                             ));
@@ -1335,11 +1339,6 @@ impl<'a> Codegen<'a> {
                                     )?;
                                     sites.insert(*id, strengths);
                                 } else if self.nested_member_target(lhs, &member_set).is_some() {
-                                    if !matches!(kind, crate::sim::ir::IrNetKind::Wire) {
-                                        return Err(format!(
-                                            "concatenated/complex continuous-assignment LHS containing wired net `{shown}` is not supported"
-                                        ));
-                                    }
                                     let width = self
                                         .sig_globals
                                         .get(&net)
@@ -1468,7 +1467,7 @@ impl<'a> Codegen<'a> {
             sites.sort_by_key(|(id, _)| id.0);
             if sites.len() > LLG_MAX_NET_DRIVERS {
                 return Err(format!(
-                    "wired net `{shown}` has {} continuous driver sites, exceeding the {LLG_MAX_NET_DRIVERS} driver-slot limit",
+                    "wired net `{shown}` has {} continuous driver sites, exceeding the runtime driver-count range",
                     sites.len()
                 ));
             }

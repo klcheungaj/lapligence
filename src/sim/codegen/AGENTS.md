@@ -89,13 +89,17 @@ actual writes. Inouts emit no links; warn and skip input/output links touching
 members.
 
 Standalone packed `wand/triand` and `wor/trior` use one group per declaration,
-with up to 16 whole-net continuous-assignment sites (including declaration
-assignments), ordered deterministically by node. Synthetic slots have no
+with one contribution slot per whole-net continuous-assignment site (including
+declaration assignments), ordered deterministically by node. The runtime
+driver/strength tables are sized exactly at elaboration, so there is no fixed
+per-net driver ceiling. Synthetic slots have no
 waveform names; reads/sensitivity observe only the resolved cell. All-Z/no
 sources → Z; wired-AND 0 dominates X, wired-OR 1 dominates X. Retain scalar
-continuous, gate and port strengths. Reject port/interface/array wired nets,
-hierarchical/selected LHSs, procedural writes, force/release and function/task-
-output drivers. Keep the older per-member wire/inout model unchanged. Tests:
+  continuous, gate and port strengths. Reject port/interface/array wired nets,
+  procedural writes, force/release and function/task-output drivers; a resolved
+  hierarchical or concatenated continuous-assignment LHS is admitted as a
+  structural driver site, and only the unresolved source-text fallback still fails.
+  Keep the older per-member wire/inout model unchanged. Tests:
 `tests/sim_net_resolution.rs`, standalone `tests/runtime_values.rs`.
 
 Standalone scalar/packed `wire/tri/uwire` uses the same per-site identity for

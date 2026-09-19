@@ -578,3 +578,38 @@ endmodule
     let stdout = run_sim(sv, "widthmix").expect("simulation should run");
     assert_eq!(stdout, "0\n1\n");
 }
+
+// ── Fixture-based acceptance: terminal matrix, arrays, tri-state enables ────
+
+#[test]
+fn gate_terminal_matrix() {
+    sim_cli::run_case(
+        "gates",
+        "terminal_matrix",
+        "CHECK: 0 1 0 1 0 0\nCHECK: 0 0 0 0 1 1\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
+fn gate_array_distribution() {
+    sim_cli::run_case(
+        "gates",
+        "array_distribution",
+        "CHECK: 1010\nCHECK: 0000\nCHECK: x0x0\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
+fn tristate_unknown_enable() {
+    sim_cli::run_case(
+        "gates",
+        "tristate_unknown_enable",
+        "CHECK: on 1 z 0 z\nCHECK: off z 1 z 0\nCHECK: x x x x x\nCHECK: z x x x x\n",
+        "",
+        &[],
+    );
+}

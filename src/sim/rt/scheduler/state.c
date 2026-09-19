@@ -369,8 +369,9 @@ typedef struct {
     uint64_t process_step_limit;
     uint64_t region_passes;    // zero-delay guard units in the current time step (region passes + coroutine resumes)
     const char* last_process_name; // survives completed-process reclamation
-    llg_proc_t* all_procs[LLG_MAX_PROCS];
+    llg_proc_t** all_procs;   // checked-growable slot table; NULL holes are free
     int n_procs;
+    int all_procs_capacity;
     size_t program_processes;       // live program initial procedures only
     llg_program_t* programs;        // stable origins, owned until runtime cleanup
     int program_completion_pending; // service after the full cancellation batch
@@ -385,12 +386,15 @@ typedef struct {
     llg_strobe_t* strobe_tail; // preserves source issue order
     // Active procedural forces. Entries own copied target/source descriptors;
     // no pre-force value is retained because release is object-specific.
-    llg_force_entry_t force_table[LLG_MAX_FORCE];
+    llg_force_entry_t* force_table;   // checked-growable live-entry table
     int force_count;
-    llg_pca_binding_t pca_table[LLG_MAX_PCA];
+    int force_capacity;
+    llg_pca_binding_t* pca_table;
     int pca_count;
-    llg_pca_real_binding_t pca_real_table[LLG_MAX_PCA];
+    int pca_capacity;
+    llg_pca_real_binding_t* pca_real_table;
     int pca_real_count;
+    int pca_real_capacity;
     llg_rng_state_t rng_root;
     int argc;
     char** argv;

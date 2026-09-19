@@ -1386,8 +1386,9 @@ static void test_llg_net(void) {
         sv4_t d0 = SV4_Z(1), d1 = SV4_Z(1);
         llg_net_t net = { .resolved = SV4_Z(1), .width = 1,
                           .resolution = LLG_RESOLVE_WIRE, .n_drivers = 2,
-                          .drivers = { &d0, &d1 }, .strength0 = { 6, 6 },
-                          .strength1 = { 6, 6 } };
+                          .drivers = (sv4_t* const[]){ &d0, &d1 },
+                          .strength0 = (const uint8_t[]){ 6, 6 },
+                          .strength1 = (const uint8_t[]){ 6, 6 } };
         llg_net_resolve(&net);
         CHECK(sv4_same(net.resolved, test_temp(SV4_Z(1)))); // z+z -> z
         sv4_replace(&d0, SV4_C(0, 1));
@@ -1416,8 +1417,8 @@ static void test_llg_net(void) {
     {
         llg_net_t net = { .resolved = SV4_Z(4), .width = 4,
                           .resolution = LLG_RESOLVE_WIRE, .n_drivers = 0,
-                          .drivers = { NULL }, .strength0 = { 0 },
-                          .strength1 = { 0 } };
+                          .drivers = NULL, .strength0 = NULL,
+                          .strength1 = NULL };
         llg_net_resolve(&net);
         CHECK(sv4_same(net.resolved, test_temp(SV4_Z(4))));
         sv4_destroy(&net.resolved);
@@ -1428,8 +1429,9 @@ static void test_llg_net(void) {
         sv4_t d0 = SV4_Z(8), d1 = SV4_Z(8);
         llg_net_t net = { .resolved = SV4_Z(8), .width = 8,
                           .resolution = LLG_RESOLVE_WIRE, .n_drivers = 2,
-                          .drivers = { &d0, &d1 }, .strength0 = { 6, 6 },
-                          .strength1 = { 6, 6 } };
+                          .drivers = (sv4_t* const[]){ &d0, &d1 },
+                          .strength0 = (const uint8_t[]){ 6, 6 },
+                          .strength1 = (const uint8_t[]){ 6, 6 } };
         llg_net_resolve(&net);
         sv4_t before = sv4_clone(&net.resolved);
         llg_net_write(&net, 0, test_temp(SV4_Z(8))); // same value -> early-out
@@ -1446,8 +1448,9 @@ static void test_llg_net(void) {
         sv4_t d0 = SV4_Z(8), d1 = SV4_Z(8);
         llg_net_t net = { .resolved = SV4_Z(8), .width = 8,
                           .resolution = LLG_RESOLVE_WIRE, .n_drivers = 2,
-                          .drivers = { &d0, &d1 }, .strength0 = { 6, 6 },
-                          .strength1 = { 6, 6 } };
+                          .drivers = (sv4_t* const[]){ &d0, &d1 },
+                          .strength0 = (const uint8_t[]){ 6, 6 },
+                          .strength1 = (const uint8_t[]){ 6, 6 } };
         llg_net_resolve(&net);
         llg_net_write(&net, 0, test_temp(SV4_C(0x5a, 8)));
         CHECK(sv4_same(d0, test_temp(SV4_C(0x5a, 8))));
@@ -1464,8 +1467,9 @@ static void test_llg_net(void) {
         sv4_t d0 = SV4_C(0x0a, 8), d1 = SV4_C(0x0b, 8);
         llg_net_t net = { .resolved = SV4_Z(8), .width = 8,
                           .resolution = LLG_RESOLVE_WIRE, .n_drivers = 2,
-                          .drivers = { &d0, &d1 }, .strength0 = { 6, 6 },
-                          .strength1 = { 6, 6 } };
+                          .drivers = (sv4_t* const[]){ &d0, &d1 },
+                          .strength0 = (const uint8_t[]){ 6, 6 },
+                          .strength1 = (const uint8_t[]){ 6, 6 } };
         llg_net_resolve(&net);
         char buf[64];
         sv4_format('h', net.resolved, buf, sizeof(buf));
@@ -1480,8 +1484,9 @@ static void test_llg_net(void) {
         sv4_t d0 = SV4_C(0x5a, 8), d1 = SV4_X(8);
         llg_net_t net = { .resolved = SV4_Z(8), .width = 8,
                           .resolution = LLG_RESOLVE_WIRE, .n_drivers = 2,
-                          .drivers = { &d0, &d1 }, .strength0 = { 6, 6 },
-                          .strength1 = { 6, 6 } };
+                          .drivers = (sv4_t* const[]){ &d0, &d1 },
+                          .strength0 = (const uint8_t[]){ 6, 6 },
+                          .strength1 = (const uint8_t[]){ 6, 6 } };
         llg_net_resolve(&net);
         CHECK(sv4_same(net.resolved, test_temp(SV4_X(8))));
         sv4_destroy(&net.resolved);

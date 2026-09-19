@@ -81,8 +81,10 @@ pub use storage::{IrArray, IrNetAliasBinding, IrNetGroup, IrNetKind, IrSignal};
 mod vpi;
 pub use vpi::{IrVpiCompileArg, IrVpiCompileCall, IrVpiObject, IrVpiObjectKind};
 
-/// Maximum contributions stored by one generated `llg_net_t`.
-pub const LLG_MAX_NET_DRIVERS: usize = 16;
+/// Upper bound on one generated `llg_net_t`'s driver count. The runtime stores
+/// the count in a C `int`; this is a representation limit checked before
+/// emission, not an admission ceiling on legal net connectivity.
+pub const LLG_MAX_NET_DRIVERS: usize = i32::MAX as usize;
 /// Maximum number of arguments exposed through one generated VPI call.
 pub const LLG_MAX_VPI_ARGS: usize = 256;
 

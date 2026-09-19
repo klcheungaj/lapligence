@@ -359,16 +359,6 @@ fn ordinary_wire_continuous_assignment_rejects_variable_target_select() {
 fn wired_nets_reject_unimplemented_driver_paths() {
     let lowering_cases = [
         (
-            "hierarchical",
-            "module tb; logic a; wand w; assign tb.w=a; endmodule",
-            "hierarchical continuous assignment",
-        ),
-        (
-            "concat_lhs",
-            "module tb; logic x; wand w; assign {w,x}=2'b11; endmodule",
-            "concatenated/complex continuous-assignment LHS",
-        ),
-        (
             "interface",
             "interface bus; wand w; endinterface module tb; bus b(); endmodule",
             "declared in an interface",
@@ -433,6 +423,23 @@ fn wired_nets_reject_unimplemented_driver_paths() {
             "{tag}: expected {expected_name}: {diagnostics:?}"
         );
     }
+}
+
+#[test]
+fn hierarchical_and_concatenated_wired_lhs_resolve_driver_sites() {
+    // A resolved hierarchical LHS (top-self or a selected net in a child) is a
+    // structural driver site, not a procedural write; each contribution keeps
+    // its own resolved slot and strength. A concatenated LHS that contains a
+    // wired net contributes only that net's bits; its other bits stay high-Z.
+    sim_cli::run_case(
+        "net_resolution",
+        "hierarchical_wired_lhs",
+        "CHECK: self=1 child=01 concat=10zz cv=10 cx=1\n\
+         CHECK: self=0 child=10 concat=10zz cv=10 cx=1\n\
+         CHECK: self=z child=1z concat=10zz cv=10 cx=1\n",
+        "",
+        &[],
+    );
 }
 
 #[test]
@@ -559,19 +566,157 @@ endmodule
 }
 
 #[test]
-fn wired_nets_reject_more_than_sixteen_driver_sites() {
-    let mut source = String::from(
-        "// llg-test-fixture: tests/sim_net_resolution.rs/driver_limit.sv\nmodule tb; wand w;\n",
+fn wired_nets_resolve_more_than_sixteen_continuous_driver_sites() {
+    // 18 structural drivers per net. The retired 16-slot runtime ceiling must
+    // not reject legal net connectivity; resolution stays strength-aware.
+    sim_cli::run_case(
+        "net_resolution",
+        "driver_growth",
+        "CHECK: w=x wa=0 wo=1\n",
+        "",
+        &[],
     );
-    for _ in 0..17 {
-        source.push_str("assign w = 1'b1;\n");
+}
+
+#[test]
+fn net_resolution_truth_matrix() {
+    // Exhaustive {0,1,x,z} x {0,1,x,z} table over wire, wand, wor, and a
+    // strong/weak pair. The expected rows are derived from the LRM resolution
+    // tables, not from the implementation under test.
+    sim_cli::run_case(
+        "net_resolution",
+        "truth_matrix",
+        "0 0 | 0 0 0 0\n0 1 | x 0 1 0\n0 x | x 0 x 0\n0 z | 0 0 0 0\n\
+         1 0 | x 0 1 1\n1 1 | 1 1 1 1\n1 x | x x 1 1\n1 z | 1 1 1 1\n\
+         x 0 | x 0 x x\nx 1 | x x 1 x\nx x | x x x x\nx z | x x x x\n\
+         z 0 | 0 0 0 0\nz 1 | 1 1 1 1\nz x | x x x x\nz z | z z z z\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
+fn net_disjoint_array_ports() {
+    sim_cli::run_case(
+        "net_resolution",
+        "disjoint_array_ports",
+        "CHECK: a5 3c 5c\nCHECK: 00 3c 0c\nCHECK: 00 f0 00\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
+fn unresolved_net_multiple_drivers() {
+    sim_cli::run_case(
+        "net_resolution",
+        "unresolved_multiple_drivers",
+        "CHECK: conflict=x wired=0\nCHECK: conflict=1 wired=1\nCHECK: conflict=z wired=z\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
+fn alias_partial_chain() {
+    sim_cli::run_case(
+        "net_resolution",
+        "alias_partial_chain",
+        "CHECK: a=fa b=a c=2\nCHECK: a=f5 b=5 c=1\nCHECK: a=f3 b=3 c=3\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
+fn alias_force_and_strength() {
+    sim_cli::run_case(
+        "net_resolution",
+        "alias_force_and_strength",
+        "CHECK: base=11\nCHECK: forced=00\nCHECK: released=11\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
+fn alias_bad_type_or_edition() {
+    sim_cli::reject_case(
+        "net_resolution",
+        "alias_incompatible_type",
+        "all nets in a net alias statement must have a common nettype",
+    );
+    sim_cli::reject_case_with_args(
+        "net_resolution",
+        "true_net_alias",
+        "use of undeclared identifier 'alias'",
+        &["--edition", "2001"],
+    );
+}
+
+#[test]
+fn inout_selected_or_array_actual_is_a_retained_boundary() {
+    // A 1-bit inout port whose actual is a fixed-array element (`lane[0]`) is
+    // legal SV, but the whole-net inout collapse only tracks plain-net
+    // actuals. Retain the precise lowering diagnostic and assign the
+    // bit-level array-element collapse to a follow-up instead of silently
+    // accepting it; the diagnostic distinguishes this shape from a syntax
+    // error.
+    sim_cli::reject_case(
+        "net_resolution",
+        "inout_array_element",
+        "has a selected or concatenated actual that cannot be resolved safely",
+    );
+}
+
+#[test]
+fn net_alias_chain_grows_past_the_old_driver_and_alias_limits() {
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
     }
-    source.push_str("endmodule\n");
-    let error = generate_error("wired_driver_limit", &source);
-    assert!(
-        error.contains("17 continuous driver sites") && error.contains("16 driver-slot limit"),
-        "{error}"
+    // A 258-net alias chain collapses into one canonical electrical network:
+    // 259 structural driver slots and 257 alias descriptors bound to the same
+    // group. This exercises both retired per-net ceilings (16 drivers, 256
+    // aliases) through checked growth rather than duplicate alias statements,
+    // which the frontend correctly rejects.
+    let n = 258usize;
+    let mut source = String::from(
+        "// llg-test-fixture: tests/sim_net_resolution.rs/alias_chain.sv\nmodule tb;\nwire n0",
     );
+    for i in 1..n {
+        source.push_str(&format!(", n{i}"));
+    }
+    source.push_str(";\n");
+    for i in 0..n - 1 {
+        source.push_str(&format!("alias n{i} = n{};\n", i + 1));
+    }
+    source.push_str(&format!(
+        "assign n0 = 1'b1;\ninitial begin #1; $display(\"CHECK: last=%b\", n{}); $finish(0); end\nendmodule\n",
+        n - 1
+    ));
+    let expected = "CHECK: last=1\n";
+    sim_harness::with_frontend_temp_cwd("alias_chain", |dir| {
+        let path = dir.join("tb.sv");
+        std::fs::write(&path, &source).map_err(|error| error.to_string())?;
+        let compiled = compile::compile_checked(&compile::CompileOpts {
+            files: vec![path.to_string_lossy().into_owned()],
+            top: Some("tb".to_owned()),
+            ..Default::default()
+        })
+        .map_err(|error| error.to_string())?;
+        let db = Db::from_slang(&compiled.snapshot).map_err(|error| error.to_string())?;
+        for (variant, opts) in [("on", OptConfig::default()), ("off", OptConfig::none())] {
+            let model = sim::codegen::generate_from_db_with_opts(&db, &opts)
+                .map_err(|error| error.to_string())?;
+            let exe =
+                sim::build::build_model_cmake(&dir.join(variant), &[("model.c", &model.model_c)])
+                    .map_err(|error| error.to_string())?;
+            assert_eq!(sim_harness::run_executable(&exe)?, expected, "{variant}");
+        }
+        Ok(())
+    })
+    .expect("alias registry growth");
 }
 
 #[test]

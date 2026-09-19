@@ -74,6 +74,31 @@ void llg_net_write(llg_net_t* net, int idx, sv4_t value) {
     llg_net_resolve(net);
 }
 
+/* Grow one net's alias list to hold at least one more entry. The old table
+ * stays live until the grown copy is complete, so an allocation failure aborts
+ * without leaving the net partially rebound. */
+static void llg_net_alias_reserve(llg_net_t* net) {
+    if (net->n_aliases < net->alias_capacity) return;
+    if (net->alias_capacity < 0) {
+        fputs("llg: fatal: net alias capacity is invalid\n", stderr);
+        abort();
+    }
+    int capacity = net->alias_capacity ? net->alias_capacity : 4;
+    while (capacity <= net->n_aliases) {
+        if (capacity > INT_MAX / 2) {
+            fputs("llg: fatal: net alias capacity overflow\n", stderr);
+            abort();
+        }
+        capacity *= 2;
+    }
+    llg_net_alias_t** grown = (llg_net_alias_t**)llg_checked_malloc(
+        (size_t)capacity, sizeof(*grown), "net alias table");
+    for (int i = 0; i < net->n_aliases; i++) grown[i] = net->aliases[i];
+    free(net->aliases);
+    net->aliases = grown;
+    net->alias_capacity = capacity;
+}
+
 void llg_net_alias_bind(llg_net_alias_t* alias) {
     if (!alias || !alias->parts || alias->n_parts == 0) return;
     for (uint32_t i = 0; i < alias->n_parts; i++) {
@@ -83,13 +108,18 @@ void llg_net_alias_bind(llg_net_alias_t* alias) {
         for (int j = 0; j < net->n_aliases; j++)
             if (net->aliases[j] == alias) seen = 1;
         if (seen) continue;
-        if (net->n_aliases >= LLG_MAX_NET_ALIASES) {
-            fprintf(stderr, "llg: too many aliases on one resolved net\n");
-            abort();
-        }
+        llg_net_alias_reserve(net);
         net->aliases[net->n_aliases++] = alias;
     }
     llg_net_alias_refresh(alias);
+}
+
+void llg_net_alias_clear(llg_net_t* net) {
+    if (!net) return;
+    free(net->aliases);
+    net->aliases = NULL;
+    net->n_aliases = 0;
+    net->alias_capacity = 0;
 }
 
 sv4_t llg_net_alias_read(llg_net_alias_t* alias) {

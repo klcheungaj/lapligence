@@ -53,14 +53,36 @@ pub(super) fn render_signal_decls(model: &IrModel, out: &mut String) {
                 Some(delay) => (1, delay.rise, delay.fall, delay.turn_off),
                 None => (0, 0, 0, 0),
             };
+        // Exact elaborated-size driver and strength tables. The generated
+        // `llg_net_t` points at them instead of embedding a fixed array, so
+        // there is no artificial per-net driver ceiling.
+        let (drivers_ptr, strength0_ptr, strength1_ptr) = if g.n_drivers == 0 {
+            ("NULL".to_owned(), "NULL".to_owned(), "NULL".to_owned())
+        } else {
+            out.push_str(&format!(
+                "static sv4_t* const {}__drivers[] = {{ {} }};\n\
+                 static const uint8_t {}__strength0[] = {{ {} }};\n\
+                 static const uint8_t {}__strength1[] = {{ {} }};\n",
+                g.c_name,
+                driver_ptrs.join(", "),
+                g.c_name,
+                strength0,
+                g.c_name,
+                strength1,
+            ));
+            (
+                format!("{}__drivers", g.c_name),
+                format!("{}__strength0", g.c_name),
+                format!("{}__strength1", g.c_name),
+            )
+        };
         out.push_str(&format!(
-            "static llg_net_t {} = {{ {resolved_init}, {}, {}, {}, {}, {{ {} }}, {{ {strength0} }}, {{ {strength1} }}, {}, NULL, {}, {}, {} }};\n",
+            "static llg_net_t {} = {{ {resolved_init}, {}, {}, {}, {}, {drivers_ptr}, {strength0_ptr}, {strength1_ptr}, {}, NULL, {}, {}, {}, 0, 0, NULL }};\n",
             g.c_name,
             g.width,
             g.signed as u8,
             g.kind.c_value(),
             g.n_drivers,
-            driver_ptrs.join(", "),
             propagation_enabled,
             propagation_rise,
             propagation_fall,
@@ -103,7 +125,7 @@ pub(super) fn render_signal_decls(model: &IrModel, out: &mut String) {
             continue;
         }
         out.push_str(&format!(
-            "static llg_event_object_t {}__object = {{{{ 0 }}, 0, {{ 0 }}, 0, 0, 0, 0 }};\n\
+            "static llg_event_object_t {}__object = {{ 0 }};\n\
              static llg_event_t {} = {{ &{}__object }};\n",
             ev.c_name, ev.c_name, ev.c_name,
         ));

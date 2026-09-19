@@ -1,4 +1,4 @@
-// Static-review counterexample; NOT EXECUTED.
+// Executed by tests/sim_imported_probes.rs::alias_delayed_wakeup_notifies_waiters.
 module tb;
   logic driver = 0;
   wire #2 original;

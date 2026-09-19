@@ -271,10 +271,11 @@ static int run_postponed_set(void) {
 // ── final blocks (see llg_rt.h) ─────────────────────────────────────────────
 
 void llg_spawn_final(void (*fn)(llg_proc_t*), const char* name) {
-    if (llg_n_finals >= LLG_MAX_FINALS) {
-        fprintf(stderr, "llg: too many final blocks (limit %d)\n", LLG_MAX_FINALS);
+    if (llg_n_finals == INT_MAX) {
+        fprintf(stderr, "llg runtime fatal: final block registry size overflow\n");
         abort();
     }
+    finals_reserve(llg_n_finals + 1);
     llg_finals[llg_n_finals].fn = fn;
     llg_finals[llg_n_finals].name = name;
     llg_n_finals++;
@@ -291,6 +292,7 @@ void llg_rt_run_finals(void) {
     if (g.suspended) return;
     if (llg_last_config_error) {
         llg_clear_final_timeformat();
+        finals_release();
         llg_n_finals = 0;
         return;
     }
@@ -338,6 +340,7 @@ void llg_rt_run_finals(void) {
     }
     llg_in_finals = 0;
     llg_rt_cleanup();
+    finals_release();
     llg_n_finals = 0;
 }
 

@@ -2,14 +2,64 @@
 // Registered final-block processes (see llg_rt.h).  Kept OUTSIDE the runtime
 // context: `llg_rt_cleanup` memsets the context, and registration happens
 // around the `llg_rt_run()` call in generated `main()`.
-static struct {
+typedef struct {
     void (*fn)(llg_proc_t*);
     const char* name;
-} llg_finals[LLG_MAX_FINALS];
+} llg_final_registration_t;
+static llg_final_registration_t* llg_finals;
 static int llg_n_finals;
+static int llg_finals_capacity;
 static int llg_in_finals;
 // Scheduler time when `llg_rt_run` exited; `$time` inside finals reports it.
 static uint64_t llg_final_time;
+
+#define LLG_REGISTRY_INITIAL 16
+
+// Double a registry capacity until it can hold `needed` entries. Growth is
+// bounded by the `int` index type; overflow aborts explicitly. Every grown
+// table is fully populated before it replaces the live one, so an allocation
+// failure aborts without a partially rebound registry.
+static int llg_registry_capacity(int current, int needed) {
+    int capacity = current > 0 ? current : LLG_REGISTRY_INITIAL;
+    while (capacity < needed) {
+        if (capacity > INT_MAX / 2) {
+            fprintf(stderr, "llg runtime fatal: registry capacity overflow\n");
+            abort();
+        }
+        capacity *= 2;
+    }
+    return capacity;
+}
+
+static void all_procs_reserve(int needed) {
+    if (needed <= g.all_procs_capacity) return;
+    int capacity = llg_registry_capacity(g.all_procs_capacity, needed);
+    llg_proc_t** grown = (llg_proc_t**)llg_checked_calloc(
+        (size_t)capacity, sizeof(*grown), "process registry");
+    if (g.all_procs)
+        memcpy(grown, g.all_procs, (size_t)g.n_procs * sizeof(*grown));
+    free(g.all_procs);
+    g.all_procs = grown;
+    g.all_procs_capacity = capacity;
+}
+
+static void finals_reserve(int needed) {
+    if (needed <= llg_finals_capacity) return;
+    int capacity = llg_registry_capacity(llg_finals_capacity, needed);
+    llg_final_registration_t* grown = (llg_final_registration_t*)llg_checked_malloc(
+        (size_t)capacity, sizeof(*grown), "final block registry");
+    if (llg_finals)
+        memcpy(grown, llg_finals, (size_t)llg_n_finals * sizeof(*grown));
+    free(llg_finals);
+    llg_finals = grown;
+    llg_finals_capacity = capacity;
+}
+
+static void finals_release(void) {
+    free(llg_finals);
+    llg_finals = NULL;
+    llg_finals_capacity = 0;
+}
 
 static void register_proc(llg_proc_t* p) {
     if (!p || g.next_process_identity == UINT64_MAX) {
@@ -23,10 +73,11 @@ static void register_proc(llg_proc_t* p) {
             return;
         }
     }
-    if (g.n_procs >= LLG_MAX_PROCS) {
-        fprintf(stderr, "llg: too many processes (limit %d)\n", LLG_MAX_PROCS);
+    if (g.n_procs == INT_MAX) {
+        fprintf(stderr, "llg runtime fatal: process registry size overflow\n");
         abort();
     }
+    all_procs_reserve(g.n_procs + 1);
     g.all_procs[g.n_procs++] = p;
 }
 

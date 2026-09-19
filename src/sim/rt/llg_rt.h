@@ -112,9 +112,9 @@ typedef struct {
 //
 // The struct is a valid file-scope static initializer: driver cells are
 // separate `sv4_t` globals whose addresses the codegen wires into `drivers`.
-
-#define LLG_MAX_NET_DRIVERS 16
-#define LLG_MAX_NET_ALIASES 256
+// `drivers`, `strength0` and `strength1` point at exact elaborated-size
+// read-only tables emitted with the model, so no fixed driver ceiling exists.
+// The alias list is grown on demand; `alias_capacity` tracks its allocation.
 
 typedef struct llg_inertial llg_inertial_t;
 typedef struct llg_net llg_net_t;
@@ -127,16 +127,17 @@ struct llg_net {
     int8_t is_signed;
     int8_t resolution;
     int n_drivers;
-    sv4_t* drivers[LLG_MAX_NET_DRIVERS]; /* per-driver contribution cells */
-    uint8_t strength0[LLG_MAX_NET_DRIVERS];
-    uint8_t strength1[LLG_MAX_NET_DRIVERS];
+    sv4_t* const* drivers;                /* per-driver contribution cells */
+    const uint8_t* strength0;             /* per-driver source drive levels */
+    const uint8_t* strength1;
     int8_t propagation_enabled;
     llg_inertial_t* propagation;
     uint64_t propagation_rise;
     uint64_t propagation_fall;
     uint64_t propagation_turn_off;
     int n_aliases;
-    llg_net_alias_t* aliases[LLG_MAX_NET_ALIASES];
+    int alias_capacity;
+    llg_net_alias_t** aliases;
 };
 
 struct llg_net_alias_part {
@@ -158,6 +159,7 @@ struct llg_net_alias {
 void llg_net_resolve(llg_net_t* net); /* strength-aware resolution, per limb */
 void llg_net_write(llg_net_t* net, int idx, sv4_t value);
 void llg_net_alias_bind(llg_net_alias_t* alias);
+void llg_net_alias_clear(llg_net_t* net); /* release a model net's alias list */
 sv4_t llg_net_alias_read(llg_net_alias_t* alias);
 void llg_net_alias_write(llg_net_alias_t* alias, sv4_t value);
 
@@ -320,6 +322,9 @@ typedef enum {
 #define LLG_REGION_NONBLOCKING_ASSIGN LLG_REGION_NBA
 #define LLG_REGION_RE_NONBLOCKING_ASSIGN LLG_REGION_RE_NBA
 
+// The live process registry grows on demand; this constant survives only as
+// the standalone runtime self-test's sequential-fork iteration base and must
+// not be treated as a concurrency ceiling.
 #define LLG_MAX_PROCS 4096
 
 // Stable SystemVerilog process states. The numeric order is the declaration
@@ -852,9 +857,8 @@ void llg_unique_priority_check(int check, int matched, int has_default,
 // remaining final procedures, as required by LRM §10.7.
 // `$time` inside finals reports the time of the last scheduler event.
 
-#define LLG_MAX_FINALS 1024
-
-// Register one final-block process (no coroutine is created here).
+// Register one final-block process (no coroutine is created here). The registry
+// is checked-growable; registrations are not capped by a fixed table size.
 void llg_spawn_final(void (*fn)(llg_proc_t*), const char* name);
 // Run every registered final process sequentially and then release the
 // runtime (the finals phase owns teardown).  A no-op when nothing was
@@ -973,27 +977,33 @@ void llg_wait_level(sv4_t* sig, sv4_t value);
 // registration order until earlier partial unlinks (swap-with-last) reorder
 // the table; a trigger with no waiters is lost — events are edge-triggered,
 // not stateful, so trigger-before-wait never latches.  Each event holds a
-// fixed-size waiter table; more concurrent waiters on ONE event than
-// LLG_MAX_EVENT_WAITERS aborts the run like the other runtime resource
-// limits.
+// waiter table that grows on demand with checked allocation, so the number of
+// concurrent waiters on one event is bounded only by available memory.
 //
 // The struct is a valid zero initializer: generated models define one global
 // per declared event. Ordinary waiters and persistent-trigger waiters are
 // separate so a trigger never latches an ordinary `@(event)` control. The
 // generation distinguishes a completed runtime from its next initialization,
 // so a static generated event cannot retain `.triggered` across runs.
-
-#define LLG_MAX_EVENT_WAITERS 64
+// `llg_event_object_reset` releases the grown tables; generated model
+// init/teardown calls it so a static event object cannot leak or retain a
+// dangling table across runs.
 
 typedef struct {
-    llg_proc_t* waiters[LLG_MAX_EVENT_WAITERS];
+    llg_proc_t** waiters;
     int n_waiters;
-    llg_proc_t* triggered_waiters[LLG_MAX_EVENT_WAITERS];
+    size_t waiters_capacity;
+    llg_proc_t** triggered_waiters;
     int n_triggered_waiters;
+    size_t triggered_waiters_capacity;
     uint64_t triggered_time;
     uint64_t triggered_generation;
     int triggered;
 } llg_event_object_t;
+
+// Release any grown waiter tables and clear the event state. Safe on a
+// zero-initialized object and idempotent.
+void llg_event_object_reset(llg_event_object_t* ev);
 
 typedef struct {
     llg_event_object_t* object;
@@ -1197,7 +1207,7 @@ void llg_ba_d(double* target, double value);
 // stable identity; executing a new site replaces the target's active binding.
 // Ordinary blocking/NBA writes to an active target are ignored. Deassign keeps
 // the last driven value, and a live binding remains beneath force/release.
-#define LLG_MAX_PCA 4096
+// The binding tables grow on demand with checked allocation.
 void llg_pca_assign(sv4_t* target, sv4_t* enable, uint64_t site, sv4_t value);
 void llg_pca_drive(sv4_t* target, sv4_t* enable, uint64_t site, sv4_t value);
 void llg_pca_deassign(sv4_t* target);
@@ -1213,9 +1223,8 @@ void llg_pca_deassign_d(double* target);
 // storage parts; a net pointer on a part keeps the underlying driver
 // resolution available for release and re-application. No pre-force value is
 // saved: variables retain the currently forced value on release, while nets
-// are recomputed from their current driver slots.
-
-#define LLG_MAX_FORCE 64
+// are recomputed from their current driver slots. The live-entry table grows
+// on demand with checked allocation.
 
 typedef struct {
     sv4_t* target;

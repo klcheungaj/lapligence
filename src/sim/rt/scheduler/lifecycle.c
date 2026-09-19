@@ -276,6 +276,18 @@ void llg_rt_cleanup(void) {
     for (int i = 0; i < g.n_procs; i++) {
         if (g.all_procs[i]) free_proc_storage(g.all_procs[i]);
     }
+    free(g.all_procs);
+    g.all_procs = NULL;
+    g.all_procs_capacity = 0;
+    free(g.force_table);
+    g.force_table = NULL;
+    g.force_capacity = 0;
+    free(g.pca_table);
+    g.pca_table = NULL;
+    g.pca_capacity = 0;
+    free(g.pca_real_table);
+    g.pca_real_table = NULL;
+    g.pca_real_capacity = 0;
     free_mailboxes();
     reap_retired_procs();
     while (g.programs) {
@@ -336,7 +348,8 @@ void llg_rt_init_with_args_precision_and_stack(int argc, char** argv,
     llg_assertion_cover_count = 0;
     llg_assertion_vacuous_total = 0;
     llg_assertion_event_order = 0;
-    llg_n_finals = 0; // a fresh run never inherits final registrations
+    finals_release(); // a fresh run never inherits final registrations
+    llg_n_finals = 0;
     if (precision_fs == 0) {
         fprintf(stderr, "llg: runtime precision must be non-zero\n");
         llg_last_failure = 1;

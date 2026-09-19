@@ -289,7 +289,7 @@ impl Validator<'_> {
             if group.n_drivers > LLG_MAX_NET_DRIVERS {
                 return self.fail(
                     format!("{path}.n_drivers"),
-                    format!("net group exceeds {LLG_MAX_NET_DRIVERS} drivers"),
+                    "net group driver count exceeds the runtime integer range",
                 );
             }
             if group.driver_strengths.len() != group.n_drivers {

@@ -244,3 +244,47 @@ for this stage. They exercise actual runtime code without Rust or Slang. Native
 macOS/Windows, the full HDL pipeline and net performance are not certified by a
 Linux component test. Heap allocation and deep cloning can add costs; no speedup
 is assumed without measurement.
+
+## Resource capacity
+
+Legal net connectivity is not subject to a fixed per-net driver or alias
+ceiling. A generated `llg_net_t` points at exact elaborated-size
+`drivers`/`strength0`/`strength1` tables instead of embedding a fixed array,
+and each net's alias list grows on demand with checked allocation: the grown
+copy is completed before it replaces the old table, so an allocation failure
+aborts without leaving a partially rebound net. The driver count is bounded
+only by the emitted C `int` representation and available memory.
+`wired_nets_resolve_more_than_sixteen_continuous_driver_sites` and
+`net_alias_chain_grows_past_the_old_driver_and_alias_limits` execute 18 driver
+sites and a 258-net alias chain (259 driver slots, 257 alias descriptors) in
+both optimizer modes.
+
+The scheduler's live registries are checked-growable as well: the concurrent
+process slot table, the final-block registration list, each named event's
+ordinary and persistent-trigger waiter tables, the active packed/real
+procedural-continuous-assignment binding tables, and the force/release live
+entry table all grow on demand. Every grown table is fully populated before it
+replaces the live one, so an allocation failure aborts with its named
+diagnostic rather than leaving a partially rebound registry. Consumers
+therefore either index the current table or retain a stable process/handle
+identity, never a stale row address. `llg_event_object_reset` releases a
+generated event's grown waiter tables from model initialization and teardown.
+The retired ceilings (4096 processes, 1024 finals, 64 waiters per event, 64
+forces, 4096 PCA bindings) are exercised by the `sim_capacity` suite, with
+`event_waiter_growth`, `process_registry_growth`, `force_entry_growth`,
+4100 PCA bindings and 1100 final registrations. There is no fixed nonblocking
+assignment capacity: each NBA is an owned heap node on its issuing process or
+the delayed queue.
+
+Retained explicit limits are checked with an actionable diagnostic rather than
+silent truncation:
+
+| Limit | Value | Failure mode |
+| --- | --- | --- |
+| Packed value width | exclusive `1 << 20` bits | lowering/backend diagnostic |
+| Function recursion depth | 256 frames | `recursion limit exceeded` |
+
+A growable registry is still bounded by available memory and, for the
+`int`-indexed tables, by `INT_MAX` entries; both abort explicitly rather than
+truncate. `LLG_MAX_PROCS` is retained only as the standalone runtime
+self-test's sequential-fork iteration base, not as a scheduling ceiling.

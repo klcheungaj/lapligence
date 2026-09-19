@@ -156,7 +156,7 @@ impl IrNetGroup {
         if n_drivers > LLG_MAX_NET_DRIVERS {
             return Err(IrValidationError::new(
                 "net_group.n_drivers",
-                format!("net group exceeds {LLG_MAX_NET_DRIVERS} drivers"),
+                "net group driver count exceeds the runtime integer range",
             ));
         }
         Ok(Self {

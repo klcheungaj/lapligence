@@ -29,21 +29,33 @@ static void event_trigger_object_unchecked(llg_event_object_t* ev) {
     ev->triggered_generation = llg_event_generation;
     clocking_drive_event_match(ev);
 
-    int n_triggered = ev->n_triggered_waiters;
-    llg_proc_t* triggered[LLG_MAX_EVENT_WAITERS];
-    memcpy(triggered, ev->triggered_waiters,
-           (size_t)n_triggered * sizeof(llg_proc_t*));
-    ev->n_triggered_waiters = 0;
-    for (int i = 0; i < n_triggered; i++) wake_proc(triggered[i]);
-
-    int n = ev->n_waiters;
     // Snapshot and detach everyone first: wake_proc unlinks the waiter from
     // every event list it registered on, which must not fight the iteration
-    // over this event's own table.  Wake order is the snapshot order, i.e.
-    // the current table order: deterministic, and equal to registration
-    // order unless earlier partial unlinks (swap-with-last) reordered it.
-    llg_proc_t* wake[LLG_MAX_EVENT_WAITERS];
-    memcpy(wake, ev->waiters, (size_t)n * sizeof(llg_proc_t*));
+    // over this event's own table. Wake order is the snapshot order, i.e. the
+    // current table order: deterministic, and equal to registration order
+    // unless earlier partial unlinks (swap-with-last) reordered it. The
+    // snapshots are heap scratch because the waiter tables grow without a
+    // fixed ceiling.
+    int n_triggered = ev->n_triggered_waiters;
+    llg_proc_t** triggered = n_triggered
+        ? (llg_proc_t**)llg_checked_malloc(
+              (size_t)n_triggered, sizeof(*triggered),
+              "triggered event wake snapshot")
+        : NULL;
+    if (triggered)
+        memcpy(triggered, ev->triggered_waiters,
+               (size_t)n_triggered * sizeof(*triggered));
+    ev->n_triggered_waiters = 0;
+    for (int i = 0; i < n_triggered; i++) wake_proc(triggered[i]);
+    free(triggered);
+
+    int n = ev->n_waiters;
+    llg_proc_t** wake = n
+        ? (llg_proc_t**)llg_checked_malloc(
+              (size_t)n, sizeof(*wake), "event wake snapshot")
+        : NULL;
+    if (wake)
+        memcpy(wake, ev->waiters, (size_t)n * sizeof(*wake));
     ev->n_waiters = 0;
     for (int i = 0; i < n; i++) {
         llg_wait_t* w = &wake[i]->wait;
@@ -68,6 +80,7 @@ static void event_trigger_object_unchecked(llg_event_object_t* ev) {
         if (matched) wake_proc(wake[i]);
         else event_list_add(ev, wake[i]);
     }
+    free(wake);
     deferred_trigger_event(ev);
 }
 
