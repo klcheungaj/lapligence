@@ -25,6 +25,7 @@ static void llg_net_alias_refresh(llg_net_alias_t* alias) {
     // updates through the ordinary signal writer so waiters and waveform
     // callbacks observe canonical alias changes.
     sig_write(&alias->visible, owned[0]);
+    if (alias->publication_target) sig_write(alias->publication_target, owned[0]);
     llg_value_scope_end(scope);
 
 }

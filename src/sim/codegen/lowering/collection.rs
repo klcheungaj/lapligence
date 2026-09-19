@@ -29,6 +29,7 @@ mod initialization;
 mod locals;
 mod lvalues;
 mod names;
+mod net_arrays;
 mod nets;
 mod packed_elements;
 pub(super) mod packed_formals;

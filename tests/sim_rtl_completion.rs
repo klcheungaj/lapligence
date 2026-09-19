@@ -43,6 +43,24 @@ fn unit_declarations_must_precede_variable_references() {
 }
 
 #[test]
+fn interface_wired_nets_preserve_instance_identity() {
+    sim_cli::run_case(
+        "rtl_completion",
+        "interface_wired_net",
+        "value=1\n",
+        "",
+        &[],
+    );
+    sim_cli::run_case(
+        "rtl_completion",
+        "interface_wired_instances",
+        "a=00 b=aa o=ff\na=f0 b=aa o=f0\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
 fn fixed_values_have_independent_locals_returns_and_copyout() {
     sim_cli::run_case(
         "rtl_completion",
@@ -164,6 +182,39 @@ fn fixed_members_and_whole_call_inputs_keep_sensitivity_dependencies() {
 }
 
 #[test]
+fn inout_arrays_nested_peers_and_selected_ports_share_resolution() {
+    sim_cli::run_case(
+        "rtl_completion",
+        "inout_composition",
+        "lane=5a sibling=zz bus=z5a5\nlane=a5 sibling=zz bus=zzz5\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
+fn net_array_selected_ports_preserve_independent_bits() {
+    sim_cli::run_case(
+        "rtl_completion",
+        "net_array_selections",
+        "lane=a5 siblings=zz,zz\nlane=z3 siblings=zz,zz\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
+fn wired_arrays_resolve_sites_and_keep_pull_defaults() {
+    sim_cli::run_case(
+        "rtl_completion",
+        "wired_arrays",
+        "and=a0 other=zz or=f5 defaults=00,1\nand=03 other=zz or=35 defaults=00,1\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
 fn fixed_initializers_execute_before_initial_processes() {
     sim_cli::run_case(
         "rtl_completion",
@@ -186,11 +237,33 @@ fn fixed_ports_accept_struct_array_elements() {
 }
 
 #[test]
+fn aggregate_nets_preserve_member_drivers_through_ports() {
+    sim_cli::run_case(
+        "rtl_completion",
+        "aggregate_nets",
+        "result=5a,a5\nresult=12,a5\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
 fn fixed_ref_ports_alias_struct_array_members_and_notify_changes() {
     sim_cli::run_case(
         "rtl_completion",
         "fixed_ref_ports",
         "before=34\nafter=7,3a observed=3a sibling=1,11\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
+fn aggregate_inouts_share_whole_and_member_electrical_paths() {
+    sim_cli::run_case(
+        "rtl_completion",
+        "aggregate_inouts",
+        "bus=a5,5a\nbus=12,34\n",
         "",
         &[],
     );

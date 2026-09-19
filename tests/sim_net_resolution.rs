@@ -357,23 +357,11 @@ fn ordinary_wire_continuous_assignment_rejects_variable_target_select() {
 
 #[test]
 fn wired_nets_reject_unimplemented_driver_paths() {
-    let lowering_cases = [
-        (
-            "interface",
-            "interface bus; wand w; endinterface module tb; bus b(); endmodule",
-            "declared in an interface",
-        ),
-        (
-            "array",
-            "module tb; wand w[0:1]; assign w[0]=1'b1; endmodule",
-            "unpacked wired-net array",
-        ),
-        (
-            "strength_vector",
-            "module tb; logic [1:0] a; wand [1:0] w; assign (strong0, strong1) w=a; endmodule",
-            "drive strength on non-scalar net",
-        ),
-    ];
+    let lowering_cases = [(
+        "strength_vector",
+        "module tb; logic [1:0] a; wand [1:0] w; assign (strong0, strong1) w=a; endmodule",
+        "drive strength on non-scalar net",
+    )];
     for (tag, source, expected) in lowering_cases {
         let source =
             format!("// llg-test-fixture: tests/sim_net_resolution.rs/{tag}.sv\n{source}\n");
@@ -655,17 +643,13 @@ fn alias_bad_type_or_edition() {
 }
 
 #[test]
-fn inout_selected_or_array_actual_is_a_retained_boundary() {
-    // A 1-bit inout port whose actual is a fixed-array element (`lane[0]`) is
-    // legal SV, but the whole-net inout collapse only tracks plain-net
-    // actuals. Retain the precise lowering diagnostic and assign the
-    // bit-level array-element collapse to a follow-up instead of silently
-    // accepting it; the diagnostic distinguishes this shape from a syntax
-    // error.
-    sim_cli::reject_case(
+fn inout_array_elements_preserve_canonical_connectivity() {
+    sim_cli::run_case(
         "net_resolution",
         "inout_array_element",
-        "has a selected or concatenated actual that cannot be resolved safely",
+        "CHECK: 1 z\nCHECK: 0 z\n",
+        "",
+        &[],
     );
 }
 

@@ -96,7 +96,9 @@ impl<'a> Codegen<'a> {
                 self.alias_error(alias, "has a packed bit index outside the runtime range")
             })?;
         let width = match self.kind(net) {
-            NodeKind::Net { ty, .. } => ty.width.unwrap_or(1),
+            NodeKind::Net { ty, .. } => self
+                .signal_of(net)
+                .map_or(ty.width.unwrap_or(1), |signal| signal.width),
             _ => return Err(self.alias_error(alias, "does not reference a plain net")),
         };
         if bit >= width {
@@ -114,12 +116,36 @@ impl<'a> Codegen<'a> {
         alias: NodeId,
         expression: NodeId,
     ) -> Result<Vec<AliasBit>, String> {
+        let aggregate_path = self.unpacked_path_for_expr(expression).or_else(|| {
+            self.unpacked_aggregate_info(expression)
+                .map(|(root, _)| (root, Vec::new()))
+        });
+        if let Some((net, path)) =
+            aggregate_path.filter(|(root, _)| matches!(self.kind(*root), NodeKind::Net { .. }))
+        {
+            let descriptor = self
+                .query_descriptor(net)
+                .ok_or("aggregate net alias has no type")?;
+            let (member, offset) = super::fixed_values::fixed_path_descriptor(descriptor, &path)
+                .ok_or("aggregate net alias has no selected member")?;
+            let width =
+                Self::fixed_descriptor_width(&member).ok_or("aggregate net alias has no width")?;
+            return Ok((0..width)
+                .rev()
+                .map(|bit| AliasBit {
+                    net,
+                    bit: offset + bit,
+                })
+                .collect());
+        }
         match self.kind(expression) {
             NodeKind::Net { .. }
             | NodeKind::Expr(ExprKind::Ref { .. } | ExprKind::HierPath { .. }) => {
                 let net = self.alias_base_net(alias, expression)?;
                 let width = match self.kind(net) {
-                    NodeKind::Net { ty, .. } => ty.width.unwrap_or(1),
+                    NodeKind::Net { ty, .. } => self
+                        .signal_of(net)
+                        .map_or(ty.width.unwrap_or(1), |signal| signal.width),
                     _ => unreachable!("alias base validated as a net"),
                 };
                 let (left, right) = self
@@ -325,6 +351,33 @@ impl<'a> Codegen<'a> {
         source: NodeId,
         lhs: NodeId,
     ) -> Result<Option<Vec<(IrNetAliasBinding, u32)>>, String> {
+        if let Some((array, element)) = self.array_net_endpoint(lhs) {
+            if let Some((_, signal)) = self.model.arrays[array]
+                .net_elements
+                .iter()
+                .find(|(index, _)| *index == element)
+            {
+                let signal = &self.model.signals[*signal];
+                if !signal.net_alias.is_empty() {
+                    let (_, bits) = self
+                        .array_net_selection(lhs)?
+                        .ok_or("net-array selection disappeared")?;
+                    let mut result = Vec::new();
+                    for (position, bit) in bits.into_iter().enumerate() {
+                        let binding = signal
+                            .net_alias
+                            .iter()
+                            .find(|binding| binding.signal_bit == bit)
+                            .ok_or("net-array selected bit has no electrical binding")?;
+                        result.push((
+                            binding.clone(),
+                            u32::try_from(position).map_err(|_| "net-array source bit overflow")?,
+                        ));
+                    }
+                    return Ok(Some(result));
+                }
+            }
+        }
         let bits = match self.alias_expression_bits(source, lhs) {
             Ok(bits) => bits,
             // Ordinary variable/net lvalues use the existing lowering path.
@@ -482,6 +535,35 @@ impl<'a> Codegen<'a> {
         Ok(result)
     }
 
+    pub(in super::super) fn array_net_endpoint(&self, node: NodeId) -> Option<(usize, u64)> {
+        let (base, indices) = match self.kind(node) {
+            NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => (*base, indices.clone()),
+            NodeKind::Expr(ExprKind::BitSelect { base, index })
+                if self.array_of(*base).is_some() =>
+            {
+                (*base, vec![*index])
+            }
+            NodeKind::Expr(
+                ExprKind::BitSelect { base, .. }
+                | ExprKind::PartSelect { base, .. }
+                | ExprKind::IndexedPartSelect { base, .. },
+            ) => return self.array_net_endpoint(*base),
+            _ => return None,
+        };
+        let array = self.array_of(base)?;
+        if !array.is_net || indices.len() < array.dims.len() {
+            return None;
+        }
+        let indices = indices[..array.dims.len()]
+            .iter()
+            .map(|index| self.eval_bound_i128(*index).ok().map(lhs_integer_expr))
+            .collect::<Option<Vec<_>>>()?;
+        Some((
+            array.ir,
+            Self::array_constant_linear_index(array, &indices)?,
+        ))
+    }
+
     pub(in super::super) fn build_net_groups(&mut self) -> Result<(), String> {
         let nodes = self.design_nodes();
         // Union-find over the parent/child nets of every inout port. True
@@ -490,6 +572,31 @@ impl<'a> Codegen<'a> {
         let mut parent: HashMap<NodeId, NodeId> = HashMap::new();
         let mut rank: HashMap<NodeId, u8> = HashMap::new();
         let mut inout_ports: Vec<NodeId> = Vec::new();
+        let mut array_ports = HashSet::new();
+        let mut array_endpoints: HashMap<(usize, u64), Vec<Option<AliasBit>>> = HashMap::new();
+        for (node, info) in &self.array_globals {
+            if self.db.array_meta(*node).is_some_and(|meta| {
+                matches!(
+                    meta.net_type(),
+                    Some(
+                        NetType::Wand
+                            | NetType::TriAnd
+                            | NetType::Wor
+                            | NetType::TriOr
+                            | NetType::Tri0
+                            | NetType::Tri1
+                            | NetType::Supply0
+                            | NetType::Supply1
+                    )
+                )
+            }) {
+                for element in 0..self.model.arrays[info.ir].total {
+                    array_endpoints
+                        .entry((info.ir, element))
+                        .or_insert_with(|| vec![None; info.elem_width as usize]);
+                }
+            }
+        }
         let mut alias_parent: HashMap<AliasBit, AliasBit> = HashMap::new();
         let mut alias_rank: HashMap<AliasBit, u8> = HashMap::new();
         let mut alias_bits: HashSet<AliasBit> = HashSet::new();
@@ -537,7 +644,9 @@ impl<'a> Codegen<'a> {
         // singleton network so ordinary net drivers still resolve electrically.
         for net in &alias_nets {
             let width = match self.kind(*net) {
-                NodeKind::Net { ty, .. } => ty.width.unwrap_or(1),
+                NodeKind::Net { ty, .. } => self
+                    .signal_of(*net)
+                    .map_or(ty.width.unwrap_or(1), |signal| signal.width),
                 _ => {
                     return Err(
                         self.alias_error(*nodes.first().unwrap_or(net), "does not reference a net")
@@ -563,6 +672,30 @@ impl<'a> Codegen<'a> {
                     ..
                 } = self.kind(*id)
                 {
+                    if let Some((endpoint, actual_bits)) = self.array_net_selection(*actual)? {
+                        let width = self.model.arrays[endpoint.0].elem_width;
+                        let formal_bits = self.alias_expression_bits(*id, *l)?;
+                        if actual_bits.len() != formal_bits.len() {
+                            return Err(
+                                "array inout selection width disagrees with its formal".into()
+                            );
+                        }
+                        let peers = array_endpoints
+                            .entry(endpoint)
+                            .or_insert_with(|| vec![None; width as usize]);
+                        for (physical, formal) in actual_bits.into_iter().zip(formal_bits) {
+                            if let Some(previous) = peers[physical as usize] {
+                                alias_union(&mut alias_parent, &mut alias_rank, previous, formal);
+                            } else {
+                                peers[physical as usize] = Some(formal);
+                            }
+                            alias_bits.insert(formal);
+                            alias_nets.insert(formal.net);
+                        }
+                        inout_ports.push(*id);
+                        array_ports.insert(*id);
+                        continue;
+                    }
                     let whole_actual = *actual == *h
                         || matches!(
                             self.kind(*actual),
@@ -575,13 +708,21 @@ impl<'a> Codegen<'a> {
                             .zip(self.signal_of(*h))
                             .is_some_and(|(actual, target)| actual.ir == target.ir);
                     if !whole_actual {
-                        return Err(format!(
-                            "inout port `{}` has a selected or concatenated actual that cannot be resolved safely at {}:{}:{}",
-                            self.node(*id).name,
-                            self.node(*id).file.as_deref().unwrap_or("<unknown>"),
-                            self.node(*id).line,
-                            self.node(*id).col,
-                        ));
+                        let actual_bits = self.alias_expression_bits(*id, *actual)?;
+                        let formal_bits = self.alias_expression_bits(*id, *l)?;
+                        if actual_bits.len() != formal_bits.len() {
+                            return Err(
+                                "selected inout actual width disagrees with its formal".into()
+                            );
+                        }
+                        for (actual, formal) in actual_bits.into_iter().zip(formal_bits) {
+                            alias_bits.extend([actual, formal]);
+                            alias_nets.extend([actual.net, formal.net]);
+                            alias_union(&mut alias_parent, &mut alias_rank, actual, formal);
+                        }
+                        inout_ports.push(*id);
+                        array_ports.insert(*id);
+                        continue;
                     }
                 }
                 // A true alias that touches one side of an inout connection
@@ -590,11 +731,15 @@ impl<'a> Codegen<'a> {
                 // second resolved object and split the alias electrically.
                 if alias_nets.contains(h) || alias_nets.contains(l) {
                     let high_width = match self.kind(*h) {
-                        NodeKind::Net { ty, .. } => ty.width.unwrap_or(1),
+                        NodeKind::Net { ty, .. } => self
+                            .signal_of(*h)
+                            .map_or(ty.width.unwrap_or(1), |signal| signal.width),
                         _ => 1,
                     };
                     let low_width = match self.kind(*l) {
-                        NodeKind::Net { ty, .. } => ty.width.unwrap_or(1),
+                        NodeKind::Net { ty, .. } => self
+                            .signal_of(*l)
+                            .map_or(ty.width.unwrap_or(1), |signal| signal.width),
                         _ => 1,
                     };
                     if high_width != low_width {
@@ -643,6 +788,50 @@ impl<'a> Codegen<'a> {
                     self.node(*id).line,
                     self.node(*id).col,
                 ));
+            }
+        }
+
+        // Port traversal order must not split a whole-net connection from a
+        // selected or explicitly aliased endpoint discovered later.
+        let mut whole_components: HashMap<NodeId, Vec<NodeId>> = HashMap::new();
+        for member in parent.keys().copied().collect::<Vec<_>>() {
+            let root = find(&mut parent, member);
+            whole_components.entry(root).or_default().push(member);
+        }
+        for component in whole_components.values() {
+            if !component.iter().any(|member| alias_nets.contains(member)) {
+                continue;
+            }
+            let first = component[0];
+            let width = self
+                .signal_of(first)
+                .ok_or("inout component has no packed storage")?
+                .width;
+            for member in component {
+                if self
+                    .signal_of(*member)
+                    .is_none_or(|signal| signal.width != width)
+                {
+                    return Err("inout component contains incompatible storage widths".into());
+                }
+                alias_nets.insert(*member);
+                for bit in 0..width {
+                    let first = AliasBit { net: first, bit };
+                    let other = AliasBit { net: *member, bit };
+                    alias_bits.extend([first, other]);
+                    alias_union(&mut alias_parent, &mut alias_rank, first, other);
+                }
+            }
+        }
+        for member in &alias_nets {
+            let width = self
+                .signal_of(*member)
+                .ok_or("alias member has no packed storage")?
+                .width;
+            for bit in 0..width {
+                let bit = AliasBit { net: *member, bit };
+                alias_bits.insert(bit);
+                alias_find(&mut alias_parent, bit);
             }
         }
 
@@ -764,7 +953,7 @@ impl<'a> Codegen<'a> {
                 ..
             } = self.kind(*port)
             {
-                if !alias_nets.contains(h) {
+                if !array_ports.contains(port) && !alias_nets.contains(h) {
                     members.insert(*h);
                 }
                 if !alias_nets.contains(l) {
@@ -810,9 +999,15 @@ impl<'a> Codegen<'a> {
                 NodeKind::Net { ty, .. } => ty.clone(),
                 _ => unreachable!("validated above"),
             };
-            let width = first_ty.width.unwrap_or(1);
+            let width = self
+                .signal_of(members[0])
+                .map_or(first_ty.width.unwrap_or(1), |signal| signal.width);
             if let Some(bad) = members.iter().skip(1).find(|m| match self.kind(**m) {
-                NodeKind::Net { ty, .. } => ty.width.unwrap_or(1) != width,
+                NodeKind::Net { ty, .. } => {
+                    self.signal_of(**m)
+                        .map_or(ty.width.unwrap_or(1), |signal| signal.width)
+                        != width
+                }
                 _ => true,
             }) {
                 return Err(format!(
@@ -960,10 +1155,11 @@ impl<'a> Codegen<'a> {
         }
         self.scalar_inits = keep;
         self.build_wired_net_groups(&nodes)?;
+        self.publish_array_net_cells(array_endpoints, &nodes)?;
         Ok(())
     }
 
-    fn add_structural_driver(
+    pub(super) fn add_structural_driver(
         &mut self,
         group: usize,
         source: NodeId,
@@ -1014,6 +1210,7 @@ impl<'a> Codegen<'a> {
         let signed = net.signed;
         let signal = self.model.signals.len();
         self.model.signals.push(IrSignal {
+            fixed_default: None,
             c_name: format!("{c_name}.resolved"),
             hdl_name: None,
             ty: IrType::Packed {
@@ -1081,7 +1278,7 @@ impl<'a> Codegen<'a> {
     /// explicit metadata in a future frontend snapshot.  Keep the fallback
     /// strong/strong so variable outputs and ordinary implicit nets retain
     /// the default structural-driver strength.
-    fn effective_port_driver_strengths(
+    pub(super) fn effective_port_driver_strengths(
         &self,
         port: NodeId,
         explicit0: Strength,
@@ -1186,7 +1383,7 @@ impl<'a> Codegen<'a> {
         Ok(sources)
     }
 
-    fn ir_net_kind(net_type: NetType) -> Option<crate::sim::ir::IrNetKind> {
+    pub(super) fn ir_net_kind(net_type: NetType) -> Option<crate::sim::ir::IrNetKind> {
         match net_type {
             NetType::Wire | NetType::Tri | NetType::Uwire | NetType::Logic => {
                 Some(crate::sim::ir::IrNetKind::Wire)
@@ -1218,29 +1415,6 @@ impl<'a> Codegen<'a> {
                 })
             })
             .collect();
-        if let Some(array) = nodes.iter().find(|id| {
-            matches!(self.kind(**id), NodeKind::Array { .. })
-                && self.db.array_meta(**id).is_some_and(|meta| {
-                    matches!(
-                        meta.net_type(),
-                        Some(
-                            NetType::Wand
-                                | NetType::TriAnd
-                                | NetType::Wor
-                                | NetType::TriOr
-                                | NetType::Tri0
-                                | NetType::Tri1
-                                | NetType::Supply0
-                                | NetType::Supply1
-                        )
-                    )
-                })
-        }) {
-            return Err(format!(
-                "unpacked wired-net array `{}` is not supported",
-                self.display_name(*array)
-            ));
-        }
         let standalone: Vec<(NodeId, crate::sim::ir::IrNetKind)> = nodes
             .iter()
             .filter_map(|id| match self.kind(*id) {
@@ -1283,23 +1457,6 @@ impl<'a> Codegen<'a> {
         for (net, kind) in standalone {
             let shown = self.display_name(net);
             let member_set = HashSet::from([net]);
-            // An interface wired net may be instantiated more than once with a
-            // shared definition net but per-instance storage; the whole-net
-            // member scan below cannot yet distinguish those instances, so keep
-            // it fail-closed rather than risk collapsing two instances.
-            if self.node(net).parent.is_some_and(|parent| {
-                matches!(
-                    self.kind(parent),
-                    NodeKind::ModuleInst {
-                        is_interface: true,
-                        ..
-                    }
-                )
-            }) {
-                return Err(format!(
-                    "wired net `{shown}` declared in an interface is not supported"
-                ));
-            }
             let mut sites: HashMap<NodeId, (u8, u8)> = HashMap::new();
             for id in nodes {
                 match self.kind(*id) {
@@ -1316,7 +1473,8 @@ impl<'a> Codegen<'a> {
                         // through the HierPath site below. The source-text
                         // fallback only rejects an unresolved top-self path
                         // (no owned target) so it cannot silently drop a driver.
-                        if self.member_write_base(lhs, &member_set).is_none()
+                        if matches!(self.kind(lhs), NodeKind::Expr(ExprKind::HierPath { .. }))
+                            && self.hier_path_signal(lhs).is_none()
                             && self.cont_assign_source_has_hier_lhs(*id, net)
                         {
                             return Err(format!(
@@ -1328,7 +1486,8 @@ impl<'a> Codegen<'a> {
                                 if matches!(
                                     self.kind(lhs),
                                     NodeKind::Expr(ExprKind::HierPath { .. })
-                                ) {
+                                ) && self.member_write_base(lhs, &member_set).is_some()
+                                {
                                     let width = self
                                         .sig_globals
                                         .get(&net)
