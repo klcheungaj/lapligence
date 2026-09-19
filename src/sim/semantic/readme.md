@@ -23,14 +23,25 @@ structural combinational gates and ordinary arithmetic/control operations. A
 single scalar edge or a list of plain signal-change controls can describe a
 clocked or combinational process; nested waits remain simulation timing.
 Multiple edge controls, including asynchronous-reset patterns, require a future
-clock/reset proof and are rejected by this initial profile. Procedural loops
-and subprogram calls require termination and effect proofs; they are rejected
-until those proofs exist. Elaborated generate scopes are structural objects
+clock/reset proof and are rejected by this initial profile. A procedural loop
+is admitted only when elaboration resolved its bound: a `repeat` with a known
+non-negative constant count, a `foreach` over a static array with every
+dimension resolved, or a control expression known to be false. Runtime-bounded
+`for`/`while`/`do-while`/`foreach` and `forever` remain `UnprovenLoop`.
+A subprogram call is admitted only when the callee is a non-virtual function
+whose reachable body is portable and zero-time; tasks, virtual/final/constructor
+calls, recursive calls, runtime services, and unresolved callees remain
+`UnprovenCall` or `UnresolvedExpression`. `final` and ordinary `initial` blocks
+remain `SimulationProcess`; a pure constant static-storage preload is reported
+as the target-dependent `StorageInitialization` instead of being admitted by
+the `initial` keyword. Elaborated generate scopes are structural objects
 and are unaffected. Source genvars remain elaboration-only declarations,
 distinct from runtime variables and concrete iteration parameters. Port types
 are checked even when there is no connected internal storage. Variable and
 array declaration initialization requires a
-target-specific profile and is excluded from portable RTL. Missing widths,
+target-specific profile and is excluded from portable RTL. Declaration-only
+frontend records such as `let` and type aliases are macros or types, not
+executable obligations. Missing widths,
 unresolved references, unknown expressions, non-static arrays, resolved-net
 classes outside ordinary wire/logic/reg/uwire, delayed primitives, and
 unsupported operations fail closed. Reachability follows every embedded
@@ -51,6 +62,8 @@ node is classified as executable, declaration-only, elaboration-consumed,
 intentionally unreachable, or unsupported. Native semantic kind and detail are
 retained by `core::db` when a frontend-neutral node has no direct variant, so a
 reachable unknown statement or expression produces a source-located error
-instead of becoming `NodeKind::Other` and disappearing. Inactive generate
+instead of becoming `NodeKind::Other` and disappearing. A pattern-matching
+case keeps its own ABI tag, so a surviving pattern is rejected with its source
+location rather than lowered as an empty ordinary case. Inactive generate
 branches and declaration-only frontend records remain in the ledger without
 being treated as executable obligations.

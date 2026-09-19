@@ -457,6 +457,11 @@ impl<'db> SemanticModel<'db> {
                 } => classify_type(ty),
                 NodeKind::FuncTask { ret: Some(ty), .. } => classify_type(ty),
                 NodeKind::Process {
+                    kind: ProcessKind::Initial,
+                } if initial_is_constant_storage_initialization(self.db, id) => {
+                    Some(SynthesisIssueKind::StorageInitialization)
+                }
+                NodeKind::Process {
                     kind: ProcessKind::Initial | ProcessKind::Final,
                 } => Some(SynthesisIssueKind::SimulationProcess),
                 NodeKind::Process {
@@ -516,6 +521,10 @@ impl<'db> SemanticModel<'db> {
                 NodeKind::FuncCall { callee: None, .. } | NodeKind::EnumConst { value: None } => {
                     Some(SynthesisIssueKind::UnresolvedExpression)
                 }
+                NodeKind::FuncCall {
+                    callee: Some(callee),
+                    ..
+                } if synthesis_call_is_proven(self.db, *callee) => None,
                 NodeKind::FuncCall { .. } => Some(SynthesisIssueKind::UnprovenCall),
                 NodeKind::Gate {
                     class: PrimClass::Gate,
@@ -526,6 +535,12 @@ impl<'db> SemanticModel<'db> {
                     ..
                 } if is_synthesis_primitive(*prim_type) => None,
                 NodeKind::Gate { .. } => Some(SynthesisIssueKind::UnsupportedPrimitive),
+                NodeKind::Other
+                    if classify_simulation_node(self.db, id, false)
+                        == SimulationNodeClass::DeclarationOnly =>
+                {
+                    None
+                }
                 NodeKind::Other => Some(SynthesisIssueKind::UnknownConstruct),
                 _ => None,
             };
@@ -933,7 +948,7 @@ fn is_declaration_only_unknown(detail: Option<&str>) -> bool {
                 | "ExplicitImport"
                 | "Export"
                 | "Import"
-                | "LetDeclaration"
+                | "LetDecl"
                 | "TypeAlias"
                 | "TransparentMember"
                 | "WildcardImport"
@@ -1047,6 +1062,19 @@ fn classify_statement(db: &Db, id: NodeId, statement: &StmtKind) -> Option<Synth
         | StmtKind::WaitFork
         | StmtKind::DisableFork
         | StmtKind::Disable { .. } => Some(SynthesisIssueKind::DynamicProcess),
+        StmtKind::Repeat { cond, .. } if synthesis_repeat_is_bounded(db, *cond) => None,
+        StmtKind::Foreach { array, .. }
+            if array.is_some_and(|array| synthesis_foreach_is_bounded(db, array)) =>
+        {
+            None
+        }
+        StmtKind::For { cond, .. }
+        | StmtKind::While { cond, .. }
+        | StmtKind::DoWhile { cond, .. }
+            if synthesis_condition_is_known_false(db, *cond) =>
+        {
+            None
+        }
         StmtKind::For { .. }
         | StmtKind::While { .. }
         | StmtKind::DoWhile { .. }
@@ -1054,6 +1082,235 @@ fn classify_statement(db: &Db, id: NodeId, statement: &StmtKind) -> Option<Synth
         | StmtKind::Forever { .. }
         | StmtKind::Foreach { .. } => Some(SynthesisIssueKind::UnprovenLoop),
         StmtKind::Unsupported { .. } => Some(SynthesisIssueKind::UnknownConstruct),
+        _ => None,
+    }
+}
+
+/// Resolve a loop count or control expression to a known integer. Only literal
+/// constants and resolved parameters are considered; general constant folding
+/// stays in the executable lowering path.
+fn synthesis_constant_integer(db: &Db, node: NodeId) -> Option<i128> {
+    match db.node_kind(node) {
+        NodeKind::Expr(ExprKind::Constant { value, .. }) => value.to_i128(),
+        NodeKind::Param {
+            value: Some(crate::core::elab::Val::Bits(bits)),
+            ..
+        } => bits.to_i128(),
+        NodeKind::Expr(ExprKind::Ref {
+            target: Some(target),
+        }) => synthesis_constant_integer(db, *target),
+        _ => None,
+    }
+}
+
+/// A `repeat (count)` loop is bounded when elaboration resolved the count to a
+/// known non-negative integer.
+fn synthesis_repeat_is_bounded(db: &Db, count: NodeId) -> bool {
+    synthesis_constant_integer(db, count).is_some_and(|count| count >= 0)
+}
+
+/// A loop controlled by a known false constant executes a fixed number of
+/// iterations. A constant-true control has no counter proof and stays
+/// unproven.
+fn synthesis_condition_is_known_false(db: &Db, condition: NodeId) -> bool {
+    synthesis_constant_integer(db, condition) == Some(0)
+}
+
+/// A `foreach` over a static array with every dimension extent resolved is
+/// bounded by elaboration. Dynamic containers and unresolved extents remain
+/// unproven.
+fn synthesis_foreach_is_bounded(db: &Db, array: NodeId) -> bool {
+    let meta = db.array_meta(array).or_else(|| match db.node_kind(array) {
+        NodeKind::Expr(ExprKind::Ref {
+            target: Some(target),
+        }) => db.array_meta(*target),
+        _ => None,
+    });
+    meta.is_some_and(|meta| {
+        matches!(meta.kind(), ArrayKind::Static)
+            && !meta.dimensions().is_empty()
+            && meta.dimensions().iter().all(Option::is_some)
+    })
+}
+
+/// Whether an `initial` process only writes compile-time constants to storage.
+/// That is the target-dependent FPGA preload form, so PortableRtl reports
+/// `StorageInitialization` instead of treating the keyword itself as the whole
+/// classification. Any control flow, timing or runtime service makes it an
+/// ordinary simulation process again.
+fn initial_is_constant_storage_initialization(db: &Db, process: NodeId) -> bool {
+    let Some(body) = db.node(process).children().first().copied() else {
+        return false;
+    };
+    let mut stack = vec![body];
+    let mut assignments = 0usize;
+    while let Some(id) = stack.pop() {
+        match db.node_kind(id) {
+            NodeKind::Stmt(StmtKind::Begin) => {
+                stack.extend_from_slice(db.node(id).children());
+            }
+            NodeKind::Stmt(StmtKind::Empty) => {}
+            NodeKind::Stmt(StmtKind::Assign {
+                blocking: true,
+                op: Operation::Assignment,
+                delay: None,
+                ..
+            }) => {
+                let children = &db.node(id).children;
+                let (Some(lhs), Some(rhs)) = (children.first(), children.get(1)) else {
+                    return false;
+                };
+                if !synthesis_constant_operand(db, *rhs)
+                    || !synthesis_static_storage_lvalue(db, *lhs)
+                {
+                    return false;
+                }
+                assignments += 1;
+            }
+            _ => return false,
+        }
+    }
+    assignments > 0
+}
+
+fn synthesis_constant_operand(db: &Db, node: NodeId) -> bool {
+    match db.node_kind(node) {
+        NodeKind::Expr(ExprKind::Constant { const_type, .. }) => {
+            !matches!(const_type, ConstantType::Unsupported | ConstantType::Null)
+        }
+        NodeKind::Param { value: Some(_), .. } => true,
+        NodeKind::Expr(ExprKind::Ref {
+            target: Some(target),
+        }) => synthesis_constant_operand(db, *target),
+        NodeKind::Expr(ExprKind::Cast { operand, .. }) => synthesis_constant_operand(db, *operand),
+        _ => false,
+    }
+}
+
+fn synthesis_static_storage_lvalue(db: &Db, node: NodeId) -> bool {
+    match db.node_kind(node) {
+        NodeKind::Var { .. } | NodeKind::Array { .. } => true,
+        NodeKind::Expr(ExprKind::Ref {
+            target: Some(target),
+        }) => matches!(
+            db.node_kind(*target),
+            NodeKind::Var { .. } | NodeKind::Array { .. }
+        ),
+        NodeKind::Expr(ExprKind::BitSelect { .. })
+        | NodeKind::Expr(ExprKind::PartSelect { .. })
+        | NodeKind::Expr(ExprKind::IndexedPartSelect { .. })
+        | NodeKind::Expr(ExprKind::HierPath { .. })
+        | NodeKind::Expr(ExprKind::ArraySelect { .. }) => true,
+        _ => false,
+    }
+}
+
+/// A call is proven for portable RTL when the callee is a non-virtual function
+/// with a body whose reachable statements and expressions are all portable and
+/// zero-time. Recursive and mutually recursive calls remain unproven.
+fn synthesis_call_is_proven(db: &Db, callee: NodeId) -> bool {
+    let mut active = Vec::new();
+    synthesis_callee_is_proven(db, callee, &mut active)
+}
+
+fn synthesis_callee_is_proven(db: &Db, callee: NodeId, active: &mut Vec<NodeId>) -> bool {
+    let NodeKind::FuncTask {
+        is_task,
+        is_virtual,
+        is_final,
+        is_constructor,
+        body: Some(body),
+        ..
+    } = db.node_kind(callee)
+    else {
+        return false;
+    };
+    if *is_task || *is_virtual || *is_final || *is_constructor {
+        return false;
+    }
+    if active.contains(&callee) {
+        return false;
+    }
+    active.push(callee);
+    let proven = synthesis_subtree_is_proven(db, *body, active);
+    active.pop();
+    proven
+}
+
+fn synthesis_subtree_is_proven(db: &Db, root: NodeId, active: &mut Vec<NodeId>) -> bool {
+    let mut seen = vec![false; db.nodes().len()];
+    let mut stack = vec![root];
+    while let Some(id) = stack.pop() {
+        if seen[id.index()] {
+            continue;
+        }
+        seen[id.index()] = true;
+        if synthesis_inline_node_issue(db, id, active).is_some() {
+            return false;
+        }
+        let node = db.node(id);
+        // A subroutine body is entered only through its call-site proof, which
+        // has already validated it.
+        if matches!(node.kind(), NodeKind::FuncTask { .. }) {
+            continue;
+        }
+        stack.extend_from_slice(node.children());
+        let mut references = Vec::new();
+        node.kind().append_references(&mut references);
+        stack.extend(references);
+    }
+    true
+}
+
+/// Classify one node reached from a candidate zero-time call body. The mapping
+/// mirrors the executable subset of [`SemanticModel::validate_synthesizable`]
+/// without owning the whole-design issue list.
+fn synthesis_inline_node_issue(
+    db: &Db,
+    id: NodeId,
+    active: &mut Vec<NodeId>,
+) -> Option<SynthesisIssueKind> {
+    match db.node_kind(id) {
+        NodeKind::Stmt(statement) => classify_statement(db, id, statement),
+        NodeKind::Expr(expression) => classify_expression(expression),
+        NodeKind::FuncCall {
+            callee: Some(callee),
+            ..
+        } => {
+            if synthesis_callee_is_proven(db, *callee, active) {
+                None
+            } else {
+                Some(SynthesisIssueKind::UnprovenCall)
+            }
+        }
+        NodeKind::FuncCall { callee: None, .. } => Some(SynthesisIssueKind::UnresolvedExpression),
+        NodeKind::SysCall { name } if is_synthesis_system_call(name) => None,
+        NodeKind::SysCall { .. } | NodeKind::MethodCall { .. } => {
+            Some(SynthesisIssueKind::RuntimeService)
+        }
+        NodeKind::Var { ty } => classify_type(ty).or_else(|| {
+            db.var_initializer(id)
+                .map(|_| SynthesisIssueKind::StorageInitialization)
+        }),
+        NodeKind::Array { ty } => match db.array_meta(id) {
+            Some(meta) if matches!(meta.kind(), ArrayKind::Static) => {
+                classify_type(ty).or_else(|| {
+                    (meta.dimensions().is_empty() || meta.dimensions().iter().any(Option::is_none))
+                        .then_some(SynthesisIssueKind::UnknownType)
+                })
+            }
+            Some(_) => Some(SynthesisIssueKind::DynamicContainer),
+            None => Some(SynthesisIssueKind::UnknownType),
+        },
+        NodeKind::FuncArg { ty, .. } => classify_type(ty),
+        NodeKind::FuncTask { ret: Some(ty), .. } => classify_type(ty),
+        NodeKind::Param {
+            ty, value: None, ..
+        } => classify_type(ty).or(Some(SynthesisIssueKind::UnresolvedExpression)),
+        NodeKind::Param { ty, .. } => classify_type(ty),
+        NodeKind::NamedEvent => Some(SynthesisIssueKind::EventOperation),
+        NodeKind::ClassDef => Some(SynthesisIssueKind::RuntimeObject),
+        NodeKind::Other => Some(SynthesisIssueKind::UnknownConstruct),
         _ => None,
     }
 }
