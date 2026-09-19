@@ -204,8 +204,12 @@ impl EmitCtx<'_, '_> {
         if op != Operation::Assignment
             && matches!(
                 lh,
-                IrLhs::Bit(..) | IrLhs::Part(..) | IrLhs::IdxPart(..) | IrLhs::ArrayElem { .. }
-                | IrLhs::PackedSelect { .. }
+                IrLhs::Bit(..)
+                    | IrLhs::Part(..)
+                    | IrLhs::IdxPart(..)
+                    | IrLhs::ArrayElem { .. }
+                    | IrLhs::PackedSelect { .. }
+                    | IrLhs::Ref { .. }
             )
         {
             // The canonical mutation expression resolves and stores the
@@ -306,8 +310,12 @@ impl EmitCtx<'_, '_> {
         let lhs = self.cg.lower_lhs(&self.path, operand)?;
         if matches!(
             lhs,
-            IrLhs::Bit(..) | IrLhs::Part(..) | IrLhs::IdxPart(..) | IrLhs::ArrayElem { .. }
+            IrLhs::Bit(..)
+                | IrLhs::Part(..)
+                | IrLhs::IdxPart(..)
+                | IrLhs::ArrayElem { .. }
                 | IrLhs::PackedSelect { .. }
+                | IrLhs::Ref { .. }
         ) {
             // Statement-position pre/post increment discards the yielded value,
             // so both forms commit the same single resolved store.
@@ -445,8 +453,10 @@ impl EmitCtx<'_, '_> {
         let rhs_ir = self.lower_assignment_rhs(lhs, rhs, op, &lh)?;
         let rhs_ir = apply_lhs_assignment_context(&self.cg.model, &lh, rhs_ir);
         if !blocking {
-            if self.cg.proc_local_target(lhs).is_some() || self.cg.subroutine_auto_target(lhs)
-                || lh.has_activation_root() {
+            if self.cg.proc_local_target(lhs).is_some()
+                || self.cg.subroutine_auto_target(lhs)
+                || lh.has_activation_root()
+            {
                 return Err(
                     "nonblocking delayed assignment requires persistent target storage".into(),
                 );
@@ -699,12 +709,20 @@ impl EmitCtx<'_, '_> {
         lhs: IrLhs,
     ) -> Result<IrLhs, String> {
         Ok(match lhs {
-            IrLhs::PackedSelect { target, steps, signed, two_state } => IrLhs::PackedSelect {
+            IrLhs::PackedSelect {
+                target,
+                steps,
+                signed,
+                two_state,
+            } => IrLhs::PackedSelect {
                 target: Box::new(self.capture_event_assignment_lhs(frame, captures, *target)?),
-                steps: steps.into_iter().map(|mut step| {
-                    step.base = self.capture_event_assignment_expr(frame, captures, step.base);
-                    step
-                }).collect(),
+                steps: steps
+                    .into_iter()
+                    .map(|mut step| {
+                        step.base = self.capture_event_assignment_expr(frame, captures, step.base);
+                        step
+                    })
+                    .collect(),
                 signed,
                 two_state,
             },
@@ -800,12 +818,20 @@ impl EmitCtx<'_, '_> {
 
         fn target(h: NodeId, slots: &mut Vec<IrStmt>, lhs: IrLhs) -> IrLhs {
             match lhs {
-                IrLhs::PackedSelect { target: root, steps, signed, two_state } => IrLhs::PackedSelect {
+                IrLhs::PackedSelect {
+                    target: root,
+                    steps,
+                    signed,
+                    two_state,
+                } => IrLhs::PackedSelect {
                     target: Box::new(target(h, slots, *root)),
-                    steps: steps.into_iter().map(|mut step| {
-                        step.base = selector(h, slots, step.base);
-                        step
-                    }).collect(),
+                    steps: steps
+                        .into_iter()
+                        .map(|mut step| {
+                            step.base = selector(h, slots, step.base);
+                            step
+                        })
+                        .collect(),
                     signed,
                     two_state,
                 },

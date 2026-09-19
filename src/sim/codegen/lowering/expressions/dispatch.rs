@@ -29,6 +29,17 @@ impl<'a> Codegen<'a> {
         scope_path: &str,
         h: NodeId,
     ) -> Result<IrExpr, String> {
+        if let Some(value) = self.fixed_activation_read(scope_path, h)? {
+            return Ok(value);
+        }
+        if let Some(value) = self.fixed_pattern_value(scope_path, h)? {
+            return Ok(value);
+        }
+        if self.array_of(h).is_some() || self.unpacked_aggregate_info(h).is_some() {
+            if let Some(value) = self.lower_bitstream_source(scope_path, h)? {
+                return Ok(value);
+            }
+        }
         if let Some(value) = self.packed_formal_read(scope_path, h)? {
             return Ok(value);
         }
@@ -540,6 +551,7 @@ impl<'a> Codegen<'a> {
                 let target_width = size_cast_expr
                     .as_deref()
                     .and_then(|expression| self.source_size_cast_width(expression))
+                    .or_else(|| self.fixed_value_width(h))
                     .or(ty.width);
                 let (w, s) = match (target_width, ty.signed) {
                     (Some(w), s) => (w, if *size_cast { source_value.signed } else { s }),
@@ -572,7 +584,7 @@ impl<'a> Codegen<'a> {
                             source.width, w
                         ));
                     }
-                    return Ok(IrExpr::new(
+                    let value = IrExpr::new(
                         IrExprKind::BitStreamCast {
                             a: Box::new(source),
                             source_width: w,
@@ -581,13 +593,20 @@ impl<'a> Codegen<'a> {
                         w,
                         s,
                         None,
-                    ));
+                    );
+                    return self.convert_fixed_payload(h, value);
                 }
                 // Value-preserving conversion (LRM 1800-2009 §6.24.1: the
                 // cast yields the value a variable of the cast type holds
                 // after the assignment — extension follows the SOURCE's
                 // signedness, so int'(8'hFF) is 255, not -1).
-                ir_to_explicit_cast_storage(v, w, s, *two_state || is_two_state_kind(&ty.kind))
+                let value = ir_to_explicit_cast_storage(
+                    v,
+                    w,
+                    s,
+                    *two_state || is_two_state_kind(&ty.kind),
+                )?;
+                self.convert_fixed_payload(h, value)
             }
             NodeKind::SysCall { name } => self.lower_sys_func_expr(scope_path, name, h),
             NodeKind::FuncCall {

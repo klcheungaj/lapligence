@@ -19,6 +19,10 @@ mod constants;
 mod dependencies;
 mod design;
 mod events;
+mod fixed_defaults;
+mod fixed_patterns;
+mod fixed_projections;
+mod fixed_values;
 mod function_bodies;
 mod gates;
 mod initialization;
@@ -46,11 +50,7 @@ fn lower_container_element(descriptor: &TypeDescriptor) -> Result<IrContainerEle
             .map(|width| IrContainerElement::Packed {
                 width,
                 signed: descriptor.info.signed,
-                two_state: descriptor.info.kind == "bit"
-                    || matches!(
-                        descriptor.info.kind.as_str(),
-                        "int" | "longint" | "byte" | "shortint"
-                    ),
+                two_state: descriptor.two_state,
             })
     };
     match &descriptor.shape {
@@ -75,6 +75,21 @@ fn lower_container_element(descriptor: &TypeDescriptor) -> Result<IrContainerEle
                     "container element `{}` has no representable packed width",
                     descriptor.name
                 )
+            })
+        }
+        TypeShape::Aggregate(layout) if layout.kind == AggregateKind::UnpackedUnion => {
+            Ok(IrContainerElement::Union {
+                type_id: descriptor.id.0,
+                members: layout
+                    .members
+                    .iter()
+                    .map(|member| {
+                        Ok(IrContainerMember {
+                            name: member.name.clone(),
+                            element: Box::new(lower_container_element(&member.descriptor)?),
+                        })
+                    })
+                    .collect::<Result<Vec<_>, String>>()?,
             })
         }
         TypeShape::Aggregate(layout) => Ok(IrContainerElement::Aggregate {
@@ -138,10 +153,12 @@ fn leaf_member(base: &AggregateMember, descriptor: &TypeDescriptor) -> Aggregate
         TypeShape::PackedAtom { ranges } => ranges.clone(),
         _ => base.packed_ranges.clone(),
     };
+    let mut ty = descriptor.info.clone();
+    ty.width = fixed_values::fixed_width(descriptor).or(ty.width);
     AggregateMember {
         initializer: base.initializer.clone(),
         name: base.name.clone(),
-        ty: descriptor.info.clone(),
+        ty,
         two_state: base.two_state,
         packed_ranges,
         aggregate: None,

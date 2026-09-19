@@ -111,7 +111,7 @@ impl EmitCtx<'_, '_> {
                     // by the function-local collection; skip them here.
                     if matches!(
                         self.cg.kind(*s),
-                        NodeKind::Var { .. } | NodeKind::FuncArg { .. }
+                        NodeKind::Var { .. } | NodeKind::Array { .. } | NodeKind::FuncArg { .. }
                     ) {
                         // Native mailbox locals are emitted as object
                         // statements rather than function-entry packed

@@ -5,40 +5,34 @@ use super::*;
 impl<'a> Codegen<'a> {
     pub(in super::super) fn emit_array_initializers(&mut self) -> Result<(), String> {
         let initializers = std::mem::take(&mut self.array_initializers);
-        let mut processes = Vec::with_capacity(initializers.len());
-        for (index, (array, initializer)) in initializers.into_iter().enumerate() {
-            let inst = self.owning_inst(array).ok_or_else(|| {
+        for (declaration, initializer) in initializers {
+            let inst = self.owning_inst(declaration).ok_or_else(|| {
                 format!(
-                    "fixed-array initializer for `{}` has no owning instance",
-                    self.node(array).name
+                    "fixed initializer for `{}` has no owning instance",
+                    self.node(declaration).name
                 )
             })?;
             self.inst = inst;
+            self.depth_arg = "0".into();
             let path = self.instance_path_of(inst);
-            let body = self
-                .lower_p30_fixed_array_assignment(
-                    &path,
-                    array,
-                    initializer,
-                    true,
-                    Operation::Assignment,
-                )?
-                .ok_or_else(|| {
-                    format!(
-                        "fixed-array initializer for `{}` in `{path}` has no array target",
-                        self.node(array).name
-                    )
-                })?;
-            processes.push(IrProcess::new_with_origin(
-                self.new_fn_name(&path, "array_init"),
-                format!("{path}.array_initializer.{index}"),
-                IrShape::RunOnce,
-                Vec::new(),
-                vec![body],
-                self.origin(array),
-            ));
+            let target = self
+                .fixed_storage_lhs(&path, declaration)?
+                .ok_or("fixed initializer has no persistent target")?;
+            let width = self
+                .fixed_value_width(declaration)
+                .ok_or("fixed initializer has no payload width")?;
+            let initialization = self.lower_declaration_initializer(
+                &path,
+                declaration,
+                initializer,
+                IrInitTarget::Fixed(Box::new(target)),
+                width,
+                false,
+                false,
+                false,
+            )?;
+            self.declaration_inits.push(initialization);
         }
-        self.model.processes.splice(0..0, processes);
         Ok(())
     }
 

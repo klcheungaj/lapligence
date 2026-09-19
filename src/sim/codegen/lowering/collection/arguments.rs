@@ -20,60 +20,12 @@ impl<'a> Codegen<'a> {
         }
     }
 
-    /// A call argument expression with an observable effect. Reusing such an
-    /// expression for a later formal's default would execute it twice.
-    fn arg_has_side_effect(&self, node: NodeId) -> bool {
-        match self.kind(node) {
-            NodeKind::FuncCall { .. } | NodeKind::MethodCall { .. } => return true,
-            NodeKind::Expr(ExprKind::Operation {
-                op:
-                    Operation::Assignment
-                    | Operation::PostIncrement
-                    | Operation::PreIncrement
-                    | Operation::PostDecrement
-                    | Operation::PreDecrement,
-                ..
-            }) => return true,
-            _ => {}
-        }
-        self.node(node)
-            .children
-            .iter()
-            .any(|child| self.arg_has_side_effect(*child))
-    }
-
-    /// Whether a default expression reads the given formal declaration.
-    fn default_references_formal(&self, node: NodeId, formal: NodeId) -> bool {
-        let formal = self.canonical_func_target(formal).unwrap_or(formal);
-        match self.kind(node) {
-            NodeKind::Expr(ExprKind::Ref {
-                target: Some(target),
-            }) => {
-                if self.canonical_func_target(*target).unwrap_or(*target) == formal {
-                    return true;
-                }
-            }
-            NodeKind::Expr(ExprKind::HierPath { refs, .. })
-                if refs.iter().flatten().any(|target| {
-                    self.canonical_func_target(*target).unwrap_or(*target) == formal
-                }) =>
-            {
-                return true;
-            }
-            _ => {}
-        }
-        self.node(node)
-            .children
-            .iter()
-            .any(|child| self.default_references_formal(*child, formal))
-    }
-
     /// Bind a call's positional arguments to the callee's formals, in formal
     /// order. Missing (or frontend-synthesized) arguments fall back to the
     /// formal's default expression; a formal without a default errors.
     pub(in super::super) fn bind_call_args(
         &self,
-        inst: NodeId,
+        _inst: NodeId,
         formals: &[(NodeId, bool)],
         args: &[NodeId],
     ) -> Result<Vec<BoundArg>, String> {
@@ -90,7 +42,7 @@ impl<'a> Codegen<'a> {
                     } else {
                         if is_real_kind(&ty.kind) {
                             (0, false, false, true, ty.kind == "shortreal", false, false)
-                        } else if let Some(w) = self.packed_formal_width(*io) {
+                        } else if let Some(w) = self.formal_value_width(*io) {
                             (
                                 w,
                                 ty.signed,
@@ -103,7 +55,7 @@ impl<'a> Codegen<'a> {
                         } else {
                             match ty.width {
                                 Some(w) if w <= LLG_MAX_WIDTH => (
-                                    self.effective_decl_width(*io, inst, w),
+                                    w,
                                     ty.signed,
                                     self.db.is_two_state_type(*io) || is_two_state_kind(&ty.kind),
                                     false,
@@ -230,21 +182,6 @@ impl<'a> Codegen<'a> {
                     arg_ir.insert(*io, ir.clone());
                 }
             }
-            // A default reads an earlier formal's already-evaluated value. If
-            // that earlier actual has side effects, reusing its expression
-            // would evaluate it twice; require explicit staging that this
-            // boundary does not yet implement.
-            for (j, (io, _)) in formals.iter().enumerate().take(idx) {
-                if arg_ir.contains_key(io)
-                    && self.arg_has_side_effect(bound[j].expr)
-                    && self.default_references_formal(bound[idx].expr, *io)
-                {
-                    return Err(format!(
-                        "default argument in `{scope_path}` references an earlier formal \
-                         whose argument has side effects; input staging is not supported"
-                    ));
-                }
-            }
             let temp_func = FuncCtx {
                 name: String::new(),
                 is_task: false,
@@ -280,7 +217,10 @@ impl<'a> Codegen<'a> {
             self.func = saved;
             res?
         } else {
-            self.lower_expr(scope_path, bound[idx].expr)?
+            match self.lower_bitstream_source(scope_path, bound[idx].expr)? {
+                Some(value) => value,
+                None => self.lower_expr(scope_path, bound[idx].expr)?,
+            }
         };
         let e_ir = apply_assignment_expression_width(e_ir, w);
         let conv_ir = if bound[idx].real {
@@ -303,7 +243,7 @@ impl<'a> Codegen<'a> {
         Ok(conv_ir)
     }
 
-    fn ir_constant_i128(value: &IrExpr) -> Option<i128> {
+    pub(in super::super) fn ir_constant_i128(value: &IrExpr) -> Option<i128> {
         let IrExprKind::Const(value) = value.kind() else {
             return None;
         };
@@ -356,8 +296,14 @@ impl<'a> Codegen<'a> {
     /// output/inout binding this never creates a temporary or a writeback:
     /// the descriptor names the caller's original storage directly.
     fn lower_ref_actual_lhs(&mut self, scope_path: &str, node: NodeId) -> Result<IrLhs, String> {
+        if let Some(lhs) = self.fixed_reference_lhs(scope_path, node)? {
+            return Ok(lhs);
+        }
         let Some(function) = self.func.as_ref() else {
-            return self.lower_lhs(scope_path, node);
+            return match self.fixed_storage_lhs(scope_path, node)? {
+                Some(lhs) => Ok(lhs),
+                None => self.lower_lhs(scope_path, node),
+            };
         };
         let target = self.canonical_func_target(node).unwrap_or(node);
         let target = if function.const_refs.contains(&target) {
@@ -371,8 +317,21 @@ impl<'a> Codegen<'a> {
                 .copied()
         };
         let Some(target) = target else {
-            return self.lower_lhs(scope_path, node);
+            return match self.fixed_storage_lhs(scope_path, node)? {
+                Some(lhs) => Ok(lhs),
+                None => self.lower_lhs(scope_path, node),
+            };
         };
+        self.lower_const_ref_lhs(target, scope_path)
+    }
+
+    pub(super) fn lower_const_ref_lhs(
+        &self,
+        target: NodeId,
+        scope_path: &str,
+    ) -> Result<IrLhs, String> {
+        let node = target;
+        let function = self.func.as_ref().ok_or("const ref outside activation")?;
         if let Some(lhs) = function.const_ref_lhs.get(&target) {
             return self.lhs_to_ir(lhs.clone());
         }
@@ -528,13 +487,15 @@ impl<'a> Codegen<'a> {
 
         let lhs = self.lower_ref_actual_lhs(scope_path, bound.expr)?;
         let read = self.lower_expr(scope_path, bound.expr)?;
-        let actual_const = matches!(
-            &lhs,
-            IrLhs::Ref {
-                const_ref: true,
-                ..
+        fn is_const(lhs: &IrLhs) -> bool {
+            match lhs {
+                IrLhs::Ref { const_ref, .. } => *const_ref,
+                IrLhs::PackedSelect { target, .. } => is_const(target),
+                IrLhs::Stream { parts, .. } => parts.iter().any(|(part, _)| is_const(part)),
+                _ => false,
             }
-        );
+        }
+        let actual_const = is_const(&lhs);
         if actual_const && !const_ref {
             return Err(format!(
                 "const ref actual cannot bind to writable ref formal in `{scope_path}`"
@@ -577,15 +538,36 @@ impl<'a> Codegen<'a> {
                 (read.width, read.signed, self.model.arrays[*arr].two_state)
             }
             IrLhs::PackedSelect { .. } => {
-                return Err("packed members and selections cannot be passed by reference".to_owned())
+                if !self.fixed_ref_is_legal(scope_path, bound.expr)? {
+                    return Err(
+                        "packed members and selections cannot be passed by reference".to_owned(),
+                    );
+                }
+                (
+                    read.width,
+                    read.signed,
+                    self.db.is_two_state_type(bound.expr),
+                )
             }
             IrLhs::Ref { bit: Some(_), .. } => {
                 return Err("packed bit selects cannot be passed by reference".to_owned())
             }
             IrLhs::Stream { .. } => {
-                return Err(format!(
-                    "streaming concatenation is not a legal ref actual in `{scope_path}`"
-                ))
+                if !self.query_descriptor(bound.expr).is_some_and(|descriptor| {
+                    matches!(
+                        descriptor.shape,
+                        TypeShape::FixedArray { .. } | TypeShape::Aggregate(_)
+                    )
+                }) {
+                    return Err(format!(
+                        "streaming concatenation is not a legal ref actual in `{scope_path}`"
+                    ));
+                }
+                (
+                    read.width,
+                    read.signed,
+                    self.db.is_two_state_type(bound.expr),
+                )
             }
         };
         if width == 0 || (width, signed, two_state) != (bound.width, bound.signed, bound.two_state)
@@ -774,7 +756,10 @@ impl<'a> Codegen<'a> {
         actual: NodeId,
         tag: &str,
     ) -> Result<(IrLhs, IrExpr, Vec<(String, u32, bool, bool, IrExpr)>), String> {
-        let lhs = self.lower_lhs(path, actual)?;
+        let lhs = match self.fixed_storage_lhs(path, actual)? {
+            Some(lhs) => lhs,
+            None => self.lower_lhs(path, actual)?,
+        };
         let mut captures = Vec::new();
         let mut sequence = 0usize;
         let (lhs, read) = self.freeze_call_lhs(lhs, tag, &mut sequence, &mut captures)?;
@@ -956,7 +941,12 @@ impl<'a> Codegen<'a> {
                     Some(read),
                 ))
             }
-            IrLhs::PackedSelect { target, steps, signed, two_state } => {
+            IrLhs::PackedSelect {
+                target,
+                steps,
+                signed,
+                two_state,
+            } => {
                 // Freeze a selected root (e.g. an array cell) before its member
                 // bounds. Each expression is captured only at this callsite.
                 let (target, read) = self.freeze_call_lhs(*target, tag, sequence, captures)?;
@@ -979,29 +969,64 @@ impl<'a> Codegen<'a> {
                 let read = read.map(|mut value| {
                     for (index, step) in steps.iter().cloned().enumerate() {
                         value = super::packed_formals::packed_step_read(value, step);
-                        if index == 0 && two_state { value = IrExpr::to_two_state(value); }
+                        if index == 0 && two_state {
+                            value = IrExpr::to_two_state(value);
+                        }
                     }
                     let width = value.width;
                     IrExpr::resize_to(value, width, signed)
                 });
-                Ok((IrLhs::PackedSelect { target: Box::new(target), steps, signed, two_state }, read))
+                Ok((
+                    IrLhs::PackedSelect {
+                        target: Box::new(target),
+                        steps,
+                        signed,
+                        two_state,
+                    },
+                    read,
+                ))
             }
             lhs @ IrLhs::WholeRef { .. } => {
-                let IrLhs::WholeRef { addr, width, signed, .. } = &lhs else { unreachable!() };
+                let IrLhs::WholeRef {
+                    addr,
+                    width,
+                    signed,
+                    ..
+                } = &lhs
+                else {
+                    unreachable!()
+                };
                 let kind = if let Some(name) = addr.strip_prefix('&') {
                     IrExprKind::LocalRead(name.to_owned())
-                } else if let Some(index) = addr.strip_prefix('o').and_then(|i| i.parse::<usize>().ok()) {
+                } else if let Some(index) =
+                    addr.strip_prefix('o').and_then(|i| i.parse::<usize>().ok())
+                {
                     IrExprKind::FormalRead(index)
                 } else {
-                    return Err(format!("output actual has no typed activation binding: {addr}"));
+                    return Err(format!(
+                        "output actual has no typed activation binding: {addr}"
+                    ));
                 };
                 let read = IrExpr::new(kind, *width, *signed, None);
                 Ok((lhs, Some(read)))
             }
             lhs @ IrLhs::Ref { .. } => {
-                let IrLhs::Ref { addr, width, signed, bit, .. } = &lhs else { unreachable!() };
-                if bit.is_some() { return Ok((lhs, None)); }
-                let index = addr.strip_prefix('r').and_then(|i| i.parse::<usize>().ok())
+                let IrLhs::Ref {
+                    addr,
+                    width,
+                    signed,
+                    bit,
+                    ..
+                } = &lhs
+                else {
+                    unreachable!()
+                };
+                if bit.is_some() {
+                    return Ok((lhs, None));
+                }
+                let index = addr
+                    .strip_prefix('r')
+                    .and_then(|i| i.parse::<usize>().ok())
                     .ok_or_else(|| "reference actual has no typed formal binding".to_owned())?;
                 let read = IrExpr::new(IrExprKind::FormalRead(index), *width, *signed, None);
                 Ok((lhs, Some(read)))

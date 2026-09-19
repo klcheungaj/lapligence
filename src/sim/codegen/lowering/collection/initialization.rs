@@ -138,6 +138,10 @@ impl<'a> Codegen<'a> {
         init: NodeId,
         aggregate: &UnpackedAggregateInfo,
     ) -> Result<(), String> {
+        if self.fixed_value_width(object).is_some() {
+            self.array_initializers.push((object, init));
+            return Ok(());
+        }
         let layout = self.db.aggregate_layout(object).ok_or_else(|| {
             format!(
                 "unpacked aggregate `{}` in `{path}` has no captured layout",

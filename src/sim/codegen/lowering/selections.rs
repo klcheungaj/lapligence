@@ -151,7 +151,9 @@ impl<'a> Codegen<'a> {
 
     pub(super) fn unpacked_aggregate_target(&self, node: NodeId) -> Option<NodeId> {
         match self.kind(node) {
-            NodeKind::Var { .. } => self.unpacked_aggregates.contains_key(&node).then_some(node),
+            NodeKind::Var { .. } | NodeKind::Net { .. } => {
+                self.unpacked_aggregates.contains_key(&node).then_some(node)
+            }
             NodeKind::Expr(ExprKind::Ref { target }) => {
                 target.filter(|target| self.unpacked_aggregates.contains_key(target))
             }
@@ -573,66 +575,6 @@ impl<'a> Codegen<'a> {
         } else {
             bin_expr(IrBinOp::Sub, index, right)
         })
-    }
-
-    /// Recover a parameterized function return range from admitted source when
-    /// the semantic type projection is incomplete.
-    fn declared_source_width(&self, declaration: NodeId, inst: NodeId) -> Option<u32> {
-        let node = self.node(declaration);
-        let file = node.file.as_deref()?;
-        let source = self.db.source_text(file)?;
-        let line = source.lines().nth(node.line.checked_sub(1)? as usize)?;
-        let range = line.split_once('[')?.1.split_once(']')?.0;
-        let (left, right) = range.split_once(':')?;
-        let owning_module = |mut node: NodeId| loop {
-            if matches!(self.kind(node), NodeKind::ModuleInst { .. }) {
-                break Some(node);
-            }
-            node = self.node(node).parent()?;
-        };
-        let function_module = owning_module(inst)?;
-        let term = |text: &str| {
-            let text = text.trim().replace('_', "");
-            text.parse::<u128>().ok().or_else(|| {
-                self.param_vals.iter().find_map(|(node, value)| {
-                    if self.node(*node).name != text
-                        || owning_module(*node) != Some(function_module)
-                    {
-                        return None;
-                    }
-                    let Val::Bits(value) = value else {
-                        return None;
-                    };
-                    (!value.is_unknown()).then(|| value.to_u128()).flatten()
-                })
-            })
-        };
-        let evaluate = |expression: &str| {
-            for operator in ['+', '-'] {
-                if let Some((left, right)) = expression.split_once(operator) {
-                    let (left, right) = (term(left)?, term(right)?);
-                    return if operator == '+' {
-                        left.checked_add(right)
-                    } else {
-                        left.checked_sub(right)
-                    };
-                }
-            }
-            term(expression)
-        };
-        let left = evaluate(left)?;
-        let right = evaluate(right)?;
-        u32::try_from(left.abs_diff(right).checked_add(1)?).ok()
-    }
-
-    pub(super) fn effective_decl_width(
-        &self,
-        declaration: NodeId,
-        inst: NodeId,
-        captured: u32,
-    ) -> u32 {
-        self.declared_source_width(declaration, inst)
-            .unwrap_or(captured)
     }
 
     pub(super) fn source_size_cast_width(&self, expression: &str) -> Option<u32> {

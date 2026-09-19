@@ -15,9 +15,36 @@ impl<'a> Codegen<'a> {
             seen: &mut HashSet<usize>,
         ) -> Result<IrLhs, String> {
             match lhs {
-                IrLhs::PackedSelect { target, steps, signed, two_state } => Ok(IrLhs::PackedSelect {
-                    target: Box::new(resolve(cg, *target, seen)?), steps, signed, two_state,
-                }),
+                IrLhs::PackedSelect {
+                    target,
+                    steps,
+                    signed,
+                    two_state,
+                } => {
+                    let target = resolve(cg, *target, seen)?;
+                    if let IrLhs::PackedSelect {
+                        target,
+                        steps: mut prefix,
+                        two_state: parent_state,
+                        ..
+                    } = target
+                    {
+                        prefix.extend(steps);
+                        Ok(IrLhs::PackedSelect {
+                            target,
+                            steps: prefix,
+                            signed,
+                            two_state: two_state || parent_state,
+                        })
+                    } else {
+                        Ok(IrLhs::PackedSelect {
+                            target: Box::new(target),
+                            steps,
+                            signed,
+                            two_state,
+                        })
+                    }
+                }
                 IrLhs::Whole(index) => {
                     let Some(target) = cg.reference_signals.get(&index).cloned() else {
                         return Ok(IrLhs::Whole(index));
@@ -40,6 +67,32 @@ impl<'a> Codegen<'a> {
                 IrLhs::IdxPart(index, base, width, selected_width, negative, two_state) => {
                     let target = resolve(cg, IrLhs::Whole(index), seen)?;
                     match target {
+                        IrLhs::PackedSelect {
+                            target,
+                            mut steps,
+                            two_state: state,
+                            ..
+                        } => {
+                            let base = if negative {
+                                bin_expr(
+                                    IrBinOp::Sub,
+                                    base,
+                                    lhs_integer_expr(i128::from(selected_width) - 1),
+                                )
+                            } else {
+                                base
+                            };
+                            steps.push(crate::sim::ir::IrPackedSelect {
+                                base,
+                                width: selected_width,
+                            });
+                            Ok(IrLhs::PackedSelect {
+                                target,
+                                steps,
+                                signed: false,
+                                two_state: two_state || state,
+                            })
+                        }
                         IrLhs::Whole(index) => Ok(IrLhs::IdxPart(
                             index,
                             base,
@@ -82,11 +135,59 @@ impl<'a> Codegen<'a> {
                     arr,
                     indices,
                     elem_sel,
-                } => Ok(IrLhs::ArrayElem {
-                    arr: cg.reference_array(arr),
-                    indices,
-                    elem_sel,
-                }),
+                } => {
+                    let arr = cg.reference_array(arr);
+                    let array = &cg.model.arrays[arr];
+                    let info = ArrayInfo {
+                        global: array.c_name.clone(),
+                        elem_width: array.elem_width,
+                        signed: array.signed,
+                        real: array.real,
+                        shortreal: array.shortreal,
+                        is_net: true,
+                        dims: array.dims.clone(),
+                        init: None,
+                        ir: arr,
+                    };
+                    if let Some(index) = Codegen::array_constant_linear_index(&info, &indices) {
+                        if let Some((_, signal)) = array
+                            .net_elements
+                            .iter()
+                            .find(|(element, _)| *element == index)
+                        {
+                            return Ok(match elem_sel {
+                                IrElemSel::Whole => IrLhs::Whole(*signal),
+                                IrElemSel::Bit(index) => IrLhs::Bit(*signal, *index, false),
+                                IrElemSel::Part(left, right) => {
+                                    IrLhs::Part(*signal, left, right, false)
+                                }
+                                IrElemSel::Indexed {
+                                    base,
+                                    width,
+                                    negative,
+                                } => IrLhs::IdxPart(
+                                    *signal,
+                                    *base,
+                                    lhs_integer_expr(i128::from(width)),
+                                    width,
+                                    negative,
+                                    false,
+                                ),
+                                IrElemSel::PackedChain(steps) => IrLhs::PackedSelect {
+                                    target: Box::new(IrLhs::Whole(*signal)),
+                                    steps,
+                                    signed: false,
+                                    two_state: false,
+                                },
+                            });
+                        }
+                    }
+                    Ok(IrLhs::ArrayElem {
+                        arr,
+                        indices,
+                        elem_sel,
+                    })
+                }
                 IrLhs::Stream {
                     parts,
                     width,
@@ -111,6 +212,23 @@ impl<'a> Codegen<'a> {
             two_state: bool,
         ) -> Result<IrLhs, String> {
             match base {
+                IrLhs::PackedSelect {
+                    target,
+                    mut steps,
+                    two_state: state,
+                    ..
+                } => {
+                    steps.push(crate::sim::ir::IrPackedSelect {
+                        base: expression,
+                        width: 1,
+                    });
+                    Ok(IrLhs::PackedSelect {
+                        target,
+                        steps,
+                        signed: false,
+                        two_state: two_state || state,
+                    })
+                }
                 IrLhs::Whole(index) => Ok(IrLhs::Bit(index, expression, two_state)),
                 IrLhs::Part(index, left, right, _) => {
                     let offset = if left >= right { right } else { left };
@@ -143,6 +261,25 @@ impl<'a> Codegen<'a> {
             two_state: bool,
         ) -> Result<IrLhs, String> {
             match base {
+                IrLhs::PackedSelect {
+                    target,
+                    mut steps,
+                    two_state: state,
+                    ..
+                } => {
+                    let width = u32::try_from(left.abs_diff(right) + 1)
+                        .map_err(|_| "reference part width overflow")?;
+                    steps.push(crate::sim::ir::IrPackedSelect {
+                        base: lhs_integer_expr(i128::from(left.min(right))),
+                        width,
+                    });
+                    Ok(IrLhs::PackedSelect {
+                        target,
+                        steps,
+                        signed: false,
+                        two_state: two_state || state,
+                    })
+                }
                 IrLhs::Whole(index) => Ok(IrLhs::Part(index, left, right, two_state)),
                 IrLhs::Part(index, base_left, base_right, _) => {
                     let offset = if base_left >= base_right {
@@ -179,7 +316,12 @@ impl<'a> Codegen<'a> {
 
     pub(in super::super) fn reference_lhs_type(&self, lhs: &IrLhs) -> Option<IrType> {
         match lhs {
-            IrLhs::PackedSelect { target, steps, signed, two_state } => Some(IrType::Packed {
+            IrLhs::PackedSelect {
+                target,
+                steps,
+                signed,
+                two_state,
+            } => Some(IrType::Packed {
                 width: steps.last()?.width,
                 signed: *signed,
                 two_state: *two_state || self.reference_lhs_type(target)?.two_state(),
@@ -275,11 +417,11 @@ impl<'a> Codegen<'a> {
             IrLhs::Whole(index)
             | IrLhs::Bit(index, ..)
             | IrLhs::Part(index, ..)
-            | IrLhs::IdxPart(index, ..) => self
-                .model
-                .signals
-                .get(*index)
-                .is_some_and(|signal| signal.net_driver.is_none()),
+            | IrLhs::IdxPart(index, ..) => {
+                self.model.signals.get(*index).is_some_and(|signal| {
+                    signal.net_driver.is_none() && signal.net_alias.is_empty()
+                })
+            }
             IrLhs::ArrayElem { arr, .. } => {
                 let array = self.reference_array(*arr);
                 self.arrays
@@ -287,7 +429,11 @@ impl<'a> Codegen<'a> {
                     .find(|info| info.ir == array)
                     .is_some_and(|info| !info.is_net)
             }
-            IrLhs::PackedSelect { .. } | IrLhs::WholeRef { .. } | IrLhs::Ref { .. } | IrLhs::Stream { .. } => false,
+            IrLhs::PackedSelect { target, .. } => self.reference_lhs_is_variable(target),
+            IrLhs::Stream { parts, .. } => parts
+                .iter()
+                .all(|(part, _)| self.reference_lhs_is_variable(part)),
+            IrLhs::WholeRef { .. } | IrLhs::Ref { .. } => false,
         }
     }
 
@@ -344,6 +490,10 @@ impl<'a> Codegen<'a> {
     /// writes share the same four-state behavior and notification path.
     pub(in super::super) fn signal_read_expr(&self, info: &SignalInfo) -> Result<IrExpr, String> {
         let target = self.reference_lhs(IrLhs::Whole(info.ir))?;
+        self.reference_target_read(target)
+    }
+
+    fn reference_target_read(&self, target: IrLhs) -> Result<IrExpr, String> {
         let read_signal = |index: usize| {
             let signal = self.model.signal(index);
             let (width, signed) = match signal.ty {
@@ -409,7 +559,27 @@ impl<'a> Codegen<'a> {
                     None,
                 ))
             }
-            IrLhs::PackedSelect { .. } | IrLhs::WholeRef { .. } | IrLhs::Ref { .. } | IrLhs::Stream { .. } => {
+            IrLhs::PackedSelect {
+                target,
+                steps,
+                signed,
+                two_state,
+            } => {
+                let mut value = self.reference_target_read(*target)?;
+                for step in steps {
+                    value = super::collection::packed_formals::packed_step_read(value, step);
+                }
+                let width = value.width;
+                ir_to_storage(value, width, signed, two_state)
+            }
+            IrLhs::Stream { parts, .. } => {
+                let values = parts
+                    .into_iter()
+                    .map(|(part, _)| self.reference_target_read(part))
+                    .collect::<Result<Vec<_>, _>>()?;
+                Self::join_bitstream_parts("reference port", values)
+            }
+            IrLhs::WholeRef { .. } | IrLhs::Ref { .. } => {
                 Err("reference port target is not a scalar readable storage".to_owned())
             }
         }
@@ -431,6 +601,10 @@ impl<'a> Codegen<'a> {
         let target = self
             .reference_lhs(IrLhs::Whole(info.ir))
             .unwrap_or(IrLhs::Whole(info.ir));
+        self.reference_target_dependency(target, &info.global)
+    }
+
+    fn reference_target_dependency(&self, target: IrLhs, fallback: &str) -> IrDependency {
         match target {
             IrLhs::Whole(index) => match self.model.signal(index).ty {
                 IrType::Real { .. } => IrDependency::real(self.model.signal(index).c_name.clone()),
@@ -450,8 +624,24 @@ impl<'a> Codegen<'a> {
                     IrDependency::ArrayElement { array: arr, index }
                 })
             }
-            IrLhs::PackedSelect { .. } | IrLhs::WholeRef { .. } | IrLhs::Ref { .. } | IrLhs::Stream { .. } => {
-                IrDependency::scalar(info.global.clone())
+            IrLhs::PackedSelect { target, steps, .. } => {
+                let mut storage = self.reference_target_dependency(*target, fallback);
+                for step in steps {
+                    let Some(lsb) = Self::ir_constant_i128(&step.base)
+                        .and_then(|value| u32::try_from(value).ok())
+                    else {
+                        break;
+                    };
+                    storage = IrDependency::PackedRange {
+                        storage: Box::new(storage),
+                        lsb,
+                        width: step.width,
+                    };
+                }
+                storage
+            }
+            IrLhs::WholeRef { .. } | IrLhs::Ref { .. } | IrLhs::Stream { .. } => {
+                IrDependency::scalar(fallback.to_owned())
             }
         }
     }

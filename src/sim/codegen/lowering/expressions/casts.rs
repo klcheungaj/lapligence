@@ -5,9 +5,16 @@ use super::*;
 impl<'a> Codegen<'a> {
     fn dynamic_cast_lhs_shape(&self, lhs: &IrLhs) -> Result<(u32, bool, bool, bool), String> {
         Ok(match lhs {
-            IrLhs::PackedSelect { target, steps, two_state, .. } => (
-                steps.last().map_or(0, |step| step.width), false,
-                *two_state || self.dynamic_cast_lhs_shape(target)?.2, false,
+            IrLhs::PackedSelect {
+                target,
+                steps,
+                two_state,
+                ..
+            } => (
+                steps.last().map_or(0, |step| step.width),
+                false,
+                *two_state || self.dynamic_cast_lhs_shape(target)?.2,
+                false,
             ),
             IrLhs::Whole(index) => match self.model.signal(*index).ty {
                 IrType::Real { shortreal } => (0, true, false, shortreal),
@@ -95,6 +102,20 @@ impl<'a> Codegen<'a> {
         path: &str,
         node: NodeId,
     ) -> Result<Option<IrExpr>, String> {
+        if self.query_descriptor(node).is_some_and(|descriptor| {
+            matches!(
+                &descriptor.shape,
+                TypeShape::FixedArray { .. }
+                    | TypeShape::Aggregate(crate::core::db::AggregateLayout {
+                        kind: AggregateKind::UnpackedStruct | AggregateKind::UnpackedUnion,
+                        ..
+                    })
+            )
+        }) {
+            if let Some(value) = self.fixed_activation_read(path, node)? {
+                return Ok(Some(value));
+            }
+        }
         if let Some(array) = self.array_of(node).cloned() {
             if array.dims.is_empty() {
                 return Err(format!(
@@ -150,7 +171,10 @@ impl<'a> Codegen<'a> {
         Ok(None)
     }
 
-    pub(super) fn join_bitstream_parts(path: &str, parts: Vec<IrExpr>) -> Result<IrExpr, String> {
+    pub(in super::super) fn join_bitstream_parts(
+        path: &str,
+        parts: Vec<IrExpr>,
+    ) -> Result<IrExpr, String> {
         if parts.is_empty() {
             return Err(format!(
                 "bit-stream source has no packed leaves in `{path}`"

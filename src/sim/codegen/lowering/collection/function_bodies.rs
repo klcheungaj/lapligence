@@ -84,7 +84,6 @@ impl<'a> Codegen<'a> {
         let local_prefix = format!("_f{}_{}_", inst.index(), ft.index());
         self.collect_func_locals(
             body,
-            inst,
             &mut locals,
             &mut chandle_locals,
             &mut process_locals,
@@ -292,7 +291,7 @@ impl<'a> Codegen<'a> {
                 NodeKind::FuncArg { ty, .. } => {
                     if is_real_kind(&ty.kind) {
                         (0, false, false, true, ty.kind == "shortreal")
-                    } else if let Some(w) = self.packed_formal_width(*io) {
+                    } else if let Some(w) = self.formal_value_width(*io) {
                         if w > LLG_MAX_WIDTH {
                             return Err(format!(
                                 "formal `{}` of `{c_name}` is {w} bits wide; the runtime \
@@ -310,7 +309,7 @@ impl<'a> Codegen<'a> {
                     } else {
                         match ty.width {
                             Some(w) if w <= LLG_MAX_WIDTH => (
-                                self.effective_decl_width(*io, inst, w),
+                                w,
                                 ty.signed,
                                 self.db.is_two_state_type(*io) || is_two_state_kind(&ty.kind),
                                 false,
@@ -584,7 +583,7 @@ impl<'a> Codegen<'a> {
                 .filter(|(_, (c_name, ..))| emitted.insert(c_name.clone()))
                 .map(|(local, (c_name, width, signed, two_state, shortreal))| {
                     Ok(crate::sim::ir::IrLocal {
-                        fixed_default: None,
+                        fixed_default: self.fixed_default_literal(local),
                         c_name,
                         width,
                         signed,
@@ -616,7 +615,6 @@ impl<'a> Codegen<'a> {
     pub(in super::super) fn collect_func_locals(
         &self,
         node: NodeId,
-        inst: NodeId,
         locals: &mut HashMap<NodeId, (String, u32, bool, bool, bool)>,
         chandle_locals: &mut HashMap<NodeId, String>,
         process_locals: &mut HashMap<NodeId, String>,
@@ -628,7 +626,6 @@ impl<'a> Codegen<'a> {
             // collected by `lower_for`; they are not function-entry locals.
             return self.collect_func_locals(
                 *body,
-                inst,
                 locals,
                 chandle_locals,
                 process_locals,
@@ -641,7 +638,6 @@ impl<'a> Codegen<'a> {
             // omitted slots carry no declaration and are skipped naturally.
             return self.collect_func_locals(
                 *body,
-                inst,
                 locals,
                 chandle_locals,
                 process_locals,
@@ -654,7 +650,7 @@ impl<'a> Codegen<'a> {
             // not as function-entry locals.
             return Ok(());
         }
-        if let NodeKind::Var { ty } = self.kind(node) {
+        if let NodeKind::Var { ty } | NodeKind::Array { ty } = self.kind(node) {
             self.explicit_local_lifetime(node)?;
             if is_handle_kind(&ty.kind) {
                 chandle_locals.entry(node).or_insert_with(|| {
@@ -687,8 +683,8 @@ impl<'a> Codegen<'a> {
                 (0, ty.kind == "shortreal")
             } else {
                 (
-                    match ty.width {
-                        Some(w) if w <= LLG_MAX_WIDTH => self.effective_decl_width(node, inst, w),
+                    match self.fixed_value_width(node).or(ty.width) {
+                        Some(w) if w <= LLG_MAX_WIDTH => w,
                         Some(w) => {
                             return Err(format!(
                                 "local `{}` is {w} bits wide; the runtime supports at most \
@@ -710,7 +706,12 @@ impl<'a> Codegen<'a> {
                 (
                     cname,
                     w,
-                    if w == 0 { false } else { ty.signed },
+                    if w == 0 {
+                        false
+                    } else {
+                        self.query_descriptor(node)
+                            .map_or(ty.signed, |descriptor| descriptor.info.signed)
+                    },
                     if w == 0 {
                         false
                     } else {
@@ -722,15 +723,7 @@ impl<'a> Codegen<'a> {
             return Ok(());
         }
         for c in &self.node(node).children {
-            self.collect_func_locals(
-                *c,
-                inst,
-                locals,
-                chandle_locals,
-                process_locals,
-                seq,
-                prefix,
-            )?;
+            self.collect_func_locals(*c, locals, chandle_locals, process_locals, seq, prefix)?;
         }
         Ok(())
     }

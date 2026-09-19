@@ -108,7 +108,7 @@ impl<'a> Codegen<'a> {
         ))
     }
 
-    fn lower_packed_aggregate_pattern_value(
+    pub(in super::super) fn lower_packed_aggregate_pattern_value(
         &mut self,
         path: &str,
         rhs: NodeId,
@@ -180,6 +180,23 @@ impl<'a> Codegen<'a> {
         nba: bool,
         op: Operation,
     ) -> Result<Option<IrStmt>, String> {
+        if op == Operation::Assignment
+            && self.query_descriptor(lhs).is_some_and(|descriptor| {
+                matches!(
+                    descriptor.shape,
+                    TypeShape::FixedArray { .. } | TypeShape::Aggregate(_)
+                )
+            })
+        {
+            if let Some(target) = self.fixed_activation_lhs(path, lhs)? {
+                let value = self.lower_expr(path, rhs)?;
+                return Ok(Some(IrStmt::Assign {
+                    lhs: target,
+                    rhs: value,
+                    nba,
+                }));
+            }
+        }
         let lhs_aggregate = self.unpacked_aggregate_info(lhs);
         let rhs_aggregate = self.unpacked_aggregate_info(rhs);
         let lhs_sub = self.resolve_unpacked_aggregate(lhs);
@@ -193,6 +210,32 @@ impl<'a> Codegen<'a> {
             // Not an aggregate destination: packed patterns and every other
             // assignment shape keep their existing lowering.
             return Ok(None);
+        }
+        if let Some(selection) = &lhs_sub {
+            if rhs_sub.is_none()
+                && !rhs_is_pattern
+                && (matches!(self.kind(rhs), NodeKind::FuncCall { .. })
+                    || self.fixed_activation_read(path, rhs)?.is_some())
+            {
+                let value = self.lower_expr(path, rhs)?;
+                return self
+                    .assign_packed_subaggregate(path, selection, value, nba, op)
+                    .map(Some);
+            }
+            if matches!(&selection.descriptor.shape, TypeShape::Aggregate(layout)
+                if matches!(layout.kind, AggregateKind::PackedStruct | AggregateKind::PackedUnion))
+                && rhs_sub.is_none()
+            {
+                let value = match &selection.descriptor.shape {
+                    TypeShape::Aggregate(layout) if rhs_is_pattern => {
+                        self.lower_packed_aggregate_pattern_value(path, rhs, layout)?
+                    }
+                    _ => self.lower_expr(path, rhs)?,
+                };
+                return self
+                    .assign_packed_subaggregate(path, selection, value, nba, op)
+                    .map(Some);
+            }
         }
         if rhs_is_pattern {
             return Ok(Some(
@@ -496,6 +539,72 @@ impl<'a> Codegen<'a> {
     /// resolves against the recursive descriptor at that path so one walker
     /// serves both.  Source expressions are staged before any destination
     /// write so overlapping or side-effecting values evaluate exactly once.
+    fn assign_packed_subaggregate(
+        &mut self,
+        path: &str,
+        selection: &copies::AggregateSelection,
+        value: IrExpr,
+        nba: bool,
+        op: Operation,
+    ) -> Result<IrStmt, String> {
+        if op != Operation::Assignment {
+            return Err(format!(
+                "compound assignment to an aggregate member in `{path}` requires a packed lvalue"
+            ));
+        }
+        let width = Self::fixed_descriptor_width(&selection.descriptor)
+            .ok_or_else(|| format!("packed member width is unresolved in `{path}`"))?;
+        let name = self.new_fn_name(path, "packed_member_value");
+        let value = ir_to_storage(value, width, selection.descriptor.info.signed, false)?;
+        let mut body = vec![IrStmt::DeclLocal {
+            name: name.clone(),
+            width,
+            signed: value.signed,
+            two_state: false,
+            init: Some(Box::new(value)),
+        }];
+        let mut remaining = width;
+        for leaf in selection
+            .storage
+            .leaves
+            .iter()
+            .filter(|leaf| leaf.path.starts_with(&selection.prefix))
+        {
+            let leaf_width = leaf
+                .member
+                .ty
+                .width
+                .ok_or_else(|| format!("packed leaf has no width in `{path}`"))?;
+            remaining = remaining
+                .checked_sub(leaf_width)
+                .ok_or_else(|| format!("packed member layout exceeds its width in `{path}`"))?;
+            let value = IrExpr::new(
+                IrExprKind::PartSel {
+                    base: Box::new(IrExpr::new(
+                        IrExprKind::LocalRead(name.clone()),
+                        width,
+                        false,
+                        None,
+                    )),
+                    left: i64::from(remaining + leaf_width - 1),
+                    right: i64::from(remaining),
+                },
+                leaf_width,
+                false,
+                None,
+            );
+            body.push(IrStmt::Assign {
+                lhs: self.aggregate_leaf_lhs(leaf)?,
+                rhs: value,
+                nba,
+            });
+        }
+        if remaining != 0 {
+            return Err(format!("packed member layout is incomplete in `{path}`"));
+        }
+        Ok(IrStmt::Block(body))
+    }
+
     fn lower_unpacked_pattern_assignment(
         &mut self,
         path: &str,
@@ -879,7 +988,10 @@ impl<'a> Codegen<'a> {
         ))
     }
 
-    fn aggregate_leaf_lhs(&self, leaf: &AggregateMemberInfo) -> Result<IrLhs, String> {
+    pub(in super::super) fn aggregate_leaf_lhs(
+        &self,
+        leaf: &AggregateMemberInfo,
+    ) -> Result<IrLhs, String> {
         let signal = leaf.signal.as_ref().ok_or_else(|| {
             format!(
                 "aggregate member `{}` is not a packed or real assignment target",
@@ -904,7 +1016,10 @@ impl<'a> Codegen<'a> {
         }
     }
 
-    pub(super) fn aggregate_leaf_read(&self, leaf: &AggregateMemberInfo) -> Result<IrExpr, String> {
+    pub(in super::super) fn aggregate_leaf_read(
+        &self,
+        leaf: &AggregateMemberInfo,
+    ) -> Result<IrExpr, String> {
         let signal = leaf.signal.as_ref().ok_or_else(|| {
             format!(
                 "aggregate member `{}` is not a packed or real expression",
@@ -954,7 +1069,7 @@ impl<'a> Codegen<'a> {
         Ok(())
     }
 
-    fn aggregate_descriptor_pattern_values(
+    pub(in super::super) fn aggregate_descriptor_pattern_values(
         &self,
         path: &str,
         node: NodeId,
@@ -968,7 +1083,32 @@ impl<'a> Codegen<'a> {
         // Peel only casts whose eventual operand is an assignment pattern so
         // ordinary scalar casts remain value expressions.
         let pattern_node = self.unwrap_assignment_pattern_cast(node);
+        if !matches!(
+            self.kind(pattern_node),
+            NodeKind::Expr(ExprKind::Operation {
+                op: Operation::AssignmentPattern,
+                ..
+            })
+        ) && matches!(
+            descriptor.shape,
+            TypeShape::Aggregate(_) | TypeShape::FixedArray { .. }
+        ) && self
+            .query_descriptor(node)
+            .is_some_and(|source| source.id == descriptor.id)
+        {
+            out.push((prefix.to_vec(), node));
+            return Ok(());
+        }
         match &descriptor.shape {
+            TypeShape::Aggregate(layout)
+                if matches!(
+                    layout.kind,
+                    AggregateKind::PackedStruct | AggregateKind::PackedUnion
+                ) =>
+            {
+                out.push((prefix.to_vec(), node));
+                Ok(())
+            }
             TypeShape::Aggregate(layout) => {
                 if matches!(
                     self.kind(pattern_node),
@@ -1335,9 +1475,7 @@ impl<'a> Codegen<'a> {
     /// model indices.
     pub(in super::super) fn lhs_to_ir(&self, lh: Lhs) -> Result<IrLhs, String> {
         Ok(match lh {
-            Lhs::Whole(info) => {
-                self.reference_lhs(IrLhs::Whole(info.ir))?
-            }
+            Lhs::Whole(info) => self.reference_lhs(IrLhs::Whole(info.ir))?,
             Lhs::WholeRef {
                 addr,
                 width,
@@ -1365,7 +1503,7 @@ impl<'a> Codegen<'a> {
                 const_ref,
                 bit: None,
             },
-            Lhs::Canonical(lhs) => lhs,
+            Lhs::Canonical(lhs) => self.reference_lhs(lhs)?,
             Lhs::Bit(info, index, two_state) => {
                 self.reference_lhs(IrLhs::Bit(info.ir, index, two_state))?
             }
@@ -1374,11 +1512,9 @@ impl<'a> Codegen<'a> {
                     checked_select_bounds(left, right, "assignment part select")?;
                 self.reference_lhs(IrLhs::Part(info.ir, left, right, two_state))?
             }
-            Lhs::IdxPart(info, base, width_expr, width, neg, two_state) => {
-                self.reference_lhs(IrLhs::IdxPart(
-                    info.ir, base, width_expr, width, neg, two_state,
-                ))?
-            }
+            Lhs::IdxPart(info, base, width_expr, width, neg, two_state) => self.reference_lhs(
+                IrLhs::IdxPart(info.ir, base, width_expr, width, neg, two_state),
+            )?,
             Lhs::ArrayElem(ae) => self.reference_lhs(IrLhs::ArrayElem {
                 arr: self.reference_array(ae.arr.ir),
                 indices: ae.indices,

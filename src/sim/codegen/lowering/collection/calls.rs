@@ -5,8 +5,15 @@ use super::*;
 impl<'a> Codegen<'a> {
     pub(in super::super) fn ref_lhs_type(&self, lhs: &IrLhs) -> Option<(u32, bool, bool, bool)> {
         match lhs {
-            IrLhs::PackedSelect { target, steps, signed, two_state } => Some((
-                steps.last()?.width, *signed, *two_state || self.ref_lhs_type(target)?.2,
+            IrLhs::PackedSelect {
+                target,
+                steps,
+                signed,
+                two_state,
+            } => Some((
+                steps.last()?.width,
+                *signed,
+                *two_state || self.ref_lhs_type(target)?.2,
                 self.ref_lhs_type(target)?.3,
             )),
             IrLhs::Whole(index) => match self.model.signal(*index).ty {
@@ -270,6 +277,12 @@ impl<'a> Codegen<'a> {
                     continue;
                 }
                 let ir = self.lower_bound_arg(scope_path, &formals, &bound, idx, &mut arg_irs)?;
+                arg_irs[idx] = Some(IrExpr::new(
+                    IrExprKind::LocalRead(crate::sim::ir::call_argument_name(idx)),
+                    ir.width,
+                    ir.signed,
+                    None,
+                ));
                 in_args.push(IrCallArg::Val(ir));
             }
         }

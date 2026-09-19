@@ -3,6 +3,41 @@
 use super::*;
 
 impl<'a> Codegen<'a> {
+    fn unpacked_storage_dependencies(&self, node: NodeId) -> Option<Vec<IrDependency>> {
+        let (root, prefix) = self.unpacked_path_for_expr(node).or_else(|| {
+            self.unpacked_aggregate_info(node)
+                .map(|(root, _)| (root, Vec::new()))
+        })?;
+        let storage = self.unpacked_aggregates.get(&root)?;
+        let descriptor = self.query_descriptor(root)?;
+        let selected = super::fixed_values::fixed_path_descriptor(descriptor, &prefix);
+        let mut dependencies = Vec::new();
+        for leaf in &storage.leaves {
+            if !prefix.starts_with(&leaf.path) && !leaf.path.starts_with(&prefix) {
+                continue;
+            }
+            let Some(signal) = &leaf.signal else {
+                continue;
+            };
+            let dependency = self.signal_dependency(signal);
+            if prefix.len() > leaf.path.len() && !signal.real {
+                if let (Some((selected, offset)), Some((_, base))) = (
+                    &selected,
+                    super::fixed_values::fixed_path_descriptor(descriptor, &leaf.path),
+                ) {
+                    if let Some(width) = Self::fixed_descriptor_width(selected) {
+                        if let Some(offset) = offset.checked_sub(base) {
+                            dependencies.push(self.slice_dependency(dependency, offset, width));
+                            continue;
+                        }
+                    }
+                }
+            }
+            dependencies.push(dependency);
+        }
+        (!dependencies.is_empty()).then_some(dependencies)
+    }
+
     // ── Signal reads for sensitivity ───────────────────────────────────────
 
     /// Collect every storage dependency read anywhere in the
@@ -164,9 +199,9 @@ impl<'a> Codegen<'a> {
                 member.width,
             ));
         }
-        if let Some((_, _, member)) = self.unpacked_member_info(node) {
-            if let Some(info) = member.signal.as_ref().filter(|info| !info.real) {
-                return Some(self.signal_dependency(info));
+        if let Some(dependencies) = self.unpacked_storage_dependencies(node) {
+            if let [dependency] = dependencies.as_slice() {
+                return Some(dependency.clone());
             }
         }
         let (base, indices, bounds) = match self.kind(node) {
@@ -582,6 +617,10 @@ impl<'a> Codegen<'a> {
         writes: &mut HashSet<IrDependency>,
         bindings: &HashMap<NodeId, IrDependency>,
     ) {
+        if let Some(dependencies) = self.unpacked_storage_dependencies(lhs) {
+            writes.extend(dependencies);
+            return;
+        }
         if let Some(prefix) = self.packed_storage_prefix_bound(lhs, bindings) {
             writes.insert(prefix);
             return;
@@ -1196,9 +1235,9 @@ impl<'a> Codegen<'a> {
         if let Some(container) = self.container_of(node) {
             self.add_container_dependencies(container.ir, true, true, seen, out);
         }
-        if let Some((_, _, member)) = self.unpacked_member_info(node) {
-            if let Some(signal) = member.signal.as_ref() {
-                self.add_dependency(self.signal_dependency(signal), seen, out);
+        if let Some(dependencies) = self.unpacked_storage_dependencies(node) {
+            for dependency in dependencies {
+                self.add_dependency(dependency, seen, out);
             }
             return Ok(());
         }

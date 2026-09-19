@@ -191,13 +191,14 @@ fn static_local_once_automatic_local_per_activation() {
     );
 }
 
-/// G1-18: an initializer that cannot be lowered aborts code generation with no
-/// runnable model.
+/// G1-18: a declaration initializer can call a function with fixed local arrays.
 #[test]
-fn init_failure_cleanup_emits_no_model() {
-    sim_cli::reject_case(
+fn init_function_with_fixed_local_array() {
+    sim_cli::run_case(
         "feature_completion/g1_18",
         "init_failure_cleanup",
-        "automatic subprogram variable",
+        "x=1\n",
+        "",
+        &[],
     );
 }

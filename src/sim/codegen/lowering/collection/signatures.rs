@@ -69,10 +69,10 @@ impl<'a> Codegen<'a> {
                                     }
                                 };
                                 Ok(IrFormal {
-                                    fixed_shape: None,
-                                    fixed_default: None,
                                     is_out: *is_out,
                                     mode,
+                                    fixed_shape: self.fixed_formal_shape(*io)?,
+                                    fixed_default: self.fixed_default_literal(*io),
                                     const_ref: *const_ref,
                                     ref_static: *ref_static,
                                     width: if is_handle_kind(&ty.kind) || is_real_kind(&ty.kind) {
@@ -80,13 +80,7 @@ impl<'a> Codegen<'a> {
                                     } else if dpi.is_some() {
                                         ty.width.unwrap_or(0)
                                     } else {
-                                        self.packed_formal_width(*io)
-                                            .or_else(|| {
-                                                ty.width.map(|width| {
-                                                    self.effective_decl_width(*io, inst, width)
-                                                })
-                                            })
-                                            .unwrap_or(0)
+                                        self.formal_value_width(*io).or(ty.width).unwrap_or(0)
                                     },
                                     signed: ty.signed,
                                     two_state: self.db.is_two_state_type(*io)
@@ -175,6 +169,7 @@ impl<'a> Codegen<'a> {
                             alias: None,
                             omit: false,
                         });
+                        self.model.signals[info.ir].fixed_default = self.fixed_default_literal(*io);
                         self.signals.push(info.clone());
                         self.static_formals.insert((inst, *io), info);
                     }
@@ -189,7 +184,6 @@ impl<'a> Codegen<'a> {
                     let mut local_seq = 0;
                     self.collect_func_locals(
                         body,
-                        inst,
                         &mut locals,
                         &mut chandle_locals,
                         &mut process_locals,
@@ -315,7 +309,7 @@ impl<'a> Codegen<'a> {
                 // renderers resolve through it).
                 let ir = self.model.funcs.len();
                 self.model.funcs.push(crate::sim::ir::IrFunc {
-                    return_default: None,
+                    return_default: self.fixed_default_literal(*c),
                     c_name,
                     automatic,
                     ret_chandle: matches!(
@@ -586,7 +580,7 @@ impl<'a> Codegen<'a> {
     pub(in super::super) fn func_info(
         &self,
         ft: NodeId,
-        inst: NodeId,
+        _inst: NodeId,
     ) -> Result<(bool, Option<(u32, bool, bool, bool)>, Vec<(NodeId, bool)>), String> {
         let (is_task, ret) = match self.kind(ft) {
             NodeKind::FuncTask { is_task, ret, .. } => (*is_task, ret.clone()),
@@ -605,9 +599,8 @@ impl<'a> Codegen<'a> {
                 if is_real_kind(&ty.kind) {
                     Some((0, false, false, ty.kind == "shortreal"))
                 } else {
-                    match ty.width {
+                    match self.fixed_value_width(ft).or(ty.width) {
                         Some(w) => {
-                            let w = self.effective_decl_width(ft, inst, w);
                             if w > LLG_MAX_WIDTH {
                                 return Err(format!(
                                     "return type of `{}` is {w} bits wide; the runtime \
@@ -711,15 +704,7 @@ impl<'a> Codegen<'a> {
                 let width = if is_real_kind(&ty.kind) || is_handle_kind(&ty.kind) {
                     0
                 } else {
-                    ty.width
-                        .map(|width| {
-                            if self.db.dpi_import(ft).is_some() {
-                                width
-                            } else {
-                                self.effective_decl_width(ft, inst, width)
-                            }
-                        })
-                        .unwrap_or(0)
+                    ty.width.unwrap_or(0)
                 };
                 let two_state = ret.is_some_and(|(_, _, two_state, _)| two_state);
                 dpi_type_key(ty, width, two_state)?

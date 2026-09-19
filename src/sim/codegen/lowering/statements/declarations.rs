@@ -142,6 +142,12 @@ impl EmitCtx<'_, '_> {
                         .cg
                         .db
                         .var_initializer(declaration)
+                        .or_else(|| {
+                            self.cg
+                                .db
+                                .array_meta(declaration)
+                                .and_then(|array| array.init)
+                        })
                         .map(|initializer| {
                             let expression = self.cg.lower_expr(&self.path, initializer)?;
                             if width == 0 {
@@ -160,7 +166,13 @@ impl EmitCtx<'_, '_> {
                             .map(Box::new)
                         })
                         .transpose()?;
-                    let init = init.or_else(|| default_real_local_initializer(width));
+                    let init = init
+                        .or_else(|| {
+                            self.cg.fixed_default_literal(declaration).map(|value| {
+                                Box::new(IrExpr::new(IrExprKind::Const(value), width, signed, None))
+                            })
+                        })
+                        .or_else(|| default_real_local_initializer(width));
                     let name = self
                         .func
                         .as_ref()
@@ -262,12 +274,29 @@ impl EmitCtx<'_, '_> {
             .cg
             .db
             .var_initializer(declaration)
+            .or_else(|| {
+                self.cg
+                    .db
+                    .array_meta(declaration)
+                    .and_then(|array| array.init)
+            })
             .map(|initializer| {
                 let expr = self.cg.lower_expr(&self.path, initializer)?;
                 ir_to_storage(expr, info.width, info.signed, info.two_state).map(Box::new)
             })
             .transpose()?;
-        let init = init.or_else(|| default_real_local_initializer(info.width));
+        let init = init
+            .or_else(|| {
+                self.cg.fixed_default_literal(declaration).map(|value| {
+                    Box::new(IrExpr::new(
+                        IrExprKind::Const(value),
+                        info.width,
+                        info.signed,
+                        None,
+                    ))
+                })
+            })
+            .or_else(|| default_real_local_initializer(info.width));
         Ok(vec![IrStmt::DeclLocal {
             name: info.c_name,
             width: info.width,

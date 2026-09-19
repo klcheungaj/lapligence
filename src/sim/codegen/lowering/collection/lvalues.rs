@@ -185,6 +185,9 @@ impl<'a> Codegen<'a> {
     }
 
     pub(in super::super) fn analyze_lhs(&mut self, path: &str, lhs: NodeId) -> Result<Lhs, String> {
+        if let Some(target) = self.fixed_activation_lhs(path, lhs)? {
+            return Ok(Lhs::Canonical(target));
+        }
         if let Some(target) = self.packed_formal_lhs(path, lhs)? {
             return Ok(Lhs::Canonical(target));
         }

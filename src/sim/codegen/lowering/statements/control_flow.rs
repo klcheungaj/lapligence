@@ -631,15 +631,37 @@ impl EmitCtx<'_, '_> {
             shortreal: false,
         };
 
-        if let Some(array_info) = self.cg.array_globals.get(&array).cloned() {
+        let dimensions = self
+            .cg
+            .array_globals
+            .get(&array)
+            .map(|array| array.dims.clone())
+            .or_else(|| {
+                self.cg
+                    .query_descriptor(array)
+                    .and_then(|descriptor| match &descriptor.shape {
+                        TypeShape::FixedArray { dimensions, .. } => Some(dimensions.clone()),
+                        TypeShape::PackedAtom { ranges } if !ranges.is_empty() => ranges
+                            .iter()
+                            .map(|range| {
+                                Some((
+                                    i32::try_from(range.left).ok()?,
+                                    i32::try_from(range.right).ok()?,
+                                ))
+                            })
+                            .collect::<Option<Vec<_>>>(),
+                        _ => None,
+                    })
+            });
+        if let Some(dimensions) = dimensions {
             // A foreach list may name only a prefix of an unpacked array's
             // dimensions.  Omitted entries in that prefix skip just that
             // dimension; dimensions not present in the list are left for the
             // body to index explicitly, as required by §12.7.3.
-            if vars.len() > array_info.dims.len() {
+            if vars.len() > dimensions.len() {
                 return Err(format!(
                     "`foreach` over {}-dimensional array `{}` in `{}` has too many dimensions",
-                    array_info.dims.len(),
+                    dimensions.len(),
                     self.cg.node(array).name,
                     self.path
                 ));
@@ -674,10 +696,8 @@ impl EmitCtx<'_, '_> {
 
             let (source_body, brk) = self.lower_loop_body(body)?;
             let mut nested = source_body;
-            for (local, (left, right)) in locals
-                .iter()
-                .zip(array_info.dims.iter().take(vars.len()))
-                .rev()
+            for (local, (left, right)) in
+                locals.iter().zip(dimensions.iter().take(vars.len())).rev()
             {
                 let Some(local) = local else {
                     // An omitted dimension is not traversed and does not

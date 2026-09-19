@@ -181,6 +181,47 @@ impl<'a> Codegen<'a> {
         actual: NodeId,
         child: UnpackedAggregateInfo,
     ) -> Result<(), String> {
+        if self.unpacked_aggregate_info(actual).is_none()
+            && self.unpacked_path_for_expr(actual).is_none()
+            && child
+                .leaves
+                .iter()
+                .all(|leaf| leaf.signal.is_some() && leaf.object.is_none())
+        {
+            let descriptor = self
+                .query_descriptor(actual)
+                .cloned()
+                .ok_or("fixed reference actual has no type")?;
+            let target = self
+                .fixed_storage_lhs(_path, actual)?
+                .ok_or("fixed reference actual has no storage")?;
+            if !self.reference_actual_is_variable(actual)
+                || !self.reference_lhs_is_variable(&target)
+            {
+                return Err("fixed reference port requires variable storage".into());
+            }
+            for leaf in &child.leaves {
+                let signal = leaf
+                    .signal
+                    .as_ref()
+                    .ok_or("fixed reference member has no storage")?;
+                let (_, offset) =
+                    super::fixed_values::fixed_path_descriptor(&descriptor, &leaf.path)
+                        .ok_or("fixed reference member has no matching actual path")?;
+                let projection = IrLhs::PackedSelect {
+                    target: Box::new(target.clone()),
+                    steps: vec![crate::sim::ir::IrPackedSelect {
+                        base: lhs_integer_expr(i128::from(offset)),
+                        width: signal.width,
+                    }],
+                    signed: signal.signed,
+                    two_state: signal.two_state,
+                };
+                self.reference_signals
+                    .insert(signal.ir, self.reference_lhs(projection)?);
+            }
+            return Ok(());
+        }
         let (actual_target, prefix) = self
             .unpacked_aggregate_target(actual)
             .map(|target| (target, Vec::new()))
@@ -292,6 +333,17 @@ impl<'a> Codegen<'a> {
                 .unwrap_or(index)
         };
         match lhs {
+            IrLhs::PackedSelect {
+                target,
+                steps,
+                signed,
+                two_state,
+            } => IrLhs::PackedSelect {
+                target: Box::new(self.remap_structural_lhs(*target, source)),
+                steps,
+                signed,
+                two_state,
+            },
             IrLhs::Whole(index) => IrLhs::Whole(remap(index)),
             IrLhs::Bit(index, expression, two_state) => {
                 IrLhs::Bit(remap(index), expression, two_state)
@@ -335,6 +387,7 @@ impl<'a> Codegen<'a> {
                 .and_then(|signal| signal.net_driver.map(|(group, _)| group))
         };
         match lhs {
+            IrLhs::PackedSelect { target, .. } => self.structural_group_for_lhs(target),
             IrLhs::Whole(index)
             | IrLhs::Bit(index, ..)
             | IrLhs::Part(index, ..)
@@ -342,7 +395,7 @@ impl<'a> Codegen<'a> {
             IrLhs::Stream { parts, .. } => parts
                 .iter()
                 .find_map(|(part, _)| self.structural_group_for_lhs(part)),
-            IrLhs::PackedSelect { .. } | IrLhs::WholeRef { .. } | IrLhs::Ref { .. } | IrLhs::ArrayElem { .. } => None,
+            IrLhs::WholeRef { .. } | IrLhs::Ref { .. } | IrLhs::ArrayElem { .. } => None,
         }
     }
 
@@ -425,6 +478,9 @@ impl<'a> Codegen<'a> {
         mapped: &mut dyn FnMut(usize) -> Option<usize>,
     ) -> Option<usize> {
         match lhs {
+            IrLhs::PackedSelect { target, .. } => {
+                self.unmapped_structural_group_for(target, mapped)
+            }
             IrLhs::Whole(index)
             | IrLhs::Bit(index, ..)
             | IrLhs::Part(index, ..)
@@ -437,7 +493,7 @@ impl<'a> Codegen<'a> {
             IrLhs::Stream { parts, .. } => parts
                 .iter()
                 .find_map(|(part, _)| self.unmapped_structural_group_for(part, mapped)),
-            IrLhs::PackedSelect { .. } | IrLhs::WholeRef { .. } | IrLhs::Ref { .. } | IrLhs::ArrayElem { .. } => None,
+            IrLhs::WholeRef { .. } | IrLhs::Ref { .. } | IrLhs::ArrayElem { .. } => None,
         }
     }
 
@@ -642,6 +698,37 @@ impl<'a> Codegen<'a> {
         actual: NodeId,
         internal: NodeId,
     ) -> Result<bool, String> {
+        if self.fixed_value_width(internal).is_some()
+            && self.query_descriptor(internal).is_some_and(|descriptor| {
+                matches!(&descriptor.shape, TypeShape::Aggregate(layout) if matches!(layout.kind,
+                    AggregateKind::UnpackedStruct | AggregateKind::UnpackedUnion))
+            })
+        {
+            let (target_node, source_node, target_path, source_path) =
+                if direction == DbDirection::Input {
+                    (internal, actual, child_path, parent_path)
+                } else {
+                    (actual, internal, parent_path, child_path)
+                };
+            let target = self
+                .fixed_storage_lhs(target_path, target_node)?
+                .ok_or("fixed port has no destination storage")?;
+            let target = self.remap_structural_lhs(target, port);
+            let rhs = self.lower_expr(source_path, source_node)?;
+            let reads = self.collect_read_signals(source_path, source_node)?;
+            self.emit_link_process(
+                parent_path,
+                child_path,
+                port,
+                reads,
+                IrStmt::Assign {
+                    lhs: target,
+                    rhs,
+                    nba: false,
+                },
+            );
+            return Ok(true);
+        }
         let child_aggregate = self.unpacked_aggregate_info(internal);
         let actual_aggregate = self.unpacked_aggregate_info(actual);
         let (child_aggregate, actual_aggregate) = match (child_aggregate, actual_aggregate) {

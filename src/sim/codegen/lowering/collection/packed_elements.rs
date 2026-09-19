@@ -169,7 +169,7 @@ fn packed_dimension(width: u32, range: Option<PackedRange>) -> Result<(PackedRan
         .checked_add(1)
         .and_then(|extent| u32::try_from(extent).ok())
         .ok_or_else(|| "packed dimension extent overflows".to_owned())?;
-    if width == 0 || extent == 0 || width % extent != 0 {
+    if width == 0 || extent == 0 || !width.is_multiple_of(extent) {
         return Err("packed dimension disagrees with its element width".to_owned());
     }
     Ok((range, width / extent))
@@ -186,7 +186,7 @@ fn packed_selection_width(count: u128, stride: u32) -> Result<u32, String> {
 /// Widen before coordinate arithmetic, including multiplication. An unsigned
 /// high-bit index must not become negative or wrap into a valid lane. Selector
 /// literals are self-determined; an unbased '1 denotes one, not a widened fill.
-fn packed_lsb(
+pub(super) fn packed_lsb(
     mut index: IrExpr,
     range: PackedRange,
     stride: u32,
@@ -204,9 +204,7 @@ fn packed_lsb(
         // clearing IrExpr::fill leaves a constant's own fill marker active.
         let width = index.width;
         index = IrExpr::new(
-            IrExprKind::Concat {
-                parts: vec![index],
-            },
+            IrExprKind::Concat { parts: vec![index] },
             width,
             false,
             None,
@@ -222,7 +220,9 @@ fn packed_lsb(
         .checked_add(2)
         .and_then(|width| width.checked_add(multiply_bits))
         .filter(|width| *width <= LLG_MAX_WIDTH)
-        .ok_or_else(|| "packed selection index arithmetic exceeds the supported limit".to_owned())?;
+        .ok_or_else(|| {
+            "packed selection index arithmetic exceeds the supported limit".to_owned()
+        })?;
     let index = IrExpr::convert_to(index, width, true);
     let right = IrExpr::convert_to(right, width, true);
     let offset = if range.left < range.right {

@@ -444,7 +444,7 @@ impl<'a> Codegen<'a> {
             .collect()
     }
 
-    fn p30_pattern_values(
+    pub(in super::super) fn p30_pattern_values(
         &self,
         path: &str,
         node: NodeId,
@@ -524,6 +524,48 @@ impl<'a> Codegen<'a> {
         captures: &mut Vec<IrStmt>,
         captured_indices: &mut HashMap<NodeId, (String, u32, bool)>,
     ) -> Result<Vec<IrExpr>, String> {
+        let fixed_source_dimensions = self
+            .query_descriptor(rhs)
+            .filter(|descriptor| Self::fixed_descriptor_width(descriptor).is_some())
+            .and_then(|descriptor| match &descriptor.shape {
+                TypeShape::FixedArray { dimensions, .. } => Some(dimensions.clone()),
+                _ => None,
+            });
+        if let Some(dimensions) = fixed_source_dimensions.filter(|_| {
+            matches!(self.kind(rhs), NodeKind::FuncCall { .. })
+                || self.p30_fixed_array_assignment_candidate(rhs)
+                || self.func.is_some()
+        }) {
+            let source = self.lower_expr(path, rhs)?;
+            let count = dimensions
+                .iter()
+                .try_fold(1u32, |count, (left, right)| {
+                    count.checked_mul(
+                        u32::try_from(i64::from(*left).abs_diff(i64::from(*right)) + 1).ok()?,
+                    )
+                })
+                .ok_or("fixed value shape exceeds supported width")?;
+            if count == 0 || !source.width.is_multiple_of(count) {
+                return Err("fixed value source shape disagrees with destination".into());
+            }
+            let element_width = source.width / count;
+            let source = self.p30_capture_value(lhs, rhs, 0, source, captures);
+            return Ok((0..count)
+                .map(|index| {
+                    let right = source.width - (index + 1) * element_width;
+                    IrExpr::new(
+                        IrExprKind::PartSel {
+                            base: Box::new(source.clone()),
+                            left: i64::from(right + element_width - 1),
+                            right: i64::from(right),
+                        },
+                        element_width,
+                        false,
+                        None,
+                    )
+                })
+                .collect());
+        }
         if let NodeKind::Expr(ExprKind::Cast { operand, .. }) = self.kind(rhs) {
             let target_is_fixed = self
                 .query_descriptor(rhs)

@@ -53,7 +53,64 @@ impl<'a> Codegen<'a> {
             }
             AggregateKind::UnpackedStruct | AggregateKind::UnpackedUnion => {}
         }
+        if matches!(self.kind(node), NodeKind::Array { .. })
+            && self.query_descriptor(node).is_some_and(|descriptor| matches!(&descriptor.shape,
+                TypeShape::FixedArray { element, .. } if Self::fixed_descriptor_width(element).is_some())) {
+            return Ok(false);
+        }
         let object_name = self.node(node).name.clone();
+        if matches!(self.kind(node), NodeKind::Net { .. }) {
+            let descriptor = self
+                .query_descriptor(node)
+                .cloned()
+                .ok_or("aggregate net has no type")?;
+            let width = Self::fixed_descriptor_width(&descriptor)
+                .ok_or("aggregate net requires fixed integral members")?;
+            let signal = self.collect_aggregate_member_signal(
+                path,
+                node,
+                &object_name,
+                &object_name,
+                (width, false, false),
+            )?;
+            self.sig_globals.insert(node, signal.clone());
+            let mut ty = descriptor.info.clone();
+            ty.width = Some(width);
+            let leaf = AggregateMemberInfo {
+                member: AggregateMember {
+                    initializer: None,
+                    name: object_name,
+                    ty,
+                    two_state: false,
+                    packed_ranges: Vec::new(),
+                    aggregate: None,
+                    descriptor,
+                },
+                signal: Some(signal),
+                object: None,
+                path: Vec::new(),
+            };
+            let members = layout
+                .members
+                .iter()
+                .map(|member| AggregateMemberInfo {
+                    member: member.clone(),
+                    signal: None,
+                    object: None,
+                    path: vec![AggregatePathPart::Member(member.name.clone())],
+                })
+                .collect();
+            self.unpacked_aggregates.insert(
+                node,
+                UnpackedAggregateInfo {
+                    kind: layout.kind,
+                    type_identity: layout.type_identity,
+                    members,
+                    leaves: vec![leaf],
+                },
+            );
+            return Ok(true);
+        }
         if let Some(aggregate) = self
             .unpacked_aggregates
             .iter()
@@ -104,7 +161,7 @@ impl<'a> Codegen<'a> {
             if layout
                 .members
                 .iter()
-                .any(|member| !matches!(member.descriptor.shape, TypeShape::PackedAtom { .. }))
+                .any(|member| Self::fixed_descriptor_width(&member.descriptor).is_none())
             {
                 return Err(format!(
                     "unpacked union `{object_name}` in `{path}` requires fixed packed value members"
@@ -113,9 +170,8 @@ impl<'a> Codegen<'a> {
             let width = layout
                 .members
                 .iter()
-                .filter_map(|member| member.descriptor.fixed_size_bits())
+                .filter_map(|member| Self::fixed_descriptor_width(&member.descriptor))
                 .max()
-                .and_then(|width| u32::try_from(width).ok())
                 .ok_or_else(|| {
                     format!(
                         "unpacked union `{object_name}` in `{path}` has an unresolved member width"
@@ -134,6 +190,17 @@ impl<'a> Codegen<'a> {
         };
         let mut leaves = Vec::new();
         for member in &layout.members {
+            if let Some(signal) = &union_signal {
+                let mut storage_member = member.clone();
+                storage_member.ty.width = Self::fixed_descriptor_width(&member.descriptor);
+                leaves.push(AggregateMemberInfo {
+                    member: storage_member,
+                    signal: Some(signal.clone()),
+                    object: None,
+                    path: vec![AggregatePathPart::Member(member.name.clone())],
+                });
+                continue;
+            }
             self.collect_aggregate_descriptor_leaves(
                 path,
                 node,
@@ -149,6 +216,29 @@ impl<'a> Codegen<'a> {
             return Err(format!(
                 "unpacked aggregate `{object_name}` in `{path}` has no supported value leaves"
             ));
+        }
+        if let Some(descriptor) = self.query_descriptor(node).cloned() {
+            if let Some(default) = Self::fixed_descriptor_default(&descriptor) {
+                for leaf in &leaves {
+                    let Some(signal) = &leaf.signal else {
+                        continue;
+                    };
+                    let value = if is_union {
+                        default.clone()
+                    } else {
+                        let (_, offset) =
+                            super::fixed_values::fixed_path_descriptor(&descriptor, &leaf.path)
+                                .ok_or("aggregate default leaf has no fixed path")?;
+                        super::fixed_values::fixed_constant_slice(
+                            &default,
+                            offset,
+                            signal.width,
+                            signal.signed,
+                        )
+                    };
+                    self.model.signals[signal.ir].fixed_default = Some(value);
+                }
+            }
         }
         let mut members = Vec::with_capacity(layout.members.len());
         for member in &layout.members {
@@ -270,6 +360,33 @@ impl<'a> Codegen<'a> {
                     member: leaf_member(member, descriptor),
                     signal: None,
                     object: Some(index),
+                    path: member_path.to_vec(),
+                });
+            }
+            TypeShape::Aggregate(layout)
+                if matches!(
+                    layout.kind,
+                    AggregateKind::PackedStruct
+                        | AggregateKind::PackedUnion
+                        | AggregateKind::UnpackedUnion
+                ) =>
+            {
+                let width =
+                    Self::fixed_descriptor_width(descriptor).ok_or("packed member has no width")?;
+                let signal = match shared {
+                    Some(signal) => signal.clone(),
+                    None => self.collect_aggregate_member_signal(
+                        path,
+                        object,
+                        object_name,
+                        &aggregate_path_suffix(member_path),
+                        (width, descriptor.info.signed, member.two_state),
+                    )?,
+                };
+                leaves.push(AggregateMemberInfo {
+                    member: leaf_member(member, descriptor),
+                    signal: Some(signal),
+                    object: None,
                     path: member_path.to_vec(),
                 });
             }
@@ -455,10 +572,21 @@ impl<'a> Codegen<'a> {
             "real" | "shortreal" => (0, true, ty.kind == "shortreal"),
             "int" | "integer" | "time" | "longint" | "byte" | "shortint" | "logic" | "reg"
             | "bit" => (ty.width.unwrap_or(1), false, false),
-            "struct" | "union" => {
-                let width = self.packed_formal_width(node).ok_or_else(|| {
-                    format!("array `{name}` in `{path}` requires a packed aggregate element type")
-                })?;
+            "enum" | "struct" | "union" => {
+                let width = self
+                    .query_descriptor(node)
+                    .and_then(|descriptor| match &descriptor.shape {
+                        TypeShape::FixedArray { element, .. } => {
+                            Self::fixed_descriptor_width(element)
+                        }
+                        _ => None,
+                    })
+                    .or_else(|| self.packed_formal_width(node))
+                    .ok_or_else(|| {
+                        format!(
+                            "array `{name}` in `{path}` requires a packed aggregate element type"
+                        )
+                    })?;
                 (width, false, false)
             }
             _ => {
@@ -505,6 +633,15 @@ impl<'a> Codegen<'a> {
             .map(|(l, r)| ((*l as i64 - *r as i64).abs() + 1) as u64)
             .product::<u64>();
         self.model.arrays.push(crate::sim::ir::IrArray {
+            net_elements: Vec::new(),
+            element_default: self.query_descriptor(node).and_then(|descriptor| {
+                match &descriptor.shape {
+                    TypeShape::FixedArray { element, .. } => {
+                        Self::fixed_descriptor_default(element)
+                    }
+                    _ => None,
+                }
+            }),
             c_name: global_name(path, name),
             hdl_name: self.waveform_name(node),
             elem_width,

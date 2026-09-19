@@ -34,7 +34,7 @@ impl<'a> Codegen<'a> {
             VariableLifetime::Unavailable => {}
         }
         let ty = match self.kind(node) {
-            NodeKind::Var { ty } => ty.clone(),
+            NodeKind::Var { ty } | NodeKind::Array { ty } => ty.clone(),
             other => {
                 return Err(format!(
                     "unsupported procedural loop declaration in `{path}` (node kind {other:?})"
@@ -45,8 +45,13 @@ impl<'a> Codegen<'a> {
         let width = if real {
             0
         } else {
-            self.signal_width(path, &self.node(node).name, &ty)?
+            self.fixed_value_width(node)
+                .map(Ok)
+                .unwrap_or_else(|| self.signal_width(path, &self.node(node).name, &ty))?
         };
+        let signed = self
+            .query_descriptor(node)
+            .map_or(ty.signed, |descriptor| descriptor.info.signed);
         let (c_name, static_signal) = match lifetime {
             VariableLifetime::Automatic => (format!("_lv{}", node.index()), None),
             VariableLifetime::Static => {
@@ -54,7 +59,7 @@ impl<'a> Codegen<'a> {
                 let signal = SignalInfo {
                     global: format!("_ls{}_{}", self.inst.index(), node.index()),
                     width,
-                    signed: ty.signed,
+                    signed,
                     two_state: self.db.is_two_state_type(node) || is_two_state_kind(&ty.kind),
                     real,
                     shortreal: real && ty.kind == "shortreal",
@@ -62,7 +67,7 @@ impl<'a> Codegen<'a> {
                     ir,
                 };
                 self.model.signals.push(IrSignal {
-                    fixed_default: None,
+                    fixed_default: self.fixed_default_literal(node),
                     c_name: signal.global.clone(),
                     hdl_name: None,
                     ty: if real {
@@ -81,7 +86,11 @@ impl<'a> Codegen<'a> {
                     alias: None,
                     omit: false,
                 });
-                if let Some(initializer) = self.db.var_initializer(node) {
+                if let Some(initializer) = self
+                    .db
+                    .var_initializer(node)
+                    .or_else(|| self.db.array_meta(node).and_then(|array| array.init))
+                {
                     let lowered = self.lower_declaration_initializer(
                         path,
                         node,
@@ -114,7 +123,7 @@ impl<'a> Codegen<'a> {
         let info = ProcLocalInfo {
             c_name,
             width,
-            signed: ty.signed,
+            signed,
             two_state: if real {
                 false
             } else {

@@ -1028,14 +1028,15 @@ fn sim_fixed_call_defaults_copyout() {
     );
 }
 
-/// G1-17: a default that references an earlier side-effecting actual is
-/// rejected rather than silently evaluating that actual twice.
+/// A dependent default reads the earlier input after its one evaluation.
 #[test]
-fn sim_default_ref_side_effect_formal_rejected() {
-    sim_cli::reject_case(
+fn sim_dependent_default_captures_prior_input_once() {
+    sim_cli::run_case(
         "feature_completion/g1_17",
         "ref_default_side_effect_rejected",
-        "input staging is not supported",
+        "calls=1 y=3\n",
+        "",
+        &[],
     );
 }
 

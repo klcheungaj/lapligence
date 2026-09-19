@@ -2,10 +2,10 @@
 use super::*;
 
 pub(super) struct AggregateSelection {
-    root: NodeId,
-    prefix: Vec<AggregatePathPart>,
-    descriptor: TypeDescriptor,
-    storage: UnpackedAggregateInfo,
+    pub(super) root: NodeId,
+    pub(super) prefix: Vec<AggregatePathPart>,
+    pub(super) descriptor: TypeDescriptor,
+    pub(super) storage: UnpackedAggregateInfo,
 }
 
 /// Check the recursive shape used by the leaf-copy ABI. Unpacked aggregates
@@ -53,10 +53,9 @@ fn equivalent_copy_shape(left: &TypeDescriptor, right: &TypeDescriptor) -> bool 
                 && left.info.width == right.info.width
                 && left.info.signed == right.info.signed
         }
-        (
-            TypeShape::Real { shortreal: left },
-            TypeShape::Real { shortreal: right },
-        ) => left == right,
+        (TypeShape::Real { shortreal: left }, TypeShape::Real { shortreal: right }) => {
+            left == right
+        }
         (TypeShape::String, TypeShape::String) => true,
         (TypeShape::Opaque { kind: left }, TypeShape::Opaque { kind: right }) => {
             left == "Chandle" && right == "Chandle"
@@ -67,13 +66,14 @@ fn equivalent_copy_shape(left: &TypeDescriptor, right: &TypeDescriptor) -> bool 
 
 impl Codegen<'_> {
     pub(super) fn resolve_unpacked_aggregate(&self, node: NodeId) -> Option<AggregateSelection> {
-        let (root, prefix, storage) = if let Some((root, storage)) = self.unpacked_aggregate_info(node) {
-            (root, Vec::new(), storage)
-        } else {
-            let (root, prefix) = self.unpacked_path_for_expr(node)?;
-            let storage = self.unpacked_aggregates.get(&root)?.clone();
-            (root, prefix, storage)
-        };
+        let (root, prefix, storage) =
+            if let Some((root, storage)) = self.unpacked_aggregate_info(node) {
+                (root, Vec::new(), storage)
+            } else {
+                let (root, prefix) = self.unpacked_path_for_expr(node)?;
+                let storage = self.unpacked_aggregates.get(&root)?.clone();
+                (root, prefix, storage)
+            };
         let descriptor = Self::descriptor_at_path(self.query_descriptor(root)?, &prefix)?;
         if !matches!(
             descriptor.shape,

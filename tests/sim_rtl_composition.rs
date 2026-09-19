@@ -261,8 +261,6 @@ mod g1_34 {
     // will pass unchanged once the owning layer is fixed.
 
     #[test]
-    #[ignore = "G1-34 defect: packed struct assigned to a packed member of an \
-                unpacked struct (expressions/aggregates.rs, collection/lvalues.rs)"]
     fn defect_member_packed_assign() {
         sim_cli::run_case(
             SUITE,
@@ -274,15 +272,11 @@ mod g1_34 {
     }
 
     #[test]
-    #[ignore = "G1-34 defect: fixed unpacked array as a function input formal \
-                (collection/arguments.rs, collection/signatures.rs)"]
     fn defect_array_formal() {
         sim_cli::run_case(SUITE, "defect_array_formal", "sum=10\n", "", &[]);
     }
 
     #[test]
-    #[ignore = "G1-34 defect: signed function return does not context-size the \
-                RHS (expressions/dispatch.rs, statements/assignments.rs)"]
     fn defect_signed_return() {
         sim_cli::run_case(
             SUITE,

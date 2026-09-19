@@ -345,6 +345,12 @@ impl EmitCtx<'_, '_> {
                     let ir =
                         self.cg
                             .lower_bound_arg(&self.path, formals, bound, idx, &mut arg_irs)?;
+                    arg_irs[idx] = Some(IrExpr::new(
+                        IrExprKind::LocalRead(crate::sim::ir::call_argument_name(idx)),
+                        ir.width,
+                        ir.signed,
+                        None,
+                    ));
                     in_args.push(IrCallArg::Val(ir));
                 }
             }
@@ -416,7 +422,6 @@ impl EmitCtx<'_, '_> {
         let prefix = format!("_i{}", h.0);
         self.cg.collect_func_locals(
             body,
-            callee_inst,
             &mut locals,
             &mut chandle_locals,
             &mut process_locals,
@@ -774,6 +779,7 @@ impl EmitCtx<'_, '_> {
                     let value =
                         self.cg
                             .lower_bound_arg(&self.path, formals, bound, idx, &mut arg_irs)?;
+                    arg_irs[idx] = Some(storage_read.clone());
                     before.push(IrStmt::Assign {
                         rhs: apply_lhs_assignment_context(&self.cg.model, &storage_lhs, value),
                         lhs: storage_lhs,
@@ -899,6 +905,12 @@ impl EmitCtx<'_, '_> {
                         two_state: b.two_state,
                     },
                 );
+                arg_irs[idx] = Some(IrExpr::new(
+                    IrExprKind::LocalRead(cname.clone()),
+                    b.width,
+                    b.signed,
+                    None,
+                ));
                 input_copies.push((cname, ir, b.two_state));
             }
         }
