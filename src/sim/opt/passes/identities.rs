@@ -17,6 +17,9 @@ pub(super) fn ident_expr(e: &mut IrExpr) {
 /// Apply identity rules to every descendant (children first).
 fn ident_children(e: &mut IrExpr) {
     match &mut e.kind {
+        IrExprKind::FixedArrayReduce(reduction) => {
+            reduction.expressions_mut(&mut |child| ident_expr(child));
+        }
         IrExprKind::Bin { a, b, .. } | IrExprKind::RealBin { a, b, .. } => {
             ident_expr(a);
             ident_expr(b);

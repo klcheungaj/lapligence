@@ -904,6 +904,9 @@ fn collect_expr_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
 
 fn collect_children_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
     match &e.kind {
+        IrExprKind::FixedArrayReduce(reduction) => {
+            reduction.expressions(&mut |child| collect_expr_reads(child, model, rw));
+        }
         IrExprKind::Container(operation) => {
             if let Some(signal) = operation.traversal_signal() {
                 rw.read(signal);

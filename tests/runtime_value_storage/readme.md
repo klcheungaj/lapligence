@@ -330,3 +330,16 @@ visible; two-state member operations preserve other four-state union fields;
 nested partial writes preserve their neighboring field. This hand-written
 transcription does not execute the Rust emitter. CTest includes it in the normal
 and sanitizer-safe scheduler subsets (it performs no coroutine stack switching).
+
+## Fixed-array fold ownership probes
+
+`fixed_array_reduction_probe.c` is a handwritten counterpart of the R03 owned
+emitter, not Rust-generated C or an end-to-end HDL test. The `values` case checks
+all five binary folds, narrow/widened and signed values, X/Z singleton seeding,
+nested payloads, two-state conversion, declared indices and 65/129-bit owners.
+The `ownership` case reduces 200,000 separately owned eight-bit cells without
+flattening their combined payload, then repeatedly replaces the accumulator and
+checks allocation counters after teardown. Both are registered in CTest and the
+strict inventory checker. The scheduler inventory also includes the already
+registered `packed_formal_owner_contracts` case; it must not be reported as an
+unexpected test or silently omitted.

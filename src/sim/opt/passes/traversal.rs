@@ -86,6 +86,9 @@ fn walk_expr_mut(e: &mut IrExpr, f: &mut impl FnMut(&mut IrExpr)) {
         IrExprKind::Container(operation) => {
             operation.expressions_mut(&mut |child| walk_expr_mut(child, f))
         }
+        IrExprKind::FixedArrayReduce(reduction) => {
+            reduction.expressions_mut(&mut |child| walk_expr_mut(child, f))
+        }
         IrExprKind::ObjectQuery(query) => {
             query.expressions_mut(&mut |child| walk_expr_mut(child, f))
         }

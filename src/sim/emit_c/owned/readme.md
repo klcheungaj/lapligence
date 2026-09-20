@@ -233,3 +233,18 @@ and temporary owner uses the existing registered lifecycle and cleanup paths.
 `packed_formal_probe.c` is a hand-written runtime contract transcription; it is
 not generated-C acceptance. The file-backed formal suite and owned-emitter unit
 tests must still run in the actual frontend/Rust environment.
+
+## Fixed-array reductions
+
+`fixed_array_reductions.rs` emits lexical folds in the caller's ownership frame.
+It captures value receivers once, or clones individual cells of a whole rank-one
+model array, then binds the immediate item and declared index for each map.
+Mapped values and the accumulator retain the method's result type. The first
+mapped value is copied unchanged; later values use existing packed binary
+operations. Item, index and map owners are destroyed per iteration. Descriptor
+slot usage is bounded by nesting and expression complexity, not element count.
+
+This emitter does not create resizable containers or out-of-frame callbacks.
+Stack budgets and expression-capacity scans must account for the implicit item,
+index and accumulator. Handwritten native fold probes check value/ownership
+contracts only; they do not establish successful Rust-generated HDL execution.

@@ -7,6 +7,7 @@ impl Validator<'_> {
         Validator {
             model,
             max_width: Cell::new(0),
+            reduction_bindings: RefCell::new(Vec::new()),
             chandle_return: Cell::new(None),
             string_return: Cell::new(None),
             function: Cell::new(None),

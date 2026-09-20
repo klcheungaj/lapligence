@@ -1,3 +1,6 @@
+#[path = "slang_semantics/fixed_reductions.rs"]
+mod fixed_reductions;
+
 #[path = "slang_semantics/foreach.rs"]
 mod foreach;
 

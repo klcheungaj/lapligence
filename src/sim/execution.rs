@@ -1171,6 +1171,11 @@ fn collect_expression_effects(
                 collect_expression_effects(ir, child, effects, visited_calls)
             });
         }
+        IrExprKind::FixedArrayReduce(reduction) => {
+            reduction.expressions(&mut |child| {
+                collect_expression_effects(ir, child, effects, visited_calls)
+            });
+        }
         IrExprKind::Bin { a, b, .. } | IrExprKind::RealBin { a, b, .. } => {
             collect_expression_effects(ir, a, effects, visited_calls);
             collect_expression_effects(ir, b, effects, visited_calls);
@@ -1864,6 +1869,36 @@ mod tests {
         )
         .unwrap();
         ExecutionModel::lower(ir).unwrap()
+    }
+
+    #[test]
+    fn fixed_array_reduction_effects_include_calls_in_source_and_map() {
+        use crate::sim::ir::{IrCallExpr, IrContainerReduction, IrDepth, IrFixedArrayReduction,
+            IrFixedArrayReductionSource};
+        let call = |width| IrExpr::new(IrExprKind::CallFn(Box::new(IrCallExpr::new(
+            0, vec![], IrDepth::PROC, false,
+        ))), width, false, None);
+        let mut model = IrModel::new("fold_effects".into(), 1).unwrap();
+        model.funcs.push(crate::sim::ir::IrFunc::new("helper".into(),
+            Some(IrType::packed(8, false).unwrap()), vec![], vec![], vec![], vec![]));
+        model.arrays.push(crate::sim::ir::IrArray::new(
+            "G_source".into(), "source".into(), 8, false, vec![(0, 0)],
+        ).unwrap());
+        for source_call in [false, true] {
+            let value = IrExpr::new(IrExprKind::LocalRead("item".into()), 8, false, None);
+            let expression = IrExpr::new(IrExprKind::FixedArrayReduce(Box::new(IrFixedArrayReduction {
+                source: if source_call { IrFixedArrayReductionSource::Value(Box::new(call(8))) }
+                    else { IrFixedArrayReductionSource::Array(0) },
+                operation: IrContainerReduction::Sum,
+                left: 0, right: 0, element_width: 8, element_signed: false,
+                element_two_state: false, item_name: "item".into(), index_name: "index".into(),
+                value: if source_call { value } else { call(8) },
+            })), 8, false, None);
+            model.validate_expr(&expression, None).unwrap();
+            let mut effects = Vec::new();
+            collect_expression_effects(&model, &expression, &mut effects, &mut HashSet::new());
+            assert!(effects.contains(&ExecutionEffect::RuntimeService));
+        }
     }
 
     #[test]

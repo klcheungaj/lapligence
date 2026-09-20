@@ -22,7 +22,7 @@ impl<'a> Codegen<'a> {
     /// Slang visits that expression before adding the receiver edge, so this
     /// intentionally removes the receiver by identity instead of relying on
     /// child order.
-    fn container_method_with_node(
+    pub(super) fn container_method_with_node(
         &self,
         path: &str,
         call: NodeId,

@@ -233,7 +233,22 @@ impl Validator<'_> {
                     return self.fail(path, "signal type disagrees with expression type");
                 }
             }
-            IrExprKind::LocalRead(_) => {}
+            IrExprKind::FixedArrayReduce(reduction) => {
+                self.validate_fixed_array_reduction(reduction, expr, formals, path)?;
+            }
+            IrExprKind::LocalRead(name) => {
+                if let Some((_, width, signed)) = self
+                    .reduction_bindings
+                    .borrow()
+                    .iter()
+                    .rev()
+                    .find(|(binding, _, _)| binding == name)
+                {
+                    if (expr.width, expr.signed) != (*width, *signed) || expr.fill.is_some() {
+                        return self.fail(path, "fixed-array iterator read has the wrong shape");
+                    }
+                }
+            }
             IrExprKind::FormalRead(idx) => {
                 let formal = formals.get(*idx).ok_or_else(|| {
                     IrValidationError::new(path, format!("formal index {idx} is out of bounds"))

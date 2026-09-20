@@ -1,4 +1,4 @@
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
 use std::error::Error;
 use std::fmt;
@@ -12,6 +12,7 @@ mod dependencies;
 mod events;
 mod expressions;
 mod file_input;
+mod fixed_array_reductions;
 mod initialization;
 mod lvalues;
 mod statements;
@@ -173,6 +174,8 @@ fn validate_container_element(element: &IrContainerElement, path: &str) -> Valid
 struct Validator<'model> {
     model: &'model IrModel,
     max_width: Cell<u128>,
+    /// Lexical bindings introduced by fixed-array method maps, innermost last.
+    reduction_bindings: RefCell<Vec<(String, u32, bool)>>,
     /// None outside a C function; otherwise whether that function returns chandle.
     chandle_return: Cell<Option<bool>>,
     string_return: Cell<Option<bool>>,

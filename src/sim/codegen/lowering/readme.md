@@ -46,3 +46,18 @@ recursion depth zero; a failed replay aborts code generation rather than emittin
 a partial model. A default that references an earlier side-effecting actual is
 rejected because no caller-side input staging exists yet to evaluate that actual
 once.
+
+## Fixed-array method maps
+
+`containers/fixed_reductions.rs` consumes owned receiver type descriptors and
+peels one unpacked dimension at a time. It retains immediate row/record types,
+not just packed leaves, and uses captured iterator declaration IDs to scope
+nested maps. Bindings are restored after successful and failed recursive
+lowering. Read-only iterator projections share the fixed activation projection
+machinery; they are never writable reference destinations.
+
+Whole rank-one model arrays remain ordinal cell sources. Casts, assignments,
+selected rows, slices, activation values and function results use expression
+sources, evaluated once by the backend. Result widths/signs come from the
+integral element or `with` expression, not the destination. This path does not
+introduce generated callbacks or change resizable-container callback contracts.

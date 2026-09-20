@@ -81,3 +81,19 @@ shapes use their maximum member width; struct/array shapes use declaration
 order. Default constants preserve each unpacked leaf's state domain and explicit
 member initializer. Net arrays bind cells to canonical resolved signal/alias
 storage; validators check the cell bounds and electrical target width.
+
+## Fixed-array reductions
+
+`fixed_array_reductions.rs` represents a nonempty fold over immediate unpacked
+array elements. `Array` sources reference rank-one model storage; `Value` sources
+hold a declaration-order payload expression. The map binds an item and signed
+32-bit declared index lexically, while retaining enclosing local/formal reads.
+Nested sources evaluate before the inner map shadows its bindings.
+
+Validation checks source extent, element/result widths, map result tags and
+bound iterator read shapes. Capacity scans include the materialized index.
+Traversal, storage-read collection, execution effects and stack accounting visit
+both payload and map expressions. Optimization may simplify children but must
+not promote destination widths into the fold or remove receiver/map effects.
+First-element seeding is intentional: an arithmetic identity would corrupt
+singleton Z values. Array methods do not become resizable storage operations.

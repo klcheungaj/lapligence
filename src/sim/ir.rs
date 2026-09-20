@@ -44,6 +44,8 @@ pub use validate::IrValidationError;
 
 mod constants;
 pub use constants::IrConst;
+mod fixed_array_reductions;
+pub use fixed_array_reductions::{IrFixedArrayReduction, IrFixedArrayReductionSource};
 mod expressions;
 pub use expressions::{
     IrBinOp, IrBitQuery, IrDynamicCast, IrEnumMember, IrEnumMethod, IrEnumQuery, IrExpr,

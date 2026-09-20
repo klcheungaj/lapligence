@@ -6,6 +6,8 @@ use crate::sim::ir::IrPackedSelect;
 #[allow(clippy::large_enum_variant)]
 enum FixedRoot {
     Activation(NodeId),
+    /// A reduction iterator is a read-only lexical value, not an lvalue.
+    ReadOnly(IrExpr),
     Cell { read: IrExpr, target: IrLhs },
 }
 
@@ -55,6 +57,26 @@ impl Codegen<'_> {
     }
 
     fn fixed_root(&mut self, path: &str, node: NodeId) -> Result<Option<Projection>, String> {
+        let declaration = match self.kind(node) {
+            NodeKind::Expr(ExprKind::Ref { target: Some(target) }) => *target,
+            _ => node,
+        };
+        if let Some(iterator) = self.fixed_method_iterators.get(&declaration) {
+            let descriptor = iterator.descriptor.clone();
+            let width = fixed_width(&descriptor).ok_or("fixed reduction iterator width overflow")?;
+            return Ok(Some(Projection {
+                root: FixedRoot::ReadOnly(IrExpr::new(
+                    IrExprKind::LocalRead(iterator.item_name.clone()),
+                    width,
+                    descriptor.info.signed,
+                    None,
+                )),
+                signed: descriptor.info.signed,
+                descriptor,
+                steps: Vec::new(),
+                ref_legal: false,
+            }));
+        }
         if let Some(root) = self.fixed_activation_root(node) {
             return Ok(Some(root));
         }
@@ -542,7 +564,7 @@ impl Codegen<'_> {
             return Ok(None);
         };
         let mut value = match &projection.root {
-            FixedRoot::Cell { read, .. } => read.clone(),
+            FixedRoot::Cell { read, .. } | FixedRoot::ReadOnly(read) => read.clone(),
             FixedRoot::Activation(root) => {
                 let function = self.func.as_ref().ok_or("fixed value outside activation")?;
                 if let Some(value) = function.arg_ir.get(root) {
@@ -577,7 +599,9 @@ impl Codegen<'_> {
     ) -> Result<bool, String> {
         Ok(self
             .fixed_projection(path, node)?
-            .is_some_and(|projection| projection.ref_legal))
+            .is_some_and(|projection| {
+                projection.ref_legal && !matches!(projection.root, FixedRoot::ReadOnly(_))
+            }))
     }
 
     pub(in super::super) fn fixed_activation_lhs(
@@ -606,6 +630,7 @@ impl Codegen<'_> {
             return Ok(None);
         };
         let target = match projection.root {
+            FixedRoot::ReadOnly(_) => return Err("fixed-array reduction iterator is read-only".into()),
             FixedRoot::Cell { target, .. } => target,
             FixedRoot::Activation(root) => {
                 if allow_const

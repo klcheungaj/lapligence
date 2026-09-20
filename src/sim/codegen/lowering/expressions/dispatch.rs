@@ -43,6 +43,9 @@ impl<'a> Codegen<'a> {
         if let Some(value) = self.packed_formal_read(scope_path, h)? {
             return Ok(value);
         }
+        if let Some(value) = self.lower_fixed_array_reduction(scope_path, h)? {
+            return Ok(value);
+        }
         if let Some(value) = self.lower_container_query(scope_path, h)? {
             return Ok(value);
         }

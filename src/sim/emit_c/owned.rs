@@ -21,6 +21,7 @@ mod control;
 mod event_waits;
 mod events;
 mod expressions;
+mod fixed_array_reductions;
 mod force;
 mod formatting;
 mod inertial;

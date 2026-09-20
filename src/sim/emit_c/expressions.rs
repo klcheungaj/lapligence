@@ -346,6 +346,11 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
                 fill: None,
             }
         }
+        IrExprKind::FixedArrayReduce(_) => {
+            return Err(
+                "fixed-array reductions require the ownership-aware expression emitter".to_owned(),
+            );
+        }
         IrExprKind::ArrayMux { .. } => {
             return Err("array conditionals require the structured owned emitter".to_owned());
         }

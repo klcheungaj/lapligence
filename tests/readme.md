@@ -361,3 +361,25 @@ HDL suites without weakening their expected results. Nine structural tests in
 The component guide documents `native_value_scopes` and `native_input_callbacks`;
 these are runtime probes and must not be reported as Rust/HDL passes. Failure-target
 manifests are delivery inventories, not the maintained language feature checklist.
+
+## Fixed-array reduction regressions (R03)
+
+`sim_fixed_array_reductions.rs` registers checked-in HDL sources for all five
+fixed-array methods, narrow and widened maps, signed/enum/record elements, X/Z,
+wide owners, nested maps, automatic captures, function receivers, slices, declared
+indices and port sensitivity. The shared CLI harness runs each case with
+optimization enabled and disabled and checks exact output. Negative cases reject
+unmapped rows, nonintegral maps and iterator names without a `with` expression.
+A resizable-container control preserves the separate existing callback path.
+
+```sh
+cargo test --locked --lib fixed_array_reduction
+cargo test --locked --test slang_semantics fixed_array_reduction -- --test-threads=1
+cargo test --locked --test sim_fixed_array_reductions -- --test-threads=1
+```
+
+The R03 implementation environment did not have Rust/Cargo or a built `llg`;
+these commands and their new tests have not been executed there. The two native
+`fixed_array_reduction_*` CTest probes are handwritten runtime counterparts,
+not freshly generated HDL models. Feature acceptance belongs in
+[`docs/sim_features.md`](../docs/sim_features.md), not in fixture counts.

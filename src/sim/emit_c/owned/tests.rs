@@ -2,6 +2,7 @@
 use super::*;
 
 mod array_conditionals;
+mod fixed_array_reductions;
 use crate::sim::execution::ExecutionModel;
 
 mod group1_repairs;

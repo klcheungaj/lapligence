@@ -23,7 +23,7 @@ class InventoryTests(unittest.TestCase):
         scheduler = {"vpi_ownership", "scheduler_ownership", "generated_scope_patterns",
                      "scope_address_index", "runtime_value_vectors", "event_array_selection",
                      "file_input_isolation", "file_output_isolation", "native_value_scopes", "native_reference_scopes", "review_native_index_and_reference_bits",
-                     "packed_selection_nba", "packed_selection_input"}
+                     "packed_selection_nba", "packed_selection_input", "packed_formal_owner_contracts"}
         coroutines = {"coroutine_ownership", "generated_coroutine_patterns", "callback_finish_ownership",
                       "runtime_original_selftest", "runtime_region", "runtime_stop-resume",
                       "runtime_budget-finite", "event_array_waits", "nextest_control_ownership", "native_input_callbacks",

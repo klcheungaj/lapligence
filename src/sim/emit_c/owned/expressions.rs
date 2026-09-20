@@ -19,6 +19,7 @@ impl Frame<'_, '_> {
             }
         }
         let result = match &expr.kind {
+            IrExprKind::FixedArrayReduce(reduction) => self.fixed_array_reduce(reduction, expr)?,
             IrExprKind::Const(constant) => {
                 let mut value = self.value(emit_const(constant), constant.width, constant.signed);
                 value.fill = constant.fill;

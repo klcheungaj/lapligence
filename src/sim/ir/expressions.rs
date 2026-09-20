@@ -67,6 +67,8 @@ impl IrEnumQuery {
 #[derive(Clone, Debug, PartialEq)]
 pub enum IrExprKind {
     Container(Box<IrContainerExpr>),
+    /// A fixed unpacked-array reduction with a lexically bound iterator.
+    FixedArrayReduce(Box<IrFixedArrayReduction>),
     ObjectQuery(Box<IrObjectQuery>),
     EnumMethod(Box<IrEnumQuery>),
     /// A concrete constant.

@@ -237,6 +237,9 @@ impl<'a> Codegen<'a> {
             return self.lower_legacy_random_expr(scope_path, kind, &args);
         }
         if name == "index" {
+            if let Some(value) = self.fixed_reduction_index(scope_path, &args)? {
+                return Ok(value);
+            }
             if let Some(iterator) = self.container_iterator {
                 let [receiver] = args.as_slice() else {
                     return Err(format!(

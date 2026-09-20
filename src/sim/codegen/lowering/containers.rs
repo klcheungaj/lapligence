@@ -1,4 +1,4 @@
-//! Lowering for resizable unpacked containers.
+//! Lowering for unpacked containers, fixed-array assignments, and reductions.
 
 use super::*;
 use crate::sim::ir::{
@@ -9,6 +9,7 @@ use crate::sim::ir::{
 mod assignments;
 mod callbacks;
 mod fixed_arrays;
+mod fixed_reductions;
 mod indexing;
 mod initialization;
 mod methods;

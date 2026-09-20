@@ -825,6 +825,17 @@ fn expr_slots(expr: &IrExpr) -> Result<u64, String> {
             });
             slots?
         }
+        IrExprKind::FixedArrayReduce(reduction) => {
+            // Receiver, item, index, accumulator and mapped values are reused
+            // per iteration; the element count does not multiply stack slots.
+            let mut slots = Ok(4);
+            reduction.expressions(&mut |child| {
+                slots = slots.clone().and_then(|n| {
+                    checked_add(n, expr_slots(child)?, "fixed-array reduction slots")
+                });
+            });
+            slots?
+        }
         IrExprKind::CallFn(call) => call_arg_slots(call.args())?,
         IrExprKind::Bin { a, b, .. } | IrExprKind::RealBin { a, b, .. } => {
             checked_add(expr_slots(a)?, expr_slots(b)?, "binary expression slots")?
@@ -1162,6 +1173,30 @@ mod tests {
             false,
             None,
         )
+    }
+
+    #[test]
+    fn fixed_array_reduction_budget_reuses_iteration_slots() {
+        use crate::sim::ir::{IrContainerReduction, IrFixedArrayReduction, IrFixedArrayReductionSource};
+        let mut expression = IrExpr::new(
+            IrExprKind::FixedArrayReduce(Box::new(IrFixedArrayReduction {
+                source: IrFixedArrayReductionSource::Array(0),
+                operation: IrContainerReduction::Sum,
+                left: 0,
+                right: 1,
+                element_width: 8,
+                element_signed: false,
+                element_two_state: false,
+                item_name: "item".into(),
+                index_name: "index".into(),
+                value: constant(1),
+            })), 8, false, None,
+        );
+        let small = expr_slots(&expression).unwrap();
+        let IrExprKind::FixedArrayReduce(plan) = &mut expression.kind else { unreachable!(); };
+        plan.right = i32::MAX;
+        assert_eq!(expr_slots(&expression).unwrap(), small);
+        assert!(small >= 4);
     }
 
     #[test]

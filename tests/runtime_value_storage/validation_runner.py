@@ -19,6 +19,8 @@ BASE_TESTS = {
     "stream_reject_minus-overflow",
     "stream_reject_zero-width",
     "stream_reject_negative-width",
+    "fixed_array_reduction_values",
+    "fixed_array_reduction_ownership",
     "array_conditional",
     "array_conditional_reject_empty",
     "array_conditional_reject_zero",
@@ -43,7 +45,7 @@ def verify_inventory(inventory: dict, capabilities: dict) -> list[str]:
     if capabilities["waveforms"]:
         expected.add("waveform_snapshot_lifecycle")
     if capabilities["scheduler"]:
-        expected.update(("vpi_ownership", "scheduler_ownership", "generated_scope_patterns", "scope_address_index", "runtime_value_vectors", "event_array_selection", "file_input_isolation", "file_output_isolation", "native_value_scopes", "native_reference_scopes", "review_native_index_and_reference_bits", "packed_selection_nba", "packed_selection_input"))
+        expected.update(("vpi_ownership", "scheduler_ownership", "generated_scope_patterns", "scope_address_index", "runtime_value_vectors", "event_array_selection", "file_input_isolation", "file_output_isolation", "native_value_scopes", "native_reference_scopes", "review_native_index_and_reference_bits", "packed_selection_nba", "packed_selection_input", "packed_formal_owner_contracts"))
         if capabilities["waveforms"]:
             expected.add("waveform_original_selftest")
     if capabilities["coroutines"]:

@@ -1005,6 +1005,9 @@ struct Codegen<'a> {
     /// expression: declaration identity plus the packed source element and
     /// index types.
     container_iterator: Option<ContainerIterator>,
+    /// Lexical bindings for fixed-array reduction maps, keyed by declaration
+    /// identity so nested `with` expressions can retain outer iterators.
+    fixed_method_iterators: HashMap<NodeId, FixedMethodIterator>,
     /// Method callback helpers are discovered while expression lowering, but
     /// attach to the owning process/function only after its body is complete.
     pending_container_pre_fns: Vec<crate::sim::ir::IrPreFn>,
@@ -1160,6 +1163,13 @@ struct ContainerIterator {
     index_signed: bool,
 }
 
+#[derive(Clone)]
+struct FixedMethodIterator {
+    descriptor: TypeDescriptor,
+    item_name: String,
+    index_name: String,
+}
+
 #[derive(Clone, Copy)]
 struct AssertionLocalBinding {
     slot: u32,
@@ -1223,6 +1233,7 @@ impl<'a> Codegen<'a> {
             container_globals: HashMap::new(),
             container_initializers: Vec::new(),
             container_iterator: None,
+            fixed_method_iterators: HashMap::new(),
             pending_container_pre_fns: Vec::new(),
             array_initializers: Vec::new(),
             events: Vec::new(),

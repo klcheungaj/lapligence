@@ -4,6 +4,13 @@ use super::*;
 
 impl<'a> Codegen<'a> {
     pub(in super::super) fn query_descriptor(&self, node: NodeId) -> Option<&TypeDescriptor> {
+        let target = match self.kind(node) {
+            NodeKind::Expr(ExprKind::Ref { target: Some(target) }) => *target,
+            _ => node,
+        };
+        if let Some(iterator) = self.fixed_method_iterators.get(&target) {
+            return Some(&iterator.descriptor);
+        }
         self.db
             .type_descriptor(node)
             .or_else(|| match self.kind(node) {
