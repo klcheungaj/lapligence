@@ -36,7 +36,8 @@ fn ident_children(e: &mut IrExpr) {
             ident_expr(a);
             ident_expr(b);
         }
-        IrExprKind::Concat { parts } | IrExprKind::Replicate { parts, .. } => {
+        IrExprKind::Predicate { clauses: parts }
+        | IrExprKind::Concat { parts } | IrExprKind::Replicate { parts, .. } => {
             for p in parts {
                 ident_expr(p);
             }

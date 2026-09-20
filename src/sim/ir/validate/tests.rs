@@ -1,6 +1,7 @@
 use super::*;
 
 mod array_conditionals;
+mod sequential_predicates;
 mod fixed_array_reductions;
 
 fn valid_model() -> IrModel {

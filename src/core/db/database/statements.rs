@@ -27,8 +27,13 @@ pub enum StmtKind {
         if_false: Option<NodeId>,
         label: String,
     },
+    /// An ordered predicate and role-resolved branches. Structural children
+    /// are not a positional condition/then/else tuple (a predicate can have
+    /// multiple clauses, each with an optional pattern).
     IfElse {
-        cond: NodeId,
+        predicate: ConditionalPredicate,
+        if_true: NodeId,
+        if_false: Option<NodeId>,
         check: UniquePriorityCheck,
     },
     Assign {

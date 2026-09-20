@@ -107,6 +107,15 @@ pub enum IrExprKind {
         op: IrUnOp,
         a: Box<IrExpr>,
     },
+    /// Nonempty, ordered Boolean clauses of a sequential `&&&` predicate.
+    /// Each clause is converted to one-bit truth exactly once. Continue only
+    /// while it is definitely true; the first false or ambiguous result is
+    /// returned without evaluating later clauses. Unlike logical AND, X/Z
+    /// stops evaluation even if a later clause could be false. The result is
+    /// unsigned one-bit 0/1/X with no fill marker.
+    Predicate {
+        clauses: Vec<IrExpr>,
+    },
     /// Conditional operator; the backend picks the packed/real shape from the
     /// operand widths.
     Mux {

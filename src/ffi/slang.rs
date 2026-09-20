@@ -786,6 +786,8 @@ pub enum SemanticEdgeRole {
     AssertionFormal,
     AssertionActual,
     BaseConstructor,
+    /// Optional pattern belonging to the condition at the same clause index.
+    ConditionPattern,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

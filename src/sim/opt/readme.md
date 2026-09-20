@@ -21,3 +21,10 @@ folding, identities, control flow and storage. Unit tests live in
 remain in the existing facade.
 
 See [the source map](../../../docs/source_layout.md).
+
+`Predicate` is not a logical-AND or concatenation identity. Folding may remove
+an unreachable suffix after a constant false/X/Z prefix, but a reached
+nonconstant/effectful clause blocks that fold even when a later clause is zero.
+A one-clause predicate still produces normalized one-bit truth, not the original
+vector. Walkers retain every potential clause for reads, effects and rewriting;
+existing lowering-time wake dependencies are not weakened by prefix folding.

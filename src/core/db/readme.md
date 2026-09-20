@@ -51,3 +51,16 @@ children separate owned types and records (`types`, `nodes`, `references`,
 `assertion_import`). `Db::from_slang` remains the single import entry point.
 
 See [the source map](../../../docs/source_layout.md) for the ownership boundaries.
+
+## Ordered conditional predicates
+
+`database/predicates.rs` imports dense, unique condition indices and pairs each
+optional pattern with its expression. `ConditionalPredicate` owns the complete
+clause sequence; `IfElse` owns explicit true/optional-false branch references.
+Branch roles never depend on positions in the structural child vector. The
+single Boolean-clause expression retains `Operation::Conditional`; a multiple-
+clause or pattern-bearing expression uses `ExprKind::Conditional`. Embedded
+references and nonempty predicates are validated with the rest of the database.
+Lint, dependency and simulator consumers must visit every clause without treating
+conditional writes as definite on early-exit paths. Execution of patterns remains
+unsupported, but their metadata must not be discarded or inferred from spelling.

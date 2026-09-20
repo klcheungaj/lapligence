@@ -80,6 +80,9 @@ impl<'a> Codegen<'a> {
             return Ok(value);
         }
         match self.kind(h) {
+            NodeKind::Expr(ExprKind::Conditional { predicate, if_true, if_false }) => {
+                self.lower_predicate_conditional(scope_path, predicate, *if_true, *if_false)
+            }
             NodeKind::Expr(ExprKind::Constant { .. }) => {
                 if let Some(comparison) = self.recover_folded_real_parameter_comparison(h) {
                     return Ok(comparison);

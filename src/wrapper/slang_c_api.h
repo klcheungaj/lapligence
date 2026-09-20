@@ -768,7 +768,9 @@ enum {
   LLG_SLANG_EDGE_ASSERTION_FORMAL = 35,
   LLG_SLANG_EDGE_ASSERTION_ACTUAL = 36,
   /* Implicit/extends-clause base-constructor invocation owned by a class. */
-  LLG_SLANG_EDGE_BASE_CONSTRUCTOR = 37
+  LLG_SLANG_EDGE_BASE_CONSTRUCTOR = 37,
+  // Optional pattern paired with CONDITION by its source clause index.
+  LLG_SLANG_EDGE_CONDITION_PATTERN = 38
 };
 
 typedef struct {

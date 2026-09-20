@@ -167,20 +167,10 @@ impl EmitCtx<'_, '_> {
                     Ok(Vec::new())
                 }
             }
-            NodeKind::Stmt(StmtKind::IfElse { cond, check }) => {
-                let c = self.cg.lower_boolean_expr(&self.path, *cond)?;
-                let then_node = self
-                    .cg
-                    .node(h)
-                    .children
-                    .get(1)
-                    .copied()
-                    .ok_or_else(|| "if without then branch".to_string())?;
-                let then_ = self.lower_stmt(then_node)?;
-                let els = match self.cg.node(h).children.get(2) {
-                    Some(e) => Some(self.lower_stmt(*e)?),
-                    None => None,
-                };
+            NodeKind::Stmt(StmtKind::IfElse { predicate, if_true, if_false, check }) => {
+                let c = self.cg.lower_conditional_predicate(&self.path, predicate)?;
+                let then_ = self.lower_stmt(*if_true)?;
+                let els = if_false.map(|branch| self.lower_stmt(branch)).transpose()?;
                 Ok(vec![IrStmt::If {
                     cond: c,
                     then_,

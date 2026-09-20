@@ -271,6 +271,23 @@ pub(super) fn expression_from_slang(
                 streams,
             }
         }
+        68 => {
+            let predicate = predicate_from_slang(edges, ids)?;
+            let (if_true, if_false) = conditional_branches_from_slang(edges, ids, true)?;
+            let if_false = if_false.ok_or_else(|| {
+                DbError::InvalidSnapshot("conditional false operand is missing".into())
+            })?;
+            if predicate.clauses.len() == 1 && !predicate.has_patterns() {
+                ExprKind::Operation {
+                    op: Operation::Conditional,
+                    reordered: false,
+                    assignment: false,
+                    operands: vec![predicate.clauses[0].expression, if_true, if_false],
+                }
+            } else {
+                ExprKind::Conditional { predicate, if_true, if_false }
+            }
+        }
         _ if node.operation != SemanticOperation::None => {
             let operands = match node.subkind {
                 66 => edge_targets(ids, edges, SemanticEdgeRole::Operand)?,
@@ -278,18 +295,6 @@ pub(super) fn expression_from_slang(
                     .into_iter()
                     .map(|role| required(role, "binary operand"))
                     .collect::<Result<Vec<_>, _>>()?,
-                68 => {
-                    let mut values = edge_targets(ids, edges, SemanticEdgeRole::Condition)?;
-                    values.push(required(
-                        SemanticEdgeRole::Then,
-                        "conditional true operand",
-                    )?);
-                    values.push(required(
-                        SemanticEdgeRole::Else,
-                        "conditional false operand",
-                    )?);
-                    values
-                }
                 70 => {
                     let mut values = vec![required(SemanticEdgeRole::Width, "replication count")?];
                     values.extend(edge_targets(ids, edges, SemanticEdgeRole::Operand)?);

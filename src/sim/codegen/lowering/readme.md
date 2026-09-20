@@ -65,3 +65,14 @@ selected rows, slices, activation values and function results use expression
 sources, evaluated once by the backend. Result widths/signs come from the
 integral element or `with` expression, not the destination. This path does not
 introduce generated callbacks or change resizable-container callback contracts.
+
+## Sequential conditional predicates
+
+`expressions/conditionals.rs` lowers a Boolean `ConditionalPredicate` to one
+`Predicate` IR expression, or reuses the ordinary Boolean conversion for a
+single clause. Pattern-bearing predicates fail explicitly. Statement dispatch
+uses owned true/false branch references instead of child-vector positions. Value
+conditionals share ordinary packed/real arm typing and R01's `ArrayMux` layout;
+R04 array-assignment staging remains separate. All reached clauses stay inside
+the resulting expression so the emitter, not lowering, controls their execution.
+Constant evaluation stops at the first false or ambiguous clause as well.

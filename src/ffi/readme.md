@@ -44,3 +44,9 @@ It is independent of macro-expansion and skipped-token flags. The Rust decoder
 accepts only these four known flag bits and still rejects unknown bits/reserved
 fields. Update both sides together: source edition checks use the provenance to
 avoid rejecting a directive body which never becomes executable source.
+
+Conditional capture includes `SemanticEdgeRole::ConditionPattern` (C role 38),
+paired by clause index with `Condition`. Raw record layouts and snapshot ownership
+are unchanged; the semantic tag set is extended, so the shim and decoder must be
+rebuilt together. Unknown role values continue to fail checked decoding. The
+owned DB, not an FFI client or emitter, validates clause/branch relationships.

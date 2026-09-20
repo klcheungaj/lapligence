@@ -39,6 +39,28 @@ impl Frame<'_, '_> {
         Ok(result)
     }
 
+    pub(super) fn predicate(&mut self, clauses: &[IrExpr]) -> Result<Value, String> {
+        let result = self.value("sv4_from_u64(1, 1, 0)".to_owned(), 1, false);
+        for clause in clauses {
+            // This is intentionally not short_circuit(LogAnd): ambiguity
+            // terminates a sequential predicate instead of consulting RHS.
+            self.line(format!("if ({}) {{", result.truth()));
+            let value = self.expression(clause)?;
+            let code = if value.width == 0 {
+                format!("sv4_from_u64({}, 1, 0)", value.truth())
+            } else {
+                // Normalize the full vector, not its low bit. Z is ambiguous
+                // truth (X), while any known one dominates other X/Z bits.
+                format!("sv4_reduce_or({})", value.code)
+            };
+            let value = self.replace(value, code, 1, false);
+            self.line(format!("sv4_move(&{}, &{});", result.code, value.code));
+            self.discard(value);
+            self.line("}");
+        }
+        Ok(result)
+    }
+
     pub(super) fn mux(
         &mut self,
         selector: &IrExpr,
@@ -56,21 +78,25 @@ impl Frame<'_, '_> {
         self.line(format!("if ({}) {{", selector.truth()));
         let a = self.expression(left)?;
         self.assign_arm(&result, a);
-        if expr.width == 0 || selector.width == 0 {
+        if selector.width == 0 {
             self.line("} else {");
         } else {
             self.line(format!("}} else if (!{}) {{", selector.unknown_truth()));
         }
         let b = self.expression(right)?;
         self.assign_arm(&result, b);
-        if expr.width != 0 && selector.width != 0 {
+        if selector.width != 0 {
             self.line("} else {");
             // Only an indeterminate condition evaluates both arms.
             let a = self.expression(left)?;
             let a = self.mux_arm(a, expr.width, expr.signed);
             let b = self.expression(right)?;
             let b = self.mux_arm(b, expr.width, expr.signed);
-            if let Some(default) = element_default {
+            if expr.width == 0 {
+                // IEEE 1800-2009 11.4.11: still evaluate both alternatives,
+                // but an ambiguous conditional with a real result yields 0.
+                self.line(format!("{} = 0.0;", result.code));
+            } else if let Some(default) = element_default {
                 let default = self.value(emit_const(default), default.width, default.signed);
                 self.line(format!(
                     "sv4_replace(&{}, sv4_array_conditional_merge({}, {}, {}));",

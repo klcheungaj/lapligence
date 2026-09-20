@@ -29,6 +29,7 @@ pub(super) fn fold_expr(e: &mut IrExpr) {
             b,
             element_default,
         } => fold_array_mux(sel, a, b, element_default).map(Folded::Bits),
+        IrExprKind::Predicate { clauses } => fold_predicate(clauses).map(Folded::Bits),
         IrExprKind::Concat { parts } => {
             let mut vals = Vec::with_capacity(parts.len());
             for p in parts {
@@ -240,4 +241,32 @@ fn resize_like_runtime(v: &Value, width: u32, signed: bool) -> Value {
         plain.fill = None;
     }
     plain.resize(width as usize, signed)
+}
+
+/// A folded prefix can terminate a sequential predicate even if its suffix
+/// contains effects. A nonconstant evaluated clause prevents folding; never
+/// skip it merely because a later clause is a known zero.
+fn fold_predicate(clauses: &[IrExpr]) -> Option<Value> {
+    if clauses.is_empty() {
+        return None;
+    }
+    for clause in clauses {
+        let truth = if let IrExprKind::Fill(bit @ 0..=3) = &clause.kind {
+            Value::from_bits(vec![match bit {
+                0 => Bit::Zero,
+                1 => Bit::One,
+                _ => Bit::X,
+            }], false)
+        } else if let Some(value) = as_packed_const(clause) {
+            elab::unary_or(&value)
+        } else if let Some(value) = real_of(clause) {
+            Value::from_u64(u64::from(value != 0.0), 1, false)
+        } else {
+            return None;
+        };
+        if truth.bits.first() != Some(&Bit::One) {
+            return Some(truth);
+        }
+    }
+    Some(Value::from_u64(1, 1, false))
 }

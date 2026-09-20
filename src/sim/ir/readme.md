@@ -97,3 +97,13 @@ both payload and map expressions. Optimization may simplify children but must
 not promote destination widths into the fold or remove receiver/map effects.
 First-element seeding is intentional: an arithmetic identity would corrupt
 singleton Z values. Array methods do not become resizable storage operations.
+
+## Sequential predicates
+
+`IrExprKind::Predicate` contains a nonempty source-ordered sequence with an
+unsigned one-bit result and no contextual fill. Convert each reached clause to
+truth across its complete value (real nonzero, or packed reduction-OR). Continue
+only after definite true; otherwise return zero or X without evaluating later
+clauses. In particular this is not `LogAnd`. Validation, capacity, effects,
+operand traversal, storage reads and stack budgets must still inspect every
+potential clause. This IR carries no pattern bindings or source DB references.

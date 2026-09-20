@@ -3035,9 +3035,15 @@ private:
       capture.semanticRole(id, &expression.member, LLG_SLANG_EDGE_REFERENCE);
     }
     else if constexpr (std::same_as<T, ConditionalExpression>) {
-      for (uint32_t i = 0; i < expression.conditions.size(); i++)
+      for (uint32_t i = 0; i < expression.conditions.size(); i++) {
         capture.semanticRole(id, expression.conditions[i].expr,
                              LLG_SLANG_EDGE_CONDITION, i);
+        // A pattern is not a Boolean expression. Retain its role even while
+        // executable matching is unsupported, so import cannot erase it.
+        if (expression.conditions[i].pattern)
+          capture.semanticRole(id, expression.conditions[i].pattern,
+                               LLG_SLANG_EDGE_CONDITION_PATTERN, i);
+      }
       capture.semanticRole(id, &expression.left(), LLG_SLANG_EDGE_THEN);
       capture.semanticRole(id, &expression.right(), LLG_SLANG_EDGE_ELSE);
     }
@@ -3200,9 +3206,15 @@ private:
                              LLG_SLANG_EDGE_DECLARATION);
     }
     else if constexpr (std::same_as<T, ConditionalStatement>) {
-      for (uint32_t i = 0; i < statement.conditions.size(); i++)
+      for (uint32_t i = 0; i < statement.conditions.size(); i++) {
         capture.semanticRole(id, statement.conditions[i].expr,
                              LLG_SLANG_EDGE_CONDITION, i);
+        // A pattern is not a Boolean expression. Retain its role even while
+        // executable matching is unsupported, so import cannot erase it.
+        if (statement.conditions[i].pattern)
+          capture.semanticRole(id, statement.conditions[i].pattern,
+                               LLG_SLANG_EDGE_CONDITION_PATTERN, i);
+      }
       capture.semanticRole(id, &statement.ifTrue, LLG_SLANG_EDGE_THEN);
       if (statement.ifFalse)
         capture.semanticRole(id, statement.ifFalse, LLG_SLANG_EDGE_ELSE);

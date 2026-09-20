@@ -100,3 +100,107 @@ fn array_conditional_plan_rejects_empty_dimensions_and_nonfixed_elements() {
     element.shape = TypeShape::String;
     assert!(array_merge_default(&array(element, vec![(0, 1)])).is_err());
 }
+
+fn predicate_literal(value: ValueData, size: i32) -> ExprKind {
+    ExprKind::Constant {
+        const_type: if matches!(&value, ValueData::Real(_)) {
+            ConstantType::Real
+        } else {
+            ConstantType::Binary
+        },
+        value,
+        size,
+        source: crate::core::db::ConstantSource::NotCaptured,
+        time_scale: None,
+    }
+}
+
+fn predicate_database(first: ExprKind, second: ExprKind, left: ExprKind, right: ExprKind) -> Db {
+    use crate::core::db::{ConditionalPredicate, Node, PredicateClause};
+    let predicate = ConditionalPredicate {
+        clauses: vec![
+            PredicateClause { expression: NodeId(1), pattern: None },
+            PredicateClause { expression: NodeId(2), pattern: None },
+        ],
+    };
+    let root = ExprKind::Conditional { predicate, if_true: NodeId(3), if_false: NodeId(4) };
+    let nodes = [root, first, second, left, right].into_iter().map(|expression| Node {
+        kind: NodeKind::Expr(expression),
+        children: Vec::new(),
+        parent: None,
+        name: String::new(),
+        full_name: String::new(),
+        file: None,
+        line: 0,
+        col: 0,
+        end_line: 0,
+        end_col: 0,
+    }).collect();
+    Db::from_test_nodes("predicate", nodes, vec![], std::collections::HashMap::new()).unwrap()
+}
+
+#[test]
+fn sequential_predicate_constant_evaluation_skips_unreached_clauses_and_arms() {
+    let db = predicate_database(
+        predicate_literal(ValueData::Bin("0".into()), 1),
+        ExprKind::Other,
+        ExprKind::Other,
+        predicate_literal(ValueData::UInt(0xa6), 8),
+    );
+    let semantic = crate::sim::semantic::SemanticModel::from_db(&db);
+    let cg = Codegen::new(&semantic);
+    assert_eq!(cg.eval_bits(NodeId(0)).unwrap().to_u64(), Some(0xa6));
+    let Val::Bits(value) = cg.eval_decl_value(NodeId(0)).unwrap() else {
+        panic!("packed conditional expected");
+    };
+    assert_eq!(value.to_u64(), Some(0xa6));
+}
+
+#[test]
+fn sequential_predicate_constant_evaluation_stops_at_ambiguity_before_false() {
+    for second in [predicate_literal(ValueData::Bin("0".into()), 1), ExprKind::Other] {
+        let db = predicate_database(
+            predicate_literal(ValueData::Bin("z".into()), 1),
+            second,
+            predicate_literal(ValueData::UInt(0xa5), 8),
+            predicate_literal(ValueData::UInt(0xa6), 8),
+        );
+        let semantic = crate::sim::semantic::SemanticModel::from_db(&db);
+        let cg = Codegen::new(&semantic);
+        let expected = val_from_value_data(&ValueData::Bin("101001xx".into()), 8).unwrap();
+        let Val::Bits(expected) = expected else { panic!("packed oracle expected"); };
+        assert_eq!(cg.eval_bits(NodeId(0)).unwrap().bits, expected.bits);
+        let Val::Bits(value) = cg.eval_decl_value(NodeId(0)).unwrap() else {
+            panic!("packed conditional expected");
+        };
+        assert_eq!(value.bits, expected.bits);
+    }
+}
+
+#[test]
+fn sequential_predicate_constant_evaluation_handles_real_truth_and_ambiguous_results() {
+    let db = predicate_database(
+        predicate_literal(ValueData::Bin("1".into()), 1),
+        predicate_literal(ValueData::Real(0.25), 0),
+        predicate_literal(ValueData::UInt(0xa5), 8),
+        ExprKind::Other,
+    );
+    let semantic = crate::sim::semantic::SemanticModel::from_db(&db);
+    assert_eq!(Codegen::new(&semantic).eval_bits(NodeId(0)).unwrap().to_u64(), Some(0xa5));
+    for right in [predicate_literal(ValueData::Real(3.5), 0), ExprKind::Other] {
+        let is_poison = matches!(&right, ExprKind::Other);
+        let db = predicate_database(
+            predicate_literal(ValueData::Bin("x".into()), 1),
+            ExprKind::Other,
+            predicate_literal(ValueData::Real(2.5), 0),
+            right,
+        );
+        let semantic = crate::sim::semantic::SemanticModel::from_db(&db);
+        let result = Codegen::new(&semantic).eval_decl_value(NodeId(0));
+        if is_poison {
+            assert!(result.is_err(), "both ambiguous alternatives must be evaluated");
+        } else {
+            assert!(matches!(result, Ok(Val::Real(value)) if value == 0.0));
+        }
+    }
+}

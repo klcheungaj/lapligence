@@ -284,7 +284,9 @@ fn analyze_sequence(
 fn analyze_stmt(db: &Db, root: NodeId, incoming: &HashSet<NodeId>) -> DefiniteAssignmentFlow {
     match db.node_kind(root) {
         NodeKind::Stmt(StmtKind::Begin) => analyze_sequence(db, &db.node(root).children, incoming),
-        NodeKind::Stmt(StmtKind::IfElse { cond, .. }) => analyze_if(db, root, *cond, incoming),
+        NodeKind::Stmt(StmtKind::IfElse { predicate, if_true, if_false, .. }) => {
+            analyze_if(db, predicate, *if_true, *if_false, incoming)
+        }
         NodeKind::Stmt(StmtKind::Assign {
             blocking, delay, ..
         }) => analyze_assignment(db, root, *blocking && delay.is_none(), incoming),
@@ -369,27 +371,48 @@ fn analyze_assignment(
     flow
 }
 
+fn analyze_predicate(
+    db: &Db,
+    predicate: &crate::core::db::ConditionalPredicate,
+    incoming: &HashSet<NodeId>,
+) -> (DefiniteAssignmentFlow, HashSet<NodeId>) {
+    let mut successful = incoming.clone();
+    let mut any_exit: Option<HashSet<NodeId>> = None;
+    let mut reads = HashSet::new();
+    for clause in &predicate.clauses {
+        let flow = analyze_expr(db, clause.expression, &successful);
+        successful = flow.definitely_assigned;
+        reads.extend(flow.read_before_assignment);
+        if let Some(pattern) = clause.pattern {
+            reads.extend(conservative_flow(db, pattern, &successful).read_before_assignment);
+        }
+        // A false/X/Z clause can bypass all remaining clauses. Writes in
+        // those clauses must not suppress a dependency after an early exit.
+        any_exit = Some(match any_exit {
+            Some(previous) => previous.intersection(&successful).copied().collect(),
+            None => successful.clone(),
+        });
+    }
+    (DefiniteAssignmentFlow {
+        definitely_assigned: any_exit.unwrap_or_else(|| incoming.clone()),
+        read_before_assignment: reads,
+    }, successful)
+}
+
 fn analyze_if(
     db: &Db,
-    root: NodeId,
-    cond: NodeId,
+    predicate: &crate::core::db::ConditionalPredicate,
+    if_true: NodeId,
+    if_false: Option<NodeId>,
     incoming: &HashSet<NodeId>,
 ) -> DefiniteAssignmentFlow {
-    let condition = analyze_expr(db, cond, incoming);
-    let children = &db.node(root).children;
-    let Some(then_branch) = children.get(1).copied() else {
-        return conservative_flow(db, root, incoming);
-    };
-    let then_flow = analyze_node(db, then_branch, &condition.definitely_assigned);
-    let else_flow = children
-        .get(2)
-        .copied()
-        .map(|else_branch| analyze_node(db, else_branch, &condition.definitely_assigned))
+    let (condition, successful) = analyze_predicate(db, predicate, incoming);
+    let then_flow = analyze_node(db, if_true, &successful);
+    let else_flow = if_false
+        .map(|branch| analyze_node(db, branch, &condition.definitely_assigned))
         .unwrap_or_else(|| DefiniteAssignmentFlow::from_assigned(&condition.definitely_assigned));
     let mut merged = merge_paths(then_flow, else_flow);
-    merged
-        .read_before_assignment
-        .extend(condition.read_before_assignment);
+    merged.read_before_assignment.extend(condition.read_before_assignment);
     merged
 }
 
@@ -620,6 +643,16 @@ fn analyze_expr(db: &Db, root: NodeId, incoming: &HashSet<NodeId>) -> DefiniteAs
             }
             flow
         }
+        NodeKind::Expr(ExprKind::Conditional { predicate, if_true, if_false }) => {
+            let (condition, _) = analyze_predicate(db, predicate, incoming);
+            // Either arm can execute after an ambiguous early clause, so
+            // neither may assume that the entire predicate was evaluated.
+            let then_flow = analyze_expr(db, *if_true, &condition.definitely_assigned);
+            let else_flow = analyze_expr(db, *if_false, &condition.definitely_assigned);
+            let mut merged = merge_paths(then_flow, else_flow);
+            merged.read_before_assignment.extend(condition.read_before_assignment);
+            merged
+        }
         NodeKind::Expr(ExprKind::Operation { operands, .. }) => {
             analyze_sequence_exprs(db, operands, incoming)
         }
@@ -782,4 +815,23 @@ mod tests {
             diags[0].message
         );
     }
+    #[test]
+    fn sequential_predicate_sensitivity_keeps_late_reads_and_early_exit_values() {
+        let diags = check(
+            "module t; logic a, b, c, y; always @(a) if (a &&& b &&& c) y = 1; else y = 0; endmodule\n",
+        );
+        assert_eq!(diags.len(), 1, "{diags:?}");
+        assert!(diags[0].message.ends_with("missing signals: b, c"), "{diags:?}");
+        for body in [
+            "if (a &&& (tmp = b)) y = 1; else y = tmp;",
+            "y = a &&& (tmp = b) ? tmp : 0;",
+        ] {
+            let diags = check(&format!(
+                "module t; logic a, b, tmp, y; always @(a or b) {body} endmodule\n"
+            ));
+            assert_eq!(diags.len(), 1, "{body}: {diags:?}");
+            assert!(diags[0].message.ends_with("missing signals: tmp"), "{body}: {diags:?}");
+        }
+    }
+
 }

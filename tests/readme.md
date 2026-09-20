@@ -430,3 +430,29 @@ cargo test --locked --test sim_rtl_completion array_conditional -- --test-thread
 These new Rust/HDL tests were not executed in the R04 implementation environment,
 which lacked Rust/Cargo and a built `llg`. Reused runtime component tests and
 fixture-integrity checks are separate evidence, not language acceptance.
+
+## Sequential predicate regressions (R06)
+
+`sim_sequential_predicates.rs` runs the checked-in SystemVerilog-2009 sources in
+`fixtures/sim/sequential_predicates/` through independent optimized and unoptimized
+CLI runs. Ten positive cases cover the exhaustive three-clause four-state truth
+matrix, branch roles, short-circuit effects, constant prefixes, 65/129-bit and real
+truth, real-result ambiguity, R01/R04 array results, clock/combinational sensitivity,
+qualifiers and R03 lexical reduction contexts. Two negative cases require explicit
+pattern rejection, even with a preceding false clause. `slang_semantics` tests keep
+the owned DB after snapshot destruction, inspect clause/branch roles and exercise
+both generation modes. Unit tests cover import/validation, lints, folding, all-
+clause traversal, capacity, checked FFI tags and structured emission.
+
+```sh
+cargo test --locked --lib sequential_predicate
+cargo test --locked --test slang_semantics sequential_predicate -- --test-threads=1
+cargo test --locked --test sim_sequential_predicates -- --test-threads=1
+cargo test --locked --test sim_logical_ops --test sim_unique_priority --test sim_array_conditional_assignments -- --test-threads=1
+```
+
+R06 was implemented without Rust/Cargo or a built `llg` in the working environment;
+the Rust tests, native C++ bridge and public-CLI HDL path were not compiled/run.
+The handwritten `sequential_predicate_*` native probes, runtime component suites
+and fixture-integrity checks are separate evidence, not end-to-end acceptance.
+Pattern matching/bindings remain outside the implemented Boolean-clause subset.

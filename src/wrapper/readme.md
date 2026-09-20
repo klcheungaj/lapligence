@@ -31,3 +31,13 @@ It is independent of macro-expansion and skipped-token flags. The Rust decoder
 accepts only these four known flag bits and still rejects unknown bits/reserved
 fields. Update both sides together: source edition checks use the provenance to
 avoid rejecting a directive body which never becomes executable source.
+
+## Conditional pattern roles
+
+`LLG_SLANG_EDGE_CONDITION_PATTERN` (38) pairs a conditional statement/expression
+pattern with the same source index as its `CONDITION` edge. `THEN` and `ELSE`
+remain separate branch roles at index zero. This extends the repository-owned
+semantic tag set without changing C record layouts or exporting native pointers.
+Update the Rust checked decoder together with the bridge. Capturing a pattern
+is not a claim of executable pattern-matching support; it prevents consumers
+from silently converting `value matches pattern` into a Boolean test of `value`.

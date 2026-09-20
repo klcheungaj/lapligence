@@ -1,6 +1,7 @@
 use super::*;
 
 mod array_conditionals;
+mod sequential_predicates;
 mod fixed_array_reductions;
 use crate::sim::ir::{
     IrAssertion, IrCall, IrCallArg, IrCaseItem, IrConcurrentAssertionKind, IrDependency, IrDepth,

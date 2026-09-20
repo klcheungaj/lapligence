@@ -31,8 +31,15 @@ impl LintRule for AssignmentInConditionRule {
 
         for id in all_design_nodes(db) {
             match db.node_kind(id) {
-                NodeKind::Stmt(StmtKind::IfElse { cond, .. })
-                | NodeKind::Stmt(StmtKind::While { cond, .. })
+                NodeKind::Stmt(StmtKind::IfElse { predicate, .. })
+                | NodeKind::Expr(ExprKind::Conditional { predicate, .. }) => {
+                    for clause in &predicate.clauses {
+                        if clause.pattern.is_none() {
+                            collect_predicate_assignments(db, clause.expression, &mut assignments);
+                        }
+                    }
+                }
+                NodeKind::Stmt(StmtKind::While { cond, .. })
                 | NodeKind::Stmt(StmtKind::DoWhile { cond, .. })
                 | NodeKind::Stmt(StmtKind::For { cond, .. })
                 | NodeKind::Stmt(StmtKind::Wait { cond }) => {
@@ -87,6 +94,17 @@ fn collect_predicate_assignments(db: &Db, expression: NodeId, out: &mut Vec<Node
             for operand in operands {
                 collect_predicate_assignments(db, *operand, out);
             }
+        }
+        NodeKind::Expr(ExprKind::Conditional { predicate, if_true, if_false }) => {
+            for clause in &predicate.clauses {
+                if clause.pattern.is_none() {
+                    collect_predicate_assignments(db, clause.expression, out);
+                }
+            }
+            // Reached only when the entire conditional is consumed as truth.
+            // A normal assignment of its value must not warn for arm writes.
+            collect_predicate_assignments(db, *if_true, out);
+            collect_predicate_assignments(db, *if_false, out);
         }
         NodeKind::Expr(ExprKind::Cast { operand, .. }) => {
             collect_predicate_assignments(db, *operand, out);
@@ -177,7 +195,9 @@ mod tests {
         let cond = all_design_nodes(&db)
             .into_iter()
             .find_map(|id| match db.node_kind(id) {
-                NodeKind::Stmt(StmtKind::IfElse { cond, .. }) => Some(*cond),
+                NodeKind::Stmt(StmtKind::IfElse { predicate, .. }) => {
+                    predicate.clauses.first().map(|clause| clause.expression)
+                }
                 _ => None,
             })
             .expect("semantic capture must expose the if condition");
@@ -236,4 +256,20 @@ mod tests {
             "{diags:?}"
         );
     }
+    #[test]
+    fn sequential_predicate_assignment_lint_visits_clauses_and_truth_consumed_arms() {
+        let diags = lint_design(
+            "module t(input logic a, b, c, output logic y); logic x;\n\
+             initial begin\n\
+             if (a &&& (x = b)) y = c;\n\
+             y = a &&& (x = b) ? c : 1'b0;\n\
+             if ((a &&& b ? (x = c) : 1'b0)) y = c;\n\
+             y = a &&& b ? (x = c) : 1'b0;\n\
+             end\nendmodule\n",
+            "t",
+        );
+        let got = rule_diags(&diags, "assignment-in-condition");
+        assert_eq!(got.iter().map(|diag| diag.line).collect::<Vec<_>>(), vec![3, 4, 5], "{diags:?}");
+    }
+
 }

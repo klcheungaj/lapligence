@@ -799,6 +799,9 @@ fn classify_simulation_node(
             SimulationNodeClass::ElaborationConsumed
         }
         NodeKind::Stmt(StmtKind::Unsupported { .. }) => SimulationNodeClass::Unsupported,
+        NodeKind::Stmt(StmtKind::IfElse { predicate, .. })
+        | NodeKind::Expr(ExprKind::Conditional { predicate, .. })
+            if predicate.has_patterns() => SimulationNodeClass::Unsupported,
         NodeKind::Var { .. } if db.is_clocking_var(id) => SimulationNodeClass::ElaborationConsumed,
         NodeKind::Expr(ExprKind::ScopeRef { .. }) if elaboration_placeholder => {
             SimulationNodeClass::ElaborationConsumed
@@ -898,6 +901,15 @@ fn classify_simulation_node(
 }
 
 fn simulation_node_detail(db: &Db, id: NodeId) -> String {
+    match db.node_kind(id) {
+        NodeKind::Stmt(StmtKind::IfElse { predicate, .. })
+        | NodeKind::Expr(ExprKind::Conditional { predicate, .. })
+            if predicate.has_patterns() =>
+        {
+            return "conditional predicate pattern matching (`matches`) is not supported".into();
+        }
+        _ => {}
+    }
     if let NodeKind::Gate {
         class,
         prim_type,
@@ -1044,6 +1056,9 @@ fn classify_type(ty: &TypeInfo) -> Option<SynthesisIssueKind> {
 
 fn classify_statement(db: &Db, id: NodeId, statement: &StmtKind) -> Option<SynthesisIssueKind> {
     match statement {
+        StmtKind::IfElse { predicate, .. } if predicate.has_patterns() => {
+            Some(SynthesisIssueKind::UnsupportedExpression)
+        }
         StmtKind::Assign { delay: Some(_), .. } => Some(SynthesisIssueKind::TimingControl),
         StmtKind::Assign { op, .. }
             if !matches!(op, Operation::Assignment) && !is_synthesis_operation(*op) =>
@@ -1364,6 +1379,9 @@ fn synthesis_event_control(db: &Db, specs: &[EventSpec], implicit: bool) -> bool
 
 fn classify_expression(expression: &ExprKind) -> Option<SynthesisIssueKind> {
     match expression {
+        ExprKind::Conditional { predicate, .. } if predicate.has_patterns() => {
+            Some(SynthesisIssueKind::UnsupportedExpression)
+        }
         ExprKind::ScopeRef { .. } => Some(SynthesisIssueKind::UnsupportedExpression),
         ExprKind::NewArray { .. } => Some(SynthesisIssueKind::DynamicContainer),
         ExprKind::Streaming { .. } => Some(SynthesisIssueKind::UnsupportedExpression),
@@ -1907,13 +1925,20 @@ mod tests {
             top(vec![NodeId(1)]),
             node(
                 NodeKind::Stmt(StmtKind::IfElse {
-                    cond: NodeId(2),
+                    predicate: crate::core::db::ConditionalPredicate {
+                        clauses: vec![crate::core::db::PredicateClause {
+                            expression: NodeId(2), pattern: None,
+                        }],
+                    },
+                    if_true: NodeId(3),
+                    if_false: None,
                     check: crate::core::db::UniquePriorityCheck::None,
                 }),
                 Some(NodeId(0)),
                 vec![],
             ),
             node(NodeKind::Expr(ExprKind::Other), None, vec![]),
+            node(NodeKind::Stmt(StmtKind::Empty), None, vec![]),
         ];
         let db = Db::from_test_nodes("top", nodes, vec![NodeId(0)], HashMap::new()).unwrap();
         let model = SemanticModel::from_db(&db);

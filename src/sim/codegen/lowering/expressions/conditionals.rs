@@ -14,9 +14,60 @@ impl Codegen<'_> {
             .filter(|descriptor| matches!(descriptor.shape, TypeShape::FixedArray { .. }))
             .map(array_merge_default)
             .transpose()?;
-        let sel = self.lower_expr(scope_path, operands[0])?;
-        let a = self.lower_expr(scope_path, operands[1])?;
-        let b = self.lower_expr(scope_path, operands[2])?;
+        let sel = self.lower_boolean_expr(scope_path, operands[0])?;
+        self.lower_conditional_arms(scope_path, sel, operands[1], operands[2], array)
+    }
+
+    pub(in super::super) fn lower_conditional_predicate(
+        &mut self,
+        scope_path: &str,
+        predicate: &crate::core::db::ConditionalPredicate,
+    ) -> Result<IrExpr, String> {
+        if predicate.clauses.is_empty() {
+            return Err(format!("conditional predicate has no clauses in `{scope_path}`"));
+        }
+        if predicate.has_patterns() {
+            return Err(format!(
+                "conditional predicate pattern matching (`matches`) is not supported in `{scope_path}`"
+            ));
+        }
+        if let [clause] = predicate.clauses.as_slice() {
+            return self.lower_boolean_expr(scope_path, clause.expression);
+        }
+        let clauses = predicate
+            .clauses
+            .iter()
+            .map(|clause| self.lower_boolean_expr(scope_path, clause.expression))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(IrExpr::new(IrExprKind::Predicate { clauses }, 1, false, None))
+    }
+
+    pub(in super::super) fn lower_predicate_conditional(
+        &mut self,
+        scope_path: &str,
+        predicate: &crate::core::db::ConditionalPredicate,
+        if_true: NodeId,
+        if_false: NodeId,
+    ) -> Result<IrExpr, String> {
+        let array = self
+            .query_descriptor(if_true)
+            .filter(|descriptor| matches!(descriptor.shape, TypeShape::FixedArray { .. }))
+            .map(array_merge_default)
+            .transpose()?;
+        let sel = self.lower_conditional_predicate(scope_path, predicate)?;
+        self.lower_conditional_arms(scope_path, sel, if_true, if_false, array)
+    }
+
+    fn lower_conditional_arms(
+        &mut self,
+        scope_path: &str,
+        sel: IrExpr,
+        if_true: NodeId,
+        if_false: NodeId,
+        array: Option<(u32, IrConst)>,
+    ) -> Result<IrExpr, String> {
+        let a = self.lower_expr(scope_path, if_true)?;
+        let b = self.lower_expr(scope_path, if_false)?;
         if let Some((width, element_default)) = array {
             if a.width != width || b.width != width || a.is_real() || b.is_real() {
                 return Err(format!(

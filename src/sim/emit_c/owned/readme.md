@@ -248,3 +248,18 @@ This emitter does not create resizable containers or out-of-frame callbacks.
 Stack budgets and expression-capacity scans must account for the implicit item,
 index and accumulator. Handwritten native fold probes check value/ownership
 contracts only; they do not establish successful Rust-generated HDL execution.
+
+## Sequential predicate ownership
+
+`control.rs` emits each `Predicate` clause inside a definite-true guard. Reached
+clause values are captured once, converted with full-vector reduction-OR or real
+truth conversion, moved into the retained one-bit result and destroyed. Skipped
+clauses create no payloads and execute no calls. Slot reuse follows the existing
+frame and cancellation cleanup rules, including predicates in lexical reduction
+maps. Ordinary logical AND keeps its distinct ambiguity behavior.
+
+A packed ambiguous mux selector evaluates both alternatives. Packed and fixed-
+array results retain their existing merge helpers; a real result becomes zero
+only after both alternatives have executed. Known selectors evaluate one arm.
+The detached expression renderer rejects `Predicate`, since a fragment string
+cannot express its guarded setup and ownership cleanup.

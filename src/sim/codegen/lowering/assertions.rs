@@ -1829,7 +1829,8 @@ pub(super) fn sampled_compatible(expression: &IrExpr) -> bool {
         IrExprKind::Mux { sel, a, b } | IrExprKind::ArrayMux { sel, a, b, .. } => {
             sampled_compatible(sel) && sampled_compatible(a) && sampled_compatible(b)
         }
-        IrExprKind::Concat { parts } | IrExprKind::Replicate { parts, .. } => {
+        IrExprKind::Predicate { clauses: parts }
+        | IrExprKind::Concat { parts } | IrExprKind::Replicate { parts, .. } => {
             parts.iter().all(sampled_compatible)
         }
         IrExprKind::Stream { value, .. } => sampled_compatible(value),

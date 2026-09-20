@@ -130,6 +130,21 @@ Implemented scope:
   evaluated alternative once; constant folding follows the same merge rule.
   Regression sources are in `sim_rtl_completion` (`array_conditional_*`), with
   separate native ownership tests; their presence is not an executed HDL result.
+- Sequential Boolean conditional predicates (R06): `if` and `?:` retain all
+  `&&&` clauses in source order, with separately captured then/else roles.
+  Every reached clause is evaluated once and converted to full-value truth;
+  false or ambiguous truth stops the sequence. A later false clause cannot
+  resolve an earlier X/Z, unlike ordinary `&&`. Ambiguous `if` takes else;
+  conditional values evaluate both alternatives and keep the existing packed
+  or R01 aggregate merge. Native real alternatives are both evaluated and
+  produce zero on an ambiguous selector (also corrected for ordinary `?:`).
+  Predicate folding, dependencies, effects, lint flow and stack accounting
+  preserve clause order and early exits. Pattern-bearing `matches` clauses
+  retain their pattern metadata and fail explicitly before optimization;
+  pattern bindings, tagged unions and pattern-case execution are not enabled.
+  The `sim_sequential_predicates` and owned-import tests are regression sources,
+  **not executed Rust/HDL acceptance evidence in this patch**. Native ownership
+  probes are handwritten counterparts, not output from the Rust emitter.
 - Dissimilar inout net types (R05): the owned internal/external port roles
   select the effective resolver, implicit pull/supply default and propagation
   delay using IEEE 1364-2001 Table 45 / IEEE 1800-2009 Table 23-1. This applies

@@ -395,6 +395,17 @@ impl Validator<'_> {
             | IrExprKind::ToTwoState { a } => {
                 self.validate_expr(a, formals, &format!("{path}.a"))?;
             }
+            IrExprKind::Predicate { clauses } => {
+                if clauses.is_empty() || expr.width != 1 || expr.signed || expr.fill.is_some() {
+                    return self.fail(
+                        path,
+                        "predicate requires nonempty clauses and an unsigned one-bit result",
+                    );
+                }
+                for (index, clause) in clauses.iter().enumerate() {
+                    self.validate_expr(clause, formals, &format!("{path}.clauses[{index}]"))?;
+                }
+            }
             IrExprKind::Mux { sel, a, b } => {
                 self.validate_expr(sel, formals, &format!("{path}.sel"))?;
                 self.validate_expr(a, formals, &format!("{path}.a"))?;

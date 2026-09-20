@@ -144,6 +144,7 @@ impl Frame<'_, '_> {
             } => {
                 self.mux(sel, a, b, expr, Some(element_default))?
             }
+            IrExprKind::Predicate { clauses } => self.predicate(clauses)?,
             IrExprKind::Concat { parts } => self.concat(parts)?,
             IrExprKind::Replicate { count, parts } => {
                 let value = self.concat(parts)?;

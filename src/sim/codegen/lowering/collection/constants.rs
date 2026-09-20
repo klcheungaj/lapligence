@@ -66,6 +66,18 @@ impl<'a> Codegen<'a> {
                     None => Err("unresolved reference in bound".to_string()),
                 }
             }
+            NodeKind::Expr(ExprKind::Conditional { predicate, if_true, if_false }) => {
+                let condition = self.eval_conditional_predicate(predicate)?;
+                match condition.to_u128() {
+                    Some(1) => self.eval_bits(*if_true),
+                    Some(0) => self.eval_bits(*if_false),
+                    _ => Ok(elab::cond(
+                        &condition,
+                        &self.eval_bits(*if_true)?,
+                        &self.eval_bits(*if_false)?,
+                    )),
+                }
+            }
             NodeKind::Expr(ExprKind::Operation {
                 op,
                 reordered,
@@ -99,6 +111,28 @@ impl<'a> Codegen<'a> {
             }
             other => Err(format!("unsupported bound expression: {other:?}")),
         }
+    }
+
+    /// Evaluate only the reached clauses; an ambiguous clause terminates the
+    /// sequence just like a false clause, unlike the ordinary logical AND.
+    fn eval_conditional_predicate(
+        &self,
+        predicate: &crate::core::db::ConditionalPredicate,
+    ) -> Result<elab::Value, String> {
+        if predicate.clauses.is_empty() || predicate.has_patterns() {
+            return Err("constant predicate requires nonempty Boolean clauses".into());
+        }
+        for clause in &predicate.clauses {
+            let truth = match self.eval_decl_value(clause.expression)? {
+                Val::Bits(value) => elab::unary_or(&value),
+                Val::Real(value) => elab::Value::from_u64(u64::from(value != 0.0), 1, false),
+                Val::Str(_) => return Err("string clause in constant predicate".into()),
+            };
+            if truth.to_u128() != Some(1) {
+                return Ok(truth);
+            }
+        }
+        Ok(elab::Value::from_u64(1, 1, false))
     }
 
     pub(super) fn collected_parameter_value(
@@ -187,6 +221,12 @@ impl<'a> Codegen<'a> {
             NodeKind::Expr(ExprKind::Constant { const_type, .. }) => {
                 *const_type == ConstantType::Time
             }
+            NodeKind::Expr(ExprKind::Conditional { predicate, if_true, if_false }) => {
+                predicate.clauses.iter().any(|clause| {
+                    self.contains_time_literal(clause.expression, visited)
+                }) || self.contains_time_literal(*if_true, visited)
+                    || self.contains_time_literal(*if_false, visited)
+            }
             NodeKind::Expr(ExprKind::Operation { operands, .. }) => operands
                 .iter()
                 .any(|operand| self.contains_time_literal(*operand, visited)),
@@ -243,6 +283,25 @@ impl<'a> Codegen<'a> {
             NodeKind::Expr(ExprKind::Ref { target }) => target
                 .and_then(|target| self.param_vals.get(&target).cloned())
                 .ok_or_else(|| "unresolved reference in declaration initializer".to_string()),
+            NodeKind::Expr(ExprKind::Conditional { predicate, if_true, if_false }) => {
+                let condition = self.eval_conditional_predicate(predicate)?;
+                match condition.to_u128() {
+                    Some(1) => self.eval_decl_value(*if_true),
+                    Some(0) => self.eval_decl_value(*if_false),
+                    _ => {
+                        let a = self.eval_decl_value(*if_true)?;
+                        let b = self.eval_decl_value(*if_false)?;
+                        match (a, b) {
+                            (Val::Bits(a), Val::Bits(b)) => {
+                                Ok(Val::Bits(elab::cond(&condition, &a, &b)))
+                            }
+                            (Val::Real(_), Val::Bits(_) | Val::Real(_))
+                            | (Val::Bits(_), Val::Real(_)) => Ok(Val::Real(0.0)),
+                            _ => Err("unsupported constant predicate result type".into()),
+                        }
+                    }
+                }
+            }
             NodeKind::Expr(ExprKind::Operation { op, operands, .. }) => {
                 super::super::validate_operation_arity(*op, operands.len(), "constant expression")?;
                 if *op == Operation::MinTypMax {

@@ -111,13 +111,9 @@ struct PathWrites {
 fn analyze_stmt(db: &Db, root: NodeId) -> PathWrites {
     match db.node_kind(root) {
         NodeKind::Stmt(StmtKind::Begin) => fold_children(db, root),
-        NodeKind::Stmt(StmtKind::IfElse { .. }) => {
-            let kids = &db.node(root).children;
-            let Some(then) = kids.get(1).copied() else {
-                return PathWrites::default();
-            };
-            let t = analyze_stmt(db, then);
-            let Some(els) = kids.get(2).copied() else {
+        NodeKind::Stmt(StmtKind::IfElse { if_true, if_false, .. }) => {
+            let t = analyze_stmt(db, *if_true);
+            let Some(els) = *if_false else {
                 // No else branch: every write in the then-branch is conditional.
                 let mut maybe = t.definite;
                 maybe.extend(t.maybe);
@@ -365,4 +361,20 @@ mod tests {
             got[0].message
         );
     }
+    #[test]
+    fn sequential_predicate_latch_lint_uses_actual_branches() {
+        let complete = lint_design(
+            "module t; logic a, b, c, y; always_comb if (a &&& b &&& c) y = 1; else y = 0; endmodule\n",
+            "t",
+        );
+        assert!(rule_diags(&complete, "if-latch").is_empty(), "{complete:?}");
+        let incomplete = lint_design(
+            "module t; logic a, b, c, y; always_comb if (a &&& b &&& c) y = 1; endmodule\n",
+            "t",
+        );
+        let got = rule_diags(&incomplete, "if-latch");
+        assert_eq!(got.len(), 1, "{incomplete:?}");
+        assert!(got[0].message.contains("`y`"));
+    }
+
 }

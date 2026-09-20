@@ -872,6 +872,15 @@ fn expr_slots(expr: &IrExpr) -> Result<u64, String> {
             [expr_slots(sel)?, expr_slots(a)?, expr_slots(b)?, 1],
             "array conditional expression slots",
         )?,
+        IrExprKind::Predicate { clauses } => {
+            // Each clause may need a separate truth-conversion owner in
+            // addition to its expression temporaries and the retained result.
+            checked_add(
+                expr_sum(clauses, "predicate expression slots")?,
+                u64::try_from(clauses.len()).map_err(|_| "predicate clause count overflow")?,
+                "predicate truth slots",
+            )?
+        }
         IrExprKind::Concat { parts } | IrExprKind::Replicate { parts, .. } => {
             expr_sum(parts, "concatenation expression slots")?
         }

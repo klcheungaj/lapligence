@@ -27,6 +27,14 @@ pub enum ExprKind {
         assignment: bool,
         operands: Vec<NodeId>,
     },
+    /// Conditional value with more than one predicate clause, or a pattern.
+    /// The ordinary one-clause Boolean form retains `Operation::Conditional`
+    /// for existing expression consumers. Branches never occupy clause slots.
+    Conditional {
+        predicate: ConditionalPredicate,
+        if_true: NodeId,
+        if_false: NodeId,
+    },
     /// A streaming concatenation with Slang's resolved slice size and exact
     /// per-stream selector relationships.
     Streaming {

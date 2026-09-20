@@ -19,6 +19,7 @@ BASE_TESTS = {
     "stream_reject_minus-overflow",
     "stream_reject_zero-width",
     "stream_reject_negative-width",
+    "sequential_predicate_truth", "sequential_predicate_ownership",
     "fixed_array_reduction_values",
     "fixed_array_reduction_ownership",
     "array_conditional",

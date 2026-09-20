@@ -59,6 +59,7 @@ pub(super) fn decode_semantic_edges(
                 35 => SemanticEdgeRole::AssertionFormal,
                 36 => SemanticEdgeRole::AssertionActual,
                 37 => SemanticEdgeRole::BaseConstructor,
+                38 => SemanticEdgeRole::ConditionPattern,
                 _ => return Err(invalid_native("semantic edge has an unknown role")),
             };
             Ok(SemanticEdge {

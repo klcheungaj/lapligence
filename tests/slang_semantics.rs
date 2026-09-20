@@ -1,3 +1,6 @@
+#[path = "slang_semantics/sequential_predicates.rs"]
+mod sequential_predicates;
+
 #[path = "slang_semantics/port_net_types.rs"]
 mod port_net_types;
 

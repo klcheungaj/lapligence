@@ -344,3 +344,14 @@ checks allocation counters after teardown. Both are registered in CTest and the
 strict inventory checker. The scheduler inventory also includes the already
 registered `packed_formal_owner_contracts` case; it must not be reported as an
 unexpected test or silently omitted.
+
+## Sequential predicate component probes (R06)
+
+`sequential_predicate_probe.c` is a handwritten counterpart of the owned emitter,
+not generated C or an HDL execution. `sequential_predicate_truth` checks all 64
+three-clause four-state combinations and evaluated-prefix traces, known high bits
+in 129-bit values, real truth, and packed/array conditional results after an early
+ambiguous clause. `sequential_predicate_ownership` performs 10,000 iterations,
+checks exact live-allocation/byte restoration and bounded peak ownership, and
+verifies that skipped wide clauses allocate nothing. Both modes are registered
+in CTest and its exact-inventory checker, with and without sanitizers.

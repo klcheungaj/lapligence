@@ -375,3 +375,19 @@ fn language_edition_parser_and_default_are_explicit() {
     assert!(LanguageEdition::from_snapshot_flags(0).is_err());
     assert!(LanguageEdition::from_snapshot_flags(SNAPSHOT_EDITION_MASK).is_err());
 }
+
+#[test]
+fn sequential_predicate_pattern_edge_decodes_and_unknown_roles_still_fail() {
+    let node = raw_semantic_node(1);
+    let edge = RawSemanticEdge {
+        role: 38, index: 2, target_id: 0, sequence_delay_valid: 0,
+        sequence_delay_min: 0, sequence_delay_max: 0,
+    };
+    let decoded = decode_semantic_edges(std::slice::from_ref(&edge), std::slice::from_ref(&node))
+        .expect("paired predicate pattern role");
+    assert_eq!(decoded[0].role, SemanticEdgeRole::ConditionPattern);
+    assert_eq!(decoded[0].index, 2);
+    let bad = RawSemanticEdge { role: 39, ..edge };
+    assert_eq!(decode_semantic_edges(&[bad], &[node]).unwrap_err().kind(),
+        SlangErrorKind::InvalidNativeData);
+}

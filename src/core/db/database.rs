@@ -55,6 +55,9 @@ pub use statements::{
     ClockingBlockInfo, ClockingEdge, ClockingSkew, ClockingVarInfo, DriverDelay, EventSpec,
     EventTriggerTiming, IntraControl, StmtKind,
 };
+mod predicates;
+pub use predicates::{ConditionalPredicate, PredicateClause};
+use predicates::{conditional_branches_from_slang, predicate_from_slang};
 mod expressions;
 pub use expressions::{
     ConstantSource, ExprKind, StreamOperand, StreamingDirection, TimeLiteralScale, TimeUnit,

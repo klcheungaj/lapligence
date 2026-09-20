@@ -54,10 +54,16 @@ pub(super) fn statement_from_slang(
             if_false: first(SemanticEdgeRole::Else)?,
             label: node.name.clone(),
         },
-        33 => StmtKind::IfElse {
-            cond: required(SemanticEdgeRole::Condition, "if condition")?,
-            check: unique_priority_check(node.auxiliary)?,
-        },
+        33 => {
+            let predicate = predicate_from_slang(edges, ids)?;
+            let (if_true, if_false) = conditional_branches_from_slang(edges, ids, false)?;
+            StmtKind::IfElse {
+                predicate,
+                if_true,
+                if_false,
+                check: unique_priority_check(node.auxiliary)?,
+            }
+        }
         34 => {
             let mut items = Vec::new();
             let branch_count = edges
