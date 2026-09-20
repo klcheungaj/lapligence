@@ -45,6 +45,7 @@ impl Frame<'_, '_> {
         left: &IrExpr,
         right: &IrExpr,
         expr: &IrExpr,
+        element_default: Option<&IrConst>,
     ) -> Result<Value, String> {
         let selector = self.expression(selector)?;
         let result = if expr.width == 0 {
@@ -69,10 +70,19 @@ impl Frame<'_, '_> {
             let a = self.mux_arm(a, expr.width, expr.signed);
             let b = self.expression(right)?;
             let b = self.mux_arm(b, expr.width, expr.signed);
-            self.line(format!(
-                "sv4_replace(&{}, sv4_mux({}, {}, {}));",
-                result.code, selector.code, a.code, b.code
-            ));
+            if let Some(default) = element_default {
+                let default = self.value(emit_const(default), default.width, default.signed);
+                self.line(format!(
+                    "sv4_replace(&{}, sv4_array_conditional_merge({}, {}, {}));",
+                    result.code, a.code, b.code, default.code
+                ));
+                self.discard(default);
+            } else {
+                self.line(format!(
+                    "sv4_replace(&{}, sv4_mux({}, {}, {}));",
+                    result.code, selector.code, a.code, b.code
+                ));
+            }
             self.discard(a);
             self.discard(b);
         }

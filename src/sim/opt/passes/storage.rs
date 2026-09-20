@@ -928,7 +928,7 @@ fn collect_children_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
         | IrExprKind::BitStreamCast { a, .. }
         | IrExprKind::ToTwoState { a }
         | IrExprKind::CastToReal { a, .. } => collect_expr_reads(a, model, rw),
-        IrExprKind::Mux { sel, a, b } => {
+        IrExprKind::Mux { sel, a, b } | IrExprKind::ArrayMux { sel, a, b, .. } => {
             collect_expr_reads(sel, model, rw);
             collect_expr_reads(a, model, rw);
             collect_expr_reads(b, model, rw);

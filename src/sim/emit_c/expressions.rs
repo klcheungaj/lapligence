@@ -346,6 +346,9 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
                 fill: None,
             }
         }
+        IrExprKind::ArrayMux { .. } => {
+            return Err("array conditionals require the structured owned emitter".to_owned());
+        }
         IrExprKind::Mux { sel, a, b } => {
             let rsel = w(sel)?;
             let ra = w(a)?;

@@ -857,6 +857,10 @@ fn expr_slots(expr: &IrExpr) -> Result<u64, String> {
             [expr_slots(sel)?, expr_slots(a)?, expr_slots(b)?],
             "conditional expression slots",
         )?,
+        IrExprKind::ArrayMux { sel, a, b, .. } => checked_sum(
+            [expr_slots(sel)?, expr_slots(a)?, expr_slots(b)?, 1],
+            "array conditional expression slots",
+        )?,
         IrExprKind::Concat { parts } | IrExprKind::Replicate { parts, .. } => {
             expr_sum(parts, "concatenation expression slots")?
         }
@@ -1158,6 +1162,34 @@ mod tests {
             false,
             None,
         )
+    }
+
+    #[test]
+    fn array_conditional_budget_includes_the_owned_element_default() {
+        let packed = IrExpr::new(
+            IrExprKind::Mux {
+                sel: Box::new(constant(0)),
+                a: Box::new(constant(1)),
+                b: Box::new(constant(2)),
+            },
+            8,
+            false,
+            None,
+        );
+        let array = IrExpr::new(
+            IrExprKind::ArrayMux {
+                sel: Box::new(constant(0)),
+                a: Box::new(constant(1)),
+                b: Box::new(constant(2)),
+                element_default: Box::new(
+                    IrConst::packed(vec![], vec![0xff], vec![], 8, false, None).unwrap(),
+                ),
+            },
+            8,
+            false,
+            None,
+        );
+        assert_eq!(expr_slots(&array).unwrap(), expr_slots(&packed).unwrap() + 1);
     }
 
     #[test]

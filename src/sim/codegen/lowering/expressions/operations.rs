@@ -304,34 +304,7 @@ impl<'a> Codegen<'a> {
                     None,
                 ))
             }
-            Operation::Conditional => {
-                let sel = op!(0);
-                let a = op!(1);
-                let b = op!(2);
-                let (w, s) = if a.is_real() || b.is_real() {
-                    (REAL_EXPR_WIDTH, true)
-                } else {
-                    (maxw(&a, &b), a.signed && b.signed)
-                };
-                let (a, b) = if w == REAL_EXPR_WIDTH {
-                    (a, b)
-                } else {
-                    (
-                        checked_operand_with_context(a, w, s, scope_path, "conditional context")?,
-                        checked_operand_with_context(b, w, s, scope_path, "conditional context")?,
-                    )
-                };
-                Ok(IrExpr::new(
-                    IrExprKind::Mux {
-                        sel: Box::new(sel),
-                        a: Box::new(a),
-                        b: Box::new(b),
-                    },
-                    w,
-                    s,
-                    None,
-                ))
-            }
+            Operation::Conditional => self.lower_conditional(scope_path, operands),
             Operation::UnaryMinus => {
                 let a = op!(0);
                 let w = a.width;

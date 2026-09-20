@@ -1187,7 +1187,7 @@ fn collect_expression_effects(
         | IrExprKind::Stream { value: a, .. } => {
             collect_expression_effects(ir, a, effects, visited_calls)
         }
-        IrExprKind::Mux { sel, a, b } => {
+        IrExprKind::Mux { sel, a, b } | IrExprKind::ArrayMux { sel, a, b, .. } => {
             collect_expression_effects(ir, sel, effects, visited_calls);
             collect_expression_effects(ir, a, effects, visited_calls);
             collect_expression_effects(ir, b, effects, visited_calls);

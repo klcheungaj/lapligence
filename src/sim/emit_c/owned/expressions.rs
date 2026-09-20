@@ -134,7 +134,15 @@ impl Frame<'_, '_> {
                 };
                 self.replace(value, code, expr.width, expr.signed)
             }
-            IrExprKind::Mux { sel, a, b } => self.mux(sel, a, b, expr)?,
+            IrExprKind::Mux { sel, a, b } => self.mux(sel, a, b, expr, None)?,
+            IrExprKind::ArrayMux {
+                sel,
+                a,
+                b,
+                element_default,
+            } => {
+                self.mux(sel, a, b, expr, Some(element_default))?
+            }
             IrExprKind::Concat { parts } => self.concat(parts)?,
             IrExprKind::Replicate { count, parts } => {
                 let value = self.concat(parts)?;

@@ -121,6 +121,15 @@ Implemented scope:
 - Fixed unpacked arrays: reversed/negative bounds by logical coordinates,
   overlapping slice self-assignment, array/struct module ports with per-leaf
   notification, memory declaration initialization and slicing.
+- Fixed-array conditional values admitted by the expression/subroutine paths:
+  `ArrayMux` retains the immediate unpacked element width and its
+  default-uninitialized payload. Ambiguous selectors preserve known-equal
+  elements and default entire differing elements, including nested rows and
+  fixed integral records; explicit member initializers are not fallback values.
+  Packed-vector mux behavior is unchanged. The owned emitter captures each
+  evaluated alternative once; constant folding follows the same merge rule.
+  Regression sources are in `sim_rtl_completion` (`array_conditional_*`), with
+  separate native ownership tests; their presence is not an executed HDL result.
 - Packed structs and untagged packed unions: cross-view aliasing, per-member
   two/four-state conversion, unequal-width members still rejected.
 - Assignment patterns: nested keyed/default patterns (including a default that
@@ -168,6 +177,10 @@ Implemented scope:
 
 Retained boundaries:
 
+- General module-procedural whole-array conditional RHS admission remains
+  restricted (audit R04); correcting the admitted conditional's merge semantics
+  does not expand that syntax/context gate. Dynamic/native aggregate elements
+  are outside the fixed integral array-merge operation.
 - Fixed port connectivity uses constant elaborated array coordinates; incompatible
   resolution kinds and unsupported dynamic resolved-net targets remain explicit.
 - Streaming `with` selectors follow the admitted one-dimensional operand forms;

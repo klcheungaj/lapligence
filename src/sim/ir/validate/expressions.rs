@@ -385,6 +385,42 @@ impl Validator<'_> {
                 self.validate_expr(a, formals, &format!("{path}.a"))?;
                 self.validate_expr(b, formals, &format!("{path}.b"))?;
             }
+            IrExprKind::ArrayMux {
+                sel,
+                a,
+                b,
+                element_default,
+            } => {
+                self.validate_expr(sel, formals, &format!("{path}.sel"))?;
+                self.validate_expr(a, formals, &format!("{path}.a"))?;
+                self.validate_expr(b, formals, &format!("{path}.b"))?;
+                self.validate_const(element_default, &format!("{path}.element_default"))?;
+                if expr.width == 0
+                    || expr.signed
+                    || expr.fill.is_some()
+                    || a.width != expr.width
+                    || b.width != expr.width
+                    || a.signed
+                    || b.signed
+                    || a.fill.is_some()
+                    || b.fill.is_some()
+                {
+                    return self.fail(
+                        path,
+                        "array conditional requires equal unsigned payload widths",
+                    );
+                }
+                if element_default.real.is_some()
+                    || element_default.fill.is_some()
+                    || element_default.width == 0
+                    || !expr.width.is_multiple_of(element_default.width)
+                {
+                    return self.fail(
+                        format!("{path}.element_default"),
+                        "array conditional default must be a concrete packed element whose width divides the payload",
+                    );
+                }
+            }
             IrExprKind::Concat { parts } | IrExprKind::Replicate { parts, .. } => {
                 if parts.is_empty() {
                     return self.fail(path, "concatenation requires at least one operand");

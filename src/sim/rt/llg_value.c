@@ -3,4 +3,5 @@
 #include "llg_value_prelude.c"
 #include "value/storage.c"
 #include "value/operations.c"
+#include "value/array_conditional.c"
 #include "value/selection_plan.c"

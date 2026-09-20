@@ -13,6 +13,7 @@ use crate::sim::ir::{
 mod aggregates;
 mod array_queries;
 mod casts;
+mod conditionals;
 mod dispatch;
 mod external_input;
 mod membership;

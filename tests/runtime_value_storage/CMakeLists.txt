@@ -94,6 +94,20 @@ foreach(probe IN ITEMS value_isolation container_isolation)
   set_tests_properties(${probe} PROPERTIES TIMEOUT 60)
 endforeach()
 
+add_executable(array_conditional_probe array_conditional_probe.c)
+target_link_libraries(array_conditional_probe PRIVATE tracked_value)
+strict_c(array_conditional_probe)
+add_test(NAME array_conditional COMMAND array_conditional_probe)
+set_tests_properties(array_conditional PROPERTIES TIMEOUT 60)
+foreach(mode IN ITEMS empty zero unequal remainder)
+  add_test(NAME array_conditional_reject_${mode}
+    COMMAND "${CMAKE_COMMAND}"
+      "-DPROBE=$<TARGET_FILE:array_conditional_probe>" "-DMODE=${mode}"
+      "-DEXPECTED=invalid array conditional merge shape"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/expect_failure.cmake")
+  set_tests_properties(array_conditional_reject_${mode} PROPERTIES TIMEOUT 60)
+endforeach()
+
 add_executable(packed_selection_probe packed_selection_probe.c)
 target_link_libraries(packed_selection_probe PRIVATE tracked_value)
 strict_c(packed_selection_probe)

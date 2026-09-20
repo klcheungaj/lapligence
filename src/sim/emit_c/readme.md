@@ -7,6 +7,12 @@ frontend or FFI objects. `model.rs` emits static descriptors/prototypes and
 coordinates `owned/`, which emits ordered setup, tracked packed results,
 borrowing runtime calls, and explicit cleanup. Operands are evaluated once;
 short-circuit and conditional branches retain their separate setup paths.
+`ArrayMux` adds a typed default payload for each immediate unpacked element.
+Its ambiguous branch captures both alternatives before calling
+`sv4_array_conditional_merge`; known selectors evaluate only the chosen arm.
+The fallback constant is another tracked owner and is included in stack sizing.
+Ordinary `Mux` still uses `sv4_mux` and its packed-bit semantics. Array merge
+plans are self-determined: enclosing packed casts must not resize their elements.
 Temporary slots are reused, and lexical packed cells have distinct registered
 scopes when a pending write might outlive the declaration.
 

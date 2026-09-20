@@ -6,6 +6,9 @@
 - **Invariants:** passes preserve table indices and lowering-time sensitivity
   sets; they do not recompute wake behavior.
 - **Validation:** callers validate the model after enabled passes complete.
+- **Array conditionals:** `ArrayMux` folds whole immediate elements with its
+  captured default payload, not packed mux bits. Its operands remain visible
+  to traversal/read collection; only a proven selector may discard an arm.
 
 See [the simulator README](../readme.md) for this stage's place in the model
 pipeline.

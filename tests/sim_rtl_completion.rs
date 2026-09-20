@@ -279,3 +279,51 @@ fn fixed_enum_leaves_use_captured_state_domains() {
         &[],
     );
 }
+
+#[test]
+fn array_conditional_values_preserve_element_semantics() {
+    sim_cli::run_case_with_args(
+        "rtl_completion",
+        "array_conditional_values",
+        "array conditional values passed\n",
+        "",
+        &[],
+        &["--edition", "2009"],
+    );
+}
+
+#[test]
+fn array_conditional_nested_elements_use_uninitialized_defaults() {
+    sim_cli::run_case_with_args(
+        "rtl_completion",
+        "array_conditional_nested",
+        "array conditional nested defaults passed\n",
+        "",
+        &[],
+        &["--edition", "2009"],
+    );
+}
+
+#[test]
+fn array_conditional_wide_elements_preserve_state_domains() {
+    sim_cli::run_case_with_args(
+        "rtl_completion",
+        "array_conditional_wide",
+        "array conditional wide states passed\n",
+        "",
+        &[],
+        &["--edition", "2009"],
+    );
+}
+
+#[test]
+fn array_conditional_arms_are_captured_once_and_short_circuited() {
+    sim_cli::run_case_with_args(
+        "rtl_completion",
+        "array_conditional_effects",
+        "array conditional effects passed\n",
+        "",
+        &[],
+        &["--edition", "2009"],
+    );
+}

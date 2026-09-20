@@ -1,5 +1,7 @@
 //! Structural checks and an opt-in end-to-end C-toolchain smoke test.
 use super::*;
+
+mod array_conditionals;
 use crate::sim::execution::ExecutionModel;
 
 mod group1_repairs;

@@ -1,5 +1,7 @@
 use super::*;
 
+mod array_conditionals;
+
 fn valid_model() -> IrModel {
     let mut model = IrModel::new("top".to_string(), 1).unwrap();
     model.signals = vec![IrSignal {

@@ -1826,7 +1826,7 @@ pub(super) fn sampled_compatible(expression: &IrExpr) -> bool {
         | IrExprKind::Resize { a }
         | IrExprKind::Convert { a }
         | IrExprKind::ToTwoState { a } => sampled_compatible(a),
-        IrExprKind::Mux { sel, a, b } => {
+        IrExprKind::Mux { sel, a, b } | IrExprKind::ArrayMux { sel, a, b, .. } => {
             sampled_compatible(sel) && sampled_compatible(a) && sampled_compatible(b)
         }
         IrExprKind::Concat { parts } | IrExprKind::Replicate { parts, .. } => {

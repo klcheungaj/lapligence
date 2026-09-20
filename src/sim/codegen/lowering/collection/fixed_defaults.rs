@@ -20,10 +20,29 @@ impl Codegen<'_> {
         ) {
             return None;
         }
+        Self::fixed_descriptor_default_impl(descriptor, true)
+    }
+
+    /// A type's default-uninitialized value, not a declaration initializer.
+    pub(in super::super) fn fixed_descriptor_uninitialized(
+        descriptor: &TypeDescriptor,
+    ) -> Option<IrConst> {
+        Self::fixed_descriptor_default_impl(descriptor, false)
+    }
+
+    fn fixed_descriptor_default_impl(
+        descriptor: &TypeDescriptor,
+        member_initializers: bool,
+    ) -> Option<IrConst> {
         let width = fixed_width(descriptor)?;
         let mut bits = vec![Bit::X; width as usize];
-        fn member_default(member: &AggregateMember, offset: u32, bits: &mut [Bit]) -> Option<()> {
-            if let Some(initializer) = &member.initializer {
+        fn member_default(
+            member: &AggregateMember,
+            offset: u32,
+            bits: &mut [Bit],
+            member_initializers: bool,
+        ) -> Option<()> {
+            if let Some(initializer) = member.initializer.as_ref().filter(|_| member_initializers) {
                 let width = fixed_width(&member.descriptor)?;
                 let Val::Bits(value) =
                     val_from_value_data(initializer, i32::try_from(width).ok()?).ok()?
@@ -35,7 +54,13 @@ impl Codegen<'_> {
                 }
                 Some(())
             } else {
-                defaults(&member.descriptor, offset, member.two_state, bits)
+                defaults(
+                    &member.descriptor,
+                    offset,
+                    member.two_state,
+                    bits,
+                    member_initializers,
+                )
             }
         }
         fn defaults(
@@ -43,6 +68,7 @@ impl Codegen<'_> {
             offset: u32,
             clear: bool,
             bits: &mut [Bit],
+            member_initializers: bool,
         ) -> Option<()> {
             let width = fixed_width(descriptor)?;
             if clear || two_state(descriptor) {
@@ -54,7 +80,7 @@ impl Codegen<'_> {
                 TypeShape::Aggregate(layout) if layout.kind == AggregateKind::UnpackedStruct => {
                     let mut cursor = offset;
                     for member in layout.members.iter().rev() {
-                        member_default(member, cursor, bits)?;
+                        member_default(member, cursor, bits, member_initializers)?;
                         cursor = cursor.checked_add(fixed_width(&member.descriptor)?)?;
                     }
                 }
@@ -66,19 +92,25 @@ impl Codegen<'_> {
                     } else {
                         offset
                     };
-                    member_default(member, start, bits)?;
+                    member_default(member, start, bits, member_initializers)?;
                 }
                 TypeShape::FixedArray { element, .. } => {
                     let stride = fixed_width(element)?;
                     for index in 0..width / stride {
-                        defaults(element, offset + index * stride, false, bits)?;
+                        defaults(
+                            element,
+                            offset + index * stride,
+                            false,
+                            bits,
+                            member_initializers,
+                        )?;
                     }
                 }
                 _ => {}
             }
             Some(())
         }
-        defaults(descriptor, 0, false, &mut bits)?;
+        defaults(descriptor, 0, false, &mut bits, member_initializers)?;
         bits.reverse();
         val_to_const(&elab::Value::from_bits(bits, descriptor.info.signed)).ok()
     }

@@ -23,6 +23,12 @@ pub(super) fn fold_expr(e: &mut IrExpr) {
                 _ => None,
             }
         }
+        IrExprKind::ArrayMux {
+            sel,
+            a,
+            b,
+            element_default,
+        } => fold_array_mux(sel, a, b, element_default).map(Folded::Bits),
         IrExprKind::Concat { parts } => {
             let mut vals = Vec::with_capacity(parts.len());
             for p in parts {
@@ -127,6 +133,34 @@ pub(super) fn fold_expr(e: &mut IrExpr) {
             }
         }
     }
+}
+
+fn fold_array_mux(sel: &IrExpr, a: &IrExpr, b: &IrExpr, default: &IrConst) -> Option<Value> {
+    let selector = as_packed_const(sel)?;
+    if selector.bits.contains(&Bit::One) {
+        return as_packed_const(a);
+    }
+    if !selector.is_unknown() {
+        return as_packed_const(b);
+    }
+    let a = as_packed_const(a)?;
+    let b = as_packed_const(b)?;
+    let default = super::constants::const_to_value(default)?;
+    let stride = default.width();
+    if stride == 0 || a.width() != b.width() || !a.width().is_multiple_of(stride) {
+        return None;
+    }
+    let mut bits = Vec::with_capacity(a.width());
+    for (left, right) in a.bits.chunks_exact(stride).zip(b.bits.chunks_exact(stride)) {
+        // Logical equality must be known true, including for nested elements.
+        // Case-equal X/Z payloads are not a match under this rule.
+        let equal = left
+            .iter()
+            .zip(right)
+            .all(|(a, b)| a == b && matches!(a, Bit::Zero | Bit::One));
+        bits.extend_from_slice(if equal { left } else { &default.bits });
+    }
+    Some(Value::from_bits(bits, false))
 }
 
 pub(super) enum Folded {

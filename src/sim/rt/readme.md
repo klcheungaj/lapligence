@@ -30,6 +30,9 @@ each eval/condition context field owns a reference, including shared pointers.
   `value/` fragments separate allocation ownership from arithmetic. `sv4_t` is
   a unique owner, with exact-width payload storage independent of model-wide
   capacity. See [the ownership contract](value/ownership.md).
+  `value/array_conditional.c` merges already-captured fixed-array alternatives
+  using their immediate element width and default payload. Inputs are borrowed;
+  the independent result has one exact-width allocation, not one per element.
 - **Legacy random layer:** `llg_random.h/.c` implements Verilog-2001
   `$random` and the seven `$dist_*` functions using the specified Annex N
   algorithms. It is scheduler-independent and can be compiled as a standalone

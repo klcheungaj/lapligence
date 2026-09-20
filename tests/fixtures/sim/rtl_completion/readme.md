@@ -10,6 +10,13 @@ diagnostics. Positive tests never treat a lowering rejection as success.
   static storage, function returns, output/inout copyout, recursive references,
   common initial member sequences, declared bounds and mixed state domains
   (Clauses 7 and 13).
+- `array_conditional_*` fixtures check IEEE 1800-2009 11.4.11 on runtime
+  function paths: whole-element fallback vs packed-bit merging, nested rows,
+  mixed state domains without member initializers, signed 65-bit elements,
+  known/ambiguous selectors, and captured side effects. Function return and
+  argument paths isolate merge semantics from the separate module-procedural
+  whole-array conditional RHS admission restriction. Both optimizer modes use
+  the same explicit oracles; a case-equal X/Z element is not a known logical match.
 - Member defaults and declaration calls must finish before ordinary processes
   start (6.21 and 7.2.2). Pattern defaults fan out one captured source value.
 - Value/ref ports and nested packed members preserve storage identity and

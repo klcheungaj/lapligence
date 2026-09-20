@@ -12,7 +12,7 @@ fn const_limb_bit(limbs: &[u64], i: usize) -> bool {
 /// runtime operations never see it (it only steers assignment conversions),
 /// so folding must extend like the C `sv4_*` helpers do — zero or sign, never
 /// fill.
-fn const_to_value(c: &IrConst) -> Option<Value> {
+pub(super) fn const_to_value(c: &IrConst) -> Option<Value> {
     if c.real.is_some() {
         return None;
     }

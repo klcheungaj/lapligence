@@ -112,6 +112,24 @@ pub enum IrExprKind {
         a: Box<IrExpr>,
         b: Box<IrExpr>,
     },
+    /// Fixed unpacked-array conditional (IEEE 1800-2009 11.4.11). Operands
+    /// are declaration-order flattened payloads, but an ambiguous selector
+    /// compares each *immediate* unpacked element using logical equality.
+    /// Only a known-true comparison preserves an element; otherwise replace
+    /// the entire element with `element_default`. Nested arrays/structs are
+    /// single elements here, not recursively merged packed bits.
+    ///
+    /// All payloads have the same nonzero width and are unsigned. The default
+    /// is a concrete, packed, default-uninitialized element (no member
+    /// initializers or fill marker); its width must divide the payload width.
+    /// Known selectors evaluate only the selected arm; ambiguous selectors
+    /// evaluate both arms exactly once before merging their captured values.
+    ArrayMux {
+        sel: Box<IrExpr>,
+        a: Box<IrExpr>,
+        b: Box<IrExpr>,
+        element_default: Box<IrConst>,
+    },
     /// Concatenation (operand order already normalized at lowering).
     Concat {
         parts: Vec<IrExpr>,
