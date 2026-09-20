@@ -37,6 +37,26 @@ Their historical pass counts are not part of the current acceptance record.
 
 ### Coverage
 
+- `sim_port_net_types`: R05 directional dissimilar inout collapse in both public
+  optimizer modes. Fixtures cover both port orientations, hierarchical chains,
+  warning-only external choices, implicit biases and drive strengths, selected
+  and concatenated ports, true aliases, ascending ranges, fixed net-array cells,
+  force/release and winning/absent propagation delays. Separate negatives retain
+  mixed-alias, trireg and frontend uwire-inout rejection. Pure unit tests encode
+  all 81 table cells; frontend/database tests cover the 49 executable resolved
+  class pairs and composition after snapshot destruction. New Rust/HDL tests
+  are unexecuted until run in the pinned environment. The native
+  `port_net_collapse_probe.c` configures the existing runtime by hand; its two
+  modes do not establish frontend/lowering correctness or generated-model
+  coroutine/sanitizer acceptance.
+
+  ```sh
+  cargo test --locked --lib port_net_type
+  cargo test --locked --test slang_semantics port_net_type -- --test-threads=1
+  cargo test --locked --test sim_port_net_types -- --test-threads=1
+  cargo test --locked --test sim_net_resolution --test sim_net_decl --test sim_inout -- --test-threads=1
+  ```
+
 - `sim_loops`: mixed packed/unpacked `foreach` tests cover exact coordinate
   order, bit reads/writes, skipped slots, lexical scope, source-loop jumps,
   signed endpoint boundaries, subprogram values, and formal-port bounds with

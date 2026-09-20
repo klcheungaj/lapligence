@@ -79,6 +79,15 @@
   copy-in/copy-out temporaries.
   Packed bit writes within ref formals retain typed, range-translated indices
   and write through the original descriptor, including retained queue aliases.
+- **Port net types:** `lowering/collection/net_collapse.rs` owns the pure
+  internal/external selection table and weighted component metadata;
+  `port_net_types.rs` replays owned alias/port edges independently of storage
+  unions. It selects the runtime resolver and the winning declaration's delay,
+  with source warnings for table conflicts. `nets.rs` consumes the plan for
+  whole/selected groups, and `net_arrays.rs` checks the same plan when publishing
+  connected cells. Same-net-type alias checks precede the more permissive
+  port rules. Whole connections stay one metadata entry per declaration;
+  selected paths retain their existing per-electrical-bit representation.
 - **True-net aliases:** Legal packed `alias` declarations are flattened into
   bit-level canonical net groups; structural drivers, packed links, force/
   release, dependencies, and waveform registration use the shared resolved

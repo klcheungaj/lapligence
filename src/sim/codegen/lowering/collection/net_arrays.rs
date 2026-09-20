@@ -1,4 +1,5 @@
 //! Fixed net-array cells share canonical electrical bits with connected ports.
+use super::net_collapse::{NetCollapsePlan, NetPoint};
 use super::*;
 
 type ArrayNetSelection = ((usize, u64), Vec<u32>);
@@ -119,6 +120,7 @@ impl Codegen<'_> {
         &mut self,
         endpoints: HashMap<(usize, u64), Vec<Option<AliasBit>>>,
         nodes: &[NodeId],
+        type_plan: &NetCollapsePlan,
     ) -> Result<(), String> {
         let mut endpoints = endpoints.into_iter().collect::<Vec<_>>();
         endpoints.sort_by_key(|(key, _)| *key);
@@ -147,10 +149,17 @@ impl Codegen<'_> {
                         .iter()
                         .find(|binding| binding.signal_bit == peer.bit)
                         .ok_or("net-array peer has no electrical bit")?;
-                    if self.model.net_groups[binding.group].kind != kind {
-                        return Err(
-                            "net-array port connects incompatible net resolution kinds".into()
-                        );
+                    let resolved_type = type_plan
+                        .resolved(NetPoint::ArrayBit {
+                            owner,
+                            element,
+                            bit: physical,
+                        })
+                        .ok_or("net-array port has no type-collapse plan")?;
+                    if Some(self.model.net_groups[binding.group].kind)
+                        != Self::ir_net_kind(resolved_type.kind)
+                    {
+                        return Err("net-array publication and type-collapse plan disagree".into());
                     }
                     bindings.push(IrNetAliasBinding {
                         signal_bit: physical,

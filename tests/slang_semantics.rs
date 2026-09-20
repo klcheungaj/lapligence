@@ -1,3 +1,6 @@
+#[path = "slang_semantics/port_net_types.rs"]
+mod port_net_types;
+
 #[path = "slang_semantics/array_conditional_assignments.rs"]
 mod array_conditional_assignments;
 

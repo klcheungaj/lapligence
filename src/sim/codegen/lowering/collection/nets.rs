@@ -1,5 +1,6 @@
 //! Nets.
 
+use super::net_collapse::NetPoint;
 use super::*;
 
 impl<'a> Codegen<'a> {
@@ -16,7 +17,7 @@ impl<'a> Codegen<'a> {
     /// Groups with anything the runtime cannot resolve (non-net members,
     /// mixed widths, unsupported net types, dynamic/NBA/task-actual writes)
     /// reject code generation rather than disconnecting the net group.
-    fn net_propagation_delay_for_members(
+    pub(super) fn net_propagation_delay_for_members(
         &mut self,
         members: &[NodeId],
         shown: &str,
@@ -56,7 +57,7 @@ impl<'a> Codegen<'a> {
         Ok(selected)
     }
 
-    fn alias_error(&self, alias: NodeId, message: &str) -> String {
+    pub(super) fn alias_error(&self, alias: NodeId, message: &str) -> String {
         format!(
             "net alias `{}` {message} at {}:{}:{}",
             self.display_name(alias),
@@ -111,7 +112,7 @@ impl<'a> Codegen<'a> {
     /// The order is the same order used by Slang when pairing alias ranges,
     /// so concatenated and selected expressions can share the same canonical
     /// bit union-find as whole-net aliases.
-    fn alias_expression_bits(
+    pub(super) fn alias_expression_bits(
         &self,
         alias: NodeId,
         expression: NodeId,
@@ -170,9 +171,8 @@ impl<'a> Codegen<'a> {
                 let left = self.eval_bound_i128(*left)?;
                 let right = self.eval_bound_i128(*right)?;
                 let width = left
-                    .checked_sub(right)
-                    .or_else(|| right.checked_sub(left))
-                    .and_then(|width| width.checked_add(1))
+                    .abs_diff(right)
+                    .checked_add(1)
                     .ok_or_else(|| self.alias_error(alias, "has an overflowing part-select"))?;
                 let width = u32::try_from(width).map_err(|_| {
                     self.alias_error(alias, "has a part-select wider than the runtime")
@@ -835,6 +835,8 @@ impl<'a> Codegen<'a> {
             }
         }
 
+        let type_plan = self.build_port_net_type_plan(&nodes, &alias_nets)?;
+
         let mut alias_buckets: HashMap<AliasBit, Vec<AliasBit>> = HashMap::new();
         for bit in alias_bits {
             let root = alias_find(&mut alias_parent, bit);
@@ -867,30 +869,17 @@ impl<'a> Codegen<'a> {
                 NodeKind::Net { ty, .. } => ty.clone(),
                 _ => return Err(self.alias_error(first_net, "does not reference a net")),
             };
-            let kind = match self.kind(first_net) {
-                NodeKind::Net { net_type, .. } => Self::ir_net_kind(*net_type),
-                _ => None,
-            }
-            .ok_or_else(|| {
-                format!(
-                    "{shown}: member `{}` has an unsupported net type",
-                    self.display_name(first_net)
-                )
-            })?;
-            if members.iter().skip(1).any(|member| {
-                !matches!(
-                    self.kind(*member),
-                    NodeKind::Net { net_type, .. }
-                        if Self::ir_net_kind(*net_type) == Some(kind)
-                )
+            let point = NetPoint::Bit(bits[0]);
+            let resolved_type = type_plan
+                .resolved(point)
+                .ok_or("selected net group has no type-collapse plan")?;
+            if bits.iter().any(|bit| {
+                type_plan.component(NetPoint::Bit(*bit)) != type_plan.component(point)
             }) {
-                return Err(format!(
-                    "{shown}: members have incompatible net types at {}:{}:{}",
-                    self.node(first_net).file.as_deref().unwrap_or("<unknown>"),
-                    self.node(first_net).line,
-                    self.node(first_net).col,
-                ));
+                return Err("selected net storage and type-collapse components disagree".into());
             }
+            let kind = Self::ir_net_kind(resolved_type.kind)
+                .ok_or("selected net group has an unsupported effective net type")?;
             if members.len() > LLG_MAX_NET_DRIVERS {
                 return Err(format!(
                     "{shown}: {} members exceed the runtime driver-count range at {}:{}:{}",
@@ -902,7 +891,8 @@ impl<'a> Codegen<'a> {
             }
             let name = format!("g_net_{}", self.model.net_groups.len());
             let gidx = self.model.net_groups.len();
-            let propagation_delay = self.net_propagation_delay_for_members(&members, &shown)?;
+            let propagation_delay =
+                self.net_propagation_delay_for_members(&resolved_type.delay_members, &shown)?;
             self.model.net_groups.push(crate::sim::ir::IrNetGroup {
                 c_name: name.clone(),
                 // One union-find root is one electrical bit, regardless of
@@ -1019,36 +1009,19 @@ impl<'a> Codegen<'a> {
                     self.node(*bad).col,
                 ));
             }
-            // 3. Every member contributes to one resolution family. Net and
-            // tri spellings share wire resolution, while wired and biased
-            // spellings retain their own canonical resolver.
-            let kind = match self.kind(members[0]) {
-                NodeKind::Net { net_type, .. } => Self::ir_net_kind(*net_type),
-                _ => None,
-            };
-            let Some(kind) = kind else {
-                return Err(format!(
-                    "{joined}: member `{}` has unsupported net type for an executable inout \
-                     connection",
-                    self.display_name(members[0])
-                ));
-            };
-            if let Some(bad) = members
-                .iter()
-                .skip(1)
-                .find(|member| match self.kind(**member) {
-                    NodeKind::Net { net_type, .. } => Self::ir_net_kind(*net_type) != Some(kind),
-                    _ => true,
-                })
-            {
-                return Err(format!(
-                    "{joined}: member `{}` has an incompatible net type at {}:{}:{}",
-                    self.display_name(*bad),
-                    self.node(*bad).file.as_deref().unwrap_or("<unknown>"),
-                    self.node(*bad).line,
-                    self.node(*bad).col,
-                ));
+            // 3. Port orientation, not member order, selects the resolver.
+            // Alias compatibility was checked before introducing any port edge.
+            let point = NetPoint::Whole(members[0]);
+            let resolved_type = type_plan
+                .resolved(point)
+                .ok_or("inout group has no type-collapse plan")?;
+            if members.iter().any(|member| {
+                type_plan.component(NetPoint::Whole(*member)) != type_plan.component(point)
+            }) {
+                return Err("inout storage and type-collapse components disagree".into());
             }
+            let kind = Self::ir_net_kind(resolved_type.kind)
+                .ok_or("inout group has an unsupported effective net type")?;
             // 4. Driver counts must fit the emitted runtime integer field.
             if members.len() > LLG_MAX_NET_DRIVERS {
                 return Err(format!(
@@ -1070,7 +1043,8 @@ impl<'a> Codegen<'a> {
                     self.node(members[0]).col,
                 ));
             }
-            let propagation_delay = self.net_propagation_delay_for_members(members, &joined)?;
+            let propagation_delay =
+                self.net_propagation_delay_for_members(&resolved_type.delay_members, &joined)?;
 
             // Group is valid: assign one driver slot per member (NodeId
             // order) and redirect every member's storage to the resolved cell.
@@ -1155,7 +1129,7 @@ impl<'a> Codegen<'a> {
         }
         self.scalar_inits = keep;
         self.build_wired_net_groups(&nodes)?;
-        self.publish_array_net_cells(array_endpoints, &nodes)?;
+        self.publish_array_net_cells(array_endpoints, &nodes, &type_plan)?;
         Ok(())
     }
 
