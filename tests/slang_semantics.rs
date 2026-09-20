@@ -1,3 +1,6 @@
+#[path = "slang_semantics/foreach.rs"]
+mod foreach;
+
 use llg::core::db::{EventTriggerTiming, NodeKind, StmtKind};
 use llg::ffi::slang::{
     self, CompileOptions, CompileRequest, ConstantValue, SemanticEdge, SemanticEdgeRole,

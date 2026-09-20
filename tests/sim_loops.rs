@@ -1,9 +1,9 @@
 //! End-to-end simulator tests for inline SystemVerilog `for` declarations and
-//! `foreach` over fixed unpacked arrays and resizable containers.
+//! `foreach` over mixed packed/unpacked arrays and resizable containers.
 //!
 //! Coverage includes lexical shadowing, nested loops, ascending and descending
 //! array ranges, multidimensional traversal, break/continue behavior, and
-//! optimizer parity. the Slang compilation uses the shared serialized temporary
+//! optimizer parity. The Slang compilation uses the shared serialized temporary
 //! CWD harness because the frontend writes process-global artifacts.
 
 #[path = "support/sim_cli.rs"]
@@ -169,5 +169,114 @@ fn foreach_omissions_containers_and_real_locals_follow_source_order() {
         "first=345 count=3 last=21 omitted=17 dynamic=15 queue=24 assoc=159 string_assoc=123 remaining=0 real=3.000000 shadow=221.000000 control=2.000000 fn=3 capture=3.000000\n",
         "llg: $finish at time 0 at tb:124:9\n",
         &[],
+    );
+}
+
+#[test]
+fn foreach_mixed_order_reads_and_writes_every_logical_dimension() {
+    sim_cli::run_case_with_args(
+        "loops",
+        "foreach_mixed_order",
+        concat!(
+            "0:3 0:2 0:1 0:0 1:3 1:2 1:1 1:0 ones=5\n",
+            "-1:3:2:0 -1:3:2:1 -1:3:1:0 -1:3:1:1 ",
+            "-1:2:2:0 -1:2:2:1 -1:2:1:0 -1:2:1:1 ",
+            "0:3:2:0 0:3:2:1 0:3:1:0 0:3:1:1 ",
+            "0:2:2:0 0:2:2:1 0:2:1:0 0:2:1:1 visits=16\n",
+            "readback=8 words=0101,0101,0101,0101\n",
+        ),
+        "",
+        &[],
+        &["--edition", "2009"],
+    );
+}
+
+#[test]
+fn foreach_mixed_omissions_keep_original_dimension_positions() {
+    sim_cli::run_case_with_args(
+        "loops",
+        "foreach_mixed_omissions",
+        "middle=40 leading=8 trailing=5 prefix=5 omitted=17 errors=0\n",
+        "",
+        &[],
+        &["--edition", "2009"],
+    );
+}
+
+#[test]
+fn foreach_mixed_control_keeps_source_loop_jumps_and_signed_endpoints() {
+    sim_cli::run_case_with_args(
+        "loops",
+        "foreach_mixed_control",
+        "1:2 1:0 1:-1 0:2 visits=4 outer=55 nested=68 endpoints=7\n",
+        "",
+        &[],
+        &["--edition", "2009"],
+    );
+}
+
+#[test]
+fn foreach_mixed_calls_use_formal_and_automatic_local_dimensions() {
+    sim_cli::run_case_with_args(
+        "loops",
+        "foreach_mixed_calls",
+        "source=1010,0100 result=0101,1011 counts=3,5 local=8\n",
+        "",
+        &[],
+        &["--edition", "2009"],
+    );
+}
+
+#[test]
+fn foreach_mixed_types_keep_integer_record_enum_and_singleton_dimensions() {
+    sim_cli::run_case_with_args(
+        "loops",
+        "foreach_mixed_types",
+        "bytes=32 integers=64 records=8 enums=12 enum_indices=30 scalars=2 singletons=2 packed=4 data=aaaa,aaaa\n",
+        "",
+        &[],
+        &["--edition", "2009"],
+    );
+}
+
+#[test]
+fn foreach_mixed_ports_preserve_formal_bounds_and_combinational_reads() {
+    sim_cli::run_case_with_args(
+        "loops",
+        "foreach_mixed_ports",
+        "sum=66\nsum=45\nsum=69\n",
+        "",
+        &[],
+        &["--edition", "2009"],
+    );
+}
+
+#[test]
+fn foreach_mixed_too_many_iterators_remain_illegal() {
+    sim_cli::reject_case_with_args(
+        "loops",
+        "foreach_mixed_too_many",
+        "too many loop variables",
+        &["--edition", "2009"],
+    );
+}
+
+#[test]
+fn foreach_mixed_scalar_elements_do_not_create_an_extra_dimension() {
+    sim_cli::reject_case_with_args(
+        "loops",
+        "foreach_mixed_scalar_extra",
+        "too many loop variables",
+        &["--edition", "2009"],
+    );
+}
+
+#[test]
+fn foreach_mixed_iterators_remain_readonly() {
+    sim_cli::reject_case_with_args(
+        "loops",
+        "foreach_mixed_readonly",
+        "cannot assign to read-only variable",
+        &["--edition", "2009"],
     );
 }

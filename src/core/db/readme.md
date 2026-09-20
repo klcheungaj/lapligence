@@ -4,6 +4,8 @@
   instance hierarchy, and read-only consumer API.
 - `slang_types.rs`: validated type, array, packed-range, and aggregate
   projection from typed ABI tables, including explicit constant member defaults.
+  `slang_types/foreach.rs` projects per-iterator fixed/runtime bounds directly
+  from the iterated expression's type chain.
 - `domain.rs`: frontend-independent semantic enums.
 - `validate.rs`: arena, root, side-table, embedded-reference, and cycle checks.
 
@@ -22,6 +24,9 @@ Packed ranges retain declaration identity, so same-named locals in unnamed
 blocks and differently parameterized instances keep their own bounds.
 Enumerated types retain a canonical `TypeId`-keyed declaration-order table of
 resolved values and owned names for runtime enum methods.
+Foreach statements retain one bound entry for every source iterator slot,
+including omitted slots. Packed element dimensions remain independent of
+flattened storage; enum ranges belong to the integral enum value, not its base.
 Subroutine bodies are explicit arena references; consumers never infer a body
 from the order of declarations or auxiliary statement children.
 Instance-body and instance-array containers are expanded recursively in module

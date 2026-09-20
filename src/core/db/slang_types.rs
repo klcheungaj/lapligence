@@ -10,6 +10,8 @@ use crate::ffi::slang::{
 };
 use std::collections::{HashMap, HashSet};
 
+mod foreach;
+
 const MAX_RECURSIVE_TYPE_DEPTH: usize = 64;
 
 /// Array metadata that does not depend on an arena node or initializer edge.

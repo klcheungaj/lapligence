@@ -152,6 +152,11 @@ pub enum StmtKind {
     Foreach {
         array: Option<NodeId>,
         vars: Vec<Option<NodeId>>,
+        /// Bounds for each iterator slot in declaration order. `None` means a
+        /// runtime-sized dimension; skipped slots still retain their bounds.
+        /// This list has exactly the same length as `vars` and includes packed
+        /// element dimensions, independently of the target's storage layout.
+        dimensions: Vec<Option<(i32, i32)>>,
         body: NodeId,
     },
     Unsupported {

@@ -330,6 +330,14 @@ impl Validator<'_> {
             self.node(id, &format!("{path}.refs[{index}]"))?;
         }
         match kind {
+            NodeKind::Stmt(StmtKind::Foreach {
+                vars, dimensions, ..
+            }) if vars.len() != dimensions.len() => {
+                return self.fail(
+                    format!("{path}.dimensions"),
+                    "foreach bounds must match the iterator slot count",
+                );
+            }
             NodeKind::Expr(ExprKind::Streaming { streams, .. }) if streams.is_empty() => {
                 return self.fail(
                     format!("{path}.streams"),
@@ -612,7 +620,9 @@ fn statement_refs(statement: &StmtKind, refs: &mut Vec<NodeId>) {
         }
         StmtKind::Release { lhs } | StmtKind::Deassign { lhs } => refs.push(*lhs),
         StmtKind::Fork { branches, .. } => refs.extend(branches.iter().copied()),
-        StmtKind::Foreach { array, vars, body } => {
+        StmtKind::Foreach {
+            array, vars, body, ..
+        } => {
             refs.extend(*array);
             refs.extend(vars.iter().flatten().copied());
             refs.push(*body);
@@ -704,6 +714,45 @@ mod tests {
 
     fn empty_db() -> Db {
         Db::empty_for_validation_test()
+    }
+
+    #[test]
+    fn foreach_mixed_dimensions_must_match_every_iterator_slot() {
+        for count in [0, 1, 2, 3] {
+            let foreach = node(NodeKind::Stmt(StmtKind::Foreach {
+                array: Some(NodeId(0)),
+                vars: vec![None, Some(NodeId(1))],
+                dimensions: vec![Some((3, 0)); count],
+                body: NodeId(2),
+            }));
+            let result = from_nodes(vec![
+                node(NodeKind::Other),
+                node(NodeKind::Var {
+                    ty: Default::default(),
+                }),
+                node(NodeKind::Stmt(StmtKind::Empty)),
+                foreach,
+            ]);
+            if count == 2 {
+                result.expect("omitted iterator retains a dimension slot");
+            } else {
+                let error = result.expect_err("bounds and iterators cannot be truncated by zip");
+                assert!(error.to_string().contains("nodes[3].kind.dimensions"));
+            }
+        }
+    }
+
+    #[test]
+    fn foreach_mixed_dimensions_do_not_hide_invalid_iterator_references() {
+        let foreach = node(NodeKind::Stmt(StmtKind::Foreach {
+            array: None,
+            vars: vec![None, Some(NodeId(9))],
+            dimensions: vec![Some((1, 0)), Some((3, 0))],
+            body: NodeId(0),
+        }));
+        let error = from_nodes(vec![node(NodeKind::Stmt(StmtKind::Empty)), foreach])
+            .expect_err("foreach iterator references remain validated");
+        assert!(error.to_string().contains("out of bounds"));
     }
 
     #[test]

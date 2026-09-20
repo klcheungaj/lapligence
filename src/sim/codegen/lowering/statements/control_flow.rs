@@ -586,10 +586,13 @@ impl EmitCtx<'_, '_> {
     }
 
     pub(super) fn lower_foreach(&mut self, h: NodeId) -> Result<Vec<IrStmt>, String> {
-        let (array, vars, body) = match self.cg.kind(h) {
-            NodeKind::Stmt(StmtKind::Foreach { array, vars, body }) => {
-                (*array, vars.clone(), *body)
-            }
+        let (array, vars, dimensions, body) = match self.cg.kind(h) {
+            NodeKind::Stmt(StmtKind::Foreach {
+                array,
+                vars,
+                dimensions,
+                body,
+            }) => (*array, vars.clone(), dimensions.clone(), *body),
             _ => unreachable!("non-foreach passed to lower_foreach"),
         };
         let array = array.ok_or_else(|| {
@@ -631,42 +634,11 @@ impl EmitCtx<'_, '_> {
             shortreal: false,
         };
 
-        let dimensions = self
-            .cg
-            .array_globals
-            .get(&array)
-            .map(|array| array.dims.clone())
-            .or_else(|| {
-                self.cg
-                    .query_descriptor(array)
-                    .and_then(|descriptor| match &descriptor.shape {
-                        TypeShape::FixedArray { dimensions, .. } => Some(dimensions.clone()),
-                        TypeShape::PackedAtom { ranges } if !ranges.is_empty() => ranges
-                            .iter()
-                            .map(|range| {
-                                Some((
-                                    i32::try_from(range.left).ok()?,
-                                    i32::try_from(range.right).ok()?,
-                                ))
-                            })
-                            .collect::<Option<Vec<_>>>(),
-                        _ => None,
-                    })
-            });
-        if let Some(dimensions) = dimensions {
-            // A foreach list may name only a prefix of an unpacked array's
-            // dimensions.  Omitted entries in that prefix skip just that
-            // dimension; dimensions not present in the list are left for the
-            // body to index explicitly, as required by §12.7.3.
-            if vars.len() > dimensions.len() {
-                return Err(format!(
-                    "`foreach` over {}-dimensional array `{}` in `{}` has too many dimensions",
-                    dimensions.len(),
-                    self.cg.node(array).name,
-                    self.path
-                ));
-            }
-
+        // The owned statement retains the complete source-slot dimensions,
+        // including packed element dimensions and omitted slots. Storage arrays
+        // only retain unpacked coordinates and cannot supply this information.
+        let fixed_dimensions = dimensions.iter().copied().collect::<Option<Vec<_>>>();
+        if let Some(dimensions) = fixed_dimensions {
             // An omitted iterator does not synthesize a loop. If every source
             // slot is omitted, there are no traversed dimensions and the body
             // must not run.
@@ -696,9 +668,7 @@ impl EmitCtx<'_, '_> {
 
             let (source_body, brk) = self.lower_loop_body(body)?;
             let mut nested = source_body;
-            for (local, (left, right)) in
-                locals.iter().zip(dimensions.iter().take(vars.len())).rev()
-            {
+            for (local, (left, right)) in locals.iter().zip(dimensions.iter()).rev() {
                 let Some(local) = local else {
                     // An omitted dimension is not traversed and does not
                     // consume or synthesize an iterator local.

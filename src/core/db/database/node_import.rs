@@ -193,7 +193,7 @@ pub(super) fn node_kind_from_slang(
             const_ref: node.is_const_ref,
             ref_static: node.is_ref_static,
         },
-        SemanticKind::Statement => statement_from_slang(snapshot, node, edges, ids)?,
+        SemanticKind::Statement => statement_from_slang(snapshot, type_projector, node, edges, ids)?,
         SemanticKind::Expression => {
             expression_from_slang(snapshot, type_projector, node, edges, ids, ty)?
         }

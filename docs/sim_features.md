@@ -130,6 +130,13 @@ Implemented scope:
   evaluated alternative once; constant folding follows the same merge rule.
   Regression sources are in `sim_rtl_completion` (`array_conditional_*`), with
   separate native ownership tests; their presence is not an executed HDL result.
+- Fixed `foreach` loops: owned per-slot bounds retain mixed unpacked/packed
+  dimensions, signed ascending/descending ranges, implicit integral element
+  vectors, singleton dimensions, and source omissions. Bounds come from the
+  iterated expression's type at import, not flattened storage or enum base
+  ranges. Source `break`/`continue` scope and endpoint-before-increment checks
+  are retained. `sim_loops` adds `foreach_mixed_*` CLI regression sources in
+  both optimizer modes; their presence is not an executed HDL result.
 - Packed structs and untagged packed unions: cross-view aliasing, per-member
   two/four-state conversion, unequal-width members still rejected.
 - Assignment patterns: nested keyed/default patterns (including a default that

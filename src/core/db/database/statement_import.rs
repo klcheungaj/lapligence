@@ -4,6 +4,7 @@ use super::*;
 
 pub(super) fn statement_from_slang(
     snapshot: &SlangSnapshot,
+    type_projector: &SlangTypeProjector<'_>,
     node: &SemanticNode,
     edges: &[crate::ffi::slang::SemanticEdge],
     ids: &HashMap<u64, NodeId>,
@@ -252,7 +253,20 @@ pub(super) fn statement_from_slang(
             } else {
                 encoded_count
             };
-            let mut vars = vec![None; count];
+            let base = required(SemanticEdgeRole::Base, "foreach array expression")?;
+            let type_id = snapshot
+                .semantic_nodes
+                .get(base.index())
+                .and_then(|base| base.type_id)
+                .ok_or_else(|| {
+                    DbError::InvalidSnapshot("foreach array expression has no type".into())
+                })?;
+            // Resolve the type before allocating by the externally supplied
+            // slot count. A short or cyclic type chain fails without a large
+            // count-sized allocation. Do not use the canonical storage target:
+            // formal/member views must retain the iterated expression's bounds.
+            let dimensions = type_projector.foreach_dimensions(type_id, count)?;
+            let mut vars = vec![None; dimensions.len()];
             for edge in edges
                 .iter()
                 .filter(|edge| edge.role == SemanticEdgeRole::Declaration)
@@ -274,6 +288,7 @@ pub(super) fn statement_from_slang(
             StmtKind::Foreach {
                 array: resolved_edge_target(snapshot, ids, edges, SemanticEdgeRole::Base)?,
                 vars,
+                dimensions,
                 body: required(SemanticEdgeRole::Body, "foreach body")?,
             }
         }

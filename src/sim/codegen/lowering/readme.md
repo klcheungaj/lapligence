@@ -7,7 +7,9 @@
   ports, subprogram signatures/bodies, calls, processes, dependencies and events.
 - **`statements.rs` / `statements/`:** `EmitCtx` coordinates procedural dispatch,
   declarations, assignments, control flow, events, forks, drivers, assertions,
-  clocking, system tasks and calls.
+  clocking, system tasks and calls. Fixed `foreach` nesting uses the owned
+  statement's per-slot bounds, including packed element dimensions, rather than
+  reconstructing dimensions from storage arrays.
 - **`expressions.rs` / `expressions/`:** lower typed expressions, operations,
   conversions, aggregates, streaming, membership and system-function queries.
   `expressions/aggregates/copies.rs` separates selected-value type compatibility

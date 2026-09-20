@@ -37,6 +37,14 @@ Their historical pass counts are not part of the current acceptance record.
 
 ### Coverage
 
+- `sim_loops`: mixed packed/unpacked `foreach` tests cover exact coordinate
+  order, bit reads/writes, skipped slots, lexical scope, source-loop jumps,
+  signed endpoint boundaries, subprogram values, and formal-port bounds with
+  combinational sensitivity. Fixed scalar, excess-iterator, and read-only
+  negative cases remain separate. See [loop fixtures](fixtures/sim/loops/readme.md).
+  `slang_semantics` tests owned slot import and missing/malformed metadata;
+  projector and database unit tests cover dimension preservation and validation.
+
 - `sim_group1_formal_repairs`: R09/R14 packed activation isolation, recursion,
   callbacks, member state conversion, immediate references, captured copy-out
   addresses and preserved const/NBA negatives. `sim_edition` exercises the shared
