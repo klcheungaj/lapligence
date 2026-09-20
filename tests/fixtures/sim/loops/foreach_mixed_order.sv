@@ -28,5 +28,6 @@ module tb;
         foreach (matrix[i,j,k,l]) readback += matrix[i][j][k][l];
         $display("readback=%0d words=%b,%b,%b,%b", readback,
                  matrix[-1][3], matrix[-1][2], matrix[0][3], matrix[0][2]);
+        $finish(0);
     end
 endmodule

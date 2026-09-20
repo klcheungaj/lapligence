@@ -119,3 +119,39 @@ fn array_conditional_assignment_rejects_incompatible_elements() {
         &["--edition", "2009"],
     );
 }
+
+#[test]
+fn array_conditional_assignment_nested_defaults_preserve_bound_element_order() {
+    sim_cli::run_case_with_args(
+        "array_conditional_assignments",
+        "nested_defaults",
+        "nested_defaults passed\n",
+        "",
+        &[],
+        &["--edition", "2009"],
+    );
+}
+
+#[test]
+fn array_conditional_assignment_typed_defaults_preserve_byte_values() {
+    sim_cli::run_case_with_args(
+        "array_conditional_assignments",
+        "typed_defaults",
+        "typed_defaults passed\n",
+        "",
+        &[],
+        &["--edition", "2009"],
+    );
+}
+
+#[test]
+fn array_conditional_assignment_deep_defaults_preserve_shared_wide_values() {
+    sim_cli::run_case_with_args(
+        "array_conditional_assignments",
+        "deep_defaults",
+        "deep_defaults passed\n",
+        "",
+        &[],
+        &["--edition", "2009"],
+    );
+}

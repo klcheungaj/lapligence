@@ -12,5 +12,6 @@ module tb;
         #1 $display("total=%0d", result);
         source[0] = 2;
         #1 $display("total=%0d", result);
+        $finish(0);
     end
 endmodule

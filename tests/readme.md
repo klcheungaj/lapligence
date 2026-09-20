@@ -456,3 +456,34 @@ the Rust tests, native C++ bridge and public-CLI HDL path were not compiled/run.
 The handwritten `sequential_predicate_*` native probes, runtime component suites
 and fixture-integrity checks are separate evidence, not end-to-end acceptance.
 Pattern matching/bindings remain outside the implemented Boolean-clause subset.
+
+## Corrective regressions after R01-R06
+
+Positive CLI fixtures that expect empty runtime stderr terminate explicitly with
+`$finish(0)`. Do not suppress simulator end-of-process, deadlock, or verbose
+`$finish` reports in the shared harness to make an unfinished fixture pass.
+
+The focused frontend tests additionally cover iterator metadata during semantic
+node-vector growth, bound nested-default array values (including repeated
+operand identities and their distinct slot indices), and concatenated inout
+actuals that have an expression but no single high-side declaration. CLI cases
+`array_conditional_assignments/nested_defaults` and
+`port_net_types/concat_actual` check declaration order and connectivity in both
+optimizer modes. The original alias expected values and NBA fixture remain the
+regression oracles. Generated-name and delay-group assertions inspect the
+relevant emitted operations/resolvers, not lowerer-private temporary names or
+unrelated input-wire groups.
+
+These corrective Rust/frontend/HDL tests require the normal Rust and native shim
+build. Native value-runtime component results alone do not validate the capture
+or lowering changes.
+
+The nested-default regressions distinguish untyped bit-filling patterns from
+explicitly typed row patterns. `nested_defaults.sv` supplies a one-bit default
+and checks `ff`/`00` bytes; `typed_defaults.sv` retains the `dd`/`ee` byte checks
+using a row type as the default value's context, plus direct packed patterns,
+packed element sizing and signed results. `deep_defaults.sv` checks shared
+operands across multiple generated rows and 65-bit values. The semantic-slot
+test checks the raw snapshot before import for extents 1, 2, 3 and 17, then
+checks generation after snapshot destruction in both optimizer modes. These
+tests do not relax positional-count validation or the CLI diagnostic checks.

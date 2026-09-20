@@ -36,6 +36,6 @@ module tb;
         #1 d = 1'bz;
         #1 $display("t14=%b%b/%b%b", external_delay, internal_delay, external_zero, internal_zero);
         #2 $display("t16=%b%b/%b%b", external_delay, internal_delay, external_zero, internal_zero);
-        $finish;
+        $finish(0);
     end
 endmodule

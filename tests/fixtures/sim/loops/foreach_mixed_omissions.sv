@@ -37,5 +37,6 @@ module tb;
         foreach (b[]) omitted++;
         $display("middle=%0d leading=%0d trailing=%0d prefix=%0d omitted=%0d errors=%0d",
                  middle, leading, trailing, prefix, omitted, order_errors);
+        $finish(0);
     end
 endmodule

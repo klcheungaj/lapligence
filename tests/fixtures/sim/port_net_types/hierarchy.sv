@@ -24,6 +24,6 @@ module tb;
         #1 $display("release=%b%b%b", bus, outer.p, outer.inner.p);
         a = 1'bz; b = 1'bz; c = 1'bz;
         #1 $display("float=%b%b%b", bus, outer.p, outer.inner.p);
-        $finish;
+        $finish(0);
     end
 endmodule

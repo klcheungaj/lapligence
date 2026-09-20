@@ -10,5 +10,6 @@ module tb;
         associative_values[-1] = 7; associative_values[5] = 6;
         $display("dynamic=%0d queue=%0d assoc=%0d mapped=%0d", dynamic_values.sum(),
                  queue_values.product(), associative_values.and(), dynamic_values.sum() with (item + 1));
+        $finish(0);
     end
 endmodule

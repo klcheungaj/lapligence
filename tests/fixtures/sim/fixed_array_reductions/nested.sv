@@ -11,5 +11,6 @@ module tb;
         $display("nested=%0d named=%0d indexed=%0d", total, named, indexed);
         $display("bounds=%0d,%0d", matrix.sum(row) with (row.index(1)),
                  matrix[1].sum(value) with (value.index()));
+        $finish(0);
     end
 endmodule

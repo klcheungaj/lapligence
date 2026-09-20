@@ -45,5 +45,6 @@ module tb;
         $display("bytes=%0d integers=%0d records=%0d enums=%0d enum_indices=%0d scalars=%0d singletons=%0d packed=%0d data=%h,%h",
                  byte_visits, integer_visits, record_visits, enum_visits, enum_indices,
                  scalar_visits, singleton_visits, packed_visits, bytes[1], bytes[0]);
+        $finish(0);
     end
 endmodule

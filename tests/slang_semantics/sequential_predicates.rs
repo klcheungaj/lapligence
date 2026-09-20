@@ -89,7 +89,7 @@ fn sequential_predicate_patterns_are_retained_and_rejected_before_optimization()
                 Ok(_) => panic!("{name}: pattern was silently erased"),
                 Err(error) => error,
             };
-            assert!(error.contains("pattern"), "{name}: {error}");
+            assert!(error.to_string().contains("pattern"), "{name}: {error}");
         }
     }
 }

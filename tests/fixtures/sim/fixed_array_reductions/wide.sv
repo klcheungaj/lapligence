@@ -18,5 +18,6 @@ module tb;
         if ((a.sum() with (129'(item))) !== 129'h20000000000000001)
             $fatal(1, "widen before accumulation");
         $display("wide=ok");
+        $finish(0);
     end
 endmodule

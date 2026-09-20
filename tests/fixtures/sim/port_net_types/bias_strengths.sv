@@ -32,6 +32,6 @@ module tb;
         #1 $display("unknown=%b%b%b%b%b", weak_down, weak_up, strong_up, ground, power);
         d = 1'bz;
         #1 $display("float=%b%b%b%b%b", weak_down, weak_up, strong_up, ground, power);
-        $finish;
+        $finish(0);
     end
 endmodule

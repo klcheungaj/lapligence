@@ -13,5 +13,6 @@ module tb;
         sliced = matrix[1][3:2].sum();
         slice_indices = matrix[1][3:2].sum(v) with (v.index());
         $display("selected=%0d calls=%0d slice=%0d indices=%0d", selected, calls, sliced, slice_indices);
+        $finish(0);
     end
 endmodule

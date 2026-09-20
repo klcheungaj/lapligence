@@ -23,5 +23,6 @@ module tb;
         $display("mapped=%0d,%0d,%0d,%0d,%0d", data.sum() with (item + 1),
                  data.product() with (item + 1), data.and() with (item + 1),
                  data.or() with (item + 1), data.xor() with (item + 1));
+        $finish(0);
     end
 endmodule

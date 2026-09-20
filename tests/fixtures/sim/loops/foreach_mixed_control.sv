@@ -39,5 +39,6 @@ module tb;
         end
         foreach (singleton[a,b]) endpoints++;
         $display("visits=%0d outer=%0d nested=%0d endpoints=%0d", visits, i, nested, endpoints);
+        $finish(0);
     end
 endmodule

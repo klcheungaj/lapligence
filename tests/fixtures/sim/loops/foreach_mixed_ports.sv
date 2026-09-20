@@ -19,5 +19,6 @@ module tb;
         #1 $display("sum=%0d", sum);
         source[1] = 4'b1111;
         #1 $display("sum=%0d", sum);
+        $finish(0);
     end
 endmodule

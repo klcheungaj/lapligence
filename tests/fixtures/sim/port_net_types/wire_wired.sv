@@ -31,6 +31,6 @@ module tb;
         #1 $display("one=%b%b/%b%b", external_and, external_or, internal_and, internal_or);
         b = 1'bz;
         #1 $display("released=%b%b/%b%b", external_and, external_or, internal_and, internal_or);
-        $finish;
+        $finish(0);
     end
 endmodule

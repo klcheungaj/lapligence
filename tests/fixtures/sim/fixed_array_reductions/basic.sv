@@ -7,5 +7,6 @@ module tb;
                  data.sum, data.product(), data.and, data.or(), data.xor, $bits(data.sum()));
         data[-1] = 7;
         $display("changed=%0d", data.sum());
+        $finish(0);
     end
 endmodule

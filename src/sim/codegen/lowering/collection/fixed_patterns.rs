@@ -125,6 +125,44 @@ impl Codegen<'_> {
         let Some(descriptor) = self.query_descriptor(node).cloned() else {
             return Ok(None);
         };
+        if let TypeShape::PackedAtom { ranges } = &descriptor.shape {
+            // A recursively bound unpacked default can finish at a packed
+            // array pattern. Its operands are elements of the outer packed
+            // dimension, not an already packed value or an unpacked row.
+            let width = fixed_width(&descriptor).ok_or("packed pattern has no supported width")?;
+            let bounds = match ranges.first() {
+                Some(range) => (
+                    i32::try_from(range.left).map_err(|_| "packed pattern left bound overflow")?,
+                    i32::try_from(range.right).map_err(|_| "packed pattern right bound overflow")?,
+                ),
+                None => (
+                    i32::try_from(width - 1).map_err(|_| "packed pattern range overflow")?,
+                    0,
+                ),
+            };
+            let count = u32::try_from(i64::from(bounds.0).abs_diff(i64::from(bounds.1)) + 1)
+                .map_err(|_| "packed pattern extent overflow")?;
+            if count > width || !width.is_multiple_of(count) {
+                return Err(format!(
+                    "packed pattern width disagrees with its bounds in `{path}`"
+                ));
+            }
+            let element_width = width / count;
+            let nodes = self.p30_pattern_level(path, node, bounds)?;
+            let mut parts = Vec::with_capacity(nodes.len());
+            for element in nodes {
+                let value = self.lower_expr(path, element)?;
+                parts.push(ir_to_storage(
+                    value,
+                    element_width,
+                    false,
+                    two_state(&descriptor),
+                )?);
+            }
+            let value = Self::join_bitstream_parts(path, parts)?;
+            return ir_to_storage(value, width, descriptor.info.signed, two_state(&descriptor))
+                .map(Some);
+        }
         if let TypeShape::Aggregate(layout) = &descriptor.shape {
             if matches!(
                 layout.kind,

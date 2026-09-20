@@ -80,3 +80,43 @@ fn fixed_array_reduction_maps_keep_enclosing_automatic_values_during_lowering() 
         .expect("lexical maps lower in the caller frame");
     assert!(generated.model_c.contains("reduction_ordinal"));
 }
+
+#[test]
+fn fixed_array_reduction_capture_survives_semantic_table_growth() {
+    // Vary preceding declarations and emit many independent implicit iterators.
+    // No capture record may borrow a vector element across ensureSemantic().
+    for padding in [0, 1, 7, 31, 63] {
+        let mut source = String::from(
+            "// llg-test-fixture: tests/slang_semantics/fixed_reductions.rs/table-growth\n\
+             module tb; int fixed_values[0:2]; int dynamic_values[];\n\
+             int queue_values[$]; int associative_values[int]; int result;\n",
+        );
+        for index in 0..padding {
+            source.push_str(&format!("int padding_{index};\n"));
+        }
+        source.push_str("initial begin\n");
+        for increment in 0..16 {
+            for receiver in ["fixed_values", "dynamic_values", "queue_values", "associative_values"] {
+                source.push_str(&format!(
+                    "result = {receiver}.sum() with (int'(item) + {increment});\n"
+                ));
+            }
+        }
+        source.push_str("$display(\"%0d\", result); $finish(0); end endmodule\n");
+        let database = capture(&source);
+        database.validate().expect("grown semantic table stays valid");
+        let mut iterators = HashSet::new();
+        for id in database.node_ids() {
+            let NodeKind::MethodCall { name, receiver, .. } = database.node_kind(id) else {
+                continue;
+            };
+            if name != "sum" {
+                continue;
+            }
+            assert!(receiver.is_some());
+            assert!(database.method_call_has_with_clause(id));
+            assert!(iterators.insert(database.method_call_iterator(id).expect("owned iterator")));
+        }
+        assert_eq!(iterators.len(), 64, "padding={padding}: method metadata was lost");
+    }
+}

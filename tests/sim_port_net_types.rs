@@ -188,3 +188,15 @@ fn port_net_type_keeps_unconnected_same_type_uwire_aliases() {
         &["--edition", "2009"],
     );
 }
+
+#[test]
+fn port_net_type_concat_actual_without_high_declaration_is_connected() {
+    sim_cli::run_case_with_args(
+        "port_net_types",
+        "concat_actual",
+        "concat=10/00/1000\nchanged=01/01/0101\nparent_only=11/00/1100\nfloat=zz/zz/zzzz\n",
+        "",
+        &[],
+        &["--edition", "2009"],
+    );
+}

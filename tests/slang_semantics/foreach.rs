@@ -23,11 +23,11 @@ const SOURCE: &str = r#"// llg-test-fixture: tests/slang_semantics/foreach.rs/ow
 module tb;
     logic [3:0] a [0:1];
     initial begin
-        foreach (a[i,j]) ;
-        foreach (a[,k]) ;
-        foreach (a[l,]) ;
-        foreach (a[,]) ;
-        foreach (a[]) ;
+        foreach (a[i,j]) begin end
+        foreach (a[,k]) begin end
+        foreach (a[l,]) begin end
+        foreach (a[,]) begin end
+        foreach (a[]) begin end
     end
 endmodule
 "#;

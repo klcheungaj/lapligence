@@ -2082,7 +2082,10 @@ public:
     attach(id);
     if (!markVisited(id))
       return;
-    auto& result = capture.output.semantic_nodes[static_cast<size_t>(id)];
+    // Capturing a call's iterator or referenced symbol can append to the
+    // semantic-node vector. Assemble a value and publish it by ID after those
+    // insertions; a reference here would dangle when the vector grows.
+    auto result = capture.output.semantic_nodes[static_cast<size_t>(id)];
     result.kind = LLG_SLANG_SEMANTIC_EXPRESSION;
     result.subkind = semanticExpressionKind(expression.kind);
     result.detail = storeString(capture.output, toString(expression.kind));
@@ -2203,6 +2206,7 @@ public:
       result.target_id = target;
       capture.semanticEdge(id, LLG_SLANG_EDGE_CALLEE, target);
     }
+    capture.output.semantic_nodes[static_cast<size_t>(id)] = result;
     if (const Symbol* target = expression.getSymbolReference()) {
       const uint64_t targetId = capture.ensureSemantic(target);
       auto& targetNode =
@@ -2277,6 +2281,18 @@ public:
         expression.right().visit(*this);
       else
         visitDefault(expression);
+    }
+    else if constexpr (std::same_as<T, StructuredAssignmentPatternExpression>) {
+      if (useBoundArrayPatternElements(expression)) {
+        // Slang binds an untyped nested default against an error type as a
+        // placeholder, then binds the executable values against each element.
+        // Only the latter belong in the owned executable graph.
+        for (const Expression* element : expression.elements())
+          element->visit(*this);
+      }
+      else {
+        visitDefault(expression);
+      }
     }
     else {
       visitDefault(expression);
@@ -3071,6 +3087,15 @@ private:
         index++;
       }
     }
+    else if constexpr (std::same_as<T, SimpleAssignmentPatternExpression>) {
+      // Synthesized default rows can repeat the same Expression pointer.
+      // Structural children are deduplicated by attach(), but positional
+      // operands must retain one edge per occurrence in elements().
+      capture.removeChildEdges(id);
+      uint32_t index = 0;
+      for (const Expression* element : expression.elements())
+        capture.semanticRole(id, element, LLG_SLANG_EDGE_OPERAND, index++);
+    }
     else if constexpr (std::same_as<T, ReplicatedAssignmentPatternExpression>) {
       capture.semanticRole(id, &expression.count(), LLG_SLANG_EDGE_WIDTH);
       uint32_t index = 0;
@@ -3155,10 +3180,40 @@ private:
     key.type_id = capture.type(*value.type);
   }
 
+  bool useBoundArrayPatternElements(
+      const StructuredAssignmentPatternExpression& expression) const {
+    if (expression.bad() || !expression.defaultSetter ||
+        !expression.defaultSetter->bad() ||
+        expression.type->getCanonicalType().kind !=
+            SymbolKind::FixedSizeUnpackedArrayType)
+      return false;
+    const auto elements = expression.elements();
+    if (elements.size() != expression.type->getFixedRange().fullWidth())
+      return false;
+    for (const Expression* element : elements) {
+      if (!element || element->bad())
+        return false;
+    }
+    return true;
+  }
+
   void addStructuredPatternRoles(
       const StructuredAssignmentPatternExpression& expression, uint64_t id) {
     capture.removeChildEdges(id);
     uint32_t index = 0;
+    if (useBoundArrayPatternElements(expression)) {
+      // Structured fixed-array elements are stored by Slang in increasing
+      // index order. Positional operands in our DB use declaration order.
+      auto elements = expression.elements();
+      const auto range = expression.type->getFixedRange();
+      for (size_t ordinal = 0; ordinal < elements.size(); ordinal++) {
+        const size_t offset = range.isDescending()
+            ? elements.size() - ordinal - 1 : ordinal;
+        capture.semanticRole(id, elements[offset], LLG_SLANG_EDGE_OPERAND,
+                             index++);
+      }
+      return;
+    }
     for (const auto& setter : expression.memberSetters) {
       const uint64_t keyId = capture.ensureSemantic(&setter);
       initializePatternKey(keyId, id, LLG_SLANG_EXPR_PATTERN_MEMBER_KEY,

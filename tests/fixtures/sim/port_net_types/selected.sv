@@ -28,6 +28,6 @@ module tb;
         #1 $display("unknown=%h/%h", bus, first.p);
         parent_d = 8'hzz; and_d = 4'hz; or_d = 4'hz;
         #1 $display("float=%h/%h", bus, first.p);
-        $finish;
+        $finish(0);
     end
 endmodule

@@ -38,8 +38,9 @@ fn sequential_predicate_emission_normalizes_real_truth_without_rounding() {
     let ctx = RCtx { model: &model, func: None, sampled: false, activation_label: None };
     let mut frame = Frame::new(&ctx);
     let expr = predicate(vec![
-        IrExpr::new(IrExprKind::Const(IrConst::real(0.25)), 0, true, None), number(1, 1),
+        IrExpr::new(IrExprKind::Const(IrConst::real(0.25)), 0, false, None), number(1, 1),
     ]);
+    model.validate_expr(&expr, None).unwrap();
     let result = frame.expression(&expr).unwrap();
     frame.discard(result);
     let body = frame.body();
@@ -54,11 +55,11 @@ fn sequential_predicate_ambiguous_real_mux_evaluates_both_arms_and_yields_zero()
     let model = IrModel::new("predicate_real_result".into(), 1).unwrap();
     let ctx = RCtx { model: &model, func: None, sampled: false, activation_label: None };
     let mut frame = Frame::new(&ctx);
-    let real = |value| IrExpr::new(IrExprKind::Const(IrConst::real(value)), 0, true, None);
+    let real = |value| IrExpr::new(IrExprKind::Const(IrConst::real(value)), 0, false, None);
     let expr = IrExpr::new(IrExprKind::Mux {
         sel: Box::new(predicate(vec![number(1, 1), number(0, 1)])),
         a: Box::new(real(2.5)), b: Box::new(real(3.5)),
-    }, 0, true, None);
+    }, 0, false, None);
     model.validate_expr(&expr, None).unwrap();
     let result = frame.expression(&expr).unwrap();
     frame.discard(result);

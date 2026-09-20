@@ -31,6 +31,6 @@ module tb;
         #1 $display("wired=%b%b split=%b cell=%b/%b", external_wired, internal_wired, split, cells[0], unrelated);
         d = 0;
         #1 $display("zero=%b%b cell=%b/%b", external_wired, internal_wired, cells[0], unrelated);
-        $finish;
+        $finish(0);
     end
 endmodule

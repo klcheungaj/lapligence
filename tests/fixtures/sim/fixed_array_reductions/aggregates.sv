@@ -14,5 +14,6 @@ module tb;
         lane_sum = records.sum() with (item.lanes.sum() with (int'(item)));
         $display("packed=%0d field=%0d records=%0d lanes=%0d", packed_values.sum(),
                  packed_values.sum() with (int'(item.high)), data_sum, lane_sum);
+        $finish(0);
     end
 endmodule

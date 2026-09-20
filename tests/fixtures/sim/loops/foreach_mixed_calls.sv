@@ -31,5 +31,6 @@ module tb;
         $display("source=%b,%b result=%b,%b counts=%0d,%0d local=%0d",
                  source[1], source[0], result[1], result[0],
                  count(source), count(result), local_visits);
+        $finish(0);
     end
 endmodule

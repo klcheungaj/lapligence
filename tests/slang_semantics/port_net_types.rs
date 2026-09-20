@@ -1,5 +1,8 @@
 //! R05: declaration identity survives capture and drives directional collapse.
-use llg::core::{compile, db::Db};
+use llg::core::{
+    compile,
+    db::{Db, Direction, NodeKind},
+};
 use llg::sim::{codegen, opt::OptConfig};
 
 fn capture(name: &str, source: &str) -> Db {
@@ -75,10 +78,42 @@ fn port_net_type_delay_selection_drops_dominated_delays_including_zero() {
     for options in [OptConfig::none(), OptConfig::default()] {
         let model = codegen::generate_from_db_with_opts(&database, &options)
             .expect("choose delays of dominating declarations, not both declarations");
-        let groups = model.model_c.lines().filter(|line| line.starts_with("static llg_net_t "))
-            .collect::<Vec<_>>();
+        // The four input-wire ports have independent WIRE resolver groups.
+        // Inspect only the four collapsed WAND networks tested by this fixture.
+        let groups = model.model_c.lines().filter(|line| {
+            line.starts_with("static llg_net_t ") && line.contains("LLG_RESOLVE_WAND")
+        }).collect::<Vec<_>>();
         assert_eq!(groups.len(), 4);
         assert_eq!(groups.iter().filter(|line| line.contains(", 1, NULL, ")).count(), 2);
         assert_eq!(groups.iter().filter(|line| line.contains(", 0, NULL, 0, 0, 0, ")).count(), 2);
+    }
+}
+
+#[test]
+fn port_net_type_expression_only_actual_joins_all_electrical_bits() {
+    for (name, source) in [
+        ("aliases.sv", include_str!("../fixtures/sim/port_net_types/aliases.sv")),
+        ("concat.sv", include_str!("../fixtures/sim/port_net_types/concat_actual.sv")),
+    ] {
+        let database = capture(name, source);
+        assert!(database.nodes().iter().any(|node| matches!(
+            node.kind,
+            NodeKind::Port {
+                direction: Direction::Inout,
+                high: None,
+                high_expr: Some(_),
+                low: Some(_),
+                ..
+            }
+        )), "{name}: fixture must exercise an expression-only actual");
+        for options in [OptConfig::none(), OptConfig::default()] {
+            let model = codegen::generate_from_db_with_opts(&database, &options)
+                .unwrap_or_else(|error| panic!("{name}: {error}"));
+            let wired_bits = model.model_c.lines().filter(|line| {
+                line.starts_with("static llg_net_t ") && line.contains("LLG_RESOLVE_WAND")
+            }).collect::<Vec<_>>();
+            assert_eq!(wired_bits.len(), 4, "{name}: every connected bit must be wired-AND");
+            assert!(model.warnings.is_empty(), "{name}: {:?}", model.warnings);
+        }
     }
 }

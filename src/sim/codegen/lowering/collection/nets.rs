@@ -662,7 +662,7 @@ impl<'a> Codegen<'a> {
         for id in &nodes {
             if let NodeKind::Port {
                 direction: DbDirection::Inout,
-                high: Some(h),
+                high: h,
                 low: Some(l),
                 ..
             } = self.kind(*id)
@@ -696,17 +696,19 @@ impl<'a> Codegen<'a> {
                         array_ports.insert(*id);
                         continue;
                     }
-                    let whole_actual = *actual == *h
-                        || matches!(
-                            self.kind(*actual),
-                            NodeKind::Expr(ExprKind::Ref {
-                                target: Some(target)
-                            }) if *target == *h
-                        )
-                        || self
-                            .hier_path_signal(*actual)
-                            .zip(self.signal_of(*h))
-                            .is_some_and(|(actual, target)| actual.ir == target.ir);
+                    let whole_actual = h.is_some_and(|high| {
+                        *actual == high
+                            || matches!(
+                                self.kind(*actual),
+                                NodeKind::Expr(ExprKind::Ref {
+                                    target: Some(target)
+                                }) if *target == high
+                            )
+                            || self
+                                .hier_path_signal(*actual)
+                                .zip(self.signal_of(high))
+                                .is_some_and(|(actual, target)| actual.ir == target.ir)
+                    });
                     if !whole_actual {
                         let actual_bits = self.alias_expression_bits(*id, *actual)?;
                         let formal_bits = self.alias_expression_bits(*id, *l)?;
@@ -725,6 +727,11 @@ impl<'a> Codegen<'a> {
                         continue;
                     }
                 }
+                // An expression-only actual has already joined the bit graph
+                // above. A missing high declaration and actual denotes a top/open port.
+                let Some(h) = h else {
+                    continue;
+                };
                 // A true alias that touches one side of an inout connection
                 // must absorb the other side into the same bit-level union.
                 // Otherwise the later whole-net inout collapse would create a
@@ -767,27 +774,21 @@ impl<'a> Codegen<'a> {
                 union(&mut parent, &mut rank, *h, *l);
             } else if let NodeKind::Port {
                 direction: DbDirection::Inout,
-                high: None,
-                ..
-            } = self.kind(*id)
-            {
-                // A top-level inout port has no parent-side connection; there
-                // is nothing to collapse, so it stays a plain net (no link is
-                // ever emitted for top-level ports).
-            } else if let NodeKind::Port {
-                direction: DbDirection::Inout,
-                high: Some(_),
+                high,
+                high_expr,
                 low: None,
                 ..
             } = self.kind(*id)
             {
-                return Err(format!(
-                    "inout port `{}` has no child-side connection at {}:{}:{}",
-                    self.node(*id).name,
-                    self.node(*id).file.as_deref().unwrap_or("<unknown>"),
-                    self.node(*id).line,
-                    self.node(*id).col,
-                ));
+                if high.is_some() || high_expr.is_some() {
+                    return Err(format!(
+                        "inout port `{}` has no child-side connection at {}:{}:{}",
+                        self.node(*id).name,
+                        self.node(*id).file.as_deref().unwrap_or("<unknown>"),
+                        self.node(*id).line,
+                        self.node(*id).col,
+                    ));
+                }
             }
         }
 

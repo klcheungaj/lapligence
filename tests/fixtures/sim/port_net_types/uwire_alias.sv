@@ -10,6 +10,6 @@ module tb;
         #1 $display("alias=%b%b", a, b);
         d = 0;
         #1 $display("alias=%b%b", a, b);
-        $finish;
+        $finish(0);
     end
 endmodule

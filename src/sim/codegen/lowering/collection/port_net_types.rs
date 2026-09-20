@@ -39,7 +39,7 @@ impl Codegen<'_> {
     fn inout_type_points(
         &self,
         port: NodeId,
-        high: NodeId,
+        high: Option<NodeId>,
         low: NodeId,
         actual: Option<NodeId>,
         bit_nets: &HashSet<NodeId>,
@@ -65,9 +65,15 @@ impl Codegen<'_> {
                 })
                 .collect());
         }
-        if bit_nets.contains(&high) || bit_nets.contains(&low) {
+        if high.is_none()
+            || high.is_some_and(|high| bit_nets.contains(&high))
+            || bit_nets.contains(&low)
+        {
             let formal = self.alias_expression_bits(port, low)?;
-            let actual = self.alias_expression_bits(port, actual.unwrap_or(high))?;
+            let actual = actual
+                .or(high)
+                .ok_or("inout type plan has no actual expression")?;
+            let actual = self.alias_expression_bits(port, actual)?;
             if formal.len() != actual.len() {
                 return Err("selected inout type plan has different endpoint widths".into());
             }
@@ -77,6 +83,7 @@ impl Codegen<'_> {
                 .map(|(internal, external)| (NetPoint::Bit(internal), NetPoint::Bit(external)))
                 .collect());
         }
+        let high = high.ok_or("whole inout type plan has no external declaration")?;
         Ok(vec![(NetPoint::Whole(low), NetPoint::Whole(high))])
     }
 
@@ -137,10 +144,11 @@ impl Codegen<'_> {
                     self.kind(*node),
                     NodeKind::Port {
                         direction: DbDirection::Inout,
-                        high: Some(_),
+                        high,
+                        high_expr,
                         low: Some(_),
                         ..
-                    }
+                    } if high.is_some() || high_expr.is_some()
                 )
             })
             .collect::<Vec<_>>();
@@ -156,7 +164,7 @@ impl Codegen<'_> {
         let mut warnings = HashSet::new();
         for port in ports {
             let NodeKind::Port {
-                high: Some(high),
+                high,
                 low: Some(low),
                 high_expr,
                 ..

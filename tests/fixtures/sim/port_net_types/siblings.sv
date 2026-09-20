@@ -9,6 +9,6 @@ module tb;
     or_leaf second(p);
     initial begin
         #1 $display("siblings=%b%b%b", p, first.p, second.p);
-        $finish;
+        $finish(0);
     end
 endmodule

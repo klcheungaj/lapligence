@@ -160,7 +160,11 @@ fn fixed_array_reduction_map_can_read_an_enclosing_formal() {
     let expr = reduction(IrFixedArrayReductionSource::Value(Box::new(number(0x0203, 16))), mapped);
     model.validate_expr(&expr, ctx.func).unwrap();
     let mut frame = Frame::new(&ctx);
+    // A raw expression frame does not run the callee's input-owner prologue.
+    frame.local("a0", 32, false, false, Some(&number(11, 32))).unwrap();
+    let address = frame.lookup("a0").unwrap().address;
     let value = frame.expression(&expr).unwrap();
+    assert!(frame.body().contains(&format!("sv4_clone({address})")));
     frame.discard(value);
     assert!(frame.slots.iter().all(|live| !live));
     assert_eq!(frame.body().matches("for (uint64_t").count(), 1);

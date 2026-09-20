@@ -28,6 +28,6 @@ module tb;
     assign wo = 1;
     initial begin
         #1 $display("conflicts=%b%b%b%b%b%b", wa, wo, down, up, ground, power);
-        $finish;
+        $finish(0);
     end
 endmodule

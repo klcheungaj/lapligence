@@ -29,5 +29,6 @@ module tb;
         skipped = 0 ? make(100).sum() : 7;
         $display("receiver=%0d calls=%0d captured=%0d local=%0d skipped=%0d",
                  result, calls, folded, local_result, skipped);
+        $finish(0);
     end
 endmodule

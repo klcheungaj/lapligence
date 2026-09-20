@@ -164,8 +164,15 @@ Implemented scope:
   shape after the established copy/slice/concatenation/pattern/cast paths.
   The complete RHS is staged before cell writes or NBA issue; conditional
   selectors and evaluated arms are not repeated per destination cell. R01's
-  `ArrayMux` retains aggregate X/Z/default semantics. Existing type/rank/extent
-  checks and specialized per-cell conversions are retained. The
+  `ArrayMux` retains aggregate X/Z/default semantics. Bound simple assignment
+  patterns retain each operand occurrence when synthesized default rows share
+  expression identities; structural-child deduplication does not change their
+  positional arity. Packed-array pattern leaves reached by recursive defaults
+  lower at their outer packed element width before concatenation and final
+  state/signedness conversion. Positional, integer-index and default keys use
+  the existing strict shape checks; this does not add packed type-key matching
+  or assignment-pattern lvalues. Specialized per-cell conversions are retained.
+  The
   `sim_array_conditional_assignments` CLI suite and owned-import generation
   tests are regression sources, **not executed Rust/HDL acceptance evidence in
   this patch**.

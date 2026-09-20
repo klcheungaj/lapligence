@@ -331,7 +331,7 @@ impl<'a> Codegen<'a> {
         }
     }
 
-    fn p30_pattern_level(
+    pub(in super::super) fn p30_pattern_level(
         &self,
         path: &str,
         node: NodeId,

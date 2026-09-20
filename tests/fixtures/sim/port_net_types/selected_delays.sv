@@ -20,6 +20,6 @@ module tb;
         #1 d = 1;
         #1 $display("t2=%b", bus);
         #3 $display("t5=%b", bus);
-        $finish;
+        $finish(0);
     end
 endmodule

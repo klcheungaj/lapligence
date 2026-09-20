@@ -24,7 +24,7 @@ fn sequential_predicate_ir_validates_all_clauses_and_counts_wide_inputs() {
     let model = valid_model();
     let expr = predicate(vec![
         packed_const(1, 1), packed_const(1, 129),
-        IrExpr::new(IrExprKind::Const(IrConst::real(-0.25)), 0, true, None),
+        IrExpr::new(IrExprKind::Const(IrConst::real(-0.25)), 0, false, None),
     ]);
     assert_eq!(model.expression_capacity(&expr, None).unwrap(), 129);
     for index in 0..3 {

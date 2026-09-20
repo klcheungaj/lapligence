@@ -14,5 +14,6 @@ module tb;
                  data.product(), result, states.sum(), records.sum());
         $display("mapped=%0d width=%0d", data.sum(v) with (longint'(v)),
                  $bits(data.sum(v) with (longint'(v))));
+        $finish(0);
     end
 endmodule

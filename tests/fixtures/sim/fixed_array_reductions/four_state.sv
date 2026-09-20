@@ -14,5 +14,6 @@ module tb;
         $display("zero_and=%b unknown_product=%b", data.and(), data.product());
         data[1] = '1;
         $display("one_or=%b", data.or());
+        $finish(0);
     end
 endmodule

@@ -21,6 +21,6 @@ module tb;
         #1 $display("changed=%b/%b/%b", a, b, u0.p);
         d = 4'hz; other = 4'hz;
         #1 $display("float=%b/%b/%b", a, b, u0.p);
-        $finish;
+        $finish(0);
     end
 endmodule

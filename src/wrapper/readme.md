@@ -41,3 +41,13 @@ semantic tag set without changing C record layouts or exporting native pointers.
 Update the Rust checked decoder together with the bridge. Capturing a pattern
 is not a claim of executable pattern-matching support; it prevents consumers
 from silently converting `value matches pattern` into a Boolean test of `value`.
+
+## Positional assignment-pattern operands
+
+Simple assignment patterns export one indexed `OPERAND` edge for each entry
+in Slang's bound element list, even when several positions share one expression
+identity. Structural child links may be deduplicated; positional operands may
+not. Structured fixed-array defaults keep their separate declaration-order
+mapping, and valid bound values replace untyped error placeholders. Consumers
+must use the ordered operand edges rather than reconstructing operand counts
+from structural children.

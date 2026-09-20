@@ -15,6 +15,9 @@ are observation scaffolding, not claims that each complete module is synthesizab
 | `views.sv` | Opposite/negative declaration bounds, selected-row indices evaluated once, unselected and invalid row reads. |
 | `shapes.sv` | Immediate multidimensional rows, two-state defaults, packed records and 129-bit elements. |
 | `expressions.sv` | Cast/pattern alternatives, conditional concatenation operands and existing per-cell widening. |
+| `nested_defaults.sv` | Shared synthesized row operands, explicit outer keys and untyped one-bit defaults, with ascending/descending bounds. |
+| `typed_defaults.sv` | Explicitly typed row defaults preserve runtime `8'hdd`/`8'hee` byte values rather than applying the nested pattern to packed bits; direct packed patterns also check element sizing and signed results. |
+| `deep_defaults.sv` | Repeated expression identities in three unpacked dimensions with 65-bit all-one, X and Z values. |
 | `wrong_shape.sv` | Different unpacked ranks remain incompatible despite equal flattened bit counts. |
 | `wrong_elements.sv` | Equal array extents do not permit incompatible element types. |
 
