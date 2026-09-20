@@ -383,3 +383,30 @@ these commands and their new tests have not been executed there. The two native
 `fixed_array_reduction_*` CTest probes are handwritten runtime counterparts,
 not freshly generated HDL models. Feature acceptance belongs in
 [`docs/sim_features.md`](../docs/sim_features.md), not in fixture counts.
+
+
+## Fixed-array conditional assignment regressions (R04)
+
+- `sim_array_conditional_assignments.rs` runs checked-in SystemVerilog-2009
+  fixtures through the public CLI, with and without optimization. Exact output
+  and self-checks cover direct `always_comb` assignments, selector/arm effects,
+  overlapping slices/patterns, NBA source/address capture and ordering,
+  `always_ff`, declared bounds, selected rows, two-state and nested defaults,
+  129-bit elements, and neighboring cast/concatenation conversions.
+- Rejection fixtures retain array rank and element-type compatibility; equal
+  flattened bit counts do not make different array shapes assignment compatible.
+- `slang_semantics::array_conditional_assignments` checks that the original
+  module RHS is a direct typed conditional, not a function/cast workaround,
+  and that the positive contexts generate C from an owned DB after snapshot
+  destruction. Generation checks do not execute the emitted model.
+
+```sh
+cargo test --locked --test slang_semantics array_conditional_assignment -- --test-threads=1
+cargo test --locked --test sim_array_conditional_assignments -- --test-threads=1
+cargo test --locked --test sim_p30_fixed_arrays -- --test-threads=1
+cargo test --locked --test sim_rtl_completion array_conditional -- --test-threads=1
+```
+
+These new Rust/HDL tests were not executed in the R04 implementation environment,
+which lacked Rust/Cargo and a built `llg`. Reused runtime component tests and
+fixture-integrity checks are separate evidence, not language acceptance.

@@ -17,6 +17,10 @@
   leaves are captured before any destination leaf is written.
 - **`containers.rs` / `containers/`:** container initialization, indexing,
   queries, fixed-array views, streaming, assignment, methods and callbacks.
+  `containers/fixed_arrays.rs` keeps specialized array conversions and a
+  type-directed value fallback. Its fixed-value source helper stages a complete
+  RHS once before projecting destination cells; module-procedural expressions
+  reuse the same typed conditional operation as subroutine values.
 - **`objects.rs` / `objects/`:** non-integral class/interface, mailbox, process,
   enum, handle and string operations.
 - **`assertions.rs`:** bounded concurrent-assertion sequence automata, legal

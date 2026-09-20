@@ -515,27 +515,29 @@ impl<'a> Codegen<'a> {
         IrExpr::new(IrExprKind::LocalRead(name), width, signed, None)
     }
 
-    fn p30_lower_source_values(
+    /// Capture a bounded fixed integral value before projecting its cells.
+    /// The caller retains specialized array conversions; this fallback admits
+    /// other expressions by owned result shape, including module conditionals.
+    fn p30_lower_fixed_source_value(
         &mut self,
         path: &str,
         lhs: NodeId,
         rhs: NodeId,
-        target_dims: &[(i32, i32)],
         captures: &mut Vec<IrStmt>,
-        captured_indices: &mut HashMap<NodeId, (String, u32, bool)>,
-    ) -> Result<Vec<IrExpr>, String> {
-        let fixed_source_dimensions = self
+    ) -> Result<Option<Vec<IrExpr>>, String> {
+        let fixed_source = self
             .query_descriptor(rhs)
-            .filter(|descriptor| Self::fixed_descriptor_width(descriptor).is_some())
             .and_then(|descriptor| match &descriptor.shape {
-                TypeShape::FixedArray { dimensions, .. } => Some(dimensions.clone()),
+                TypeShape::FixedArray { dimensions, .. } => {
+                    Self::fixed_descriptor_width(descriptor)
+                        .map(|width| (dimensions.clone(), width))
+                }
                 _ => None,
             });
-        if let Some(dimensions) = fixed_source_dimensions.filter(|_| {
-            matches!(self.kind(rhs), NodeKind::FuncCall { .. })
-                || self.p30_fixed_array_assignment_candidate(rhs)
-                || self.func.is_some()
-        }) {
+        if let Some((dimensions, expected_width)) = fixed_source {
+            if dimensions.is_empty() {
+                return Err(format!("fixed array source has no dimensions in `{path}`"));
+            }
             let source = self.lower_expr(path, rhs)?;
             let count = dimensions
                 .iter()
@@ -545,12 +547,17 @@ impl<'a> Codegen<'a> {
                     )
                 })
                 .ok_or("fixed value shape exceeds supported width")?;
-            if count == 0 || !source.width.is_multiple_of(count) {
-                return Err("fixed value source shape disagrees with destination".into());
+            if source.width != expected_width || !source.width.is_multiple_of(count) {
+                return Err(format!(
+                    "fixed array source payload disagrees with its declared shape in `{path}`"
+                ));
             }
             let element_width = source.width / count;
+            // Stage the complete expression before splitting it into cells.
+            // This preserves branch evaluation counts, overlapping copies and
+            // NBA issue-time values without repeating the selector or arms.
             let source = self.p30_capture_value(lhs, rhs, 0, source, captures);
-            return Ok((0..count)
+            let values = (0..count)
                 .map(|index| {
                     let right = source.width - (index + 1) * element_width;
                     IrExpr::new(
@@ -564,7 +571,31 @@ impl<'a> Codegen<'a> {
                         None,
                     )
                 })
-                .collect());
+                .collect();
+            return Ok(Some(values));
+        }
+        Ok(None)
+    }
+
+    fn p30_lower_source_values(
+        &mut self,
+        path: &str,
+        lhs: NodeId,
+        rhs: NodeId,
+        target_dims: &[(i32, i32)],
+        captures: &mut Vec<IrStmt>,
+        captured_indices: &mut HashMap<NodeId, (String, u32, bool)>,
+    ) -> Result<Vec<IrExpr>, String> {
+        // Preserve the established value path for calls, views and activation
+        // expressions. This is dispatch ordering, not an admission whitelist:
+        // other typed values reach the same helper after specialized forms.
+        if matches!(self.kind(rhs), NodeKind::FuncCall { .. })
+            || self.p30_fixed_array_assignment_candidate(rhs)
+            || self.func.is_some()
+        {
+            if let Some(values) = self.p30_lower_fixed_source_value(path, lhs, rhs, captures)? {
+                return Ok(values);
+            }
         }
         if let NodeKind::Expr(ExprKind::Cast { operand, .. }) = self.kind(rhs) {
             let target_is_fixed = self
@@ -710,8 +741,14 @@ impl<'a> Codegen<'a> {
                 "dynamic or queue array to fixed unpacked-array assignment in `{path}` requires a runtime-compatible fixed size"
             ));
         }
+        // A conditional (or other fixed integral array expression) need not
+        // look like a storage view. Its owned type is sufficient to select the
+        // existing value lowerer, including R01's aggregate-aware ArrayMux.
+        if let Some(values) = self.p30_lower_fixed_source_value(path, lhs, rhs, captures)? {
+            return Ok(values);
+        }
         Err(format!(
-            "fixed unpacked-array assignment in `{path}` requires a compatible fixed array, slice, concatenation, or assignment pattern"
+            "fixed unpacked-array assignment in `{path}` requires a compatible fixed-array expression, slice, concatenation, or assignment pattern"
         ))
     }
 

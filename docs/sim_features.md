@@ -121,7 +121,7 @@ Implemented scope:
 - Fixed unpacked arrays: reversed/negative bounds by logical coordinates,
   overlapping slice self-assignment, array/struct module ports with per-leaf
   notification, memory declaration initialization and slicing.
-- Fixed-array conditional values admitted by the expression/subroutine paths:
+- Fixed-array conditional values:
   `ArrayMux` retains the immediate unpacked element width and its
   default-uninitialized payload. Ambiguous selectors preserve known-equal
   elements and default entire differing elements, including nested rows and
@@ -130,6 +130,16 @@ Implemented scope:
   evaluated alternative once; constant folding follows the same merge rule.
   Regression sources are in `sim_rtl_completion` (`array_conditional_*`), with
   separate native ownership tests; their presence is not an executed HDL result.
+- Module-procedural fixed-array expressions (R04): whole-array and selected
+  array destinations accept a bounded fixed integral RHS by its owned result
+  shape after the established copy/slice/concatenation/pattern/cast paths.
+  The complete RHS is staged before cell writes or NBA issue; conditional
+  selectors and evaluated arms are not repeated per destination cell. R01's
+  `ArrayMux` retains aggregate X/Z/default semantics. Existing type/rank/extent
+  checks and specialized per-cell conversions are retained. The
+  `sim_array_conditional_assignments` CLI suite and owned-import generation
+  tests are regression sources, **not executed Rust/HDL acceptance evidence in
+  this patch**.
 - Fixed `foreach` loops: owned per-slot bounds retain mixed unpacked/packed
   dimensions, signed ascending/descending ranges, implicit integral element
   vectors, singleton dimensions, and source omissions. Bounds come from the
@@ -197,10 +207,11 @@ Implemented scope:
 
 Retained boundaries:
 
-- General module-procedural whole-array conditional RHS admission remains
-  restricted (audit R04); correcting the admitted conditional's merge semantics
-  does not expand that syntax/context gate. Dynamic/native aggregate elements
-  are outside the fixed integral array-merge operation.
+- The general fixed-array expression path uses a bounded packed payload;
+  payloads above the backend limit and expressions without a supported value
+  representation still fail closed. Dynamic/native aggregate elements remain
+  outside the fixed integral array-merge operation. R04 does not change the
+  separate continuous-assignment or intra-assignment timing paths.
 - Fixed port connectivity uses constant elaborated array coordinates; incompatible
   resolution kinds and unsupported dynamic resolved-net targets remain explicit.
 - Streaming `with` selectors follow the admitted one-dimensional operand forms;
@@ -323,7 +334,7 @@ Verilog era:
 - 🟦 **integer variables** — §1364-2001 3.9 **[1995]**
 - 🟦 **time variables** 64-bit unsigned storage — §1364-2001 3.9 **[1995]** (sim_counter.rs)
 - 🟦 **wire/tri nets** — §1364-2001 3.7 **[1995]** tri resolution inside inout net groups and ordinary per-continuous-assignment driver groups; plain tri behaves like wire (sim_inout.rs, sim_net_resolution.rs)
-- 🟨 **memories/unpacked arrays N-D** element bit/part/indexed-part selects, declared packed ranges, two-state conversion, guarded indices and masked delayed NBAs — §1364-2001 3.10 **[1995]**. The P30 source path also lowers bounded whole fixed-array assignment, concatenation, slices and partial-index views through captured coordinates, including shape-checked packed container sources. General element/subprogram/port combinations remain restricted (sim_memory.rs, sim_p30_fixed_arrays.rs, sim_partial_features.rs).
+- 🟨 **memories/unpacked arrays N-D** element bit/part/indexed-part selects, declared packed ranges, two-state conversion, guarded indices and masked delayed NBAs — §1364-2001 3.10 **[1995]**. The P30 source path also lowers bounded whole fixed-array assignment, concatenation, slices and partial-index views through captured coordinates, including shape-checked packed container sources. R04 adds type-directed fallback for bounded module-procedural array expressions, including conditionals with one RHS snapshot before cell stores. General element/subprogram/port combinations remain restricted (sim_memory.rs, sim_p30_fixed_arrays.rs, sim_array_conditional_assignments.rs, sim_partial_features.rs).
 - 🟦 **Net declaration assignment** `wire w = expr;` — §1364-2001 3.6 **[1995]** behaves as a continuous driver for constant and dynamic RHS expressions, using the same event-driven run-once/sensitivity-loop IR as an explicit `assign` (sim_net_decl.rs); fixed-array and resizable-container reads use stable dependency markers, while unsupported resolved-net classes remain rejected explicitly
 - 🟨 **Variable declaration initializers and procedural lifetimes** scalar `reg x = 0;`, `logic l = 1'b0;`, `int x = P+1;` — §1364-2001 6.2.1 / §1800-2009 6.8, 6.21, 10.5 **[2001/SV-2005]** declaration identity and resolved static/automatic lifetime are preserved. Admitted non-call runtime initializers execute before processes in the selected 2009 policy and may race in explicitly selected Verilog-2001; static block/subprogram locals initialize once and automatic locals on each activation. Pre-process user-subprogram calls remain rejected, separately from constant frontend evaluation and procedural automatic initialization. General recursive aggregate/subprogram layouts remain bounded (sim_varinit.rs, sim_geninit.rs, sim_variable_lifetime.rs, sim_edition.rs).
 - 🟦 **Parameters** override + propagation — §1364-2001 3.11.1 **[1995]** (elab_resolve.rs)
@@ -691,7 +702,7 @@ is rejected by the frontend; parsing or declaration capture is not execution.
 | 4 | Partial | Strings | Owned strings now have module/static/automatic storage, input/output/inout/ref/const-ref call paths, returns, core methods, conversion and dynamic formatting. Collected string value ports and contents dependencies exist. Automatic string NBA targets, unsupported native captures/automatic monitors and broader aggregate/continuous forms remain; string formals and ports are no longer blanket-missing. | [strings.rs](../src/sim/emit_c/owned/strings.rs), [model.rs](../src/sim/emit_c/owned/model.rs), [ports.rs](../src/sim/codegen/lowering/collection/ports.rs) |
 | 5 | Partial | Chandles | Native chandle null/copy/identity/Boolean operations, automatic/static locals, admitted aggregate/class fields, typed mixed signatures and input/output/inout/ref/const-ref/return paths exist. Matching collected reference-port leaves can share storage; ordinary chandle value-port links remain rejected. Packed containment, arithmetic, general continuous assignment and non-string object sensitivity are outside the bounded path. | [objects.rs](../src/sim/emit_c/owned/objects.rs), [ports.rs](../src/sim/codegen/lowering/collection/ports.rs) |
 | 6 | Partial | Structures and untagged unions | Packed patterns/overlapping union views, recursive fixed unpacked leaves, deep copy, bounded initializers and unequal-width packed-member untagged-union storage are present. Collected recursive reference leaves and aggregate link generation exist. Unsupported declaration layouts, general aggregate net/subroutine storage, tagged unions, recursive/resizable object forms and general slices remain; type identity and all nested storage must not be listed as wholly absent. | [aggregates.rs](../src/sim/codegen/lowering/collection/aggregates.rs), [initialization.rs](../src/sim/codegen/lowering/collection/initialization.rs), [statements.rs](../src/sim/emit_c/owned/containers/statements.rs) |
-| 7 | Partial | Fixed unpacked arrays | Bounded whole fixed-array assignment, concatenation, slices and partial-index views lower through logical coordinates, captured indices and shape checks. Selected element and masked NBA paths remain. R03 adds fixed integral reductions and bounded record/row `with` maps, including automatic captures; the new Rust/HDL regressions are not yet executed acceptance evidence. General element/subprogram/port layouts and unsupported selector combinations require more work; whole-array assignment/slices are not blanket-missing. | [fixed_arrays.rs](../src/sim/codegen/lowering/containers/fixed_arrays.rs), [stores.rs](../src/sim/emit_c/owned/stores.rs) |
+| 7 | Partial | Fixed unpacked arrays | Bounded whole fixed-array assignment, concatenation, slices and partial-index views lower through logical coordinates, captured indices and shape checks. Selected element and masked NBA paths remain. R03 adds fixed integral reductions and bounded record/row `with` maps, including automatic captures; the new Rust/HDL regressions are not yet executed acceptance evidence. R04 adds a type-directed value fallback for bounded module-procedural conditional RHSs, retaining full RHS capture and specialized per-cell conversions; its new Rust/HDL regressions are not executed here. General element/subprogram/port layouts and unsupported selector combinations require more work; whole-array assignment/slices are not blanket-missing. | [fixed_arrays.rs](../src/sim/codegen/lowering/containers/fixed_arrays.rs), [stores.rs](../src/sim/emit_c/owned/stores.rs) |
 | 8 | Partial | Resizable containers and array methods | Dynamic/queue/associative allocation, copy, resize, defaults, traversal, bounded patterns, generic/nested leaves and collected value-port copies have source paths. Packed method callbacks, reductions, locator/min/max/unique and ordering operations are present. Non-packed endpoint/pop expressions, external automatic callback captures, string-key index results, general subroutine/nested scalar-query forms and broader recursive/object combinations remain gated. | [containers/](../src/sim/codegen/lowering/containers/), [containers.rs](../src/sim/emit_c/owned/containers.rs), [containers/](../src/sim/emit_c/owned/containers/) |
 | 9 | Source-implemented | Runtime enum methods | Scalar enum first/last/next/prev/num/name methods use owned declaration-order metadata, including sparse/signed values, wrapping counts, invalid-value defaults and owned names. | [queries.rs](../src/sim/emit_c/owned/objects/queries.rs), [strings.rs](../src/sim/emit_c/owned/strings.rs) |
 | 10 | Partial | Casts | Scalar packed/real dynamic casts with success-only writes and enum membership, checked nominal class casts, fixed-size aggregate/array and packed-element dynamic/queue bit-stream paths exist. Native-string/object/recursive stream forms and unsupported reference targets remain restricted. Class downcasts are no longer blanket-missing. | [casts.rs](../src/sim/codegen/lowering/expressions/casts.rs), [queries.rs](../src/sim/emit_c/owned/objects/queries.rs), [objects.rs](../src/sim/emit_c/owned/objects.rs) |

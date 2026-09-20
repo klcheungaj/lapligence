@@ -1,3 +1,6 @@
+#[path = "slang_semantics/array_conditional_assignments.rs"]
+mod array_conditional_assignments;
+
 #[path = "slang_semantics/fixed_reductions.rs"]
 mod fixed_reductions;
 
