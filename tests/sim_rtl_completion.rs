@@ -166,6 +166,36 @@ fn fixed_array_input_port_element_mismatch_is_rejected() {
 }
 
 #[test]
+fn fixed_output_ref_and_aggregate_port_shapes_preserve_storage() {
+    sim_cli::run_case(
+        "rtl_completion",
+        "syn_008_port_shape_matrix",
+        concat!(
+            "direct=11,22 slice=51,62\n",
+            "ref=11,32 observed=23\n",
+            "packet=02,1d,d3\n",
+            "nested=54 distributed=65,76\n",
+        ),
+        "",
+        &[],
+    );
+}
+
+#[test]
+fn illegal_output_expression_and_ref_shape_are_rejected() {
+    sim_cli::reject_case(
+        "rtl_completion",
+        "syn_008_output_expression_rejected",
+        "expression is not assignable",
+    );
+    sim_cli::reject_case(
+        "rtl_completion",
+        "syn_008_ref_shape_rejected",
+        "inequivalent type",
+    );
+}
+
+#[test]
 fn whole_array_continuous_variable_conflicts_are_rejected() {
     sim_cli::reject_case(
         "rtl_completion",

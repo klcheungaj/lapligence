@@ -589,6 +589,18 @@ fn gate_terminal_matrix() {
 }
 
 #[test]
+fn gate_terminal_matrix_verilog_2001() {
+    sim_cli::run_case_with_args(
+        "gates",
+        "terminal_matrix",
+        "CHECK: 0 1 0 1 0 0\nCHECK: 0 0 0 0 1 1\n",
+        "",
+        &[],
+        &["--edition", "2001"],
+    );
+}
+
+#[test]
 fn gate_array_distribution() {
     sim_cli::run_case(
         "gates",

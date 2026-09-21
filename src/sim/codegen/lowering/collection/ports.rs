@@ -11,6 +11,21 @@ struct FixedArrayPortShape {
     two_state: bool,
 }
 
+#[derive(Clone)]
+struct FixedArrayPortActual {
+    array: ArrayInfo,
+    /// Shape after leading element selections or an unpacked slice.
+    dims: Vec<(i32, i32)>,
+    /// Leading element selections on a whole-array actual. These remain
+    /// expressions so runtime-selected input rows can retain their link
+    /// dependencies; output targets validate them as constants below.
+    prefix: Vec<NodeId>,
+    /// Full coordinates for an unpacked slice. A slice can reverse the
+    /// expression order, so it cannot be represented by `prefix` plus the
+    /// declaration bounds alone.
+    coordinates: Option<Vec<Vec<i32>>>,
+}
+
 impl<'a> Codegen<'a> {
     // ── Port links ─────────────────────────────────────────────────────────
 
@@ -531,25 +546,100 @@ impl<'a> Codegen<'a> {
         ));
     }
 
-    /// Resolve a fixed-array value-port actual to the array being connected
-    /// plus any leading constant element indices. A whole array (`a`) has no
-    /// prefix and its full declared shape; an element select of a higher-rank
-    /// array (`a[i]`) contributes the select indices and leaves only the
-    /// remaining dimensions as the connected shape.
-    fn port_array_actual(&self, actual: NodeId) -> Option<(ArrayInfo, Vec<NodeId>)> {
-        if let Some(array) = self.array_of(actual) {
+    /// Resolve a fixed-array value-port actual to the array being connected,
+    /// its remaining shape, and any selected coordinates. A whole array (`a`)
+    /// has no prefix and its full declared shape; an element select of a
+    /// higher-rank array (`a[i]`) contributes the select indices and leaves
+    /// only the remaining dimensions as the connected shape. Unpacked part
+    /// selects retain expression order in `coordinates`, including a reversed
+    /// slice, so output links write the same cells that an input value link
+    /// would read.
+    fn port_array_prefix(&self, node: NodeId) -> Option<(ArrayInfo, Vec<NodeId>)> {
+        if let Some(array) = self.array_of(node) {
             return Some((array.clone(), Vec::new()));
         }
-        let NodeKind::Expr(ExprKind::ArraySelect { base, indices }) = self.kind(actual) else {
+        match self.kind(node) {
+            NodeKind::Expr(ExprKind::Cast { operand, .. }) => self.port_array_prefix(*operand),
+            NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
+                let (array, mut prefix) = self.port_array_prefix(*base)?;
+                if prefix.len().saturating_add(indices.len()) >= array.dims.len() {
+                    return None;
+                }
+                prefix.extend(indices.iter().copied());
+                Some((array, prefix))
+            }
+            NodeKind::Expr(ExprKind::BitSelect { base, index }) => {
+                let (array, mut prefix) = self.port_array_prefix(*base)?;
+                if prefix.len().saturating_add(1) >= array.dims.len() {
+                    return None;
+                }
+                prefix.push(*index);
+                Some((array, prefix))
+            }
+            _ => None,
+        }
+    }
+
+    fn port_array_actual(&self, actual: NodeId) -> Option<FixedArrayPortActual> {
+        if let Some(array) = self.array_of(actual) {
+            return Some(FixedArrayPortActual {
+                array: array.clone(),
+                dims: array.dims.clone(),
+                prefix: Vec::new(),
+                coordinates: None,
+            });
+        }
+        if let Some((array, prefix)) = self.port_array_prefix(actual) {
+            let dims = array.dims[prefix.len()..].to_vec();
+            return Some(FixedArrayPortActual {
+                array,
+                dims,
+                prefix,
+                coordinates: None,
+            });
+        }
+        let NodeKind::Expr(ExprKind::PartSelect { base, left, right }) = self.kind(actual) else {
             return None;
         };
-        let array = self.array_of(*base)?.clone();
-        if indices.len() >= array.dims.len() {
+        let (array, prefix) = self.port_array_prefix(*base)?;
+        let dimension = prefix.len();
+        let (decl_left, decl_right) = *array.dims.get(dimension)?;
+        let left = i32::try_from(self.eval_bound_i128(*left).ok()?).ok()?;
+        let right = i32::try_from(self.eval_bound_i128(*right).ok()?).ok()?;
+        if left < decl_left.min(decl_right)
+            || left > decl_left.max(decl_right)
+            || right < decl_left.min(decl_right)
+            || right > decl_left.max(decl_right)
+        {
             return None;
         }
-        let mut shape = array;
-        shape.dims = shape.dims[indices.len()..].to_vec();
-        Some((shape, indices.clone()))
+        let step = if left >= right { -1 } else { 1 };
+        let suffix = port_array_index_vectors(&array.dims[dimension + 1..]);
+        let mut coordinates = Vec::new();
+        let mut index = left;
+        loop {
+            for suffix_indices in &suffix {
+                let mut coordinate = prefix
+                    .iter()
+                    .map(|node| i32::try_from(self.eval_bound_i128(*node).ok()?).ok())
+                    .collect::<Option<Vec<_>>>()?;
+                coordinate.push(index);
+                coordinate.extend(suffix_indices.iter().copied());
+                coordinates.push(coordinate);
+            }
+            if index == right {
+                break;
+            }
+            index = index.checked_add(step)?;
+        }
+        let mut dims = vec![(left, right)];
+        dims.extend_from_slice(&array.dims[dimension + 1..]);
+        Some(FixedArrayPortActual {
+            array,
+            dims,
+            prefix: Vec::new(),
+            coordinates: Some(coordinates),
+        })
     }
 
     /// Type information for a fixed-array value, including expressions that
@@ -701,7 +791,7 @@ impl<'a> Codegen<'a> {
             }
         }
         let actual_resolved = self.port_array_actual(actual);
-        let (child_array, actual_array, actual_prefix) = match (child_array, actual_resolved) {
+        let (child_array, actual_array) = match (child_array, actual_resolved) {
             (None, None) => return Ok(false),
             (Some(_), None) | (None, Some(_)) => {
                 return Err(format!(
@@ -709,7 +799,7 @@ impl<'a> Codegen<'a> {
                     self.display_name(port)
                 ));
             }
-            (Some(child), Some((actual, prefix))) => (child, actual, prefix),
+            (Some(child), Some(actual)) => (child, actual),
         };
         if child_array.dims.len() != actual_array.dims.len()
             || child_array.dims.iter().zip(&actual_array.dims).any(
@@ -727,16 +817,17 @@ impl<'a> Codegen<'a> {
 
         let actual_is_target = direction != DbDirection::Input;
         let (target, source) = if actual_is_target {
-            (&actual_array, &child_array)
+            (&actual_array.array, &child_array)
         } else {
-            (&child_array, &actual_array)
+            (&child_array, &actual_array.array)
         };
         let target_array = self.reference_array(target.ir);
         let source_array = self.reference_array(source.ir);
         // An element actual (`a[i]`) selects leading dimensions of a
         // higher-rank array; those element indices must be elaboration
         // constants so the connected sub-array is fixed at build time.
-        let actual_prefix = actual_prefix
+        let actual_prefix = actual_array
+            .prefix
             .iter()
             .map(|index| self.eval_bound_i128(*index))
             .collect::<Result<Vec<_>, String>>()
@@ -752,8 +843,18 @@ impl<'a> Codegen<'a> {
                     self.display_name(port)
                 )
             })?;
-        let target_indices = port_array_index_vectors(&target.dims);
-        let source_indices = port_array_index_vectors(&source.dims);
+        let target_dims = if actual_is_target {
+            &actual_array.dims
+        } else {
+            &child_array.dims
+        };
+        let source_dims = if actual_is_target {
+            &child_array.dims
+        } else {
+            &actual_array.dims
+        };
+        let target_indices = port_array_index_vectors(target_dims);
+        let source_indices = port_array_index_vectors(source_dims);
         if target_indices.len() != source_indices.len() {
             return Err(format!(
                 "fixed array port `{}` has incompatible element count in `{child_path}`",
@@ -771,17 +872,34 @@ impl<'a> Codegen<'a> {
                 )
                 .collect()
         };
+        let actual_coordinates = actual_array.coordinates.as_ref().map(|coordinates| {
+            coordinates
+                .iter()
+                .map(|indices| {
+                    indices
+                        .iter()
+                        .map(|index| lhs_integer_expr(i128::from(*index)))
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>()
+        });
         let mut assignments = Vec::with_capacity(target_indices.len());
-        for (target_indices, source_indices) in target_indices.iter().zip(&source_indices) {
+        for (ordinal, (target_indices, source_indices)) in
+            target_indices.iter().zip(&source_indices).enumerate()
+        {
+            let actual_indices = actual_coordinates
+                .as_ref()
+                .and_then(|coordinates| coordinates.get(ordinal))
+                .cloned();
             let (target_index_exprs, source_index_exprs) = if actual_is_target {
                 (
-                    with_prefix(&actual_prefix, target_indices),
+                    actual_indices.unwrap_or_else(|| with_prefix(&actual_prefix, target_indices)),
                     with_prefix(&[], source_indices),
                 )
             } else {
                 (
                     with_prefix(&[], target_indices),
-                    with_prefix(&actual_prefix, source_indices),
+                    actual_indices.unwrap_or_else(|| with_prefix(&actual_prefix, source_indices)),
                 )
             };
             let lhs = IrLhs::ArrayElem {

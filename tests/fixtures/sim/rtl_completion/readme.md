@@ -29,6 +29,13 @@ diagnostics. Positive tests never treat a lowering rejection as success.
   `syn_007_array_input_element_rejected.sv` keeps the incompatible-element
   diagnostic; both are single-fault controls (1800-2009 §§7.6, 23.2.2 and
   23.3.3).
+- `syn_008_port_shape_matrix.sv` qualifies fixed output rows, legal unpacked
+  slices, a matching fixed-array `ref`, aggregate value output, nested member
+  targets, and module instance-array distribution. `syn_008_output_expression_rejected.sv`
+  keeps the assignability boundary for output actuals, while
+  `syn_008_ref_shape_rejected.sv` keeps the matching fixed-array reference
+  boundary; both are single-fault controls (1800-2009 §§7.4.6, 23.2.2.2,
+  23.3.2 and 23.3.3).
 - `$unit` variable declarations must precede their references under the 2009
   profile; prior declarations and legal forward subroutine calls are controls
   (3.12.1).
