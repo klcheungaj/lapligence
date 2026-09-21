@@ -280,15 +280,13 @@ impl<'a> Codegen<'a> {
             return Ok(Some(statement));
         }
         let descriptor = self.query_descriptor(lhs).cloned();
-        if let NodeKind::Expr(ExprKind::Operation { op: pattern_op, .. }) = self.kind(rhs) {
-            if *pattern_op == Operation::AssignmentPattern {
-                return Ok(Some(self.lower_container_pattern(
-                    path,
-                    dst.ir,
-                    rhs,
-                    descriptor.as_ref(),
-                )?));
-            }
+        if self.assignment_pattern_operands(path, rhs)?.is_some() {
+            return Ok(Some(self.lower_container_pattern(
+                path,
+                dst.ir,
+                rhs,
+                descriptor.as_ref(),
+            )?));
         }
         if let Some(operation) = self.container_method_result(path, dst.ir, rhs)? {
             return Ok(Some(IrStmt::Container(operation)));

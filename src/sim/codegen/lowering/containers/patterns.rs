@@ -10,26 +10,11 @@ impl<'a> Codegen<'a> {
         pattern: NodeId,
         descriptor: Option<&TypeDescriptor>,
     ) -> Result<IrStmt, String> {
-        let NodeKind::Expr(ExprKind::Operation {
-            op,
-            operands,
-            reordered,
-            ..
-        }) = self.kind(pattern)
-        else {
+        let Some(operands) = self.assignment_pattern_operands(path, pattern)? else {
             return Err(format!(
                 "resizable container initializer in `{path}` is not an assignment pattern"
             ));
         };
-        if *op != Operation::AssignmentPattern {
-            return Err(format!(
-                "resizable container initializer in `{path}` is not an assignment pattern"
-            ));
-        }
-        let mut operands = operands.clone();
-        if *reordered {
-            operands.reverse();
-        }
         let kind = self.model.containers[container].kind.clone();
         match kind {
             IrContainerKind::Dynamic | IrContainerKind::Queue { .. } => {

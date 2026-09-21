@@ -337,28 +337,13 @@ impl<'a> Codegen<'a> {
         node: NodeId,
         bounds: (i32, i32),
     ) -> Result<Vec<NodeId>, String> {
-        let NodeKind::Expr(ExprKind::Operation {
-            op,
-            operands,
-            reordered,
-            ..
-        }) = self.kind(node)
-        else {
+        let Some(operands) = self.assignment_pattern_operands(path, node)? else {
             return Err(format!(
                 "fixed unpacked-array assignment pattern in `{path}` is not an assignment pattern"
             ));
         };
-        if *op != Operation::AssignmentPattern {
-            return Err(format!(
-                "fixed unpacked-array assignment pattern in `{path}` is not an assignment pattern"
-            ));
-        }
         let count = usize::try_from((i64::from(bounds.0) - i64::from(bounds.1)).unsigned_abs() + 1)
             .map_err(|_| format!("fixed unpacked-array pattern is too large in `{path}`"))?;
-        let mut operands = operands.clone();
-        if *reordered {
-            operands.reverse();
-        }
         let tagged = operands.iter().any(|operand| {
             matches!(
                 self.kind(*operand),
@@ -453,13 +438,9 @@ impl<'a> Codegen<'a> {
         let Some((bounds, rest)) = dims.split_first() else {
             return Ok(vec![node]);
         };
-        let values = match self.kind(node) {
-            NodeKind::Expr(ExprKind::Operation { op, .. })
-                if *op == Operation::AssignmentPattern =>
-            {
-                self.p30_pattern_level(path, node, *bounds)?
-            }
-            _ => {
+        let values = match self.assignment_pattern_operands(path, node)? {
+            Some(_) => self.p30_pattern_level(path, node, *bounds)?,
+            None => {
                 let count = dims[1..]
                     .iter()
                     .map(|(left, right)| (i64::from(*left) - i64::from(*right)).unsigned_abs() + 1)
@@ -704,13 +685,10 @@ impl<'a> Codegen<'a> {
             }
             return Ok(values);
         }
-        if matches!(
-            self.kind(source_node),
-            NodeKind::Expr(ExprKind::Operation {
-                op: Operation::AssignmentPattern,
-                ..
-            })
-        ) {
+        if self
+            .assignment_pattern_operands(path, source_node)?
+            .is_some()
+        {
             let nodes = self.p30_pattern_values(path, source_node, target_dims)?;
             let mut values = Vec::with_capacity(nodes.len());
             for (ordinal, node) in nodes.into_iter().enumerate() {

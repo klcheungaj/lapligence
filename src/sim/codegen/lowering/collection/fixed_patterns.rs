@@ -4,6 +4,81 @@ use super::*;
 use crate::sim::ir::IrPackedSelect;
 
 impl Codegen<'_> {
+    /// Return assignment-pattern operands in source/declaration order.
+    ///
+    /// Slang retains a replicated pattern's syntactic element list and its
+    /// constant count separately.  Expand that list here, at the owned IR
+    /// boundary, so every fixed-array/aggregate consumer sees one operand per
+    /// destination position.  Repeated entries intentionally keep the same
+    /// node identity: the operand slot is distinct even when the source node
+    /// is shared.  The count is required to be constant by SV 10.9.1.
+    pub(in super::super) fn assignment_pattern_operands(
+        &self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<Option<Vec<NodeId>>, String> {
+        let NodeKind::Expr(ExprKind::Operation {
+            op,
+            operands,
+            reordered,
+            ..
+        }) = self.kind(node)
+        else {
+            return Ok(None);
+        };
+        let mut operands = operands.clone();
+        if *reordered {
+            operands.reverse();
+        }
+        match op {
+            Operation::AssignmentPattern => Ok(Some(operands)),
+            Operation::MultiAssignmentPattern => {
+                let count_node = operands.first().copied().ok_or_else(|| {
+                    format!("replicated assignment pattern has no count in `{path}`")
+                })?;
+                let count = self.eval_bits(count_node).map_err(|error| {
+                    format!("invalid replicated assignment count in `{path}`: {error}")
+                })?;
+                if count.is_unknown() {
+                    return Err(format!(
+                        "replicated assignment pattern count is unknown in `{path}`"
+                    ));
+                }
+                let count = count.to_u128().ok_or_else(|| {
+                    format!("replicated assignment pattern count does not fit in u128 in `{path}`")
+                })?;
+                if count == 0 {
+                    return Err(format!(
+                        "replicated assignment pattern count must be positive in `{path}`"
+                    ));
+                }
+                let elements = &operands[1..];
+                if elements.is_empty() {
+                    return Err(format!(
+                        "replicated assignment pattern has no elements in `{path}`"
+                    ));
+                }
+                let count = usize::try_from(count).map_err(|_| {
+                    format!("replicated assignment pattern is too large in `{path}`")
+                })?;
+                let capacity = elements.len().checked_mul(count).ok_or_else(|| {
+                    format!("replicated assignment pattern is too large in `{path}`")
+                })?;
+                if capacity > LLG_MAX_WIDTH as usize {
+                    return Err(format!(
+                        "replicated assignment pattern has too many elements in `{path}`"
+                    ));
+                }
+                let mut expanded = Vec::with_capacity(capacity);
+                for _ in 0..count {
+                    expanded.extend(elements.iter().copied());
+                }
+                Ok(Some(expanded))
+            }
+            _ => Ok(None),
+        }
+    }
+
     /// Apply unpacked leaf state domains after a bit-stream cast. The helper
     /// receives one evaluated payload, so splitting it never repeats effects.
     pub(in super::super) fn convert_fixed_payload(
@@ -113,13 +188,7 @@ impl Codegen<'_> {
         path: &str,
         node: NodeId,
     ) -> Result<Option<IrExpr>, String> {
-        if !matches!(
-            self.kind(node),
-            NodeKind::Expr(ExprKind::Operation {
-                op: Operation::AssignmentPattern,
-                ..
-            })
-        ) {
+        if self.assignment_pattern_operands(path, node)?.is_none() {
             return Ok(None);
         }
         let Some(descriptor) = self.query_descriptor(node).cloned() else {

@@ -240,3 +240,81 @@ fn array_conditional_assignment_shared_default_operands_keep_every_slot() {
         }
     }
 }
+
+#[test]
+fn replicated_assignment_pattern_import_keeps_count_and_element_order() {
+    use llg::ffi::slang::{SemanticEdgeRole, SemanticOperation};
+
+    let source = "// llg-test-fixture: tests/slang_semantics/array_conditional_assignments.rs/replicated-pattern-edges\n\
+                  module tb;\n\
+                  logic [7:0] y; logic [7:0] values [0:3];\n\
+                  initial values = '{2{y, 8'h12}};\n\
+                  endmodule\n";
+    let compiled = compile::compile_sources_checked(
+        &[compile::OwnedSource::compilation_unit(
+            "replicated-pattern-edges.sv",
+            source,
+        )],
+        &compile::CompileOpts {
+            top: Some("tb".into()),
+            ..Default::default()
+        },
+    )
+    .expect("valid replicated assignment pattern source");
+    let snapshot = &compiled.snapshot;
+    let pattern = snapshot
+        .semantic_nodes
+        .iter()
+        .find(|node| node.operation == SemanticOperation::MultiAssignmentPattern)
+        .expect("replicated assignment pattern node");
+    let pattern_edges = super::edges(snapshot, pattern);
+    let widths: Vec<_> = pattern_edges
+        .iter()
+        .filter(|edge| edge.role == SemanticEdgeRole::Width)
+        .collect();
+    assert_eq!(widths.len(), 1, "the repetition count is one width edge");
+    let operands: Vec<_> = pattern_edges
+        .iter()
+        .filter(|edge| edge.role == SemanticEdgeRole::Operand)
+        .collect();
+    assert_eq!(operands.len(), 2, "the syntactic element list is retained");
+    assert_eq!(
+        operands.iter().map(|edge| edge.index).collect::<Vec<_>>(),
+        [0, 1],
+        "replicated pattern elements retain source order"
+    );
+    let database = Db::from_slang(snapshot).expect("replicated pattern import");
+    let pattern_id = database
+        .node_ids()
+        .find(|id| {
+            matches!(
+                database.node_kind(*id),
+                NodeKind::Expr(ExprKind::Operation {
+                    op: Operation::MultiAssignmentPattern,
+                    ..
+                })
+            )
+        })
+        .expect("owned replicated assignment pattern node");
+    let NodeKind::Expr(ExprKind::Operation { operands, .. }) = database.node_kind(pattern_id)
+    else {
+        unreachable!();
+    };
+    assert_eq!(
+        operands.len(),
+        3,
+        "owned operands retain count plus elements"
+    );
+    assert!(matches!(
+        database.node_kind(operands[1]),
+        NodeKind::Expr(ExprKind::Ref { .. })
+    ));
+    assert_ne!(
+        operands[1], operands[2],
+        "distinct syntactic elements must retain distinct operand slots"
+    );
+    for options in [OptConfig::none(), OptConfig::default()] {
+        codegen::generate_from_db_with_opts(&database, &options)
+            .expect("replicated pattern edges lower after snapshot drop");
+    }
+}

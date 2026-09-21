@@ -75,11 +75,7 @@ impl<'a> Codegen<'a> {
         rhs: NodeId,
         op: Operation,
     ) -> Result<Option<IrExpr>, String> {
-        if !matches!(
-            self.kind(rhs),
-            NodeKind::Expr(ExprKind::Operation { op, .. })
-                if *op == Operation::AssignmentPattern
-        ) {
+        if self.assignment_pattern_operands(path, rhs)?.is_none() {
             return Ok(None);
         }
         let target = match self.kind(lhs) {
@@ -127,11 +123,10 @@ impl<'a> Codegen<'a> {
                 )
             })?;
             let value = if let Some(nested) = member.aggregate_layout() {
-                if matches!(
-                    self.kind(value_node),
-                    NodeKind::Expr(ExprKind::Operation { op, .. })
-                        if *op == Operation::AssignmentPattern
-                ) {
+                if self
+                    .assignment_pattern_operands(path, value_node)?
+                    .is_some()
+                {
                     if !matches!(
                         nested.kind,
                         AggregateKind::PackedStruct | AggregateKind::PackedUnion
@@ -201,11 +196,7 @@ impl<'a> Codegen<'a> {
         let rhs_aggregate = self.unpacked_aggregate_info(rhs);
         let lhs_sub = self.resolve_unpacked_aggregate(lhs);
         let rhs_sub = self.resolve_unpacked_aggregate(rhs);
-        let rhs_is_pattern = matches!(
-            self.kind(rhs),
-            NodeKind::Expr(ExprKind::Operation { op, .. })
-                if *op == Operation::AssignmentPattern
-        );
+        let rhs_is_pattern = self.assignment_pattern_operands(path, rhs)?.is_some();
         if lhs_aggregate.is_none() && rhs_aggregate.is_none() && lhs_sub.is_none() {
             // Not an aggregate destination: packed patterns and every other
             // assignment shape keep their existing lowering.
@@ -1083,18 +1074,17 @@ impl<'a> Codegen<'a> {
         // Peel only casts whose eventual operand is an assignment pattern so
         // ordinary scalar casts remain value expressions.
         let pattern_node = self.unwrap_assignment_pattern_cast(node);
-        if !matches!(
-            self.kind(pattern_node),
-            NodeKind::Expr(ExprKind::Operation {
-                op: Operation::AssignmentPattern,
-                ..
-            })
-        ) && matches!(
-            descriptor.shape,
-            TypeShape::Aggregate(_) | TypeShape::FixedArray { .. }
-        ) && self
-            .query_descriptor(node)
-            .is_some_and(|source| source.id == descriptor.id)
+        let is_pattern = self
+            .assignment_pattern_operands(path, pattern_node)?
+            .is_some();
+        if !is_pattern
+            && matches!(
+                descriptor.shape,
+                TypeShape::Aggregate(_) | TypeShape::FixedArray { .. }
+            )
+            && self
+                .query_descriptor(node)
+                .is_some_and(|source| source.id == descriptor.id)
         {
             out.push((prefix.to_vec(), node));
             return Ok(());
@@ -1110,11 +1100,7 @@ impl<'a> Codegen<'a> {
                 Ok(())
             }
             TypeShape::Aggregate(layout) => {
-                if matches!(
-                    self.kind(pattern_node),
-                    NodeKind::Expr(ExprKind::Operation { op, .. })
-                        if *op == Operation::AssignmentPattern
-                ) {
+                if is_pattern {
                     self.aggregate_pattern_leaf_values(path, pattern_node, layout, prefix, out)
                 } else {
                     self.aggregate_descriptor_default_values(
@@ -1147,11 +1133,7 @@ impl<'a> Codegen<'a> {
                         },
                     }
                 };
-                if !matches!(
-                    self.kind(pattern_node),
-                    NodeKind::Expr(ExprKind::Operation { op, .. })
-                        if *op == Operation::AssignmentPattern
-                ) {
+                if !is_pattern {
                     // A scalar default applied to an array member recurses
                     // through every element, so the full array descriptor
                     // (not the element) drives the fan-out.
@@ -1201,8 +1183,10 @@ impl<'a> Codegen<'a> {
         }
         if matches!(
             self.kind(operand),
-            NodeKind::Expr(ExprKind::Operation { op, .. })
-                if *op == Operation::AssignmentPattern
+            NodeKind::Expr(ExprKind::Operation {
+                op: Operation::AssignmentPattern | Operation::MultiAssignmentPattern,
+                ..
+            })
         ) {
             operand
         } else {
@@ -1305,26 +1289,11 @@ impl<'a> Codegen<'a> {
         let count = (i64::from(left) - i64::from(right)).unsigned_abs() + 1;
         let count = usize::try_from(count)
             .map_err(|_| format!("fixed array pattern is too large in `{path}`"))?;
-        let NodeKind::Expr(ExprKind::Operation {
-            op,
-            operands,
-            reordered,
-            ..
-        }) = self.kind(node)
-        else {
+        let Some(values) = self.assignment_pattern_operands(path, node)? else {
             return Err(format!(
                 "array initializer in `{path}` is not an assignment pattern"
             ));
         };
-        if *op != Operation::AssignmentPattern {
-            return Err(format!(
-                "array initializer in `{path}` is not an assignment pattern"
-            ));
-        }
-        let mut values = operands.clone();
-        if *reordered {
-            values.reverse();
-        }
         let tagged = values.iter().any(|value| {
             matches!(
                 self.kind(*value),

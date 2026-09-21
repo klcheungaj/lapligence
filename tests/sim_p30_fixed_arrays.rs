@@ -3,6 +3,8 @@
 //! Each fixture is lowered and executed in both optimizer modes so array
 //! snapshot semantics and notifications cannot diverge between pipelines.
 
+#[path = "support/sim_cli.rs"]
+mod sim_cli;
 #[path = "support/sim.rs"]
 mod sim_harness;
 
@@ -144,5 +146,53 @@ fn fixed_array_overlap_slice() {
     run_fixture(
         "fixed_array_overlap_slice.sv",
         "PASS fixed_array_overlap_slice\n",
+    );
+}
+
+#[test]
+fn replicated_assignment_patterns_preserve_rows_and_runtime_values() {
+    run_fixture(
+        "replicated_assignment_patterns.sv",
+        "PASS replicated_assignment_patterns\n",
+    );
+}
+
+#[test]
+fn replicated_assignment_patterns_public_cli() {
+    sim_cli::run_case_with_args(
+        "p30_fixed_arrays",
+        "replicated_assignment_patterns",
+        "PASS replicated_assignment_patterns\n",
+        "llg: $finish at time 1000 at tb:83:9\n",
+        &[],
+        &["--edition", "2009"],
+    );
+}
+
+#[test]
+fn replicated_assignment_pattern_constant_control() {
+    run_fixture(
+        "replicated_assignment_pattern_constant.sv",
+        "PASS replicated_assignment_pattern_constant\n",
+    );
+}
+
+#[test]
+fn replicated_assignment_pattern_rejects_wrong_extent() {
+    sim_cli::reject_case_with_args(
+        "p30_fixed_arrays",
+        "replicated_assignment_pattern_shape",
+        "assignment pattern",
+        &["--edition", "2009"],
+    );
+}
+
+#[test]
+fn replicated_assignment_pattern_rejects_zero_count() {
+    sim_cli::reject_case_with_args(
+        "p30_fixed_arrays",
+        "replicated_assignment_pattern_zero",
+        "value must be positive",
+        &["--edition", "2009"],
     );
 }

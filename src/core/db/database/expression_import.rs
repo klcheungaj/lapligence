@@ -300,6 +300,19 @@ pub(super) fn expression_from_slang(
                     values.extend(edge_targets(ids, edges, SemanticEdgeRole::Operand)?);
                     values
                 }
+                78 if node.operation == SemanticOperation::MultiAssignmentPattern => {
+                    // Replicated assignment patterns carry the count in a
+                    // width edge just like ordinary concatenation
+                    // replication. Keep it in operand position zero so
+                    // fixed-array consumers can expand the typed pattern
+                    // without losing the count or the repeated edge order.
+                    let mut values = vec![required(
+                        SemanticEdgeRole::Width,
+                        "assignment pattern count",
+                    )?];
+                    values.extend(edge_targets(ids, edges, SemanticEdgeRole::Operand)?);
+                    values
+                }
                 71 => [SemanticEdgeRole::Lhs, SemanticEdgeRole::Rhs]
                     .into_iter()
                     .map(|role| required(role, "assignment operand"))

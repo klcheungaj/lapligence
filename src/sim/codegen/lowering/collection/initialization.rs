@@ -35,11 +35,8 @@ impl<'a> Codegen<'a> {
                 if matches!(
                     layout.kind,
                     AggregateKind::PackedStruct | AggregateKind::PackedUnion
-                ) && matches!(
-                    self.kind(init),
-                    NodeKind::Expr(ExprKind::Operation { op, .. })
-                        if *op == Operation::AssignmentPattern
-                ) {
+                ) && self.assignment_pattern_operands(path, init)?.is_some()
+                {
                     let value = self.packed_aggregate_decl_init(path, init, layout, &info)?;
                     self.var_inits.push((info, value));
                     continue;
@@ -270,11 +267,10 @@ impl<'a> Codegen<'a> {
         width: u32,
     ) -> Result<elab::Value, String> {
         if let Some(layout) = member.aggregate_layout() {
-            if matches!(
-                self.kind(value_node),
-                NodeKind::Expr(ExprKind::Operation { op, .. })
-                    if *op == Operation::AssignmentPattern
-            ) {
+            if self
+                .assignment_pattern_operands(path, value_node)?
+                .is_some()
+            {
                 if !matches!(
                     layout.kind,
                     AggregateKind::PackedStruct | AggregateKind::PackedUnion
@@ -366,26 +362,11 @@ impl<'a> Codegen<'a> {
         init: NodeId,
         layout: &crate::core::db::AggregateLayout,
     ) -> Result<Vec<(usize, NodeId)>, String> {
-        let NodeKind::Expr(ExprKind::Operation {
-            op,
-            operands,
-            reordered,
-            ..
-        }) = self.kind(init)
-        else {
+        let Some(operands) = self.assignment_pattern_operands(path, init)? else {
             return Err(format!(
                 "declaration initializer for aggregate in `{path}` is not an assignment pattern"
             ));
         };
-        if *op != Operation::AssignmentPattern {
-            return Err(format!(
-                "declaration initializer for aggregate in `{path}` is not an assignment pattern"
-            ));
-        }
-        let mut operands = operands.clone();
-        if *reordered {
-            operands.reverse();
-        }
         let tagged = operands.iter().any(|operand| {
             matches!(
                 self.kind(*operand),
@@ -575,11 +556,7 @@ impl<'a> Codegen<'a> {
         let Some(rhs) = self.node(ca).children.get(1).copied() else {
             return Ok(false);
         };
-        if !matches!(
-            self.kind(rhs),
-            NodeKind::Expr(ExprKind::Operation { op, .. })
-                if *op == Operation::AssignmentPattern
-        ) {
+        if self.assignment_pattern_operands(path, rhs)?.is_none() {
             return Ok(false);
         }
         if let Some(aggregate) = self.unpacked_aggregates.get(&target).cloned() {
@@ -782,19 +759,11 @@ impl<'a> Codegen<'a> {
         name: &str,
         init: NodeId,
     ) -> Result<Vec<IrConst>, String> {
-        let operands: Vec<NodeId> = match self.kind(init) {
-            NodeKind::Expr(ExprKind::Operation { op, operands, .. })
-                if *op == Operation::AssignmentPattern =>
-            {
-                operands.clone()
-            }
-            other => {
-                return Err(format!(
-                    "array `{name}` in `{path}` has an unsupported declaration \
-                     initializer: {other:?}"
-                ))
-            }
-        };
+        let operands = self
+            .assignment_pattern_operands(path, init)?
+            .ok_or_else(|| {
+                format!("array `{name}` in `{path}` has an unsupported declaration initializer")
+            })?;
         operands
             .iter()
             .map(|operand| {
