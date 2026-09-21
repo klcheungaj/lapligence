@@ -8,8 +8,10 @@ The file remains the sole maintained simulator feature-status document.
 
 Section numbers retain the original inventory's Verilog (§1364-2001 x.y),
 SystemVerilog and verification (§1800-2009 y.z) references. The clause mappings
-link to the checked-in references under `docs/specification/`; they were not
-independently revalidated in this source-status audit.
+refer to the workspace-local reference pack under `docs/specification/`; its
+PDFs and extracted maps are an untracked prerequisite and are not part of this
+Git revision. They were not independently revalidated in this source-status
+audit.
 Detailed source investigations and run records belong in local `persistence/`.
 
 ## Current source status and qualification — 2026-09-21
@@ -105,8 +107,10 @@ and legacy extension subprofiles named by the implementation plan. A
 owned simulator pipeline and concrete acceptance evidence from the selected
 synthesis target. The repository has simulator regressions for several of
 these constructs, but no checked-in target-tool run, netlist, or equivalent
-target acceptance artifact. The clause maps under `docs/specification/` are
-language references and synthesis classifications, not target acceptance.
+target acceptance artifact. The workspace-local clause maps under
+`docs/specification/` are an untracked language-reference prerequisite and
+provide language references and synthesis classifications, not target
+acceptance.
 
 All six forms are therefore **excluded by the selected SYN-000 profile**. The
 exclusions apply to synthesis qualification; existing simulator behavior and
@@ -585,8 +589,9 @@ while those later semantic boundaries remain an explicit inventory item.
 ### SYN-019 selected edition boundary ledger — 2026-09-20
 
 This ledger closes the selected Core-elaboration cells from the SYN-019 plan.
-The supplied IEEE 1364-2001 and IEEE 1800-2009 PDFs and the local clause maps
-under `docs/specification/` are the normative inputs; no local errata file was
+The supplied IEEE 1364-2001 and IEEE 1800-2009 PDFs and the workspace-local
+clause maps under `docs/specification/` are the normative inputs. They are an
+untracked prerequisite outside this Git revision; no local errata file was
 available to amend these rulings. Every public CLI fixture below runs through
 `llg` and `llg --no-opt` in [`sim_edition.rs`](../tests/sim_edition.rs).
 
@@ -635,7 +640,8 @@ resolution retain the ordinary structural-driver path. The public
 test checks the copied table rows.
 
 The accepted references are IEEE 1364-2001 §§8.1, 8.2, 8.6 and IEEE 1800-2009
-§§29.3, 29.4, 29.8, as mapped by the checked-in specification references. The
+§§29.3, 29.4, 29.8, as mapped by the workspace-local specification references
+(an untracked prerequisite). The
 negative fixtures cover sequential level/edge UDPs (1364 §§8.3–8.5; 1800
 §§29.5–29.7) and edge-sensitive table rows. Vector or aggregate terminals,
 switch/transistor primitives, and specify/SDF behavior remain outside this
@@ -654,11 +660,13 @@ the source revision that produced them belong to SYN-039. The `PI-03` row is
 an explicit Extended SYN-031 boundary marker; its `PASS` records the selected
 UDP evidence owner and does not promote UDP syntax into the Core denominator.
 
-The production names and clause numbers below were checked against the local
-Annex A/B index in `docs/specification/spec-reference-annex-a.md` and its
-1364-2001/1800-2009 chapter maps. They deliberately use the local index's
-production spelling; a friendly feature name is not used as a substitute for
-a grammar row. An `SV2009` gate is intentional whenever a named production or
+The production names and clause numbers below were checked against the
+workspace-local Annex A/B index in
+`docs/specification/spec-reference-annex-a.md` and its 1364-2001/1800-2009
+chapter maps. Those files are an untracked prerequisite outside this Git
+revision. The rows deliberately use the local index's production spelling; a
+friendly feature name is not used as a substitute for a grammar row. An
+`SV2009` gate is intentional whenever a named production or
 the checked-in witness uses SystemVerilog-only syntax; a `V2001/SV2009` gate is
 reserved for rows whose complete witness remains legal in both editions.
 
@@ -779,7 +787,7 @@ claimed complete here.
 | SYN038-EX-02 | SV2009 | `queue_dimension`, `associative_dimension`, `dynamic_array_variable_identifier` (B.3/B.4) | `tests/fixtures/sim/data_types_next/dynamic_array_invalid_size.sv`; SYN-034 | Resizable/native storage has no portable Core RTL mapping. |
 | SYN038-EX-03 | V2001/SV2009 | `non_integer_type`, runtime `real_type`, `string`, `chandle` (B.3) | `tests/fixtures/sim/data_types_next/inside_chandle_rejected.sv`; SYN-016 | Constants may elaborate; runtime real/native objects are outside Core. |
 | SYN038-EX-04 | V2001/SV2009 | `procedural_continuous_assignment`, `force`/`release` extensions (B.7/B.9) | `tests/fixtures/sim/procedural_assign/real.sv`; SYN-034 | Target-dependent legacy drivers are excluded without named target evidence. |
-| SYN038-EX-05 | V2001/SV2009 | `mos_switch_instance`, `pass_switch_instance`, resistive switch forms (B.24) | `tests/fixtures/sim/gates/p40_strength_rejected.sv`; SYN-034 | Device-level switch semantics are outside portable Core RTL. |
+| SYN038-EX-05 | V2001/SV2009 | `mos_switch_instance`, `pass_switch_instance`, resistive switch forms (B.24) | [`sim_gates_reject_switch_primitive`](../tests/sim_gates.rs) (`tests/sim_gates.rs`); SYN-034 | Device-level switch semantics are outside portable Core RTL; the inline test supplies the single-fault variable-terminal rejection. |
 | SYN038-EX-06 | V2001/SV2009 | `sequential_body`, `edge_input_list` UDP forms (B.25) | `tests/fixtures/sim/partial_features/udp_sequential_rejected.sv`; SYN-031 | SYN-031 owns the accepted scalar combinational UDP track; sequential/device UDP needs separate implementation and remains outside Core. |
 | SYN038-EX-07 | V2001/SV2009 | `specify_block`, `system_timing_check`, `path_delay_value` (B.26) | `tests/fixtures/sim/partial_features/negative_constant_delay.sv`; groups 17–19 | Timing/path/SDF behavior is simulation infrastructure, not Core synthesis. |
 | SYN038-EX-08 | SV2009 | `class_declaration`, `program_declaration`, `clocking_declaration` (B.5/B.11/B.20) | `tests/fixtures/sim/classes/basic.sv`; SYN-034 | Verification/object/process containers are outside Core. |
@@ -901,12 +909,15 @@ composed public-CLI witnesses and one neighboring single-fault rejection:
 Every public-CLI witness in this suite runs with optimization enabled and with
 `--no-opt`; the composed SystemVerilog witnesses use the selected 2009 profile.
 The shared `sim_rtl_composition` controls additionally pass the corresponding
-Verilog-2001 and SystemVerilog-2009 edition designs. The final serialized Cargo
-gate covered **141 test cases: 141 passed, 0 failed** across the composed Core
-suite, R01–R06 controls, selected pattern/UDP/configuration/alias/memory
-extensions, SYN-036 capacity, and the SYN-038 ledger. A separate serialized
-R01–R06 gate covered **82 test cases: 82 passed, 0 failed**. The exact command
-was:
+Verilog-2001 and SystemVerilog-2009 edition designs. The final serialized
+composed-profile acceptance invocation covered **141 test cases: 141 passed,
+0 failed** across the named Core controls, selected
+pattern/UDP/configuration/alias/memory extensions, SYN-036 capacity, and the
+SYN-038 ledger. This is the aggregate count returned by that invocation; it is
+not a rerun of every positive or negative case in every selected task suite.
+Each task's own suite remains the owner of its complete per-task validation.
+A separate serialized R01–R06 gate covered **82 test cases: 82 passed, 0
+failed**. The exact command was:
 
 ```text
 cargo test --locked --test sim_syn039_acceptance --test sim_rtl_composition --test sim_rtl_completion --test sim_sequential_predicates --test sim_udp --test sim_syn032_library_configs --test sim_net_resolution --test sim_memory_views --test sim_syn036_capacity --test sim_syn038_ledger -- --test-threads=1

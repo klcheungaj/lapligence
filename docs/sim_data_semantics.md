@@ -3,11 +3,12 @@
 This is a reference for simulator models and semantic tests. It describes the
 language rules, not the current `llg` implementation. “Verilog” below means
 IEEE 1364-2001 unless an edition is named; “SystemVerilog” means IEEE
-1800-2009. The repository’s clause maps are in
+1800-2009. The workspace-local clause maps are in
 [spec-reference-verilog.md](specification/spec-reference-verilog.md) and
 [spec-reference-sv.md](specification/spec-reference-sv.md). Clause numbers
-below were checked against the local PDFs/extracted text in
+below were checked against the workspace-local PDFs/extracted text in
 `docs/specification/` (the 2009 PDF is the primary source for SystemVerilog).
+This reference pack is an untracked prerequisite outside the Git revision.
 
 This page is normative guidance for expected semantics, not an implementation
 status report. The feature checklist and the bounded

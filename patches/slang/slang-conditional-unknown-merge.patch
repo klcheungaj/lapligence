@@ -2,14 +2,9 @@ diff --git a/source/numeric/SVInt.cpp b/source/numeric/SVInt.cpp
 index 3f2c2e5b..00000000 100644
 --- a/source/numeric/SVInt.cpp
 +++ b/source/numeric/SVInt.cpp
-@@ -1716,7 +1716,8 @@ SVInt SVInt::conditional(const SVInt& condition, const SVInt& lhs, const SVInt& rhs) {
-     if (!c.isUnknown())
-         return c ? lhs : rhs;
- 
+@@ -1719,2 +1719,3 @@ SVInt SVInt::conditional(const SVInt& condition, const SVInt& lhs, const SVInt& rhs) {
 -    if (exactlyEqual(lhs, rhs))
 -        return rhs;
 +    // IEEE 1364-2001 §4.1.13 Table 28 and IEEE 1800-2009 §11.4.11
 +    // Table 11-20 preserve equal known bits only. Equal X/Z bits must be
 +    // recomputed as X; a whole-value equality shortcut would preserve Z/Z.
- 
-     SVInt result = SVInt::allocUninitialized(lhs.bitWidth, bothSigned, true);

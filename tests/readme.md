@@ -9,7 +9,7 @@
 
 ## Simulator testing methodology
 
-- Target IEEE 1364-2001 and IEEE 1800-2009 using the local [specifications](../docs/specification/).
+- Target IEEE 1364-2001 and IEEE 1800-2009 using the workspace-local [specification reference pack](../docs/specification/). The PDFs and extracted maps are an untracked prerequisite outside this Git revision.
 - Keep end-to-end designs in checked-in `.v` / `.sv` files; pass them directly to `llg`.
 - Run each conformance fixture with default optimization and `--no-opt`.
 - Keep independent expected results in Rust: explicit truth tables, bit strings and width/signedness arithmetic.
@@ -58,8 +58,10 @@ multi-instance drivers, and selected pattern/UDP/configuration assembly. Its
 neighboring sequential-UDP fixture is a single-fault rejection. The final gate
 also runs the composed Core controls, R01–R06 suites, selected Extended suites,
 SYN-036 capacity and this ledger in one serialized Cargo invocation. The
-current Linux x86_64 result is 141 test cases passed with no failures; this is
-scoped evidence for the documented profile, not a universal synthesis claim.
+current Linux x86_64 result is 141 test cases passed with no failures in that
+composed-profile invocation. The count is not a rerun of every selected task
+suite; each task's own suite remains the owner of its per-task validation. This
+is scoped evidence for the documented profile, not a universal synthesis claim.
 
 ```sh
 cargo test --locked --test sim_syn039_acceptance --test sim_rtl_composition --test sim_rtl_completion --test sim_sequential_predicates --test sim_udp --test sim_syn032_library_configs --test sim_net_resolution --test sim_memory_views --test sim_syn036_capacity --test sim_syn038_ledger -- --test-threads=1
