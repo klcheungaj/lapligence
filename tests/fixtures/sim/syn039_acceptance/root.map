@@ -1,0 +1,2 @@
+// llg-test-fixture: SYN-039 library map include.
+include "cells.map";

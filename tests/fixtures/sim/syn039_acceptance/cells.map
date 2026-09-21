@@ -1,0 +1,3 @@
+// llg-test-fixture: SYN-039 library map.
+library rtl "extended_rtl.sv";
+library gate "extended_gate.sv";

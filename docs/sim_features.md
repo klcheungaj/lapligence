@@ -17,7 +17,8 @@ Detailed source investigations and run records belong in local `persistence/`.
 This inventory records the source status reconciled against the task checkout
 on 2026-09-21. The baseline source identity, vendored base revisions and
 tracked native patches are captured in the local evidence record; the prior
-full-suite result remains historical until the SYN-039 acceptance run.
+full-suite result remains historical; the current scoped acceptance evidence is
+recorded in the SYN-039 section below.
 
 **R01–R05 have bounded source implementations. R06 implements sequential Boolean
 clauses, SYN-022 adds integral constant, wildcard and identifier-binding
@@ -25,9 +26,9 @@ clauses, SYN-022 adds integral constant, wildcard and identifier-binding
 packed/unpacked structure patterns with resolved member checks, SYN-024 adds
 finite tagged-union discriminant and payload patterns, and SYN-025 adds
 primitive/structure/tagged pattern-case items with ordered filters and owned
-selector capture. The last recorded clean checkout had a green Linux
-all-features baseline; that result is historical evidence for its revision, not
-a current-run or complete synthesizable Verilog/SystemVerilog claim.**
+selector capture. The SYN-039 gate now has current Linux public-CLI evidence for
+the selected Core, Extended and capacity tracks; it remains a bounded
+qualification and not a complete synthesizable Verilog/SystemVerilog claim.**
 The numbered feature sections and stable grouped inventory below record the
 implemented forms and remaining restrictions, including corrections to older
 contradictory rows for `defparam`, `let`, initialization and read-only helper
@@ -159,9 +160,10 @@ this selected RTL profile.
 That recorded baseline established a clean Linux build and full Rust/HDL
 nextest result, including the corrected fixed-array conditional, NBA and
 default-pattern cases where those suites ran them. Existing regression source
-files are not themselves pass evidence. Native Windows/macOS execution, the
-generated-model ASan boundary and every language/context combination remain
-separately unqualified. Commands and test methodology belong in the [test
+files are not themselves pass evidence. The current SYN-039 scope and command
+results are recorded below. Native Windows/macOS execution, the generated-model
+ASan boundary and every language/context combination remain separately
+unqualified. Commands and test methodology belong in the [test
 guide](../tests/readme.md); detailed run records belong in `persistence/`.
 
 ## Dynamic value migration acceptance boundary
@@ -878,6 +880,57 @@ descriptions below and are not copied into the selected Core denominator. A
 new legal failing cell found while executing this ledger must receive a new
 SYN child and dependency; it must not be converted into a broad `Partial`
 label or silently treated as an exclusion.
+
+### SYN-039 selected-profile acceptance — 2026-09-21
+
+The final acceptance gate was run on Linux x86_64 with the repository's native
+CMake toolchain from integrated production revision `bdd4482` (the completed
+SYN-000 through SYN-038 source chain); the acceptance fixtures and ledger
+claims are delivered by the SYN-039 task commit. The new
+[`sim_syn039_acceptance.rs`](../tests/sim_syn039_acceptance.rs) suite adds four
+composed public-CLI witnesses and one neighboring single-fault rejection:
+
+| Witness | Composition and result |
+| --- | --- |
+| `array_record_datapath` | Fixed array of unpacked records through value ports, a zero-time function, `always_comb`, and `always_ff`; **PASS**. |
+| `interface_generate_memory` | Independent parameterized interface instances, finite initialized memories, generated structural links, and runtime address changes; **PASS**. |
+| `alias_wired_multi` | Two instance drivers through a true alias and a `wand` resolver, including all-Z, single-driver and conflicting-driver states; **PASS**. |
+| `extended_top` with `syn039_select:config` | Selected library/configuration binding below a combinational UDP and finite tagged pattern-case datapath; **PASS**. |
+| `unsupported_sequential_udp` | Sequential UDP instance outside the selected combinational UDP profile; **REJECT** with the owned unsupported-primitive diagnostic. |
+
+Every public-CLI witness in this suite runs with optimization enabled and with
+`--no-opt`; the composed SystemVerilog witnesses use the selected 2009 profile.
+The shared `sim_rtl_composition` controls additionally pass the corresponding
+Verilog-2001 and SystemVerilog-2009 edition designs. The final serialized Cargo
+gate covered **141 test cases: 141 passed, 0 failed** across the composed Core
+suite, R01–R06 controls, selected pattern/UDP/configuration/alias/memory
+extensions, SYN-036 capacity, and the SYN-038 ledger. A separate serialized
+R01–R06 gate covered **82 test cases: 82 passed, 0 failed**. The exact command
+was:
+
+```text
+cargo test --locked --test sim_syn039_acceptance --test sim_rtl_composition --test sim_rtl_completion --test sim_sequential_predicates --test sim_udp --test sim_syn032_library_configs --test sim_net_resolution --test sim_memory_views --test sim_syn036_capacity --test sim_syn038_ledger -- --test-threads=1
+```
+
+`cargo nextest` is not installed on this host, so the equivalent Cargo test
+runner was used. The affected library and executable paths also passed
+`cargo check --locked --lib --no-default-features` and
+`cargo check --locked --bin llg`; fixture integrity passed with 767 static
+references and 0 errors. The native generated-model sanitizer lanes, native
+Windows/macOS execution, and synthesis-tool acceptance were not run and are
+not implied by this result.
+
+The accepted final profile is finite Core RTL and elaboration for the legal
+Verilog-2001/SystemVerilog-2009 forms recorded in SYN-038, plus the selected
+finite tagged values/patterns, fixed iterator and ordering methods, memory
+images/views, combinational UDPs, library/configuration assembly, structural
+bind, and the separate fixed-array capacity ceiling. The resource boundaries
+remain exact packed values below `1 << 20` bits, at most 65,536 generated fixed
+array cells, a 256-level generated-subroutine recursion guard, and the
+10,000,000 default scheduler/process budgets. SYN-034's six target-dependent
+forms and SYN-035's sixteen PLA forms remain excluded or deferred pending named
+target evidence. General verification, device-level, foreign-interface,
+resizable/native-object and untested-host behavior remains outside this claim.
 
 ### Compilation-unit grouping
 

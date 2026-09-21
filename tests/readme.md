@@ -49,6 +49,26 @@ check; SYN-039 owns the public CLI run revision and optimizer-mode results.
 cargo test --locked --test sim_syn038_ledger
 ```
 
+### SYN-039 selected-profile acceptance
+
+`sim_syn039_acceptance` runs the final composed public-CLI witnesses in both
+optimizer modes: fixed record arrays through ports/functions/`always_comb` and
+`always_ff`, parameterized interface/generate memory, aliased wired
+multi-instance drivers, and selected pattern/UDP/configuration assembly. Its
+neighboring sequential-UDP fixture is a single-fault rejection. The final gate
+also runs the composed Core controls, R01–R06 suites, selected Extended suites,
+SYN-036 capacity and this ledger in one serialized Cargo invocation. The
+current Linux x86_64 result is 141 test cases passed with no failures; this is
+scoped evidence for the documented profile, not a universal synthesis claim.
+
+```sh
+cargo test --locked --test sim_syn039_acceptance --test sim_rtl_composition --test sim_rtl_completion --test sim_sequential_predicates --test sim_udp --test sim_syn032_library_configs --test sim_net_resolution --test sim_memory_views --test sim_syn036_capacity --test sim_syn038_ledger -- --test-threads=1
+```
+
+The host does not have `cargo nextest`; the equivalent Cargo test runner was
+used. The acceptance record does not qualify native Windows/macOS execution,
+generated-model sanitizer lanes or synthesis-tool output.
+
 ### Coverage
 
 - `sim_port_net_types`: R05 directional dissimilar inout collapse in both public
@@ -145,6 +165,8 @@ cargo test --locked --test sim_syn038_ledger
 - `sim_syn036_capacity`: the selected 65,536-cell fixed-array storage boundary,
   direct cell-wise reduction above packed payload capacity, and single-fault
   flattened-value diagnostics in both optimizer modes.
+- `sim_syn039_acceptance`: final composed Core/Extended public-CLI witnesses
+  and the neighboring sequential-UDP profile rejection in both optimizer modes.
 - `sim_physical_time`: file-backed 1fs/10fs/100fs/1ps/1ns mixed scopes,
   10s/100s units, checked overflow rejection, and VCD femtosecond
   headers/timestamps.
