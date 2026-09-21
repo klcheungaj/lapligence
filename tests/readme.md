@@ -83,6 +83,12 @@ Their historical pass counts are not part of the current acceptance record.
 - [Process semantic regressions](fixtures/sim/process_semantics/readme.md):
   always-family sensitivity, time-zero execution, writer/timing contracts and
   legal latch/flip-flop controls.
+- `sim_syn014_process_contexts.rs` runs the SYN-014 aggregate/process witness
+  in both optimizer modes: fixed record and nested-array sensitivity through
+  helper calls and input links, ordinary `@*` call-site behavior, written
+  member exclusion, disjoint packed writers, legal latch/flip-flop controls,
+  and single-fault writer/event rejection controls. See
+  [SYN-014 fixtures](fixtures/sim/syn014_process_contexts/readme.md).
 - `sim_process_control`: process-class identity/status observations,
   suspended waits, terminal awaits, recursive kill cleanup and independent
   delayed NBA ownership in both optimizer modes.
