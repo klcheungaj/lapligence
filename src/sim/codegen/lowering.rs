@@ -1169,8 +1169,12 @@ struct ContainerIterator {
 #[derive(Clone)]
 struct FixedMethodIterator {
     descriptor: TypeDescriptor,
+    /// The fixed unpacked dimension traversed by this reduction.  Packed
+    /// dimensions of the iterator item and unvisited dimensions of a nested
+    /// receiver do not have a live iterator index in this lexical callback.
+    dimensions: Vec<(i32, i32)>,
+    index_names: Vec<String>,
     item_name: String,
-    index_name: String,
 }
 
 #[derive(Clone, Copy)]

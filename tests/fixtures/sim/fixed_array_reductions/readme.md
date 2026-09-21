@@ -13,6 +13,9 @@ observation scaffolding, not claims that those entire modules are synthesizable.
 | `four_state.sv` | X/Z propagation, singleton preservation, two-state mapping and absorbing bitwise values. |
 | `wide.sv` | Exact 65/129-bit values and widening before reduction. |
 | `nested.sv` | Immediate rows, nested default/named iterators, outer capture and declared index queries. |
+| `iterator_indices.sv` | Ascending/descending bounds, default and explicit dimension 1, dynamic dimension 1, and nested lexical iterator identities. |
+| `iterator_index_zero.sv` | Reject a constant zero iterator dimension. |
+| `iterator_index_out_of_range.sv` | Reject a packed item dimension that has no live iterator index. |
 | `aggregates.sv` | Packed records and bounded unpacked-record/array-member maps. |
 | `functions.sv` | One function receiver evaluation; automatic local/formal captures; unselected branch suppression. |
 | `views.sv` | Selected rows and slices with one selector evaluation and declared slice indices. |

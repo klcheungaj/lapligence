@@ -77,6 +77,38 @@ fn fixed_array_reduction_nested() {
 }
 
 #[test]
+fn fixed_array_reduction_iterator_indices() {
+    sim_cli::run_case_with_args(
+        "fixed_array_reductions",
+        "iterator_indices",
+        "ascending=9,9,9 dynamic=9 narrow=9 dimension_calls=3\ndescending=0 dynamic=0\nnested=0 dynamic=-2\n",
+        "",
+        &[],
+        &["--edition", "2009"],
+    );
+}
+
+#[test]
+fn fixed_array_reduction_rejects_zero_iterator_dimension() {
+    sim_cli::reject_case_with_args(
+        "fixed_array_reductions",
+        "iterator_index_zero",
+        "undefined dimension 0",
+        &["--edition", "2009"],
+    );
+}
+
+#[test]
+fn fixed_array_reduction_rejects_packed_item_dimension() {
+    sim_cli::reject_case_with_args(
+        "fixed_array_reductions",
+        "iterator_index_out_of_range",
+        "undefined dimension 2",
+        &["--edition", "2009"],
+    );
+}
+
+#[test]
 fn fixed_array_reduction_aggregates() {
     sim_cli::run_case_with_args(
         "fixed_array_reductions",

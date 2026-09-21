@@ -90,8 +90,9 @@ impl Codegen<'_> {
                 iterator,
                 FixedMethodIterator {
                     descriptor: element.clone(),
+                    dimensions: vec![(left, right)],
+                    index_names: vec![index_name.clone()],
                     item_name: item_name.clone(),
-                    index_name: index_name.clone(),
                 },
             );
             let lowered = self.lower_expr(path, with_node);
@@ -139,7 +140,7 @@ impl Codegen<'_> {
     }
 
     pub(in super::super) fn fixed_reduction_index(
-        &self,
+        &mut self,
         path: &str,
         args: &[NodeId],
     ) -> Result<Option<IrExpr>, String> {
@@ -149,25 +150,86 @@ impl Codegen<'_> {
         let NodeKind::Expr(ExprKind::Ref { target: Some(target) }) = self.kind(*receiver) else {
             return Ok(None);
         };
-        let Some(iterator) = self.fixed_method_iterators.get(target) else {
+        let Some(iterator) = self.fixed_method_iterators.get(target).cloned() else {
             return Ok(None);
         };
-        if args.len() > 2
-            || args
-                .get(1)
-                .is_some_and(|dimension| self.eval_bound_i128(*dimension).ok() != Some(1))
-        {
+        if args.len() > 2 {
             return Err(format!(
-                "fixed-array iterator index in `{path}` supports only the current dimension (constant 1)"
+                "fixed-array iterator index in `{path}` accepts at most one dimension argument"
             ));
         }
+        let current_index = || {
+            IrExpr::new(
+                IrExprKind::LocalRead(iterator.index_names[0].clone()),
+                32,
+                true,
+                None,
+            )
+        };
+        let Some(dimension) = args.get(1).copied() else {
+            return Ok(Some(current_index()));
+        };
+        if let Ok(dimension) = self.eval_bound_i128(dimension) {
+            let Some(dimension) = usize::try_from(dimension).ok() else {
+                return Err(undefined_iterator_dimension(path, dimension, &iterator));
+            };
+            if dimension == 0 || dimension > iterator.dimensions.len() {
+                return Err(undefined_iterator_dimension(
+                    path,
+                    dimension as i128,
+                    &iterator,
+                ));
+            }
+            return Ok(Some(IrExpr::new(
+                IrExprKind::LocalRead(iterator.index_names[dimension - 1].clone()),
+                32,
+                true,
+                None,
+            )));
+        }
+
+        // The formal argument is an `int`; convert a dynamic integral
+        // expression once before checking it. A non-one or unknown value is
+        // outside this iterator's defined dimension set and produces X.
+        let dimension = self.lower_expr(path, dimension)?;
+        if dimension.is_real() || dimension.width == 0 {
+            return Err(format!(
+                "fixed-array iterator index dimension in `{path}` must be integral"
+            ));
+        }
+        let dimension = IrExpr::convert_to(dimension, 32, true);
+        let valid = IrExpr::new(
+            IrExprKind::Bin {
+                op: IrBinOp::CaseEq,
+                a: Box::new(dimension),
+                b: Box::new(IrExpr::resize_to(lhs_integer_expr(1), 32, true)),
+            },
+            1,
+            false,
+            None,
+        );
         Ok(Some(IrExpr::new(
-            IrExprKind::LocalRead(iterator.index_name.clone()),
+            IrExprKind::Mux {
+                sel: Box::new(valid),
+                a: Box::new(current_index()),
+                b: Box::new(IrExpr::new(IrExprKind::Fill(2), 32, true, Some(2))),
+            },
             32,
             true,
             None,
         )))
     }
+}
+
+fn undefined_iterator_dimension(
+    path: &str,
+    dimension: i128,
+    iterator: &FixedMethodIterator,
+) -> String {
+    format!(
+        "fixed-array iterator index in `{path}` has undefined dimension {dimension}; this lexical iterator defines dimensions 1..{}",
+        iterator.dimensions.len()
+    )
 }
 
 fn reduction_integral(descriptor: &TypeDescriptor) -> bool {
