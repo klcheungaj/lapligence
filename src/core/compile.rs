@@ -415,14 +415,26 @@ pub fn compile(opts: &CompileOpts) -> Result<CompileOut, StartupError> {
         &mut source_count,
         &mut remaining,
     )?;
-    let root_count = owned.len();
+    let path_roots = owned;
+    let mut owned = opts.sources.clone();
+    owned.extend(path_roots.iter().cloned());
+    admit_in_memory_library_maps(
+        &opts.library_maps,
+        &mut owned,
+        &mut library_owned,
+        &mut source_count,
+        &mut remaining,
+        effective_source_count_limit(opts.limits),
+    )?;
     let mut macros = macro_environment_from_defines(&opts.defines);
     let expansion_budget = MacroExpansionBudget::new(effective_source_byte_limit(opts.limits));
-    for root_index in 0..root_count {
+    for path_root in path_roots {
+        let Some(root) = owned.iter().find(|source| *source == &path_root).cloned() else {
+            continue;
+        };
         if matches!(opts.compilation_unit_mode, CompilationUnitMode::Separate) {
             macros = macro_environment_from_defines(&opts.defines);
         }
-        let root = owned[root_index].clone();
         let mut include_stack = vec![PathBuf::from(&root.name)];
         admit_macro_includes(
             &root.name,
@@ -455,19 +467,13 @@ pub fn compile(opts: &CompileOpts) -> Result<CompileOut, StartupError> {
             0,
         )?;
     }
-    if opts
-        .sources
-        .len()
-        .saturating_add(owned.len())
-        .saturating_add(library_owned.len())
-        > effective_source_count_limit(opts.limits)
-    {
+    if owned.len().saturating_add(library_owned.len()) > effective_source_count_limit(opts.limits) {
         return Err(StartupError::new(
             StartupErrorKind::InvalidArgument,
             "source count exceeds the configured Slang limit",
         ));
     }
-    compile_source_groups(&opts.sources, &owned, &library_owned, opts)
+    compile_source_groups(&owned, &[], &library_owned, opts)
 }
 
 /// Compile exact source buffers without reading the filesystem.
@@ -477,8 +483,71 @@ pub fn compile_sources(
 ) -> Result<CompileOut, StartupError> {
     preflight_options(opts)?;
     preflight_sources(sources, opts.limits)?;
+    preflight_library_maps(&opts.library_maps, opts.limits)?;
     preflight_library_sources(&opts.library_sources, opts.limits)?;
-    compile_source_groups(sources, &[], &opts.library_sources, opts)
+    let mut source_count = sources
+        .len()
+        .checked_add(opts.library_maps.len())
+        .and_then(|count| count.checked_add(opts.library_sources.len()))
+        .ok_or_else(|| {
+            StartupError::new(StartupErrorKind::InvalidArgument, "source count overflow")
+        })?;
+    let source_limit = effective_source_count_limit(opts.limits);
+    if source_count > source_limit {
+        return Err(StartupError::new(
+            StartupErrorKind::InvalidArgument,
+            "source count exceeds the configured Slang limit",
+        ));
+    }
+    let admitted_bytes = sources
+        .iter()
+        .try_fold(0_u64, |total, source| {
+            total
+                .checked_add(source.name.len() as u64)?
+                .checked_add(source.text.len() as u64)
+        })
+        .and_then(|total| {
+            opts.library_maps.iter().try_fold(total, |total, source| {
+                total
+                    .checked_add(source.name.len() as u64)?
+                    .checked_add(source.text.len() as u64)
+            })
+        })
+        .and_then(|total| {
+            opts.library_sources
+                .iter()
+                .try_fold(total, |total, source| {
+                    total
+                        .checked_add(source.name.len() as u64)?
+                        .checked_add(source.text.len() as u64)?
+                        .checked_add(source.library.len() as u64)
+                })
+        })
+        .ok_or_else(|| {
+            StartupError::new(
+                StartupErrorKind::InvalidArgument,
+                "source byte count overflow",
+            )
+        })?;
+    let mut remaining = effective_source_byte_limit(opts.limits)
+        .checked_sub(admitted_bytes)
+        .ok_or_else(|| {
+            StartupError::new(
+                StartupErrorKind::LimitExceeded,
+                "admitted source bytes exceed the configured Slang limit",
+            )
+        })?;
+    let mut owned = sources.to_vec();
+    let mut library_owned = opts.library_sources.clone();
+    admit_in_memory_library_maps(
+        &opts.library_maps,
+        &mut owned,
+        &mut library_owned,
+        &mut source_count,
+        &mut remaining,
+        source_limit,
+    )?;
+    compile_source_groups(&owned, &[], &library_owned, opts)
 }
 
 fn preflight_options(opts: &CompileOpts) -> Result<(), StartupError> {
@@ -657,6 +726,35 @@ fn preflight_library_sources(
     Ok(())
 }
 
+fn preflight_library_maps(maps: &[OwnedSource], limits: Limits) -> Result<(), StartupError> {
+    if maps.len() > effective_source_count_limit(limits) {
+        return Err(StartupError::new(
+            StartupErrorKind::InvalidArgument,
+            "library map count exceeds the configured Slang limit",
+        ));
+    }
+    let bytes = maps
+        .iter()
+        .try_fold(0_u64, |total, source| {
+            total
+                .checked_add(source.name.len() as u64)?
+                .checked_add(source.text.len() as u64)
+        })
+        .ok_or_else(|| {
+            StartupError::new(
+                StartupErrorKind::InvalidArgument,
+                "library map byte count overflow",
+            )
+        })?;
+    if bytes > effective_source_byte_limit(limits) {
+        return Err(StartupError::new(
+            StartupErrorKind::LimitExceeded,
+            "library map bytes exceed the configured Slang limit",
+        ));
+    }
+    Ok(())
+}
+
 fn read_bounded(path: &str, limit: u64) -> Result<String, StartupError> {
     let file = std::fs::File::open(path).map_err(|error| {
         StartupError::new(
@@ -738,12 +836,6 @@ fn admit_library_maps(
         *remaining = remaining.saturating_sub(name.len() as u64 + text.len() as u64);
         if seen_maps.insert(resolved.clone()) {
             pending.push((resolved, text));
-        }
-    }
-    for source in &opts.library_maps {
-        let resolved = absolute_path(Path::new(&source.name))?;
-        if seen_maps.insert(resolved.clone()) {
-            pending.push((resolved, source.text.clone()));
         }
     }
 
@@ -847,6 +939,228 @@ fn admit_library_maps(
         }
     }
     Ok(())
+}
+
+/// Admit map-backed library sources from buffers already supplied by the
+/// caller. An in-memory map name is a logical document name, not a filesystem
+/// path. Its parent is used as the explicit base for relative map patterns and
+/// includes; matching never opens a path, which preserves the cache-only FFI
+/// contract for exact-source compilation.
+fn admit_in_memory_library_maps(
+    maps: &[OwnedSource],
+    sources: &mut Vec<OwnedSource>,
+    library_sources: &mut Vec<LibrarySource>,
+    source_count: &mut usize,
+    remaining: &mut u64,
+    source_limit: usize,
+) -> Result<(), StartupError> {
+    if maps.is_empty() {
+        return Ok(());
+    }
+    if *source_count > source_limit {
+        return Err(StartupError::new(
+            StartupErrorKind::LimitExceeded,
+            "library map expansion exceeds the configured source limit",
+        ));
+    }
+
+    let mut pending = Vec::new();
+    let mut seen_maps = HashSet::new();
+    for map in maps {
+        if map.name.is_empty() {
+            return Err(StartupError::new(
+                StartupErrorKind::InvalidArgument,
+                "in-memory library map names must be nonempty",
+            ));
+        }
+        let key = logical_path_key(Path::new(&map.name));
+        if seen_maps.insert(key) {
+            pending.push((map.name.clone(), map.text.clone()));
+        }
+    }
+
+    let mut assigned = HashSet::new();
+    let mut cursor = 0;
+    while cursor < pending.len() {
+        let (map_name, text) = pending[cursor].clone();
+        cursor += 1;
+        let (includes, entries) = parse_library_map(&text)?;
+        let base = Path::new(&map_name)
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+
+        for include in includes {
+            let mut matches = Vec::new();
+            for candidate in maps {
+                if map_pattern_matches(base, &include, Path::new(&candidate.name))? {
+                    matches.push(candidate);
+                }
+            }
+            matches.sort_by(|left, right| left.name.cmp(&right.name));
+            if matches.is_empty() {
+                return Err(StartupError::new(
+                    StartupErrorKind::Input,
+                    format!(
+                        "in-memory library map include `{include}` matched no admitted buffers"
+                    ),
+                ));
+            }
+            for candidate in matches {
+                let key = logical_path_key(Path::new(&candidate.name));
+                if seen_maps.insert(key) {
+                    pending.push((candidate.name.clone(), candidate.text.clone()));
+                }
+            }
+        }
+
+        for entry in entries {
+            for pattern in entry.patterns {
+                let mut source_matches = Vec::new();
+                for (index, source) in sources.iter().enumerate() {
+                    if map_pattern_matches(base, &pattern, Path::new(&source.name))? {
+                        source_matches.push(index);
+                    }
+                }
+                let mut library_matches = Vec::new();
+                for (index, source) in library_sources.iter().enumerate() {
+                    if map_pattern_matches(base, &pattern, Path::new(&source.name))? {
+                        library_matches.push(index);
+                    }
+                }
+                if source_matches.is_empty() && library_matches.is_empty() {
+                    return Err(StartupError::new(
+                        StartupErrorKind::Input,
+                        format!(
+                            "in-memory library `{}` pattern `{pattern}` matched no admitted buffers",
+                            entry.library
+                        ),
+                    ));
+                }
+
+                source_matches
+                    .sort_by(|left, right| sources[*left].name.cmp(&sources[*right].name));
+                for index in source_matches.into_iter().rev() {
+                    let source = sources.remove(index);
+                    let key = logical_path_key(Path::new(&source.name));
+                    if !assigned.insert(key) {
+                        return Err(StartupError::new(
+                            StartupErrorKind::InvalidArgument,
+                            format!("source is assigned more than once: {}", source.name),
+                        ));
+                    }
+                    charge_library_source_metadata(remaining, &entry.library)?;
+                    library_sources.push(LibrarySource::new(
+                        source.name,
+                        source.text,
+                        entry.library.clone(),
+                    ));
+                }
+
+                for index in library_matches.drain(..).rev() {
+                    let source = &library_sources[index];
+                    if source.library != entry.library {
+                        return Err(StartupError::new(
+                            StartupErrorKind::InvalidArgument,
+                            format!("source is assigned more than once: {}", source.name),
+                        ));
+                    }
+                    let key = logical_path_key(Path::new(&source.name));
+                    if !assigned.insert(key) {
+                        return Err(StartupError::new(
+                            StartupErrorKind::InvalidArgument,
+                            format!("source is assigned more than once: {}", source.name),
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn charge_library_source_metadata(remaining: &mut u64, library: &str) -> Result<(), StartupError> {
+    let library_bytes = u64::try_from(library.len()).map_err(|_| {
+        StartupError::new(
+            StartupErrorKind::LimitExceeded,
+            "library name exceeds the configured Slang byte limit",
+        )
+    })?;
+    *remaining = remaining.checked_sub(library_bytes).ok_or_else(|| {
+        StartupError::new(
+            StartupErrorKind::LimitExceeded,
+            format!("library name {library} exceeds the configured Slang byte limit"),
+        )
+    })?;
+    Ok(())
+}
+
+fn logical_path_key(path: &Path) -> Vec<String> {
+    let mut result = Vec::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::Prefix(prefix) => {
+                result.push(prefix.as_os_str().to_string_lossy().into_owned());
+            }
+            std::path::Component::RootDir => result.push(String::new()),
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                if result
+                    .last()
+                    .is_some_and(|part| !part.is_empty() && part != "..")
+                {
+                    result.pop();
+                } else if result.last().is_none() || result.last().is_some_and(|part| part == "..")
+                {
+                    result.push("..".to_owned());
+                }
+            }
+            std::path::Component::Normal(value) => {
+                result.push(value.to_string_lossy().into_owned());
+            }
+        }
+    }
+    result
+}
+
+fn map_pattern_matches(base: &Path, pattern: &str, candidate: &Path) -> Result<bool, StartupError> {
+    if pattern.contains('$') {
+        return Err(StartupError::new(
+            StartupErrorKind::InvalidArgument,
+            format!("environment expansion is not allowed in library map path `{pattern}`"),
+        ));
+    }
+    let pattern_path = if Path::new(pattern).is_absolute() {
+        PathBuf::from(pattern)
+    } else {
+        base.join(pattern)
+    };
+    let pattern = logical_path_key(&pattern_path);
+    let candidate = logical_path_key(candidate);
+    Ok(logical_path_pattern_matches(&pattern, &candidate))
+}
+
+fn logical_path_pattern_matches(pattern: &[String], candidate: &[String]) -> bool {
+    if pattern.first().is_some_and(|part| part == "..") {
+        return false;
+    }
+    let mut table = vec![vec![false; candidate.len() + 1]; pattern.len() + 1];
+    table[0][0] = true;
+    for (pattern_index, component) in pattern.iter().enumerate() {
+        if component == "**" {
+            for candidate_index in 0..=candidate.len() {
+                table[pattern_index + 1][candidate_index] = table[pattern_index][candidate_index]
+                    || (candidate_index > 0 && table[pattern_index + 1][candidate_index - 1]);
+            }
+        } else {
+            for candidate_index in 0..candidate.len() {
+                table[pattern_index + 1][candidate_index + 1] = table[pattern_index]
+                    [candidate_index]
+                    && wildcard_component_matches(&candidate[candidate_index], component);
+            }
+        }
+    }
+    table[pattern.len()][candidate.len()]
 }
 
 fn charge_library_map_source(
@@ -2476,6 +2790,18 @@ mod tests {
             .expect_err("pattern exceeding its source ceiling must fail");
         assert_eq!(error.kind(), StartupErrorKind::LimitExceeded);
         std::fs::remove_dir_all(root).expect("remove library pattern root");
+    }
+
+    #[test]
+    fn logical_map_paths_preserve_leading_parent_components() {
+        assert_eq!(
+            logical_path_key(Path::new("../../x")),
+            vec!["..".to_owned(), "..".to_owned(), "x".to_owned()]
+        );
+        assert!(
+            !map_pattern_matches(Path::new("."), "../../x", Path::new("x"))
+                .expect("lexical map matching must not fail")
+        );
     }
 
     #[cfg(unix)]

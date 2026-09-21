@@ -175,6 +175,126 @@ fn selected_library_identity_reaches_the_owned_instance_model() {
 }
 
 #[test]
+fn in_memory_library_map_uses_a_logical_name_and_admitted_source() {
+    let output = compile::compile_sources_checked(
+        &[
+            compile::OwnedSource::compilation_unit(
+                "virtual/top.sv",
+                "module top; mapped_cell instance_name(); endmodule",
+            ),
+            compile::OwnedSource::compilation_unit(
+                "virtual/missing/mapped.sv",
+                "module mapped_cell; endmodule",
+            ),
+            compile::OwnedSource::compilation_unit(
+                "virtual/config.sv",
+                "config choose; design custom.top; cell mapped_cell use rtl.mapped_cell; endconfig",
+            ),
+        ],
+        &compile::CompileOpts {
+            top: Some("choose:config".to_owned()),
+            default_library: Some("custom".to_owned()),
+            library_maps: vec![
+                compile::OwnedSource::include(
+                    "virtual/missing/root.map",
+                    "include \"nested.map\";",
+                ),
+                compile::OwnedSource::include(
+                    "virtual/missing/nested.map",
+                    "library rtl mapped.sv;",
+                ),
+            ],
+            ..Default::default()
+        },
+    )
+    .expect("a supplied map buffer must not be opened by name");
+    let database = db::Db::from_slang(&output.snapshot).expect("owned database");
+    let design = model::DesignModel::from_db(&database);
+    assert_eq!(
+        design.instance("top.instance_name").unwrap().def_name,
+        "mapped_cell"
+    );
+    assert_eq!(design.modules_in("virtual/missing/mapped.sv").len(), 1);
+}
+
+#[test]
+fn compile_checked_applies_in_memory_map_to_compile_opts_sources() {
+    let output = compile::compile_checked(&compile::CompileOpts {
+        sources: vec![
+            compile::OwnedSource::compilation_unit(
+                "virtual/top.sv",
+                "module top; mapped_cell instance_name(); endmodule",
+            ),
+            compile::OwnedSource::compilation_unit(
+                "virtual/missing/mapped.sv",
+                "module mapped_cell; endmodule",
+            ),
+            compile::OwnedSource::compilation_unit(
+                "virtual/config.sv",
+                "config choose; design custom.top; cell mapped_cell use rtl.mapped_cell; endconfig",
+            ),
+        ],
+        top: Some("choose:config".to_owned()),
+        default_library: Some("custom".to_owned()),
+        library_maps: vec![compile::OwnedSource::include(
+            "virtual/missing/root.map",
+            "library rtl mapped.sv;",
+        )],
+        ..Default::default()
+    })
+    .expect("compile_checked should apply in-memory map assignments");
+    let database = db::Db::from_slang(&output.snapshot).expect("owned database");
+    let design = model::DesignModel::from_db(&database);
+    assert_eq!(
+        design.instance("top.instance_name").unwrap().def_name,
+        "mapped_cell"
+    );
+    assert_eq!(design.modules_in("virtual/missing/mapped.sv").len(), 1);
+}
+
+#[test]
+fn compile_sources_resolves_configured_library_from_an_in_memory_map() {
+    let output = compile::compile_sources_checked(
+        &[
+            compile::OwnedSource::compilation_unit(
+                "virtual/top.sv",
+                "module top; logic_cell from_cell(); default_cell from_default(); endmodule",
+            ),
+            compile::OwnedSource::compilation_unit(
+                "virtual/config.sv",
+                "config choose; design custom.top; default liblist rtl; cell logic_cell use rtl.logic_cell; endconfig",
+            ),
+            compile::OwnedSource::compilation_unit(
+                "virtual/rtl.sv",
+                "module logic_cell; endmodule module default_cell; endmodule",
+            ),
+        ],
+        &compile::CompileOpts {
+            top: Some("choose:config".to_owned()),
+            default_library: Some("custom".to_owned()),
+            library_order: vec!["rtl".to_owned()],
+            library_maps: vec![compile::OwnedSource::include(
+                "virtual/maps/root.map",
+                "library rtl ../rtl.sv;",
+            )],
+            ..Default::default()
+        },
+    )
+    .expect("compile_sources should apply in-memory map library assignments");
+    let database = db::Db::from_slang(&output.snapshot).expect("owned database");
+    let design = model::DesignModel::from_db(&database);
+    assert_eq!(
+        design.instance("top.from_cell").unwrap().def_name,
+        "logic_cell"
+    );
+    assert_eq!(
+        design.instance("top.from_default").unwrap().def_name,
+        "default_cell"
+    );
+    assert_eq!(design.modules_in("virtual/rtl.sv").len(), 2);
+}
+
+#[test]
 fn library_order_selects_an_unconfigured_definition() {
     let output = compile::compile_sources_checked(
         &[compile::OwnedSource::compilation_unit(
