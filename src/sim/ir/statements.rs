@@ -105,6 +105,18 @@ pub enum IrMemoryRadix {
     Hex,
 }
 
+/// Edition-specific default addressing for a memory file task.
+///
+/// Verilog-2001 walks an omitted range in declaration order. SystemVerilog
+/// 2009 walks an omitted range from the lowest declared address to the
+/// highest, including when only the start address is supplied. Explicit
+/// start and finish expressions retain their source order in either edition.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum IrMemoryAddressingPolicy {
+    Verilog2001,
+    SystemVerilog2009,
+}
+
 /// File-control tasks that do not produce a packed value.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IrFileOp {
@@ -189,13 +201,17 @@ pub enum IrStmt {
         state: IrStringExpr,
     },
     /// `$readmem*`/`$writemem*` against one fixed unpacked memory. Bounds are
-    /// evaluated at the call site; `None` selects the declaration's complete
-    /// first dimension in declaration order.
+    /// evaluated at the call site; omitted bounds use `addressing` while the
+    /// two presence flags remain distinct from an explicitly supplied value.
+    /// Enum element values are retained when the destination is an enum so
+    /// the runtime can stop after the first non-member word.
     Memory {
         write: bool,
         path: IrStringExpr,
         array: usize,
         radix: IrMemoryRadix,
+        addressing: IrMemoryAddressingPolicy,
+        enum_values: Option<Vec<IrConst>>,
         start: Option<IrExpr>,
         finish: Option<IrExpr>,
     },

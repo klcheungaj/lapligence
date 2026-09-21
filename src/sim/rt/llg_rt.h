@@ -718,14 +718,26 @@ void llg_file_display_typed(uint32_t descriptor, const char* fmt,
 // only when the corresponding flag is non-zero. Radix is 2 for binary and 16
 // for hexadecimal files. File syntax accepts whitespace, comments, radix
 // digits, and `@` address jumps while preserving four-state X/Z digits.
+// Addressing policy is 0 for the Verilog-2001 declaration-order defaults and
+// 1 for the SystemVerilog-2009 low-to-high defaults. Explicit start/finish
+// bounds are honored in source order for either policy.
+// `enum_values` is a borrowed table used by reads to reject a non-member word;
+// writes ignore that table. Both the table and its elements remain owned by
+// the generated call scope.
+enum {
+    LLG_MEMORY_ADDRESSING_VERILOG_2001 = 0,
+    LLG_MEMORY_ADDRESSING_SYSTEMVERILOG_2009 = 1,
+};
 void llg_memory_read(llg_string_t path, sv4_t* memory, uint64_t total,
                      uint32_t elem_width, int8_t elem_signed, int8_t two_state,
                      const int32_t* dims, int n_dims, sv4_t start, sv4_t finish,
-                     int has_start, int has_finish, int radix);
+                     int has_start, int has_finish, int addressing_policy,
+                     const sv4_t* enum_values, uint32_t enum_count, int radix);
 void llg_memory_write(llg_string_t path, sv4_t* memory, uint64_t total,
                       uint32_t elem_width, int8_t elem_signed, int8_t two_state,
                       const int32_t* dims, int n_dims, sv4_t start, sv4_t finish,
-                      int has_start, int has_finish, int radix);
+                      int has_start, int has_finish, int addressing_policy,
+                      const sv4_t* enum_values, uint32_t enum_count, int radix);
 
 // ── File input ─────────────────────────────────────────────────────────────
 // Formatted input uses an HDL-aware scanner rather than the host scanf family:

@@ -11,6 +11,37 @@ fn invoke_with_args(suite: &str, fixture: &str, optimized: bool, args: &[&str]) 
     invoke_with_env(suite, fixture, optimized, args, &[], &[])
 }
 
+/// Invoke one checked-in fixture after copying its independent memory-file
+/// inputs into the child working directory. Memory tasks resolve relative
+/// paths from that directory, so the files must be installed after creating
+/// the isolated directory and before launching the public CLI.
+fn invoke_with_files(
+    suite: &str,
+    fixture: &str,
+    optimized: bool,
+    args: &[&str],
+    files: &[(&str, &str)],
+) -> Output {
+    let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/sim")
+        .join(suite)
+        .join(format!("{fixture}.sv"));
+    assert!(source.is_file(), "missing fixture: {}", source.display());
+    let directory = sim_harness::TempDir::new(fixture).expect("CLI test directory");
+    for (name, contents) in files {
+        std::fs::write(directory.path().join(name), contents)
+            .unwrap_or_else(|error| panic!("{suite}/{fixture}: write {name}: {error}"));
+    }
+    let mut command = Command::new(env!("CARGO_BIN_EXE_llg"));
+    command.current_dir(directory.path()).args(["--top", "tb"]);
+    if !optimized {
+        command.arg("--no-opt");
+    }
+    command.args(args).arg(source);
+    sim_harness::run_command(&mut command, Duration::from_secs(180))
+        .unwrap_or_else(|error| panic!("{suite}/{fixture}, optimized={optimized}: {error}"))
+}
+
 /// Invoke one checked-in simulator fixture with explicit child-process
 /// environment controls. `remove_env` is applied after `envs`, so tests can
 /// guarantee that a host configuration variable is absent even when the test
@@ -163,6 +194,26 @@ pub(crate) fn run_case_with_args(
     );
     for optimized in [false, true] {
         let output = invoke_with_args(suite, fixture, optimized, args);
+        let label = format!("{suite}/{fixture}, optimized={optimized}");
+        assert_case_output(output, &label, expected, expected_stderr, expected_warnings);
+    }
+}
+
+pub(crate) fn run_case_with_files(
+    suite: &str,
+    fixture: &str,
+    expected: &str,
+    expected_stderr: &str,
+    expected_warnings: &[&str],
+    args: &[&str],
+    files: &[(&str, &str)],
+) {
+    assert!(
+        llg::sim::build::cmake_available(),
+        "CLI tests require CMake"
+    );
+    for optimized in [false, true] {
+        let output = invoke_with_files(suite, fixture, optimized, args, files);
         let label = format!("{suite}/{fixture}, optimized={optimized}");
         assert_case_output(output, &label, expected, expected_stderr, expected_warnings);
     }

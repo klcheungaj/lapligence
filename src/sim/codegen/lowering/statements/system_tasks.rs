@@ -96,16 +96,53 @@ impl EmitCtx<'_, '_> {
         };
         let start = args.get(2).copied().map(&mut lower_bound).transpose()?;
         let finish = args.get(3).copied().map(&mut lower_bound).transpose()?;
+        let enum_values = if write {
+            None
+        } else {
+            match self.cg.query_descriptor(args[1]) {
+                Some(TypeDescriptor {
+                    shape: TypeShape::FixedArray { element, .. },
+                    ..
+                }) if element.info.kind == "enum" => {
+                    let metadata = self.cg.db.enum_type_metadata(element.id).ok_or_else(|| {
+                        format!(
+                            "{name} enum memory element has no owned enum metadata in `{}`",
+                            self.path
+                        )
+                    })?;
+                    Some(
+                        metadata
+                            .members
+                            .iter()
+                            .map(|member| match &member.value {
+                                Val::Bits(value) => val_to_const(value),
+                                _ => Err(format!(
+                                    "{name} enum member `{}` has a non-integral value in `{}`",
+                                    member.name, self.path
+                                )),
+                            })
+                            .collect::<Result<Vec<_>, _>>()?,
+                    )
+                }
+                _ => None,
+            }
+        };
         let radix = match name {
             "$readmemb" | "$writememb" => IrMemoryRadix::Binary,
             "$readmemh" | "$writememh" => IrMemoryRadix::Hex,
             _ => unreachable!(),
+        };
+        let addressing = match self.cg.db.edition() {
+            LanguageEdition::Verilog2001 => IrMemoryAddressingPolicy::Verilog2001,
+            LanguageEdition::SystemVerilog2009 => IrMemoryAddressingPolicy::SystemVerilog2009,
         };
         Ok(IrStmt::Memory {
             write,
             path,
             array: array.ir,
             radix,
+            addressing,
+            enum_values,
             start,
             finish,
         })

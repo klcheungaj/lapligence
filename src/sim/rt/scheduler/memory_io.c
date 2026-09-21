@@ -235,7 +235,8 @@ static uint64_t llg_memory_range_length(int64_t first, int64_t last) {
 static int llg_memory_bounds(const char* path, uint64_t total,
                              const int32_t* dims, int n_dims,
                              sv4_t start, sv4_t finish, int has_start,
-                             int has_finish, int64_t* first, int64_t* last) {
+                             int has_finish, int addressing_policy,
+                             int64_t* first, int64_t* last) {
     if (!dims || n_dims != 1 || total == 0) {
         llg_memory_warning(path, "memory descriptor is invalid");
         return 0;
@@ -255,12 +256,21 @@ static int llg_memory_bounds(const char* path, uint64_t total,
         llg_memory_warning(path, "finish address is unknown, negative-width, or out of range");
         return 0;
     }
-    if (!has_start) *first = left;
-    if (!has_finish) *last = right;
+    if (!has_start) {
+        *first = addressing_policy == LLG_MEMORY_ADDRESSING_SYSTEMVERILOG_2009
+                     ? (left < right ? left : right)
+                     : left;
+    }
+    if (!has_finish) {
+        *last = addressing_policy == LLG_MEMORY_ADDRESSING_SYSTEMVERILOG_2009
+                    ? (left > right ? left : right)
+                    : right;
+    }
     uint64_t ignored_index;
     if (!llg_memory_index(*first, dims, total, &ignored_index) ||
         !llg_memory_index(*last, dims, total, &ignored_index)) {
         llg_memory_warning(path, "selected range includes an address outside the destination memory");
+        return 0;
     }
     return 1;
 }
@@ -271,10 +281,24 @@ static int llg_memory_in_requested_range(int64_t address, int64_t first,
                          : address <= first && address >= last;
 }
 
+static int llg_memory_enum_value_allowed(sv4_t value,
+                                         const sv4_t* enum_values,
+                                         uint32_t enum_count) {
+    if (!enum_values || enum_count == 0) return 1;
+    for (uint32_t index = 0; index < enum_count; ++index) {
+        sv4_t match = sv4_case_eq(value, enum_values[index]);
+        int allowed = sv4_to_bool(match);
+        sv4_destroy(&match);
+        if (allowed) return 1;
+    }
+    return 0;
+}
+
 void llg_memory_read(llg_string_t path, sv4_t* memory, uint64_t total,
                      uint32_t elem_width, int8_t elem_signed, int8_t two_state,
                      const int32_t* dims, int n_dims, sv4_t start, sv4_t finish,
-                     int has_start, int has_finish, int radix) {
+                     int has_start, int has_finish, int addressing_policy,
+                     const sv4_t* enum_values, uint32_t enum_count, int radix) {
     char* filename = llg_memory_path_copy(path);
     FILE* stream = fopen(filename, "r");
     if (!stream) {
@@ -284,7 +308,7 @@ void llg_memory_read(llg_string_t path, sv4_t* memory, uint64_t total,
     }
     int64_t first, last;
     if (!llg_memory_bounds(filename, total, dims, n_dims, start, finish,
-                           has_start, has_finish, &first, &last)) {
+                           has_start, has_finish, addressing_policy, &first, &last)) {
         fclose(stream);
         free(filename);
         return;
@@ -307,11 +331,20 @@ void llg_memory_read(llg_string_t path, sv4_t* memory, uint64_t total,
             int64_t address;
             if (!sv4_to_index_i64(token.value, &address)) {
                 llg_memory_warning(filename, "address jump is not a known non-negative index");
+                sv4_destroy(&token.value);
+                fclose(stream);
+                free(filename);
+                return;
             } else {
                 current = address;
-                if (!llg_memory_index(address, dims, total, &(uint64_t){0}) && !warned_extra) {
-                    llg_memory_warning(filename, "address jump is outside the destination memory");
-                    warned_extra = 1;
+                if (!llg_memory_index(address, dims, total, &(uint64_t){0}) ||
+                    !llg_memory_in_requested_range(address, first, last)) {
+                    llg_memory_warning(filename,
+                        "address jump is outside the destination memory or selected range; load terminated");
+                    sv4_destroy(&token.value);
+                    fclose(stream);
+                    free(filename);
+                    return;
                 }
             }
             continue;
@@ -337,6 +370,15 @@ void llg_memory_read(llg_string_t path, sv4_t* memory, uint64_t total,
                     }
                     sv4_replace(&converted, sv4_to_two_state(converted));
                 }
+                if (!llg_memory_enum_value_allowed(converted, enum_values, enum_count)) {
+                    llg_memory_warning(filename,
+                        "memory data value is not a member of the enum; load terminated");
+                    sv4_destroy(&converted);
+                    sv4_destroy(&token.value);
+                    fclose(stream);
+                    free(filename);
+                    return;
+                }
                 llg_ba(&memory[index], converted);
                 sv4_destroy(&converted);
                 written++;
@@ -361,8 +403,11 @@ void llg_memory_read(llg_string_t path, sv4_t* memory, uint64_t total,
 void llg_memory_write(llg_string_t path, sv4_t* memory, uint64_t total,
                       uint32_t elem_width, int8_t elem_signed, int8_t two_state,
                       const int32_t* dims, int n_dims, sv4_t start, sv4_t finish,
-                      int has_start, int has_finish, int radix) {
+                      int has_start, int has_finish, int addressing_policy,
+                      const sv4_t* enum_values, uint32_t enum_count, int radix) {
     (void)two_state;
+    (void)enum_values;
+    (void)enum_count;
     char* filename = llg_memory_path_copy(path);
     FILE* stream = fopen(filename, "w");
     if (!stream) {
@@ -372,7 +417,7 @@ void llg_memory_write(llg_string_t path, sv4_t* memory, uint64_t total,
     }
     int64_t first, last;
     if (!llg_memory_bounds(filename, total, dims, n_dims, start, finish,
-                           has_start, has_finish, &first, &last)) {
+                           has_start, has_finish, addressing_policy, &first, &last)) {
         fclose(stream);
         free(filename);
         return;

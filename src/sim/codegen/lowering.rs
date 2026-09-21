@@ -257,11 +257,12 @@ use crate::sim::ir::{
     IrConst, IrContainer, IrContainerExpr, IrContainerKind, IrContainerStmt, IrDeferredAction,
     IrDelay, IrDependency, IrDepth, IrDisplayRadix, IrEdge, IrElemSel, IrEvent, IrEventCapture,
     IrEventContext, IrEventRef, IrExpr, IrExprKind, IrFormal, IrImmediateAssertionKind,
-    IrInitPhase, IrInitTarget, IrInitialization, IrJoinKind, IrLhs, IrMemoryRadix, IrModel,
-    IrNetAliasBinding, IrProcess, IrProcessKind, IrRealBinOp, IrRealUnOp, IrSeverityLevel, IrShape,
-    IrSignal, IrStmt, IrStochasticStmt, IrStreamDirection, IrStreamTarget, IrSysFunc, IrTimeKind,
-    IrTransitionDelay, IrType, IrUnOp, IrUniquePriorityCheck, IrVpiObject, IrVpiObjectKind,
-    IrWaitSrc, StorageKind, StorageLifetime, StorageOwnership, StorageRef, LLG_MAX_NET_DRIVERS,
+    IrInitPhase, IrInitTarget, IrInitialization, IrJoinKind, IrLhs, IrMemoryAddressingPolicy,
+    IrMemoryRadix, IrModel, IrNetAliasBinding, IrProcess, IrProcessKind, IrRealBinOp, IrRealUnOp,
+    IrSeverityLevel, IrShape, IrSignal, IrStmt, IrStochasticStmt, IrStreamDirection,
+    IrStreamTarget, IrSysFunc, IrTimeKind, IrTransitionDelay, IrType, IrUnOp,
+    IrUniquePriorityCheck, IrVpiObject, IrVpiObjectKind, IrWaitSrc, StorageKind, StorageLifetime,
+    StorageOwnership, StorageRef, LLG_MAX_NET_DRIVERS,
 };
 
 mod assertion_context;

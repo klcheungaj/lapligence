@@ -1,4 +1,5 @@
 //! Runtime tasks which borrow packed operands or consume a published literal path.
+use super::super::constants::emit_const;
 use super::*;
 
 impl Frame<'_, '_> {
@@ -31,6 +32,8 @@ impl Frame<'_, '_> {
             path,
             array,
             radix,
+            addressing,
+            enum_values,
             start,
             finish,
         } = statement
@@ -68,9 +71,32 @@ impl Frame<'_, '_> {
             IrMemoryRadix::Binary => 2,
             IrMemoryRadix::Hex => 16,
         };
-        self.line(format!("{runtime}({}, {}, {}ULL, {}u, {}, {}, (const int32_t[]){{ {left}, {right} }}, 1, {first}, {last}, {}, {}, {radix});",
+        let addressing = match addressing {
+            IrMemoryAddressingPolicy::Verilog2001 => 0,
+            IrMemoryAddressingPolicy::SystemVerilog2009 => 1,
+        };
+        let enum_name = enum_values
+            .as_ref()
+            .filter(|values| !values.is_empty())
+            .map(|values| {
+                let name = self.name("memory_enum_values");
+                let values = values.iter().map(emit_const).collect::<Vec<_>>().join(", ");
+                self.line("{");
+                self.line(format!("sv4_t {name}[{}] = {{ {values} }};", values.len()));
+                name
+            });
+        let enum_pointer = enum_name.as_deref().unwrap_or("NULL");
+        let enum_count = enum_values
+            .as_ref()
+            .filter(|values| !values.is_empty())
+            .map_or(0, Vec::len);
+        self.line(format!("{runtime}({}, {}, {}ULL, {}u, {}, {}, (const int32_t[]){{ {left}, {right} }}, 1, {first}, {last}, {}, {}, {addressing}, {enum_pointer}, {enum_count}, {radix});",
             path.take_string(), array.c_name, array.total, array.elem_width, u8::from(array.signed),
             u8::from(array.two_state), u8::from(start.is_some()), u8::from(finish.is_some())));
+        if let Some(enum_name) = enum_name {
+            self.line(format!("sv4_destroy_array({enum_name}, {enum_count});"));
+            self.line("}");
+        }
         self.native_discard(path);
         if let Some(value) = start_value {
             self.discard(value);

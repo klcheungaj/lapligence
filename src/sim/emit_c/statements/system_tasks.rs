@@ -1,6 +1,8 @@
 //! System tasks.
 
+use super::super::constants::emit_const;
 use super::*;
+use crate::sim::ir::IrConst;
 
 pub(super) fn render_memory(
     ctx: &RCtx<'_>,
@@ -8,6 +10,8 @@ pub(super) fn render_memory(
     path: &crate::sim::ir::IrStringExpr,
     array: usize,
     radix: IrMemoryRadix,
+    addressing: IrMemoryAddressingPolicy,
+    enum_values: Option<&[IrConst]>,
     start: Option<&IrExpr>,
     finish: Option<&IrExpr>,
 ) -> Result<String, String> {
@@ -41,14 +45,42 @@ pub(super) fn render_memory(
         IrMemoryRadix::Binary => 2,
         IrMemoryRadix::Hex => 16,
     };
+    let addressing = match addressing {
+        IrMemoryAddressingPolicy::Verilog2001 => 0,
+        IrMemoryAddressingPolicy::SystemVerilog2009 => 1,
+    };
+    let enum_values = enum_values.filter(|values| !values.is_empty());
+    let enum_count = enum_values.map_or(0, <[_]>::len);
+    let enum_pointer = if enum_values.is_some() {
+        "_llg_memory_enum_values"
+    } else {
+        "NULL"
+    };
+    let enum_declaration = enum_values
+        .map(|values| {
+            let values = values.iter().map(emit_const).collect::<Vec<_>>().join(", ");
+            format!(
+                "             sv4_t _llg_memory_enum_values[{}] = {{ {} }};\n",
+                values.len(),
+                values
+            )
+        })
+        .unwrap_or_default();
+    let enum_cleanup = if enum_values.is_some() {
+        format!("             sv4_destroy_array(_llg_memory_enum_values, {enum_count});\n")
+    } else {
+        String::new()
+    };
     Ok(format!(
         "{{\n\
              llg_string_t _llg_memory_path = {path};\n\
              sv4_t _llg_memory_start = {start_value};\n\
              sv4_t _llg_memory_finish = {finish_value};\n\
+             {enum_declaration}\
              {runtime}(_llg_memory_path, {name}, {total}ULL, {width}u, {signed}, {two_state},\n\
                        (const int32_t[]){{ {left}, {right} }}, 1,\n\
-                       _llg_memory_start, _llg_memory_finish, {has_start}, {has_finish}, {radix});\n\
+                       _llg_memory_start, _llg_memory_finish, {has_start}, {has_finish}, {addressing}, {enum_pointer}, {enum_count}, {radix});\n\
+             {enum_cleanup}\
          }}\n",
         name = array_info.c_name,
         total = array_info.total,
@@ -57,6 +89,10 @@ pub(super) fn render_memory(
         two_state = array_info.two_state as u8,
         has_start = start.is_some() as u8,
         has_finish = finish.is_some() as u8,
+        enum_declaration = enum_declaration,
+        enum_pointer = enum_pointer,
+        enum_count = enum_count,
+        enum_cleanup = enum_cleanup,
     ))
 }
 
