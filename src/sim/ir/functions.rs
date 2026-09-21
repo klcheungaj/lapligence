@@ -198,6 +198,11 @@ pub struct IrFunc {
     /// Stable slot assigned to virtual methods in one inheritance family.
     pub(in crate::sim) virtual_slot: Option<usize>,
     pub(in crate::sim) formals: Vec<IrFormal>,
+    /// Compiler-generated copies from static by-value input formals into
+    /// their persistent storage. A read-only callback materializes these
+    /// copies in its private formal bindings instead of publishing them to
+    /// model storage.
+    pub(in crate::sim) callback_private_formal_copies: Vec<(usize, usize)>,
     /// Resolved-static locals in emission order (node-id sorted at lowering).
     /// Resolved-automatic locals remain declaration-site [`IrStmt::DeclLocal`]
     /// operations so nested block reentry recreates them correctly.
@@ -228,6 +233,7 @@ impl IrFunc {
             receiver_class: None,
             virtual_slot: None,
             formals,
+            callback_private_formal_copies: Vec::new(),
             locals,
             pre_fns,
             body,

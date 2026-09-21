@@ -39,6 +39,21 @@ impl Frame<'_, '_> {
                 value
             }
             IrExprKind::SigRead(index) => {
+                if let Some(formal_index) = self
+                    .callback_signal_overrides
+                    .last()
+                    .and_then(|overrides| overrides.get(index).copied())
+                {
+                    let formals = self
+                        .formal_overrides
+                        .last()
+                        .ok_or_else(|| "callback signal override has no formal frame".to_owned())?;
+                    let binding = formals
+                        .get(formal_index)
+                        .cloned()
+                        .ok_or_else(|| "callback signal override has invalid formal".to_owned())?;
+                    return Ok(self.read_binding(&binding));
+                }
                 let signal = self.ctx.model.signal(*index);
                 if self.sampled_reads && signal.ty.width() != 0 {
                     let addr = if signal.net_alias.is_empty() {

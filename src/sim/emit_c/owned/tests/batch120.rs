@@ -35,9 +35,12 @@ fn pure_callback_inlines_owned_formals_without_native_writes() {
 }
 
 #[test]
-fn persistent_return_functions_remain_rejected_in_read_only_callbacks() {
+fn persistent_local_functions_remain_rejected_in_read_only_callbacks() {
     let mut model = numeric_model();
     model.funcs[0].automatic = false;
+    model.funcs[0]
+        .locals
+        .push(IrLocal::new("_persistent".to_owned(), 65, false).unwrap());
     let ctx = RCtx {
         model: &model,
         func: None,
@@ -62,6 +65,44 @@ fn persistent_return_functions_remain_rejected_in_read_only_callbacks() {
         .err()
         .unwrap()
         .contains("side-effect-capable"));
+}
+
+#[test]
+fn static_formal_copies_are_private_in_read_only_callbacks() {
+    let mut model = numeric_model();
+    model.funcs[0].automatic = false;
+    model.funcs[0].body.insert(
+        0,
+        IrStmt::Assign {
+            lhs: IrLhs::Whole(0),
+            rhs: IrExpr::new(IrExprKind::FormalRead(0), 65, false, None),
+            nba: false,
+        },
+    );
+    model.funcs[0].callback_private_formal_copies.push((0, 0));
+    let ctx = RCtx {
+        model: &model,
+        func: None,
+        sampled: false,
+        activation_label: None,
+    };
+    let mut frame = Frame::new(&ctx);
+    frame.read_only_callback = true;
+    let call = IrExpr::new(
+        IrExprKind::CallFn(Box::new(IrCallExpr::new(
+            0,
+            vec![IrCallArg::Val(number(3, 65))],
+            IrDepth::PROC,
+            false,
+        ))),
+        65,
+        false,
+        None,
+    );
+    let value = frame.expression(&call).unwrap();
+    frame.discard(value);
+    assert!(!frame.body().contains("llg_ba(&G_value"));
+    assert!(frame.body().contains("sv4_add("));
 }
 
 #[test]

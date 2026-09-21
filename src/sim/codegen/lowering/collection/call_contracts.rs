@@ -67,11 +67,36 @@ impl<'a> Codegen<'a> {
                             "function calls in evaluated event controls are not supported in `{scope_path}`: function `{name}` has no body"
                         )
                     })?;
+                    if matches!(
+                        self.kind(ft),
+                        NodeKind::FuncTask {
+                            automatic: false,
+                            ret: Some(_),
+                            ..
+                        }
+                    ) && self.function_reads_return(body, ft)
+                    {
+                        return rejected("function reads persistent return state");
+                    }
                     self.check_event_node(body, scope_path, visited_functions, Some(ft))?;
                 }
             }
             NodeKind::SysCall { name } => {
                 return rejected(&format!("system call `{name}` has no pure effect summary"));
+            }
+            NodeKind::MethodCall {
+                name,
+                receiver: Some(receiver),
+                ..
+            } if matches!(name.as_str(), "sum" | "product" | "and" | "or" | "xor") => {
+                let fixed_array = self.query_descriptor(*receiver).is_some_and(|descriptor| {
+                    matches!(descriptor.shape, TypeShape::FixedArray { .. })
+                });
+                if !fixed_array {
+                    return rejected(&format!(
+                        "fixed-array reduction method `{name}` has no pure effect summary"
+                    ));
+                }
             }
             NodeKind::MethodCall { name, .. } => {
                 return rejected(&format!("method call `{name}` has no pure effect summary"));
@@ -127,6 +152,98 @@ impl<'a> Codegen<'a> {
         Ok(())
     }
 
+    /// Static function return storage is persistent. Keep helpers that read
+    /// the function name before assigning it out of read-only event callbacks;
+    /// ordinary return assignments remain private callback writes.
+    fn function_reads_return(&self, root: NodeId, function: NodeId) -> bool {
+        fn visit(cg: &Codegen<'_>, node: NodeId, function: NodeId, write_target: bool) -> bool {
+            match cg.kind(node) {
+                NodeKind::Expr(ExprKind::Ref {
+                    target: Some(target),
+                }) if cg.canonical_func_target(*target).unwrap_or(*target) == function => {
+                    return !write_target;
+                }
+                NodeKind::Stmt(StmtKind::Assign { .. }) => {
+                    if let Some(lhs) = cg.node(node).children.first() {
+                        if visit(cg, *lhs, function, true) {
+                            return true;
+                        }
+                    }
+                    return cg
+                        .node(node)
+                        .children
+                        .iter()
+                        .skip(1)
+                        .any(|child| visit(cg, *child, function, false));
+                }
+                NodeKind::Expr(ExprKind::Operation {
+                    op,
+                    assignment,
+                    operands,
+                    ..
+                }) if *assignment
+                    || matches!(
+                        op,
+                        Operation::Assignment
+                            | Operation::PostIncrement
+                            | Operation::PreIncrement
+                            | Operation::PostDecrement
+                            | Operation::PreDecrement
+                    ) =>
+                {
+                    if let Some(lhs) = operands.first() {
+                        let reads_lhs = *assignment && !matches!(op, Operation::Assignment)
+                            || matches!(
+                                op,
+                                Operation::PostIncrement
+                                    | Operation::PreIncrement
+                                    | Operation::PostDecrement
+                                    | Operation::PreDecrement
+                            );
+                        if visit(cg, *lhs, function, reads_lhs) {
+                            return true;
+                        }
+                    }
+                    return operands
+                        .iter()
+                        .skip(1)
+                        .any(|operand| visit(cg, *operand, function, false));
+                }
+                NodeKind::Expr(ExprKind::BitSelect { base, index }) if write_target => {
+                    return visit(cg, *base, function, true) || visit(cg, *index, function, false);
+                }
+                NodeKind::Expr(ExprKind::PartSelect { base, left, right }) if write_target => {
+                    return visit(cg, *base, function, true)
+                        || visit(cg, *left, function, false)
+                        || visit(cg, *right, function, false);
+                }
+                NodeKind::Expr(ExprKind::IndexedPartSelect {
+                    base,
+                    base_expr,
+                    width_expr,
+                    ..
+                }) if write_target => {
+                    return visit(cg, *base, function, true)
+                        || visit(cg, *base_expr, function, false)
+                        || visit(cg, *width_expr, function, false);
+                }
+                NodeKind::Expr(ExprKind::ArraySelect { base, indices }) if write_target => {
+                    return visit(cg, *base, function, true)
+                        || indices
+                            .iter()
+                            .any(|index| visit(cg, *index, function, false));
+                }
+                _ => {}
+            }
+            cg.node(node)
+                .children
+                .iter()
+                .any(|child| visit(cg, *child, function, false))
+        }
+
+        visit(self, root, function, false)
+    }
+
     fn event_local_write_allowed(&self, function: Option<NodeId>, lhs: NodeId) -> bool {
         let Some(function) = function else {
             return false;
@@ -147,7 +264,10 @@ impl<'a> Codegen<'a> {
                 direction: DbDirection::Input,
                 ..
             }
-            | NodeKind::Var { .. } => self.db.variable_lifetime(target) != VariableLifetime::Static,
+            | NodeKind::Var { .. }
+            | NodeKind::Array { .. } => {
+                self.db.variable_lifetime(target) != VariableLifetime::Static
+            }
             _ => false,
         }
     }

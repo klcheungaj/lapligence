@@ -1,4 +1,4 @@
-//! Bounded callback inlining of automatic, zero-time numeric functions.
+//! Bounded callback inlining of stateless, zero-time numeric functions.
 //!
 //! The evaluator callback ABI is read-only: it must not publish signal writes,
 //! allocate native storage, suspend, or consume runtime randomness. An
@@ -12,8 +12,10 @@ use super::*;
 /// gains one entry per active inline call, so its depth is the current nesting.
 const PURE_CALL_LIMIT: usize = 32;
 
-/// Statement forms that can appear in an automatic, zero-time function whose
-/// only effects are private automatic locals and structured control flow.
+/// Statement forms that can appear in a zero-time function whose only effects
+/// are private locals and structured control flow. Qualified branches are
+/// retained: their runtime diagnostic is part of the function's observable
+/// behavior even though the selected body remains private to the callback.
 fn callback_safe_statements(body: &[IrStmt]) -> Result<(), String> {
     for statement in body {
         match statement {
@@ -50,13 +52,8 @@ fn callback_safe_statements(body: &[IrStmt]) -> Result<(), String> {
                 cond,
                 then_,
                 els,
-                check,
+                check: _,
             } => {
-                if !check.is_none() {
-                    return Err(pending(
-                        "side-effect-capable evaluator expressions: callback helper uses a unique/priority check",
-                    ));
-                }
                 callback_safe_expression(cond)?;
                 callback_safe_statements(then_)?;
                 if let Some(els) = els {
@@ -83,14 +80,7 @@ fn callback_safe_statements(body: &[IrStmt]) -> Result<(), String> {
                 callback_safe_statements(body)?;
             }
             IrStmt::Forever { body } => callback_safe_statements(body)?,
-            IrStmt::Case {
-                sel, items, check, ..
-            } => {
-                if !check.is_none() {
-                    return Err(pending(
-                        "side-effect-capable evaluator expressions: callback helper uses a unique/priority check",
-                    ));
-                }
+            IrStmt::Case { sel, items, .. } => {
                 callback_safe_expression(sel)?;
                 for item in items {
                     callback_safe_statements(&item.body)?;
@@ -156,6 +146,18 @@ fn callback_effect(statement: &IrStmt) -> String {
     pending(&format!(
         "side-effect-capable evaluator expressions: {reason}"
     ))
+}
+
+fn is_callback_formal_copy(statement: &IrStmt, copies: &[(usize, usize)]) -> bool {
+    matches!(
+        statement,
+        IrStmt::Assign {
+            lhs: IrLhs::Whole(signal),
+            rhs,
+            nba: false,
+        } if matches!(rhs.kind(), IrExprKind::FormalRead(index)
+            if copies.contains(&(*signal, *index)))
+    )
 }
 
 /// Replace every `return` with a blocking write to the private result cell and
@@ -241,8 +243,14 @@ impl Frame<'_, '_> {
             return Err(pending("recursive or excessively deep evaluator callbacks"));
         }
         let function = self.ctx.model.func(call.f).clone();
-        let eligible = function.automatic
-            && function.locals.is_empty()
+        // Static functions normally retain return/formal storage, but a
+        // function with no static locals or stateful return reads can be
+        // materialized privately. Input copies and the return cell then stay
+        // inside the callback frame instead of publishing call state. Static
+        // locals remain excluded by `function.locals.is_empty()` and are
+        // therefore never hidden by the callback frame.
+        let stateless = function.automatic || function.locals.is_empty();
+        let eligible = stateless
             && function.pre_fns.is_empty()
             && function.dpi.is_none()
             && function.receiver_class.is_none()
@@ -261,7 +269,19 @@ impl Frame<'_, '_> {
         if !eligible {
             return Err(pending("side-effect-capable evaluator expressions"));
         }
-        callback_safe_statements(&function.body)?;
+        // Static functions lower by-value input formals as a leading copy
+        // into persistent model storage. The callback already creates a
+        // private copy for every input, so discard only the compiler-marked
+        // prologue assignments before checking and rewriting the body.
+        let body: Vec<_> = function
+            .body
+            .iter()
+            .filter(|statement| {
+                !is_callback_formal_copy(statement, &function.callback_private_formal_copies)
+            })
+            .cloned()
+            .collect();
+        callback_safe_statements(&body)?;
         let ty = function
             .ret
             .ok_or_else(|| pending("void evaluator calls"))?;
@@ -324,7 +344,7 @@ impl Frame<'_, '_> {
             shortreal: matches!(ty, IrType::Real { shortreal: true }),
         };
         let label = self.name("pure_return");
-        let body = rewrite_returns(&function.body, &result, &label);
+        let body = rewrite_returns(&body, &result, &label);
 
         // Reserve the escaping result in the caller scope. In particular, a
         // native real result must not name a double declared inside the callee
@@ -417,6 +437,13 @@ impl Frame<'_, '_> {
                 .map(|binding| binding.expect("validated formal order"))
                 .collect(),
         );
+        self.callback_signal_overrides.push(
+            function
+                .callback_private_formal_copies
+                .iter()
+                .copied()
+                .collect(),
+        );
         let mut outcome = Ok(());
         for statement in &body {
             if let Err(error) = self.statement(statement) {
@@ -424,6 +451,7 @@ impl Frame<'_, '_> {
                 break;
             }
         }
+        self.callback_signal_overrides.pop();
         self.formal_overrides.pop();
         outcome?;
         // Every `return` jumps here, before the frame is unwound. Falling off

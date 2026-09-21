@@ -168,6 +168,7 @@ impl<'a> Codegen<'a> {
         let mut string_write = HashMap::new();
         let mut string_addr = HashMap::new();
         let mut static_input_copies = Vec::new();
+        let mut callback_private_formal_copies = Vec::new();
         for (local, name) in &chandle_locals {
             if self.db.variable_lifetime(*local) == VariableLifetime::Static {
                 let object = if let Some(object) = self
@@ -431,6 +432,7 @@ impl<'a> Codegen<'a> {
                 );
                 if !*is_out {
                     let lhs = IrLhs::Whole(storage.ir);
+                    callback_private_formal_copies.push((storage.ir, idx));
                     static_input_copies.push(IrStmt::Assign {
                         lhs: lhs.clone(),
                         rhs: apply_lhs_assignment_context(
@@ -662,6 +664,7 @@ impl<'a> Codegen<'a> {
         let entry = self.model.funcs.get_mut(meta_ir).ok_or(no_entry)?;
         entry.locals = ir_locals;
         entry.automatic = automatic;
+        entry.callback_private_formal_copies = callback_private_formal_copies;
         entry.pre_fns = pre_fns;
         entry.body = body_stmts;
         let _ = (guard, decl, has_ret, ret_x, c_name.as_str());
