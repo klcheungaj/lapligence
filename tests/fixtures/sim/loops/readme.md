@@ -21,6 +21,13 @@
 - `foreach_mixed_too_many.sv`, `foreach_mixed_scalar_extra.sv` and
   `foreach_mixed_readonly.sv`: excess dimensions, a nonexistent scalar dimension
   and assignment to an implicit read-only iterator remain frontend errors.
+- `syn_037_finite_control.sv`: SYN-037's finite for/repeat/while/do/foreach
+  matrix, multiple loop clauses, nested lexical jumps, local named-block
+  disables, function early returns, task output copy-out, reverse endpoints,
+  and duplicate names in independent scopes.
+
+- `syn_037_finite_control_2001.sv`: the Verilog-2001 loop and named-disable
+  subset, including a function/task exit and task output copy-out.
 
 Run the R02 cases on a configured host:
 

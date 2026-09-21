@@ -280,3 +280,30 @@ fn foreach_mixed_iterators_remain_readonly() {
         &["--edition", "2009"],
     );
 }
+
+#[test]
+fn syn_037_finite_control_preserves_local_targets_and_copyout() {
+    sim_cli::run_case_with_args(
+        "loops",
+        "syn_037_finite_control",
+        concat!(
+            "for=24 repeat=5 while=13 do=5 foreach=21 named=306 duplicate=11 ",
+            "function=104 task=11 endpoints=2\n",
+        ),
+        "",
+        &[],
+        &["--edition", "2009"],
+    );
+}
+
+#[test]
+fn syn_037_verilog_2001_local_disable_preserves_loop_and_copyout() {
+    sim_cli::run_case_with_args(
+        "loops",
+        "syn_037_finite_control_2001",
+        "value=31 body=4 repeat=4 while=8 forever=3 function=3 task=6\n",
+        "",
+        &[],
+        &["--edition", "2001"],
+    );
+}

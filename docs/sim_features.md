@@ -42,6 +42,29 @@ separate qualifications.
 | Extended finite / target-dependent | Tagged fixed values and patterns; fixed-array iterator/order methods; memory images; combinational UDPs; explicit library/configuration selection; structural bind. | These tracks are selected as named work items. SYN-034 excludes the six finite metaprogramming and legacy forms recorded below; SYN-035 keeps legacy PLA excluded pending a named target and acceptance evidence. |
 | Companion semantics and capacity | Exact edition semantics, four-state/X/Z policy, resource ceilings and per-context evidence. | Required for truthful support claims, but kept distinct from a syntax-family completion claim. |
 
+### SYN-037 finite loop control and local named disable — 2026-09-21
+
+SYN-037 closes the finite, zero-time local control matrix for the selected
+Core simulator scope. The public command-line fixtures run in optimized and
+unoptimized modes through the ordinary simulator test harness:
+
+- [syn_037_finite_control_2001.sv](../tests/fixtures/sim/loops/syn_037_finite_control_2001.sv)
+  covers the Verilog-2001 for, repeat, while and forever forms, named-block
+  exits, automatic function and task locals, and task output copy-out. Its
+  source references IEEE 1364-2001 §§9.6, 10.2-10.3, and 11.
+- [syn_037_finite_control.sv](../tests/fixtures/sim/loops/syn_037_finite_control.sv)
+  covers the SystemVerilog matrix with multiple for initializers and steps,
+  nested lexical break/continue targets, per-iteration declarations,
+  do/foreach controls, reverse extreme endpoints, local named-block disable,
+  function early return, task disable and copy-out, and duplicate names in
+  independent scopes. Its source references IEEE 1364-2001 §§9.6, 10.2-10.3,
+  and 11 plus IEEE 1800-2009 §§9.6.2, 12.7.1-12.7.6, and 12.8.
+
+The qualification is limited to finite local control. Budget exhaustion and
+nontermination remain scheduler policy; cross-process cancellation, recursive
+timed-task cancellation, dynamic string iterator captures, and jumps across
+lexical scopes remain outside this closure.
+
 ### SYN-034 finite metaprogramming and legacy extension profile — 2026-09-21
 
 SYN-034 records the target-policy decision for the six finite metaprogramming
