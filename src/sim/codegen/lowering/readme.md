@@ -72,9 +72,10 @@ introduce generated callbacks or change resizable-container callback contracts.
 
 `expressions/conditionals.rs` lowers a Boolean `ConditionalPredicate` to one
 `Predicate` IR expression, or reuses the ordinary Boolean conversion for a
-single clause. Primitive and fixed-structure patterns lower to owned `Pattern`
-IR expressions with definite-match binding stores; tagged patterns fail
-explicitly. Pattern-case statements capture their selector once, then lower
+single clause. Primitive, fixed-structure and finite tagged-union patterns
+lower to owned `Pattern` IR expressions with definite-match binding stores;
+tag discriminants use exact four-state equality before payload checks. Pattern-
+case statements capture their selector once, then lower
 each ordered pattern/filter/body item to the same pattern machinery and a
 first-match branch chain. Statement dispatch
 uses owned true/false branch references instead of child-vector positions. Value

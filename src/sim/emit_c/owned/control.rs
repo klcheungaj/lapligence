@@ -98,10 +98,14 @@ impl Frame<'_, '_> {
                 });
                 let check_result = if let Some(constant) = &check.constant {
                     let constant = self.expression(constant)?;
-                    let cmp = match pattern.match_kind {
-                        IrPatternMatchKind::Exact => "sv4_case_eq",
-                        IrPatternMatchKind::Casex => "sv4_casex_eq",
-                        IrPatternMatchKind::Casez => "sv4_casez_eq",
+                    let cmp = if check.exact {
+                        "sv4_case_eq"
+                    } else {
+                        match pattern.match_kind {
+                            IrPatternMatchKind::Exact => "sv4_case_eq",
+                            IrPatternMatchKind::Casex => "sv4_casex_eq",
+                            IrPatternMatchKind::Casez => "sv4_casez_eq",
+                        }
                     };
                     let code = format!("{cmp}({}, {})", member.code, constant.code);
                     let result = self.replace(member, code, 1, false);

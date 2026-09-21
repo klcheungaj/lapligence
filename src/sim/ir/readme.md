@@ -115,7 +115,8 @@ operand traversal, storage reads and stack budgets must still inspect every
 potential clause. This IR carries no pattern bindings or source DB references.
 
 `IrExprKind::Pattern` carries exact, `casez` or `casex` matching mode along with
-its owned value, optional constant or binding, and recursive structure checks.
-Pattern-case statements use a captured selector `LocalRead`, so each item sees
-the same selector value while its filter remains a source-ordered logical
-continuation. Tagged pattern metadata remains rejected by semantic admission.
+its owned value, optional constant or binding, and recursive structure/tagged
+checks. Tagged discriminant checks are marked exact so a surrounding `casez`
+or `casex` mode applies only to payload constants. Pattern-case statements use
+a captured selector `LocalRead`, so each item sees the same selector value
+while its filter remains a source-ordered logical continuation.

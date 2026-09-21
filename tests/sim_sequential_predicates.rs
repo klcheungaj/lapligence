@@ -109,11 +109,23 @@ fn syn_023_recursive_structure_patterns() {
 }
 
 #[test]
+fn syn_024_tagged_patterns_guard_tags_and_bind_payloads() {
+    sim_cli::run_case_with_args(
+        "sequential_predicates",
+        "syn_024_tagged_patterns",
+        "tagged_patterns=pass checks=5 calls=1\n",
+        "",
+        &[],
+        &["--edition", "2009"],
+    );
+}
+
+#[test]
 fn syn_025_pattern_case_items_filters_and_qualifiers() {
     let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/sim/sequential_predicates/syn_025_pattern_case.sv");
     let warning = format!(
-        "unique violation at {}:79:9: multiple matching items",
+        "unique violation at {}:110:9: multiple matching items",
         source.display()
     );
     sim_cli::run_case_with_args(
@@ -156,6 +168,26 @@ fn sequential_predicate_bad_matches_out_of_scope() {
         "sequential_predicates",
         "bad_matches_out_of_scope",
         "undeclared identifier",
+        &["--edition", "2009"],
+    );
+}
+
+#[test]
+fn sequential_predicate_bad_tagged_pattern_tag() {
+    sim_cli::reject_case_with_args(
+        "sequential_predicates",
+        "bad_tagged_pattern_tag",
+        "missing",
+        &["--edition", "2009"],
+    );
+}
+
+#[test]
+fn sequential_predicate_bad_tagged_pattern_type() {
+    sim_cli::reject_case_with_args(
+        "sequential_predicates",
+        "bad_tagged_pattern_type",
+        "tagged",
         &["--edition", "2009"],
     );
 }

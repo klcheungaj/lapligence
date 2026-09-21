@@ -989,7 +989,8 @@ fn supports_conditional_pattern(db: &Db, pattern: NodeId) -> bool {
         if !active.insert(pattern) {
             return false;
         }
-        let supported = match db.conditional_pattern(pattern).map(|info| info.kind) {
+        let info = db.conditional_pattern(pattern);
+        let supported = match info.map(|info| info.kind) {
             Some(
                 ConditionalPatternKind::Wildcard
                 | ConditionalPatternKind::Constant
@@ -1002,6 +1003,12 @@ fn supports_conditional_pattern(db: &Db, pattern: NodeId) -> bool {
                         .iter()
                         .all(|field| visit(db, field.pattern, active))
                 }),
+            Some(ConditionalPatternKind::Tagged) => info.is_some_and(|info| {
+                info.tagged_member.is_some()
+                    && info
+                        .value_pattern
+                        .is_none_or(|payload| visit(db, payload, active))
+            }),
             _ => false,
         };
         active.remove(&pattern);

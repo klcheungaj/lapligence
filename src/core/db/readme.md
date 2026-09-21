@@ -64,5 +64,6 @@ references and nonempty predicates are validated with the rest of the database.
 Lint, dependency and simulator consumers must visit every clause without treating
 conditional writes as definite on early-exit paths. Primitive and fixed-structure
 patterns retain owned metadata for conditional expressions and pattern-case items;
-tagged patterns remain explicit unsupported records until their tagged-union
-contract is implemented.
+tagged patterns retain a resolved union member and an optional payload pattern.
+Validation rejects missing member identities and non-tagged records carrying
+tagged metadata.

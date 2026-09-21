@@ -117,6 +117,40 @@ impl Validator<'_> {
                 }
             }
         }
+        for pattern in self.db.node_ids() {
+            let Some(info) = self.db.conditional_pattern(pattern) else {
+                continue;
+            };
+            if info.kind == ConditionalPatternKind::Tagged {
+                let Some(member) = info.tagged_member else {
+                    return self.fail(
+                        format!("conditional_patterns[{}].tagged_member", pattern.0),
+                        "tagged pattern has no resolved union member",
+                    );
+                };
+                self.node(
+                    member,
+                    &format!("conditional_patterns[{}].tagged_member", pattern.0),
+                )?;
+                if let Some(payload) = info.value_pattern {
+                    self.node(
+                        payload,
+                        &format!("conditional_patterns[{}].value_pattern", pattern.0),
+                    )?;
+                    if self.db.conditional_pattern(payload).is_none() {
+                        return self.fail(
+                            format!("conditional_patterns[{}].value_pattern", pattern.0),
+                            "tagged payload pattern metadata is missing",
+                        );
+                    }
+                }
+            } else if info.tagged_member.is_some() || info.value_pattern.is_some() {
+                return self.fail(
+                    format!("conditional_patterns[{0}]", pattern.0),
+                    "non-tagged pattern carries tagged metadata",
+                );
+            }
+        }
         self.validate_acyclic_links()?;
 
         self.validate_roots(self.db.tops(), "tops", |kind| {

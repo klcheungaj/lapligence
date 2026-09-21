@@ -199,6 +199,14 @@ impl<'a> Codegen<'a> {
                 targets,
             );
         }
+        if let Some(payload) = info.value_pattern {
+            self.collect_conditional_pattern_targets(
+                payload,
+                visited,
+                target_set,
+                targets,
+            );
+        }
     }
 
     pub(in super::super) fn emit_pass(&mut self, top: NodeId, pass: Pass) -> Result<(), String> {

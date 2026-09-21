@@ -24,6 +24,10 @@ pub struct ConditionalPatternInfo {
     pub kind: ConditionalPatternKind,
     /// Pattern variable declaration for `.name`, when Slang supplied one.
     pub binding: Option<NodeId>,
+    /// Resolved tagged-union field for a `tagged member` pattern.
+    pub tagged_member: Option<NodeId>,
+    /// Nested payload pattern for a tagged-union member, when present.
+    pub value_pattern: Option<NodeId>,
 }
 
 /// One resolved member of a structure conditional pattern.

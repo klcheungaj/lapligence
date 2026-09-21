@@ -2621,6 +2621,15 @@ public:
             target_node.flags |= LLG_SLANG_SEMANTIC_AUTOMATIC;
           }
         }
+        if constexpr (std::same_as<T, TaggedPattern>) {
+          // A tagged pattern has two independent identities: the selected
+          // union field and the optional payload pattern.  Keep the field as
+          // the pattern target and make the payload an ordered operand so the
+          // owned importer can validate the tag before lowering its payload.
+          const uint64_t member = captureReferenceTarget(node.member);
+          capture.output.semantic_nodes[static_cast<size_t>(id)].target_id =
+              member;
+        }
       }
     }
     result.detail = storeString(capture.output, toString(node.kind));
@@ -2653,6 +2662,14 @@ public:
         capture.semanticEdge(id, LLG_SLANG_EDGE_DECLARATION, fieldId, index);
         index++;
       }
+    }
+    if constexpr (std::same_as<T, TaggedPattern>) {
+      // The generic visitor attaches the optional payload as a child. Replace
+      // that structural edge after traversal with the owned ordered operand;
+      // the union member remains the resolved target identity above.
+      capture.removeChildEdges(id);
+      if (node.valuePattern)
+        capture.semanticRole(id, node.valuePattern, LLG_SLANG_EDGE_OPERAND);
     }
     addAuxiliaryRoles(node, id);
   }

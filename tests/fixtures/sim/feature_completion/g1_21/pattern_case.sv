@@ -1,8 +1,8 @@
 // llg-test-fixture: tests/fixtures/sim/feature_completion/g1_21/pattern_case.sv
-// G1-21 boundary: tagged pattern-case forms remain deferred to SYN-024 and
-// must be rejected rather than partially executed as ordinary patterns.
+// G1-21 control: tagged pattern-case forms use the owned tag guard and keep
+// ordinary case-item selection when the active arm does not match.
 module tb;
-    typedef union tagged {
+    typedef union tagged packed {
         void invalid;
         logic [1:0] valid;
     } choice_t;

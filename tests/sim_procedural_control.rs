@@ -1,7 +1,7 @@
 //! G1-21 procedural control-flow acceptance through the public HDL CLI.
 //!
-//! Positive fixtures run in both optimizer modes with exact stdout. The
-//! tagged pattern cases remain pinned as a rejection until SYN-024 lands.
+//! Positive fixtures run in both optimizer modes with exact stdout, including
+//! tagged pattern-case selection through the owned tag guard.
 
 #[path = "support/sim_cli.rs"]
 mod sim_cli;
@@ -59,6 +59,12 @@ fn loop_not_synthesis_proven() {
 }
 
 #[test]
-fn tagged_pattern_case_is_rejected_until_syn_024() {
-    sim_cli::reject_case("feature_completion/g1_21", "pattern_case", "pattern");
+fn tagged_pattern_case_selects_only_the_active_arm() {
+    sim_cli::run_case(
+        "feature_completion/g1_21",
+        "pattern_case",
+        "o=1\n",
+        "",
+        &[],
+    );
 }

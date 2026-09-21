@@ -172,6 +172,43 @@ fn syn_023_import_retains_recursive_structure_pattern_roles() {
 }
 
 #[test]
+fn syn_024_import_retains_tagged_members_and_payload_patterns() {
+    let db = capture(
+        "syn_024_tagged_patterns.sv",
+        include_str!("../fixtures/sim/sequential_predicates/syn_024_tagged_patterns.sv"),
+    );
+    db.validate().expect("tagged pattern owned graph validates");
+    let mut tagged = 0;
+    let mut payload_patterns = 0;
+    for id in db.node_ids() {
+        let Some(info) = db.conditional_pattern(id) else {
+            continue;
+        };
+        if info.kind != ConditionalPatternKind::Tagged {
+            continue;
+        }
+        tagged += 1;
+        let member = info.tagged_member.expect("tagged member identity");
+        assert!(!db.node(member).name.is_empty());
+        assert!(db.type_descriptor(member).is_some());
+        if let Some(payload) = info.value_pattern {
+            payload_patterns += 1;
+            assert!(db.conditional_pattern(payload).is_some());
+        }
+    }
+    assert!(tagged >= 8, "tagged pattern identities were not retained");
+    assert!(
+        payload_patterns >= 5,
+        "tagged payload pattern identities were not retained"
+    );
+    for options in [OptConfig::none(), OptConfig::default()] {
+        let model = codegen::generate_from_db_with_opts(&db, &options)
+            .expect("tagged patterns lower from owned metadata");
+        assert!(model.model_c.contains("sv4_case_eq("));
+    }
+}
+
+#[test]
 fn syn_025_pattern_case_is_owned_and_generates_in_both_modes() {
     let db = capture(
         "syn_025_pattern_case.sv",

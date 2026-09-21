@@ -91,31 +91,48 @@ impl Codegen<'_> {
                 "conditional predicate pattern metadata is missing in `{scope_path}`"
             )
         })?;
-        if info.kind == ConditionalPatternKind::Structure {
+        if matches!(
+            info.kind,
+            ConditionalPatternKind::Structure | ConditionalPatternKind::Tagged
+        ) {
             let descriptor = self.query_descriptor(expression).cloned().ok_or_else(|| {
                 format!(
-                    "conditional structure pattern source type is missing in `{scope_path}`"
+                    "conditional aggregate pattern source type is missing in `{scope_path}`"
                 )
             })?;
             let source_width = Codegen::fixed_descriptor_width(&descriptor).ok_or_else(|| {
                 format!(
-                    "conditional structure pattern requires a fixed-width source in `{scope_path}`"
+                    "conditional aggregate pattern requires a fixed-width source in `{scope_path}`"
                 )
             })?;
             if value.width != source_width {
                 return Err(format!(
-                    "conditional structure pattern source width disagrees with its type in `{scope_path}`"
+                    "conditional aggregate pattern source width disagrees with its type in `{scope_path}`"
                 ));
             }
             let mut checks = Vec::new();
-            self.lower_structure_pattern_fields(
-                scope_path,
-                pattern_id,
-                &descriptor,
-                0,
-                &mut checks,
-                &mut HashSet::new(),
-            )?;
+            let mut active = HashSet::new();
+            match info.kind {
+                ConditionalPatternKind::Structure => self.lower_structure_pattern_fields(
+                    scope_path,
+                    pattern_id,
+                    &descriptor,
+                    0,
+                    &mut checks,
+                    &mut active,
+                    match_kind,
+                )?,
+                ConditionalPatternKind::Tagged => self.lower_tagged_pattern_checks(
+                    scope_path,
+                    pattern_id,
+                    &descriptor,
+                    0,
+                    &mut checks,
+                    &mut active,
+                    match_kind,
+                )?,
+                _ => unreachable!("aggregate pattern kind was checked above"),
+            }
             return Ok(IrExpr::new(
                 IrExprKind::Pattern(Box::new(IrPatternExpr {
                     value: Box::new(value),
@@ -228,6 +245,7 @@ impl Codegen<'_> {
         base_offset: u32,
         checks: &mut Vec<IrPatternCheck>,
         active: &mut HashSet<NodeId>,
+        match_kind: IrPatternMatchKind,
     ) -> Result<(), String> {
         if !active.insert(pattern_id) {
             return Err(format!(
@@ -322,7 +340,13 @@ impl Codegen<'_> {
                         ));
                     };
                     let constant = self.lower_expr(scope_path, *constant_node)?;
-                    if constant.is_real() {
+                    if constant.is_real()
+                        || !matches!(
+                            self.query_descriptor(*constant_node)
+                                .map(|descriptor| &descriptor.shape),
+                            Some(TypeShape::PackedAtom { .. })
+                        )
+                    {
                         return Err(format!(
                             "conditional structure constant pattern requires an integral constant in `{scope_path}`"
                         ));
@@ -338,6 +362,7 @@ impl Codegen<'_> {
                         offset,
                         width,
                         signed: member.descriptor.info.signed,
+                        exact: false,
                         constant: Some(Box::new(constant)),
                         binding: None,
                     });
@@ -360,7 +385,7 @@ impl Codegen<'_> {
                             self.db.node(target).name
                         ));
                     }
-                    let target_width = target_descriptor.info.width.ok_or_else(|| {
+                    let target_width = Codegen::fixed_descriptor_width(target_descriptor).ok_or_else(|| {
                         format!(
                             "conditional structure binding `{}` has no resolved width in `{scope_path}`",
                             self.db.node(target).name
@@ -376,6 +401,7 @@ impl Codegen<'_> {
                         offset,
                         width,
                         signed: member.descriptor.info.signed,
+                        exact: false,
                         constant: None,
                         binding: Some(self.lower_lhs(scope_path, target).map_err(|error| {
                             format!(
@@ -392,11 +418,19 @@ impl Codegen<'_> {
                         offset,
                         checks,
                         active,
+                        match_kind,
                     )?;
                 }
-                ConditionalPatternKind::Invalid
-                | ConditionalPatternKind::Tagged
-                | ConditionalPatternKind::Unsupported => {
+                ConditionalPatternKind::Tagged => self.lower_tagged_pattern_checks(
+                    scope_path,
+                    field.pattern,
+                    &member.descriptor,
+                    offset,
+                    checks,
+                    active,
+                    match_kind,
+                )?,
+                ConditionalPatternKind::Invalid | ConditionalPatternKind::Unsupported => {
                     return Err(format!(
                         "unsupported nested conditional structure pattern in `{scope_path}`"
                     ));
@@ -405,6 +439,258 @@ impl Codegen<'_> {
         }
         active.remove(&pattern_id);
         Ok(())
+    }
+
+    fn lower_tagged_pattern_checks(
+        &mut self,
+        scope_path: &str,
+        pattern_id: NodeId,
+        descriptor: &TypeDescriptor,
+        base_offset: u32,
+        checks: &mut Vec<IrPatternCheck>,
+        active: &mut HashSet<NodeId>,
+        match_kind: IrPatternMatchKind,
+    ) -> Result<(), String> {
+        if !active.insert(pattern_id) {
+            return Err(format!(
+                "cyclic conditional tagged pattern in `{scope_path}`"
+            ));
+        }
+        let TypeShape::Aggregate(layout) = &descriptor.shape else {
+            return Err(format!(
+                "conditional tagged pattern requires a tagged-union source in `{scope_path}`"
+            ));
+        };
+        if layout.kind != AggregateKind::TaggedUnion {
+            return Err(format!(
+                "conditional tagged pattern requires a tagged-union source in `{scope_path}`"
+            ));
+        }
+        let info = self.db.conditional_pattern(pattern_id).ok_or_else(|| {
+            format!(
+                "conditional tagged pattern metadata is missing in `{scope_path}`"
+            )
+        })?;
+        let member_id = info.tagged_member.ok_or_else(|| {
+            format!(
+                "conditional tagged pattern has no resolved union member in `{scope_path}`"
+            )
+        })?;
+        let member_name = self.db.node(member_id).name.clone();
+        let member_index = layout
+            .members
+            .iter()
+            .position(|member| member.name == member_name)
+            .ok_or_else(|| {
+                format!(
+                    "conditional tagged pattern member `{member_name}` is not in its source type in `{scope_path}`"
+                )
+            })?;
+        let member = &layout.members[member_index];
+        let member_descriptor = self.db.type_descriptor(member_id).ok_or_else(|| {
+            format!(
+                "conditional tagged pattern member `{member_name}` has no resolved type in `{scope_path}`"
+            )
+        })?;
+        if member_descriptor.id != member.descriptor.id {
+            return Err(format!(
+                "conditional tagged pattern member `{member_name}` has an incompatible resolved type in `{scope_path}`"
+            ));
+        }
+        let tag_width = layout.tag_bits().ok_or_else(|| {
+            format!("conditional tagged pattern tag width overflows in `{scope_path}`")
+        })?;
+        let payload_width = layout.payload_bits().ok_or_else(|| {
+            format!("conditional tagged pattern payload width overflows in `{scope_path}`")
+        })?;
+        let total_width = tag_width.checked_add(payload_width).ok_or_else(|| {
+            format!("conditional tagged pattern width overflows in `{scope_path}`")
+        })?;
+        if Codegen::fixed_descriptor_width(descriptor) != Some(total_width) {
+            return Err(format!(
+                "conditional tagged pattern source width disagrees with its tag and payload in `{scope_path}`"
+            ));
+        }
+        if tag_width > 0 {
+            let tag_offset = base_offset.checked_add(payload_width).ok_or_else(|| {
+                format!("conditional tagged pattern tag offset overflows in `{scope_path}`")
+            })?;
+            let tag = IrConst::packed(
+                vec![u64::try_from(member_index).map_err(|_| {
+                    format!("conditional tagged pattern member index overflows in `{scope_path}`")
+                })?],
+                vec![0],
+                vec![0],
+                tag_width,
+                false,
+                None,
+            )
+            .map_err(|error| error.to_string())?;
+            checks.push(IrPatternCheck {
+                offset: tag_offset,
+                width: tag_width,
+                signed: false,
+                exact: true,
+                constant: Some(Box::new(IrExpr::new(
+                    IrExprKind::Const(tag),
+                    tag_width,
+                    false,
+                    None,
+                ))),
+                binding: None,
+            });
+        }
+
+        if let Some(payload) = info.value_pattern {
+            let is_void = matches!(
+                &member.descriptor.shape,
+                TypeShape::Opaque { kind } if kind == "Void"
+            );
+            if is_void {
+                return Err(format!(
+                    "void tagged pattern member `{member_name}` cannot have a payload pattern in `{scope_path}`"
+                ));
+            }
+            let member_width = Codegen::fixed_descriptor_width(&member.descriptor).ok_or_else(|| {
+                format!(
+                    "tagged pattern member `{member_name}` has no fixed payload in `{scope_path}`"
+                )
+            })?;
+            if member_width > payload_width {
+                return Err(format!(
+                    "tagged pattern member `{member_name}` exceeds its union payload in `{scope_path}`"
+                ));
+            }
+            self.lower_pattern_component(
+                scope_path,
+                payload,
+                &member.descriptor,
+                base_offset,
+                checks,
+                active,
+                match_kind,
+            )?;
+        }
+        active.remove(&pattern_id);
+        Ok(())
+    }
+
+    fn lower_pattern_component(
+        &mut self,
+        scope_path: &str,
+        pattern_id: NodeId,
+        descriptor: &TypeDescriptor,
+        base_offset: u32,
+        checks: &mut Vec<IrPatternCheck>,
+        active: &mut HashSet<NodeId>,
+        match_kind: IrPatternMatchKind,
+    ) -> Result<(), String> {
+        let info = self.db.conditional_pattern(pattern_id).ok_or_else(|| {
+            format!("nested conditional pattern metadata is missing in `{scope_path}`")
+        })?;
+        match info.kind {
+            ConditionalPatternKind::Wildcard => Ok(()),
+            ConditionalPatternKind::Constant => {
+                let children = self.db.node(pattern_id).children();
+                let [constant_node] = children else {
+                    return Err(format!(
+                        "nested conditional constant pattern has invalid shape in `{scope_path}`"
+                    ));
+                };
+                let constant = self.lower_expr(scope_path, *constant_node)?;
+                if constant.is_real()
+                    || !matches!(
+                        self.query_descriptor(*constant_node)
+                            .map(|descriptor| &descriptor.shape),
+                        Some(TypeShape::PackedAtom { .. })
+                    )
+                {
+                    return Err(format!(
+                        "nested conditional constant pattern requires an integral constant in `{scope_path}`"
+                    ));
+                }
+                let width = Codegen::fixed_descriptor_width(descriptor).ok_or_else(|| {
+                    format!(
+                        "nested conditional constant pattern has no fixed payload in `{scope_path}`"
+                    )
+                })?;
+                let constant = checked_operand_with_context(
+                    constant,
+                    width,
+                    descriptor.info.signed,
+                    scope_path,
+                    "conditional pattern context",
+                )?;
+                checks.push(IrPatternCheck {
+                    offset: base_offset,
+                    width,
+                    signed: descriptor.info.signed,
+                    exact: false,
+                    constant: Some(Box::new(constant)),
+                    binding: None,
+                });
+                Ok(())
+            }
+            ConditionalPatternKind::Binding => {
+                let target = info.binding.ok_or_else(|| {
+                    format!(
+                        "nested conditional binding has no declaration in `{scope_path}`"
+                    )
+                })?;
+                let target_descriptor = self.query_descriptor(target).ok_or_else(|| {
+                    format!(
+                        "conditional binding `{}` has no resolved type in `{scope_path}`",
+                        self.db.node(target).name
+                    )
+                })?;
+                if target_descriptor.id != descriptor.id {
+                    return Err(format!(
+                        "conditional binding `{}` has an incompatible payload type in `{scope_path}`",
+                        self.db.node(target).name
+                    ));
+                }
+                let width = Codegen::fixed_descriptor_width(descriptor).ok_or_else(|| {
+                    format!(
+                        "conditional binding `{}` has no fixed payload in `{scope_path}`",
+                        self.db.node(target).name
+                    )
+                })?;
+                checks.push(IrPatternCheck {
+                    offset: base_offset,
+                    width,
+                    signed: descriptor.info.signed,
+                    exact: false,
+                    constant: None,
+                    binding: Some(self.lower_lhs(scope_path, target).map_err(|error| {
+                        format!(
+                            "conditional binding cannot be assigned in `{scope_path}`: {error}"
+                        )
+                    })?),
+                });
+                Ok(())
+            }
+            ConditionalPatternKind::Structure => self.lower_structure_pattern_fields(
+                scope_path,
+                pattern_id,
+                descriptor,
+                base_offset,
+                checks,
+                active,
+                match_kind,
+            ),
+            ConditionalPatternKind::Tagged => self.lower_tagged_pattern_checks(
+                scope_path,
+                pattern_id,
+                descriptor,
+                base_offset,
+                checks,
+                active,
+                match_kind,
+            ),
+            ConditionalPatternKind::Invalid | ConditionalPatternKind::Unsupported => Err(format!(
+                "unsupported nested conditional pattern in `{scope_path}`"
+            )),
+        }
     }
 
     pub(in super::super) fn lower_predicate_conditional(

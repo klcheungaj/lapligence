@@ -8,8 +8,14 @@ module tb;
         logic [3:0] payload;
     } packet_t;
 
+    typedef union tagged packed {
+        void invalid;
+        logic [7:0] valid;
+    } choice_t;
+
     logic [7:0] value, result;
     packet_t packet;
+    choice_t choice;
     int calls;
 
     function automatic logic [7:0] selected(input logic [7:0] source);
@@ -43,6 +49,31 @@ module tb;
         endcase
         if (calls != 1 || result !== 8'h5a)
             $fatal(1, "pattern case selector evaluation");
+
+        choice = tagged valid 8'h5a;
+        casez (choice) matches
+            tagged invalid: result = 8'h01;
+            tagged valid .case_payload &&& case_payload == 8'h5a:
+                result = case_payload;
+            default: result = 8'h00;
+        endcase
+        if (result !== 8'h5a)
+            $fatal(1, "tagged pattern case item");
+
+        choice = 'x;
+        casez (choice) matches
+            tagged invalid: result = 8'h01;
+            default: result = 8'h00;
+        endcase
+        if (result !== 8'h00)
+            $fatal(1, "casez wildcard ignored tagged X tag");
+
+        casex (choice) matches
+            tagged invalid: result = 8'h01;
+            default: result = 8'h00;
+        endcase
+        if (result !== 8'h00)
+            $fatal(1, "casex wildcard ignored tagged X tag");
 
         case (value) matches
             8'h5a: result = 8'h11;

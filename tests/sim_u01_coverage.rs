@@ -26,38 +26,15 @@ fn invalid_source_is_rejected_before_simulation_coverage() {
     sim_cli::reject_case("u01_coverage", "invalid_source", "Slang reported errors");
 }
 
-/// G1-02 `coverage_reachable_pattern`: a reached tagged pattern-matching case
-/// remains a located feature rejection until SYN-024 supplies tagged lowering.
 #[test]
-fn coverage_reachable_pattern_reports_its_source_span() {
-    for optimized in [false, true] {
-        let output = sim_cli::invoke_with_env(
-            "feature_completion/g1_02",
-            "coverage_reachable_pattern",
-            optimized,
-            &[],
-            &[],
-            &[],
-        );
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert_eq!(
-            output.status.code(),
-            Some(1),
-            "optimized={optimized}: {stderr}"
-        );
-        assert!(
-            output.stdout.is_empty(),
-            "optimized={optimized}: pattern case produced stdout: {output:?}"
-        );
-        assert!(
-            stderr.contains("unsupported pattern case pattern matching (`matches`)"),
-            "optimized={optimized}: {stderr}"
-        );
-        assert!(
-            stderr.contains("coverage_reachable_pattern.sv:14:9"),
-            "optimized={optimized}: {stderr}"
-        );
-    }
+fn coverage_reachable_pattern_executes_with_owned_tag_matching() {
+    sim_cli::run_case(
+        "feature_completion/g1_02",
+        "coverage_reachable_pattern",
+        "coverage_reachable_pattern=o0\n",
+        "",
+        &[],
+    );
 }
 
 /// G1-02 `coverage_pruned_udp`: an elaboration-pruned unsupported primitive

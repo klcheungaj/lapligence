@@ -290,13 +290,17 @@ pub enum IrExprKind {
     SysFunc(IrSysFunc),
 }
 
-/// One checked member of a recursive fixed structure conditional pattern.
+/// One checked member of a recursive conditional pattern.
 #[derive(Clone, Debug, PartialEq)]
 pub struct IrPatternCheck {
     /// Physical LSB offset in the flattened source payload.
     pub(in crate::sim) offset: u32,
     pub(in crate::sim) width: u32,
     pub(in crate::sim) signed: bool,
+    /// Tagged-union discriminants always use exact four-state equality. This
+    /// remains true when the containing pattern is lowered for `casez` or
+    /// `casex`; only payload constants inherit that case mode.
+    pub(in crate::sim) exact: bool,
     pub(in crate::sim) constant: Option<Box<IrExpr>>,
     pub(in crate::sim) binding: Option<IrLhs>,
 }

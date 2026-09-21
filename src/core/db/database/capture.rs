@@ -59,7 +59,7 @@ impl Db {
             .iter()
             .map(|semantic| semantic.detail.clone())
             .collect();
-        let conditional_patterns = snapshot
+        let mut conditional_patterns = snapshot
             .semantic_nodes
             .iter()
             .enumerate()
@@ -88,11 +88,40 @@ impl Db {
                         kind,
                         binding: semantic
                             .target_id
-                            .and_then(|target| ids.get(&target).copied()),
+                            .and_then(|target| ids.get(&target).copied())
+                            .filter(|_| kind == ConditionalPatternKind::Binding),
+                        tagged_member: semantic
+                            .target_id
+                            .and_then(|target| ids.get(&target).copied())
+                            .filter(|_| kind == ConditionalPatternKind::Tagged),
+                        value_pattern: None,
                     },
                 ))
             })
             .collect::<HashMap<_, _>>();
+        for (pattern, info) in &mut conditional_patterns {
+            if info.kind != ConditionalPatternKind::Tagged {
+                continue;
+            }
+            let semantic = snapshot
+                .semantic_nodes
+                .get(pattern.index())
+                .ok_or_else(|| DbError::InvalidSnapshot("tagged pattern node is missing".into()))?;
+            let edges = semantic_edges(snapshot, semantic)?;
+            let operands = edges
+                .iter()
+                .filter(|edge| edge.role == SemanticEdgeRole::Operand)
+                .collect::<Vec<_>>();
+            if operands.len() > 1 || operands.first().is_some_and(|edge| edge.index != 0) {
+                return Err(DbError::InvalidSnapshot(
+                    "tagged pattern has an invalid payload pattern edge".into(),
+                ));
+            }
+            info.value_pattern = operands
+                .first()
+                .map(|edge| semantic_id(&ids, edge.target_id))
+                .transpose()?;
+        }
         let mut conditional_pattern_fields = HashMap::new();
         for (index, semantic) in snapshot.semantic_nodes.iter().enumerate() {
             if semantic.kind != SemanticKind::Unsupported
