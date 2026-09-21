@@ -147,8 +147,8 @@ fn port_net_type_keeps_selected_bits_and_array_cells_independent() {
     let mut plan = NetCollapsePlan::default();
     let a0 = NetPoint::ArrayBit { owner: NodeId(0), element: 4, bit: 0 };
     let a1 = NetPoint::ArrayBit { owner: NodeId(0), element: 5, bit: 0 };
-    let b0 = NetPoint::Bit(AliasBit { net: NodeId(1), bit: 0 });
-    let b1 = NetPoint::Bit(AliasBit { net: NodeId(1), bit: 1 });
+    let b0 = NetPoint::Bit(AliasBit::Net { net: NodeId(1), bit: 0 });
+    let b1 = NetPoint::Bit(AliasBit::Net { net: NodeId(1), bit: 1 });
     for point in [a0, a1, b0, b1] { plan.insert(point, NetType::Wire).unwrap(); }
     let wired = add(&mut plan, 2, NetType::Wand);
     plan.port(b0, a0).unwrap();

@@ -89,6 +89,41 @@ impl<'a> Codegen<'a> {
         }
     }
 
+    fn alias_signal_target(&self, info: &SignalInfo) -> Option<NodeId> {
+        self.sig_globals
+            .iter()
+            .find_map(|(target, candidate)| (candidate.ir == info.ir).then_some(*target))
+    }
+
+    fn alias_signal_bits(
+        &self,
+        alias: NodeId,
+        info: &SignalInfo,
+        lsb: u32,
+        width: u32,
+    ) -> Result<Vec<AliasBit>, String> {
+        let net = self.alias_signal_target(info).ok_or_else(|| {
+            self.alias_error(alias, "has a packed projection without a net target")
+        })?;
+        let end = lsb.checked_add(width.saturating_sub(1)).ok_or_else(|| {
+            self.alias_error(alias, "has a packed projection wider than the runtime")
+        })?;
+        let signal_width = self
+            .signal_of(net)
+            .map(|signal| signal.width)
+            .ok_or_else(|| self.alias_error(alias, "has a packed projection without storage"))?;
+        if end >= signal_width {
+            return Err(self.alias_error(alias, "has a packed projection outside its net"));
+        }
+        Ok((0..width)
+            .rev()
+            .map(|offset| AliasBit::Net {
+                net,
+                bit: lsb + offset,
+            })
+            .collect())
+    }
+
     fn alias_bit(&self, alias: NodeId, net: NodeId, label: i128) -> Result<AliasBit, String> {
         let bit = self
             .packed_relative_bound(net, label)?
@@ -105,7 +140,235 @@ impl<'a> Codegen<'a> {
         if bit >= width {
             return Err(self.alias_error(alias, "has a packed bit index outside its net"));
         }
-        Ok(AliasBit { net, bit })
+        Ok(AliasBit::Net { net, bit })
+    }
+
+    fn alias_array_selection_bits(
+        &self,
+        alias: NodeId,
+        expression: NodeId,
+    ) -> Result<Option<Vec<AliasBit>>, String> {
+        if self.array_net_endpoint(expression).is_none() {
+            return Ok(None);
+        }
+        let ((array, element), bits) = self
+            .array_net_selection(expression)?
+            .ok_or_else(|| self.alias_error(alias, "has an unsupported net-array projection"))?;
+        let owner = self
+            .array_globals
+            .iter()
+            .find_map(|(owner, info)| (info.ir == array).then_some(*owner))
+            .ok_or_else(|| {
+                self.alias_error(alias, "has a net-array projection without an owner")
+            })?;
+        Ok(Some(
+            bits.into_iter()
+                .map(|bit| AliasBit::Array {
+                    owner,
+                    element,
+                    bit,
+                })
+                .collect(),
+        ))
+    }
+
+    fn packed_logical_slot(
+        &self,
+        range: crate::core::db::PackedRange,
+        label: i128,
+    ) -> Result<usize, String> {
+        let low = range.left.min(range.right);
+        let high = range.left.max(range.right);
+        if !(low..=high).contains(&label) {
+            return Err(format!(
+                "packed select bound {label} is outside range [{}:{}]",
+                range.left, range.right
+            ));
+        }
+        let slot = if range.left >= range.right {
+            range.left - label
+        } else {
+            label - range.left
+        };
+        usize::try_from(slot).map_err(|_| "packed select slot overflows".into())
+    }
+
+    fn alias_packed_range_bits(
+        &self,
+        alias: NodeId,
+        base: NodeId,
+        left: i128,
+        right: i128,
+    ) -> Result<Option<Vec<AliasBit>>, String> {
+        let Some(ranges) = self.packed_ranges_for_base(base) else {
+            return Ok(None);
+        };
+        let Some(range) = ranges.as_slice().first().copied() else {
+            return Ok(None);
+        };
+        if ranges.len() != 1 {
+            return Err(self.alias_error(
+                alias,
+                "has an unsupported multidimensional packed part-select",
+            ));
+        }
+        let bits = self.alias_expression_bits(alias, base)?;
+        let left_slot = self.packed_logical_slot(range, left)?;
+        let right_slot = self.packed_logical_slot(range, right)?;
+        if left_slot >= bits.len() || right_slot >= bits.len() {
+            return Err(self.alias_error(alias, "has a packed part-select outside its net"));
+        }
+        let step = if left_slot <= right_slot { 1 } else { -1 };
+        let width = left_slot.abs_diff(right_slot) + 1;
+        Ok(Some(
+            (0..width)
+                .map(|offset| {
+                    let position = if step > 0 {
+                        left_slot + offset
+                    } else {
+                        left_slot - offset
+                    };
+                    bits[position]
+                })
+                .collect(),
+        ))
+    }
+
+    fn alias_packed_indexed_bits(
+        &self,
+        alias: NodeId,
+        base: NodeId,
+        base_expr: NodeId,
+        width_expr: NodeId,
+        neg: bool,
+    ) -> Result<Option<Vec<AliasBit>>, String> {
+        let Some(ranges) = self.packed_ranges_for_base(base) else {
+            return Ok(None);
+        };
+        let Some(range) = ranges.as_slice().first().copied() else {
+            return Ok(None);
+        };
+        if ranges.len() != 1 {
+            return Err(self.alias_error(
+                alias,
+                "has an unsupported multidimensional packed indexed select",
+            ));
+        }
+        let bits = self.alias_expression_bits(alias, base)?;
+        let width = self.eval_bound_i128(width_expr)?;
+        let width = usize::try_from(width)
+            .ok()
+            .filter(|width| *width != 0)
+            .ok_or_else(|| self.alias_error(alias, "has an invalid indexed part-select width"))?;
+        let start = self.eval_bound_i128(base_expr)?;
+        let ascending = range.left < range.right;
+        let (start, step) = if ascending {
+            (start, if neg { -1 } else { 1 })
+        } else {
+            (
+                if neg {
+                    start
+                } else {
+                    start
+                        .checked_add(i128::try_from(width - 1).unwrap_or(i128::MAX))
+                        .ok_or_else(|| {
+                            self.alias_error(alias, "has an overflowing indexed part-select")
+                        })?
+                },
+                -1,
+            )
+        };
+        let mut result = Vec::with_capacity(width);
+        for offset in 0..width {
+            let label = start
+                .checked_add(i128::try_from(offset).unwrap_or(i128::MAX) * step)
+                .ok_or_else(|| self.alias_error(alias, "has an overflowing indexed part-select"))?;
+            let position = self.packed_logical_slot(range, label)?;
+            let bit = bits.get(position).copied().ok_or_else(|| {
+                self.alias_error(alias, "has an indexed part-select outside its net")
+            })?;
+            result.push(bit);
+        }
+        Ok(Some(result))
+    }
+
+    fn alias_packed_projection_bits(
+        &self,
+        alias: NodeId,
+        expression: NodeId,
+    ) -> Result<Option<Vec<AliasBit>>, String> {
+        match self.kind(expression) {
+            NodeKind::Expr(ExprKind::HierPath { .. }) => {
+                let Some((info, member)) = self.packed_member_info(expression) else {
+                    return Ok(None);
+                };
+                Ok(Some(self.alias_signal_bits(
+                    alias,
+                    &info,
+                    member.lsb,
+                    member.width,
+                )?))
+            }
+            NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
+                if let Some((info, _member, lsb, width)) =
+                    self.packed_member_select_info(*base, indices)?
+                {
+                    return Ok(Some(self.alias_signal_bits(alias, &info, lsb, width)?));
+                }
+                if let Some((info, lsb, width)) = self.packed_select_info(*base, indices)? {
+                    return Ok(Some(self.alias_signal_bits(alias, &info, lsb, width)?));
+                }
+                Ok(None)
+            }
+            NodeKind::Expr(ExprKind::BitSelect { base, index }) => {
+                if let Some((info, _member, lsb, width)) =
+                    self.packed_member_select_info(*base, &[*index])?
+                {
+                    return Ok(Some(self.alias_signal_bits(alias, &info, lsb, width)?));
+                }
+                if let Some((info, lsb, width)) = self.packed_select_info(*base, &[*index])? {
+                    return Ok(Some(self.alias_signal_bits(alias, &info, lsb, width)?));
+                }
+                let index = self.eval_bound_i128(*index)?;
+                let bits = self.alias_packed_range_bits(alias, *base, index, index)?;
+                if bits.is_some() {
+                    return Ok(bits);
+                }
+                if self.packed_ranges_for_base(*base).is_some() {
+                    return Err(self.alias_error(alias, "has an unsupported packed bit projection"));
+                }
+                Ok(None)
+            }
+            NodeKind::Expr(ExprKind::PartSelect { base, left, right }) => {
+                if let Some((info, _member, lsb, width)) = self.packed_member_range_info(
+                    *base,
+                    self.eval_bound_i128(*left)?,
+                    self.eval_bound_i128(*right)?,
+                )? {
+                    return Ok(Some(self.alias_signal_bits(alias, &info, lsb, width)?));
+                }
+                let bits = self.alias_packed_range_bits(
+                    alias,
+                    *base,
+                    self.eval_bound_i128(*left)?,
+                    self.eval_bound_i128(*right)?,
+                )?;
+                if bits.is_some() {
+                    return Ok(bits);
+                }
+                if self.packed_ranges_for_base(*base).is_some() {
+                    return Err(self.alias_error(alias, "has an unsupported packed part-select"));
+                }
+                Ok(None)
+            }
+            NodeKind::Expr(ExprKind::IndexedPartSelect {
+                base,
+                base_expr,
+                width_expr,
+                neg,
+            }) => self.alias_packed_indexed_bits(alias, *base, *base_expr, *width_expr, *neg),
+            _ => Ok(None),
+        }
     }
 
     /// Flatten one legal alias lvalue to its logical MSB-to-LSB bit order.
@@ -117,6 +380,12 @@ impl<'a> Codegen<'a> {
         alias: NodeId,
         expression: NodeId,
     ) -> Result<Vec<AliasBit>, String> {
+        if let Some(bits) = self.alias_array_selection_bits(alias, expression)? {
+            return Ok(bits);
+        }
+        if let Some(bits) = self.alias_packed_projection_bits(alias, expression)? {
+            return Ok(bits);
+        }
         let aggregate_path = self.unpacked_path_for_expr(expression).or_else(|| {
             self.unpacked_aggregate_info(expression)
                 .map(|(root, _)| (root, Vec::new()))
@@ -131,9 +400,10 @@ impl<'a> Codegen<'a> {
                 .ok_or("aggregate net alias has no selected member")?;
             let width =
                 Self::fixed_descriptor_width(&member).ok_or("aggregate net alias has no width")?;
+            let net = self.alias_base_net(alias, net)?;
             return Ok((0..width)
                 .rev()
-                .map(|bit| AliasBit {
+                .map(|bit| AliasBit::Net {
                     net,
                     bit: offset + bit,
                 })
@@ -295,6 +565,14 @@ impl<'a> Codegen<'a> {
     /// lowering path while ensuring an unsupported alias lvalue is rejected
     /// instead of silently being treated as a raw signal write.
     fn expression_may_touch_alias(&self, expression: NodeId) -> bool {
+        if let Some((array, element)) = self.array_net_endpoint(expression) {
+            return self.model.arrays[array]
+                .net_elements
+                .iter()
+                .find_map(|(index, signal)| (*index == element).then_some(*signal))
+                .and_then(|signal| self.model.signals.get(signal))
+                .is_some_and(|signal| !signal.net_alias.is_empty());
+        }
         let signal_is_alias = |net: NodeId| {
             self.sig_globals
                 .get(&net)
@@ -305,6 +583,9 @@ impl<'a> Codegen<'a> {
             NodeKind::Net { .. } => signal_is_alias(expression),
             NodeKind::Expr(ExprKind::Ref { target }) => {
                 target.is_some_and(|target| self.expression_may_touch_alias(target))
+            }
+            NodeKind::Expr(ExprKind::ArraySelect { base, .. }) => {
+                self.expression_may_touch_alias(*base)
             }
             NodeKind::Expr(ExprKind::HierPath { .. }) => {
                 self.hier_path_signal(expression).is_some_and(|info| {
@@ -396,9 +677,7 @@ impl<'a> Codegen<'a> {
                 let mut result = Vec::new();
                 let mut rhs_bit = 0u32;
                 for element in elements {
-                    let signal = self
-                        .model
-                        .arrays[array.ir]
+                    let signal = self.model.arrays[array.ir]
                         .net_elements
                         .iter()
                         .find_map(|(index, signal)| (*index == element).then_some(*signal))
@@ -436,15 +715,26 @@ impl<'a> Codegen<'a> {
         let mut saw_alias = false;
         let mut saw_plain = false;
         for (rhs_bit, bit) in bits.into_iter().enumerate() {
-            let Some(info) = self.sig_globals.get(&bit.net) else {
+            let signal_index = match bit {
+                AliasBit::Net { net, .. } => self.sig_globals.get(&net).map(|info| info.ir),
+                AliasBit::Array { owner, element, .. } => {
+                    self.array_globals.get(&owner).and_then(|info| {
+                        self.model.arrays[info.ir]
+                            .net_elements
+                            .iter()
+                            .find_map(|(index, signal)| (*index == element).then_some(*signal))
+                    })
+                }
+            };
+            let Some(signal_index) = signal_index else {
                 saw_plain = true;
                 continue;
             };
-            let signal = &self.model.signals[info.ir];
+            let signal = &self.model.signals[signal_index];
             let mapped = signal
                 .net_alias
                 .iter()
-                .filter(|binding| binding.signal_bit == bit.bit)
+                .filter(|binding| binding.signal_bit == bit.bit())
                 .cloned()
                 .collect::<Vec<_>>();
             if mapped.is_empty() {
@@ -673,7 +963,7 @@ impl<'a> Codegen<'a> {
                     );
                 }
                 alias_bits.extend(expression.iter().copied());
-                alias_nets.extend(expression.iter().map(|bit| bit.net));
+                alias_nets.extend(expression.iter().filter_map(|bit| bit.net()));
             }
             for expression in expressions.iter().skip(1) {
                 for (first, second) in first.iter().zip(expression) {
@@ -696,7 +986,7 @@ impl<'a> Codegen<'a> {
                 }
             };
             for bit in 0..width {
-                let bit = AliasBit { net: *net, bit };
+                let bit = AliasBit::Net { net: *net, bit };
                 alias_bits.insert(bit);
                 alias_find(&mut alias_parent, bit);
             }
@@ -716,6 +1006,11 @@ impl<'a> Codegen<'a> {
                 {
                     if let Some((endpoint, actual_bits)) = self.array_net_selection(*actual)? {
                         let width = self.model.arrays[endpoint.0].elem_width;
+                        let owner = self
+                            .array_globals
+                            .iter()
+                            .find_map(|(owner, info)| (info.ir == endpoint.0).then_some(*owner))
+                            .ok_or("array inout endpoint has no owned array")?;
                         let formal_bits = self.alias_expression_bits(*id, *l)?;
                         if actual_bits.len() != formal_bits.len() {
                             return Err(
@@ -726,13 +1021,21 @@ impl<'a> Codegen<'a> {
                             .entry(endpoint)
                             .or_insert_with(|| vec![None; width as usize]);
                         for (physical, formal) in actual_bits.into_iter().zip(formal_bits) {
+                            let actual = AliasBit::Array {
+                                owner,
+                                element: endpoint.1,
+                                bit: physical,
+                            };
                             if let Some(previous) = peers[physical as usize] {
-                                alias_union(&mut alias_parent, &mut alias_rank, previous, formal);
+                                alias_union(&mut alias_parent, &mut alias_rank, previous, actual);
                             } else {
                                 peers[physical as usize] = Some(formal);
                             }
-                            alias_bits.insert(formal);
-                            alias_nets.insert(formal.net);
+                            alias_union(&mut alias_parent, &mut alias_rank, actual, formal);
+                            alias_bits.extend([actual, formal]);
+                            if let Some(net) = formal.net() {
+                                alias_nets.insert(net);
+                            }
                         }
                         inout_ports.push(*id);
                         array_ports.insert(*id);
@@ -761,7 +1064,7 @@ impl<'a> Codegen<'a> {
                         }
                         for (actual, formal) in actual_bits.into_iter().zip(formal_bits) {
                             alias_bits.extend([actual, formal]);
-                            alias_nets.extend([actual.net, formal.net]);
+                            alias_nets.extend(actual.net().into_iter().chain(formal.net()));
                             alias_union(&mut alias_parent, &mut alias_rank, actual, formal);
                         }
                         inout_ports.push(*id);
@@ -803,8 +1106,8 @@ impl<'a> Codegen<'a> {
                     alias_nets.insert(*h);
                     alias_nets.insert(*l);
                     for bit in 0..high_width {
-                        let high = AliasBit { net: *h, bit };
-                        let low = AliasBit { net: *l, bit };
+                        let high = AliasBit::Net { net: *h, bit };
+                        let low = AliasBit::Net { net: *l, bit };
                         alias_bits.insert(high);
                         alias_bits.insert(low);
                         alias_find(&mut alias_parent, high);
@@ -859,8 +1162,8 @@ impl<'a> Codegen<'a> {
                 }
                 alias_nets.insert(*member);
                 for bit in 0..width {
-                    let first = AliasBit { net: first, bit };
-                    let other = AliasBit { net: *member, bit };
+                    let first = AliasBit::Net { net: first, bit };
+                    let other = AliasBit::Net { net: *member, bit };
                     alias_bits.extend([first, other]);
                     alias_union(&mut alias_parent, &mut alias_rank, first, other);
                 }
@@ -872,13 +1175,13 @@ impl<'a> Codegen<'a> {
                 .ok_or("alias member has no packed storage")?
                 .width;
             for bit in 0..width {
-                let bit = AliasBit { net: *member, bit };
+                let bit = AliasBit::Net { net: *member, bit };
                 alias_bits.insert(bit);
                 alias_find(&mut alias_parent, bit);
             }
         }
 
-        let type_plan = self.build_port_net_type_plan(&nodes, &alias_nets)?;
+        let type_plan = self.build_port_net_type_plan(&nodes, &alias_nets, &alias_bits)?;
 
         let mut alias_buckets: HashMap<AliasBit, Vec<AliasBit>> = HashMap::new();
         for bit in alias_bits {
@@ -887,38 +1190,59 @@ impl<'a> Codegen<'a> {
         }
         let mut alias_groups = alias_buckets.into_values().collect::<Vec<_>>();
         for bits in &mut alias_groups {
-            bits.sort_by_key(|bit| (bit.net.0, bit.bit));
+            bits.sort_by_key(|bit| bit.sort_key());
         }
         alias_groups.sort_by_key(|bits| {
-            bits.first()
-                .map(|bit| (bit.net.0, bit.bit))
-                .unwrap_or((u32::MAX, u32::MAX))
+            bits.first().map(|bit| bit.sort_key()).unwrap_or((
+                u32::MAX,
+                u8::MAX,
+                u64::MAX,
+                u32::MAX,
+            ))
         });
+        let mut array_alias_bindings: HashMap<(usize, u64), Vec<IrNetAliasBinding>> =
+            HashMap::new();
         for bits in alias_groups {
-            let mut members = bits.iter().map(|bit| bit.net).collect::<Vec<_>>();
-            members.sort_by_key(|id| id.0);
+            let member_key = |bit: AliasBit| match bit {
+                AliasBit::Net { net, .. } => (net, None),
+                AliasBit::Array { owner, element, .. } => (owner, Some(element)),
+            };
+            let mut members = bits.iter().copied().map(member_key).collect::<Vec<_>>();
+            members.sort_by_key(|(owner, element)| (owner.0, *element));
             members.dedup();
             let names = members
                 .iter()
-                .map(|member| self.display_name(*member))
+                .map(|(member, element)| match element {
+                    Some(element) => format!("{}[{element}]", self.display_name(*member)),
+                    None => self.display_name(*member),
+                })
                 .collect::<Vec<_>>()
                 .join(", ");
             let shown = format!("net alias group {{{names}}}");
-            let first_net = members
+            let first_bit = bits
                 .first()
                 .copied()
                 .ok_or_else(|| "net alias group has no member nets".to_string())?;
-            let first_ty = match self.kind(first_net) {
-                NodeKind::Net { ty, .. } => ty.clone(),
-                _ => return Err(self.alias_error(first_net, "does not reference a net")),
+            let first_owner = first_bit.owner();
+            let first_signed = match first_bit {
+                AliasBit::Net { net, .. } => match self.kind(net) {
+                    NodeKind::Net { ty, .. } => ty.signed,
+                    _ => return Err(self.alias_error(net, "does not reference a net")),
+                },
+                AliasBit::Array { owner, .. } => self
+                    .array_globals
+                    .get(&owner)
+                    .map(|info| info.signed)
+                    .ok_or_else(|| self.alias_error(owner, "has no array storage"))?,
             };
-            let point = NetPoint::Bit(bits[0]);
+            let point = first_bit.point();
             let resolved_type = type_plan
                 .resolved(point)
                 .ok_or("selected net group has no type-collapse plan")?;
-            if bits.iter().any(|bit| {
-                type_plan.component(NetPoint::Bit(*bit)) != type_plan.component(point)
-            }) {
+            if bits
+                .iter()
+                .any(|bit| type_plan.component(bit.point()) != type_plan.component(point))
+            {
                 return Err("selected net storage and type-collapse components disagree".into());
             }
             let kind = Self::ir_net_kind(resolved_type.kind)
@@ -927,9 +1251,12 @@ impl<'a> Codegen<'a> {
                 return Err(format!(
                     "{shown}: {} members exceed the runtime driver-count range at {}:{}:{}",
                     members.len(),
-                    self.node(first_net).file.as_deref().unwrap_or("<unknown>"),
-                    self.node(first_net).line,
-                    self.node(first_net).col,
+                    self.node(first_owner)
+                        .file
+                        .as_deref()
+                        .unwrap_or("<unknown>"),
+                    self.node(first_owner).line,
+                    self.node(first_owner).col,
                 ));
             }
             let name = format!("g_net_{}", self.model.net_groups.len());
@@ -941,33 +1268,52 @@ impl<'a> Codegen<'a> {
                 // One union-find root is one electrical bit, regardless of
                 // how many source-net bits name that same identity.
                 width: 1,
-                signed: first_ty.signed,
+                signed: first_signed,
                 kind,
                 n_drivers: members.len(),
                 driver_strengths: vec![(6, 6); members.len()],
                 propagation_delay,
             });
             for bit in &bits {
+                let key = member_key(*bit);
                 let slot = members
                     .iter()
-                    .position(|member| *member == bit.net)
-                    .expect("alias group member list contains every alias bit net");
-                let info = self.sig_globals.get(&bit.net).ok_or_else(|| {
-                    format!(
-                        "{shown}: member `{}` has no collected signal storage",
-                        self.display_name(bit.net)
-                    )
-                })?;
-                self.model.signals[info.ir]
-                    .net_alias
-                    .push(IrNetAliasBinding {
-                        group: gidx,
-                        slot,
-                        signal_bit: bit.bit,
-                        group_bit: 0,
-                    });
+                    .position(|member| *member == key)
+                    .expect("alias group member list contains every alias bit owner");
+                let binding = IrNetAliasBinding {
+                    group: gidx,
+                    slot,
+                    signal_bit: bit.bit(),
+                    group_bit: 0,
+                };
+                match *bit {
+                    AliasBit::Net { net, .. } => {
+                        let info = self.sig_globals.get(&net).ok_or_else(|| {
+                            format!(
+                                "{shown}: member `{}` has no collected signal storage",
+                                self.display_name(net)
+                            )
+                        })?;
+                        self.model.signals[info.ir].net_alias.push(binding);
+                    }
+                    AliasBit::Array { owner, element, .. } => {
+                        let array = self
+                            .array_globals
+                            .get(&owner)
+                            .ok_or_else(|| self.alias_error(owner, "has no array storage"))?
+                            .ir;
+                        array_alias_bindings
+                            .entry((array, element))
+                            .or_default()
+                            .push(binding);
+                    }
+                }
             }
-            let sources = self.structural_site_sources(&members)?;
+            let normal_members = members
+                .iter()
+                .filter_map(|(member, element)| element.is_none().then_some(*member))
+                .collect::<Vec<_>>();
+            let sources = self.structural_site_sources(&normal_members)?;
             for (source, strengths) in sources {
                 let signal = self.add_structural_driver(gidx, source, strengths)?;
                 if matches!(self.kind(source), NodeKind::ContAssign { .. }) {
@@ -1173,7 +1519,7 @@ impl<'a> Codegen<'a> {
         }
         self.scalar_inits = keep;
         self.build_wired_net_groups(&nodes)?;
-        self.publish_array_net_cells(array_endpoints, &nodes, &type_plan)?;
+        self.publish_array_net_cells(array_endpoints, &nodes, &type_plan, array_alias_bindings)?;
         Ok(())
     }
 

@@ -150,6 +150,37 @@ fn net_aliases_share_one_resolved_network_with_optimizer_parity() {
 }
 
 #[test]
+fn static_net_array_and_packed_alias_projections_keep_shared_connectivity() {
+    sim_cli::run_case(
+        "net_resolution",
+        "syn_010_fixed_net_aliases",
+        "CHECK: fixed=a/a\nCHECK: forced=3/3\nCHECK: released=a/a\nCHECK: ascending=1010/1010\nCHECK: packed=10/10\nCHECK: nested=11/11\nCHECK: linked=5\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
+fn static_net_alias_legality_rejects_single_fault_invalid_forms() {
+    sim_cli::reject_case(
+        "net_resolution",
+        "syn_010_self_alias",
+        "cannot alias a net to itself",
+    );
+    sim_cli::reject_case(
+        "net_resolution",
+        "syn_010_duplicate_alias",
+        "same bits of the same nets more than once",
+    );
+    sim_cli::reject_case(
+        "net_resolution",
+        "syn_010_incompatible_alias",
+        "common nettype",
+    );
+    sim_cli::reject_case("net_resolution", "syn_010_variable_alias", "is not a net");
+}
+
+#[test]
 fn forced_true_net_alias_reacts_to_alias_rhs_changes_with_optimizer_parity() {
     sim_cli::run_case(
         "net_resolution",

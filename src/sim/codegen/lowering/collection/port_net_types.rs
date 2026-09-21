@@ -94,6 +94,7 @@ impl Codegen<'_> {
         &mut self,
         nodes: &[NodeId],
         bit_nets: &HashSet<NodeId>,
+        alias_bits: &HashSet<AliasBit>,
     ) -> Result<NetCollapsePlan, String> {
         let mut plan = NetCollapsePlan::default();
         // Include unconnected bits of a partially collapsed vector as singleton
@@ -105,8 +106,11 @@ impl Codegen<'_> {
                 .width;
             let kind = self.collapse_net_type(*owner)?;
             for bit in 0..width {
-                plan.insert(NetPoint::Bit(AliasBit { net: *owner, bit }), kind)?;
+                plan.insert(NetPoint::Bit(AliasBit::Net { net: *owner, bit }), kind)?;
             }
+        }
+        for bit in alias_bits {
+            plan.insert(bit.point(), self.collapse_net_type(bit.owner())?)?;
         }
         // Alias legality is checked against declarations, before any port can
         // change an effective type. Aliases have no external-side dominance.
@@ -127,7 +131,7 @@ impl Codegen<'_> {
                     return Err(self.alias_error(*node, "contains different widths"));
                 }
                 for (first, other) in first.iter().zip(other) {
-                    plan.alias(NetPoint::Bit(*first), NetPoint::Bit(other))
+                    plan.alias(first.point(), other.point())
                         .map_err(|error| self.alias_error(*node, &error))?;
                 }
             }

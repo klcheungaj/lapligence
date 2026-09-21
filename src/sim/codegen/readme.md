@@ -90,10 +90,12 @@
   port rules. Whole connections stay one metadata entry per declaration;
   selected paths retain their existing per-electrical-bit representation.
 - **True-net aliases:** Legal packed `alias` declarations are flattened into
-  bit-level canonical net groups; structural drivers, packed links, force/
-  release, dependencies, and waveform registration use the shared resolved
-  identities while dynamic selects, aggregate forms, and switch-level paths
-  remain explicit boundaries.
+  bit-level canonical net groups; fully indexed fixed net-array elements and
+  multidimensional packed projections use the same physical bit mapping as
+  scalar aliases. Structural drivers, packed links, force/release,
+  dependencies, and waveform registration use the shared identities while
+  dynamic selections, variables, forbidden cross-scope forms, and switch-level
+  paths remain explicit boundaries.
 - **Deferred assertions:** `assert`/`assume`/`cover #0` conditions are lowered
   as issue-time samples with owned value captures and Reactive action
   callbacks. Actions remain within Slang's single-call contract; automatic or

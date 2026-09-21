@@ -5,7 +5,11 @@ IEEE 1800-2009 §6.6, §10.3, §10.11 and §23.6: the two-driver resolution trut
 matrix, multi-site structural drivers above the retired 16-slot runtime
 ceiling, disjoint fixed-array net elements, plain-wire driver conflicts, and
 whole/constant-selected/concatenated/ascending aliases with continuous and
-primitive drivers, port links, force/release, and conflicting drivers.
+primitive drivers, port links, force/release, and conflicting drivers. SYN-010
+adds fully indexed fixed net-array elements, reversed ranges, multidimensional
+packed projections, and aliases crossing an admitted inout link; its negative
+fixtures keep self, duplicate, incompatible-type, and variable aliases as
+single-fault frontend controls.
 Hierarchical continuous-driver fixtures cover parent-to-child, selected,
 generated-name, upward-qualified and R05-connected targets; procedural net
 writes remain negative controls. The owning suite runs every fixture through

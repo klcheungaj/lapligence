@@ -1391,9 +1391,48 @@ fn is_two_state_kind(kind: &str) -> bool {
 // ── Union-find (collapsed inout-net groups) ───────────────────────────────────
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-struct AliasBit {
-    net: NodeId,
-    bit: u32,
+enum AliasBit {
+    Net {
+        net: NodeId,
+        bit: u32,
+    },
+    Array {
+        owner: NodeId,
+        element: u64,
+        bit: u32,
+    },
+}
+
+impl AliasBit {
+    fn owner(self) -> NodeId {
+        match self {
+            Self::Net { net, .. } | Self::Array { owner: net, .. } => net,
+        }
+    }
+
+    fn bit(self) -> u32 {
+        match self {
+            Self::Net { bit, .. } | Self::Array { bit, .. } => bit,
+        }
+    }
+
+    fn net(self) -> Option<NodeId> {
+        match self {
+            Self::Net { net, .. } => Some(net),
+            Self::Array { .. } => None,
+        }
+    }
+
+    fn sort_key(self) -> (u32, u8, u64, u32) {
+        match self {
+            Self::Net { net, bit } => (net.0, 0, 0, bit),
+            Self::Array {
+                owner,
+                element,
+                bit,
+            } => (owner.0, 1, element, bit),
+        }
+    }
 }
 
 fn alias_find(parent: &mut HashMap<AliasBit, AliasBit>, x: AliasBit) -> AliasBit {

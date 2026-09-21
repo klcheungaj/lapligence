@@ -214,6 +214,7 @@ impl Codegen<'_> {
         endpoints: HashMap<(usize, u64), Vec<Option<AliasBit>>>,
         nodes: &[NodeId],
         type_plan: &NetCollapsePlan,
+        array_alias_bindings: HashMap<(usize, u64), Vec<IrNetAliasBinding>>,
     ) -> Result<(), String> {
         let mut endpoints = endpoints.into_iter().collect::<Vec<_>>();
         endpoints.sort_by_key(|(key, _)| *key);
@@ -276,14 +277,35 @@ impl Codegen<'_> {
             for (physical, peer) in peers.into_iter().enumerate() {
                 let physical =
                     u32::try_from(physical).map_err(|_| "net-array bit index overflow")?;
-                if let Some(peer) = peer {
+                let aliased = array_alias_bindings
+                    .get(&(array, element))
+                    .and_then(|bindings| {
+                        bindings
+                            .iter()
+                            .find(|binding| binding.signal_bit == physical)
+                    });
+                if let Some(binding) = aliased {
+                    let resolved_type = type_plan
+                        .resolved(NetPoint::ArrayBit {
+                            owner,
+                            element,
+                            bit: physical,
+                        })
+                        .ok_or("net-array alias has no type-collapse plan")?;
+                    if Some(self.model.net_groups[binding.group].kind)
+                        != Self::ir_net_kind(resolved_type.kind)
+                    {
+                        return Err("net-array publication and type-collapse plan disagree".into());
+                    }
+                    bindings.push(binding.clone());
+                } else if let Some(peer) = peer {
                     let signal = self
-                        .signal_of(peer.net)
+                        .signal_of(peer.owner())
                         .ok_or("net-array peer has no storage")?;
                     let binding = self.model.signals[signal.ir]
                         .net_alias
                         .iter()
-                        .find(|binding| binding.signal_bit == peer.bit)
+                        .find(|binding| binding.signal_bit == peer.bit())
                         .ok_or("net-array peer has no electrical bit")?;
                     let resolved_type = type_plan
                         .resolved(NetPoint::ArrayBit {

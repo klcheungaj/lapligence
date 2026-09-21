@@ -16,11 +16,28 @@ pub(super) enum NetPoint {
     },
 }
 
+impl AliasBit {
+    pub(super) fn point(self) -> NetPoint {
+        match self {
+            Self::Net { net, bit } => NetPoint::Bit(Self::Net { net, bit }),
+            Self::Array {
+                owner,
+                element,
+                bit,
+            } => NetPoint::ArrayBit {
+                owner,
+                element,
+                bit,
+            },
+        }
+    }
+}
+
 impl NetPoint {
     pub(super) fn owner(self) -> NodeId {
         match self {
             Self::Whole(owner) | Self::ArrayBit { owner, .. } => owner,
-            Self::Bit(bit) => bit.net,
+            Self::Bit(bit) => bit.owner(),
         }
     }
 }

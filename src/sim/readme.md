@@ -35,9 +35,10 @@
   bind directly to caller lvalues, including legal packed selects and fixed
   array elements; writable aliases commit through the canonical runtime target.
 - **True-net aliases:** Legal packed `alias` declarations share bit-level
-  resolved driver groups across whole, selected, and concatenated net names;
-  force/release, packed port links, dependency wakeups, and waveform reads use
-  those groups. Dynamic selects, aggregate, and switch-level alias forms remain
+  resolved driver groups across whole, selected, concatenated, fixed net-array,
+  and multidimensional packed projections; force/release, packed port links,
+  dependency wakeups, and waveform reads use those groups. Dynamic selections,
+  variables, forbidden cross-scope forms, and switch-level alias paths remain
   unsupported.
 - **DPI-C imports:** bounded scalar `bit`/`logic`/`reg`, two-state integral,
   real/shortreal, chandle, and string imports cross an emitted canonical

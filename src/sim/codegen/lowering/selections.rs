@@ -513,20 +513,52 @@ impl<'a> Codegen<'a> {
         &self,
         base: NodeId,
     ) -> Option<crate::core::db::PackedRange> {
-        let base = self
-            .clocking_var_target(base)
-            .or_else(|| self.db.is_clocking_var(base).then_some(base))
-            .and_then(|target| self.db.clocking_var(target).map(|var| var.source))
-            .unwrap_or(base);
-        if let Some([range]) = self.db.packed_dimensions(base) {
-            return Some(*range);
-        }
-        self.packed_member_info(base).and_then(|(_, member)| {
-            match member.packed_ranges.as_slice() {
-                [range] => Some(*range),
-                _ => None,
+        self.packed_ranges_for_base(base)
+            .and_then(|ranges| (ranges.len() == 1).then_some(ranges[0]))
+    }
+
+    /// Return the packed dimensions still visible after a constant packed
+    /// projection.  The expression lowering and true-net alias lowering both
+    /// use the same flattened storage order for multidimensional packed
+    /// declarations and packed aggregate members.
+    pub(super) fn packed_ranges_for_base(
+        &self,
+        base: NodeId,
+    ) -> Option<Vec<crate::core::db::PackedRange>> {
+        match self.kind(base) {
+            NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
+                let mut ranges = self.packed_ranges_for_base(*base)?;
+                if indices.len() > ranges.len() {
+                    return None;
+                }
+                ranges.drain(..indices.len());
+                Some(ranges)
             }
-        })
+            NodeKind::Expr(ExprKind::HierPath { .. }) => self
+                .packed_member_info(base)
+                .map(|(_, member)| member.packed_ranges)
+                .or_else(|| {
+                    self.hier_path_signal(base)
+                        .and_then(|info| {
+                            self.sig_globals.iter().find_map(|(target, candidate)| {
+                                (candidate.ir == info.ir).then_some(*target)
+                            })
+                        })
+                        .and_then(|target| self.packed_ranges_for_base(target))
+                }),
+            NodeKind::Expr(ExprKind::Ref { target }) => {
+                target.and_then(|target| self.packed_ranges_for_base(target))
+            }
+            NodeKind::Net { .. } | NodeKind::Var { .. } => {
+                let target = self
+                    .clocking_var_target(base)
+                    .or_else(|| self.db.is_clocking_var(base).then_some(base))
+                    .and_then(|target| self.db.clocking_var(target).map(|var| var.source))
+                    .unwrap_or(base);
+                self.db.packed_dimensions(target).map(ToOwned::to_owned)
+            }
+            _ => None,
+        }
     }
 
     pub(super) fn packed_range_ascending(&self, base: NodeId) -> bool {
