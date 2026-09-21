@@ -60,11 +60,5 @@ fn loop_not_synthesis_proven() {
 
 #[test]
 fn tagged_pattern_case_selects_only_the_active_arm() {
-    sim_cli::run_case(
-        "feature_completion/g1_21",
-        "pattern_case",
-        "o=1\n",
-        "",
-        &[],
-    );
+    sim_cli::run_case("feature_completion/g1_21", "pattern_case", "o=1\n", "", &[]);
 }

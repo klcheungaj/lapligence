@@ -60,15 +60,7 @@ fn structure_conditional_emits_each_member_boundary_and_default_owner() {
                 IrConditionalMember {
                     offset: 0,
                     width: 4,
-                    default: IrConst::packed(
-                        vec![],
-                        vec![0xf],
-                        vec![],
-                        4,
-                        false,
-                        None,
-                    )
-                    .unwrap(),
+                    default: IrConst::packed(vec![], vec![0xf], vec![], 4, false, None).unwrap(),
                 },
                 IrConditionalMember {
                     offset: 4,
@@ -78,15 +70,7 @@ fn structure_conditional_emits_each_member_boundary_and_default_owner() {
                 IrConditionalMember {
                     offset: 5,
                     width: 8,
-                    default: IrConst::packed(
-                        vec![],
-                        vec![0xff],
-                        vec![],
-                        8,
-                        false,
-                        None,
-                    )
-                    .unwrap(),
+                    default: IrConst::packed(vec![], vec![0xff], vec![], 8, false, None).unwrap(),
                 },
             ],
         },

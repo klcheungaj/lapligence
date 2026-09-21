@@ -233,9 +233,7 @@ impl<'a> Codegen<'a> {
         let mut layout = self.db.aggregate_layout(target)?;
         if !matches!(
             layout.kind,
-            AggregateKind::PackedStruct
-                | AggregateKind::PackedUnion
-                | AggregateKind::TaggedUnion
+            AggregateKind::PackedStruct | AggregateKind::PackedUnion | AggregateKind::TaggedUnion
         ) {
             return None;
         }
@@ -265,7 +263,8 @@ impl<'a> Codegen<'a> {
                 Some(nested)
                     if matches!(
                         nested.kind,
-                        AggregateKind::PackedStruct | AggregateKind::PackedUnion
+                        AggregateKind::PackedStruct
+                            | AggregateKind::PackedUnion
                             | AggregateKind::TaggedUnion
                     ) =>
                 {

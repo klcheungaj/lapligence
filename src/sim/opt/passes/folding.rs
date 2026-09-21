@@ -313,10 +313,9 @@ fn fold_predicate(clauses: &[IrExpr]) -> Option<Value> {
             }], false)
         } else if let Some(value) = as_packed_const(clause) {
             elab::unary_or(&value)
-        } else if let Some(value) = real_of(clause) {
-            Value::from_u64(u64::from(value != 0.0), 1, false)
         } else {
-            return None;
+            let value = real_of(clause)?;
+            Value::from_u64(u64::from(value != 0.0), 1, false)
         };
         if truth.bits.first() != Some(&Bit::One) {
             return Some(truth);

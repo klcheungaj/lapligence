@@ -4,6 +4,7 @@ use super::super::constants::emit_const;
 use super::*;
 use crate::sim::ir::IrConst;
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn render_memory(
     ctx: &RCtx<'_>,
     write: bool,

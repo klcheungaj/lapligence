@@ -59,13 +59,7 @@ fn db_owns_combinational_udp_rows() {
 #[test]
 fn combinational_udp_truth_table_and_drivers() {
     const EXPECTED: &str = "known 0\nknown 1\nknown 1\nknown 0\nx 1\nz 1\nunmatched x\nb_symbol x\nwildcard x\narray 10\nresolved 0\nresolved x\nresolved_z x\ndelay_before 1\ndelay_after 0\n";
-    sim_cli::run_case(
-        "partial_features",
-        "udp_comb",
-        EXPECTED,
-        "",
-        &[],
-    );
+    sim_cli::run_case("partial_features", "udp_comb", EXPECTED, "", &[]);
     sim_cli::run_case_with_args(
         "partial_features",
         "udp_comb",

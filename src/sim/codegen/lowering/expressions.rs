@@ -4,12 +4,11 @@ use super::collection::aggregate_path_suffix;
 use super::objects::object_query;
 use super::*;
 use crate::sim::ir::{
-    IrArrayDimension, IrArrayQuery, IrArrayQueryKind, IrArrayQueryTarget, IrBinOp,
-    IrChandleExpr, IrConditionalMember, IrConst, IrContainerExpr, IrContainerKind, IrFileInput,
-    IrFileInputTarget, IrFileReadTarget, IrInsideArrayElement, IrInsideItem, IrObjectQuery,
-    IrObjectStmt, IrObjectType,
-    IrPlusArgTarget, IrPlusArgText, IrStreamSelector, IrStringExpr, IrStringInsideItem,
-    IrVpiCompileArg, IrVpiCompileCall,
+    IrArrayDimension, IrArrayQuery, IrArrayQueryKind, IrArrayQueryTarget, IrBinOp, IrChandleExpr,
+    IrConditionalMember, IrConst, IrContainerExpr, IrContainerKind, IrFileInput, IrFileInputTarget,
+    IrFileReadTarget, IrInsideArrayElement, IrInsideItem, IrObjectQuery, IrObjectStmt,
+    IrObjectType, IrPlusArgTarget, IrPlusArgText, IrStreamSelector, IrStringExpr,
+    IrStringInsideItem, IrVpiCompileArg, IrVpiCompileCall,
 };
 
 mod aggregates;

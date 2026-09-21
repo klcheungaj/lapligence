@@ -668,6 +668,7 @@ impl<'a> Codegen<'a> {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn emit_fixed_array_input_port_link(
         &mut self,
         parent_path: &str,

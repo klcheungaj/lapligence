@@ -680,6 +680,7 @@ impl<'a> Codegen<'a> {
         Ok(Some(IrStmt::Block(statements)))
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn lower_fixed_sort_capture(
         &mut self,
         path: &str,

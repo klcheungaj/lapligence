@@ -36,15 +36,14 @@ pub(super) fn fixed_width_bits(descriptor: &TypeDescriptor) -> Option<u64> {
         TypeShape::FixedArray {
             dimensions,
             element,
-        } => dimensions.iter().try_fold(
-            fixed_width_bits(element)?,
-            |width, (left, right)| {
+        } => dimensions
+            .iter()
+            .try_fold(fixed_width_bits(element)?, |width, (left, right)| {
                 let count = i64::from(*left)
                     .abs_diff(i64::from(*right))
                     .checked_add(1)?;
                 width.checked_mul(count)
-            },
-        ),
+            }),
         _ => None,
     }
 }

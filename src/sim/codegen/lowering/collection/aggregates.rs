@@ -18,9 +18,7 @@ impl<'a> Codegen<'a> {
                 .iter()
                 .filter_map(|member| member.ty.width)
                 .max(),
-            AggregateKind::TaggedUnion => layout
-                .payload_bits()?
-                .checked_add(layout.tag_bits()?),
+            AggregateKind::TaggedUnion => layout.payload_bits()?.checked_add(layout.tag_bits()?),
             _ => None,
         }
     }

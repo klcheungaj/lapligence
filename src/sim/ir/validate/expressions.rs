@@ -539,12 +539,7 @@ impl Validator<'_> {
                     );
                 }
             }
-            IrExprKind::StructMux {
-                sel,
-                a,
-                b,
-                members,
-            } => {
+            IrExprKind::StructMux { sel, a, b, members } => {
                 self.validate_expr(sel, formals, &format!("{path}.sel"))?;
                 self.validate_expr(a, formals, &format!("{path}.a"))?;
                 self.validate_expr(b, formals, &format!("{path}.b"))?;

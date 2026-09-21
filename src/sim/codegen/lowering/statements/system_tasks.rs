@@ -202,7 +202,7 @@ impl EmitCtx<'_, '_> {
         let mut origin = 0u64;
         for (dimension, value) in selected.iter().enumerate() {
             let (left, right) = array.dims[dimension];
-            let extent = u64::from((i64::from(left) - i64::from(right)).unsigned_abs() + 1);
+            let extent = (i64::from(left) - i64::from(right)).unsigned_abs() + 1;
             let offset = if left >= right {
                 u64::try_from(i64::from(left) - i64::from(*value))
             } else {
@@ -216,7 +216,7 @@ impl EmitCtx<'_, '_> {
         }
         let mut suffix_total = 1u64;
         for &(left, right) in &array.dims[selectors.len()..] {
-            let extent = u64::from((i64::from(left) - i64::from(right)).unsigned_abs() + 1);
+            let extent = (i64::from(left) - i64::from(right)).unsigned_abs() + 1;
             suffix_total = suffix_total
                 .checked_mul(extent)
                 .ok_or_else(|| format!("{name} memory view extent overflow in `{}`", self.path))?;
@@ -228,7 +228,7 @@ impl EmitCtx<'_, '_> {
         let mut strides = vec![1u64; dims.len()];
         for dimension in (0..dims.len().saturating_sub(1)).rev() {
             let (left, right) = dims[dimension + 1];
-            let extent = u64::from((i64::from(left) - i64::from(right)).unsigned_abs() + 1);
+            let extent = (i64::from(left) - i64::from(right)).unsigned_abs() + 1;
             strides[dimension] = strides[dimension + 1]
                 .checked_mul(extent)
                 .ok_or_else(|| format!("{name} memory view stride overflow in `{}`", self.path))?;

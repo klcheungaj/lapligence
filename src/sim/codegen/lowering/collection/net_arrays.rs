@@ -57,15 +57,14 @@ impl Codegen<'_> {
         Ok(Some(elements))
     }
 
-    pub(super) fn array_net_target_parts(
-        &self,
-        node: NodeId,
-    ) -> Option<(ArrayInfo, Vec<NodeId>)> {
+    pub(super) fn array_net_target_parts(&self, node: NodeId) -> Option<(ArrayInfo, Vec<NodeId>)> {
         match self.kind(node) {
-            NodeKind::Array { .. } | NodeKind::Expr(ExprKind::Ref { .. })
-            | NodeKind::Expr(ExprKind::HierPath { .. }) => {
-                self.array_of(node).cloned().map(|array| (array, Vec::new()))
-            }
+            NodeKind::Array { .. }
+            | NodeKind::Expr(ExprKind::Ref { .. })
+            | NodeKind::Expr(ExprKind::HierPath { .. }) => self
+                .array_of(node)
+                .cloned()
+                .map(|array| (array, Vec::new())),
             NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
                 if let Some(array) = self.array_of(*base).cloned() {
                     Some((array, indices.clone()))
@@ -83,8 +82,7 @@ impl Codegen<'_> {
                 }
             }
             NodeKind::Expr(
-                ExprKind::PartSelect { base, .. }
-                | ExprKind::IndexedPartSelect { base, .. },
+                ExprKind::PartSelect { base, .. } | ExprKind::IndexedPartSelect { base, .. },
             ) => self.array_net_target_parts(*base),
             NodeKind::Expr(ExprKind::Cast { operand, .. }) => self.array_net_target_parts(*operand),
             NodeKind::Expr(ExprKind::Operation {

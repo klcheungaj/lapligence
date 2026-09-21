@@ -4,6 +4,7 @@ use super::*;
 
 /// Kind of a captured expression.
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum ExprKind {
     /// A non-value symbol used as scope/interface metadata, never a signal read.
     /// Consumers must validate the use site before treating it as elaboration-only.

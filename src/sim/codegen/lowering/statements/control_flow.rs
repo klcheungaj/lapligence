@@ -186,9 +186,7 @@ impl EmitCtx<'_, '_> {
             }
             branches.push((condition, self.lower_stmt(item.body)?));
         }
-        let mut tail = default
-            .map(|body| self.lower_stmt(body))
-            .transpose()?;
+        let mut tail = default.map(|body| self.lower_stmt(body)).transpose()?;
         let qualifier = lower_unique_priority_check(check, self.cg.origin(h));
         for (condition, body) in branches.into_iter().rev() {
             tail = Some(vec![IrStmt::If {
@@ -221,7 +219,7 @@ impl EmitCtx<'_, '_> {
                 els: tail,
                 check: qualifier,
             }]);
-        } else if let Some([IrStmt::If { check, .. }]) = tail.as_mut().map(Vec::as_mut_slice) {
+        } else if let Some([IrStmt::If { check, .. }]) = tail.as_deref_mut() {
             *check = qualifier;
         }
         let mut lowered = vec![IrStmt::DeclLocal {

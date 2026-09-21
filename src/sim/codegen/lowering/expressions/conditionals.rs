@@ -237,6 +237,7 @@ impl Codegen<'_> {
         ))
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn lower_structure_pattern_fields(
         &mut self,
         scope_path: &str,
@@ -441,6 +442,7 @@ impl Codegen<'_> {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn lower_tagged_pattern_checks(
         &mut self,
         scope_path: &str,
@@ -575,6 +577,7 @@ impl Codegen<'_> {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn lower_pattern_component(
         &mut self,
         scope_path: &str,

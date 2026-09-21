@@ -192,20 +192,10 @@ impl<'a> Codegen<'a> {
             .into_iter()
             .flatten()
         {
-            self.collect_conditional_pattern_targets(
-                field.pattern,
-                visited,
-                target_set,
-                targets,
-            );
+            self.collect_conditional_pattern_targets(field.pattern, visited, target_set, targets);
         }
         if let Some(payload) = info.value_pattern {
-            self.collect_conditional_pattern_targets(
-                payload,
-                visited,
-                target_set,
-                targets,
-            );
+            self.collect_conditional_pattern_targets(payload, visited, target_set, targets);
         }
     }
 
@@ -900,7 +890,9 @@ impl<'a> Codegen<'a> {
             NodeKind::Expr(ExprKind::ArraySelect { base, .. }) => {
                 self.lhs_is_variable_storage(*base)
             }
-            NodeKind::Expr(ExprKind::Cast { operand, .. }) => self.lhs_is_variable_storage(*operand),
+            NodeKind::Expr(ExprKind::Cast { operand, .. }) => {
+                self.lhs_is_variable_storage(*operand)
+            }
             NodeKind::Expr(ExprKind::Operation { operands, .. }) => operands
                 .iter()
                 .any(|operand| self.lhs_is_variable_storage(*operand)),

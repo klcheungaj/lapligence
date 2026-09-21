@@ -61,6 +61,7 @@ impl Node {
 
 /// What a captured node is.
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum NodeKind {
     ModuleInst {
         def_name: String,
