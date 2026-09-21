@@ -173,6 +173,62 @@ fn run_reverse_rejection_fixture(file: &str, needles: &[&str]) {
     .expect("fixed-array reverse rejection conformance");
 }
 
+fn run_sort_rejection_fixture(file: &str, needles: &[&str]) {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/sim/data_types_completion")
+        .join(file);
+
+    sim_harness::with_frontend_temp_cwd("data-types-completion-sort-rejection", |dir| {
+        let source = dir.join(file);
+        std::fs::copy(&fixture, &source).map_err(|error| format!("copy fixture: {error}"))?;
+        let options = compile::CompileOpts {
+            files: vec![source.to_string_lossy().into_owned()],
+            top: Some("tb".to_owned()),
+            ..Default::default()
+        };
+        let compiled = match compile::compile_checked(&options) {
+            Ok(compiled) => compiled,
+            Err(error) => {
+                let diagnostic = error
+                    .diagnostics()
+                    .map(|diagnostics| {
+                        diagnostics
+                            .iter()
+                            .map(|diagnostic| diagnostic.message.as_str())
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    })
+                    .unwrap_or_else(|| error.to_string());
+                let diagnostic = diagnostic.to_ascii_lowercase();
+                if needles.iter().any(|needle| diagnostic.contains(needle)) {
+                    return Ok(());
+                }
+                return Err(format!(
+                    "{file}: unexpected compile diagnostic: {diagnostic}"
+                ));
+            }
+        };
+        let database = Db::from_slang(&compiled.snapshot)
+            .map_err(|error| format!("{file}: database: {error}"))?;
+        for (variant, options) in [
+            ("unoptimized", OptConfig::none()),
+            ("optimized", OptConfig::default()),
+        ] {
+            let error = sim::codegen::generate_from_db_with_opts(&database, &options)
+                .map(|_| "generated successfully".to_owned())
+                .unwrap_or_else(|error| error.to_string());
+            let error = error.to_ascii_lowercase();
+            if !needles.iter().any(|needle| error.contains(needle)) {
+                return Err(format!(
+                    "{file}: {variant}: expected a fixed sort rejection, got {error}"
+                ));
+            }
+        }
+        Ok(())
+    })
+    .expect("fixed-array sort rejection conformance");
+}
+
 #[test]
 fn string_atoreal_and_realtoa() {
     run_fixture("string_real_conversion.sv", "string_real_conversion");
@@ -270,6 +326,11 @@ fn fixed_array_reverse_preserves_declaration_order_and_overlap_safety() {
 }
 
 #[test]
+fn fixed_array_sort_and_rsort_preserve_keys_and_maps() {
+    run_fixture("syn_028_fixed_sort.sv", "syn_028_fixed_sort");
+}
+
+#[test]
 fn fixed_array_reverse_with_clause_is_rejected() {
     run_reverse_rejection_fixture("syn_027_reverse_with.sv", &["with"]);
 }
@@ -277,6 +338,16 @@ fn fixed_array_reverse_with_clause_is_rejected() {
 #[test]
 fn fixed_array_reverse_const_ref_is_rejected() {
     run_reverse_rejection_fixture("syn_027_reverse_const_ref.sv", &["const", "writable"]);
+}
+
+#[test]
+fn fixed_array_sort_incompatible_map_is_rejected() {
+    run_sort_rejection_fixture("syn_028_sort_bad_map.sv", &["integral", "real"]);
+}
+
+#[test]
+fn fixed_array_sort_const_ref_is_rejected() {
+    run_sort_rejection_fixture("syn_028_sort_const_ref.sv", &["const", "writable"]);
 }
 
 #[test]
