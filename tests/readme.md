@@ -112,6 +112,9 @@ Their historical pass counts are not part of the current acceptance record.
 - `sim_stochastic`, `runtime_stochastic`: IEEE stochastic-analysis queue order, status codes, simulation-time statistics and scheduler-independent runtime boundaries.
 - [Executable-node coverage](fixtures/sim/u01_coverage/): source-located fail-closed unsupported nodes, compile-time declarations and elaborated-away branches.
 - `sim_edition`: checked-in 2009 time-literal rounding and 2001 edition/keyword CLI probes.
+- `sim_syn018_module_declarations`: parameterized extern declarations and bodies,
+  independently scoped nested modules, owned hierarchy identities, and single-fault
+  frontend diagnostics in both compilation-unit policies and optimizer modes.
 - `sim_physical_time`: file-backed 1fs/10fs/100fs/1ps/1ns mixed scopes,
   10s/100s units, checked overflow rejection, and VCD femtosecond
   headers/timestamps.
