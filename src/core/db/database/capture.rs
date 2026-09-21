@@ -93,6 +93,54 @@ impl Db {
                 ))
             })
             .collect::<HashMap<_, _>>();
+        let mut conditional_pattern_fields = HashMap::new();
+        for (index, semantic) in snapshot.semantic_nodes.iter().enumerate() {
+            if semantic.kind != SemanticKind::Unsupported
+                || semantic.subkind != crate::ffi::slang::SEMANTIC_PATTERN_STRUCTURE
+            {
+                continue;
+            }
+            let edges = semantic_edges(snapshot, semantic)?;
+            let mut operands = edges
+                .iter()
+                .filter(|edge| edge.role == SemanticEdgeRole::Operand)
+                .collect::<Vec<_>>();
+            operands.sort_by_key(|edge| edge.index);
+            let mut declarations = HashMap::new();
+            for edge in edges
+                .iter()
+                .filter(|edge| edge.role == SemanticEdgeRole::Declaration)
+            {
+                if declarations.insert(edge.index, edge.target_id).is_some() {
+                    return Err(DbError::InvalidSnapshot(
+                        "duplicate structure pattern field index".into(),
+                    ));
+                }
+            }
+            let mut fields = Vec::with_capacity(operands.len());
+            for (expected, operand) in operands.into_iter().enumerate() {
+                if usize::try_from(operand.index).ok() != Some(expected) {
+                    return Err(DbError::InvalidSnapshot(
+                        "structure pattern field indices must be dense and unique".into(),
+                    ));
+                }
+                let field = declarations.remove(&operand.index).ok_or_else(|| {
+                    DbError::InvalidSnapshot(
+                        "structure pattern field has no resolved declaration".into(),
+                    )
+                })?;
+                fields.push(ConditionalPatternField {
+                    field: semantic_id(&ids, field)?,
+                    pattern: semantic_id(&ids, operand.target_id)?,
+                });
+            }
+            if !declarations.is_empty() {
+                return Err(DbError::InvalidSnapshot(
+                    "structure pattern has an unpaired field declaration".into(),
+                ));
+            }
+            conditional_pattern_fields.insert(NodeId::from_index(index), fields);
+        }
         let program_instances = snapshot
             .semantic_nodes
             .iter()
@@ -208,6 +256,15 @@ impl Db {
                 if child_semantic.is_uninstantiated
                     || child_semantic.kind == SemanticKind::Definition
                 {
+                    continue;
+                }
+                if semantic.kind == SemanticKind::Unsupported
+                    && semantic.subkind == crate::ffi::slang::SEMANTIC_PATTERN_STRUCTURE
+                    && edge.role == SemanticEdgeRole::Declaration
+                {
+                    // Structure-pattern field declarations are metadata, not
+                    // executable children. Their resolved identities live in
+                    // `conditional_pattern_fields` below.
                     continue;
                 }
                 if !matches!(
@@ -872,6 +929,7 @@ impl Db {
             semantic_kinds,
             semantic_details,
             conditional_patterns,
+            conditional_pattern_fields,
             program_instances,
             unconnected_drives,
             tops,

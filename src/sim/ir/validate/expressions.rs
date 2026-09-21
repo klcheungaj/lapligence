@@ -417,6 +417,14 @@ impl Validator<'_> {
                     return self.fail(path, "conditional pattern value must be packed");
                 }
                 self.validate_expr(&pattern.value, formals, &format!("{path}.value"))?;
+                if !pattern.checks.is_empty()
+                    && (pattern.constant.is_some() || pattern.binding.is_some())
+                {
+                    return self.fail(
+                        path,
+                        "structure conditional pattern cannot carry a top-level match",
+                    );
+                }
                 if let Some(constant) = &pattern.constant {
                     if constant.is_real()
                         || constant.width != pattern.value.width
@@ -436,6 +444,57 @@ impl Validator<'_> {
                             path,
                             "conditional pattern binding width disagrees with its value",
                         );
+                    }
+                }
+                for (index, check) in pattern.checks.iter().enumerate() {
+                    let check_path = format!("{path}.checks[{index}]");
+                    self.validate_width(check.width, &format!("{check_path}.width"))?;
+                    let Some(end) = check.offset.checked_add(check.width) else {
+                        return self.fail(
+                            format!("{check_path}.offset"),
+                            "conditional pattern member range overflows",
+                        );
+                    };
+                    if end > pattern.value.width {
+                        return self.fail(
+                            check_path,
+                            "conditional pattern member range exceeds its source",
+                        );
+                    }
+                    if check.constant.is_some() == check.binding.is_some() {
+                        return self.fail(
+                            format!("{path}.checks[{index}]"),
+                            "conditional pattern member must have exactly one match action",
+                        );
+                    }
+                    if let Some(constant) = &check.constant {
+                        if constant.is_real()
+                            || constant.width != check.width
+                            || constant.signed != check.signed
+                        {
+                            return self.fail(
+                                format!("{path}.checks[{index}].constant"),
+                                "conditional pattern member constant shape disagrees with its field",
+                            );
+                        }
+                        self.validate_expr(
+                            constant,
+                            formals,
+                            &format!("{path}.checks[{index}].constant"),
+                        )?;
+                    }
+                    if let Some(binding) = &check.binding {
+                        self.validate_lhs(
+                            binding,
+                            formals,
+                            &format!("{path}.checks[{index}].binding"),
+                        )?;
+                        if self.lhs_packed_width(binding) != Some(check.width) {
+                            return self.fail(
+                                format!("{path}.checks[{index}].binding"),
+                                "conditional pattern member binding width disagrees with its field",
+                            );
+                        }
                     }
                 }
             }

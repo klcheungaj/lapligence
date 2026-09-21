@@ -4,6 +4,7 @@ use llg::core::{
     db::{ConditionalPatternKind, Db, ExprKind, NodeKind, StmtKind},
 };
 use llg::sim::{codegen, opt::OptConfig};
+use std::collections::HashSet;
 
 fn capture(name: &str, source: &str) -> Db {
     let compiled = compile::compile_sources_checked(
@@ -126,23 +127,46 @@ fn syn_022_import_retains_primitive_pattern_ownership() {
 }
 
 #[test]
-fn sequential_predicate_unsupported_patterns_are_retained_and_rejected_before_optimization() {
-    for (name, source) in [
-        ("pattern-if.sv", include_str!("../fixtures/sim/sequential_predicates/bad_matches_if.sv")),
-        ("pattern-conditional.sv", include_str!("../fixtures/sim/sequential_predicates/bad_matches_conditional.sv")),
-    ] {
-        let db = capture(name, source);
-        assert!(db.nodes().iter().any(|node| match &node.kind {
-            NodeKind::Stmt(StmtKind::IfElse { predicate, .. })
-            | NodeKind::Expr(ExprKind::Conditional { predicate, .. }) => predicate.has_patterns(),
-            _ => false,
-        }));
-        for options in [OptConfig::none(), OptConfig::default()] {
-            let error = match codegen::generate_from_db_with_opts(&db, &options) {
-                Ok(_) => panic!("{name}: pattern was silently erased"),
-                Err(error) => error,
-            };
-            assert!(error.to_string().contains("pattern"), "{name}: {error}");
+fn syn_023_import_retains_recursive_structure_pattern_roles() {
+    let db = capture(
+        "syn_023_structure_patterns.sv",
+        include_str!("../fixtures/sim/sequential_predicates/syn_023_structure_patterns.sv"),
+    );
+    db.validate().unwrap();
+    let mut structures = 0;
+    let mut nested_structures = 0;
+    let mut bindings = HashSet::new();
+    for id in db.node_ids() {
+        let Some(info) = db.conditional_pattern(id) else {
+            continue;
+        };
+        if info.kind != ConditionalPatternKind::Structure {
+            continue;
         }
+        structures += 1;
+        let fields = db
+            .conditional_pattern_fields(id)
+            .expect("structure pattern field roles");
+        assert!(!fields.is_empty());
+        let mut names = HashSet::new();
+        for field in fields {
+            assert!(names.insert(db.node(field.field).name.clone()));
+            assert!(db.type_descriptor(field.field).is_some());
+            let nested = db
+                .conditional_pattern(field.pattern)
+                .expect("nested pattern metadata");
+            if nested.kind == ConditionalPatternKind::Structure {
+                nested_structures += 1;
+            }
+            if let Some(target) = nested.binding {
+                bindings.insert(target);
+            }
+        }
+    }
+    assert!(structures >= 5, "structure patterns were not retained");
+    assert!(nested_structures >= 1, "nested structure roles were not retained");
+    assert!(bindings.len() >= 5, "nested binding identities were not retained");
+    for options in [OptConfig::none(), OptConfig::default()] {
+        codegen::generate_from_db_with_opts(&db, &options).unwrap();
     }
 }

@@ -26,6 +26,17 @@ pub struct ConditionalPatternInfo {
     pub binding: Option<NodeId>,
 }
 
+/// One resolved member of a structure conditional pattern.
+///
+/// The field identity comes from Slang's resolved [`FieldSymbol`], while the
+/// pattern identity points at the recursively captured child pattern. Keeping
+/// both IDs avoids recovering member positions or names from source text.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ConditionalPatternField {
+    pub field: NodeId,
+    pub pattern: NodeId,
+}
+
 /// A clause of a sequential conditional predicate (`&&&`). Pattern references
 /// are retained separately: an unsupported `matches` must never become a
 /// Boolean test of its input expression.

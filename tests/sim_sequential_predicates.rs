@@ -97,6 +97,18 @@ fn syn_022_basic_patterns() {
 }
 
 #[test]
+fn syn_023_recursive_structure_patterns() {
+    sim_cli::run_case_with_args(
+        "sequential_predicates",
+        "syn_023_structure_patterns",
+        "structure_patterns=pass checks=6 calls=1\n",
+        "",
+        &[],
+        &["--edition", "2009"],
+    );
+}
+
+#[test]
 fn sequential_predicate_bad_matches_if() {
     sim_cli::reject_case_with_args(
         "sequential_predicates", "bad_matches_if", "pattern",
@@ -107,7 +119,15 @@ fn sequential_predicate_bad_matches_if() {
 #[test]
 fn sequential_predicate_bad_matches_conditional() {
     sim_cli::reject_case_with_args(
-        "sequential_predicates", "bad_matches_conditional", "pattern",
+        "sequential_predicates", "bad_matches_conditional", "too few",
+        &["--edition", "2009"],
+    );
+}
+
+#[test]
+fn sequential_predicate_bad_matches_incompatible() {
+    sim_cli::reject_case_with_args(
+        "sequential_predicates", "bad_matches_incompatible", "not a struct",
         &["--edition", "2009"],
     );
 }

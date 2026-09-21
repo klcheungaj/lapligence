@@ -1130,9 +1130,20 @@ fn collect_expression_effects(
                 effects.push(ExecutionEffect::ImmediateStore);
                 collect_lhs_expression_effects(ir, binding, effects, visited_calls);
             }
+            for check in &pattern.checks {
+                if let Some(binding) = &check.binding {
+                    effects.push(ExecutionEffect::ImmediateStore);
+                    collect_lhs_expression_effects(ir, binding, effects, visited_calls);
+                }
+            }
             collect_expression_effects(ir, &pattern.value, effects, visited_calls);
             if let Some(constant) = &pattern.constant {
                 collect_expression_effects(ir, constant, effects, visited_calls);
+            }
+            for check in &pattern.checks {
+                if let Some(constant) = &check.constant {
+                    collect_expression_effects(ir, constant, effects, visited_calls);
+                }
             }
         }
         IrExprKind::CallFn(call) => {

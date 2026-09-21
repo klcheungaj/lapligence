@@ -50,7 +50,7 @@ mod expressions;
 pub use expressions::{
     IrBinOp, IrBitQuery, IrConditionalMember, IrDynamicCast, IrEnumMember, IrEnumMethod,
     IrEnumQuery, IrExpr, IrExprKind, IrFileInput, IrFileInputTarget, IrFileReadTarget, IrMathFunc,
-    IrMutationExpr, IrPatternExpr,
+    IrMutationExpr, IrPatternCheck, IrPatternExpr,
     IrPlusArgTarget, IrPlusArgText, IrRandomFunc, IrRealBinOp, IrRealUnOp, IrSampledCall,
     IrSampledDomain, IrSampledFunc, IrSysFunc, IrTimeKind, IrUnOp,
 };

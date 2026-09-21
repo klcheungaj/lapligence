@@ -140,18 +140,12 @@ impl<'a> Codegen<'a> {
                     let Some(pattern) = clause.pattern else {
                         continue;
                     };
-                    let Some(info) = self.db.conditional_pattern(pattern) else {
-                        continue;
-                    };
-                    if info.kind != crate::core::db::ConditionalPatternKind::Binding {
-                        continue;
-                    }
-                    let Some(target) = info.binding else {
-                        continue;
-                    };
-                    if target_set.insert(target) {
-                        targets.push(target);
-                    }
+                    self.collect_conditional_pattern_targets(
+                        pattern,
+                        &mut visited,
+                        &mut target_set,
+                        &mut targets,
+                    );
                 }
             }
             pending.extend(self.node(node).children.iter().copied());
@@ -160,6 +154,41 @@ impl<'a> Codegen<'a> {
             pending.extend(references);
         }
         targets
+    }
+
+    fn collect_conditional_pattern_targets(
+        &self,
+        pattern: NodeId,
+        visited: &mut HashSet<NodeId>,
+        target_set: &mut HashSet<NodeId>,
+        targets: &mut Vec<NodeId>,
+    ) {
+        if !visited.insert(pattern) {
+            return;
+        }
+        let Some(info) = self.db.conditional_pattern(pattern) else {
+            return;
+        };
+        if info.kind == crate::core::db::ConditionalPatternKind::Binding {
+            if let Some(target) = info.binding {
+                if target_set.insert(target) {
+                    targets.push(target);
+                }
+            }
+        }
+        for field in self
+            .db
+            .conditional_pattern_fields(pattern)
+            .into_iter()
+            .flatten()
+        {
+            self.collect_conditional_pattern_targets(
+                field.pattern,
+                visited,
+                target_set,
+                targets,
+            );
+        }
     }
 
     pub(in super::super) fn emit_pass(&mut self, top: NodeId, pass: Pass) -> Result<(), String> {

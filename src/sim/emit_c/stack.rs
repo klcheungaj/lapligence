@@ -897,7 +897,31 @@ fn expr_slots(expr: &IrExpr) -> Result<u64, String> {
             if pattern.binding.is_some() {
                 slots = checked_add(slots, 1, "pattern binding slots")?;
             }
-            checked_add(slots, 1, "pattern result slots")?
+            for check in &pattern.checks {
+                slots = checked_add(slots, 1, "pattern member slice slots")?;
+                if let Some(constant) = &check.constant {
+                    slots = checked_add(
+                        slots,
+                        expr_slots(constant)?,
+                        "pattern member constant slots",
+                    )?;
+                }
+                if check.binding.is_some() {
+                    slots = checked_add(slots, 1, "pattern member binding slots")?;
+                }
+            }
+            // Structure matching retains one source snapshot and one
+            // short-circuit result while checking each member. The result is
+            // also the expression's final value, so no extra slot is needed.
+            checked_add(
+                slots,
+                if pattern.checks.is_empty() { 1 } else { 2 },
+                if pattern.checks.is_empty() {
+                    "pattern result slots"
+                } else {
+                    "pattern structure state slots"
+                },
+            )?
         }
         IrExprKind::Concat { parts } | IrExprKind::Replicate { parts, .. } => {
             expr_sum(parts, "concatenation expression slots")?

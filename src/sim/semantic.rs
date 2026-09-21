@@ -779,14 +779,8 @@ fn classify_simulation_node(
     match node.kind() {
         NodeKind::Other => match db.semantic_kind(id) {
             Some(CapturedSemanticKind::Unsupported)
-                if db.conditional_pattern(id).is_some_and(|info| {
-                    matches!(
-                        info.kind,
-                        ConditionalPatternKind::Wildcard
-                            | ConditionalPatternKind::Constant
-                            | ConditionalPatternKind::Binding
-                    )
-                }) =>
+                if db.conditional_pattern(id).is_some()
+                    && supports_conditional_pattern(db, id) =>
             {
                 SimulationNodeClass::Executable
             }
@@ -813,7 +807,7 @@ fn classify_simulation_node(
         NodeKind::Stmt(StmtKind::Unsupported { .. }) => SimulationNodeClass::Unsupported,
         NodeKind::Stmt(StmtKind::IfElse { predicate, .. })
         | NodeKind::Expr(ExprKind::Conditional { predicate, .. })
-            if !supports_primitive_patterns(db, predicate) =>
+            if !supports_conditional_patterns(db, predicate) =>
         {
             SimulationNodeClass::Unsupported
         }
@@ -919,7 +913,7 @@ fn simulation_node_detail(db: &Db, id: NodeId) -> String {
     match db.node_kind(id) {
         NodeKind::Stmt(StmtKind::IfElse { predicate, .. })
         | NodeKind::Expr(ExprKind::Conditional { predicate, .. })
-            if !supports_primitive_patterns(db, predicate) =>
+            if !supports_conditional_patterns(db, predicate) =>
         {
             return "unsupported conditional predicate pattern matching (`matches`)".into();
         }
@@ -961,20 +955,42 @@ fn simulation_node_detail(db: &Db, id: NodeId) -> String {
         })
 }
 
-fn supports_primitive_patterns(db: &Db, predicate: &crate::core::db::ConditionalPredicate) -> bool {
+fn supports_conditional_patterns(
+    db: &Db,
+    predicate: &crate::core::db::ConditionalPredicate,
+) -> bool {
     predicate.clauses.iter().all(|clause| {
-        let Some(pattern) = clause.pattern else {
-            return true;
-        };
-        matches!(
-            db.conditional_pattern(pattern).map(|info| info.kind),
+        clause
+            .pattern
+            .is_none_or(|pattern| supports_conditional_pattern(db, pattern))
+    })
+}
+
+fn supports_conditional_pattern(db: &Db, pattern: NodeId) -> bool {
+    fn visit(db: &Db, pattern: NodeId, active: &mut std::collections::HashSet<NodeId>) -> bool {
+        if !active.insert(pattern) {
+            return false;
+        }
+        let supported = match db.conditional_pattern(pattern).map(|info| info.kind) {
             Some(
                 ConditionalPatternKind::Wildcard
-                    | ConditionalPatternKind::Constant
-                    | ConditionalPatternKind::Binding
-            )
-        )
-    })
+                | ConditionalPatternKind::Constant
+                | ConditionalPatternKind::Binding,
+            ) => true,
+            Some(ConditionalPatternKind::Structure) => db
+                .conditional_pattern_fields(pattern)
+                .is_some_and(|fields| {
+                    fields
+                        .iter()
+                        .all(|field| visit(db, field.pattern, active))
+                }),
+            _ => false,
+        };
+        active.remove(&pattern);
+        supported
+    }
+
+    visit(db, pattern, &mut std::collections::HashSet::new())
 }
 
 fn is_declaration_only_unknown(detail: Option<&str>) -> bool {
@@ -1091,7 +1107,7 @@ fn classify_type(ty: &TypeInfo) -> Option<SynthesisIssueKind> {
 
 fn classify_statement(db: &Db, id: NodeId, statement: &StmtKind) -> Option<SynthesisIssueKind> {
     match statement {
-        StmtKind::IfElse { predicate, .. } if !supports_primitive_patterns(db, predicate) => {
+        StmtKind::IfElse { predicate, .. } if !supports_conditional_patterns(db, predicate) => {
             Some(SynthesisIssueKind::UnsupportedExpression)
         }
         StmtKind::Assign { delay: Some(_), .. } => Some(SynthesisIssueKind::TimingControl),
@@ -1414,7 +1430,7 @@ fn synthesis_event_control(db: &Db, specs: &[EventSpec], implicit: bool) -> bool
 
 fn classify_expression_for_db(db: &Db, expression: &ExprKind) -> Option<SynthesisIssueKind> {
     if let ExprKind::Conditional { predicate, .. } = expression {
-        if !supports_primitive_patterns(db, predicate) {
+        if !supports_conditional_patterns(db, predicate) {
             return Some(SynthesisIssueKind::UnsupportedExpression);
         }
     }

@@ -290,12 +290,26 @@ pub enum IrExprKind {
     SysFunc(IrSysFunc),
 }
 
-/// One owned primitive conditional pattern operation.
+/// One checked member of a recursive fixed structure conditional pattern.
+#[derive(Clone, Debug, PartialEq)]
+pub struct IrPatternCheck {
+    /// Physical LSB offset in the flattened source payload.
+    pub(in crate::sim) offset: u32,
+    pub(in crate::sim) width: u32,
+    pub(in crate::sim) signed: bool,
+    pub(in crate::sim) constant: Option<Box<IrExpr>>,
+    pub(in crate::sim) binding: Option<IrLhs>,
+}
+
+/// One owned conditional pattern operation.
 #[derive(Clone, Debug, PartialEq)]
 pub struct IrPatternExpr {
     pub(in crate::sim) value: Box<IrExpr>,
     pub(in crate::sim) constant: Option<Box<IrExpr>>,
     pub(in crate::sim) binding: Option<IrLhs>,
+    /// Nonempty for recursive structure patterns. Primitive patterns use the
+    /// top-level constant/binding fields for the existing compact form.
+    pub(in crate::sim) checks: Vec<IrPatternCheck>,
 }
 
 /// A lowered expression: its structural [`IrExprKind`] plus the

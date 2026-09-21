@@ -66,6 +66,67 @@ impl Frame<'_, '_> {
         if value.width == 0 {
             return Err("conditional pattern requires a packed value".to_owned());
         }
+        if !pattern.checks.is_empty() {
+            let snapshot = self.value(
+                format!("sv4_clone(&{})", value.code),
+                value.width,
+                value.signed,
+            );
+            self.discard(value);
+            let matched = self.value("sv4_from_u64(1, 1, 0)".to_owned(), 1, false);
+            for check in &pattern.checks {
+                let high = check
+                    .offset
+                    .checked_add(check.width)
+                    .and_then(|end| end.checked_sub(1))
+                    .ok_or_else(|| "conditional pattern member range overflows".to_owned())?;
+                self.line(format!("if ({}) {{", matched.truth()));
+                let member = self.value(
+                    format!(
+                        "sv4_part_select({}, {}LL, {}LL)",
+                        snapshot.code, high, check.offset
+                    ),
+                    check.width,
+                    check.signed,
+                );
+                let captured = check.binding.as_ref().map(|_| {
+                    self.value(
+                        format!("sv4_clone(&{})", member.code),
+                        member.width,
+                        member.signed,
+                    )
+                });
+                let check_result = if let Some(constant) = &check.constant {
+                    let constant = self.expression(constant)?;
+                    let code = format!("sv4_case_eq({}, {})", member.code, constant.code);
+                    let result = self.replace(member, code, 1, false);
+                    self.discard(constant);
+                    result
+                } else {
+                    self.replace(member, "sv4_from_u64(1, 1, 0)".to_owned(), 1, false)
+                };
+                if let Some(binding) = &check.binding {
+                    let target = self.target(binding)?;
+                    self.line(format!("if ({}) {{", check_result.truth()));
+                    self.store(
+                        &target,
+                        captured.expect("structure pattern binding captured a member value"),
+                        false,
+                        "0",
+                    )?;
+                    self.line("}");
+                    self.release_target(target);
+                }
+                self.line(format!(
+                    "sv4_move(&{}, &{});",
+                    matched.code, check_result.code
+                ));
+                self.discard(check_result);
+                self.line("}");
+            }
+            self.discard(snapshot);
+            return Ok(matched);
+        }
         let captured = pattern.binding.as_ref().map(|_| {
             self.value(
                 format!("sv4_clone(&{})", value.code),

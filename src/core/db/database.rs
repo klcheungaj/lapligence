@@ -58,7 +58,8 @@ pub use statements::{
 };
 mod predicates;
 pub use predicates::{
-    ConditionalPatternInfo, ConditionalPatternKind, ConditionalPredicate, PredicateClause,
+    ConditionalPatternField, ConditionalPatternInfo, ConditionalPatternKind,
+    ConditionalPredicate, PredicateClause,
 };
 use predicates::{conditional_branches_from_slang, predicate_from_slang};
 mod expressions;
@@ -164,6 +165,9 @@ pub struct Db {
     /// syntax remains a separate side table because `NodeKind` intentionally
     /// does not expose native frontend pattern variants.
     conditional_patterns: HashMap<NodeId, ConditionalPatternInfo>,
+    /// Resolved field and nested-pattern roles for structure conditional
+    /// patterns. These metadata edges are kept out of executable children.
+    conditional_pattern_fields: HashMap<NodeId, Vec<ConditionalPatternField>>,
     /// Elaborated module-instance/definition IDs whose definition is a
     /// SystemVerilog program.  Program identity is kept as owned semantic
     /// metadata rather than inferred from names or source text so simulator
@@ -261,6 +265,7 @@ impl Db {
             semantic_kinds: Vec::new(),
             semantic_details: Vec::new(),
             conditional_patterns: HashMap::new(),
+            conditional_pattern_fields: HashMap::new(),
             program_instances: HashSet::new(),
             unconnected_drives: HashMap::new(),
             tops: Vec::new(),
@@ -321,6 +326,7 @@ impl Db {
             semantic_kinds: Vec::new(),
             semantic_details: Vec::new(),
             conditional_patterns: HashMap::new(),
+            conditional_pattern_fields: HashMap::new(),
             program_instances: HashSet::new(),
             unconnected_drives: HashMap::new(),
             tops,
@@ -403,6 +409,19 @@ impl Db {
     /// metadata and therefore return `None`.
     pub fn conditional_pattern(&self, id: NodeId) -> Option<ConditionalPatternInfo> {
         self.conditional_patterns.get(&id).copied()
+    }
+
+    /// Return resolved member roles for a structure conditional pattern.
+    pub fn conditional_pattern_fields(&self, id: NodeId) -> Option<&[ConditionalPatternField]> {
+        self.conditional_pattern_fields
+            .get(&id)
+            .map(Vec::as_slice)
+    }
+
+    pub(crate) fn conditional_pattern_field_entries(
+        &self,
+    ) -> &HashMap<NodeId, Vec<ConditionalPatternField>> {
+        &self.conditional_pattern_fields
     }
 
     /// Whether an owned variable is a lexical `.name` binding introduced by

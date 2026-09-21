@@ -2,7 +2,10 @@ use std::collections::HashSet;
 use std::error::Error;
 use std::fmt;
 
-use super::{AssertionExprKind, Db, DriverDelay, ExprKind, NodeId, NodeKind, StmtKind};
+use super::{
+    AssertionExprKind, ConditionalPatternKind, Db, DriverDelay, ExprKind, NodeId, NodeKind,
+    StmtKind,
+};
 
 /// A structural invariant violation in an owned [`Db`].
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -81,6 +84,38 @@ impl Validator<'_> {
                 self.node(child, &format!("{path}.children[{child_index}]"))?;
             }
             self.validate_kind_refs(&node.kind, &format!("{path}.kind"))?;
+        }
+        for (pattern, fields) in self.db.conditional_pattern_field_entries() {
+            let path = format!("conditional_pattern_fields[{}]", pattern.0);
+            self.node(*pattern, &path)?;
+            if self.db.conditional_pattern(*pattern).map(|info| info.kind)
+                != Some(ConditionalPatternKind::Structure)
+            {
+                return self.fail(path, "field metadata key is not a structure pattern");
+            }
+            let mut seen_fields = HashSet::new();
+            for (index, field) in fields.iter().enumerate() {
+                self.node(
+                    field.field,
+                    &format!("conditional_pattern_fields[{}][{index}].field", pattern.0),
+                )?;
+                self.node(
+                    field.pattern,
+                    &format!("conditional_pattern_fields[{}][{index}].pattern", pattern.0),
+                )?;
+                if !seen_fields.insert(field.field) {
+                    return self.fail(
+                        format!("conditional_pattern_fields[{}][{index}].field", pattern.0),
+                        "structure pattern repeats a resolved field",
+                    );
+                }
+                if self.db.conditional_pattern(field.pattern).is_none() {
+                    return self.fail(
+                        format!("conditional_pattern_fields[{}][{index}].pattern", pattern.0),
+                        "nested pattern metadata is missing",
+                    );
+                }
+            }
         }
         self.validate_acyclic_links()?;
 

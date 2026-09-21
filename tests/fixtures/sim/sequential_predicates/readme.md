@@ -22,3 +22,9 @@ and without optimization. `bad_matches_*` retain legal structure-pattern
 forms as fail-closed controls; `bad_matches_out_of_scope.sv` checks the
 frontend binding boundary. These negatives must reject instead of becoming
 Boolean tests of the matched source or exposing a binding in the else arm.
+
+`syn_023_structure_patterns.sv` adds recursive fixed packed and unpacked
+structure patterns. Positional and named fields, omitted members, nested
+patterns, wildcard members, mixed signedness/state domains, and lexical
+bindings are checked through the public CLI. Function-returning sources prove
+that each matched value is captured once before ordered member checks.

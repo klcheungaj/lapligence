@@ -52,6 +52,14 @@ fn ident_children(e: &mut IrExpr) {
             if let Some(binding) = &mut pattern.binding {
                 walk_lhs_mut(binding, &mut |child| ident_expr(child));
             }
+            for check in &mut pattern.checks {
+                if let Some(constant) = &mut check.constant {
+                    ident_expr(constant);
+                }
+                if let Some(binding) = &mut check.binding {
+                    walk_lhs_mut(binding, &mut |child| ident_expr(child));
+                }
+            }
         }
         IrExprKind::Stream { value, .. } => ident_expr(value),
         IrExprKind::Mutation(mutation) => {

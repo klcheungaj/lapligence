@@ -2604,6 +2604,31 @@ public:
     parents.push_back(id);
     visitDefault(node);
     parents.pop_back();
+    if constexpr (std::same_as<T, StructurePattern>) {
+      // A structure pattern's field identities and nested patterns are
+      // resolved by Slang. Replace generic child edges with paired roles so
+      // the owned database can preserve named, reordered, omitted, and
+      // recursive members without recovering source offsets.
+      capture.removeChildEdges(id);
+      uint32_t index = 0;
+      for (const auto& fieldPattern : node.patterns) {
+        const FieldSymbol* field = fieldPattern.field;
+        const uint64_t fieldId = capture.ensureSemantic(field);
+        auto& fieldNode =
+            capture.output.semantic_nodes[static_cast<size_t>(fieldId)];
+        if (fieldNode.name.len == 0) {
+          fieldNode.kind = LLG_SLANG_SEMANTIC_VARIABLE;
+          fieldNode.name = storeString(capture.output, field->name);
+          fieldNode.detail = storeString(capture.output, "PatternField");
+          fieldNode.range = capture.span(field->location, field->name.size());
+        }
+        fieldNode.type_id = capture.type(field->getType());
+        capture.semanticRole(id, fieldPattern.pattern, LLG_SLANG_EDGE_OPERAND,
+                             index);
+        capture.semanticEdge(id, LLG_SLANG_EDGE_DECLARATION, fieldId, index);
+        index++;
+      }
+    }
     addAuxiliaryRoles(node, id);
   }
 

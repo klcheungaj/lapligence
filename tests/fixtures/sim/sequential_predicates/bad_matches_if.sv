@@ -5,8 +5,8 @@ module tb;
     payload_t value;
     initial begin
         value = '{data: 8'h5a};
-        if (value matches '{data: 8'h5a})
-            $display("must reject structure pattern");
+        if (value matches '{data: 8'h5a, data: 8'h5b})
+            $display("duplicate structure member must reject");
         $finish(0);
     end
 endmodule

@@ -1,7 +1,8 @@
 //! Conditional values retain array element boundaries across payload flattening.
 use super::*;
 use crate::core::db::ConditionalPatternKind;
-use crate::sim::ir::IrPatternExpr;
+use crate::sim::ir::{IrPatternCheck, IrPatternExpr};
+use std::collections::HashSet;
 
 impl Codegen<'_> {
     pub(super) fn lower_conditional(
@@ -73,6 +74,43 @@ impl Codegen<'_> {
                 "conditional predicate pattern metadata is missing in `{scope_path}`"
             )
         })?;
+        if info.kind == ConditionalPatternKind::Structure {
+            let descriptor = self.query_descriptor(clause.expression).cloned().ok_or_else(|| {
+                format!(
+                    "conditional structure pattern source type is missing in `{scope_path}`"
+                )
+            })?;
+            let source_width = Codegen::fixed_descriptor_width(&descriptor).ok_or_else(|| {
+                format!(
+                    "conditional structure pattern requires a fixed-width source in `{scope_path}`"
+                )
+            })?;
+            if value.width != source_width {
+                return Err(format!(
+                    "conditional structure pattern source width disagrees with its type in `{scope_path}`"
+                ));
+            }
+            let mut checks = Vec::new();
+            self.lower_structure_pattern_fields(
+                scope_path,
+                pattern_id,
+                &descriptor,
+                0,
+                &mut checks,
+                &mut HashSet::new(),
+            )?;
+            return Ok(IrExpr::new(
+                IrExprKind::Pattern(Box::new(IrPatternExpr {
+                    value: Box::new(value),
+                    constant: None,
+                    binding: None,
+                    checks,
+                })),
+                1,
+                false,
+                None,
+            ));
+        }
         if value.is_real()
             || self
                 .query_descriptor(clause.expression)
@@ -155,11 +193,199 @@ impl Codegen<'_> {
                 value: Box::new(value),
                 constant,
                 binding,
+                checks: Vec::new(),
             })),
             1,
             false,
             None,
         ))
+    }
+
+    fn lower_structure_pattern_fields(
+        &mut self,
+        scope_path: &str,
+        pattern_id: NodeId,
+        descriptor: &TypeDescriptor,
+        base_offset: u32,
+        checks: &mut Vec<IrPatternCheck>,
+        active: &mut HashSet<NodeId>,
+    ) -> Result<(), String> {
+        if !active.insert(pattern_id) {
+            return Err(format!(
+                "cyclic conditional structure pattern in `{scope_path}`"
+            ));
+        }
+        let TypeShape::Aggregate(layout) = &descriptor.shape else {
+            return Err(format!(
+                "conditional structure pattern requires a structure source in `{scope_path}`"
+            ));
+        };
+        if !matches!(layout.kind, AggregateKind::PackedStruct | AggregateKind::UnpackedStruct) {
+            return Err(format!(
+                "conditional structure pattern requires a fixed structure in `{scope_path}`"
+            ));
+        }
+        let fields = self
+            .db
+            .conditional_pattern_fields(pattern_id)
+            .ok_or_else(|| {
+                format!(
+                    "conditional structure pattern fields are missing in `{scope_path}`"
+                )
+            })?
+            .to_vec();
+        let mut seen_fields = HashSet::new();
+        let mut seen_names = HashSet::new();
+        for field in fields {
+            if !seen_fields.insert(field.field) {
+                return Err(format!(
+                    "conditional structure pattern repeats a field in `{scope_path}`"
+                ));
+            }
+            let name = self.db.node(field.field).name.clone();
+            if !seen_names.insert(name.clone()) {
+                return Err(format!(
+                    "conditional structure pattern repeats member `{name}` in `{scope_path}`"
+                ));
+            }
+            let index = layout
+                .members
+                .iter()
+                .position(|member| member.name == name)
+                .ok_or_else(|| {
+                    format!(
+                        "conditional structure pattern member `{name}` is not in its source type in `{scope_path}`"
+                    )
+                })?;
+            let member = &layout.members[index];
+            let field_descriptor = self.db.type_descriptor(field.field).ok_or_else(|| {
+                format!(
+                    "conditional structure pattern member `{name}` has no resolved type in `{scope_path}`"
+                )
+            })?;
+            if field_descriptor.id != member.descriptor.id {
+                return Err(format!(
+                    "conditional structure pattern member `{name}` has an incompatible resolved type in `{scope_path}`"
+                ));
+            }
+            let width = Codegen::fixed_descriptor_width(&member.descriptor).ok_or_else(|| {
+                format!(
+                    "conditional structure pattern member `{name}` has no fixed integral payload in `{scope_path}`"
+                )
+            })?;
+            let displacement = layout.members[index + 1..]
+                .iter()
+                .try_fold(0u32, |sum, member| {
+                    sum.checked_add(Codegen::fixed_descriptor_width(&member.descriptor)?)
+                })
+                .ok_or_else(|| {
+                    format!(
+                        "conditional structure pattern member offset overflows in `{scope_path}`"
+                    )
+                })?;
+            let offset = base_offset.checked_add(displacement).ok_or_else(|| {
+                format!(
+                    "conditional structure pattern member offset overflows in `{scope_path}`"
+                )
+            })?;
+            let info = self.db.conditional_pattern(field.pattern).ok_or_else(|| {
+                format!(
+                    "conditional structure pattern child metadata is missing in `{scope_path}`"
+                )
+            })?;
+            match info.kind {
+                ConditionalPatternKind::Wildcard => {}
+                ConditionalPatternKind::Constant => {
+                    let children = self.db.node(field.pattern).children();
+                    let [constant_node] = children else {
+                        return Err(format!(
+                            "conditional structure constant pattern has invalid shape in `{scope_path}`"
+                        ));
+                    };
+                    let constant = self.lower_expr(scope_path, *constant_node)?;
+                    if constant.is_real() {
+                        return Err(format!(
+                            "conditional structure constant pattern requires an integral constant in `{scope_path}`"
+                        ));
+                    }
+                    let constant = checked_operand_with_context(
+                        constant,
+                        width,
+                        member.descriptor.info.signed,
+                        scope_path,
+                        "conditional structure pattern context",
+                    )?;
+                    checks.push(IrPatternCheck {
+                        offset,
+                        width,
+                        signed: member.descriptor.info.signed,
+                        constant: Some(Box::new(constant)),
+                        binding: None,
+                    });
+                }
+                ConditionalPatternKind::Binding => {
+                    let target = info.binding.ok_or_else(|| {
+                        format!(
+                            "conditional structure binding has no declaration in `{scope_path}`"
+                        )
+                    })?;
+                    let target_descriptor = self.query_descriptor(target).ok_or_else(|| {
+                        format!(
+                            "conditional structure binding `{}` has no resolved type in `{scope_path}`",
+                            self.db.node(target).name
+                        )
+                    })?;
+                    if target_descriptor.id != member.descriptor.id {
+                        return Err(format!(
+                            "conditional structure binding `{}` has an incompatible resolved type with member `{name}` in `{scope_path}`",
+                            self.db.node(target).name
+                        ));
+                    }
+                    let target_width = target_descriptor.info.width.ok_or_else(|| {
+                        format!(
+                            "conditional structure binding `{}` has no resolved width in `{scope_path}`",
+                            self.db.node(target).name
+                        )
+                    })?;
+                    if target_width != width {
+                        return Err(format!(
+                            "conditional structure binding `{}` width disagrees with member `{name}` in `{scope_path}`",
+                            self.db.node(target).name
+                        ));
+                    }
+                    checks.push(IrPatternCheck {
+                        offset,
+                        width,
+                        signed: member.descriptor.info.signed,
+                        constant: None,
+                        binding: Some(self.lower_lhs(scope_path, target).map_err(|error| {
+                            format!(
+                                "conditional structure binding cannot be assigned in `{scope_path}`: {error}"
+                            )
+                        })?),
+                    });
+                }
+                ConditionalPatternKind::Structure => {
+                    self.lower_structure_pattern_fields(
+                        scope_path,
+                        field.pattern,
+                        &member.descriptor,
+                        offset,
+                        checks,
+                        active,
+                    )?;
+                }
+                ConditionalPatternKind::Invalid
+                | ConditionalPatternKind::Tagged
+                | ConditionalPatternKind::Unsupported => {
+                    return Err(format!(
+                        "unsupported nested conditional structure pattern in `{scope_path}`"
+                    ));
+                }
+            }
+        }
+        active.remove(&pattern_id);
+        Ok(())
     }
 
     pub(in super::super) fn lower_predicate_conditional(
