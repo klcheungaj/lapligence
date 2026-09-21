@@ -124,6 +124,9 @@ Their historical pass counts are not part of the current acceptance record.
 - `sim_syn033_structural_bind`: parameterized module-type and selected-instance binds,
   interface-to-interface binding, owned bound-instance paths after frontend drop, and
   single-fault unknown/primitive-target diagnostics in both optimizer modes.
+- `sim_syn036_capacity`: the selected 65,536-cell fixed-array storage boundary,
+  direct cell-wise reduction above packed payload capacity, and single-fault
+  flattened-value diagnostics in both optimizer modes.
 - `sim_physical_time`: file-backed 1fs/10fs/100fs/1ps/1ns mixed scopes,
   10s/100s units, checked overflow rejection, and VCD femtosecond
   headers/timestamps.
@@ -142,6 +145,8 @@ Their historical pass counts are not part of the current acceptance record.
 - Passing fixtures establish exercised behavior, not complete IEEE conformance.
 - Wide probes cover representative operations at 65,536 and 1,048,575 bits; they do not exhaust every value or context.
 - Capacity tests check rejection at 1,048,576 bits; fixed-size atoms retain their specified widths.
+- SYN-036 also checks the selected 65,536-cell fixed-array storage boundary;
+  this resource ceiling is separate from the packed value limit.
 - Driver-boundary tests exercise registry growth past the retired per-net ceilings.
 - Two-state net declarations are language errors (§1800-2009 6.7); two-state conversion tests apply to variables and expressions.
 - Platform build configuration alone is not evidence of successful native execution.

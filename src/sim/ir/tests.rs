@@ -64,3 +64,43 @@ fn waveform_array_names_follow_declared_index_orientation() {
     );
     assert_eq!(array.waveform_element_name(6), None);
 }
+
+#[test]
+fn fixed_array_constructor_checks_the_selected_cell_limit() {
+    let last = (super::LLG_MAX_FIXED_ARRAY_CELLS - 1) as i32;
+    assert!(
+        IrArray::new(
+            "at_limit".to_owned(),
+            "at_limit".to_owned(),
+            1,
+            false,
+            vec![(0, last)],
+        )
+        .is_ok()
+    );
+    let error = IrArray::new(
+        "above_limit".to_owned(),
+        "above_limit".to_owned(),
+        1,
+        false,
+        vec![(0, last + 1)],
+    )
+    .expect_err("fixed-array storage above the selected limit must fail");
+    assert_eq!(error.path(), "array.dims");
+    assert!(error.detail().contains("selected cell-wise storage limit"));
+
+    let overflow = IrArray::new(
+        "overflow".to_owned(),
+        "overflow".to_owned(),
+        1,
+        false,
+        vec![(i32::MIN, i32::MAX); 2],
+    )
+    .expect_err("fixed-array dimension products must use checked arithmetic");
+    assert_eq!(overflow.path(), "array.dims[1]");
+    assert!(
+        overflow
+            .detail()
+            .contains("dimension product overflows u64")
+    );
+}

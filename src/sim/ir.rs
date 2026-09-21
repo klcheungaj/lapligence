@@ -95,6 +95,14 @@ pub use vpi::{IrVpiCompileArg, IrVpiCompileCall, IrVpiObject, IrVpiObjectKind};
 pub const LLG_MAX_NET_DRIVERS: usize = i32::MAX as usize;
 /// Maximum number of arguments exposed through one generated VPI call.
 pub const LLG_MAX_VPI_ARGS: usize = 256;
+/// Maximum number of cells in one generated fixed unpacked array.
+///
+/// Fixed arrays are emitted as owned cell storage and are traversed cell by
+/// cell by the direct reduction path. This is a generated-model resource
+/// ceiling, not a language or packed-value width limit. Lowering and IR
+/// validation check the dimension product before cell tables or C declarations
+/// are created.
+pub const LLG_MAX_FIXED_ARRAY_CELLS: u64 = 1 << 16;
 
 fn validate_width(path: &str, width: u32) -> Result<(), IrValidationError> {
     if width != 0 {

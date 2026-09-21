@@ -716,13 +716,29 @@ impl Validator<'_> {
             }
             let mut total = 1u64;
             for (dim_idx, (left, right)) in array.dims.iter().copied().enumerate() {
-                let extent = (i64::from(left) - i64::from(right)).unsigned_abs() + 1;
+                let extent = (i64::from(left) - i64::from(right))
+                    .unsigned_abs()
+                    .checked_add(1)
+                    .ok_or_else(|| {
+                        IrValidationError::new(
+                            format!("{path}.dims[{dim_idx}]"),
+                            "dimension extent overflows u64",
+                        )
+                    })?;
                 total = total.checked_mul(extent).ok_or_else(|| {
                     IrValidationError::new(
                         format!("{path}.dims[{dim_idx}]"),
                         "dimension product overflows u64",
                     )
                 })?;
+            }
+            if total > LLG_MAX_FIXED_ARRAY_CELLS {
+                return self.fail(
+                    format!("{path}.total"),
+                    format!(
+                        "fixed-array cell count {total} exceeds selected cell-wise storage limit {LLG_MAX_FIXED_ARRAY_CELLS}"
+                    ),
+                );
             }
             if total != array.total {
                 return self.fail(

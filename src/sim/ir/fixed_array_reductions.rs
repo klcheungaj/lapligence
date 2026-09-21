@@ -41,8 +41,10 @@ pub struct IrFixedArrayReduction {
 }
 
 impl IrFixedArrayReduction {
-    pub(in crate::sim) fn element_count(&self) -> u64 {
-        i64::from(self.left).abs_diff(i64::from(self.right)) + 1
+    pub(in crate::sim) fn element_count(&self) -> Option<u64> {
+        i64::from(self.left)
+            .abs_diff(i64::from(self.right))
+            .checked_add(1)
     }
 
     pub(in crate::sim) fn expressions(&self, visit: &mut impl FnMut(&IrExpr)) {

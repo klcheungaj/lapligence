@@ -39,9 +39,19 @@ impl Validator<'_> {
                 let array = self.model.arrays.get(*index).ok_or_else(|| {
                     IrValidationError::new(format!("{path}.array"), "array index is out of bounds")
                 })?;
+                if array.total > crate::sim::ir::LLG_MAX_FIXED_ARRAY_CELLS {
+                    return self.fail(
+                        path,
+                        format!(
+                            "fixed-array reduction source has {} cells; selected cell-wise storage limit is {} cells",
+                            array.total,
+                            crate::sim::ir::LLG_MAX_FIXED_ARRAY_CELLS
+                        ),
+                    );
+                }
                 if array.real
                     || array.dims.len() != 1
-                    || array.total != reduction.element_count()
+                    || reduction.element_count() != Some(array.total)
                     || array.elem_width != reduction.element_width
                 {
                     return self.fail(path, "fixed-array reduction source storage shape mismatch");
@@ -53,7 +63,7 @@ impl Validator<'_> {
                     || source.fill.is_some()
                     || reduction
                         .element_count()
-                        .checked_mul(u64::from(reduction.element_width))
+                        .and_then(|count| count.checked_mul(u64::from(reduction.element_width)))
                         != Some(u64::from(source.width))
                 {
                     return self.fail(

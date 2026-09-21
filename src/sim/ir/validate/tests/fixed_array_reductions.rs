@@ -41,11 +41,34 @@ fn fixed_array_reduction_direct_storage_uses_ordinal_not_declared_bounds() {
     plan(&mut expr).source = IrFixedArrayReductionSource::Array(0);
     model.validate_expr(&expr, None).unwrap();
     // A large memory does not impose a packed-payload width on the fold.
-    model.arrays[0].dims = vec![(0, i32::MAX)];
-    model.arrays[0].total = 1u64 << 31;
+    let last = (crate::sim::ir::LLG_MAX_FIXED_ARRAY_CELLS - 1) as i32;
+    model.arrays[0].dims = vec![(0, last)];
+    model.arrays[0].total = crate::sim::ir::LLG_MAX_FIXED_ARRAY_CELLS;
     plan(&mut expr).left = 0;
-    plan(&mut expr).right = i32::MAX;
+    plan(&mut expr).right = last;
     assert_eq!(model.expression_capacity(&expr, None).unwrap(), 32);
+}
+
+#[test]
+fn fixed_array_reduction_rejects_storage_above_selected_cell_limit() {
+    let mut model = valid_model();
+    model
+        .arrays
+        .push(IrArray::new("a".into(), "a".into(), 8, false, vec![(0, 1)]).unwrap());
+    let mut expr = reduction();
+    plan(&mut expr).source = IrFixedArrayReductionSource::Array(0);
+    let over_limit = crate::sim::ir::LLG_MAX_FIXED_ARRAY_CELLS as i32;
+    model.arrays[0].dims = vec![(0, over_limit)];
+    model.arrays[0].total = crate::sim::ir::LLG_MAX_FIXED_ARRAY_CELLS + 1;
+    plan(&mut expr).left = 0;
+    plan(&mut expr).right = over_limit;
+    assert!(
+        model
+            .validate_expr(&expr, None)
+            .expect_err("over-limit direct storage must be rejected")
+            .detail()
+            .contains("selected cell-wise storage limit")
+    );
 }
 
 #[test]

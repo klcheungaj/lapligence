@@ -233,13 +233,29 @@ impl IrArray {
         }
         let mut total = 1u64;
         for (index, (left, right)) in dims.iter().copied().enumerate() {
-            let extent = (i64::from(left) - i64::from(right)).unsigned_abs() + 1;
+            let extent = (i64::from(left) - i64::from(right))
+                .unsigned_abs()
+                .checked_add(1)
+                .ok_or_else(|| {
+                    IrValidationError::new(
+                        format!("array.dims[{index}]"),
+                        "dimension extent overflows u64",
+                    )
+                })?;
             total = total.checked_mul(extent).ok_or_else(|| {
                 IrValidationError::new(
                     format!("array.dims[{index}]"),
                     "dimension product overflows u64",
                 )
             })?;
+        }
+        if total > LLG_MAX_FIXED_ARRAY_CELLS {
+            return Err(IrValidationError::new(
+                "array.dims",
+                format!(
+                    "fixed-array cell count {total} exceeds selected cell-wise storage limit {LLG_MAX_FIXED_ARRAY_CELLS}"
+                ),
+            ));
         }
         Ok(Self {
             c_name,
@@ -286,7 +302,9 @@ impl IrArray {
         let mut indices = vec![0i64; self.dims.len()];
         for dimension in (0..self.dims.len()).rev() {
             let (left, right) = self.dims[dimension];
-            let extent = (i64::from(left) - i64::from(right)).unsigned_abs() + 1;
+            let extent = (i64::from(left) - i64::from(right))
+                .unsigned_abs()
+                .checked_add(1)?;
             let offset = remainder % extent;
             remainder /= extent;
             let offset = i64::try_from(offset).ok()?;

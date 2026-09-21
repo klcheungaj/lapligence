@@ -47,7 +47,10 @@ impl Codegen<'_> {
                 ));
             }
         }
-        let count = i64::from(left).abs_diff(i64::from(right)) + 1;
+        let count = i64::from(left)
+            .abs_diff(i64::from(right))
+            .checked_add(1)
+            .ok_or_else(|| format!("fixed-array reduction element count overflows in `{path}`"))?;
         // Do not flatten an ordinary memory into a giant concatenation merely
         // to reduce it. Value receivers still capture once before iteration.
         // array_of also unwraps casts and assignments for lvalue discovery.
@@ -72,7 +75,14 @@ impl Codegen<'_> {
             IrFixedArrayReductionSource::Array(array)
         } else {
             let width = Self::fixed_descriptor_width(&descriptor).ok_or_else(|| {
-                format!("fixed-array reduction receiver payload exceeds supported width in `{path}`")
+                Self::fixed_descriptor_width_bits(&descriptor)
+                    .filter(|width| *width > u64::from(LLG_MAX_WIDTH))
+                    .map(|width| Self::fixed_descriptor_capacity_error(path, width))
+                    .unwrap_or_else(|| {
+                        format!(
+                            "fixed-array reduction receiver payload has no supported fixed width in `{path}`"
+                        )
+                    })
             })?;
             let value = self.lower_expr(path, receiver)?;
             if value.width != width || value.is_real() {

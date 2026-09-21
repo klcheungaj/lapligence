@@ -14,7 +14,9 @@ impl Frame<'_, '_> {
         };
         let result = self.reserve(expr.width, expr.signed);
         let ordinal = self.name("reduction_ordinal");
-        let count = reduction.element_count();
+        let count = reduction
+            .element_count()
+            .ok_or_else(|| "fixed-array reduction element count overflows".to_owned())?;
         self.line(format!(
             "for (uint64_t {ordinal} = 0; {ordinal} < {count}ULL; ++{ordinal}) {{"
         ));

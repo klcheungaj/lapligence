@@ -1,42 +1,84 @@
 //! Fixed value activations keep declaration-order payloads and typed projections.
 use super::*;
 
-pub(super) fn fixed_width(descriptor: &TypeDescriptor) -> Option<u32> {
-    let width = match &descriptor.shape {
-        TypeShape::PackedAtom { .. } => descriptor.info.width?,
+/// Compute a flattened width without applying the packed-value capacity.
+///
+/// Fixed-array reductions can consume a model array cell by cell, so their
+/// complete payload is not necessarily a valid `sv4_t`. Other fixed-value
+/// contexts still use [`fixed_width`] and therefore retain the packed-value
+/// limit.
+pub(super) fn fixed_width_bits(descriptor: &TypeDescriptor) -> Option<u64> {
+    match &descriptor.shape {
+        TypeShape::PackedAtom { .. } => descriptor.info.width.map(u64::from),
         TypeShape::Aggregate(layout) => {
             let mut widths = layout
                 .members
                 .iter()
-                .map(|member| fixed_width(&member.descriptor));
+                .map(|member| fixed_width_bits(&member.descriptor));
             if matches!(
                 layout.kind,
                 AggregateKind::PackedUnion | AggregateKind::UnpackedUnion
             ) {
-                widths.try_fold(0, |largest, width| Some(largest.max(width?)))?
+                widths.try_fold(0, |largest, width| Some(largest.max(width?)))
             } else if matches!(
                 layout.kind,
                 AggregateKind::PackedStruct | AggregateKind::UnpackedStruct
             ) {
-                widths.try_fold(0u32, |sum, width| sum.checked_add(width?))?
+                widths.try_fold(0u64, |sum, width| sum.checked_add(width?))
             } else {
-                return None;
+                None
             }
         }
         TypeShape::FixedArray {
             dimensions,
             element,
-        } => dimensions
-            .iter()
-            .try_fold(fixed_width(element)?, |width, (left, right)| {
+        } => dimensions.iter().try_fold(
+            fixed_width_bits(element)?,
+            |width, (left, right)| {
                 let count = i64::from(*left)
                     .abs_diff(i64::from(*right))
                     .checked_add(1)?;
-                u32::try_from(u64::from(width).checked_mul(count)?).ok()
-            })?,
-        _ => return None,
-    };
-    (width != 0 && width <= LLG_MAX_WIDTH).then_some(width)
+                width.checked_mul(count)
+            },
+        ),
+        _ => None,
+    }
+}
+
+pub(super) fn fixed_width(descriptor: &TypeDescriptor) -> Option<u32> {
+    let width = fixed_width_bits(descriptor)?;
+    (width != 0 && width <= u64::from(LLG_MAX_WIDTH))
+        .then(|| u32::try_from(width).ok())
+        .flatten()
+}
+
+pub(super) fn fixed_value_capacity_error(context: &str, width: u64) -> String {
+    format!(
+        "{context} fixed value payload is {width} bits; packed value capacity is {LLG_MAX_WIDTH} bits (the runtime limit is exclusive)"
+    )
+}
+
+pub(super) fn fixed_array_cell_count(dims: &[(i32, i32)]) -> Result<u64, String> {
+    if dims.is_empty() {
+        return Err("fixed-array storage has no dimensions".to_owned());
+    }
+    let mut total = 1u64;
+    for (index, (left, right)) in dims.iter().copied().enumerate() {
+        let extent = i64::from(left)
+            .abs_diff(i64::from(right))
+            .checked_add(1)
+            .ok_or_else(|| format!("fixed-array dimension {index} extent overflows u64"))?;
+        total = total.checked_mul(extent).ok_or_else(|| {
+            format!("fixed-array dimension product overflows u64 at dimension {index}")
+        })?;
+    }
+    if total > crate::sim::ir::LLG_MAX_FIXED_ARRAY_CELLS {
+        return Err(format!(
+            "fixed-array storage has {total} cells; selected cell-wise storage limit is {} cells",
+            crate::sim::ir::LLG_MAX_FIXED_ARRAY_CELLS
+        ));
+    }
+    Ok(total)
 }
 
 pub(super) fn two_state(descriptor: &TypeDescriptor) -> bool {
@@ -145,14 +187,27 @@ impl Codegen<'_> {
         ) {
             return Ok(None);
         }
-        let Some(_) = fixed_width(descriptor) else {
+        let Some(width) = fixed_width_bits(descriptor) else {
             return Ok(None);
         };
+        if width > u64::from(LLG_MAX_WIDTH) {
+            return Err(fixed_value_capacity_error("fixed formal shape", width));
+        }
         lower_container_element(descriptor).map(Some)
     }
 
     pub(in super::super) fn fixed_descriptor_width(descriptor: &TypeDescriptor) -> Option<u32> {
         fixed_width(descriptor)
+    }
+
+    pub(in super::super) fn fixed_descriptor_width_bits(
+        descriptor: &TypeDescriptor,
+    ) -> Option<u64> {
+        fixed_width_bits(descriptor)
+    }
+
+    pub(in super::super) fn fixed_descriptor_capacity_error(context: &str, width: u64) -> String {
+        fixed_value_capacity_error(context, width)
     }
 
     pub(super) fn formal_value_width(&self, node: NodeId) -> Option<u32> {
@@ -171,6 +226,13 @@ impl Codegen<'_> {
     ) -> Result<Option<IrLhs>, String> {
         if let Some(lhs) = self.fixed_activation_lhs(path, node)? {
             return Ok(Some(lhs));
+        }
+        if let Some(width) = self
+            .query_descriptor(node)
+            .and_then(fixed_width_bits)
+            .filter(|width| *width > u64::from(LLG_MAX_WIDTH))
+        {
+            return Err(fixed_value_capacity_error(path, width));
         }
         let mut parts = Vec::new();
         if let Some(array) = self.array_of(node).cloned() {
@@ -203,11 +265,14 @@ impl Codegen<'_> {
         } else {
             return Ok(None);
         }
-        let width = parts
+        let width_bits = parts
             .iter()
-            .try_fold(0u32, |sum, (_, width)| sum.checked_add(*width))
+            .try_fold(0u64, |sum, (_, width)| sum.checked_add(u64::from(*width)))
+            .ok_or_else(|| format!("fixed value payload width overflows in `{path}`"))?;
+        let width = u32::try_from(width_bits)
+            .ok()
             .filter(|width| *width != 0 && *width <= LLG_MAX_WIDTH)
-            .ok_or("fixed value payload exceeds supported width")?;
+            .ok_or_else(|| fixed_value_capacity_error(path, width_bits))?;
         Ok(Some(IrLhs::Stream {
             parts,
             width,

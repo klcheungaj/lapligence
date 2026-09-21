@@ -214,6 +214,30 @@ fn rejects_array_total_that_disagrees_with_dimensions() {
 }
 
 #[test]
+fn rejects_array_storage_above_selected_cell_limit() {
+    let mut model = valid_model();
+    model.arrays.push(IrArray {
+        net_elements: Vec::new(),
+        element_default: None,
+        c_name: "memory".to_string(),
+        hdl_name: "memory".to_string(),
+        elem_width: 1,
+        signed: false,
+        two_state: false,
+        real: false,
+        shortreal: false,
+        dims: vec![(0, crate::sim::ir::LLG_MAX_FIXED_ARRAY_CELLS as i32)],
+        total: crate::sim::ir::LLG_MAX_FIXED_ARRAY_CELLS + 1,
+    });
+
+    let error = model
+        .validate()
+        .expect_err("over-limit fixed-array storage must fail validation");
+    assert_eq!(error.path(), "arrays[0].total");
+    assert!(error.detail().contains("selected cell-wise storage limit"));
+}
+
+#[test]
 fn accepts_a_minimal_well_formed_model() {
     valid_model().validate().expect("minimal model is valid");
 }

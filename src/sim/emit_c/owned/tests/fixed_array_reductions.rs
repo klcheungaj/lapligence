@@ -118,7 +118,8 @@ fn fixed_array_reduction_nested_maps_shadow_only_after_capturing_the_outer_item(
 #[test]
 fn fixed_array_reduction_direct_storage_has_constant_emission_and_slot_cost() {
     let mut model = IrModel::new("large_memory".into(), 1).unwrap();
-    model.arrays.push(IrArray::new("G_memory".into(), "memory".into(), 8, false, vec![(0, 200_000)]).unwrap());
+    let last = (crate::sim::ir::LLG_MAX_FIXED_ARRAY_CELLS - 1) as i32;
+    model.arrays.push(IrArray::new("G_memory".into(), "memory".into(), 8, false, vec![(0, last)]).unwrap());
     let ctx = RCtx {
         model: &model,
         func: None,
@@ -129,14 +130,16 @@ fn fixed_array_reduction_direct_storage_has_constant_emission_and_slot_cost() {
     let IrExprKind::FixedArrayReduce(plan) = &mut expr.kind else {
         unreachable!();
     };
-    plan.left = 200_000;
+    plan.left = last;
     plan.right = 0;
     model.validate_expr(&expr, None).unwrap();
     let mut frame = Frame::new(&ctx);
     let value = frame.expression(&expr).unwrap();
     frame.discard(value);
-    assert!(frame.body().contains("200001ULL"));
-    assert!(frame.body().contains("200000LL - (int64_t)"));
+    assert!(frame
+        .body()
+        .contains(&format!("{}ULL", crate::sim::ir::LLG_MAX_FIXED_ARRAY_CELLS)));
+    assert!(frame.body().contains(&format!("{last}LL - (int64_t)")));
     assert!(!frame.body().contains("sv4_concat"));
     assert!(!frame.body().contains("sv4_part_select"));
     assert!(frame.body().len() < 5000);

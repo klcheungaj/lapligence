@@ -617,6 +617,8 @@ impl<'a> Codegen<'a> {
                 }
             }
         }
+        let total = fixed_values::fixed_array_cell_count(&dims)
+            .map_err(|error| format!("array `{name}` in `{path}`: {error}"))?;
         let init = match meta.init {
             Some(eid) => match self.array_init_consts(path, name, eid) {
                 Ok(values) => Some(values),
@@ -628,10 +630,6 @@ impl<'a> Codegen<'a> {
             None => None,
         };
         let ir = self.model.arrays.len();
-        let total = dims
-            .iter()
-            .map(|(l, r)| ((*l as i64 - *r as i64).abs() + 1) as u64)
-            .product::<u64>();
         self.model.arrays.push(crate::sim::ir::IrArray {
             net_elements: Vec::new(),
             element_default: self.query_descriptor(node).and_then(|descriptor| {

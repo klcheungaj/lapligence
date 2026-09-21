@@ -5,8 +5,11 @@
 // ------
 // `sv4_t` owns three exact-width planes in one allocation. Bit i lives in
 // bits[i/64], x[i/64], z[i/64] at position i%64. X and Z remain distinct
-// (x & z == 0). No model-wide capacity is embedded in a value. For expression
-// semantics Z behaves like X in every op that propagates unknown bits (LRM
+// (x & z == 0). No model-wide capacity is embedded in a value. This packed
+// value limit applies to each value, including one fixed-array cell; the
+// generated model's separate fixed-array cell ceiling is checked in the Rust
+// IR before an array declaration is emitted. For expression semantics Z
+// behaves like X in every op that propagates unknown bits (LRM
 // 11.4.5); X and Z are only distinguished by `$display`, casez/casex wildcard
 // matching, `===`/`!==` and the identity/copy ops (mux with a known select,
 // selects, resize, concat) which carry Z through.  Every operation keeps limbs
