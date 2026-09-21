@@ -101,6 +101,53 @@ fn array_conditional_plan_rejects_empty_dimensions_and_nonfixed_elements() {
     assert!(array_merge_default(&array(element, vec![(0, 1)])).is_err());
 }
 
+#[test]
+fn structure_conditional_plan_keeps_member_boundaries_and_uninitialized_defaults() {
+    let descriptor = TypeDescriptor {
+        id: TypeId(4),
+        name: "record".into(),
+        two_state: false,
+        info: TypeInfo::default(),
+        shape: TypeShape::Aggregate(AggregateLayout {
+            kind: AggregateKind::UnpackedStruct,
+            type_identity: None,
+            type_id: None,
+            members: vec![
+                member("byte", atom(8, false), 0xa5),
+                member("flag", atom(1, true), 1),
+                member("nibble", atom(4, false), 2),
+            ],
+        }),
+    };
+    let members = structure_merge_members(&descriptor).unwrap();
+    assert_eq!(members.len(), 3);
+    assert_eq!((members[0].offset, members[0].width), (0, 4));
+    assert_eq!(members[0].default.x, vec![0xf]);
+    assert_eq!((members[1].offset, members[1].width), (4, 1));
+    assert_eq!(members[1].default.bits, vec![0]);
+    assert_eq!((members[2].offset, members[2].width), (5, 8));
+    assert_eq!(members[2].default.x, vec![0xff]);
+}
+
+#[test]
+fn structure_conditional_plan_rejects_native_members() {
+    let mut native = atom(8, false);
+    native.shape = TypeShape::String;
+    let descriptor = TypeDescriptor {
+        id: TypeId(5),
+        name: "record".into(),
+        two_state: false,
+        info: TypeInfo::default(),
+        shape: TypeShape::Aggregate(AggregateLayout {
+            kind: AggregateKind::UnpackedStruct,
+            type_identity: None,
+            type_id: None,
+            members: vec![member("native", native, 0)],
+        }),
+    };
+    assert!(structure_merge_members(&descriptor).is_err());
+}
+
 fn predicate_literal(value: ValueData, size: i32) -> ExprKind {
     ExprKind::Constant {
         const_type: if matches!(&value, ValueData::Real(_)) {

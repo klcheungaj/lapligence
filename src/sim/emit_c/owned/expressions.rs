@@ -135,14 +135,22 @@ impl Frame<'_, '_> {
                 };
                 self.replace(value, code, expr.width, expr.signed)
             }
-            IrExprKind::Mux { sel, a, b } => self.mux(sel, a, b, expr, None)?,
+            IrExprKind::Mux { sel, a, b } => self.mux(sel, a, b, expr, None, None)?,
             IrExprKind::ArrayMux {
                 sel,
                 a,
                 b,
                 element_default,
             } => {
-                self.mux(sel, a, b, expr, Some(element_default))?
+                self.mux(sel, a, b, expr, Some(element_default), None)?
+            }
+            IrExprKind::StructMux {
+                sel,
+                a,
+                b,
+                members,
+            } => {
+                self.mux(sel, a, b, expr, None, Some(members))?
             }
             IrExprKind::Predicate { clauses } => self.predicate(clauses)?,
             IrExprKind::Concat { parts } => self.concat(parts)?,

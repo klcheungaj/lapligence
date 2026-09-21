@@ -872,6 +872,14 @@ fn expr_slots(expr: &IrExpr) -> Result<u64, String> {
             [expr_slots(sel)?, expr_slots(a)?, expr_slots(b)?, 1],
             "array conditional expression slots",
         )?,
+        IrExprKind::StructMux { sel, a, b, .. } => checked_sum(
+            // The ambiguous path retains both arms and the result while a
+            // member is merged. Each member also owns its two slices, its
+            // default and the merge result; those four slots are reused for
+            // the next member.
+            [expr_slots(sel)?, expr_slots(a)?, expr_slots(b)?, 4],
+            "structure conditional expression slots",
+        )?,
         IrExprKind::Predicate { clauses } => {
             // Each clause may need a separate truth-conversion owner in
             // addition to its expression temporaries and the retained result.
@@ -1170,7 +1178,7 @@ fn checked_mul(left: u64, right: u64, context: &str) -> Result<u64, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sim::ir::{IrBinOp, IrConst, IrFormal, IrLocal};
+    use crate::sim::ir::{IrBinOp, IrConditionalMember, IrConst, IrFormal, IrLocal};
 
     fn constant(value: u64) -> IrExpr {
         IrExpr::new(
@@ -1238,7 +1246,43 @@ mod tests {
             false,
             None,
         );
-        assert_eq!(expr_slots(&array).unwrap(), expr_slots(&packed).unwrap() + 1);
+        assert_eq!(
+            expr_slots(&array).unwrap(),
+            expr_slots(&packed).unwrap() + 1
+        );
+    }
+
+    #[test]
+    fn structure_conditional_budget_includes_member_merge_owners() {
+        let packed = IrExpr::new(
+            IrExprKind::Mux {
+                sel: Box::new(constant(0)),
+                a: Box::new(constant(1)),
+                b: Box::new(constant(2)),
+            },
+            8,
+            false,
+            None,
+        );
+        let structure = IrExpr::new(
+            IrExprKind::StructMux {
+                sel: Box::new(constant(0)),
+                a: Box::new(constant(1)),
+                b: Box::new(constant(2)),
+                members: vec![IrConditionalMember {
+                    offset: 0,
+                    width: 8,
+                    default: IrConst::packed(vec![], vec![], vec![], 8, false, None).unwrap(),
+                }],
+            },
+            8,
+            false,
+            None,
+        );
+        assert_eq!(
+            expr_slots(&structure).unwrap(),
+            expr_slots(&packed).unwrap() + 4
+        );
     }
 
     #[test]

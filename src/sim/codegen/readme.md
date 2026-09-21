@@ -18,9 +18,10 @@
 - **Fixed values:** `lowering/collection/fixed_values.rs` owns checked widths and paths;
   its sibling `fixed_defaults.rs`, `fixed_patterns.rs`, and `fixed_projections.rs` handle
   defaults, one-time pattern/cast inputs, and activation/member views.
-  `lowering/expressions/conditionals.rs` builds an `ArrayMux` plan before
-  flattening loses the immediate unpacked element boundary; it requests
-  default-uninitialized values separately from declaration member defaults.
+  `lowering/expressions/conditionals.rs` builds `ArrayMux` and direct unpacked
+  `StructMux` plans before flattening loses the immediate element/member
+  boundaries; both request default-uninitialized values separately from
+  declaration member defaults.
   `net_arrays.rs` maps fixed net cells and selected ports onto resolved bits.
 - **Reuse:** `generate_from_db_with_opts` supports multiple optimization
   variants from one owned database.

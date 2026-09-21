@@ -34,6 +34,19 @@ pub struct IrEnumQuery {
     pub default: IrExpr,
 }
 
+/// One immediate member of a fixed unpacked structure conditional.
+///
+/// `offset` is the physical LSB offset in the declaration-order flattened
+/// payload. The default is the member's type default, without declaration
+/// initializers; aggregate conditionals replace a differing member as a
+/// whole when the selector is ambiguous.
+#[derive(Clone, Debug, PartialEq)]
+pub struct IrConditionalMember {
+    pub offset: u32,
+    pub width: u32,
+    pub default: IrConst,
+}
+
 impl IrEnumQuery {
     pub(in crate::sim) fn expressions(&self, visit: &mut impl FnMut(&IrExpr)) {
         if let Some(receiver) = &self.receiver {
@@ -140,6 +153,15 @@ pub enum IrExprKind {
         a: Box<IrExpr>,
         b: Box<IrExpr>,
         element_default: Box<IrConst>,
+    },
+    /// Fixed unpacked-structure conditional (IEEE 1800-2009 11.4.11).
+    /// Operands are flattened only for storage, while each immediate member
+    /// retains its typed boundary and default-uninitialized value.
+    StructMux {
+        sel: Box<IrExpr>,
+        a: Box<IrExpr>,
+        b: Box<IrExpr>,
+        members: Vec<IrConditionalMember>,
     },
     /// Concatenation (operand order already normalized at lowering).
     Concat {

@@ -14,6 +14,12 @@
 Recursive validation covers each IR variant and owns new cross-structure
 invariants.
 
+`IrExprKind::StructMux` retains direct fixed unpacked-structure member
+boundaries and default-uninitialized member constants while its operands use
+the existing flattened packed payload. Validation checks disjoint complete
+coverage; ownership and optimization consume those boundaries without changing
+ordinary packed mux or fixed-array `ArrayMux` semantics.
+
 `IrModel` is the staging owner used while converting semantic database nodes.
 `ExecutionModel::lower` moves every process body out of that staging table and
 into executable basic blocks. The staging process entries retain names,

@@ -72,7 +72,8 @@ introduce generated callbacks or change resizable-container callback contracts.
 `Predicate` IR expression, or reuses the ordinary Boolean conversion for a
 single clause. Pattern-bearing predicates fail explicitly. Statement dispatch
 uses owned true/false branch references instead of child-vector positions. Value
-conditionals share ordinary packed/real arm typing and R01's `ArrayMux` layout;
+conditionals share ordinary packed/real arm typing, R01's `ArrayMux` layout,
+and SYN-004's immediate-member `StructMux` layout;
 R04 array-assignment staging remains separate. All reached clauses stay inside
 the resulting expression so the emitter, not lowering, controls their execution.
 Constant evaluation stops at the first false or ambiguous clause as well.

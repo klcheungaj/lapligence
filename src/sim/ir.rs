@@ -48,8 +48,9 @@ mod fixed_array_reductions;
 pub use fixed_array_reductions::{IrFixedArrayReduction, IrFixedArrayReductionSource};
 mod expressions;
 pub use expressions::{
-    IrBinOp, IrBitQuery, IrDynamicCast, IrEnumMember, IrEnumMethod, IrEnumQuery, IrExpr,
-    IrExprKind, IrFileInput, IrFileInputTarget, IrFileReadTarget, IrMathFunc, IrMutationExpr,
+    IrBinOp, IrBitQuery, IrConditionalMember, IrDynamicCast, IrEnumMember, IrEnumMethod,
+    IrEnumQuery, IrExpr, IrExprKind, IrFileInput, IrFileInputTarget, IrFileReadTarget, IrMathFunc,
+    IrMutationExpr,
     IrPlusArgTarget, IrPlusArgText, IrRandomFunc, IrRealBinOp, IrRealUnOp, IrSampledCall,
     IrSampledDomain, IrSampledFunc, IrSysFunc, IrTimeKind, IrUnOp,
 };

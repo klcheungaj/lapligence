@@ -31,7 +31,9 @@ fn ident_children(e: &mut IrExpr) {
         | IrExprKind::Convert { a }
         | IrExprKind::ToTwoState { a } => ident_expr(a),
         IrExprKind::CastToReal { a, .. } => ident_expr(a),
-        IrExprKind::Mux { sel, a, b } | IrExprKind::ArrayMux { sel, a, b, .. } => {
+        IrExprKind::Mux { sel, a, b }
+        | IrExprKind::ArrayMux { sel, a, b, .. }
+        | IrExprKind::StructMux { sel, a, b, .. } => {
             ident_expr(sel);
             ident_expr(a);
             ident_expr(b);
@@ -325,7 +327,9 @@ fn try_identity(e: &mut IrExpr) -> bool {
         // self-determined shape: Verilog widens ?: to max(branches), so a
         // narrower branch may not stand in for it (concat/replication
         // operands are width-sensitive at runtime).
-        IrExprKind::Mux { sel, a, b } | IrExprKind::ArrayMux { sel, a, b, .. } => {
+        IrExprKind::Mux { sel, a, b }
+        | IrExprKind::ArrayMux { sel, a, b, .. }
+        | IrExprKind::StructMux { sel, a, b, .. } => {
             let pick = as_packed_const(sel).and_then(|v| v.to_u64().map(|u| u != 0));
             match pick {
                 Some(choice) => {

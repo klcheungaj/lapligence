@@ -14,8 +14,28 @@ impl Codegen<'_> {
             .filter(|descriptor| matches!(descriptor.shape, TypeShape::FixedArray { .. }))
             .map(array_merge_default)
             .transpose()?;
+        let structure = self
+            .query_descriptor(operands[1])
+            .filter(|descriptor| {
+                matches!(
+                    descriptor.shape,
+                    TypeShape::Aggregate(crate::core::db::AggregateLayout {
+                        kind: AggregateKind::UnpackedStruct,
+                        ..
+                    })
+                )
+            })
+            .map(structure_merge_members)
+            .transpose()?;
         let sel = self.lower_boolean_expr(scope_path, operands[0])?;
-        self.lower_conditional_arms(scope_path, sel, operands[1], operands[2], array)
+        self.lower_conditional_arms(
+            scope_path,
+            sel,
+            operands[1],
+            operands[2],
+            array,
+            structure,
+        )
     }
 
     pub(in super::super) fn lower_conditional_predicate(
@@ -54,8 +74,28 @@ impl Codegen<'_> {
             .filter(|descriptor| matches!(descriptor.shape, TypeShape::FixedArray { .. }))
             .map(array_merge_default)
             .transpose()?;
+        let structure = self
+            .query_descriptor(if_true)
+            .filter(|descriptor| {
+                matches!(
+                    descriptor.shape,
+                    TypeShape::Aggregate(crate::core::db::AggregateLayout {
+                        kind: AggregateKind::UnpackedStruct,
+                        ..
+                    })
+                )
+            })
+            .map(structure_merge_members)
+            .transpose()?;
         let sel = self.lower_conditional_predicate(scope_path, predicate)?;
-        self.lower_conditional_arms(scope_path, sel, if_true, if_false, array)
+        self.lower_conditional_arms(
+            scope_path,
+            sel,
+            if_true,
+            if_false,
+            array,
+            structure,
+        )
     }
 
     fn lower_conditional_arms(
@@ -65,6 +105,7 @@ impl Codegen<'_> {
         if_true: NodeId,
         if_false: NodeId,
         array: Option<(u32, IrConst)>,
+        structure: Option<Vec<IrConditionalMember>>,
     ) -> Result<IrExpr, String> {
         let a = self.lower_expr(scope_path, if_true)?;
         let b = self.lower_expr(scope_path, if_false)?;
@@ -80,6 +121,37 @@ impl Codegen<'_> {
                     a: Box::new(IrExpr::resize_to(a, width, false)),
                     b: Box::new(IrExpr::resize_to(b, width, false)),
                     element_default: Box::new(element_default),
+                },
+                width,
+                false,
+                None,
+            ));
+        }
+        if let Some(members) = structure {
+            let width = members
+                .iter()
+                .try_fold(0u32, |total, member| {
+                    total.checked_add(member.width)
+                })
+                .ok_or_else(|| {
+                    format!("fixed-structure conditional payload width overflow in `{scope_path}`")
+                })?;
+            if width == 0
+                || a.width != width
+                || b.width != width
+                || a.is_real()
+                || b.is_real()
+            {
+                return Err(format!(
+                    "fixed-structure conditional payload width mismatch in `{scope_path}`"
+                ));
+            }
+            return Ok(IrExpr::new(
+                IrExprKind::StructMux {
+                    sel: Box::new(sel),
+                    a: Box::new(IrExpr::resize_to(a, width, false)),
+                    b: Box::new(IrExpr::resize_to(b, width, false)),
+                    members,
                 },
                 width,
                 false,
@@ -110,6 +182,43 @@ impl Codegen<'_> {
             None,
         ))
     }
+}
+
+fn structure_merge_members(
+    descriptor: &TypeDescriptor,
+) -> Result<Vec<IrConditionalMember>, String> {
+    let TypeShape::Aggregate(layout) = &descriptor.shape else {
+        return Err("conditional merge requires an unpacked structure".to_owned());
+    };
+    if layout.kind != AggregateKind::UnpackedStruct || layout.members.is_empty() {
+        return Err("conditional merge requires a nonempty unpacked structure".to_owned());
+    }
+
+    // The flattened representation places the first declared member at the
+    // most-significant end, matching fixed aggregate projections and defaults.
+    let mut offset = 0u32;
+    let mut members = Vec::with_capacity(layout.members.len());
+    for member in layout.members.iter().rev() {
+        let width = Codegen::fixed_descriptor_width(&member.descriptor)
+            .ok_or("conditional structure member has no supported fixed payload")?;
+        let default = Codegen::fixed_descriptor_uninitialized(&member.descriptor)
+            .ok_or("conditional structure member has no supported default-uninitialized payload")?;
+        if width == 0 || default.width != width {
+            return Err("conditional structure member default width mismatch".to_owned());
+        }
+        members.push(IrConditionalMember {
+            offset,
+            width,
+            default,
+        });
+        offset = offset
+            .checked_add(width)
+            .ok_or("conditional structure payload width overflow")?;
+    }
+    if offset != Codegen::fixed_descriptor_width(descriptor).unwrap_or(0) {
+        return Err("conditional structure payload width disagrees with members".to_owned());
+    }
+    Ok(members)
 }
 
 fn array_merge_default(descriptor: &TypeDescriptor) -> Result<(u32, IrConst), String> {

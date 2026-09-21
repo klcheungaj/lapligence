@@ -202,6 +202,14 @@ Implemented scope:
   separate native ownership tests. Current acceptance is subject to the
   [validation status](#latest-supplied-validation-status), not inferred from
   fixture presence.
+- Direct fixed unpacked-structure conditional values (SYN-004): `StructMux`
+  retains each immediate member boundary, including nested fixed row/record
+  members, and defaults a differing member to its type's uninitialized value
+  under X/Z selectors. Known selectors evaluate one arm; ambiguous selectors
+  evaluate both reached arms once. Packed structures retain ordinary mux
+  semantics; native/resizable and tagged structures remain outside this path.
+  Regression sources are `sim_rtl_completion.rs`:
+  `unpacked_structure_conditionals_*`.
 - Sequential Boolean conditional predicates (R06): `if` and `?:` retain all
   `&&&` clauses in source order, with separately captured then/else roles.
   Every reached clause is evaluated once and converted to full-value truth;
@@ -627,7 +635,7 @@ Verilog era:
 
 SystemVerilog era:
 
-- 🟨 **Fixed-array conditional values** `sel ? a : b` — §1800-2009 11.4.11 **[SV-2005]** R01's `ArrayMux` retains the immediate unpacked element's default-uninitialized payload. An ambiguous selector preserves known-equal elements and defaults a whole differing element, including a nested row or fixed integral record; explicit declaration member initializers are not used as fallback values. Packed vectors keep per-bit merging. Reached alternatives are captured once; fixed-value subroutine contexts and R04 module-procedural assignments use this path. General dynamic/native aggregate merging and payloads beyond the backend limit remain unsupported (sim_rtl_completion.rs: `array_conditional_*`, sim_array_conditional_assignments.rs).
+- 🟨 **Fixed-array and direct unpacked-structure conditional values** `sel ? a : b` — §1800-2009 7.2, 11.4.11 **[SV-2005]** R01's `ArrayMux` retains immediate unpacked element boundaries, while SYN-004's `StructMux` retains direct unpacked-structure member boundaries. An ambiguous selector preserves known-equal elements or members and defaults each differing boundary from its uninitialized value; explicit declaration member initializers are not fallback values. Packed vectors keep per-bit merging. Reached alternatives are captured once; fixed-value subroutine contexts and R04 module-procedural assignments use these paths. General dynamic/native aggregate merging and payloads beyond the backend limit remain unsupported (sim_rtl_completion.rs: `array_conditional_*`, `unpacked_structure_conditionals_*`, sim_array_conditional_assignments.rs).
 - 🟨 **Fixed-array reduction methods** `.sum()`, `.product()`, `.and()`, `.or()`, `.xor()` — §1800-2009 7.12.3 **[SV-2005]** R03 supports optional parentheses, named iterators and `with` expressions, nested fixed rows and admitted fixed-record maps. Accumulator/result width and signedness come from the element or mapped expression, not a wider destination; first-element seeding preserves singleton X/Z. Lexical maps can read enclosing automatic locals/formals and distinguish nested iterator identities. Whole rank-one model arrays are read cell-by-cell; other receivers capture one bounded packed payload. Only integral mapped results and iterator `index()`/constant `index(1)` are admitted. Fixed-array locator/ordering methods, other/dynamic index dimensions, native/string/real/resizable-element maps and over-limit value receivers remain outside the path (sim_fixed_array_reductions.rs).
 - 🟦 **Sequential Boolean predicates in conditional values** `a &&& b ? t : f` — §§1800-2009 11.4.11, 12.6.3 **[SV-2005]** R06 uses the same ordered truth sequence as `if`; a later clause is not evaluated after false or ambiguous truth. An ambiguous result evaluates both arms and uses the existing packed, R01 aggregate or real-zero result rule. `Predicate` IR, folding, effects and dependency collection retain clause order; `matches` clauses remain rejected rather than reduced to Boolean source values (sim_sequential_predicates.rs).
 - 🟨 **Static casts** `int'(e)`, `signed'()`, `unsigned'()`, size casts `n'(e)` — §1800-2009 6.24.1 **[SV-2005]** Slang retains explicit/implicit conversion identity and resolved target width, signedness, and state domain. Scalar/vector typed and numeric size casts have source paths through declaration, runtime-expression, and function contexts; unsupported aggregate/net paths remain outside this claim (sim_data_types.rs, sim_data_type_edges.rs, sim_data_types_next.rs)

@@ -11,8 +11,12 @@ short-circuit and conditional branches retain their separate setup paths.
 Its ambiguous branch captures both alternatives before calling
 `sv4_array_conditional_merge`; known selectors evaluate only the chosen arm.
 The fallback constant is another tracked owner and is included in stack sizing.
-Ordinary `Mux` still uses `sv4_mux` and its packed-bit semantics. Array merge
-plans are self-determined: enclosing packed casts must not resize their elements.
+`StructMux` applies the same owned merge helper separately to each immediate
+unpacked-structure member boundary, using that member's default-uninitialized
+payload and tracked part-select owners.
+Ordinary `Mux` still uses `sv4_mux` and its packed-bit semantics. Aggregate
+merge plans are self-determined: enclosing packed casts must not resize their
+immediate elements or members.
 Temporary slots are reused, and lexical packed cells have distinct registered
 scopes when a pending write might outlive the declaration.
 

@@ -19,6 +19,47 @@ fn conditional() -> IrExpr {
     )
 }
 
+fn structure_conditional() -> IrExpr {
+    let default = |width: u32, x: u64| {
+        IrConst::packed(
+            vec![],
+            (x != 0).then_some(vec![x]).unwrap_or_default(),
+            vec![],
+            width,
+            false,
+            None,
+        )
+        .unwrap()
+    };
+    IrExpr::new(
+        IrExprKind::StructMux {
+            sel: Box::new(packed_const(0, 1)),
+            a: Box::new(packed_const(0x12a5, 13)),
+            b: Box::new(packed_const(0x14a6, 13)),
+            members: vec![
+                IrConditionalMember {
+                    offset: 0,
+                    width: 4,
+                    default: default(4, 0xf),
+                },
+                IrConditionalMember {
+                    offset: 4,
+                    width: 1,
+                    default: default(1, 0),
+                },
+                IrConditionalMember {
+                    offset: 5,
+                    width: 8,
+                    default: default(8, 0xff),
+                },
+            ],
+        },
+        13,
+        false,
+        None,
+    )
+}
+
 #[test]
 fn array_conditional_valid_plan_counts_the_payload_capacity() {
     let model = valid_model();
@@ -73,6 +114,51 @@ fn array_conditional_checks_all_three_child_references() {
     for index in 0..3 {
         let mut expr = conditional();
         let IrExprKind::ArrayMux { sel, a, b, .. } = &mut expr.kind else {
+            unreachable!();
+        };
+        let target = match index {
+            0 => sel,
+            1 => a,
+            _ => b,
+        };
+        target.kind = IrExprKind::SigRead(999);
+        assert!(model.validate_expr(&expr, None).is_err());
+    }
+}
+
+#[test]
+fn structure_conditional_validates_boundaries_and_defaults() {
+    let model = valid_model();
+    assert!(model.validate_expr(&structure_conditional(), None).is_ok());
+
+    let mut overlap = structure_conditional();
+    let IrExprKind::StructMux { members, .. } = &mut overlap.kind else {
+        unreachable!();
+    };
+    members[1].offset = 3;
+    assert!(model.validate_expr(&overlap, None).is_err());
+
+    let mut incomplete = structure_conditional();
+    let IrExprKind::StructMux { members, .. } = &mut incomplete.kind else {
+        unreachable!();
+    };
+    members.pop();
+    assert!(model.validate_expr(&incomplete, None).is_err());
+
+    let mut bad_default = structure_conditional();
+    let IrExprKind::StructMux { members, .. } = &mut bad_default.kind else {
+        unreachable!();
+    };
+    members[0].default.width = 3;
+    assert!(model.validate_expr(&bad_default, None).is_err());
+}
+
+#[test]
+fn structure_conditional_checks_all_three_child_references() {
+    let model = valid_model();
+    for index in 0..3 {
+        let mut expr = structure_conditional();
+        let IrExprKind::StructMux { sel, a, b, .. } = &mut expr.kind else {
             unreachable!();
         };
         let target = match index {

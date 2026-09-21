@@ -68,6 +68,7 @@ impl Frame<'_, '_> {
         right: &IrExpr,
         expr: &IrExpr,
         element_default: Option<&IrConst>,
+        structure_members: Option<&[IrConditionalMember]>,
     ) -> Result<Value, String> {
         let selector = self.expression(selector)?;
         let result = if expr.width == 0 {
@@ -103,6 +104,8 @@ impl Frame<'_, '_> {
                     result.code, a.code, b.code, default.code
                 ));
                 self.discard(default);
+            } else if let Some(members) = structure_members {
+                self.structure_merge(&result, &a, &b, members);
             } else {
                 self.line(format!(
                     "sv4_replace(&{}, sv4_mux({}, {}, {}));",
@@ -115,6 +118,61 @@ impl Frame<'_, '_> {
         self.line("}");
         self.discard(selector);
         Ok(result)
+    }
+
+    fn structure_merge(
+        &mut self,
+        result: &Value,
+        left: &Value,
+        right: &Value,
+        members: &[IrConditionalMember],
+    ) {
+        // `result` is a fresh slot. Initialize its storage before the
+        // per-member part-select writes populate the complete payload.
+        self.line(format!(
+            "sv4_replace(&{}, sv4_zero({}, 0));",
+            result.code, result.width
+        ));
+        for member in members {
+            let high = member.offset + member.width - 1;
+            let left_member = self.value(
+                format!(
+                    "sv4_part_select({}, {high}LL, {}LL)",
+                    left.code, member.offset
+                ),
+                member.width,
+                false,
+            );
+            let right_member = self.value(
+                format!(
+                    "sv4_part_select({}, {high}LL, {}LL)",
+                    right.code, member.offset
+                ),
+                member.width,
+                false,
+            );
+            let default = self.value(
+                emit_const(&member.default),
+                member.default.width,
+                member.default.signed,
+            );
+            let merged = self.value(
+                format!(
+                    "sv4_array_conditional_merge({}, {}, {})",
+                    left_member.code, right_member.code, default.code
+                ),
+                member.width,
+                false,
+            );
+            self.line(format!(
+                "sv4_part_select_set(&{}, {high}LL, {}LL, {});",
+                result.code, member.offset, merged.code
+            ));
+            self.discard(merged);
+            self.discard(default);
+            self.discard(right_member);
+            self.discard(left_member);
+        }
     }
 
     fn mux_arm(&mut self, arm: Value, width: u32, signed: bool) -> Value {

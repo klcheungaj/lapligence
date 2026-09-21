@@ -9,6 +9,8 @@
 - **Array conditionals:** `ArrayMux` folds whole immediate elements with its
   captured default payload, not packed mux bits. Its operands remain visible
   to traversal/read collection; only a proven selector may discard an arm.
+  `StructMux` uses the same rule at each immediate unpacked-structure member
+  boundary, while preserving child traversal and effect analysis.
 
 See [the simulator README](../readme.md) for this stage's place in the model
 pipeline.

@@ -29,6 +29,12 @@ pub(super) fn fold_expr(e: &mut IrExpr) {
             b,
             element_default,
         } => fold_array_mux(sel, a, b, element_default).map(Folded::Bits),
+        IrExprKind::StructMux {
+            sel,
+            a,
+            b,
+            members,
+        } => fold_struct_mux(sel, a, b, members).map(Folded::Bits),
         IrExprKind::Predicate { clauses } => fold_predicate(clauses).map(Folded::Bits),
         IrExprKind::Concat { parts } => {
             let mut vals = Vec::with_capacity(parts.len());
@@ -162,6 +168,50 @@ fn fold_array_mux(sel: &IrExpr, a: &IrExpr, b: &IrExpr, default: &IrConst) -> Op
         bits.extend_from_slice(if equal { left } else { &default.bits });
     }
     Some(Value::from_bits(bits, false))
+}
+
+fn fold_struct_mux(
+    sel: &IrExpr,
+    a: &IrExpr,
+    b: &IrExpr,
+    members: &[IrConditionalMember],
+) -> Option<Value> {
+    let selector = as_packed_const(sel)?;
+    if selector.bits.contains(&Bit::One) {
+        return as_packed_const(a);
+    }
+    if !selector.is_unknown() {
+        return as_packed_const(b);
+    }
+    let a = as_packed_const(a)?;
+    let b = as_packed_const(b)?;
+    if a.width() != b.width() {
+        return None;
+    }
+    let mut lsb_bits = vec![Bit::X; a.width()];
+    for member in members {
+        let default = super::constants::const_to_value(&member.default)?;
+        let offset = usize::try_from(member.offset).ok()?;
+        let width = usize::try_from(member.width).ok()?;
+        let end = offset.checked_add(width)?;
+        if end > a.width() || default.width() != width {
+            return None;
+        }
+        let equal = (offset..end).all(|index| {
+            let left = a.bit_lsb(index);
+            let right = b.bit_lsb(index);
+            left == right && matches!(left, Bit::Zero | Bit::One)
+        });
+        for index in 0..width {
+            lsb_bits[offset + index] = if equal {
+                a.bit_lsb(offset + index)
+            } else {
+                default.bit_lsb(index)
+            };
+        }
+    }
+    lsb_bits.reverse();
+    Some(Value::from_bits(lsb_bits, false))
 }
 
 pub(super) enum Folded {

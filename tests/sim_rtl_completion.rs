@@ -94,6 +94,28 @@ fn fixed_structs_preserve_value_copy_and_reference_semantics() {
 }
 
 #[test]
+fn unpacked_structure_conditionals_merge_immediate_members() {
+    sim_cli::run_case_with_args(
+        "rtl_completion",
+        "syn_004_record_conditional",
+        "record conditional passed\n",
+        "",
+        &[],
+        &["--edition", "2009"],
+    );
+}
+
+#[test]
+fn unpacked_structure_conditionals_reject_native_members() {
+    sim_cli::reject_case_with_args(
+        "rtl_completion",
+        "syn_004_record_conditional_rejected",
+        "conditional structure member has no supported fixed payload",
+        &["--edition", "2009"],
+    );
+}
+
+#[test]
 fn fixed_arrays_of_structs_preserve_member_paths_and_formal_shapes() {
     sim_cli::run_case(
         "rtl_completion",

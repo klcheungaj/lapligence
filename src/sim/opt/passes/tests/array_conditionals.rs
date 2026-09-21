@@ -23,6 +23,52 @@ fn array(sel: IrExpr, a: IrExpr, b: IrExpr, default: IrExpr) -> IrExpr {
     )
 }
 
+fn structure(sel: IrExpr, a: IrExpr, b: IrExpr) -> IrExpr {
+    IrExpr::new(
+        IrExprKind::StructMux {
+            sel: Box::new(sel),
+            a: Box::new(a),
+            b: Box::new(b),
+            members: vec![
+                IrConditionalMember {
+                    offset: 0,
+                    width: 4,
+                    default: IrConst::packed(
+                        vec![],
+                        vec![0xf],
+                        vec![],
+                        4,
+                        false,
+                        None,
+                    )
+                    .unwrap(),
+                },
+                IrConditionalMember {
+                    offset: 4,
+                    width: 1,
+                    default: IrConst::packed(vec![0], vec![], vec![], 1, false, None).unwrap(),
+                },
+                IrConditionalMember {
+                    offset: 5,
+                    width: 8,
+                    default: IrConst::packed(
+                        vec![],
+                        vec![0xff],
+                        vec![],
+                        8,
+                        false,
+                        None,
+                    )
+                    .unwrap(),
+                },
+            ],
+        },
+        13,
+        false,
+        None,
+    )
+}
+
 fn check(mut expr: IrExpr, expected: IrExpr) {
     fold_expr(&mut expr);
     let actual = as_packed_const(&expr).expect("array conditional must fold");
@@ -50,6 +96,14 @@ fn array_conditional_fold_does_not_reuse_packed_bit_merging() {
     assert_eq!(
         as_packed_const(&packed).unwrap().bits,
         as_packed_const(&masked_konst(0xa4, 3, 0, 8)).unwrap().bits,
+    );
+}
+
+#[test]
+fn structure_conditional_fold_preserves_equal_members_only() {
+    check(
+        structure(unknown(1), konst(0x12a5, 13), konst(0x14a6, 13)),
+        masked_konst(0, 0x1fef, 0, 13),
     );
 }
 
