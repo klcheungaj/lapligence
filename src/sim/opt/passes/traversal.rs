@@ -120,6 +120,15 @@ fn walk_expr_mut(e: &mut IrExpr, f: &mut impl FnMut(&mut IrExpr)) {
                 walk_expr_mut(p, f);
             }
         }
+        IrExprKind::Pattern(pattern) => {
+            walk_expr_mut(&mut pattern.value, f);
+            if let Some(constant) = &mut pattern.constant {
+                walk_expr_mut(constant, f);
+            }
+            if let Some(binding) = &mut pattern.binding {
+                walk_lhs_mut(binding, f);
+            }
+        }
         IrExprKind::Stream { value, .. } => walk_expr_mut(value, f),
         IrExprKind::FixedStream { selector, .. } => walk_stream_selector_mut(selector, f),
         IrExprKind::Inside { value, items } => {

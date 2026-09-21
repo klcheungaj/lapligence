@@ -406,6 +406,39 @@ impl Validator<'_> {
                     self.validate_expr(clause, formals, &format!("{path}.clauses[{index}]"))?;
                 }
             }
+            IrExprKind::Pattern(pattern) => {
+                if expr.width != 1 || expr.signed || expr.fill.is_some() {
+                    return self.fail(
+                        path,
+                        "conditional pattern requires an unsigned one-bit result",
+                    );
+                }
+                if pattern.value.is_real() {
+                    return self.fail(path, "conditional pattern value must be packed");
+                }
+                self.validate_expr(&pattern.value, formals, &format!("{path}.value"))?;
+                if let Some(constant) = &pattern.constant {
+                    if constant.is_real()
+                        || constant.width != pattern.value.width
+                        || constant.signed != pattern.value.signed
+                    {
+                        return self.fail(
+                            path,
+                            "conditional pattern constant shape disagrees with its value",
+                        );
+                    }
+                    self.validate_expr(constant, formals, &format!("{path}.constant"))?;
+                }
+                if let Some(binding) = &pattern.binding {
+                    self.validate_lhs(binding, formals, &format!("{path}.binding"))?;
+                    if self.lhs_packed_width(binding) != Some(pattern.value.width) {
+                        return self.fail(
+                            path,
+                            "conditional pattern binding width disagrees with its value",
+                        );
+                    }
+                }
+            }
             IrExprKind::Mux { sel, a, b } => {
                 self.validate_expr(sel, formals, &format!("{path}.sel"))?;
                 self.validate_expr(a, formals, &format!("{path}.a"))?;

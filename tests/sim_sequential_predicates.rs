@@ -85,6 +85,18 @@ fn sequential_predicate_reduction_context() {
 }
 
 #[test]
+fn syn_022_basic_patterns() {
+    sim_cli::run_case_with_args(
+        "sequential_predicates",
+        "syn_022_basic_patterns",
+        "patterns=pass result=3c calls=1\n",
+        "",
+        &[],
+        &["--edition", "2009"],
+    );
+}
+
+#[test]
 fn sequential_predicate_bad_matches_if() {
     sim_cli::reject_case_with_args(
         "sequential_predicates", "bad_matches_if", "pattern",
@@ -96,6 +108,16 @@ fn sequential_predicate_bad_matches_if() {
 fn sequential_predicate_bad_matches_conditional() {
     sim_cli::reject_case_with_args(
         "sequential_predicates", "bad_matches_conditional", "pattern",
+        &["--edition", "2009"],
+    );
+}
+
+#[test]
+fn sequential_predicate_bad_matches_out_of_scope() {
+    sim_cli::reject_case_with_args(
+        "sequential_predicates",
+        "bad_matches_out_of_scope",
+        "undeclared identifier",
         &["--edition", "2009"],
     );
 }

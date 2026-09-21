@@ -129,6 +129,12 @@ pub enum IrExprKind {
     Predicate {
         clauses: Vec<IrExpr>,
     },
+    /// Primitive SystemVerilog conditional pattern. `constant == None` is a
+    /// wildcard or identifier binding; a constant match is four-state
+    /// exact four-state equality normalized to a defined Boolean. A binding target is written
+    /// only after the match is definitely true, so later `&&&` clauses and
+    /// the true arm observe the source-order lexical value.
+    Pattern(Box<IrPatternExpr>),
     /// Conditional operator; the backend picks the packed/real shape from the
     /// operand widths.
     Mux {
@@ -282,6 +288,14 @@ pub enum IrExprKind {
         a: Box<IrExpr>,
     },
     SysFunc(IrSysFunc),
+}
+
+/// One owned primitive conditional pattern operation.
+#[derive(Clone, Debug, PartialEq)]
+pub struct IrPatternExpr {
+    pub(in crate::sim) value: Box<IrExpr>,
+    pub(in crate::sim) constant: Option<Box<IrExpr>>,
+    pub(in crate::sim) binding: Option<IrLhs>,
 }
 
 /// A lowered expression: its structural [`IrExprKind`] plus the

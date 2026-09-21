@@ -114,6 +114,54 @@ impl<'a> Codegen<'a> {
         }
     }
 
+    /// Find lexical `.name` declarations used by primitive conditional
+    /// patterns in one procedural body. Slang keeps the pattern declaration
+    /// on the pattern node rather than as a statement child, so the normal
+    /// declaration walk cannot allocate its automatic storage before the
+    /// predicate is lowered. Walk both structural children and the owned
+    /// semantic references embedded in statements and expressions; the
+    /// visited set keeps function and declaration references from looping.
+    pub(in super::super) fn conditional_pattern_targets(&self, root: NodeId) -> Vec<NodeId> {
+        let mut pending = vec![root];
+        let mut visited = HashSet::new();
+        let mut targets = Vec::new();
+        let mut target_set = HashSet::new();
+        while let Some(node) = pending.pop() {
+            if !visited.insert(node) {
+                continue;
+            }
+            let predicate = match self.kind(node) {
+                NodeKind::Stmt(StmtKind::IfElse { predicate, .. })
+                | NodeKind::Expr(ExprKind::Conditional { predicate, .. }) => Some(predicate),
+                _ => None,
+            };
+            if let Some(predicate) = predicate {
+                for clause in &predicate.clauses {
+                    let Some(pattern) = clause.pattern else {
+                        continue;
+                    };
+                    let Some(info) = self.db.conditional_pattern(pattern) else {
+                        continue;
+                    };
+                    if info.kind != crate::core::db::ConditionalPatternKind::Binding {
+                        continue;
+                    }
+                    let Some(target) = info.binding else {
+                        continue;
+                    };
+                    if target_set.insert(target) {
+                        targets.push(target);
+                    }
+                }
+            }
+            pending.extend(self.node(node).children.iter().copied());
+            let mut references = Vec::new();
+            self.kind(node).append_references(&mut references);
+            pending.extend(references);
+        }
+        targets
+    }
+
     pub(in super::super) fn emit_pass(&mut self, top: NodeId, pass: Pass) -> Result<(), String> {
         let path = self.instance_path_of(top);
         self.emit_pass_inst(top, &path, pass)
@@ -1061,10 +1109,26 @@ impl<'a> Codegen<'a> {
             self.collect_process_writes(stmt)?.into_iter().collect();
         writes.sort_by_key(|dependency| self.dependency_label(dependency));
         let fn_name = self.new_fn_name(path, "proc");
+        let pattern_decls = self
+            .conditional_pattern_targets(stmt)
+            .into_iter()
+            .filter_map(|target| match self.collect_loop_var(path, target) {
+                Ok(info) if info.static_signal.is_none() => Some(Ok(IrStmt::DeclLocal {
+                    name: info.c_name,
+                    width: info.width,
+                    signed: info.signed,
+                    two_state: info.two_state,
+                    init: None,
+                })),
+                Ok(_) => None,
+                Err(error) => Some(Err(error)),
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         let (body_stmts, mut pre_fns, shape) = {
             let mut ctx = EmitCtx::new(self, path.to_string(), inst, "0", None, None, is_final);
             ctx.process_kind = always_type;
-            let body_stmts = ctx.lower_stmt(stmt)?;
+            let mut body_stmts = pattern_decls;
+            body_stmts.extend(ctx.lower_stmt(stmt)?);
             // Fork-branch coroutines and monitor/strobe evaluators attach to
             // the process (rendered ahead of it).
             let pre_fns = std::mem::take(&mut ctx.pre_fns);

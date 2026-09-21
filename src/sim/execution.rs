@@ -1125,6 +1125,16 @@ fn collect_expression_effects(
                 collect_expression_effects(ir, value, effects, visited_calls);
             }
         }
+        IrExprKind::Pattern(pattern) => {
+            if let Some(binding) = &pattern.binding {
+                effects.push(ExecutionEffect::ImmediateStore);
+                collect_lhs_expression_effects(ir, binding, effects, visited_calls);
+            }
+            collect_expression_effects(ir, &pattern.value, effects, visited_calls);
+            if let Some(constant) = &pattern.constant {
+                collect_expression_effects(ir, constant, effects, visited_calls);
+            }
+        }
         IrExprKind::CallFn(call) => {
             // Keep DPI imports on the conservative foreign-call effect path;
             // `pure` is metadata for validation and diagnostics, not a license

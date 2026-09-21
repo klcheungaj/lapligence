@@ -1171,6 +1171,18 @@ uint32_t semanticStatementKind(StatementKind kind) {
   }
 }
 
+uint32_t semanticPatternKind(PatternKind kind) {
+  switch (kind) {
+    case PatternKind::Invalid: return LLG_SLANG_PATTERN_INVALID;
+    case PatternKind::Wildcard: return LLG_SLANG_PATTERN_WILDCARD;
+    case PatternKind::Constant: return LLG_SLANG_PATTERN_CONSTANT;
+    case PatternKind::Variable: return LLG_SLANG_PATTERN_VARIABLE;
+    case PatternKind::Tagged: return LLG_SLANG_PATTERN_TAGGED;
+    case PatternKind::Structure: return LLG_SLANG_PATTERN_STRUCTURE;
+  }
+  return LLG_SLANG_PATTERN_INVALID;
+}
+
 uint32_t semanticAssertionExprKind(AssertionExprKind kind) {
   switch (kind) {
     case AssertionExprKind::Invalid: return LLG_SLANG_ASSERTION_EXPR_INVALID;
@@ -2529,6 +2541,23 @@ public:
     }
     else {
       result.kind = LLG_SLANG_SEMANTIC_UNSUPPORTED;
+      if constexpr (std::derived_from<T, Pattern>) {
+        result.subkind = semanticPatternKind(node.kind);
+        if constexpr (std::same_as<T, VariablePattern>) {
+          const uint64_t target = captureReferenceTarget(node.variable);
+          result.target_id = target;
+          result.type_id = capture.type(node.variable.getType());
+          // Pattern variables are lexical automatic temporaries. Slang uses
+          // TempVarSymbol for them, so they do not pass through the ordinary
+          // VariableSymbol lifetime capture path.
+          if (target < capture.output.semantic_nodes.size()) {
+            auto& target_node = capture.output.semantic_nodes[static_cast<size_t>(target)];
+            target_node.subkind = LLG_SLANG_VARIABLE_PATTERN_BINDING;
+            target_node.auxiliary = LLG_SLANG_VARIABLE_LIFETIME_AUTOMATIC;
+            target_node.flags |= LLG_SLANG_SEMANTIC_AUTOMATIC;
+          }
+        }
+      }
     }
     result.detail = storeString(capture.output, toString(node.kind));
     if constexpr (requires { node.sourceRange; })

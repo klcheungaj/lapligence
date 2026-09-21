@@ -134,6 +134,9 @@ fn callback_safe_expression(expr: &IrExpr) -> Result<(), String> {
             }
             callback_safe_expression(&mutation.value)
         }
+        IrExprKind::Pattern(_) => Err(pending(
+            "side-effect-capable evaluator expressions: conditional pattern binding",
+        )),
         _ => Ok(()),
     }
 }

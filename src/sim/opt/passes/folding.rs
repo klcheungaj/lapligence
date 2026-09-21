@@ -36,6 +36,10 @@ pub(super) fn fold_expr(e: &mut IrExpr) {
             members,
         } => fold_struct_mux(sel, a, b, members).map(Folded::Bits),
         IrExprKind::Predicate { clauses } => fold_predicate(clauses).map(Folded::Bits),
+        // Pattern matching has ordered binding side effects. Leave even
+        // wildcard/constant forms intact so optimization cannot erase the
+        // source evaluation or change the lexical binding boundary.
+        IrExprKind::Pattern(_) => None,
         IrExprKind::Concat { parts } => {
             let mut vals = Vec::with_capacity(parts.len());
             for p in parts {

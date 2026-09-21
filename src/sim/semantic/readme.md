@@ -62,8 +62,10 @@ node is classified as executable, declaration-only, elaboration-consumed,
 intentionally unreachable, or unsupported. Native semantic kind and detail are
 retained by `core::db` when a frontend-neutral node has no direct variant, so a
 reachable unknown statement or expression produces a source-located error
-instead of becoming `NodeKind::Other` and disappearing. A pattern-matching
-case keeps its own ABI tag, so a surviving pattern is rejected with its source
+instead of becoming `NodeKind::Other` and disappearing. Integral constant,
+wildcard and identifier-binding patterns in conditional predicates have owned
+subtype metadata and an executable lowering path. A pattern-matching case
+keeps its own ABI tag, so a surviving pattern is rejected with its source
 location rather than lowered as an empty ordinary case. Inactive generate
 branches and declaration-only frontend records remain in the ledger without
 being treated as executable obligations.

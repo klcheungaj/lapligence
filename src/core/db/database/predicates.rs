@@ -3,6 +3,29 @@
 use super::*;
 use crate::ffi::slang::SemanticEdge;
 
+/// Primitive conditional pattern forms retained by the owned database.
+/// Tagged, structure, and malformed forms stay explicit so simulator
+/// lowering can reject them without treating their source expression as a
+/// Boolean predicate.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConditionalPatternKind {
+    Invalid,
+    Wildcard,
+    Constant,
+    Binding,
+    Tagged,
+    Structure,
+    Unsupported,
+}
+
+/// Owned metadata for one Slang conditional pattern node.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ConditionalPatternInfo {
+    pub kind: ConditionalPatternKind,
+    /// Pattern variable declaration for `.name`, when Slang supplied one.
+    pub binding: Option<NodeId>,
+}
+
 /// A clause of a sequential conditional predicate (`&&&`). Pattern references
 /// are retained separately: an unsupported `matches` must never become a
 /// Boolean test of its input expression.

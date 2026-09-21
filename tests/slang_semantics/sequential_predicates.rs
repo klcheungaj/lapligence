@@ -1,5 +1,8 @@
 //! R06: snapshot-owned clause order and branch roles survive native teardown.
-use llg::core::{compile, db::{Db, ExprKind, NodeKind, StmtKind}};
+use llg::core::{
+    compile,
+    db::{ConditionalPatternKind, Db, ExprKind, NodeKind, StmtKind},
+};
 use llg::sim::{codegen, opt::OptConfig};
 
 fn capture(name: &str, source: &str) -> Db {
@@ -73,7 +76,57 @@ fn sequential_predicate_contexts_generate_from_owned_database() {
 }
 
 #[test]
-fn sequential_predicate_patterns_are_retained_and_rejected_before_optimization() {
+fn syn_022_import_retains_primitive_pattern_ownership() {
+    let db = capture(
+        "syn_022_basic_patterns.sv",
+        include_str!("../fixtures/sim/sequential_predicates/syn_022_basic_patterns.sv"),
+    );
+    db.validate().unwrap();
+    let mut constants = 0;
+    let mut wildcards = 0;
+    let mut bindings = 0;
+    let pattern_ids = db
+        .nodes()
+        .iter()
+        .flat_map(|node| match &node.kind {
+            NodeKind::Stmt(StmtKind::IfElse { predicate, .. })
+            | NodeKind::Expr(ExprKind::Conditional { predicate, .. }) => predicate
+                .clauses
+                .iter()
+                .filter_map(|clause| clause.pattern)
+                .collect::<Vec<_>>(),
+            _ => Vec::new(),
+        })
+        .collect::<Vec<_>>();
+    for id in pattern_ids {
+        let info = db.conditional_pattern(id).expect("owned pattern metadata");
+        assert!(matches!(db.node_kind(id), NodeKind::Other));
+        match info.kind {
+            ConditionalPatternKind::Constant => constants += 1,
+            ConditionalPatternKind::Wildcard => wildcards += 1,
+            ConditionalPatternKind::Binding => {
+                bindings += 1;
+                let target = info.binding.expect("binding pattern target");
+                assert!(matches!(db.node_kind(target), NodeKind::Var { .. }));
+                assert!(db.is_conditional_pattern_binding(target));
+                assert_eq!(
+                    db.variable_lifetime(target),
+                    llg::core::db::VariableLifetime::Automatic
+                );
+            }
+            other => panic!("unexpected primitive fixture pattern: {other:?}"),
+        }
+    }
+    assert!(constants >= 3, "constant patterns were not retained");
+    assert!(wildcards >= 1, "wildcard patterns were not retained");
+    assert!(bindings >= 8, "binding identities were not retained");
+    for options in [OptConfig::none(), OptConfig::default()] {
+        codegen::generate_from_db_with_opts(&db, &options).unwrap();
+    }
+}
+
+#[test]
+fn sequential_predicate_unsupported_patterns_are_retained_and_rejected_before_optimization() {
     for (name, source) in [
         ("pattern-if.sv", include_str!("../fixtures/sim/sequential_predicates/bad_matches_if.sv")),
         ("pattern-conditional.sv", include_str!("../fixtures/sim/sequential_predicates/bad_matches_conditional.sv")),

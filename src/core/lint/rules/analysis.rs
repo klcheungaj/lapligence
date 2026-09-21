@@ -26,16 +26,20 @@ use crate::core::value::ValueData;
 
 /// True when `id` is a net, variable or array node.
 pub fn is_signal(db: &Db, id: NodeId) -> bool {
-    matches!(
-        db.node_kind(id),
-        NodeKind::Net { .. } | NodeKind::Var { .. } | NodeKind::Array { .. }
-    )
+    !db.is_conditional_pattern_binding(id)
+        && matches!(
+            db.node_kind(id),
+            NodeKind::Net { .. } | NodeKind::Var { .. } | NodeKind::Array { .. }
+        )
 }
 
 /// The signal a ref-like expression ultimately refers to: a plain `Ref`
 /// target, or the base of a bit/part/indexed-part select.  `None` when the
 /// expression is not (or cannot be resolved to) a net/var/array.
 pub fn signal_of_ref(db: &Db, id: NodeId) -> Option<NodeId> {
+    if db.is_conditional_pattern_binding(id) {
+        return None;
+    }
     match db.node_kind(id) {
         NodeKind::Net { .. } | NodeKind::Var { .. } | NodeKind::Array { .. } => {
             Some(db.clocking_var(id).map_or(id, |var| var.source))

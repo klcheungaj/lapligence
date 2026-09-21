@@ -59,6 +59,40 @@ impl Db {
             .iter()
             .map(|semantic| semantic.detail.clone())
             .collect();
+        let conditional_patterns = snapshot
+            .semantic_nodes
+            .iter()
+            .enumerate()
+            .filter_map(|(index, semantic)| {
+                if semantic.kind != SemanticKind::Unsupported {
+                    return None;
+                }
+                let kind = match semantic.subkind {
+                    crate::ffi::slang::SEMANTIC_PATTERN_INVALID => ConditionalPatternKind::Invalid,
+                    crate::ffi::slang::SEMANTIC_PATTERN_WILDCARD => {
+                        ConditionalPatternKind::Wildcard
+                    }
+                    crate::ffi::slang::SEMANTIC_PATTERN_CONSTANT => {
+                        ConditionalPatternKind::Constant
+                    }
+                    crate::ffi::slang::SEMANTIC_PATTERN_VARIABLE => ConditionalPatternKind::Binding,
+                    crate::ffi::slang::SEMANTIC_PATTERN_TAGGED => ConditionalPatternKind::Tagged,
+                    crate::ffi::slang::SEMANTIC_PATTERN_STRUCTURE => {
+                        ConditionalPatternKind::Structure
+                    }
+                    _ => ConditionalPatternKind::Unsupported,
+                };
+                Some((
+                    NodeId::from_index(index),
+                    ConditionalPatternInfo {
+                        kind,
+                        binding: semantic
+                            .target_id
+                            .and_then(|target| ids.get(&target).copied()),
+                    },
+                ))
+            })
+            .collect::<HashMap<_, _>>();
         let program_instances = snapshot
             .semantic_nodes
             .iter()
@@ -837,6 +871,7 @@ impl Db {
             overridden_parameters,
             semantic_kinds,
             semantic_details,
+            conditional_patterns,
             program_instances,
             unconnected_drives,
             tops,

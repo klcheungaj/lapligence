@@ -1,8 +1,12 @@
+// llg-test-fixture: tests/fixtures/sim/sequential_predicates/bad_matches_if.sv
+// LRM: IEEE 1800-2009 12.6, 12.6.2-12.6.3.
 module tb;
-    logic a, b;
+    typedef struct packed { logic [7:0] data; } payload_t;
+    payload_t value;
     initial begin
-        a = 0; b = 1;
-        if (a matches 1'b0 &&& b) $display("must not erase the pattern");
+        value = '{data: 8'h5a};
+        if (value matches '{data: 8'h5a})
+            $display("must reject structure pattern");
         $finish(0);
     end
 endmodule

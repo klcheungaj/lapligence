@@ -343,6 +343,18 @@ enum {
   LLG_SLANG_SEMANTIC_UNSUPPORTED = 255
 };
 
+/* Pattern subtype tags carried by unsupported semantic nodes.  Keeping the
+ * source kind explicit lets the owned importer admit only the primitive
+ * conditional patterns whose value and binding contracts it can lower. */
+enum {
+  LLG_SLANG_PATTERN_INVALID = 1,
+  LLG_SLANG_PATTERN_WILDCARD = 2,
+  LLG_SLANG_PATTERN_CONSTANT = 3,
+  LLG_SLANG_PATTERN_VARIABLE = 4,
+  LLG_SLANG_PATTERN_TAGGED = 5,
+  LLG_SLANG_PATTERN_STRUCTURE = 6
+};
+
 enum {
   LLG_SLANG_SEMANTIC_BAD = 1u << 0,
   LLG_SLANG_SEMANTIC_UNINSTANTIATED = 1u << 1,
@@ -601,7 +613,9 @@ enum {
    * declaration/type is still an owned value symbol used by sequence match
    * items. Keep it distinct from ordinary model storage for downstream
    * per-attempt lowering. */
-  LLG_SLANG_VARIABLE_ASSERTION_LOCAL = 232
+  LLG_SLANG_VARIABLE_ASSERTION_LOCAL = 232,
+  /* Pattern `.name` bindings are lexical temporaries, not instance signals. */
+  LLG_SLANG_VARIABLE_PATTERN_BINDING = 234
 };
 
 /* Clocking metadata carried in LlgSlangSemanticNode::auxiliary. Edge codes

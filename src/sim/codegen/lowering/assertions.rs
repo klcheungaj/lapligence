@@ -1835,6 +1835,10 @@ pub(super) fn sampled_compatible(expression: &IrExpr) -> bool {
         | IrExprKind::Concat { parts } | IrExprKind::Replicate { parts, .. } => {
             parts.iter().all(sampled_compatible)
         }
+        // Pattern bindings are procedural state updates and are not sampled
+        // assertion expressions. Conditional pattern support is confined to
+        // executable procedural predicates.
+        IrExprKind::Pattern(_) => false,
         IrExprKind::Stream { value, .. } => sampled_compatible(value),
         IrExprKind::Inside { value, items } => {
             sampled_compatible(value)

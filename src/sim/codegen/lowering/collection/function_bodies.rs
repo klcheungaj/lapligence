@@ -90,6 +90,53 @@ impl<'a> Codegen<'a> {
             &mut local_seq,
             &local_prefix,
         )?;
+        // Pattern variables are lexical temporaries owned by a conditional
+        // predicate, so Slang does not expose them as declaration statements
+        // for the ordinary local walk. Give automatic `.name` bindings the
+        // same per-activation storage as source-declared integral locals.
+        let pattern_targets = self.conditional_pattern_targets(body);
+        for target in &pattern_targets {
+            if locals.contains_key(target) {
+                continue;
+            }
+            let ty = match self.kind(*target) {
+                NodeKind::Var { ty } => ty,
+                other => {
+                    return Err(format!(
+                        "unsupported conditional pattern binding `{}` (node kind {other:?})",
+                        self.node(*target).name
+                    ));
+                }
+            };
+            if is_real_kind(&ty.kind) || is_handle_kind(&ty.kind) || ty.kind == "string" {
+                return Err(format!(
+                    "conditional pattern binding `{}` requires an integral type",
+                    self.node(*target).name
+                ));
+            }
+            let width = self
+                .fixed_value_width(*target)
+                .or(ty.width)
+                .ok_or_else(|| {
+                    format!(
+                        "conditional pattern binding `{}` has no resolved width",
+                        self.node(*target).name
+                    )
+                })?;
+            if width > LLG_MAX_WIDTH {
+                return Err(format!(
+                    "conditional pattern binding `{}` is {width} bits wide; the runtime supports at most {LLG_MAX_WIDTH}",
+                    self.node(*target).name
+                ));
+            }
+            let signed = self
+                .query_descriptor(*target)
+                .map_or(ty.signed, |descriptor| descriptor.info.signed);
+            let two_state = self.db.is_two_state_type(*target) || is_two_state_kind(&ty.kind);
+            let name = format!("{local_prefix}_l{local_seq}");
+            local_seq += 1;
+            locals.insert(*target, (name, width, signed, two_state, false));
+        }
         let mut declaration_initializers = HashMap::new();
         self.collect_subroutine_decl_initializers(body, &mut declaration_initializers);
 
@@ -487,6 +534,20 @@ impl<'a> Codegen<'a> {
         // Lower the body under the function context; the guard, `_ret`
         // declaration and locals are rendered by the backend from the
         // `IrFunc` metadata.
+        let pattern_decls = pattern_targets
+            .iter()
+            .filter(|target| self.db.variable_lifetime(**target) == VariableLifetime::Automatic)
+            .filter_map(|target| locals.get(target))
+            .map(
+                |(name, width, signed, two_state, _shortreal)| IrStmt::DeclLocal {
+                    name: name.clone(),
+                    width: *width,
+                    signed: *signed,
+                    two_state: *two_state,
+                    init: None,
+                },
+            )
+            .collect::<Vec<_>>();
         let (mut body_stmts, mut pre_fns) = {
             let mut ctx = EmitCtx::new(
                 self,
@@ -497,7 +558,8 @@ impl<'a> Codegen<'a> {
                 None,
                 false,
             );
-            let mut body_stmts = static_input_copies;
+            let mut body_stmts = pattern_decls;
+            body_stmts.extend(static_input_copies);
             if matches!(
                 ctx.cg.kind(ft),
                 NodeKind::FuncTask {

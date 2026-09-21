@@ -944,6 +944,15 @@ fn collect_children_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
                 collect_expr_reads(p, model, rw);
             }
         }
+        IrExprKind::Pattern(pattern) => {
+            collect_expr_reads(&pattern.value, model, rw);
+            if let Some(constant) = &pattern.constant {
+                collect_expr_reads(constant, model, rw);
+            }
+            if let Some(binding) = &pattern.binding {
+                collect_lhs_rw(binding, model, rw);
+            }
+        }
         IrExprKind::Stream { value, .. } => collect_expr_reads(value, model, rw),
         IrExprKind::FixedStream { selector, .. } => {
             collect_stream_selector_reads(selector, model, rw)

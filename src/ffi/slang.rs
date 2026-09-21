@@ -604,6 +604,16 @@ pub const SEMANTIC_STMT_CONCURRENT_EXPECT: u32 = 67;
 /// surviving pattern as an empty case.
 pub const SEMANTIC_STMT_PATTERN_CASE: u32 = 233;
 
+/// Conditional pattern subtype tags defined by the C ABI. Pattern nodes stay
+/// in the unsupported semantic category until a consumer proves the subtype
+/// is one of the bounded primitive forms.
+pub const SEMANTIC_PATTERN_INVALID: u32 = 1;
+pub const SEMANTIC_PATTERN_WILDCARD: u32 = 2;
+pub const SEMANTIC_PATTERN_CONSTANT: u32 = 3;
+pub const SEMANTIC_PATTERN_VARIABLE: u32 = 4;
+pub const SEMANTIC_PATTERN_TAGGED: u32 = 5;
+pub const SEMANTIC_PATTERN_STRUCTURE: u32 = 6;
+
 pub const SEMANTIC_ASSERTION_EXPR_INVALID: u32 = 1;
 pub const SEMANTIC_ASSERTION_EXPR_SIMPLE: u32 = 2;
 pub const SEMANTIC_ASSERTION_EXPR_SEQUENCE_CONCAT: u32 = 3;
@@ -643,6 +653,9 @@ pub const SEMANTIC_VARIABLE_CLOCKING: u32 = 231;
 /// Local assertion variables are materialized by Slang per assertion attempt;
 /// they are not members of the enclosing instance scope.
 pub const SEMANTIC_VARIABLE_ASSERTION_LOCAL: u32 = 232;
+/// Conditional pattern `.name` bindings are lexical temporaries rather than
+/// instance signals.
+pub const SEMANTIC_VARIABLE_PATTERN_BINDING: u32 = 234;
 pub const CLOCKING_BLOCK_DEFAULT: u64 = 1 << 0;
 pub const CLOCKING_BLOCK_GLOBAL: u64 = 1 << 1;
 pub const CLOCKING_INPUT_EDGE_SHIFT: u32 = 2;

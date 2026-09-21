@@ -889,6 +889,16 @@ fn expr_slots(expr: &IrExpr) -> Result<u64, String> {
                 "predicate truth slots",
             )?
         }
+        IrExprKind::Pattern(pattern) => {
+            let mut slots = expr_slots(&pattern.value)?;
+            if let Some(constant) = &pattern.constant {
+                slots = checked_add(slots, expr_slots(constant)?, "pattern constant slots")?;
+            }
+            if pattern.binding.is_some() {
+                slots = checked_add(slots, 1, "pattern binding slots")?;
+            }
+            checked_add(slots, 1, "pattern result slots")?
+        }
         IrExprKind::Concat { parts } | IrExprKind::Replicate { parts, .. } => {
             expr_sum(parts, "concatenation expression slots")?
         }

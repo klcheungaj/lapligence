@@ -316,9 +316,21 @@ pub(super) fn validate_semantic_subkind(kind: u32, subkind: u32) -> Result<(), S
         20..=22 => matches!(subkind, 0 | 76),
         9 => matches!(
             subkind,
-            0 | 229 | SEMANTIC_VARIABLE_CLOCKING | SEMANTIC_VARIABLE_ASSERTION_LOCAL
+            0 | 229
+                | SEMANTIC_VARIABLE_CLOCKING
+                | SEMANTIC_VARIABLE_ASSERTION_LOCAL
+                | SEMANTIC_VARIABLE_PATTERN_BINDING
         ),
-        2 | 3 | 5..=7 | 10..=12 | 16 | 17 | 23 | 24 | 27 | 255 => subkind == 0,
+        2 | 3 | 5..=7 | 10..=12 | 16 | 17 | 23 | 24 | 27 => subkind == 0,
+        255 => matches!(
+            subkind,
+            0 | SEMANTIC_PATTERN_INVALID
+                | SEMANTIC_PATTERN_WILDCARD
+                | SEMANTIC_PATTERN_CONSTANT
+                | SEMANTIC_PATTERN_VARIABLE
+                | SEMANTIC_PATTERN_TAGGED
+                | SEMANTIC_PATTERN_STRUCTURE
+        ),
         _ => true,
     };
     if !valid {

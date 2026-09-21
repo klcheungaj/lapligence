@@ -14,7 +14,11 @@ truth, qualifiers, nested branches, sensitivity, fixed-array values and lexical
 reduction contexts have separate fixtures. The Rust suite owns exact stdout
 oracles and runs both optimizer modes; no source transformation to `&&` is used.
 
-`bad_matches_*` are legal language forms but intentionally unsupported simulator
-cases. They must reject with a pattern diagnostic, not silently ignore matching
-or prune it away. The fixture inventory is not evidence that Rust compilation or
-HDL execution has passed; those steps were unavailable for this delivery.
+`syn_022_basic_patterns.sv` adds the SV-2009 primitive pattern subset: integral
+constant patterns, `.*`, identifier bindings in later `&&&` clauses and true
+arms, four-state constant inputs, ordered side effects, function locals and
+combinational sensitivity. Its stdout is checked through the public CLI with
+and without optimization. `bad_matches_*` retain legal structure-pattern
+forms as fail-closed controls; `bad_matches_out_of_scope.sv` checks the
+frontend binding boundary. These negatives must reject instead of becoming
+Boolean tests of the matched source or exposing a binding in the else arm.

@@ -57,7 +57,9 @@ pub use statements::{
     EventTriggerTiming, IntraControl, StmtKind,
 };
 mod predicates;
-pub use predicates::{ConditionalPredicate, PredicateClause};
+pub use predicates::{
+    ConditionalPatternInfo, ConditionalPatternKind, ConditionalPredicate, PredicateClause,
+};
 use predicates::{conditional_branches_from_slang, predicate_from_slang};
 mod expressions;
 pub use expressions::{
@@ -158,6 +160,10 @@ pub struct Db {
     /// Native detail text retained alongside [`semantic_kinds`] for
     /// source-located diagnostics about otherwise unsupported nodes.
     semantic_details: Vec<String>,
+    /// Pattern kind and declaration identity captured from Slang. Pattern
+    /// syntax remains a separate side table because `NodeKind` intentionally
+    /// does not expose native frontend pattern variants.
+    conditional_patterns: HashMap<NodeId, ConditionalPatternInfo>,
     /// Elaborated module-instance/definition IDs whose definition is a
     /// SystemVerilog program.  Program identity is kept as owned semantic
     /// metadata rather than inferred from names or source text so simulator
@@ -254,6 +260,7 @@ impl Db {
             overridden_parameters: HashSet::new(),
             semantic_kinds: Vec::new(),
             semantic_details: Vec::new(),
+            conditional_patterns: HashMap::new(),
             program_instances: HashSet::new(),
             unconnected_drives: HashMap::new(),
             tops: Vec::new(),
@@ -313,6 +320,7 @@ impl Db {
             overridden_parameters: HashSet::new(),
             semantic_kinds: Vec::new(),
             semantic_details: Vec::new(),
+            conditional_patterns: HashMap::new(),
             program_instances: HashSet::new(),
             unconnected_drives: HashMap::new(),
             tops,
@@ -388,6 +396,22 @@ impl Db {
     /// Native detail retained for diagnostics about a captured node.
     pub fn semantic_detail(&self, id: NodeId) -> Option<&str> {
         self.semantic_details.get(id.index()).map(String::as_str)
+    }
+
+    /// Return owned conditional-pattern metadata, if `id` is a captured
+    /// pattern node. Synthetic test databases do not carry frontend pattern
+    /// metadata and therefore return `None`.
+    pub fn conditional_pattern(&self, id: NodeId) -> Option<ConditionalPatternInfo> {
+        self.conditional_patterns.get(&id).copied()
+    }
+
+    /// Whether an owned variable is a lexical `.name` binding introduced by
+    /// a conditional pattern. These temporaries use variable-shaped nodes for
+    /// lowering, but they are not module or process signals for lint activity.
+    pub fn is_conditional_pattern_binding(&self, id: NodeId) -> bool {
+        self.conditional_patterns
+            .values()
+            .any(|pattern| pattern.binding == Some(id))
     }
 
     /// Whether an elaborated instance or definition has program-block

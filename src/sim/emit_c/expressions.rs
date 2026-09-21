@@ -354,6 +354,9 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
         IrExprKind::Predicate { .. } => {
             return Err("sequential predicates require the ownership-aware emitter".to_owned());
         }
+        IrExprKind::Pattern(_) => {
+            return Err("conditional patterns require the ownership-aware emitter".to_owned());
+        }
         IrExprKind::ArrayMux { .. } | IrExprKind::StructMux { .. } => {
             return Err("aggregate conditionals require the structured owned emitter".to_owned());
         }

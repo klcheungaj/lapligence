@@ -1,5 +1,7 @@
 //! Conditional values retain array element boundaries across payload flattening.
 use super::*;
+use crate::core::db::ConditionalPatternKind;
+use crate::sim::ir::IrPatternExpr;
 
 impl Codegen<'_> {
     pub(super) fn lower_conditional(
@@ -46,20 +48,118 @@ impl Codegen<'_> {
         if predicate.clauses.is_empty() {
             return Err(format!("conditional predicate has no clauses in `{scope_path}`"));
         }
-        if predicate.has_patterns() {
-            return Err(format!(
-                "conditional predicate pattern matching (`matches`) is not supported in `{scope_path}`"
-            ));
-        }
-        if let [clause] = predicate.clauses.as_slice() {
-            return self.lower_boolean_expr(scope_path, clause.expression);
-        }
         let clauses = predicate
             .clauses
             .iter()
-            .map(|clause| self.lower_boolean_expr(scope_path, clause.expression))
+            .map(|clause| self.lower_predicate_clause(scope_path, clause))
             .collect::<Result<Vec<_>, _>>()?;
+        if let [clause] = clauses.as_slice() {
+            return Ok(clause.clone());
+        }
         Ok(IrExpr::new(IrExprKind::Predicate { clauses }, 1, false, None))
+    }
+
+    fn lower_predicate_clause(
+        &mut self,
+        scope_path: &str,
+        clause: &crate::core::db::PredicateClause,
+    ) -> Result<IrExpr, String> {
+        let Some(pattern_id) = clause.pattern else {
+            return self.lower_boolean_expr(scope_path, clause.expression);
+        };
+        let value = self.lower_expr(scope_path, clause.expression)?;
+        let info = self.db.conditional_pattern(pattern_id).ok_or_else(|| {
+            format!(
+                "conditional predicate pattern metadata is missing in `{scope_path}`"
+            )
+        })?;
+        if value.is_real()
+            || self
+                .query_descriptor(clause.expression)
+                .is_some_and(|descriptor| !matches!(descriptor.shape, TypeShape::PackedAtom { .. }))
+        {
+            return Err(format!(
+                "conditional predicate pattern requires an integral value in `{scope_path}`"
+            ));
+        }
+        let binding = match info.kind {
+            ConditionalPatternKind::Wildcard => None,
+            ConditionalPatternKind::Binding => {
+                let target = info.binding.ok_or_else(|| {
+                    format!(
+                        "conditional predicate binding has no declaration in `{scope_path}`"
+                    )
+                })?;
+                Some(self.lower_lhs(scope_path, target).map_err(|error| {
+                    format!("conditional predicate binding cannot be assigned in `{scope_path}`: {error}")
+                })?)
+            }
+            ConditionalPatternKind::Constant => None,
+            ConditionalPatternKind::Invalid
+            | ConditionalPatternKind::Tagged
+            | ConditionalPatternKind::Structure
+            | ConditionalPatternKind::Unsupported => {
+                return Err(format!(
+                    "unsupported conditional predicate pattern in `{scope_path}`"
+                ));
+            }
+        };
+        let constant = if info.kind == ConditionalPatternKind::Constant {
+            let children = self.db.node(pattern_id).children();
+            let [constant_node] = children else {
+                return Err(format!(
+                    "conditional predicate constant pattern has invalid shape in `{scope_path}`"
+                ));
+            };
+            let constant = self.lower_expr(scope_path, *constant_node)?;
+            if constant.is_real()
+                || self
+                    .query_descriptor(*constant_node)
+                    .is_some_and(|descriptor| !matches!(descriptor.shape, TypeShape::PackedAtom { .. }))
+            {
+                return Err(format!(
+                    "conditional predicate constant pattern requires an integral constant in `{scope_path}`"
+                ));
+            }
+            let width = value.width.max(constant.width);
+            let signed = value.signed && constant.signed;
+            Some(Box::new(checked_operand_with_context(
+                constant,
+                width,
+                signed,
+                scope_path,
+                "conditional pattern context",
+            )?))
+        } else {
+            None
+        };
+        let width = constant
+            .as_ref()
+            .map_or(value.width, |constant| constant.width);
+        let signed = constant
+            .as_ref()
+            .map_or(value.signed, |constant| constant.signed);
+        let value = if value.width == width && value.signed == signed {
+            value
+        } else {
+            checked_operand_with_context(
+                value,
+                width,
+                signed,
+                scope_path,
+                "conditional pattern context",
+            )?
+        };
+        Ok(IrExpr::new(
+            IrExprKind::Pattern(Box::new(IrPatternExpr {
+                value: Box::new(value),
+                constant,
+                binding,
+            })),
+            1,
+            false,
+            None,
+        ))
     }
 
     pub(in super::super) fn lower_predicate_conditional(

@@ -6,9 +6,9 @@
 //! absent from this layer.
 
 use crate::core::db::{
-    AlwaysKind, ArrayKind, CapturedSemanticKind, CaseKind, ConstantType, Db, Direction, EventSpec,
-    ExprKind, NetType, NodeId, NodeKind, Operation, PrimClass, PrimitiveType, ProcessKind,
-    StmtKind, Strength,
+    AlwaysKind, ArrayKind, CapturedSemanticKind, CaseKind, ConditionalPatternKind, ConstantType,
+    Db, Direction, EventSpec, ExprKind, NetType, NodeId, NodeKind, Operation, PrimClass,
+    PrimitiveType, ProcessKind, StmtKind, Strength,
 };
 use crate::core::model::TypeInfo;
 
@@ -518,7 +518,7 @@ impl<'db> SemanticModel<'db> {
                 }
                 NodeKind::Stmt(statement) => classify_statement(self.db, id, statement),
                 NodeKind::AssertionExpr(_) => None,
-                NodeKind::Expr(expression) => classify_expression(expression),
+                NodeKind::Expr(expression) => classify_expression_for_db(self.db, expression),
                 NodeKind::SysCall { name } if is_synthesis_system_call(name) => None,
                 NodeKind::SysCall { .. } | NodeKind::MethodCall { .. } => {
                     Some(SynthesisIssueKind::RuntimeService)
@@ -778,6 +778,18 @@ fn classify_simulation_node(
     let node = db.node(id);
     match node.kind() {
         NodeKind::Other => match db.semantic_kind(id) {
+            Some(CapturedSemanticKind::Unsupported)
+                if db.conditional_pattern(id).is_some_and(|info| {
+                    matches!(
+                        info.kind,
+                        ConditionalPatternKind::Wildcard
+                            | ConditionalPatternKind::Constant
+                            | ConditionalPatternKind::Binding
+                    )
+                }) =>
+            {
+                SimulationNodeClass::Executable
+            }
             Some(CapturedSemanticKind::TimingControl) => SimulationNodeClass::ElaborationConsumed,
             Some(CapturedSemanticKind::Unsupported) if elaboration_placeholder => {
                 SimulationNodeClass::ElaborationConsumed
@@ -801,7 +813,10 @@ fn classify_simulation_node(
         NodeKind::Stmt(StmtKind::Unsupported { .. }) => SimulationNodeClass::Unsupported,
         NodeKind::Stmt(StmtKind::IfElse { predicate, .. })
         | NodeKind::Expr(ExprKind::Conditional { predicate, .. })
-            if predicate.has_patterns() => SimulationNodeClass::Unsupported,
+            if !supports_primitive_patterns(db, predicate) =>
+        {
+            SimulationNodeClass::Unsupported
+        }
         NodeKind::Var { .. } if db.is_clocking_var(id) => SimulationNodeClass::ElaborationConsumed,
         NodeKind::Expr(ExprKind::ScopeRef { .. }) if elaboration_placeholder => {
             SimulationNodeClass::ElaborationConsumed
@@ -904,9 +919,9 @@ fn simulation_node_detail(db: &Db, id: NodeId) -> String {
     match db.node_kind(id) {
         NodeKind::Stmt(StmtKind::IfElse { predicate, .. })
         | NodeKind::Expr(ExprKind::Conditional { predicate, .. })
-            if predicate.has_patterns() =>
+            if !supports_primitive_patterns(db, predicate) =>
         {
-            return "conditional predicate pattern matching (`matches`) is not supported".into();
+            return "unsupported conditional predicate pattern matching (`matches`)".into();
         }
         _ => {}
     }
@@ -944,6 +959,22 @@ fn simulation_node_detail(db: &Db, id: NodeId) -> String {
             NodeKind::Other => "owned node kind Other".to_owned(),
             kind => format!("{kind:?}"),
         })
+}
+
+fn supports_primitive_patterns(db: &Db, predicate: &crate::core::db::ConditionalPredicate) -> bool {
+    predicate.clauses.iter().all(|clause| {
+        let Some(pattern) = clause.pattern else {
+            return true;
+        };
+        matches!(
+            db.conditional_pattern(pattern).map(|info| info.kind),
+            Some(
+                ConditionalPatternKind::Wildcard
+                    | ConditionalPatternKind::Constant
+                    | ConditionalPatternKind::Binding
+            )
+        )
+    })
 }
 
 fn is_declaration_only_unknown(detail: Option<&str>) -> bool {
@@ -1056,7 +1087,7 @@ fn classify_type(ty: &TypeInfo) -> Option<SynthesisIssueKind> {
 
 fn classify_statement(db: &Db, id: NodeId, statement: &StmtKind) -> Option<SynthesisIssueKind> {
     match statement {
-        StmtKind::IfElse { predicate, .. } if predicate.has_patterns() => {
+        StmtKind::IfElse { predicate, .. } if !supports_primitive_patterns(db, predicate) => {
             Some(SynthesisIssueKind::UnsupportedExpression)
         }
         StmtKind::Assign { delay: Some(_), .. } => Some(SynthesisIssueKind::TimingControl),
@@ -1304,7 +1335,7 @@ fn synthesis_inline_node_issue(
 ) -> Option<SynthesisIssueKind> {
     match db.node_kind(id) {
         NodeKind::Stmt(statement) => classify_statement(db, id, statement),
-        NodeKind::Expr(expression) => classify_expression(expression),
+        NodeKind::Expr(expression) => classify_expression_for_db(db, expression),
         NodeKind::FuncCall {
             callee: Some(callee),
             ..
@@ -1377,11 +1408,17 @@ fn synthesis_event_control(db: &Db, specs: &[EventSpec], implicit: bool) -> bool
     }
 }
 
+fn classify_expression_for_db(db: &Db, expression: &ExprKind) -> Option<SynthesisIssueKind> {
+    if let ExprKind::Conditional { predicate, .. } = expression {
+        if !supports_primitive_patterns(db, predicate) {
+            return Some(SynthesisIssueKind::UnsupportedExpression);
+        }
+    }
+    classify_expression(expression)
+}
+
 fn classify_expression(expression: &ExprKind) -> Option<SynthesisIssueKind> {
     match expression {
-        ExprKind::Conditional { predicate, .. } if predicate.has_patterns() => {
-            Some(SynthesisIssueKind::UnsupportedExpression)
-        }
         ExprKind::ScopeRef { .. } => Some(SynthesisIssueKind::UnsupportedExpression),
         ExprKind::NewArray { .. } => Some(SynthesisIssueKind::DynamicContainer),
         ExprKind::Streaming { .. } => Some(SynthesisIssueKind::UnsupportedExpression),
