@@ -35,6 +35,20 @@ R14's legal packed-input/ref rejection cases into positive tests. The original
 missing contents and six advertised-but-absent suites were not recovered.
 Their historical pass counts are not part of the current acceptance record.
 
+### SYN-038 grammar/context ledger
+
+`sim_syn038_ledger` validates the maintained [SYN-038 ledger](../docs/sim_features.md#syn-038-selected-core-grammar-by-context-ledger--2026-09-21)
+without running HDL. It checks that selected rows have unique stable IDs,
+explicit `V2001`/`SV2009` gates, `PASS` or `REJECT` outcomes, existing fixture
+paths and all required context axes. It also checks that the selected-profile
+exclusions remain explicit and that the historical 72-group inventory has one
+disposition for every ID from 1 through 72. The test is an evidence-integrity
+check; SYN-039 owns the public CLI run revision and optimizer-mode results.
+
+```sh
+cargo test --locked --test sim_syn038_ledger
+```
+
 ### Coverage
 
 - `sim_port_net_types`: R05 directional dissimilar inout collapse in both public

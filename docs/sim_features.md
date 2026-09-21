@@ -12,21 +12,22 @@ link to the checked-in references under `docs/specification/`; they were not
 independently revalidated in this source-status audit.
 Detailed source investigations and run records belong in local `persistence/`.
 
-## Current source status and qualification — 2026-09-20
+## Current source status and qualification — 2026-09-21
 
-This inventory records the source status reconciled against the clean
-2026-09-20 checkout. The baseline source identity, vendored base revisions and
-tracked native patches are captured in the local evidence record; this file
-remains the maintained feature-scope document.
+This inventory records the source status reconciled against the task checkout
+on 2026-09-21. The baseline source identity, vendored base revisions and
+tracked native patches are captured in the local evidence record; the prior
+full-suite result remains historical until the SYN-039 acceptance run.
 
 **R01–R05 have bounded source implementations. R06 implements sequential Boolean
 clauses, SYN-022 adds integral constant, wildcard and identifier-binding
 `matches` patterns with owned lexical storage, SYN-023 adds recursive fixed
 packed/unpacked structure patterns with resolved member checks, and SYN-025 adds
 primitive/structure pattern-case items with ordered filters and owned selector
-capture. Tagged patterns remain deferred to SYN-024. The current clean
-checkout has a green Linux all-features baseline; this is test evidence for the
-checkout, not a claim of complete synthesizable Verilog/SystemVerilog support.**
+capture. Tagged patterns remain deferred to SYN-024. The last recorded clean
+checkout had a green Linux all-features baseline; that result is historical
+evidence for its revision, not a current-run or complete synthesizable
+Verilog/SystemVerilog claim.**
 The numbered feature sections and stable grouped inventory below record the
 implemented forms and remaining restrictions, including corrections to older
 contradictory rows for `defparam`, `let`, initialization and read-only helper
@@ -150,14 +151,14 @@ this selected RTL profile.
 
 | Evidence | Result | Qualification boundary |
 | --- | --- | --- |
-| Current clean-checkout baseline | **2,353 tests run: 2,353 passed, 1 skipped** | Full `--all-features` nextest on Linux from the isolated clean worktree at `fb3e4d12`; the skip is `property_elab::gen_c_vectors`. This is current checkout evidence, not clause-by-clause conformance. |
+| Historical clean-checkout baseline before SYN-038 | **2,353 tests run: 2,353 passed, 1 skipped** | Full `--all-features` nextest on Linux from the isolated pre-ledger worktree at `fb3e4d12`; the skip is `property_elab::gen_c_vectors`. This is historical checkout evidence, not current-branch or clause-by-clause conformance. |
 | Superseded user-reported pre-`_03` run | **2,350 tests run: 2,346 passed, 4 failed, 1 skipped** | Historical evidence only. The four reported failures and the subsequent `_02` compile error are not current baseline failures; the current run supersedes them. |
 | Recorded native component runs after R01–R06 and the first corrective patch | **50/50 GCC ASan/UBSan; 62/62 unsanitized** | Results come from the supplied validation logs, not a new run. The suites overlap; the sanitizer lane excludes real coroutine stack switching. Handwritten C probes do not validate the complete frontend-to-generated-model path. |
 | Recorded operand-slot witness for corrective patch `_02` | **9 checks passed with GCC; 9 with Clang**, both ASan/UBSan | Extracted bridge functions with AST stand-ins check repeated operand positions. This is not a full Slang bridge build or HDL run. |
 
-The current baseline establishes a clean Linux build and full Rust/HDL
+That recorded baseline established a clean Linux build and full Rust/HDL
 nextest result, including the corrected fixed-array conditional, NBA and
-default-pattern cases where those suites run them. Existing regression source
+default-pattern cases where those suites ran them. Existing regression source
 files are not themselves pass evidence. Native Windows/macOS execution, the
 generated-model ASan boundary and every language/context combination remain
 separately unqualified. Commands and test methodology belong in the [test
@@ -298,7 +299,7 @@ A bounded repair does not close an entire feature family.
 | R01 | Fixed-array conditional values retain immediate element boundaries and default differing elements on ambiguous selectors. | Bounded fixed integral payloads; not general dynamic/native aggregates. Packed mux policy remains separate. | [sim_rtl_completion.rs](../tests/sim_rtl_completion.rs) (`array_conditional_*`) |
 | R02 | Fixed `foreach` uses the iterated type's mixed unpacked/packed dimensions, original omitted slots and declared bounds. | Does not add nested resizable traversal or unsupported iterator captures. | [sim_loops.rs](../tests/sim_loops.rs), [foreach import tests](../tests/slang_semantics/foreach.rs) |
 | R03 | Fixed-array `sum`/`product`/`and`/`or`/`xor`, including lexical `with` maps, nested fixed-row reductions and live fixed-array iterator index queries. | Integral mapped results; bounded value receivers; `index()`, constant `index(1)` and checked dynamic integral dimensions are limited to the current fixed unpacked iterator dimension, retaining declared signed bounds and nested iterator identities. Packed item dimensions and higher/unvisited dimensions remain rejected; fixed ordering methods are covered separately by SYN-028. | [sim_fixed_array_reductions.rs](../tests/sim_fixed_array_reductions.rs) |
-| R04 | Module-procedural fixed-array expressions use type-directed admission and one complete RHS capture before stores or NBA issue. | Bounded integral representations; no new continuous/timed-assignment paths. The corrected nested-default/NBA cases pass in the current Linux baseline; broader contexts remain unqualified. | [sim_array_conditional_assignments.rs](../tests/sim_array_conditional_assignments.rs) |
+| R04 | Module-procedural fixed-array expressions use type-directed admission and one complete RHS capture before stores or NBA issue. | Bounded integral representations; no new continuous/timed-assignment paths. The corrected nested-default/NBA cases passed in the recorded pre-SYN038 Linux baseline; broader contexts remain unqualified. | [sim_array_conditional_assignments.rs](../tests/sim_array_conditional_assignments.rs) |
 | R05 | Directional dissimilar `inout` collapse selects resolver/default/delay on admitted whole, selected/concatenated and fixed net-array-cell connections. | `trireg` and frontend-rejected `uwire` inouts remain excluded; true-alias type rules stay strict; no new whole-array port shapes or net-array declaration-delay capture. | [sim_port_net_types.rs](../tests/sim_port_net_types.rs) |
 | R06 | Ordered Boolean `&&&` predicates in `if` and `?:`, with independent branch roles, short-circuiting and full-value truth. | **Partial:** primitive and recursive fixed structure `matches` forms are covered by SYN-022/SYN-023, and SYN-025 adds primitive/structure pattern-case execution. Tagged patterns remain unsupported pending SYN-024. Timing-check `&&&` is a separate missing feature. | [sim_sequential_predicates.rs](../tests/sim_sequential_predicates.rs) |
 
@@ -349,7 +350,8 @@ Implemented scope:
   default behavior, unique/priority checks, and primitive/structure bindings.
   Tagged patterns remain explicitly fail-closed before optimization. The
   `sim_sequential_predicates` and owned-
-  import tests cover these bounded forms in the current Linux baseline. Native
+  import tests cover these bounded forms in the recorded pre-SYN038 Linux
+  baseline. Native
   ownership probes are handwritten counterparts, not output from the Rust
   emitter. The captured `ConditionPattern` semantic edge requires the wrapper
   and Rust consumer to be rebuilt together.
@@ -386,7 +388,7 @@ Implemented scope:
   to the pattern resolver's signed index bounds. The
   `sim_array_conditional_assignments` CLI suite and owned-import generation tests
   include `nba`, `nested_defaults`, `typed_defaults` and `deep_defaults`. These
-  corrected cases pass in the current Linux baseline; the original NBA fixture
+  corrected cases passed in the recorded pre-SYN038 Linux baseline; the original NBA fixture
   and exact-output checks were not weakened.
 - Fixed-array input value ports (SYN-007): compatible fixed integral input
   arrays accept conditional and function values, assignment patterns, fixed
@@ -495,8 +497,9 @@ Retained boundaries:
   semantics for every multiway warning-only conflict.
 - Streaming `with` selectors follow the admitted one-dimensional operand forms;
   native/string/object extensions remain separate from fixed integral RTL.
-- Dynamic/native aggregate fields, tagged unions and later verification/foreign
-  facilities retain the restrictions in their owning rows below.
+- Dynamic/native aggregate fields and pending tagged pattern forms retain the
+  restrictions in their owning rows below; SYN-021 covers finite packed tagged
+  storage, construction and access.
 - No complete IEEE syntax percentage or cross-platform release acceptance is
   inferred from this regression inventory.
 
@@ -631,6 +634,245 @@ negative fixtures cover sequential level/edge UDPs (1364 §§8.3–8.5; 1800
 switch/transistor primitives, and specify/SDF behavior remain outside this
 cell.
 
+### SYN-038 selected Core grammar-by-context ledger — 2026-09-21
+
+This ledger is the finite denominator for the selected Core profiles. Each row
+has a stable ID, an edition gate, an Annex A/B production or material semantic
+variant, a context vector, a checked-in fixture, and an expected result. `PASS`
+means that the fixture is a positive evidence source for the named cell;
+`REJECT` means that the fixture is a single-fault legality or boundary control.
+The row is an assignment of evidence, not a claim that a source file has been
+run in the current checkout. Public CLI results for both optimizer modes and
+the source revision that produced them belong to SYN-039. The `PI-03` row is
+an explicit Extended SYN-031 boundary marker; its `PASS` records the selected
+UDP evidence owner and does not promote UDP syntax into the Core denominator.
+
+The production names and clause numbers below were checked against the local
+Annex A/B index in `docs/specification/spec-reference-annex-a.md` and its
+1364-2001/1800-2009 chapter maps. They deliberately use the local index's
+production spelling; a friendly feature name is not used as a substitute for
+a grammar row. An `SV2009` gate is intentional whenever a named production or
+the checked-in witness uses SystemVerilog-only syntax; a `V2001/SV2009` gate is
+reserved for rows whose complete witness remains legal in both editions.
+
+| ID | Edition | Annex A/B production or variant | Context cells | Fixture / check | Expected |
+| --- | --- | --- | --- | --- | --- |
+| SYN038-CORE-LX-01 | V2001/SV2009 | `comment`, `white_space`, `identifier`, `escaped_identifier` (B.1; V §§2.1–2.7, SV §5.6) | lexical; declaration | `tests/fixtures/sim/directive_effects/default_nettype_none.sv` | PASS |
+| SYN038-CORE-LX-02 | SV2009 | `integral_number`, `binary_number`, `octal_number`, `hex_number`, `x_digit`, `z_digit` (B.2; V §2.5.1, SV §5.7.1) | literal; width 1/7/8/32 | `tests/fixtures/sim/feature_completion/g1_10/fill_literal_context.sv` | PASS |
+| SYN038-CORE-LX-03 | SV2009 | `real_number`, `time_number`, `string_literal` in finite constant contexts (B.1/B.2; V §§2.5.2–2.6, SV §§5.7.2–5.9) | elaboration; parameter; initializer | `tests/fixtures/sim/data_types_completion/string_real_conversion.sv` | PASS |
+| SYN038-CORE-LX-04 | V2001/SV2009 | `text_macro_definition`, `text_macro_usage`, `include_compiler_directive`, `conditional_compilation_directive` (B.1/B.18; V §§19.3–19.5, SV §§22.5–22.6) | compilation unit; module | `tests/fixtures/sim/directive_effects/macros_include.sv` | PASS |
+| SYN038-CORE-LX-05 | SV2009 | `attribute_instance`, `pragma`, `pragma_expression` (B.1/B.18; V §2.8, SV §§5.12, 22.11) | declaration; statement | `tests/fixtures/sim/directive_effects/vectored_scalared.sv` | PASS |
+| SYN038-CORE-LX-06 | SV2009 | `timescale_compiler_directive`, `timeunits_declaration`, `default_nettype_compiler_directive` (B.18; V §19.8, SV §§22.7, 22.11) | compilation unit; module | `tests/fixtures/sim/partial_features/time_literal_values_2009.sv` | PASS |
+| SYN038-CORE-TY-01 | SV2009 | `built_in_data_type`, `integer_vector_type`, `signing` (B.3; V §§3.2–3.3, SV §§6.11, 6.11.3) | scalar/vector; signed/unsigned; 2/4-state | `tests/fixtures/sim/data_types/two_state.sv` | PASS |
+| SYN038-CORE-TY-02 | SV2009 | `net_type`, `variable_type`, `net_port_type` (B.3/B.19; V §§3.2, 3.7–3.8, SV §6.6) | module; net/variable; driver | `tests/fixtures/sim/data_types_next/continuous_assignment_strengths.sv` | PASS |
+| SYN038-CORE-TY-03 | SV2009 | `packed_dimension`, `unpacked_dimension`, `dimension` (B.3/B.4; V §§3.3, 3.10, SV §§7.4, 7.5) | packed/unpacked; reversed/nonzero bounds | `tests/fixtures/sim/syn012_fixed_layout/matrix.sv` | PASS |
+| SYN038-CORE-TY-04 | SV2009 | `typedef`, `type_declaration`, `enum_name_declaration`, `enum_identifier` (B.3; SV §§6.18–6.19) | type; enum; parameter | `tests/fixtures/sim/feature_completion/g1_10/enum_navigation_sparse.sv` | PASS |
+| SYN038-CORE-TY-05 | SV2009 | `struct_union`, `struct_union_member` for packed structures (B.3; SV §7.2) | packed struct; member; width 1/7/8/65/129 | `tests/fixtures/sim/data_types_completion/packed_struct_assignment_patterns.sv` | PASS |
+| SYN038-CORE-TY-06 | SV2009 | `struct_union`, `struct_union_member` for equal-width packed unions (B.3; SV §7.3.1) | packed union; selected member; alias view | `tests/fixtures/sim/data_types_completion/packed_union_assignment_patterns.sv` | PASS |
+| SYN038-CORE-TY-07 | SV2009 | `struct_union`, `struct_union_member` for fixed unpacked records (B.3/B.4; SV §7.2) | unpacked record; array member; return | `tests/fixtures/sim/data_types_next/unpacked_struct.sv` | PASS |
+| SYN038-CORE-TY-08 | SV2009 | `array_type`, `array_identifier`, `variable_dimension` (B.4; SV §§7.4–7.5) | fixed array; 2-D/3-D; array of record | `tests/fixtures/sim/syn012_fixed_layout/matrix.sv` | PASS |
+| SYN038-CORE-TY-09 | SV2009 | `parameter_declaration`, `local_parameter_declaration`, `parameter_port_declaration` (B.19; V §3.11, SV §6.20) | module; package; generate | `tests/fixtures/sim/edition_parameter_override.sv` | PASS |
+| SYN038-CORE-TY-10 | SV2009 | `const_identifier`, `lifetime`, `static`/`automatic` declarations (B.3; SV §6.20.6–6.21) | module; static local; automatic local | `tests/fixtures/sim/feature_completion/g1_18/static_vs_automatic_loop.sv` | PASS |
+| SYN038-CORE-TY-11 | SV2009 | `assignment_pattern`, `assignment_pattern_key`, `array_pattern_key`, `structure_pattern_key` (B.4; SV §§7.2, 10.9) | fixed array; record; default/key | `tests/fixtures/sim/p30_fixed_arrays/replicated_assignment_patterns.sv` | PASS |
+| SYN038-CORE-TY-12 | SV2009 | `array_query_function`, `array_dimension_function`, `range_function`, `size_function` (B.4; SV §7.4.6) | type; selected row; bounds | `tests/fixtures/sim/feature_completion/g1_27/query_dimension_order.sv` | PASS |
+| SYN038-CORE-EX-01 | SV2009 | `expression`, `primary`, `constant_expression`, `mintypmax_expression` (B.8; V §4.2, SV §§11.5–11.6) | RHS; parameter; declaration | `tests/fixtures/sim/syn016_elaboration/real_extent.sv` | PASS |
+| SYN038-CORE-EX-02 | V2001/SV2009 | `unary_operator`, `binary_operator`, arithmetic operators (B.8; V §§4.1.5–4.1.6, SV §11.4) | scalar/vector; signed; width 7/33/65 | `tests/fixtures/sim/feature_completion/g1_11/arithmetic_small_exhaustive.sv` | PASS |
+| SYN038-CORE-EX-03 | V2001/SV2009 | relational and equality operators in `expression` (B.8; V §4.1.7–4.1.8, SV §11.4) | 4-state; X/Z; conditional | `tests/fixtures/sim/data_types/equality_unknown.v` | PASS |
+| SYN038-CORE-EX-04 | V2001/SV2009 | logical, bitwise and reduction operators (B.8; V §§4.1.9–4.1.11, SV §11.4) | predicate; RHS; full-value truth | `tests/fixtures/sim/data_types/four_state_truth.v` | PASS |
+| SYN038-CORE-EX-05 | SV2009 | shift and `conditional_expression` (B.8; V §§4.1.12–4.1.13, SV §11.4) | conditional arm; signed; X selector | `tests/fixtures/sim/data_types_extended/shifts_concat_conditional.sv` | PASS |
+| SYN038-CORE-EX-06 | SV2009 | `concatenation`, `multiple_concatenation` (B.4/B.8; V §4.1.14, SV §11.4) | packed lvalue; replication; overlap | `tests/fixtures/sim/feature_completion/g1_12/overlap_concat_store.sv` | PASS |
+| SYN038-CORE-EX-07 | SV2009 | `select`, `bit_select`, `part_select_range`, `indexed_range` (B.4; V §4.2.1, SV §11.5) | packed; fixed-array element; runtime index | `tests/fixtures/sim/feature_completion/g1_12/nested_array_runtime_lane.sv` | PASS |
+| SYN038-CORE-EX-08 | SV2009 | `constant_select`, `constant_bit_select`, `constant_indexed_range` (B.4; V §4.2.1, SV §11.5) | declaration; part/indexed part; bounds | `tests/fixtures/sim/data_type_edges/indexed_part_assignment_context.sv` | PASS |
+| SYN038-CORE-EX-09 | SV2009 | `cast`, `constant_cast`, `casting_type` (B.8; SV §6.24) | RHS; return; enum; two-state conversion | `tests/fixtures/sim/data_types/casts_conformance.sv` | PASS |
+| SYN038-CORE-EX-10 | SV2009 | `stream_concatenation`, `stream_expression`, `stream_operator` (B.4; SV §11.4.14) | RHS; fixed source; selected destination | `tests/fixtures/sim/data_types_next/syn_015_fixed_stream_contexts.sv` | PASS |
+| SYN038-CORE-EX-11 | SV2009 | `inside_expression`, `open_range_list`, `value_range` (B.8; SV §11.4.13) | predicate; fixed-array value; wildcard X/Z | `tests/fixtures/sim/data_types_next/syn_005_inside_array_values.sv` | PASS |
+| SYN038-CORE-EX-12 | SV2009 | `assignment_pattern_expression`, `constant_assignment_pattern_expression` (B.4; SV §§7.2, 10.9) | RHS; call; return; NBA | `tests/fixtures/sim/p30_fixed_arrays/replicated_assignment_patterns.sv` | PASS |
+| SYN038-CORE-AS-01 | SV2009 | `continuous_assign`, `net_assignment`, `net_decl_assignment` (B.7; V §§6.1–6.1.2, SV §10.3) | scalar/net; fixed array; driver | `tests/fixtures/sim/partial_features/net_declaration_transition.sv` | PASS |
+| SYN038-CORE-AS-02 | SV2009 | `blocking_assignment` and `variable_assignment` (B.7; V §6.2, SV §10.4) | whole variable; field; selected element | `tests/fixtures/sim/expression_mutations/expression_mutations.sv` | PASS |
+| SYN038-CORE-AS-03 | SV2009 | `nonblocking_assignment` (B.7; V §6.2, SV §10.4) | persistent local; NBA; issue/commit | `tests/fixtures/sim/array_conditional_assignments/nba.sv` | PASS |
+| SYN038-CORE-AS-04 | SV2009 | `operator_assignment`, `inc_or_dec_expression`, `inc_or_dec_operator` (B.7; SV §10.4) | whole/select lvalue; prefix/postfix; effect | `tests/fixtures/sim/feature_completion/g1_31/compound_index_once.sv` | PASS |
+| SYN038-CORE-AS-05 | SV2009 | `assignment_pattern_variable_lvalue` (B.4; SV §10.9) | positional pattern; blocking/NBA | `tests/fixtures/sim/syn003_pattern_lvalues/syn_003_pattern_lvalues.sv` | PASS |
+| SYN038-CORE-AS-06 | SV2009 | `assignment_pattern_net_lvalue` and keyed/default pattern lvalue boundary (B.4) | negative lvalue legality | `tests/fixtures/sim/syn003_pattern_lvalues/syn_003_keyed_lvalue.sv` | REJECT |
+| SYN038-CORE-AS-07 | SV2009 | `array_identifier`, `variable_concatenation`, fixed-array value assignment (B.4/B.7) | whole array; slice; nested row | `tests/fixtures/sim/p30_fixed_arrays/fixed_array_assignment.sv` | PASS |
+| SYN038-CORE-AS-08 | SV2009 | replicated `assignment_pattern_expression` (B.4; SV §10.9.1) | nested row; repeated operands; shape | `tests/fixtures/sim/p30_fixed_arrays/replicated_assignment_patterns.sv` | PASS |
+| SYN038-CORE-AS-09 | SV2009 | `net_alias`, `list_of_net_assignments` (B.7/B.19; SV §10.11) | net; selected element; true alias | `tests/fixtures/sim/net_resolution/syn_010_fixed_net_aliases.sv` | PASS |
+| SYN038-CORE-AS-10 | SV2009 | fixed-array continuous assignment context (B.7; SV §10.3) | net/variable; element wakeup; generate | `tests/fixtures/sim/rtl_completion/syn_006_array_continuous.sv` | PASS |
+| SYN038-CORE-PR-01 | V2001/SV2009 | `initial_construct`, `always_construct`, `always_keyword` (B.6; V §§9.2, 9.7, SV §9.2) | module; time-zero; process | `tests/fixtures/sim/loops/syn_037_finite_control_2001.sv` | PASS |
+| SYN038-CORE-PR-02 | SV2009 | `event_control`, `event_expression`, `procedural_timing_control` (B.6; V §9.7, SV §9.2) | clock/reset; finite event; sensitivity | `tests/fixtures/sim/syn014_process_contexts/process_contexts.sv` | PASS |
+| SYN038-CORE-PR-03 | SV2009 | `always_comb`, `always_latch`, `always_ff` (B.6; SV §9.2.2.2–9.2.2.4) | combinational/latch/FF; time-zero | `tests/fixtures/sim/syn014_process_contexts/process_contexts.sv` | PASS |
+| SYN038-CORE-PR-04 | V2001/SV2009 | `loop_statement`, `for_initialization`, `for_step`, `repeat`/`while` variants (B.9; V §9.6, SV §§12.7–12.8) | finite loop; bounds; body effects | `tests/fixtures/sim/loops/syn_037_finite_control_2001.sv` | PASS |
+| SYN038-CORE-PR-05 | SV2009 | `foreach` loop form and `loop_variables` (B.9; SV §12.7.3) | fixed array; mixed dimensions; cleanup | `tests/fixtures/sim/loops/foreach_mixed_control.sv` | PASS |
+| SYN038-CORE-PR-06 | SV2009 | `do`/`break`/`continue` jump forms (B.9; SV §§12.7.4–12.7.6) | nested lexical loop; finite exit | `tests/fixtures/sim/loops/syn_037_finite_control.sv` | PASS |
+| SYN038-CORE-PR-07 | SV2009 | `case_statement`, `case_item`, `case_inside_item` (B.9; V §9.5, SV §12.5) | case/casez/casex; X/Z; inside | `tests/fixtures/sim/feature_completion/g1_21/case_four_state.sv` | PASS |
+| SYN038-CORE-PR-08 | SV2009 | `unique_priority` and conditional statement (B.9; SV §§12.4–12.5) | priority; diagnostics; predicate | `tests/fixtures/sim/unique_priority/inside.sv` | PASS |
+| SYN038-CORE-PR-09 | V2001/SV2009 | `seq_block`, `disable_statement`, named block scope (B.6/B.9; V §§9.6, 11, SV §12.8) | local named disable; function/task | `tests/fixtures/sim/loops/syn_037_finite_control_2001.sv` | PASS |
+| SYN038-CORE-PR-10 | V2001/SV2009 | `wait_statement` and finite event-trigger control (B.6/B.9; V §9.7, SV §12.4) | zero-time; finite wait; process | `tests/fixtures/sim/partial_features/wait_constant_false.sv` | PASS |
+| SYN038-CORE-SB-01 | SV2009 | `function_declaration`, `task_declaration`, `subroutine_call` (B.10; V §§10–11, SV §13) | call; return; module/package | `tests/fixtures/sim/syn013_zero_time_calls/zero_time_calls.sv` | PASS |
+| SYN038-CORE-SB-02 | SV2009 | `task_port_item`, `function_port_list`, `formal_argument`, `actual_argument` (B.10; V §10, SV §13.5) | input/output/inout; copy-out | `tests/fixtures/sim/function/reference_argument_alias.sv` | PASS |
+| SYN038-CORE-SB-03 | SV2009 | `ref_declaration`, `const` reference formal and actual matching (B.10/B.19; SV §§6.21, 13.5) | ref/const-ref; selected aggregate | `tests/fixtures/sim/feature_completion/g1_17/fixed_ref_alias_visibility.sv` | PASS |
+| SYN038-CORE-SB-04 | SV2009 | default formal argument and `list_of_formal_arguments` (B.10; V §10, SV §13.5.4) | omitted/default; side effect once | `tests/fixtures/sim/feature_completion/g1_17/fixed_call_defaults_copyout.sv` | PASS |
+| SYN038-CORE-SB-05 | SV2009 | fixed aggregate function result and `function_data_type_or_implicit` (B.10; SV §§6.13, 13.4) | return value; array/record | `tests/fixtures/sim/feature_completion/g1_17/packed_struct_return.sv` | PASS |
+| SYN038-CORE-SB-06 | V2001/SV2009 | zero-time `subroutine_call_statement` and timing legality (B.10; V §§10–11, SV §13.4) | initializer; process; no timing | `tests/fixtures/sim/syn013_zero_time_calls/legacy_calls.sv` | PASS |
+| SYN038-CORE-SB-07 | SV2009 | recursive `function_declaration` with finite termination (B.10; V §10.3, SV §13.4) | automatic frame; finite recursion | `tests/fixtures/sim/feature_completion/g1_17/automatic_recursive_function.sv` | PASS |
+| SYN038-CORE-SB-08 | SV2009 | `lifetime` and output copy-out storage (B.3/B.10; SV §6.21, §13.5) | static/automatic; local/formal | `tests/fixtures/sim/feature_completion/g1_18/static_vs_automatic_loop.sv` | PASS |
+| SYN038-CORE-HY-01 | SV2009 | `module_declaration`, `module_ansi_header`, `module_nonansi_header` (B.19; V §12.1–12.3, SV §23.2) | top; nested; ANSI/non-ANSI | `tests/fixtures/sim/syn018_module_declarations/module_declarations.sv` | PASS |
+| SYN038-CORE-HY-02 | SV2009 | `module_instantiation`, `ordered_port_connection`, `named_port_connection` (B.19; V §12.1–12.3, SV §23.3) | instance; named/ordered; arrays | `tests/fixtures/sim/feature_completion/g1_22/port_array_aggregate_roundtrip.sv` | PASS |
+| SYN038-CORE-HY-03 | SV2009 | `parameter_override`, `parameter_value_assignment`, `defparam_assignment` (B.19; V §12.2, SV §§23.10, 6.20) | instance; hierarchy; re-elaboration | `tests/fixtures/sim/edition_parameter_override.sv` | PASS |
+| SYN038-CORE-HY-04 | SV2009 | `generate_region`, `generate_block`, `if_generate_construct`, `generate_case_statement` (B.23; V §12.4, SV §§27.3–27.5) | generate; parameter; hierarchy | `tests/fixtures/sim/feature_completion/g1_34/hier_generate_pipeline.sv` | PASS |
+| SYN038-CORE-HY-05 | SV2009 | `loop_generate_construct`, `genvar_declaration`, `genvar_iteration` (B.23; V §12.4, SV §27.4) | generated instances; array | `tests/fixtures/sim/feature_completion/g1_34/hier_generate_pipeline.sv` | PASS |
+| SYN038-CORE-HY-06 | SV2009 | `hierarchical_identifier`, `hierarchical_task_identifier`, `hierarchical_function_identifier` (B.19; V §12.6, SV §23.8) | cross-instance call; parent/child | `tests/fixtures/sim/syn018_module_declarations/module_declarations.sv` | PASS |
+| SYN038-CORE-HY-07 | SV2009 | `package_declaration`, `package_import_declaration`, `package_scope` (B.22; SV §26) | package; `$unit`; qualified type/call | `tests/fixtures/sim/syn016_elaboration/elaboration_matrix.sv` | PASS |
+| SYN038-CORE-HY-08 | SV2009 | `interface_declaration`, `interface_instantiation`, `modport_declaration` (B.21; SV §§25.3, 25.5) | interface; modport; instance | `tests/fixtures/sim/feature_completion/g1_34/interface_modport_struct.sv` | PASS |
+| SYN038-CORE-HY-09 | SV2009 | `input_declaration`, `output_declaration`, `inout_declaration`, fixed aggregate port variants (B.19; SV §§23.2.2, 23.3) | input/output/ref; whole/row/slice | `tests/fixtures/sim/rtl_completion/syn_008_port_shape_matrix.sv` | PASS |
+| SYN038-CORE-HY-10 | SV2009 | `module_declaration` for nested and extern module forms (B.19; SV §§23.2, 23.4–23.5) | extern body; nested scope | `tests/fixtures/sim/syn018_module_declarations/extern_child.sv` | PASS |
+| SYN038-CORE-ED-01 | V2001 | legacy `module_declaration`, continuous assignment and `always @*` forms (B.6/B.7/B.19) | edition gate; public CLI | `tests/fixtures/sim/partial_features/edition_legacy_forms.sv` | PASS |
+| SYN038-CORE-ED-02 | V2001 | SV-only `typedef`, `struct`, whole-array and assignment-pattern forms rejected by edition policy (B.3/B.4) | negative edition gate | `tests/fixtures/sim/partial_features/edition_2001_sv_only.sv` | REJECT |
+| SYN038-CORE-ED-03 | V2001 | SV-only fixed-array value/port forms rejected while indexed memories remain legal (B.4/B.19) | negative edition gate; storage | `tests/fixtures/sim/partial_features/edition_2001_whole_array_assignment.sv` | REJECT |
+| SYN038-CORE-ED-04 | SV2009 | `logic`, `typedef`, packed `struct`, assignment pattern and `always_comb` accepted (B.3/B.4/B.6) | edition gate; type/process | `tests/fixtures/sim/partial_features/edition_2009_sv_types.sv` | PASS |
+| SYN038-CORE-ED-05 | SV2009 | `keywords_directive` changes lexical keywords without changing selected edition (B.1/B.18) | preprocessor; edition | `tests/fixtures/sim/partial_features/edition_begin_keywords_legacy_identifier.sv` | PASS |
+| SYN038-CORE-ED-06 | SV2009 | later `countbits`/final/assertcontrol forms remain outside the selected 2009 set (B.17) | negative later-edition gate | `tests/fixtures/sim/partial_features/edition_2009_countbits.sv` | REJECT |
+| SYN038-CORE-PI-01 | V2001/SV2009 | `gate_instantiation`, `n_input_gate_instance`, `enable_gate_instance` (B.24; V §§7.1–7.4, SV §§28.3–28.6) | structural; terminal; driver | `tests/fixtures/sim/gates/terminal_matrix.sv` | PASS |
+| SYN038-CORE-PI-02 | V2001/SV2009 | `drive_strength`, `pullup_strength`, `pulldown_strength` (B.24; V §§3.4, 7.1.2, SV §28.11) | scalar net; resolved driver | `tests/fixtures/sim/gates/pull_undriven.v` | PASS |
+| SYN038-CORE-PI-03 | V2001/SV2009 | `udp_declaration`/`combinational_body` are tracked as selected Extended SYN-031, not Core syntax | extension boundary; source map | `tests/fixtures/sim/partial_features/udp_comb.sv` | PASS |
+| SYN038-CORE-PI-04 | V2001/SV2009 | `sequential_body`, `edge_input_list` UDP forms remain outside Core (B.25; V §§8.3–8.5, SV §§29.5–29.7) | negative extension boundary | `tests/fixtures/sim/partial_features/udp_sequential_rejected.sv` | REJECT |
+
+The IDs above cover the selected finite Core grammar and its material context
+variants. The context crosswalk makes the pairwise coverage explicit and keeps
+the high-risk three-way chains visible:
+
+| Context ID | Required axis | Covered dimensions | Ledger rows |
+| --- | --- | --- | --- |
+| SYN038-CTX-01 | Declaration/type | scalar/vector; signed/unsigned; bit/logic; enum; packed struct/union; fixed unpacked array/record | `TY-01`–`TY-08` |
+| SYN038-CTX-02 | Shape | singleton, 2/3/17 element controls; 2-D/3-D; packed-inside-unpacked; arrays of records; reversed/negative/nonzero bounds | `TY-03`, `TY-07`–`TY-08`, `EX-07`–`EX-08`, `AS-07`–`AS-10` |
+| SYN038-CTX-03 | Width | 1, 7, 8, 31/32/33, 63/64/65, 129 and selected larger capacity probes | `LX-02`, `TY-01`, `TY-05`–`TY-06`, `EX-02`–`EX-03`, `AS-07` |
+| SYN038-CTX-04 | Storage/lifetime | module/package, static local, automatic local, input/output/inout/ref/const-ref formal, return value, interface member | `TY-09`–`TY-10`, `SB-02`–`SB-08`, `HY-07`–`HY-09` |
+| SYN038-CTX-05 | Expression consumer | assignment RHS, conditional arm, equality/inside, cast/stream, input actual, function return, declaration initializer, constant elaboration | `EX-01`–`EX-12`, `AS-01`–`AS-08`, `SB-04`–`SB-06` |
+| SYN038-CTX-06 | Destination | whole variable, field, selected element, fixed row/slice, concatenation, positional pattern | `EX-06`–`EX-08`, `AS-02`–`AS-08`, `HY-09` |
+| SYN038-CTX-07 | Driver/process | continuous variable/net, multiple legal net sites, blocking/NBA, always/comb/latch/ff, generate and input/output link | `AS-01`–`AS-10`, `PR-01`–`PR-03`, `HY-04`–`HY-09`, `PI-01`–`PI-02` |
+| SYN038-CTX-08 | Values/effects | known/unknown selector, X/Z data, partial mismatch, two-state conversion, unequal widths, one-time call/selector and overlap | `LX-02`–`LX-03`, `EX-03`–`EX-05`, `AS-03`–`AS-09`, `SB-03`–`SB-04` |
+| SYN038-CTX-09 | Pipeline | native snapshot drop, constant/runtime, optimizer on/off, both editions where shared | all positive rows; public run owned by SYN-039 |
+| SYN038-CTX-10 | Interaction chain | array value + function return + input port; record conditional + two-state member + NBA; alias + selected port + distinct driver | `EX-05`, `AS-03`, `HY-09`, `SB-05`, `AS-09`–`AS-10` |
+
+#### SYN-038 selected-profile exclusions
+
+These are explicit profile decisions. An excluded production is not an
+unassigned Core requirement and is not counted as a failing positive cell.
+The negative fixture, when present, checks the selected boundary; target or
+verification extensions require a named SYN-034 child before they can enter
+the Core denominator. SYN-021's finite packed tagged storage and SYN-025's
+primitive/structure case forms have their own Extended evidence, and SYN-028's
+fixed reverse/sort/rsort track is accepted as a separate Extended task; tagged
+predicate and tagged case forms remain owned by active SYN-024 and are not
+claimed complete here.
+
+| ID | Edition | Annex A/B production family | Fixture / owner | Exclusion reason and profile boundary |
+| --- | --- | --- | --- | --- |
+| SYN038-EX-01 | SV2009 | `tagged_union_expression`, `cond_pattern`, `case_pattern_item` (B.3/B.8/B.9) | `tests/fixtures/sim/sequential_predicates/bad_matches_conditional.sv`; SYN-021–025 | Selected Extended tagged/pattern track; SYN-021 finite storage and SYN-025 primitive/structure cases have separate evidence, while tagged predicate/case forms remain pending SYN-024; no Core denominator. |
+| SYN038-EX-02 | SV2009 | `queue_dimension`, `associative_dimension`, `dynamic_array_variable_identifier` (B.3/B.4) | `tests/fixtures/sim/data_types_next/dynamic_array_invalid_size.sv`; SYN-034 | Resizable/native storage has no portable Core RTL mapping. |
+| SYN038-EX-03 | V2001/SV2009 | `non_integer_type`, runtime `real_type`, `string`, `chandle` (B.3) | `tests/fixtures/sim/data_types_next/inside_chandle_rejected.sv`; SYN-016 | Constants may elaborate; runtime real/native objects are outside Core. |
+| SYN038-EX-04 | V2001/SV2009 | `procedural_continuous_assignment`, `force`/`release` extensions (B.7/B.9) | `tests/fixtures/sim/procedural_assign/real.sv`; SYN-034 | Target-dependent legacy drivers are excluded without named target evidence. |
+| SYN038-EX-05 | V2001/SV2009 | `mos_switch_instance`, `pass_switch_instance`, resistive switch forms (B.24) | `tests/fixtures/sim/gates/p40_strength_rejected.sv`; SYN-034 | Device-level switch semantics are outside portable Core RTL. |
+| SYN038-EX-06 | V2001/SV2009 | `sequential_body`, `edge_input_list` UDP forms (B.25) | `tests/fixtures/sim/partial_features/udp_sequential_rejected.sv`; SYN-031 | SYN-031 owns the accepted scalar combinational UDP track; sequential/device UDP needs separate implementation and remains outside Core. |
+| SYN038-EX-07 | V2001/SV2009 | `specify_block`, `system_timing_check`, `path_delay_value` (B.26) | `tests/fixtures/sim/partial_features/negative_constant_delay.sv`; groups 17–19 | Timing/path/SDF behavior is simulation infrastructure, not Core synthesis. |
+| SYN038-EX-08 | SV2009 | `class_declaration`, `program_declaration`, `clocking_declaration` (B.5/B.11/B.20) | `tests/fixtures/sim/classes/basic.sv`; SYN-034 | Verification/object/process containers are outside Core. |
+| SYN038-EX-09 | SV2009 | `assertion_item`, `property_declaration`, `checker_declaration` (B.13/B.14) | `tests/fixtures/sim/concurrent_assertions/unsupported_assertion_argument.sv`; SYN-034 | Bounded simulation assertions do not establish target hardware synthesis. |
+| SYN038-EX-10 | SV2009 | `constraint_declaration`, `randomize_call`, `randcase_statement` (B.15) | `tests/fixtures/sim/data_types_next/dynamic_array_invalid_size.sv`; SYN-034 | Solver/randomization facilities have no Core RTL mapping. |
+| SYN038-EX-11 | V2001/SV2009 | `dpi_import_export`, `extern_tf_declaration`, VPI/PLI forms (B.29/B.30) | `tests/fixtures/sim/dpi/unsupported_vector.sv`; groups 70–71 | Foreign APIs are not synthesizable language requirements. |
+| SYN038-EX-12 | V2001/SV2009 | `pla_system_task`, `dumpports_task`, `vcdclose_task` (B.17; Annex A §§A.7–A.8) | SYN-035; no Core fixture | PLA and extended VCD need target/file-format evidence and stay outside Core. |
+| SYN038-EX-13 | SV2009 | `array_method_call` locator, `find*`, `min`, `max`, `unique` (B.4; Annex A §A.6) | `tests/fixtures/sim/fixed_array_reductions/nonintegral_map.sv`; SYN-034 | Fixed reductions/order methods have separate selected tasks; locator results are excluded. |
+| SYN038-EX-14 | V2001/SV2009 | `par_block`, `join_keyword`, timed recursive `task_declaration` (B.6/B.10) | `tests/fixtures/sim/function/recursive_timed_task.sv`; groups 44–45 | Timed/parallel capture and recursive suspension are outside finite zero-time Core. |
+
+#### SYN-038 72-group disposition
+
+The original grouped inventory is a historical grouping, not the denominator
+for this ledger. Each ID is classified once here using the plan's section 8
+dispositions: `CORE` maps to one or more ledger rows; `RETAIN` keeps a bounded
+existing simulator form; `EXT` belongs to a named selected Extended task;
+`POLICY` is an explicit SYN-034/SYN-035 profile choice; `CAPACITY` is a
+resource ceiling; `OUTSIDE` is not a Core synthesis requirement.
+
+| Old ID | Group | Disposition | Evidence owner / boundary |
+| ---: | --- | --- | --- |
+| 1 | Charge-storage nets | OUTSIDE | SYN-034 target-mapped keeper/cell decision |
+| 2 | Tagged unions | EXT | SYN-021 supports finite packed storage/construction/access; tagged predicate/case patterns remain pending SYN-024, with primitive/structure cases separately covered by SYN-025 |
+| 3 | Real types | CORE + POLICY | SYN-016 constants; runtime real target extensions need SYN-034 |
+| 4 | Strings | CORE + POLICY | SYN-016/SYN-029/SYN-030 constants/images; native runtime strings outside Core |
+| 5 | Chandles | OUTSIDE | Native pointer/foreign handles |
+| 6 | Structures and untagged unions | CORE | `TY-05`–`TY-07`, `AS-07`, SYN-012/SYN-013/SYN-015 |
+| 7 | Fixed unpacked arrays | CORE + CAPACITY | `TY-03`, `TY-08`, `AS-07`–`AS-10`, SYN-001–008/012–015; SYN-036 ceiling |
+| 8 | Resizable containers and array methods | EXT + POLICY | SYN-026–028; SYN-028 fixed ordering is accepted on current main; unrestricted resizing outside Core |
+| 9 | Runtime enum methods | CORE | `TY-04`, SYN-016/SYN-038 finite numeric methods |
+| 10 | Casts | CORE | `EX-09`–`EX-10`, SYN-015 |
+| 11 | Data and array queries | CORE | `TY-12`, SYN-016/SYN-026; dynamic unsupported dimensions excluded |
+| 12 | Initialization and storage lifetimes | CORE | `TY-09`–`TY-10`, `SB-08`, SYN-012/SYN-013/SYN-016 |
+| 13 | Net resolution and strengths | CORE | `TY-02`, `AS-01`, `AS-09`, `PI-01`–`PI-02`, SYN-009/SYN-010 |
+| 14 | Switch-level primitives | OUTSIDE | SYN-034 target selection required |
+| 15 | Primitive instance arrays | RETAIN + EXT | `PI-01`; built-in gate arrays retained, combinational UDP arrays follow SYN-031 |
+| 16 | User-defined primitives | EXT | SYN-031 combinational UDP; sequential UDP outside Core |
+| 17 | Specify blocks | OUTSIDE + POLICY | SYN038-EX-07; no Core timing path; static legacy specparams require SYN-034 selection |
+| 18 | Timing checks | OUTSIDE | SYN038-EX-07; Boolean predicate `&&&` is distinct |
+| 19 | SDF annotation | OUTSIDE | No synthesis-subset dependency |
+| 20 | Gate terminal forms | CORE | `PI-01`–`PI-02`, SYN-008/SYN-009; typed builtins retained |
+| 21 | Continuous and gate delays | RETAIN | Constant simulator delays; dynamic timing outside Core |
+| 22 | Delay expressions | CORE + POLICY | Constant/edition forms in SYN-016/SYN-019; runtime timing extensions outside Core |
+| 23 | Time precision and literal semantics | CORE + RETAIN | `LX-03`, `LX-06`, SYN-019; existing scheduling support retained |
+| 24 | Port connections | CORE | `HY-02`, `HY-09`, `AS-09`–`AS-10`, SYN-007–010/014 |
+| 25 | Libraries and configurations | EXT | SYN-032 selected design assembly |
+| 26 | Packages | CORE | `HY-07`, SYN-013/SYN-016 |
+| 27 | Net aliases | CORE | `AS-09`, SYN-010 strict true-alias rules |
+| 28 | SystemVerilog scheduling regions | RETAIN | `PR-01`–`PR-03`; full verification regions outside Core |
+| 29 | Zero-delay process behavior | CORE + CAPACITY | `PR-01`–`PR-10`; SYN-036 budget boundary |
+| 30 | Conditional event controls | CORE | `PR-02`, SYN-011/SYN-014 finite numeric helpers |
+| 31 | Named-event references | OUTSIDE | Testbench synchronization, no Core backlog |
+| 32 | Array/container sensitivity | CORE | `PR-02`–`PR-03`, SYN-005/SYN-007/SYN-014 |
+| 33 | Intra-assignment timing | RETAIN | Existing NBA capture; timing-bearing/native forms excluded |
+| 34 | Force and release | OUTSIDE + POLICY | General forcing is outside Core; SYN-034 selected static/legacy target required |
+| 35 | Procedural assign/deassign | POLICY | SYN-034 bounded legacy target required |
+| 36 | Named disable | CORE | `PR-09`, SYN-037 local finite control |
+| 37 | Loop forms and captures | CORE | `PR-04`–`PR-06`, SYN-037 |
+| 38 | Uniqueness and priority checking | CORE | `PR-08`, SYN-011/SYN-025 finite checks |
+| 39 | Pattern matching | EXT | SYN-022–025; SYN-025 primitive/structure cases accepted, tagged forms await SYN-024; Core row only records exclusion |
+| 40 | Side-effecting operators | CORE | `AS-04`, canonical mutation path |
+| 41 | Set membership | CORE | `EX-11`, SYN-005 fixed value expressions |
+| 42 | Streaming | CORE | `EX-10`, SYN-015 admitted fixed forms |
+| 43 | Reference subroutine arguments | CORE | `SB-03`, `SB-08`, SYN-013/SYN-015 legality |
+| 44 | Recursive timed tasks | OUTSIDE | SYN038-EX-14; finite zero-time recursion is `SB-07` |
+| 45 | Parallel subroutine bodies | OUTSIDE | SYN038-EX-14; ordinary zero-time calls retained |
+| 46 | Cross-instance subroutine calls | CORE | `HY-06`, `SB-01`, SYN-013/SYN-016/SYN-018 |
+| 47 | Subroutine copy-out and storage | CORE | `SB-02`–`SB-08`, SYN-012/SYN-013 |
+| 48 | File I/O | OUTSIDE | Host scanning/I/O; memory images are SYN-029/SYN-030 |
+| 49 | Display families and formatting | RETAIN + OUTSIDE | Simulation diagnostics retained; aggregate formatting and monitor behavior are outside Core |
+| 50 | String formatting tasks/functions | RETAIN + POLICY | Constant elaboration may use strings; runtime diagnostic facilities retained outside Core |
+| 51 | Memory file loading and writing | EXT | SYN-029/SYN-030 selected initialization profile |
+| 52 | Real-time reporting and time formatting | RETAIN + OUTSIDE | Simulation reporting retained, not Core syntax |
+| 53 | Simulation suspension | OUTSIDE | Interactive `$stop`/debugger behavior |
+| 54 | PLA modeling | POLICY | SYN-035 pending named legacy target and artifact |
+| 55 | Stochastic queues | OUTSIDE | Simulation statistics/queues |
+| 56 | Random-number facilities | OUTSIDE | Simulator RNG does not imply synthesizable RNG |
+| 57 | Command-line plusargs | OUTSIDE | Host input, not a constant parameter override |
+| 58 | Runtime mathematical functions | CORE + POLICY | Constant folding in SYN-016; real hardware target needs SYN-034 |
+| 59 | Runtime severity tasks | RETAIN + OUTSIDE | Elaboration diagnostics and simulation checks retained outside Core |
+| 60 | Host command execution | OUTSIDE | `$system` is host process control |
+| 61 | Waveform selection and extended VCD | RETAIN + OUTSIDE | `$dumpvars` companion retained; extended VCD excluded |
+| 62 | Classes | POLICY | SYN-034 finite static/elaboration decision; general heap outside Core |
+| 63 | Program blocks | OUTSIDE | Testbench reactive construct |
+| 64 | Clocking declarations, sampling and synchronous drives | OUTSIDE | Verification profile; no Core clocking grammar |
+| 65 | Advanced interprocess synchronization | OUTSIDE | Mailbox/semaphore/process APIs |
+| 66 | Assertions and sampled values | RETAIN + POLICY | Simulation checks retained; target assertion synthesis needs SYN-034 |
+| 67 | Checkers | OUTSIDE | Verification container |
+| 68 | Functional coverage | OUTSIDE | Coverage database/bins |
+| 69 | Constrained and structured randomization | OUTSIDE | Solver and randomization |
+| 70 | DPI | OUTSIDE | Foreign-code calling convention |
+| 71 | PLI/VPI | OUTSIDE | External introspection/control APIs |
+| 72 | Virtual interfaces | CORE + OUTSIDE | Concrete interfaces are `HY-08`; runtime virtual handles outside Core |
+
+No Core row is left without a fixture or an explicit single-fault rejection
+control. The old inventory's `Missing`/`Partial` labels remain source-status
+descriptions below and are not copied into the selected Core denominator. A
+new legal failing cell found while executing this ledger must receive a new
+SYN child and dependency; it must not be converted into a broad `Partial`
+label or silently treated as an exclusion.
+
 ### Compilation-unit grouping
 
 The driver accepts `--compilation-units separate|merged` (default `separate`)
@@ -699,10 +941,10 @@ SystemVerilog era:
 - 🟨 **byte/shortint/int/longint** 2-state ints — §1800-2009 6.11 **[SV-2005]** widths/signedness and X/Z-to-zero coercion are implemented for scalar/vector paths and the represented packed aggregates; unsupported net/member contexts remain outside this row's claim
 - 🟦 **uwire nets** — §1800-2009 6.6.2 **[SV-2005]** checked compilation rejects overlapping drivers; standalone whole/declaration and disjoint constant-selected drivers preserve four-state values and undriven Z bits. Driver release, generate scopes, ordinary ports/interface defaults, and undriven net arrays have regression sources for both optimizer modes (`sim_type_conformance.rs`). Same-type aliases without inout edges retain their existing path. The bundled frontend rejects `uwire` inout declarations/actuals; the R05 table unit tests do not establish their execution (sim_port_net_types.rs).
 - 🟦 **typedef simple/packed-vector aliases** — §1800-2009 6.18 **[SV-2005]** resolved by frontend (historical probe)
-- 🟨 **Array declaration initializers** `'{…}` — §1800-2009 7.6/10.9.1 **[SV-2005]** fixed integral array values use declaration-order element correspondence and typed defaults, including admitted runtime zero-time calls in the 2009 pre-process phase. This is no longer a constant-elements-only capability. Nested-default corrections retain repeated bound operands and packed-vector leaf ranges; the corrected cases pass in the current Linux baseline. Unsupported native/resizable element layouts remain outside this claim (sim_memory.rs, sim_rtl_completion.rs, sim_array_conditional_assignments.rs).
+- 🟨 **Array declaration initializers** `'{…}` — §1800-2009 7.6/10.9.1 **[SV-2005]** fixed integral array values use declaration-order element correspondence and typed defaults, including admitted runtime zero-time calls in the 2009 pre-process phase. This is no longer a constant-elements-only capability. Nested-default corrections retain repeated bound operands and packed-vector leaf ranges; the corrected cases passed in the recorded pre-SYN038 Linux baseline. Unsupported native/resizable element layouts remain outside this claim (sim_memory.rs, sim_rtl_completion.rs, sim_array_conditional_assignments.rs).
 - 🟨 **Fixed unpacked array values, assignments and reductions** — §§1800-2009 7.4, 7.6, 7.12.3, 11.4.11 **[SV-2005]** R01 retains array-specific conditional merging; R04 admits bounded type-compatible module-procedural expressions with one RHS snapshot; R03 implements integral reductions and lexical `with` maps without converting fixed arrays to resizable containers. Whole copies, overlapping slices, partial-index rows, reversed/negative bounds and fixed integral subroutine/port paths are represented. SYN-036 caps generated fixed-array storage at 65,536 cells and keeps direct rank-one reductions cell-wise; value/formal/stream contexts require one packed payload and report that measured capacity. Refer to §5 for assignment boundaries and §7 for operator/method boundaries. Native/resizable aggregate elements, unsupported shapes and values exceeding the bounded payload path remain restricted (sim_p30_fixed_arrays.rs, sim_rtl_completion.rs, sim_array_conditional_assignments.rs, sim_fixed_array_reductions.rs, [SYN-036](../tests/sim_syn036_capacity.rs)).
 - 🟦 **enum-typed scalar variables and runtime methods** — §1800-2009 6.19/6.19.5 **[SV-2005]** stored at the elaborated packed base width; enum constants fold through the frontend, and declaration-order first/last/next/prev/num/name methods retain sparse signed values, wrapping step counts, owned names, and the four-/two-state invalid-value defaults (sim_operator_semantics.rs, sim_data_types_next.rs)
-- 🟨 **packed/unpacked struct and union aggregates** — §1800-2009 7.2–7.3, 7.4 **[SV-2005]** packed patterns retain positional/named/default/type-key forms, exact state/signedness and member overrides. Packed unions use overlapping width-matched views; fixed recursive unpacked struct/array leaves have initialization, deep copy and member paths for represented packed, real, string and chandle storage. Unequal-width unpacked untagged unions use the maximum packed member extent. Bounded recursive reference-port leaves and collected aggregate copy links exist; tagged unions, unsupported declaration/element layouts, native/resizable aggregate subroutine storage and general slices remain restricted. Recursive type identity is present, not a missing blanket capability (sim_data_types_completion.rs, sim_partial_features/ports.rs).
+- 🟨 **packed/unpacked struct and union aggregates** — §1800-2009 7.2–7.3, 7.4 **[SV-2005]** packed patterns retain positional/named/default/type-key forms, exact state/signedness and member overrides. Packed unions use overlapping width-matched views; fixed recursive unpacked struct/array leaves have initialization, deep copy and member paths for represented packed, real, string and chandle storage. Unequal-width unpacked untagged unions use the maximum packed member extent. SYN-021 supplies finite packed tagged storage, construction and access; tagged predicate/case patterns remain restricted pending SYN-024, while SYN-025 covers primitive/structure pattern-case forms. Bounded recursive reference-port leaves and collected aggregate copy links exist; unsupported declaration/element layouts, native/resizable aggregate subroutine storage and general slices remain restricted. Recursive type identity is present, not a missing blanket capability (sim_data_types_completion.rs, sim_partial_features/ports.rs).
 - 🟨 **string type/signals/params** — §1800-2009 6.16 **[SV-2005]** module/static/automatic byte strings, copy/casts, core methods, `.atoreal`/`.realtoa`, dynamic formatting, value and string-reference formals, output/inout copy-out and automatic/static returns have ownership-aware source paths. Collected string input/output links and string sensitivity use dependency markers. Returns/inputs are independently owned and copy-out follows cancellation checks. Automatic string NBA destinations, string captures not representable by the activation frame, automatic monitor dependencies and broader aggregate/continuous/native combinations remain restricted (sim_data_types_next.rs, sim_h04_string_format.rs, sim_partial_features/ports.rs).
 - 🟨 **event data type** scalar and fixed unpacked `event` declarations, runtime-indexed selects, hierarchical references, null/default handles, and task-formal aliases preserve stable event-object identity — §1800-2009 6.17 **[SV-2005]**; dynamic/associative/queue event storage remains outside the bounded subset
 - 🟨 **dynamic arrays / associative arrays / queues** — §1800-2009 7.5/7.8/7.10/7.12 **[SV-2005]** source paths include allocation/resize/delete, copy, packed and descriptor-backed generic/nested leaf operations, bounded initialization/patterns, queue slices/overflow, associative defaults/traversal, collected value-port copies and contents/shape dependencies. Packed reductions and `with` methods, locator/min/max/unique queues and sort/rsort/reverse/shuffle are represented. Generic storage does not remove packed-only method/result boundaries: automatic callback captures, string-key index-result queues, non-packed queue endpoint/pop expressions, unsupported nested scalar accesses, general subroutine storage and broader recursive/object forms remain restricted. Shuffle retains its container seed API rather than full process/object RNG integration (sim_data_types_next.rs, sim_data_types_completion.rs, sim_array_sensitivity.rs).
@@ -791,7 +1033,7 @@ Verilog era:
 
 SystemVerilog era:
 
-- 🟨 **Whole/selected fixed-array procedural assignment** `result = sel ? a : b;` / `result <= sel ? a : b;` — §§1800-2009 7.6, 10.4, 11.4.11 **[SV-2005]** R04 admits bounded fixed integral expressions by owned result shape after the existing copy/slice/concatenation/pattern/cast paths. It captures the full RHS once before stores or NBA issue, preserving overlapping assignments, declared element order and specialized per-cell conversions. R01 supplies aggregate ambiguous-selector merging. The separate continuous-assignment/intra-assignment timing paths are unchanged; illegal automatic/reference-formal NBA destinations remain rejected. The nested-default/NBA corrections pass in the current Linux baseline (sim_array_conditional_assignments.rs, sim_p30_fixed_arrays.rs).
+- 🟨 **Whole/selected fixed-array procedural assignment** `result = sel ? a : b;` / `result <= sel ? a : b;` — §§1800-2009 7.6, 10.4, 11.4.11 **[SV-2005]** R04 admits bounded fixed integral expressions by owned result shape after the existing copy/slice/concatenation/pattern/cast paths. It captures the full RHS once before stores or NBA issue, preserving overlapping assignments, declared element order and specialized per-cell conversions. R01 supplies aggregate ambiguous-selector merging. The separate continuous-assignment/intra-assignment timing paths are unchanged; illegal automatic/reference-formal NBA destinations remain rejected. The nested-default/NBA corrections passed in the recorded pre-SYN038 Linux baseline (sim_array_conditional_assignments.rs, sim_p30_fixed_arrays.rs).
 - 🟨 **Assignment-pattern values and positional lvalues** `'{…}`, integer/member keys and `default` — §§1800-2009 10.9.1–10.9.2 **[SV-2005]** existing fixed-array/record paths retain element context, missing/duplicate-key checks and declaration order. The corrections export bound nested defaults without error placeholders and preserve repeated positional edges when elements share one expression node. Bounded packed-vector leaves support positional/integer/default keys using declared `ranges` and checked bounds; typed row defaults and untyped recursive bit defaults remain distinct. Fixed unpacked-array type keys now match owned integral, typedef, row and record descriptors with explicit-index > type-key > default precedence; nested fixed integral arrays/records, reversed/negative bounds and declaration/local/argument/return/NBA contexts are covered by `sim_syn001_type_keys.rs` in both optimizer modes. Replicated assignment-pattern values now expand their constant count through the owned pipeline for fixed unpacked arrays and fixed integral aggregates, preserving syntactic order and repeated positions across nested rows, packed multidimensional values, typedef-qualified values, reversed bounds, declaration, argument/return, and NBA contexts; the public regression covers both optimizer modes (`sim_p30_fixed_arrays.rs`). Positional assignment-pattern lvalues now use typed fixed-array scatter plans for plain and typedef-qualified targets, nested positions, selected fixed-array cells, reversed source bounds, overlap-safe one-time RHS capture, pattern RHSs, and blocking/legal persistent-storage NBA contexts; `sim_syn003_pattern_lvalues.rs` covers both optimizer modes. Frontend-invalid zero counts and shape mismatches remain rejected, source side-effect evaluation count is not promised for replication, keyed/default/replicated lvalue forms, width/type mismatches, constant destinations, automatic/reference-formal NBA targets, packed-vector type-key matching, and general native/resizable aggregate shapes remain restricted.
 - 🟦 **Sequential Boolean predicates** `if (a &&& b)` — §§1800-2009 12.6.2–12.6.3 **[SV-2005]** R06 stores all clauses in source order and keeps branch references separate. Each reached clause is evaluated once; only definite true advances, while false or ambiguous truth stops. Ambiguous statement predicates take else. Numeric truth uses the whole packed value or real nonzero comparison; unique/priority handling remains attached to the statement. This is distinct from ordinary logical `&&` and from timing-check conditions (sim_sequential_predicates.rs).
 - 🟨 **Conditional pattern execution and bindings** `matches`, pattern variables — §1800-2009 12.6, 12.6.2-12.6.3 **[SV-2005]** integral constant patterns, `.*` wildcards and `.name` bindings execute in `if`/`?:` predicates with source-ordered `&&&`, defined match Booleans, automatic binding storage, later-clause/true-arm scope and effect/dependency/lint coverage. SYN-023 adds recursive fixed packed/unpacked structure patterns with resolved member checks. SYN-025 adds primitive/structure `case`/`casez`/`casex ... matches` items, per-item filters, first-match/default behavior and unique/priority checks with one selector capture; tagged patterns remain fail-closed pending SYN-024 (sim_sequential_predicates.rs, sim_semantic.rs).
@@ -877,7 +1119,7 @@ Verilog era:
 - 🟨 **Gate delays** `and #2 g(…)` / parameterized `#D` — §1364-2001 7.14 **[1995]** supported whole-signal and constant-selected gate terminals use captured active-region inertial updates with single, rise/fall, and rise/fall/turn-off delays, X initialization and short-pulse cancellation. Enable-gate X/Z values, vector transition selection and unchanged-result deadlines have regression sources (`sim_gates.rs`, `sim_partial_features.rs`, both optimizer modes); unsupported primitive kinds and other unrepresented terminal forms remain restricted
 - 🟦 **Gate instance arrays** `and g[3:0] (…)` — §1364-2001 7.1 **[1995]** built-in gate-array elements and scalar combinational UDP-array elements are imported with typed terminals and admitted by semantic/lowering paths. `sim_gates_gate_array_distributes_bits` and `udp_comb.sv` cover bit distribution and independent UDP drivers; switch/sequential arrays remain rejected by primitive kind.
 - 🟦 **Combinational UDPs** definition/table/instances — §1364-2001 8.1–8.2/8.6 **[1995]** and §1800-2009 29.3–29.4/29.8 **[SV-2009]** scalar tables are imported into owned rows, validate overlap, match runtime Z as X, return X for unmatched rows, and lower through structural drivers; repeated instances and primitive instance arrays retain independent drivers (`sim_udp.rs`, `udp_comb.sv`, both optimizer modes)
-- ❌ **Sequential UDPs** level/edge-sensitive — §1364-2001 8.3–8.5 **[1995]** same reject as combinational UDPs
+- ❌ **Sequential UDPs** level/edge-sensitive — §1364-2001 8.3–8.5 **[1995]** remain outside the selected UDP profile; SYN-031 accepts scalar combinational UDPs, while sequential state/edge table semantics require separate work
 - 🟨 **Gate terminal connections** — §1364-2001 7.1 **[1995]** typed input expressions, constants, selected and hierarchical references, legal selected outputs, mixed-width normalization and multi-output `buf`/`not` have source paths. Output lvalues still require a supported packed target and structural driver mapping; real terminals, invalid expressions, unsupported primitives and resolved-net combinations reject. The former whole-signal-only, equal-width and 64-terminal statements are obsolete (sim_gates.rs, sim_net_resolution.rs).
 - 🟨 **Structural bind** — §1800-2009 23.11 **[SV-2005]** finite module-type and selected-instance binds, plus interface-to-interface binds, are elaborated as ordinary owned hierarchy with parameter values, target-local port resolution, distinct instance paths and optimizer-parity generated-model traces (`sim_syn033_structural_bind.rs`). Unknown targets and primitive targets remain frontend diagnostics; module injection into an interface is rejected by the SystemVerilog target-kind rule, and checker/program/coverage injection remains outside this selected RTL scope.
 
@@ -1064,17 +1306,17 @@ is rejected by the frontend; parsing or declaration capture is not execution.
 | # | Status | Feature group | Current scope and remaining work | Implementation / rejection owner |
 | ---: | --- | --- | --- | --- |
 | 1 | Missing | Charge-storage nets | `trireg`, charge strengths, charge decay and charge sharing. | [design.rs](../src/sim/codegen/lowering/collection/design.rs), [nets.c](../src/sim/rt/scheduler/nets.c) |
-| 2 | Missing | Tagged unions | Tagged storage, construction and matching. | [aggregates.rs](../src/sim/codegen/lowering/collection/aggregates.rs) |
+| 2 | Partial | Tagged unions | SYN-021 supports finite packed tagged storage, construction and access. Tagged predicate/case patterns remain pending SYN-024; primitive/structure pattern-case forms are covered separately by SYN-025. | [aggregates.rs](../src/sim/codegen/lowering/collection/aggregates.rs), [predicates.rs](../src/core/db/database/predicates.rs), [statement_import.rs](../src/core/db/database/statement_import.rs) |
 | 3 | Partial | Real types | Scalar/fixed-array real storage, ports, value-formal calls, arithmetic, waits/events, changed-write notification and typed formatting are present. Generic container real/shortreal leaf operations exist. Addressable automatic real locals use registered heap payloads and real publication pins them. Queued automatic-real destinations, general real-reference calls and real-valued sampled/method callback results remain restricted. | [owned.rs](../src/sim/emit_c/owned.rs), [stores.rs](../src/sim/emit_c/owned/stores.rs), [dependencies.c](../src/sim/rt/scheduler/dependencies.c) |
 | 4 | Partial | Strings | Owned strings now have module/static/automatic storage, input/output/inout/ref/const-ref call paths, returns, core methods, conversion and dynamic formatting. Collected string value ports and contents dependencies exist. Automatic string NBA targets, unsupported native captures/automatic monitors and broader aggregate/continuous forms remain; string formals and ports are no longer blanket-missing. | [strings.rs](../src/sim/emit_c/owned/strings.rs), [model.rs](../src/sim/emit_c/owned/model.rs), [ports.rs](../src/sim/codegen/lowering/collection/ports.rs) |
 | 5 | Partial | Chandles | Native chandle null/copy/identity/Boolean operations, automatic/static locals, admitted aggregate/class fields, typed mixed signatures and input/output/inout/ref/const-ref/return paths exist. Matching collected reference-port leaves can share storage; ordinary chandle value-port links remain rejected. Packed containment, arithmetic, general continuous assignment and non-string object sensitivity are outside the bounded path. | [objects.rs](../src/sim/emit_c/owned/objects.rs), [ports.rs](../src/sim/codegen/lowering/collection/ports.rs) |
-| 6 | Partial | Structures and untagged unions | Packed patterns/overlapping union views, recursive fixed unpacked leaves, deep copy, explicit member defaults and represented unequal-width unpacked untagged-union storage are present. SYN-012 closes the local packed-aggregate member projection gap and records legal packed struct, equal-width packed union, fixed unpacked struct, untagged union view and nested array-of-record contexts at widths 1/7/8/31/32/33/64/65/129, with mixed signed/unsigned `bit`/`logic` and reversed bounds, through declaration/local/member/row, equality/conditional/assignment/return cells. Collected recursive reference leaves and aggregate links exist. Unsupported declaration/net layouts, general native/resizable subroutine storage, tagged unions and arbitrary slices remain. | [aggregates.rs](../src/sim/codegen/lowering/collection/aggregates.rs), [fixed_projections.rs](../src/sim/codegen/lowering/collection/fixed_projections.rs), [fixed_values.rs](../src/sim/codegen/lowering/collection/fixed_values.rs), [fixed_patterns.rs](../src/sim/codegen/lowering/collection/fixed_patterns.rs), [SYN-012 matrix](../tests/sim_syn012_fixed_layout.rs) |
-| 7 | Partial | Fixed unpacked arrays | Bounded copies, concatenations, slices and partial-index views retain logical coordinates and captured indices. R01 provides fixed-array conditional element/default semantics; R04 stages type-compatible module-procedural expressions before cell stores/NBA issue; R03 adds integral reductions and lexical fixed-record/row maps; SYN-027 adds declaration-order `reverse()` for fixed integral elements, selected rows and automatic local/formal payloads; SYN-028 adds deterministic `sort()`/`rsort()` for fixed integral elements, including selected rows, packed records, repeated keys, reversed/negative bounds, singleton arrays, and automatic local/formal payloads. SYN-007 accepts compatible fixed integral input-port value expressions, including conditional/function/pattern values, fixed slices and runtime-selected rows, with one source capture and declaration-order scatter. SYN-008 qualifies bounded fixed integral output whole/row/slice links, matching fixed-array references, aggregate output values, nested member targets and instance-array distribution. Bound nested patterns preserve repeated operand slots and packed leaf ranges, and the corrected NBA/default-pattern cases pass in the current Linux baseline. General native/resizable element, real-array expression, runtime output/ref/inout rewiring, subroutine and over-limit value combinations remain restricted. | [fixed_arrays.rs](../src/sim/codegen/lowering/containers/fixed_arrays.rs), [ports.rs](../src/sim/codegen/lowering/collection/ports.rs), [methods.rs](../src/sim/codegen/lowering/containers/methods.rs), [fixed_patterns.rs](../src/sim/codegen/lowering/collection/fixed_patterns.rs), [conditionals.rs](../src/sim/codegen/lowering/expressions/conditionals.rs), [fixed_reductions.rs](../src/sim/codegen/lowering/containers/fixed_reductions.rs), [sim_rtl_completion.rs](../tests/sim_rtl_completion.rs), [sim_feature_completion_g1.rs](../tests/sim_feature_completion_g1.rs) |
+| 6 | Partial | Structures and untagged unions | Packed patterns/overlapping union views, recursive fixed unpacked leaves, deep copy, explicit member defaults and represented unequal-width unpacked untagged-union storage are present. SYN-012 closes the local packed-aggregate member projection gap and records legal packed struct, equal-width packed union, fixed unpacked struct, untagged union view and nested array-of-record contexts at widths 1/7/8/31/32/33/64/65/129, with mixed signed/unsigned `bit`/`logic` and reversed bounds, through declaration/local/member/row, equality/conditional/assignment/return cells. SYN-021 supplies finite packed tagged storage, construction and access; tagged predicate/case patterns remain pending SYN-024, while SYN-025 covers primitive/structure pattern-case forms. Collected recursive reference leaves and aggregate links exist. Unsupported declaration/net layouts, general native/resizable subroutine storage and arbitrary slices remain. | [aggregates.rs](../src/sim/codegen/lowering/collection/aggregates.rs), [fixed_projections.rs](../src/sim/codegen/lowering/collection/fixed_projections.rs), [fixed_values.rs](../src/sim/codegen/lowering/collection/fixed_values.rs), [fixed_patterns.rs](../src/sim/codegen/lowering/collection/fixed_patterns.rs), [SYN-012 matrix](../tests/sim_syn012_fixed_layout.rs) |
+| 7 | Partial | Fixed unpacked arrays | Bounded copies, concatenations, slices and partial-index views retain logical coordinates and captured indices. R01 provides fixed-array conditional element/default semantics; R04 stages type-compatible module-procedural expressions before cell stores/NBA issue; R03 adds integral reductions and lexical fixed-record/row maps; SYN-027 adds declaration-order `reverse()` for fixed integral elements, selected rows and automatic local/formal payloads; SYN-028 adds deterministic `sort()`/`rsort()` for fixed integral elements, including selected rows, packed records, repeated keys, reversed/negative bounds, singleton arrays, and automatic local/formal payloads. SYN-007 accepts compatible fixed integral input-port value expressions, including conditional/function/pattern values, fixed slices and runtime-selected rows, with one source capture and declaration-order scatter. SYN-008 qualifies bounded fixed integral output whole/row/slice links, matching fixed-array references, aggregate output values, nested member targets and instance-array distribution. Bound nested patterns preserve repeated operand slots and packed leaf ranges, and the corrected NBA/default-pattern cases passed in the recorded pre-SYN038 Linux baseline. General native/resizable element, real-array expression, runtime output/ref/inout rewiring, subroutine and over-limit value combinations remain restricted. | [fixed_arrays.rs](../src/sim/codegen/lowering/containers/fixed_arrays.rs), [ports.rs](../src/sim/codegen/lowering/collection/ports.rs), [methods.rs](../src/sim/codegen/lowering/containers/methods.rs), [fixed_patterns.rs](../src/sim/codegen/lowering/collection/fixed_patterns.rs), [conditionals.rs](../src/sim/codegen/lowering/expressions/conditionals.rs), [fixed_reductions.rs](../src/sim/codegen/lowering/containers/fixed_reductions.rs), [sim_rtl_completion.rs](../tests/sim_rtl_completion.rs), [sim_feature_completion_g1.rs](../tests/sim_feature_completion_g1.rs) |
 | 8 | Partial | Resizable containers and array methods | Dynamic/queue/associative allocation, copy, resize, defaults, traversal, bounded patterns, generic/nested leaves and collected value-port copies have source paths. Packed callbacks, reductions, locator/min/max/unique and ordering operations are present; their method metadata survives semantic-table growth. Fixed integral reductions use the separate R03 lexical path in group 7; that does not enable automatic captures for resizable callbacks. Non-packed endpoint/pop expressions, string-key index results, general subroutine/nested scalar-query forms and broader recursive/object combinations remain gated. | [containers/](../src/sim/codegen/lowering/containers/), [containers.rs](../src/sim/emit_c/owned/containers.rs), [containers/](../src/sim/emit_c/owned/containers/) |
 | 9 | Source-implemented | Runtime enum methods | Scalar enum first/last/next/prev/num/name methods use owned declaration-order metadata, including sparse/signed values, wrapping counts, invalid-value defaults and owned names. | [queries.rs](../src/sim/emit_c/owned/objects/queries.rs), [strings.rs](../src/sim/emit_c/owned/strings.rs) |
 | 10 | Partial | Casts | Scalar packed/real dynamic casts with success-only writes and enum membership, checked nominal class casts, fixed-size aggregate/array and packed-element dynamic/queue bit-stream paths exist. Native-string/object/recursive stream forms and unsupported reference targets remain restricted. Class downcasts are no longer blanket-missing. | [casts.rs](../src/sim/codegen/lowering/expressions/casts.rs), [queries.rs](../src/sim/emit_c/owned/objects/queries.rs), [objects.rs](../src/sim/emit_c/owned/objects.rs) |
 | 11 | Partial | Data and array queries | Executed `$typename`, `$isunbounded`, `$bits`, `$left`/`$right`/`$low`/`$high`/`$increment`/`$size`/`$dimensions`/`$unpacked_dimensions` with descriptor-backed packed, fixed-array, dynamic/queue, associative-integral, and string metadata; nested runtime container dimensions and string/wildcard associative bounds remain unsupported. | [array_queries.rs](../src/sim/codegen/lowering/expressions/array_queries.rs), [queries.rs](../src/sim/emit_c/owned/objects/queries.rs) |
-| 12 | Partial | Initialization and storage lifetimes | Declaration identity, lifetime and edition-specific initialization are represented. Scalar and fixed integral composite initializers admit zero-time user calls before SystemVerilog processes; static storage initializes once and automatic storage per activation. Explicit member defaults, mixed state domains and nested bound pattern operands have paths. The corrected packed-default path passes in the current Linux baseline. Timing-bearing calls, general native/resizable aggregate/subroutine layouts and ambiguous lifetime provenance remain restricted. | [initialization.rs](../src/sim/codegen/lowering/collection/initialization.rs), [declarations.rs](../src/sim/codegen/lowering/statements/declarations.rs), [calls.rs](../src/sim/emit_c/owned/calls.rs) |
+| 12 | Partial | Initialization and storage lifetimes | Declaration identity, lifetime and edition-specific initialization are represented. Scalar and fixed integral composite initializers admit zero-time user calls before SystemVerilog processes; static storage initializes once and automatic storage per activation. Explicit member defaults, mixed state domains and nested bound pattern operands have paths. The corrected packed-default path passed in the recorded pre-SYN038 Linux baseline. Timing-bearing calls, general native/resizable aggregate/subroutine layouts and ambiguous lifetime provenance remain restricted. | [initialization.rs](../src/sim/codegen/lowering/collection/initialization.rs), [declarations.rs](../src/sim/codegen/lowering/statements/declarations.rs), [calls.rs](../src/sim/emit_c/owned/calls.rs) |
 | 13 | Partial | Net resolution and strengths | Continuous, gate, packed port, fixed wired-array, admitted hierarchical and collapsed-inout drivers retain per-source strengths, wire/tri and wired rules, pulls/supplies, disjoint selected writes and delayed slots. Hierarchical drivers are accepted for parent-to-child, selected constant-bit/part, generated-name and upward-qualified targets through owning-instance slots; R05 applies directional dissimilar-type selection, source-located warnings and winning-declaration propagation delays, including no delay. Expression-only concatenated actuals retain their connectivity; strict true-alias type checks are separate. Unsupported net/aggregate shapes, procedural net writes, uwire inouts, trireg and switch/resistive propagation remain; explicit vector continuous-assignment strength legality is unchanged. | [port_net_types.rs](../src/sim/codegen/lowering/collection/port_net_types.rs), [net_collapse.rs](../src/sim/codegen/lowering/collection/net_collapse.rs), [nets.rs](../src/sim/codegen/lowering/collection/nets.rs), [nets.c](../src/sim/rt/scheduler/nets.c) |
 | 14 | Missing | Switch-level primitives | `nmos`, `pmos`, `cmos`, `rnmos`, `rpmos`, `rcmos`, `tran`, `tranif0/1`, `rtran`, `rtranif0/1`, including resistive strength propagation. | [gates.rs](../src/sim/codegen/lowering/collection/gates.rs), [semantic.rs](../src/sim/semantic.rs) |
 | 15 | Partial | Primitive instance arrays | Built-in gate-array elements are imported and lowered through the ordinary typed gate path, with an existing bit-distribution regression. UDP and switch array kinds remain rejected; broader primitive-array/delay/connection combinations lack current acceptance. | [node_import.rs](../src/core/db/database/node_import.rs), [gates.rs](../src/sim/codegen/lowering/collection/gates.rs) |
