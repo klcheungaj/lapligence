@@ -116,6 +116,62 @@ fn unpacked_structure_conditionals_reject_native_members() {
 }
 
 #[test]
+fn whole_array_continuous_assignments_keep_sources_cells_and_rhs_snapshots() {
+    sim_cli::run_case(
+        "rtl_completion",
+        "syn_006_array_continuous",
+        concat!(
+            "t1 net=a1,x2 var=a1,a2 cond=a1,xx\n",
+            "t1 pattern=c1,c2 selected=zz,a2 split=a1,b2 bit=01,02 row=31,32 ",
+            "func=e1,e3 calls=1\n",
+            "t2 net=x1,x2 var=a1,d2 cond=a1,d2\n",
+            "t2 pattern=c1,c2 selected=zz,d2 split=a1,c2 bit=03,02 row=41,32 ",
+            "func=e1,e4 calls=2\n",
+        ),
+        "",
+        &[],
+    );
+}
+
+#[test]
+fn whole_array_continuous_variable_conflicts_are_rejected() {
+    sim_cli::reject_case(
+        "rtl_completion",
+        "syn_006_array_continuous_variable_conflict",
+        "multiple continuous assignments to variable storage",
+    );
+}
+
+#[test]
+fn dynamic_fixed_net_array_continuous_targets_are_rejected() {
+    sim_cli::reject_case(
+        "rtl_completion",
+        "syn_006_array_continuous_dynamic_net",
+        "reference to non-constant variable 'index'",
+    );
+}
+
+#[test]
+fn conditional_generate_continuous_assignments_only_keep_active_branches() {
+    sim_cli::run_case(
+        "rtl_completion",
+        "syn_006_generate_continuous",
+        "generated=1,0\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
+fn same_instance_continuous_variable_conflicts_are_rejected() {
+    sim_cli::reject_case(
+        "rtl_completion",
+        "syn_006_generate_continuous_conflict",
+        "multiple continuous assignments to variable storage",
+    );
+}
+
+#[test]
 fn fixed_arrays_of_structs_preserve_member_paths_and_formal_shapes() {
     sim_cli::run_case(
         "rtl_completion",

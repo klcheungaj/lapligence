@@ -5,6 +5,99 @@ use super::*;
 type ArrayNetSelection = ((usize, u64), Vec<u32>);
 
 impl Codegen<'_> {
+    /// Return the fixed-array cells covered by a constant array lvalue.
+    ///
+    /// A whole array and a selected row have no single `array_net_endpoint`,
+    /// but they still name a deterministic set of electrical cells.  Keep
+    /// this mapping in the owned lowering layer so continuous driver
+    /// registration and alias-lvalue lowering use the same declared-order
+    /// coordinates.
+    pub(super) fn array_net_target_elements(
+        &self,
+        node: NodeId,
+    ) -> Result<Option<Vec<u64>>, String> {
+        let Some((array, selected)) = self.array_net_target_parts(node) else {
+            return Ok(None);
+        };
+        if !array.is_net {
+            return Ok(None);
+        }
+        let prefix = selected
+            .iter()
+            .take(array.dims.len())
+            .map(|index| {
+                self.eval_bound_i128(*index).map_err(|_| {
+                    format!(
+                        "continuous assignment to net array `{}` requires constant array indices",
+                        array.global
+                    )
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut elements = Vec::new();
+        for coordinates in super::port_array_index_vectors(&array.dims) {
+            if coordinates
+                .iter()
+                .take(prefix.len())
+                .zip(&prefix)
+                .any(|(coordinate, selected)| i128::from(*coordinate) != *selected)
+            {
+                continue;
+            }
+            let indices = coordinates
+                .iter()
+                .copied()
+                .map(i128::from)
+                .map(lhs_integer_expr)
+                .collect::<Vec<_>>();
+            let element = Self::array_constant_linear_index(&array, &indices)
+                .ok_or("net-array target coordinate is out of bounds")?;
+            elements.push(element);
+        }
+        Ok(Some(elements))
+    }
+
+    pub(super) fn array_net_target_parts(
+        &self,
+        node: NodeId,
+    ) -> Option<(ArrayInfo, Vec<NodeId>)> {
+        match self.kind(node) {
+            NodeKind::Array { .. } | NodeKind::Expr(ExprKind::Ref { .. })
+            | NodeKind::Expr(ExprKind::HierPath { .. }) => {
+                self.array_of(node).cloned().map(|array| (array, Vec::new()))
+            }
+            NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
+                if let Some(array) = self.array_of(*base).cloned() {
+                    Some((array, indices.clone()))
+                } else {
+                    let (array, mut prior) = self.array_net_target_parts(*base)?;
+                    prior.extend(indices.iter().copied());
+                    Some((array, prior))
+                }
+            }
+            NodeKind::Expr(ExprKind::BitSelect { base, index }) => {
+                if let Some(array) = self.array_of(*base).cloned() {
+                    Some((array, vec![*index]))
+                } else {
+                    self.array_net_target_parts(*base)
+                }
+            }
+            NodeKind::Expr(
+                ExprKind::PartSelect { base, .. }
+                | ExprKind::IndexedPartSelect { base, .. },
+            ) => self.array_net_target_parts(*base),
+            NodeKind::Expr(ExprKind::Cast { operand, .. }) => self.array_net_target_parts(*operand),
+            NodeKind::Expr(ExprKind::Operation {
+                op: Operation::Assignment,
+                operands,
+                ..
+            }) => operands
+                .first()
+                .and_then(|operand| self.array_net_target_parts(*operand)),
+            _ => None,
+        }
+    }
+
     pub(super) fn array_net_selection(
         &self,
         node: NodeId,
@@ -136,6 +229,49 @@ impl Codegen<'_> {
                 .and_then(|meta| meta.net_type())
                 .and_then(Self::ir_net_kind)
                 .ok_or("net-array kind cannot be resolved")?;
+            let mut sources = Vec::new();
+            for source in nodes {
+                let (target, strengths) = match self.kind(*source) {
+                    NodeKind::ContAssign {
+                        strength0,
+                        strength1,
+                        ..
+                    } => {
+                        let Some(target) = self.node(*source).children.first().copied() else {
+                            continue;
+                        };
+                        (
+                            target,
+                            continuous_assignment_strengths_for_width(
+                                *strength0,
+                                *strength1,
+                                &self.model.arrays[array].hdl_name,
+                                self.model.arrays[array].elem_width,
+                            )?,
+                        )
+                    }
+                    NodeKind::Port {
+                        direction: DbDirection::Output,
+                        high_expr: Some(target),
+                        strength0,
+                        strength1,
+                        low,
+                        ..
+                    } => (
+                        *target,
+                        self.effective_port_driver_strengths(
+                            *source, *strength0, *strength1, *low,
+                        )?,
+                    ),
+                    _ => continue,
+                };
+                if self
+                    .array_net_target_elements(target)?
+                    .is_some_and(|elements| elements.contains(&element))
+                {
+                    sources.push((*source, strengths));
+                }
+            }
             let mut bindings = Vec::with_capacity(peers.len());
             for (physical, peer) in peers.into_iter().enumerate() {
                 let physical =
@@ -172,8 +308,8 @@ impl Codegen<'_> {
                         width: 1,
                         signed: false,
                         kind,
-                        n_drivers: 1,
-                        driver_strengths: vec![(6, 6)],
+                        n_drivers: usize::from(sources.is_empty()),
+                        driver_strengths: vec![(6, 6); usize::from(sources.is_empty())],
                         propagation_delay: None,
                     });
                     bindings.push(IrNetAliasBinding {
@@ -218,45 +354,9 @@ impl Codegen<'_> {
                 .collect::<Vec<_>>();
             groups.sort_unstable();
             groups.dedup();
-            for source in nodes {
-                let (target, strengths) = match self.kind(*source) {
-                    NodeKind::ContAssign {
-                        strength0,
-                        strength1,
-                        ..
-                    } => {
-                        let Some(target) = self.node(*source).children.first().copied() else {
-                            continue;
-                        };
-                        (
-                            target,
-                            continuous_assignment_strengths_for_width(
-                                *strength0,
-                                *strength1,
-                                &self.model.arrays[array].hdl_name,
-                                self.model.arrays[array].elem_width,
-                            )?,
-                        )
-                    }
-                    NodeKind::Port {
-                        direction: DbDirection::Output,
-                        high_expr: Some(target),
-                        strength0,
-                        strength1,
-                        low,
-                        ..
-                    } => (
-                        *target,
-                        self.effective_port_driver_strengths(
-                            *source, *strength0, *strength1, *low,
-                        )?,
-                    ),
-                    _ => continue,
-                };
-                if self.array_net_endpoint(target) == Some((array, element)) {
-                    for group in &groups {
-                        self.add_structural_driver(*group, *source, strengths)?;
-                    }
+            for (source, strengths) in sources {
+                for group in &groups {
+                    self.add_structural_driver(*group, source, strengths)?;
                 }
             }
         }

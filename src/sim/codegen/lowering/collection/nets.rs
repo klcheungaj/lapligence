@@ -378,6 +378,52 @@ impl<'a> Codegen<'a> {
                 }
             }
         }
+        // Whole arrays and selected rows lower to a stream of `ArrayElem`
+        // lvalues, so they do not have one endpoint node to inspect.  Expand
+        // their cells in the same declared coordinate order as the fixed
+        // projection path and route each physical bit through its canonical
+        // net alias binding.  The RHS remains one captured value in the
+        // caller; this method only records its source-bit mapping.
+        if let Some((array, _)) = self.array_net_target_parts(lhs) {
+            if array.is_net {
+                let elements = self.array_net_target_elements(lhs)?.ok_or_else(|| {
+                    format!(
+                        "continuous assignment `{}` has no net-array target",
+                        self.display_name(source)
+                    )
+                })?;
+                let storage = &self.model.arrays[array.ir];
+                let mut result = Vec::new();
+                let mut rhs_bit = 0u32;
+                for element in elements {
+                    let signal = self
+                        .model
+                        .arrays[array.ir]
+                        .net_elements
+                        .iter()
+                        .find_map(|(index, signal)| (*index == element).then_some(*signal))
+                        .ok_or("net-array target cell has no electrical signal")?;
+                    let signal = &self.model.signals[signal];
+                    if signal.net_alias.is_empty() {
+                        return Err("net-array target cell has no electrical bindings".into());
+                    }
+                    for bit in (0..storage.elem_width).rev() {
+                        let binding = signal
+                            .net_alias
+                            .iter()
+                            .find(|binding| binding.signal_bit == bit)
+                            .ok_or("net-array target bit has no electrical binding")?;
+                        result.push((binding.clone(), rhs_bit));
+                        rhs_bit = rhs_bit
+                            .checked_add(1)
+                            .ok_or("net-array source bit index overflow")?;
+                    }
+                }
+                if !result.is_empty() {
+                    return Ok(Some(result));
+                }
+            }
+        }
         let bits = match self.alias_expression_bits(source, lhs) {
             Ok(bits) => bits,
             // Ordinary variable/net lvalues use the existing lowering path.
@@ -575,21 +621,17 @@ impl<'a> Codegen<'a> {
         let mut array_ports = HashSet::new();
         let mut array_endpoints: HashMap<(usize, u64), Vec<Option<AliasBit>>> = HashMap::new();
         for (node, info) in &self.array_globals {
-            if self.db.array_meta(*node).is_some_and(|meta| {
-                matches!(
-                    meta.net_type(),
-                    Some(
-                        NetType::Wand
-                            | NetType::TriAnd
-                            | NetType::Wor
-                            | NetType::TriOr
-                            | NetType::Tri0
-                            | NetType::Tri1
-                            | NetType::Supply0
-                            | NetType::Supply1
-                    )
-                )
-            }) {
+            // Every fixed net-array cell needs a canonical alias view.  The
+            // view is also the per-element driver boundary for ordinary
+            // `wire`/`tri` arrays; inout-connected cells may replace one or
+            // more bits with the already-collapsed peer groups below.
+            if self
+                .db
+                .array_meta(*node)
+                .and_then(|meta| meta.net_type())
+                .and_then(Self::ir_net_kind)
+                .is_some()
+            {
                 for element in 0..self.model.arrays[info.ir].total {
                     array_endpoints
                         .entry((info.ir, element))

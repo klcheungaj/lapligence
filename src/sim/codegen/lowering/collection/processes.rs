@@ -580,7 +580,12 @@ impl<'a> Codegen<'a> {
         // Continuous assignments are independent drivers. Declaration
         // initializers for variables/arrays are initialization, not another
         // process writer; true nets retain their continuous-driver identity.
-        for id in self.db.node_ids() {
+        // `db.node_ids()` also contains the inactive branch of a conditional
+        // generate.  Its declarations remain owned for diagnostics, but they
+        // are not executable drivers in this elaborated instance tree.  Walk
+        // the active design tree so mutually exclusive generate assignments
+        // do not appear as concurrent writers to the same variable.
+        for id in self.design_nodes() {
             if !matches!(self.kind(id), NodeKind::ContAssign { .. })
                 || !self.is_runtime_continuous_driver(id)
             {
@@ -663,6 +668,36 @@ impl<'a> Codegen<'a> {
             }
         }
 
+        // A variable continuous assignment has one source-site writer.  The
+        // frontend reports this as a warning for some legal-looking forms;
+        // allowing code generation would make the result depend on process
+        // order, so reject overlapping sites at the owned semantic boundary.
+        let continuous = writers
+            .iter()
+            .filter(|writer| {
+                matches!(self.kind(writer.node), NodeKind::ContAssign { .. })
+                    && self.continuous_target_is_variable(writer.node)
+            })
+            .collect::<Vec<_>>();
+        for (index, writer) in continuous.iter().enumerate() {
+            for other in continuous.iter().skip(index + 1) {
+                if let Some(storage) = writer.writes.iter().find(|write| {
+                    other
+                        .writes
+                        .iter()
+                        .any(|candidate| self.same_storage(write, candidate))
+                }) {
+                    return Err(format!(
+                        "semantic error: multiple continuous assignments to variable storage `{}` at {} (also written by `{}` at {})",
+                        self.dependency_label(storage),
+                        self.source_location(writer.node),
+                        other.label,
+                        self.source_location(other.node),
+                    ));
+                }
+            }
+        }
+
         for restricted in writers.iter().filter(|writer| {
             matches!(
                 self.kind(writer.node),
@@ -733,6 +768,40 @@ impl<'a> Codegen<'a> {
                 matches!(self.net_decl_target(node), NetDeclTarget::TrueNet)
             }
             NodeKind::ContAssign { .. } => true,
+            _ => false,
+        }
+    }
+
+    fn continuous_target_is_variable(&self, node: NodeId) -> bool {
+        let Some(lhs) = self.node(node).children.first().copied() else {
+            return false;
+        };
+        self.lhs_is_variable_storage(lhs)
+    }
+
+    fn lhs_is_variable_storage(&self, node: NodeId) -> bool {
+        if let Some(array) = self.array_of(node) {
+            return !array.is_net;
+        }
+        match self.kind(node) {
+            NodeKind::Var { .. } => true,
+            NodeKind::Net { .. } => false,
+            NodeKind::Expr(ExprKind::Ref {
+                target: Some(target),
+            }) => self.lhs_is_variable_storage(*target),
+            NodeKind::Expr(ExprKind::HierPath { .. }) => false,
+            NodeKind::Expr(
+                ExprKind::BitSelect { base, .. }
+                | ExprKind::PartSelect { base, .. }
+                | ExprKind::IndexedPartSelect { base, .. },
+            ) => self.lhs_is_variable_storage(*base),
+            NodeKind::Expr(ExprKind::ArraySelect { base, .. }) => {
+                self.lhs_is_variable_storage(*base)
+            }
+            NodeKind::Expr(ExprKind::Cast { operand, .. }) => self.lhs_is_variable_storage(*operand),
+            NodeKind::Expr(ExprKind::Operation { operands, .. }) => operands
+                .iter()
+                .any(|operand| self.lhs_is_variable_storage(*operand)),
             _ => false,
         }
     }
