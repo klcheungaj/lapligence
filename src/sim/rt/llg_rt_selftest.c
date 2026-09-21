@@ -374,8 +374,8 @@ static void test_sv4_ops(void) {
     CHECK(sv4_same(test_temp(sv4_mux(test_temp(b4("x")), test_temp(b4("1010")), test_temp(b4("0101")))), test_temp(SV4_X(4))));
     CHECK(sv4_same(test_temp(sv4_mux(test_temp(b4("x")), test_temp(b4("1010")), test_temp(b4("1000")))), test_temp(b4("10x0"))));
     CHECK(sv4_same(test_temp(sv4_mux(test_temp(b4("z")), test_temp(b4("1010")), test_temp(b4("1000")))), test_temp(b4("10x0"))));
-    CHECK(sv4_same(test_temp(sv4_mux(test_temp(b4("x")), test_temp(b4("10xz")), test_temp(b4("10xz")))), test_temp(b4("10xz"))));
-    CHECK(sv4_same(test_temp(sv4_mux(test_temp(b4("x")), test_temp(b4("10xz")), test_temp(b4("10zz")))), test_temp(b4("10xz"))));
+    CHECK(sv4_same(test_temp(sv4_mux(test_temp(b4("x")), test_temp(b4("10xz")), test_temp(b4("10xz")))), test_temp(b4("10xx"))));
+    CHECK(sv4_same(test_temp(sv4_mux(test_temp(b4("x")), test_temp(b4("10xz")), test_temp(b4("10zz")))), test_temp(b4("10xx"))));
     {
         sv4_t signed_narrow = test_temp(b4("1111"));
         signed_narrow.is_signed = 1;
@@ -645,6 +645,10 @@ static void test_sv4_wide(void) {
         sv4_t mx = test_temp(sv4_mux(test_temp(SV4_X(1)), a, b));
         CHECK(sv4_is_unknown(mx) && mx.width == 128);
         CHECK(sv4_same(test_temp(sv4_mux(test_temp(SV4_X(1)), a, a)), a));
+        sv4_t az = test_temp(SV4_Z(128));
+        sv4_t mz = test_temp(sv4_mux(test_temp(SV4_X(1)), az, az));
+        CHECK(mz.width == 128 && mz.x[0] == UINT64_MAX && mz.x[1] == UINT64_MAX &&
+              mz.z[0] == 0 && mz.z[1] == 0);
     }
     // sv4_same across limbs (bits and xz in the high limb)
     {
@@ -774,6 +778,8 @@ static const sv4_vec_t VECTORS[] = {
     { V_MUX, 0xaULL, 0x0ULL, 0x0ULL, 4, 0, 0xaULL, 0x0ULL, 0x0ULL, 4, 0, 0x0ULL, 0x1ULL, 0x0ULL, 1, 0, 0xaULL, 0x0ULL, 0x0ULL, 4, 0 },
     { V_MUX, 0xaULL, 0x0ULL, 0x0ULL, 4, 0, 0x5ULL, 0x0ULL, 0x0ULL, 4, 0, 0x0ULL, 0x1ULL, 0x0ULL, 1, 0, 0x0ULL, 0xfULL, 0x0ULL, 4, 0 },
     { V_MUX, 0xaULL, 0x0ULL, 0x0ULL, 4, 0, 0x5ULL, 0x0ULL, 0x0ULL, 4, 0, 0x0ULL, 0x0ULL, 0x1ULL, 1, 0, 0x0ULL, 0xfULL, 0x0ULL, 4, 0 },
+    { V_MUX, 0x0ULL, 0x0ULL, 0x1ULL, 1, 0, 0x0ULL, 0x0ULL, 0x1ULL, 1, 0, 0x0ULL, 0x1ULL, 0x0ULL, 1, 0, 0x0ULL, 0x1ULL, 0x0ULL, 1, 0 },
+    { V_MUX, 0x8ULL, 0x2ULL, 0x1ULL, 4, 0, 0x8ULL, 0x2ULL, 0x1ULL, 4, 0, 0x0ULL, 0x0ULL, 0x1ULL, 1, 0, 0x8ULL, 0x3ULL, 0x0ULL, 4, 0 },
     { V_MUX, 0x9ULL, 0x0ULL, 0x2ULL, 4, 0, 0x0ULL, 0x0ULL, 0x0ULL, 4, 0, 0x1ULL, 0x0ULL, 0x0ULL, 1, 0, 0x9ULL, 0x0ULL, 0x2ULL, 4, 0 },
     { V_RESIZE, 0x8ULL, 0x0ULL, 0x0ULL, 4, 1, 0x0ULL, 0x0ULL, 0x0ULL, 0, 0, 0x0ULL, 0x0ULL, 0x0ULL, 8, 1, 0xf8ULL, 0x0ULL, 0x0ULL, 8, 1 },
     { V_RESIZE, 0x8ULL, 0x0ULL, 0x0ULL, 4, 1, 0x0ULL, 0x0ULL, 0x0ULL, 0, 0, 0x0ULL, 0x0ULL, 0x0ULL, 8, 0, 0x8ULL, 0x0ULL, 0x0ULL, 8, 0 },

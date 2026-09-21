@@ -741,6 +741,8 @@ fn vector_specs() -> Vec<VecSpec> {
         VecSpec::new("V_MUX", bstr("1010"), bstr("1010"), bstr("x")),
         VecSpec::new("V_MUX", bstr("1010"), bstr("0101"), bstr("x")),
         VecSpec::new("V_MUX", bstr("1010"), bstr("0101"), bstr("z")),
+        VecSpec::new("V_MUX", bstr("z"), bstr("z"), bstr("x")),
+        VecSpec::new("V_MUX", bstr("10xz"), bstr("10xz"), bstr("z")),
         VecSpec::new("V_MUX", bstr("10z1"), bstr("0000"), bstr("1")),
         // resize (c = target width + signedness)
         VecSpec::new("V_RESIZE", sstr("1000"), EMPTY, resize_target(8, true)),

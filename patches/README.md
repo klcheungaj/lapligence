@@ -13,6 +13,8 @@ reports a mixed or mismatched checkout as an error.
   path normalization used by the admitted in-memory frontend boundary.
 - `slang/slang-ref-port-binding.patch`: packed lvalue binding for module
   reference ports; subroutine reference arguments retain their own rules.
+- `slang/slang-conditional-unknown-merge.patch`: packed ambiguous conditional
+  constants follow the supplied Verilog/SystemVerilog tables, including Z/Z → X.
 
 ## libaco
 

@@ -194,8 +194,10 @@ Implemented scope:
   default-uninitialized payload. Ambiguous selectors preserve known-equal
   elements and default entire differing elements, including nested rows and
   fixed integral records; explicit member initializers are not fallback values.
-  Packed-vector mux behavior is unchanged. The owned emitter captures each
-  evaluated alternative once; constant folding follows the same merge rule.
+  Packed-vector muxes follow the supplied edition tables: equal known `0`/`1`
+  bits survive, while X/Z branch bits, including equal Z/Z, become X. The
+  owned emitter captures each evaluated alternative once; constant folding
+  follows the same merge rule.
   Regression sources are in `sim_rtl_completion` (`array_conditional_*`), with
   separate native ownership tests. Current acceptance is subject to the
   [validation status](#latest-supplied-validation-status), not inferred from
@@ -611,7 +613,7 @@ Verilog era:
 - 🟦 **Arithmetic shifts** `<<< >>>` sign-fill — §1364-2001 4.1.12 **[2001]**
 - 🟦 **Relational** `< <= > >=` — §1364-2001 4.1.7 **[1995]**
 - 🟨 **Equality** `== != === !==` — §1364-2001 4.1.8 **[1995]** X/Z compare literally with `===`/`!==`; logical equality preserves known-mismatch dominance over unrelated unknown bits (the broader formal matrix remains a partial claim)
-- 🟨 **Conditional** `?:` — §1364-2001 4.1.13 **[1995]** packed known selectors choose one arm and ambiguous selectors use the existing per-bit mux. R06 also corrects real-valued alternatives to evaluate both and return zero for an ambiguous selector. Array-valued conditionals have a separate SystemVerilog row. The existing X-select/Z/Z packed result preserves Z; the original audit's supplied-edition table discrepancy remains a separate unresolved conformance boundary, not an R01 change (sim_operator_semantics.rs, sim_sequential_predicates.rs).
+- 🟨 **Conditional** `?:` — §1364-2001 4.1.13 Table 28 / §1800-2009 11.4.11 Table 11-20 **[2001/SV-2009]** packed known selectors choose one arm and ambiguous selectors use the standards' per-bit table: equal known `0`/`1` bits survive, while any branch bit involving X or Z, including Z/Z, becomes X. R06 also corrects real-valued alternatives to evaluate both and return zero for an ambiguous selector. Array-valued conditionals have a separate SystemVerilog row (sim_operator_semantics.rs, sim_conditional_policy.rs, sim_sequential_predicates.rs).
 - 🟦 **Concatenation** `{}` reordered-concat respected — §1364-2001 4.1.14 **[1995]**
 - 🟦 **Replication** `{n{}}` — §1364-2001 4.1.14 **[1995]**
 - 🟦 **Bit-select/part-select operands** — §1364-2001 4.2.1 **[1995]**

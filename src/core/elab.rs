@@ -1174,8 +1174,10 @@ pub fn concat(parts: &[Value]) -> Value {
     Value::from_bits(bits, false)
 }
 
-/// Conditional (`sel ? a : b`).  An X/Z selector merges the branches bit by
-/// bit: identical four-state bits survive and differing bits become X.
+/// Conditional (`sel ? a : b`).  An X/Z selector merges packed branches using
+/// IEEE 1364-2001 §4.1.13 Table 28 and IEEE 1800-2009 §11.4.11 Table 11-20:
+/// identical known bits survive, while any branch bit involving X or Z becomes
+/// X (including an equal Z/Z pair).
 pub fn cond(sel: &Value, a: &Value, b: &Value) -> Value {
     let w = max_width(a, b);
     let signed = a.signed && b.signed;
@@ -1190,7 +1192,11 @@ pub fn cond(sel: &Value, a: &Value, b: &Value) -> Value {
         .bits
         .into_iter()
         .zip(rb.bits)
-        .map(|(left, right)| if left == right { left } else { Bit::X })
+        .map(|(left, right)| match (left, right) {
+            (Bit::Zero, Bit::Zero) => Bit::Zero,
+            (Bit::One, Bit::One) => Bit::One,
+            _ => Bit::X,
+        })
         .collect();
     Value::from_bits(bits, signed)
 }
@@ -1926,8 +1932,9 @@ mod tests {
         assert_eq!(cond(&bits("x"), &same, &same), bits("1010"));
         // sel = X merges equal bits and marks only differing bits unknown.
         assert_eq!(cond(&bits("x"), &bits("1010"), &bits("1001")), bits("10xx"));
-        // Identical X and Z bits remain distinct through the merge.
-        assert_eq!(cond(&bits("z"), &bits("10xz"), &bits("10xz")), bits("10xz"));
+        // Equal known bits survive, while equal X/Z branch bits are X per the
+        // ambiguous-condition tables in both supplied editions.
+        assert_eq!(cond(&bits("z"), &bits("10xz"), &bits("10xz")), bits("10xx"));
         // Arms are coerced before either selecting or merging: common width
         // is max and common signedness requires both arms to be signed.
         assert_eq!(
@@ -1948,6 +1955,38 @@ mod tests {
             cond(&bits("1x"), &bits("1010"), &bits("1000")),
             bits("1010")
         );
+    }
+
+    #[test]
+    fn conditional_one_bit_table_is_exhaustive() {
+        // IEEE 1364-2001 §4.1.13 Table 28 and IEEE 1800-2009 §11.4.11
+        // Table 11-20 agree for every one-bit selector/branch combination.
+        let states = [Bit::Zero, Bit::One, Bit::X, Bit::Z];
+        for selector in states {
+            for left in states {
+                for right in states {
+                    let expected = match selector {
+                        Bit::Zero => right,
+                        Bit::One => left,
+                        Bit::X | Bit::Z => match (left, right) {
+                            (Bit::Zero, Bit::Zero) => Bit::Zero,
+                            (Bit::One, Bit::One) => Bit::One,
+                            _ => Bit::X,
+                        },
+                    };
+                    let actual = cond(
+                        &Value::from_bits(vec![selector], false),
+                        &Value::from_bits(vec![left], false),
+                        &Value::from_bits(vec![right], false),
+                    );
+                    assert_eq!(
+                        actual.bits,
+                        vec![expected],
+                        "{selector:?}: {left:?}/{right:?}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]

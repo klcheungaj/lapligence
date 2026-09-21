@@ -10,7 +10,7 @@ skip or an expected-success substitute.
 | Fixture | Required result / ownership boundary |
 | --- | --- |
 | `numeric_loop.sv` | 1,000 owned function results; `1007` |
-| `branch_side_effects.sv` | Skipped logical/conditional arms do not call the function; equal Z arms merge without losing Z; `23 0`, then `1` |
+| `branch_side_effects.sv` | Skipped logical/conditional arms do not call the function; equal Z arms become X under the packed conditional tables; `23 0`, then `1` |
 | `wide_intermediate.sv` | A 7-bit source produces a 7,168-bit expression containing 4,096 ones |
 | `mixed_width_loop.sv` | Repeated narrow temporaries alongside one 65,537-bit cell; `8192 1` |
 | `selected_nba_capture.sv` | A pending selected write retains the original RHS despite source mutation; `0`, then `42` |

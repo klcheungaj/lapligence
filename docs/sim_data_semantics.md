@@ -313,14 +313,15 @@ operands, including their side effects.
 **Conditional merge**
 
 For `c ? t : f`, a known nonzero condition selects `t`, zero selects `f`. If
-the condition is ambiguous, each result bit is `t_bit` when `t_bit == f_bit`,
-otherwise `x` (including differences involving `z`):
+the condition is ambiguous, each result bit preserves an equal known `0` or
+`1` branch bit and otherwise becomes `x`, including equal or differing `x`/`z`
+branch bits:
 
 | `t_bit` | `f_bit` | merged bit |
 | --- | --- | --- |
 | 0 | 0 | 0 |
 | 1 | 1 | 1 |
-| x/z | same x/z | that same value |
+| x/z | same x/z | x |
 | any unequal pair |  | x |
 
 **Signed arithmetic corner cases**
@@ -357,7 +358,7 @@ The complete operator inventory is in 1800-2009 §11.4 (and 1364-2001 §§2.4,
 | Bitwise | `&`, `|`, `^`, `^~`, `~^` | Per-bit four-state operation (§11.4.8) |
 | Reduction | unary `&`, `~&`, `|`, `~|`, `^`, `~^`, `^~` | Reduces a vector to one bit; X if decisive information is unavailable (§11.4.9) |
 | Shift | `<<`, `>>`, `<<<`, `>>>` | Left fills zero; logical right fills zero; arithmetic right fills sign bit; unknown shift amount yields X (§11.4.10) |
-| Conditional | `?:` | Condition is true when its value is nonzero, false when zero; X/Z or a partially unknown vector merges the two branches bit-by-bit, retaining equal bits (§11.4.11) |
+| Conditional | `?:` | Condition is true when its value is nonzero, false when zero; X/Z or a partially unknown packed vector merges the two branches bit-by-bit, retaining equal known `0`/`1` bits and producing X for branch X/Z bits, including Z/Z (§1364-2001 4.1.13 Table 28; §1800-2009 11.4.11 Table 11-20) |
 | Concatenation | `{a,b}`, replication `{n{a,b}}` | Self-determined operands; result is unsigned and concatenated width (§11.4.12) |
 | String concat | `{s1,s2}` in string context | String concatenation rules in §11.4.12.2 and §11.10 |
 | Set membership | `inside` | Tests a value against expressions, ranges, and wildcard items; returns 1-bit result (§11.4.13) |
