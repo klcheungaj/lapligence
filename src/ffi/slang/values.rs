@@ -117,7 +117,7 @@ pub(super) fn decode_types(
     let types = raw
         .iter()
         .map(|item| {
-            if item.flags & !0b111 != 0 {
+            if item.flags & !0b1111 != 0 {
                 return Err(invalid_native("type contains unknown flags"));
             }
             for index in checked_window(
@@ -178,6 +178,7 @@ pub(super) fn decode_types(
                 is_signed: item.flags & 1 != 0,
                 is_four_state: item.flags & 2 != 0,
                 is_fixed_size: item.flags & 4 != 0,
+                is_tagged: item.flags & 8 != 0,
                 bit_width: item.bit_width,
                 // SAFETY: native strings borrow from the live snapshot.
                 display_name: unsafe { copy_string(item.display_name, "type display name")? },

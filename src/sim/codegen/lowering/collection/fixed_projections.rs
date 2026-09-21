@@ -14,9 +14,16 @@ enum FixedRoot {
 struct Projection {
     root: FixedRoot,
     descriptor: TypeDescriptor,
-    steps: Vec<(IrPackedSelect, bool)>,
+    steps: Vec<(IrPackedSelect, bool, Option<TaggedMemberGuard>)>,
     signed: bool,
     ref_legal: bool,
+}
+
+#[derive(Clone, Copy)]
+struct TaggedMemberGuard {
+    total_width: u32,
+    tag_width: u32,
+    member_index: usize,
 }
 
 impl Codegen<'_> {
@@ -42,6 +49,7 @@ impl Codegen<'_> {
                 | TypeShape::Aggregate(crate::core::db::AggregateLayout {
                     kind: AggregateKind::PackedStruct
                         | AggregateKind::PackedUnion
+                        | AggregateKind::TaggedUnion
                         | AggregateKind::UnpackedStruct
                         | AggregateKind::UnpackedUnion,
                     ..
@@ -395,6 +403,7 @@ impl Codegen<'_> {
                             width,
                         },
                         false,
+                        None,
                     ));
                     projection.signed = false;
                     projection.ref_legal = false;
@@ -412,7 +421,7 @@ impl Codegen<'_> {
                 )?;
                 projection
                     .steps
-                    .extend(steps.into_iter().map(|step| (step, false)));
+                    .extend(steps.into_iter().map(|step| (step, false, None)));
                 projection.signed = false;
                 projection.ref_legal = false;
                 Ok(Some(projection))
@@ -439,7 +448,7 @@ impl Codegen<'_> {
                 )?;
                 projection
                     .steps
-                    .extend(steps.into_iter().map(|step| (step, false)));
+                    .extend(steps.into_iter().map(|step| (step, false, None)));
                 projection.signed = false;
                 projection.ref_legal = false;
                 Ok(Some(projection))
@@ -459,13 +468,27 @@ impl Codegen<'_> {
             .ok_or_else(|| format!("fixed value has no member `{name}`"))?;
         let member = &layout.members[index];
         let width = fixed_width(&member.descriptor).ok_or("fixed member has no width")?;
+        let tagged_guard = if layout.kind == AggregateKind::TaggedUnion {
+            let total_width = fixed_width(&projection.descriptor)
+                .ok_or("tagged union has no fixed width")?;
+            let tag_width = layout.tag_bits().ok_or("tagged union tag width overflow")?;
+            (tag_width > 0).then_some(TaggedMemberGuard {
+                total_width,
+                tag_width,
+                member_index: index,
+            })
+        } else {
+            None
+        };
         let offset = if layout.kind == AggregateKind::UnpackedUnion
             && matches!(&member.descriptor.shape, TypeShape::Aggregate(member_layout) if member_layout.kind == AggregateKind::UnpackedStruct)
         {
             fixed_width(&projection.descriptor).ok_or("union has no width")? - width
         } else if matches!(
             layout.kind,
-            AggregateKind::PackedUnion | AggregateKind::UnpackedUnion
+            AggregateKind::PackedUnion
+                | AggregateKind::TaggedUnion
+                | AggregateKind::UnpackedUnion
         ) {
             0
         } else {
@@ -486,6 +509,7 @@ impl Codegen<'_> {
                 width,
             },
             member.two_state,
+            tagged_guard,
         ));
         projection.signed = member.ty.signed;
         projection.descriptor = member.descriptor.clone();
@@ -551,6 +575,7 @@ impl Codegen<'_> {
         projection.steps.push((
             IrPackedSelect { base, width },
             unpacked && two_state(&element),
+            None,
         ));
         projection.ref_legal = unpacked;
         projection.signed = element.info.signed;
@@ -585,8 +610,66 @@ impl Codegen<'_> {
                 }
             }
         };
-        for (step, state) in projection.steps {
+        for (step, state, tagged_guard) in projection.steps {
+            let source = value.clone();
             value = super::packed_formals::packed_step_read(value, step);
+            if let Some(guard) = tagged_guard {
+                let tag_right = guard
+                    .total_width
+                    .checked_sub(guard.tag_width)
+                    .ok_or("tagged union tag offset underflow")?;
+                let tag_left = tag_right
+                    .checked_add(guard.tag_width)
+                    .and_then(|width| width.checked_sub(1))
+                    .ok_or("tagged union tag offset overflow")?;
+                let tag = IrExpr::new(
+                    IrExprKind::PartSel {
+                        base: Box::new(source),
+                        left: i64::from(tag_left),
+                        right: i64::from(tag_right),
+                    },
+                    guard.tag_width,
+                    false,
+                    None,
+                );
+                let expected = IrConst::packed(
+                    vec![u64::try_from(guard.member_index)
+                        .map_err(|_| "tagged union member index overflow")?],
+                    vec![0],
+                    vec![0],
+                    guard.tag_width,
+                    false,
+                    None,
+                )
+                .map_err(|error| error.to_string())?;
+                let matches = IrExpr::new(
+                    IrExprKind::Bin {
+                        op: IrBinOp::CaseEq,
+                        a: Box::new(tag),
+                        b: Box::new(IrExpr::new(
+                            IrExprKind::Const(expected),
+                            guard.tag_width,
+                            false,
+                            None,
+                        )),
+                    },
+                    1,
+                    false,
+                    None,
+                );
+                let width = value.width;
+                let signed = value.signed;
+                value = IrExpr::new(
+                    IrExprKind::Mux {
+                        sel: Box::new(matches),
+                        a: Box::new(value),
+                        b: Box::new(const_x_expr(width)),
+                    },
+                    width,
+                    signed,
+                    None,
+                );
+            }
             if state {
                 value = IrExpr::to_two_state(value);
             }
@@ -665,14 +748,22 @@ impl Codegen<'_> {
                     arr: *arr,
                     indices: indices.clone(),
                     elem_sel: IrElemSel::PackedChain(
-                        projection.steps.into_iter().map(|(step, _)| step).collect(),
+                        projection
+                            .steps
+                            .into_iter()
+                            .map(|(step, _, _)| step)
+                            .collect(),
                     ),
                 }));
             }
         }
         Ok(Some(IrLhs::PackedSelect {
             target: Box::new(target),
-            steps: projection.steps.into_iter().map(|(step, _)| step).collect(),
+            steps: projection
+                .steps
+                .into_iter()
+                .map(|(step, _, _)| step)
+                .collect(),
             signed: projection.signed,
             two_state: two_state(&projection.descriptor),
         }))

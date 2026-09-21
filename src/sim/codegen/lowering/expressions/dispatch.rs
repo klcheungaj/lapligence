@@ -3,6 +3,161 @@
 use super::*;
 
 impl<'a> Codegen<'a> {
+    fn lower_tagged_union_constructor(
+        &mut self,
+        scope_path: &str,
+        node: NodeId,
+        member_name: &str,
+        value_node: Option<NodeId>,
+    ) -> Result<IrExpr, String> {
+        let descriptor = self
+            .query_descriptor(node)
+            .cloned()
+            .ok_or_else(|| format!("tagged union constructor has no type in `{scope_path}`"))?;
+        let TypeShape::Aggregate(layout) = &descriptor.shape else {
+            return Err(format!(
+                "tagged union constructor has a non-aggregate type in `{scope_path}`"
+            ));
+        };
+        if layout.kind != AggregateKind::TaggedUnion {
+            return Err(format!(
+                "tagged constructor targets a non-tagged union in `{scope_path}`"
+            ));
+        }
+        let member_index = layout
+            .members
+            .iter()
+            .position(|member| member.name == member_name)
+            .ok_or_else(|| format!("tagged union has no member `{member_name}` in `{scope_path}`"))?;
+        let member = &layout.members[member_index];
+        let tag_width = layout
+            .tag_bits()
+            .ok_or_else(|| format!("tagged union tag width overflows in `{scope_path}`"))?;
+        if tag_width == 0 && layout.members.len() != 1 {
+            return Err(format!(
+                "tagged union `{}` has no representable tag bits in `{scope_path}`",
+                descriptor.name
+            ));
+        }
+        let payload_width = layout
+            .payload_bits()
+            .ok_or_else(|| format!("tagged union payload width overflows in `{scope_path}`"))?;
+        let total_width = tag_width
+            .checked_add(payload_width)
+            .ok_or_else(|| format!("tagged union width overflows in `{scope_path}`"))?;
+        if descriptor.info.width != Some(total_width) {
+            return Err(format!(
+                "tagged union `{}` is not a fixed packed value in `{scope_path}`",
+                descriptor.name
+            ));
+        }
+        if total_width == 0 {
+            return Err(format!(
+                "tagged union `{}` has zero storage width in `{scope_path}`",
+                descriptor.name
+            ));
+        }
+        let member_width = if matches!(
+            &member.descriptor.shape,
+            TypeShape::Opaque { kind } if kind == "Void"
+        ) {
+            0
+        } else {
+            Self::fixed_descriptor_width(&member.descriptor).ok_or_else(|| {
+                format!(
+                    "tagged union member `{member_name}` has no fixed packed width in `{scope_path}`"
+                )
+            })?
+        };
+        if member_width > payload_width {
+            return Err(format!(
+                "tagged union member `{member_name}` exceeds payload width in `{scope_path}`"
+            ));
+        }
+        let fill = if descriptor.two_state { 0 } else { 2 };
+        let payload = match value_node {
+            Some(_value_node) if member_width == 0 => {
+                return Err(format!(
+                    "void tagged union member `{member_name}` has a value in `{scope_path}`"
+                ));
+            }
+            Some(value_node) => {
+                let value = ir_to_storage(
+                    self.lower_expr(scope_path, value_node)?,
+                    member_width,
+                    member.descriptor.info.signed,
+                    member.descriptor.two_state,
+                )?;
+                let padding = payload_width - member_width;
+                if padding == 0 {
+                    value
+                } else {
+                    IrExpr::new(
+                        IrExprKind::Concat {
+                            parts: vec![
+                                IrExpr::new(
+                                    IrExprKind::Fill(fill),
+                                    padding,
+                                    false,
+                                    Some(fill),
+                                ),
+                                value,
+                            ],
+                        },
+                        payload_width,
+                        false,
+                        None,
+                    )
+                }
+            }
+            None if payload_width == 0 => return Ok(IrExpr::new(
+                IrExprKind::Const(
+                    IrConst::packed(
+                        vec![u64::try_from(member_index).map_err(|_| {
+                            format!("tagged union member index overflows in `{scope_path}`")
+                        })?],
+                        vec![0],
+                        vec![0],
+                        tag_width,
+                        false,
+                        None,
+                    )
+                    .map_err(|error| error.to_string())?,
+                ),
+                total_width,
+                descriptor.info.signed,
+                None,
+            )),
+            None => IrExpr::new(IrExprKind::Fill(fill), payload_width, false, Some(fill)),
+        };
+        if tag_width == 0 {
+            return Ok(payload);
+        }
+        let tag = IrConst::packed(
+            vec![u64::try_from(member_index)
+                .map_err(|_| format!("tagged union member index overflows in `{scope_path}`"))?],
+            vec![0],
+            vec![0],
+            tag_width,
+            false,
+            None,
+        )
+        .map_err(|error| error.to_string())?;
+        Ok(IrExpr::new(
+            IrExprKind::Concat {
+                parts: vec![IrExpr::new(
+                    IrExprKind::Const(tag),
+                    tag_width,
+                    false,
+                    None,
+                ), payload],
+            },
+            total_width,
+            descriptor.info.signed,
+            None,
+        ))
+    }
+
     /// Render context for the IR built so far (the enclosing function, when
     /// any, resolves formal reads).
     #[allow(dead_code)] // retained for fragment callers pending the lowering migration
@@ -35,7 +190,9 @@ impl<'a> Codegen<'a> {
         if let Some(value) = self.fixed_pattern_value(scope_path, h)? {
             return Ok(value);
         }
-        if self.array_of(h).is_some() || self.unpacked_aggregate_info(h).is_some() {
+        if (self.array_of(h).is_some() || self.unpacked_aggregate_info(h).is_some())
+            && self.packed_member_info(h).is_none()
+        {
             if let Some(value) = self.lower_bitstream_source(scope_path, h)? {
                 return Ok(value);
             }
@@ -80,6 +237,9 @@ impl<'a> Codegen<'a> {
             return Ok(value);
         }
         match self.kind(h) {
+            NodeKind::Expr(ExprKind::TaggedUnion { member, value }) => {
+                self.lower_tagged_union_constructor(scope_path, h, member, *value)
+            }
             NodeKind::Expr(ExprKind::Conditional { predicate, if_true, if_false }) => {
                 self.lower_predicate_conditional(scope_path, predicate, *if_true, *if_false)
             }
@@ -232,6 +392,7 @@ impl<'a> Codegen<'a> {
                             member.ty.signed,
                         )
                     };
+                    let value = self.guard_tagged_member_read(h, &signal, value)?;
                     return Ok(if member.two_state && !signal.real {
                         IrExpr::to_two_state(value)
                     } else {
@@ -680,6 +841,7 @@ impl<'a> Codegen<'a> {
                             member.ty.signed,
                         )
                     };
+                    let member_value = self.guard_tagged_member_read(h, &signal, member_value)?;
                     return Ok(if member.two_state && !member_value.is_real() {
                         IrExpr::to_two_state(member_value)
                     } else {
@@ -698,6 +860,7 @@ impl<'a> Codegen<'a> {
                         false,
                         None,
                     );
+                    let member_value = self.guard_tagged_member_read(h, &info, member_value)?;
                     let selected = IrExpr::resize_to(member_value, member.width, member.signed);
                     return Ok(if member.two_state {
                         IrExpr::to_two_state(selected)

@@ -70,7 +70,9 @@ fn lower_container_element(descriptor: &TypeDescriptor) -> Result<IrContainerEle
         TypeShape::Aggregate(layout)
             if matches!(
                 layout.kind,
-                AggregateKind::PackedStruct | AggregateKind::PackedUnion
+                AggregateKind::PackedStruct
+                    | AggregateKind::PackedUnion
+                    | AggregateKind::TaggedUnion
             ) && descriptor.info.width.is_some() =>
         {
             packed().ok_or_else(|| {

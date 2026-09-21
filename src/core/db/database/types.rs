@@ -200,7 +200,17 @@ impl TypeDescriptor {
                     .iter()
                     .map(|member| member.descriptor.fixed_size_bits())
                     .try_fold(0u64, |largest, width| Some(largest.max(width?))),
-                _ => None,
+                AggregateKind::TaggedUnion => {
+                    let payload = layout
+                        .members
+                        .iter()
+                        .map(|member| match &member.descriptor.shape {
+                            TypeShape::Opaque { kind } if kind == "Void" => Some(0),
+                            _ => member.descriptor.fixed_size_bits(),
+                        })
+                        .try_fold(0u64, |largest, width| Some(largest.max(width?)))?;
+                    payload.checked_add(u64::from(layout.tag_bits()?))
+                }
             },
             TypeShape::FixedArray {
                 dimensions,
@@ -288,6 +298,33 @@ pub struct AggregateLayout {
     pub type_identity: Option<String>,
     pub type_id: Option<TypeId>,
     pub members: Vec<AggregateMember>,
+}
+
+impl AggregateLayout {
+    /// Number of packed tag bits for a finite tagged union. Slang assigns
+    /// declaration-order member indices starting at zero and reserves enough
+    /// bits for the largest index.
+    pub fn tag_bits(&self) -> Option<u32> {
+        if self.kind != AggregateKind::TaggedUnion {
+            return None;
+        }
+        let max_index = self.members.len().checked_sub(1)?;
+        Some(usize::BITS - max_index.leading_zeros())
+    }
+
+    /// Maximum fixed payload width across tagged members, excluding the tag.
+    pub fn payload_bits(&self) -> Option<u32> {
+        self.members
+            .iter()
+            .map(|member| match &member.descriptor.shape {
+                TypeShape::Opaque { kind } if kind == "Void" => Some(0),
+                _ => member
+                    .descriptor
+                    .fixed_size_bits()
+                    .and_then(|width| u32::try_from(width).ok()),
+            })
+            .try_fold(0u32, |largest, width| Some(largest.max(width?)))
+    }
 }
 
 /// Exact owned metadata for a type key in an assignment pattern.

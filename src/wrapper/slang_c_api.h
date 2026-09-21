@@ -240,7 +240,9 @@ enum {
 enum {
   LLG_SLANG_TYPE_SIGNED = 1u << 0,
   LLG_SLANG_TYPE_FOUR_STATE = 1u << 1,
-  LLG_SLANG_TYPE_FIXED_SIZE = 1u << 2
+  LLG_SLANG_TYPE_FIXED_SIZE = 1u << 2,
+  /* A packed or unpacked union with an active-member tag. */
+  LLG_SLANG_TYPE_TAGGED = 1u << 3
 };
 
 typedef struct {
@@ -590,6 +592,8 @@ enum {
   LLG_SLANG_EXPR_ASSERTION_INSTANCE = 90,
   /* `@(event)` arguments carried by sampled-value system functions. */
   LLG_SLANG_EXPR_CLOCKING_EVENT = 91,
+  /* A typed tagged-union member constructor (`tag value(...)`). */
+  LLG_SLANG_EXPR_TAGGED_UNION = 92,
   LLG_SLANG_TIMING_DELAY = 112,
   LLG_SLANG_TIMING_SIGNAL_EVENT = 113,
   LLG_SLANG_TIMING_EVENT_LIST = 114,

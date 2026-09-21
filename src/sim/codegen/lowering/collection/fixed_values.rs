@@ -10,6 +10,7 @@ use super::*;
 pub(super) fn fixed_width_bits(descriptor: &TypeDescriptor) -> Option<u64> {
     match &descriptor.shape {
         TypeShape::PackedAtom { .. } => descriptor.info.width.map(u64::from),
+        TypeShape::Opaque { kind } if kind == "Void" => Some(0),
         TypeShape::Aggregate(layout) => {
             let mut widths = layout
                 .members
@@ -20,6 +21,9 @@ pub(super) fn fixed_width_bits(descriptor: &TypeDescriptor) -> Option<u64> {
                 AggregateKind::PackedUnion | AggregateKind::UnpackedUnion
             ) {
                 widths.try_fold(0, |largest, width| Some(largest.max(width?)))
+            } else if layout.kind == AggregateKind::TaggedUnion {
+                let payload = widths.try_fold(0, |largest, width| Some(largest.max(width?)))?;
+                payload.checked_add(u64::from(layout.tag_bits()?))
             } else if matches!(
                 layout.kind,
                 AggregateKind::PackedStruct | AggregateKind::UnpackedStruct
@@ -105,7 +109,9 @@ pub(super) fn fixed_path_descriptor(
                     fixed_width(&descriptor)? - fixed_width(&member.descriptor)?
                 } else if matches!(
                     layout.kind,
-                    AggregateKind::UnpackedUnion | AggregateKind::PackedUnion
+                    AggregateKind::UnpackedUnion
+                        | AggregateKind::PackedUnion
+                        | AggregateKind::TaggedUnion
                 ) {
                     0
                 } else {

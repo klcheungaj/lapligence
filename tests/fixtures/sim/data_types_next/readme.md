@@ -1,7 +1,8 @@
 # Next-phase datatype fixtures
 
 - Purpose: bounded, non-exhaustive next-phase datatype inventory.
-- Coverage: unions/structs, streaming and `inside`, static subprogram storage,
+- Coverage: untagged and finite packed tagged unions/structs, streaming and
+  `inside`, static subprogram storage,
   packed and descriptor-backed dynamic containers (including nested copy,
   resize, delete, and negative-size diagnostics), descriptor-backed real and
   string queues/associative arrays, recursive child-container queue and

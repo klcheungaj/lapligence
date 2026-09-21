@@ -613,6 +613,8 @@ struct Capture {
       flags |= LLG_SLANG_TYPE_FOUR_STATE;
     if (canonical.isFixedSize())
       flags |= LLG_SLANG_TYPE_FIXED_SIZE;
+    if (canonical.isTaggedUnion())
+      flags |= LLG_SLANG_TYPE_TAGGED;
 
     const uint64_t id = output.types.size();
     typeIds.emplace(&canonical, id);
@@ -1323,6 +1325,7 @@ uint32_t semanticExpressionKind(ExpressionKind kind) {
     case ExpressionKind::ValueRange: return LLG_SLANG_EXPR_VALUE_RANGE;
     case ExpressionKind::AssertionInstance: return LLG_SLANG_EXPR_ASSERTION_INSTANCE;
     case ExpressionKind::ClockingEvent: return LLG_SLANG_EXPR_CLOCKING_EVENT;
+    case ExpressionKind::TaggedUnion: return LLG_SLANG_EXPR_TAGGED_UNION;
     default: return LLG_SLANG_SUBKIND_NONE;
   }
 }
@@ -2231,6 +2234,8 @@ public:
         result.flags |= LLG_SLANG_SEMANTIC_INDEXED_DOWN;
     }
     if constexpr (std::same_as<T, MemberAccessExpression>)
+      result.name = storeString(capture.output, expression.member.name);
+    if constexpr (std::same_as<T, TaggedUnionExpression>)
       result.name = storeString(capture.output, expression.member.name);
     if constexpr (std::same_as<T, CallExpression>) {
       result.name = storeString(capture.output, expression.getSubroutineName());
@@ -3154,6 +3159,10 @@ private:
     else if constexpr (std::same_as<T, MemberAccessExpression>) {
       capture.semanticRole(id, &expression.value(), LLG_SLANG_EDGE_BASE);
       capture.semanticRole(id, &expression.member, LLG_SLANG_EDGE_REFERENCE);
+    }
+    else if constexpr (std::same_as<T, TaggedUnionExpression>) {
+      if (expression.valueExpr)
+        capture.semanticRole(id, expression.valueExpr, LLG_SLANG_EDGE_BODY);
     }
     else if constexpr (std::same_as<T, ConditionalExpression>) {
       for (uint32_t i = 0; i < expression.conditions.size(); i++) {

@@ -496,6 +496,7 @@ pub struct Type {
     pub is_signed: bool,
     pub is_four_state: bool,
     pub is_fixed_size: bool,
+    pub is_tagged: bool,
     pub bit_width: u64,
     pub display_name: String,
     pub element_type_id: Option<u64>,
@@ -657,6 +658,8 @@ pub const SEMANTIC_ASSERTION_REPEAT_GOTO: u32 = 3;
 pub const SEMANTIC_EXPR_ASSERTION_INSTANCE: u32 = 90;
 /// Expression tag for a sampled-value `@(event)` argument.
 pub const SEMANTIC_EXPR_CLOCKING_EVENT: u32 = 91;
+/// Expression tag for a typed tagged-union member constructor.
+pub const SEMANTIC_EXPR_TAGGED_UNION: u32 = 92;
 
 /// Immediate assertion metadata carried in [`SemanticNode::auxiliary`].
 pub const SEMANTIC_ASSERTION_DEFERRED: u64 = 1 << 0;

@@ -10,6 +10,10 @@ Inventory:
 - `packed_union.sv`, `packed_aggregate_selections.sv`, `unpacked_struct.sv`,
   `unpacked_union.sv`: member layout/aliasing, packed dimensions, defaults,
   writes, and aggregate copy.
+- `syn_021_tagged_values.sv`: finite packed tagged-union tags and payloads,
+  void/unequal members, nested values, fixed arrays, ports, zero-time function
+  returns, and inactive-member X reads. `syn_021_tagged_unpacked_rejected.sv`
+  keeps the nonpacked form as a single fixed-storage rejection.
 - `packed_streaming.sv`, `streaming_general.sv`, `inside_membership.sv`: packed
   and fixed/resizable-array stream order, non-divisible slices, static
   fixed-array and runtime resizable-array `with` selectors, X/Z preservation,

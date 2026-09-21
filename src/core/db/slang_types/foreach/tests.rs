@@ -9,6 +9,7 @@ fn ty(id: u64, kind: TypeKind, width: u64, element: Option<u64>) -> SlangType {
         is_signed: false,
         is_four_state: true,
         is_fixed_size: true,
+        is_tagged: false,
         bit_width: width,
         display_name: "not used for dimension recovery".into(),
         element_type_id: element,

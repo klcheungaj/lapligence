@@ -238,6 +238,7 @@ fn current_statement_and_expression_subkinds_are_admitted() {
     assert!(validate_semantic_subkind(19, 89).is_ok());
     assert!(validate_semantic_subkind(19, SEMANTIC_EXPR_ASSERTION_INSTANCE).is_ok());
     assert!(validate_semantic_subkind(19, SEMANTIC_EXPR_CLOCKING_EVENT).is_ok());
+    assert!(validate_semantic_subkind(19, SEMANTIC_EXPR_TAGGED_UNION).is_ok());
     assert!(validate_semantic_subkind(9, 229).is_ok());
     assert!(validate_semantic_subkind(25, SEMANTIC_SCOPE_CLOCKING_BLOCK).is_ok());
     assert!(validate_semantic_subkind(9, SEMANTIC_VARIABLE_CLOCKING).is_ok());

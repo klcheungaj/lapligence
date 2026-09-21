@@ -48,6 +48,13 @@ pub enum ExprKind {
         key_type: Option<AssignmentPatternKeyType>,
         value: Option<NodeId>,
     },
+    /// A finite tagged-union constructor (`tag value(...)`). The member name
+    /// is retained independently of the optional value so void members keep
+    /// their active tag.
+    TaggedUnion {
+        member: String,
+        value: Option<NodeId>,
+    },
     /// `'(type)(expr)` cast — target type resolved at build time.
     Cast {
         operand: NodeId,

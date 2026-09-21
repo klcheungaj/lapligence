@@ -94,6 +94,137 @@ impl<'a> Codegen<'a> {
         ))
     }
 
+    /// Guard a packed tagged-union member read with the active tag. Tagged
+    /// payload bits share ordinary packed storage, but a member from another
+    /// active arm has no value; expose X for that access instead of silently
+    /// reading stale payload bits. Nested tagged layouts use the accumulated
+    /// packed displacement for each tag slice.
+    pub(super) fn guard_tagged_member_read(
+        &self,
+        node: NodeId,
+        info: &SignalInfo,
+        value: IrExpr,
+    ) -> Result<IrExpr, String> {
+        let NodeKind::Expr(ExprKind::HierPath { parts, refs }) = self.kind(node) else {
+            return Ok(value);
+        };
+        let Some((target, base_index)) = self.hier_path_signal_target(parts, refs) else {
+            return Ok(value);
+        };
+        let Some(mut descriptor) = self.query_descriptor(target).cloned() else {
+            return Ok(value);
+        };
+        let mut offset = 0u32;
+        let mut guards = Vec::new();
+        for name in &parts[base_index + 1..] {
+            let TypeShape::Aggregate(layout) = &descriptor.shape else {
+                break;
+            };
+            let index = layout
+                .members
+                .iter()
+                .position(|member| member.name == *name)
+                .ok_or_else(|| format!("tagged member `{name}` is missing from its layout"))?;
+            let member = &layout.members[index];
+            if layout.kind == AggregateKind::TaggedUnion
+                && layout.tag_bits().is_some_and(|tag_width| tag_width > 0)
+            {
+                let total_width = Self::fixed_descriptor_width(&descriptor).ok_or_else(|| {
+                    "tagged union member read has no fixed packed width".to_owned()
+                })?;
+                let tag_width = layout
+                    .tag_bits()
+                    .ok_or_else(|| "tagged union tag width overflows".to_owned())?;
+                let tag_right = offset
+                    .checked_add(total_width)
+                    .and_then(|width| width.checked_sub(tag_width))
+                    .ok_or_else(|| "tagged union tag offset underflows".to_owned())?;
+                let tag_left = tag_right
+                    .checked_add(tag_width)
+                    .and_then(|width| width.checked_sub(1))
+                    .ok_or_else(|| "tagged union tag offset overflows".to_owned())?;
+                let tag = IrExpr::new(
+                    IrExprKind::PartSel {
+                        base: Box::new(self.signal_read_expr(info)?),
+                        left: i64::from(tag_left),
+                        right: i64::from(tag_right),
+                    },
+                    tag_width,
+                    false,
+                    None,
+                );
+                let expected = IrConst::packed(
+                    vec![u64::try_from(index)
+                        .map_err(|_| "tagged union member index overflows".to_owned())?],
+                    vec![0],
+                    vec![0],
+                    tag_width,
+                    false,
+                    None,
+                )
+                .map_err(|error| error.to_string())?;
+                guards.push(IrExpr::new(
+                    IrExprKind::Bin {
+                        op: IrBinOp::CaseEq,
+                        a: Box::new(tag),
+                        b: Box::new(IrExpr::new(
+                            IrExprKind::Const(expected),
+                            tag_width,
+                            false,
+                            None,
+                        )),
+                    },
+                    1,
+                    false,
+                    None,
+                ));
+            }
+            let displacement = if matches!(
+                layout.kind,
+                AggregateKind::PackedUnion | AggregateKind::TaggedUnion
+            ) {
+                0
+            } else {
+                layout.members[index + 1..]
+                    .iter()
+                    .try_fold(0u32, |sum, following| {
+                        sum.checked_add(Self::fixed_descriptor_width(&following.descriptor)?)
+                    })
+                    .ok_or_else(|| "tagged member packed displacement overflows".to_owned())?
+            };
+            offset = offset
+                .checked_add(displacement)
+                .ok_or_else(|| "tagged member packed offset overflows".to_owned())?;
+            descriptor = member.descriptor.clone();
+        }
+        let Some(mut guard) = guards.first().cloned() else {
+            return Ok(value);
+        };
+        for next in guards.into_iter().skip(1) {
+            guard = IrExpr::new(
+                IrExprKind::Bin {
+                    op: IrBinOp::LogAnd,
+                    a: Box::new(guard),
+                    b: Box::new(next),
+                },
+                1,
+                false,
+                None,
+            );
+        }
+        let fallback = const_x_expr(value.width);
+        Ok(IrExpr::new(
+            IrExprKind::Mux {
+                sel: Box::new(guard),
+                a: Box::new(value.clone()),
+                b: Box::new(fallback),
+            },
+            value.width,
+            value.signed,
+            None,
+        ))
+    }
+
     pub(super) fn packed_member_layout(
         &self,
         target: NodeId,
@@ -102,7 +233,9 @@ impl<'a> Codegen<'a> {
         let mut layout = self.db.aggregate_layout(target)?;
         if !matches!(
             layout.kind,
-            AggregateKind::PackedStruct | AggregateKind::PackedUnion
+            AggregateKind::PackedStruct
+                | AggregateKind::PackedUnion
+                | AggregateKind::TaggedUnion
         ) {
             return None;
         }
@@ -114,7 +247,10 @@ impl<'a> Codegen<'a> {
                 .iter()
                 .position(|member| member.name == *member_name)?;
             let member = &layout.members[index];
-            let relative_lsb = if layout.kind == AggregateKind::PackedUnion {
+            let relative_lsb = if matches!(
+                layout.kind,
+                AggregateKind::PackedUnion | AggregateKind::TaggedUnion
+            ) {
                 0
             } else {
                 layout.members[index + 1..]
@@ -130,6 +266,7 @@ impl<'a> Codegen<'a> {
                     if matches!(
                         nested.kind,
                         AggregateKind::PackedStruct | AggregateKind::PackedUnion
+                            | AggregateKind::TaggedUnion
                     ) =>
                 {
                     layout = nested;

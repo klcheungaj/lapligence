@@ -299,6 +299,7 @@ impl<'a> SlangTypeProjector<'a> {
     ) -> Result<Option<AggregateLayout>, String> {
         let kind = match ty.kind {
             TypeKind::PackedStruct => AggregateKind::PackedStruct,
+            TypeKind::PackedUnion if ty.is_tagged => AggregateKind::TaggedUnion,
             TypeKind::PackedUnion => AggregateKind::PackedUnion,
             TypeKind::UnpackedStruct => AggregateKind::UnpackedStruct,
             TypeKind::UnpackedUnion => AggregateKind::UnpackedUnion,
@@ -571,6 +572,7 @@ mod tests {
             is_signed: false,
             is_four_state: true,
             is_fixed_size: true,
+            is_tagged: false,
             bit_width,
             display_name: String::new(),
             element_type_id: None,

@@ -692,6 +692,7 @@ fn expression_refs(expression: &ExprKind, refs: &mut Vec<NodeId>) {
             refs.extend([*if_true, *if_false]);
         }
         ExprKind::TaggedPattern { value, .. } => refs.extend(*value),
+        ExprKind::TaggedUnion { value, .. } => refs.extend(*value),
         ExprKind::Cast { operand, .. } => refs.push(*operand),
         ExprKind::NewArray { size, initializer } => {
             refs.push(*size);

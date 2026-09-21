@@ -18,6 +18,9 @@ impl<'a> Codegen<'a> {
                 .iter()
                 .filter_map(|member| member.ty.width)
                 .max(),
+            AggregateKind::TaggedUnion => layout
+                .payload_bits()?
+                .checked_add(layout.tag_bits()?),
             _ => None,
         }
     }
@@ -46,8 +49,18 @@ impl<'a> Codegen<'a> {
                 return Ok(false);
             }
             AggregateKind::TaggedUnion => {
+                if self
+                    .query_descriptor(node)
+                    .is_some_and(|descriptor| Self::fixed_descriptor_width(descriptor).is_some())
+                {
+                    // A finite tagged packed union uses the ordinary packed
+                    // scalar storage path. Its tag occupies the most
+                    // significant bits; member access resolves the payload
+                    // from the same owned layout.
+                    return Ok(false);
+                }
                 return Err(format!(
-                    "tagged union `{}` in `{path}` is not supported",
+                    "tagged union `{}` in `{path}` requires a fixed packed representation",
                     self.node(node).name
                 ));
             }

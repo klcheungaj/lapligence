@@ -227,6 +227,10 @@ pub(super) fn expression_from_slang(
                 value: first(SemanticEdgeRole::Body)?,
             }
         }
+        SEMANTIC_EXPR_TAGGED_UNION => ExprKind::TaggedUnion {
+            member: node.name.clone(),
+            value: first(SemanticEdgeRole::Body)?,
+        },
         69 if matches!(
             node.operation,
             SemanticOperation::StreamLeft | SemanticOperation::StreamRight
