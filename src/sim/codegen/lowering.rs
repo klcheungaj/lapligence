@@ -46,8 +46,9 @@
 //!   `sv4_mux(en, Z, ~(data|data))`; pullup/pulldown are constant RunOnce
 //!   drivers; gate delays `#D` capture transition-specific values in the
 //!   active-region inertial scheduler without suspending the comb evaluator.
-//!   Switch/transistor primitives, UDP instances, primitive arrays and
-//!   charge-strength forms are rejected at lowering time; illegal vector
+//!   Combinational UDPs evaluate their owned 0/1/x/?/b tables with runtime Z
+//!   matching x. Switch/transistor primitives, sequential or edge-sensitive
+//!   UDPs, and charge-strength forms are rejected at lowering time; illegal vector
 //!   strengths, unsupported dynamic resolved-net targets, and unequal-width
 //!   gate terminals remain explicit boundaries;
 //! - every child-instance port pair gets a link process copying the parent
@@ -240,7 +241,7 @@ use crate::core::db::{
     ConstantType, Db, Direction as DbDirection, DriverDelay, EventSpec, EventTriggerTiming,
     ExprKind, ImmediateAssertionKind, IntraControl, JoinKind as DbJoinKind, NetType, NodeId,
     NodeKind, Operation, PackedMember, PrimClass, PrimitiveType, ProcessKind, StmtKind,
-    StreamingDirection as DbStreamingDirection, Strength, TypeDescriptor, TypeShape,
+    StreamingDirection as DbStreamingDirection, Strength, TypeDescriptor, TypeShape, UdpTable,
     UnconnectedDrive, VariableLifetime,
 };
 use crate::core::elab::{self, Bit, Val};
@@ -298,6 +299,8 @@ enum GateOp {
     Enable { invert_out: bool, active_high: bool },
     /// `pullup`/`pulldown`: constant 1/0 driver over the terminal width.
     Pull(bool),
+    /// A scalar combinational user-defined primitive truth table.
+    Udp,
 }
 
 /// A real expression is represented by width zero; packed values are never
@@ -2072,6 +2075,31 @@ fn const_z_expr(width: u32) -> IrExpr {
             bits: vec![0; nlimbs],
             x: vec![0; nlimbs],
             z,
+            width,
+            signed: false,
+            real: None,
+            fill: None,
+        }),
+        width,
+        false,
+        None,
+    )
+}
+
+/// An all-X constant over `width` bits. UDP input `x` matching treats runtime
+/// Z as X explicitly in the evaluator, while unmatched rows return this value.
+fn const_x_expr(width: u32) -> IrExpr {
+    let nlimbs = (width as usize).div_ceil(64);
+    let mut x = vec![u64::MAX; nlimbs];
+    let tail = width as usize % 64;
+    if tail != 0 {
+        x[nlimbs - 1] = (1u64 << tail) - 1;
+    }
+    IrExpr::new(
+        IrExprKind::Const(IrConst {
+            bits: vec![0; nlimbs],
+            x,
+            z: vec![0; nlimbs],
             width,
             signed: false,
             real: None,

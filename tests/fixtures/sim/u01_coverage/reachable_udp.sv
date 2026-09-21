@@ -1,14 +1,14 @@
 // llg-test-fixture: tests/fixtures/sim/u01_coverage/reachable_udp.sv
 primitive mux2 (out, sel, a, b);
-    output out;
+    output reg out;
     input sel, a, b;
     table
-        0 ? 1 : 0 ;
-        0 0 ? : 0 ;
-        1 ? 0 : 1 ;
-        1 1 ? : 1 ;
-        x 0 0 : 0 ;
-        x 1 1 : 1 ;
+        0 ? 1 : ? : 0 ;
+        0 0 ? : ? : 0 ;
+        1 ? 0 : ? : 1 ;
+        1 1 ? : ? : 1 ;
+        x 0 0 : ? : 0 ;
+        x 1 1 : ? : 1 ;
     endtable
 endprimitive
 

@@ -35,6 +35,10 @@ pub(super) fn decode_snapshot(
         type_range_count: 0,
         type_members: ptr::null(),
         type_member_count: 0,
+        udp_tables: ptr::null(),
+        udp_table_count: 0,
+        udp_rows: ptr::null(),
+        udp_row_count: 0,
     };
     let mut error = ptr::null_mut();
     // SAFETY: owner contains a live snapshot and output pointers are writable.
@@ -97,6 +101,14 @@ pub(super) fn decode_snapshot(
         .saturating_mul(2);
     enforce_count(view.value_word_count, max_words, "constant value words")?;
     enforce_count(view.constant_count, limits.max_constants, "constants")?;
+    // UDP declarations and rows are bounded by the same frontend record
+    // limits as the semantic graph; their byte budget is checked below too.
+    enforce_count(
+        view.udp_table_count,
+        limits.max_semantic_nodes,
+        "UDP tables",
+    )?;
+    enforce_count(view.udp_row_count, limits.max_semantic_edges, "UDP rows")?;
 
     let mut output_bytes = 0_u64;
     for (count, size) in [
@@ -125,6 +137,8 @@ pub(super) fn decode_snapshot(
         ),
         (view.type_range_count, std::mem::size_of::<RawTypeRange>()),
         (view.type_member_count, std::mem::size_of::<RawTypeMember>()),
+        (view.udp_table_count, std::mem::size_of::<RawUdpTable>()),
+        (view.udp_row_count, std::mem::size_of::<RawUdpRow>()),
     ] {
         let bytes = count
             .checked_mul(size as u64)
@@ -200,6 +214,11 @@ pub(super) fn decode_snapshot(
     // SAFETY: same snapshot-view contract as above.
     let raw_type_members =
         unsafe { foreign_slice(view.type_members, view.type_member_count, "type members")? };
+    // SAFETY: same snapshot-view contract as above.
+    let raw_udp_tables =
+        unsafe { foreign_slice(view.udp_tables, view.udp_table_count, "UDP tables")? };
+    // SAFETY: same snapshot-view contract as above.
+    let raw_udp_rows = unsafe { foreign_slice(view.udp_rows, view.udp_row_count, "UDP rows")? };
 
     for item in raw_files {
         charge_output_string(&mut output_bytes, item.name, limits.max_output_bytes)?;
@@ -240,6 +259,12 @@ pub(super) fn decode_snapshot(
     }
     for item in raw_type_members {
         charge_output_string(&mut output_bytes, item.name, limits.max_output_bytes)?;
+    }
+    for item in raw_udp_tables {
+        charge_output_string(&mut output_bytes, item.name, limits.max_output_bytes)?;
+    }
+    for item in raw_udp_rows {
+        charge_output_string(&mut output_bytes, item.inputs, limits.max_output_bytes)?;
     }
 
     let mut file_ids = HashSet::with_capacity(raw_files.len());
@@ -285,6 +310,7 @@ pub(super) fn decode_snapshot(
         &types,
         constants.len(),
     )?;
+    let udp_tables = decode_udp_tables(raw_udp_tables, raw_udp_rows, &semantic_nodes)?;
     let lexical_tokens = decode_lexical_tokens(raw_lexical_tokens, &files, &semantic_nodes)?;
 
     drop(unexpected_error);
@@ -303,5 +329,6 @@ pub(super) fn decode_snapshot(
         lexical_tokens,
         type_ranges,
         type_members,
+        udp_tables,
     })
 }

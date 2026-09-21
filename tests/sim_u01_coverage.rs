@@ -62,7 +62,8 @@ fn coverage_reachable_pattern_reports_its_source_span() {
 }
 
 /// G1-02 `coverage_pruned_udp`: an elaboration-pruned unsupported primitive
-/// stays irrelevant while a surviving one still fails until G2-40.
+/// stays irrelevant while a reachable sequential UDP remains an explicit
+/// unsupported boundary after combinational UDP support.
 #[test]
 fn coverage_pruned_udp_does_not_fail_an_unrelated_top() {
     sim_cli::run_case(

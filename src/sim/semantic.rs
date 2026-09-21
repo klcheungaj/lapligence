@@ -1010,9 +1010,13 @@ fn is_simulation_gate(
     strength0: Strength,
     strength1: Strength,
 ) -> bool {
+    if !supported_gate_strength(strength0) || !supported_gate_strength(strength1) {
+        return false;
+    }
+    if class == PrimClass::Udp {
+        return prim_type == PrimitiveType::Combinational;
+    }
     matches!(class, PrimClass::Gate | PrimClass::Array)
-        && supported_gate_strength(strength0)
-        && supported_gate_strength(strength1)
         && matches!(
             prim_type,
             PrimitiveType::And

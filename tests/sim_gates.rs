@@ -2,7 +2,7 @@
 //! (IEEE 1364-1995 ch. 7 §7.1–7.2): n-input gates (`and`/`or`/`nand`/`nor`/
 //! `xor`/`xnor`), `buf`/`not`, enable gates (`bufif0/1`, `notif0/1`),
 //! `pullup`/`pulldown`, optional gate delays, strength-aware gate drivers, and
-//! the documented v1 rejects (UDP instances and switch/transistor primitives).
+//! the documented rejects (sequential UDPs and switch/transistor primitives).
 //!
 //! Expected traces are hand-computed from the LRM gate tables and the
 //! runtime's `sv4_*` X/Z semantics: Z behaves as X in every expression
@@ -428,18 +428,14 @@ endmodule
 // ── Unsupported primitives ──────────────────────────────────────────────────
 
 #[test]
-fn sim_gates_reject_udp_instance() {
+fn sim_gates_reject_sequential_udp_instance() {
     let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"primitive mux2 (out, sel, a, b);
-    output out;
+    output reg out;
     input sel, a, b;
     table
-        0 ? 1 : 0 ;
-        0 0 ? : 0 ;
-        1 ? 0 : 1 ;
-        1 1 ? : 1 ;
-        x 0 0 : 0 ;
-        x 1 1 : 1 ;
+        0 ? ? : ? : 0 ;
+        1 ? ? : ? : 1 ;
     endtable
 endprimitive
 

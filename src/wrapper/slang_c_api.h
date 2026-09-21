@@ -13,7 +13,7 @@
 extern "C" {
 #endif
 
-#define LLG_SLANG_ABI_VERSION 4u
+#define LLG_SLANG_ABI_VERSION 5u
 #define LLG_SLANG_INVALID_ID UINT64_MAX
 
 typedef struct LlgSlangSnapshot LlgSlangSnapshot;
@@ -261,6 +261,33 @@ typedef struct {
   /* Snapshot constant ID for an explicit member default, or INVALID_ID. */
   uint64_t initializer_constant_id;
 } LlgSlangTypeMember;
+
+/* One owned truth table attached to a user-defined primitive declaration.
+ * `primitive_id` is the semantic-node ID of the declaration. Rows are stored
+ * in source order in the separate row vector. */
+typedef struct {
+  uint64_t primitive_id;
+  uint32_t input_count;
+  uint32_t reserved;
+  uint64_t row_start;
+  uint64_t row_count;
+  LlgSlangString name;
+} LlgSlangUdpTable;
+
+/* A normalized Slang UDP table row. `state` is zero for combinational rows;
+ * nonzero values are retained so the owned decoder can reject sequential UDP
+ * data if the frontend ever exposes it through this table. */
+typedef struct {
+  LlgSlangString inputs;
+  uint32_t state;
+  uint32_t output;
+  uint32_t flags;
+  uint32_t reserved;
+} LlgSlangUdpRow;
+
+enum {
+  LLG_SLANG_UDP_ROW_EDGE_SENSITIVE = 1u << 0
+};
 
 enum {
   LLG_SLANG_VALUE_NONE = 0,
@@ -926,6 +953,10 @@ typedef struct {
   uint64_t type_range_count;
   const LlgSlangTypeMember* type_members;
   uint64_t type_member_count;
+  const LlgSlangUdpTable* udp_tables;
+  uint64_t udp_table_count;
+  const LlgSlangUdpRow* udp_rows;
+  uint64_t udp_row_count;
 } LlgSlangSnapshotView;
 
 typedef struct {

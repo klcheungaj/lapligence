@@ -14,12 +14,11 @@ impl<'a> Codegen<'a> {
     /// Multi-input logic gates reduce their inputs left-to-right with the
     /// two-input runtime op; nand/nor/xnor negate after the full reduce.
     /// A gate delay `#D` schedules a captured inertial update while the
-    /// process continues watching its inputs. Unsupported primitives
-    /// (switches and UDPs) are rejected with explicit errors here at lowering
-    /// time; terminal legality is checked by the typed LHS/expression
-    /// lowerers.
+    /// process continues watching its inputs. Combinational UDPs use their
+    /// owned truth table and retain the same structural driver identity as
+    /// builtin gates; switches and sequential UDPs are rejected explicitly.
     pub(super) fn emit_gate(&mut self, inst: NodeId, path: &str, g: NodeId) -> Result<(), String> {
-        let (class, prim_type, strength0, strength1, delay, terms) = match self.kind(g) {
+        let (class, prim_type, strength0, strength1, delay, terms, udp_table) = match self.kind(g) {
             NodeKind::Gate {
                 class,
                 prim_type,
@@ -27,6 +26,7 @@ impl<'a> Codegen<'a> {
                 strength1,
                 delay,
                 terms,
+                udp,
             } => (
                 *class,
                 *prim_type,
@@ -34,6 +34,7 @@ impl<'a> Codegen<'a> {
                 *strength1,
                 *delay,
                 Vec::clone(terms),
+                udp.clone(),
             ),
             _ => unreachable!("non-gate node passed to emit_gate"),
         };
@@ -52,19 +53,19 @@ impl<'a> Codegen<'a> {
                 ))
             }
             PrimClass::Udp => {
-                return Err(format!(
-                    "user-defined primitive instance `{shown}` in `{path}` is not \
-                     supported"
-                ))
+                if prim_type != PrimitiveType::Combinational {
+                    return Err(format!(
+                        "sequential user-defined primitive instance `{shown}` in `{path}` is \
+                         not supported"
+                    ));
+                }
             }
             PrimClass::Array => {}
         }
         let driver_strengths =
             gate_driver_strengths(prim_type, strength0, strength1, &format!("{path}.{shown}"))?;
-        // Which builtin gate this is; everything outside the supported set
-        // (switch/transistor prim types, sequential/combinational UDP types)
-        // is rejected.  UDP instances never reach this point (their class was
-        // rejected above); the prim-type reject covers unknown/other kinds.
+        // Which builtin gate this is; UDP instances take the separate table
+        // evaluator below and every other primitive kind remains explicit.
         let op = match prim_type {
             PrimitiveType::And => GateOp::Reduce(IrBinOp::BitAnd, false),
             PrimitiveType::Nand => GateOp::Reduce(IrBinOp::BitAnd, true),
@@ -92,6 +93,7 @@ impl<'a> Codegen<'a> {
             },
             PrimitiveType::Pullup => GateOp::Pull(true),
             PrimitiveType::Pulldown => GateOp::Pull(false),
+            PrimitiveType::Combinational => GateOp::Udp,
             _ => {
                 return Err(format!(
                     "primitive type {prim_type:?} of `{shown}` in `{path}` is not \
@@ -132,6 +134,13 @@ impl<'a> Codegen<'a> {
                     && !in_positions.is_empty()
                     && out_positions.len() + in_positions.len() == terms.len()
             }
+            GateOp::Udp => udp_table.as_ref().is_some_and(|table| {
+                usize::try_from(table.input_count).ok() == Some(in_positions.len())
+                    && terms.len() == in_positions.len() + 1
+                    && out_positions.len() == 1
+                    && out_positions[0] < terms.len()
+                    && out_positions[0] == 0
+            }),
         };
         if !shape_ok {
             let what = match op {
@@ -147,6 +156,9 @@ impl<'a> Codegen<'a> {
                 GateOp::Reduce(..) => {
                     "logic gates take exactly one output terminal plus at least one \
                      input terminal"
+                }
+                GateOp::Udp => {
+                    "combinational UDPs take one scalar output followed by scalar input terminals"
                 }
             };
             return Err(format!(
@@ -168,6 +180,7 @@ impl<'a> Codegen<'a> {
         let mut terminal_exprs: Vec<Option<IrExpr>> = vec![None; terms.len()];
         let mut widths = vec![0u32; terms.len()];
         let mut sens = Vec::new();
+        let is_udp = matches!(op, GateOp::Udp);
         for i in &in_positions {
             let expr = self.lower_expr(path, terms[*i].expr).map_err(|error| {
                 format!(
@@ -186,6 +199,12 @@ impl<'a> Codegen<'a> {
             if expr.width() == 0 {
                 return Err(format!(
                     "input terminal {} of gate `{shown}` in `{path}` has zero width",
+                    i
+                ));
+            }
+            if is_udp && expr.width() != 1 {
+                return Err(format!(
+                    "input terminal {} of combinational UDP `{shown}` in `{path}` must be scalar",
                     i
                 ));
             }
@@ -215,6 +234,12 @@ impl<'a> Codegen<'a> {
             if width == 0 {
                 return Err(format!(
                     "output terminal {} of gate `{shown}` in `{path}` has zero width",
+                    i
+                ));
+            }
+            if is_udp && width != 1 {
+                return Err(format!(
+                    "output terminal {} of combinational UDP `{shown}` in `{path}` must be scalar",
                     i
                 ));
             }
@@ -317,11 +342,25 @@ impl<'a> Codegen<'a> {
             }
 
             let mut input_values = Vec::with_capacity(in_positions.len());
+            let mut udp_setup = Vec::new();
             for i in &in_positions {
                 let expr = terminal_exprs[*i]
                     .clone()
                     .expect("gate input expression lowered above");
-                input_values.push(IrExpr::resize_to(expr, output_width, false));
+                let expr = IrExpr::resize_to(expr, output_width, false);
+                if is_udp {
+                    let name = format!("_udp_gate_input_{}_{}_{}", g.index(), output_ordinal, i);
+                    udp_setup.push(IrStmt::DeclLocal {
+                        name: name.clone(),
+                        width: 1,
+                        signed: false,
+                        init: Some(Box::new(expr)),
+                        two_state: false,
+                    });
+                    input_values.push(IrExpr::new(IrExprKind::LocalRead(name), 1, false, None));
+                } else {
+                    input_values.push(expr);
+                }
             }
             let value = match op {
                 GateOp::Pull(ones) => const_bits_expr(output_width, ones),
@@ -392,8 +431,14 @@ impl<'a> Codegen<'a> {
                         None,
                     )
                 }
+                GateOp::Udp => udp_value(
+                    udp_table.as_ref().ok_or_else(|| {
+                        format!("combinational UDP `{shown}` in `{path}` has no owned truth table")
+                    })?,
+                    &input_values,
+                )?,
             };
-            let body = if let Some(bindings) = alias_bindings {
+            let mut body = if let Some(bindings) = alias_bindings {
                 let value_name = format!("_alias_gate_value_{}_{}", g.index(), output_ordinal);
                 let value_read = IrExpr::new(
                     IrExprKind::LocalRead(value_name.clone()),
@@ -446,6 +491,10 @@ impl<'a> Codegen<'a> {
                     nba: false,
                 }]
             };
+            if !udp_setup.is_empty() {
+                udp_setup.append(&mut body);
+                body = udp_setup;
+            }
             let shape = if sens.is_empty() {
                 IrShape::RunOnce
             } else {
@@ -466,4 +515,73 @@ impl<'a> Codegen<'a> {
         }
         Ok(())
     }
+}
+
+/// Build an owned four-state decision tree for one scalar combinational UDP.
+/// A UDP `x` input matches both runtime X and Z; `b` matches only known 0/1,
+/// while `?` matches every four-state value. The final X arm is the LRM
+/// result for an input combination with no matching table row.
+fn udp_value(table: &UdpTable, inputs: &[IrExpr]) -> Result<IrExpr, String> {
+    if inputs.len() != usize::try_from(table.input_count).unwrap_or(usize::MAX) {
+        return Err(format!(
+            "UDP table `{}` input count does not match its instance terminals",
+            table.name
+        ));
+    }
+    let mut value = const_x_expr(1);
+    for row in table.rows.iter().rev() {
+        if row.inputs.len() != inputs.len() {
+            return Err(format!(
+                "UDP table `{}` contains a row with the wrong input width",
+                table.name
+            ));
+        }
+        let mut condition = const_bits_expr(1, true);
+        for (symbol, input) in row.inputs.bytes().zip(inputs.iter()) {
+            let matched = match symbol {
+                b'0' => cmp_expr_ir(IrBinOp::CaseEq, input.clone(), const_bits_expr(1, false)),
+                b'1' => cmp_expr_ir(IrBinOp::CaseEq, input.clone(), const_bits_expr(1, true)),
+                b'x' => bin_expr(
+                    IrBinOp::LogOr,
+                    cmp_expr_ir(IrBinOp::CaseEq, input.clone(), const_x_expr(1)),
+                    cmp_expr_ir(IrBinOp::CaseEq, input.clone(), const_z_expr(1)),
+                ),
+                b'b' => bin_expr(
+                    IrBinOp::LogOr,
+                    cmp_expr_ir(IrBinOp::CaseEq, input.clone(), const_bits_expr(1, false)),
+                    cmp_expr_ir(IrBinOp::CaseEq, input.clone(), const_bits_expr(1, true)),
+                ),
+                b'?' => const_bits_expr(1, true),
+                other => {
+                    return Err(format!(
+                        "UDP table `{}` contains unsupported input symbol `{}`",
+                        table.name, other as char
+                    ));
+                }
+            };
+            condition = bin_expr(IrBinOp::LogAnd, condition, matched);
+        }
+        let output = match row.output {
+            b'0' => const_bits_expr(1, false),
+            b'1' => const_bits_expr(1, true),
+            b'x' => const_x_expr(1),
+            other => {
+                return Err(format!(
+                    "UDP table `{}` contains unsupported output symbol `{}`",
+                    table.name, other as char
+                ));
+            }
+        };
+        value = IrExpr::new(
+            IrExprKind::Mux {
+                sel: Box::new(condition),
+                a: Box::new(output),
+                b: Box::new(value),
+            },
+            1,
+            false,
+            None,
+        );
+    }
+    Ok(value)
 }

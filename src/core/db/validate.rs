@@ -896,6 +896,7 @@ mod tests {
                     strength1: super::super::Strength::Unspecified,
                     delay: Some(delay),
                     terms: Vec::new(),
+                    udp: None,
                 },
             ] {
                 let error = from_nodes(vec![node(NodeKind::Other), node(kind)])

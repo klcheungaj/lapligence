@@ -155,6 +155,8 @@ pub enum NodeKind {
         strength1: Strength,
         delay: Option<DriverDelay>,
         terms: Vec<GateTerm>,
+        /// Owned truth table for a combinational UDP instance.
+        udp: Option<UdpTable>,
     },
     Stmt(StmtKind),
     AssertionExpr(AssertionExprKind),
@@ -239,6 +241,21 @@ pub struct GateTerm {
     pub direction: Direction,
     pub term_index: i32,
     pub expr: NodeId,
+}
+
+/// Owned combinational UDP behavior captured through the frontend-neutral
+/// snapshot. Rows retain source order for deterministic matching.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UdpTable {
+    pub name: String,
+    pub input_count: u32,
+    pub rows: Vec<UdpRow>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UdpRow {
+    pub inputs: String,
+    pub output: u8,
 }
 
 impl GateTerm {

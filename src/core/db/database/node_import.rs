@@ -134,6 +134,40 @@ pub(super) fn node_kind_from_slang(
                 })
                 .collect::<Result<Vec<_>, DbError>>()?;
             let prim_type = primitive_type_from_subkind(node.subkind);
+            let udp = if prim_type == PrimitiveType::Combinational {
+                let primitive_id = node.target_id.ok_or_else(|| {
+                    DbError::InvalidSnapshot(format!(
+                        "combinational UDP instance `{}` has no declaration identity",
+                        node.definition_name
+                    ))
+                })?;
+                Some(
+                    snapshot
+                        .udp_tables
+                        .iter()
+                        .find(|table| table.primitive_id == primitive_id)
+                        .ok_or_else(|| {
+                            DbError::InvalidSnapshot(format!(
+                                "combinational UDP instance `{}` has no owned truth table for declaration {}",
+                                node.definition_name, primitive_id
+                            ))
+                        })
+                        .map(|table| UdpTable {
+                            name: table.name.clone(),
+                            input_count: table.input_count,
+                            rows: table
+                                .rows
+                                .iter()
+                                .map(|row| UdpRow {
+                                    inputs: row.inputs.clone(),
+                                    output: row.output,
+                                })
+                                .collect(),
+                        })?,
+                )
+            } else {
+                None
+            };
             let is_array_element = node
                 .parent_id
                 .and_then(|parent| snapshot.semantic_nodes.get(parent as usize))
@@ -141,13 +175,13 @@ pub(super) fn node_kind_from_slang(
                     parent.kind == SemanticKind::Instance && parent.subkind == 193
                 });
             NodeKind::Gate {
-                class: if is_array_element {
-                    PrimClass::Array
-                } else if matches!(
+                class: if matches!(
                     prim_type,
                     PrimitiveType::Sequential | PrimitiveType::Combinational
                 ) {
                     PrimClass::Udp
+                } else if is_array_element {
+                    PrimClass::Array
                 } else if matches!(
                     prim_type,
                     PrimitiveType::Nmos
@@ -172,6 +206,7 @@ pub(super) fn node_kind_from_slang(
                 strength1: strength_from_slang(node.strength1),
                 delay: driver_delay(snapshot, ids, edges)?,
                 terms,
+                udp,
             }
         }
         SemanticKind::Primitive => NodeKind::Other,

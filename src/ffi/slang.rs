@@ -14,7 +14,7 @@ use std::{fmt, ptr, slice, str};
 mod snapshot;
 use snapshot::decode_snapshot;
 mod semantics;
-use semantics::{decode_semantic_edges, decode_semantic_nodes};
+use semantics::{decode_semantic_edges, decode_semantic_nodes, decode_udp_tables};
 #[cfg(test)]
 use semantics::{decode_semantic_operation, validate_semantic_subkind};
 mod tokens;
@@ -26,7 +26,7 @@ use values::{
     decode_constants, decode_instances, decode_parameters, decode_types, validate_parameter_windows,
 };
 
-const ABI_VERSION: u32 = 4;
+const ABI_VERSION: u32 = 5;
 const INVALID_ID: u64 = u64::MAX;
 
 const STATUS_OK: u32 = 0;
@@ -957,6 +957,30 @@ pub struct LexicalToken {
     pub text: String,
 }
 
+/// One normalized row from a combinational user-defined primitive table.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UdpRow {
+    /// Input symbols in primitive port order. Slang normalizes these to
+    /// lowercase `0`, `1`, `x`, `?`, and `b` for combinational rows.
+    pub inputs: String,
+    /// Sequential UDP state, when present. Combinational tables require this
+    /// to be absent; retaining it lets the owned decoder reject a malformed
+    /// or accidentally broadened native export.
+    pub state: Option<u8>,
+    pub output: u8,
+    pub edge_sensitive: bool,
+}
+
+/// One owned combinational user-defined primitive table.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UdpTable {
+    /// Semantic-node ID of the primitive declaration.
+    pub primitive_id: u64,
+    pub name: String,
+    pub input_count: u32,
+    pub rows: Vec<UdpRow>,
+}
+
 /// Fully owned observations from one Slang compilation.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Snapshot {
@@ -976,6 +1000,7 @@ pub struct Snapshot {
     pub lexical_tokens: Vec<LexicalToken>,
     pub type_ranges: Vec<TypeRange>,
     pub type_members: Vec<TypeMember>,
+    pub udp_tables: Vec<UdpTable>,
 }
 
 impl Snapshot {
@@ -1147,6 +1172,27 @@ struct RawTypeMember {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
+struct RawUdpTable {
+    primitive_id: u64,
+    input_count: u32,
+    reserved: u32,
+    row_start: u64,
+    row_count: u64,
+    name: RawString,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RawUdpRow {
+    inputs: RawString,
+    state: u32,
+    output: u32,
+    flags: u32,
+    reserved: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
 struct RawConstant {
     kind: u32,
     is_signed: u32,
@@ -1253,6 +1299,10 @@ struct RawSnapshotView {
     type_range_count: u64,
     type_members: *const RawTypeMember,
     type_member_count: u64,
+    udp_tables: *const RawUdpTable,
+    udp_table_count: u64,
+    udp_rows: *const RawUdpRow,
+    udp_row_count: u64,
 }
 
 #[repr(C)]

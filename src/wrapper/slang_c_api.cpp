@@ -202,6 +202,8 @@ struct LlgSlangSnapshot {
   std::vector<LlgSlangLexicalToken> lexical_tokens;
   std::vector<LlgSlangTypeRange> type_ranges;
   std::vector<LlgSlangTypeMember> type_members;
+  std::vector<LlgSlangUdpTable> udp_tables;
+  std::vector<LlgSlangUdpRow> udp_rows;
 };
 
 namespace {
@@ -375,6 +377,35 @@ struct Capture {
   uint64_t maxTypeMembers() const {
     return effectiveLimit(limits.max_type_members, kDefaultMaxTypeMembers,
                           kHardMaxTypeMembers);
+  }
+
+  void captureUdpTable(uint64_t primitiveId, const PrimitiveSymbol& primitive) {
+    if (primitive.primitiveKind != PrimitiveSymbol::UserDefined ||
+        primitive.isSequential)
+      return;
+    if (primitive.ports.size() < 2)
+      throw BridgeFailure(LLG_SLANG_STATUS_INTERNAL_ERROR,
+                          "combinational UDP has too few ports");
+    const uint64_t rowStart = output.udp_rows.size();
+    for (const auto& row : primitive.table) {
+      chargeRecord(output, sizeof(LlgSlangUdpRow));
+      output.udp_rows.push_back({
+          storeString(output, row.inputs),
+          static_cast<uint32_t>(static_cast<unsigned char>(row.state)),
+          static_cast<uint32_t>(static_cast<unsigned char>(row.output)),
+          row.isEdgeSensitive ? LLG_SLANG_UDP_ROW_EDGE_SENSITIVE : 0u,
+          0u,
+      });
+    }
+    chargeRecord(output, sizeof(LlgSlangUdpTable));
+    output.udp_tables.push_back({
+        primitiveId,
+        static_cast<uint32_t>(primitive.ports.size() - 1),
+        0u,
+        rowStart,
+        static_cast<uint64_t>(primitive.table.size()),
+        storeString(output, primitive.name),
+    });
   }
 
   SourceLocation physicalLocation(SourceLocation location) const {
@@ -1791,11 +1822,19 @@ public:
     if constexpr (std::same_as<T, PrimitiveSymbol>) {
       result.subkind = semanticPrimitiveType(symbol);
       result.flags |= LLG_SLANG_SEMANTIC_PRIMITIVE_DECLARATION;
+      capture.captureUdpTable(id, symbol);
     }
     if constexpr (std::same_as<T, PrimitiveInstanceSymbol>) {
       result.subkind = semanticPrimitiveType(symbol.primitiveType);
       result.definition_name = storeString(capture.output,
                                            symbol.primitiveType.name);
+      // Keep the declaration identity beside the display name.  Primitive
+      // names are looked up in their owning scope, so a name-only join can
+      // select a different UDP table when declarations share a spelling.
+      const uint64_t primitiveId =
+          capture.ensureSemantic(&symbol.primitiveType);
+      result.target_id = primitiveId;
+      capture.semanticEdge(id, LLG_SLANG_EDGE_REFERENCE, primitiveId);
       result.flags |= LLG_SLANG_SEMANTIC_PRIMITIVE_INSTANCE;
       addDriveStrength(result, symbol.getDriveStrength());
     }
@@ -4372,6 +4411,10 @@ extern "C" uint32_t llg_slang_snapshot_view(const LlgSlangSnapshot* snapshot,
       static_cast<uint64_t>(snapshot->type_ranges.size()),
       dataOrNull(snapshot->type_members),
       static_cast<uint64_t>(snapshot->type_members.size()),
+      dataOrNull(snapshot->udp_tables),
+      static_cast<uint64_t>(snapshot->udp_tables.size()),
+      dataOrNull(snapshot->udp_rows),
+      static_cast<uint64_t>(snapshot->udp_rows.size()),
   };
   return LLG_SLANG_STATUS_OK;
 }

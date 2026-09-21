@@ -466,6 +466,27 @@ beyond the selected `assert final`/`$countbits` probes. The positive cases are
 execution witnesses for the named finite forms, not a synthesis-completeness
 claim.
 
+### SYN-031 selected combinational UDP ledger — 2026-09-20
+
+The selected UDP cell accepts scalar combinational user-defined primitive
+definitions and instances for both language editions. `Db::from_slang` owns the
+normalized table, port count, symbols, and source order before simulation
+lowering. Rows accept `0`, `1`, `x`, `b`, and `?`; runtime `z` matches the `x`
+input symbol, and an unmatched input combination produces `x`. Slang's table
+overlap decision is repeated at the owned boundary so conflicting overlapping
+rows cannot enter the simulator. Output driver identity, optional legal gate
+strengths/delays, repeated instances, primitive instance arrays, and net
+resolution retain the ordinary structural-driver path. The public
+`udp_comb.sv` fixture runs with and without optimization and the owned database
+test checks the copied table rows.
+
+The accepted references are IEEE 1364-2001 §§8.1, 8.2, 8.6 and IEEE 1800-2009
+§§29.3, 29.4, 29.8, as mapped by the checked-in specification references. The
+negative fixtures cover sequential level/edge UDPs (1364 §§8.3–8.5; 1800
+§§29.5–29.7) and edge-sensitive table rows. Vector or aggregate terminals,
+switch/transistor primitives, and specify/SDF behavior remain outside this
+cell.
+
 ### Compilation-unit grouping
 
 The driver accepts `--compilation-units separate|merged` (default `separate`)
@@ -708,8 +729,8 @@ Verilog era:
 - 🟦 **pullup/pulldown** — §1364-2001 7.8 **[1995]** (sim_gates.rs) constant 1/0 driver process over the terminal width (RunOnce)
 - 🟨 **Strength modeling/resolution tables** — §1364-2001 7.9–7.13 **[1995]** scalar drive endpoints, X uncertainty, wired-net tie rules, pull/supply defaults, gate outputs and collapsed output-port links are modeled; switch-level/resistive propagation, charge strength and aggregate contexts remain unsupported
 - 🟨 **Gate delays** `and #2 g(…)` / parameterized `#D` — §1364-2001 7.14 **[1995]** supported whole-signal and constant-selected gate terminals use captured active-region inertial updates with single, rise/fall, and rise/fall/turn-off delays, X initialization and short-pulse cancellation. Enable-gate X/Z values, vector transition selection and unchanged-result deadlines have regression sources (`sim_gates.rs`, `sim_partial_features.rs`, both optimizer modes); unsupported primitive kinds and other unrepresented terminal forms remain restricted
-- 🟦 **Gate instance arrays** `and g[3:0] (…)` — §1364-2001 7.1 **[1995]** built-in gate-array elements are imported with typed terminals and admitted by semantic/lowering paths. `sim_gates_gate_array_distributes_bits` is an existing regression source. UDP/switch arrays remain rejected by primitive kind; this is not acceptance of all primitive-array combinations.
-- ❌ **Combinational UDPs** definition/table/instances — §1364-2001 8.1–8.2/8.6 **[1995]** instances captured and rejected with a clear message ("user-defined primitive instance … not supported")
+- 🟦 **Gate instance arrays** `and g[3:0] (…)` — §1364-2001 7.1 **[1995]** built-in gate-array elements and scalar combinational UDP-array elements are imported with typed terminals and admitted by semantic/lowering paths. `sim_gates_gate_array_distributes_bits` and `udp_comb.sv` cover bit distribution and independent UDP drivers; switch/sequential arrays remain rejected by primitive kind.
+- 🟦 **Combinational UDPs** definition/table/instances — §1364-2001 8.1–8.2/8.6 **[1995]** and §1800-2009 29.3–29.4/29.8 **[SV-2009]** scalar tables are imported into owned rows, validate overlap, match runtime Z as X, return X for unmatched rows, and lower through structural drivers; repeated instances and primitive instance arrays retain independent drivers (`sim_udp.rs`, `udp_comb.sv`, both optimizer modes)
 - ❌ **Sequential UDPs** level/edge-sensitive — §1364-2001 8.3–8.5 **[1995]** same reject as combinational UDPs
 - 🟨 **Gate terminal connections** — §1364-2001 7.1 **[1995]** typed input expressions, constants, selected and hierarchical references, legal selected outputs, mixed-width normalization and multi-output `buf`/`not` have source paths. Output lvalues still require a supported packed target and structural driver mapping; real terminals, invalid expressions, unsupported primitives and resolved-net combinations reject. The former whole-signal-only, equal-width and 64-terminal statements are obsolete (sim_gates.rs, sim_net_resolution.rs).
 
@@ -886,7 +907,7 @@ acceptance is claimed.
 
 The original audit IDs are stable. **None of the 72 groups is marked completed or
 accepted for this snapshot.** Of these, **8 are source-implemented** for their stated scope,
-**50 are partial**, and **14 are missing**.
+**51 are partial**, and **13 are missing**.
 These are project-defined groups, not counts of IEEE keywords or clauses, and
 `Source-implemented` is not `Completed`. Source links identify the owning path or
 rejection boundary. Missing/out-of-scope entries do not imply every declaration
@@ -909,7 +930,7 @@ is rejected by the frontend; parsing or declaration capture is not execution.
 | 13 | Partial | Net resolution and strengths | Continuous, gate, packed port, fixed wired-array, admitted hierarchical and collapsed-inout drivers retain per-source strengths, wire/tri and wired rules, pulls/supplies, disjoint selected writes and delayed slots. Hierarchical drivers are accepted for parent-to-child, selected constant-bit/part, generated-name and upward-qualified targets through owning-instance slots; R05 applies directional dissimilar-type selection, source-located warnings and winning-declaration propagation delays, including no delay. Expression-only concatenated actuals retain their connectivity; strict true-alias type checks are separate. Unsupported net/aggregate shapes, procedural net writes, uwire inouts, trireg and switch/resistive propagation remain; explicit vector continuous-assignment strength legality is unchanged. | [port_net_types.rs](../src/sim/codegen/lowering/collection/port_net_types.rs), [net_collapse.rs](../src/sim/codegen/lowering/collection/net_collapse.rs), [nets.rs](../src/sim/codegen/lowering/collection/nets.rs), [nets.c](../src/sim/rt/scheduler/nets.c) |
 | 14 | Missing | Switch-level primitives | `nmos`, `pmos`, `cmos`, `rnmos`, `rpmos`, `rcmos`, `tran`, `tranif0/1`, `rtran`, `rtranif0/1`, including resistive strength propagation. | [gates.rs](../src/sim/codegen/lowering/collection/gates.rs), [semantic.rs](../src/sim/semantic.rs) |
 | 15 | Partial | Primitive instance arrays | Built-in gate-array elements are imported and lowered through the ordinary typed gate path, with an existing bit-distribution regression. UDP and switch array kinds remain rejected; broader primitive-array/delay/connection combinations lack current acceptance. | [node_import.rs](../src/core/db/database/node_import.rs), [gates.rs](../src/sim/codegen/lowering/collection/gates.rs) |
-| 16 | Missing | User-defined primitives | Combinational and sequential UDP tables, state/edge behavior and instances. | [gates.rs](../src/sim/codegen/lowering/collection/gates.rs) |
+| 16 | Partial | User-defined primitives | Scalar combinational UDP tables and instances are captured through the owned snapshot and executed with 0/1/X/Z, `b`, and `?` matching, unmatched-X behavior, overlap validation, delays/strengths, repeated instances and primitive arrays. Sequential level/edge/state initialization, vector/aggregate ports, and switch-level UDP behavior remain rejected. | [slang_c_api.cpp](../src/wrapper/slang_c_api.cpp), [semantics.rs](../src/ffi/slang/semantics.rs), [gates.rs](../src/sim/codegen/lowering/collection/gates.rs) |
 | 17 | Missing | Specify blocks | Specify parameters, module path delays, state/edge-dependent paths and pulse-control semantics including `PATHPULSE$`. | [semantic.rs](../src/sim/semantic.rs), [design.rs](../src/sim/codegen/lowering/collection/design.rs) |
 | 18 | Missing | Timing checks | `$setup`, `$hold`, `$setuphold`, `$recovery`, `$removal`, `$recrem`, `$skew`, `$timeskew`, `$fullskew`, `$period`, `$width`, `$nochange`, notifiers and timing-check conditions. R06's Boolean conditional predicates do not implement timing-check `&&&` conditions. | [system_tasks.rs](../src/sim/codegen/lowering/statements/system_tasks.rs), [semantic.rs](../src/sim/semantic.rs) |
 | 19 | Missing | SDF annotation | `$sdf_annotate` and application of annotated delays/checks. | [system_tasks.rs](../src/sim/codegen/lowering/statements/system_tasks.rs) |

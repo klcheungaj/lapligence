@@ -504,6 +504,131 @@ pub(super) fn decode_semantic_operation(raw: u32) -> Result<SemanticOperation, S
     })
 }
 
+/// Decode the native UDP table side table into owned rows and check the
+/// frontend-independent consistency rules needed by downstream lowering.
+/// Slang has already diagnosed conflicting rows, but retaining this check at
+/// the ABI boundary prevents a malformed or stale native export from making
+/// the simulator depend on borrowed frontend state.
+pub(super) fn decode_udp_tables(
+    raw_tables: &[RawUdpTable],
+    raw_rows: &[RawUdpRow],
+    semantic_nodes: &[SemanticNode],
+) -> Result<Vec<UdpTable>, SlangError> {
+    let mut used_rows = vec![false; raw_rows.len()];
+    let mut table_ids = HashSet::with_capacity(raw_tables.len());
+    let mut tables = Vec::with_capacity(raw_tables.len());
+    for raw_table in raw_tables {
+        if raw_table.reserved != 0 || !table_ids.insert(raw_table.primitive_id) {
+            return Err(invalid_native(
+                "UDP table has invalid or duplicate metadata",
+            ));
+        }
+        let declaration = semantic_nodes
+            .iter()
+            .find(|node| node.id == raw_table.primitive_id)
+            .ok_or_else(|| invalid_native("UDP table refers to an unknown primitive"))?;
+        if declaration.kind != SemanticKind::Primitive
+            || !declaration.is_primitive_declaration
+            || declaration.subkind != 227
+        {
+            return Err(invalid_native(
+                "UDP table is not attached to a combinational primitive declaration",
+            ));
+        }
+        let input_count = usize::try_from(raw_table.input_count)
+            .map_err(|_| invalid_native("UDP input count does not fit usize"))?;
+        let window = checked_window(
+            raw_table.row_start,
+            raw_table.row_count,
+            raw_rows.len(),
+            "UDP table rows",
+        )?;
+        if window.clone().any(|index| used_rows[index]) {
+            return Err(invalid_native("UDP table row windows overlap"));
+        }
+        for index in window.clone() {
+            used_rows[index] = true;
+        }
+
+        let mut rows = Vec::with_capacity(window.len());
+        for raw_row in &raw_rows[window] {
+            if raw_row.reserved != 0 || raw_row.flags != 0 || raw_row.state != 0 {
+                return Err(invalid_native(
+                    "combinational UDP row contains state or edge metadata",
+                ));
+            }
+            if raw_row.output > u8::MAX as u32
+                || !matches!(raw_row.output as u8, b'0' | b'1' | b'x')
+            {
+                return Err(invalid_native(
+                    "combinational UDP row has an invalid output",
+                ));
+            }
+            // SAFETY: the native snapshot remains alive while this decoder
+            // copies every exported row string.
+            let inputs = unsafe { copy_string(raw_row.inputs, "UDP row inputs")? };
+            if inputs.chars().count() != input_count
+                || inputs
+                    .bytes()
+                    .any(|symbol| !matches!(symbol, b'0' | b'1' | b'x' | b'?' | b'b'))
+            {
+                return Err(invalid_native(
+                    "combinational UDP row has invalid input symbols or width",
+                ));
+            }
+            rows.push(UdpRow {
+                inputs,
+                state: None,
+                output: raw_row.output as u8,
+                edge_sensitive: false,
+            });
+        }
+        for left in 0..rows.len() {
+            for right in (left + 1)..rows.len() {
+                if udp_rows_overlap(&rows[left].inputs, &rows[right].inputs)
+                    && rows[left].output != rows[right].output
+                {
+                    return Err(invalid_native(
+                        "combinational UDP table has overlapping rows with different outputs",
+                    ));
+                }
+            }
+        }
+        // SAFETY: the native snapshot remains alive while this decoder copies
+        // the declaration name.
+        let name = unsafe { copy_string(raw_table.name, "UDP table name")? };
+        if name != declaration.name {
+            return Err(invalid_native(
+                "UDP table name does not match its primitive declaration",
+            ));
+        }
+        tables.push(UdpTable {
+            primitive_id: raw_table.primitive_id,
+            name,
+            input_count: raw_table.input_count,
+            rows,
+        });
+    }
+    Ok(tables)
+}
+
+fn udp_rows_overlap(left: &str, right: &str) -> bool {
+    left.bytes()
+        .zip(right.bytes())
+        .all(|(left, right)| udp_symbol_mask(left) & udp_symbol_mask(right) != 0)
+}
+
+fn udp_symbol_mask(symbol: u8) -> u8 {
+    match symbol {
+        b'0' => 1,
+        b'1' => 2,
+        b'x' => 4,
+        b'b' => 3,
+        b'?' => 7,
+        _ => 0,
+    }
+}
+
 fn decode_time_scale(node: &RawSemanticNode) -> Result<Option<SemanticTimeScale>, SlangError> {
     let values = [
         node.time_unit,
