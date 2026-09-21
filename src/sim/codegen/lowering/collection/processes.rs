@@ -399,6 +399,9 @@ impl<'a> Codegen<'a> {
         // Callee resolution in the RHS and elaborated alias bounds needs the
         // owning instance.
         self.inst = inst;
+        let array_net_target = self
+            .array_net_target_parts(lhs)
+            .is_some_and(|(array, _)| array.is_net);
         let alias_bindings = self.alias_lvalue_bindings(ca, lhs)?;
         let has_structural_driver = self.has_structural_driver(ca);
         if has_structural_driver && !self.net_lvalue_selects_are_constant(lhs) {
@@ -453,7 +456,11 @@ impl<'a> Codegen<'a> {
             {
                 let lhs = IrLhs::Whole(driver);
                 if let Some(delay) = scaled_delay {
-                    self.initialize_delayed_driver(driver)?;
+                    if array_net_target {
+                        self.initialize_delayed_driver_as_z(driver)?;
+                    } else {
+                        self.initialize_delayed_driver(driver)?;
+                    }
                     body.push(IrStmt::InertialAssign {
                         lhs,
                         rhs: value,

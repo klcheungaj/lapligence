@@ -1851,14 +1851,20 @@ public:
       capture.captureUdpTable(id, symbol);
     }
     if constexpr (std::same_as<T, PrimitiveInstanceSymbol>) {
+      // `ensureSemantic` may grow semantic_nodes and invalidate references
+      // into that vector. Resolve the primitive declaration before borrowing
+      // the instance record so the instance flags and target remain owned by
+      // the live vector element.
+      const uint64_t primitiveId =
+          capture.ensureSemantic(&symbol.primitiveType);
+      auto& result =
+          capture.output.semantic_nodes[static_cast<size_t>(id)];
       result.subkind = semanticPrimitiveType(symbol.primitiveType);
       result.definition_name = storeString(capture.output,
                                            symbol.primitiveType.name);
       // Keep the declaration identity beside the display name.  Primitive
       // names are looked up in their owning scope, so a name-only join can
       // select a different UDP table when declarations share a spelling.
-      const uint64_t primitiveId =
-          capture.ensureSemantic(&symbol.primitiveType);
       result.target_id = primitiveId;
       capture.semanticEdge(id, LLG_SLANG_EDGE_REFERENCE, primitiveId);
       result.flags |= LLG_SLANG_SEMANTIC_PRIMITIVE_INSTANCE;

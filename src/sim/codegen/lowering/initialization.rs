@@ -268,23 +268,36 @@ impl<'a> Codegen<'a> {
     }
 
     pub(super) fn initialize_delayed_driver(&mut self, index: usize) -> Result<(), String> {
+        self.initialize_delayed_driver_with_initial(index, false)
+    }
+
+    /// A delayed fixed net-array element remains high impedance until its
+    /// first continuous-assignment update arrives. Scalar delayed drivers and
+    /// gate outputs retain their all-X initial value.
+    pub(super) fn initialize_delayed_driver_as_z(&mut self, index: usize) -> Result<(), String> {
+        self.initialize_delayed_driver_with_initial(index, true)
+    }
+
+    fn initialize_delayed_driver_with_initial(
+        &mut self,
+        index: usize,
+        high_impedance: bool,
+    ) -> Result<(), String> {
         use crate::sim::ir::IrInitStep;
         let signal = self.model.signal(index);
         let width = signal.ty.width();
         let limbs = (width as usize).div_ceil(64);
-        let mut x = vec![u64::MAX; limbs];
+        let mut state = vec![u64::MAX; limbs];
         if !width.is_multiple_of(64) {
-            x[limbs - 1] = (1u64 << (width % 64)) - 1;
+            state[limbs - 1] = (1u64 << (width % 64)) - 1;
         }
-        let value = IrConst::packed(
-            vec![0; limbs],
-            x,
-            vec![0; limbs],
-            width,
-            signal.ty.signed(),
-            None,
-        )
-        .map_err(|error| error.to_string())?;
+        let (x, z) = if high_impedance {
+            (vec![0; limbs], state)
+        } else {
+            (state, vec![0; limbs])
+        };
+        let value = IrConst::packed(vec![0; limbs], x, z, width, signal.ty.signed(), None)
+            .map_err(|error| error.to_string())?;
         self.delayed_driver_inits.push(match signal.net_driver {
             Some((group, slot)) => IrInitStep::WriteNet { group, slot, value },
             None => IrInitStep::SetScalar { sig: index, value },
