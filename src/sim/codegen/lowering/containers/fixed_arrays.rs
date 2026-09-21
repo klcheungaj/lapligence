@@ -369,10 +369,16 @@ impl<'a> Codegen<'a> {
                 "mixed positional and keyed fixed unpacked-array assignment pattern in `{path}` is not supported"
             ));
         }
+        let element = self.p30_pattern_element_descriptor(node);
         let mut explicit = HashMap::<usize, NodeId>::new();
+        let mut type_values = Vec::<(AssignmentPatternKeyType, NodeId)>::new();
         let mut default = None;
         for operand in operands {
-            let NodeKind::Expr(ExprKind::TaggedPattern { key, value, .. }) = self.kind(operand)
+            let NodeKind::Expr(ExprKind::TaggedPattern {
+                key,
+                key_type,
+                value,
+            }) = self.kind(operand)
             else {
                 unreachable!();
             };
@@ -390,43 +396,102 @@ impl<'a> Codegen<'a> {
                 }
                 continue;
             }
-            let index = parse_pattern_i128(key).ok_or_else(|| {
-                format!(
-                    "fixed unpacked-array pattern key `{key}` is not a constant index in `{path}`"
-                )
-            })?;
-            let index = i32::try_from(index).map_err(|_| {
-                format!("fixed unpacked-array pattern index `{key}` is out of range in `{path}`")
-            })?;
-            let (left, right) = bounds;
-            let Some(offset) = (if left >= right {
-                left.checked_sub(index)
-            } else {
-                index.checked_sub(left)
-            })
-            .filter(|offset| *offset >= 0) else {
+            if let Some(index) = parse_pattern_i128(key) {
+                let index = i32::try_from(index).map_err(|_| {
+                    format!(
+                        "fixed unpacked-array pattern index `{key}` is out of range in `{path}`"
+                    )
+                })?;
+                let (left, right) = bounds;
+                let Some(offset) = (if left >= right {
+                    left.checked_sub(index)
+                } else {
+                    index.checked_sub(left)
+                })
+                .filter(|offset| *offset >= 0) else {
+                    return Err(format!(
+                        "fixed unpacked-array pattern index `{key}` is outside [{left}:{right}] in `{path}`"
+                    ));
+                };
+                let offset = usize::try_from(offset).map_err(|_| {
+                    format!(
+                        "fixed unpacked-array pattern index `{key}` is out of range in `{path}`"
+                    )
+                })?;
+                if offset >= count || explicit.insert(offset, value).is_some() {
+                    return Err(format!(
+                        "duplicate fixed unpacked-array pattern index `{key}` in `{path}`"
+                    ));
+                }
+                continue;
+            }
+            let Some(key_type) = key_type.as_ref() else {
                 return Err(format!(
-                    "fixed unpacked-array pattern index `{key}` is outside [{left}:{right}] in `{path}`"
+                    "fixed unpacked-array pattern key `{key}` has no matching index or type in `{path}`"
                 ));
             };
-            let offset = usize::try_from(offset).map_err(|_| {
-                format!("fixed unpacked-array pattern index `{key}` is out of range in `{path}`")
-            })?;
-            if offset >= count || explicit.insert(offset, value).is_some() {
+            let Some(element) = element.as_ref() else {
                 return Err(format!(
-                    "duplicate fixed unpacked-array pattern index `{key}` in `{path}`"
+                    "fixed unpacked-array pattern type key `{key}` has no captured element type in `{path}`"
+                ));
+            };
+            if !super::super::collection::pattern_key_matches_descriptor(
+                key_type,
+                element,
+                element.two_state,
+                None,
+            ) {
+                return Err(format!(
+                    "fixed unpacked-array pattern key `{key}` has no matching index or type in `{path}`"
                 ));
             }
+            if type_values.iter().any(|(previous, _)| {
+                super::super::collection::pattern_key_types_equal(previous, key_type)
+            }) {
+                return Err(format!(
+                    "duplicate fixed unpacked-array pattern type key `{key}` in `{path}`"
+                ));
+            }
+            type_values.push((key_type.clone(), value));
         }
         (0..count)
             .map(|offset| {
-                explicit.get(&offset).copied().or(default).ok_or_else(|| {
-                    format!(
-                        "fixed unpacked-array pattern does not cover offset {offset} in `{path}`"
-                    )
-                })
+                explicit
+                    .get(&offset)
+                    .copied()
+                    .or_else(|| type_values.last().map(|(_, value)| *value))
+                    .or(default)
+                    .ok_or_else(|| {
+                        format!(
+                            "fixed unpacked-array pattern does not cover offset {offset} in `{path}`"
+                        )
+                    })
             })
             .collect()
+    }
+
+    fn p30_pattern_element_descriptor(&self, node: NodeId) -> Option<TypeDescriptor> {
+        let descriptor = self.query_descriptor(node)?;
+        let TypeShape::FixedArray {
+            dimensions,
+            element,
+        } = &descriptor.shape
+        else {
+            return None;
+        };
+        if dimensions.len() == 1 {
+            return Some(element.as_ref().clone());
+        }
+        Some(TypeDescriptor {
+            id: descriptor.id,
+            two_state: descriptor.two_state,
+            name: descriptor.name.clone(),
+            info: descriptor.info.clone(),
+            shape: TypeShape::FixedArray {
+                dimensions: dimensions[1..].to_vec(),
+                element: element.clone(),
+            },
+        })
     }
 
     pub(in super::super) fn p30_pattern_values(

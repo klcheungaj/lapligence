@@ -213,6 +213,7 @@ pub(super) fn expression_from_slang(
                 let projection = type_projector.project(type_id)?;
                 Some(AssignmentPatternKeyType {
                     type_id: projection.descriptor.id,
+                    descriptor: projection.descriptor,
                     ty: projection.type_info,
                     two_state: projection.two_state,
                     packed_ranges: projection.packed_dimensions,

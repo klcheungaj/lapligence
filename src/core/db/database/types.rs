@@ -297,6 +297,9 @@ pub struct AssignmentPatternKeyType {
     /// are not sufficient to decide whether a nominal aggregate/type key
     /// matches a member.
     pub type_id: TypeId,
+    /// Complete owned descriptor for array keys whose immediate type identity
+    /// is hidden by the flattened fixed-array representation of a value.
+    pub descriptor: TypeDescriptor,
     pub ty: TypeInfo,
     pub two_state: bool,
     pub packed_ranges: Vec<PackedRange>,

@@ -297,7 +297,14 @@ pub(super) fn pattern_key_matches_descriptor(
     two_state: bool,
     packed_ranges: Option<&[crate::core::db::PackedRange]>,
 ) -> bool {
-    if key_type.type_id != descriptor.id {
+    // Fixed-array descriptors flatten nested unpacked dimensions and retain
+    // only the outer type id. Compare their complete shapes when that
+    // representation hides the immediate nested array identity.
+    if key_type.type_id != descriptor.id
+        && !(key_type.ty.kind == "array"
+            && descriptor.info.kind == "array"
+            && array_pattern_key_shapes_match(&key_type.descriptor, descriptor))
+    {
         return false;
     }
     let nominal = |kind: &str| matches!(kind, "struct" | "union" | "enum" | "class");
@@ -305,7 +312,9 @@ pub(super) fn pattern_key_matches_descriptor(
         return key_type.ty.kind == descriptor.info.kind && key_type.two_state == two_state;
     }
     if key_type.ty.kind == "array" || descriptor.info.kind == "array" {
-        return key_type.ty.kind == descriptor.info.kind;
+        return key_type.ty.kind == descriptor.info.kind
+            && key_type.two_state == two_state
+            && array_pattern_key_shapes_match(&key_type.descriptor, descriptor);
     }
     if key_type.ty.kind == "real" || descriptor.info.kind == "real" {
         return key_type.ty.kind == descriptor.info.kind;
@@ -350,11 +359,61 @@ pub(super) fn pattern_key_types_equal(
     right: &AssignmentPatternKeyType,
 ) -> bool {
     left.type_id == right.type_id
+        && left.descriptor == right.descriptor
         && left.two_state == right.two_state
         && left.ty.kind == right.ty.kind
         && left.ty.width == right.ty.width
         && left.ty.signed == right.ty.signed
         && left.packed_ranges == right.packed_ranges
+}
+
+fn array_pattern_key_shapes_match(left: &TypeDescriptor, right: &TypeDescriptor) -> bool {
+    match (&left.shape, &right.shape) {
+        (
+            TypeShape::FixedArray {
+                dimensions: left_dimensions,
+                element: left_element,
+            },
+            TypeShape::FixedArray {
+                dimensions: right_dimensions,
+                element: right_element,
+            },
+        ) => {
+            left_dimensions == right_dimensions
+                && array_pattern_key_shapes_match(left_element, right_element)
+        }
+        (
+            TypeShape::PackedAtom {
+                ranges: left_ranges,
+            },
+            TypeShape::PackedAtom {
+                ranges: right_ranges,
+            },
+        ) => {
+            left.id == right.id
+                && left_ranges == right_ranges
+                && left.info.kind == right.info.kind
+                && left.info.signed == right.info.signed
+                && left.two_state == right.two_state
+        }
+        (TypeShape::Aggregate(left_layout), TypeShape::Aggregate(right_layout)) => {
+            left_layout.kind == right_layout.kind && left_layout.type_id == right_layout.type_id
+        }
+        (
+            TypeShape::Real {
+                shortreal: left_shortreal,
+            },
+            TypeShape::Real {
+                shortreal: right_shortreal,
+            },
+        ) => left.id == right.id && left_shortreal == right_shortreal,
+        (TypeShape::String, TypeShape::String) => left.id == right.id,
+        (TypeShape::Opaque { kind: left_kind }, TypeShape::Opaque { kind: right_kind }) => {
+            left_kind == right_kind && left.id == right.id
+        }
+        (TypeShape::Container { .. }, TypeShape::Container { .. }) => left.id == right.id,
+        _ => false,
+    }
 }
 
 pub(super) fn pattern_key_matches_type_descriptor(
