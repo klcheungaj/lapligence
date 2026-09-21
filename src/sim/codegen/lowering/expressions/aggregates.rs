@@ -175,6 +175,11 @@ impl<'a> Codegen<'a> {
         nba: bool,
         op: Operation,
     ) -> Result<Option<IrStmt>, String> {
+        if let Some(statement) =
+            self.lower_p30_pattern_lvalue_assignment(path, lhs, rhs, !nba, op)?
+        {
+            return Ok(Some(statement));
+        }
         if op == Operation::Assignment
             && self.query_descriptor(lhs).is_some_and(|descriptor| {
                 matches!(

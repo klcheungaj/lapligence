@@ -5,6 +5,285 @@ use super::*;
 impl<'a> Codegen<'a> {
     // Fixed unpacked-array assignment (P30).
 
+    /// Lower a positional assignment-pattern lvalue (SV 10.9).  Slang
+    /// represents each lvalue position as an assignment operation whose RHS
+    /// is an `EmptyArgument`; the pattern itself therefore needs a small
+    /// target-side walk before the ordinary lvalue lowerer can be used.
+    ///
+    /// The source values are lowered through the existing fixed-array source
+    /// path.  That path places all source captures before the returned writes,
+    /// which is required when a target overlaps the source storage or when the
+    /// assignment is nonblocking.
+    pub(in super::super) fn lower_p30_pattern_lvalue_assignment(
+        &mut self,
+        path: &str,
+        lhs: NodeId,
+        rhs: NodeId,
+        blocking: bool,
+        op: Operation,
+    ) -> Result<Option<IrStmt>, String> {
+        let pattern = self.p30_unwrap_cast(lhs);
+        let NodeKind::Expr(ExprKind::Operation { op: pattern_op, .. }) = self.kind(pattern) else {
+            return Ok(None);
+        };
+        if !matches!(
+            pattern_op,
+            Operation::AssignmentPattern | Operation::MultiAssignmentPattern
+        ) {
+            return Ok(None);
+        }
+        if *pattern_op == Operation::MultiAssignmentPattern {
+            return Err(format!(
+                "replicated assignment-pattern lvalue in `{path}` is not supported"
+            ));
+        }
+        if op != Operation::Assignment {
+            return Err(format!(
+                "compound assignment of a positional assignment-pattern lvalue in `{path}` is not supported"
+            ));
+        }
+
+        let target_descriptor = self.query_descriptor(lhs).cloned().ok_or_else(|| {
+            format!("positional assignment-pattern lvalue in `{path}` has no owned target type")
+        })?;
+        let source_descriptor = self.query_descriptor(rhs).cloned().ok_or_else(|| {
+            format!("positional assignment-pattern RHS in `{path}` has no owned source type")
+        })?;
+        let TypeShape::FixedArray { .. } = target_descriptor.shape else {
+            return Err(format!(
+                "positional assignment-pattern lvalue in `{path}` requires a fixed unpacked-array type"
+            ));
+        };
+        let TypeShape::FixedArray { .. } = source_descriptor.shape else {
+            return Err(format!(
+                "positional assignment-pattern RHS in `{path}` requires a compatible fixed unpacked array"
+            ));
+        };
+        self.p30_require_pattern_shape(
+            path,
+            &target_descriptor,
+            &source_descriptor,
+            "assignment-pattern lvalue",
+        )?;
+
+        let mut targets = Vec::new();
+        self.p30_collect_pattern_lvalue_targets(path, pattern, &target_descriptor, &mut targets)?;
+        let mut lowered_targets = Vec::with_capacity(targets.len());
+        for (target, descriptor) in targets {
+            if !blocking
+                && (self.proc_local_target(target).is_some() || self.subroutine_auto_target(target))
+            {
+                return Err(format!(
+                    "nonblocking assignment to an automatic assignment-pattern target in `{path}` is not supported"
+                ));
+            }
+            let lowered = self.lower_lhs(path, target)?;
+            if !blocking && matches!(lowered, IrLhs::Ref { .. }) {
+                return Err(format!(
+                    "nonblocking assignment through a reference formal in `{path}` is not supported"
+                ));
+            }
+            let width = packed_lhs_width(&self.model, &lowered).ok_or_else(|| {
+                format!("assignment-pattern lvalue target in `{path}` is not a packed value target")
+            })?;
+            let expected = Self::fixed_descriptor_width(&descriptor).ok_or_else(|| {
+                format!("assignment-pattern lvalue target in `{path}` has unresolved element width")
+            })?;
+            if width != expected {
+                return Err(format!(
+                    "assignment-pattern lvalue target in `{path}` is {width} bits wide; expected {expected}"
+                ));
+            }
+            lowered_targets.push(lowered);
+        }
+
+        let target_dims = match &target_descriptor.shape {
+            TypeShape::FixedArray { dimensions, .. } => dimensions.clone(),
+            _ => unreachable!("checked fixed assignment-pattern target shape"),
+        };
+        let mut captures = Vec::new();
+        let mut captured_indices = HashMap::new();
+        let values = self.p30_lower_source_values(
+            path,
+            lhs,
+            rhs,
+            &target_dims,
+            &mut captures,
+            &mut captured_indices,
+        )?;
+        if values.len() != lowered_targets.len() {
+            return Err(format!(
+                "assignment-pattern lvalue in `{path}` has {} targets but RHS supplies {} values",
+                lowered_targets.len(),
+                values.len()
+            ));
+        }
+        for (target, value) in lowered_targets.into_iter().zip(values) {
+            let value = apply_lhs_assignment_context(&self.model, &target, value);
+            captures.push(IrStmt::Assign {
+                lhs: target,
+                rhs: value,
+                nba: !blocking,
+            });
+        }
+        Ok(Some(IrStmt::Block(captures)))
+    }
+
+    fn p30_collect_pattern_lvalue_targets(
+        &self,
+        path: &str,
+        node: NodeId,
+        descriptor: &TypeDescriptor,
+        out: &mut Vec<(NodeId, TypeDescriptor)>,
+    ) -> Result<(), String> {
+        let pattern = self.p30_unwrap_cast(node);
+        let TypeShape::FixedArray {
+            dimensions,
+            element,
+        } = &descriptor.shape
+        else {
+            out.push((node, descriptor.clone()));
+            return Ok(());
+        };
+        let Some((bounds, rest)) = dimensions.split_first() else {
+            return Err(format!(
+                "assignment-pattern lvalue in `{path}` has an empty fixed-array shape"
+            ));
+        };
+        let Some(operands) = self.assignment_pattern_operands(path, pattern)? else {
+            return Err(format!(
+                "positional assignment-pattern lvalue in `{path}` must contain only positional targets"
+            ));
+        };
+        let NodeKind::Expr(ExprKind::Operation { op, .. }) = self.kind(pattern) else {
+            unreachable!("assignment-pattern operands checked above");
+        };
+        if *op != Operation::AssignmentPattern {
+            return Err(format!(
+                "replicated assignment-pattern lvalue in `{path}` is not supported"
+            ));
+        }
+        let count = usize::try_from((i64::from(bounds.0) - i64::from(bounds.1)).unsigned_abs() + 1)
+            .map_err(|_| format!("assignment-pattern lvalue is too large in `{path}"))?;
+        if operands.len() != count {
+            return Err(format!(
+                "assignment-pattern lvalue in `{path}` has {} positional targets; expected {count}",
+                operands.len()
+            ));
+        }
+        let next = if rest.is_empty() {
+            element.as_ref().clone()
+        } else {
+            TypeDescriptor {
+                two_state: descriptor.two_state,
+                id: descriptor.id,
+                name: descriptor.name.clone(),
+                info: descriptor.info.clone(),
+                shape: TypeShape::FixedArray {
+                    dimensions: rest.to_vec(),
+                    element: element.clone(),
+                },
+            }
+        };
+        for operand in operands {
+            let target = self.p30_pattern_lvalue_operand(path, operand)?;
+            if matches!(&next.shape, TypeShape::FixedArray { .. }) {
+                self.p30_collect_pattern_lvalue_targets(path, target, &next, out)?;
+            } else {
+                if matches!(
+                    self.kind(target),
+                    NodeKind::Expr(ExprKind::Operation {
+                        op: Operation::AssignmentPattern | Operation::MultiAssignmentPattern,
+                        ..
+                    })
+                ) {
+                    return Err(format!(
+                        "assignment-pattern lvalue nesting in `{path}` does not match its target type"
+                    ));
+                }
+                out.push((target, next.clone()));
+            }
+        }
+        Ok(())
+    }
+
+    fn p30_pattern_lvalue_operand(&self, path: &str, node: NodeId) -> Result<NodeId, String> {
+        let NodeKind::Expr(ExprKind::Operation {
+            op: Operation::Assignment,
+            assignment: true,
+            operands,
+            ..
+        }) = self.kind(node)
+        else {
+            return Err(format!(
+                "assignment-pattern lvalue in `{path}` contains a keyed/default or malformed target"
+            ));
+        };
+        let [target, empty] = operands.as_slice() else {
+            return Err(format!(
+                "assignment-pattern lvalue in `{path}` contains a malformed target"
+            ));
+        };
+        let mut empty = *empty;
+        while let NodeKind::Expr(ExprKind::Cast { operand, .. }) = self.kind(empty) {
+            empty = *operand;
+        }
+        if !matches!(self.kind(empty), NodeKind::Expr(ExprKind::Other))
+            || self.db.semantic_detail(empty) != Some("EmptyArgument")
+        {
+            return Err(format!(
+                "assignment-pattern lvalue in `{path}` contains a keyed/default or malformed target"
+            ));
+        }
+        Ok(*target)
+    }
+
+    fn p30_require_pattern_shape(
+        &self,
+        path: &str,
+        target: &TypeDescriptor,
+        source: &TypeDescriptor,
+        label: &str,
+    ) -> Result<(), String> {
+        match (&target.shape, &source.shape) {
+            (
+                TypeShape::FixedArray {
+                    dimensions: target_dims,
+                    element: target_element,
+                },
+                TypeShape::FixedArray {
+                    dimensions: source_dims,
+                    element: source_element,
+                },
+            ) => {
+                if target_dims.len() != source_dims.len()
+                    || target_dims.iter().zip(source_dims).any(|(left, right)| {
+                        (i64::from(left.0) - i64::from(left.1)).unsigned_abs()
+                            != (i64::from(right.0) - i64::from(right.1)).unsigned_abs()
+                    })
+                {
+                    return Err(format!(
+                        "{label} in `{path}` has incompatible fixed-array shape"
+                    ));
+                }
+                self.p30_require_pattern_shape(path, target_element, source_element, label)
+            }
+            (TypeShape::PackedAtom { .. }, TypeShape::PackedAtom { .. }) => {
+                let target_width = Self::fixed_descriptor_width(target)
+                    .ok_or_else(|| format!("{label} in `{path}` has unresolved target width"))?;
+                let source_width = Self::fixed_descriptor_width(source)
+                    .ok_or_else(|| format!("{label} in `{path}` has unresolved source width"))?;
+                if target_width != source_width {
+                    return Err(format!(
+                        "{label} in `{path}` has incompatible element widths ({target_width} versus {source_width})"
+                    ));
+                }
+                Ok(())
+            }
+            _ => Err(format!("{label} in `{path}` has incompatible value shape")),
+        }
+    }
+
     /// A fixed-array view is represented by the complete coordinate list in
     /// logical (declared left-to-right) order.  Keeping the view as concrete
     /// coordinates lets the existing guarded ArrayRead/ArrayElem IR preserve
