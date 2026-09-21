@@ -15,6 +15,9 @@ reports a mixed or mismatched checkout as an error.
   reference ports; subroutine reference arguments retain their own rules.
 - `slang/slang-conditional-unknown-merge.patch`: packed ambiguous conditional
   constants follow the supplied Verilog/SystemVerilog tables, including Z/Z → X.
+- `slang/slang-package-wildcard-export.patch`: resolves lazy package wildcard
+  re-exports for finite declarations and keeps ambiguous re-export names as
+  frontend diagnostics.
 
 ## libaco
 

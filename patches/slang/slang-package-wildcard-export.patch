@@ -1,0 +1,60 @@
+diff --git a/source/ast/symbols/CompilationUnitSymbols.cpp b/source/ast/symbols/CompilationUnitSymbols.cpp
+--- a/source/ast/symbols/CompilationUnitSymbols.cpp
++++ b/source/ast/symbols/CompilationUnitSymbols.cpp
+@@ -16,3 +16,4 @@
+ #include "slang/ast/types/NetType.h"
+ #include "slang/diagnostics/DeclarationsDiags.h"
++#include "slang/diagnostics/LookupDiags.h"
+ #include "slang/syntax/AllSyntax.h"
+@@ -178,1 +179,51 @@
++    // A wildcard export forwards the names available through the package's
++    // wildcard imports. Those imports are normally populated lazily by a
++    // lookup in the package body, but a client can first request a name from
++    // the re-exporting package. Resolve that name through each imported
++    // package so typedefs, lets, and other declarations are visible too.
++    const Symbol* exported = nullptr;
++    const WildcardImportSymbol* exportedFrom = nullptr;
++    if (hasExportAll || !exportDecls.empty()) {
++        for (auto import : wildcardData->wildcardImports) {
++            auto package = import->getPackage();
++            if (!package)
++                continue;
++
++            auto symbol = package->findForImport(lookupName);
++            if (!symbol)
++                continue;
++
++            bool isExported = hasExportAll;
++            if (!isExported) {
++                for (auto decl : exportDecls) {
++                    if (decl->package.valueText() != package->name)
++                        continue;
++
++                    if (decl->item.kind == TokenKind::Star ||
++                        decl->item.valueText() == lookupName) {
++                        isExported = true;
++                        break;
++                    }
++                }
++            }
++            if (!isExported)
++                continue;
++
++            if (exported && exported != symbol) {
++                auto& diag = addDiag(diag::AmbiguousWildcardImport, import->location);
++                diag << lookupName;
++                diag.addNote(diag::NoteImportedFrom, exportedFrom->location);
++                diag.addNote(diag::NoteImportedFrom, import->location);
++                return nullptr;
++            }
++            exported = symbol;
++            exportedFrom = import;
++        }
++    }
++
++    if (exported) {
++        wildcardData->importedSymbols.emplace(lookupName, exported);
++        return exported;
++    }
++
+     return nullptr;
