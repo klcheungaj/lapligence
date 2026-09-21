@@ -12,7 +12,9 @@
   API.
 - Admission: compilation units and include-only buffers are supplied from
   bounded process memory. Include lookup remains cache-only and cannot read an
-  unadmitted file.
+  unadmitted file. Named library buffers, their default search order, and the
+  selected default library are borrowed for the same compile call; they do not
+  widen native filesystem access.
 - Representation: source ranges are zero-based half-open byte ranges. Stable
   repository codes describe semantic operations and edge roles; unsupported
   Slang constructs remain explicit records. Four-state values preserve value

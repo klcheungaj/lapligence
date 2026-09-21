@@ -61,6 +61,10 @@ fn simulator_information_exits_without_compiling_or_installing_memory_limits() {
     assert!(String::from_utf8_lossy(&output.stdout).contains("--include-dir <path>"));
     assert!(String::from_utf8_lossy(&output.stdout).contains("--define <NAME[=VALUE]>"));
     assert!(String::from_utf8_lossy(&output.stdout).contains("--define-system-task <prototype>"));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("--libmap <file>"));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("--libfile"));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("--library-order"));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("--default-library"));
     assert!(String::from_utf8_lossy(&output.stdout).contains("--stop-policy <resume|exit>"));
     assert!(String::from_utf8_lossy(&output.stdout).contains("--launcher"));
 }
@@ -76,6 +80,15 @@ fn simulator_missing_option_value_is_a_usage_error() {
     for (option, diagnostic) in [
         ("--generator", "requires a backend name"),
         ("--launcher", "requires a program name"),
+        ("--libmap", "--libmap requires a file path"),
+        ("--libfile", "--libfile requires [library=]file"),
+        ("-v", "--libfile requires [library=]file"),
+        ("--library-order", "--library-order requires a library name"),
+        ("-L", "--library-order requires a library name"),
+        (
+            "--default-library",
+            "--default-library requires a library name",
+        ),
     ] {
         let output = invoke(env!("CARGO_BIN_EXE_llg"), &[option]);
         assert_eq!(output.status.code(), Some(2), "{output:?}");

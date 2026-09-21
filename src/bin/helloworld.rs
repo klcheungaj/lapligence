@@ -32,6 +32,7 @@ fn main() -> std::process::ExitCode {
     let options = CompileOptions::default();
     let snapshot = match slang::compile(&CompileRequest {
         sources: &sources,
+        library_sources: &[],
         options: &options,
     }) {
         Ok(snapshot) => snapshot,

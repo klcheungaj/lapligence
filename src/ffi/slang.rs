@@ -26,7 +26,7 @@ use values::{
     decode_constants, decode_instances, decode_parameters, decode_types, validate_parameter_windows,
 };
 
-const ABI_VERSION: u32 = 5;
+const ABI_VERSION: u32 = 6;
 const INVALID_ID: u64 = u64::MAX;
 
 const STATUS_OK: u32 = 0;
@@ -66,6 +66,18 @@ pub struct Source<'a> {
     /// Parse this source as a compilation unit. `false` preloads an admitted
     /// include buffer that can only be opened through Slang's in-memory cache.
     pub is_compilation_unit: bool,
+}
+
+/// One source buffer assigned to an explicit named source library.
+///
+/// Library files are still admitted by the Rust side before entering the
+/// cache-only native frontend. The library name is metadata for elaboration;
+/// it does not authorize additional filesystem reads.
+#[derive(Debug, Clone, Copy)]
+pub struct LibrarySource<'a> {
+    pub name: &'a str,
+    pub text: &'a str,
+    pub library: &'a str,
 }
 
 impl<'a> Source<'a> {
@@ -275,6 +287,10 @@ pub struct CompileOptions {
     /// Treat compilation units as library units so definitions are checked
     /// once without inferring and recursively elaborating design tops.
     pub library_units: bool,
+    /// Search order for named source libraries used by configuration rules.
+    pub library_order: Vec<String>,
+    /// Name of the default source library. `work` is used when omitted.
+    pub default_library: Option<String>,
     /// Group admitted compilation-unit buffers before preprocessing. The
     /// default keeps each buffer as an independent compilation unit.
     pub compilation_unit_mode: CompilationUnitMode,
@@ -285,6 +301,7 @@ pub struct CompileOptions {
 #[derive(Debug, Clone, Copy)]
 pub struct CompileRequest<'a> {
     pub sources: &'a [Source<'a>],
+    pub library_sources: &'a [LibrarySource<'a>],
     pub options: &'a CompileOptions,
 }
 
@@ -1037,6 +1054,16 @@ struct RawSource {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
+struct RawLibrarySource {
+    name: RawString,
+    text: RawString,
+    library: RawString,
+    flags: u32,
+    reserved: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
 struct RawDefine {
     name: RawString,
     value: RawString,
@@ -1080,6 +1107,13 @@ struct RawCompileRequest {
     parameter_override_count: u64,
     system_subroutines: *const RawString,
     system_subroutine_count: u64,
+    library_sources: *const RawLibrarySource,
+    library_source_count: u64,
+    library_order: *const RawString,
+    library_order_count: u64,
+    default_library: RawString,
+    default_library_present: u32,
+    default_library_reserved: u32,
     limits: RawLimits,
 }
 
@@ -1369,6 +1403,17 @@ pub fn compile(request: &CompileRequest<'_>) -> Result<Snapshot, SlangError> {
             reserved: 0,
         })
         .collect();
+    let raw_library_sources: Vec<_> = request
+        .library_sources
+        .iter()
+        .map(|source| RawLibrarySource {
+            name: raw_string(source.name),
+            text: raw_string(source.text),
+            library: raw_string(source.library),
+            flags: 0,
+            reserved: 0,
+        })
+        .collect();
     let raw_defines: Vec<_> = request
         .options
         .defines
@@ -1412,6 +1457,17 @@ pub fn compile(request: &CompileRequest<'_>) -> Result<Snapshot, SlangError> {
         .iter()
         .map(|prototype| raw_string(prototype))
         .collect();
+    let raw_library_order: Vec<_> = request
+        .options
+        .library_order
+        .iter()
+        .map(|name| raw_string(name))
+        .collect();
+    let raw_default_library = request
+        .options
+        .default_library
+        .as_deref()
+        .map_or_else(empty_raw_string, raw_string);
     let limits = request.options.limits;
     let raw_request = RawCompileRequest {
         abi_version: ABI_VERSION,
@@ -1433,6 +1489,13 @@ pub fn compile(request: &CompileRequest<'_>) -> Result<Snapshot, SlangError> {
         parameter_override_count: raw_parameter_overrides.len() as u64,
         system_subroutines: raw_system_subroutines.as_ptr(),
         system_subroutine_count: raw_system_subroutines.len() as u64,
+        library_sources: raw_library_sources.as_ptr(),
+        library_source_count: raw_library_sources.len() as u64,
+        library_order: raw_library_order.as_ptr(),
+        library_order_count: raw_library_order.len() as u64,
+        default_library: raw_default_library,
+        default_library_present: u32::from(request.options.default_library.is_some()),
+        default_library_reserved: 0,
         limits: RawLimits {
             max_sources: limits.max_sources,
             max_source_bytes: limits.max_source_bytes,
@@ -1479,17 +1542,25 @@ pub fn compile(request: &CompileRequest<'_>) -> Result<Snapshot, SlangError> {
         ));
     }
     for file in &mut decoded.files {
-        let source = request
+        let source_text = request
             .sources
             .iter()
             .find(|source| source.name == file.name)
+            .map(|source| source.text)
+            .or_else(|| {
+                request
+                    .library_sources
+                    .iter()
+                    .find(|source| source.name == file.name)
+                    .map(|source| source.text)
+            })
             .ok_or_else(|| invalid_native("snapshot file was not an admitted source"))?;
-        if source.text.len() as u64 != file.byte_len {
+        if source_text.len() as u64 != file.byte_len {
             return Err(invalid_native(
                 "snapshot file length does not match admitted source",
             ));
         }
-        file.text = source.text.to_owned();
+        file.text = source_text.to_owned();
     }
     drop(unexpected_error);
     Ok(decoded)
@@ -1500,16 +1571,36 @@ fn validate_request(request: &CompileRequest<'_>) -> Result<(), SlangError> {
     if request.sources.is_empty() {
         return Err(invalid_argument("at least one source is required"));
     }
-    if request.sources.len() > MAX_SOURCES {
+    let total_sources = request
+        .sources
+        .len()
+        .checked_add(request.library_sources.len())
+        .ok_or_else(|| limit_exceeded("source count overflowed"))?;
+    if total_sources > MAX_SOURCES {
         return Err(limit_exceeded("source count exceeds the native limit"));
     }
-    if request.sources.len() as u64 > limits.max_sources {
+    if total_sources as u64 > limits.max_sources {
         return Err(limit_exceeded("source count exceeds max_sources"));
     }
     let mut total = 0_u64;
-    let mut names = HashSet::with_capacity(request.sources.len());
+    let mut names = HashSet::with_capacity(total_sources);
     for source in request.sources {
         validate_name(source.name, "source name")?;
+        if !names.insert(source.name) {
+            return Err(invalid_argument("source names must be unique"));
+        }
+        total = total
+            .checked_add(source.name.len() as u64)
+            .ok_or_else(|| limit_exceeded("source byte count overflowed"))?
+            .checked_add(source.text.len() as u64)
+            .ok_or_else(|| limit_exceeded("source byte count overflowed"))?;
+        if total > limits.max_source_bytes {
+            return Err(limit_exceeded("source bytes exceed max_source_bytes"));
+        }
+    }
+    for source in request.library_sources {
+        validate_name(source.name, "library source name")?;
+        validate_name(source.library, "library name")?;
         if !names.insert(source.name) {
             return Err(invalid_argument("source names must be unique"));
         }
@@ -1542,6 +1633,9 @@ fn validate_request(request: &CompileRequest<'_>) -> Result<(), SlangError> {
         return Err(limit_exceeded(
             "system subroutine count exceeds the native limit",
         ));
+    }
+    if request.options.library_order.len() > MAX_SOURCES {
+        return Err(limit_exceeded("library order exceeds the native limit"));
     }
     let mut config_bytes = 0_u64;
     for define in &request.options.defines {
@@ -1585,6 +1679,14 @@ fn validate_request(request: &CompileRequest<'_>) -> Result<(), SlangError> {
             ));
         }
         add_input_bytes(&mut config_bytes, prototype.len(), "configuration")?;
+    }
+    for library in &request.options.library_order {
+        validate_name(library, "library name")?;
+        add_input_bytes(&mut config_bytes, library.len(), "configuration")?;
+    }
+    if let Some(library) = &request.options.default_library {
+        validate_name(library, "default library name")?;
+        add_input_bytes(&mut config_bytes, library.len(), "configuration")?;
     }
     if !request
         .sources

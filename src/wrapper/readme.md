@@ -18,7 +18,9 @@
   failures return an owned error record. Destruction accepts null.
 - Admission: buffers are explicitly marked as compilation units or include-only.
   Cache-only reads and lexical path normalization restrict includes to admitted
-  buffers; missing includes cannot read file contents.
+  buffers; missing includes cannot read file contents. Named library buffers and
+  the default library search order are supplied as borrowed request metadata,
+  so configuration elaboration also remains restricted to admitted contents.
 - Scope: the snapshot is the only native frontend boundary. Rust converts its
   semantic records into independently testable semantic and execution IRs.
 - Consumer: [Rust FFI layer](../ffi/readme.md).

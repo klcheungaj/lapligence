@@ -25,6 +25,7 @@ fn compile(source: &str) -> slang::Snapshot {
     let options = CompileOptions::default();
     let snapshot = slang::compile(&CompileRequest {
         sources: &sources,
+        library_sources: &[],
         options: &options,
     })
     .expect("semantic source should compile");
@@ -58,6 +59,7 @@ fn navigation_capture_shares_repeated_bodies_and_generate_declarations() {
         };
         let snapshot = slang::compile(&CompileRequest {
             sources: &[Source::compilation_unit("/virtual/navigation.sv", &source)],
+            library_sources: &[],
             options: &options,
         })
         .expect("navigation capture stays within the source-sized node budget");
@@ -568,6 +570,7 @@ endmodule
         };
         let snapshot = slang::compile(&CompileRequest {
             sources: &sources,
+            library_sources: &[],
             options: &options,
         })
         .expect("connection source should compile");

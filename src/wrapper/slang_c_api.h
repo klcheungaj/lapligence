@@ -13,7 +13,7 @@
 extern "C" {
 #endif
 
-#define LLG_SLANG_ABI_VERSION 5u
+#define LLG_SLANG_ABI_VERSION 6u
 #define LLG_SLANG_INVALID_ID UINT64_MAX
 
 typedef struct LlgSlangSnapshot LlgSlangSnapshot;
@@ -30,6 +30,16 @@ typedef struct {
   uint32_t flags;
   uint32_t reserved;
 } LlgSlangSource;
+
+/* A source file assigned to an explicit named library. The wrapper owns no
+ * input memory; all three strings remain borrowed for llg_slang_compile(). */
+typedef struct {
+  LlgSlangString name;
+  LlgSlangString text;
+  LlgSlangString library;
+  uint32_t flags;
+  uint32_t reserved;
+} LlgSlangLibrarySource;
 
 enum {
   /* Parse and add this buffer to the compilation. Buffers without this flag
@@ -92,6 +102,13 @@ typedef struct {
   /* Standard SystemVerilog prototypes for user-defined $ system tasks/functions. */
   const LlgSlangString* system_subroutines;
   uint64_t system_subroutine_count;
+  const LlgSlangLibrarySource* library_sources;
+  uint64_t library_source_count;
+  const LlgSlangString* library_order;
+  uint64_t library_order_count;
+  LlgSlangString default_library;
+  uint32_t default_library_present;
+  uint32_t default_library_reserved;
   LlgSlangLimits limits;
 } LlgSlangCompileRequest;
 

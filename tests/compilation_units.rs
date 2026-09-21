@@ -572,6 +572,7 @@ fn macro_expansion_diagnostics_retain_the_defining_header_origin() {
     ];
     let snapshot = slang::compile(&CompileRequest {
         sources: &sources,
+        library_sources: &[],
         options: &CompileOptions::default(),
     })
     .expect("macro expansion diagnostics are not a startup failure");

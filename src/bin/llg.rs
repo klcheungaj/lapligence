@@ -4,7 +4,7 @@
 //!
 //! ```text
 //! llg [generate options] [build options] <file.sv>... [-- <plusargs>...]
-//! generate: --top <module>  --edition <2001|2009>  --compilation-units <separate|merged>  --include-dir <path>  --define <NAME[=VALUE]>  --define-system-task <prototype>  --lint  --lint-json [<path>]  --lint-config <file>  --gen-only  --no-opt  --stop-policy <resume|exit>
+//! generate: --top <module[:config]>  --edition <2001|2009>  --compilation-units <separate|merged>  --include-dir <path>  --define <NAME[=VALUE]>  --define-system-task <prototype>  --libmap <file>  --libfile [<library>=]<file>  --library-order <library>[,<library>...]  --default-library <library>  --lint  --lint-json [<path>]  --lint-config <file>  --gen-only  --no-opt  --stop-policy <resume|exit>
 //! build:    --generator <backend>  --launcher <program>  --dpi-lib <path>...
 //! ```
 //!
@@ -62,6 +62,10 @@ struct DriverOptions {
     include_dirs: Vec<String>,
     defines: Vec<String>,
     system_subroutines: Vec<String>,
+    library_map_files: Vec<String>,
+    library_files: Vec<String>,
+    library_order: Vec<String>,
+    default_library: Option<String>,
     files: Vec<String>,
     runtime_args: Vec<String>,
     lint_mode: bool,
@@ -115,7 +119,7 @@ fn parse_args(args: Vec<String>) -> Result<DriverOptions, i32> {
     if args.is_empty() {
         eprintln!(
             "usage: llg [generate options] [build options] <file.sv>... [-- <plusargs>...]\n\
-             generate: --top <module>  --edition <2001|2009>  --compilation-units <separate|merged>  --include-dir <path>  --define <NAME[=VALUE]>  --define-system-task <prototype>  --lint  --lint-json [<path>]  --lint-config <file>  --gen-only  --no-opt\n\
+             generate: --top <module[:config]>  --edition <2001|2009>  --compilation-units <separate|merged>  --include-dir <path>  --define <NAME[=VALUE]>  --define-system-task <prototype>  --libmap <file>  --libfile [<library>=]<file>  --library-order <library>[,<library>...]  --default-library <library>  --lint  --lint-json [<path>]  --lint-config <file>  --gen-only  --no-opt\n\
              build:    --generator <backend>  --launcher <program>  --dpi-lib <path>...\n\
              stop:     --stop-policy <resume|exit>  # `$stop` handling (default: resume)"
         );
@@ -128,6 +132,10 @@ fn parse_args(args: Vec<String>) -> Result<DriverOptions, i32> {
     let mut include_dirs: Vec<String> = Vec::new();
     let mut defines: Vec<String> = Vec::new();
     let mut system_subroutines: Vec<String> = Vec::new();
+    let mut library_map_files: Vec<String> = Vec::new();
+    let mut library_files: Vec<String> = Vec::new();
+    let mut library_order: Vec<String> = Vec::new();
+    let mut default_library: Option<String> = None;
     let mut files: Vec<String> = Vec::new();
     let mut runtime_args: Vec<String> = Vec::new();
     let mut lint_mode = false;
@@ -156,7 +164,7 @@ Usage: llg [OPTIONS] <file.sv>... [-- <plusargs>...]
 Options:
   -h, --help                 Print help and exit
   -V, --version              Print the package version and exit
-      --top <module>         Select the top module
+      --top <module[:config]> Select the top module or configured design
       --edition <2001|2009> Select the language edition (default: 2009)
       --compilation-units <separate|merged>
                               Select compilation-unit grouping (default: separate)
@@ -164,6 +172,13 @@ Options:
   -D, --define <NAME[=VALUE]> Define a preprocessor macro
       --define-system-task <prototype>
                               Define a VPI system task/function prototype
+      --libmap <file>        Admit a library map file (repeatable)
+      -v, --libfile <[library=]file>
+                              Admit a source file into a named library (repeatable)
+      -L, --library-order <library>[,<library>...]
+                              Set the default configuration library search order
+      --default-library <name>
+                              Name the default source library (default: work)
       --lint                 Run lint before simulation
       --lint-json [<path>]   Report lint as JSON and exit
       --lint-config <file>   Load lint configuration
@@ -227,6 +242,45 @@ Options:
                 Some(prototype) if !prototype.is_empty() => system_subroutines.push(prototype),
                 _ => {
                     eprintln!("llg: --define-system-task requires a prototype");
+                    return Err(2);
+                }
+            },
+            "--libmap" | "--library-map" => match it.next() {
+                Some(path) if !path.is_empty() => library_map_files.push(path),
+                _ => {
+                    eprintln!("llg: --libmap requires a file path");
+                    return Err(2);
+                }
+            },
+            "--libfile" | "-v" => match it.next() {
+                Some(path) if !path.is_empty() => library_files.push(path),
+                _ => {
+                    eprintln!("llg: --libfile requires [library=]file");
+                    return Err(2);
+                }
+            },
+            "--library-order" | "-L" => match it.next() {
+                Some(value) if !value.is_empty() => {
+                    let names = value
+                        .split(',')
+                        .filter(|name| !name.is_empty())
+                        .map(str::to_owned)
+                        .collect::<Vec<_>>();
+                    if names.is_empty() {
+                        eprintln!("llg: --library-order requires a library name");
+                        return Err(2);
+                    }
+                    library_order.extend(names);
+                }
+                _ => {
+                    eprintln!("llg: --library-order requires a library name");
+                    return Err(2);
+                }
+            },
+            "--default-library" | "--defaultLibName" => match it.next() {
+                Some(value) if !value.is_empty() => default_library = Some(value),
+                _ => {
+                    eprintln!("llg: --default-library requires a library name");
                     return Err(2);
                 }
             },
@@ -300,6 +354,10 @@ Options:
         include_dirs,
         defines,
         system_subroutines,
+        library_map_files,
+        library_files,
+        library_order,
+        default_library,
         files,
         runtime_args,
         lint_mode,
@@ -323,6 +381,10 @@ fn run(options: DriverOptions) -> i32 {
         include_dirs,
         defines,
         system_subroutines,
+        library_map_files,
+        library_files,
+        library_order,
+        default_library,
         files,
         runtime_args,
         lint_mode,
@@ -365,6 +427,10 @@ fn run(options: DriverOptions) -> i32 {
         include_dirs,
         defines,
         system_subroutines,
+        library_map_files,
+        library_files,
+        library_order,
+        default_library,
         ..Default::default()
     }) {
         Ok(out) => out,

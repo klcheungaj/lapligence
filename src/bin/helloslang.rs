@@ -38,6 +38,7 @@ fn run(args: Vec<String>) -> i32 {
     };
     let snapshot = match slang::compile(&CompileRequest {
         sources: &sources,
+        library_sources: &[],
         options: &options,
     }) {
         Ok(snapshot) => snapshot,

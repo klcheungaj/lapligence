@@ -8,6 +8,7 @@
 #include <deque>
 #include <exception>
 #include <filesystem>
+#include <iterator>
 #include <limits>
 #include <map>
 #include <memory>
@@ -4054,12 +4055,23 @@ std::unique_ptr<LlgSlangSnapshot> compileImpl(const LlgSlangCompileRequest& requ
   if (request.system_subroutine_count != 0 && request.system_subroutines == nullptr)
     throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT,
                         "system_subroutines has a null pointer");
+  if (request.library_source_count != 0 && request.library_sources == nullptr)
+    throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT,
+                        "library_sources has a null pointer");
+  if (request.library_order_count != 0 && request.library_order == nullptr)
+    throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT,
+                        "library_order has a null pointer");
+  if (request.default_library_present > 1 || request.default_library_reserved != 0)
+    throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT,
+                        "invalid default library flags");
 
   const uint64_t maxSources = effectiveLimit(request.limits.max_sources,
       kDefaultMaxSources, kHardMaxSources);
   const uint64_t maxSourceBytes = effectiveLimit(request.limits.max_source_bytes,
       kDefaultMaxSourceBytes, kHardMaxSourceBytes);
-  if (request.source_count > maxSources)
+  if (request.source_count > maxSources ||
+      request.library_source_count > maxSources -
+          std::min(request.source_count, maxSources))
     throw BridgeFailure(LLG_SLANG_STATUS_LIMIT_EXCEEDED, "source count limit exceeded");
   if (request.define_count > kHardMaxDefines)
     throw BridgeFailure(LLG_SLANG_STATUS_LIMIT_EXCEEDED, "define count limit exceeded");
@@ -4074,15 +4086,18 @@ std::unique_ptr<LlgSlangSnapshot> compileImpl(const LlgSlangCompileRequest& requ
   if (request.system_subroutine_count > kHardMaxSystemSubroutines)
     throw BridgeFailure(LLG_SLANG_STATUS_LIMIT_EXCEEDED,
                         "system subroutine count limit exceeded");
+  if (request.library_order_count > maxSources)
+    throw BridgeFailure(LLG_SLANG_STATUS_LIMIT_EXCEEDED,
+                        "library order count limit exceeded");
 
   uint64_t sourceBytes = 0;
   uint64_t configBytes = 0;
   std::vector<std::string> sourceNames;
-  sourceNames.reserve(static_cast<size_t>(request.source_count));
+  sourceNames.reserve(static_cast<size_t>(request.source_count + request.library_source_count));
   std::vector<std::string> sourcePaths;
-  sourcePaths.reserve(static_cast<size_t>(request.source_count));
+  sourcePaths.reserve(static_cast<size_t>(request.source_count + request.library_source_count));
   std::vector<std::string_view> sourceTexts;
-  sourceTexts.reserve(static_cast<size_t>(request.source_count));
+  sourceTexts.reserve(static_cast<size_t>(request.source_count + request.library_source_count));
   for (uint64_t i = 0; i < request.source_count; i++) {
     const auto& input = request.sources[i];
     if ((input.flags & ~LLG_SLANG_SOURCE_COMPILATION_UNIT) != 0 || input.reserved != 0)
@@ -4103,6 +4118,35 @@ std::unique_ptr<LlgSlangSnapshot> compileImpl(const LlgSlangCompileRequest& requ
     sourceNames.emplace_back(name);
     sourcePaths.push_back(normalized);
     sourceTexts.push_back(text);
+  }
+  std::vector<std::string> libraryNames;
+  std::vector<std::string_view> librarySourceTexts;
+  libraryNames.reserve(static_cast<size_t>(request.library_source_count));
+  librarySourceTexts.reserve(static_cast<size_t>(request.library_source_count));
+  for (uint64_t i = 0; i < request.library_source_count; i++) {
+    const auto& input = request.library_sources[i];
+    if (input.flags != 0 || input.reserved != 0)
+      throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT,
+                          "unknown library source flags or nonzero reserved field");
+    const std::string_view name = checkedView(input.name, "library source name");
+    const std::string_view text = checkedView(input.text, "library source text");
+    const std::string_view library = checkedView(input.library, "library name");
+    if (name.empty() || name.find('\0') != std::string_view::npos ||
+        library.empty() || library.find('\0') != std::string_view::npos)
+      throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT,
+                          "library source names and libraries must be nonempty and contain no NUL bytes");
+    addChecked(sourceBytes, name.size(), maxSourceBytes, "source byte");
+    addChecked(sourceBytes, text.size(), maxSourceBytes, "source byte");
+    const std::string normalized =
+        std::filesystem::path(name).lexically_normal().generic_string();
+    if (std::find(sourcePaths.begin(), sourcePaths.end(), normalized) != sourcePaths.end())
+      throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT,
+                          "source names must be unique after lexical normalization");
+    sourceNames.emplace_back(name);
+    sourcePaths.push_back(normalized);
+    sourceTexts.push_back(text);
+    libraryNames.emplace_back(library);
+    librarySourceTexts.push_back(text);
   }
 
   std::vector<std::string> predefines;
@@ -4157,6 +4201,26 @@ std::unique_ptr<LlgSlangSnapshot> compileImpl(const LlgSlangCompileRequest& requ
   for (const std::string& name : topNames)
     compilationOptions.topModules.emplace(name);
 
+  std::vector<std::string> libraryOrder;
+  libraryOrder.reserve(static_cast<size_t>(request.library_order_count));
+  for (uint64_t i = 0; i < request.library_order_count; i++) {
+    const std::string_view name = checkedView(request.library_order[i], "library name");
+    if (name.empty() || name.find('\0') != std::string_view::npos)
+      throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT,
+                          "library names must be nonempty and contain no NUL bytes");
+    addChecked(configBytes, name.size(), kHardMaxConfigBytes, "configuration byte");
+    libraryOrder.emplace_back(name);
+  }
+  std::string defaultLibraryName = "work";
+  if (request.default_library_present != 0) {
+    const std::string_view name = checkedView(request.default_library, "default library name");
+    if (name.empty() || name.find('\0') != std::string_view::npos)
+      throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT,
+                          "default library name must be nonempty and contain no NUL bytes");
+    addChecked(configBytes, name.size(), kHardMaxConfigBytes, "configuration byte");
+    defaultLibraryName.assign(name);
+  }
+
   compilationOptions.paramOverrides.reserve(
       static_cast<size_t>(request.parameter_override_count));
   for (uint64_t i = 0; i < request.parameter_override_count; i++) {
@@ -4196,6 +4260,37 @@ std::unique_ptr<LlgSlangSnapshot> compileImpl(const LlgSlangCompileRequest& requ
   sourceManager.setDisableProximatePaths(true);
   sourceManager.setCacheOnlyReads(true);
 
+  SourceLibrary defaultLibrary(std::move(defaultLibraryName), std::numeric_limits<int>::max());
+  defaultLibrary.isDefault = true;
+  std::vector<std::unique_ptr<SourceLibrary>> sourceLibraries;
+  std::unordered_map<std::string, SourceLibrary*> sourceLibraryByName;
+  sourceLibraryByName.emplace(defaultLibrary.name, &defaultLibrary);
+  auto libraryFor = [&](const std::string& name) -> SourceLibrary* {
+    if (auto it = sourceLibraryByName.find(name); it != sourceLibraryByName.end())
+      return it->second;
+    const int priority = static_cast<int>(sourceLibraries.size());
+    auto library = std::make_unique<SourceLibrary>(std::string(name), priority);
+    SourceLibrary* result = library.get();
+    sourceLibraries.push_back(std::move(library));
+    sourceLibraryByName.emplace(name, result);
+    return result;
+  };
+  std::vector<std::string> discoveredLibraryOrder;
+  for (const std::string& name : libraryNames) {
+    libraryFor(name);
+    if (std::find(discoveredLibraryOrder.begin(), discoveredLibraryOrder.end(), name) ==
+        discoveredLibraryOrder.end())
+      discoveredLibraryOrder.push_back(name);
+  }
+  if (libraryOrder.empty())
+    libraryOrder = discoveredLibraryOrder;
+  for (const std::string& name : libraryOrder) {
+    if (name == defaultLibrary.name)
+      continue;
+    libraryFor(name);
+    compilationOptions.defaultLiblist.push_back(name);
+  }
+
   std::vector<std::shared_ptr<driver::UserDefinedSubroutine>> userDefinedSubroutines;
   userDefinedSubroutines.reserve(static_cast<size_t>(request.system_subroutine_count));
   for (uint64_t i = 0; i < request.system_subroutine_count; i++) {
@@ -4216,6 +4311,24 @@ std::unique_ptr<LlgSlangSnapshot> compileImpl(const LlgSlangCompileRequest& requ
   buffers.reserve(static_cast<size_t>(request.source_count));
   for (uint64_t i = 0; i < request.source_count; i++)
     buffers.push_back(sourceManager.assignText(sourcePaths[i], sourceTexts[i]));
+  std::vector<SourceBuffer> libraryBuffers;
+  libraryBuffers.reserve(static_cast<size_t>(request.library_source_count));
+  std::vector<std::pair<SourceLibrary*, std::vector<SourceBuffer>>> libraryBufferGroups;
+  for (uint64_t i = 0; i < request.library_source_count; i++) {
+    auto* library = libraryFor(libraryNames[static_cast<size_t>(i)]);
+    auto buffer = sourceManager.assignText(
+        sourcePaths[static_cast<size_t>(request.source_count + i)],
+        librarySourceTexts[static_cast<size_t>(i)], SourceLocation(), library);
+    sourceManager.setBufferKind(buffer.id, SourceManager::BufferKind::LibraryFile);
+    libraryBuffers.push_back(buffer);
+    auto group = std::find_if(libraryBufferGroups.begin(), libraryBufferGroups.end(),
+                              [library](const auto& entry) { return entry.first == library; });
+    if (group == libraryBufferGroups.end()) {
+      libraryBufferGroups.emplace_back(library, std::vector<SourceBuffer>{});
+      group = std::prev(libraryBufferGroups.end());
+    }
+    group->second.push_back(buffer);
+  }
 
   parsing::PreprocessorOptions preprocessorOptions;
   preprocessorOptions.languageVersion = edition.languageVersion;
@@ -4234,7 +4347,7 @@ std::unique_ptr<LlgSlangSnapshot> compileImpl(const LlgSlangCompileRequest& requ
   parseOptions.set(std::move(parserOptions));
   Bag compileOptions;
   compileOptions.set(std::move(compilationOptions));
-  Compilation compilation(compileOptions);
+  Compilation compilation(compileOptions, &defaultLibrary);
   for (const auto& subroutine : userDefinedSubroutines)
     compilation.addSystemSubroutine(subroutine);
   bool anyCompilationUnit = false;
@@ -4265,6 +4378,11 @@ std::unique_ptr<LlgSlangSnapshot> compileImpl(const LlgSlangCompileRequest& requ
       compilation.addSyntaxTree(std::move(tree));
     }
   }
+  for (auto& group : libraryBufferGroups) {
+    auto tree = syntax::SyntaxTree::fromBuffers(group.second, sourceManager, parseOptions);
+    tree->isLibraryUnit = true;
+    compilation.addSyntaxTree(std::move(tree));
+  }
   if (!anyCompilationUnit)
     throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT,
                         "at least one compilation unit source is required");
@@ -4277,11 +4395,15 @@ std::unique_ptr<LlgSlangSnapshot> compileImpl(const LlgSlangCompileRequest& requ
       kDefaultMaxOutputBytes, kHardMaxOutputBytes);
   Capture capture{*output, sourceManager, request.limits,
                   (request.flags & LLG_SLANG_COMPILE_LIBRARY_UNITS) != 0};
-  for (uint64_t i = 0; i < request.source_count; i++) {
+  const uint64_t totalSourceCount = request.source_count + request.library_source_count;
+  for (uint64_t i = 0; i < totalSourceCount; i++) {
     chargeRecord(*output, sizeof(LlgSlangFile));
     output->files.push_back({i, storeString(*output, sourceNames[i]),
                              static_cast<uint64_t>(sourceTexts[i].size())});
-    capture.fileIds.emplace_back(buffers[static_cast<size_t>(i)].id, i);
+    const auto buffer = i < request.source_count
+                            ? buffers[static_cast<size_t>(i)]
+                            : libraryBuffers[static_cast<size_t>(i - request.source_count)];
+    capture.fileIds.emplace_back(buffer.id, i);
   }
 
   // A cached include gets a new BufferID that refers to the same admitted file.
@@ -4290,7 +4412,7 @@ std::unique_ptr<LlgSlangSnapshot> compileImpl(const LlgSlangCompileRequest& requ
     if (!sourceManager.isFileLoc(SourceLocation(buffer, 0)))
       continue;
     const auto path = sourceManager.getFullPath(buffer).generic_string();
-    for (uint64_t i = 0; i < request.source_count; i++) {
+    for (uint64_t i = 0; i < totalSourceCount; i++) {
       if (path == sourcePaths[static_cast<size_t>(i)]) {
         capture.fileIds.emplace_back(buffer, i);
         break;

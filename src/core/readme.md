@@ -2,7 +2,9 @@
 
 - Purpose: provide a safe, owned semantic model shared by simulation, linting,
   and language-server features.
-- `compile.rs`: in-memory Slang compilation and owned diagnostics.
+- `compile.rs`: bounded Slang compilation and owned diagnostics, including
+  cache-only admission of explicit named library sources and deterministic
+  library-map expansion for configured elaboration.
 - [`db/`](db/readme.md): validated semantic arena and type metadata.
 - `value.rs` and `elab.rs`: exact four-state values and pure value operations.
 - `model.rs`: hierarchy and editor-facing projections.
@@ -12,6 +14,12 @@
 Native ownership ends in `ffi::slang`; core and all downstream consumers use
 owned Rust data. Admitted source text stays in memory and is never recovered
 by reopening frontend paths.
+
+Library and configuration inputs follow the same boundary: `--libmap` and
+`--libfile` paths are read and expanded by Rust, then named library buffers and
+the selected default liblist are passed to the native bridge. Slang therefore
+resolves `module:config`, cell and instance rules over admitted buffers without
+performing implicit filesystem discovery.
 
 Strict source admission is centralized in `compile/editions.rs`, over owned
 semantic records and classified lexical tokens. The table is shared by ordinary

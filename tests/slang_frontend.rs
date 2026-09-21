@@ -7,7 +7,11 @@ use llg::ffi::slang::{
 };
 
 fn request<'a>(sources: &'a [Source<'a>], options: &'a CompileOptions) -> CompileRequest<'a> {
-    CompileRequest { sources, options }
+    CompileRequest {
+        sources,
+        library_sources: &[],
+        options,
+    }
 }
 
 fn compile_valid(request: &CompileRequest<'_>) -> Result<slang::Snapshot, String> {
