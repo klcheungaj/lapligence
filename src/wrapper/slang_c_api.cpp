@@ -387,6 +387,19 @@ struct Capture {
     if (primitive.ports.size() < 2)
       throw BridgeFailure(LLG_SLANG_STATUS_INTERNAL_ERROR,
                           "combinational UDP has too few ports");
+    if (output.udp_tables.size() >= maxSemanticNodes())
+      throw BridgeFailure(LLG_SLANG_STATUS_LIMIT_EXCEEDED,
+                          "UDP table limit exceeded");
+    const uint64_t capturedRows = output.udp_rows.size();
+    const uint64_t rowCount = primitive.table.size();
+    if (capturedRows > maxSemanticEdges() ||
+        rowCount > maxSemanticEdges() - capturedRows)
+      throw BridgeFailure(LLG_SLANG_STATUS_LIMIT_EXCEEDED,
+                          "UDP row limit exceeded");
+    const uint64_t inputCount = primitive.ports.size() - 1;
+    if (inputCount > std::numeric_limits<uint32_t>::max())
+      throw BridgeFailure(LLG_SLANG_STATUS_LIMIT_EXCEEDED,
+                          "UDP input count exceeds the ABI limit");
     const uint64_t rowStart = output.udp_rows.size();
     for (const auto& row : primitive.table) {
       chargeRecord(output, sizeof(LlgSlangUdpRow));
@@ -401,10 +414,10 @@ struct Capture {
     chargeRecord(output, sizeof(LlgSlangUdpTable));
     output.udp_tables.push_back({
         primitiveId,
-        static_cast<uint32_t>(primitive.ports.size() - 1),
+        static_cast<uint32_t>(inputCount),
         0u,
         rowStart,
-        static_cast<uint64_t>(primitive.table.size()),
+        rowCount,
         storeString(output, primitive.name),
     });
   }

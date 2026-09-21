@@ -63,6 +63,41 @@ fn raw_semantic_node(edge_count: u64) -> RawSemanticNode {
     }
 }
 
+fn raw_udp_node(name: &str) -> RawSemanticNode {
+    let mut node = raw_semantic_node(0);
+    node.kind = 15;
+    node.subkind = 227;
+    node.flags = 1 << 24;
+    node.name = raw_string(name);
+    node
+}
+
+fn raw_udp_table(row_start: u64, row_count: u64, input_count: u32) -> RawUdpTable {
+    RawUdpTable {
+        primitive_id: 0,
+        input_count,
+        reserved: 0,
+        row_start,
+        row_count,
+        name: raw_string("udp"),
+    }
+}
+
+fn raw_udp_row(inputs: &str, output: u8) -> RawUdpRow {
+    RawUdpRow {
+        inputs: raw_string(inputs),
+        state: 0,
+        output: u32::from(output),
+        flags: 0,
+        reserved: 0,
+    }
+}
+
+fn decoded_udp_nodes() -> Vec<SemanticNode> {
+    decode_semantic_nodes(&[raw_udp_node("udp")], &[], &[], &[], 0)
+        .expect("UDP declaration metadata should decode")
+}
+
 #[test]
 fn narrow_constants_charge_bits_without_double_charging_word_padding() {
     let raw = [raw_integer(0, 1), raw_integer(2, 3)];
@@ -350,6 +385,35 @@ fn semantic_and_type_table_limits_are_exact() {
     assert!(enforce_count(5, 4, "type members").is_err());
     assert!(enforce_count(4, 4, "constants").is_ok());
     assert!(enforce_count(5, 4, "constants").is_err());
+}
+
+#[test]
+fn udp_overlap_validation_rejects_conflicts_and_bounds_expansion() {
+    let nodes = decoded_udp_nodes();
+    let table = raw_udp_table(0, 2, 2);
+    let rows = [raw_udp_row("0?", b'0'), raw_udp_row("?0", b'1')];
+    let error = decode_udp_tables(&[table], &rows, &nodes, 16)
+        .expect_err("overlapping UDP rows with different outputs must fail");
+    assert_eq!(error.kind(), SlangErrorKind::InvalidNativeData);
+    assert!(error.message().contains("overlapping rows"));
+
+    let table = raw_udp_table(0, 1, 2);
+    let rows = [raw_udp_row("??", b'x')];
+    let error = decode_udp_tables(&[table], &rows, &nodes, 8)
+        .expect_err("wildcard expansion must honor the selected validation capacity");
+    assert_eq!(error.kind(), SlangErrorKind::LimitExceeded);
+    assert!(error.message().contains("overlap validation"));
+}
+
+#[test]
+fn udp_rows_must_be_claimed_by_a_table_window() {
+    let nodes = decoded_udp_nodes();
+    let table = raw_udp_table(0, 1, 2);
+    let rows = [raw_udp_row("00", b'0'), raw_udp_row("01", b'1')];
+    let error = decode_udp_tables(&[table], &rows, &nodes, 8)
+        .expect_err("unclaimed UDP rows must fail checked decoding");
+    assert_eq!(error.kind(), SlangErrorKind::InvalidNativeData);
+    assert!(error.message().contains("not owned by a table"));
 }
 
 #[test]

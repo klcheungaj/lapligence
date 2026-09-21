@@ -24,6 +24,12 @@
 - Errors: HDL errors remain diagnostics in a successful snapshot. Invalid
   input, configured-limit failures, frontend/bridge failures, and malformed ABI
   output return typed Rust errors.
+- UDP capture: combinational UDP table records use the semantic-node ceiling and
+  their rows use the semantic-edge ceiling before native vectors or row strings
+  are grown. The owned decoder requires every exported row to belong to exactly
+  one table window and validates wildcard overlap through a bounded concrete
+  assignment index; tables whose expansion exceeds the semantic-edge capacity
+  return a resource error.
 - Safety: this is the only Rust directory permitted to contain `unsafe`; every
   exported API is safe and owns its returned data.
 - Consumers: shared-core capture, simulator lowering, language-server features,

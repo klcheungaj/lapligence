@@ -1,6 +1,7 @@
 //! Semantics.
 
 use super::*;
+use std::collections::HashMap;
 
 pub(super) fn decode_semantic_edges(
     raw: &[RawSemanticEdge],
@@ -515,6 +516,7 @@ pub(super) fn decode_udp_tables(
     raw_tables: &[RawUdpTable],
     raw_rows: &[RawUdpRow],
     semantic_nodes: &[SemanticNode],
+    max_overlap_assignments: u64,
 ) -> Result<Vec<UdpTable>, SlangError> {
     let mut used_rows = vec![false; raw_rows.len()];
     let mut table_ids = HashSet::with_capacity(raw_tables.len());
@@ -525,9 +527,11 @@ pub(super) fn decode_udp_tables(
                 "UDP table has invalid or duplicate metadata",
             ));
         }
+        let declaration_index = usize::try_from(raw_table.primitive_id)
+            .map_err(|_| invalid_native("UDP table primitive ID does not fit usize"))?;
         let declaration = semantic_nodes
-            .iter()
-            .find(|node| node.id == raw_table.primitive_id)
+            .get(declaration_index)
+            .filter(|node| node.id == raw_table.primitive_id)
             .ok_or_else(|| invalid_native("UDP table refers to an unknown primitive"))?;
         if declaration.kind != SemanticKind::Primitive
             || !declaration.is_primitive_declaration
@@ -585,17 +589,7 @@ pub(super) fn decode_udp_tables(
                 edge_sensitive: false,
             });
         }
-        for left in 0..rows.len() {
-            for right in (left + 1)..rows.len() {
-                if udp_rows_overlap(&rows[left].inputs, &rows[right].inputs)
-                    && rows[left].output != rows[right].output
-                {
-                    return Err(invalid_native(
-                        "combinational UDP table has overlapping rows with different outputs",
-                    ));
-                }
-            }
-        }
+        validate_udp_rows(&rows, max_overlap_assignments)?;
         // SAFETY: the native snapshot remains alive while this decoder copies
         // the declaration name.
         let name = unsafe { copy_string(raw_table.name, "UDP table name")? };
@@ -611,13 +605,77 @@ pub(super) fn decode_udp_tables(
             rows,
         });
     }
+    if used_rows.iter().any(|claimed| !claimed) {
+        return Err(invalid_native("UDP row is not owned by a table"));
+    }
     Ok(tables)
 }
 
-fn udp_rows_overlap(left: &str, right: &str) -> bool {
-    left.bytes()
-        .zip(right.bytes())
-        .all(|(left, right)| udp_symbol_mask(left) & udp_symbol_mask(right) != 0)
+/// Validate row overlap by indexing concrete input assignments.
+///
+/// A combinational UDP row describes a Cartesian product over the three
+/// four-state input values represented by the table (`0`, `1`, and `x`).
+/// Expanding each row into those assignments makes overlap validation a
+/// linear hash-table insertion pass rather than a quadratic row pair scan.
+/// The expansion budget is the configured semantic-edge capacity, so a broad
+/// wildcard table fails with a resource error before the index can grow
+/// without bound.
+fn validate_udp_rows(rows: &[UdpRow], max_assignments: u64) -> Result<(), SlangError> {
+    let mut assignments = HashMap::<Vec<u8>, u8>::new();
+    let mut generated = 0_u64;
+
+    for row in rows {
+        let masks: Vec<u8> = row.inputs.bytes().map(udp_symbol_mask).collect();
+        let row_assignments = masks.iter().try_fold(1_u64, |total, mask| {
+            total.checked_mul(u64::from(mask.count_ones()))
+        });
+        let row_assignments = row_assignments
+            .ok_or_else(|| limit_exceeded("UDP overlap validation assignment count overflowed"))?;
+        generated = generated
+            .checked_add(row_assignments)
+            .ok_or_else(|| limit_exceeded("UDP overlap validation assignment count overflowed"))?;
+        if generated > max_assignments {
+            return Err(limit_exceeded(
+                "UDP overlap validation exceeds the configured semantic-edge capacity",
+            ));
+        }
+
+        let mut assignment = masks
+            .iter()
+            .map(|mask| udp_first_value(*mask))
+            .collect::<Vec<_>>();
+        loop {
+            match assignments.entry(assignment.clone()) {
+                std::collections::hash_map::Entry::Vacant(entry) => {
+                    entry.insert(row.output);
+                }
+                std::collections::hash_map::Entry::Occupied(entry)
+                    if *entry.get() != row.output =>
+                {
+                    return Err(invalid_native(
+                        "combinational UDP table has overlapping rows with different outputs",
+                    ));
+                }
+                std::collections::hash_map::Entry::Occupied(_) => {}
+            }
+
+            let mut advanced = false;
+            for position in (0..masks.len()).rev() {
+                if let Some(value) = udp_next_value(masks[position], assignment[position]) {
+                    assignment[position] = value;
+                    for reset in (position + 1)..masks.len() {
+                        assignment[reset] = udp_first_value(masks[reset]);
+                    }
+                    advanced = true;
+                    break;
+                }
+            }
+            if !advanced {
+                break;
+            }
+        }
+    }
+    Ok(())
 }
 
 fn udp_symbol_mask(symbol: u8) -> u8 {
@@ -629,6 +687,16 @@ fn udp_symbol_mask(symbol: u8) -> u8 {
         b'?' => 7,
         _ => 0,
     }
+}
+
+fn udp_first_value(mask: u8) -> u8 {
+    (0..=2)
+        .find(|value| mask & (1 << value) != 0)
+        .expect("validated UDP symbol has at least one value")
+}
+
+fn udp_next_value(mask: u8, current: u8) -> Option<u8> {
+    ((current + 1)..=2).find(|value| mask & (1 << value) != 0)
 }
 
 fn decode_time_scale(node: &RawSemanticNode) -> Result<Option<SemanticTimeScale>, SlangError> {

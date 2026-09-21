@@ -317,6 +317,37 @@ fn resource_limits_accept_the_boundary_and_reject_the_next_record() {
 }
 
 #[test]
+fn udp_capture_applies_the_row_ceiling_before_export_growth() {
+    let sources = [Source::compilation_unit(
+        "udp-limit.sv",
+        r#"
+primitive limited_udp(out, a, b, c);
+    output out;
+    input a, b, c;
+    table
+        0 0 0 : 0;
+        0 0 1 : 1;
+        0 1 0 : 0;
+        0 1 1 : 1;
+        1 0 0 : 0;
+    endtable
+endprimitive
+"#,
+    )];
+    let options = CompileOptions {
+        limits: slang::Limits {
+            max_semantic_edges: 4,
+            ..slang::Limits::default()
+        },
+        ..CompileOptions::default()
+    };
+    let error = slang::compile(&request(&sources, &options))
+        .expect_err("UDP rows must be bounded during native capture");
+    assert_eq!(error.kind(), SlangErrorKind::LimitExceeded);
+    assert!(error.message().contains("UDP row limit"));
+}
+
+#[test]
 fn warnings_do_not_turn_a_valid_snapshot_into_failure() {
     let sources = [Source::compilation_unit(
         "warning.sv",

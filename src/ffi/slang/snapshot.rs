@@ -310,7 +310,12 @@ pub(super) fn decode_snapshot(
         &types,
         constants.len(),
     )?;
-    let udp_tables = decode_udp_tables(raw_udp_tables, raw_udp_rows, &semantic_nodes)?;
+    let udp_tables = decode_udp_tables(
+        raw_udp_tables,
+        raw_udp_rows,
+        &semantic_nodes,
+        limits.max_semantic_edges,
+    )?;
     let lexical_tokens = decode_lexical_tokens(raw_lexical_tokens, &files, &semantic_nodes)?;
 
     drop(unexpected_error);
