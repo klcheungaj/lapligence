@@ -422,6 +422,44 @@ exposes SystemVerilog semantic checks starting at its 2017 API level, so the
 2009 policy uses its exact 2009 keyword table and Lapligence's 2009 time rules
 while those later semantic boundaries remain an explicit inventory item.
 
+### SYN-019 selected edition boundary ledger — 2026-09-20
+
+This ledger closes the selected Core-elaboration cells from the SYN-019 plan.
+The supplied IEEE 1364-2001 and IEEE 1800-2009 PDFs and the local clause maps
+under `docs/specification/` are the normative inputs; no local errata file was
+available to amend these rulings. Every public CLI fixture below runs through
+`llg` and `llg --no-opt` in [`sim_edition.rs`](../tests/sim_edition.rs).
+
+| Selected cell | IEEE 1364-2001 | IEEE 1800-2009 | Evidence and policy owner |
+| --- | --- | --- | --- |
+| ANSI and non-ANSI module ports, continuous assignments, `always @*`, `$display`, `$finish`, `$signed` | Accepted | Accepted | [`edition_legacy_forms.sv`](../tests/fixtures/sim/partial_features/edition_legacy_forms.sv); §§6.2, 9.7.5, 12.3, 17.4, 4.5. |
+| Scalar declaration initialization | Accepted; active-process race is retained | Accepted; static initialization precedes ordinary processes | [`declaration_init_edition.sv`](../tests/fixtures/sim/partial_features/declaration_init_edition.sv); 1364 §6.2.1 and 1800 §§6.8, 6.21, 10.5. |
+| `logic`, `typedef`, packed `struct`, type parameters, assignment patterns, and `always_comb` | Rejected by frontend or owned strict policy | Accepted in the selected finite forms | [`edition_2009_sv_types.sv`](../tests/fixtures/sim/partial_features/edition_2009_sv_types.sv) and the single-fault 2001 fixtures; 1800 §§6.18, 6.20.3, 7.2.1, 9.2.2.2, 10.9. |
+| `$clog2` in a constant context | Rejected by the owned system-name policy | Accepted in the selected constant context | [`edition_2001_clog2.sv`](../tests/fixtures/sim/partial_features/edition_2001_clog2.sv), [`edition_2009_sv_types.sv`](../tests/fixtures/sim/partial_features/edition_2009_sv_types.sv); 1800 §20.8. |
+| Whole fixed unpacked assignment, equality, conditional value, and unpacked array ports | Rejected by the owned type-aware policy; memory declarations and element selects remain legal | Accepted in the selected finite forms | [`edition_2009_whole_arrays.sv`](../tests/fixtures/sim/partial_features/edition_2009_whole_arrays.sv) and paired 2001 fixtures; 1800 §§7.4.2, 7.6, 11.4.11, 23.2.2.2. |
+| `` `begin_keywords `` and macro scopes | Old keyword tables and macro replacement cannot relax the selected policy | An old 1364 table can make `logic` an identifier while the owned edition remains 2009 | [`edition_begin_keywords_legacy_identifier.sv`](../tests/fixtures/sim/partial_features/edition_begin_keywords_legacy_identifier.sv), [`edition_2001_begin_keywords_array.sv`](../tests/fixtures/sim/partial_features/edition_2001_begin_keywords_array.sv), and [`edition_2001_macro_sv_only.sv`](../tests/fixtures/sim/partial_features/edition_2001_macro_sv_only.sv); 1800 §§22.5, 22.14. |
+| Later builtin and assertion forms (`$countbits`, `assert final`, `$assertcontrol`) | Rejected | Rejected when absent from the selected 2009 set | [`edition_2009_countbits.sv`](../tests/fixtures/sim/partial_features/edition_2009_countbits.sv), [`edition_assert_final.sv`](../tests/fixtures/sim/partial_features/edition_assert_final.sv), [`edition_assertcontrol.sv`](../tests/fixtures/sim/partial_features/edition_assertcontrol.sv). |
+
+The whole-array policy is semantic rather than a keyword blacklist because the
+newer Slang API accepts these memory values under the 2001 parser mode. The
+owned check examines fixed-unpacked value nodes and array ports, reports a
+located edition diagnostic, and leaves indexed memory access unchanged. Body
+expressions are present only in execution snapshots; navigation/library-unit
+snapshots intentionally omit them, so this ledger does not claim body-level
+whole-array diagnostics in that read-only mode. Array-port declarations remain
+visible and are checked in both snapshot modes.
+
+The following cells remain untested by this ledger: the complete 1364/1800
+Annex A production sets; switch/transistor primitives, UDP tables, specify and
+timing-check forms, configuration/library declarations, and PLA/file system
+task catalogs; package/interface/class/program/clocking/assertion grammar
+combinations; dynamic, associative, queue, and whole-array subroutine argument
+forms; aggregate or memory declaration-initialization variants beyond the
+scalar race probe; port default/ref directions; and later-edition boundaries
+beyond the selected `assert final`/`$countbits` probes. The positive cases are
+execution witnesses for the named finite forms, not a synthesis-completeness
+claim.
+
 ### Compilation-unit grouping
 
 The driver accepts `--compilation-units separate|merged` (default `separate`)

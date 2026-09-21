@@ -65,6 +65,50 @@ fn declaration_initialization_keeps_edition_specific_scheduling() {
 }
 
 #[test]
+fn selected_edition_matrix_accepts_legacy_and_systemverilog_cli_forms() {
+    sim_cli::run_case_with_args(
+        "partial_features",
+        "edition_legacy_forms",
+        "legacy=1 ansi=1 comb=1 signed=-1 init=1\n",
+        "llg: $finish at time 0 at tb:31:9\n",
+        &[],
+        &["--edition", "2001"],
+    );
+    sim_cli::run_case_with_args(
+        "partial_features",
+        "edition_legacy_forms",
+        "legacy=1 ansi=1 comb=1 signed=-1 init=x\n",
+        "llg: $finish at time 0 at tb:31:9\n",
+        &[],
+        &["--edition", "2009"],
+    );
+    sim_cli::run_case_with_args(
+        "partial_features",
+        "edition_2009_sv_types",
+        "sv_types=0b width=4\n",
+        "llg: $finish at time 0 at tb:25:9\n",
+        &[],
+        &["--edition", "2009"],
+    );
+    sim_cli::run_case_with_args(
+        "partial_features",
+        "edition_2009_whole_arrays",
+        "whole=12 34 equal=1\n",
+        "llg: $finish at time 0 at tb:27:9\n",
+        &[],
+        &["--edition", "2009"],
+    );
+    sim_cli::run_case_with_args(
+        "partial_features",
+        "edition_begin_keywords_legacy_identifier",
+        "legacy_name=1\n",
+        "llg: $finish at time 0 at tb:10:9\n",
+        &[],
+        &["--edition", "2009"],
+    );
+}
+
+#[test]
 fn verilog_2001_rejects_systemverilog_constructs() {
     sim_cli::reject_case_with_args(
         "partial_features",
@@ -72,6 +116,53 @@ fn verilog_2001_rejects_systemverilog_constructs() {
         "always_comb",
         &["--edition", "2001"],
     );
+}
+
+#[test]
+fn selected_edition_matrix_rejects_single_fault_2001_and_later_builtin_fixtures() {
+    for (fixture, diagnostic) in [
+        ("edition_2001_typedef", "typedef"),
+        ("edition_2001_struct", "struct"),
+        ("edition_2001_type_parameter", "type"),
+        (
+            "edition_2001_assignment_pattern",
+            "SystemVerilog expression",
+        ),
+        ("edition_2001_clog2", "$clog2"),
+        (
+            "edition_2001_whole_array_assignment",
+            "whole unpacked array value",
+        ),
+        (
+            "edition_2001_whole_array_equal",
+            "whole unpacked array value",
+        ),
+        (
+            "edition_2001_whole_array_conditional",
+            "whole unpacked array value",
+        ),
+        ("edition_2001_array_port", "unpacked array port"),
+        (
+            "edition_2001_begin_keywords_array",
+            "whole unpacked array value",
+        ),
+        ("edition_2001_macro_sv_only", "logic"),
+    ] {
+        sim_cli::reject_case_with_args(
+            "partial_features",
+            fixture,
+            diagnostic,
+            &["--edition", "2001"],
+        );
+    }
+    for edition in ["2001", "2009"] {
+        sim_cli::reject_case_with_args(
+            "partial_features",
+            "edition_2009_countbits",
+            "$countbits",
+            &["--edition", edition],
+        );
+    }
 }
 
 #[test]
@@ -260,6 +351,46 @@ fn strict_profile_rejects_in_both_snapshot_modes(
         assert_eq!(diagnostic.file.as_deref(), Some("strict-profile.sv"));
         assert!(diagnostic.line > 0 && diagnostic.col > 0, "{diagnostic:?}");
     }
+}
+
+#[test]
+fn whole_unpacked_values_and_ports_follow_edition_policy() {
+    for (source, label) in [
+        (
+            "module tb; reg [7:0] a [0:1]; reg [7:0] b [0:1]; initial b = a; endmodule",
+            "whole unpacked array value",
+        ),
+        (
+            "module tb; reg [7:0] a [0:1]; reg [7:0] b [0:1]; initial if (a == b) ; endmodule",
+            "whole unpacked array value",
+        ),
+        (
+            "module tb; reg [7:0] a [0:1]; reg [7:0] b [0:1]; reg s; initial b = s ? a : b; endmodule",
+            "whole unpacked array value",
+        ),
+    ] {
+        let output = compile::compile(&CompileOpts {
+            sources: vec![OwnedSource::compilation_unit("whole-array.sv", source)],
+            top: Some("tb".to_owned()),
+            edition: LanguageEdition::Verilog2001,
+            ..CompileOpts::default()
+        })
+        .expect("compile whole-array execution snapshot");
+        assert!(!output.ok(), "{label} was accepted");
+        assert!(
+            output
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.message.contains(label)),
+            "{label}: {:?}",
+            output.diagnostics
+        );
+    }
+    strict_profile_rejects_in_both_snapshot_modes(
+        "module child(input [7:0] a [0:1], output [7:0] b [0:1]); assign b[0] = a[0]; assign b[1] = a[1]; endmodule module tb; reg [7:0] a [0:1]; wire [7:0] b [0:1]; child c(a, b); endmodule",
+        LanguageEdition::Verilog2001,
+        "unpacked array port",
+    );
 }
 
 #[test]

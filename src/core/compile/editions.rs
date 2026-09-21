@@ -8,8 +8,9 @@
 //! standard builtin of an older edition.
 use super::{one_based_utf16_position, Diag, LanguageEdition, Severity, Snapshot};
 use crate::ffi::slang::{
-    LexicalKind, LexicalRole, SemanticKind, SemanticOperation, SourceRange, CLASS_INTERFACE,
-    SEMANTIC_ASSERTION_FINAL, SEMANTIC_STMT_CONCURRENT_ASSERT, SEMANTIC_STMT_CONCURRENT_ASSUME,
+    LexicalKind, LexicalRole, SemanticEdgeRole, SemanticKind, SemanticNode, SemanticOperation,
+    SourceRange, TypeKind, CLASS_INTERFACE, SEMANTIC_ASSERTION_FINAL,
+    SEMANTIC_STMT_CONCURRENT_ASSERT, SEMANTIC_STMT_CONCURRENT_ASSUME,
     SEMANTIC_STMT_CONCURRENT_COVER, SEMANTIC_STMT_CONCURRENT_EXPECT,
     SEMANTIC_STMT_IMMEDIATE_ASSERT, SEMANTIC_STMT_IMMEDIATE_ASSUME, SEMANTIC_STMT_IMMEDIATE_COVER,
 };
@@ -528,6 +529,71 @@ fn keyword_allowed(name: &str, edition: LanguageEdition) -> bool {
         || (edition == LanguageEdition::SystemVerilog2009 && listed(SYSTEMVERILOG_KEYWORDS, name))
 }
 
+fn is_fixed_unpacked_type(snapshot: &Snapshot, type_id: Option<u64>) -> bool {
+    let Some(type_id) = type_id else {
+        return false;
+    };
+    snapshot
+        .types
+        .iter()
+        .find(|ty| ty.id == type_id)
+        .is_some_and(|ty| ty.kind == TypeKind::FixedUnpackedArray)
+}
+
+/// The 2001 grammar admits memories, but a memory is not a first-class value.
+/// Slang's later semantic API can still materialize a memory as an array value,
+/// so reject only value-bearing semantic nodes and array ports. Element selects
+/// remain legal because their result type is the packed element type.
+fn is_whole_unpacked_value(
+    snapshot: &Snapshot,
+    nodes: &HashMap<u64, &SemanticNode>,
+    node: &SemanticNode,
+) -> bool {
+    if !matches!(
+        node.kind,
+        SemanticKind::Expression
+            | SemanticKind::FunctionCall
+            | SemanticKind::MethodCall
+            | SemanticKind::Argument
+    ) {
+        return false;
+    }
+    if is_fixed_unpacked_type(snapshot, node.type_id) {
+        return true;
+    }
+    let start = usize::try_from(node.edge_start).ok();
+    let count = usize::try_from(node.edge_count).ok();
+    let Some((start, count)) = start.zip(count) else {
+        return false;
+    };
+    let Some(edges) = snapshot
+        .semantic_edges
+        .get(start..start.saturating_add(count))
+    else {
+        return false;
+    };
+    edges
+        .iter()
+        .filter(|edge| {
+            matches!(
+                edge.role,
+                SemanticEdgeRole::Lhs
+                    | SemanticEdgeRole::Rhs
+                    | SemanticEdgeRole::Condition
+                    | SemanticEdgeRole::Then
+                    | SemanticEdgeRole::Else
+                    | SemanticEdgeRole::Operand
+                    | SemanticEdgeRole::Left
+                    | SemanticEdgeRole::Right
+                    | SemanticEdgeRole::Argument
+                    | SemanticEdgeRole::Actual
+                    | SemanticEdgeRole::Receiver
+            )
+        })
+        .filter_map(|edge| nodes.get(&edge.target_id).copied())
+        .any(|child| is_fixed_unpacked_type(snapshot, child.type_id))
+}
+
 /// Native prototype parsing has already succeeded. Match the same first-dollar
 /// name that UserDefinedSubroutine::create parses; do not whitelist substrings
 /// in arbitrary source comments, strings, includes, or an unregistered call.
@@ -559,8 +625,20 @@ pub(super) fn edition_diagnostics(
         .filter_map(|p| extension_name(p))
         .collect();
     let files: HashMap<_, _> = snapshot.files.iter().map(|f| (f.id, f)).collect();
+    let nodes: HashMap<_, _> = snapshot
+        .semantic_nodes
+        .iter()
+        .map(|node| (node.id, node))
+        .collect();
     let mut violations: Vec<(Option<SourceRange>, String)> = Vec::new();
     for node in &snapshot.semantic_nodes {
+        if edition == LanguageEdition::Verilog2001 {
+            if node.kind == SemanticKind::Port && is_fixed_unpacked_type(snapshot, node.type_id) {
+                violations.push((node.range, "unpacked array port".to_owned()));
+            } else if is_whole_unpacked_value(snapshot, &nodes, node) {
+                violations.push((node.range, "whole unpacked array value".to_owned()));
+            }
+        }
         if node.kind == SemanticKind::SystemCall
             && node.name.starts_with('$')
             && !system_name_allowed(&node.name, edition, &extensions)
