@@ -902,7 +902,7 @@ impl<'a> Codegen<'a> {
         Ok(None)
     }
 
-    fn p30_lower_source_values(
+    pub(in super::super) fn p30_lower_source_values(
         &mut self,
         path: &str,
         lhs: NodeId,
@@ -911,17 +911,6 @@ impl<'a> Codegen<'a> {
         captures: &mut Vec<IrStmt>,
         captured_indices: &mut HashMap<NodeId, (String, u32, bool)>,
     ) -> Result<Vec<IrExpr>, String> {
-        // Preserve the established value path for calls, views and activation
-        // expressions. This is dispatch ordering, not an admission whitelist:
-        // other typed values reach the same helper after specialized forms.
-        if matches!(self.kind(rhs), NodeKind::FuncCall { .. })
-            || self.p30_fixed_array_assignment_candidate(rhs)
-            || self.func.is_some()
-        {
-            if let Some(values) = self.p30_lower_fixed_source_value(path, lhs, rhs, captures)? {
-                return Ok(values);
-            }
-        }
         if let NodeKind::Expr(ExprKind::Cast { operand, .. }) = self.kind(rhs) {
             let target_is_fixed = self
                 .query_descriptor(rhs)
@@ -1057,6 +1046,18 @@ impl<'a> Codegen<'a> {
                 values.push(self.p30_capture_value(lhs, rhs, ordinal, value, captures));
             }
             return Ok(values);
+        }
+        // Calls, conditional values, and activation expressions do not have
+        // a storage view. Lower their complete fixed payload once, then split
+        // it into declaration-order elements after the view-specific cases
+        // above have had a chance to retain runtime row selectors.
+        if matches!(self.kind(rhs), NodeKind::FuncCall { .. })
+            || self.p30_fixed_array_assignment_candidate(rhs)
+            || self.func.is_some()
+        {
+            if let Some(values) = self.p30_lower_fixed_source_value(path, lhs, rhs, captures)? {
+                return Ok(values);
+            }
         }
         if self.p30_container_source(rhs).is_some() {
             return Err(format!(

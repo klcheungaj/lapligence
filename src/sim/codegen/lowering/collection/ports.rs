@@ -2,6 +2,15 @@
 
 use super::*;
 
+#[derive(Clone)]
+struct FixedArrayPortShape {
+    dims: Vec<(i32, i32)>,
+    elem_width: u32,
+    signed: bool,
+    real: bool,
+    two_state: bool,
+}
+
 impl<'a> Codegen<'a> {
     // ── Port links ─────────────────────────────────────────────────────────
 
@@ -543,6 +552,127 @@ impl<'a> Codegen<'a> {
         Some((shape, indices.clone()))
     }
 
+    /// Type information for a fixed-array value, including expressions that
+    /// do not have a collected storage array. Input value ports copy these
+    /// expressions element by element, so their source shape must remain
+    /// available independently of storage identity.
+    fn fixed_array_port_shape(&self, node: NodeId) -> Option<FixedArrayPortShape> {
+        let descriptor = self.query_descriptor(node)?;
+        let TypeShape::FixedArray {
+            dimensions,
+            element,
+        } = &descriptor.shape
+        else {
+            return None;
+        };
+        let (real, elem_width) = match &element.shape {
+            TypeShape::Real { .. } => (true, 0),
+            _ => (false, Self::fixed_descriptor_width(element)?),
+        };
+        Some(FixedArrayPortShape {
+            dims: dimensions.clone(),
+            elem_width,
+            signed: element.info.signed,
+            real,
+            two_state: element.two_state,
+        })
+    }
+
+    fn emit_fixed_array_input_port_link(
+        &mut self,
+        parent_path: &str,
+        child_path: &str,
+        port: NodeId,
+        actual: NodeId,
+        internal: NodeId,
+        child_array: ArrayInfo,
+        actual_shape: FixedArrayPortShape,
+    ) -> Result<bool, String> {
+        if actual_shape.real || child_array.real {
+            // Real fixed arrays retain the existing storage-only path until
+            // their value ownership contract is represented in the packed
+            // activation helpers.
+            return Ok(false);
+        }
+        if child_array.dims.len() != actual_shape.dims.len()
+            || child_array.dims.iter().zip(&actual_shape.dims).any(
+                |((child_left, child_right), (actual_left, actual_right))| {
+                    (i64::from(*child_left) - i64::from(*child_right)).unsigned_abs()
+                        != (i64::from(*actual_left) - i64::from(*actual_right)).unsigned_abs()
+                },
+            )
+        {
+            return Err(format!(
+                "fixed array port `{}` has incompatible rank or dimensions in `{child_path}`",
+                self.display_name(port)
+            ));
+        }
+        if child_array.elem_width != actual_shape.elem_width {
+            return Err(format!(
+                "fixed array port `{}` has incompatible element types in `{child_path}`",
+                self.display_name(port)
+            ));
+        }
+
+        let mut captures = Vec::new();
+        let mut captured_indices = HashMap::new();
+        let values = self.p30_lower_source_values(
+            parent_path,
+            internal,
+            actual,
+            &child_array.dims,
+            &mut captures,
+            &mut captured_indices,
+        )?;
+        let target_indices = port_array_index_vectors(&child_array.dims);
+        if values.len() != target_indices.len() {
+            return Err(format!(
+                "fixed array port `{}` source has {} elements; expected {} in `{child_path}`",
+                self.display_name(port),
+                values.len(),
+                target_indices.len()
+            ));
+        }
+
+        let target_array = self.reference_array(child_array.ir);
+        let mut assignments = Vec::with_capacity(values.len());
+        for (indices, value) in target_indices.into_iter().zip(values) {
+            let lhs = IrLhs::ArrayElem {
+                arr: target_array,
+                indices: indices
+                    .into_iter()
+                    .map(|index| lhs_integer_expr(i128::from(index)))
+                    .collect(),
+                elem_sel: IrElemSel::Whole,
+            };
+            let value = if actual_shape.two_state {
+                IrExpr::to_two_state(value)
+            } else {
+                value
+            };
+            let value = if value.width == actual_shape.elem_width {
+                IrExpr::new(value.kind, value.width, actual_shape.signed, value.fill)
+            } else {
+                value
+            };
+            assignments.push(IrStmt::Assign {
+                lhs: lhs.clone(),
+                rhs: apply_lhs_assignment_context(&self.model, &lhs, value),
+                nba: false,
+            });
+        }
+        captures.extend(assignments);
+        let reads = self.collect_read_signals(parent_path, actual)?;
+        self.emit_link_process(
+            parent_path,
+            child_path,
+            port,
+            reads,
+            IrStmt::Block(captures),
+        );
+        Ok(true)
+    }
+
     fn emit_array_port_link(
         &mut self,
         parent_path: &str,
@@ -553,6 +683,23 @@ impl<'a> Codegen<'a> {
         internal: NodeId,
     ) -> Result<bool, String> {
         let child_array = self.array_of(internal).cloned();
+        if direction == DbDirection::Input {
+            if let (Some(child_array), Some(actual_shape)) =
+                (child_array.clone(), self.fixed_array_port_shape(actual))
+            {
+                if self.emit_fixed_array_input_port_link(
+                    parent_path,
+                    child_path,
+                    port,
+                    actual,
+                    internal,
+                    child_array,
+                    actual_shape,
+                )? {
+                    return Ok(true);
+                }
+            }
+        }
         let actual_resolved = self.port_array_actual(actual);
         let (child_array, actual_array, actual_prefix) = match (child_array, actual_resolved) {
             (None, None) => return Ok(false),

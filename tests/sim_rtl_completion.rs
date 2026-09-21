@@ -134,6 +134,38 @@ fn whole_array_continuous_assignments_keep_sources_cells_and_rhs_snapshots() {
 }
 
 #[test]
+fn fixed_array_input_ports_capture_values_and_runtime_rows() {
+    sim_cli::run_case(
+        "rtl_completion",
+        "syn_007_array_input_values",
+        concat!(
+            "t1 cond=a1,b1 func=12,22 selected=33,43 slice=14,24 pattern=17,39 reverse=5b,6c calls=1\n",
+            "t2 cond=11,30 func=12,31 selected=e3,d3 slice=14,24 pattern=17,39 reverse=5b,6c calls=2\n",
+        ),
+        "",
+        &[],
+    );
+}
+
+#[test]
+fn fixed_array_input_port_rank_mismatch_is_rejected() {
+    sim_cli::reject_case(
+        "rtl_completion",
+        "syn_007_array_input_rank_rejected",
+        "cannot be assigned to type 'row_t'",
+    );
+}
+
+#[test]
+fn fixed_array_input_port_element_mismatch_is_rejected() {
+    sim_cli::reject_case(
+        "rtl_completion",
+        "syn_007_array_input_element_rejected",
+        "cannot be assigned to type 'row_t'",
+    );
+}
+
+#[test]
 fn whole_array_continuous_variable_conflicts_are_rejected() {
     sim_cli::reject_case(
         "rtl_completion",

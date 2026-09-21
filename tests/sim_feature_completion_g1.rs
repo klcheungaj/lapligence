@@ -398,11 +398,13 @@ fn port_array_element_actual_roundtrip() {
 }
 
 #[test]
-fn port_array_nonconstant_actual_is_rejected() {
-    sim_cli::reject_case(
+fn port_array_runtime_selected_actual_rebinds_the_input_link() {
+    sim_cli::run_case(
         "feature_completion/g1_22",
         "port_array_nonconstant_actual",
-        "non-constant element actual",
+        "10 20\na0 b0\na0 c0\n",
+        "",
+        &[],
     );
 }
 

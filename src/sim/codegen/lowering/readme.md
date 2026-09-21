@@ -19,8 +19,10 @@
   queries, fixed-array views, streaming, assignment, methods and callbacks.
   `containers/fixed_arrays.rs` keeps specialized array conversions and a
   type-directed value fallback. Its fixed-value source helper stages a complete
-  RHS once before projecting destination cells; module-procedural expressions
-  reuse the same typed conditional operation as subroutine values.
+  RHS once before projecting destination cells; runtime selected views capture
+  their selectors once before projecting source cells. Module-procedural
+  expressions and fixed-array input value ports reuse the same typed conditional
+  operation as subroutine values.
 - **`objects.rs` / `objects/`:** non-integral class/interface, mailbox, process,
   enum, handle and string operations.
 - **`assertions.rs`:** bounded concurrent-assertion sequence automata, legal

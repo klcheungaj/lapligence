@@ -22,6 +22,13 @@ diagnostics. Positive tests never treat a lowering rejection as success.
 - Value/ref ports and nested packed members preserve storage identity and
   sensitivity. Wired arrays, interfaces, aliases and inouts preserve per-site
   electrical contributions and unaffected elements (Clauses 6 and 23).
+- `syn_007_array_input_values.sv` exercises fixed-array input value links for
+  conditional/function/pattern values, a fixed slice, a runtime-selected row,
+  and opposite unpacked ranges. `syn_007_array_input_rank_rejected.sv` keeps
+  the incompatible-rank diagnostic, while
+  `syn_007_array_input_element_rejected.sv` keeps the incompatible-element
+  diagnostic; both are single-fault controls (1800-2009 §§7.6, 23.2.2 and
+  23.3.3).
 - `$unit` variable declarations must precede their references under the 2009
   profile; prior declarations and legal forward subroutine calls are controls
   (3.12.1).
