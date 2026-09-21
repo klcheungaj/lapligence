@@ -792,6 +792,26 @@ impl<'a> Codegen<'a> {
                 self.node(source).col,
             ));
         }
+        let target_width = bindings.iter().try_fold(0_u32, |width, (_, rhs_bit)| {
+            let bit_width = rhs_bit.checked_add(1).ok_or_else(|| {
+                format!(
+                    "continuous assignment `{}` has an alias RHS bit outside its width at {}:{}:{}",
+                    self.display_name(source),
+                    self.node(source).file.as_deref().unwrap_or("<unknown>"),
+                    self.node(source).line,
+                    self.node(source).col,
+                )
+            })?;
+            Ok::<_, String>(width.max(bit_width))
+        })?;
+        // Alias drivers project a captured RHS one bit at a time, so perform
+        // the assignment conversion before selecting mapped bits. This keeps
+        // both padding and truncation consistent with the ordinary path.
+        let rhs = if target_width != rhs.width() {
+            IrExpr::convert_to(rhs.clone(), target_width, rhs.signed())
+        } else {
+            rhs.clone()
+        };
         let mut group_bits: HashMap<(usize, u32), u32> = HashMap::new();
         for (binding, rhs_bit) in bindings {
             if let Some(previous) =
