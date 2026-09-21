@@ -684,7 +684,14 @@ impl<'a> Codegen<'a> {
                         .and_then(|target| self.packed_ranges_for_base(target))
                 }),
             NodeKind::Expr(ExprKind::Ref { target }) => {
-                target.and_then(|target| self.packed_ranges_for_base(target))
+                // A reference expression carries the formal's resolved type
+                // metadata even when its declaration target is an argument
+                // node, which is not itself a runtime signal. Keep that
+                // metadata as the fallback after following the target so
+                // packed ref-formal indices retain their declared direction.
+                target
+                    .and_then(|target| self.packed_ranges_for_base(target))
+                    .or_else(|| self.db.packed_dimensions(base).map(ToOwned::to_owned))
             }
             NodeKind::Net { .. } | NodeKind::Var { .. } => {
                 let target = self
