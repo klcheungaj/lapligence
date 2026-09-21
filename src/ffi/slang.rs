@@ -576,6 +576,10 @@ pub(crate) const SUBROUTINE_CONSTRUCTOR: u64 = 1 << 4;
 pub(crate) const CLASS_ABSTRACT: u64 = 1 << 0;
 pub(crate) const CLASS_FINAL: u64 = 1 << 1;
 pub(crate) const CLASS_INTERFACE: u64 = 1 << 2;
+/// Definition-level `` `unconnected_drive`` state copied from Slang's
+/// resolved module metadata.
+pub(crate) const UNCONNECTED_PULL0: u64 = 1 << 16;
+pub(crate) const UNCONNECTED_PULL1: u64 = 1 << 17;
 pub(crate) const NEW_CLASS_SUPER: u64 = 1 << 0;
 pub(crate) const CALL_SUPER: u64 = 1 << 0;
 

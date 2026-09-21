@@ -241,7 +241,7 @@ use crate::core::db::{
     ExprKind, ImmediateAssertionKind, IntraControl, JoinKind as DbJoinKind, NetType, NodeId,
     NodeKind, Operation, PackedMember, PrimClass, PrimitiveType, ProcessKind, StmtKind,
     StreamingDirection as DbStreamingDirection, Strength, TypeDescriptor, TypeShape,
-    VariableLifetime,
+    UnconnectedDrive, VariableLifetime,
 };
 use crate::core::elab::{self, Bit, Val};
 use crate::core::model::TypeInfo;

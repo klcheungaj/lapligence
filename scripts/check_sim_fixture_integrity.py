@@ -92,6 +92,24 @@ def source_references(text: str, source: str) -> set[Reference]:
         if suite is not None and stem is not None:
             add(f"tests/fixtures/sim/{suite}/{stem}.sv", m.start())
 
+    for m in re.finditer(
+        r'sim_cli::run_case_with_source_prefix\(\s*'
+        + r'('
+        + ATOM
+        + r')'
+        + r'\s*,\s*'
+        + r'('
+        + ATOM
+        + r')'
+        + r'\s*,\s*&\s*\[([^\]]*)\]',
+        text,
+    ):
+        suite = atom(m[1])
+        for stem_match in re.finditer(ATOM, m[3]):
+            stem = atom(stem_match[0])
+            if suite is not None and stem is not None:
+                add(f"tests/fixtures/sim/{suite}/{stem}.sv", m.start())
+
 
     joins = list(re.finditer(r'\.join\(\s*' + STRING + r'\s*\)', text))
     roots = {m[1] for m in joins if m[1].startswith("tests/fixtures/sim/")

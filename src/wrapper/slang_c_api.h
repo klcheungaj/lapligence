@@ -406,6 +406,14 @@ enum {
   LLG_SLANG_CLASS_INTERFACE = 1ull << 2
 };
 
+/* Definition-level `unconnected_drive` state carried in
+ * LlgSlangSemanticNode::auxiliary.  These bits are repository-owned and are
+ * copied from Slang's resolved DefinitionSymbol metadata. */
+enum {
+  LLG_SLANG_UNCONNECTED_PULL0 = 1ull << 16,
+  LLG_SLANG_UNCONNECTED_PULL1 = 1ull << 17
+};
+
 /* New-class expression qualifiers carried in auxiliary. */
 enum {
   LLG_SLANG_NEW_CLASS_SUPER = 1ull << 0

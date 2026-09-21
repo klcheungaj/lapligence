@@ -25,6 +25,6 @@ pub use database::{
 };
 pub use domain::{
     AlwaysKind, CapturedSemanticKind, CaseKind, ConstantType, Direction, JoinKind, NetType,
-    ObjectType, Operation, PrimitiveType, Strength, UniquePriorityCheck,
+    ObjectType, Operation, PrimitiveType, Strength, UnconnectedDrive, UniquePriorityCheck,
 };
 pub use validate::DbValidationError;

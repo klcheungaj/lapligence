@@ -1743,6 +1743,10 @@ public:
     if constexpr (std::same_as<T, DefinitionSymbol>) {
       addDefinitionKind(result, symbol.definitionKind);
       addTimeScale(result, symbol.timeScale);
+      if (symbol.unconnectedDrive == UnconnectedDrive::Pull0)
+        result.auxiliary |= LLG_SLANG_UNCONNECTED_PULL0;
+      else if (symbol.unconnectedDrive == UnconnectedDrive::Pull1)
+        result.auxiliary |= LLG_SLANG_UNCONNECTED_PULL1;
       if (symbol.getInstanceCount() == 0)
         result.flags |= LLG_SLANG_SEMANTIC_UNINSTANTIATED;
       if (symbol.definitionKind == DefinitionKind::Module) {
@@ -1754,6 +1758,13 @@ public:
             member->visit(sourceInstances);
         }
       }
+    }
+    if constexpr (std::same_as<T, InstanceSymbol>) {
+      const auto drive = symbol.getDefinition().unconnectedDrive;
+      if (drive == UnconnectedDrive::Pull0)
+        result.auxiliary |= LLG_SLANG_UNCONNECTED_PULL0;
+      else if (drive == UnconnectedDrive::Pull1)
+        result.auxiliary |= LLG_SLANG_UNCONNECTED_PULL1;
     }
     if constexpr (std::same_as<T, PackageSymbol>)
       addTimeScale(result, symbol.timeScale);

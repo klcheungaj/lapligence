@@ -917,6 +917,37 @@ impl<'a> Codegen<'a> {
                         self.node(port).col,
                     ));
                 }
+                if direction == DbDirection::Input {
+                    match self.db.unconnected_drive(child_inst) {
+                        UnconnectedDrive::None => {}
+                        drive => {
+                            let Some(internal) = low else {
+                                continue;
+                            };
+                            let (_, child_info) = self.resolve_signal_id(&child_path, internal)?;
+                            let lhs = IrLhs::Whole(child_info.ir);
+                            let rhs = apply_lhs_assignment_context(
+                                &self.model,
+                                &lhs,
+                                unconnected_drive_expr(drive, child_info.width)?,
+                            );
+                            let fn_name = self.new_fn_name(parent_path, "unconnected");
+                            let origin = self.origin(port);
+                            self.model.processes.push(IrProcess::new_with_origin(
+                                fn_name,
+                                format!("{child_path}.unconnected"),
+                                IrShape::RunOnce,
+                                Vec::new(),
+                                vec![IrStmt::Assign {
+                                    lhs,
+                                    rhs,
+                                    nba: false,
+                                }],
+                                origin,
+                            ));
+                        }
+                    }
+                }
                 continue;
             };
             let Some(internal) = low else {
@@ -1066,4 +1097,25 @@ impl<'a> Codegen<'a> {
         }
         Ok(())
     }
+}
+
+fn unconnected_drive_expr(drive: UnconnectedDrive, width: u32) -> Result<IrExpr, String> {
+    if width == 0 {
+        return Err("unconnected_drive requires packed input storage".to_owned());
+    }
+    let limbs = (width as usize).div_ceil(64);
+    let mut bits = if drive == UnconnectedDrive::Pull1 {
+        vec![u64::MAX; limbs]
+    } else {
+        vec![0; limbs]
+    };
+    if let Some(last) = bits.last_mut() {
+        let tail = width % 64;
+        if tail != 0 {
+            *last &= (1_u64 << tail) - 1;
+        }
+    }
+    let constant = IrConst::packed(bits, vec![], vec![], width, false, None)
+        .map_err(|error| error.to_string())?;
+    Ok(IrExpr::new(IrExprKind::Const(constant), width, false, None))
 }

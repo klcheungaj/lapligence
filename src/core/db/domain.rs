@@ -12,6 +12,9 @@ semantic_enum! { pub enum Direction { Input, Output, Inout, Mixed, None, Ref } }
 semantic_enum! { pub enum NetType { Wire, Wand, Wor, Tri, Tri0, Tri1, TriReg, TriAnd, TriOr, Supply1, Supply0, None, Uwire, Logic, Reg } }
 semantic_enum! { pub enum PrimitiveType { And, Nand, Nor, Or, Xor, Xnor, Buf, Not, Bufif0, Bufif1, Notif0, Notif1, Nmos, Pmos, Cmos, Rnmos, Rpmos, Rcmos, Rtran, Rtranif0, Rtranif1, Tran, Tranif0, Tranif1, Pullup, Pulldown, Sequential, Combinational } }
 semantic_enum! { pub enum Strength { Unspecified, Supply, Strong, Pull, Weak, Large, Medium, Small, HighZ } }
+// Pull value applied to an omitted input port by `` `unconnected_drive``.
+// `None` leaves the formal at its ordinary undriven value.
+semantic_enum! { pub enum UnconnectedDrive { None, Pull0, Pull1 } }
 semantic_enum! { pub enum AlwaysKind { Always, Comb, FlipFlop, Latch } }
 semantic_enum! { pub enum CaseKind { Exact, X, Z, Inside } }
 semantic_enum! { pub enum UniquePriorityCheck { None, Unique, Unique0, Priority } }

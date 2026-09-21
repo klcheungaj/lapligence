@@ -331,6 +331,12 @@ pub(super) fn validate_semantic_subkind(kind: u32, subkind: u32) -> Result<(), S
 
 fn validate_semantic_auxiliary(node: &RawSemanticNode) -> Result<(), SlangError> {
     let valid = match (node.kind, node.subkind, node.operation) {
+        // Module definitions and elaborated instances carry the resolved
+        // `unconnected_drive` value for omitted input links.
+        (1 | 24, _, _) => {
+            let allowed = UNCONNECTED_PULL0 | UNCONNECTED_PULL1;
+            node.auxiliary & !allowed == 0 && node.auxiliary.count_ones() <= 1
+        }
         // An incomplete declaration placeholder may not carry its resolved
         // lifetime yet; complete variable nodes use static or automatic.
         (9 | 11, _, _) if node.subkind == SEMANTIC_VARIABLE_CLOCKING => {

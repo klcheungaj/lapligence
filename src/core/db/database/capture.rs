@@ -71,6 +71,27 @@ impl Db {
             })
             .map(|(index, _)| NodeId::from_index(index))
             .collect();
+        let unconnected_drives = snapshot
+            .semantic_nodes
+            .iter()
+            .enumerate()
+            .filter(|(_, semantic)| {
+                matches!(
+                    semantic.kind,
+                    SemanticKind::Instance | SemanticKind::Definition
+                )
+            })
+            .filter_map(|(index, semantic)| {
+                let drive = if semantic.auxiliary & crate::ffi::slang::UNCONNECTED_PULL0 != 0 {
+                    UnconnectedDrive::Pull0
+                } else if semantic.auxiliary & crate::ffi::slang::UNCONNECTED_PULL1 != 0 {
+                    UnconnectedDrive::Pull1
+                } else {
+                    return None;
+                };
+                Some((NodeId::from_index(index), drive))
+            })
+            .collect();
         let mut arrays = HashMap::new();
         let mut event_arrays = HashMap::new();
         let mut array_select_paths = HashMap::new();
@@ -817,6 +838,7 @@ impl Db {
             semantic_kinds,
             semantic_details,
             program_instances,
+            unconnected_drives,
             tops,
             flat_modules,
             packages,

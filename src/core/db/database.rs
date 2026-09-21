@@ -11,7 +11,8 @@
 use super::slang_types::SlangTypeProjector;
 use super::{
     AlwaysKind, CapturedSemanticKind, CaseKind, ConstantType, DbValidationError, Direction,
-    JoinKind, NetType, ObjectType, Operation, PrimitiveType, Strength, UniquePriorityCheck,
+    JoinKind, NetType, ObjectType, Operation, PrimitiveType, Strength, UnconnectedDrive,
+    UniquePriorityCheck,
 };
 
 use crate::core::elab::Val;
@@ -162,6 +163,9 @@ pub struct Db {
     /// metadata rather than inferred from names or source text so simulator
     /// scheduling can distinguish it after the Slang snapshot is released.
     program_instances: HashSet<NodeId>,
+    /// Definition-level pull behavior for omitted input ports, copied from
+    /// the frontend's directive state while the snapshot is imported.
+    unconnected_drives: HashMap<NodeId, UnconnectedDrive>,
     tops: Vec<NodeId>,
     flat_modules: Vec<NodeId>,
     packages: Vec<NodeId>,
@@ -251,6 +255,7 @@ impl Db {
             semantic_kinds: Vec::new(),
             semantic_details: Vec::new(),
             program_instances: HashSet::new(),
+            unconnected_drives: HashMap::new(),
             tops: Vec::new(),
             flat_modules: Vec::new(),
             packages: Vec::new(),
@@ -309,6 +314,7 @@ impl Db {
             semantic_kinds: Vec::new(),
             semantic_details: Vec::new(),
             program_instances: HashSet::new(),
+            unconnected_drives: HashMap::new(),
             tops,
             flat_modules: Vec::new(),
             packages: Vec::new(),
@@ -389,6 +395,15 @@ impl Db {
     /// metadata and therefore report `false`.
     pub fn is_program_instance(&self, id: NodeId) -> bool {
         self.program_instances.contains(&id)
+    }
+
+    /// Return the definition-level pull value for omitted input ports on an
+    /// elaborated instance.  Missing metadata means ordinary undriven behavior.
+    pub fn unconnected_drive(&self, id: NodeId) -> UnconnectedDrive {
+        self.unconnected_drives
+            .get(&id)
+            .copied()
+            .unwrap_or(UnconnectedDrive::None)
     }
 
     pub(crate) fn semantic_metadata_lengths(&self) -> (usize, usize) {

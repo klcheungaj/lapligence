@@ -11,6 +11,44 @@ fn invoke_with_args(suite: &str, fixture: &str, optimized: bool, args: &[&str]) 
     invoke_with_env(suite, fixture, optimized, args, &[], &[])
 }
 
+/// Invoke a fixture after source files which must precede it in a merged
+/// compilation unit. The paths are still checked-in fixture stems, so the
+/// public CLI observes the same admission and file ordering as a user command.
+fn invoke_with_source_prefix(
+    suite: &str,
+    fixture: &str,
+    prefix: &[&str],
+    optimized: bool,
+    args: &[&str],
+) -> Output {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/sim")
+        .join(suite);
+    let source = root.join(format!("{fixture}.sv"));
+    assert!(source.is_file(), "missing fixture: {}", source.display());
+    let prefix_paths: Vec<_> = prefix
+        .iter()
+        .map(|stem| {
+            let path = root.join(format!("{stem}.sv"));
+            assert!(path.is_file(), "missing fixture: {}", path.display());
+            path
+        })
+        .collect();
+    let directory = sim_harness::TempDir::new(fixture).expect("CLI test directory");
+    let mut command = Command::new(env!("CARGO_BIN_EXE_llg"));
+    command.current_dir(directory.path()).args(["--top", "tb"]);
+    if !optimized {
+        command.arg("--no-opt");
+    }
+    command.args(args);
+    for path in prefix_paths {
+        command.arg(path);
+    }
+    command.arg(source);
+    sim_harness::run_command(&mut command, Duration::from_secs(180))
+        .unwrap_or_else(|error| panic!("{suite}/{fixture}, optimized={optimized}: {error}"))
+}
+
 /// Invoke one checked-in fixture after copying its independent memory-file
 /// inputs into the child working directory. Memory tasks resolve relative
 /// paths from that directory, so the files must be installed after creating
@@ -214,6 +252,26 @@ pub(crate) fn run_case_with_files(
     );
     for optimized in [false, true] {
         let output = invoke_with_files(suite, fixture, optimized, args, files);
+        let label = format!("{suite}/{fixture}, optimized={optimized}");
+        assert_case_output(output, &label, expected, expected_stderr, expected_warnings);
+    }
+}
+
+pub(crate) fn run_case_with_source_prefix(
+    suite: &str,
+    fixture: &str,
+    prefix: &[&str],
+    expected: &str,
+    expected_stderr: &str,
+    expected_warnings: &[&str],
+    args: &[&str],
+) {
+    assert!(
+        llg::sim::build::cmake_available(),
+        "CLI tests require CMake"
+    );
+    for optimized in [false, true] {
+        let output = invoke_with_source_prefix(suite, fixture, prefix, optimized, args);
         let label = format!("{suite}/{fixture}, optimized={optimized}");
         assert_case_output(output, &label, expected, expected_stderr, expected_warnings);
     }

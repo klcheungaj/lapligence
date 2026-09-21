@@ -490,9 +490,9 @@ Verilog era:
 - 🟦 **String literals** `"..."` as display format strings — §1364-2001 2.6 **[1995]** (SystemVerilog `string` has its own partial row, see §2)
 - 🟦 **Lexical base** comments, identifiers, escaped identifiers, operators — §1364-2001 2.1–2.7 **[1995]** via the Slang frontend
 - 🟦 **Attributes** `(* full_case *)` parsed+ignored — §1364-2001 2.8 **[2001]** consumed by frontend, no sim effect
-- 🟦 **`` `define ``/`` `undef `` macros incl. arguments** — §1364-2001 19.3 **[1995]** expanded pre-elaboration
-- 🟦 **`` `ifdef `` family incl. `` `elsif ``/`` `ifndef ``** — §1364-2001 19.4 **[1995]** (`elsif`/`ifndef` are [2001])
-- 🟦 **`` `include ``** — §1364-2001 19.5 **[1995]** literal and bounded object/function-like macro-expanded filenames are admitted through canonical source/include roots in both compilation-unit modes; missing, dynamic, and unauthorized paths remain frontend diagnostics
+- 🟦 **`` `define ``/`` `undef `` macros incl. arguments** — §1364-2001 19.3 **[1995]** expanded pre-elaboration; argument substitution, token concatenation and stringification reach the executable model (sim_directive_effects.rs)
+- 🟦 **`` `ifdef `` family incl. `` `elsif ``/`` `ifndef ``** — §1364-2001 19.4 **[1995]** (`elsif`/`ifndef` are [2001]); selected and skipped branches are fixed before elaboration and have both-edition CLI controls (sim_directive_effects.rs)
+- 🟦 **`` `include ``** — §1364-2001 19.5 **[1995]** literal and bounded object/function-like macro-expanded filenames are admitted through canonical source/include roots in both compilation-unit modes; include order and unavailable-file diagnostics have public CLI coverage, while missing, dynamic, and unauthorized paths remain frontend diagnostics (sim_directive_effects.rs)
 - 🟦 **`` `timescale `` honored** scales `#N` and rounded integer `$time`/`$stime` with Slang's resolved owning-module time unit and precision — §1364-2001 19.8 **[1995]** compilation-unit/declaration inheritance is resolved by the frontend; scheduler ticks use checked femtoseconds across 1fs through 100s (sim_physical_time.rs and sim_timescale.rs)
 
 SystemVerilog era:
@@ -522,7 +522,7 @@ Verilog era:
 - 🟨 **tri0/tri1/trireg/supply0/supply1 pull semantics** — §1364-2001 3.7 **[1995]** standalone `tri0/tri1` apply implicit pulls only to all-Z bits after ordinary-driver resolution; `supply0/supply1` dominate ordinary drivers, with correct initial defaults (sim_net_defaults.rs, runtime_values.rs); same bounded standalone-driver restrictions as wired nets; `trireg` charge storage and resistive propagation remain unsupported
 - 🟨 **drive strength / charge strength** — §1364-2001 3.4 **[1995]** scalar continuous, gate, wired and collapsed-inout drivers preserve ordered supply/strong/pull/weak/high-Z endpoints, with implicit tri and supply defaults; explicit vector continuous-assignment strengths remain prohibited by §10.3.4, and `trireg` charge storage/resistive propagation remain unsupported
 - ❌ **specparam** — §1364-2001 3.11.3 **[1995]** specify blocks unsupported
-- ❌ **vectored/scalared hints** — §1364-2001 3.3 **[1995]** no dedicated handling
+- 🟨 **vectored/scalared hints** — §1364-2001 3.3.2 **[1995]** declarations are admitted and retain their packed simulation values; the attributes are advisory and have no dedicated simulator or vendor-synthesis semantics (sim_directive_effects.rs)
 
 SystemVerilog era:
 
@@ -825,11 +825,11 @@ SystemVerilog era:
 
 Verilog era:
 
-- 🟦 **`` `default_nettype ``** affects implicit net kinds at elaboration — §1364-2001 19.2 **[1995]**
-- 🟦 **`` `resetall ``** resets directive state — §1364-2001 19.6 **[1995]** consumed by frontend
+- 🟦 **`` `default_nettype ``** affects implicit net admission and diagnostics at elaboration — §1364-2001 19.2 **[1995]**; `none` rejection and the reset boundary are exercised in both editions (sim_directive_effects.rs)
+- 🟦 **`` `resetall ``** resets directive state used by later elaboration — §1364-2001 19.6 **[1995]**; the restored implicit-net behavior is executed after the frontend snapshot is released (sim_directive_effects.rs)
 - 🟦 **`` `celldefine ``/`` `endcelldefine ``** cell tagging — §1364-2001 19.1 **[1995]** consumed by frontend, no sim effect
-- 🟦 **`` `unconnected_drive ``/`` `nounconnected_drive ``** — §1364-2001 19.9 **[1995]** consumed by frontend
-- 🟦 **`` `line ``** position override — §1364-2001 19.7 **[2001]** consumed by frontend
+- 🟨 **`` `unconnected_drive ``/`` `nounconnected_drive ``** — §1364-2001 19.9 **[1995]** omitted scalar and packed input links receive pull0/pull1/Z values after elaboration; strength conflicts and aggregate/resizable formals remain outside the tested boundary (sim_directive_effects.rs)
+- 🟨 **`` `line ``** position override — §1364-2001 19.7 **[2001]** mapped `__FILE__`/`__LINE__` values reach execution; owned frontend diagnostics retain physical source ranges (sim_directive_effects.rs)
 
 (`` `timescale `` is covered in §1.)
 
@@ -838,7 +838,7 @@ SystemVerilog era:
 - 🟦 **`` `begin_keywords ``/`` `end_keywords ``** keyword-set selection — §1800-2009 22.14 **[SV-2005]** (`begin_keywords` first in [1364-2005]) consumed by the frontend as lexical state only; it does not override the selected global edition
 - 🟦 **`` `pragma ``** — §1800-2009 22.11 **[SV-2009]** consumed by frontend
 - 🟦 **`` `undefineall ``** — §1800-2009 22.5.3 **[SV-2009]** consumed by frontend
-- 🟦 **`` `__FILE__ ``/`` `__LINE__ `` predefined macros** — §1800-2009 22.13 **[SV-2009]** consumed by frontend
+- 🟨 **`` `__FILE__ ``/`` `__LINE__ `` predefined macros** — §1800-2009 22.13 **[SV-2009]** mapped values reach execution; diagnostic identity remains the owned physical source range (sim_directive_effects.rs)
 
 ## 12. Out-of-scope verification-infrastructure tier (⬜)
 
