@@ -658,6 +658,11 @@ datatype_case!(
     "streaming_general.sv",
     "streaming_general"
 );
+datatype_case!(
+    syn_015_fixed_stream_contexts,
+    "syn_015_fixed_stream_contexts.sv",
+    "syn_015_fixed_stream_contexts"
+);
 
 #[test]
 fn string_argument_cast_copy_and_display_conversions() {
