@@ -1,5 +1,5 @@
 // IEEE 1364-2001 §4.1.13 Table 28 / IEEE 1800-2009 §11.4.11 Table 11-20:
-// packed ambiguous-selector Z/Z branch bits produce X.
+// packed ambiguous-selector equal branch bits retain their four-state value.
 module tb;
     reg [3:0] states;
     reg [15:0] known_zero;

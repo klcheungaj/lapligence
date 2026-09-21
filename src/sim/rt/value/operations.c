@@ -1316,10 +1316,10 @@ sv4_t sv4_mux(sv4_t sel, sv4_t a, sv4_t b) {
     r.is_signed = s;
     for (int i = 0; i < (int)w; i++) {
         int ab = sv4_extended_bit(a, i, s), bb = sv4_extended_bit(b, i, s);
-        // IEEE 1364-2001 §4.1.13 Table 28 and IEEE 1800-2009 §11.4.11
-        // Table 11-20 preserve only equal known branch bits.  X/Z branch
-        // bits, including Z/Z, produce X under an ambiguous selector.
-        sv4_lsb_bit_set(&r, i, ab < 2 && ab == bb ? ab : 2);
+        // IEEE 1364-2001 §4.1.13 and IEEE 1800-2009 §11.4.11 merge the
+        // alternatives per bit: equal four-state values survive; differing
+        // values become X.
+        sv4_lsb_bit_set(&r, i, ab == bb ? ab : 2);
     }
     return r;
 }

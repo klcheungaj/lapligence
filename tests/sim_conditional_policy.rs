@@ -10,10 +10,10 @@ fn packed_conditional_policy_matches_both_lrm_tables() {
     let expected = concat!(
         "known0=zx10zx10zx10zx10\n",
         "known1=zzzzxxxx11110000\n",
-        "x=xxxxxxxxxx1xxxx0\n",
-        "z=xxxxxxxxxx1xxxx0\n",
-        "constant=x frontend=x mixed=10xx01x0 wide=",
-        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n",
+        "x=zxxxxxxxxx1xxxx0\n",
+        "z=zxxxxxxxxx1xxxx0\n",
+        "constant=z frontend=z mixed=10zz01x0 wide=",
+        "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\n",
     );
     for edition in ["2001", "2009"] {
         sim_cli::run_case_with_args(
