@@ -1846,6 +1846,9 @@ pub(super) fn sampled_compatible(expression: &IrExpr) -> bool {
                             && high.as_ref().is_none_or(sampled_compatible)
                     }
                     crate::sim::ir::IrInsideItem::Container { .. } => false,
+                    crate::sim::ir::IrInsideItem::FixedArray { value, .. } => {
+                        sampled_compatible(value)
+                    }
                 })
         }
         IrExprKind::BitSel { base, idx } => sampled_compatible(base) && sampled_compatible(idx),

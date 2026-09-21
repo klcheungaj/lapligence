@@ -1223,6 +1223,9 @@ fn collect_expression_effects(
                         }
                     }
                     IrInsideItem::Container { .. } => {}
+                    IrInsideItem::FixedArray { value, .. } => {
+                        collect_expression_effects(ir, value, effects, visited_calls)
+                    }
                 }
             }
         }

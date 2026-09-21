@@ -68,6 +68,19 @@ pub enum IrStreamDirection {
     RightToLeft,
 }
 
+/// One projected scalar element of a fixed-array `inside` set item.
+#[derive(Clone, Debug, PartialEq)]
+pub struct IrInsideArrayElement {
+    /// Inclusive physical MSB coordinate in the captured array payload.
+    pub left: i64,
+    /// Inclusive physical LSB coordinate in the captured array payload.
+    pub right: i64,
+    /// Width of the scalar value projected from the payload.
+    pub width: u32,
+    /// Declared signedness of the projected scalar value.
+    pub signed: bool,
+}
+
 /// One scalar integral member of an `inside` set.
 #[derive(Clone, Debug, PartialEq)]
 pub enum IrInsideItem {
@@ -83,6 +96,13 @@ pub enum IrInsideItem {
     /// All values currently stored in a dynamic, queue, or associative
     /// container. The container storage ABI remains unchanged.
     Container { container: usize },
+    /// A fixed unpacked array value. The expression is evaluated once and
+    /// each element is projected from its packed payload as a scalar set
+    /// item. Aggregate leaves remain one value at this boundary.
+    FixedArray {
+        value: IrExpr,
+        elements: Vec<IrInsideArrayElement>,
+    },
 }
 
 /// Assignment target, mirroring the pre-IR LHS analysis outcomes.

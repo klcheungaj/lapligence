@@ -904,6 +904,11 @@ fn expr_slots(expr: &IrExpr) -> Result<u64, String> {
                         "inside open range expression slots",
                     )?,
                     IrInsideItem::Container { .. } => 0,
+                    IrInsideItem::FixedArray { value, .. } => checked_add(
+                        expr_slots(value)?,
+                        1,
+                        "inside fixed-array matching slots",
+                    )?,
                 };
                 slots = checked_add(slots, item_slots, "inside expression slots")?;
             }

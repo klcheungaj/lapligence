@@ -6,8 +6,9 @@ use super::*;
 use crate::sim::ir::{
     IrArrayDimension, IrArrayQuery, IrArrayQueryKind, IrArrayQueryTarget, IrBinOp, IrChandleExpr,
     IrConst, IrContainerExpr, IrContainerKind, IrFileInput, IrFileInputTarget, IrFileReadTarget,
-    IrInsideItem, IrObjectQuery, IrObjectStmt, IrObjectType, IrPlusArgTarget, IrPlusArgText,
-    IrStreamSelector, IrStringExpr, IrStringInsideItem, IrVpiCompileArg, IrVpiCompileCall,
+    IrInsideArrayElement, IrInsideItem, IrObjectQuery, IrObjectStmt, IrObjectType,
+    IrPlusArgTarget, IrPlusArgText, IrStreamSelector, IrStringExpr, IrStringInsideItem,
+    IrVpiCompileArg, IrVpiCompileCall,
 };
 
 mod aggregates;

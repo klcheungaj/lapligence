@@ -76,6 +76,7 @@ fn ident_children(e: &mut IrExpr) {
                         }
                     }
                     IrInsideItem::Container { .. } => {}
+                    IrInsideItem::FixedArray { value, .. } => ident_expr(value),
                 }
             }
         }

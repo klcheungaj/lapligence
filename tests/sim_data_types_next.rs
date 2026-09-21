@@ -269,6 +269,11 @@ datatype_case!(
     "inside_aggregate_contexts.sv",
     "inside_aggregate_contexts"
 );
+datatype_case!(
+    inside_fixed_array_value_expressions,
+    "syn_005_inside_array_values.sv",
+    "syn_005_inside_array_values"
+);
 
 #[test]
 fn inside_chandle_context_is_rejected_as_one_frontend_fault() {
@@ -308,6 +313,32 @@ fn inside_chandle_context_is_rejected_as_one_frontend_fault() {
         Ok(())
     })
     .expect("chandle inside operand must be rejected");
+}
+
+#[test]
+fn inside_unpacked_aggregate_context_is_rejected_as_one_frontend_fault() {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/sim/data_types_next")
+        .join("syn_005_inside_unpacked_aggregate_rejected.sv");
+    sim_harness::with_frontend_temp_cwd("data-types-next-inside-aggregate-rejection", |dir| {
+        let source = dir.join("syn_005_inside_unpacked_aggregate_rejected.sv");
+        std::fs::copy(&fixture, &source).map_err(|error| format!("copy fixture: {error}"))?;
+        let compiled = compile::compile(&compile::CompileOpts {
+            files: vec![source.to_string_lossy().into_owned()],
+            top: Some("tb".to_owned()),
+            ..Default::default()
+        })
+        .map_err(|error| format!("compile: {error}"))?;
+        if compiled.ok() {
+            return Err("unpacked aggregate inside item was accepted".into());
+        }
+        let diagnostic = format!("{:?}", compiled.diagnostics).to_ascii_lowercase();
+        if !diagnostic.contains("invalid type") || !diagnostic.contains("inside") {
+            return Err(format!("unexpected inside diagnostic: {diagnostic}"));
+        }
+        Ok(())
+    })
+    .expect("unpacked aggregate inside operand must be rejected");
 }
 datatype_case!(
     static_function_and_task_locals_persist,

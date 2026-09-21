@@ -266,6 +266,35 @@ impl Frame<'_, '_> {
                     self.line("}");
                     matched
                 }
+                IrInsideItem::FixedArray { value, elements } => {
+                    let value = self.expression(value)?;
+                    let matched = self.value("sv4_from_u64(0, 1, 0)".to_owned(), 1, false);
+                    for element in elements {
+                        self.line(format!("if (!{}) {{", matched.truth()));
+                        let item = self.value(
+                            format!(
+                                "sv4_part_select({}, {}LL, {}LL)",
+                                value.code, element.left, element.right
+                            ),
+                            element.width,
+                            element.signed,
+                        );
+                        let code = if source.width == 0 {
+                            format!("sv4_from_u64(({} == {}), 1, 0)", source.real(), item.real())
+                        } else {
+                            format!("sv4_wild_eq({}, {})", source.code, item.code)
+                        };
+                        let check = self.replace(item, code, 1, false);
+                        self.line(format!(
+                            "sv4_replace(&{}, sv4_logor({}, {}));",
+                            matched.code, matched.code, check.code
+                        ));
+                        self.discard(check);
+                        self.line("}");
+                    }
+                    self.discard(value);
+                    matched
+                }
             };
             self.line(format!(
                 "sv4_replace(&{}, sv4_logor({}, {}));",

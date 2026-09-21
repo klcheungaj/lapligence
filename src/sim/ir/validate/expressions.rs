@@ -581,6 +581,36 @@ impl Validator<'_> {
                                 );
                             }
                         }
+                        IrInsideItem::FixedArray { value, elements } => {
+                            self.validate_expr(
+                                value,
+                                formals,
+                                &format!("{path}.items[{idx}].value"),
+                            )?;
+                            if value.width == 0 || elements.is_empty() {
+                                return self.fail(
+                                    format!("{path}.items[{idx}]"),
+                                    "inside fixed-array item requires packed scalar elements",
+                                );
+                            }
+                            for (element_idx, element) in elements.iter().enumerate() {
+                                let projection_width = element
+                                    .left
+                                    .checked_sub(element.right)
+                                    .and_then(|width| width.checked_add(1));
+                                if element.width == 0
+                                    || element.right < 0
+                                    || element.left < element.right
+                                    || element.left >= i64::from(value.width)
+                                    || projection_width != Some(i64::from(element.width))
+                                {
+                                    return self.fail(
+                                        format!("{path}.items[{idx}].elements[{element_idx}]"),
+                                        "inside fixed-array projection is outside its payload",
+                                    );
+                                }
+                            }
+                        }
                     }
                 }
             }

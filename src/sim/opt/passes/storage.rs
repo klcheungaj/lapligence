@@ -964,6 +964,7 @@ fn collect_children_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
                         }
                     }
                     IrInsideItem::Container { .. } => {}
+                    IrInsideItem::FixedArray { value, .. } => collect_expr_reads(value, model, rw),
                 }
             }
         }

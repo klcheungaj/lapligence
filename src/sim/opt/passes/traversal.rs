@@ -138,6 +138,7 @@ fn walk_expr_mut(e: &mut IrExpr, f: &mut impl FnMut(&mut IrExpr)) {
                         }
                     }
                     IrInsideItem::Container { .. } => {}
+                    IrInsideItem::FixedArray { value, .. } => walk_expr_mut(value, f),
                 }
             }
         }

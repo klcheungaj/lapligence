@@ -3,6 +3,97 @@
 use super::*;
 
 impl<'a> Codegen<'a> {
+    fn lower_fixed_array_elements(
+        descriptor: &TypeDescriptor,
+        right: u32,
+        elements: &mut Vec<IrInsideArrayElement>,
+    ) -> Result<(), String> {
+        match &descriptor.shape {
+            TypeShape::FixedArray {
+                dimensions,
+                element,
+            } => {
+                let (left, array_right) = dimensions
+                    .first()
+                    .copied()
+                    .ok_or("fixed-array inside item has no dimensions")?;
+                let count = i64::from(left).abs_diff(i64::from(array_right)) + 1;
+                let next = if dimensions.len() == 1 {
+                    *element.clone()
+                } else {
+                    TypeDescriptor {
+                        shape: TypeShape::FixedArray {
+                            dimensions: dimensions[1..].to_vec(),
+                            element: element.clone(),
+                        },
+                        ..descriptor.clone()
+                    }
+                };
+                let stride = Self::fixed_descriptor_width(&next)
+                    .ok_or("fixed-array inside item has an unsupported element width")?;
+                for ordinal in 0..count {
+                    let offset = u32::try_from(count - ordinal - 1)
+                        .ok()
+                        .and_then(|offset| offset.checked_mul(stride))
+                        .ok_or("fixed-array inside item payload offset overflow")?;
+                    let child_right = right
+                        .checked_add(offset)
+                        .ok_or("fixed-array inside item payload offset overflow")?;
+                    Self::lower_fixed_array_elements(&next, child_right, elements)?;
+                }
+            }
+            _ => {
+                let width = Self::fixed_descriptor_width(descriptor)
+                    .ok_or("fixed-array inside item has an unsupported scalar element")?;
+                let left = right
+                    .checked_add(
+                        width
+                            .checked_sub(1)
+                            .ok_or("fixed-array element has zero width")?,
+                    )
+                    .ok_or("fixed-array inside item payload bound overflow")?;
+                elements.push(IrInsideArrayElement {
+                    left: i64::from(left),
+                    right: i64::from(right),
+                    width,
+                    signed: descriptor.info.signed,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    fn lower_fixed_array_value_item(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<Option<IrInsideItem>, String> {
+        let Some(descriptor) = self.query_descriptor(node).cloned() else {
+            return Ok(None);
+        };
+        if !matches!(descriptor.shape, TypeShape::FixedArray { .. }) {
+            return Ok(None);
+        }
+        let width = Self::fixed_descriptor_width(&descriptor).ok_or_else(|| {
+            format!("fixed-array inside set item has no supported width in `{path}`")
+        })?;
+        let value = self.lower_expr(path, node)?;
+        if value.width != width {
+            return Err(format!(
+                "fixed-array inside set item width {} does not match its type width {width} in `{path}`",
+                value.width
+            ));
+        }
+        let mut elements = Vec::new();
+        Self::lower_fixed_array_elements(&descriptor, 0, &mut elements)?;
+        if elements.is_empty() {
+            return Err(format!(
+                "fixed-array inside set item has no scalar elements in `{path}`"
+            ));
+        }
+        Ok(Some(IrInsideItem::FixedArray { value, elements }))
+    }
+
     pub(in super::super) fn lower_inside_items(
         &mut self,
         path: &str,
@@ -119,6 +210,10 @@ impl<'a> Codegen<'a> {
                     None,
                 )));
             }
+            return Ok(());
+        }
+        if let Some(item) = self.lower_fixed_array_value_item(path, node)? {
+            out.push(item);
             return Ok(());
         }
         if let Some(container) = self.container_of(node) {
