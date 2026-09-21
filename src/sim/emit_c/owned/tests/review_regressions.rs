@@ -92,3 +92,74 @@ fn addressable_real_local_is_heap_backed_and_lexically_owned() {
     assert!(frame.body().contains("llg_value_scopes_end_since("));
     assert!(frame.lookup("result").is_none());
 }
+
+fn wide_enum_values() -> Vec<IrConst> {
+    (1..=3)
+        .map(|value| {
+            IrConst::packed(
+                vec![value, value << 8, value],
+                vec![0, 0, 0],
+                vec![0, 0, 0],
+                130,
+                false,
+                None,
+            )
+            .expect("wide enum value")
+        })
+        .collect()
+}
+
+#[test]
+fn owned_memory_emitter_uses_enum_entry_count_for_c_array_bound() {
+    let array = IrArray::new(
+        "G_memory".to_owned(),
+        "tb.memory".to_owned(),
+        130,
+        false,
+        vec![(0, 2)],
+    )
+    .expect("memory array");
+    let model = IrModel::from_parts(
+        "enum_memory".to_owned(),
+        1,
+        IrModelParts {
+            arrays: vec![array],
+            ..Default::default()
+        },
+    )
+    .expect("valid model");
+    let ctx = RCtx {
+        model: &model,
+        func: None,
+        sampled: false,
+        activation_label: None,
+    };
+    let statement = IrStmt::Memory {
+        write: false,
+        path: IrStringExpr::Literal(b"enum.mem".to_vec()),
+        view: IrMemoryView {
+            array: 0,
+            origin: 0,
+            dims: vec![(0, 2)],
+            strides: vec![1],
+            total: 3,
+        },
+        radix: IrMemoryRadix::Hex,
+        addressing: IrMemoryAddressingPolicy::SystemVerilog2009,
+        enum_values: Some(wide_enum_values()),
+        start: None,
+        finish: None,
+    };
+    let mut frame = Frame::new(&ctx);
+    frame
+        .memory_task(&statement)
+        .expect("owned memory rendering");
+
+    let rendered = frame.body();
+    let declaration = rendered
+        .lines()
+        .find(|line| line.contains("sv4_t _llg_memory_enum_values"))
+        .expect("enum declaration");
+    assert!(declaration.contains("[3]"), "{declaration}");
+    assert!(rendered.contains(", 3, 16);"), "{rendered}");
+}

@@ -79,9 +79,12 @@ impl Frame<'_, '_> {
             .filter(|values| !values.is_empty())
             .map(|values| {
                 let name = self.name("memory_enum_values");
-                let values = values.iter().map(emit_const).collect::<Vec<_>>().join(", ");
+                let entry_count = values.len();
+                let rendered_values = values.iter().map(emit_const).collect::<Vec<_>>().join(", ");
                 self.line("{");
-                self.line(format!("sv4_t {name}[{}] = {{ {values} }};", values.len()));
+                self.line(format!(
+                    "sv4_t {name}[{entry_count}] = {{ {rendered_values} }};"
+                ));
                 name
             });
         let enum_pointer = enum_name.as_deref().unwrap_or("NULL");

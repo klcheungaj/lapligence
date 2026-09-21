@@ -135,6 +135,34 @@ fn enum_memory_data_stops_at_the_first_non_member() {
 }
 
 #[test]
+fn wide_enum_memory_uses_entry_count_for_emitted_table() {
+    sim_cli::run_case_with_files(
+        "memory_editions",
+        "enum_wide",
+        "PASS wide enum memory\n",
+        "llg: simulation ended without $finish (no processes remain) at time 0\n",
+        &[],
+        &[],
+        &[("enum_wide.mem", "1\n2\n3\n4\n")],
+    );
+
+    let run = sim_harness::run_generated_sim_with_files(
+        include_str!("fixtures/sim/memory_editions/enum_wide.sv"),
+        "tb",
+        "enum_wide_model_source",
+        &[("enum_wide.mem", "1\n2\n3\n4\n")],
+    )
+    .expect("wide enum memory simulation");
+    assert_eq!(run.stdout, "PASS wide enum memory\n");
+    let declaration = run
+        .model_c
+        .lines()
+        .find(|line| line.contains("sv4_t _llg_memory_enum_values"))
+        .expect("generated enum table declaration");
+    assert!(declaration.contains("[4]"), "{declaration}");
+}
+
+#[test]
 fn memory_file_tasks_accept_multidimensional_arrays() {
     sim_cli::run_case_with_files(
         "memory_editions",
