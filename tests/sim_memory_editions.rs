@@ -135,11 +135,24 @@ fn enum_memory_data_stops_at_the_first_non_member() {
 }
 
 #[test]
-fn memory_file_tasks_reject_multidimensional_arrays() {
+fn memory_file_tasks_accept_multidimensional_arrays() {
+    sim_cli::run_case_with_files(
+        "memory_editions",
+        "multidim_2009",
+        "",
+        "llg: simulation ended without $finish (no processes remain) at time 0\n",
+        &[],
+        &["--edition", "2009"],
+        &[("bad.mem", "11\n22\n33\n44\n")],
+    );
+}
+
+#[test]
+fn multidimensional_memory_views_remain_a_systemverilog_feature() {
     sim_cli::reject_case_with_args(
         "memory_editions",
-        "reject_multidim",
-        "requires a one-dimensional memory",
-        &["--edition", "2009"],
+        "multidim_2009",
+        "multidimensional memory views require SystemVerilog-2009",
+        &["--edition", "2001"],
     );
 }

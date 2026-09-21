@@ -51,36 +51,35 @@ impl EmitCtx<'_, '_> {
             ));
         }
         let path = self.cg.lower_string(&self.path, args[0])?;
-        let array = self.cg.array_of(args[1]).cloned().ok_or_else(|| {
-            if self.cg.container_of(args[1]).is_some() {
-                format!(
-                    "{name} does not support dynamic arrays, queues, or associative arrays in `{}`",
-                    self.path
-                )
-            } else {
-                format!(
-                    "{name} requires a fixed one-dimensional packed memory in `{}`",
-                    self.path
-                )
-            }
-        })?;
-        if array.dims.len() != 1 {
-            return Err(format!(
-                "{name} requires a one-dimensional memory; `{}` has {} dimensions in `{}`",
-                self.cg.node(args[1]).name,
-                array.dims.len(),
+        let view = self.lower_memory_view(name, args[1])?;
+        let array = self.cg.model.arrays.get(view.array).ok_or_else(|| {
+            format!(
+                "{name} requires a fixed packed memory view in `{}`",
                 self.path
-            ));
-        }
+            )
+        })?;
         if array.real {
             return Err(format!(
                 "{name} does not support real or shortreal memory elements in `{}`",
                 self.path
             ));
         }
-        if array.is_net {
+        let element = self.memory_element_descriptor(args[1]).ok_or_else(|| {
+            format!(
+                "{name} requires packed integral or packed-struct memory elements in `{}`",
+                self.path
+            )
+        })?;
+        if !matches!(
+            element.shape,
+            TypeShape::PackedAtom { .. }
+                | TypeShape::Aggregate(AggregateLayout {
+                    kind: AggregateKind::PackedStruct | AggregateKind::PackedUnion,
+                    ..
+                })
+        ) {
             return Err(format!(
-                "{name} requires a variable memory, not a net, in `{}`",
+                "{name} requires packed integral or packed-struct memory elements in `{}`",
                 self.path
             ));
         }
@@ -96,36 +95,28 @@ impl EmitCtx<'_, '_> {
         };
         let start = args.get(2).copied().map(&mut lower_bound).transpose()?;
         let finish = args.get(3).copied().map(&mut lower_bound).transpose()?;
-        let enum_values = if write {
+        let enum_values = if write || element.info.kind != "enum" {
             None
         } else {
-            match self.cg.query_descriptor(args[1]) {
-                Some(TypeDescriptor {
-                    shape: TypeShape::FixedArray { element, .. },
-                    ..
-                }) if element.info.kind == "enum" => {
-                    let metadata = self.cg.db.enum_type_metadata(element.id).ok_or_else(|| {
-                        format!(
-                            "{name} enum memory element has no owned enum metadata in `{}`",
-                            self.path
-                        )
-                    })?;
-                    Some(
-                        metadata
-                            .members
-                            .iter()
-                            .map(|member| match &member.value {
-                                Val::Bits(value) => val_to_const(value),
-                                _ => Err(format!(
-                                    "{name} enum member `{}` has a non-integral value in `{}`",
-                                    member.name, self.path
-                                )),
-                            })
-                            .collect::<Result<Vec<_>, _>>()?,
-                    )
-                }
-                _ => None,
-            }
+            let metadata = self.cg.db.enum_type_metadata(element.id).ok_or_else(|| {
+                format!(
+                    "{name} enum memory element has no owned enum metadata in `{}`",
+                    self.path
+                )
+            })?;
+            Some(
+                metadata
+                    .members
+                    .iter()
+                    .map(|member| match &member.value {
+                        Val::Bits(value) => val_to_const(value),
+                        _ => Err(format!(
+                            "{name} enum member `{}` has a non-integral value in `{}`",
+                            member.name, self.path
+                        )),
+                    })
+                    .collect::<Result<Vec<_>, _>>()?,
+            )
         };
         let radix = match name {
             "$readmemb" | "$writememb" => IrMemoryRadix::Binary,
@@ -136,16 +127,190 @@ impl EmitCtx<'_, '_> {
             LanguageEdition::Verilog2001 => IrMemoryAddressingPolicy::Verilog2001,
             LanguageEdition::SystemVerilog2009 => IrMemoryAddressingPolicy::SystemVerilog2009,
         };
+        if view.dims.len() > 1 && self.cg.db.edition() == LanguageEdition::Verilog2001 {
+            return Err(format!(
+                "{name} multidimensional memory views require SystemVerilog-2009 in `{}`",
+                self.path
+            ));
+        }
         Ok(IrStmt::Memory {
             write,
             path,
-            array: array.ir,
+            view,
             radix,
             addressing,
             enum_values,
             start,
             finish,
         })
+    }
+
+    /// Capture a legal fixed memory view. SystemVerilog permits constant
+    /// higher-dimension index selectors, leaving at least one unpacked
+    /// dimension as the memory's addressable outer dimension. Range and
+    /// runtime selectors are rejected before IR construction.
+    fn lower_memory_view(&mut self, name: &str, node: NodeId) -> Result<IrMemoryView, String> {
+        let (base, selectors) = self.memory_view_base(node)?;
+        let array = self.cg.array_of(base).cloned().ok_or_else(|| {
+            if self.cg.container_of(node).is_some() {
+                format!(
+                    "{name} does not support dynamic arrays, queues, or associative arrays in `{}`",
+                    self.path
+                )
+            } else {
+                format!(
+                    "{name} requires a fixed packed memory view in `{}`",
+                    self.path
+                )
+            }
+        })?;
+        if array.is_net {
+            return Err(format!(
+                "{name} requires a variable memory, not a net, in `{}`",
+                self.path
+            ));
+        }
+        if selectors.len() >= array.dims.len() {
+            return Err(format!(
+                "{name} memory view must retain at least one unpacked dimension in `{}`",
+                self.path
+            ));
+        }
+        let mut selected = Vec::with_capacity(selectors.len());
+        for (dimension, selector) in selectors.iter().enumerate() {
+            let value = self.cg.eval_bound_i128(*selector).map_err(|_| {
+                format!(
+                    "{name} memory view selectors must be constant integral indices in `{}`",
+                    self.path
+                )
+            })?;
+            let value = i32::try_from(value).map_err(|_| {
+                format!(
+                    "{name} memory view selector is outside the supported index range in `{}`",
+                    self.path
+                )
+            })?;
+            let (left, right) = array.dims[dimension];
+            if value < left.min(right) || value > left.max(right) {
+                return Err(format!(
+                    "{name} memory view selector {value} is outside dimension {dimension} in `{}`",
+                    self.path
+                ));
+            }
+            selected.push(value);
+        }
+        let mut origin = 0u64;
+        for (dimension, value) in selected.iter().enumerate() {
+            let (left, right) = array.dims[dimension];
+            let extent = u64::from((i64::from(left) - i64::from(right)).unsigned_abs() + 1);
+            let offset = if left >= right {
+                u64::try_from(i64::from(left) - i64::from(*value))
+            } else {
+                u64::try_from(i64::from(*value) - i64::from(left))
+            }
+            .map_err(|_| format!("{name} memory view offset underflow in `{}`", self.path))?;
+            origin = origin
+                .checked_mul(extent)
+                .and_then(|value| value.checked_add(offset))
+                .ok_or_else(|| format!("{name} memory view offset overflow in `{}`", self.path))?;
+        }
+        let mut suffix_total = 1u64;
+        for &(left, right) in &array.dims[selectors.len()..] {
+            let extent = u64::from((i64::from(left) - i64::from(right)).unsigned_abs() + 1);
+            suffix_total = suffix_total
+                .checked_mul(extent)
+                .ok_or_else(|| format!("{name} memory view extent overflow in `{}`", self.path))?;
+        }
+        origin = origin
+            .checked_mul(suffix_total)
+            .ok_or_else(|| format!("{name} memory view origin overflow in `{}`", self.path))?;
+        let dims = array.dims[selectors.len()..].to_vec();
+        let mut strides = vec![1u64; dims.len()];
+        for dimension in (0..dims.len().saturating_sub(1)).rev() {
+            let (left, right) = dims[dimension + 1];
+            let extent = u64::from((i64::from(left) - i64::from(right)).unsigned_abs() + 1);
+            strides[dimension] = strides[dimension + 1]
+                .checked_mul(extent)
+                .ok_or_else(|| format!("{name} memory view stride overflow in `{}`", self.path))?;
+        }
+        Ok(IrMemoryView {
+            array: array.ir,
+            origin,
+            dims,
+            strides,
+            total: suffix_total,
+        })
+    }
+
+    fn memory_view_base(&self, node: NodeId) -> Result<(NodeId, Vec<NodeId>), String> {
+        match self.cg.kind(node) {
+            NodeKind::Array { .. } => Ok((node, Vec::new())),
+            NodeKind::Expr(ExprKind::Ref {
+                target: Some(target),
+            }) => {
+                if self.cg.array_of(*target).is_some() {
+                    Ok((*target, Vec::new()))
+                } else {
+                    self.memory_view_base(*target)
+                }
+            }
+            NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
+                let (root, mut selectors) = self.memory_view_base(*base)?;
+                selectors.extend(indices.iter().copied());
+                Ok((root, selectors))
+            }
+            NodeKind::Expr(ExprKind::HierPath { refs, .. }) => {
+                let target = refs
+                    .first()
+                    .copied()
+                    .flatten()
+                    .or_else(|| refs.last().copied().flatten());
+                target
+                    .and_then(|target| self.cg.array_of(target).map(|_| (target, Vec::new())))
+                    .ok_or_else(|| {
+                        format!(
+                            "{} does not resolve to a fixed memory view in `{}`",
+                            self.cg.node(node).name,
+                            self.path
+                        )
+                    })
+            }
+            NodeKind::Expr(ExprKind::Cast { operand, .. }) => self.memory_view_base(*operand),
+            NodeKind::Expr(ExprKind::Operation {
+                op: Operation::Assignment,
+                operands,
+                ..
+            }) => operands.first().copied().map_or_else(
+                || {
+                    Err(format!(
+                        "{} requires a fixed memory view in `{}`",
+                        self.cg.node(node).name,
+                        self.path
+                    ))
+                },
+                |operand| self.memory_view_base(operand),
+            ),
+            _ => Err(format!(
+                "{} requires a fixed memory view in `{}`",
+                self.cg.node(node).name,
+                self.path
+            )),
+        }
+    }
+
+    fn memory_element_descriptor(&self, node: NodeId) -> Option<TypeDescriptor> {
+        let (base, _) = self.memory_view_base(node).ok()?;
+        let mut descriptor = self
+            .cg
+            .query_descriptor(node)
+            .or_else(|| self.cg.query_descriptor(base))?
+            .clone();
+        loop {
+            match descriptor.shape {
+                TypeShape::FixedArray { element, .. } => descriptor = *element,
+                _ => return Some(descriptor),
+            }
+        }
     }
 
     fn assertion_control_target_scope(&self, target: NodeId, task: &str) -> Result<String, String> {

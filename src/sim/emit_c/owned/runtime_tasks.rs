@@ -30,7 +30,7 @@ impl Frame<'_, '_> {
         let IrStmt::Memory {
             write,
             path,
-            array,
+            view,
             radix,
             addressing,
             enum_values,
@@ -41,9 +41,9 @@ impl Frame<'_, '_> {
             return Err("expected a memory task".to_owned());
         };
         let path = self.string(path)?;
-        let array = self.ctx.model.array(*array);
-        if array.real || array.dims.len() != 1 {
-            return Err("memory task requires a one-dimensional packed array".to_owned());
+        let array = self.ctx.model.array(view.array);
+        if array.real || view.dims.is_empty() || view.dims.len() != view.strides.len() {
+            return Err("memory task requires a fixed packed memory view".to_owned());
         }
         let start_value = start
             .as_ref()
@@ -61,11 +61,10 @@ impl Frame<'_, '_> {
             .as_ref()
             .map(|value| value.code.as_str())
             .unwrap_or("(sv4_t)SV4_EMPTY");
-        let (left, right) = array.dims[0];
         let runtime = if *write {
-            "llg_memory_write"
+            "llg_memory_write_view"
         } else {
-            "llg_memory_read"
+            "llg_memory_read_view"
         };
         let radix = match radix {
             IrMemoryRadix::Binary => 2,
@@ -90,9 +89,22 @@ impl Frame<'_, '_> {
             .as_ref()
             .filter(|values| !values.is_empty())
             .map_or(0, Vec::len);
-        self.line(format!("{runtime}({}, {}, {}ULL, {}u, {}, {}, (const int32_t[]){{ {left}, {right} }}, 1, {first}, {last}, {}, {}, {addressing}, {enum_pointer}, {enum_count}, {radix});",
+        let dimensions = view
+            .dims
+            .iter()
+            .flat_map(|(left, right)| [left.to_string(), right.to_string()])
+            .collect::<Vec<_>>()
+            .join(", ");
+        let strides = view
+            .strides
+            .iter()
+            .map(u64::to_string)
+            .collect::<Vec<_>>()
+            .join(", ");
+        self.line(format!("{runtime}({}, {}, {}ULL, {}u, {}, {}, (const int32_t[]){{ {dimensions} }}, {}, (const uint64_t[]){{ {strides} }}, {}ULL, {}ULL, {first}, {last}, {}, {}, {addressing}, {enum_pointer}, {enum_count}, {radix});",
             path.take_string(), array.c_name, array.total, array.elem_width, u8::from(array.signed),
-            u8::from(array.two_state), u8::from(start.is_some()), u8::from(finish.is_some())));
+            u8::from(array.two_state), view.dims.len(), view.origin, view.total,
+            u8::from(start.is_some()), u8::from(finish.is_some())));
         if let Some(enum_name) = enum_name {
             self.line(format!("sv4_destroy_array({enum_name}, {enum_count});"));
             self.line("}");

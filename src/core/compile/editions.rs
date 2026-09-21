@@ -558,7 +558,19 @@ fn is_whole_unpacked_value(
     ) {
         return false;
     }
+    if node
+        .parent_id
+        .and_then(|parent| nodes.get(&parent))
+        .is_some_and(|parent| parent.detail == "ElementSelect")
+    {
+        return false;
+    }
     if is_fixed_unpacked_type(snapshot, node.type_id) {
+        // Memory-file tasks consume a procedural storage reference; Slang's
+        // semantic graph may still label that argument as a fixed-array value.
+        if is_memory_task_operand(snapshot, nodes, node.id) {
+            return false;
+        }
         return true;
     }
     let start = usize::try_from(node.edge_start).ok();
@@ -592,6 +604,66 @@ fn is_whole_unpacked_value(
         })
         .filter_map(|edge| nodes.get(&edge.target_id).copied())
         .any(|child| is_fixed_unpacked_type(snapshot, child.type_id))
+}
+
+fn is_memory_task_operand(
+    snapshot: &Snapshot,
+    nodes: &HashMap<u64, &SemanticNode>,
+    target: u64,
+) -> bool {
+    let mut stack = snapshot
+        .semantic_nodes
+        .iter()
+        .filter(|call| {
+            matches!(call.kind, SemanticKind::SystemCall)
+                && matches!(
+                    call.name.as_str(),
+                    "$readmemb" | "$readmemh" | "$writememb" | "$writememh"
+                )
+        })
+        .flat_map(|call| {
+            usize::try_from(call.edge_start)
+                .ok()
+                .zip(usize::try_from(call.edge_count).ok())
+                .and_then(|(start, count)| {
+                    snapshot
+                        .semantic_edges
+                        .get(start..start.saturating_add(count))
+                })
+                .into_iter()
+                .flat_map(|edges| {
+                    edges
+                        .iter()
+                        .filter(|edge| edge.role == SemanticEdgeRole::Argument)
+                        .map(|edge| edge.target_id)
+                })
+        })
+        .collect::<Vec<_>>();
+    let mut visited = HashSet::new();
+    while let Some(id) = stack.pop() {
+        if id == target {
+            return true;
+        }
+        if !visited.insert(id) {
+            continue;
+        }
+        let Some(node) = nodes.get(&id) else {
+            continue;
+        };
+        let Some(start) = usize::try_from(node.edge_start).ok() else {
+            continue;
+        };
+        let Some(count) = usize::try_from(node.edge_count).ok() else {
+            continue;
+        };
+        if let Some(edges) = snapshot
+            .semantic_edges
+            .get(start..start.saturating_add(count))
+        {
+            stack.extend(edges.iter().map(|edge| edge.target_id));
+        }
+    }
+    false
 }
 
 /// Native prototype parsing has already succeeded. Match the same first-dollar

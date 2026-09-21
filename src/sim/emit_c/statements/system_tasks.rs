@@ -8,7 +8,7 @@ pub(super) fn render_memory(
     ctx: &RCtx<'_>,
     write: bool,
     path: &crate::sim::ir::IrStringExpr,
-    array: usize,
+    view: &crate::sim::ir::IrMemoryView,
     radix: IrMemoryRadix,
     addressing: IrMemoryAddressingPolicy,
     enum_values: Option<&[IrConst]>,
@@ -18,13 +18,13 @@ pub(super) fn render_memory(
     let array_info = ctx
         .model
         .arrays
-        .get(array)
+        .get(view.array)
         .ok_or_else(|| "memory task array index is out of bounds".to_owned())?;
     if array_info.real {
         return Err("memory task does not support real arrays".to_owned());
     }
-    if array_info.dims.len() != 1 {
-        return Err("memory task requires a one-dimensional array".to_owned());
+    if view.dims.is_empty() || view.dims.len() != view.strides.len() {
+        return Err("memory task requires a fixed packed memory view".to_owned());
     }
     let path = super::super::objects::string(ctx, path)?;
     let start_code = start
@@ -35,11 +35,10 @@ pub(super) fn render_memory(
         .transpose()?;
     let start_value = start_code.as_deref().unwrap_or("SV4_C(0, 1)");
     let finish_value = finish_code.as_deref().unwrap_or("SV4_C(0, 1)");
-    let (left, right) = array_info.dims[0];
     let runtime = if write {
-        "llg_memory_write"
+        "llg_memory_write_view"
     } else {
-        "llg_memory_read"
+        "llg_memory_read_view"
     };
     let radix = match radix {
         IrMemoryRadix::Binary => 2,
@@ -71,6 +70,18 @@ pub(super) fn render_memory(
     } else {
         String::new()
     };
+    let dimensions = view
+        .dims
+        .iter()
+        .flat_map(|(left, right)| [left.to_string(), right.to_string()])
+        .collect::<Vec<_>>()
+        .join(", ");
+    let strides = view
+        .strides
+        .iter()
+        .map(u64::to_string)
+        .collect::<Vec<_>>()
+        .join(", ");
     Ok(format!(
         "{{\n\
              llg_string_t _llg_memory_path = {path};\n\
@@ -78,7 +89,8 @@ pub(super) fn render_memory(
              sv4_t _llg_memory_finish = {finish_value};\n\
              {enum_declaration}\
              {runtime}(_llg_memory_path, {name}, {total}ULL, {width}u, {signed}, {two_state},\n\
-                       (const int32_t[]){{ {left}, {right} }}, 1,\n\
+                       (const int32_t[]){{ {dimensions} }}, {n_dims},\n\
+                       (const uint64_t[]){{ {strides} }}, {origin}ULL, {view_total}ULL,\n\
                        _llg_memory_start, _llg_memory_finish, {has_start}, {has_finish}, {addressing}, {enum_pointer}, {enum_count}, {radix});\n\
              {enum_cleanup}\
          }}\n",
@@ -93,6 +105,11 @@ pub(super) fn render_memory(
         enum_pointer = enum_pointer,
         enum_count = enum_count,
         enum_cleanup = enum_cleanup,
+        dimensions = dimensions,
+        n_dims = view.dims.len(),
+        strides = strides,
+        origin = view.origin,
+        view_total = view.total,
     ))
 }
 

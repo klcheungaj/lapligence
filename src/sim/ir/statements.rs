@@ -117,6 +117,23 @@ pub enum IrMemoryAddressingPolicy {
     SystemVerilog2009,
 }
 
+/// A fixed unpacked memory view captured at the system-task call site.
+///
+/// `origin` and `strides` address the original flat array storage while
+/// `dims` describes the remaining unpacked dimensions after any constant
+/// higher-dimension selectors. The runtime uses the first remaining
+/// dimension for file addresses and walks all lower dimensions in row-major
+/// order. Keeping this metadata in the owned IR prevents a generated model
+/// from retaining a transient frontend expression or pointer.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct IrMemoryView {
+    pub array: usize,
+    pub origin: u64,
+    pub dims: Vec<(i32, i32)>,
+    pub strides: Vec<u64>,
+    pub total: u64,
+}
+
 /// File-control tasks that do not produce a packed value.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IrFileOp {
@@ -200,15 +217,16 @@ pub enum IrStmt {
     RandomStateSet {
         state: IrStringExpr,
     },
-    /// `$readmem*`/`$writemem*` against one fixed unpacked memory. Bounds are
-    /// evaluated at the call site; omitted bounds use `addressing` while the
-    /// two presence flags remain distinct from an explicitly supplied value.
+    /// `$readmem*`/`$writemem*` against one fixed unpacked memory view.
+    /// Bounds are evaluated at the call site; omitted bounds use `addressing`
+    /// while the two presence flags remain distinct from an explicitly
+    /// supplied value.
     /// Enum element values are retained when the destination is an enum so
     /// the runtime can stop after the first non-member word.
     Memory {
         write: bool,
         path: IrStringExpr,
-        array: usize,
+        view: IrMemoryView,
         radix: IrMemoryRadix,
         addressing: IrMemoryAddressingPolicy,
         enum_values: Option<Vec<IrConst>>,

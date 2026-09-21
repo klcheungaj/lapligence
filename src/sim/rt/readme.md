@@ -90,12 +90,15 @@ each eval/condition context field owns a reference, including shared pointers.
   Clocking-bound `##N` waits are lowered as repeated event waits, so they count
   published clocking-block events instead of assuming a clock period.
   Memory-file tasks parse four-state binary/hex words, comments and address
-  jumps into bounded fixed packed memories. Verilog-2001 omitted ranges use
-  declaration order, SystemVerilog-2009 omitted ranges use low-to-high order,
-  and explicit ranges retain their source direction. Out-of-range address
-  jumps and non-member enum words terminate a load after preserving prior
-  writes. Resizable, multidimensional and real memories remain an explicit
-  lowering boundary.
+  jumps into bounded fixed packed memory views. SystemVerilog-2009 views may
+  retain multiple unpacked dimensions or constant higher-dimension selections;
+  remaining dimensions use low-to-high row-major file order while declaration
+  direction maps to flat storage. Verilog-2001 omitted ranges use declaration
+  order, SystemVerilog-2009 omitted ranges use low-to-high order, and explicit
+  ranges retain their source direction. Out-of-range address jumps and
+  non-member enum words terminate a load after preserving prior writes.
+  Resizable, associative, queue, range-selected, non-packed aggregate and
+  real memories remain an explicit lowering boundary.
   Deferred immediate assertion actions use an owned per-time-slot report queue:
   conditions and value arguments are sampled at issue time, legal references
   are resolved by the Reactive callback, and same-process assertion identities

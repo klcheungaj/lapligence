@@ -236,13 +236,13 @@ use std::collections::{HashMap, HashSet};
 use super::timescale::{real_delay_ticks, round_time_literal, time_literal_delay_ticks, Timescale};
 use super::CodegenError;
 use crate::core::db::{
-    AggregateKind, AggregateMember, AlwaysKind, ArrayKind, AssignmentPatternKeyType,
-    AssociativeIndex, CaseKind as DbCaseKind, ClockingEdge, ClockingSkew, ConstantSource,
-    ConstantType, Db, Direction as DbDirection, DriverDelay, EventSpec, EventTriggerTiming,
-    ExprKind, ImmediateAssertionKind, IntraControl, JoinKind as DbJoinKind, NetType, NodeId,
-    NodeKind, Operation, PackedMember, PrimClass, PrimitiveType, ProcessKind, StmtKind,
-    StreamingDirection as DbStreamingDirection, Strength, TypeDescriptor, TypeShape, UdpTable,
-    UnconnectedDrive, VariableLifetime,
+    AggregateKind, AggregateLayout, AggregateMember, AlwaysKind, ArrayKind,
+    AssignmentPatternKeyType, AssociativeIndex, CaseKind as DbCaseKind, ClockingEdge, ClockingSkew,
+    ConstantSource, ConstantType, Db, Direction as DbDirection, DriverDelay, EventSpec,
+    EventTriggerTiming, ExprKind, ImmediateAssertionKind, IntraControl, JoinKind as DbJoinKind,
+    NetType, NodeId, NodeKind, Operation, PackedMember, PrimClass, PrimitiveType, ProcessKind,
+    StmtKind, StreamingDirection as DbStreamingDirection, Strength, TypeDescriptor, TypeShape,
+    UdpTable, UnconnectedDrive, VariableLifetime,
 };
 use crate::core::elab::{self, Bit, Val};
 use crate::core::model::TypeInfo;
@@ -259,8 +259,8 @@ use crate::sim::ir::{
     IrDelay, IrDependency, IrDepth, IrDisplayRadix, IrEdge, IrElemSel, IrEvent, IrEventCapture,
     IrEventContext, IrEventRef, IrExpr, IrExprKind, IrFormal, IrImmediateAssertionKind,
     IrInitPhase, IrInitTarget, IrInitialization, IrJoinKind, IrLhs, IrMemoryAddressingPolicy,
-    IrMemoryRadix, IrModel, IrNetAliasBinding, IrProcess, IrProcessKind, IrRealBinOp, IrRealUnOp,
-    IrSeverityLevel, IrShape, IrSignal, IrStmt, IrStochasticStmt, IrStreamDirection,
+    IrMemoryRadix, IrMemoryView, IrModel, IrNetAliasBinding, IrProcess, IrProcessKind, IrRealBinOp,
+    IrRealUnOp, IrSeverityLevel, IrShape, IrSignal, IrStmt, IrStochasticStmt, IrStreamDirection,
     IrStreamTarget, IrSysFunc, IrTimeKind, IrTransitionDelay, IrType, IrUnOp,
     IrUniquePriorityCheck, IrVpiObject, IrVpiObjectKind, IrWaitSrc, StorageKind, StorageLifetime,
     StorageOwnership, StorageRef, LLG_MAX_NET_DRIVERS,

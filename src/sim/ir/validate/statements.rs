@@ -114,7 +114,7 @@ impl Validator<'_> {
             }
             IrStmt::Memory {
                 path: file,
-                array,
+                view,
                 start,
                 finish,
                 ..
@@ -127,14 +127,74 @@ impl Validator<'_> {
                         .and_then(|_| self.validate_expr(child, formals, path));
                 });
                 result?;
-                let Some(array) = self.model.arrays.get(*array) else {
+                let Some(array) = self.model.arrays.get(view.array) else {
                     return self.fail(path, "memory task array index is out of bounds");
                 };
                 if array.real {
                     return self.fail(path, "memory task does not support real arrays");
                 }
-                if array.dims.len() != 1 {
-                    return self.fail(path, "memory task requires a one-dimensional array");
+                if view.dims.is_empty() || view.dims.len() != view.strides.len() {
+                    return self.fail(path, "memory task requires a fixed packed memory view");
+                }
+                if view.total == 0 || view.origin >= array.total {
+                    return self.fail(path, "memory task view has an invalid extent");
+                }
+                let Some(prefix) = array.dims.len().checked_sub(view.dims.len()) else {
+                    return self.fail(path, "memory task view rank exceeds its array rank");
+                };
+                let mut expected_total = 1u64;
+                for (offset, dimension) in view.dims.iter().enumerate() {
+                    let Some(expected) = array.dims.get(prefix + offset) else {
+                        return self.fail(path, "memory task view dimension is out of bounds");
+                    };
+                    if expected != dimension {
+                        return self.fail(path, "memory task view bounds disagree with its array");
+                    }
+                    let Some(extent) = (i64::from(dimension.0) - i64::from(dimension.1))
+                        .unsigned_abs()
+                        .checked_add(1)
+                    else {
+                        return self.fail(path, "memory task view dimension overflows");
+                    };
+                    let Some(total) = expected_total.checked_mul(extent) else {
+                        return self.fail(path, "memory task view extent overflows");
+                    };
+                    expected_total = total;
+                }
+                if expected_total != view.total {
+                    return self.fail(path, "memory task view total disagrees with its bounds");
+                }
+                let mut expected_stride = 1u64;
+                for (offset, stride) in view.strides.iter().enumerate().rev() {
+                    if *stride != expected_stride {
+                        return self
+                            .fail(path, "memory task view stride disagrees with its bounds");
+                    }
+                    let dimension = view.dims[offset];
+                    let Some(extent) = (i64::from(dimension.0) - i64::from(dimension.1))
+                        .unsigned_abs()
+                        .checked_add(1)
+                    else {
+                        return self.fail(path, "memory task view dimension overflows");
+                    };
+                    let Some(stride) = expected_stride.checked_mul(extent) else {
+                        return self.fail(path, "memory task view stride overflows");
+                    };
+                    expected_stride = stride;
+                }
+                let Some(last) = view.strides.iter().zip(&view.dims).try_fold(
+                    view.origin,
+                    |offset, (stride, (left, right))| {
+                        let extent = (i64::from(*left) - i64::from(*right))
+                            .unsigned_abs()
+                            .checked_sub(1)?;
+                        offset.checked_add(stride.checked_mul(extent)?)
+                    },
+                ) else {
+                    return self.fail(path, "memory task view exceeds its array");
+                };
+                if last >= array.total {
+                    return self.fail(path, "memory task view exceeds its array");
                 }
                 for (name, bound) in [("start", start), ("finish", finish)] {
                     if let Some(bound) = bound {

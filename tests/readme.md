@@ -110,6 +110,10 @@ Their historical pass counts are not part of the current acceptance record.
 - `sim_memory`: fixed packed-memory `$readmemh/$readmemb` parsing,
   `$writememh/$writememb` roundtrips, range/order/address handling, four-state
   conversion and file-size diagnostics in optimized and unoptimized models.
+- `sim_memory_views`: SystemVerilog-2009 multidimensional and constant selected
+  memory views, row-major file ordering, declaration-direction storage,
+  address jumps, incomplete rows, packed-struct elements and unsupported-view
+  diagnostics in optimized and unoptimized models.
 - [Procedural assignment regressions](fixtures/sim/procedural_assign/): PCA priority, replacement, dependencies and force layering.
 - `sim_reference_args`: typed `ref`/`const ref` aliasing, selected actuals, nested calls, recursion and suspension observation.
 - [Datatype basics](fixtures/sim/data_types/), [wide values](fixtures/sim/data_types_extended/) and [edge cases](fixtures/sim/data_type_edges/): operator/state combinations, limb boundaries and capacity rejection.

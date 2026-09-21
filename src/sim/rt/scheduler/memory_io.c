@@ -183,6 +183,11 @@ static int llg_memory_next_token(FILE* stream, int radix,
     if (c == -2) return LLG_MEMORY_TOKEN_ERROR;
     if (c == '@') {
         c = fgetc(stream);
+        int negative = 0;
+        if (c == '-' || c == '+') {
+            negative = c == '-';
+            c = fgetc(stream);
+        }
         int state;
         unsigned numeric;
         while (c != EOF) {
@@ -204,6 +209,10 @@ static int llg_memory_next_token(FILE* stream, int radix,
         if (value->digits == 0 || value->too_wide) return LLG_MEMORY_TOKEN_ERROR;
         sv4_replace(&value->value, sv4_resize(value->value,
                     (uint32_t)(value->digits * 4u), 0));
+        if (negative) {
+            value->value.is_signed = 1;
+            sv4_replace(&value->value, sv4_neg(value->value));
+        }
         return LLG_MEMORY_TOKEN_ADDRESS;
     }
     if (!llg_memory_digit(c, radix, &(int){0}, &(unsigned){0})) {
@@ -213,41 +222,147 @@ static int llg_memory_next_token(FILE* stream, int radix,
     return llg_memory_parse_digits(stream, radix, c, value);
 }
 
-static int llg_memory_index(int64_t address, const int32_t* dims,
-                            uint64_t total, uint64_t* index) {
-    int64_t left = dims[0];
-    int64_t right = dims[1];
+static int llg_memory_extent(int32_t left_value, int32_t right_value,
+                             uint64_t* extent) {
+    int64_t left = left_value;
+    int64_t right = right_value;
+    uint64_t distance = left >= right ? (uint64_t)(left - right)
+                                      : (uint64_t)(right - left);
+    if (distance == UINT64_MAX) return 0;
+    *extent = distance + 1u;
+    return 1;
+}
+
+static int llg_memory_address_offset(int64_t address, int32_t left_value,
+                                     int32_t right_value, uint64_t* offset) {
+    int64_t left = left_value;
+    int64_t right = right_value;
     if (address < (left < right ? left : right) ||
         address > (left > right ? left : right)) return 0;
-    uint64_t offset = left >= right ? (uint64_t)(left - address)
-                                    : (uint64_t)(address - left);
-    if (offset >= total) return 0;
-    *index = offset;
+    *offset = left >= right ? (uint64_t)(left - address)
+                            : (uint64_t)(address - left);
+    return 1;
+}
+
+static int llg_memory_descriptor(const char* path, uint64_t total,
+                                 const int32_t* dims, int n_dims,
+                                 const uint64_t* strides, uint64_t origin,
+                                 uint64_t view_total, uint64_t* inner_total) {
+    if (!dims || !strides || n_dims <= 0 || total == 0 || view_total == 0 ||
+        origin >= total || view_total > total - origin) {
+        llg_memory_warning(path, "memory descriptor is invalid");
+        return 0;
+    }
+    uint64_t expected_total = 1;
+    for (int dimension = 0; dimension < n_dims; ++dimension) {
+        uint64_t extent;
+        if (!llg_memory_extent(dims[2 * dimension], dims[2 * dimension + 1], &extent) ||
+            expected_total > UINT64_MAX / extent) {
+            llg_memory_warning(path, "memory descriptor dimension overflows");
+            return 0;
+        }
+        expected_total *= extent;
+    }
+    if (expected_total != view_total) {
+        llg_memory_warning(path, "memory descriptor size does not match its bounds");
+        return 0;
+    }
+    uint64_t expected_stride = 1;
+    for (int dimension = n_dims - 1; dimension >= 0; --dimension) {
+        uint64_t extent;
+        if (!llg_memory_extent(dims[2 * dimension], dims[2 * dimension + 1], &extent) ||
+            strides[dimension] != expected_stride ||
+            expected_stride > UINT64_MAX / extent) {
+            llg_memory_warning(path, "memory descriptor stride is invalid");
+            return 0;
+        }
+        expected_stride *= extent;
+    }
+    uint64_t max_offset = 0;
+    for (int dimension = 0; dimension < n_dims; ++dimension) {
+        uint64_t extent;
+        if (!llg_memory_extent(dims[2 * dimension], dims[2 * dimension + 1], &extent) ||
+            extent == 0 ||
+            (extent - 1u) > UINT64_MAX / strides[dimension] ||
+            max_offset > UINT64_MAX - (extent - 1u) * strides[dimension]) {
+            llg_memory_warning(path, "memory descriptor range overflows");
+            return 0;
+        }
+        max_offset += (extent - 1u) * strides[dimension];
+    }
+    if (max_offset >= total - origin) {
+        llg_memory_warning(path, "memory descriptor exceeds its source array");
+        return 0;
+    }
+    uint64_t outer_extent;
+    if (!llg_memory_extent(dims[0], dims[1], &outer_extent) ||
+        outer_extent == 0 || view_total % outer_extent != 0) {
+        llg_memory_warning(path, "memory descriptor outer extent is invalid");
+        return 0;
+    }
+    *inner_total = view_total / outer_extent;
+    return 1;
+}
+
+static int llg_memory_view_index(int64_t address, uint64_t inner_ordinal,
+                                 const int32_t* dims, int n_dims,
+                                 const uint64_t* strides, uint64_t origin,
+                                 uint64_t view_total, uint64_t total,
+                                 uint64_t* index) {
+    uint64_t outer_extent;
+    if (!llg_memory_extent(dims[0], dims[1], &outer_extent) ||
+        outer_extent == 0 || inner_ordinal >= view_total / outer_extent) {
+        return 0;
+    }
+    uint64_t outer_offset;
+    if (!llg_memory_address_offset(address, dims[0], dims[1], &outer_offset)) {
+        return 0;
+    }
+    if (outer_offset > UINT64_MAX / strides[0]) return 0;
+    uint64_t flat = origin + outer_offset * strides[0];
+    if (flat < origin) return 0;
+    uint64_t ordinal = inner_ordinal;
+    for (int dimension = n_dims - 1; dimension >= 1; --dimension) {
+        uint64_t extent;
+        if (!llg_memory_extent(dims[2 * dimension], dims[2 * dimension + 1], &extent) ||
+            extent == 0) {
+            return 0;
+        }
+        uint64_t coordinate = ordinal % extent;
+        ordinal /= extent;
+        uint64_t offset = dims[2 * dimension] >= dims[2 * dimension + 1]
+                              ? extent - 1u - coordinate
+                              : coordinate;
+        if (offset > UINT64_MAX / strides[dimension] ||
+            flat > UINT64_MAX - offset * strides[dimension]) {
+            return 0;
+        }
+        flat += offset * strides[dimension];
+    }
+    if (ordinal != 0 || flat >= total) return 0;
+    *index = flat;
     return 1;
 }
 
 static uint64_t llg_memory_range_length(int64_t first, int64_t last) {
-    uint64_t distance = first >= last ? (uint64_t)first - (uint64_t)last
-                                      : (uint64_t)last - (uint64_t)first;
+    uint64_t distance = first >= last ? (uint64_t)(first - last)
+                                      : (uint64_t)(last - first);
     return distance == UINT64_MAX ? UINT64_MAX : distance + 1u;
 }
 
 static int llg_memory_bounds(const char* path, uint64_t total,
                              const int32_t* dims, int n_dims,
-                             sv4_t start, sv4_t finish, int has_start,
-                             int has_finish, int addressing_policy,
-                             int64_t* first, int64_t* last) {
-    if (!dims || n_dims != 1 || total == 0) {
-        llg_memory_warning(path, "memory descriptor is invalid");
+                             const uint64_t* strides, uint64_t origin,
+                             uint64_t view_total, sv4_t start, sv4_t finish,
+                             int has_start, int has_finish, int addressing_policy,
+                             int64_t* first, int64_t* last,
+                             uint64_t* inner_total) {
+    if (!llg_memory_descriptor(path, total, dims, n_dims, strides, origin,
+                               view_total, inner_total)) {
         return 0;
     }
-    int64_t left = dims[0], right = dims[1];
-    uint64_t extent = left >= right ? (uint64_t)(left - right) + 1u
-                                    : (uint64_t)(right - left) + 1u;
-    if (extent != total) {
-        llg_memory_warning(path, "memory descriptor size does not match its bounds");
-        return 0;
-    }
+    int32_t left_value = dims[0], right_value = dims[1];
+    int64_t left = left_value, right = right_value;
     if (has_start && !sv4_to_index_i64(start, first)) {
         llg_memory_warning(path, "start address is unknown, negative-width, or out of range");
         return 0;
@@ -266,9 +381,9 @@ static int llg_memory_bounds(const char* path, uint64_t total,
                     ? (left > right ? left : right)
                     : right;
     }
-    uint64_t ignored_index;
-    if (!llg_memory_index(*first, dims, total, &ignored_index) ||
-        !llg_memory_index(*last, dims, total, &ignored_index)) {
+    uint64_t ignored_offset;
+    if (!llg_memory_address_offset(*first, left_value, right_value, &ignored_offset) ||
+        !llg_memory_address_offset(*last, left_value, right_value, &ignored_offset)) {
         llg_memory_warning(path, "selected range includes an address outside the destination memory");
         return 0;
     }
@@ -294,11 +409,13 @@ static int llg_memory_enum_value_allowed(sv4_t value,
     return 0;
 }
 
-void llg_memory_read(llg_string_t path, sv4_t* memory, uint64_t total,
-                     uint32_t elem_width, int8_t elem_signed, int8_t two_state,
-                     const int32_t* dims, int n_dims, sv4_t start, sv4_t finish,
-                     int has_start, int has_finish, int addressing_policy,
-                     const sv4_t* enum_values, uint32_t enum_count, int radix) {
+void llg_memory_read_view(llg_string_t path, sv4_t* memory, uint64_t total,
+                          uint32_t elem_width, int8_t elem_signed, int8_t two_state,
+                          const int32_t* dims, int n_dims,
+                          const uint64_t* strides, uint64_t origin,
+                          uint64_t view_total, sv4_t start, sv4_t finish,
+                          int has_start, int has_finish, int addressing_policy,
+                          const sv4_t* enum_values, uint32_t enum_count, int radix) {
     char* filename = llg_memory_path_copy(path);
     FILE* stream = fopen(filename, "r");
     if (!stream) {
@@ -307,16 +424,22 @@ void llg_memory_read(llg_string_t path, sv4_t* memory, uint64_t total,
         return;
     }
     int64_t first, last;
-    if (!llg_memory_bounds(filename, total, dims, n_dims, start, finish,
-                           has_start, has_finish, addressing_policy, &first, &last)) {
+    uint64_t inner_total;
+    if (!llg_memory_bounds(filename, total, dims, n_dims, strides, origin,
+                           view_total, start, finish, has_start, has_finish,
+                           addressing_policy, &first, &last, &inner_total)) {
         fclose(stream);
         free(filename);
         return;
     }
-    uint64_t expected = llg_memory_range_length(first, last);
+    uint64_t range = llg_memory_range_length(first, last);
+    uint64_t expected = range > UINT64_MAX / inner_total
+                            ? UINT64_MAX
+                            : range * inner_total;
     uint64_t written = 0;
     int64_t current = first;
     int64_t step = first <= last ? 1 : -1;
+    uint64_t inner = 0;
     int warned_extra = 0;
     int warned_unknown = 0;
     llg_memory_value_t token = {0};
@@ -330,14 +453,15 @@ void llg_memory_read(llg_string_t path, sv4_t* memory, uint64_t total,
         if (kind == LLG_MEMORY_TOKEN_ADDRESS) {
             int64_t address;
             if (!sv4_to_index_i64(token.value, &address)) {
-                llg_memory_warning(filename, "address jump is not a known non-negative index");
+                llg_memory_warning(filename, "address jump is not a known index");
                 sv4_destroy(&token.value);
                 fclose(stream);
                 free(filename);
                 return;
             } else {
                 current = address;
-                if (!llg_memory_index(address, dims, total, &(uint64_t){0}) ||
+                inner = 0;
+                if (!llg_memory_address_offset(address, dims[0], dims[1], &(uint64_t){0}) ||
                     !llg_memory_in_requested_range(address, first, last)) {
                     llg_memory_warning(filename,
                         "address jump is outside the destination memory or selected range; load terminated");
@@ -356,7 +480,9 @@ void llg_memory_read(llg_string_t path, sv4_t* memory, uint64_t total,
             }
         } else {
             uint64_t index;
-            if (!llg_memory_index(current, dims, total, &index)) {
+            if (inner >= inner_total ||
+                !llg_memory_view_index(current, inner, dims, n_dims, strides,
+                                       origin, view_total, total, &index)) {
                 if (!warned_extra) {
                     llg_memory_warning(filename, "selected address is outside the destination memory");
                     warned_extra = 1;
@@ -384,11 +510,16 @@ void llg_memory_read(llg_string_t path, sv4_t* memory, uint64_t total,
                 written++;
             }
         }
-        if (current == last) {
-            current = step > 0 ? INT64_MAX : INT64_MIN;
-        } else if ((step > 0 && current < INT64_MAX) ||
-                   (step < 0 && current > INT64_MIN)) {
-            current += step;
+        if (inner + 1u >= inner_total) {
+            inner = 0;
+            if (current == last) {
+                current = step > 0 ? INT64_MAX : INT64_MIN;
+            } else if ((step > 0 && current < INT64_MAX) ||
+                       (step < 0 && current > INT64_MIN)) {
+                current += step;
+            }
+        } else {
+            ++inner;
         }
     }
     sv4_destroy(&token.value);
@@ -400,11 +531,13 @@ void llg_memory_read(llg_string_t path, sv4_t* memory, uint64_t total,
     free(filename);
 }
 
-void llg_memory_write(llg_string_t path, sv4_t* memory, uint64_t total,
-                      uint32_t elem_width, int8_t elem_signed, int8_t two_state,
-                      const int32_t* dims, int n_dims, sv4_t start, sv4_t finish,
-                      int has_start, int has_finish, int addressing_policy,
-                      const sv4_t* enum_values, uint32_t enum_count, int radix) {
+void llg_memory_write_view(llg_string_t path, sv4_t* memory, uint64_t total,
+                           uint32_t elem_width, int8_t elem_signed, int8_t two_state,
+                           const int32_t* dims, int n_dims,
+                           const uint64_t* strides, uint64_t origin,
+                           uint64_t view_total, sv4_t start, sv4_t finish,
+                           int has_start, int has_finish, int addressing_policy,
+                           const sv4_t* enum_values, uint32_t enum_count, int radix) {
     (void)two_state;
     (void)enum_values;
     (void)enum_count;
@@ -416,8 +549,10 @@ void llg_memory_write(llg_string_t path, sv4_t* memory, uint64_t total,
         return;
     }
     int64_t first, last;
-    if (!llg_memory_bounds(filename, total, dims, n_dims, start, finish,
-                           has_start, has_finish, addressing_policy, &first, &last)) {
+    uint64_t inner_total;
+    if (!llg_memory_bounds(filename, total, dims, n_dims, strides, origin,
+                           view_total, start, finish, has_start, has_finish,
+                           addressing_policy, &first, &last, &inner_total)) {
         fclose(stream);
         free(filename);
         return;
@@ -427,9 +562,11 @@ void llg_memory_write(llg_string_t path, sv4_t* memory, uint64_t total,
     int64_t current = first;
     int64_t step = first <= last ? 1 : -1;
     int warned_extra = 0;
+    uint64_t inner = 0;
     for (;;) {
         uint64_t index;
-        if (!llg_memory_index(current, dims, total, &index)) {
+        if (!llg_memory_view_index(current, inner, dims, n_dims, strides,
+                                   origin, view_total, total, &index)) {
             if (!warned_extra) {
                 llg_memory_warning(filename, "selected address is outside the source memory");
                 warned_extra = 1;
@@ -441,16 +578,45 @@ void llg_memory_write(llg_string_t path, sv4_t* memory, uint64_t total,
                 break;
             }
         }
-        if (current == last) break;
-        if ((step > 0 && current == INT64_MAX) ||
-            (step < 0 && current == INT64_MIN)) break;
-        current += step;
+        if (inner + 1u >= inner_total) {
+            inner = 0;
+            if (current == last) break;
+            if ((step > 0 && current == INT64_MAX) ||
+                (step < 0 && current == INT64_MIN)) break;
+            current += step;
+        } else {
+            ++inner;
+        }
     }
     free(digits);
     if (fclose(stream) != 0) llg_memory_warning(filename, "close after writing failed");
     (void)elem_width;
     (void)elem_signed;
     free(filename);
+}
+
+void llg_memory_read(llg_string_t path, sv4_t* memory, uint64_t total,
+                     uint32_t elem_width, int8_t elem_signed, int8_t two_state,
+                     const int32_t* dims, int n_dims, sv4_t start, sv4_t finish,
+                     int has_start, int has_finish, int addressing_policy,
+                     const sv4_t* enum_values, uint32_t enum_count, int radix) {
+    uint64_t stride = 1;
+    llg_memory_read_view(path, memory, total, elem_width, elem_signed, two_state,
+                         dims, n_dims, n_dims == 1 ? &stride : NULL, 0, total,
+                         start, finish, has_start, has_finish, addressing_policy,
+                         enum_values, enum_count, radix);
+}
+
+void llg_memory_write(llg_string_t path, sv4_t* memory, uint64_t total,
+                      uint32_t elem_width, int8_t elem_signed, int8_t two_state,
+                      const int32_t* dims, int n_dims, sv4_t start, sv4_t finish,
+                      int has_start, int has_finish, int addressing_policy,
+                      const sv4_t* enum_values, uint32_t enum_count, int radix) {
+    uint64_t stride = 1;
+    llg_memory_write_view(path, memory, total, elem_width, elem_signed, two_state,
+                          dims, n_dims, n_dims == 1 ? &stride : NULL, 0, total,
+                          start, finish, has_start, has_finish, addressing_policy,
+                          enum_values, enum_count, radix);
 }
 
 static void llg_file_cleanup(void) {

@@ -50,9 +50,9 @@ mod expressions;
 pub use expressions::{
     IrBinOp, IrBitQuery, IrConditionalMember, IrDynamicCast, IrEnumMember, IrEnumMethod,
     IrEnumQuery, IrExpr, IrExprKind, IrFileInput, IrFileInputTarget, IrFileReadTarget, IrMathFunc,
-    IrMutationExpr, IrPatternCheck, IrPatternExpr,
-    IrPlusArgTarget, IrPlusArgText, IrRandomFunc, IrRealBinOp, IrRealUnOp, IrSampledCall,
-    IrSampledDomain, IrSampledFunc, IrSysFunc, IrTimeKind, IrUnOp,
+    IrMutationExpr, IrPatternCheck, IrPatternExpr, IrPlusArgTarget, IrPlusArgText, IrRandomFunc,
+    IrRealBinOp, IrRealUnOp, IrSampledCall, IrSampledDomain, IrSampledFunc, IrSysFunc, IrTimeKind,
+    IrUnOp,
 };
 mod lvalues;
 pub use lvalues::{
@@ -65,8 +65,8 @@ pub use calls::{IrCall, IrCallArg, IrCallExpr, IrDepth, IrVirtualCall};
 mod statements;
 pub use statements::{
     IrActivationTarget, IrCaseItem, IrCaseKind, IrClockingSampleMode, IrDisplayRadix, IrFileOp,
-    IrMemoryAddressingPolicy, IrMemoryRadix, IrStmt, IrStochasticStmt, IrUniquePriorityCheck,
-    IrWaveDumpVars,
+    IrMemoryAddressingPolicy, IrMemoryRadix, IrMemoryView, IrStmt, IrStochasticStmt,
+    IrUniquePriorityCheck, IrWaveDumpVars,
 };
 mod events;
 pub use events::{

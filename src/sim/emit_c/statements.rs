@@ -307,7 +307,7 @@ fn render_stmt_scoped(
         IrStmt::Memory {
             write,
             path,
-            array,
+            view,
             radix,
             addressing,
             enum_values,
@@ -317,7 +317,7 @@ fn render_stmt_scoped(
             ctx,
             *write,
             path,
-            *array,
+            view,
             *radix,
             *addressing,
             enum_values.as_deref(),
