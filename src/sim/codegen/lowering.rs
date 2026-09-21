@@ -1087,12 +1087,14 @@ struct Codegen<'a> {
     /// Whole-net continuous assignment node -> synthetic signal index carrying
     /// that wired net driver's distinct runtime slot.
     wired_driver_sites: HashMap<NodeId, usize>,
-    /// Structural source node and resolved-group index -> synthetic signal
-    /// carrying that source's independent contribution slot.  A source can
-    /// feed more than one canonical group (for example a hierarchical port
-    /// connection), so the group is part of the key rather than being inferred
-    /// from a display name.
-    structural_driver_sites: HashMap<(NodeId, usize), DriverId>,
+    /// Structural source owner, source node and resolved-group index ->
+    /// synthetic signal carrying that source's independent contribution slot.
+    /// A source can feed more than one canonical group (for example a
+    /// hierarchical port connection), so the group is part of the key rather
+    /// than being inferred from a display name. Keep the owning instance in
+    /// the key as well: elaborated instances may retain a shared source
+    /// identity while their storage and canonical groups remain independent.
+    structural_driver_sites: HashMap<(NodeId, NodeId, usize), DriverId>,
     /// Typed structural-driver records kept until the model is fully lowered.
     /// The record is the single source of truth for contribution identity;
     /// synthetic signal indices are only an emission detail.
@@ -1101,7 +1103,7 @@ struct Codegen<'a> {
     /// outputs land in the same canonical resolved group. The ordinary
     /// source/group key remains terminal zero for compatibility with the
     /// existing structural-driver inventory.
-    structural_driver_terminal_sites: HashMap<(NodeId, usize, usize), DriverId>,
+    structural_driver_terminal_sites: HashMap<(NodeId, NodeId, usize, usize), DriverId>,
     /// Final-block process function names (`ProcessKind::Final`), in
     /// emission order — spawned into [`IrModel::final_spawns`] instead of
     /// the t=0 spawn list.

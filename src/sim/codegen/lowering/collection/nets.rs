@@ -1104,7 +1104,8 @@ impl<'a> Codegen<'a> {
                     continue;
                 };
                 let id = self.record_structural_driver(signal)?;
-                self.structural_driver_sites.insert((*member, gidx), id);
+                self.structural_driver_sites
+                    .insert((self.structural_site_owner(*member), *member, gidx), id);
             }
             let sources = self.structural_site_sources(members)?;
             for (source, strengths) in sources {
@@ -1153,11 +1154,12 @@ impl<'a> Codegen<'a> {
         strengths: (u8, u8),
         terminal: usize,
     ) -> Result<usize, String> {
+        let owner = self.structural_site_owner(source);
         let existing = if terminal == 0 {
-            self.structural_driver_sites.get(&(source, group))
+            self.structural_driver_sites.get(&(owner, source, group))
         } else {
             self.structural_driver_terminal_sites
-                .get(&(source, group, terminal))
+                .get(&(owner, source, group, terminal))
         };
         if let Some(signal) = existing {
             return self
@@ -1200,10 +1202,11 @@ impl<'a> Codegen<'a> {
         });
         let id = self.record_structural_driver(signal)?;
         if terminal == 0 {
-            self.structural_driver_sites.insert((source, group), id);
+            self.structural_driver_sites
+                .insert((owner, source, group), id);
         } else {
             self.structural_driver_terminal_sites
-                .insert((source, group, terminal), id);
+                .insert((owner, source, group, terminal), id);
         }
         Ok(signal)
     }
@@ -1219,8 +1222,9 @@ impl<'a> Codegen<'a> {
     }
 
     pub(super) fn structural_driver_signal(&self, source: NodeId, group: usize) -> Option<usize> {
+        let owner = self.structural_site_owner(source);
         self.structural_driver_sites
-            .get(&(source, group))
+            .get(&(owner, source, group))
             .and_then(|id| self.structural_drivers.get(id.0 as usize))
             .map(|record| record.signal)
     }
@@ -1234,16 +1238,27 @@ impl<'a> Codegen<'a> {
         if terminal == 0 {
             return self.structural_driver_signal(source, group);
         }
+        let owner = self.structural_site_owner(source);
         self.structural_driver_terminal_sites
-            .get(&(source, group, terminal))
+            .get(&(owner, source, group, terminal))
             .and_then(|id| self.structural_drivers.get(id.0 as usize))
             .map(|record| record.signal)
     }
 
     pub(super) fn has_structural_driver(&self, source: NodeId) -> bool {
+        let owner = self.structural_site_owner(source);
         self.structural_driver_sites
             .keys()
-            .any(|(candidate, _)| *candidate == source)
+            .any(|(candidate_owner, candidate, _)| {
+                *candidate_owner == owner && *candidate == source
+            })
+    }
+
+    /// Return the concrete module instance that owns a structural source.
+    /// Driver storage belongs to that instance even when a frontend preserves
+    /// one source declaration identity across elaborated instances.
+    fn structural_site_owner(&self, source: NodeId) -> NodeId {
+        self.owning_inst(source).unwrap_or(source)
     }
 
     /// Resolve the strength of an output-port link from the port metadata and
@@ -1656,7 +1671,8 @@ impl<'a> Codegen<'a> {
 
             if sites.is_empty() {
                 let id = self.record_structural_driver(info.ir)?;
-                self.structural_driver_sites.insert((net, group), id);
+                self.structural_driver_sites
+                    .insert((self.structural_site_owner(net), net, group), id);
             }
 
             for (source, strengths) in sites {

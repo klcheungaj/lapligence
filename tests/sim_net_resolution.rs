@@ -9,6 +9,8 @@ use llg::core::{compile, db::Db};
 use llg::ffi::slang::DiagnosticSeverity;
 use llg::sim::{self, opt::OptConfig};
 use std::path::Path;
+use std::process::Command;
+use std::time::Duration;
 
 fn generate_error(tag: &str, source: &str) -> String {
     sim_harness::with_frontend_temp_cwd(tag, |dir| {
@@ -427,6 +429,97 @@ fn hierarchical_and_concatenated_wired_lhs_resolve_driver_sites() {
          CHECK: self=z child=1z concat=10zz cv=10 cx=1\n",
         "",
         &[],
+    );
+}
+
+#[test]
+fn hierarchical_child_drivers_match_in_v2001_and_sv2009() {
+    sim_cli::run_case(
+        "net_resolution",
+        "hierarchical_child_driver",
+        "CHECK: and=0 or=1\nCHECK: and=0 or=1\nCHECK: and=1 or=0\n",
+        "",
+        &[],
+    );
+
+    // Keep an exact Verilog-2001 file in the checked-in fixture set. The
+    // public CLI path above exercises the equivalent SystemVerilog source;
+    // this direct invocation preserves the .v edition boundary and still
+    // uses the same adapter and process lifecycle as the public harness.
+    assert!(sim::build::cmake_available(), "CLI tests require CMake");
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/sim/net_resolution/hierarchical_child_driver.v");
+    for optimized in [false, true] {
+        let directory = sim_harness::TempDir::new("hierarchical_child_driver_v2001")
+            .expect("CLI test directory");
+        let mut command = Command::new(env!("CARGO_BIN_EXE_llg"));
+        command.current_dir(directory.path()).args(["--top", "tb"]);
+        if !optimized {
+            command.arg("--no-opt");
+        }
+        command.args(["--edition", "2001"]).arg(&fixture);
+        let output = sim_harness::run_command(&mut command, Duration::from_secs(180))
+            .expect("run Verilog-2001 hierarchical driver fixture");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(output.status.success(), "optimized={optimized}: {stderr}");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            "CHECK: and=0 or=1\nCHECK: and=0 or=1\nCHECK: and=1 or=0\n",
+            "optimized={optimized}: {stderr}"
+        );
+    }
+}
+
+#[test]
+fn hierarchical_selected_generated_and_upward_drivers_keep_independent_slots() {
+    sim_cli::run_case(
+        "net_resolution",
+        "hierarchical_driver_paths",
+        "CHECK: first=1011/0010/0000/0000\nCHECK: second=1111/0000/1111/1110\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
+fn hierarchical_driver_preserves_r05_inout_compatibility() {
+    assert!(sim::build::cmake_available(), "CLI tests require CMake");
+    for optimized in [false, true] {
+        let output = sim_cli::invoke_with_env(
+            "net_resolution",
+            "hierarchical_r05_driver",
+            optimized,
+            &["--edition", "2001"],
+            &[],
+            &[],
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(output.status.success(), "optimized={optimized}: {stderr}");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            "CHECK: bus=1 p=1\n",
+            "optimized={optimized}: {stderr}"
+        );
+        let warnings = stderr
+            .lines()
+            .filter_map(|line| line.strip_prefix("llg: warning: "))
+            .collect::<Vec<_>>();
+        assert_eq!(warnings.len(), 1, "optimized={optimized}: {stderr}");
+        assert!(
+            warnings[0].contains("internal Wand, external Wor")
+                && warnings[0].contains("table choice Wor")
+                && warnings[0].contains("Table 23-1"),
+            "optimized={optimized}: {stderr}"
+        );
+    }
+}
+
+#[test]
+fn hierarchical_procedural_net_assignment_remains_illegal() {
+    sim_cli::reject_case(
+        "net_resolution",
+        "hierarchical_procedural_net",
+        "cannot assign to a net within a procedural context",
     );
 }
 
