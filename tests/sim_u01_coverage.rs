@@ -26,9 +26,8 @@ fn invalid_source_is_rejected_before_simulation_coverage() {
     sim_cli::reject_case("u01_coverage", "invalid_source", "Slang reported errors");
 }
 
-/// G1-02 `coverage_reachable_pattern`: a reached pattern-matching case is a
-/// located feature rejection, not an empty ordinary case that reaches
-/// lowering.
+/// G1-02 `coverage_reachable_pattern`: a reached tagged pattern-matching case
+/// remains a located feature rejection until SYN-024 supplies tagged lowering.
 #[test]
 fn coverage_reachable_pattern_reports_its_source_span() {
     for optimized in [false, true] {
@@ -51,11 +50,11 @@ fn coverage_reachable_pattern_reports_its_source_span() {
             "optimized={optimized}: pattern case produced stdout: {output:?}"
         );
         assert!(
-            stderr.contains("unsupported executable node `PatternCase`"),
+            stderr.contains("unsupported pattern case pattern matching (`matches`)"),
             "optimized={optimized}: {stderr}"
         );
         assert!(
-            stderr.contains("coverage_reachable_pattern.sv:10:9"),
+            stderr.contains("coverage_reachable_pattern.sv:14:9"),
             "optimized={optimized}: {stderr}"
         );
     }

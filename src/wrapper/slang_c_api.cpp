@@ -2410,6 +2410,25 @@ public:
         default: break;
       }
     }
+    if constexpr (std::same_as<T, PatternCaseStatement>) {
+      // Pattern cases carry the same case-condition and qualifier metadata
+      // as ordinary cases.  Keep this on the owned node so matching is
+      // selected from typed frontend data rather than reconstructed from
+      // source text.
+      result.auxiliary = semanticUniquePriorityCheck(statement.check);
+      switch (statement.condition) {
+        case CaseStatementCondition::WildcardXOrZ:
+          result.flags |= LLG_SLANG_SEMANTIC_CASE_X_OR_Z;
+          break;
+        case CaseStatementCondition::WildcardJustZ:
+          result.flags |= LLG_SLANG_SEMANTIC_CASE_Z;
+          break;
+        case CaseStatementCondition::Inside:
+          result.flags |= LLG_SLANG_SEMANTIC_CASE_INSIDE;
+          break;
+        default: break;
+      }
+    }
     if constexpr (std::same_as<T, ConditionalStatement>)
       result.auxiliary = semanticUniquePriorityCheck(statement.check);
     if constexpr (std::same_as<T, ImmediateAssertionStatement>) {
@@ -3415,6 +3434,23 @@ private:
           expressionIndex++;
         }
         capture.semanticRole(id, item.stmt, LLG_SLANG_EDGE_BRANCH, itemIndex++);
+      }
+      if (statement.defaultCase)
+        capture.semanticRole(id, statement.defaultCase, LLG_SLANG_EDGE_ELSE);
+    }
+    else if constexpr (std::same_as<T, PatternCaseStatement>) {
+      capture.semanticRole(id, &statement.expr, LLG_SLANG_EDGE_CASE_EXPRESSION);
+      uint32_t itemIndex = 0;
+      for (const auto& item : statement.items) {
+        // PatternCase items have one pattern and one body.  Reuse the
+        // existing case-item/branch roles with the item index; the owned
+        // importer distinguishes this statement kind and preserves the
+        // optional filter separately.
+        capture.semanticRole(id, item.pattern, LLG_SLANG_EDGE_CASE_ITEM, itemIndex);
+        if (item.filter)
+          capture.semanticRole(id, item.filter, LLG_SLANG_EDGE_CONDITION, itemIndex);
+        capture.semanticRole(id, item.stmt, LLG_SLANG_EDGE_BRANCH, itemIndex);
+        itemIndex++;
       }
       if (statement.defaultCase)
         capture.semanticRole(id, statement.defaultCase, LLG_SLANG_EDGE_ELSE);

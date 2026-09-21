@@ -148,6 +148,16 @@ impl<'a> Codegen<'a> {
                     );
                 }
             }
+            if let NodeKind::Stmt(StmtKind::PatternCase { items, .. }) = self.kind(node) {
+                for item in items {
+                    self.collect_conditional_pattern_targets(
+                        item.pattern,
+                        &mut visited,
+                        &mut target_set,
+                        &mut targets,
+                    );
+                }
+            }
             pending.extend(self.node(node).children.iter().copied());
             let mut references = Vec::new();
             self.kind(node).append_references(&mut references);

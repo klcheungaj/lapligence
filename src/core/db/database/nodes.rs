@@ -288,3 +288,27 @@ impl CaseItem {
         self.body
     }
 }
+
+/// One pattern-case item.  The pattern is evaluated against the statement's
+/// selector, then the optional filter and body are considered in source order.
+/// The default arm is kept separately on [`StmtKind::PatternCase`].
+#[derive(Debug)]
+pub struct PatternCaseItem {
+    pub pattern: NodeId,
+    pub filter: Option<NodeId>,
+    pub body: NodeId,
+}
+
+impl PatternCaseItem {
+    pub const fn pattern(&self) -> NodeId {
+        self.pattern
+    }
+
+    pub const fn filter(&self) -> Option<NodeId> {
+        self.filter
+    }
+
+    pub const fn body(&self) -> NodeId {
+        self.body
+    }
+}

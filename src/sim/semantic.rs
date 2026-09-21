@@ -805,6 +805,15 @@ fn classify_simulation_node(
             SimulationNodeClass::ElaborationConsumed
         }
         NodeKind::Stmt(StmtKind::Unsupported { .. }) => SimulationNodeClass::Unsupported,
+        NodeKind::Stmt(StmtKind::PatternCase {
+            case_type, items, ..
+        }) if matches!(case_type, CaseKind::Inside | CaseKind::Unsupported)
+            || !items
+                .iter()
+                .all(|item| supports_conditional_pattern(db, item.pattern)) =>
+        {
+            SimulationNodeClass::Unsupported
+        }
         NodeKind::Stmt(StmtKind::IfElse { predicate, .. })
         | NodeKind::Expr(ExprKind::Conditional { predicate, .. })
             if !supports_conditional_patterns(db, predicate) =>
@@ -916,6 +925,15 @@ fn simulation_node_detail(db: &Db, id: NodeId) -> String {
             if !supports_conditional_patterns(db, predicate) =>
         {
             return "unsupported conditional predicate pattern matching (`matches`)".into();
+        }
+        NodeKind::Stmt(StmtKind::PatternCase {
+            case_type, items, ..
+        }) if matches!(case_type, CaseKind::Inside | CaseKind::Unsupported)
+            || items
+                .iter()
+                .any(|item| !supports_conditional_pattern(db, item.pattern)) =>
+        {
+            return "unsupported pattern case pattern matching (`matches`)".into();
         }
         _ => {}
     }
@@ -1108,6 +1126,15 @@ fn classify_type(ty: &TypeInfo) -> Option<SynthesisIssueKind> {
 fn classify_statement(db: &Db, id: NodeId, statement: &StmtKind) -> Option<SynthesisIssueKind> {
     match statement {
         StmtKind::IfElse { predicate, .. } if !supports_conditional_patterns(db, predicate) => {
+            Some(SynthesisIssueKind::UnsupportedExpression)
+        }
+        StmtKind::PatternCase {
+            case_type, items, ..
+        } if matches!(case_type, CaseKind::Inside | CaseKind::Unsupported)
+            || items
+                .iter()
+                .any(|item| !supports_conditional_pattern(db, item.pattern)) =>
+        {
             Some(SynthesisIssueKind::UnsupportedExpression)
         }
         StmtKind::Assign { delay: Some(_), .. } => Some(SynthesisIssueKind::TimingControl),

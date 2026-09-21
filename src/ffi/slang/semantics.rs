@@ -409,7 +409,9 @@ fn validate_semantic_auxiliary(node: &RawSemanticNode) -> Result<(), SlangError>
         // slots so omitted trailing dimensions survive the owned snapshot.
         // Keep the count bounded independently of the later DB allocation.
         (18, 59, _) => node.auxiliary <= 4096,
-        (18, 33 | 34, _) => node.auxiliary <= SEMANTIC_UNIQUE_PRIORITY_PRIORITY,
+        (18, 33 | 34 | SEMANTIC_STMT_PATTERN_CASE, _) => {
+            node.auxiliary <= SEMANTIC_UNIQUE_PRIORITY_PRIORITY
+        }
         // Class qualifiers and `new super` are repository-owned flags.
         (3, _, _) => node.auxiliary & !(CLASS_ABSTRACT | CLASS_FINAL | CLASS_INTERFACE) == 0,
         (19, 87, _) => node.auxiliary & !NEW_CLASS_SUPER == 0,

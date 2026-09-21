@@ -379,6 +379,36 @@ impl Validator<'_> {
                     "foreach bounds must match the iterator slot count",
                 );
             }
+            NodeKind::Stmt(StmtKind::PatternCase { items, .. }) => {
+                for (index, item) in items.iter().enumerate() {
+                    if self.db.conditional_pattern(item.pattern).is_none() {
+                        return self.fail(
+                            format!("{path}.items[{index}].pattern"),
+                            "pattern case item has no owned pattern metadata",
+                        );
+                    }
+                    if !matches!(self.db.node_kind(item.body), NodeKind::Stmt(_)) {
+                        return self.fail(
+                            format!("{path}.items[{index}].body"),
+                            "pattern case item body is not a statement",
+                        );
+                    }
+                    if let Some(filter) = item.filter {
+                        if !matches!(
+                            self.db.node_kind(filter),
+                            NodeKind::Expr(_)
+                                | NodeKind::SysCall { .. }
+                                | NodeKind::MethodCall { .. }
+                                | NodeKind::FuncCall { .. }
+                        ) {
+                            return self.fail(
+                                format!("{path}.items[{index}].filter"),
+                                "pattern case item filter is not an expression",
+                            );
+                        }
+                    }
+                }
+            }
             NodeKind::Expr(ExprKind::Streaming { streams, .. }) if streams.is_empty() => {
                 return self.fail(
                     format!("{path}.streams"),
@@ -630,6 +660,20 @@ fn statement_refs(statement: &StmtKind, refs: &mut Vec<NodeId>) {
                 refs.extend(item.exprs.iter().copied());
                 refs.extend(item.body);
             }
+        }
+        StmtKind::PatternCase {
+            selector,
+            items,
+            default,
+            ..
+        } => {
+            refs.push(*selector);
+            for item in items {
+                refs.push(item.pattern);
+                refs.extend(item.filter);
+                refs.push(item.body);
+            }
+            refs.extend(*default);
         }
         StmtKind::For {
             vars,

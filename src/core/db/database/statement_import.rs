@@ -107,11 +107,98 @@ pub(super) fn statement_from_slang(
                 items,
             }
         }
-        // Until G3-01 implements matching, a surviving pattern case is an
-        // explicit unsupported construct, never an empty ordinary case.
-        crate::ffi::slang::SEMANTIC_STMT_PATTERN_CASE => StmtKind::Unsupported {
-            object_type: ObjectType::PatternCaseStatement,
-        },
+        crate::ffi::slang::SEMANTIC_STMT_PATTERN_CASE => {
+            let selectors = edges
+                .iter()
+                .filter(|edge| edge.role == SemanticEdgeRole::CaseExpression)
+                .collect::<Vec<_>>();
+            if selectors.len() != 1 {
+                return Err(DbError::InvalidSnapshot(
+                    "pattern case must have exactly one selector".into(),
+                ));
+            }
+            let selector = semantic_id(ids, selectors[0].target_id)?;
+            let mut patterns = edges
+                .iter()
+                .filter(|edge| edge.role == SemanticEdgeRole::CaseItem)
+                .collect::<Vec<_>>();
+            patterns.sort_by_key(|edge| edge.index);
+            let mut filters = HashMap::new();
+            for edge in edges
+                .iter()
+                .filter(|edge| edge.role == SemanticEdgeRole::Condition)
+            {
+                if filters.insert(edge.index, edge.target_id).is_some() {
+                    return Err(DbError::InvalidSnapshot(
+                        "pattern case item has duplicate filters".into(),
+                    ));
+                }
+            }
+            let mut branches = HashMap::new();
+            for edge in edges
+                .iter()
+                .filter(|edge| edge.role == SemanticEdgeRole::Branch)
+            {
+                if branches.insert(edge.index, edge.target_id).is_some() {
+                    return Err(DbError::InvalidSnapshot(
+                        "pattern case item has duplicate bodies".into(),
+                    ));
+                }
+            }
+            let mut items = Vec::with_capacity(patterns.len());
+            for (expected, pattern) in patterns.into_iter().enumerate() {
+                if usize::try_from(pattern.index).ok() != Some(expected) {
+                    return Err(DbError::InvalidSnapshot(
+                        "pattern case item indices must be dense and unique".into(),
+                    ));
+                }
+                let body = branches.remove(&pattern.index).ok_or_else(|| {
+                    DbError::InvalidSnapshot("pattern case item body is missing".into())
+                })?;
+                let filter = filters
+                    .remove(&pattern.index)
+                    .map(|target| semantic_id(ids, target))
+                    .transpose()?;
+                items.push(PatternCaseItem {
+                    pattern: semantic_id(ids, pattern.target_id)?,
+                    filter,
+                    body: semantic_id(ids, body)?,
+                });
+            }
+            if !filters.is_empty() || !branches.is_empty() {
+                return Err(DbError::InvalidSnapshot(
+                    "pattern case has an unpaired filter or body".into(),
+                ));
+            }
+            let defaults = edges
+                .iter()
+                .filter(|edge| edge.role == SemanticEdgeRole::Else)
+                .collect::<Vec<_>>();
+            if defaults.len() > 1 {
+                return Err(DbError::InvalidSnapshot(
+                    "pattern case has duplicate default arms".into(),
+                ));
+            }
+            let default = defaults
+                .first()
+                .map(|edge| semantic_id(ids, edge.target_id))
+                .transpose()?;
+            StmtKind::PatternCase {
+                case_type: if node.case_inside {
+                    CaseKind::Inside
+                } else if node.case_wildcard_x_or_z {
+                    CaseKind::X
+                } else if node.case_wildcard_z {
+                    CaseKind::Z
+                } else {
+                    CaseKind::Exact
+                },
+                check: unique_priority_check(node.auxiliary)?,
+                selector,
+                items,
+                default,
+            }
+        }
         35 => StmtKind::For {
             vars: Vec::new(),
             init: edge_targets(ids, edges, SemanticEdgeRole::Initializer)?,

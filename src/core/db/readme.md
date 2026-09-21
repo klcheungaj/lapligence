@@ -62,5 +62,7 @@ single Boolean-clause expression retains `Operation::Conditional`; a multiple-
 clause or pattern-bearing expression uses `ExprKind::Conditional`. Embedded
 references and nonempty predicates are validated with the rest of the database.
 Lint, dependency and simulator consumers must visit every clause without treating
-conditional writes as definite on early-exit paths. Execution of patterns remains
-unsupported, but their metadata must not be discarded or inferred from spelling.
+conditional writes as definite on early-exit paths. Primitive and fixed-structure
+patterns retain owned metadata for conditional expressions and pattern-case items;
+tagged patterns remain explicit unsupported records until their tagged-union
+contract is implemented.

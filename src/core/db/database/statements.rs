@@ -49,6 +49,16 @@ pub enum StmtKind {
         check: UniquePriorityCheck,
         items: Vec<CaseItem>,
     },
+    /// A `case (...) matches` statement.  Each item owns one pattern-local
+    /// scope, an optional filter, and its body; the selector and default arm
+    /// remain separate so source order and no-match behavior survive import.
+    PatternCase {
+        case_type: CaseKind,
+        check: UniquePriorityCheck,
+        selector: NodeId,
+        items: Vec<PatternCaseItem>,
+        default: Option<NodeId>,
+    },
     For {
         /// Variables declared in the initializer (`for (int i = ...; ...)`).
         vars: Vec<NodeId>,

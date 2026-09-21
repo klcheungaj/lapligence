@@ -45,7 +45,9 @@ pub use types::{
     ValueCopySemantics, ValueDefaultSemantics, ValueDestroySemantics, ValueEqualitySemantics,
 };
 mod nodes;
-pub use nodes::{CaseItem, GateTerm, Node, NodeKind, PrimClass, ProcessKind, UdpRow, UdpTable};
+pub use nodes::{
+    CaseItem, GateTerm, Node, NodeKind, PatternCaseItem, PrimClass, ProcessKind, UdpRow, UdpTable,
+};
 mod assertions;
 pub use assertions::{
     AssertionBinaryOp, AssertionBinding, AssertionCaseItem, AssertionExprKind, AssertionRange,

@@ -28,3 +28,9 @@ structure patterns. Positional and named fields, omitted members, nested
 patterns, wildcard members, mixed signedness/state domains, and lexical
 bindings are checked through the public CLI. Function-returning sources prove
 that each matched value is captured once before ordered member checks.
+
+`syn_025_pattern_case.sv` adds primitive and fixed-structure `case`, `casez`
+and `casex ... matches` items. It checks one selector evaluation, source-order
+filters over per-item bindings, first-match/default behavior and unique/priority
+qualifiers in both optimizer modes. Tagged patterns remain a separate
+fail-closed boundary until SYN-024.

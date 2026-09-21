@@ -132,6 +132,111 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
 }
 
 impl EmitCtx<'_, '_> {
+    /// Lower a `case ... matches` statement. The selector is captured before
+    /// any item pattern is evaluated, then each pattern/filter pair is tested
+    /// in source order until the first definitely true item.
+    pub(super) fn lower_pattern_case(&mut self, h: NodeId) -> Result<Vec<IrStmt>, String> {
+        let (case_type, check, selector, items, default) = match self.cg.kind(h) {
+            NodeKind::Stmt(StmtKind::PatternCase {
+                case_type,
+                check,
+                selector,
+                items,
+                default,
+            }) => (*case_type, *check, *selector, items, *default),
+            _ => unreachable!("non-pattern-case passed to lower_pattern_case"),
+        };
+        let match_kind = match case_type {
+            DbCaseKind::Exact => crate::sim::ir::IrPatternMatchKind::Exact,
+            DbCaseKind::X => crate::sim::ir::IrPatternMatchKind::Casex,
+            DbCaseKind::Z => crate::sim::ir::IrPatternMatchKind::Casez,
+            DbCaseKind::Inside | DbCaseKind::Unsupported => {
+                return Err(format!(
+                    "pattern case inside matching is unsupported in `{}`",
+                    self.path
+                ));
+            }
+        };
+        let selector_value = self.cg.lower_expr(&self.path, selector)?;
+        if selector_value.is_real() {
+            return Err(format!(
+                "pattern case selector must be integral in `{}`",
+                self.path
+            ));
+        }
+        let selector_name = self.new_label("pattern_case");
+        let selector_read = IrExpr::new(
+            IrExprKind::LocalRead(selector_name.clone()),
+            selector_value.width,
+            selector_value.signed,
+            None,
+        );
+        let mut branches = Vec::with_capacity(items.len());
+        for item in items {
+            let mut condition = self.cg.lower_pattern_value(
+                &self.path,
+                selector,
+                item.pattern,
+                selector_read.clone(),
+                match_kind,
+            )?;
+            if let Some(filter) = item.filter {
+                let filter = self.cg.lower_boolean_expr(&self.path, filter)?;
+                condition = cmp_expr_ir(IrBinOp::LogAnd, condition, filter);
+            }
+            branches.push((condition, self.lower_stmt(item.body)?));
+        }
+        let mut tail = default
+            .map(|body| self.lower_stmt(body))
+            .transpose()?;
+        let qualifier = lower_unique_priority_check(check, self.cg.origin(h));
+        for (condition, body) in branches.into_iter().rev() {
+            tail = Some(vec![IrStmt::If {
+                cond: condition,
+                then_: body,
+                els: tail,
+                check: IrUniquePriorityCheck::None,
+            }]);
+        }
+        if tail.is_none() && !qualifier.is_none() {
+            // A qualified pattern case may contain only a default arm. Keep a
+            // false candidate so the qualifier still reports no-match when no
+            // default exists, and suppresses that diagnostic when it does.
+            tail = Some(vec![IrStmt::If {
+                cond: IrExpr::new(
+                    IrExprKind::Const(IrConst {
+                        bits: vec![0],
+                        x: vec![0],
+                        z: vec![0],
+                        width: 1,
+                        signed: false,
+                        real: None,
+                        fill: None,
+                    }),
+                    1,
+                    false,
+                    None,
+                ),
+                then_: Vec::new(),
+                els: tail,
+                check: qualifier,
+            }]);
+        } else if let Some([IrStmt::If { check, .. }]) = tail.as_mut().map(Vec::as_mut_slice) {
+            *check = qualifier;
+        }
+        let mut lowered = vec![IrStmt::DeclLocal {
+            name: selector_name,
+            width: selector_value.width,
+            signed: selector_value.signed,
+            two_state: false,
+            init: Some(Box::new(selector_value)),
+        }];
+        if let Some(tail) = tail {
+            lowered.extend(tail);
+        }
+        Ok(lowered)
+    }
+
     pub(super) fn lower_case(&mut self, h: NodeId) -> Result<Vec<IrStmt>, String> {
         let (case_type, check, items) = match self.cg.kind(h) {
             NodeKind::Stmt(StmtKind::Case {

@@ -109,6 +109,24 @@ fn syn_023_recursive_structure_patterns() {
 }
 
 #[test]
+fn syn_025_pattern_case_items_filters_and_qualifiers() {
+    let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/sim/sequential_predicates/syn_025_pattern_case.sv");
+    let warning = format!(
+        "unique violation at {}:79:9: multiple matching items",
+        source.display()
+    );
+    sim_cli::run_case_with_args(
+        "sequential_predicates",
+        "syn_025_pattern_case",
+        "pattern_case=pass result=5a calls=1\n",
+        "",
+        &[warning.as_str()],
+        &["--edition", "2009"],
+    );
+}
+
+#[test]
 fn sequential_predicate_bad_matches_if() {
     sim_cli::reject_case_with_args(
         "sequential_predicates", "bad_matches_if", "pattern",

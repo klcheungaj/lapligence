@@ -301,12 +301,24 @@ pub struct IrPatternCheck {
     pub(in crate::sim) binding: Option<IrLhs>,
 }
 
+/// Matching mode used by a lowered pattern operation.
+///
+/// Conditional predicates use exact four-state matching. Pattern case
+/// statements retain the source case/casez/casex mode for each pattern.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IrPatternMatchKind {
+    Exact,
+    Casex,
+    Casez,
+}
+
 /// One owned conditional pattern operation.
 #[derive(Clone, Debug, PartialEq)]
 pub struct IrPatternExpr {
     pub(in crate::sim) value: Box<IrExpr>,
     pub(in crate::sim) constant: Option<Box<IrExpr>>,
     pub(in crate::sim) binding: Option<IrLhs>,
+    pub(in crate::sim) match_kind: IrPatternMatchKind,
     /// Nonempty for recursive structure patterns. Primitive patterns use the
     /// top-level constant/binding fields for the existing compact form.
     pub(in crate::sim) checks: Vec<IrPatternCheck>,

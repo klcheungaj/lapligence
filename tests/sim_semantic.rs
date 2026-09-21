@@ -1,5 +1,5 @@
 use llg::core::compile::{compile_checked, CompileOpts, OwnedSource};
-use llg::core::db::{CaseKind, Db, NodeKind, ObjectType, StmtKind};
+use llg::core::db::{CaseKind, Db, NodeKind, StmtKind};
 use llg::sim::semantic::{Origin, SemanticModel, SynthesisIssueKind, SynthesisProfile};
 
 #[path = "support/sim.rs"]
@@ -94,8 +94,8 @@ fn typed_member_selects_preserve_offsets_ranges_and_state_domains() {
 }
 
 /// G1-02 `coverage_all_condition_roles`: every ordinary case condition role is
-/// preserved in the owned database, and a pattern case is tagged as an
-/// explicitly unsupported pattern instead of an empty ordinary case.
+/// preserved in the owned database, and a primitive pattern case retains its
+/// selector, item patterns and default arm as owned executable data.
 #[test]
 fn coverage_preserves_case_condition_roles_and_pattern_identity() {
     let db = owned_design(
@@ -138,10 +138,19 @@ fn coverage_preserves_case_condition_roles_and_pattern_identity() {
                     empty_cases += 1;
                 }
             }
-            NodeKind::Stmt(StmtKind::Unsupported { object_type })
-                if *object_type == ObjectType::PatternCaseStatement =>
-            {
+            NodeKind::Stmt(StmtKind::PatternCase {
+                case_type,
+                selector,
+                items,
+                default,
+                ..
+            }) => {
                 pattern_cases += 1;
+                assert_eq!(*case_type, CaseKind::Exact);
+                assert!(matches!(db.node_kind(*selector), NodeKind::Expr(_)));
+                assert_eq!(items.len(), 1);
+                assert!(items[0].filter.is_none());
+                assert!(default.is_some());
             }
             _ => {}
         }
@@ -154,10 +163,10 @@ fn coverage_preserves_case_condition_roles_and_pattern_identity() {
     }
     assert_eq!(pattern_cases, 1, "pattern case must keep its own identity");
     assert_eq!(empty_cases, 0, "no case may lose its items");
-    // The claimed pattern is reachable and has no lowering contract, so the
-    // public IR is stopped before emitter indexing rather than executed.
     let semantic = SemanticModel::from_db(&db);
-    assert!(semantic.validate_simulation().is_err());
+    semantic
+        .validate_simulation()
+        .expect("primitive pattern case is executable");
 }
 
 /// G1-30 `classification_three_axes`: a legal runtime loop stays supported for

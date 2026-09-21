@@ -737,6 +737,31 @@ impl Db {
                     }
                     _ => Vec::new(),
                 };
+            } else if semantic.kind == SemanticKind::Statement
+                && semantic.subkind == crate::ffi::slang::SEMANTIC_STMT_PATTERN_CASE
+            {
+                // Pattern-case roles are explicit because a pattern item has
+                // a pattern, optional filter, and body.  Keep those in source
+                // order so downstream traversal cannot confuse a filter or
+                // binding scope with an ordinary case expression.
+                children = match &kind {
+                    NodeKind::Stmt(StmtKind::PatternCase {
+                        selector,
+                        items,
+                        default,
+                        ..
+                    }) => {
+                        let mut values = vec![*selector];
+                        for item in items {
+                            values.push(item.pattern);
+                            values.extend(item.filter);
+                            values.push(item.body);
+                        }
+                        values.extend(*default);
+                        values
+                    }
+                    _ => Vec::new(),
+                };
             }
             let target_name = || {
                 semantic

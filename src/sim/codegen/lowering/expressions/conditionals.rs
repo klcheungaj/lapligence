@@ -1,7 +1,7 @@
 //! Conditional values retain array element boundaries across payload flattening.
 use super::*;
 use crate::core::db::ConditionalPatternKind;
-use crate::sim::ir::{IrPatternCheck, IrPatternExpr};
+use crate::sim::ir::{IrPatternCheck, IrPatternExpr, IrPatternMatchKind};
 use std::collections::HashSet;
 
 impl Codegen<'_> {
@@ -69,13 +69,30 @@ impl Codegen<'_> {
             return self.lower_boolean_expr(scope_path, clause.expression);
         };
         let value = self.lower_expr(scope_path, clause.expression)?;
+        self.lower_pattern_value(
+            scope_path,
+            clause.expression,
+            pattern_id,
+            value,
+            IrPatternMatchKind::Exact,
+        )
+    }
+
+    pub(in super::super) fn lower_pattern_value(
+        &mut self,
+        scope_path: &str,
+        expression: NodeId,
+        pattern_id: NodeId,
+        value: IrExpr,
+        match_kind: IrPatternMatchKind,
+    ) -> Result<IrExpr, String> {
         let info = self.db.conditional_pattern(pattern_id).ok_or_else(|| {
             format!(
                 "conditional predicate pattern metadata is missing in `{scope_path}`"
             )
         })?;
         if info.kind == ConditionalPatternKind::Structure {
-            let descriptor = self.query_descriptor(clause.expression).cloned().ok_or_else(|| {
+            let descriptor = self.query_descriptor(expression).cloned().ok_or_else(|| {
                 format!(
                     "conditional structure pattern source type is missing in `{scope_path}`"
                 )
@@ -104,6 +121,7 @@ impl Codegen<'_> {
                     value: Box::new(value),
                     constant: None,
                     binding: None,
+                    match_kind,
                     checks,
                 })),
                 1,
@@ -113,7 +131,7 @@ impl Codegen<'_> {
         }
         if value.is_real()
             || self
-                .query_descriptor(clause.expression)
+                .query_descriptor(expression)
                 .is_some_and(|descriptor| !matches!(descriptor.shape, TypeShape::PackedAtom { .. }))
         {
             return Err(format!(
@@ -193,6 +211,7 @@ impl Codegen<'_> {
                 value: Box::new(value),
                 constant,
                 binding,
+                match_kind,
                 checks: Vec::new(),
             })),
             1,

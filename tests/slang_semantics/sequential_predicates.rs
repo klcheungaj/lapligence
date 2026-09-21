@@ -170,3 +170,43 @@ fn syn_023_import_retains_recursive_structure_pattern_roles() {
         codegen::generate_from_db_with_opts(&db, &options).unwrap();
     }
 }
+
+#[test]
+fn syn_025_pattern_case_is_owned_and_generates_in_both_modes() {
+    let db = capture(
+        "syn_025_pattern_case.sv",
+        include_str!("../fixtures/sim/sequential_predicates/syn_025_pattern_case.sv"),
+    );
+    db.validate().expect("pattern case owned graph validates");
+    let mut pattern_cases = 0;
+    let mut filtered_items = 0;
+    let mut defaults = 0;
+    let mut case_types = HashSet::new();
+    for id in db.node_ids() {
+        if let NodeKind::Stmt(StmtKind::PatternCase {
+            case_type,
+            selector,
+            items,
+            default,
+            ..
+        }) = db.node_kind(id)
+        {
+            pattern_cases += 1;
+            case_types.insert(*case_type);
+            assert!(db.node(*selector).parent().is_some());
+            filtered_items += items.iter().filter(|item| item.filter.is_some()).count();
+            defaults += usize::from(default.is_some());
+        }
+    }
+    assert!(pattern_cases >= 7, "all pattern-case forms remain distinct");
+    assert!(filtered_items >= 5, "item filters remain owned");
+    assert!(defaults >= 7, "default arms remain owned");
+    assert!(case_types.contains(&llg::core::db::CaseKind::Exact));
+    assert!(case_types.contains(&llg::core::db::CaseKind::X));
+    assert!(case_types.contains(&llg::core::db::CaseKind::Z));
+    for options in [OptConfig::none(), OptConfig::default()] {
+        let model = codegen::generate_from_db_with_opts(&db, &options)
+            .expect("pattern case lowers from owned metadata");
+        assert!(model.model_c.contains("sv4_case_eq("));
+    }
+}
