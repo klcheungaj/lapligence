@@ -535,7 +535,7 @@ impl<'a> Codegen<'a> {
         }
     }
 
-    fn p30_array_view(
+    pub(super) fn p30_array_view(
         &mut self,
         path: &str,
         node: NodeId,

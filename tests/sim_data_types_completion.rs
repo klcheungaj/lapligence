@@ -117,6 +117,62 @@ fn run_assignment_pattern_rejection_fixture(file: &str, needles: &[&str]) {
     .expect("assignment-pattern rejection conformance");
 }
 
+fn run_reverse_rejection_fixture(file: &str, needles: &[&str]) {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/sim/data_types_completion")
+        .join(file);
+
+    sim_harness::with_frontend_temp_cwd("data-types-completion-reverse-rejection", |dir| {
+        let source = dir.join(file);
+        std::fs::copy(&fixture, &source).map_err(|error| format!("copy fixture: {error}"))?;
+        let options = compile::CompileOpts {
+            files: vec![source.to_string_lossy().into_owned()],
+            top: Some("tb".to_owned()),
+            ..Default::default()
+        };
+        let compiled = match compile::compile_checked(&options) {
+            Ok(compiled) => compiled,
+            Err(error) => {
+                let diagnostic = error
+                    .diagnostics()
+                    .map(|diagnostics| {
+                        diagnostics
+                            .iter()
+                            .map(|diagnostic| diagnostic.message.as_str())
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    })
+                    .unwrap_or_else(|| error.to_string());
+                let diagnostic = diagnostic.to_ascii_lowercase();
+                if needles.iter().any(|needle| diagnostic.contains(needle)) {
+                    return Ok(());
+                }
+                return Err(format!(
+                    "{file}: unexpected compile diagnostic: {diagnostic}"
+                ));
+            }
+        };
+        let database = Db::from_slang(&compiled.snapshot)
+            .map_err(|error| format!("{file}: database: {error}"))?;
+        for (variant, options) in [
+            ("unoptimized", OptConfig::none()),
+            ("optimized", OptConfig::default()),
+        ] {
+            let error = sim::codegen::generate_from_db_with_opts(&database, &options)
+                .map(|_| "generated successfully".to_owned())
+                .unwrap_or_else(|error| error.to_string());
+            let error = error.to_ascii_lowercase();
+            if !needles.iter().any(|needle| error.contains(needle)) {
+                return Err(format!(
+                    "{file}: {variant}: expected a fixed reverse rejection, got {error}"
+                ));
+            }
+        }
+        Ok(())
+    })
+    .expect("fixed-array reverse rejection conformance");
+}
+
 #[test]
 fn string_atoreal_and_realtoa() {
     run_fixture("string_real_conversion.sv", "string_real_conversion");
@@ -206,6 +262,21 @@ fn associative_array_reductions_include_wide_high_bits() {
 #[test]
 fn array_methods_preserve_order_and_with_clause_values() {
     run_fixture("array_methods.sv", "array_methods");
+}
+
+#[test]
+fn fixed_array_reverse_preserves_declaration_order_and_overlap_safety() {
+    run_fixture("syn_027_fixed_reverse.sv", "syn_027_fixed_reverse");
+}
+
+#[test]
+fn fixed_array_reverse_with_clause_is_rejected() {
+    run_reverse_rejection_fixture("syn_027_reverse_with.sv", &["with"]);
+}
+
+#[test]
+fn fixed_array_reverse_const_ref_is_rejected() {
+    run_reverse_rejection_fixture("syn_027_reverse_const_ref.sv", &["const", "writable"]);
 }
 
 #[test]
