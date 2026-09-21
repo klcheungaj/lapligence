@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use llg::ffi::slang::{
     self, CompileOptions, CompileRequest, ConstantValue, DiagnosticProvider, DiagnosticSeverity,
-    SlangErrorKind, Source,
+    LibrarySource, Limits, SlangErrorKind, Source,
 };
 
 fn request<'a>(sources: &'a [Source<'a>], options: &'a CompileOptions) -> CompileRequest<'a> {
@@ -95,6 +95,69 @@ endmodule
         .types
         .iter()
         .any(|ty| ty.is_signed && ty.bit_width == 32));
+}
+
+#[test]
+fn library_name_bytes_consume_the_native_source_budget() {
+    let sources = [Source::compilation_unit(
+        "top.sv",
+        "module top; endmodule\n",
+    )];
+    let library_sources = [LibrarySource {
+        name: "library.sv",
+        text: "module library; endmodule\n",
+        library: "named_library",
+    }];
+    let max_source_bytes = (sources[0].name.len()
+        + sources[0].text.len()
+        + library_sources[0].name.len()
+        + library_sources[0].text.len()) as u64;
+    let options = CompileOptions {
+        limits: Limits {
+            max_source_bytes,
+            ..Limits::default()
+        },
+        ..CompileOptions::default()
+    };
+    let error = slang::compile(&CompileRequest {
+        sources: &sources,
+        library_sources: &library_sources,
+        options: &options,
+    })
+    .expect_err("library-name metadata must consume the source budget");
+    assert_eq!(error.kind(), SlangErrorKind::LimitExceeded);
+    assert!(error.message().contains("source"));
+}
+
+#[test]
+fn aggregate_member_limit_rejects_before_member_storage_allocation() {
+    let sources = [Source::compilation_unit(
+        "aggregate-limit.sv",
+        r#"
+typedef struct {
+    logic first;
+    logic second;
+} pair_t;
+module top;
+    pair_t value;
+endmodule
+"#,
+    )];
+    let options = CompileOptions {
+        limits: Limits {
+            max_type_members: 1,
+            ..Limits::default()
+        },
+        ..CompileOptions::default()
+    };
+    let error = slang::compile(&CompileRequest {
+        sources: &sources,
+        library_sources: &[],
+        options: &options,
+    })
+    .expect_err("aggregate members must honor the capture ceiling");
+    assert_eq!(error.kind(), SlangErrorKind::LimitExceeded);
+    assert!(error.message().contains("type member"));
 }
 
 #[test]

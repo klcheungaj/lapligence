@@ -645,6 +645,15 @@ struct Capture {
     uint64_t indexType = LLG_SLANG_INVALID_ID;
     std::optional<LlgSlangTypeRange> range;
     std::vector<const FieldSymbol*> fields;
+    const uint64_t availableTypeMembers =
+        maxTypeMembers() -
+        std::min<uint64_t>(output.type_members.size(), maxTypeMembers());
+    auto appendField = [&](const FieldSymbol* field) {
+      if (fields.size() >= availableTypeMembers)
+        throw BridgeFailure(LLG_SLANG_STATUS_LIMIT_EXCEEDED,
+                            "type member limit exceeded");
+      fields.push_back(field);
+    };
     switch (canonical.kind) {
       case SymbolKind::PackedArrayType: {
         const auto& array = canonical.as<PackedArrayType>();
@@ -684,20 +693,20 @@ struct Capture {
       case SymbolKind::PackedStructType:
         for (const FieldSymbol& field :
              canonical.as<PackedStructType>().membersOfType<FieldSymbol>())
-          fields.push_back(&field);
+          appendField(&field);
         break;
       case SymbolKind::PackedUnionType:
         for (const FieldSymbol& field :
              canonical.as<PackedUnionType>().membersOfType<FieldSymbol>())
-          fields.push_back(&field);
+          appendField(&field);
         break;
       case SymbolKind::UnpackedStructType:
         for (const FieldSymbol* field : canonical.as<UnpackedStructType>().fields)
-          fields.push_back(field);
+          appendField(field);
         break;
       case SymbolKind::UnpackedUnionType:
         for (const FieldSymbol* field : canonical.as<UnpackedUnionType>().fields)
-          fields.push_back(field);
+          appendField(field);
         break;
       default: break;
     }
@@ -4212,6 +4221,7 @@ std::unique_ptr<LlgSlangSnapshot> compileImpl(const LlgSlangCompileRequest& requ
                           "library source names and libraries must be nonempty and contain no NUL bytes");
     addChecked(sourceBytes, name.size(), maxSourceBytes, "source byte");
     addChecked(sourceBytes, text.size(), maxSourceBytes, "source byte");
+    addChecked(sourceBytes, library.size(), maxSourceBytes, "source byte");
     const std::string normalized =
         std::filesystem::path(name).lexically_normal().generic_string();
     if (std::find(sourcePaths.begin(), sourcePaths.end(), normalized) != sourcePaths.end())

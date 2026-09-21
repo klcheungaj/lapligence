@@ -1611,6 +1611,8 @@ fn validate_request(request: &CompileRequest<'_>) -> Result<(), SlangError> {
             .checked_add(source.name.len() as u64)
             .ok_or_else(|| limit_exceeded("source byte count overflowed"))?
             .checked_add(source.text.len() as u64)
+            .ok_or_else(|| limit_exceeded("source byte count overflowed"))?
+            .checked_add(source.library.len() as u64)
             .ok_or_else(|| limit_exceeded("source byte count overflowed"))?;
         if total > limits.max_source_bytes {
             return Err(limit_exceeded("source bytes exceed max_source_bytes"));

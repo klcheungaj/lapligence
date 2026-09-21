@@ -188,6 +188,22 @@ pub struct CompileOut {
     owned_errors: bool,
 }
 
+// Keep path-based admission below the native bridge's hard source-byte cap.
+// The C++ shim clamps its effective limit to this value; doing the same before
+// opening a path prevents Rust from reading a larger caller-requested budget
+// that the bridge can never accept.
+const NATIVE_HARD_MAX_SOURCE_BYTES: u64 = 512 * 1024 * 1024;
+const NATIVE_HARD_MAX_SOURCES: u64 = 4_096;
+const MAX_LIBRARY_MAP_TRAVERSAL: u64 = 1_000_000;
+
+fn effective_source_byte_limit(limits: Limits) -> u64 {
+    limits.max_source_bytes.min(NATIVE_HARD_MAX_SOURCE_BYTES)
+}
+
+fn effective_source_count_limit(limits: Limits) -> usize {
+    usize::try_from(limits.max_sources.min(NATIVE_HARD_MAX_SOURCES)).unwrap_or(usize::MAX)
+}
+
 impl CompileOut {
     pub fn ok(&self) -> bool {
         !self.snapshot.has_errors() && !self.owned_errors
@@ -261,7 +277,7 @@ pub fn compile(opts: &CompileOpts) -> Result<CompileOut, StartupError> {
     preflight_options(opts)?;
     preflight_sources(&opts.sources, opts.limits)?;
     preflight_library_sources(&opts.library_sources, opts.limits)?;
-    let source_count = opts
+    let mut source_count = opts
         .sources
         .len()
         .checked_add(opts.library_sources.len())
@@ -271,7 +287,7 @@ pub fn compile(opts: &CompileOpts) -> Result<CompileOut, StartupError> {
         .ok_or_else(|| {
             StartupError::new(StartupErrorKind::InvalidArgument, "source count overflow")
         })?;
-    if source_count > usize::try_from(opts.limits.max_sources).unwrap_or(usize::MAX) {
+    if source_count > effective_source_count_limit(opts.limits) {
         return Err(StartupError::new(
             StartupErrorKind::InvalidArgument,
             "source count exceeds the configured Slang limit",
@@ -293,7 +309,8 @@ pub fn compile(opts: &CompileOpts) -> Result<CompileOut, StartupError> {
                 .try_fold(total, |total, source| {
                     total
                         .checked_add(source.name.len() as u64)?
-                        .checked_add(source.text.len() as u64)
+                        .checked_add(source.text.len() as u64)?
+                        .checked_add(source.library.len() as u64)
                 })
         })
         .and_then(|total| {
@@ -309,9 +326,7 @@ pub fn compile(opts: &CompileOpts) -> Result<CompileOut, StartupError> {
                 "source byte count overflow",
             )
         })?;
-    let mut remaining = opts
-        .limits
-        .max_source_bytes
+    let mut remaining = effective_source_byte_limit(opts.limits)
         .checked_sub(admitted_bytes)
         .ok_or_else(|| {
             StartupError::new(
@@ -354,20 +369,55 @@ pub fn compile(opts: &CompileOpts) -> Result<CompileOut, StartupError> {
             ));
         }
         let name = resolved.to_string_lossy().into_owned();
-        let content_limit = remaining.checked_sub(name.len() as u64).ok_or_else(|| {
+        let name_bytes = u64::try_from(name.len()).map_err(|_| {
+            StartupError::new(
+                StartupErrorKind::LimitExceeded,
+                format!("source path {name} exceeds the configured Slang byte limit"),
+            )
+        })?;
+        let library_bytes = u64::try_from(library.len()).map_err(|_| {
+            StartupError::new(
+                StartupErrorKind::LimitExceeded,
+                "library name exceeds the configured Slang byte limit",
+            )
+        })?;
+        let metadata_bytes = name_bytes.checked_add(library_bytes).ok_or_else(|| {
+            StartupError::new(
+                StartupErrorKind::LimitExceeded,
+                "source metadata byte count overflow",
+            )
+        })?;
+        let content_limit = remaining.checked_sub(metadata_bytes).ok_or_else(|| {
             StartupError::new(
                 StartupErrorKind::LimitExceeded,
                 format!("source path {name} exceeds the configured Slang byte limit"),
             )
         })?;
         let text = read_bounded(&name, content_limit)?;
-        remaining = remaining.saturating_sub(name.len() as u64 + text.len() as u64);
+        let text_bytes = u64::try_from(text.len()).map_err(|_| {
+            StartupError::new(
+                StartupErrorKind::LimitExceeded,
+                format!("source path {name} exceeds the configured Slang byte limit"),
+            )
+        })?;
+        remaining = content_limit.checked_sub(text_bytes).ok_or_else(|| {
+            StartupError::new(
+                StartupErrorKind::LimitExceeded,
+                format!("source path {name} exceeds the configured Slang byte limit"),
+            )
+        })?;
         library_owned.push(LibrarySource::new(name, text, library));
     }
-    admit_library_maps(opts, &mut identities, &mut library_owned, &mut remaining)?;
+    admit_library_maps(
+        opts,
+        &mut identities,
+        &mut library_owned,
+        &mut source_count,
+        &mut remaining,
+    )?;
     let root_count = owned.len();
     let mut macros = macro_environment_from_defines(&opts.defines);
-    let expansion_budget = MacroExpansionBudget::new(opts.limits.max_source_bytes);
+    let expansion_budget = MacroExpansionBudget::new(effective_source_byte_limit(opts.limits));
     for root_index in 0..root_count {
         if matches!(opts.compilation_unit_mode, CompilationUnitMode::Separate) {
             macros = macro_environment_from_defines(&opts.defines);
@@ -381,6 +431,7 @@ pub fn compile(opts: &CompileOpts) -> Result<CompileOut, StartupError> {
             &mut macros,
             &mut identities,
             &mut owned,
+            &mut source_count,
             &mut remaining,
             &mut include_stack,
             &expansion_budget,
@@ -397,6 +448,7 @@ pub fn compile(opts: &CompileOpts) -> Result<CompileOut, StartupError> {
             &mut library_macros,
             &mut identities,
             &mut owned,
+            &mut source_count,
             &mut remaining,
             &mut include_stack,
             &expansion_budget,
@@ -408,7 +460,7 @@ pub fn compile(opts: &CompileOpts) -> Result<CompileOut, StartupError> {
         .len()
         .saturating_add(owned.len())
         .saturating_add(library_owned.len())
-        > usize::try_from(opts.limits.max_sources).unwrap_or(usize::MAX)
+        > effective_source_count_limit(opts.limits)
     {
         return Err(StartupError::new(
             StartupErrorKind::InvalidArgument,
@@ -544,7 +596,7 @@ fn compile_source_groups(
 }
 
 fn preflight_sources(sources: &[OwnedSource], limits: Limits) -> Result<(), StartupError> {
-    if sources.len() > usize::try_from(limits.max_sources).unwrap_or(usize::MAX) {
+    if sources.len() > effective_source_count_limit(limits) {
         return Err(StartupError::new(
             StartupErrorKind::InvalidArgument,
             "source count exceeds the configured Slang limit",
@@ -563,7 +615,7 @@ fn preflight_sources(sources: &[OwnedSource], limits: Limits) -> Result<(), Star
                 "source byte count overflow",
             )
         })?;
-    if bytes > limits.max_source_bytes {
+    if bytes > effective_source_byte_limit(limits) {
         return Err(StartupError::new(
             StartupErrorKind::LimitExceeded,
             "source bytes exceed the configured Slang limit",
@@ -576,7 +628,7 @@ fn preflight_library_sources(
     sources: &[LibrarySource],
     limits: Limits,
 ) -> Result<(), StartupError> {
-    if sources.len() > usize::try_from(limits.max_sources).unwrap_or(usize::MAX) {
+    if sources.len() > effective_source_count_limit(limits) {
         return Err(StartupError::new(
             StartupErrorKind::InvalidArgument,
             "library source count exceeds the configured Slang limit",
@@ -596,7 +648,7 @@ fn preflight_library_sources(
                 "library source byte count overflow",
             )
         })?;
-    if bytes > limits.max_source_bytes {
+    if bytes > effective_source_byte_limit(limits) {
         return Err(StartupError::new(
             StartupErrorKind::LimitExceeded,
             "library source bytes exceed the configured Slang limit",
@@ -612,6 +664,18 @@ fn read_bounded(path: &str, limit: u64) -> Result<String, StartupError> {
             format!("cannot open SystemVerilog source {path}: {error}"),
         )
     })?;
+    let metadata = file.metadata().map_err(|error| {
+        StartupError::new(
+            StartupErrorKind::Input,
+            format!("cannot inspect SystemVerilog source {path}: {error}"),
+        )
+    })?;
+    if metadata.len() > limit {
+        return Err(StartupError::new(
+            StartupErrorKind::LimitExceeded,
+            format!("source {path} exceeds the configured Slang byte limit"),
+        ));
+    }
     let mut bytes = Vec::new();
     file.take(limit.saturating_add(1))
         .read_to_end(&mut bytes)
@@ -649,8 +713,16 @@ fn admit_library_maps(
     opts: &CompileOpts,
     identities: &mut HashSet<PathBuf>,
     library_sources: &mut Vec<LibrarySource>,
+    source_count: &mut usize,
     remaining: &mut u64,
 ) -> Result<(), StartupError> {
+    let source_limit = effective_source_count_limit(opts.limits);
+    if *source_count > source_limit {
+        return Err(StartupError::new(
+            StartupErrorKind::LimitExceeded,
+            "library map expansion exceeds the configured source limit",
+        ));
+    }
     let mut pending = Vec::new();
     let mut seen_maps = HashSet::new();
     for path in &opts.library_map_files {
@@ -682,7 +754,7 @@ fn admit_library_maps(
         let (includes, entries) = parse_library_map(&text)?;
         let base = map_path.parent().unwrap_or_else(|| Path::new("."));
         for include in includes {
-            let paths = expand_library_pattern(base, &include)?;
+            let paths = expand_library_pattern(base, &include, source_limit as u64)?;
             if paths.is_empty() {
                 return Err(StartupError::new(
                     StartupErrorKind::Input,
@@ -691,6 +763,7 @@ fn admit_library_maps(
             }
             for path in paths {
                 if seen_maps.insert(path.clone()) {
+                    charge_library_map_source(source_count, source_limit, "library map")?;
                     let name = path.to_string_lossy().into_owned();
                     let content_limit = remaining.checked_sub(name.len() as u64).ok_or_else(|| {
                         StartupError::new(
@@ -707,7 +780,7 @@ fn admit_library_maps(
         }
         for entry in entries {
             for pattern in entry.patterns {
-                let paths = expand_library_pattern(base, &pattern)?;
+                let paths = expand_library_pattern(base, &pattern, source_limit as u64)?;
                 if paths.is_empty() {
                     return Err(StartupError::new(
                         StartupErrorKind::Input,
@@ -724,19 +797,46 @@ fn admit_library_maps(
                             format!("source is assigned more than once: {}", path.display()),
                         ));
                     }
+                    charge_library_map_source(source_count, source_limit, "library source")?;
                     let name = path.to_string_lossy().into_owned();
-                    let content_limit =
-                        remaining.checked_sub(name.len() as u64).ok_or_else(|| {
+                    let name_bytes = u64::try_from(name.len()).map_err(|_| {
+                        StartupError::new(
+                            StartupErrorKind::LimitExceeded,
+                            format!("source path {name} exceeds the configured Slang byte limit"),
+                        )
+                    })?;
+                    let library_bytes = u64::try_from(entry.library.len()).map_err(|_| {
+                        StartupError::new(
+                            StartupErrorKind::LimitExceeded,
+                            "library name exceeds the configured Slang byte limit",
+                        )
+                    })?;
+                    let metadata_bytes =
+                        name_bytes.checked_add(library_bytes).ok_or_else(|| {
                             StartupError::new(
                                 StartupErrorKind::LimitExceeded,
-                                format!(
-                                    "source path {name} exceeds the configured Slang byte limit"
-                                ),
+                                "source metadata byte count overflow",
                             )
                         })?;
+                    let content_limit = remaining.checked_sub(metadata_bytes).ok_or_else(|| {
+                        StartupError::new(
+                            StartupErrorKind::LimitExceeded,
+                            format!("source path {name} exceeds the configured Slang byte limit"),
+                        )
+                    })?;
                     let source_text = read_bounded(&name, content_limit)?;
-                    *remaining =
-                        remaining.saturating_sub(name.len() as u64 + source_text.len() as u64);
+                    let text_bytes = u64::try_from(source_text.len()).map_err(|_| {
+                        StartupError::new(
+                            StartupErrorKind::LimitExceeded,
+                            format!("source path {name} exceeds the configured Slang byte limit"),
+                        )
+                    })?;
+                    *remaining = content_limit.checked_sub(text_bytes).ok_or_else(|| {
+                        StartupError::new(
+                            StartupErrorKind::LimitExceeded,
+                            format!("source path {name} exceeds the configured Slang byte limit"),
+                        )
+                    })?;
                     library_sources.push(LibrarySource::new(
                         name,
                         source_text,
@@ -746,6 +846,21 @@ fn admit_library_maps(
             }
         }
     }
+    Ok(())
+}
+
+fn charge_library_map_source(
+    source_count: &mut usize,
+    source_limit: usize,
+    kind: &str,
+) -> Result<(), StartupError> {
+    if *source_count >= source_limit {
+        return Err(StartupError::new(
+            StartupErrorKind::LimitExceeded,
+            format!("library map expansion exceeds the configured {kind} source limit"),
+        ));
+    }
+    *source_count += 1;
     Ok(())
 }
 
@@ -883,7 +998,51 @@ fn library_map_tokens(text: &str) -> Result<Vec<String>, StartupError> {
     Ok(tokens)
 }
 
-fn expand_library_pattern(base: &Path, pattern: &str) -> Result<Vec<PathBuf>, StartupError> {
+struct LibraryPatternBudget {
+    traversed: u64,
+    matches: u64,
+    max_matches: u64,
+}
+
+impl LibraryPatternBudget {
+    fn visit(&mut self) -> Result<(), StartupError> {
+        self.traversed = self.traversed.checked_add(1).ok_or_else(|| {
+            StartupError::new(
+                StartupErrorKind::LimitExceeded,
+                "library map traversal exceeds the admission limit",
+            )
+        })?;
+        if self.traversed > MAX_LIBRARY_MAP_TRAVERSAL {
+            return Err(StartupError::new(
+                StartupErrorKind::LimitExceeded,
+                "library map traversal exceeds the admission limit",
+            ));
+        }
+        Ok(())
+    }
+
+    fn match_path(&mut self) -> Result<(), StartupError> {
+        self.matches = self.matches.checked_add(1).ok_or_else(|| {
+            StartupError::new(
+                StartupErrorKind::LimitExceeded,
+                "library map pattern matches exceed the source limit",
+            )
+        })?;
+        if self.matches > self.max_matches {
+            return Err(StartupError::new(
+                StartupErrorKind::LimitExceeded,
+                "library map pattern matches exceed the source limit",
+            ));
+        }
+        Ok(())
+    }
+}
+
+fn expand_library_pattern(
+    base: &Path,
+    pattern: &str,
+    max_matches: u64,
+) -> Result<Vec<PathBuf>, StartupError> {
     if pattern.contains('$') {
         return Err(StartupError::new(
             StartupErrorKind::InvalidArgument,
@@ -909,7 +1068,16 @@ fn expand_library_pattern(base: &Path, pattern: &str) -> Result<Vec<PathBuf>, St
                 ),
             )
         })?;
-        return Ok(path.is_file().then_some(path).into_iter().collect());
+        if !path.is_file() {
+            return Ok(Vec::new());
+        }
+        if max_matches == 0 {
+            return Err(StartupError::new(
+                StartupErrorKind::LimitExceeded,
+                "library map pattern matches exceed the source limit",
+            ));
+        }
+        return Ok(vec![path]);
     };
     let mut anchor = PathBuf::new();
     for component in &components[..wildcard_index] {
@@ -929,7 +1097,12 @@ fn expand_library_pattern(base: &Path, pattern: &str) -> Result<Vec<PathBuf>, St
         )
     })?;
     let mut matches = Vec::new();
-    walk_library_pattern(&anchor, &rest, &mut matches)?;
+    let mut budget = LibraryPatternBudget {
+        traversed: 0,
+        matches: 0,
+        max_matches,
+    };
+    walk_library_pattern(&anchor, &rest, &mut matches, &mut budget)?;
     matches.sort();
     matches.dedup();
     Ok(matches)
@@ -939,9 +1112,15 @@ fn walk_library_pattern(
     current: &Path,
     components: &[std::ffi::OsString],
     matches: &mut Vec<PathBuf>,
+    budget: &mut LibraryPatternBudget,
 ) -> Result<(), StartupError> {
+    budget.visit()?;
+    if is_symlink_directory(current) {
+        return Ok(());
+    }
     if components.is_empty() {
         if current.is_file() {
+            budget.match_path()?;
             matches.push(current.canonicalize().map_err(|error| {
                 StartupError::new(
                     StartupErrorKind::Input,
@@ -956,36 +1135,70 @@ fn walk_library_pattern(
     }
     let component = components[0].to_string_lossy();
     if component == "**" {
-        walk_library_pattern(current, &components[1..], matches)?;
-        let mut children = std::fs::read_dir(current)
+        walk_library_pattern(current, &components[1..], matches, budget)?;
+        let mut children = Vec::new();
+        for entry in std::fs::read_dir(current)
             .map_err(|error| StartupError::new(StartupErrorKind::Input, error.to_string()))?
-            .filter_map(Result::ok)
-            .map(|entry| entry.path())
-            .filter(|path| path.is_dir())
-            .collect::<Vec<_>>();
+        {
+            budget.visit()?;
+            let Ok(entry) = entry else {
+                continue;
+            };
+            let path = entry.path();
+            if is_symlink_directory(&path) {
+                continue;
+            }
+            if path.is_dir() {
+                children.push(path);
+            }
+        }
         children.sort();
         for child in children {
-            walk_library_pattern(&child, components, matches)?;
+            walk_library_pattern(&child, components, matches, budget)?;
         }
     } else if component_has_wildcard(components[0].as_os_str()) {
-        let mut children = std::fs::read_dir(current)
+        let mut children = Vec::new();
+        for entry in std::fs::read_dir(current)
             .map_err(|error| StartupError::new(StartupErrorKind::Input, error.to_string()))?
-            .filter_map(Result::ok)
-            .map(|entry| entry.path())
-            .collect::<Vec<_>>();
+        {
+            budget.visit()?;
+            let Ok(entry) = entry else {
+                continue;
+            };
+            let path = entry.path();
+            if is_symlink_directory(&path) {
+                continue;
+            }
+            children.push(path);
+        }
         children.sort();
         for child in children {
             let Some(name) = child.file_name() else {
                 continue;
             };
             if wildcard_component_matches(&name.to_string_lossy(), &component) {
-                walk_library_pattern(&child, &components[1..], matches)?;
+                walk_library_pattern(&child, &components[1..], matches, budget)?;
             }
         }
     } else {
-        walk_library_pattern(&current.join(component.as_ref()), &components[1..], matches)?;
+        walk_library_pattern(
+            &current.join(component.as_ref()),
+            &components[1..],
+            matches,
+            budget,
+        )?;
     }
     Ok(())
+}
+
+fn is_symlink_directory(path: &Path) -> bool {
+    let Ok(link_metadata) = std::fs::symlink_metadata(path) else {
+        return false;
+    };
+    link_metadata.file_type().is_symlink()
+        && std::fs::metadata(path)
+            .map(|metadata| metadata.is_dir())
+            .unwrap_or(false)
 }
 
 fn component_has_wildcard(component: &std::ffi::OsStr) -> bool {
@@ -1176,6 +1389,7 @@ fn admit_macro_includes(
     macros: &mut MacroEnvironment,
     identities: &mut HashSet<PathBuf>,
     owned: &mut Vec<OwnedSource>,
+    source_count: &mut usize,
     remaining: &mut u64,
     include_stack: &mut Vec<PathBuf>,
     expansion_budget: &MacroExpansionBudget,
@@ -1196,14 +1410,13 @@ fn admit_macro_includes(
         };
         let path_name = path.to_string_lossy().into_owned();
         if !identities.contains(&path) {
-            if opts.sources.len().saturating_add(owned.len())
-                >= usize::try_from(opts.limits.max_sources).unwrap_or(usize::MAX)
-            {
+            if *source_count >= effective_source_count_limit(opts.limits) {
                 return Err(StartupError::new(
-                    StartupErrorKind::InvalidArgument,
+                    StartupErrorKind::LimitExceeded,
                     "include graph exceeds the configured Slang source limit",
                 ));
             }
+            *source_count += 1;
             let content_limit = remaining
                 .checked_sub(path_name.len() as u64)
                 .ok_or_else(|| {
@@ -1238,6 +1451,7 @@ fn admit_macro_includes(
             macros,
             identities,
             owned,
+            source_count,
             remaining,
             include_stack,
             expansion_budget,
@@ -2016,6 +2230,17 @@ fn one_based_utf16_position(text: &str, offset: u64) -> (u32, u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+    fn temporary_path(label: &str) -> PathBuf {
+        let sequence = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!(
+            "llg-compile-{label}-{}-{sequence}",
+            std::process::id()
+        ))
+    }
 
     #[test]
     fn literal_include_scan_ignores_comments_and_strings() {
@@ -2105,5 +2330,172 @@ mod tests {
             one_based_utf16_position(text, "a😀\r\n".len() as u64),
             (2, 1)
         );
+    }
+
+    #[test]
+    fn library_name_bytes_count_before_path_admission() {
+        let path = temporary_path("library-name-budget");
+        std::fs::write(&path, [0xff]).expect("write invalid source fixture");
+        let path_name = path
+            .canonicalize()
+            .expect("canonical source fixture")
+            .to_string_lossy()
+            .into_owned();
+        let source = OwnedSource::compilation_unit("top.sv", "module top; endmodule\n");
+        let library_source = LibrarySource::new(
+            "library.sv",
+            "module library; endmodule\n",
+            "L".repeat(path_name.len() + 2),
+        );
+        let admitted_without_library_name = source.name.len() as u64
+            + source.text.len() as u64
+            + library_source.name.len() as u64
+            + library_source.text.len() as u64;
+        let limits = Limits {
+            max_source_bytes: admitted_without_library_name + path_name.len() as u64 + 1,
+            ..Limits::default()
+        };
+        let result = compile(&CompileOpts {
+            sources: vec![source],
+            files: vec![path_name],
+            library_sources: vec![library_source],
+            limits,
+            ..CompileOpts::default()
+        });
+        assert_eq!(
+            result
+                .expect_err("library name must consume the combined source budget")
+                .kind(),
+            StartupErrorKind::LimitExceeded
+        );
+        std::fs::remove_file(path).expect("remove invalid source fixture");
+    }
+
+    #[test]
+    fn explicit_library_file_name_bytes_count_before_path_read() {
+        let path = temporary_path("library-file-name-budget");
+        std::fs::write(&path, [0xff]).expect("write invalid library source fixture");
+        let path_name = path
+            .canonicalize()
+            .expect("canonical library source fixture")
+            .to_string_lossy()
+            .into_owned();
+        let source = OwnedSource::compilation_unit("top.sv", "module top; endmodule\n");
+        let library_name = "L".repeat(path_name.len() + 2);
+        let limits = Limits {
+            max_source_bytes: source.name.len() as u64
+                + source.text.len() as u64
+                + path_name.len() as u64
+                + 1,
+            ..Limits::default()
+        };
+        let result = compile(&CompileOpts {
+            sources: vec![source],
+            library_files: vec![format!("{library_name}={path_name}")],
+            limits,
+            ..CompileOpts::default()
+        });
+        assert_eq!(
+            result
+                .expect_err("explicit library names must consume the source budget")
+                .kind(),
+            StartupErrorKind::LimitExceeded
+        );
+        std::fs::remove_file(path).expect("remove invalid library source fixture");
+    }
+
+    #[test]
+    fn map_library_name_bytes_count_before_expanded_source_read() {
+        let root = temporary_path("library-map-name-budget");
+        std::fs::create_dir_all(&root).expect("create library map budget root");
+        let top = root.join("top.sv");
+        let map = root.join("root.map");
+        let source = root.join("mapped.sv");
+        std::fs::write(&top, "module top; endmodule\n").expect("write top source");
+        std::fs::write(&source, [0xff]).expect("write invalid mapped source");
+        let source_name = source
+            .canonicalize()
+            .expect("canonical mapped source")
+            .to_string_lossy()
+            .into_owned();
+        let library_name = "L".repeat(source_name.len() + 2);
+        let map_text = format!("library {library_name} mapped.sv;\n");
+        std::fs::write(&map, &map_text).expect("write library map");
+        let top_name = top
+            .canonicalize()
+            .expect("canonical top source")
+            .to_string_lossy()
+            .into_owned();
+        let map_name = map
+            .canonicalize()
+            .expect("canonical library map")
+            .to_string_lossy()
+            .into_owned();
+        let limits = Limits {
+            max_source_bytes: top_name.len() as u64
+                + "module top; endmodule\n".len() as u64
+                + map_name.len() as u64
+                + map_text.len() as u64
+                + source_name.len() as u64
+                + 1,
+            ..Limits::default()
+        };
+        let result = compile(&CompileOpts {
+            files: vec![top_name],
+            library_map_files: vec![map_name],
+            limits,
+            ..CompileOpts::default()
+        });
+        assert_eq!(
+            result
+                .expect_err("map library names must consume the source budget")
+                .kind(),
+            StartupErrorKind::LimitExceeded
+        );
+        std::fs::remove_dir_all(root).expect("remove library map budget root");
+    }
+
+    #[test]
+    fn custom_source_budget_is_clamped_to_the_native_hard_limit() {
+        assert_eq!(
+            effective_source_byte_limit(Limits {
+                max_source_bytes: NATIVE_HARD_MAX_SOURCE_BYTES.saturating_add(1),
+                ..Limits::default()
+            }),
+            NATIVE_HARD_MAX_SOURCE_BYTES
+        );
+    }
+
+    #[test]
+    fn library_pattern_match_ceiling_is_checked_before_file_reads() {
+        let root = temporary_path("library-pattern-limit");
+        std::fs::create_dir_all(&root).expect("create library pattern root");
+        std::fs::write(root.join("a.sv"), "module a; endmodule\n").expect("write first source");
+        std::fs::write(root.join("b.sv"), "module b; endmodule\n").expect("write second source");
+        let error = expand_library_pattern(&root, "*.sv", 1)
+            .expect_err("pattern exceeding its source ceiling must fail");
+        assert_eq!(error.kind(), StartupErrorKind::LimitExceeded);
+        std::fs::remove_dir_all(root).expect("remove library pattern root");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn recursive_library_pattern_skips_symlink_directory_cycles() {
+        use std::os::unix::fs::symlink;
+
+        let root = temporary_path("library-pattern-cycle");
+        let real = root.join("real");
+        std::fs::create_dir_all(&real).expect("create recursive library root");
+        let source = real.join("source.sv");
+        std::fs::write(&source, "module source; endmodule\n").expect("write recursive source");
+        symlink(&root, real.join("cycle")).expect("create recursive directory symlink");
+
+        let matches = expand_library_pattern(&root, "**/*.sv", 8)
+            .expect("recursive pattern should terminate at symlink directories");
+        assert_eq!(
+            matches,
+            vec![source.canonicalize().expect("canonical source")]
+        );
+        std::fs::remove_dir_all(root).expect("remove recursive library root");
     }
 }
