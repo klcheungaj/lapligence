@@ -411,6 +411,25 @@ endprimitive
 }
 
 #[test]
+fn udp_limit_cannot_exceed_the_native_hard_ceiling() {
+    let sources = [Source::compilation_unit(
+        "udp-limit-ceiling.sv",
+        "module top; endmodule\n",
+    )];
+    let options = CompileOptions {
+        limits: slang::Limits {
+            max_semantic_edges: u64::MAX,
+            ..slang::Limits::default()
+        },
+        ..CompileOptions::default()
+    };
+    let error = slang::compile(&request(&sources, &options))
+        .expect_err("raw u64::MAX must not bypass the native semantic-edge ceiling");
+    assert_eq!(error.kind(), SlangErrorKind::LimitExceeded);
+    assert!(error.message().contains("native hard ceiling"));
+}
+
+#[test]
 fn warnings_do_not_turn_a_valid_snapshot_into_failure() {
     let sources = [Source::compilation_unit(
         "warning.sv",

@@ -4154,6 +4154,9 @@ std::unique_ptr<LlgSlangSnapshot> compileImpl(const LlgSlangCompileRequest& requ
   if (request.default_library_present > 1 || request.default_library_reserved != 0)
     throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT,
                         "invalid default library flags");
+  if (request.limits.max_semantic_edges > kHardMaxSemanticEdges)
+    throw BridgeFailure(LLG_SLANG_STATUS_LIMIT_EXCEEDED,
+                        "max_semantic_edges exceeds the native hard ceiling");
 
   const uint64_t maxSources = effectiveLimit(request.limits.max_sources,
       kDefaultMaxSources, kHardMaxSources);

@@ -63,8 +63,9 @@ fn raw_semantic_node(edge_count: u64) -> RawSemanticNode {
     }
 }
 
-fn raw_udp_node(name: &str) -> RawSemanticNode {
+fn raw_udp_node(id: u64, name: &str) -> RawSemanticNode {
     let mut node = raw_semantic_node(0);
+    node.id = id;
     node.kind = 15;
     node.subkind = 227;
     node.flags = 1 << 24;
@@ -72,14 +73,20 @@ fn raw_udp_node(name: &str) -> RawSemanticNode {
     node
 }
 
-fn raw_udp_table(row_start: u64, row_count: u64, input_count: u32) -> RawUdpTable {
+fn raw_udp_table(
+    primitive_id: u64,
+    row_start: u64,
+    row_count: u64,
+    input_count: u32,
+    name: &str,
+) -> RawUdpTable {
     RawUdpTable {
-        primitive_id: 0,
+        primitive_id,
         input_count,
         reserved: 0,
         row_start,
         row_count,
-        name: raw_string("udp"),
+        name: raw_string(name),
     }
 }
 
@@ -94,7 +101,7 @@ fn raw_udp_row(inputs: &str, output: u8) -> RawUdpRow {
 }
 
 fn decoded_udp_nodes() -> Vec<SemanticNode> {
-    decode_semantic_nodes(&[raw_udp_node("udp")], &[], &[], &[], 0)
+    decode_semantic_nodes(&[raw_udp_node(0, "udp")], &[], &[], &[], 0)
         .expect("UDP declaration metadata should decode")
 }
 
@@ -390,14 +397,14 @@ fn semantic_and_type_table_limits_are_exact() {
 #[test]
 fn udp_overlap_validation_rejects_conflicts_and_bounds_expansion() {
     let nodes = decoded_udp_nodes();
-    let table = raw_udp_table(0, 2, 2);
+    let table = raw_udp_table(0, 0, 2, 2, "udp");
     let rows = [raw_udp_row("0?", b'0'), raw_udp_row("?0", b'1')];
     let error = decode_udp_tables(&[table], &rows, &nodes, 16)
         .expect_err("overlapping UDP rows with different outputs must fail");
     assert_eq!(error.kind(), SlangErrorKind::InvalidNativeData);
     assert!(error.message().contains("overlapping rows"));
 
-    let table = raw_udp_table(0, 1, 2);
+    let table = raw_udp_table(0, 0, 1, 2, "udp");
     let rows = [raw_udp_row("??", b'x')];
     let error = decode_udp_tables(&[table], &rows, &nodes, 8)
         .expect_err("wildcard expansion must honor the selected validation capacity");
@@ -406,9 +413,46 @@ fn udp_overlap_validation_rejects_conflicts_and_bounds_expansion() {
 }
 
 #[test]
+fn udp_overlap_budget_is_shared_across_tables() {
+    let nodes = decode_semantic_nodes(
+        &[raw_udp_node(0, "first"), raw_udp_node(1, "second")],
+        &[],
+        &[],
+        &[],
+        0,
+    )
+    .expect("UDP declaration metadata should decode");
+    let tables = [
+        raw_udp_table(0, 0, 1, 2, "first"),
+        raw_udp_table(1, 1, 1, 2, "second"),
+    ];
+    let rows = [raw_udp_row("0?", b'0'), raw_udp_row("1?", b'1')];
+
+    let decoded = decode_udp_tables(&tables, &rows, &nodes, 6)
+        .expect("exactly the shared assignment budget should be accepted");
+    assert_eq!(decoded.len(), 2);
+
+    let error = decode_udp_tables(&tables, &rows, &nodes, 5)
+        .expect_err("multiple UDP tables must charge one shared overlap budget");
+    assert_eq!(error.kind(), SlangErrorKind::LimitExceeded);
+    assert!(error.message().contains("bounded assignment capacity"));
+}
+
+#[test]
+fn udp_wide_wildcard_rejects_before_large_assignment_growth() {
+    let nodes = decoded_udp_nodes();
+    let table = raw_udp_table(0, 0, 1, 15, "udp");
+    let rows = [raw_udp_row("???????????????", b'x')];
+    let error = decode_udp_tables(&[table], &rows, &nodes, u64::MAX)
+        .expect_err("wide wildcard expansion must stay below the memory boundary");
+    assert_eq!(error.kind(), SlangErrorKind::LimitExceeded);
+    assert!(error.message().contains("bounded assignment capacity"));
+}
+
+#[test]
 fn udp_rows_must_be_claimed_by_a_table_window() {
     let nodes = decoded_udp_nodes();
-    let table = raw_udp_table(0, 1, 2);
+    let table = raw_udp_table(0, 0, 1, 2, "udp");
     let rows = [raw_udp_row("00", b'0'), raw_udp_row("01", b'1')];
     let error = decode_udp_tables(&[table], &rows, &nodes, 8)
         .expect_err("unclaimed UDP rows must fail checked decoding");
@@ -445,14 +489,20 @@ fn language_edition_parser_and_default_are_explicit() {
 fn sequential_predicate_pattern_edge_decodes_and_unknown_roles_still_fail() {
     let node = raw_semantic_node(1);
     let edge = RawSemanticEdge {
-        role: 38, index: 2, target_id: 0, sequence_delay_valid: 0,
-        sequence_delay_min: 0, sequence_delay_max: 0,
+        role: 38,
+        index: 2,
+        target_id: 0,
+        sequence_delay_valid: 0,
+        sequence_delay_min: 0,
+        sequence_delay_max: 0,
     };
     let decoded = decode_semantic_edges(std::slice::from_ref(&edge), std::slice::from_ref(&node))
         .expect("paired predicate pattern role");
     assert_eq!(decoded[0].role, SemanticEdgeRole::ConditionPattern);
     assert_eq!(decoded[0].index, 2);
     let bad = RawSemanticEdge { role: 39, ..edge };
-    assert_eq!(decode_semantic_edges(&[bad], &[node]).unwrap_err().kind(),
-        SlangErrorKind::InvalidNativeData);
+    assert_eq!(
+        decode_semantic_edges(&[bad], &[node]).unwrap_err().kind(),
+        SlangErrorKind::InvalidNativeData
+    );
 }

@@ -26,10 +26,15 @@
   output return typed Rust errors.
 - UDP capture: combinational UDP table records use the semantic-node ceiling and
   their rows use the semantic-edge ceiling before native vectors or row strings
-  are grown. The owned decoder requires every exported row to belong to exactly
-  one table window and validates wildcard overlap through a bounded concrete
-  assignment index; tables whose expansion exceeds the semantic-edge capacity
-  return a resource error.
+  are grown. The safe facade rejects a caller `max_semantic_edges` above the
+  native 16,000,000-record hard ceiling. The owned decoder requires every
+  exported row to belong to exactly one table window and validates wildcard
+  overlap through one reused concrete-assignment index. Overlap validation has
+  a separate 65,536-assignment budget charged across all tables in the
+  snapshot and an 8 MiB budget for indexed key bytes; a row whose expansion
+  exceeds either remaining budget fails before index allocation. These smaller
+  boundaries cover hash buckets and per-key allocations that the native record
+  ceiling does not measure.
 - Safety: this is the only Rust directory permitted to contain `unsafe`; every
   exported API is safe and owns its returned data.
 - Consumers: shared-core capture, simulator lowering, language-server features,

@@ -65,6 +65,7 @@ typedef struct {
   uint64_t max_related_diagnostics;
   uint64_t max_output_bytes;
   uint64_t max_semantic_nodes;
+  /* The native hard ceiling for this field is 16,000,000. */
   uint64_t max_semantic_edges;
   uint64_t max_lexical_tokens;
   uint64_t max_type_ranges;

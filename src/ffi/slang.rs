@@ -57,6 +57,10 @@ const MAX_INCLUDE_DIRS: usize = 4_096;
 const MAX_PARAMETER_OVERRIDES: usize = 4_096;
 const MAX_SYSTEM_SUBROUTINES: usize = 4_096;
 const MAX_CONFIG_BYTES: u64 = 4 * 1024 * 1024;
+// Keep this in sync with the native bridge's kHardMaxSemanticEdges. The Rust
+// decoder uses the caller's limit for UDP validation, so accepting a larger
+// value here would let it do more work than the native capture can produce.
+const NATIVE_HARD_MAX_SEMANTIC_EDGES: u64 = 16_000_000;
 
 /// One admitted in-memory SystemVerilog compilation unit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -237,6 +241,8 @@ pub struct Limits {
     pub max_related_diagnostics: u64,
     pub max_output_bytes: u64,
     pub max_semantic_nodes: u64,
+    /// Maximum semantic edges and UDP rows. Values above the native hard
+    /// ceiling are rejected before the bridge is called.
     pub max_semantic_edges: u64,
     pub max_lexical_tokens: u64,
     pub max_type_ranges: u64,
@@ -1722,6 +1728,11 @@ fn validate_request(request: &CompileRequest<'_>) -> Result<(), SlangError> {
     .contains(&0)
     {
         return Err(invalid_argument("Slang capture limits must be positive"));
+    }
+    if limits.max_semantic_edges > NATIVE_HARD_MAX_SEMANTIC_EDGES {
+        return Err(limit_exceeded(format!(
+            "max_semantic_edges exceeds the native hard ceiling ({NATIVE_HARD_MAX_SEMANTIC_EDGES})"
+        )));
     }
     Ok(())
 }

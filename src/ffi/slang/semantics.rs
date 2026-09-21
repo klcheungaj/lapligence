@@ -521,6 +521,7 @@ pub(super) fn decode_udp_tables(
     let mut used_rows = vec![false; raw_rows.len()];
     let mut table_ids = HashSet::with_capacity(raw_tables.len());
     let mut tables = Vec::with_capacity(raw_tables.len());
+    let mut overlap_validator = UdpOverlapValidator::new(max_overlap_assignments);
     for raw_table in raw_tables {
         if raw_table.reserved != 0 || !table_ids.insert(raw_table.primitive_id) {
             return Err(invalid_native(
@@ -589,7 +590,7 @@ pub(super) fn decode_udp_tables(
                 edge_sensitive: false,
             });
         }
-        validate_udp_rows(&rows, max_overlap_assignments)?;
+        overlap_validator.validate_rows(&rows)?;
         // SAFETY: the native snapshot remains alive while this decoder copies
         // the declaration name.
         let name = unsafe { copy_string(raw_table.name, "UDP table name")? };
@@ -611,71 +612,145 @@ pub(super) fn decode_udp_tables(
     Ok(tables)
 }
 
+/// Keep overlap validation small enough for the concrete assignment index to
+/// have a predictable process-memory cost. This is deliberately below the
+/// native semantic-edge ceiling: a 16-million-entry `HashMap<Vec<u8>, u8>`
+/// can consume hundreds of MiB once hash buckets and per-key allocations are
+/// included, even though the native row count is within its hard limit.
+const MAX_UDP_OVERLAP_ASSIGNMENTS: u64 = 65_536;
+const MAX_UDP_OVERLAP_INDEX_BYTES: u64 = 8 * 1024 * 1024;
+
 /// Validate row overlap by indexing concrete input assignments.
 ///
 /// A combinational UDP row describes a Cartesian product over the three
 /// four-state input values represented by the table (`0`, `1`, and `x`).
 /// Expanding each row into those assignments makes overlap validation a
 /// linear hash-table insertion pass rather than a quadratic row pair scan.
-/// The expansion budget is the configured semantic-edge capacity, so a broad
-/// wildcard table fails with a resource error before the index can grow
-/// without bound.
-fn validate_udp_rows(rows: &[UdpRow], max_assignments: u64) -> Result<(), SlangError> {
-    let mut assignments = HashMap::<Vec<u8>, u8>::new();
-    let mut generated = 0_u64;
+/// The validator owns one assignment index, reuses it for each table, and
+/// charges one global expansion budget across the complete snapshot. Its
+/// fixed 65,536-assignment cap bounds the retained hash buckets and key
+/// allocations even when a caller supplies the native 16-million edge limit;
+/// an additional 8 MiB key-byte budget covers wide rows whose individual
+/// assignments would otherwise make each `Vec<u8>` expensive.
+struct UdpOverlapValidator {
+    assignments: HashMap<Vec<u8>, u8>,
+    generated: u64,
+    index_bytes: u64,
+    max_assignments: u64,
+}
 
-    for row in rows {
-        let masks: Vec<u8> = row.inputs.bytes().map(udp_symbol_mask).collect();
-        let row_assignments = masks.iter().try_fold(1_u64, |total, mask| {
-            total.checked_mul(u64::from(mask.count_ones()))
-        });
-        let row_assignments = row_assignments
-            .ok_or_else(|| limit_exceeded("UDP overlap validation assignment count overflowed"))?;
-        generated = generated
-            .checked_add(row_assignments)
-            .ok_or_else(|| limit_exceeded("UDP overlap validation assignment count overflowed"))?;
-        if generated > max_assignments {
-            return Err(limit_exceeded(
-                "UDP overlap validation exceeds the configured semantic-edge capacity",
-            ));
+impl UdpOverlapValidator {
+    fn new(requested_max: u64) -> Self {
+        Self {
+            assignments: HashMap::new(),
+            generated: 0,
+            index_bytes: 0,
+            max_assignments: requested_max.min(MAX_UDP_OVERLAP_ASSIGNMENTS),
         }
+    }
 
-        let mut assignment = masks
-            .iter()
-            .map(|mask| udp_first_value(*mask))
-            .collect::<Vec<_>>();
-        loop {
-            match assignments.entry(assignment.clone()) {
-                std::collections::hash_map::Entry::Vacant(entry) => {
-                    entry.insert(row.output);
-                }
-                std::collections::hash_map::Entry::Occupied(entry)
-                    if *entry.get() != row.output =>
-                {
+    fn validate_rows(&mut self, rows: &[UdpRow]) -> Result<(), SlangError> {
+        // Tables are independent overlap domains. Retain the allocated bucket
+        // storage for reuse, while keeping entries from one table out of the
+        // next table's conflict checks.
+        self.assignments.clear();
+
+        for row in rows {
+            // Check the Cartesian-product size before allocating the masks or
+            // assignment index entries. A wide wildcard row therefore fails
+            // at the resource boundary without starting a large expansion.
+            let mut row_assignments = 1_u64;
+            let remaining_assignments = self
+                .max_assignments
+                .checked_sub(self.generated)
+                .ok_or_else(|| {
+                    limit_exceeded("UDP overlap validation assignment count overflowed")
+                })?;
+            for symbol in row.inputs.bytes() {
+                let mask = udp_symbol_mask(symbol);
+                if mask == 0 {
                     return Err(invalid_native(
-                        "combinational UDP table has overlapping rows with different outputs",
+                        "combinational UDP row has invalid input symbols or width",
                     ));
                 }
-                std::collections::hash_map::Entry::Occupied(_) => {}
+                row_assignments = row_assignments
+                    .checked_mul(u64::from(mask.count_ones()))
+                    .ok_or_else(|| {
+                        limit_exceeded("UDP overlap validation assignment count overflowed")
+                    })?;
+                if row_assignments > remaining_assignments {
+                    return Err(limit_exceeded(
+                        "UDP overlap validation exceeds its bounded assignment capacity",
+                    ));
+                }
             }
+            if row_assignments > remaining_assignments {
+                return Err(limit_exceeded(
+                    "UDP overlap validation exceeds its bounded assignment capacity",
+                ));
+            }
+            self.generated = self.generated.checked_add(row_assignments).ok_or_else(|| {
+                limit_exceeded("UDP overlap validation assignment count overflowed")
+            })?;
+            let row_index_bytes = row_assignments
+                .checked_mul(u64::try_from(row.inputs.len()).map_err(|_| {
+                    limit_exceeded("UDP overlap validation row width does not fit u64")
+                })?)
+                .ok_or_else(|| {
+                    limit_exceeded("UDP overlap validation index byte count overflowed")
+                })?;
+            if row_index_bytes > MAX_UDP_OVERLAP_INDEX_BYTES
+                || row_index_bytes > MAX_UDP_OVERLAP_INDEX_BYTES - self.index_bytes
+            {
+                return Err(limit_exceeded(
+                    "UDP overlap validation exceeds its bounded index memory capacity",
+                ));
+            }
+            self.index_bytes = self
+                .index_bytes
+                .checked_add(row_index_bytes)
+                .ok_or_else(|| {
+                    limit_exceeded("UDP overlap validation index byte count overflowed")
+                })?;
 
-            let mut advanced = false;
-            for position in (0..masks.len()).rev() {
-                if let Some(value) = udp_next_value(masks[position], assignment[position]) {
-                    assignment[position] = value;
-                    for reset in (position + 1)..masks.len() {
-                        assignment[reset] = udp_first_value(masks[reset]);
+            let masks: Vec<u8> = row.inputs.bytes().map(udp_symbol_mask).collect();
+            let mut assignment = masks
+                .iter()
+                .map(|mask| udp_first_value(*mask))
+                .collect::<Vec<_>>();
+            loop {
+                match self.assignments.entry(assignment.clone()) {
+                    std::collections::hash_map::Entry::Vacant(entry) => {
+                        entry.insert(row.output);
                     }
-                    advanced = true;
+                    std::collections::hash_map::Entry::Occupied(entry)
+                        if *entry.get() != row.output =>
+                    {
+                        return Err(invalid_native(
+                            "combinational UDP table has overlapping rows with different outputs",
+                        ));
+                    }
+                    std::collections::hash_map::Entry::Occupied(_) => {}
+                }
+
+                let mut advanced = false;
+                for position in (0..masks.len()).rev() {
+                    if let Some(value) = udp_next_value(masks[position], assignment[position]) {
+                        assignment[position] = value;
+                        for reset in (position + 1)..masks.len() {
+                            assignment[reset] = udp_first_value(masks[reset]);
+                        }
+                        advanced = true;
+                        break;
+                    }
+                }
+                if !advanced {
                     break;
                 }
             }
-            if !advanced {
-                break;
-            }
         }
+        Ok(())
     }
-    Ok(())
 }
 
 fn udp_symbol_mask(symbol: u8) -> u8 {
