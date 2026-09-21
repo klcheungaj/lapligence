@@ -115,6 +115,9 @@ Their historical pass counts are not part of the current acceptance record.
 - `sim_syn018_module_declarations`: parameterized extern declarations and bodies,
   independently scoped nested modules, owned hierarchy identities, and single-fault
   frontend diagnostics in both compilation-unit policies and optimizer modes.
+- `sim_syn033_structural_bind`: parameterized module-type and selected-instance binds,
+  interface-to-interface binding, owned bound-instance paths after frontend drop, and
+  single-fault unknown/primitive-target diagnostics in both optimizer modes.
 - `sim_physical_time`: file-backed 1fs/10fs/100fs/1ps/1ns mixed scopes,
   10s/100s units, checked overflow rejection, and VCD femtosecond
   headers/timestamps.

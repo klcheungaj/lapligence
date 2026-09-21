@@ -759,6 +759,7 @@ Verilog era:
 - 🟦 **Combinational UDPs** definition/table/instances — §1364-2001 8.1–8.2/8.6 **[1995]** and §1800-2009 29.3–29.4/29.8 **[SV-2009]** scalar tables are imported into owned rows, validate overlap, match runtime Z as X, return X for unmatched rows, and lower through structural drivers; repeated instances and primitive instance arrays retain independent drivers (`sim_udp.rs`, `udp_comb.sv`, both optimizer modes)
 - ❌ **Sequential UDPs** level/edge-sensitive — §1364-2001 8.3–8.5 **[1995]** same reject as combinational UDPs
 - 🟨 **Gate terminal connections** — §1364-2001 7.1 **[1995]** typed input expressions, constants, selected and hierarchical references, legal selected outputs, mixed-width normalization and multi-output `buf`/`not` have source paths. Output lvalues still require a supported packed target and structural driver mapping; real terminals, invalid expressions, unsupported primitives and resolved-net combinations reject. The former whole-signal-only, equal-width and 64-terminal statements are obsolete (sim_gates.rs, sim_net_resolution.rs).
+- 🟨 **Structural bind** — §1800-2009 23.11 **[SV-2005]** finite module-type and selected-instance binds, plus interface-to-interface binds, are elaborated as ordinary owned hierarchy with parameter values, target-local port resolution, distinct instance paths and optimizer-parity generated-model traces (`sim_syn033_structural_bind.rs`). Unknown targets and primitive targets remain frontend diagnostics; module injection into an interface is rejected by the SystemVerilog target-kind rule, and checker/program/coverage injection remains outside this selected RTL scope.
 
 (SystemVerilog era: 1800-2009 ch28–29 restore gates/UDPs verbatim — same
 statuses as the rows above.)
@@ -914,7 +915,7 @@ acceptance is claimed.
 | Specify blocks | module paths, edge/state-dependent paths, `PATHPULSE$` | §1800-2009 ch30 | [1995]/[SV-2009 restored] |
 | Timing checks | `$setup/$hold/$width/…`, notifiers, `&&&` conditions | §1800-2009 ch31 | [1995]/[SV-2009 restored] |
 | SDF backannotation | `$sdf_annotate`, delay/check mapping | §1800-2009 ch32 | [1995]/[SV-2009 restored] |
-| bind | elaboration-time injection of modules/interfaces | §1800-2009 23.11 | [SV-2005] |
+| bind | bounded elaboration-time injection of finite modules/interfaces; checker/program/coverage injection remains outside the selected RTL scope | §1800-2009 23.11 | [SV-2005] |
 
 ## How to update this document
 
