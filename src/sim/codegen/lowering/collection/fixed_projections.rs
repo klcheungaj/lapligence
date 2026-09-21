@@ -40,7 +40,10 @@ impl Codegen<'_> {
             &descriptor.shape,
             TypeShape::FixedArray { .. }
                 | TypeShape::Aggregate(crate::core::db::AggregateLayout {
-                    kind: AggregateKind::UnpackedStruct | AggregateKind::UnpackedUnion,
+                    kind: AggregateKind::PackedStruct
+                        | AggregateKind::PackedUnion
+                        | AggregateKind::UnpackedStruct
+                        | AggregateKind::UnpackedUnion,
                     ..
                 })
         ) {
