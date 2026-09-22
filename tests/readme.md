@@ -19,6 +19,21 @@
 - Use focused in-memory sources for frontend, database and IR unit tests.
 - Run generated C under GCC ASan/UBSan; sanitizer coverage does not instrument the vendored Slang archive.
 
+### Vendor patch preparation
+
+`vendor_patches.rs` covers clean and already-applied checkouts, source trees
+without Git metadata, archives nested in an outer Git checkout, exact active
+and retired file manifests, authenticated rendered output, LF digest
+normalization with CRLF preservation, and rejection of symlink, Windows
+reparse-point, hard-link, stale, and untracked source inputs. Its deterministic
+handle-relative regressions cover ancestor and parent replacement plus a
+temporary hard-link insertion after the staging identity check. The focused
+command is:
+
+```sh
+cargo test --locked --test vendor_patches -- --test-threads=1
+```
+
 ### Fixture integrity before a native build
 
 Run `python3 scripts/check_sim_fixture_integrity.py --tracked` after staging every
@@ -263,8 +278,13 @@ The exact Rust toolchain is pinned in [`rust-toolchain.toml`](../rust-toolchain.
 and Cargo dependencies are resolved by [`Cargo.lock`](../Cargo.lock). The
 vendored Slang and libaco gitlinks must be checked out at the upstream base
 revisions recorded by the root commit; `build.rs` applies the reviewable patches
-under `patches/` before native sources are consumed. No project-specific vendor
-commits are allowed. `scripts/run-regression.sh` verifies the gitlinks before
+under `patches/` before native sources are consumed. The patch directories also
+carry complete clean/applied file digests and a retired-file digest for the
+portable source-archive path. No project-specific vendor commits are allowed.
+When Git metadata is present, the preparer verifies the pinned `HEAD` and
+rejects tracked or source-like untracked inputs outside the active patch set;
+Git metadata and `safe.directory` configuration remain optional.
+`scripts/run-regression.sh` verifies the gitlinks before
 running the serialized gate and records provenance, command lines, phase status,
 timings, and complete logs in ignored `persistence/` output.
 

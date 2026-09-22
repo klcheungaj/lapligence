@@ -1,1 +1,2 @@
 *.patch text eol=lf
+patches/**/*.sha256 text eol=lf

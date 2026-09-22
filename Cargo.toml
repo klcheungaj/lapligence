@@ -73,10 +73,16 @@ windows-sys = { version = "0.61", features = [
 
 
 [build-dependencies]
+cap-std = "4.0.3"
+cap-fs-ext = "4.0.3"
+rustix = { version = "1.1.4", features = ["fs"] }
 cc = "1.2"
 cmake = "0.1"
 
 [dev-dependencies]
+cap-std = "4.0.3"
+cap-fs-ext = "4.0.3"
+rustix = { version = "1.1.4", features = ["fs"] }
 # Process-level LSP stdio contract tests (tests/lsp_stdio.rs) speak raw
 # JSON-RPC and need a JSON library on the test side.
 serde_json = "1"
