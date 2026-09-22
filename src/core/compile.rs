@@ -4,10 +4,10 @@
 //! snapshot. No native Slang object escapes the FFI call.
 
 use crate::core::tokens::FileTokens;
+use crate::ffi::secure_fs::{self, AdmittedTarget, FileIdentity, OpenedPath};
 use crate::ffi::slang::{self, CompileOptions, CompileRequest, Define, Limits, ParameterOverride};
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
-use std::io::Read;
 use std::path::{Path, PathBuf};
 
 pub use crate::ffi::slang::{
@@ -194,7 +194,237 @@ pub struct CompileOut {
 // that the bridge can never accept.
 const NATIVE_HARD_MAX_SOURCE_BYTES: u64 = 512 * 1024 * 1024;
 const NATIVE_HARD_MAX_SOURCES: u64 = 4_096;
-const MAX_LIBRARY_MAP_TRAVERSAL: u64 = 1_000_000;
+const MAX_LIBRARY_MAP_WORK: u64 = 1_000_000;
+const MAX_LIBRARY_PATTERN_COMPONENTS: usize = 512;
+const MAX_LIBRARY_PATH_BYTES: usize = 16 * 1024;
+const LIBRARY_MAP_READ_CHUNK_BYTES: usize = 8 * 1024;
+// Regular files normally satisfy one read per chunk. Keep a separate I/O
+// iteration ceiling so a filesystem that returns one byte at a time cannot
+// turn a bounded source into unbounded admission work while retaining the
+// normal 128 MiB source limit.
+const MAX_REGULAR_FILE_READ_ITERATIONS: u64 = 1_000_000;
+
+#[derive(Debug)]
+struct LibraryMapWorkBudget {
+    used: u64,
+    limit: u64,
+    allocation_used: u64,
+    allocation_limit: u64,
+    path_resolution_reserved: bool,
+}
+
+impl LibraryMapWorkBudget {
+    #[cfg(test)]
+    fn new(limit: u64) -> Self {
+        Self::with_allocation_limit(limit, limit)
+    }
+
+    fn with_allocation_limit(limit: u64, allocation_limit: u64) -> Self {
+        Self {
+            used: 0,
+            limit,
+            allocation_used: 0,
+            allocation_limit,
+            path_resolution_reserved: false,
+        }
+    }
+
+    fn charge(&mut self, amount: u64, operation: &str) -> Result<(), StartupError> {
+        let next = self
+            .used
+            .checked_add(amount)
+            .ok_or_else(|| self.limit_error(operation))?;
+        if next > self.limit {
+            return Err(self.limit_error(operation));
+        }
+        self.used = next;
+        Ok(())
+    }
+
+    fn charge_usize(&mut self, amount: usize, operation: &str) -> Result<(), StartupError> {
+        let amount = u64::try_from(amount).map_err(|_| self.limit_error(operation))?;
+        self.charge(amount, operation)
+    }
+
+    fn charge_allocation(&mut self, amount: u64, operation: &str) -> Result<(), StartupError> {
+        let next = self
+            .allocation_used
+            .checked_add(amount)
+            .ok_or_else(|| self.allocation_limit_error(operation))?;
+        if next > self.allocation_limit {
+            return Err(self.allocation_limit_error(operation));
+        }
+        self.allocation_used = next;
+        Ok(())
+    }
+
+    fn charge_allocation_usize(
+        &mut self,
+        amount: usize,
+        operation: &str,
+    ) -> Result<(), StartupError> {
+        let amount = u64::try_from(amount).map_err(|_| self.allocation_limit_error(operation))?;
+        self.charge_allocation(amount, operation)
+    }
+
+    fn limit_error(&self, operation: &str) -> StartupError {
+        StartupError::new(
+            StartupErrorKind::LimitExceeded,
+            format!(
+                "library map {operation} work budget exceeded after {} operations (limit {}); simplify wildcard patterns or reduce library-map candidates",
+                self.used, self.limit
+            ),
+        )
+    }
+
+    fn allocation_limit_error(&self, operation: &str) -> StartupError {
+        StartupError::new(
+            StartupErrorKind::LimitExceeded,
+            format!(
+                "library map {operation} allocation budget exceeded after {} bytes (limit {}); reduce library-map input size",
+                self.allocation_used, self.allocation_limit
+            ),
+        )
+    }
+}
+
+fn charge_library_map_text_allocation(
+    work: &mut LibraryMapWorkBudget,
+    text: &str,
+    operation: &str,
+) -> Result<(), StartupError> {
+    work.charge_allocation_usize(text.len(), operation)
+}
+
+fn checked_library_path_bytes(path: &Path, operation: &str) -> Result<usize, StartupError> {
+    let length = path.to_string_lossy().len();
+    if length > MAX_LIBRARY_PATH_BYTES {
+        return Err(StartupError::new(
+            StartupErrorKind::LimitExceeded,
+            format!(
+                "library map {operation} path is {length} bytes; the limit is {MAX_LIBRARY_PATH_BYTES}; simplify the path"
+            ),
+        ));
+    }
+    Ok(length)
+}
+
+fn charge_library_path_bytes(
+    work: &mut LibraryMapWorkBudget,
+    path: &Path,
+    operation: &str,
+) -> Result<(), StartupError> {
+    let length = checked_library_path_bytes(path, operation)?;
+    work.charge_usize(length, operation)
+}
+
+fn charge_library_path_join(
+    work: &mut LibraryMapWorkBudget,
+    parent: &Path,
+    child: &std::ffi::OsStr,
+    operation: &str,
+) -> Result<(), StartupError> {
+    let parent_length = checked_library_path_bytes(parent, operation)?;
+    let child_length = child.to_string_lossy().len();
+    let length = parent_length
+        .checked_add(1)
+        .and_then(|length| length.checked_add(child_length))
+        .ok_or_else(|| {
+            StartupError::new(
+                StartupErrorKind::LimitExceeded,
+                format!("library map {operation} path length overflows the configured limit"),
+            )
+        })?;
+    if length > MAX_LIBRARY_PATH_BYTES {
+        return Err(StartupError::new(
+            StartupErrorKind::LimitExceeded,
+            format!(
+                "library map {operation} path is {length} bytes; the limit is {MAX_LIBRARY_PATH_BYTES}; simplify the path"
+            ),
+        ));
+    }
+    work.charge_usize(length, operation)
+}
+
+fn canonicalize_library_map_path(
+    work: &mut LibraryMapWorkBudget,
+    path: &Path,
+    operation: &str,
+) -> Result<AdmittedTarget, StartupError> {
+    checked_library_path_bytes(path, operation)?;
+    work.charge(1, operation)?;
+    if work.path_resolution_reserved {
+        return Err(StartupError::new(
+            StartupErrorKind::LimitExceeded,
+            format!("library map {operation} path resolution is already active"),
+        ));
+    }
+
+    // Keep a transient reservation while the handle-derived target is
+    // obtained; this keeps the reservation separate from cumulative map work
+    // so every ordinary match does not spend MAX_LIBRARY_PATH_BYTES.
+    work.path_resolution_reserved = true;
+    let result = secure_fs::open_path(path).map(|opened| opened.admitted_target());
+    work.path_resolution_reserved = false;
+    let canonical = result.map_err(|error| {
+        StartupError::new(
+            StartupErrorKind::Input,
+            format!(
+                "cannot resolve library map path {}: {error}",
+                path.display()
+            ),
+        )
+    })?;
+    charge_library_path_bytes(work, canonical.actual_path(), operation)?;
+    Ok(canonical)
+}
+
+fn charge_key_comparison_work<I>(
+    work: &mut LibraryMapWorkBudget,
+    key_lengths: I,
+    sort: bool,
+    operation: &str,
+) -> Result<(), StartupError>
+where
+    I: IntoIterator<Item = usize>,
+{
+    let mut count = 0_u64;
+    let mut max_key_length = 0_u64;
+    for key_length in key_lengths {
+        work.charge(1, "library map ordering key scan")?;
+        let key_length = u64::try_from(key_length)
+            .map_err(|_| work.limit_error("library map ordering key scan"))?;
+        work.charge(key_length, "library map ordering key scan")?;
+        count = count
+            .checked_add(1)
+            .ok_or_else(|| work.limit_error("library map ordering key scan"))?;
+        max_key_length = max_key_length.max(key_length);
+    }
+
+    let comparisons = if sort && count > 1 {
+        let count_usize = usize::try_from(count)
+            .map_err(|_| work.limit_error("library map ordering comparisons"))?;
+        let levels = u64::from(usize::BITS - (count_usize - 1).leading_zeros());
+        count
+            .checked_mul(
+                levels
+                    .checked_add(1)
+                    .ok_or_else(|| work.limit_error("library map ordering comparisons"))?,
+            )
+            .and_then(|value| value.checked_mul(2))
+            .ok_or_else(|| work.limit_error("library map ordering comparisons"))?
+    } else {
+        count.saturating_sub(1)
+    };
+    let comparison_bytes = comparisons
+        .checked_mul(
+            max_key_length
+                .checked_add(1)
+                .ok_or_else(|| work.limit_error(operation))?,
+        )
+        .ok_or_else(|| work.limit_error(operation))?;
+    work.charge(comparison_bytes, operation)
+}
 
 fn effective_source_byte_limit(limits: Limits) -> u64 {
     limits.max_source_bytes.min(NATIVE_HARD_MAX_SOURCE_BYTES)
@@ -335,6 +565,7 @@ pub fn compile(opts: &CompileOpts) -> Result<CompileOut, StartupError> {
             )
         })?;
     let mut identities = std::collections::HashSet::new();
+    let mut admitted_targets = HashMap::new();
     for source in &opts.library_sources {
         if source.name.is_empty() || source.library.is_empty() {
             return Err(StartupError::new(
@@ -345,30 +576,37 @@ pub fn compile(opts: &CompileOpts) -> Result<CompileOut, StartupError> {
     }
     for path in &opts.files {
         let resolved = absolute_path(Path::new(path))?;
-        if !identities.insert(resolved.clone()) {
+        let resolved_path = resolved.actual_path().to_path_buf();
+        admitted_targets.insert(resolved_path.clone(), resolved.clone());
+        if !identities.insert(resolved_path.clone()) {
             continue;
         }
-        let name = resolved.to_string_lossy().into_owned();
+        let name = resolved_path.to_string_lossy().into_owned();
         let content_limit = remaining.checked_sub(name.len() as u64).ok_or_else(|| {
             StartupError::new(
                 StartupErrorKind::LimitExceeded,
                 format!("source path {name} exceeds the configured Slang byte limit"),
             )
         })?;
-        let text = read_bounded(&name, content_limit)?;
+        let text = read_bounded_target(&name, &resolved, content_limit, "SystemVerilog source")?;
         remaining = remaining.saturating_sub(name.len() as u64 + text.len() as u64);
         owned.push(OwnedSource::compilation_unit(name, text));
     }
     for spec in &opts.library_files {
         let (library, path) = split_library_file_spec(spec, opts.default_library.as_deref())?;
         let resolved = absolute_path(Path::new(path))?;
-        if !identities.insert(resolved.clone()) {
+        let resolved_path = resolved.actual_path().to_path_buf();
+        admitted_targets.insert(resolved_path.clone(), resolved.clone());
+        if !identities.insert(resolved_path.clone()) {
             return Err(StartupError::new(
                 StartupErrorKind::InvalidArgument,
-                format!("source is assigned more than once: {}", resolved.display()),
+                format!(
+                    "source is assigned more than once: {}",
+                    resolved_path.display()
+                ),
             ));
         }
-        let name = resolved.to_string_lossy().into_owned();
+        let name = resolved_path.to_string_lossy().into_owned();
         let name_bytes = u64::try_from(name.len()).map_err(|_| {
             StartupError::new(
                 StartupErrorKind::LimitExceeded,
@@ -393,7 +631,7 @@ pub fn compile(opts: &CompileOpts) -> Result<CompileOut, StartupError> {
                 format!("source path {name} exceeds the configured Slang byte limit"),
             )
         })?;
-        let text = read_bounded(&name, content_limit)?;
+        let text = read_bounded_target(&name, &resolved, content_limit, "SystemVerilog source")?;
         let text_bytes = u64::try_from(text.len()).map_err(|_| {
             StartupError::new(
                 StartupErrorKind::LimitExceeded,
@@ -408,12 +646,18 @@ pub fn compile(opts: &CompileOpts) -> Result<CompileOut, StartupError> {
         })?;
         library_owned.push(LibrarySource::new(name, text, library));
     }
-    admit_library_maps(
+    let mut library_map_work = LibraryMapWorkBudget::with_allocation_limit(
+        MAX_LIBRARY_MAP_WORK,
+        effective_source_byte_limit(opts.limits),
+    );
+    admit_library_maps_with_targets(
         opts,
         &mut identities,
         &mut library_owned,
         &mut source_count,
         &mut remaining,
+        &mut library_map_work,
+        &mut admitted_targets,
     )?;
     let path_roots = owned;
     let mut owned = opts.sources.clone();
@@ -425,6 +669,7 @@ pub fn compile(opts: &CompileOpts) -> Result<CompileOut, StartupError> {
         &mut source_count,
         &mut remaining,
         effective_source_count_limit(opts.limits),
+        &mut library_map_work,
     )?;
     let mut macros = macro_environment_from_defines(&opts.defines);
     let expansion_budget = MacroExpansionBudget::new(effective_source_byte_limit(opts.limits));
@@ -435,12 +680,15 @@ pub fn compile(opts: &CompileOpts) -> Result<CompileOut, StartupError> {
         if matches!(opts.compilation_unit_mode, CompilationUnitMode::Separate) {
             macros = macro_environment_from_defines(&opts.defines);
         }
+        let root_target = admitted_targets.get(Path::new(&root.name)).cloned();
         let mut include_stack = vec![PathBuf::from(&root.name)];
         admit_macro_includes(
             &root.name,
             &root.text,
             opts,
             &mut macros,
+            root_target.as_ref(),
+            &mut admitted_targets,
             &mut identities,
             &mut owned,
             &mut source_count,
@@ -452,12 +700,15 @@ pub fn compile(opts: &CompileOpts) -> Result<CompileOut, StartupError> {
     }
     for root in library_owned.clone() {
         let mut library_macros = macro_environment_from_defines(&opts.defines);
+        let root_target = admitted_targets.get(Path::new(&root.name)).cloned();
         let mut include_stack = vec![PathBuf::from(&root.name)];
         admit_macro_includes(
             &root.name,
             &root.text,
             opts,
             &mut library_macros,
+            root_target.as_ref(),
+            &mut admitted_targets,
             &mut identities,
             &mut owned,
             &mut source_count,
@@ -539,6 +790,10 @@ pub fn compile_sources(
         })?;
     let mut owned = sources.to_vec();
     let mut library_owned = opts.library_sources.clone();
+    let mut library_map_work = LibraryMapWorkBudget::with_allocation_limit(
+        MAX_LIBRARY_MAP_WORK,
+        effective_source_byte_limit(opts.limits),
+    );
     admit_in_memory_library_maps(
         &opts.library_maps,
         &mut owned,
@@ -546,6 +801,7 @@ pub fn compile_sources(
         &mut source_count,
         &mut remaining,
         source_limit,
+        &mut library_map_work,
     )?;
     compile_source_groups(&owned, &[], &library_owned, opts)
 }
@@ -756,45 +1012,276 @@ fn preflight_library_maps(maps: &[OwnedSource], limits: Limits) -> Result<(), St
 }
 
 fn read_bounded(path: &str, limit: u64) -> Result<String, StartupError> {
-    let file = std::fs::File::open(path).map_err(|error| {
+    let expected = secure_fs::open_path(Path::new(path)).map_err(|error| {
         StartupError::new(
             StartupErrorKind::Input,
-            format!("cannot open SystemVerilog source {path}: {error}"),
+            format!("cannot resolve SystemVerilog source {path}: {error}"),
         )
     })?;
-    let metadata = file.metadata().map_err(|error| {
-        StartupError::new(
-            StartupErrorKind::Input,
-            format!("cannot inspect SystemVerilog source {path}: {error}"),
-        )
-    })?;
-    if metadata.len() > limit {
-        return Err(StartupError::new(
-            StartupErrorKind::LimitExceeded,
-            format!("source {path} exceeds the configured Slang byte limit"),
-        ));
-    }
-    let mut bytes = Vec::new();
-    file.take(limit.saturating_add(1))
-        .read_to_end(&mut bytes)
-        .map_err(|error| {
-            StartupError::new(
-                StartupErrorKind::Input,
-                format!("cannot read SystemVerilog source {path}: {error}"),
-            )
-        })?;
-    if bytes.len() as u64 > limit {
-        return Err(StartupError::new(
-            StartupErrorKind::LimitExceeded,
-            format!("source {path} exceeds the configured Slang byte limit"),
-        ));
-    }
+    read_bounded_target(
+        path,
+        &expected.admitted_target(),
+        limit,
+        "SystemVerilog source",
+    )
+}
+
+fn read_bounded_at(
+    path: &str,
+    expected: &AdmittedTarget,
+    limit: u64,
+    kind: &str,
+) -> Result<String, StartupError> {
+    let (mut file, metadata) = open_regular_file_at(path, expected, kind)?;
+    let bytes = read_regular_file_contents(
+        &mut file,
+        metadata.len(),
+        limit,
+        path,
+        kind,
+        None,
+        "source read",
+        "source final metadata",
+    )?;
     String::from_utf8(bytes).map_err(|error| {
         StartupError::new(
             StartupErrorKind::Input,
-            format!("SystemVerilog source {path} is not UTF-8: {error}"),
+            format!("{kind} {path} is not UTF-8: {error}"),
         )
     })
+}
+
+fn read_bounded_target(
+    path: &str,
+    expected: &AdmittedTarget,
+    limit: u64,
+    kind: &str,
+) -> Result<String, StartupError> {
+    read_bounded_at(path, expected, limit, kind)
+}
+
+#[cfg(test)]
+fn read_bounded_library_map(
+    path: &str,
+    limit: u64,
+    work: &mut LibraryMapWorkBudget,
+) -> Result<String, StartupError> {
+    let expected = secure_fs::open_path(Path::new(path)).map_err(|error| {
+        StartupError::new(
+            StartupErrorKind::Input,
+            format!("cannot resolve library map {path}: {error}"),
+        )
+    })?;
+    read_bounded_library_file_at(
+        path,
+        &expected.admitted_target(),
+        limit,
+        work,
+        "library map",
+    )
+}
+
+fn read_bounded_library_file_at(
+    path: &str,
+    expected: &AdmittedTarget,
+    limit: u64,
+    work: &mut LibraryMapWorkBudget,
+    kind: &str,
+) -> Result<String, StartupError> {
+    let (open_operation, metadata_operation, read_operation, final_metadata_operation) =
+        if kind == "library map" {
+            (
+                "library map open",
+                "library map metadata",
+                "library map incremental read",
+                "library map final metadata",
+            )
+        } else {
+            (
+                "library source open",
+                "library source metadata",
+                "library source incremental read",
+                "library source final metadata",
+            )
+        };
+    let (mut file, metadata) = open_regular_library_file_at(
+        path,
+        expected,
+        kind,
+        work,
+        open_operation,
+        metadata_operation,
+    )?;
+    let bytes = read_regular_file_contents(
+        &mut file,
+        metadata.len(),
+        limit,
+        path,
+        kind,
+        Some(work),
+        read_operation,
+        final_metadata_operation,
+    )?;
+    String::from_utf8(bytes).map_err(|error| {
+        StartupError::new(
+            StartupErrorKind::Input,
+            format!("{kind} {path} is not UTF-8: {error}"),
+        )
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn read_regular_file_contents(
+    file: &mut OpenedPath,
+    expected_size: u64,
+    limit: u64,
+    path: &str,
+    kind: &str,
+    mut work: Option<&mut LibraryMapWorkBudget>,
+    read_operation: &str,
+    final_metadata_operation: &str,
+) -> Result<Vec<u8>, StartupError> {
+    if expected_size > limit {
+        return Err(StartupError::new(
+            StartupErrorKind::LimitExceeded,
+            format!("{kind} {path} exceeds the configured Slang byte limit"),
+        ));
+    }
+    let capacity = usize::try_from(expected_size).map_err(|_| {
+        StartupError::new(
+            StartupErrorKind::LimitExceeded,
+            format!("{kind} {path} is too large to admit safely"),
+        )
+    })?;
+    if let Some(budget) = work.as_deref_mut() {
+        budget.charge_allocation(expected_size, &format!("{kind} text admission"))?;
+    }
+    let mut bytes = Vec::new();
+    if capacity > 0 {
+        bytes.try_reserve_exact(capacity).map_err(|_| {
+            StartupError::new(
+                StartupErrorKind::LimitExceeded,
+                format!("{kind} {path} cannot reserve its bounded buffer"),
+            )
+        })?;
+    }
+
+    let mut total = 0_u64;
+    let mut iterations = 0_u64;
+    let mut chunk = [0_u8; LIBRARY_MAP_READ_CHUNK_BYTES];
+    while total < expected_size {
+        let request =
+            usize::try_from((expected_size - total).min(LIBRARY_MAP_READ_CHUNK_BYTES as u64))
+                .unwrap_or(LIBRARY_MAP_READ_CHUNK_BYTES);
+        let count = loop {
+            if iterations >= MAX_REGULAR_FILE_READ_ITERATIONS {
+                return Err(StartupError::new(
+                    StartupErrorKind::LimitExceeded,
+                    format!("{kind} {path} read iterations exceed the admission limit"),
+                ));
+            }
+            iterations += 1;
+            if let Some(budget) = work.as_deref_mut() {
+                // Charge every OS read attempt, including each retry after
+                // EINTR.  A filesystem that repeatedly interrupts reads
+                // therefore cannot bypass the map work ceiling.
+                budget.charge(1, read_operation)?;
+            }
+            match file.read_bytes(&mut chunk[..request]) {
+                Ok(count) => break count,
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(error) => {
+                    return Err(StartupError::new(
+                        StartupErrorKind::Input,
+                        format!("cannot read {kind} {path}: {error}"),
+                    ));
+                }
+            }
+        };
+        if count == 0 {
+            return Err(StartupError::new(
+                StartupErrorKind::Input,
+                format!("{kind} {path} changed or was truncated while reading"),
+            ));
+        }
+        bytes.extend_from_slice(&chunk[..count]);
+        total = total.checked_add(count as u64).ok_or_else(|| {
+            StartupError::new(StartupErrorKind::LimitExceeded, "source size overflow")
+        })?;
+    }
+
+    if total != expected_size || bytes.len() as u64 != expected_size {
+        return Err(StartupError::new(
+            StartupErrorKind::Input,
+            format!("{kind} {path} changed or was truncated while reading"),
+        ));
+    }
+    if let Some(budget) = work {
+        budget.charge(1, final_metadata_operation)?;
+    }
+    let final_size = file.refresh_metadata().map_err(|error| {
+        StartupError::new(
+            StartupErrorKind::Input,
+            format!("cannot inspect {kind} {path} after reading: {error}"),
+        )
+    })?;
+    if !final_size.file_type().is_file() || final_size.len() != expected_size {
+        return Err(StartupError::new(
+            StartupErrorKind::Input,
+            format!("{kind} {path} changed or was truncated while reading"),
+        ));
+    }
+    Ok(bytes)
+}
+
+#[cfg(test)]
+fn open_regular_file(
+    path: &str,
+    kind: &str,
+) -> Result<(OpenedPath, std::fs::Metadata), StartupError> {
+    let opened = secure_fs::open_path(Path::new(path)).map_err(|error| {
+        StartupError::new(
+            StartupErrorKind::Input,
+            format!("cannot open {kind} {path}: {error}"),
+        )
+    })?;
+    if !opened.is_file() {
+        return Err(StartupError::new(
+            StartupErrorKind::Input,
+            format!("{kind} {path} is not a regular file"),
+        ));
+    }
+    let metadata = opened.metadata().clone();
+    Ok((opened, metadata))
+}
+
+fn open_regular_file_at(
+    path: &str,
+    expected: &AdmittedTarget,
+    kind: &str,
+) -> Result<(OpenedPath, std::fs::Metadata), StartupError> {
+    let file = secure_fs::open_regular_file_exact(Path::new(path), expected).map_err(|error| {
+        StartupError::new(
+            StartupErrorKind::Input,
+            format!("cannot open {kind} {path}: {error}"),
+        )
+    })?;
+    let metadata = file.metadata().clone();
+    Ok((file, metadata))
+}
+
+fn open_regular_library_file_at(
+    path: &str,
+    expected: &AdmittedTarget,
+    kind: &str,
+    work: &mut LibraryMapWorkBudget,
+    open_operation: &str,
+    metadata_operation: &str,
+) -> Result<(OpenedPath, std::fs::Metadata), StartupError> {
+    work.charge(1, open_operation)?;
+    let (file, metadata) = open_regular_file_at(path, expected, kind)?;
+    work.charge(1, metadata_operation)?;
+    Ok((file, metadata))
 }
 
 #[derive(Debug, Clone)]
@@ -803,16 +1290,51 @@ struct LibraryMapEntry {
     patterns: Vec<String>,
 }
 
+#[derive(Debug, Clone)]
+struct LibraryMapToken {
+    value: String,
+    quoted: bool,
+}
+
+impl LibraryMapToken {
+    fn is(&self, value: &str) -> bool {
+        self.value == value
+    }
+}
+
 /// Admit library-map inputs before entering Slang. The native bridge remains
 /// cache-only, so every file named by a map is read and assigned its library
 /// identity here. Expansion is lexical, deterministic and limited to the
 /// explicit map patterns.
+#[cfg(test)]
 fn admit_library_maps(
     opts: &CompileOpts,
     identities: &mut HashSet<PathBuf>,
     library_sources: &mut Vec<LibrarySource>,
     source_count: &mut usize,
     remaining: &mut u64,
+    work: &mut LibraryMapWorkBudget,
+) -> Result<(), StartupError> {
+    let mut admitted_targets = HashMap::new();
+    admit_library_maps_with_targets(
+        opts,
+        identities,
+        library_sources,
+        source_count,
+        remaining,
+        work,
+        &mut admitted_targets,
+    )
+}
+
+fn admit_library_maps_with_targets(
+    opts: &CompileOpts,
+    identities: &mut HashSet<PathBuf>,
+    library_sources: &mut Vec<LibrarySource>,
+    source_count: &mut usize,
+    remaining: &mut u64,
+    work: &mut LibraryMapWorkBudget,
+    admitted_targets: &mut HashMap<PathBuf, AdmittedTarget>,
 ) -> Result<(), StartupError> {
     let source_limit = effective_source_count_limit(opts.limits);
     if *source_count > source_limit {
@@ -824,55 +1346,99 @@ fn admit_library_maps(
     let mut pending = Vec::new();
     let mut seen_maps = HashSet::new();
     for path in &opts.library_map_files {
-        let resolved = absolute_path(Path::new(path))?;
-        let name = resolved.to_string_lossy().into_owned();
+        work.charge(1, "map admission")?;
+        let input_path = Path::new(path);
+        charge_library_path_bytes(work, input_path, "library map path preparation")?;
+        let resolved =
+            canonicalize_library_map_path(work, input_path, "library map path resolution")?;
+        work.charge(1, "library map name allocation")?;
+        let name = resolved.actual_path().to_string_lossy().into_owned();
+        admitted_targets.insert(resolved.actual_path().to_path_buf(), resolved.clone());
         let content_limit = remaining.checked_sub(name.len() as u64).ok_or_else(|| {
             StartupError::new(
                 StartupErrorKind::LimitExceeded,
                 format!("library map path {name} exceeds the configured Slang byte limit"),
             )
         })?;
-        let text = read_bounded(&name, content_limit)?;
+        let text =
+            read_bounded_library_file_at(&name, &resolved, content_limit, work, "library map")?;
         *remaining = remaining.saturating_sub(name.len() as u64 + text.len() as u64);
-        if seen_maps.insert(resolved.clone()) {
-            pending.push((resolved, text));
+        work.charge_usize(name.len(), "library map identity admission")?;
+        let resolved_path = resolved.actual_path().to_path_buf();
+        if !seen_maps.contains(&resolved_path) {
+            work.charge(1, "library map identity clone")?;
+            seen_maps.insert(resolved_path.clone());
+            pending.push((resolved_path, text, resolved));
         }
     }
 
     let mut cursor = 0;
     while cursor < pending.len() {
-        let (map_path, text) = pending[cursor].clone();
+        let map_path_len = pending[cursor].0.to_string_lossy().len();
+        work.charge(1, "library map name processing clone")?;
+        work.charge_usize(map_path_len, "library map name processing clone")?;
+        let text_len = pending[cursor].1.len();
+        work.charge(1, "library map text processing clone")?;
+        work.charge_allocation_usize(text_len, "library map text processing clone")?;
+        let (map_path, text, map_target) = pending[cursor].clone();
         cursor += 1;
-        let (includes, entries) = parse_library_map(&text)?;
+        work.charge(1, "map parsing")?;
+        let (includes, entries) = parse_library_map(&text, work)?;
         let base = map_path.parent().unwrap_or_else(|| Path::new("."));
         for include in includes {
-            let paths = expand_library_pattern(base, &include, source_limit as u64)?;
+            let paths = expand_library_pattern_admitted_under(
+                base,
+                &include,
+                source_limit as u64,
+                work,
+                &map_target,
+            )?;
             if paths.is_empty() {
                 return Err(StartupError::new(
                     StartupErrorKind::Input,
                     format!("library map include `{include}` matched no files"),
                 ));
             }
-            for path in paths {
-                if seen_maps.insert(path.clone()) {
-                    charge_library_map_source(source_count, source_limit, "library map")?;
-                    let name = path.to_string_lossy().into_owned();
-                    let content_limit = remaining.checked_sub(name.len() as u64).ok_or_else(|| {
-                        StartupError::new(
-                            StartupErrorKind::LimitExceeded,
-                            format!("library map path {name} exceeds the configured Slang byte limit"),
-                        )
-                    })?;
-                    let map_text = read_bounded(&name, content_limit)?;
-                    *remaining =
-                        remaining.saturating_sub(name.len() as u64 + map_text.len() as u64);
-                    pending.push((path, map_text));
+            for target in paths {
+                let path = target.actual_path();
+                let path_len = path.to_string_lossy().len();
+                work.charge_usize(path_len, "library map identity admission")?;
+                if seen_maps.contains(path) {
+                    continue;
                 }
+                charge_library_map_source(source_count, source_limit, "library map")?;
+                work.charge(1, "map source admission")?;
+                work.charge(1, "library map identity clone")?;
+                seen_maps.insert(path.to_path_buf());
+                admitted_targets.insert(path.to_path_buf(), target.clone());
+                work.charge(1, "library map name allocation")?;
+                let name = path.to_string_lossy().into_owned();
+                let content_limit = remaining.checked_sub(name.len() as u64).ok_or_else(|| {
+                    StartupError::new(
+                        StartupErrorKind::LimitExceeded,
+                        format!("library map path {name} exceeds the configured Slang byte limit"),
+                    )
+                })?;
+                let map_text = read_bounded_library_file_at(
+                    &name,
+                    &target,
+                    content_limit,
+                    work,
+                    "library map",
+                )?;
+                *remaining = remaining.saturating_sub(name.len() as u64 + map_text.len() as u64);
+                pending.push((path.to_path_buf(), map_text, target));
             }
         }
         for entry in entries {
             for pattern in entry.patterns {
-                let paths = expand_library_pattern(base, &pattern, source_limit as u64)?;
+                let paths = expand_library_pattern_admitted_under(
+                    base,
+                    &pattern,
+                    source_limit as u64,
+                    work,
+                    &map_target,
+                )?;
                 if paths.is_empty() {
                     return Err(StartupError::new(
                         StartupErrorKind::Input,
@@ -882,14 +1448,22 @@ fn admit_library_maps(
                         ),
                     ));
                 }
-                for path in paths {
-                    if !identities.insert(path.clone()) {
+                for target in paths {
+                    let path = target.actual_path();
+                    let path_len = path.to_string_lossy().len();
+                    work.charge_usize(path_len, "library source identity admission")?;
+                    if identities.contains(path) {
                         return Err(StartupError::new(
                             StartupErrorKind::InvalidArgument,
                             format!("source is assigned more than once: {}", path.display()),
                         ));
                     }
                     charge_library_map_source(source_count, source_limit, "library source")?;
+                    work.charge(1, "library source admission")?;
+                    work.charge(1, "library source identity clone")?;
+                    identities.insert(path.to_path_buf());
+                    admitted_targets.insert(path.to_path_buf(), target.clone());
+                    work.charge(1, "library source name allocation")?;
                     let name = path.to_string_lossy().into_owned();
                     let name_bytes = u64::try_from(name.len()).map_err(|_| {
                         StartupError::new(
@@ -916,7 +1490,13 @@ fn admit_library_maps(
                             format!("source path {name} exceeds the configured Slang byte limit"),
                         )
                     })?;
-                    let source_text = read_bounded(&name, content_limit)?;
+                    let source_text = read_bounded_library_file_at(
+                        &name,
+                        &target,
+                        content_limit,
+                        work,
+                        "library source",
+                    )?;
                     let text_bytes = u64::try_from(source_text.len()).map_err(|_| {
                         StartupError::new(
                             StartupErrorKind::LimitExceeded,
@@ -929,6 +1509,8 @@ fn admit_library_maps(
                             format!("source path {name} exceeds the configured Slang byte limit"),
                         )
                     })?;
+                    work.charge_usize(entry.library.len(), "library source library clone")?;
+                    work.charge(1, "library source library clone")?;
                     library_sources.push(LibrarySource::new(
                         name,
                         source_text,
@@ -953,6 +1535,7 @@ fn admit_in_memory_library_maps(
     source_count: &mut usize,
     remaining: &mut u64,
     source_limit: usize,
+    work: &mut LibraryMapWorkBudget,
 ) -> Result<(), StartupError> {
     if maps.is_empty() {
         return Ok(());
@@ -967,14 +1550,20 @@ fn admit_in_memory_library_maps(
     let mut pending = Vec::new();
     let mut seen_maps = HashSet::new();
     for map in maps {
+        work.charge(1, "in-memory map admission")?;
         if map.name.is_empty() {
             return Err(StartupError::new(
                 StartupErrorKind::InvalidArgument,
                 "in-memory library map names must be nonempty",
             ));
         }
-        let key = logical_path_key(Path::new(&map.name));
-        if seen_maps.insert(key) {
+        let key = logical_path_key(Path::new(&map.name), work, "in-memory map name")?;
+        if !seen_maps.contains(&key) {
+            work.charge(1, "in-memory map name clone")?;
+            work.charge_usize(map.name.len(), "in-memory map name clone")?;
+            work.charge(1, "in-memory map text clone")?;
+            charge_library_map_text_allocation(work, &map.text, "in-memory map text clone")?;
+            seen_maps.insert(key);
             pending.push((map.name.clone(), map.text.clone()));
         }
     }
@@ -982,21 +1571,32 @@ fn admit_in_memory_library_maps(
     let mut assigned = HashSet::new();
     let mut cursor = 0;
     while cursor < pending.len() {
+        let map_name_len = pending[cursor].0.len();
+        work.charge(1, "in-memory map name processing clone")?;
+        work.charge_usize(map_name_len, "in-memory map name processing clone")?;
+        let text_len = pending[cursor].1.len();
+        work.charge(1, "in-memory map text processing clone")?;
+        work.charge_allocation_usize(text_len, "in-memory map text processing clone")?;
         let (map_name, text) = pending[cursor].clone();
         cursor += 1;
-        let (includes, entries) = parse_library_map(&text)?;
-        let base = Path::new(&map_name)
-            .parent()
-            .filter(|parent| !parent.as_os_str().is_empty())
-            .unwrap_or_else(|| Path::new("."));
+        work.charge(1, "in-memory map parsing")?;
+        let (includes, entries) = parse_library_map(&text, work)?;
+        let base = logical_map_parent(&map_name);
 
         for include in includes {
             let mut matches = Vec::new();
             for candidate in maps {
-                if map_pattern_matches(base, &include, Path::new(&candidate.name))? {
+                work.charge(1, "in-memory include candidate scan")?;
+                if map_pattern_matches(&base, &include, Path::new(&candidate.name), work)? {
                     matches.push(candidate);
                 }
             }
+            charge_key_comparison_work(
+                work,
+                matches.iter().map(|candidate| candidate.name.len()),
+                true,
+                "in-memory include ordering comparisons",
+            )?;
             matches.sort_by(|left, right| left.name.cmp(&right.name));
             if matches.is_empty() {
                 return Err(StartupError::new(
@@ -1007,8 +1607,18 @@ fn admit_in_memory_library_maps(
                 ));
             }
             for candidate in matches {
-                let key = logical_path_key(Path::new(&candidate.name));
-                if seen_maps.insert(key) {
+                work.charge(1, "in-memory map admission")?;
+                let key = logical_path_key(Path::new(&candidate.name), work, "in-memory map name")?;
+                if !seen_maps.contains(&key) {
+                    work.charge(1, "in-memory map name clone")?;
+                    work.charge_usize(candidate.name.len(), "in-memory map name clone")?;
+                    work.charge(1, "in-memory map text clone")?;
+                    charge_library_map_text_allocation(
+                        work,
+                        &candidate.text,
+                        "in-memory map text clone",
+                    )?;
+                    seen_maps.insert(key);
                     pending.push((candidate.name.clone(), candidate.text.clone()));
                 }
             }
@@ -1016,15 +1626,20 @@ fn admit_in_memory_library_maps(
 
         for entry in entries {
             for pattern in entry.patterns {
+                work.charge(1, "in-memory library pattern")?;
                 let mut source_matches = Vec::new();
                 for (index, source) in sources.iter().enumerate() {
-                    if map_pattern_matches(base, &pattern, Path::new(&source.name))? {
+                    work.charge(1, "in-memory source candidate scan")?;
+                    if map_pattern_matches(&base, &pattern, Path::new(&source.name), work)? {
+                        work.charge(1, "in-memory source match storage")?;
                         source_matches.push(index);
                     }
                 }
                 let mut library_matches = Vec::new();
                 for (index, source) in library_sources.iter().enumerate() {
-                    if map_pattern_matches(base, &pattern, Path::new(&source.name))? {
+                    work.charge(1, "in-memory library candidate scan")?;
+                    if map_pattern_matches(&base, &pattern, Path::new(&source.name), work)? {
+                        work.charge(1, "in-memory library match storage")?;
                         library_matches.push(index);
                     }
                 }
@@ -1038,34 +1653,81 @@ fn admit_in_memory_library_maps(
                     ));
                 }
 
+                charge_key_comparison_work(
+                    work,
+                    source_matches
+                        .iter()
+                        .map(|index| sources[*index].name.len()),
+                    true,
+                    "in-memory source ordering comparisons",
+                )?;
                 source_matches
                     .sort_by(|left, right| sources[*left].name.cmp(&sources[*right].name));
-                for index in source_matches.into_iter().rev() {
-                    let source = sources.remove(index);
-                    let key = logical_path_key(Path::new(&source.name));
-                    if !assigned.insert(key) {
-                        return Err(StartupError::new(
-                            StartupErrorKind::InvalidArgument,
-                            format!("source is assigned more than once: {}", source.name),
+                if !source_matches.is_empty() {
+                    let source_count = sources.len();
+                    let removal_work = source_count
+                        .checked_mul(3)
+                        .and_then(|amount| amount.checked_add(source_matches.len()))
+                        .ok_or_else(|| work.limit_error("in-memory source removal"))?;
+                    work.charge_usize(removal_work, "in-memory source removal")?;
+                    for &index in source_matches.iter().rev() {
+                        work.charge(1, "in-memory library source admission")?;
+                        charge_library_source_metadata(remaining, &entry.library)?;
+                        let key = logical_path_key(
+                            Path::new(&sources[index].name),
+                            work,
+                            "in-memory source assignment",
+                        )?;
+                        if !assigned.insert(key) {
+                            return Err(StartupError::new(
+                                StartupErrorKind::InvalidArgument,
+                                format!(
+                                    "source is assigned more than once: {}",
+                                    sources[index].name
+                                ),
+                            ));
+                        }
+                    }
+                    let mut available = std::mem::take(sources)
+                        .into_iter()
+                        .map(Some)
+                        .collect::<Vec<_>>();
+                    for index in source_matches.into_iter().rev() {
+                        let source = available[index].take().ok_or_else(|| {
+                            StartupError::new(
+                                StartupErrorKind::Internal,
+                                "library map source match indices were not unique",
+                            )
+                        })?;
+                        work.charge(1, "in-memory source library clone")?;
+                        work.charge_usize(entry.library.len(), "in-memory source library clone")?;
+                        library_sources.push(LibrarySource::new(
+                            source.name,
+                            source.text,
+                            entry.library.clone(),
                         ));
                     }
-                    charge_library_source_metadata(remaining, &entry.library)?;
-                    library_sources.push(LibrarySource::new(
-                        source.name,
-                        source.text,
-                        entry.library.clone(),
-                    ));
+                    *sources = available.into_iter().flatten().collect();
                 }
 
                 for index in library_matches.drain(..).rev() {
                     let source = &library_sources[index];
+                    work.charge_usize(
+                        source.library.len(),
+                        "in-memory matched source library comparison",
+                    )?;
+                    work.charge_usize(entry.library.len(), "in-memory map library comparison")?;
                     if source.library != entry.library {
                         return Err(StartupError::new(
                             StartupErrorKind::InvalidArgument,
                             format!("source is assigned more than once: {}", source.name),
                         ));
                     }
-                    let key = logical_path_key(Path::new(&source.name));
+                    let key = logical_path_key(
+                        Path::new(&source.name),
+                        work,
+                        "in-memory source assignment",
+                    )?;
                     if !assigned.insert(key) {
                         return Err(StartupError::new(
                             StartupErrorKind::InvalidArgument,
@@ -1095,72 +1757,353 @@ fn charge_library_source_metadata(remaining: &mut u64, library: &str) -> Result<
     Ok(())
 }
 
-fn logical_path_key(path: &Path) -> Vec<String> {
-    let mut result = Vec::new();
-    for component in path.components() {
-        match component {
-            std::path::Component::Prefix(prefix) => {
-                result.push(prefix.as_os_str().to_string_lossy().into_owned());
-            }
-            std::path::Component::RootDir => result.push(String::new()),
-            std::path::Component::CurDir => {}
-            std::path::Component::ParentDir => {
-                if result
-                    .last()
-                    .is_some_and(|part| !part.is_empty() && part != "..")
-                {
-                    result.pop();
-                } else if result.last().is_none() || result.last().is_some_and(|part| part == "..")
-                {
-                    result.push("..".to_owned());
-                }
-            }
-            std::path::Component::Normal(value) => {
-                result.push(value.to_string_lossy().into_owned());
-            }
+fn logical_path_key(
+    path: &Path,
+    work: &mut LibraryMapWorkBudget,
+    operation: &str,
+) -> Result<Vec<String>, StartupError> {
+    let values = logical_components_from_text(&path.to_string_lossy());
+    work.charge_usize(values.len(), operation)?;
+    let mut result: Vec<String> = Vec::new();
+    for component in values {
+        work.charge(1, operation)?;
+        work.charge_usize(component.len(), operation)?;
+        if component == "." {
+            continue;
         }
+        if component == ".." {
+            if result.last().is_some_and(|part| {
+                !part.is_empty() && part != ".." && !logical_prefix_component(part)
+            }) {
+                result.pop();
+            } else {
+                work.charge_usize(2, operation)?;
+                result.push(component);
+            }
+            continue;
+        }
+        result.push(component);
     }
-    result
+    Ok(result)
 }
 
-fn map_pattern_matches(base: &Path, pattern: &str, candidate: &Path) -> Result<bool, StartupError> {
+fn map_pattern_matches(
+    base: &Path,
+    pattern: &str,
+    candidate: &Path,
+    work: &mut LibraryMapWorkBudget,
+) -> Result<bool, StartupError> {
+    work.charge_usize(pattern.len(), "logical map pattern preparation")?;
     if pattern.contains('$') {
         return Err(StartupError::new(
             StartupErrorKind::InvalidArgument,
             format!("environment expansion is not allowed in library map path `{pattern}`"),
         ));
     }
-    let pattern_path = if Path::new(pattern).is_absolute() {
-        PathBuf::from(pattern)
-    } else {
-        base.join(pattern)
-    };
-    let pattern = logical_path_key(&pattern_path);
-    let candidate = logical_path_key(candidate);
-    Ok(logical_path_pattern_matches(&pattern, &candidate))
+    let pattern = logical_map_pattern_key(base, pattern, work)?;
+    let candidate = logical_path_key(candidate, work, "logical map candidate normalization")?;
+    logical_path_pattern_matches(&pattern, &candidate, work)
 }
 
-fn logical_path_pattern_matches(pattern: &[String], candidate: &[String]) -> bool {
-    if pattern.first().is_some_and(|part| part == "..") {
-        return false;
-    }
-    let mut table = vec![vec![false; candidate.len() + 1]; pattern.len() + 1];
-    table[0][0] = true;
-    for (pattern_index, component) in pattern.iter().enumerate() {
-        if component == "**" {
-            for candidate_index in 0..=candidate.len() {
-                table[pattern_index + 1][candidate_index] = table[pattern_index][candidate_index]
-                    || (candidate_index > 0 && table[pattern_index + 1][candidate_index - 1]);
+#[derive(Debug)]
+struct LogicalMapPatternComponent {
+    value: String,
+    wildcards: bool,
+}
+
+fn logical_map_pattern_key(
+    base: &Path,
+    pattern: &str,
+    work: &mut LibraryMapWorkBudget,
+) -> Result<Vec<LogicalMapPatternComponent>, StartupError> {
+    let absolute = logical_text_is_absolute(pattern);
+    let mut result = if absolute {
+        Vec::new()
+    } else {
+        let base_components = logical_path_key(base, work, "logical map base normalization")?;
+        work.charge_usize(base_components.len(), "logical map base component storage")?;
+        base_components
+            .into_iter()
+            .map(|value| LogicalMapPatternComponent {
+                value,
+                wildcards: false,
+            })
+            .collect()
+    };
+    let components = logical_components_from_text(pattern);
+    let component_count = components.len();
+    work.charge_usize(component_count, "logical map pattern component storage")?;
+    for component in components {
+        work.charge(1, "logical map pattern normalization")?;
+        work.charge_usize(component.len(), "logical map pattern normalization")?;
+        if component == "." {
+            continue;
+        }
+        if component.is_empty()
+            && result.last().is_some_and(|part| {
+                part.value.len() == 2
+                    && part.value.as_bytes()[0].is_ascii_alphabetic()
+                    && part.value.as_bytes()[1] == b':'
+            })
+        {
+            // Keep the root marker after a Windows drive prefix.  Clearing
+            // the result here would turn `C:\\root\\*.sv` into a path
+            // relative to the drive rather than an absolute path.
+            work.charge(1, "logical map pattern normalization")?;
+            result.push(LogicalMapPatternComponent {
+                value: component,
+                wildcards: false,
+            });
+        } else if logical_prefix_component(&component) {
+            result.clear();
+            result.push(LogicalMapPatternComponent {
+                value: component,
+                wildcards: false,
+            });
+        } else if component == ".." {
+            if result.last().is_some_and(|part| {
+                !part.value.is_empty()
+                    && part.value != ".."
+                    && !logical_prefix_component(&part.value)
+            }) {
+                result.pop();
+            } else {
+                work.charge(1, "logical map pattern normalization")?;
+                result.push(LogicalMapPatternComponent {
+                    value: component,
+                    wildcards: false,
+                });
             }
         } else {
-            for candidate_index in 0..candidate.len() {
-                table[pattern_index + 1][candidate_index + 1] = table[pattern_index]
-                    [candidate_index]
-                    && wildcard_component_matches(&candidate[candidate_index], component);
-            }
+            work.charge(1, "logical map pattern normalization")?;
+            result.push(LogicalMapPatternComponent {
+                wildcards: text_has_wildcard(&component),
+                value: component,
+            });
         }
     }
-    table[pattern.len()][candidate.len()]
+    Ok(result)
+}
+
+fn logical_prefix_component(value: &str) -> bool {
+    value.is_empty()
+        || value.starts_with("//")
+        || (value.len() == 2
+            && value.as_bytes()[0].is_ascii_alphabetic()
+            && value.as_bytes()[1] == b':')
+}
+
+fn logical_map_parent(name: &str) -> PathBuf {
+    let Some(index) = name.rfind(['/', '\\']) else {
+        return PathBuf::from(".");
+    };
+    if index == 0 {
+        PathBuf::from(&name[..1])
+    } else if index == 2 && name.as_bytes()[1] == b':' && name.as_bytes()[0].is_ascii_alphabetic() {
+        // `Path` uses the host spelling, so preserve a Windows drive root
+        // lexically even when the map is being matched on Unix.
+        PathBuf::from(&name[..=index])
+    } else {
+        PathBuf::from(&name[..index])
+    }
+}
+
+fn logical_text_is_absolute(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    bytes
+        .first()
+        .is_some_and(|byte| matches!(byte, b'/' | b'\\'))
+        || (bytes.len() >= 3
+            && bytes[1] == b':'
+            && !bytes[2].is_ascii_whitespace()
+            && matches!(bytes[2], b'/' | b'\\'))
+}
+
+fn logical_components_from_text(text: &str) -> Vec<String> {
+    let bytes = text.as_bytes();
+    let separator = |character: char| matches!(character, '/' | '\\');
+    let separator_byte = |byte: u8| matches!(byte, b'/' | b'\\');
+    let mut result = Vec::new();
+    let mut start = 0;
+    if bytes.len() >= 2 && separator_byte(bytes[0]) && separator_byte(bytes[1]) {
+        let parts = text[2..]
+            .split(separator)
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>();
+        if parts.len() >= 2 {
+            result.push(format!("//{}/{}", parts[0], parts[1]));
+            let prefix_len = 2 + parts[0].len() + 1 + parts[1].len();
+            start = prefix_len;
+            while start < text.len() && separator_byte(bytes[start]) {
+                start += 1;
+            }
+        } else {
+            result.push("//".to_owned());
+            start = 2;
+        }
+    } else if bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
+        result.push(text[..2].to_owned());
+        start = 2;
+        if start < text.len() && separator_byte(bytes[start]) {
+            result.push(String::new());
+            while start < text.len() && separator_byte(bytes[start]) {
+                start += 1;
+            }
+        }
+    } else if bytes.first().is_some_and(|byte| separator_byte(*byte)) {
+        result.push(String::new());
+        while start < text.len() && separator_byte(bytes[start]) {
+            start += 1;
+        }
+    }
+    for part in text[start..]
+        .split(separator)
+        .filter(|part| !part.is_empty())
+    {
+        result.push(part.to_owned());
+    }
+    result
+}
+
+fn logical_path_pattern_matches(
+    pattern: &[LogicalMapPatternComponent],
+    candidate: &[String],
+    work: &mut LibraryMapWorkBudget,
+) -> Result<bool, StartupError> {
+    let first_is_parent = if let Some(first) = pattern.first() {
+        if first.wildcards {
+            false
+        } else {
+            charge_logical_component_comparison(work, &first.value, "..")?
+        }
+    } else {
+        false
+    };
+    if first_is_parent {
+        return Ok(false);
+    }
+
+    // Greedy backtracking keeps only the current positions and the last `**`.
+    // Every loop retry and every component comparison is charged at the point
+    // where it happens, including the bytes inspected by literal equality.
+    let mut pattern_index = 0;
+    let mut candidate_index = 0;
+    let mut star_index = None;
+    let mut star_candidate = 0;
+    while candidate_index < candidate.len() {
+        work.charge(1, "logical path matching step")?;
+        let recursive = if pattern_index < pattern.len() && pattern[pattern_index].wildcards {
+            charge_logical_component_comparison(work, &pattern[pattern_index].value, "**")?
+        } else {
+            false
+        };
+        if pattern_index < pattern.len() && !recursive {
+            let pattern_component = &pattern[pattern_index];
+            let matched = if pattern_component.wildcards {
+                wildcard_component_matches(
+                    &candidate[candidate_index],
+                    &pattern_component.value,
+                    work,
+                )?
+            } else {
+                charge_logical_value_comparison(
+                    work,
+                    &candidate[candidate_index],
+                    &pattern_component.value,
+                )?
+            };
+            if matched {
+                pattern_index += 1;
+                candidate_index += 1;
+                continue;
+            }
+        } else if recursive {
+            star_index = Some(pattern_index);
+            pattern_index += 1;
+            star_candidate = candidate_index;
+            continue;
+        }
+
+        let Some(star) = star_index else {
+            return Ok(false);
+        };
+        work.charge(1, "logical path matching backtracking")?;
+        star_candidate += 1;
+        candidate_index = star_candidate;
+        pattern_index = star + 1;
+    }
+    while pattern_index < pattern.len() && pattern[pattern_index].wildcards {
+        let recursive =
+            charge_logical_component_comparison(work, &pattern[pattern_index].value, "**")?;
+        if !recursive {
+            break;
+        }
+        pattern_index += 1;
+    }
+    Ok(pattern_index == pattern.len())
+}
+
+fn charge_logical_component_comparison(
+    work: &mut LibraryMapWorkBudget,
+    value: &str,
+    literal: &str,
+) -> Result<bool, StartupError> {
+    work.charge(1, "logical path component comparison")?;
+    work.charge_usize(value.len(), "logical path component comparison")?;
+    work.charge_usize(literal.len(), "logical path component comparison")?;
+    Ok(value == literal)
+}
+
+fn charge_logical_value_comparison(
+    work: &mut LibraryMapWorkBudget,
+    value: &str,
+    pattern: &str,
+) -> Result<bool, StartupError> {
+    work.charge(1, "logical path literal comparison")?;
+    work.charge_usize(value.len(), "logical path literal comparison")?;
+    work.charge_usize(pattern.len(), "logical path literal comparison")?;
+    Ok(value == pattern)
+}
+
+fn wildcard_component_matches(
+    value: &str,
+    pattern: &str,
+    work: &mut LibraryMapWorkBudget,
+) -> Result<bool, StartupError> {
+    // The usual greedy `*` matcher is constant-memory. A star remembers the
+    // next value position to retry, so it never needs a byte-by-byte table.
+    // Charge every loop iteration: a failed suffix can cause the greedy
+    // matcher to replay that suffix for each later value position.
+    let value = value.as_bytes();
+    let pattern = pattern.as_bytes();
+    let mut value_index = 0;
+    let mut pattern_index = 0;
+    let mut star_index = None;
+    let mut star_value = 0;
+    while value_index < value.len() {
+        work.charge(1, "byte matching step")?;
+        if pattern_index < pattern.len() && pattern[pattern_index] == b'*' {
+            star_index = Some(pattern_index);
+            pattern_index += 1;
+            star_value = value_index;
+        } else if pattern_index < pattern.len()
+            && (pattern[pattern_index] == b'?' || pattern[pattern_index] == value[value_index])
+        {
+            pattern_index += 1;
+            value_index += 1;
+        } else if let Some(star) = star_index {
+            star_value += 1;
+            value_index = star_value;
+            pattern_index = star + 1;
+        } else {
+            return Ok(false);
+        }
+    }
+    while pattern_index < pattern.len() && pattern[pattern_index] == b'*' {
+        work.charge(1, "byte matching trailing-star step")?;
+        pattern_index += 1;
+    }
+    Ok(pattern_index == pattern.len())
 }
 
 fn charge_library_map_source(
@@ -1178,13 +2121,17 @@ fn charge_library_map_source(
     Ok(())
 }
 
-fn parse_library_map(text: &str) -> Result<(Vec<String>, Vec<LibraryMapEntry>), StartupError> {
-    let tokens = library_map_tokens(text)?;
+fn parse_library_map(
+    text: &str,
+    work: &mut LibraryMapWorkBudget,
+) -> Result<(Vec<String>, Vec<LibraryMapEntry>), StartupError> {
+    work.charge_usize(text.len(), "library map tokenization")?;
+    let tokens = library_map_tokens(text, work)?;
     let mut includes = Vec::new();
     let mut entries = Vec::new();
     let mut index = 0;
     while index < tokens.len() {
-        match tokens[index].as_str() {
+        match tokens[index].value.as_str() {
             "include" => {
                 let Some(path) = tokens.get(index + 1) else {
                     return Err(StartupError::new(
@@ -1192,9 +2139,10 @@ fn parse_library_map(text: &str) -> Result<(Vec<String>, Vec<LibraryMapEntry>), 
                         "library map include requires a path",
                     ));
                 };
-                includes.push(path.clone());
+                charge_library_map_clone(work, &path.value, "library map include clone")?;
+                includes.push(path.value.clone());
                 index += 2;
-                while index < tokens.len() && tokens[index] != ";" {
+                while index < tokens.len() && !tokens[index].is(";") {
                     index += 1;
                 }
             }
@@ -1206,46 +2154,106 @@ fn parse_library_map(text: &str) -> Result<(Vec<String>, Vec<LibraryMapEntry>), 
                     ));
                 };
                 let mut patterns = Vec::new();
+                charge_library_map_clone(work, &name.value, "library map library-name clone")?;
                 index += 2;
-                while index < tokens.len() && tokens[index] != ";" {
-                    if tokens[index] == "," {
+                while index < tokens.len() && !tokens[index].is(";") {
+                    if tokens[index].is(",") {
                         index += 1;
                         continue;
                     }
-                    if tokens[index] == "-incdir" {
+                    if tokens[index].is("-incdir") && !tokens[index].quoted {
                         index += 1;
-                        while index < tokens.len() && tokens[index] != ";" {
+                        while index < tokens.len() && !tokens[index].is(";") {
                             index += 1;
                         }
                         break;
                     }
-                    patterns.push(tokens[index].clone());
+                    charge_library_map_clone(
+                        work,
+                        &tokens[index].value,
+                        "library map pattern clone",
+                    )?;
+                    patterns.push(tokens[index].value.clone());
                     index += 1;
                 }
                 if patterns.is_empty() {
                     return Err(StartupError::new(
                         StartupErrorKind::InvalidArgument,
-                        format!("library `{name}` has no source patterns"),
+                        format!("library `{}` has no source patterns", name.value),
                     ));
                 }
+                work.charge(1, "library map entry allocation")?;
                 entries.push(LibraryMapEntry {
-                    library: name.clone(),
+                    library: name.value.clone(),
                     patterns,
                 });
             }
             _ => {}
         }
-        while index < tokens.len() && tokens[index] == ";" {
+        while index < tokens.len() && tokens[index].is(";") {
             index += 1;
         }
-        if index < tokens.len() && tokens[index] != "include" && tokens[index] != "library" {
+        if index < tokens.len() && !tokens[index].is("include") && !tokens[index].is("library") {
             index += 1;
         }
     }
     Ok((includes, entries))
 }
 
-fn library_map_tokens(text: &str) -> Result<Vec<String>, StartupError> {
+fn charge_library_map_clone(
+    work: &mut LibraryMapWorkBudget,
+    value: &str,
+    operation: &str,
+) -> Result<(), StartupError> {
+    work.charge(1, operation)?;
+    work.charge_allocation_usize(value.len(), operation)
+}
+
+fn push_library_map_token(
+    tokens: &mut Vec<LibraryMapToken>,
+    value: &str,
+    work: &mut LibraryMapWorkBudget,
+    operation: &str,
+) -> Result<(), StartupError> {
+    charge_library_map_clone(work, value, operation)?;
+    tokens.push(LibraryMapToken {
+        value: value.to_owned(),
+        quoted: false,
+    });
+    Ok(())
+}
+
+fn starts_library_map_line_comment(bytes: &[u8], index: usize, path_context: bool) -> bool {
+    if bytes.get(index) != Some(&b'/') || bytes.get(index + 1) != Some(&b'/') {
+        return false;
+    }
+    if !path_context {
+        return true;
+    }
+    let content_start = index + 2;
+    if content_start >= bytes.len() || bytes[content_start].is_ascii_whitespace() {
+        return true;
+    }
+
+    // A leading `//` is also a valid UNC path. Treat it as a comment only
+    // when the following token has no path separator, which leaves ordinary
+    // `// comment` forms unambiguous while preserving `//server/share`.
+    let mut end = content_start;
+    while end < bytes.len()
+        && !bytes[end].is_ascii_whitespace()
+        && !matches!(bytes[end], b';' | b',')
+    {
+        end += 1;
+    }
+    !bytes[content_start..end]
+        .iter()
+        .any(|byte| matches!(byte, b'/' | b'\\'))
+}
+
+fn library_map_tokens(
+    text: &str,
+    work: &mut LibraryMapWorkBudget,
+) -> Result<Vec<LibraryMapToken>, StartupError> {
     let bytes = text.as_bytes();
     let mut tokens = Vec::new();
     let mut index = 0;
@@ -1254,14 +2262,18 @@ fn library_map_tokens(text: &str) -> Result<Vec<String>, StartupError> {
             index += 1;
             continue;
         }
-        if bytes[index] == b'/' && bytes.get(index + 1) == Some(&b'/') {
+        let path_context = library_map_path_context(&tokens);
+        if starts_library_map_line_comment(bytes, index, path_context) {
             index += 2;
             while index < bytes.len() && bytes[index] != b'\n' {
                 index += 1;
             }
             continue;
         }
-        if bytes[index] == b'/' && bytes.get(index + 1) == Some(&b'*') {
+        if bytes[index] == b'/'
+            && bytes.get(index + 1) == Some(&b'*')
+            && (!path_context || starts_library_map_block_comment(bytes, index))
+        {
             index += 2;
             while index + 1 < bytes.len() && !(bytes[index] == b'*' && bytes[index + 1] == b'/') {
                 index += 1;
@@ -1277,26 +2289,58 @@ fn library_map_tokens(text: &str) -> Result<Vec<String>, StartupError> {
         }
         if bytes[index] == b'"' {
             index += 1;
-            let mut token = String::new();
-            while index < bytes.len() && bytes[index] != b'"' {
-                if bytes[index] == b'\\' && index + 1 < bytes.len() {
-                    index += 1;
+            let content_start = index;
+            let mut end = index;
+            while end < bytes.len() {
+                if bytes[end] == b'"' {
+                    let mut backslashes = 0_usize;
+                    let mut preceding = end;
+                    while preceding > content_start && bytes[preceding - 1] == b'\\' {
+                        backslashes += 1;
+                        preceding -= 1;
+                    }
+                    if backslashes.is_multiple_of(2) {
+                        break;
+                    }
                 }
-                token.push(bytes[index] as char);
-                index += 1;
+                end += 1;
             }
-            if index >= bytes.len() {
+            if end >= bytes.len() {
                 return Err(StartupError::new(
                     StartupErrorKind::InvalidArgument,
                     "unterminated library map string",
                 ));
             }
-            index += 1;
-            tokens.push(token);
+            charge_library_map_clone(
+                work,
+                &text[content_start..end],
+                "library map quoted token allocation",
+            )?;
+            work.charge_allocation_usize(
+                end - content_start,
+                "library map quoted token allocation",
+            )?;
+            index = end + 1;
+            let token = String::from_utf8(bytes[content_start..end].to_vec()).map_err(|_| {
+                StartupError::new(
+                    StartupErrorKind::InvalidArgument,
+                    "library map quoted string is not valid UTF-8",
+                )
+            })?;
+            tokens.push(LibraryMapToken {
+                value: token,
+                quoted: true,
+            });
             continue;
         }
         if matches!(bytes[index], b';' | b',') {
-            tokens.push((bytes[index] as char).to_string());
+            let punctuation = if bytes[index] == b';' { ";" } else { "," };
+            push_library_map_token(
+                &mut tokens,
+                punctuation,
+                work,
+                "library map punctuation token allocation",
+            )?;
             index += 1;
             continue;
         }
@@ -1307,237 +2351,531 @@ fn library_map_tokens(text: &str) -> Result<Vec<String>, StartupError> {
         {
             index += 1;
         }
-        tokens.push(text[start..index].to_owned());
+        push_library_map_token(
+            &mut tokens,
+            &text[start..index],
+            work,
+            "library map token allocation",
+        )?;
     }
     Ok(tokens)
 }
 
-struct LibraryPatternBudget {
-    traversed: u64,
+fn library_map_path_context(tokens: &[LibraryMapToken]) -> bool {
+    let start = tokens
+        .iter()
+        .rposition(|token| token.is(";"))
+        .map_or(0, |index| index + 1);
+    let statement = &tokens[start..];
+    match statement.first().map(|token| token.value.as_str()) {
+        Some("include") => statement.len() == 1,
+        Some("library") => {
+            statement.len() == 2 || statement.last().is_some_and(|token| token.is(","))
+        }
+        _ => false,
+    }
+}
+
+fn starts_library_map_block_comment(bytes: &[u8], index: usize) -> bool {
+    let content_start = index + 2;
+    // `/**/` is both an empty block comment and the first four bytes of an
+    // absolute recursive pattern such as `/**/*.sv`.  A wildcard suffix
+    // identifies the latter; a literal suffix keeps the ordinary comment
+    // behavior even when it is adjacent to the comment terminator.
+    if bytes.get(content_start) == Some(&b'*')
+        && bytes.get(content_start + 1) == Some(&b'/')
+        && bytes
+            .get(content_start + 2)
+            .is_some_and(|byte| matches!(byte, b'*' | b'?'))
+    {
+        return false;
+    }
+    if bytes
+        .get(content_start)
+        .is_some_and(u8::is_ascii_whitespace)
+    {
+        return true;
+    }
+    let mut cursor = content_start;
+    while cursor + 1 < bytes.len() && !matches!(bytes[cursor], b';' | b',') {
+        if bytes[cursor] == b'*' && bytes[cursor + 1] == b'/' {
+            return true;
+        }
+        cursor += 1;
+    }
+    false
+}
+
+struct LibraryPatternBudget<'a> {
+    work: &'a mut LibraryMapWorkBudget,
     matches: u64,
     max_matches: u64,
 }
 
-impl LibraryPatternBudget {
+impl LibraryPatternBudget<'_> {
     fn visit(&mut self) -> Result<(), StartupError> {
-        self.traversed = self.traversed.checked_add(1).ok_or_else(|| {
-            StartupError::new(
-                StartupErrorKind::LimitExceeded,
-                "library map traversal exceeds the admission limit",
-            )
-        })?;
-        if self.traversed > MAX_LIBRARY_MAP_TRAVERSAL {
-            return Err(StartupError::new(
-                StartupErrorKind::LimitExceeded,
-                "library map traversal exceeds the admission limit",
-            ));
-        }
-        Ok(())
+        self.work.charge(1, "filesystem traversal")
     }
 
     fn match_path(&mut self) -> Result<(), StartupError> {
-        self.matches = self.matches.checked_add(1).ok_or_else(|| {
-            StartupError::new(
-                StartupErrorKind::LimitExceeded,
-                "library map pattern matches exceed the source limit",
-            )
-        })?;
-        if self.matches > self.max_matches {
+        if self.matches >= self.max_matches {
             return Err(StartupError::new(
                 StartupErrorKind::LimitExceeded,
-                "library map pattern matches exceed the source limit",
+                "library map pattern matches exceed the source limit; reduce matching files or raise max_sources",
             ));
         }
+        self.work.charge(1, "filesystem source matching")?;
+        self.matches = self
+            .matches
+            .checked_add(1)
+            .ok_or_else(|| self.work.limit_error("filesystem source matching"))?;
         Ok(())
     }
 }
 
+fn charge_library_pattern_entry_name(
+    work: &mut LibraryMapWorkBudget,
+    name: &std::ffi::OsStr,
+) -> Result<(), StartupError> {
+    let name_len = name.to_string_lossy().len();
+    work.charge_usize(name_len, "filesystem directory entry name")
+}
+
+fn charge_library_pattern_child_path(
+    work: &mut LibraryMapWorkBudget,
+    parent: &Path,
+    name: &std::ffi::OsStr,
+) -> Result<(), StartupError> {
+    charge_library_path_join(work, parent, name, "filesystem child path bytes")?;
+    work.charge(1, "filesystem child path storage")?;
+    work.charge(2, "filesystem path inspection")
+}
+
+fn charge_library_pattern_component(
+    work: &mut LibraryMapWorkBudget,
+    component: &std::ffi::OsStr,
+    operation: &str,
+) -> Result<(), StartupError> {
+    work.charge_usize(component.to_string_lossy().len(), operation)
+}
+
+#[cfg(test)]
 fn expand_library_pattern(
     base: &Path,
     pattern: &str,
     max_matches: u64,
+    work: &mut LibraryMapWorkBudget,
 ) -> Result<Vec<PathBuf>, StartupError> {
+    Ok(
+        expand_library_pattern_admitted(base, pattern, max_matches, work)?
+            .into_iter()
+            .map(|target| target.actual_path().to_path_buf())
+            .collect(),
+    )
+}
+
+#[cfg(test)]
+fn expand_library_pattern_admitted(
+    base: &Path,
+    pattern: &str,
+    max_matches: u64,
+    work: &mut LibraryMapWorkBudget,
+) -> Result<Vec<AdmittedTarget>, StartupError> {
+    expand_library_pattern_admitted_with_base(base, pattern, max_matches, work, None)
+}
+
+fn expand_library_pattern_admitted_under(
+    base: &Path,
+    pattern: &str,
+    max_matches: u64,
+    work: &mut LibraryMapWorkBudget,
+    map_target: &AdmittedTarget,
+) -> Result<Vec<AdmittedTarget>, StartupError> {
+    work.charge(2, "filesystem map anchor admission")?;
+    let base_handle = secure_fs::open_parent_of_target(map_target).map_err(|error| {
+        StartupError::new(
+            StartupErrorKind::Input,
+            format!("cannot reopen library map base {}: {error}", base.display()),
+        )
+    })?;
+    expand_library_pattern_admitted_with_base(base, pattern, max_matches, work, Some(&base_handle))
+}
+
+fn expand_library_pattern_admitted_with_base(
+    base: &Path,
+    pattern: &str,
+    max_matches: u64,
+    work: &mut LibraryMapWorkBudget,
+    admitted_base: Option<&OpenedPath>,
+) -> Result<Vec<AdmittedTarget>, StartupError> {
+    work.charge_usize(pattern.len(), "filesystem pattern preparation")?;
     if pattern.contains('$') {
         return Err(StartupError::new(
             StartupErrorKind::InvalidArgument,
             format!("environment expansion is not allowed in library map path `{pattern}`"),
         ));
     }
-    let candidate = if Path::new(pattern).is_absolute() {
-        PathBuf::from(pattern)
-    } else {
-        base.join(pattern)
-    };
-    let components = candidate.components().collect::<Vec<_>>();
+    if max_matches == 0 {
+        return Err(StartupError::new(
+            StartupErrorKind::LimitExceeded,
+            "library map pattern matches exceed the source limit; reduce matching files or raise max_sources",
+        ));
+    }
+    let pattern_path = Path::new(pattern);
+    let component_count = pattern_path.components().count();
+    if component_count > MAX_LIBRARY_PATTERN_COMPONENTS {
+        return Err(StartupError::new(
+            StartupErrorKind::LimitExceeded,
+            format!(
+                "library map pattern component depth exceeds the limit of {MAX_LIBRARY_PATTERN_COMPONENTS}; simplify the pattern"
+            ),
+        ));
+    }
+    work.charge_usize(component_count, "filesystem pattern component storage")?;
+    let components = pattern_path.components().collect::<Vec<_>>();
     let wildcard_index = components
         .iter()
         .position(|component| component_has_wildcard(component.as_os_str()));
-    let Some(wildcard_index) = wildcard_index else {
-        let path = candidate.canonicalize().map_err(|error| {
+    let owned_base_handle = if pattern_path.is_absolute() || admitted_base.is_some() {
+        None
+    } else {
+        Some(secure_fs::open_path(base).map_err(|error| {
             StartupError::new(
                 StartupErrorKind::Input,
-                format!(
-                    "cannot resolve library map path {}: {error}",
-                    candidate.display()
-                ),
+                format!("cannot open library map base {}: {error}", base.display()),
             )
-        })?;
-        if !path.is_file() {
+        })?)
+    };
+    let base_handle = admitted_base.or(owned_base_handle.as_ref());
+    let Some(wildcard_index) = wildcard_index else {
+        if pattern_path.is_absolute() {
+            charge_library_path_bytes(work, pattern_path, "filesystem pattern path bytes")?;
+            work.charge(1, "filesystem pattern path storage")?;
+        } else {
+            charge_library_path_join(
+                work,
+                base,
+                pattern_path.as_os_str(),
+                "filesystem pattern path bytes",
+            )?;
+            work.charge(1, "filesystem pattern path storage")?;
+        }
+        let candidate = if pattern_path.is_absolute() {
+            PathBuf::from(pattern)
+        } else {
+            base.join(pattern)
+        };
+        work.charge(1, "filesystem path resolution")?;
+        let opened = if pattern_path.is_absolute() {
+            secure_fs::open_path(&candidate)
+        } else {
+            let base_handle = base_handle.ok_or_else(|| {
+                StartupError::new(
+                    StartupErrorKind::Input,
+                    format!("cannot open library map base {}", base.display()),
+                )
+            })?;
+            secure_fs::open_path_under(&candidate, base_handle)
+        };
+        let opened = match opened {
+            Ok(opened) => opened,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => {
+                return Err(StartupError::new(
+                    StartupErrorKind::Input,
+                    format!(
+                        "cannot inspect library map path {}: {error}",
+                        candidate.display()
+                    ),
+                ));
+            }
+        };
+        work.charge(1, "filesystem source check")?;
+        if !opened.is_file() {
             return Ok(Vec::new());
         }
-        if max_matches == 0 {
-            return Err(StartupError::new(
-                StartupErrorKind::LimitExceeded,
-                "library map pattern matches exceed the source limit",
-            ));
-        }
-        return Ok(vec![path]);
+        work.charge(1, "filesystem source matching")?;
+        return Ok(vec![opened.admitted_target()]);
     };
-    let mut anchor = PathBuf::new();
+
+    let mut anchor = if pattern_path.is_absolute() {
+        work.charge(1, "filesystem pattern anchor storage")?;
+        PathBuf::new()
+    } else {
+        charge_library_path_bytes(work, base, "filesystem pattern anchor base bytes")?;
+        work.charge(1, "filesystem pattern anchor storage")?;
+        PathBuf::from(base)
+    };
     for component in &components[..wildcard_index] {
+        charge_library_pattern_child_path(work, &anchor, component.as_os_str())?;
         anchor.push(component.as_os_str());
     }
-    let rest = components[wildcard_index..]
-        .iter()
-        .map(|component| component.as_os_str().to_owned())
-        .collect::<Vec<_>>();
-    let anchor = anchor.canonicalize().map_err(|error| {
+    let rest_len = components.len() - wildcard_index;
+    work.charge_usize(rest_len, "filesystem pattern suffix storage")?;
+    let mut rest = Vec::with_capacity(rest_len);
+    for component in &components[wildcard_index..] {
+        charge_library_pattern_component(
+            work,
+            component.as_os_str(),
+            "filesystem pattern suffix bytes",
+        )?;
+        work.charge(1, "filesystem pattern suffix allocation")?;
+        rest.push(component.as_os_str().to_owned());
+    }
+    work.charge(1, "filesystem pattern anchor resolution")?;
+    let anchor = if pattern_path.is_absolute() {
+        secure_fs::open_path(&anchor)
+    } else {
+        if anchor == base {
+            let base_handle = base_handle.ok_or_else(|| {
+                StartupError::new(
+                    StartupErrorKind::Input,
+                    format!("cannot open library map base {}", base.display()),
+                )
+            })?;
+            Ok(base_handle.try_clone().map_err(|error| {
+                StartupError::new(
+                    StartupErrorKind::Input,
+                    format!("cannot clone library map base {}: {error}", base.display()),
+                )
+            })?)
+        } else {
+            let base_handle = base_handle.ok_or_else(|| {
+                StartupError::new(
+                    StartupErrorKind::Input,
+                    format!("cannot open library map base {}", base.display()),
+                )
+            })?;
+            secure_fs::open_path_under(&anchor, base_handle)
+        }
+    }
+    .map_err(|error| {
         StartupError::new(
             StartupErrorKind::Input,
             format!(
-                "cannot resolve library map directory {}: {error}",
+                "cannot resolve library map pattern anchor {}: {error}",
                 anchor.display()
             ),
         )
     })?;
     let mut matches = Vec::new();
     let mut budget = LibraryPatternBudget {
-        traversed: 0,
+        work,
         matches: 0,
         max_matches,
     };
-    walk_library_pattern(&anchor, &rest, &mut matches, &mut budget)?;
-    matches.sort();
-    matches.dedup();
+    let mut ancestors = Vec::new();
+    walk_library_pattern(&anchor, &rest, &mut matches, &mut budget, 0, &mut ancestors)?;
+    charge_key_comparison_work(
+        budget.work,
+        matches.iter().map(|target: &AdmittedTarget| {
+            target.actual_path().as_os_str().to_string_lossy().len()
+        }),
+        true,
+        "filesystem match ordering comparisons",
+    )?;
+    matches.sort_by(|left, right| left.actual_path().cmp(right.actual_path()));
+    charge_key_comparison_work(
+        budget.work,
+        matches.iter().map(|target: &AdmittedTarget| {
+            target.actual_path().as_os_str().to_string_lossy().len()
+        }),
+        false,
+        "filesystem match deduplication comparisons",
+    )?;
+    matches.dedup_by(|left, right| left.actual_path() == right.actual_path());
     Ok(matches)
 }
 
 fn walk_library_pattern(
-    current: &Path,
+    current: &OpenedPath,
     components: &[std::ffi::OsString],
-    matches: &mut Vec<PathBuf>,
+    matches: &mut Vec<AdmittedTarget>,
     budget: &mut LibraryPatternBudget,
+    depth: usize,
+    ancestors: &mut Vec<FileIdentity>,
 ) -> Result<(), StartupError> {
+    if depth > MAX_LIBRARY_PATTERN_COMPONENTS {
+        return Err(StartupError::new(
+            StartupErrorKind::LimitExceeded,
+            format!(
+                "library map pattern recursion depth exceeds the limit of {MAX_LIBRARY_PATTERN_COMPONENTS}; simplify the pattern"
+            ),
+        ));
+    }
+    let next_depth = depth
+        .checked_add(1)
+        .ok_or_else(|| budget.work.limit_error("filesystem pattern recursion"))?;
     budget.visit()?;
-    if is_symlink_directory(current) {
+    budget.work.charge(2, "filesystem path inspection")?;
+    let current_identity = current.identity();
+    if ancestors.contains(&current_identity)
+        && ancestors
+            .last()
+            .is_none_or(|last| *last != current_identity)
+    {
         return Ok(());
     }
+    budget.work.charge(1, "filesystem ancestor comparison")?;
+    ancestors.push(current_identity);
     if components.is_empty() {
+        budget.work.charge(1, "filesystem source check")?;
         if current.is_file() {
             budget.match_path()?;
-            matches.push(current.canonicalize().map_err(|error| {
-                StartupError::new(
-                    StartupErrorKind::Input,
-                    format!(
-                        "cannot resolve library source {}: {error}",
-                        current.display()
-                    ),
-                )
-            })?);
+            budget.work.charge(1, "filesystem match storage")?;
+            matches.push(current.admitted_target());
         }
+        ancestors.pop();
         return Ok(());
     }
     let component = components[0].to_string_lossy();
+    budget
+        .work
+        .charge_usize(component.len(), "filesystem pattern component")?;
     if component == "**" {
-        walk_library_pattern(current, &components[1..], matches, budget)?;
-        let mut children = Vec::new();
-        for entry in std::fs::read_dir(current)
-            .map_err(|error| StartupError::new(StartupErrorKind::Input, error.to_string()))?
-        {
-            budget.visit()?;
-            let Ok(entry) = entry else {
-                continue;
-            };
-            let path = entry.path();
-            if is_symlink_directory(&path) {
-                continue;
-            }
-            if path.is_dir() {
-                children.push(path);
-            }
-        }
-        children.sort();
-        for child in children {
-            walk_library_pattern(&child, components, matches, budget)?;
-        }
-    } else if component_has_wildcard(components[0].as_os_str()) {
-        let mut children = Vec::new();
-        for entry in std::fs::read_dir(current)
-            .map_err(|error| StartupError::new(StartupErrorKind::Input, error.to_string()))?
-        {
-            budget.visit()?;
-            let Ok(entry) = entry else {
-                continue;
-            };
-            let path = entry.path();
-            if is_symlink_directory(&path) {
-                continue;
-            }
-            children.push(path);
-        }
-        children.sort();
-        for child in children {
-            let Some(name) = child.file_name() else {
-                continue;
-            };
-            if wildcard_component_matches(&name.to_string_lossy(), &component) {
-                walk_library_pattern(&child, &components[1..], matches, budget)?;
-            }
-        }
-    } else {
         walk_library_pattern(
-            &current.join(component.as_ref()),
+            current,
             &components[1..],
             matches,
             budget,
+            next_depth,
+            ancestors,
         )?;
+        let mut children = Vec::new();
+        budget.work.charge(1, "filesystem directory scan")?;
+        if !current.is_dir() {
+            ancestors.pop();
+            return Ok(());
+        }
+        for entry in current.read_dir().map_err(|error| {
+            StartupError::new(
+                StartupErrorKind::Input,
+                format!(
+                    "cannot read library map directory {}: {error}",
+                    current.actual_path().display()
+                ),
+            )
+        })? {
+            budget.work.charge(1, "filesystem directory entry")?;
+            let file_name = match entry {
+                Ok(file_name) => file_name,
+                Err(_) => continue,
+            };
+            charge_library_pattern_entry_name(budget.work, &file_name)?;
+            charge_library_pattern_child_path(budget.work, current.actual_path(), &file_name)?;
+            let Ok(child) = current.open_child(&file_name) else {
+                continue;
+            };
+            budget.work.charge(1, "filesystem directory check")?;
+            if child.is_dir() {
+                budget
+                    .work
+                    .charge(1, "filesystem directory child storage")?;
+                children.push((file_name, child));
+            }
+        }
+        charge_key_comparison_work(
+            budget.work,
+            children
+                .iter()
+                .map(|(name, _)| name.to_string_lossy().len()),
+            true,
+            "filesystem directory ordering comparisons",
+        )?;
+        children.sort_by(|left, right| left.0.cmp(&right.0));
+        for (_, child) in children {
+            walk_library_pattern(&child, components, matches, budget, next_depth, ancestors)?;
+        }
+    } else if component_has_wildcard(components[0].as_os_str()) {
+        let mut children = Vec::new();
+        budget.work.charge(1, "filesystem directory scan")?;
+        if !current.is_dir() {
+            ancestors.pop();
+            return Ok(());
+        }
+        for entry in current.read_dir().map_err(|error| {
+            StartupError::new(
+                StartupErrorKind::Input,
+                format!(
+                    "cannot read library map directory {}: {error}",
+                    current.actual_path().display()
+                ),
+            )
+        })? {
+            budget.work.charge(1, "filesystem directory entry")?;
+            let file_name = match entry {
+                Ok(file_name) => file_name,
+                Err(_) => continue,
+            };
+            let name = file_name.to_string_lossy();
+            budget
+                .work
+                .charge_usize(name.len(), "filesystem directory entry name")?;
+            if wildcard_component_matches(&name, &component, budget.work)? {
+                charge_library_pattern_child_path(budget.work, current.actual_path(), &file_name)?;
+                let Ok(child) = current.open_child(&file_name) else {
+                    continue;
+                };
+                budget.work.charge(1, "filesystem directory check")?;
+                if components.len() > 1 && !child.is_dir() {
+                    continue;
+                }
+                budget
+                    .work
+                    .charge(1, "filesystem directory child storage")?;
+                children.push((file_name, child));
+            }
+        }
+        charge_key_comparison_work(
+            budget.work,
+            children
+                .iter()
+                .map(|(name, _)| name.to_string_lossy().len()),
+            true,
+            "filesystem directory ordering comparisons",
+        )?;
+        children.sort_by(|left, right| left.0.cmp(&right.0));
+        for (_, child) in children {
+            walk_library_pattern(
+                &child,
+                &components[1..],
+                matches,
+                budget,
+                next_depth,
+                ancestors,
+            )?;
+        }
+    } else {
+        budget
+            .work
+            .charge_usize(component.len(), "filesystem path descent")?;
+        charge_library_pattern_child_path(
+            budget.work,
+            current.actual_path(),
+            components[0].as_ref(),
+        )?;
+        if let Ok(child) = current.open_child(components[0].as_ref()) {
+            walk_library_pattern(
+                &child,
+                &components[1..],
+                matches,
+                budget,
+                next_depth,
+                ancestors,
+            )?;
+        }
     }
+    ancestors.pop();
     Ok(())
-}
-
-fn is_symlink_directory(path: &Path) -> bool {
-    let Ok(link_metadata) = std::fs::symlink_metadata(path) else {
-        return false;
-    };
-    link_metadata.file_type().is_symlink()
-        && std::fs::metadata(path)
-            .map(|metadata| metadata.is_dir())
-            .unwrap_or(false)
 }
 
 fn component_has_wildcard(component: &std::ffi::OsStr) -> bool {
     let component = component.to_string_lossy();
-    component.contains('*') || component.contains('?')
+    text_has_wildcard(&component)
 }
 
-fn wildcard_component_matches(value: &str, pattern: &str) -> bool {
-    let value = value.as_bytes();
-    let pattern = pattern.as_bytes();
-    let mut table = vec![vec![false; value.len() + 1]; pattern.len() + 1];
-    table[0][0] = true;
-    for (row, character) in pattern.iter().enumerate() {
-        if *character == b'*' {
-            table[row + 1][0] = table[row][0];
-        }
-        for column in 0..value.len() {
-            table[row + 1][column + 1] = if *character == b'*' {
-                table[row][column + 1] || table[row + 1][column]
-            } else {
-                table[row][column] && (*character == b'?' || *character == value[column])
-            };
-        }
-    }
-    table[pattern.len()][value.len()]
+fn text_has_wildcard(component: &str) -> bool {
+    component.contains('*') || component.contains('?')
 }
 
 fn split_library_file_spec<'a>(
@@ -1556,16 +2894,18 @@ fn split_library_file_spec<'a>(
     Ok((default_library.unwrap_or("work").to_owned(), value))
 }
 
-fn absolute_path(path: &Path) -> Result<PathBuf, StartupError> {
-    path.canonicalize().map_err(|error| {
-        StartupError::new(
-            StartupErrorKind::Input,
-            format!(
-                "cannot resolve SystemVerilog source {}: {error}",
-                path.display()
-            ),
-        )
-    })
+fn absolute_path(path: &Path) -> Result<AdmittedTarget, StartupError> {
+    secure_fs::open_path(path)
+        .map(|opened| opened.admitted_target())
+        .map_err(|error| {
+            StartupError::new(
+                StartupErrorKind::Input,
+                format!(
+                    "cannot resolve SystemVerilog source {}: {error}",
+                    path.display()
+                ),
+            )
+        })
 }
 
 fn normalize_include_dir(value: &str) -> String {
@@ -1578,40 +2918,61 @@ fn normalize_include_dir(value: &str) -> String {
         .unwrap_or_else(|_| value.to_owned())
 }
 
-fn resolve_include(including: &Path, target: &str, include_dirs: &[String]) -> Option<PathBuf> {
+#[cfg(test)]
+fn resolve_include(
+    including: &Path,
+    target: &str,
+    include_dirs: &[String],
+) -> Option<AdmittedTarget> {
+    resolve_include_checked(including, None, target, include_dirs)
+}
+
+fn resolve_include_checked(
+    including: &Path,
+    including_target: Option<&AdmittedTarget>,
+    target: &str,
+    include_dirs: &[String],
+) -> Option<AdmittedTarget> {
     let target = Path::new(target);
-    let mut roots = Vec::with_capacity(include_dirs.len().saturating_add(1));
-    if let Some(parent) = including.parent() {
-        roots.push(parent.to_path_buf());
-    }
-    roots.extend(include_dirs.iter().map(PathBuf::from));
-    let roots: Vec<_> = roots
-        .into_iter()
-        .filter_map(|root| root.canonicalize().ok())
-        .filter(|root| root.is_dir())
-        .collect();
-    if roots.is_empty() {
-        return None;
-    }
-    let candidates = if target.is_absolute() {
-        roots
-            .iter()
-            .map(|root| (target.to_path_buf(), root))
-            .collect::<Vec<_>>()
-    } else {
-        roots
-            .iter()
-            .map(|root| (root.join(target), root))
-            .collect::<Vec<_>>()
-    };
-    candidates.into_iter().find_map(|(candidate, root)| {
-        let canonical = candidate.canonicalize().ok()?;
-        if canonical.is_file() && canonical.starts_with(root) {
-            Some(canonical)
-        } else {
-            None
+    if let Some(expected) = including_target {
+        let root = secure_fs::open_parent_of_target(expected).ok()?;
+        if let Some(path) = resolve_include_under_root(&root, target) {
+            return Some(path);
         }
-    })
+    } else if let Some(parent) = including.parent() {
+        if let Some(root) = secure_fs::open_path(parent)
+            .ok()
+            .filter(|root| root.is_dir())
+        {
+            if let Some(path) = resolve_include_under_root(&root, target) {
+                return Some(path);
+            }
+        }
+    }
+
+    include_dirs
+        .iter()
+        .map(PathBuf::from)
+        .find_map(|root_path| {
+            let root = secure_fs::open_path(&root_path).ok()?;
+            if !root.is_dir() {
+                return None;
+            }
+            resolve_include_under_root(&root, target)
+        })
+}
+
+fn resolve_include_under_root(root: &OpenedPath, target: &Path) -> Option<AdmittedTarget> {
+    let candidate = if target.is_absolute() {
+        if !target.starts_with(root.actual_path()) {
+            return None;
+        }
+        target.to_path_buf()
+    } else {
+        root.actual_path().join(target)
+    };
+    let opened = secure_fs::open_path_under(&candidate, root).ok()?;
+    opened.is_file().then(|| opened.admitted_target())
 }
 
 const MAX_INCLUDE_DISCOVERY_DEPTH: usize = 256;
@@ -1701,6 +3062,8 @@ fn admit_macro_includes(
     text: &str,
     opts: &CompileOpts,
     macros: &mut MacroEnvironment,
+    including_target: Option<&AdmittedTarget>,
+    admitted_targets: &mut HashMap<PathBuf, AdmittedTarget>,
     identities: &mut HashSet<PathBuf>,
     owned: &mut Vec<OwnedSource>,
     source_count: &mut usize,
@@ -1717,13 +3080,16 @@ fn admit_macro_includes(
     }
     let including = Path::new(name);
     let mut admit = |target: String, macros: &mut MacroEnvironment| -> Result<(), StartupError> {
-        let Some(path) = resolve_include(including, &target, &opts.include_dirs) else {
+        let Some(path) =
+            resolve_include_checked(including, including_target, &target, &opts.include_dirs)
+        else {
             // Leave missing, malformed, and unauthorized targets for Slang so
             // its diagnostic retains the original directive and source range.
             return Ok(());
         };
-        let path_name = path.to_string_lossy().into_owned();
-        if !identities.contains(&path) {
+        let path_name = path.actual_path().to_string_lossy().into_owned();
+        admitted_targets.insert(path.actual_path().to_path_buf(), path.clone());
+        if !identities.contains(path.actual_path()) {
             if *source_count >= effective_source_count_limit(opts.limits) {
                 return Err(StartupError::new(
                     StartupErrorKind::LimitExceeded,
@@ -1739,15 +3105,19 @@ fn admit_macro_includes(
                         format!("include path {path_name} exceeds the configured Slang byte limit"),
                     )
                 })?;
-            let child_text = read_bounded(&path_name, content_limit)?;
+            let child_text =
+                read_bounded_at(&path_name, &path, content_limit, "SystemVerilog source")?;
             *remaining = remaining.saturating_sub(path_name.len() as u64 + child_text.len() as u64);
-            identities.insert(path.clone());
+            identities.insert(path.actual_path().to_path_buf());
             owned.push(OwnedSource::include(path_name.clone(), child_text));
         }
 
         // A repeated include still executes its directives, but a cycle must
         // stop admission recursion and remain visible to Slang's diagnostics.
-        if include_stack.iter().any(|entry| entry == &path) {
+        if include_stack
+            .iter()
+            .any(|entry| entry == path.actual_path())
+        {
             return Ok(());
         }
         let Some(child) = owned
@@ -1757,12 +3127,14 @@ fn admit_macro_includes(
         else {
             return Ok(());
         };
-        include_stack.push(path.clone());
+        include_stack.push(path.actual_path().to_path_buf());
         admit_macro_includes(
             &child.name,
             &child.text,
             opts,
             macros,
+            Some(&path),
+            admitted_targets,
             identities,
             owned,
             source_count,
@@ -2544,6 +3916,7 @@ fn one_based_utf16_position(text: &str, offset: u64) -> (u32, u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -2786,22 +4159,1090 @@ mod tests {
         std::fs::create_dir_all(&root).expect("create library pattern root");
         std::fs::write(root.join("a.sv"), "module a; endmodule\n").expect("write first source");
         std::fs::write(root.join("b.sv"), "module b; endmodule\n").expect("write second source");
-        let error = expand_library_pattern(&root, "*.sv", 1)
+        let mut work = LibraryMapWorkBudget::new(MAX_LIBRARY_MAP_WORK);
+        let error = expand_library_pattern(&root, "*.sv", 1, &mut work)
             .expect_err("pattern exceeding its source ceiling must fail");
         assert_eq!(error.kind(), StartupErrorKind::LimitExceeded);
         std::fs::remove_dir_all(root).expect("remove library pattern root");
     }
 
     #[test]
+    fn logical_map_matching_bounds_long_wildcard_and_name_work() {
+        let mut work = LibraryMapWorkBudget::new(4_096);
+        let pattern = format!("{}*", "a".repeat(4_096));
+        let candidate = PathBuf::from("a".repeat(4_096));
+        let error = map_pattern_matches(Path::new("."), &pattern, &candidate, &mut work)
+            .expect_err("long logical wildcard work must be bounded");
+        assert_eq!(error.kind(), StartupErrorKind::LimitExceeded);
+        assert!(error.contains("logical map"));
+    }
+
+    #[test]
+    fn logical_map_byte_matching_charges_replayed_suffix_steps() {
+        let value = "a".repeat(20_000);
+        let pattern = format!("*{}b", "a".repeat(6_000));
+        let mut work = LibraryMapWorkBudget::new(50_000);
+        let error = wildcard_component_matches(&value, &pattern, &mut work)
+            .expect_err("replayed wildcard suffix work must be bounded");
+        assert_eq!(error.kind(), StartupErrorKind::LimitExceeded);
+        assert!(error.contains("byte matching step"));
+    }
+
+    #[test]
+    fn logical_recursive_matching_charges_literal_backtracking_bytes() {
+        let pattern = vec![
+            LogicalMapPatternComponent {
+                value: "**".to_owned(),
+                wildcards: true,
+            },
+            LogicalMapPatternComponent {
+                value: "literal".repeat(128),
+                wildcards: false,
+            },
+        ];
+        let candidate = vec!["candidate".repeat(128); 64];
+        let mut work = LibraryMapWorkBudget::new(10_000);
+        let error = logical_path_pattern_matches(&pattern, &candidate, &mut work)
+            .expect_err("recursive literal backtracking must consume comparison bytes");
+        assert_eq!(error.kind(), StartupErrorKind::LimitExceeded);
+        assert!(error.contains("literal comparison") || error.contains("component comparison"));
+    }
+
+    #[test]
+    fn logical_map_star_precedes_literal_matching() {
+        let mut work = LibraryMapWorkBudget::new(MAX_LIBRARY_MAP_WORK);
+        assert!(wildcard_component_matches("*", "*?", &mut work)
+            .expect("wildcard matching should succeed"));
+
+        let mut work = LibraryMapWorkBudget::new(MAX_LIBRARY_MAP_WORK);
+        assert!(
+            map_pattern_matches(Path::new("."), "dir/*?", Path::new("dir/*"), &mut work,)
+                .expect("logical map matching should succeed")
+        );
+    }
+
+    #[test]
+    fn library_map_token_work_is_charged_before_semicolon_amplification() {
+        let text = ";".repeat(65);
+        let mut work = LibraryMapWorkBudget::new(64);
+        let error = parse_library_map(&text, &mut work)
+            .expect_err("token amplification must be bounded before token allocation");
+        assert_eq!(error.kind(), StartupErrorKind::LimitExceeded);
+        assert!(error.contains("tokenization"));
+    }
+
+    #[test]
+    fn in_memory_library_map_text_is_charged_before_cloning() {
+        let text = ";".repeat(65);
+        let maps = [OwnedSource::include("root.map", text)];
+        let mut sources = Vec::new();
+        let mut library_sources = Vec::new();
+        let mut source_count = maps.len();
+        let mut remaining = u64::MAX;
+        let mut work = LibraryMapWorkBudget::new(64);
+        let error = admit_in_memory_library_maps(
+            &maps,
+            &mut sources,
+            &mut library_sources,
+            &mut source_count,
+            &mut remaining,
+            128,
+            &mut work,
+        )
+        .expect_err("in-memory map text must be bounded before cloning");
+        assert_eq!(error.kind(), StartupErrorKind::LimitExceeded);
+        assert!(error.contains("in-memory map text clone"));
+        assert!(sources.is_empty());
+        assert!(library_sources.is_empty());
+    }
+
+    #[test]
+    fn large_mapped_buffers_use_byte_admission_without_exhausting_structural_work() {
+        let map_text = format!("/*{}*/\nlibrary L mapped.sv;\n", "m".repeat(384 * 1024));
+        let source_text = format!("module mapped; /*{}*/ endmodule\n", "s".repeat(768 * 1024));
+        let sources = [
+            OwnedSource::compilation_unit("top.sv", "module top; endmodule\n"),
+            OwnedSource::compilation_unit("mapped.sv", source_text),
+        ];
+        let opts = CompileOpts {
+            library_maps: vec![OwnedSource::include("root.map", map_text)],
+            limits: Limits {
+                max_source_bytes: 2 * 1024 * 1024,
+                ..Limits::default()
+            },
+            ..CompileOpts::default()
+        };
+
+        let result = compile_sources(&sources, &opts).expect(
+            "mapped source and map content within the public source budget should be admitted",
+        );
+        assert!(!result.snapshot.has_errors());
+    }
+
+    #[test]
+    fn large_mapped_buffers_still_enforce_the_public_source_byte_limit() {
+        let map_text = format!("/*{}*/\nlibrary L mapped.sv;\n", "m".repeat(384 * 1024));
+        let source_text = format!("module mapped; /*{}*/ endmodule\n", "s".repeat(768 * 1024));
+        let source_bytes = "top.sv".len()
+            + "module top; endmodule\n".len()
+            + "mapped.sv".len()
+            + source_text.len();
+        let map_bytes = "root.map".len() + map_text.len();
+        let sources = [
+            OwnedSource::compilation_unit("top.sv", "module top; endmodule\n"),
+            OwnedSource::compilation_unit("mapped.sv", source_text),
+        ];
+        let opts = CompileOpts {
+            library_maps: vec![OwnedSource::include("root.map", map_text)],
+            limits: Limits {
+                max_source_bytes: (source_bytes + map_bytes - 1) as u64,
+                ..Limits::default()
+            },
+            ..CompileOpts::default()
+        };
+
+        let error = compile_sources(&sources, &opts)
+            .expect_err("mapped content above the public source budget must be rejected");
+        assert_eq!(error.kind(), StartupErrorKind::LimitExceeded);
+        assert!(error.contains("source bytes"));
+    }
+
+    #[test]
+    fn filesystem_library_map_text_is_charged_before_reading() {
+        let path = temporary_path("library-map-text-budget");
+        let text = ";".repeat(65);
+        std::fs::write(&path, &text).expect("write map text budget fixture");
+        let path_name = path.to_string_lossy().into_owned();
+        let mut work = LibraryMapWorkBudget::new(64);
+        let error = read_bounded_library_map(&path_name, 1_024, &mut work)
+            .expect_err("filesystem map text must be bounded before reading");
+        assert_eq!(error.kind(), StartupErrorKind::LimitExceeded);
+        assert!(error.contains("library map text admission"));
+        std::fs::remove_file(path).expect("remove map text budget fixture");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn non_regular_library_map_files_are_rejected_before_reading() {
+        let mut work = LibraryMapWorkBudget::new(MAX_LIBRARY_MAP_WORK);
+        let error = read_bounded_library_map("/dev/zero", 64, &mut work)
+            .expect_err("special library-map files must be rejected");
+        assert_eq!(error.kind(), StartupErrorKind::Input);
+        assert!(error.contains("not a regular file"));
+        assert!(work.used < 64);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fifo_library_map_is_rejected_without_blocking() {
+        use std::process::Command;
+
+        let path = temporary_path("library-map-fifo");
+        let status = Command::new("mkfifo").arg(&path).status();
+        let Ok(status) = status else {
+            return;
+        };
+        if !status.success() {
+            return;
+        }
+
+        let path_name = path.to_string_lossy().into_owned();
+        let mut work = LibraryMapWorkBudget::new(MAX_LIBRARY_MAP_WORK);
+        let error = read_bounded_library_map(&path_name, 64, &mut work)
+            .expect_err("FIFO must be rejected without opening a blocking descriptor");
+        assert_eq!(error.kind(), StartupErrorKind::Input);
+        assert!(error.contains("not a regular file"));
+        std::fs::remove_file(path).expect("remove library-map FIFO");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fifo_source_readers_are_rejected_without_blocking() {
+        use std::process::Command;
+
+        let path = temporary_path("source-fifo");
+        let status = Command::new("mkfifo").arg(&path).status();
+        let Ok(status) = status else {
+            return;
+        };
+        if !status.success() {
+            return;
+        }
+
+        let path_name = path.to_string_lossy().into_owned();
+        let direct = read_bounded(&path_name, 64).expect_err("FIFO source must be rejected");
+        assert_eq!(direct.kind(), StartupErrorKind::Input);
+        assert!(direct.contains("not a regular file"));
+
+        let parsed = parse_only(&path_name, &[]).expect_err("parse_only must reject FIFO input");
+        assert_eq!(parsed.kind(), StartupErrorKind::Input);
+        assert!(parsed.contains("not a regular file"));
+
+        let positional = compile(&CompileOpts {
+            files: vec![path_name.clone()],
+            ..CompileOpts::default()
+        })
+        .expect_err("positional FIFO input must be rejected");
+        assert_eq!(positional.kind(), StartupErrorKind::Input);
+        assert!(positional.contains("not a regular file"));
+
+        let library = compile(&CompileOpts {
+            library_files: vec![format!("L={path_name}")],
+            ..CompileOpts::default()
+        })
+        .expect_err("--libfile FIFO input must be rejected");
+        assert_eq!(library.kind(), StartupErrorKind::Input);
+        assert!(library.contains("not a regular file"));
+
+        std::fs::remove_file(path).expect("remove source FIFO");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn macro_include_reader_rejects_fifo_replacement_without_blocking() {
+        use std::process::Command;
+
+        let root = temporary_path("macro-include-fifo");
+        std::fs::create_dir_all(&root).expect("create macro include root");
+        let including = root.join("top.sv");
+        let child = root.join("child.svh");
+        std::fs::write(&child, "`define CHILD 1\n").expect("write include fixture");
+        let resolved = resolve_include(&including, "child.svh", &[])
+            .expect("regular include should resolve before the replacement race");
+        std::fs::remove_file(&child).expect("remove include fixture");
+        let status = Command::new("mkfifo").arg(&child).status();
+        let Ok(status) = status else {
+            std::fs::remove_dir_all(root).expect("remove macro include root");
+            return;
+        };
+        if !status.success() {
+            std::fs::remove_dir_all(root).expect("remove macro include root");
+            return;
+        }
+
+        let path_name = resolved.actual_path().to_string_lossy().into_owned();
+        let error = read_bounded_at(&path_name, &resolved, 64, "SystemVerilog source")
+            .expect_err("macro include replacement must be rejected before blocking");
+        assert_eq!(error.kind(), StartupErrorKind::Input);
+        assert!(
+            error.contains("changed from admitted target") || error.contains("not a regular file")
+        );
+        std::fs::remove_dir_all(root).expect("remove macro include root");
+    }
+
+    #[test]
+    fn regular_file_truncation_race_is_rejected() {
+        let path = temporary_path("source-truncation-race");
+        std::fs::write(&path, b"original").expect("write truncation fixture");
+        let path_name = path.to_string_lossy().into_owned();
+        let (mut file, metadata) =
+            open_regular_file(&path_name, "test source").expect("open truncation fixture");
+        std::fs::write(&path, b"x").expect("truncate source fixture");
+        let error = read_regular_file_contents(
+            &mut file,
+            metadata.len(),
+            64,
+            &path_name,
+            "test source",
+            None,
+            "test read",
+            "test final metadata",
+        )
+        .expect_err("truncated regular files must not be admitted");
+        assert_eq!(error.kind(), StartupErrorKind::Input);
+        assert!(error.contains("changed or was truncated"));
+        std::fs::remove_file(path).expect("remove truncation fixture");
+    }
+
+    #[test]
+    fn regular_file_growth_after_open_is_rejected() {
+        let path = temporary_path("source-growth-race");
+        std::fs::write(&path, b"old").expect("write growth fixture");
+        let path_name = path.to_string_lossy().into_owned();
+        let (mut file, metadata) =
+            open_regular_file(&path_name, "test source").expect("open growth fixture");
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .expect("open growth fixture for append")
+            .write_all(b"new")
+            .expect("grow source fixture");
+        let error = read_regular_file_contents(
+            &mut file,
+            metadata.len(),
+            64,
+            &path_name,
+            "test source",
+            None,
+            "test read",
+            "test final metadata",
+        )
+        .expect_err("grown regular files must not be admitted");
+        assert_eq!(error.kind(), StartupErrorKind::Input);
+        assert!(error.contains("changed or was truncated"));
+        std::fs::remove_file(path).expect("remove growth fixture");
+    }
+
+    #[test]
+    fn library_map_read_iterations_use_structural_budget() {
+        let path = temporary_path("library-map-read-iterations");
+        std::fs::write(&path, b"library L source.sv;\n").expect("write iteration fixture");
+        let path_name = path.to_string_lossy().into_owned();
+        let mut work = LibraryMapWorkBudget::with_allocation_limit(2, u64::MAX);
+        let error = read_bounded_library_map(&path_name, 64, &mut work)
+            .expect_err("each library-map read iteration must consume structural work");
+        assert_eq!(error.kind(), StartupErrorKind::LimitExceeded);
+        assert!(error.contains("incremental read"));
+        std::fs::remove_file(path).expect("remove iteration fixture");
+    }
+
+    #[test]
+    fn library_map_parser_charges_large_ast_allocations() {
+        let library = "L".repeat(8_000);
+        let text = format!("library {library} tiny.sv;\n");
+        let mut work = LibraryMapWorkBudget::with_allocation_limit(
+            MAX_LIBRARY_MAP_WORK,
+            text.len() as u64 + 4_000,
+        );
+        let error = parse_library_map(&text, &mut work)
+            .expect_err("large library-name AST allocations must be bounded");
+        assert_eq!(error.kind(), StartupErrorKind::LimitExceeded);
+        assert!(error.contains("library-name clone") || error.contains("allocation budget"));
+    }
+
+    #[test]
+    fn filesystem_child_path_bytes_are_charged_before_join() {
+        let parent = PathBuf::from("p".repeat(128));
+        let name = std::ffi::OsString::from("n".repeat(128));
+        let mut work = LibraryMapWorkBudget::new(200);
+        charge_library_pattern_entry_name(&mut work, &name)
+            .expect("entry name should fit before child path accounting");
+        let error = charge_library_pattern_child_path(&mut work, &parent, &name)
+            .expect_err("parent path bytes must be charged before joining the child");
+        assert_eq!(error.kind(), StartupErrorKind::LimitExceeded);
+        assert!(error.contains("child path bytes"));
+    }
+
+    #[test]
+    fn filesystem_nonmatching_entry_names_share_the_byte_budget() {
+        let root = temporary_path("library-pattern-entry-names");
+        std::fs::create_dir_all(&root).expect("create entry-name budget root");
+        for index in 0..3 {
+            let name = format!("nonmatching-{index}-{}.sv", "x".repeat(180));
+            std::fs::write(root.join(name), "module source; endmodule\n")
+                .expect("write long nonmatching source");
+        }
+        let mut work = LibraryMapWorkBudget::new(512);
+        let error = expand_library_pattern(&root, "match-*.sv", 8, &mut work)
+            .expect_err("long nonmatching entries must consume shared path-byte work");
+        assert_eq!(error.kind(), StartupErrorKind::LimitExceeded);
+        assert!(error.contains("directory entry name"));
+        std::fs::remove_dir_all(root).expect("remove entry-name budget root");
+    }
+
+    #[test]
+    fn wildcard_scan_skips_matching_files_when_components_remain() {
+        let root = temporary_path("library-pattern-file-branch");
+        let directory = root.join("candidate");
+        std::fs::create_dir_all(&directory).expect("create wildcard directory");
+        let source = directory.join("source.sv");
+        std::fs::write(&source, "module source; endmodule\n").expect("write wildcard source");
+        std::fs::write(root.join("README"), "not a directory\n").expect("write README");
+
+        let mut work = LibraryMapWorkBudget::new(MAX_LIBRARY_MAP_WORK);
+        let matches = expand_library_pattern(&root, "*/*.sv", 8, &mut work)
+            .expect("ordinary files matched by an intermediate wildcard must be skipped");
+        assert_eq!(
+            matches,
+            vec![source.canonicalize().expect("canonical wildcard source")]
+        );
+        std::fs::remove_dir_all(root).expect("remove wildcard file branch root");
+    }
+
+    #[test]
+    fn filesystem_map_base_wildcards_are_literal() {
+        let root = temporary_path("library-pattern-literal-base");
+        let literal = root.join("a*b");
+        let wildcard_match = root.join("axb");
+        std::fs::create_dir_all(&literal).expect("create literal wildcard directory");
+        std::fs::create_dir_all(&wildcard_match).expect("create wildcard sibling directory");
+        let literal_source = literal.join("source.sv");
+        let sibling_source = wildcard_match.join("source.sv");
+        let map = literal.join("root.map");
+        std::fs::write(&literal_source, "module literal_source; endmodule\n")
+            .expect("write literal source");
+        std::fs::write(&sibling_source, "module sibling_source; endmodule\n")
+            .expect("write sibling source");
+        std::fs::write(&map, "library L source.sv;\n").expect("write literal-base map");
+
+        let mut identities = HashSet::new();
+        let mut library_sources = Vec::new();
+        let mut source_count = 0;
+        let mut remaining = u64::MAX;
+        let mut work = LibraryMapWorkBudget::new(MAX_LIBRARY_MAP_WORK);
+        admit_library_maps(
+            &CompileOpts {
+                library_map_files: vec![map
+                    .canonicalize()
+                    .expect("canonical literal-base map")
+                    .to_string_lossy()
+                    .into_owned()],
+                ..CompileOpts::default()
+            },
+            &mut identities,
+            &mut library_sources,
+            &mut source_count,
+            &mut remaining,
+            &mut work,
+        )
+        .expect("literal wildcard base should admit its own source");
+        assert_eq!(library_sources.len(), 1);
+        assert_eq!(
+            library_sources[0].name,
+            literal_source
+                .canonicalize()
+                .expect("canonical literal source")
+                .to_string_lossy()
+        );
+        assert_eq!(library_sources[0].library, "L");
+        std::fs::remove_dir_all(root).expect("remove literal-base root");
+    }
+
+    #[test]
+    fn in_memory_map_base_wildcards_are_literal() {
+        let maps = [OwnedSource::include(
+            "a*b/root.map",
+            "library L source.sv;\n",
+        )];
+        let mut sources = vec![
+            OwnedSource::compilation_unit("a*b/source.sv", ""),
+            OwnedSource::compilation_unit("axb/source.sv", ""),
+        ];
+        let mut library_sources = Vec::new();
+        let mut source_count = sources.len();
+        let mut remaining = u64::MAX;
+        let mut work = LibraryMapWorkBudget::new(MAX_LIBRARY_MAP_WORK);
+        admit_in_memory_library_maps(
+            &maps,
+            &mut sources,
+            &mut library_sources,
+            &mut source_count,
+            &mut remaining,
+            128,
+            &mut work,
+        )
+        .expect("literal wildcard in-memory base should admit its own source");
+        assert_eq!(
+            library_sources
+                .iter()
+                .map(|source| source.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["a*b/source.sv"]
+        );
+        assert_eq!(
+            sources
+                .iter()
+                .map(|source| source.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["axb/source.sv"]
+        );
+    }
+
+    #[test]
+    fn canonical_path_resolution_uses_a_transient_reservation() {
+        let root = temporary_path("library-pattern-canonical-reservation");
+        std::fs::create_dir_all(&root).expect("create canonical reservation root");
+        std::fs::write(root.join("source.sv"), "module source; endmodule\n")
+            .expect("write canonical reservation source");
+        let mut work = LibraryMapWorkBudget::new(MAX_LIBRARY_PATH_BYTES as u64);
+        let matches = expand_library_pattern(&root, "source.sv", 8, &mut work)
+            .expect("canonicalization reservation must not accumulate per match");
+        assert_eq!(matches.len(), 1);
+        assert!(work.used < MAX_LIBRARY_PATH_BYTES as u64);
+        std::fs::remove_dir_all(root).expect("remove canonical reservation root");
+    }
+
+    #[test]
+    fn filesystem_pattern_canonicalization_scales_past_transient_ceiling() {
+        let root = temporary_path("library-pattern-many-matches");
+        std::fs::create_dir_all(&root).expect("create many-match root");
+        for index in 0..96 {
+            std::fs::write(
+                root.join(format!("source-{index}.sv")),
+                "module source; endmodule\n",
+            )
+            .expect("write many-match source");
+        }
+
+        let mut work = LibraryMapWorkBudget::new(MAX_LIBRARY_MAP_WORK);
+        let matches = expand_library_pattern(&root, "*.sv", 128, &mut work)
+            .expect("ordinary map expansion should not spend one path ceiling per match");
+        assert_eq!(matches.len(), 96);
+
+        std::fs::remove_dir_all(root).expect("remove many-match root");
+    }
+
+    #[test]
+    fn in_memory_library_map_quoted_unicode_path_preserves_utf8() {
+        let maps = [OwnedSource::include("root.map", "library L \"dir/é.sv\";")];
+        let mut sources = vec![OwnedSource::compilation_unit("dir/é.sv", "")];
+        let mut library_sources = Vec::new();
+        let mut source_count = sources.len();
+        let mut remaining = u64::MAX;
+        let mut work = LibraryMapWorkBudget::new(MAX_LIBRARY_MAP_WORK);
+        admit_in_memory_library_maps(
+            &maps,
+            &mut sources,
+            &mut library_sources,
+            &mut source_count,
+            &mut remaining,
+            128,
+            &mut work,
+        )
+        .expect("quoted UTF-8 in-memory map path should match");
+        assert!(sources.is_empty());
+        assert_eq!(library_sources.len(), 1);
+        assert_eq!(library_sources[0].name, "dir/é.sv");
+        assert_eq!(library_sources[0].library, "L");
+    }
+
+    #[test]
+    fn library_map_lexer_preserves_unc_and_windows_path_spelling() {
+        let text = r#"
+            // this comment must remain a comment
+            library unc //server/share/source.sv;
+            library drive "C:\work\rtl\\core\"v1.sv";
+            library quoted "//server/share/quoted.sv";
+            library drive_unquoted C:\work\rtl\source.sv;
+        "#;
+        let mut work = LibraryMapWorkBudget::new(MAX_LIBRARY_MAP_WORK);
+        let (_, entries) = parse_library_map(text, &mut work).expect("parse path spellings");
+        assert_eq!(entries.len(), 4);
+        assert_eq!(entries[0].library, "unc");
+        assert_eq!(entries[0].patterns, vec!["//server/share/source.sv"]);
+        assert_eq!(entries[1].library, "drive");
+        assert_eq!(entries[1].patterns, vec![r#"C:\work\rtl\\core\"v1.sv"#]);
+        assert_eq!(entries[2].library, "quoted");
+        assert_eq!(entries[2].patterns, vec!["//server/share/quoted.sv"]);
+        assert_eq!(entries[3].library, "drive_unquoted");
+        assert_eq!(entries[3].patterns, vec![r#"C:\work\rtl\source.sv"#]);
+    }
+
+    #[test]
+    fn library_map_lexer_keeps_unambiguous_comments() {
+        let text = "library L source.sv; // trailing comment\n// whole-line comment\nlibrary M other.sv;\n";
+        let mut work = LibraryMapWorkBudget::new(MAX_LIBRARY_MAP_WORK);
+        let (_, entries) = parse_library_map(text, &mut work).expect("parse comments");
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].patterns, vec!["source.sv"]);
+        assert_eq!(entries[1].patterns, vec!["other.sv"]);
+    }
+
+    #[test]
+    fn library_map_lexer_uses_path_context_for_unc_and_comment_paths() {
+        let text = "library L source.sv; //comment/path\nlibrary M //server/share/source.sv;\n";
+        let mut work = LibraryMapWorkBudget::new(MAX_LIBRARY_MAP_WORK);
+        let (_, entries) = parse_library_map(text, &mut work).expect("parse path context");
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].patterns, vec!["source.sv"]);
+        assert_eq!(entries[1].patterns, vec!["//server/share/source.sv"]);
+    }
+
+    #[test]
+    fn library_map_lexer_keeps_block_comments_and_absolute_star_paths_distinct() {
+        let text = "/* header comment */\nlibrary L /*/*.sv;\n";
+        let mut work = LibraryMapWorkBudget::new(MAX_LIBRARY_MAP_WORK);
+        let (_, entries) = parse_library_map(text, &mut work).expect("parse absolute star path");
+        assert_eq!(entries[0].patterns, vec!["/*/*.sv"]);
+    }
+
+    #[test]
+    fn library_map_lexer_keeps_empty_comments_and_absolute_recursive_paths_distinct() {
+        let text = "library L /**/*.sv;\nlibrary M /**/source.sv;\n";
+        let mut work = LibraryMapWorkBudget::new(MAX_LIBRARY_MAP_WORK);
+        let (_, entries) =
+            parse_library_map(text, &mut work).expect("parse recursive path and empty comment");
+        assert_eq!(entries[0].patterns, vec!["/**/*.sv"]);
+        assert_eq!(entries[1].patterns, vec!["source.sv"]);
+    }
+
+    #[test]
+    fn quoted_incdir_token_remains_a_literal_pattern() {
+        let mut work = LibraryMapWorkBudget::new(MAX_LIBRARY_MAP_WORK);
+        let (_, entries) =
+            parse_library_map(r#"library L "-incdir";"#, &mut work).expect("quoted incdir path");
+        assert_eq!(entries[0].patterns, vec!["-incdir"]);
+    }
+
+    #[test]
+    fn line_comments_keep_unc_paths_only_in_path_context() {
+        let text = "//server/share is a comment here\nlibrary L //server/share/source.sv;";
+        let mut work = LibraryMapWorkBudget::new(MAX_LIBRARY_MAP_WORK);
+        let (_, entries) = parse_library_map(text, &mut work).expect("parse UNC context");
+        assert_eq!(entries[0].patterns, vec!["//server/share/source.sv"]);
+    }
+
+    #[test]
+    fn matched_library_source_comparison_is_budgeted() {
+        let map_library = "L".repeat(256);
+        let map_text = format!("library {map_library} candidate.sv;\n");
+        let maps = [OwnedSource::include("root.map", map_text)];
+        let source_library = map_library.clone();
+        let run = |limit| {
+            let mut sources = Vec::new();
+            let mut library_sources = vec![LibrarySource::new(
+                "candidate.sv",
+                "",
+                source_library.clone(),
+            )];
+            let mut source_count = 0;
+            let mut remaining = u64::MAX;
+            let mut work = LibraryMapWorkBudget::with_allocation_limit(limit, u64::MAX);
+            let result = admit_in_memory_library_maps(
+                &maps,
+                &mut sources,
+                &mut library_sources,
+                &mut source_count,
+                &mut remaining,
+                128,
+                &mut work,
+            );
+            (result, work.used)
+        };
+        let (_, used) = run(MAX_LIBRARY_MAP_WORK);
+        let error = run(used.saturating_sub((source_library.len() + map_library.len()) as u64) + 1)
+            .0
+            .expect_err("matched library comparison must consume its string lengths");
+        assert_eq!(error.kind(), StartupErrorKind::LimitExceeded);
+        assert!(error.contains("library comparison"));
+    }
+
+    #[test]
+    fn filesystem_library_map_quoted_unicode_path_preserves_utf8() {
+        let root = temporary_path("library-map-unicode");
+        std::fs::create_dir_all(&root).expect("create Unicode map root");
+        let source = root.join("é.sv");
+        let map = root.join("root.map");
+        std::fs::write(&source, "module mapped; endmodule\n").expect("write Unicode source");
+        std::fs::write(&map, "library L \"é.sv\";\n").expect("write Unicode map");
+        let map_name = map
+            .canonicalize()
+            .expect("canonical Unicode map")
+            .to_string_lossy()
+            .into_owned();
+        let opts = CompileOpts {
+            library_map_files: vec![map_name],
+            ..CompileOpts::default()
+        };
+        let mut identities = HashSet::new();
+        let mut library_sources = Vec::new();
+        let mut source_count = 0;
+        let mut remaining = u64::MAX;
+        let mut work = LibraryMapWorkBudget::new(MAX_LIBRARY_MAP_WORK);
+        admit_library_maps(
+            &opts,
+            &mut identities,
+            &mut library_sources,
+            &mut source_count,
+            &mut remaining,
+            &mut work,
+        )
+        .expect("quoted UTF-8 filesystem map path should match");
+        assert_eq!(library_sources.len(), 1);
+        assert_eq!(
+            library_sources[0].name,
+            source
+                .canonicalize()
+                .expect("canonical Unicode source")
+                .to_string_lossy()
+        );
+        assert_eq!(library_sources[0].library, "L");
+        std::fs::remove_dir_all(root).expect("remove Unicode map root");
+    }
+
+    #[test]
+    fn library_map_ordering_charges_key_comparison_work() {
+        let mut work = LibraryMapWorkBudget::new(128);
+        let keys = vec![1_024_usize; 4];
+        let error = charge_key_comparison_work(&mut work, keys, true, "test ordering comparisons")
+            .expect_err("long ordering keys must consume comparison work");
+        assert_eq!(error.kind(), StartupErrorKind::LimitExceeded);
+        assert!(error.contains("ordering key scan"));
+    }
+
+    #[test]
+    fn in_memory_source_removal_follows_admission_charge() {
+        let maps = [OwnedSource::include(
+            "root.map",
+            "library L candidate.sv;\n",
+        )];
+        let run = |limit| {
+            let mut sources = vec![OwnedSource::compilation_unit(
+                "candidate.sv",
+                "module candidate; endmodule\n",
+            )];
+            let mut library_sources = Vec::new();
+            let mut source_count = sources.len();
+            let mut remaining = u64::MAX;
+            let mut work = LibraryMapWorkBudget::new(limit);
+            let result = admit_in_memory_library_maps(
+                &maps,
+                &mut sources,
+                &mut library_sources,
+                &mut source_count,
+                &mut remaining,
+                128,
+                &mut work,
+            );
+            (result, sources, library_sources)
+        };
+
+        for limit in 0..MAX_LIBRARY_MAP_WORK {
+            let (result, sources, library_sources) = run(limit);
+            let Err(error) = result else {
+                continue;
+            };
+            if error.contains("in-memory library source admission") {
+                assert_eq!(sources.len(), 1);
+                assert!(library_sources.is_empty());
+                assert_eq!(error.kind(), StartupErrorKind::LimitExceeded);
+                return;
+            }
+        }
+        panic!("test budget did not stop before source removal");
+    }
+
+    #[test]
+    fn in_memory_source_admission_is_deterministic_for_both_input_orders() {
+        let admit = |names: &[&str]| {
+            let maps = [OwnedSource::include(
+                "root.map",
+                "library L candidate/*.sv;",
+            )];
+            let mut sources = names
+                .iter()
+                .map(|name| OwnedSource::compilation_unit(*name, ""))
+                .collect::<Vec<_>>();
+            let mut library_sources = Vec::new();
+            let mut source_count = sources.len();
+            let mut remaining = u64::MAX;
+            let mut work = LibraryMapWorkBudget::new(MAX_LIBRARY_MAP_WORK);
+            admit_in_memory_library_maps(
+                &maps,
+                &mut sources,
+                &mut library_sources,
+                &mut source_count,
+                &mut remaining,
+                128,
+                &mut work,
+            )
+            .expect("library map source admission");
+            (
+                library_sources
+                    .into_iter()
+                    .map(|source| source.name)
+                    .collect::<Vec<_>>(),
+                sources
+                    .into_iter()
+                    .map(|source| source.name)
+                    .collect::<Vec<_>>(),
+            )
+        };
+
+        let first = admit(&["top.sv", "candidate/z.sv", "candidate/a.sv"]);
+        let second = admit(&["candidate/z.sv", "candidate/a.sv", "top.sv"]);
+        assert_eq!(first.0, vec!["candidate/z.sv", "candidate/a.sv"]);
+        assert_eq!(first.1, vec!["top.sv"]);
+        assert_eq!(second, first);
+    }
+
+    #[test]
+    fn logical_map_patterns_and_candidate_scans_share_one_work_budget() {
+        let mut work = LibraryMapWorkBudget::new(256);
+        let mut exhausted = None;
+        for index in 0..32 {
+            let name = format!("candidate-{index}.sv");
+            let result = map_pattern_matches(
+                Path::new("."),
+                &format!("candidate-{index}.s?"),
+                Path::new(&name),
+                &mut work,
+            );
+            if let Err(error) = result {
+                exhausted = Some(error);
+                break;
+            }
+        }
+        let error = exhausted.expect("candidate scans must consume their shared work budget");
+        assert_eq!(error.kind(), StartupErrorKind::LimitExceeded);
+        assert!(error.contains("work budget"));
+    }
+
+    #[test]
+    fn filesystem_pattern_traversal_shares_work_across_patterns() {
+        let root = temporary_path("library-pattern-shared-budget");
+        std::fs::create_dir_all(&root).expect("create shared budget root");
+        std::fs::write(root.join("source.sv"), "module source; endmodule\n")
+            .expect("write shared budget source");
+
+        let mut work = LibraryMapWorkBudget::new(MAX_LIBRARY_MAP_WORK);
+        expand_library_pattern(&root, "*.sv", 8, &mut work)
+            .expect("first pattern should fit the shared work budget");
+        let consumed = work.used;
+        work.limit = consumed.saturating_add("*.sv".len() as u64);
+        let error = expand_library_pattern(&root, "*.sv", 8, &mut work)
+            .expect_err("the second pattern must use the remaining shared budget");
+        assert_eq!(error.kind(), StartupErrorKind::LimitExceeded);
+        assert!(error.contains("filesystem"));
+
+        std::fs::remove_dir_all(root).expect("remove shared budget root");
+    }
+
+    #[test]
+    fn filesystem_pattern_component_depth_is_bounded_before_recursion() {
+        let root = temporary_path("library-pattern-depth");
+        std::fs::create_dir_all(&root).expect("create deep pattern root");
+        let pattern = format!("*/{}source.sv", "a/".repeat(20_000));
+        let mut work = LibraryMapWorkBudget::new(MAX_LIBRARY_MAP_WORK);
+        let error = expand_library_pattern(&root, &pattern, 8, &mut work)
+            .expect_err("deep literal suffix must hit the component-depth limit");
+        assert_eq!(error.kind(), StartupErrorKind::LimitExceeded);
+        assert!(error.contains("component depth"));
+        std::fs::remove_dir_all(root).expect("remove deep pattern root");
+    }
+
+    #[test]
     fn logical_map_paths_preserve_leading_parent_components() {
         assert_eq!(
-            logical_path_key(Path::new("../../x")),
+            logical_path_key(
+                Path::new("../../x"),
+                &mut LibraryMapWorkBudget::new(MAX_LIBRARY_MAP_WORK),
+                "test path normalization",
+            )
+            .expect("logical path normalization"),
             vec!["..".to_owned(), "..".to_owned(), "x".to_owned()]
         );
+        let mut work = LibraryMapWorkBudget::new(MAX_LIBRARY_MAP_WORK);
         assert!(
-            !map_pattern_matches(Path::new("."), "../../x", Path::new("x"))
+            !map_pattern_matches(Path::new("."), "../../x", Path::new("x"), &mut work)
                 .expect("lexical map matching must not fail")
         );
+    }
+
+    #[test]
+    fn logical_map_matching_preserves_drive_and_unc_prefixes() {
+        let mut work = LibraryMapWorkBudget::new(MAX_LIBRARY_MAP_WORK);
+        assert!(map_pattern_matches(
+            Path::new(r"C:\work"),
+            "*.sv",
+            Path::new(r"C:\work\source.sv"),
+            &mut work,
+        )
+        .expect("drive path matching"));
+        let mut work = LibraryMapWorkBudget::new(MAX_LIBRARY_MAP_WORK);
+        assert!(map_pattern_matches(
+            Path::new(r"\\server\share"),
+            "*.sv",
+            Path::new(r"\\server\share\source.sv"),
+            &mut work,
+        )
+        .expect("UNC path matching"));
+        let mut work = LibraryMapWorkBudget::new(MAX_LIBRARY_MAP_WORK);
+        assert!(map_pattern_matches(
+            Path::new("."),
+            r"C:\work\*.sv",
+            Path::new(r"C:\work\source.sv"),
+            &mut work,
+        )
+        .expect("absolute drive pattern matching"));
+        let mut work = LibraryMapWorkBudget::new(MAX_LIBRARY_MAP_WORK);
+        assert!(map_pattern_matches(
+            Path::new("."),
+            r"\\server\share\*.sv",
+            Path::new(r"\\server\share\source.sv"),
+            &mut work,
+        )
+        .expect("absolute UNC pattern matching"));
+    }
+
+    #[test]
+    fn logical_map_parent_preserves_drive_and_unc_roots() {
+        assert_eq!(logical_map_parent(r"C:\root.map"), PathBuf::from(r"C:\"));
+        assert_eq!(
+            logical_map_parent(r"\\server\share\root.map"),
+            PathBuf::from(r"\\server\share")
+        );
+
+        let mut work = LibraryMapWorkBudget::new(MAX_LIBRARY_MAP_WORK);
+        assert!(map_pattern_matches(
+            Path::new(r"C:\"),
+            "*.sv",
+            Path::new(r"C:\source.sv"),
+            &mut work,
+        )
+        .expect("drive-root relative map pattern matching"));
+        let mut work = LibraryMapWorkBudget::new(MAX_LIBRARY_MAP_WORK);
+        assert!(map_pattern_matches(
+            Path::new(r"\\server\share"),
+            "*.sv",
+            Path::new(r"\\server\share\source.sv"),
+            &mut work,
+        )
+        .expect("UNC-root relative map pattern matching"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn opened_map_anchor_rejects_parent_replacement_before_child_open() {
+        let root = temporary_path("secure-anchor-race");
+        let moved = temporary_path("secure-anchor-moved");
+        let external = temporary_path("secure-anchor-external");
+        std::fs::create_dir_all(&root).expect("create secure anchor");
+        std::fs::create_dir_all(&external).expect("create external anchor");
+        std::fs::write(root.join("source.sv"), "module source; endmodule\n")
+            .expect("write admitted source");
+        std::fs::write(external.join("source.sv"), "module external; endmodule\n")
+            .expect("write external source");
+        let anchor = secure_fs::open_path(&root).expect("open stable anchor handle");
+        std::fs::rename(&root, &moved).expect("move admitted anchor");
+        std::fs::rename(&external, &root).expect("replace admitted anchor path");
+
+        let error = anchor
+            .open_child(std::ffi::OsStr::new("source.sv"))
+            .expect_err("descriptor-relative child open must retain the original anchor");
+        assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+
+        std::fs::remove_dir_all(moved).expect("remove moved admitted anchor");
+        std::fs::remove_dir_all(root).expect("remove replacement anchor");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn reopened_source_rejects_parent_replacement_before_read() {
+        let root = temporary_path("secure-source-race");
+        let moved = temporary_path("secure-source-moved");
+        let external = temporary_path("secure-source-external");
+        std::fs::create_dir_all(&root).expect("create source root");
+        std::fs::create_dir_all(&external).expect("create external source root");
+        let path = root.join("source.sv");
+        std::fs::write(&path, "module source; endmodule\n").expect("write source");
+        std::fs::write(external.join("source.sv"), "module external; endmodule\n")
+            .expect("write external source");
+        let expected = secure_fs::open_path(&path)
+            .expect("capture source handle target")
+            .admitted_target();
+        std::fs::rename(&root, &moved).expect("move source root");
+        std::fs::rename(&external, &root).expect("replace source root path");
+
+        let path_name = path.to_string_lossy().into_owned();
+        let error = open_regular_file_at(&path_name, &expected, "test source")
+            .expect_err("reopened source must retain its admitted target");
+        assert_eq!(error.kind(), StartupErrorKind::Input);
+        assert!(error.contains("changed from admitted target"));
+
+        std::fs::remove_dir_all(moved).expect("remove moved source root");
+        std::fs::remove_dir_all(root).expect("remove replacement source root");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn include_target_rejects_parent_replacement_before_read() {
+        let root = temporary_path("secure-include-race");
+        let moved = temporary_path("secure-include-moved");
+        let external = temporary_path("secure-include-external");
+        std::fs::create_dir_all(&root).expect("create include root");
+        std::fs::create_dir_all(&external).expect("create external include root");
+        let including = root.join("top.sv");
+        let child = root.join("child.svh");
+        std::fs::write(&including, "module top; endmodule\n").expect("write including source");
+        std::fs::write(&child, "`define CHILD 1\n").expect("write admitted include");
+        std::fs::write(external.join("child.svh"), "`define EXTERNAL 1\n")
+            .expect("write external include");
+        let expected = resolve_include(&including, "child.svh", &[])
+            .expect("include should resolve before replacement");
+        std::fs::rename(&root, &moved).expect("move admitted include root");
+        std::fs::rename(&external, &root).expect("replace admitted include root");
+
+        let path_name = expected.actual_path().to_string_lossy().into_owned();
+        let error = read_bounded_at(&path_name, &expected, 64, "SystemVerilog source")
+            .expect_err("include replacement must retain its admitted target");
+        assert_eq!(error.kind(), StartupErrorKind::Input);
+        assert!(error.contains("changed from admitted target"));
+
+        std::fs::remove_dir_all(moved).expect("remove moved include root");
+        std::fs::remove_dir_all(root).expect("remove replacement include root");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn include_resolution_rejects_replaced_admitted_parent() {
+        let root = temporary_path("secure-include-resolution-race");
+        let moved = temporary_path("secure-include-resolution-moved");
+        let external = temporary_path("secure-include-resolution-external");
+        std::fs::create_dir_all(&root).expect("create include resolution root");
+        std::fs::create_dir_all(&external).expect("create external resolution root");
+        let including = root.join("top.sv");
+        std::fs::write(&including, "module top; endmodule\n").expect("write including source");
+        std::fs::write(root.join("child.svh"), "`define CHILD 1\n")
+            .expect("write admitted include");
+        std::fs::write(external.join("top.sv"), "module external; endmodule\n")
+            .expect("write external including source");
+        std::fs::write(external.join("child.svh"), "`define EXTERNAL 1\n")
+            .expect("write external include");
+        let expected = secure_fs::open_path(&including)
+            .expect("open including source")
+            .admitted_target();
+        std::fs::rename(&root, &moved).expect("move admitted include root");
+        std::fs::rename(&external, &root).expect("replace admitted include root");
+
+        assert!(resolve_include_checked(&including, Some(&expected), "child.svh", &[]).is_none());
+
+        std::fs::remove_dir_all(moved).expect("remove moved admitted include root");
+        std::fs::remove_dir_all(root).expect("remove replacement include root");
+    }
+
+    #[test]
+    fn unquoted_absolute_star_path_matches_in_memory_sources() {
+        let maps = [OwnedSource::include("root.map", "library L /*/*.sv;")];
+        let mut sources = vec![OwnedSource::compilation_unit("/rtl/source.sv", "")];
+        let mut library_sources = Vec::new();
+        let mut source_count = sources.len();
+        let mut remaining = u64::MAX;
+        let mut work = LibraryMapWorkBudget::new(MAX_LIBRARY_MAP_WORK);
+        admit_in_memory_library_maps(
+            &maps,
+            &mut sources,
+            &mut library_sources,
+            &mut source_count,
+            &mut remaining,
+            128,
+            &mut work,
+        )
+        .expect("absolute star pattern should match an admitted source");
+        assert!(sources.is_empty());
+        assert_eq!(library_sources[0].name, "/rtl/source.sv");
+    }
+
+    #[test]
+    fn unquoted_absolute_recursive_path_matches_in_memory_sources() {
+        let maps = [OwnedSource::include("root.map", "library L /**/*.sv;")];
+        let mut sources = vec![OwnedSource::compilation_unit("/rtl/nested/source.sv", "")];
+        let mut library_sources = Vec::new();
+        let mut source_count = sources.len();
+        let mut remaining = u64::MAX;
+        let mut work = LibraryMapWorkBudget::new(MAX_LIBRARY_MAP_WORK);
+        admit_in_memory_library_maps(
+            &maps,
+            &mut sources,
+            &mut library_sources,
+            &mut source_count,
+            &mut remaining,
+            128,
+            &mut work,
+        )
+        .expect("absolute recursive pattern should match an admitted source");
+        assert!(sources.is_empty());
+        assert_eq!(library_sources[0].name, "/rtl/nested/source.sv");
     }
 
     #[cfg(unix)]
@@ -2816,7 +5257,8 @@ mod tests {
         std::fs::write(&source, "module source; endmodule\n").expect("write recursive source");
         symlink(&root, real.join("cycle")).expect("create recursive directory symlink");
 
-        let matches = expand_library_pattern(&root, "**/*.sv", 8)
+        let mut work = LibraryMapWorkBudget::new(MAX_LIBRARY_MAP_WORK);
+        let matches = expand_library_pattern(&root, "**/*.sv", 8, &mut work)
             .expect("recursive pattern should terminate at symlink directories");
         assert_eq!(
             matches,

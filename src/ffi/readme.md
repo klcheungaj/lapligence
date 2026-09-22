@@ -6,6 +6,8 @@
     snapshot of files, diagnostics, elaborated metadata, semantic graph records,
     and lexical tokens.
   - `process_memory.rs`: platform memory sampling for the process-memory guard.
+  - `secure_fs.rs`: handle-backed admission and descriptor-relative containment
+    checks for source, include, and library-map files.
 - Ownership: inputs are borrowed only for the compile call. The C++ shim owns
   snapshot storage while Rust validates and copies it; RAII destroys the opaque
   owner afterward. No Slang AST address or native allocation crosses the safe
