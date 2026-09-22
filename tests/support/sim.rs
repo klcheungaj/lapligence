@@ -1,6 +1,7 @@
 //! Shared lifecycle support for native-backed simulator integration tests.
 #![allow(dead_code)]
 
+use std::cell::Cell;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Output, Stdio};
@@ -14,6 +15,9 @@ use llg::sim;
 
 static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
 static CWD_LOCK: Mutex<()> = Mutex::new(());
+thread_local! {
+    static CWD_DEPTH: Cell<usize> = const { Cell::new(0) };
+}
 const MODEL_TIMEOUT: Duration = Duration::from_secs(60);
 
 fn lock_process_cwd() -> std::sync::MutexGuard<'static, ()> {
@@ -52,15 +56,45 @@ impl Drop for TempDir {
     }
 }
 
+struct CwdLockGuard {
+    _lock: Option<std::sync::MutexGuard<'static, ()>>,
+}
+
+impl CwdLockGuard {
+    fn enter() -> Self {
+        let lock = CWD_DEPTH.with(|depth| {
+            let lock = (depth.get() == 0).then(lock_process_cwd);
+            depth.set(depth.get() + 1);
+            lock
+        });
+        Self { _lock: lock }
+    }
+}
+
+impl Drop for CwdLockGuard {
+    fn drop(&mut self) {
+        CWD_DEPTH.with(|depth| {
+            let current = depth.get();
+            debug_assert!(current > 0, "CWD guard depth underflow");
+            depth.set(current.saturating_sub(1));
+        });
+    }
+}
+
 struct CwdGuard {
     original: PathBuf,
+    _lock: CwdLockGuard,
 }
 
 impl CwdGuard {
     fn enter(path: &Path) -> Result<Self, String> {
+        let lock = CwdLockGuard::enter();
         let original = std::env::current_dir().map_err(|error| format!("current dir: {error}"))?;
         std::env::set_current_dir(path).map_err(|error| format!("chdir: {error}"))?;
-        Ok(Self { original })
+        Ok(Self {
+            original,
+            _lock: lock,
+        })
     }
 }
 
@@ -82,7 +116,6 @@ pub(crate) fn with_frontend_temp_cwd<T>(
     prefix: &str,
     action: impl FnOnce(&Path) -> Result<T, String>,
 ) -> Result<T, String> {
-    let _guard = lock_process_cwd();
     with_temp_cwd(prefix, action)
 }
 
@@ -91,6 +124,12 @@ pub(crate) fn with_cwd<T>(
     action: impl FnOnce() -> Result<T, String>,
 ) -> Result<T, String> {
     let _cwd = CwdGuard::enter(path)?;
+    action()
+}
+
+/// Run a read-only process-CWD observation while holding the shared guard.
+pub(crate) fn with_cwd_lock<T>(action: impl FnOnce() -> T) -> T {
+    let _lock = CwdLockGuard::enter();
     action()
 }
 
@@ -225,7 +264,6 @@ pub(crate) fn run_generated_sim_with_files_opts(
     files: &[(&str, &str)],
     options: &llg::sim::opt::OptConfig,
 ) -> Result<SimRun, String> {
-    let _guard = lock_process_cwd();
     with_temp_cwd(tag, |dir| {
         run_generated_sim_in_dir(sv, top, dir, true, files, options)
     })
@@ -245,7 +283,6 @@ fn run_generated_sim_inner(
     tag: &str,
     require_success: bool,
 ) -> Result<SimRun, String> {
-    let _guard = lock_process_cwd();
     with_temp_cwd(tag, |dir| {
         run_generated_sim_in_dir(
             sv,
