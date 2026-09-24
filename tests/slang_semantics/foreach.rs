@@ -105,7 +105,10 @@ fn foreach_mixed_owned_import_rejects_an_excessive_slot_count_before_allocation(
         .position(|node| matches!(node.kind, NodeKind::Stmt(StmtKind::Foreach { .. })))
         .expect("foreach statement");
     snapshot.semantic_nodes[index].auxiliary = u64::MAX;
-    let error = db::Db::from_slang(&snapshot).expect_err("invalid count must not allocate a slot vector");
+    let error =
+        db::Db::from_slang(&snapshot).expect_err("invalid count must not allocate a slot vector");
     let detail = error.to_string();
-    assert!(detail.contains("foreach") && (detail.contains("scalar") || detail.contains("too large")));
+    assert!(
+        detail.contains("foreach") && (detail.contains("scalar") || detail.contains("too large"))
+    );
 }

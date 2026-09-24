@@ -37,11 +37,11 @@ fn duplicate_explicit_index_is_rejected() {
 }
 
 #[test]
-fn incompatible_type_key_is_rejected() {
+fn uncovered_array_with_unmatched_type_key_is_rejected() {
     sim_cli::reject_case(
         "syn001_type_keys",
         "syn_001_incompatible_type_key",
-        "has no matching index or type",
+        "not all elements",
     );
 }
 

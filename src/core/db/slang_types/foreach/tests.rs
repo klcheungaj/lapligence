@@ -62,7 +62,9 @@ fn foreach_mixed_dimensions_follow_unpacked_then_packed_elements() {
         [Some((0, 1)), Some((3, 0))]
     );
     assert_eq!(project(&types, &ranges, 2, 1).unwrap(), [Some((0, 1))]);
-    assert!(project(&types, &ranges, 2, 3).unwrap_err().contains("scalar"));
+    assert!(project(&types, &ranges, 2, 3)
+        .unwrap_err()
+        .contains("scalar"));
 }
 
 #[test]
@@ -82,7 +84,10 @@ fn foreach_mixed_dimensions_preserve_all_bounds_and_requested_prefixes() {
     ];
     let expected = [Some((2, 1)), Some((-2, -1)), Some((3, 0)), Some((1, 2))];
     for count in 0..=expected.len() {
-        assert_eq!(project(&types, &ranges, 4, count).unwrap(), expected[..count]);
+        assert_eq!(
+            project(&types, &ranges, 4, count).unwrap(),
+            expected[..count]
+        );
     }
     assert_eq!(project(&types, &ranges, 2, 2).unwrap(), expected[2..]);
 }
@@ -126,7 +131,11 @@ fn foreach_mixed_dimensions_do_not_reuse_enum_base_bounds() {
 
 #[test]
 fn foreach_mixed_dimensions_treat_packed_records_as_one_integral_dimension() {
-    for kind in [TypeKind::PackedStruct, TypeKind::PackedUnion, TypeKind::Enum] {
+    for kind in [
+        TypeKind::PackedStruct,
+        TypeKind::PackedUnion,
+        TypeKind::Enum,
+    ] {
         for width in [1, 8] {
             let types = [ty(0, kind, width, None)];
             assert_eq!(
@@ -176,7 +185,10 @@ fn foreach_mixed_dimensions_distinguish_runtime_bounds_from_static_bounds() {
             ty(2, kind, 0, Some(1)),
         ];
         let ranges = [range(3, 0, TypeRangeKind::Packed)];
-        assert_eq!(project(&types, &ranges, 2, 2).unwrap(), [None, Some((3, 0))]);
+        assert_eq!(
+            project(&types, &ranges, 2, 2).unwrap(),
+            [None, Some((3, 0))]
+        );
     }
     let types = [ty(0, TypeKind::String, 0, None)];
     assert_eq!(project(&types, &[], 0, 1).unwrap(), [None]);
@@ -208,7 +220,9 @@ fn foreach_mixed_dimensions_reject_bounds_that_do_not_fit_int_indices() {
             ranged(ty(1, TypeKind::PackedArray, 4, Some(0)), 0),
         ];
         let ranges = [range(left, right, TypeRangeKind::Packed)];
-        assert!(project(&types, &ranges, 1, 1).unwrap_err().contains("bound"));
+        assert!(project(&types, &ranges, 1, 1)
+            .unwrap_err()
+            .contains("bound"));
     }
 }
 

@@ -1,6 +1,8 @@
 //! Independent next-phase SystemVerilog datatype conformance fixtures.
 //! Every checked-in fixture runs with optimization disabled and enabled.
 
+#[path = "support/sim_cli.rs"]
+mod sim_cli;
 #[path = "support/sim.rs"]
 mod sim_harness;
 
@@ -162,40 +164,25 @@ endmodule
 }
 
 #[test]
-fn packed_nominal_type_key_mismatch_is_rejected() {
-    let source = r#"module tb;
-    typedef struct packed { logic [7:0] value; } left_lane_t;
-    typedef struct packed { logic [7:0] value; } right_lane_t;
-    typedef struct packed { left_lane_t lane; } holder_t;
-    holder_t value = '{right_lane_t: 8'hff, default: '0};
-endmodule
-"#;
-    sim_harness::with_frontend_temp_cwd("packed-nominal-key-mismatch", |dir| {
-        let source_path = dir.join("tb.sv");
-        std::fs::write(&source_path, source).map_err(|error| error.to_string())?;
-        let options = compile::CompileOpts {
-            files: vec![source_path.to_string_lossy().into_owned()],
-            top: Some("tb".to_owned()),
-            ..Default::default()
-        };
-        let compiled = compile::compile_checked(&options).map_err(|error| error.to_string())?;
-        let database = Db::from_slang(&compiled.snapshot).map_err(|error| error.to_string())?;
-        for (variant, options) in [
-            ("unoptimized", OptConfig::none()),
-            ("optimized", OptConfig::default()),
-        ] {
-            let error = sim::codegen::generate_from_db_with_opts(&database, &options)
-                .map(|_| "generated successfully".to_owned())
-                .unwrap_or_else(|error| error.to_string());
-            if !error.contains("no matching member or type") {
-                return Err(format!(
-                    "{variant}: distinct same-width nominal key was not rejected: {error}"
-                ));
-            }
-        }
-        Ok(())
-    })
-    .expect("same-width packed nominal type keys must not match by width");
+fn packed_nominal_type_key_mismatch_falls_through_to_typed_default() {
+    sim_cli::run_case_with_args(
+        "data_types_next",
+        "packed_nominal_type_key_default",
+        "PASS packed_nominal_type_key_default\n",
+        "llg: $finish at time 0 at tb:19:9\n",
+        &[],
+        &["--edition", "2009"],
+    );
+}
+
+#[test]
+fn packed_nominal_type_key_without_default_leaves_member_uncovered() {
+    sim_cli::reject_case_with_args(
+        "data_types_next",
+        "packed_nominal_type_key_uncovered",
+        "not all elements of array are covered by an assignment pattern key",
+        &["--edition", "2009"],
+    );
 }
 
 #[test]

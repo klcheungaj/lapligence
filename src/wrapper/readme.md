@@ -44,12 +44,20 @@ Update the Rust checked decoder together with the bridge. Capturing a pattern
 is not a claim of executable pattern-matching support; it prevents consumers
 from silently converting `value matches pattern` into a Boolean test of `value`.
 
-## Positional assignment-pattern operands
+## Assignment-pattern operands and keys
 
 Simple assignment patterns export one indexed `OPERAND` edge for each entry
 in Slang's bound element list, even when several positions share one expression
-identity. Structural child links may be deduplicated; positional operands may
-not. Structured fixed-array defaults keep their separate declaration-order
-mapping, and valid bound values replace untyped error placeholders. Consumers
-must use the ordered operand edges rather than reconstructing operand counts
-from structural children.
+identity. Structured fixed-array patterns with type setters and no explicit
+index setters export Slang's resolved elements in declaration order; Slang has
+already applied recursive type matching, the last matching type setter, and
+defaults. Fixed-array patterns whose nested default is an error-typed
+intermediate also export their valid bound elements, omitting those synthetic
+placeholders. Fixed-array elements are reordered from Slang's increasing-index
+storage to declared left-to-right order. Other explicit index-key patterns keep
+their keyed operands and an `INDEX` edge to the original key expression,
+including parameter and constant-function expressions. Structural child links
+may be deduplicated; positional operands may not. Consumers must use ordered
+operand edges rather than reconstructing operand counts from structural
+children, and evaluate retained index keys from owned semantic values rather
+than source text.

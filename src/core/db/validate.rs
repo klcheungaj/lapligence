@@ -403,7 +403,10 @@ impl Validator<'_> {
             | NodeKind::Expr(ExprKind::Conditional { predicate, .. })
                 if predicate.clauses.is_empty() =>
             {
-                return self.fail(format!("{path}.predicate"), "conditional predicate has no clauses");
+                return self.fail(
+                    format!("{path}.predicate"),
+                    "conditional predicate has no clauses",
+                );
             }
             NodeKind::Stmt(StmtKind::Foreach {
                 vars, dimensions, ..
@@ -667,7 +670,12 @@ fn statement_refs(statement: &StmtKind, refs: &mut Vec<NodeId>) {
             refs.push(*property);
             refs.extend(if_true.iter().chain(if_false.iter()).copied());
         }
-        StmtKind::IfElse { predicate, if_true, if_false, .. } => {
+        StmtKind::IfElse {
+            predicate,
+            if_true,
+            if_false,
+            ..
+        } => {
             predicate.referenced_nodes(refs);
             refs.push(*if_true);
             refs.extend(*if_false);
@@ -765,11 +773,20 @@ fn expression_refs(expression: &ExprKind, refs: &mut Vec<NodeId>) {
     match expression {
         ExprKind::ScopeRef { target } => refs.push(*target),
         ExprKind::Operation { operands, .. } => refs.extend(operands.iter().copied()),
-        ExprKind::Conditional { predicate, if_true, if_false } => {
+        ExprKind::Conditional {
+            predicate,
+            if_true,
+            if_false,
+        } => {
             predicate.referenced_nodes(refs);
             refs.extend([*if_true, *if_false]);
         }
-        ExprKind::TaggedPattern { value, .. } => refs.extend(*value),
+        ExprKind::TaggedPattern {
+            index_key, value, ..
+        } => {
+            refs.extend(*index_key);
+            refs.extend(*value);
+        }
         ExprKind::TaggedUnion { value, .. } => refs.extend(*value),
         ExprKind::Cast { operand, .. } => refs.push(*operand),
         ExprKind::NewArray { size, initializer } => {
@@ -1157,26 +1174,40 @@ mod tests {
         let predicate = super::super::ConditionalPredicate { clauses: vec![] };
         for kind in [
             NodeKind::Stmt(StmtKind::IfElse {
-                predicate: predicate.clone(), if_true: NodeId(1), if_false: None,
+                predicate: predicate.clone(),
+                if_true: NodeId(1),
+                if_false: None,
                 check: super::super::UniquePriorityCheck::None,
             }),
             NodeKind::Expr(ExprKind::Conditional {
-                predicate: predicate.clone(), if_true: NodeId(1), if_false: NodeId(1),
+                predicate: predicate.clone(),
+                if_true: NodeId(1),
+                if_false: NodeId(1),
             }),
         ] {
             let error = from_nodes(vec![node(kind), node(NodeKind::Stmt(StmtKind::Empty))])
                 .expect_err("an empty predicate must not act like true");
-            assert!(error.to_string().contains("conditional predicate has no clauses"));
+            assert!(error
+                .to_string()
+                .contains("conditional predicate has no clauses"));
         }
     }
 
     #[test]
     fn sequential_predicate_validates_late_clauses_patterns_and_branches() {
         for invalid in 0..4 {
-            let mut predicate = super::super::ConditionalPredicate { clauses: vec![
-                super::super::PredicateClause { expression: NodeId(1), pattern: None },
-                super::super::PredicateClause { expression: NodeId(2), pattern: Some(NodeId(3)) },
-            ] };
+            let mut predicate = super::super::ConditionalPredicate {
+                clauses: vec![
+                    super::super::PredicateClause {
+                        expression: NodeId(1),
+                        pattern: None,
+                    },
+                    super::super::PredicateClause {
+                        expression: NodeId(2),
+                        pattern: Some(NodeId(3)),
+                    },
+                ],
+            };
             let mut if_true = NodeId(4);
             let mut if_false = NodeId(5);
             match invalid {
@@ -1187,19 +1218,24 @@ mod tests {
             }
             for kind in [
                 NodeKind::Stmt(StmtKind::IfElse {
-                    predicate: predicate.clone(), if_true, if_false: Some(if_false),
+                    predicate: predicate.clone(),
+                    if_true,
+                    if_false: Some(if_false),
                     check: super::super::UniquePriorityCheck::None,
                 }),
                 NodeKind::Expr(ExprKind::Conditional {
-                    predicate: predicate.clone(), if_true, if_false,
+                    predicate: predicate.clone(),
+                    if_true,
+                    if_false,
                 }),
             ] {
                 let mut nodes = vec![node(kind)];
                 nodes.extend((0..5).map(|_| node(NodeKind::Expr(ExprKind::Other))));
-                assert!(from_nodes(nodes).expect_err("typed reference is out of bounds")
-                    .to_string().contains("out of bounds"));
+                assert!(from_nodes(nodes)
+                    .expect_err("typed reference is out of bounds")
+                    .to_string()
+                    .contains("out of bounds"));
             }
         }
     }
-
 }

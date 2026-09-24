@@ -1,0 +1,59 @@
+diff --git a/source/ast/expressions/OperatorExpressions.cpp b/source/ast/expressions/OperatorExpressions.cpp
+index 03e33e9c1..6b4af5fbb 100644
+--- a/source/ast/expressions/OperatorExpressions.cpp
++++ b/source/ast/expressions/OperatorExpressions.cpp
+@@ -1639,8 +1639,22 @@ ConstantValue ConditionalExpression::evalImpl(EvalContext& context) const {
+         if (!cvl || !cvr)
+             return nullptr;
+ 
+-        if (cvl.isInteger() && cvr.isInteger())
+-            return SVInt::conditional(cp.integer(), cvl.integer(), cvr.integer());
++        if (cvl.isInteger() && cvr.isInteger()) {
++            SVInt result = SVInt::conditional(cp.integer(), cvl.integer(), cvr.integer());
++            if (result.countZs() != 0) {
++                // The conditional merge keeps equal 0/1 bits. Z is not a
++                // merged value, so equal Z bits also become X.
++                SmallVector<logic_t> digits;
++                digits.reserve(result.getBitWidth());
++                for (int32_t bit = int32_t(result.getBitWidth()) - 1; bit >= 0; bit--) {
++                    logic_t value = result[bit];
++                    digits.push_back(exactlyEqual(value, logic_t::z) ? logic_t::x : value);
++                }
++                return SVInt::fromDigits(result.getBitWidth(), LiteralBase::Binary,
++                                         result.isSigned(), true, digits);
++            }
++            return result;
++        }
+ 
+         auto combineArrays = [&](auto& result, auto& la, auto& ra) -> ConstantValue {
+             ConstantValue defaultElement = type->getArrayElementType()->getDefaultValue();
+diff --git a/tests/unittests/ast/ExpressionTests.cpp b/tests/unittests/ast/ExpressionTests.cpp
+index 7664576c6..e4a67e87d 100644
+--- a/tests/unittests/ast/ExpressionTests.cpp
++++ b/tests/unittests/ast/ExpressionTests.cpp
+@@ -3790,6 +3790,25 @@ endmodule
+     CHECK(var.getInitializer()->eval(eval_ctx).getBitstreamWidth() == 4);
+ }
+ 
++TEST_CASE("Conditional merge turns equal Z branch bits into X") {
++    auto tree = SyntaxTree::fromText(R"(
++module m;
++    localparam logic p = 1'bx ? 1'bz : 1'bz;
++    localparam logic [7:0] q = 1'bx ? 8'b10zz01x0 : 8'b10zz01x0;
++endmodule
++)");
++
++    Compilation compilation;
++    compilation.addSyntaxTree(tree);
++    NO_COMPILATION_ERRORS;
++
++    auto& root = compilation.getRoot();
++    auto& p = root.lookupName<ParameterSymbol>("m.p");
++    CHECK(exactlyEqual(p.getValue().integer(), "1'bx"_si));
++    auto& q = root.lookupName<ParameterSymbol>("m.q");
++    CHECK(exactlyEqual(q.getValue().integer(), "8'b10xx01x0"_si));
++}
++
+ TEST_CASE("Value range where implicit strings not allowed") {
+     auto tree = SyntaxTree::fromText(R"(
+ int i = "a" inside { [1:2] };

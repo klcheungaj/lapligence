@@ -178,6 +178,31 @@ fn resolves_parameters_per_elaborated_instance() {
 }
 
 #[test]
+fn ambiguous_constant_conditional_merges_equal_z_branches_to_x() {
+    let snapshot = compile(
+        "top",
+        r#"
+module top;
+    localparam logic P = 1'bx ? 1'bz : 1'bz;
+    localparam logic KNOWN_Z = 1'b0 ? 1'b0 : 1'bz;
+    localparam logic EQUAL_X = 1'bx ? 1'bx : 1'bx;
+    localparam logic DIFFERENT = 1'bx ? 1'b0 : 1'b1;
+endmodule
+"#,
+    );
+    let value = |value_word, unknown_word| ConstantValue::Integer {
+        is_signed: false,
+        bit_width: 1,
+        value_words: vec![value_word],
+        unknown_words: vec![unknown_word],
+    };
+    assert_eq!(integer(&snapshot, "top", "P"), &value(0, 1));
+    assert_eq!(integer(&snapshot, "top", "KNOWN_Z"), &value(1, 1));
+    assert_eq!(integer(&snapshot, "top", "EQUAL_X"), &value(0, 1));
+    assert_eq!(integer(&snapshot, "top", "DIFFERENT"), &value(0, 1));
+}
+
+#[test]
 fn owned_hierarchy_survives_compile_result_drop() {
     let out = compile::compile_sources_checked(
         &[OwnedSource::compilation_unit("test.sv", PARAMS_SV)],

@@ -2379,10 +2379,10 @@ public:
         visitDefault(expression);
     }
     else if constexpr (std::same_as<T, StructuredAssignmentPatternExpression>) {
-      if (useBoundArrayPatternElements(expression)) {
-        // Slang binds an untyped nested default against an error type as a
-        // placeholder, then binds the executable values against each element.
-        // Only the latter belong in the owned executable graph.
+      if (useResolvedPatternElements(expression)) {
+        // Slang has already resolved these fixed-array patterns to
+        // declaration-order values. Ordinary explicit index-key patterns
+        // remain on the semantic-key capture path.
         for (const Expression* element : expression.elements())
           element->visit(*this);
       }
@@ -3358,20 +3358,40 @@ private:
     key.type_id = capture.type(*value.type);
   }
 
-  bool useBoundArrayPatternElements(
+  bool useResolvedPatternElements(
       const StructuredAssignmentPatternExpression& expression) const {
-    if (expression.bad() || !expression.defaultSetter ||
-        !expression.defaultSetter->bad() ||
-        expression.type->getCanonicalType().kind !=
-            SymbolKind::FixedSizeUnpackedArrayType)
+    if (expression.bad())
       return false;
+
+    const Type& type = expression.type->getCanonicalType();
+    if (type.kind != SymbolKind::FixedSizeUnpackedArrayType)
+      return false;
+
+    // Slang binds an untyped nested default against an error type as a
+    // placeholder, then binds executable values against each element. Keep
+    // the resolved elements for that legacy path as well as type-keyed
+    // patterns. Ordinary explicit index keys stay in the semantic graph so
+    // the simulator can evaluate their constant expressions from owned data.
+    const bool bad_default = expression.defaultSetter &&
+                             expression.defaultSetter->bad();
+    const bool resolved_type_keys = !expression.typeSetters.empty() &&
+                                    expression.indexSetters.empty();
+    if (!bad_default && !resolved_type_keys)
+      return false;
+
     const auto elements = expression.elements();
-    if (elements.size() != expression.type->getFixedRange().fullWidth())
+    const size_t expected =
+        static_cast<size_t>(type.getFixedRange().fullWidth());
+
+    if (elements.size() != expected)
       return false;
     for (const Expression* element : elements) {
       if (!element || element->bad())
         return false;
     }
+
+    // Slang has already applied index, last matching type, and default
+    // precedence, recursively descending through fixed arrays and records.
     return true;
   }
 
@@ -3379,16 +3399,24 @@ private:
       const StructuredAssignmentPatternExpression& expression, uint64_t id) {
     capture.removeChildEdges(id);
     uint32_t index = 0;
-    if (useBoundArrayPatternElements(expression)) {
-      // Structured fixed-array elements are stored by Slang in increasing
-      // index order. Positional operands in our DB use declaration order.
+    if (useResolvedPatternElements(expression)) {
       auto elements = expression.elements();
-      const auto range = expression.type->getFixedRange();
-      for (size_t ordinal = 0; ordinal < elements.size(); ordinal++) {
-        const size_t offset = range.isDescending()
-            ? elements.size() - ordinal - 1 : ordinal;
-        capture.semanticRole(id, elements[offset], LLG_SLANG_EDGE_OPERAND,
-                             index++);
+      if (expression.type->getCanonicalType().kind ==
+          SymbolKind::FixedSizeUnpackedArrayType) {
+        // Slang stores fixed-array elements by increasing index. Positional
+        // operands in the owned DB use declaration order.
+        const auto range = expression.type->getFixedRange();
+        for (size_t ordinal = 0; ordinal < elements.size(); ordinal++) {
+          const size_t offset = range.isDescending()
+              ? elements.size() - ordinal - 1 : ordinal;
+          capture.semanticRole(id, elements[offset], LLG_SLANG_EDGE_OPERAND,
+                               index++);
+        }
+      }
+      else {
+        // Structure elements are returned in declaration order.
+        for (const Expression* element : elements)
+          capture.semanticRole(id, element, LLG_SLANG_EDGE_OPERAND, index++);
       }
       return;
     }

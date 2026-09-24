@@ -1,2 +1,4 @@
 *.patch text eol=lf
 patches/**/*.sha256 text eol=lf
+# Unified diff payloads can require whitespace-only context lines.
+patches/slang/*.patch whitespace=-blank-at-eol

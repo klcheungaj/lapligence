@@ -103,11 +103,11 @@ pub fn expr_width(db: &Db, id: NodeId) -> Option<u32> {
         }
         NodeKind::Expr(ExprKind::Cast { ty, .. }) => ty.width,
         NodeKind::Expr(ExprKind::Operation { op, operands, .. }) => op_width(db, *op, operands),
-        NodeKind::Expr(ExprKind::Conditional { if_true, if_false, .. }) => {
-            expr_width(db, *if_true)
-                .zip(expr_width(db, *if_false))
-                .map(|(a, b)| a.max(b))
-        }
+        NodeKind::Expr(ExprKind::Conditional {
+            if_true, if_false, ..
+        }) => expr_width(db, *if_true)
+            .zip(expr_width(db, *if_false))
+            .map(|(a, b)| a.max(b)),
         _ => None,
     }
 }

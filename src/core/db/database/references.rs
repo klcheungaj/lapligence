@@ -51,6 +51,30 @@ pub(super) fn canonical_reference_target(
     Ok(target)
 }
 
+pub(super) fn hierarchical_reference_target(
+    snapshot: &SlangSnapshot,
+    ids: &HashMap<u64, NodeId>,
+    target_id: u64,
+) -> Result<NodeId, DbError> {
+    let target = semantic_id(ids, target_id)?;
+    let semantic = snapshot
+        .semantic_nodes
+        .get(target.index())
+        .ok_or_else(|| DbError::InvalidSnapshot("semantic reference target is missing".into()))?;
+    let edges = semantic_edges(snapshot, semantic)?;
+    // A hierarchical access to an implicit function result names the result
+    // variable itself. Ordinary references still canonicalize ReturnOwner
+    // variables to their function, but hierarchy consumers need this identity
+    // to resolve the actual storage target.
+    if semantic.kind == SemanticKind::Variable
+        && edge_target(ids, edges, SemanticEdgeRole::ReturnOwner)?.is_some()
+    {
+        Ok(target)
+    } else {
+        canonical_reference_target(snapshot, ids, target_id)
+    }
+}
+
 pub(super) fn edge_target(
     ids: &HashMap<u64, NodeId>,
     edges: &[crate::ffi::slang::SemanticEdge],

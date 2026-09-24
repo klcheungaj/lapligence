@@ -104,9 +104,7 @@ pub(super) fn predicate_from_slang(
             .ok()
             .and_then(|index| clauses.get_mut(index))
             .ok_or_else(|| {
-                DbError::InvalidSnapshot(
-                    "conditional pattern has no corresponding clause".into(),
-                )
+                DbError::InvalidSnapshot("conditional pattern has no corresponding clause".into())
             })?;
         if clause.pattern.is_some() {
             return Err(DbError::InvalidSnapshot(

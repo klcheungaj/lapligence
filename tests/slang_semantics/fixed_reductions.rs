@@ -6,7 +6,10 @@ use std::collections::HashSet;
 
 fn capture(source: &str) -> Db {
     let compiled = compile::compile_sources_checked(
-        &[compile::OwnedSource::compilation_unit("fixed-reductions.sv", source)],
+        &[compile::OwnedSource::compilation_unit(
+            "fixed-reductions.sv",
+            source,
+        )],
         &compile::CompileOpts {
             top: Some("tb".into()),
             ..Default::default()
@@ -74,10 +77,14 @@ endmodule
 
 #[test]
 fn fixed_array_reduction_maps_keep_enclosing_automatic_values_during_lowering() {
-    let database = capture(include_str!("../fixtures/sim/fixed_array_reductions/functions.sv"));
-    database.validate().expect("valid captured activation graph");
-    let generated = llg::sim::codegen::generate(&database)
-        .expect("lexical maps lower in the caller frame");
+    let database = capture(include_str!(
+        "../fixtures/sim/fixed_array_reductions/functions.sv"
+    ));
+    database
+        .validate()
+        .expect("valid captured activation graph");
+    let generated =
+        llg::sim::codegen::generate(&database).expect("lexical maps lower in the caller frame");
     assert!(generated.model_c.contains("reduction_ordinal"));
 }
 
@@ -96,7 +103,12 @@ fn fixed_array_reduction_capture_survives_semantic_table_growth() {
         }
         source.push_str("initial begin\n");
         for increment in 0..16 {
-            for receiver in ["fixed_values", "dynamic_values", "queue_values", "associative_values"] {
+            for receiver in [
+                "fixed_values",
+                "dynamic_values",
+                "queue_values",
+                "associative_values",
+            ] {
                 source.push_str(&format!(
                     "result = {receiver}.sum() with (int'(item) + {increment});\n"
                 ));
@@ -104,7 +116,9 @@ fn fixed_array_reduction_capture_survives_semantic_table_growth() {
         }
         source.push_str("$display(\"%0d\", result); $finish(0); end endmodule\n");
         let database = capture(&source);
-        database.validate().expect("grown semantic table stays valid");
+        database
+            .validate()
+            .expect("grown semantic table stays valid");
         let mut iterators = HashSet::new();
         for id in database.node_ids() {
             let NodeKind::MethodCall { name, receiver, .. } = database.node_kind(id) else {
@@ -117,6 +131,10 @@ fn fixed_array_reduction_capture_survives_semantic_table_growth() {
             assert!(database.method_call_has_with_clause(id));
             assert!(iterators.insert(database.method_call_iterator(id).expect("owned iterator")));
         }
-        assert_eq!(iterators.len(), 64, "padding={padding}: method metadata was lost");
+        assert_eq!(
+            iterators.len(),
+            64,
+            "padding={padding}: method metadata was lost"
+        );
     }
 }

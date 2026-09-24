@@ -10,6 +10,10 @@ Inventory:
 - `packed_union.sv`, `packed_aggregate_selections.sv`, `unpacked_struct.sv`,
   `unpacked_union.sv`: member layout/aliasing, packed dimensions, defaults,
   writes, and aggregate copy.
+- `packed_nominal_type_key_default.sv` and
+  `packed_nominal_type_key_uncovered.sv`: a same-width but nonmatching packed
+  struct type key falls through to a typed default, while omitting the default
+  leaves the member uncovered (§§6.22.1, 10.9.2).
 - `syn_021_tagged_values.sv`: finite packed tagged-union tags and payloads,
   void/unequal members, nested values, fixed arrays, ports, zero-time function
   returns, and inactive-member X reads. `syn_021_tagged_unpacked_rejected.sv`

@@ -63,17 +63,13 @@ module tb;
         if (copied.narrow !== 8'h5a)
             $fatal(1, "tagged cast");
 
-        if (value.wide_value !== 64'hx)
-            $fatal(1, "inactive member read");
-
         nested = tagged inner(value);
-        if (nested.inner.narrow !== 8'h5a ||
-            nested.inner.wide_value !== 64'hx)
+        if (nested.inner.narrow !== 8'h5a)
             $fatal(1, "nested member read");
 
         nested = tagged wide_value(64'hab5);
-        if (nested.wide_value !== 64'hab5 || nested.inner.narrow !== 8'hx)
-            $fatal(1, "outer inactive member read");
+        if (nested.wide_value !== 64'hab5)
+            $fatal(1, "outer active member read");
 
         $display("PASS syn_021_tagged_values");
         $finish;

@@ -284,9 +284,12 @@ fn analyze_sequence(
 fn analyze_stmt(db: &Db, root: NodeId, incoming: &HashSet<NodeId>) -> DefiniteAssignmentFlow {
     match db.node_kind(root) {
         NodeKind::Stmt(StmtKind::Begin) => analyze_sequence(db, &db.node(root).children, incoming),
-        NodeKind::Stmt(StmtKind::IfElse { predicate, if_true, if_false, .. }) => {
-            analyze_if(db, predicate, *if_true, *if_false, incoming)
-        }
+        NodeKind::Stmt(StmtKind::IfElse {
+            predicate,
+            if_true,
+            if_false,
+            ..
+        }) => analyze_if(db, predicate, *if_true, *if_false, incoming),
         NodeKind::Stmt(StmtKind::Assign {
             blocking, delay, ..
         }) => analyze_assignment(db, root, *blocking && delay.is_none(), incoming),
@@ -393,10 +396,13 @@ fn analyze_predicate(
             None => successful.clone(),
         });
     }
-    (DefiniteAssignmentFlow {
-        definitely_assigned: any_exit.unwrap_or_else(|| incoming.clone()),
-        read_before_assignment: reads,
-    }, successful)
+    (
+        DefiniteAssignmentFlow {
+            definitely_assigned: any_exit.unwrap_or_else(|| incoming.clone()),
+            read_before_assignment: reads,
+        },
+        successful,
+    )
 }
 
 fn analyze_if(
@@ -412,7 +418,9 @@ fn analyze_if(
         .map(|branch| analyze_node(db, branch, &condition.definitely_assigned))
         .unwrap_or_else(|| DefiniteAssignmentFlow::from_assigned(&condition.definitely_assigned));
     let mut merged = merge_paths(then_flow, else_flow);
-    merged.read_before_assignment.extend(condition.read_before_assignment);
+    merged
+        .read_before_assignment
+        .extend(condition.read_before_assignment);
     merged
 }
 
@@ -643,14 +651,20 @@ fn analyze_expr(db: &Db, root: NodeId, incoming: &HashSet<NodeId>) -> DefiniteAs
             }
             flow
         }
-        NodeKind::Expr(ExprKind::Conditional { predicate, if_true, if_false }) => {
+        NodeKind::Expr(ExprKind::Conditional {
+            predicate,
+            if_true,
+            if_false,
+        }) => {
             let (condition, _) = analyze_predicate(db, predicate, incoming);
             // Either arm can execute after an ambiguous early clause, so
             // neither may assume that the entire predicate was evaluated.
             let then_flow = analyze_expr(db, *if_true, &condition.definitely_assigned);
             let else_flow = analyze_expr(db, *if_false, &condition.definitely_assigned);
             let mut merged = merge_paths(then_flow, else_flow);
-            merged.read_before_assignment.extend(condition.read_before_assignment);
+            merged
+                .read_before_assignment
+                .extend(condition.read_before_assignment);
             merged
         }
         NodeKind::Expr(ExprKind::Operation { operands, .. }) => {
@@ -821,7 +835,10 @@ mod tests {
             "module t; logic a, b, c, y; always @(a) if (a &&& b &&& c) y = 1; else y = 0; endmodule\n",
         );
         assert_eq!(diags.len(), 1, "{diags:?}");
-        assert!(diags[0].message.ends_with("missing signals: b, c"), "{diags:?}");
+        assert!(
+            diags[0].message.ends_with("missing signals: b, c"),
+            "{diags:?}"
+        );
         for body in [
             "if (a &&& (tmp = b)) y = 1; else y = tmp;",
             "y = a &&& (tmp = b) ? tmp : 0;",
@@ -830,8 +847,10 @@ mod tests {
                 "module t; logic a, b, tmp, y; always @(a or b) {body} endmodule\n"
             ));
             assert_eq!(diags.len(), 1, "{body}: {diags:?}");
-            assert!(diags[0].message.ends_with("missing signals: tmp"), "{body}: {diags:?}");
+            assert!(
+                diags[0].message.ends_with("missing signals: tmp"),
+                "{body}: {diags:?}"
+            );
         }
     }
-
 }

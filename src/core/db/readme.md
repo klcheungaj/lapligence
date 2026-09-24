@@ -29,6 +29,9 @@ including omitted slots. Packed element dimensions remain independent of
 flattened storage; enum ranges belong to the integral enum value, not its base.
 Subroutine bodies are explicit arena references; consumers never infer a body
 from the order of declarations or auxiliary statement children.
+Assignment-pattern index keys retain their owned expression and any
+front-end-folded integral value; their printed spelling is diagnostic text,
+not the numeric source of truth for array matching.
 Instance-body and instance-array containers are expanded recursively in module
 and generate-scope child lists, so every elaborated primitive remains reachable.
 Container expansion rejects cyclic or repeated containers before traversal.

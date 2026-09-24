@@ -1,0 +1,11 @@
+--- a/source/ast/symbols/SubroutineSymbols.cpp
++++ b/source/ast/symbols/SubroutineSymbols.cpp
+@@ -148,7 +148,7 @@
+              proto->returnType->kind != SyntaxKind::VoidType) {
+         // The function gets an implicit variable inserted that represents the return value.
+         auto implicitReturnVar = compilation.emplace<VariableSymbol>(result->name, result->location,
+-                                                                     VariableLifetime::Automatic);
++                                                                     result->defaultLifetime);
+         implicitReturnVar->getDeclaredType()->setLink(result->declaredReturnType);
+         implicitReturnVar->flags |= VariableFlags::CompilerGenerated;
+         result->addMember(*implicitReturnVar);

@@ -27,11 +27,10 @@ use crate::ffi::slang::{
     SEMANTIC_ASSERTION_ABORT_SYNC, SEMANTIC_ASSERTION_DEFERRED, SEMANTIC_ASSERTION_FINAL,
     SEMANTIC_ASSERTION_RANGE, SEMANTIC_ASSERTION_REPETITION, SEMANTIC_ASSERTION_STRONG,
     SEMANTIC_EXPR_CLOCKING_EVENT, SEMANTIC_EXPR_TAGGED_UNION, SEMANTIC_SCOPE_CLOCKING_BLOCK,
-    SEMANTIC_STMT_CONCURRENT_ASSERT,
-    SEMANTIC_STMT_CONCURRENT_ASSUME, SEMANTIC_STMT_CONCURRENT_COVER,
-    SEMANTIC_STMT_CONCURRENT_EXPECT, SEMANTIC_STMT_IMMEDIATE_ASSERT,
-    SEMANTIC_STMT_IMMEDIATE_ASSUME, SEMANTIC_STMT_IMMEDIATE_COVER, SEMANTIC_TIMING_CYCLE_DELAY,
-    SEMANTIC_TIMING_ONE_STEP_DELAY, SEMANTIC_VARIABLE_CLOCKING,
+    SEMANTIC_STMT_CONCURRENT_ASSERT, SEMANTIC_STMT_CONCURRENT_ASSUME,
+    SEMANTIC_STMT_CONCURRENT_COVER, SEMANTIC_STMT_CONCURRENT_EXPECT,
+    SEMANTIC_STMT_IMMEDIATE_ASSERT, SEMANTIC_STMT_IMMEDIATE_ASSUME, SEMANTIC_STMT_IMMEDIATE_COVER,
+    SEMANTIC_TIMING_CYCLE_DELAY, SEMANTIC_TIMING_ONE_STEP_DELAY, SEMANTIC_VARIABLE_CLOCKING,
 };
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
@@ -60,11 +59,11 @@ pub use statements::{
     EventTriggerTiming, IntraControl, StmtKind,
 };
 mod predicates;
-pub use predicates::{
-    ConditionalPatternField, ConditionalPatternInfo, ConditionalPatternKind,
-    ConditionalPredicate, PredicateClause,
-};
 use predicates::{conditional_branches_from_slang, predicate_from_slang};
+pub use predicates::{
+    ConditionalPatternField, ConditionalPatternInfo, ConditionalPatternKind, ConditionalPredicate,
+    PredicateClause,
+};
 mod expressions;
 pub use expressions::{
     ConstantSource, ExprKind, StreamOperand, StreamingDirection, TimeLiteralScale, TimeUnit,
@@ -73,8 +72,8 @@ pub use expressions::{
 mod references;
 use references::{
     array_select_from_slang, canonical_reference_target, edge_target, edge_target_at, edge_targets,
-    expression_reference_target, member_path_from_slang, resolved_edge_target, semantic_edges,
-    semantic_id,
+    expression_reference_target, hierarchical_reference_target, member_path_from_slang,
+    resolved_edge_target, semantic_edges, semantic_id,
 };
 mod clocking;
 use clocking::{
@@ -416,9 +415,7 @@ impl Db {
 
     /// Return resolved member roles for a structure conditional pattern.
     pub fn conditional_pattern_fields(&self, id: NodeId) -> Option<&[ConditionalPatternField]> {
-        self.conditional_pattern_fields
-            .get(&id)
-            .map(Vec::as_slice)
+        self.conditional_pattern_fields.get(&id).map(Vec::as_slice)
     }
 
     pub(crate) fn conditional_pattern_field_entries(

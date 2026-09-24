@@ -48,7 +48,9 @@ impl SlangTypeProjector<'_> {
                         .bit_width
                         .checked_sub(1)
                         .and_then(|left| i32::try_from(left).ok())
-                        .ok_or_else(|| "foreach integral width has no int-indexed range".to_owned())?;
+                        .ok_or_else(|| {
+                            "foreach integral width has no int-indexed range".to_owned()
+                        })?;
                     // The range belongs to this single integral value, not
                     // an enum's underlying packed range or a record's members.
                     current = None;

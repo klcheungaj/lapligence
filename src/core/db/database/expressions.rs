@@ -47,6 +47,12 @@ pub enum ExprKind {
     TaggedPattern {
         key: Option<String>,
         key_type: Option<AssignmentPatternKeyType>,
+        /// Owned expression for a constant array index key. The spelling in
+        /// `key` is retained for display and diagnostics only.
+        index_key: Option<NodeId>,
+        /// Slang's resolved value when the index key is constant-folded by
+        /// the frontend (including constant-function calls).
+        index_value: Option<ValueData>,
         value: Option<NodeId>,
     },
     /// A finite tagged-union constructor (`tag value(...)`). The member name

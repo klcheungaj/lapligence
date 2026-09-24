@@ -75,7 +75,13 @@ pub(super) fn expression_from_slang(
         65 => ExprKind::Ref {
             target: node
                 .target_id
-                .map(|id| canonical_reference_target(snapshot, ids, id))
+                .map(|id| {
+                    if node.detail == "HierarchicalValue" {
+                        hierarchical_reference_target(snapshot, ids, id)
+                    } else {
+                        canonical_reference_target(snapshot, ids, id)
+                    }
+                })
                 .transpose()?,
         },
         72 => ExprKind::Cast {
@@ -221,9 +227,17 @@ pub(super) fn expression_from_slang(
             } else {
                 None
             };
+            let index_key = first(SemanticEdgeRole::Index)?;
+            let index_value = index_key
+                .and_then(|index| snapshot.semantic_nodes.get(index.index()))
+                .and_then(|index| index.constant_id)
+                .and_then(|constant| snapshot.constants.get(constant as usize))
+                .map(|constant| value_data_from_slang(&constant.value));
             ExprKind::TaggedPattern {
                 key: (!node.name.is_empty()).then(|| node.name.clone()),
                 key_type,
+                index_key,
+                index_value,
                 value: first(SemanticEdgeRole::Body)?,
             }
         }
@@ -290,7 +304,11 @@ pub(super) fn expression_from_slang(
                     operands: vec![predicate.clauses[0].expression, if_true, if_false],
                 }
             } else {
-                ExprKind::Conditional { predicate, if_true, if_false }
+                ExprKind::Conditional {
+                    predicate,
+                    if_true,
+                    if_false,
+                }
             }
         }
         _ if node.operation != SemanticOperation::None => {

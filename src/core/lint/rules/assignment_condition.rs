@@ -95,7 +95,11 @@ fn collect_predicate_assignments(db: &Db, expression: NodeId, out: &mut Vec<Node
                 collect_predicate_assignments(db, *operand, out);
             }
         }
-        NodeKind::Expr(ExprKind::Conditional { predicate, if_true, if_false }) => {
+        NodeKind::Expr(ExprKind::Conditional {
+            predicate,
+            if_true,
+            if_false,
+        }) => {
             for clause in &predicate.clauses {
                 if clause.pattern.is_none() {
                     collect_predicate_assignments(db, clause.expression, out);
@@ -269,7 +273,10 @@ mod tests {
             "t",
         );
         let got = rule_diags(&diags, "assignment-in-condition");
-        assert_eq!(got.iter().map(|diag| diag.line).collect::<Vec<_>>(), vec![3, 4, 5], "{diags:?}");
+        assert_eq!(
+            got.iter().map(|diag| diag.line).collect::<Vec<_>>(),
+            vec![3, 4, 5],
+            "{diags:?}"
+        );
     }
-
 }

@@ -111,7 +111,9 @@ struct PathWrites {
 fn analyze_stmt(db: &Db, root: NodeId) -> PathWrites {
     match db.node_kind(root) {
         NodeKind::Stmt(StmtKind::Begin) => fold_children(db, root),
-        NodeKind::Stmt(StmtKind::IfElse { if_true, if_false, .. }) => {
+        NodeKind::Stmt(StmtKind::IfElse {
+            if_true, if_false, ..
+        }) => {
             let t = analyze_stmt(db, *if_true);
             let Some(els) = *if_false else {
                 // No else branch: every write in the then-branch is conditional.
@@ -376,5 +378,4 @@ mod tests {
         assert_eq!(got.len(), 1, "{incomplete:?}");
         assert!(got[0].message.contains("`y`"));
     }
-
 }

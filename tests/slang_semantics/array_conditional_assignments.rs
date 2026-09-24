@@ -132,7 +132,8 @@ fn array_conditional_assignment_nested_defaults_export_only_bound_values() {
             op: Operation::AssignmentPattern,
             operands,
             ..
-        }) = &node.kind else {
+        }) = &node.kind
+        else {
             continue;
         };
         let Some(descriptor) = database.type_descriptor(id) else {
@@ -167,17 +168,23 @@ fn array_conditional_assignment_nested_defaults_export_only_bound_values() {
         patterns += 1;
         assert_eq!(operands.len(), 3, "each outer row needs a bound operand");
         for operand in operands {
-            assert!(matches!(
-                database.node_kind(*operand),
-                NodeKind::Expr(ExprKind::Operation {
-                    op: Operation::AssignmentPattern,
-                    ..
-                })
-            ), "untyped default placeholders must not be executable operands");
+            assert!(
+                matches!(
+                    database.node_kind(*operand),
+                    NodeKind::Expr(ExprKind::Operation {
+                        op: Operation::AssignmentPattern,
+                        ..
+                    })
+                ),
+                "untyped default placeholders must not be executable operands"
+            );
         }
     }
     assert_eq!(patterns, 2);
-    assert_eq!(shared_rows, 2, "each default generates a shared two-byte row");
+    assert_eq!(
+        shared_rows, 2,
+        "each default generates a shared two-byte row"
+    );
     for options in [OptConfig::none(), OptConfig::default()] {
         codegen::generate_from_db_with_opts(&database, &options)
             .expect("bound nested defaults lower after snapshot destruction");
@@ -197,7 +204,10 @@ fn array_conditional_assignment_shared_default_operands_keep_every_slot() {
             extent - 2,
         );
         let compiled = compile::compile_sources_checked(
-            &[compile::OwnedSource::compilation_unit("shared-default-slots.sv", source)],
+            &[compile::OwnedSource::compilation_unit(
+                "shared-default-slots.sv",
+                source,
+            )],
             &compile::CompileOpts {
                 top: Some("tb".into()),
                 ..Default::default()
@@ -227,11 +237,14 @@ fn array_conditional_assignment_shared_default_operands_keep_every_slot() {
                     "Slang shares the value"
                 );
             }
-            assert!(edges.iter().all(|edge| edge.role != SemanticEdgeRole::Child));
+            assert!(edges
+                .iter()
+                .all(|edge| edge.role != SemanticEdgeRole::Child));
             rows += 1;
         }
         assert_eq!(rows, 1, "one shared synthesized row is sufficient");
-        let database = Db::from_slang(snapshot).expect("shared operands import without deduplication");
+        let database =
+            Db::from_slang(snapshot).expect("shared operands import without deduplication");
         drop(compiled);
         database.validate().expect("owned shared-row graph");
         for options in [OptConfig::none(), OptConfig::default()] {
@@ -239,6 +252,40 @@ fn array_conditional_assignment_shared_default_operands_keep_every_slot() {
                 .expect("all operand occurrences lower after snapshot destruction");
         }
     }
+}
+
+#[test]
+fn assignment_pattern_index_key_keeps_owned_expression_and_constant_value() {
+    let database = capture(
+        "pattern-index-key.sv",
+        "module tb;\n\
+         localparam int BASE = 0;\n\
+         int values [0:1]; int seed;\n\
+         initial values = '{(BASE + 1): seed, default: 0};\n\
+         endmodule\n",
+    );
+    database
+        .validate()
+        .expect("valid assignment-pattern key graph");
+
+    let (key_expression, key_value) = database
+        .node_ids()
+        .find_map(|id| match database.node_kind(id) {
+            NodeKind::Expr(ExprKind::TaggedPattern {
+                index_key: Some(key_expression),
+                index_value: Some(key_value),
+                ..
+            }) => Some((*key_expression, key_value.to_i128())),
+            _ => None,
+        })
+        .expect("constant array index key is retained as owned semantic data");
+    assert_eq!(key_value, Some(1));
+    assert!(matches!(
+        database.node_kind(key_expression),
+        NodeKind::Expr(ExprKind::Operation { .. })
+            | NodeKind::Expr(ExprKind::Cast { .. })
+            | NodeKind::Expr(ExprKind::Constant { .. })
+    ));
 }
 
 #[test]
