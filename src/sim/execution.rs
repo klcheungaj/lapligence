@@ -726,11 +726,15 @@ fn collect_statement_expression_effects(
         }
         IrStmt::Memory {
             path,
+            view,
             start,
             finish,
             ..
         } => {
             collect_string_effects(ir, path, effects, visited_calls);
+            for selector in &view.selectors {
+                collect_expression_effects(ir, &selector.value, effects, visited_calls);
+            }
             if let Some(start) = start {
                 collect_expression_effects(ir, start, effects, visited_calls);
             }
@@ -1125,6 +1129,13 @@ fn collect_expression_effects(
                 collect_expression_effects(ir, value, effects, visited_calls);
             }
         }
+        IrExprKind::TaggedSelect { base, steps, .. } => {
+            effects.push(ExecutionEffect::RuntimeService);
+            collect_expression_effects(ir, base, effects, visited_calls);
+            for step in steps {
+                collect_expression_effects(ir, &step.selection.base, effects, visited_calls);
+            }
+        }
         IrExprKind::Pattern(pattern) => {
             if let Some(binding) = &pattern.binding {
                 effects.push(ExecutionEffect::ImmediateStore);
@@ -1221,7 +1232,8 @@ fn collect_expression_effects(
             collect_expression_effects(ir, b, effects, visited_calls);
         }
         IrExprKind::Predicate { clauses: parts }
-        | IrExprKind::Concat { parts } | IrExprKind::Replicate { parts, .. } => {
+        | IrExprKind::Concat { parts }
+        | IrExprKind::Replicate { parts, .. } => {
             for part in parts {
                 collect_expression_effects(ir, part, effects, visited_calls);
             }
@@ -1827,6 +1839,13 @@ fn collect_lhs_expression_effects(
                 collect_expression_effects(ir, &step.base, effects, visited_calls);
             }
         }
+        IrLhs::TaggedSelect { target, steps, .. } => {
+            effects.push(ExecutionEffect::RuntimeService);
+            collect_lhs_expression_effects(ir, target, effects, visited_calls);
+            for step in steps {
+                collect_expression_effects(ir, &step.selection.base, effects, visited_calls);
+            }
+        }
         IrLhs::Bit(_, index, _) => collect_expression_effects(ir, index, effects, visited_calls),
         IrLhs::IdxPart(_, base, width, ..) => {
             collect_expression_effects(ir, base, effects, visited_calls);
@@ -1900,27 +1919,60 @@ mod tests {
 
     #[test]
     fn fixed_array_reduction_effects_include_calls_in_source_and_map() {
-        use crate::sim::ir::{IrCallExpr, IrContainerReduction, IrDepth, IrFixedArrayReduction,
-            IrFixedArrayReductionSource};
-        let call = |width| IrExpr::new(IrExprKind::CallFn(Box::new(IrCallExpr::new(
-            0, vec![], IrDepth::PROC, false,
-        ))), width, false, None);
+        use crate::sim::ir::{
+            IrCallExpr, IrContainerReduction, IrDepth, IrFixedArrayReduction,
+            IrFixedArrayReductionSource,
+        };
+        let call = |width| {
+            IrExpr::new(
+                IrExprKind::CallFn(Box::new(IrCallExpr::new(0, vec![], IrDepth::PROC, false))),
+                width,
+                false,
+                None,
+            )
+        };
         let mut model = IrModel::new("fold_effects".into(), 1).unwrap();
-        model.funcs.push(crate::sim::ir::IrFunc::new("helper".into(),
-            Some(IrType::packed(8, false).unwrap()), vec![], vec![], vec![], vec![]));
-        model.arrays.push(crate::sim::ir::IrArray::new(
-            "G_source".into(), "source".into(), 8, false, vec![(0, 0)],
-        ).unwrap());
+        model.funcs.push(crate::sim::ir::IrFunc::new(
+            "helper".into(),
+            Some(IrType::packed(8, false).unwrap()),
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+        ));
+        model.arrays.push(
+            crate::sim::ir::IrArray::new(
+                "G_source".into(),
+                "source".into(),
+                8,
+                false,
+                vec![(0, 0)],
+            )
+            .unwrap(),
+        );
         for source_call in [false, true] {
             let value = IrExpr::new(IrExprKind::LocalRead("item".into()), 8, false, None);
-            let expression = IrExpr::new(IrExprKind::FixedArrayReduce(Box::new(IrFixedArrayReduction {
-                source: if source_call { IrFixedArrayReductionSource::Value(Box::new(call(8))) }
-                    else { IrFixedArrayReductionSource::Array(0) },
-                operation: IrContainerReduction::Sum,
-                left: 0, right: 0, element_width: 8, element_signed: false,
-                element_two_state: false, item_name: "item".into(), index_name: "index".into(),
-                value: if source_call { value } else { call(8) },
-            })), 8, false, None);
+            let expression = IrExpr::new(
+                IrExprKind::FixedArrayReduce(Box::new(IrFixedArrayReduction {
+                    source: if source_call {
+                        IrFixedArrayReductionSource::Value(Box::new(call(8)))
+                    } else {
+                        IrFixedArrayReductionSource::Array(0)
+                    },
+                    operation: IrContainerReduction::Sum,
+                    left: 0,
+                    right: 0,
+                    element_width: 8,
+                    element_signed: false,
+                    element_two_state: false,
+                    item_name: "item".into(),
+                    index_name: "index".into(),
+                    value: if source_call { value } else { call(8) },
+                })),
+                8,
+                false,
+                None,
+            );
             model.validate_expr(&expression, None).unwrap();
             let mut effects = Vec::new();
             collect_expression_effects(&model, &expression, &mut effects, &mut HashSet::new());

@@ -5,11 +5,26 @@
   the facades below.
 - **`collection.rs` / `collection/`:** collect design storage, nets, gates,
   ports, subprogram signatures/bodies, calls, processes, dependencies and events.
+  Input value links pre-collect an explicitly bound hierarchical static
+  block-local actual into its per-instance storage before lowering the link;
+  the same storage supplies the source dependency so later writes refresh the
+  child port. Automatic and unresolved actuals remain fail-closed.
+  Packed selections of subroutine formals, function return slots, and
+  procedural locals lower against their existing typed activation or local
+  storage roots; this avoids requiring a module-wide signal for those targets.
+  `collection/call_contracts.rs` admits static return storage to read-only event
+  callbacks only when it is not read and a result value is established on
+  every normal or explicit return path. A supported static function result
+  exposed to a hierarchical assignment or passed as a hierarchical ref actual
+  is registered as a hidden model signal backed by the same persistent `_ret`
+  storage for continuous/procedural writes and caller references.
 - **`statements.rs` / `statements/`:** `EmitCtx` coordinates procedural dispatch,
   declarations, assignments, control flow, events, forks, drivers, assertions,
   clocking, system tasks and calls. Fixed `foreach` nesting uses the owned
   statement's per-slot bounds, including packed element dimensions, rather than
-  reconstructing dimensions from storage arrays.
+  reconstructing dimensions from storage arrays. Fork branches use persistent
+  subroutine signals directly; synchronous `join` branches borrow enclosing
+  automatic numeric cells, while detachable branches retain value snapshots.
 - **`expressions.rs` / `expressions/`:** lower typed expressions, operations,
   conversions, aggregates, streaming, membership and system-function queries.
   `expressions/aggregates/copies.rs` separates selected-value type compatibility
@@ -22,7 +37,13 @@
   RHS once before projecting destination cells; runtime selected views capture
   their selectors once before projecting source cells. Module-procedural
   expressions and fixed-array input value ports reuse the same typed conditional
-  operation as subroutine values.
+  operation as subroutine values. Assignment-pattern consumers use Slang's
+  resolved declaration-order operands for recursive type-key/default patterns;
+  explicit index keys are evaluated from owned constant values or expression
+  nodes. Positional pattern lvalues recursively scatter fixed unpacked arrays,
+  structures, and packed arrays after one RHS snapshot. Bound references to
+  subroutine-local scalar parameters materialize their captured values on demand
+  instead of adding them to instance-wide parameter storage.
 - **`objects.rs` / `objects/`:** non-integral class/interface, mailbox, process,
   enum, handle and string operations.
 - **`assertions.rs`:** bounded concurrent-assertion sequence automata, legal
@@ -44,14 +65,15 @@ values only. Defaults resolve earlier formals through the typed argument map.
 Do not request detached C strings in argument binding: owner setup/cleanup is
 emitted later by the structured whole-model renderer.
 
-Storage collection lowers constant declaration initializers eagerly, but a
-scalar declaration initializer whose expression contains a user function call is
-deferred until subroutine prototypes have assigned every callee a model entry.
-Deferred initializers are replayed in the model initialization frame with process
-recursion depth zero; a failed replay aborts code generation rather than emitting
-a partial model. A default that references an earlier side-effecting actual is
-rejected because no caller-side input staging exists yet to evaluate that actual
-once.
+Storage collection lowers declaration initializers eagerly when their references
+are available. It defers a scalar initializer that contains a user function call
+or names a bound variable/net whose child or interface signal is not collected
+yet; other initializers keep their eager order. Deferred
+initializers are replayed after design collection and subroutine prototype
+emission in the model initialization frame with process recursion depth zero. A
+failed replay aborts code generation rather than emitting a partial model. A
+default that references an earlier side-effecting actual is rejected because no
+caller-side input staging exists yet to evaluate that actual once.
 
 ## Fixed-array method maps
 
@@ -84,3 +106,14 @@ and SYN-004's immediate-member `StructMux` layout;
 R04 array-assignment staging remains separate. All reached clauses stay inside
 the resulting expression so the emitter, not lowering, controls their execution.
 Constant evaluation stops at the first false or ambiguous clause as well.
+
+## Memory-task views
+
+`statements/system_tasks.rs` lowers fixed packed `$readmem*`/`$writemem*`
+destinations into an owned memory view. Higher-dimension runtime selectors are
+retained as typed expressions and evaluated once at the task call; a constant
+slice may narrow the lowest specified dimension. The view dimension follows
+the source array's declared direction, while file addresses continue to map to
+their numeric indices. The view retains physical flat-array strides and checks
+file start/finish addresses against the selected range. Dynamic, native and
+associative memories remain outside this path.

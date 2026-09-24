@@ -49,16 +49,6 @@ impl<'a> Codegen<'a> {
         let source_descriptor = self.query_descriptor(rhs).cloned().ok_or_else(|| {
             format!("positional assignment-pattern RHS in `{path}` has no owned source type")
         })?;
-        let TypeShape::FixedArray { .. } = target_descriptor.shape else {
-            return Err(format!(
-                "positional assignment-pattern lvalue in `{path}` requires a fixed unpacked-array type"
-            ));
-        };
-        let TypeShape::FixedArray { .. } = source_descriptor.shape else {
-            return Err(format!(
-                "positional assignment-pattern RHS in `{path}` requires a compatible fixed unpacked array"
-            ));
-        };
         self.p30_require_pattern_shape(
             path,
             &target_descriptor,
@@ -69,6 +59,7 @@ impl<'a> Codegen<'a> {
         let mut targets = Vec::new();
         self.p30_collect_pattern_lvalue_targets(path, pattern, &target_descriptor, &mut targets)?;
         let mut lowered_targets = Vec::with_capacity(targets.len());
+        let mut target_widths = Vec::with_capacity(targets.len());
         for (target, descriptor) in targets {
             if !blocking
                 && (self.proc_local_target(target).is_some() || self.subroutine_auto_target(target))
@@ -94,23 +85,37 @@ impl<'a> Codegen<'a> {
                     "assignment-pattern lvalue target in `{path}` is {width} bits wide; expected {expected}"
                 ));
             }
+            target_widths.push((expected, descriptor.info.signed));
             lowered_targets.push(lowered);
         }
 
-        let target_dims = match &target_descriptor.shape {
-            TypeShape::FixedArray { dimensions, .. } => dimensions.clone(),
-            _ => unreachable!("checked fixed assignment-pattern target shape"),
-        };
         let mut captures = Vec::new();
         let mut captured_indices = HashMap::new();
-        let values = self.p30_lower_source_values(
-            path,
-            lhs,
-            rhs,
-            &target_dims,
-            &mut captures,
-            &mut captured_indices,
-        )?;
+        let source_values = if let TypeShape::FixedArray { dimensions, .. } =
+            &source_descriptor.shape
+        {
+            self.p30_lower_source_values(
+                path,
+                lhs,
+                rhs,
+                dimensions,
+                &mut captures,
+                &mut captured_indices,
+            )?
+        } else {
+            let value = self.lower_expr(path, rhs)?;
+            let expected = Self::fixed_descriptor_width(&source_descriptor).ok_or_else(|| {
+                format!("assignment-pattern lvalue RHS in `{path}` has unresolved width")
+            })?;
+            if value.width != expected || value.is_real() {
+                return Err(format!(
+                    "assignment-pattern lvalue RHS in `{path}` has width {}; expected {expected}",
+                    value.width
+                ));
+            }
+            vec![self.p30_capture_value(lhs, rhs, 0, value, &mut captures)]
+        };
+        let values = Self::p30_split_pattern_source_values(path, source_values, &target_widths)?;
         if values.len() != lowered_targets.len() {
             return Err(format!(
                 "assignment-pattern lvalue in `{path}` has {} targets but RHS supplies {} values",
@@ -129,6 +134,42 @@ impl<'a> Codegen<'a> {
         Ok(Some(IrStmt::Block(captures)))
     }
 
+    /// Lower the ordered writable leaves of a positional assignment-pattern
+    /// lvalue. Call and port output bindings use the same target order when
+    /// copying a packed formal value back to the caller.
+    pub(in super::super) fn positional_pattern_lvalue_parts(
+        &mut self,
+        path: &str,
+        lhs: NodeId,
+    ) -> Result<Option<Vec<Lhs>>, String> {
+        let pattern = self.p30_unwrap_cast(lhs);
+        let NodeKind::Expr(ExprKind::Operation { op, .. }) = self.kind(pattern) else {
+            return Ok(None);
+        };
+        if !matches!(
+            op,
+            Operation::AssignmentPattern | Operation::MultiAssignmentPattern
+        ) {
+            return Ok(None);
+        }
+        if *op == Operation::MultiAssignmentPattern {
+            return Err(format!(
+                "replicated assignment-pattern lvalue in `{path}` is not supported"
+            ));
+        }
+
+        let descriptor = self.query_descriptor(lhs).cloned().ok_or_else(|| {
+            format!("positional assignment-pattern lvalue in `{path}` has no owned target type")
+        })?;
+        let mut targets = Vec::new();
+        self.p30_collect_pattern_lvalue_targets(path, pattern, &descriptor, &mut targets)?;
+        let mut parts = Vec::with_capacity(targets.len());
+        for (target, _) in targets {
+            parts.push(self.analyze_lhs(path, target)?);
+        }
+        Ok(Some(parts))
+    }
+
     fn p30_collect_pattern_lvalue_targets(
         &self,
         path: &str,
@@ -137,18 +178,9 @@ impl<'a> Codegen<'a> {
         out: &mut Vec<(NodeId, TypeDescriptor)>,
     ) -> Result<(), String> {
         let pattern = self.p30_unwrap_cast(node);
-        let TypeShape::FixedArray {
-            dimensions,
-            element,
-        } = &descriptor.shape
-        else {
+        let Some(count) = Self::p30_pattern_component_count(descriptor) else {
             out.push((node, descriptor.clone()));
             return Ok(());
-        };
-        let Some((bounds, rest)) = dimensions.split_first() else {
-            return Err(format!(
-                "assignment-pattern lvalue in `{path}` has an empty fixed-array shape"
-            ));
         };
         let Some(operands) = self.assignment_pattern_operands(path, pattern)? else {
             return Err(format!(
@@ -163,40 +195,28 @@ impl<'a> Codegen<'a> {
                 "replicated assignment-pattern lvalue in `{path}` is not supported"
             ));
         }
-        let count = usize::try_from((i64::from(bounds.0) - i64::from(bounds.1)).unsigned_abs() + 1)
-            .map_err(|_| format!("assignment-pattern lvalue is too large in `{path}"))?;
         if operands.len() != count {
             return Err(format!(
                 "assignment-pattern lvalue in `{path}` has {} positional targets; expected {count}",
                 operands.len()
             ));
         }
-        let next = if rest.is_empty() {
-            element.as_ref().clone()
-        } else {
-            TypeDescriptor {
-                two_state: descriptor.two_state,
-                id: descriptor.id,
-                name: descriptor.name.clone(),
-                info: descriptor.info.clone(),
-                shape: TypeShape::FixedArray {
-                    dimensions: rest.to_vec(),
-                    element: element.clone(),
-                },
-            }
-        };
-        for operand in operands {
+        for (offset, operand) in operands.into_iter().enumerate() {
+            let next = Self::p30_pattern_component_descriptor(descriptor, offset)
+                .ok_or_else(|| format!("assignment-pattern lvalue shape is invalid in `{path}`"))?;
             let target = self.p30_pattern_lvalue_operand(path, operand)?;
-            if matches!(&next.shape, TypeShape::FixedArray { .. }) {
+            let target_pattern = self.p30_unwrap_cast(target);
+            let nested_pattern = matches!(
+                self.kind(target_pattern),
+                NodeKind::Expr(ExprKind::Operation {
+                    op: Operation::AssignmentPattern | Operation::MultiAssignmentPattern,
+                    ..
+                })
+            );
+            if nested_pattern && Self::p30_pattern_component_count(&next).is_some() {
                 self.p30_collect_pattern_lvalue_targets(path, target, &next, out)?;
             } else {
-                if matches!(
-                    self.kind(target),
-                    NodeKind::Expr(ExprKind::Operation {
-                        op: Operation::AssignmentPattern | Operation::MultiAssignmentPattern,
-                        ..
-                    })
-                ) {
+                if nested_pattern {
                     return Err(format!(
                         "assignment-pattern lvalue nesting in `{path}` does not match its target type"
                     ));
@@ -268,12 +288,81 @@ impl<'a> Codegen<'a> {
                 }
                 self.p30_require_pattern_shape(path, target_element, source_element, label)
             }
-            (TypeShape::PackedAtom { .. }, TypeShape::PackedAtom { .. }) => {
+            (TypeShape::Aggregate(target_layout), TypeShape::Aggregate(source_layout))
+                if matches!(
+                    target_layout.kind,
+                    AggregateKind::PackedStruct | AggregateKind::UnpackedStruct
+                ) && target_layout.kind == source_layout.kind =>
+            {
+                if target_layout.members.len() != source_layout.members.len() {
+                    return Err(format!(
+                        "{label} in `{path}` has incompatible structure shape"
+                    ));
+                }
+                for (target_member, source_member) in
+                    target_layout.members.iter().zip(&source_layout.members)
+                {
+                    self.p30_require_pattern_shape(
+                        path,
+                        &target_member.descriptor,
+                        &source_member.descriptor,
+                        label,
+                    )?;
+                }
+                Ok(())
+            }
+            (TypeShape::Aggregate(target_layout), TypeShape::Aggregate(source_layout))
+                if target_layout.kind == AggregateKind::PackedUnion
+                    && source_layout.kind == AggregateKind::PackedUnion =>
+            {
+                let same_type = match (
+                    target_layout.type_identity.as_deref(),
+                    source_layout.type_identity.as_deref(),
+                ) {
+                    (Some(target), Some(source)) => target == source,
+                    _ => {
+                        target_layout.type_id.is_some()
+                            && target_layout.type_id == source_layout.type_id
+                    }
+                };
+                if !same_type {
+                    return Err(format!(
+                        "{label} in `{path}` has incompatible packed-union type identity"
+                    ));
+                }
                 let target_width = Self::fixed_descriptor_width(target)
                     .ok_or_else(|| format!("{label} in `{path}` has unresolved target width"))?;
                 let source_width = Self::fixed_descriptor_width(source)
                     .ok_or_else(|| format!("{label} in `{path}` has unresolved source width"))?;
                 if target_width != source_width {
+                    return Err(format!(
+                        "{label} in `{path}` has incompatible packed-union widths ({target_width} versus {source_width})"
+                    ));
+                }
+                Ok(())
+            }
+            (TypeShape::PackedAtom { .. }, TypeShape::PackedAtom { .. }) => {
+                let target_width = Self::fixed_descriptor_width(target)
+                    .ok_or_else(|| format!("{label} in `{path}` has unresolved target width"))?;
+                let source_width = Self::fixed_descriptor_width(source)
+                    .ok_or_else(|| format!("{label} in `{path}` has unresolved source width"))?;
+                let target_ranges = match &target.shape {
+                    TypeShape::PackedAtom { ranges } => ranges,
+                    _ => unreachable!(),
+                };
+                let source_ranges = match &source.shape {
+                    TypeShape::PackedAtom { ranges } => ranges,
+                    _ => unreachable!(),
+                };
+                if target_width != source_width
+                    || target_ranges.len() != source_ranges.len()
+                    || target_ranges
+                        .iter()
+                        .zip(source_ranges)
+                        .any(|(left, right)| {
+                            left.left.abs_diff(left.right) != right.left.abs_diff(right.right)
+                        })
+                {
                     return Err(format!(
                         "{label} in `{path}` has incompatible element widths ({target_width} versus {source_width})"
                     ));
@@ -282,6 +371,142 @@ impl<'a> Codegen<'a> {
             }
             _ => Err(format!("{label} in `{path}` has incompatible value shape")),
         }
+    }
+
+    fn p30_pattern_component_count(descriptor: &TypeDescriptor) -> Option<usize> {
+        let extent = match &descriptor.shape {
+            TypeShape::FixedArray { dimensions, .. } => {
+                let (left, right) = dimensions.first()?;
+                u128::from(i64::from(*left).abs_diff(i64::from(*right))) + 1
+            }
+            TypeShape::Aggregate(layout)
+                if matches!(
+                    layout.kind,
+                    AggregateKind::PackedStruct | AggregateKind::UnpackedStruct
+                ) =>
+            {
+                return Some(layout.members.len());
+            }
+            TypeShape::PackedAtom { ranges } => {
+                let range = ranges.first()?;
+                range.left.abs_diff(range.right).checked_add(1)?
+            }
+            _ => return None,
+        };
+        usize::try_from(extent).ok()
+    }
+
+    fn p30_pattern_component_descriptor(
+        descriptor: &TypeDescriptor,
+        offset: usize,
+    ) -> Option<TypeDescriptor> {
+        match &descriptor.shape {
+            TypeShape::FixedArray {
+                dimensions,
+                element,
+            } => {
+                let (left, right) = dimensions.first()?;
+                let count =
+                    usize::try_from(u128::from(i64::from(*left).abs_diff(i64::from(*right)) + 1))
+                        .ok()?;
+                (offset < count).then(|| {
+                    if dimensions.len() == 1 {
+                        element.as_ref().clone()
+                    } else {
+                        TypeDescriptor {
+                            two_state: descriptor.two_state,
+                            id: descriptor.id,
+                            name: descriptor.name.clone(),
+                            info: descriptor.info.clone(),
+                            shape: TypeShape::FixedArray {
+                                dimensions: dimensions[1..].to_vec(),
+                                element: element.clone(),
+                            },
+                        }
+                    }
+                })
+            }
+            TypeShape::Aggregate(layout)
+                if matches!(
+                    layout.kind,
+                    AggregateKind::PackedStruct | AggregateKind::UnpackedStruct
+                ) =>
+            {
+                layout
+                    .members
+                    .get(offset)
+                    .map(|member| member.descriptor.clone())
+            }
+            TypeShape::PackedAtom { ranges } => {
+                let range = ranges.first()?;
+                let count = u32::try_from(range.left.abs_diff(range.right).checked_add(1)?).ok()?;
+                let width = descriptor.info.width?;
+                if offset >= usize::try_from(count).ok()?
+                    || count == 0
+                    || width == 0
+                    || width % count != 0
+                    || width / count == 0
+                {
+                    return None;
+                }
+                let width = width / count;
+                let mut component = descriptor.clone();
+                component.info.width = Some(width);
+                component.shape = TypeShape::PackedAtom {
+                    ranges: ranges[1..].to_vec(),
+                };
+                Some(component)
+            }
+            _ => None,
+        }
+    }
+
+    fn p30_split_pattern_source_values(
+        path: &str,
+        source_values: Vec<IrExpr>,
+        target_widths: &[(u32, bool)],
+    ) -> Result<Vec<IrExpr>, String> {
+        let mut values = Vec::with_capacity(target_widths.len());
+        let mut target = 0usize;
+        for source in source_values {
+            if source.is_real() || source.width == 0 {
+                return Err(format!(
+                    "assignment-pattern source in `{path}` must be a nonempty packed value"
+                ));
+            }
+            let mut cursor = source.width;
+            while cursor > 0 {
+                let Some((width, signed)) = target_widths.get(target).copied() else {
+                    return Err(format!(
+                        "assignment-pattern lvalue in `{path}` has fewer RHS positions than targets"
+                    ));
+                };
+                if width == 0 || width > cursor {
+                    return Err(format!(
+                        "assignment-pattern source in `{path}` does not match target position {target}"
+                    ));
+                }
+                cursor -= width;
+                values.push(IrExpr::new(
+                    IrExprKind::PartSel {
+                        base: Box::new(source.clone()),
+                        left: i64::from(cursor + width - 1),
+                        right: i64::from(cursor),
+                    },
+                    width,
+                    signed,
+                    None,
+                ));
+                target += 1;
+            }
+        }
+        if target != target_widths.len() {
+            return Err(format!(
+                "assignment-pattern lvalue in `{path}` has {} targets but RHS supplies only {target} values",
+                target_widths.len()
+            ));
+        }
+        Ok(values)
     }
 
     /// A fixed-array view is represented by the complete coordinate list in
@@ -657,6 +882,7 @@ impl<'a> Codegen<'a> {
                 key,
                 key_type,
                 value,
+                ..
             }) = self.kind(operand)
             else {
                 unreachable!();
@@ -675,7 +901,7 @@ impl<'a> Codegen<'a> {
                 }
                 continue;
             }
-            if let Some(index) = parse_pattern_i128(key) {
+            if let Some(index) = self.assignment_pattern_index_key(path, operand)? {
                 let index = i32::try_from(index).map_err(|_| {
                     format!(
                         "fixed unpacked-array pattern index `{key}` is out of range in `{path}`"
@@ -709,28 +935,6 @@ impl<'a> Codegen<'a> {
                     "fixed unpacked-array pattern key `{key}` has no matching index or type in `{path}`"
                 ));
             };
-            let Some(element) = element.as_ref() else {
-                return Err(format!(
-                    "fixed unpacked-array pattern type key `{key}` has no captured element type in `{path}`"
-                ));
-            };
-            if !super::super::collection::pattern_key_matches_descriptor(
-                key_type,
-                element,
-                element.two_state,
-                None,
-            ) {
-                return Err(format!(
-                    "fixed unpacked-array pattern key `{key}` has no matching index or type in `{path}`"
-                ));
-            }
-            if type_values.iter().any(|(previous, _)| {
-                super::super::collection::pattern_key_types_equal(previous, key_type)
-            }) {
-                return Err(format!(
-                    "duplicate fixed unpacked-array pattern type key `{key}` in `{path}`"
-                ));
-            }
             type_values.push((key_type.clone(), value));
         }
         (0..count)
@@ -738,7 +942,19 @@ impl<'a> Codegen<'a> {
                 explicit
                     .get(&offset)
                     .copied()
-                    .or_else(|| type_values.last().map(|(_, value)| *value))
+                    .or_else(|| {
+                        element.as_ref().and_then(|element| {
+                            type_values.iter().rev().find_map(|(key_type, value)| {
+                                super::super::collection::pattern_key_matches_descriptor(
+                                    key_type,
+                                    element,
+                                    element.two_state,
+                                    None,
+                                )
+                                .then_some(*value)
+                            })
+                        })
+                    })
                     .or(default)
                     .ok_or_else(|| {
                         format!(
@@ -850,15 +1066,15 @@ impl<'a> Codegen<'a> {
         rhs: NodeId,
         captures: &mut Vec<IrStmt>,
     ) -> Result<Option<Vec<IrExpr>>, String> {
-        let fixed_source = self
-            .query_descriptor(rhs)
-            .and_then(|descriptor| match &descriptor.shape {
-                TypeShape::FixedArray { dimensions, .. } => {
-                    Self::fixed_descriptor_width(descriptor)
-                        .map(|width| (dimensions.clone(), width))
-                }
-                _ => None,
-            });
+        let fixed_source =
+            self.query_descriptor(rhs)
+                .and_then(|descriptor| match &descriptor.shape {
+                    TypeShape::FixedArray { dimensions, .. } => {
+                        Self::fixed_descriptor_width(descriptor)
+                            .map(|width| (dimensions.clone(), width))
+                    }
+                    _ => None,
+                });
         if let Some((dimensions, expected_width)) = fixed_source {
             if dimensions.is_empty() {
                 return Err(format!("fixed array source has no dimensions in `{path}`"));

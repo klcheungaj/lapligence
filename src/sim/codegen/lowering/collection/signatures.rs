@@ -310,6 +310,7 @@ impl<'a> Codegen<'a> {
                 let ir = self.model.funcs.len();
                 self.model.funcs.push(crate::sim::ir::IrFunc {
                     return_default: self.fixed_default_literal(*c),
+                    return_signal: None,
                     c_name,
                     automatic,
                     ret_chandle: matches!(
@@ -348,6 +349,7 @@ impl<'a> Codegen<'a> {
                     virtual_slot: self.method_virtual_slots.get(c).copied(),
                     formals: formals_ir,
                     callback_private_formal_copies: Vec::new(),
+                    callback_return_independent: false,
                     locals: Vec::new(),
                     pre_fns: Vec::new(),
                     body: Vec::new(),

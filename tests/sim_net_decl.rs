@@ -117,12 +117,13 @@ endmodule
 
 #[test]
 fn net_declaration_propagation_is_after_resolution_and_not_double_delayed() {
-    sim_cli::run_case(
+    sim_cli::run_case_with_args(
         "partial_features",
         "net_declaration_propagation",
         "t2 z z x z x\nt3 1 1 1 x x\n",
         "",
         &[],
+        &["--edition", "2009"],
     );
 }
 

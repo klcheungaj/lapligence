@@ -12,6 +12,116 @@ struct Projection {
 }
 
 impl<'a> Codegen<'a> {
+    /// Lower a packed selection rooted in activation or procedural-local
+    /// storage without requiring that storage to have a global signal cell.
+    pub(super) fn activation_packed_lhs(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<Option<IrLhs>, String> {
+        let mut current = node;
+        let mut selectors = Vec::new();
+        loop {
+            match self.kind(current) {
+                NodeKind::Expr(ExprKind::BitSelect { base, index }) => {
+                    selectors.push((*base, Select::Elements(vec![*index])));
+                    current = *base;
+                }
+                NodeKind::Expr(ExprKind::ArraySelect { base, indices })
+                    if self.array_of(*base).is_none() =>
+                {
+                    selectors.push((*base, Select::Elements(indices.clone())));
+                    current = *base;
+                }
+                NodeKind::Expr(ExprKind::PartSelect { base, left, right }) => {
+                    selectors.push((*base, Select::Part(*left, *right)));
+                    current = *base;
+                }
+                NodeKind::Expr(ExprKind::IndexedPartSelect {
+                    base,
+                    base_expr,
+                    width_expr,
+                    neg,
+                }) => {
+                    selectors.push((*base, Select::Indexed(*base_expr, *width_expr, *neg)));
+                    current = *base;
+                }
+                _ => break,
+            }
+        }
+        if selectors.is_empty() {
+            return Ok(None);
+        }
+
+        let root_expression = current;
+        let declaration = match self.kind(root_expression) {
+            NodeKind::Expr(ExprKind::Ref {
+                target: Some(target),
+            }) => *target,
+            NodeKind::Var { .. } | NodeKind::FuncArg { .. } => root_expression,
+            _ => return Ok(None),
+        };
+        let root = self
+            .canonical_func_target(declaration)
+            .unwrap_or(declaration);
+        let descriptor = self
+            .query_descriptor(root)
+            .or_else(|| self.query_descriptor(declaration));
+        let Some(descriptor) = descriptor.filter(|descriptor| {
+            matches!(
+                descriptor.shape,
+                crate::core::db::TypeShape::PackedAtom { .. }
+            )
+        }) else {
+            return Ok(None);
+        };
+        let Some(root_width) = descriptor.info.width.filter(|width| *width > 0) else {
+            return Ok(None);
+        };
+        let two_state = descriptor.two_state;
+
+        let declaration_name = self.node(root).name.clone();
+        if self.is_const_ref_target(root, &declaration_name) {
+            return Err(format!(
+                "cannot write through const ref `{declaration_name}` in `{path}`"
+            ));
+        }
+        let target = if let Some(target) = self.func_write_target(root, "") {
+            target
+        } else if let Some(info) = self.proc_local_info(root) {
+            if let Some(signal) = &info.static_signal {
+                Lhs::Whole(signal.clone())
+            } else {
+                Lhs::WholeRef {
+                    addr: format!("&{}", info.c_name),
+                    width: info.width,
+                    signed: info.signed,
+                    two_state: info.two_state,
+                    shortreal: false,
+                }
+            }
+        } else {
+            return Ok(None);
+        };
+
+        let mut width = root_width;
+        let mut steps = Vec::new();
+        for (base, select) in selectors.into_iter().rev() {
+            let base = if base == root_expression { root } else { base };
+            self.packed_selection_steps(path, base, select, &mut width, &mut steps)?;
+        }
+        if steps.is_empty() {
+            return Ok(None);
+        }
+
+        Ok(Some(IrLhs::PackedSelect {
+            target: Box::new(self.lhs_to_ir(target)?),
+            steps,
+            signed: false,
+            two_state,
+        }))
+    }
+
     fn packed_formal_projection(
         &mut self,
         path: &str,

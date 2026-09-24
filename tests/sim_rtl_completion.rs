@@ -117,7 +117,7 @@ fn unpacked_structure_conditionals_reject_native_members() {
 
 #[test]
 fn whole_array_continuous_assignments_keep_sources_cells_and_rhs_snapshots() {
-    sim_cli::run_case(
+    sim_cli::run_case_with_args(
         "rtl_completion",
         "syn_006_array_continuous",
         concat!(
@@ -130,12 +130,13 @@ fn whole_array_continuous_assignments_keep_sources_cells_and_rhs_snapshots() {
         ),
         "",
         &[],
+        &["--edition", "2009"],
     );
 }
 
 #[test]
 fn fixed_array_input_ports_capture_values_and_runtime_rows() {
-    sim_cli::run_case(
+    sim_cli::run_case_with_args(
         "rtl_completion",
         "syn_007_array_input_values",
         concat!(
@@ -144,6 +145,7 @@ fn fixed_array_input_ports_capture_values_and_runtime_rows() {
         ),
         "",
         &[],
+        &["--edition", "2009"],
     );
 }
 
@@ -235,12 +237,13 @@ fn same_instance_continuous_variable_conflicts_are_rejected() {
 
 #[test]
 fn fixed_arrays_of_structs_preserve_member_paths_and_formal_shapes() {
-    sim_cli::run_case(
+    sim_cli::run_case_with_args(
         "rtl_completion",
         "struct_array_values",
         "sum=16 data=5a,a5\n",
         "",
         &[],
+        &["--edition", "2009"],
     );
 }
 
@@ -268,12 +271,13 @@ fn nested_fixed_views_preserve_aliases_bounds_and_state() {
 
 #[test]
 fn fixed_block_locals_observe_automatic_and_static_lifetimes() {
-    sim_cli::run_case(
+    sim_cli::run_case_with_args(
         "rtl_completion",
         "fixed_block_locals",
         "local=26 saved=11\nlocal=26 saved=12\n",
         "",
         &[],
+        &["--edition", "2009"],
     );
 }
 
@@ -323,12 +327,13 @@ fn fixed_members_and_whole_call_inputs_keep_sensitivity_dependencies() {
 
 #[test]
 fn inout_arrays_nested_peers_and_selected_ports_share_resolution() {
-    sim_cli::run_case(
+    sim_cli::run_case_with_args(
         "rtl_completion",
         "inout_composition",
         "lane=5a sibling=zz bus=z5a5\nlane=a5 sibling=zz bus=zzz5\n",
         "",
         &[],
+        &["--edition", "2009"],
     );
 }
 

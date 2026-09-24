@@ -45,6 +45,62 @@ impl<'a> Codegen<'a> {
                         })
                     }
                 }
+                IrLhs::TaggedSelect {
+                    target,
+                    mut steps,
+                    signed,
+                    two_state,
+                    location,
+                } => {
+                    let target = resolve(cg, *target, seen)?;
+                    match target {
+                        IrLhs::TaggedSelect {
+                            target,
+                            steps: mut prefix,
+                            two_state: parent_state,
+                            ..
+                        } => {
+                            prefix.append(&mut steps);
+                            Ok(IrLhs::TaggedSelect {
+                                target,
+                                steps: prefix,
+                                signed,
+                                two_state: two_state || parent_state,
+                                location,
+                            })
+                        }
+                        IrLhs::PackedSelect {
+                            target,
+                            steps: prefix,
+                            two_state: parent_state,
+                            ..
+                        } => {
+                            let mut combined = prefix
+                                .into_iter()
+                                .map(|selection| crate::sim::ir::IrTaggedSelectStep {
+                                    selection,
+                                    guard: None,
+                                    two_state: false,
+                                })
+                                .collect::<Vec<_>>();
+                            combined.append(&mut steps);
+                            Ok(IrLhs::TaggedSelect {
+                                target,
+                                steps: combined,
+                                signed,
+                                two_state: two_state || parent_state,
+                                location,
+                            })
+                        }
+                        target => Ok(IrLhs::TaggedSelect {
+                            target: Box::new(target),
+                            steps,
+                            signed,
+                            two_state,
+                            location,
+                        }),
+                    }
+                }
                 IrLhs::Whole(index) => {
                     let Some(target) = cg.reference_signals.get(&index).cloned() else {
                         return Ok(IrLhs::Whole(index));
@@ -91,6 +147,38 @@ impl<'a> Codegen<'a> {
                                 steps,
                                 signed: false,
                                 two_state: two_state || state,
+                            })
+                        }
+                        IrLhs::TaggedSelect {
+                            target,
+                            mut steps,
+                            two_state: state,
+                            location,
+                            ..
+                        } => {
+                            let base = if negative {
+                                bin_expr(
+                                    IrBinOp::Sub,
+                                    base,
+                                    lhs_integer_expr(i128::from(selected_width) - 1),
+                                )
+                            } else {
+                                base
+                            };
+                            steps.push(crate::sim::ir::IrTaggedSelectStep {
+                                selection: crate::sim::ir::IrPackedSelect {
+                                    base,
+                                    width: selected_width,
+                                },
+                                two_state,
+                                guard: None,
+                            });
+                            Ok(IrLhs::TaggedSelect {
+                                target,
+                                steps,
+                                signed: false,
+                                two_state: two_state || state,
+                                location,
                             })
                         }
                         IrLhs::Whole(index) => Ok(IrLhs::IdxPart(
@@ -229,6 +317,29 @@ impl<'a> Codegen<'a> {
                         two_state: two_state || state,
                     })
                 }
+                IrLhs::TaggedSelect {
+                    target,
+                    mut steps,
+                    two_state: state,
+                    location,
+                    ..
+                } => {
+                    steps.push(crate::sim::ir::IrTaggedSelectStep {
+                        selection: crate::sim::ir::IrPackedSelect {
+                            base: expression,
+                            width: 1,
+                        },
+                        two_state,
+                        guard: None,
+                    });
+                    Ok(IrLhs::TaggedSelect {
+                        target,
+                        steps,
+                        signed: false,
+                        two_state: two_state || state,
+                        location,
+                    })
+                }
                 IrLhs::Whole(index) => Ok(IrLhs::Bit(index, expression, two_state)),
                 IrLhs::Part(index, left, right, _) => {
                     let offset = if left >= right { right } else { left };
@@ -280,6 +391,31 @@ impl<'a> Codegen<'a> {
                         two_state: two_state || state,
                     })
                 }
+                IrLhs::TaggedSelect {
+                    target,
+                    mut steps,
+                    two_state: state,
+                    location,
+                    ..
+                } => {
+                    let width = u32::try_from(left.abs_diff(right) + 1)
+                        .map_err(|_| "reference part width overflow")?;
+                    steps.push(crate::sim::ir::IrTaggedSelectStep {
+                        selection: crate::sim::ir::IrPackedSelect {
+                            base: lhs_integer_expr(i128::from(left.min(right))),
+                            width,
+                        },
+                        two_state,
+                        guard: None,
+                    });
+                    Ok(IrLhs::TaggedSelect {
+                        target,
+                        steps,
+                        signed: false,
+                        two_state: two_state || state,
+                        location,
+                    })
+                }
                 IrLhs::Whole(index) => Ok(IrLhs::Part(index, left, right, two_state)),
                 IrLhs::Part(index, base_left, base_right, _) => {
                     let offset = if base_left >= base_right {
@@ -323,6 +459,17 @@ impl<'a> Codegen<'a> {
                 two_state,
             } => Some(IrType::Packed {
                 width: steps.last()?.width,
+                signed: *signed,
+                two_state: *two_state || self.reference_lhs_type(target)?.two_state(),
+            }),
+            IrLhs::TaggedSelect {
+                target,
+                steps,
+                signed,
+                two_state,
+                ..
+            } => Some(IrType::Packed {
+                width: steps.last()?.selection.width,
                 signed: *signed,
                 two_state: *two_state || self.reference_lhs_type(target)?.two_state(),
             }),
@@ -429,7 +576,9 @@ impl<'a> Codegen<'a> {
                     .find(|info| info.ir == array)
                     .is_some_and(|info| !info.is_net)
             }
-            IrLhs::PackedSelect { target, .. } => self.reference_lhs_is_variable(target),
+            IrLhs::PackedSelect { target, .. } | IrLhs::TaggedSelect { target, .. } => {
+                self.reference_lhs_is_variable(target)
+            }
             IrLhs::Stream { parts, .. } => parts
                 .iter()
                 .all(|(part, _)| self.reference_lhs_is_variable(part)),
@@ -572,6 +721,27 @@ impl<'a> Codegen<'a> {
                 let width = value.width;
                 ir_to_storage(value, width, signed, two_state)
             }
+            IrLhs::TaggedSelect {
+                target,
+                steps,
+                signed,
+                two_state,
+                location,
+            } => {
+                let base = self.reference_target_read(*target)?;
+                let width = steps.last().map_or(0, |step| step.selection.width);
+                let value = IrExpr::new(
+                    IrExprKind::TaggedSelect {
+                        base: Box::new(base),
+                        steps,
+                        location,
+                    },
+                    width,
+                    signed,
+                    None,
+                );
+                ir_to_storage(value, width, signed, two_state)
+            }
             IrLhs::Stream { parts, .. } => {
                 let values = parts
                     .into_iter()
@@ -639,6 +809,11 @@ impl<'a> Codegen<'a> {
                     };
                 }
                 storage
+            }
+            // The active-tag guard reads discriminator bits outside the
+            // selected payload, so retain a dependency on the complete root.
+            IrLhs::TaggedSelect { target, .. } => {
+                self.reference_target_dependency(*target, fallback)
             }
             IrLhs::WholeRef { .. } | IrLhs::Ref { .. } | IrLhs::Stream { .. } => {
                 IrDependency::scalar(fallback.to_owned())

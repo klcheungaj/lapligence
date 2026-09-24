@@ -12,6 +12,9 @@ pub(in super::super) fn render_assign(
     rhs: &IrExpr,
     nba: bool,
 ) -> Result<String, String> {
+    if matches!(lh, IrLhs::TaggedSelect { .. }) {
+        return Err("tagged-union writes require structured owned emission".to_owned());
+    }
     if nba {
         return super::super::assignments::render_nba(ctx, lh, rhs, "0ULL");
     }
@@ -132,6 +135,9 @@ pub(in super::super) fn render_assign(
             }
             IrLhs::PackedSelect { steps, signed, .. } => {
                 (steps.last().map_or(0, |step| step.width), *signed)
+            }
+            IrLhs::TaggedSelect { steps, signed, .. } => {
+                (steps.last().map_or(0, |step| step.selection.width), *signed)
             }
             IrLhs::Bit(..) => (1, false),
             IrLhs::Part(_, left, right, _) => (((left - right).abs() + 1) as u32, false),
@@ -381,6 +387,9 @@ pub(in super::super) fn render_assign(
     let args = match lh {
         IrLhs::PackedSelect { .. } => {
             return Err("packed activation selects require structured owned emission".to_owned())
+        }
+        IrLhs::TaggedSelect { .. } => {
+            return Err("tagged-union writes require structured owned emission".to_owned())
         }
         IrLhs::Whole(idx) => {
             let sig = ctx.model.signal(*idx);

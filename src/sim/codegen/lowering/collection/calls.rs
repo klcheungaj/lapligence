@@ -16,6 +16,18 @@ impl<'a> Codegen<'a> {
                 *two_state || self.ref_lhs_type(target)?.2,
                 self.ref_lhs_type(target)?.3,
             )),
+            IrLhs::TaggedSelect {
+                target,
+                steps,
+                signed,
+                two_state,
+                ..
+            } => Some((
+                steps.last()?.selection.width,
+                *signed,
+                *two_state || self.ref_lhs_type(target)?.2,
+                self.ref_lhs_type(target)?.3,
+            )),
             IrLhs::Whole(index) => match self.model.signal(*index).ty {
                 IrType::Packed {
                     width,
@@ -220,8 +232,19 @@ impl<'a> Codegen<'a> {
                     continue;
                 }
                 let tname = format!("_t{}_{}", h.0, idx);
-                let (wb, actual_read, selector_inits) =
-                    self.lower_call_actual(scope_path, bound[idx].expr, &format!("{}_{idx}", h.0))?;
+                let read_actual = matches!(
+                    self.kind(*io),
+                    NodeKind::FuncArg {
+                        direction: DbDirection::Inout,
+                        ..
+                    }
+                );
+                let (wb, actual_read, selector_inits) = self.lower_call_actual(
+                    scope_path,
+                    bound[idx].expr,
+                    &format!("{}_{idx}", h.0),
+                    read_actual,
+                )?;
                 let init_ir = self.lower_call_temp_init_from_expr(*io, &bound[idx], actual_read)?;
                 let storage = self.static_formals.get(&(callee_inst, *io)).cloned();
                 let (storage_addr, storage_lhs, storage_read) = if let Some(storage) = storage {

@@ -211,6 +211,13 @@ impl Codegen<'_> {
         fixed_width_bits(descriptor)
     }
 
+    pub(in super::super) fn fixed_descriptor_path(
+        descriptor: &TypeDescriptor,
+        path: &[AggregatePathPart],
+    ) -> Option<(TypeDescriptor, u32)> {
+        fixed_path_descriptor(descriptor, path)
+    }
+
     pub(in super::super) fn fixed_descriptor_capacity_error(context: &str, width: u64) -> String {
         fixed_value_capacity_error(context, width)
     }

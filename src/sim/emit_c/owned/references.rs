@@ -96,6 +96,98 @@ impl Frame<'_, '_> {
             self.line(format!("*{pointer} = (llg_ref_t){{ .kind = LLG_REF_COMPOSITE, .width = {width}, .is_signed = {}, .two_state = {}, .retained = {composite} }};", u8::from(signed), u8::from(two_state)));
             return Ok(pointer);
         }
+        if let IrLhs::TaggedSelect {
+            target,
+            steps,
+            location,
+            ..
+        } = lhs
+        {
+            let root_width = match target.as_ref() {
+                IrLhs::Whole(index) => self.ctx.model.signals[*index].ty.width(),
+                IrLhs::WholeRef { width, .. }
+                | IrLhs::Ref { width, .. }
+                | IrLhs::Stream { width, .. } => *width,
+                IrLhs::ArrayElem { arr, .. } => self.ctx.model.arrays[*arr].elem_width,
+                _ => return Err("tagged reference view requires a whole storage root".into()),
+            };
+            let parent = self
+                .reference_argument_with_scopes(target, read, root_width, false, false, scopes)?;
+            let mut selectors = Vec::with_capacity(steps.len());
+            for step in steps {
+                if step.selection.base.is_real() {
+                    return Err("tagged reference selector must be integral".into());
+                }
+                selectors.push(self.expression(&step.selection.base)?);
+            }
+            let plan = self.scalar(
+                "sv4_select_plan_t",
+                format!("sv4_select_plan_init({root_width})"),
+            );
+            let check_count = steps.iter().filter(|step| step.guard.is_some()).count();
+            let checks = if check_count == 0 {
+                "NULL".to_owned()
+            } else {
+                let allocation = self.scalar(
+                    "llg_value_scope_t*",
+                    format!(
+                        "llg_value_scope_begin_object(sizeof(llg_ref_tag_check_t) * {check_count}, NULL)"
+                    ),
+                );
+                scopes.push(allocation.clone());
+                self.scalar(
+                    "llg_ref_tag_check_t*",
+                    format!("(llg_ref_tag_check_t*)llg_value_scope_object({allocation})"),
+                )
+            };
+            let mut check_index = 0;
+            for (index, step) in steps.iter().enumerate() {
+                if let Some(guard) = &step.guard {
+                    self.line(format!(
+                        "{checks}[{check_index}] = (llg_ref_tag_check_t){{ .receiver_plan = {plan}, .tag_width = {}, .member_index = {}, .member_name = {} }};",
+                        guard.tag_width,
+                        guard.member_index,
+                        c_string_literal(&guard.member_name)
+                    ));
+                    check_index += 1;
+                }
+                self.line(format!(
+                    "sv4_select_plan_step(&{plan}, {}, {});",
+                    selectors[index].code, step.selection.width
+                ));
+            }
+            for selector in selectors {
+                self.discard(selector);
+            }
+            let allocation = self.scalar(
+                "llg_value_scope_t*",
+                "llg_value_scope_begin_object(sizeof(llg_ref_view_t), NULL)".into(),
+            );
+            scopes.push(allocation.clone());
+            let view = self.scalar(
+                "llg_ref_view_t*",
+                format!("(llg_ref_view_t*)llg_value_scope_object({allocation})"),
+            );
+            self.line(format!(
+                "*{view} = (llg_ref_view_t){{ .parent = {parent}, .plan = {plan}, .tag_check_count = {check_count}, .tag_checks = {checks}, .location = {} }};",
+                c_string_literal(location)
+            ));
+            let allocation = self.scalar(
+                "llg_value_scope_t*",
+                "llg_value_scope_begin_object(sizeof(llg_ref_t), NULL)".into(),
+            );
+            scopes.push(allocation.clone());
+            let pointer = self.scalar(
+                "llg_ref_t*",
+                format!("(llg_ref_t*)llg_value_scope_object({allocation})"),
+            );
+            self.line(format!(
+                "*{pointer} = (llg_ref_t){{ .kind = LLG_REF_TAGGED_VIEW, .width = {width}, .is_signed = {}, .two_state = {}, .retained = {view} }};",
+                u8::from(signed),
+                u8::from(two_state)
+            ));
+            return Ok(pointer);
+        }
         if let IrLhs::PackedSelect { target, steps, .. } = lhs {
             let root_width = match target.as_ref() {
                 IrLhs::Whole(index) => self.ctx.model.signals[*index].ty.width(),
@@ -122,7 +214,7 @@ impl Frame<'_, '_> {
                 format!("(llg_ref_view_t*)llg_value_scope_object({allocation})"),
             );
             self.line(format!(
-                "*{view} = (llg_ref_view_t){{ .parent = {parent}, .plan = {plan} }};"
+                "*{view} = (llg_ref_view_t){{ .parent = {parent}, .plan = {plan}, .tag_check_count = 0, .tag_checks = NULL, .location = NULL }};"
             ));
             let allocation = self.scalar(
                 "llg_value_scope_t*",

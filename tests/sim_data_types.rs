@@ -82,7 +82,7 @@ const AND: [&str; 4] = ["0000", "01xx", "0xxx", "0xxx"];
 const OR: [&str; 4] = ["01xx", "1111", "x1xx", "x1xx"];
 const XOR: [&str; 4] = ["01xx", "10xx", "xxxx", "xxxx"];
 const XNOR: [&str; 4] = ["10xx", "01xx", "xxxx", "xxxx"];
-const MUX: [&str; 4] = ["0xxx", "x1xx", "xxxx", "xxxz"];
+const MUX: [&str; 4] = ["0xxx", "x1xx", "xxxx", "xxxx"];
 const EQ: [&str; 4] = ["10xx", "01xx", "xxxx", "xxxx"];
 
 fn table_bit(table: &[&str; 4], left: usize, right: usize) -> char {

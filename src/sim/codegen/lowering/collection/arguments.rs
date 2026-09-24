@@ -490,7 +490,9 @@ impl<'a> Codegen<'a> {
         fn is_const(lhs: &IrLhs) -> bool {
             match lhs {
                 IrLhs::Ref { const_ref, .. } => *const_ref,
-                IrLhs::PackedSelect { target, .. } => is_const(target),
+                IrLhs::PackedSelect { target, .. } | IrLhs::TaggedSelect { target, .. } => {
+                    is_const(target)
+                }
                 IrLhs::Stream { parts, .. } => parts.iter().any(|(part, _)| is_const(part)),
                 _ => false,
             }
@@ -549,6 +551,16 @@ impl<'a> Codegen<'a> {
                     self.db.is_two_state_type(bound.expr),
                 )
             }
+            IrLhs::TaggedSelect { .. } => {
+                if !self.reference_lhs_is_variable(&lhs) {
+                    return Err(format!("ref actual in `{scope_path}` must be a variable"));
+                }
+                (
+                    read.width,
+                    read.signed,
+                    self.db.is_two_state_type(bound.expr),
+                )
+            }
             IrLhs::Ref { bit: Some(_), .. } => {
                 return Err("packed bit selects cannot be passed by reference".to_owned())
             }
@@ -595,13 +607,16 @@ impl<'a> Codegen<'a> {
         &self,
         io: NodeId,
         b: &BoundArg,
-        e: IrExpr,
+        e: Option<IrExpr>,
     ) -> Result<Option<IrExpr>, String> {
         match self.kind(io) {
             NodeKind::FuncArg {
                 direction: DbDirection::Inout,
                 ..
             } => {
+                let e = e.ok_or_else(|| {
+                    "inout subroutine actual has no caller-side input value".to_owned()
+                })?;
                 let e = apply_assignment_expression_width(e, b.width);
                 let conv = if b.real {
                     IrExpr::new(
@@ -755,7 +770,15 @@ impl<'a> Codegen<'a> {
         path: &str,
         actual: NodeId,
         tag: &str,
-    ) -> Result<(IrLhs, IrExpr, Vec<(String, u32, bool, bool, IrExpr)>), String> {
+        read_actual: bool,
+    ) -> Result<
+        (
+            IrLhs,
+            Option<IrExpr>,
+            Vec<(String, u32, bool, bool, IrExpr)>,
+        ),
+        String,
+    > {
         let lhs = match self.fixed_storage_lhs(path, actual)? {
             Some(lhs) => lhs,
             None => self.lower_lhs(path, actual)?,
@@ -763,9 +786,13 @@ impl<'a> Codegen<'a> {
         let mut captures = Vec::new();
         let mut sequence = 0usize;
         let (lhs, read) = self.freeze_call_lhs(lhs, tag, &mut sequence, &mut captures)?;
-        let read = match read {
-            Some(read) => read,
-            None => self.lower_expr(path, actual)?,
+        let read = if read_actual {
+            Some(match read {
+                Some(read) => read,
+                None => self.lower_expr(path, actual)?,
+            })
+        } else {
+            None
         };
         Ok((lhs, read, captures))
     }
@@ -986,6 +1013,73 @@ impl<'a> Codegen<'a> {
                     read,
                 ))
             }
+            IrLhs::TaggedSelect {
+                target,
+                steps,
+                signed,
+                two_state,
+                location,
+            } => {
+                let (target, read) = self.freeze_call_lhs(*target, tag, sequence, captures)?;
+                let mut frozen = Vec::with_capacity(steps.len());
+                for step in steps {
+                    let name = format!("_call_idx_{tag}_{}", *sequence);
+                    *sequence += 1;
+                    let width = step.selection.base.width;
+                    let selector_signed = step.selection.base.signed;
+                    if step.selection.base.is_real() {
+                        return Err("tagged-union selector must be integral".to_owned());
+                    }
+                    captures.push((
+                        name.clone(),
+                        width,
+                        selector_signed,
+                        false,
+                        step.selection.base,
+                    ));
+                    frozen.push(crate::sim::ir::IrTaggedSelectStep {
+                        selection: crate::sim::ir::IrPackedSelect {
+                            base: IrExpr::new(
+                                IrExprKind::LocalRead(name),
+                                width,
+                                selector_signed,
+                                None,
+                            ),
+                            width: step.selection.width,
+                        },
+                        two_state: step.two_state,
+                        guard: step.guard,
+                    });
+                }
+                let result_width = frozen.last().map_or(0, |step| step.selection.width);
+                let read = read.map(|base| {
+                    let value = IrExpr::new(
+                        IrExprKind::TaggedSelect {
+                            base: Box::new(base),
+                            steps: frozen.clone(),
+                            location: location.clone(),
+                        },
+                        result_width,
+                        signed,
+                        None,
+                    );
+                    if two_state {
+                        IrExpr::to_two_state(value)
+                    } else {
+                        value
+                    }
+                });
+                Ok((
+                    IrLhs::TaggedSelect {
+                        target: Box::new(target),
+                        steps: frozen,
+                        signed,
+                        two_state,
+                        location,
+                    },
+                    read,
+                ))
+            }
             lhs @ IrLhs::WholeRef { .. } => {
                 let IrLhs::WholeRef {
                     addr,
@@ -1031,7 +1125,37 @@ impl<'a> Codegen<'a> {
                 let read = IrExpr::new(IrExprKind::FormalRead(index), *width, *signed, None);
                 Ok((lhs, Some(read)))
             }
-            lhs @ IrLhs::Stream { .. } => Ok((lhs, None)),
+            IrLhs::Stream {
+                parts,
+                width,
+                slice,
+                direction,
+            } => {
+                let mut frozen_parts = Vec::with_capacity(parts.len());
+                let mut read_parts = Vec::with_capacity(parts.len());
+                let mut readable = slice == 1 && direction == IrStreamDirection::LeftToRight;
+                for (part, part_width) in parts {
+                    let (part, read) = self.freeze_call_lhs(part, tag, sequence, captures)?;
+                    if let Some(read) = read {
+                        read_parts.push(read);
+                    } else {
+                        readable = false;
+                    }
+                    frozen_parts.push((part, part_width));
+                }
+                let read = readable.then(|| {
+                    IrExpr::new(IrExprKind::Concat { parts: read_parts }, width, false, None)
+                });
+                Ok((
+                    IrLhs::Stream {
+                        parts: frozen_parts,
+                        width,
+                        slice,
+                        direction,
+                    },
+                    read,
+                ))
+            }
         }
     }
 }

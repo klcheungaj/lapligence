@@ -60,7 +60,7 @@ fn force_part(
     out: &mut Vec<String>,
 ) -> Result<(), String> {
     match lhs {
-        IrLhs::PackedSelect { .. } => {
+        IrLhs::PackedSelect { .. } | IrLhs::TaggedSelect { .. } => {
             return Err("packed activation selects require structured owned emission".to_owned())
         }
         IrLhs::Whole(index) => {

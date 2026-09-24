@@ -8,11 +8,24 @@ fn predicate(clauses: Vec<IrExpr>) -> IrExpr {
 #[test]
 fn sequential_predicate_emission_guards_every_clause_and_releases_owners() {
     let model = numeric_model();
-    let ctx = RCtx { model: &model, func: None, sampled: false, activation_label: None };
+    let ctx = RCtx {
+        model: &model,
+        func: None,
+        sampled: false,
+        activation_label: None,
+    };
     let mut frame = Frame::new(&ctx);
-    let call = IrExpr::new(IrExprKind::CallFn(Box::new(IrCallExpr::new(
-        0, vec![IrCallArg::Val(number(7, 65))], IrDepth::PROC, false,
-    ))), 65, false, None);
+    let call = IrExpr::new(
+        IrExprKind::CallFn(Box::new(IrCallExpr::new(
+            0,
+            vec![IrCallArg::Val(number(7, 65))],
+            IrDepth::PROC,
+            false,
+        ))),
+        65,
+        false,
+        None,
+    );
     let expr = predicate(vec![number(0, 1), call, number(1, 129)]);
     model.validate_expr(&expr, None).unwrap();
     let result = frame.expression(&expr).unwrap();
@@ -23,9 +36,15 @@ fn sequential_predicate_emission_guards_every_clause_and_releases_owners() {
     assert_eq!(body.matches("if (sv4_to_bool(").count(), 3);
     assert_eq!(body.matches("sv4_reduce_or(").count(), 3);
     assert_eq!(body.matches("f_increment(").count(), 1);
-    let guards: Vec<_> = body.match_indices("if (sv4_to_bool(").map(|(index, _)| index).collect();
+    let guards: Vec<_> = body
+        .match_indices("if (sv4_to_bool(")
+        .map(|(index, _)| index)
+        .collect();
     let call = body.find("f_increment(").unwrap();
-    assert!(guards[1] < call && call < guards[2], "call must stay inside its clause guard");
+    assert!(
+        guards[1] < call && call < guards[2],
+        "call must stay inside its clause guard"
+    );
     assert!(body.matches("sv4_move(").count() >= 3);
     assert!(!body.contains("sv4_logand("));
     assert!(!body.contains("({"));
@@ -35,10 +54,16 @@ fn sequential_predicate_emission_guards_every_clause_and_releases_owners() {
 #[test]
 fn sequential_predicate_emission_normalizes_real_truth_without_rounding() {
     let model = IrModel::new("predicate_real".into(), 1).unwrap();
-    let ctx = RCtx { model: &model, func: None, sampled: false, activation_label: None };
+    let ctx = RCtx {
+        model: &model,
+        func: None,
+        sampled: false,
+        activation_label: None,
+    };
     let mut frame = Frame::new(&ctx);
     let expr = predicate(vec![
-        IrExpr::new(IrExprKind::Const(IrConst::real(0.25)), 0, false, None), number(1, 1),
+        IrExpr::new(IrExprKind::Const(IrConst::real(0.25)), 0, false, None),
+        number(1, 1),
     ]);
     model.validate_expr(&expr, None).unwrap();
     let result = frame.expression(&expr).unwrap();
@@ -53,13 +78,24 @@ fn sequential_predicate_emission_normalizes_real_truth_without_rounding() {
 #[test]
 fn sequential_predicate_ambiguous_real_mux_evaluates_both_arms_and_yields_zero() {
     let model = IrModel::new("predicate_real_result".into(), 1).unwrap();
-    let ctx = RCtx { model: &model, func: None, sampled: false, activation_label: None };
+    let ctx = RCtx {
+        model: &model,
+        func: None,
+        sampled: false,
+        activation_label: None,
+    };
     let mut frame = Frame::new(&ctx);
     let real = |value| IrExpr::new(IrExprKind::Const(IrConst::real(value)), 0, false, None);
-    let expr = IrExpr::new(IrExprKind::Mux {
-        sel: Box::new(predicate(vec![number(1, 1), number(0, 1)])),
-        a: Box::new(real(2.5)), b: Box::new(real(3.5)),
-    }, 0, false, None);
+    let expr = IrExpr::new(
+        IrExprKind::Mux {
+            sel: Box::new(predicate(vec![number(1, 1), number(0, 1)])),
+            a: Box::new(real(2.5)),
+            b: Box::new(real(3.5)),
+        },
+        0,
+        false,
+        None,
+    );
     model.validate_expr(&expr, None).unwrap();
     let result = frame.expression(&expr).unwrap();
     frame.discard(result);

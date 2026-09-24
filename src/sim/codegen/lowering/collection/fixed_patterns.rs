@@ -202,7 +202,8 @@ impl Codegen<'_> {
             let bounds = match ranges.first() {
                 Some(range) => (
                     i32::try_from(range.left).map_err(|_| "packed pattern left bound overflow")?,
-                    i32::try_from(range.right).map_err(|_| "packed pattern right bound overflow")?,
+                    i32::try_from(range.right)
+                        .map_err(|_| "packed pattern right bound overflow")?,
                 ),
                 None => (
                     i32::try_from(width - 1).map_err(|_| "packed pattern range overflow")?,

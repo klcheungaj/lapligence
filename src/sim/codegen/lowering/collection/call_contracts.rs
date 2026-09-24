@@ -74,9 +74,11 @@ impl<'a> Codegen<'a> {
                             ret: Some(_),
                             ..
                         }
-                    ) && self.function_reads_return(body, ft)
+                    ) && !self.static_return_is_callback_independent(body, ft)
                     {
-                        return rejected("function reads persistent return state");
+                        return rejected(
+                            "static function return is read or is not assigned on every path",
+                        );
                     }
                     self.check_event_node(body, scope_path, visited_functions, Some(ft))?;
                 }
@@ -152,20 +154,45 @@ impl<'a> Codegen<'a> {
         Ok(())
     }
 
-    /// Static function return storage is persistent. Keep helpers that read
-    /// the function name before assigning it out of read-only event callbacks;
-    /// ordinary return assignments remain private callback writes.
+    /// Static result storage is persistent. A callback may use a private
+    /// result cell only when source analysis proves it is never read and a
+    /// result value is established on every normal or explicit return path.
+    pub(super) fn static_return_is_callback_independent(
+        &self,
+        body: NodeId,
+        function: NodeId,
+    ) -> bool {
+        !self.function_reads_return(body, function)
+            && self.function_establishes_return_on_every_path(body, function)
+    }
+
+    /// A static function result may be evaluated in a private callback frame
+    /// only if that frame cannot observe a previous invocation's result.
+    /// `Access::Write` follows an lvalue's storage path without counting the
+    /// target itself as a read; read-modify-write operations use `ReadWrite`.
     fn function_reads_return(&self, root: NodeId, function: NodeId) -> bool {
-        fn visit(cg: &Codegen<'_>, node: NodeId, function: NodeId, write_target: bool) -> bool {
+        #[derive(Clone, Copy, PartialEq, Eq)]
+        enum Access {
+            Read,
+            Write,
+            ReadWrite,
+        }
+
+        fn visit(cg: &Codegen<'_>, node: NodeId, function: NodeId, access: Access) -> bool {
             match cg.kind(node) {
                 NodeKind::Expr(ExprKind::Ref {
                     target: Some(target),
                 }) if cg.canonical_func_target(*target).unwrap_or(*target) == function => {
-                    return !write_target;
+                    return access != Access::Write;
                 }
-                NodeKind::Stmt(StmtKind::Assign { .. }) => {
+                NodeKind::Stmt(StmtKind::Assign { op, .. }) => {
                     if let Some(lhs) = cg.node(node).children.first() {
-                        if visit(cg, *lhs, function, true) {
+                        let access = if matches!(op, Operation::Assignment) {
+                            Access::Write
+                        } else {
+                            Access::ReadWrite
+                        };
+                        if visit(cg, *lhs, function, access) {
                             return true;
                         }
                     }
@@ -174,7 +201,7 @@ impl<'a> Codegen<'a> {
                         .children
                         .iter()
                         .skip(1)
-                        .any(|child| visit(cg, *child, function, false));
+                        .any(|child| visit(cg, *child, function, Access::Read));
                 }
                 NodeKind::Expr(ExprKind::Operation {
                     op,
@@ -200,48 +227,220 @@ impl<'a> Codegen<'a> {
                                     | Operation::PostDecrement
                                     | Operation::PreDecrement
                             );
-                        if visit(cg, *lhs, function, reads_lhs) {
+                        if visit(
+                            cg,
+                            *lhs,
+                            function,
+                            if reads_lhs {
+                                Access::ReadWrite
+                            } else {
+                                Access::Write
+                            },
+                        ) {
                             return true;
                         }
                     }
                     return operands
                         .iter()
                         .skip(1)
-                        .any(|operand| visit(cg, *operand, function, false));
+                        .any(|operand| visit(cg, *operand, function, Access::Read));
                 }
-                NodeKind::Expr(ExprKind::BitSelect { base, index }) if write_target => {
-                    return visit(cg, *base, function, true) || visit(cg, *index, function, false);
+                NodeKind::Expr(ExprKind::BitSelect { base, index }) if access != Access::Read => {
+                    return visit(cg, *base, function, access)
+                        || visit(cg, *index, function, Access::Read);
                 }
-                NodeKind::Expr(ExprKind::PartSelect { base, left, right }) if write_target => {
-                    return visit(cg, *base, function, true)
-                        || visit(cg, *left, function, false)
-                        || visit(cg, *right, function, false);
+                NodeKind::Expr(ExprKind::PartSelect { base, left, right })
+                    if access != Access::Read =>
+                {
+                    return visit(cg, *base, function, access)
+                        || visit(cg, *left, function, Access::Read)
+                        || visit(cg, *right, function, Access::Read);
                 }
                 NodeKind::Expr(ExprKind::IndexedPartSelect {
                     base,
                     base_expr,
                     width_expr,
                     ..
-                }) if write_target => {
-                    return visit(cg, *base, function, true)
-                        || visit(cg, *base_expr, function, false)
-                        || visit(cg, *width_expr, function, false);
+                }) if access != Access::Read => {
+                    return visit(cg, *base, function, access)
+                        || visit(cg, *base_expr, function, Access::Read)
+                        || visit(cg, *width_expr, function, Access::Read);
                 }
-                NodeKind::Expr(ExprKind::ArraySelect { base, indices }) if write_target => {
-                    return visit(cg, *base, function, true)
+                NodeKind::Expr(ExprKind::ArraySelect { base, indices })
+                    if access != Access::Read =>
+                {
+                    return visit(cg, *base, function, access)
                         || indices
                             .iter()
-                            .any(|index| visit(cg, *index, function, false));
+                            .any(|index| visit(cg, *index, function, Access::Read));
                 }
                 _ => {}
             }
             cg.node(node)
                 .children
                 .iter()
-                .any(|child| visit(cg, *child, function, false))
+                .any(|child| visit(cg, *child, function, Access::Read))
         }
 
-        visit(self, root, function, false)
+        visit(self, root, function, Access::Read)
+    }
+
+    /// Conservatively prove that every function exit gets a fresh result.
+    /// Partial selections and writes in potentially skipped loops do not
+    /// establish a complete result.
+    fn function_establishes_return_on_every_path(&self, root: NodeId, function: NodeId) -> bool {
+        #[derive(Clone, Copy)]
+        struct Flow {
+            fallthrough: Option<bool>,
+            exits_assigned: bool,
+        }
+
+        fn assigned_lhs(cg: &Codegen<'_>, lhs: NodeId, function: NodeId) -> bool {
+            matches!(
+                cg.kind(lhs),
+                NodeKind::Expr(ExprKind::Ref {
+                    target: Some(target)
+                }) if cg.canonical_func_target(*target).unwrap_or(*target) == function
+            )
+        }
+
+        fn sequence(cg: &Codegen<'_>, nodes: &[NodeId], function: NodeId, input: bool) -> Flow {
+            let mut flow = Flow {
+                fallthrough: Some(input),
+                exits_assigned: true,
+            };
+            for node in nodes {
+                let Some(assigned) = flow.fallthrough else {
+                    break;
+                };
+                let next = statement(cg, *node, function, assigned);
+                flow.exits_assigned &= next.exits_assigned;
+                flow.fallthrough = next.fallthrough;
+            }
+            flow
+        }
+
+        fn merge_branches(left: Flow, right: Flow) -> Flow {
+            let fallthrough = match (left.fallthrough, right.fallthrough) {
+                (Some(left), Some(right)) => Some(left && right),
+                (Some(value), None) | (None, Some(value)) => Some(value),
+                (None, None) => None,
+            };
+            Flow {
+                fallthrough,
+                exits_assigned: left.exits_assigned && right.exits_assigned,
+            }
+        }
+
+        fn statement(cg: &Codegen<'_>, node: NodeId, function: NodeId, input: bool) -> Flow {
+            let falls = |assigned| Flow {
+                fallthrough: Some(assigned),
+                exits_assigned: true,
+            };
+            match cg.kind(node) {
+                NodeKind::Stmt(StmtKind::Begin) => {
+                    sequence(cg, &cg.node(node).children, function, input)
+                }
+                NodeKind::Stmt(StmtKind::Assign {
+                    blocking: true,
+                    op: Operation::Assignment,
+                    delay: None,
+                }) => {
+                    let writes_return = cg
+                        .node(node)
+                        .children
+                        .first()
+                        .is_some_and(|lhs| assigned_lhs(cg, *lhs, function));
+                    falls(input || writes_return)
+                }
+                NodeKind::Expr(ExprKind::Operation {
+                    op: Operation::Assignment,
+                    assignment: true,
+                    operands,
+                    ..
+                }) => {
+                    let writes_return = operands
+                        .first()
+                        .is_some_and(|lhs| assigned_lhs(cg, *lhs, function));
+                    falls(input || writes_return)
+                }
+                NodeKind::Stmt(StmtKind::Return { value }) => Flow {
+                    fallthrough: None,
+                    exits_assigned: value.is_some() || input,
+                },
+                NodeKind::Stmt(StmtKind::IfElse {
+                    if_true, if_false, ..
+                }) => {
+                    let then_flow = statement(cg, *if_true, function, input);
+                    let else_flow = if let Some(if_false) = if_false {
+                        statement(cg, *if_false, function, input)
+                    } else {
+                        falls(input)
+                    };
+                    merge_branches(then_flow, else_flow)
+                }
+                NodeKind::Stmt(StmtKind::Case { items, .. }) => {
+                    let mut branches = items.iter().map(|item| {
+                        item.body
+                            .map(|body| statement(cg, body, function, input))
+                            .unwrap_or_else(|| falls(input))
+                    });
+                    let Some(mut merged) = branches.next() else {
+                        return falls(input);
+                    };
+                    let has_default = items.iter().any(|item| item.exprs.is_empty());
+                    for branch in branches {
+                        merged = merge_branches(merged, branch);
+                    }
+                    if !has_default {
+                        merged = merge_branches(merged, falls(input));
+                    }
+                    merged
+                }
+                NodeKind::Stmt(StmtKind::PatternCase { items, default, .. }) => {
+                    let mut branches = items
+                        .iter()
+                        .map(|item| statement(cg, item.body, function, input));
+                    let mut merged = branches.next().unwrap_or_else(|| falls(input));
+                    for branch in branches {
+                        merged = merge_branches(merged, branch);
+                    }
+                    if let Some(default) = default {
+                        merged = merge_branches(merged, statement(cg, *default, function, input));
+                    } else {
+                        merged = merge_branches(merged, falls(input));
+                    }
+                    merged
+                }
+                NodeKind::Stmt(
+                    StmtKind::While { body, .. }
+                    | StmtKind::Repeat { body, .. }
+                    | StmtKind::For { body, .. }
+                    | StmtKind::Foreach { body, .. },
+                ) => {
+                    // These loops may execute zero times. Returns within them
+                    // still need a valid result on the paths that take them.
+                    let body = statement(cg, *body, function, input);
+                    Flow {
+                        fallthrough: Some(input),
+                        exits_assigned: body.exits_assigned,
+                    }
+                }
+                NodeKind::Stmt(StmtKind::DoWhile { body, .. }) => {
+                    let body = statement(cg, *body, function, input);
+                    Flow {
+                        fallthrough: Some(body.fallthrough.unwrap_or(input)),
+                        exits_assigned: body.exits_assigned,
+                    }
+                }
+                // Other statements cannot establish a whole-result write. Keep
+                // the incoming state so unmodelled control flow fails closed.
+                _ => falls(input),
+            }
+        }
+
+        let flow = statement(self, root, function, false);
+        flow.exits_assigned && flow.fallthrough.unwrap_or(true)
     }
 
     fn event_local_write_allowed(&self, function: Option<NodeId>, lhs: NodeId) -> bool {
@@ -701,6 +900,9 @@ impl<'a> Codegen<'a> {
         }
         for (nid, (cname, w, s, two_state, shortreal)) in &f.locals {
             if self.node(*nid).name == name {
+                if let Some(storage) = f.persistent.get(nid) {
+                    return Some(Lhs::Whole(storage.clone()));
+                }
                 return Some(Lhs::WholeRef {
                     addr: format!("&{cname}"),
                     width: *w,
@@ -822,6 +1024,40 @@ impl<'a> Codegen<'a> {
                     .filter(|child| matches!(self.kind(**child), NodeKind::FuncArg { .. }))
                     .nth(ordinal)
                     .copied()
+            }
+            NodeKind::Var { .. } => {
+                let owner = self.enclosing_func_task(node)?;
+                let has_numeric_or_native_result = matches!(
+                    self.kind(owner),
+                    NodeKind::FuncTask {
+                        is_task: false,
+                        ret: Some(_),
+                        ..
+                    }
+                );
+                // Return variables are direct typed children of their
+                // function. Block locals can also appear in the subroutine's
+                // structural child list, but retain their statement-block
+                // parent and must not be canonicalized to the function.
+                let is_result = has_numeric_or_native_result
+                    && self.node(node).parent == Some(owner)
+                    && self.node(node).name == self.node(owner).name;
+                (is_result && self.same_subroutine_signature(owner, definition))
+                    .then_some(definition)
+            }
+            NodeKind::Array { .. } => {
+                let owner = self.enclosing_func_task(node)?;
+                let is_array_result = matches!(
+                    self.kind(owner),
+                    NodeKind::FuncTask {
+                        is_task: false,
+                        ret: Some(ret),
+                        ..
+                    } if ret.kind == "array"
+                ) && self.node(node).parent == Some(owner)
+                    && self.node(node).name == self.node(owner).name;
+                (is_array_result && self.same_subroutine_signature(owner, definition))
+                    .then_some(definition)
             }
             _ => None,
         }

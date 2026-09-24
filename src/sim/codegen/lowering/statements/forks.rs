@@ -124,7 +124,21 @@ impl EmitCtx<'_, '_> {
                     slot as u32,
                     self.cg.declaration_identity(*target)?,
                     source.lifetime,
-                    StorageOwnership::Owned,
+                    if join == IrJoinKind::Join
+                        && source.lifetime == StorageLifetime::Automatic
+                        && source.kind != StorageKind::Opaque
+                        && !matches!(
+                            self.cg.kind(*target),
+                            NodeKind::FuncArg {
+                                direction: DbDirection::Ref,
+                                ..
+                            }
+                        )
+                    {
+                        StorageOwnership::Borrowed
+                    } else {
+                        StorageOwnership::Owned
+                    },
                 )
                 .with_kind(source.kind);
                 let local = ProcLocalInfo {

@@ -43,10 +43,13 @@ fn fixed_array_reduction_emits_each_binary_method_without_an_identity_seed() {
         (IrContainerReduction::BitXor, "sv4_xor("),
     ] {
         let mut frame = Frame::new(&ctx);
-        let mut expr = reduction(IrFixedArrayReductionSource::Value(Box::new(number(0xff01, 16))), item());
+        let mut expr = reduction(
+            IrFixedArrayReductionSource::Value(Box::new(number(0xff01, 16))),
+            item(),
+        );
         let IrExprKind::FixedArrayReduce(plan) = &mut expr.kind else {
-        unreachable!();
-    };
+            unreachable!();
+        };
         plan.operation = operation;
         model.validate_expr(&expr, None).unwrap();
         let value = frame.expression(&expr).unwrap();
@@ -66,8 +69,14 @@ fn fixed_array_reduction_emits_each_binary_method_without_an_identity_seed() {
 fn fixed_array_reduction_receiver_call_is_captured_before_the_loop_once() {
     let mut model = IrModel::new("fold_call".into(), 1).unwrap();
     model.funcs.push(IrFunc::new(
-        "make_payload".into(), Some(IrType::packed(16, false).unwrap()),
-        vec![], vec![], vec![], vec![IrStmt::Return { value: Some(Box::new(number(0x0203, 16))) }],
+        "make_payload".into(),
+        Some(IrType::packed(16, false).unwrap()),
+        vec![],
+        vec![],
+        vec![],
+        vec![IrStmt::Return {
+            value: Some(Box::new(number(0x0203, 16))),
+        }],
     ));
     let ctx = RCtx {
         model: &model,
@@ -76,9 +85,12 @@ fn fixed_array_reduction_receiver_call_is_captured_before_the_loop_once() {
         activation_label: None,
     };
     let mut frame = Frame::new(&ctx);
-    let call = IrExpr::new(IrExprKind::CallFn(Box::new(IrCallExpr::new(
-        0, vec![], IrDepth::PROC, false,
-    ))), 16, false, None);
+    let call = IrExpr::new(
+        IrExprKind::CallFn(Box::new(IrCallExpr::new(0, vec![], IrDepth::PROC, false))),
+        16,
+        false,
+        None,
+    );
     let expr = reduction(IrFixedArrayReductionSource::Value(Box::new(call)), item());
     model.validate_expr(&expr, None).unwrap();
     let value = frame.expression(&expr).unwrap();
@@ -99,8 +111,14 @@ fn fixed_array_reduction_nested_maps_shadow_only_after_capturing_the_outer_item(
         activation_label: None,
     };
     let outer_item = IrExpr::new(IrExprKind::LocalRead("item".into()), 16, false, None);
-    let inner = reduction(IrFixedArrayReductionSource::Value(Box::new(outer_item)), item());
-    let mut expr = reduction(IrFixedArrayReductionSource::Value(Box::new(number(0x01020304, 32))), inner);
+    let inner = reduction(
+        IrFixedArrayReductionSource::Value(Box::new(outer_item)),
+        item(),
+    );
+    let mut expr = reduction(
+        IrFixedArrayReductionSource::Value(Box::new(number(0x01020304, 32))),
+        inner,
+    );
     let IrExprKind::FixedArrayReduce(plan) = &mut expr.kind else {
         unreachable!();
     };
@@ -119,7 +137,16 @@ fn fixed_array_reduction_nested_maps_shadow_only_after_capturing_the_outer_item(
 fn fixed_array_reduction_direct_storage_has_constant_emission_and_slot_cost() {
     let mut model = IrModel::new("large_memory".into(), 1).unwrap();
     let last = (crate::sim::ir::LLG_MAX_FIXED_ARRAY_CELLS - 1) as i32;
-    model.arrays.push(IrArray::new("G_memory".into(), "memory".into(), 8, false, vec![(0, last)]).unwrap());
+    model.arrays.push(
+        IrArray::new(
+            "G_memory".into(),
+            "memory".into(),
+            8,
+            false,
+            vec![(0, last)],
+        )
+        .unwrap(),
+    );
     let ctx = RCtx {
         model: &model,
         func: None,
@@ -150,21 +177,35 @@ fn fixed_array_reduction_direct_storage_has_constant_emission_and_slot_cost() {
 #[test]
 fn fixed_array_reduction_map_can_read_an_enclosing_formal() {
     let mut model = IrModel::new("captured_map".into(), 1).unwrap();
-    model.funcs.push(IrFunc::new("f".into(), Some(IrType::packed(32, false).unwrap()),
-        vec![IrFormal::new(false, 32, false).unwrap()], vec![], vec![], vec![]));
+    model.funcs.push(IrFunc::new(
+        "f".into(),
+        Some(IrType::packed(32, false).unwrap()),
+        vec![IrFormal::new(false, 32, false).unwrap()],
+        vec![],
+        vec![],
+        vec![],
+    ));
     let ctx = RCtx {
         model: &model,
         func: Some(&model.funcs[0]),
         sampled: false,
         activation_label: None,
     };
-    let mapped = add(IrExpr::convert_to(item(), 32, false),
-        IrExpr::new(IrExprKind::FormalRead(0), 32, false, None), 32);
-    let expr = reduction(IrFixedArrayReductionSource::Value(Box::new(number(0x0203, 16))), mapped);
+    let mapped = add(
+        IrExpr::convert_to(item(), 32, false),
+        IrExpr::new(IrExprKind::FormalRead(0), 32, false, None),
+        32,
+    );
+    let expr = reduction(
+        IrFixedArrayReductionSource::Value(Box::new(number(0x0203, 16))),
+        mapped,
+    );
     model.validate_expr(&expr, ctx.func).unwrap();
     let mut frame = Frame::new(&ctx);
     // A raw expression frame does not run the callee's input-owner prologue.
-    frame.local("a0", 32, false, false, Some(&number(11, 32))).unwrap();
+    frame
+        .local("a0", 32, false, false, Some(&number(11, 32)))
+        .unwrap();
     let address = frame.lookup("a0").unwrap().address;
     let value = frame.expression(&expr).unwrap();
     assert!(frame.body().contains(&format!("sv4_clone({address})")));

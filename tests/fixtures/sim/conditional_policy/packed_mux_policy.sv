@@ -1,5 +1,6 @@
 // IEEE 1364-2001 §4.1.13 Table 28 / IEEE 1800-2009 §11.4.11 Table 11-20:
-// packed ambiguous-selector equal branch bits retain their four-state value.
+// ambiguous packed selectors preserve equal 0/1/X bits; Z/Z and differences
+// produce X.
 module tb;
     reg [3:0] states;
     reg [15:0] known_zero;
@@ -18,6 +19,17 @@ module tb;
     integer right;
     integer index;
     localparam frontend_constant = 1'bx ? 1'bz : 1'bz;
+    wire [3:0] generated_case_result;
+    generate
+        case (frontend_constant)
+            1'bx: begin : x_branch
+                assign generated_case_result = 4'bxxxx;
+            end
+            default: begin : z_branch
+                assign generated_case_result = 4'bzzzz;
+            end
+        endcase
+    endgenerate
     initial begin
         states[0] = 1'b0;
         states[1] = 1'b1;
@@ -50,8 +62,9 @@ module tb;
         $display("known1=%b", known_one);
         $display("x=%b", x_select);
         $display("z=%b", z_select);
-        $display("constant=%b frontend=%b mixed=%b wide=%b", constant_result,
-                 frontend_constant, mixed_result, wide_result);
+        $display("constant=%b frontend=%b generated_case=%b mixed=%b wide=%b",
+                 constant_result, frontend_constant, generated_case_result,
+                 mixed_result, wide_result);
         $finish(0);
     end
 endmodule

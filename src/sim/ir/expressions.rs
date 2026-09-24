@@ -106,6 +106,15 @@ pub enum IrExprKind {
     /// is the old target value for post forms or the committed target value
     /// otherwise.
     Mutation(Box<IrMutationExpr>),
+    /// Read a packed value through one or more member selections of a tagged
+    /// union. The receiver is evaluated once; every tag is checked before its
+    /// corresponding payload is projected. A failed check reports a runtime
+    /// error and the expression yields X.
+    TaggedSelect {
+        base: Box<IrExpr>,
+        steps: Vec<IrTaggedSelectStep>,
+        location: String,
+    },
     /// SystemVerilog `$cast` with an assignment target and an optional set of
     /// legal values (used for enum destinations).  The expression returns a
     /// one-bit status and commits the converted value only when the dynamic
@@ -348,6 +357,22 @@ pub struct IrMutationExpr {
     pub(in crate::sim) current_signed: bool,
     pub(in crate::sim) reads_current: bool,
     pub(in crate::sim) post: bool,
+}
+
+/// Tag metadata for one packed tagged-union member projection.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IrTaggedMemberGuard {
+    pub(in crate::sim) member_index: u32,
+    pub(in crate::sim) tag_width: u32,
+    pub(in crate::sim) member_name: String,
+}
+
+/// One packed projection in an expression or lvalue rooted at a tagged union.
+#[derive(Clone, Debug, PartialEq)]
+pub struct IrTaggedSelectStep {
+    pub(in crate::sim) selection: IrPackedSelect,
+    pub(in crate::sim) two_state: bool,
+    pub(in crate::sim) guard: Option<IrTaggedMemberGuard>,
 }
 
 /// Runtime-checked `$cast` operation.  `target_width == 0` denotes a real

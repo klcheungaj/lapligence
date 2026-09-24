@@ -779,8 +779,7 @@ fn classify_simulation_node(
     match node.kind() {
         NodeKind::Other => match db.semantic_kind(id) {
             Some(CapturedSemanticKind::Unsupported)
-                if db.conditional_pattern(id).is_some()
-                    && supports_conditional_pattern(db, id) =>
+                if db.conditional_pattern(id).is_some() && supports_conditional_pattern(db, id) =>
             {
                 SimulationNodeClass::Executable
             }
@@ -998,11 +997,7 @@ fn supports_conditional_pattern(db: &Db, pattern: NodeId) -> bool {
             ) => true,
             Some(ConditionalPatternKind::Structure) => db
                 .conditional_pattern_fields(pattern)
-                .is_some_and(|fields| {
-                    fields
-                        .iter()
-                        .all(|field| visit(db, field.pattern, active))
-                }),
+                .is_some_and(|fields| fields.iter().all(|field| visit(db, field.pattern, active))),
             Some(ConditionalPatternKind::Tagged) => info.is_some_and(|info| {
                 info.tagged_member.is_some()
                     && info
@@ -2018,7 +2013,8 @@ mod tests {
                 NodeKind::Stmt(StmtKind::IfElse {
                     predicate: crate::core::db::ConditionalPredicate {
                         clauses: vec![crate::core::db::PredicateClause {
-                            expression: NodeId(2), pattern: None,
+                            expression: NodeId(2),
+                            pattern: None,
                         }],
                     },
                     if_true: NodeId(3),

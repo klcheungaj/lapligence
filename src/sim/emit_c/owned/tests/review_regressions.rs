@@ -140,6 +140,8 @@ fn owned_memory_emitter_uses_enum_entry_count_for_c_array_bound() {
         view: IrMemoryView {
             array: 0,
             origin: 0,
+            selectors: Vec::new(),
+            sliced: false,
             dims: vec![(0, 2)],
             strides: vec![1],
             total: 3,

@@ -1,6 +1,7 @@
 //! Selections.
 
 use super::*;
+use crate::sim::ir::{IrPackedSelect, IrTaggedMemberGuard, IrTaggedSelectStep};
 
 impl<'a> Codegen<'a> {
     /// Resolve a hierarchical reference read (`a.b.sig`, or the 2-part
@@ -27,15 +28,37 @@ impl<'a> Codegen<'a> {
                 if let Some(info) = self.signal_of(t) {
                     return Some(info);
                 }
+                if let Some(info) = self.static_proc_local_signal(t) {
+                    return Some(info);
+                }
             }
             let (target, base_index) = self.hier_path_signal_target(parts, refs)?;
             if base_index + 1 == parts.len() {
                 return self
                     .clocking_var_source_info(target)
-                    .or_else(|| self.signal_of(target));
+                    .or_else(|| self.signal_of(target))
+                    .or_else(|| self.static_proc_local_signal(target));
             }
         }
         None
+    }
+
+    pub(super) fn static_proc_local_signal(&self, node: NodeId) -> Option<&SignalInfo> {
+        let instance = self.owning_inst(node)?;
+        if let Some(signal) = self
+            .static_formals
+            .get(&(instance, node))
+            .or_else(|| self.static_task_locals.get(&(instance, node)))
+        {
+            return Some(signal);
+        }
+        if self.db.variable_lifetime(node) != VariableLifetime::Static {
+            return None;
+        }
+        self.proc_local_instances
+            .get(&(instance, node))?
+            .static_signal
+            .as_ref()
     }
 
     /// Resolve a signal target when a semantic hierarchical path has no target
@@ -54,6 +77,7 @@ impl<'a> Codegen<'a> {
             if self.sampled_signal_of(target).is_some()
                 || self.clocking_var_source_info(target).is_some()
                 || self.signal_of(target).is_some()
+                || self.static_proc_local_signal(target).is_some()
             {
                 return Some((target, index));
             }
@@ -94,6 +118,118 @@ impl<'a> Codegen<'a> {
         ))
     }
 
+    /// Resolve a packed-member path rooted at a captured parameter. Unlike
+    /// `packed_member_info`, this path has no signal storage; expression
+    /// lowering reads the owned parameter value and projects the member as a
+    /// constant instead.
+    pub(super) fn packed_parameter_member_info(
+        &self,
+        node: NodeId,
+    ) -> Option<(NodeId, PackedMember)> {
+        let NodeKind::Expr(ExprKind::HierPath { parts, refs }) = self.kind(node) else {
+            return None;
+        };
+        let (base_index, target) = refs.iter().enumerate().find_map(|(index, target)| {
+            let target = (*target)?;
+            (matches!(self.kind(target), NodeKind::Param { .. })
+                && self.param_vals.contains_key(&target)
+                && parts
+                    .get(index)
+                    .is_some_and(|part| part == &self.node(target).name))
+            .then_some((index, target))
+        })?;
+        let member = self.packed_member_layout(target, parts.get(base_index + 1..)?)?;
+        Some((target, member))
+    }
+
+    /// Lower the packed member path of a hierarchical reference into relative
+    /// projections. Tagged-union checks are attached to the exact member step
+    /// so reads and lvalues can share the same receiver and selector captures.
+    pub(super) fn tagged_member_projection(
+        &self,
+        node: NodeId,
+    ) -> Result<Option<(SignalInfo, Vec<IrTaggedSelectStep>)>, String> {
+        let NodeKind::Expr(ExprKind::HierPath { parts, refs }) = self.kind(node) else {
+            return Ok(None);
+        };
+        let Some((target, base_index)) = self.hier_path_signal_target(parts, refs) else {
+            return Ok(None);
+        };
+        let Some(info) = self.signal_of(target).cloned() else {
+            return Ok(None);
+        };
+        let Some(mut descriptor) = self.query_descriptor(target).cloned() else {
+            return Ok(None);
+        };
+        let mut steps = Vec::new();
+        let mut checked = false;
+        for name in &parts[base_index + 1..] {
+            let TypeShape::Aggregate(layout) = &descriptor.shape else {
+                return Ok(None);
+            };
+            if !matches!(
+                layout.kind,
+                AggregateKind::PackedStruct
+                    | AggregateKind::PackedUnion
+                    | AggregateKind::TaggedUnion
+            ) {
+                return Ok(None);
+            }
+            let index = layout
+                .members
+                .iter()
+                .position(|member| member.name == *name)
+                .ok_or_else(|| format!("packed member `{name}` is missing from its layout"))?;
+            let member = &layout.members[index];
+            let width = Self::fixed_descriptor_width(&member.descriptor)
+                .ok_or_else(|| format!("packed member `{name}` has no fixed width"))?;
+            let guard = if layout.kind == AggregateKind::TaggedUnion {
+                let tag_width = layout
+                    .tag_bits()
+                    .ok_or_else(|| "tagged union tag width overflows".to_owned())?;
+                if tag_width > 0 {
+                    checked = true;
+                    Some(IrTaggedMemberGuard {
+                        member_index: u32::try_from(index)
+                            .map_err(|_| "tagged union member index overflows".to_owned())?,
+                        tag_width,
+                        member_name: name.clone(),
+                    })
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            let offset = if matches!(
+                layout.kind,
+                AggregateKind::PackedUnion | AggregateKind::TaggedUnion
+            ) {
+                0
+            } else {
+                layout.members[index + 1..]
+                    .iter()
+                    .try_fold(0u32, |sum, following| {
+                        sum.checked_add(Self::fixed_descriptor_width(&following.descriptor)?)
+                    })
+                    .ok_or_else(|| "packed member displacement overflows".to_owned())?
+            };
+            steps.push(IrTaggedSelectStep {
+                selection: IrPackedSelect {
+                    base: lhs_integer_expr(i128::from(offset)),
+                    width,
+                },
+                two_state: member.two_state,
+                guard,
+            });
+            descriptor = member.descriptor.clone();
+        }
+        if !checked {
+            return Ok(None);
+        }
+        Ok(Some((info, steps)))
+    }
+
     /// Guard a packed tagged-union member read with the active tag. Tagged
     /// payload bits share ordinary packed storage, but a member from another
     /// active arm has no value; expose X for that access instead of silently
@@ -108,6 +244,18 @@ impl<'a> Codegen<'a> {
         let NodeKind::Expr(ExprKind::HierPath { parts, refs }) = self.kind(node) else {
             return Ok(value);
         };
+        if let Some((root, steps)) = self.tagged_member_projection(node)? {
+            return Ok(IrExpr::new(
+                IrExprKind::TaggedSelect {
+                    base: Box::new(self.signal_read_expr(&root)?),
+                    steps,
+                    location: self.source_location(node),
+                },
+                value.width,
+                value.signed,
+                None,
+            ));
+        }
         let Some((target, base_index)) = self.hier_path_signal_target(parts, refs) else {
             return Ok(value);
         };
@@ -481,6 +629,123 @@ impl<'a> Codegen<'a> {
             .checked_add(relative_lsb)
             .ok_or_else(|| format!("packed-member `{}` offset overflows", member.name))?;
         Ok(Some((info, member, lsb, width)))
+    }
+
+    pub(super) fn packed_parameter_member_select_info(
+        &self,
+        base: NodeId,
+        indices: &[NodeId],
+    ) -> Result<Option<(NodeId, PackedMember, u32, u32)>, String> {
+        let Some((parameter, member)) = self.packed_parameter_member_info(base) else {
+            return Ok(None);
+        };
+        if indices.is_empty()
+            || member.packed_ranges.is_empty()
+            || indices.len() > member.packed_ranges.len()
+        {
+            return Ok(None);
+        }
+        if indices
+            .iter()
+            .any(|index| self.eval_bound_i128(*index).is_err())
+        {
+            return Ok(None);
+        }
+        let (relative_lsb, width) =
+            self.packed_selection_offset(&member.packed_ranges, indices, &member.name)?;
+        let lsb = member
+            .lsb
+            .checked_add(relative_lsb)
+            .ok_or_else(|| format!("packed-member `{}` offset overflows", member.name))?;
+        Ok(Some((parameter, member, lsb, width)))
+    }
+
+    pub(super) fn packed_parameter_member_dynamic_select_info(
+        &mut self,
+        path: &str,
+        base: NodeId,
+        indices: &[NodeId],
+    ) -> Result<Option<(NodeId, PackedMember, IrExpr, u32)>, String> {
+        if indices.len() != 1 {
+            return Ok(None);
+        }
+        let Some((parameter, member)) = self.packed_parameter_member_info(base) else {
+            return Ok(None);
+        };
+        let Some(range) = member.packed_ranges.first().copied() else {
+            return Ok(None);
+        };
+        if self.eval_bound_i128(indices[0]).is_ok() {
+            return Ok(None);
+        }
+
+        let stride = member.packed_ranges[1..]
+            .iter()
+            .try_fold(1u32, |stride, dimension| {
+                let extent = dimension
+                    .left
+                    .abs_diff(dimension.right)
+                    .checked_add(1)
+                    .and_then(|extent| u32::try_from(extent).ok())?;
+                stride.checked_mul(extent)
+            })
+            .ok_or_else(|| format!("packed member `{}` stride overflows", member.name))?;
+        let first_extent = range
+            .left
+            .abs_diff(range.right)
+            .checked_add(1)
+            .and_then(|extent| u32::try_from(extent).ok())
+            .ok_or_else(|| format!("packed member `{}` extent overflows", member.name))?;
+        if first_extent.checked_mul(stride) != Some(member.width) {
+            return Err(format!(
+                "packed member `{}` dimensions disagree with its width",
+                member.name
+            ));
+        }
+
+        let mut index = self.lower_expr(path, indices[0])?;
+        if index.is_real() || stride == 0 {
+            return Err(
+                "packed selection requires an integral index and nonzero stride".to_owned(),
+            );
+        }
+        if index.fill.is_some()
+            || matches!(&index.kind, IrExprKind::Fill(_))
+            || matches!(&index.kind, IrExprKind::Const(value) if value.fill.is_some())
+        {
+            let width = index.width;
+            index = IrExpr::new(
+                IrExprKind::Concat { parts: vec![index] },
+                width,
+                false,
+                None,
+            );
+        }
+
+        let right = lhs_integer_expr(range.right);
+        let multiply_bits = u32::BITS - (stride - 1).leading_zeros();
+        let arithmetic_width = index
+            .width
+            .max(right.width)
+            .checked_add(2)
+            .and_then(|width| width.checked_add(multiply_bits))
+            .filter(|width| *width <= LLG_MAX_WIDTH)
+            .ok_or_else(|| {
+                "packed selection index arithmetic exceeds the supported limit".to_owned()
+            })?;
+        let index = IrExpr::convert_to(index, arithmetic_width, true);
+        let right = IrExpr::convert_to(right, arithmetic_width, true);
+        let relative = if range.left < range.right {
+            bin_expr(IrBinOp::Sub, right, index)
+        } else {
+            bin_expr(IrBinOp::Sub, index, right)
+        };
+        let scaled = bin_expr(
+            IrBinOp::Mul,
+            relative,
+            IrExpr::convert_to(lhs_integer_expr(i128::from(stride)), arithmetic_width, true),
+        );
+        Ok(Some((parameter, member, scaled, stride)))
     }
 
     /// Resolve a range select on the outermost packed dimension of a member.

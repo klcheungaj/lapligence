@@ -3,6 +3,451 @@
 use super::*;
 
 impl<'a> Codegen<'a> {
+    fn fixed_array_parameter_target(&self, node: NodeId) -> Option<NodeId> {
+        let target = match self.kind(node) {
+            NodeKind::Param { .. } => node,
+            NodeKind::Expr(ExprKind::Ref {
+                target: Some(target),
+            }) => *target,
+            _ => return None,
+        };
+        matches!(self.kind(target), NodeKind::Param { .. }).then_some(target)
+    }
+
+    fn fixed_array_parameter_initializer(&self, parameter: NodeId) -> Option<NodeId> {
+        // Slang's instantiated Param node owns the effective initializer,
+        // including an instance override. Never reconstruct that value from
+        // the parameter's declaration or scalar `Param::value` field.
+        self.node(parameter).children.iter().copied().find(|child| {
+            matches!(
+                self.kind(*child),
+                NodeKind::Expr(ExprKind::Operation {
+                    op: Operation::AssignmentPattern | Operation::MultiAssignmentPattern,
+                    ..
+                })
+            )
+        })
+    }
+
+    fn lower_fixed_array_parameter_value(
+        &mut self,
+        path: &str,
+        parameter: NodeId,
+    ) -> Result<Option<IrExpr>, String> {
+        if !matches!(
+            self.query_descriptor(parameter)
+                .map(|descriptor| &descriptor.shape),
+            Some(TypeShape::FixedArray { .. })
+        ) {
+            return Ok(None);
+        }
+        let Some(initializer) = self.fixed_array_parameter_initializer(parameter) else {
+            return Ok(None);
+        };
+        self.fixed_pattern_value(path, initializer)
+    }
+
+    fn lower_subroutine_localparam_value(
+        &self,
+        scope_path: &str,
+        parameter: NodeId,
+    ) -> Result<Option<IrExpr>, String> {
+        let NodeKind::Param {
+            value, local: true, ..
+        } = self.kind(parameter)
+        else {
+            return Ok(None);
+        };
+        let mut parent = self.node(parameter).parent;
+        let mut in_subroutine = false;
+        while let Some(scope) = parent {
+            match self.kind(scope) {
+                NodeKind::FuncTask { .. } => {
+                    in_subroutine = true;
+                    break;
+                }
+                NodeKind::ModuleInst { .. } | NodeKind::GenScope => break,
+                _ => parent = self.node(scope).parent,
+            }
+        }
+        if !in_subroutine {
+            return Ok(None);
+        }
+        let Some(parent) = self.node(parameter).parent else {
+            return Ok(None);
+        };
+        let value = self.collected_parameter_value(parent, parameter, value.as_ref())?;
+        let Some(value) = value else {
+            return Ok(None);
+        };
+        match value {
+            Val::Bits(value) => {
+                let constant = val_to_const(&value)?;
+                Ok(Some(IrExpr::new(
+                    IrExprKind::Const(constant.clone()),
+                    constant.width,
+                    constant.signed,
+                    None,
+                )))
+            }
+            Val::Real(value) => Ok(Some(real_literal_expr(value))),
+            Val::Str(value) => match self.kind(parameter) {
+                NodeKind::Param { ty, .. } if ty.kind != "string" => match ty.width {
+                    Some(width) => {
+                        let constant = string_to_const(&value)?;
+                        let expr = IrExpr::new(
+                            IrExprKind::Const(constant.clone()),
+                            constant.width,
+                            constant.signed,
+                            None,
+                        );
+                        Ok(Some(IrExpr::convert_to(expr, width, ty.signed)))
+                    }
+                    None => Err(format!(
+                        "string parameter `{}` used as a value is not supported in `{scope_path}`",
+                        self.node(parameter).name
+                    )),
+                },
+                _ => Err(format!(
+                    "string parameter `{}` used as a value is not supported in `{scope_path}`",
+                    self.node(parameter).name
+                )),
+            },
+        }
+    }
+
+    fn lower_fixed_array_parameter_element(
+        &mut self,
+        path: &str,
+        base: NodeId,
+        indices: &[NodeId],
+    ) -> Result<Option<IrExpr>, String> {
+        let Some(parameter) = self.fixed_array_parameter_target(base) else {
+            return Ok(None);
+        };
+        let Some(descriptor) = self.query_descriptor(parameter).cloned() else {
+            return Ok(None);
+        };
+        let TypeShape::FixedArray {
+            dimensions,
+            element,
+        } = &descriptor.shape
+        else {
+            return Ok(None);
+        };
+        if indices.len() != dimensions.len() {
+            return Ok(None);
+        }
+        let Some(width) = Self::fixed_descriptor_width(element) else {
+            return Ok(None);
+        };
+        if width == 0 {
+            return Ok(None);
+        }
+        let Some(mut initializer) = self.fixed_array_parameter_initializer(parameter) else {
+            return Ok(None);
+        };
+
+        let constant_indices = indices
+            .iter()
+            .map(|index| self.eval_bound_i128(*index))
+            .collect::<Result<Vec<_>, _>>();
+        let constant_indices = match constant_indices {
+            Ok(indices) => indices,
+            Err(_) if dimensions.len() == 1 => {
+                let (left_bound, right_bound) = dimensions[0];
+                let Some(array_value) = self.fixed_pattern_value(path, initializer)? else {
+                    return Ok(None);
+                };
+                let index = self.lower_expr(path, indices[0])?;
+                if index.is_real() || index.width == 0 {
+                    return Err(format!(
+                        "fixed-array parameter index must be integral in `{path}`"
+                    ));
+                }
+                let base_width = index.width.max(32);
+                let scale_width = u32::BITS - (width - 1).leading_zeros();
+                let arithmetic_width = base_width
+                    .checked_add(scale_width)
+                    .and_then(|width| width.checked_add(2))
+                    .filter(|width| *width <= LLG_MAX_WIDTH)
+                    .ok_or_else(|| {
+                        "fixed-array parameter index arithmetic exceeds the supported width"
+                            .to_owned()
+                    })?;
+                let index = IrExpr::convert_to(index, arithmetic_width, true);
+                let left_expr = IrExpr::convert_to(
+                    lhs_integer_expr(i128::from(left_bound)),
+                    arithmetic_width,
+                    true,
+                );
+                let ordinal = if left_bound >= right_bound {
+                    bin_expr(IrBinOp::Sub, left_expr, index)
+                } else {
+                    bin_expr(IrBinOp::Sub, index, left_expr)
+                };
+                let count = i128::from(i64::from(left_bound).abs_diff(i64::from(right_bound)) + 1);
+                let remaining = bin_expr(
+                    IrBinOp::Sub,
+                    IrExpr::convert_to(lhs_integer_expr(count - 1), arithmetic_width, true),
+                    ordinal,
+                );
+                let bit_offset = bin_expr(
+                    IrBinOp::Mul,
+                    remaining,
+                    IrExpr::convert_to(lhs_integer_expr(i128::from(width)), arithmetic_width, true),
+                );
+                let selected = IrExpr::new(
+                    IrExprKind::IdxPartSel {
+                        base: Box::new(array_value),
+                        base_idx: Box::new(bit_offset),
+                        width_expr: Box::new(lhs_integer_expr(i128::from(width))),
+                        neg: false,
+                    },
+                    width,
+                    false,
+                    None,
+                );
+                return ir_to_storage(selected, width, element.info.signed, element.two_state)
+                    .map(Some);
+            }
+            Err(_) => return Ok(None),
+        };
+
+        for (&index, &(left, right)) in constant_indices.iter().zip(dimensions) {
+            let index = i32::try_from(index)
+                .map_err(|_| format!("fixed-array parameter index does not fit i32 in `{path}`"))?;
+            let offset = if left >= right {
+                i64::from(left) - i64::from(index)
+            } else {
+                i64::from(index) - i64::from(left)
+            };
+            let count = i64::from(left).abs_diff(i64::from(right)) + 1;
+            let offset = usize::try_from(offset)
+                .ok()
+                .filter(|offset| u64::try_from(*offset).is_ok_and(|offset| offset < count))
+                .ok_or_else(|| {
+                    format!(
+                        "fixed-array parameter index {index} is outside [{left}:{right}] in `{path}`"
+                    )
+                })?;
+            let values = self.p30_pattern_level(path, initializer, (left, right))?;
+            initializer = *values.get(offset).ok_or_else(|| {
+                format!("fixed-array parameter initializer is missing index {index} in `{path}`")
+            })?;
+        }
+
+        let value = self.lower_expr(path, initializer)?;
+        ir_to_storage(value, width, element.info.signed, element.two_state).map(Some)
+    }
+
+    fn fixed_parameter_member_target(
+        &self,
+        node: NodeId,
+    ) -> Option<(NodeId, Vec<AggregatePathPart>)> {
+        let (parts, refs) = match self.kind(node) {
+            NodeKind::Expr(ExprKind::HierPath { parts, refs }) if parts.len() > 1 => (parts, refs),
+            _ => return None,
+        };
+        let first = refs.first().copied().flatten()?;
+        let (parameter, indices) = match self.kind(first) {
+            NodeKind::Param { .. } => (first, &[][..]),
+            NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => (
+                self.fixed_array_parameter_target(*base)?,
+                indices.as_slice(),
+            ),
+            NodeKind::Expr(ExprKind::Ref {
+                target: Some(target),
+            }) if matches!(self.kind(*target), NodeKind::Param { .. }) => (*target, &[][..]),
+            _ => return None,
+        };
+        let descriptor = self.query_descriptor(parameter)?;
+        match &descriptor.shape {
+            TypeShape::FixedArray { .. } => {}
+            TypeShape::Aggregate(layout)
+                if matches!(
+                    layout.kind,
+                    AggregateKind::UnpackedStruct | AggregateKind::UnpackedUnion
+                ) => {}
+            _ => return None,
+        }
+        let mut path = Vec::with_capacity(indices.len() + parts.len() - 1);
+        for index in indices {
+            let index = i32::try_from(self.eval_bound_i128(*index).ok()?).ok()?;
+            path.push(AggregatePathPart::Index(index));
+        }
+        path.extend(parts.iter().skip(1).cloned().map(AggregatePathPart::Member));
+        (!path.is_empty()).then_some((parameter, path))
+    }
+
+    fn lower_fixed_parameter_member_read(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<Option<IrExpr>, String> {
+        let Some((parameter, aggregate_path)) = self.fixed_parameter_member_target(node) else {
+            return Ok(None);
+        };
+        let Some(descriptor) = self.query_descriptor(parameter).cloned() else {
+            return Ok(None);
+        };
+        let Some((member, offset)) = Self::fixed_descriptor_path(&descriptor, &aggregate_path)
+        else {
+            return Ok(None);
+        };
+        let Some(width) = Self::fixed_descriptor_width(&member) else {
+            return Ok(None);
+        };
+        if width == 0 {
+            return Ok(None);
+        }
+        let Some(initializer) = self.fixed_array_parameter_initializer(parameter) else {
+            return Ok(None);
+        };
+        let Some(value) = self.fixed_pattern_value(path, initializer)? else {
+            return Ok(None);
+        };
+        let Some(end) = offset.checked_add(width).filter(|end| *end <= value.width) else {
+            return Err(format!(
+                "fixed parameter member projection exceeds its aggregate value in `{path}`"
+            ));
+        };
+        let selected = IrExpr::new(
+            IrExprKind::PartSel {
+                base: Box::new(value),
+                left: i64::from(end - 1),
+                right: i64::from(offset),
+            },
+            width,
+            member.info.signed,
+            None,
+        );
+        ir_to_storage(selected, width, member.info.signed, member.two_state).map(Some)
+    }
+
+    fn lower_fixed_parameter_member_array_element(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<Option<IrExpr>, String> {
+        let indices = match self.kind(node) {
+            NodeKind::Expr(ExprKind::ArraySelect { indices, .. }) => indices,
+            _ => return Ok(None),
+        };
+        // The owned path retains the exact aggregate owner even when Slang
+        // represents its member array as a detached synthetic Array node.
+        let Some((root, members)) = self.db.array_select_path(node) else {
+            return Ok(None);
+        };
+        let Some(parameter) = self.fixed_array_parameter_target(root) else {
+            return Ok(None);
+        };
+        let Some(descriptor) = self.query_descriptor(parameter).cloned() else {
+            return Ok(None);
+        };
+        if !matches!(
+            &descriptor.shape,
+            TypeShape::Aggregate(layout)
+                if matches!(layout.kind, AggregateKind::UnpackedStruct | AggregateKind::UnpackedUnion)
+        ) {
+            return Ok(None);
+        }
+        let mut aggregate_path = members
+            .iter()
+            .cloned()
+            .map(AggregatePathPart::Member)
+            .collect::<Vec<_>>();
+        for index in indices {
+            let Ok(index) = self.eval_bound_i128(*index) else {
+                return Ok(None);
+            };
+            let Ok(index) = i32::try_from(index) else {
+                return Ok(None);
+            };
+            aggregate_path.push(AggregatePathPart::Index(index));
+        }
+        let Some((element, offset)) = Self::fixed_descriptor_path(&descriptor, &aggregate_path)
+        else {
+            return Ok(None);
+        };
+        let Some(width) = Self::fixed_descriptor_width(&element) else {
+            return Ok(None);
+        };
+        if width == 0 {
+            return Ok(None);
+        }
+        let Some(initializer) = self.fixed_array_parameter_initializer(parameter) else {
+            return Ok(None);
+        };
+        let Some(value) = self.fixed_pattern_value(path, initializer)? else {
+            return Ok(None);
+        };
+        let Some(end) = offset.checked_add(width).filter(|end| *end <= value.width) else {
+            return Err(format!(
+                "fixed parameter member array projection exceeds its aggregate value in `{path}`"
+            ));
+        };
+        let selected = IrExpr::new(
+            IrExprKind::PartSel {
+                base: Box::new(value),
+                left: i64::from(end - 1),
+                right: i64::from(offset),
+            },
+            width,
+            element.info.signed,
+            None,
+        );
+        ir_to_storage(selected, width, element.info.signed, element.two_state).map(Some)
+    }
+
+    fn lower_fixed_array_parameter_partial(
+        &mut self,
+        path: &str,
+        base: NodeId,
+        indices: &[NodeId],
+    ) -> Result<Option<IrExpr>, String> {
+        let Some(parameter) = self.fixed_array_parameter_target(base) else {
+            return Ok(None);
+        };
+        let Some(descriptor) = self.query_descriptor(parameter).cloned() else {
+            return Ok(None);
+        };
+        let TypeShape::FixedArray { dimensions, .. } = &descriptor.shape else {
+            return Ok(None);
+        };
+        if indices.is_empty() || indices.len() >= dimensions.len() {
+            return Ok(None);
+        }
+        let Some(mut initializer) = self.fixed_array_parameter_initializer(parameter) else {
+            return Ok(None);
+        };
+        for (index_node, &(left, right)) in indices.iter().zip(dimensions) {
+            let Ok(index) = self.eval_bound_i128(*index_node) else {
+                return Ok(None);
+            };
+            let index = i32::try_from(index)
+                .map_err(|_| format!("fixed-array parameter index does not fit i32 in `{path}`"))?;
+            let offset = if left >= right {
+                i64::from(left) - i64::from(index)
+            } else {
+                i64::from(index) - i64::from(left)
+            };
+            let count = i64::from(left).abs_diff(i64::from(right)) + 1;
+            let Some(offset) = usize::try_from(offset)
+                .ok()
+                .filter(|offset| u64::try_from(*offset).is_ok_and(|offset| offset < count))
+            else {
+                return Ok(None);
+            };
+            let values = self.p30_pattern_level(path, initializer, (left, right))?;
+            let Some(value) = values.get(offset) else {
+                return Ok(None);
+            };
+            initializer = *value;
+        }
+        self.fixed_pattern_value(path, initializer)
+    }
+
     fn lower_tagged_union_constructor(
         &mut self,
         scope_path: &str,
@@ -28,7 +473,9 @@ impl<'a> Codegen<'a> {
             .members
             .iter()
             .position(|member| member.name == member_name)
-            .ok_or_else(|| format!("tagged union has no member `{member_name}` in `{scope_path}`"))?;
+            .ok_or_else(|| {
+                format!("tagged union has no member `{member_name}` in `{scope_path}`")
+            })?;
         let member = &layout.members[member_index];
         let tag_width = layout
             .tag_bits()
@@ -95,12 +542,7 @@ impl<'a> Codegen<'a> {
                     IrExpr::new(
                         IrExprKind::Concat {
                             parts: vec![
-                                IrExpr::new(
-                                    IrExprKind::Fill(fill),
-                                    padding,
-                                    false,
-                                    Some(fill),
-                                ),
+                                IrExpr::new(IrExprKind::Fill(fill), padding, false, Some(fill)),
                                 value,
                             ],
                         },
@@ -110,24 +552,26 @@ impl<'a> Codegen<'a> {
                     )
                 }
             }
-            None if payload_width == 0 => return Ok(IrExpr::new(
-                IrExprKind::Const(
-                    IrConst::packed(
-                        vec![u64::try_from(member_index).map_err(|_| {
-                            format!("tagged union member index overflows in `{scope_path}`")
-                        })?],
-                        vec![0],
-                        vec![0],
-                        tag_width,
-                        false,
-                        None,
-                    )
-                    .map_err(|error| error.to_string())?,
-                ),
-                total_width,
-                descriptor.info.signed,
-                None,
-            )),
+            None if payload_width == 0 => {
+                return Ok(IrExpr::new(
+                    IrExprKind::Const(
+                        IrConst::packed(
+                            vec![u64::try_from(member_index).map_err(|_| {
+                                format!("tagged union member index overflows in `{scope_path}`")
+                            })?],
+                            vec![0],
+                            vec![0],
+                            tag_width,
+                            false,
+                            None,
+                        )
+                        .map_err(|error| error.to_string())?,
+                    ),
+                    total_width,
+                    descriptor.info.signed,
+                    None,
+                ))
+            }
             None => IrExpr::new(IrExprKind::Fill(fill), payload_width, false, Some(fill)),
         };
         if tag_width == 0 {
@@ -145,17 +589,132 @@ impl<'a> Codegen<'a> {
         .map_err(|error| error.to_string())?;
         Ok(IrExpr::new(
             IrExprKind::Concat {
-                parts: vec![IrExpr::new(
-                    IrExprKind::Const(tag),
-                    tag_width,
-                    false,
-                    None,
-                ), payload],
+                parts: vec![
+                    IrExpr::new(IrExprKind::Const(tag), tag_width, false, None),
+                    payload,
+                ],
             },
             total_width,
             descriptor.info.signed,
             None,
         ))
+    }
+
+    fn packed_parameter_projection(
+        &self,
+        parameter: NodeId,
+        member: &PackedMember,
+        lsb: u32,
+        width: u32,
+        signed: bool,
+    ) -> Result<IrExpr, String> {
+        let Some(Val::Bits(value)) = self.param_vals.get(&parameter) else {
+            return Err(format!(
+                "packed parameter `{}` has no integral value for member read",
+                self.node(parameter).name
+            ));
+        };
+        let lsb = usize::try_from(lsb)
+            .map_err(|_| format!("packed member `{}` offset does not fit usize", member.name))?;
+        let width = usize::try_from(width)
+            .map_err(|_| format!("packed member `{}` width does not fit usize", member.name))?;
+        let end = lsb
+            .checked_add(width)
+            .ok_or_else(|| format!("packed member `{}` range overflows", member.name))?;
+        if width == 0 || end > value.width() {
+            return Err(format!(
+                "packed member `{}` exceeds parameter `{}` width",
+                member.name,
+                self.node(parameter).name
+            ));
+        }
+        let start = value.width() - end;
+        let selected_bits = value
+            .bits
+            .get(start..start + width)
+            .ok_or_else(|| format!("packed member `{}` is outside parameter value", member.name))?;
+        let mut projected = value.clone();
+        projected.bits = selected_bits.to_vec();
+        projected.signed = signed;
+        projected.fill = None;
+        let constant = val_to_const(&projected)?;
+        let selected = IrExpr::new(
+            IrExprKind::Const(constant.clone()),
+            constant.width,
+            constant.signed,
+            constant.fill,
+        );
+        Ok(if member.two_state {
+            IrExpr::to_two_state(selected)
+        } else {
+            selected
+        })
+    }
+
+    fn packed_parameter_member_read(&self, node: NodeId) -> Result<Option<IrExpr>, String> {
+        let Some((parameter, member)) = self.packed_parameter_member_info(node) else {
+            return Ok(None);
+        };
+        Ok(Some(self.packed_parameter_projection(
+            parameter,
+            &member,
+            member.lsb,
+            member.width,
+            member.signed,
+        )?))
+    }
+
+    fn packed_parameter_member_select_read(
+        &self,
+        base: NodeId,
+        indices: &[NodeId],
+    ) -> Result<Option<IrExpr>, String> {
+        let Some((parameter, member, lsb, width)) =
+            self.packed_parameter_member_select_info(base, indices)?
+        else {
+            return Ok(None);
+        };
+        Ok(Some(self.packed_parameter_projection(
+            parameter, &member, lsb, width, false,
+        )?))
+    }
+
+    fn packed_parameter_member_dynamic_select_read(
+        &mut self,
+        path: &str,
+        base: NodeId,
+        indices: &[NodeId],
+    ) -> Result<Option<IrExpr>, String> {
+        let Some((parameter, member, base_idx, width)) =
+            self.packed_parameter_member_dynamic_select_info(path, base, indices)?
+        else {
+            return Ok(None);
+        };
+        // Restrict the selector base to the member itself so an invalid index
+        // cannot read neighboring fields from the containing packed value.
+        let value = self.packed_parameter_projection(
+            parameter,
+            &member,
+            member.lsb,
+            member.width,
+            member.signed,
+        )?;
+        let selected = IrExpr::new(
+            IrExprKind::IdxPartSel {
+                base: Box::new(value),
+                base_idx: Box::new(base_idx),
+                width_expr: Box::new(lhs_integer_expr(i128::from(width))),
+                neg: false,
+            },
+            width,
+            false,
+            None,
+        );
+        Ok(Some(if member.two_state {
+            IrExpr::to_two_state(selected)
+        } else {
+            selected
+        }))
     }
 
     /// Render context for the IR built so far (the enclosing function, when
@@ -184,6 +743,19 @@ impl<'a> Codegen<'a> {
         scope_path: &str,
         h: NodeId,
     ) -> Result<IrExpr, String> {
+        let partial_array_select = match self.kind(h) {
+            NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
+                Some((*base, indices.clone()))
+            }
+            _ => None,
+        };
+        if let Some((base, indices)) = partial_array_select {
+            if let Some(value) =
+                self.lower_fixed_array_parameter_partial(scope_path, base, &indices)?
+            {
+                return Ok(value);
+            }
+        }
         if let Some(value) = self.fixed_activation_read(scope_path, h)? {
             return Ok(value);
         }
@@ -240,9 +812,11 @@ impl<'a> Codegen<'a> {
             NodeKind::Expr(ExprKind::TaggedUnion { member, value }) => {
                 self.lower_tagged_union_constructor(scope_path, h, member, *value)
             }
-            NodeKind::Expr(ExprKind::Conditional { predicate, if_true, if_false }) => {
-                self.lower_predicate_conditional(scope_path, predicate, *if_true, *if_false)
-            }
+            NodeKind::Expr(ExprKind::Conditional {
+                predicate,
+                if_true,
+                if_false,
+            }) => self.lower_predicate_conditional(scope_path, predicate, *if_true, *if_false),
             NodeKind::Expr(ExprKind::Constant { .. }) => {
                 if let Some(comparison) = self.recover_folded_real_parameter_comparison(h) {
                     return Ok(comparison);
@@ -283,6 +857,11 @@ impl<'a> Codegen<'a> {
             }
             NodeKind::Expr(ExprKind::Ref { target }) => self.lower_ref_expr(scope_path, h, *target),
             NodeKind::Expr(ExprKind::BitSelect { base, index }) => {
+                if let Some(value) =
+                    self.packed_parameter_member_dynamic_select_read(scope_path, *base, &[*index])?
+                {
+                    return Ok(value);
+                }
                 if let Some(value) = self.packed_element_read_ir(scope_path, h)? {
                     return Ok(value);
                 }
@@ -332,6 +911,9 @@ impl<'a> Codegen<'a> {
                         selected
                     });
                 }
+                if let Some(value) = self.packed_parameter_member_select_read(*base, &[*index])? {
+                    return Ok(value);
+                }
                 if let Some((info, lsb, width)) = self.packed_select_info(*base, &[*index])? {
                     if width > 1 {
                         let right = i64::from(lsb);
@@ -365,6 +947,11 @@ impl<'a> Codegen<'a> {
                 ))
             }
             NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
+                if let Some(value) =
+                    self.packed_parameter_member_dynamic_select_read(scope_path, *base, indices)?
+                {
+                    return Ok(value);
+                }
                 if let Some(value) = self.packed_element_read_ir(scope_path, h)? {
                     return Ok(value);
                 }
@@ -417,6 +1004,19 @@ impl<'a> Codegen<'a> {
                     } else {
                         selected
                     });
+                }
+                if let Some(value) = self.packed_parameter_member_select_read(*base, indices)? {
+                    return Ok(value);
+                }
+                if let Some(value) =
+                    self.lower_fixed_parameter_member_array_element(scope_path, h)?
+                {
+                    return Ok(value);
+                }
+                if let Some(value) =
+                    self.lower_fixed_array_parameter_element(scope_path, *base, indices)?
+                {
+                    return Ok(value);
                 }
                 if let Some((info, lsb, width)) = self.packed_select_info(*base, indices)? {
                     let right = i64::from(lsb);
@@ -868,6 +1468,12 @@ impl<'a> Codegen<'a> {
                         selected
                     });
                 }
+                if let Some(value) = self.packed_parameter_member_read(h)? {
+                    return Ok(value);
+                }
+                if let Some(value) = self.lower_fixed_parameter_member_read(scope_path, h)? {
+                    return Ok(value);
+                }
                 // Interface and ordinary hierarchical members both resolve
                 // to their concrete owned storage identity.
                 if let Some(info) = self.hier_path_signal(h) {
@@ -1062,6 +1668,13 @@ impl<'a> Codegen<'a> {
             if let Some(info) = self.signal_of(t) {
                 return self.signal_read_expr(info);
             }
+            // Static subroutine formals have persistent model storage. A
+            // hierarchical reference from outside the task/function body
+            // resolves to the same formal declaration node, but there is no
+            // active `FuncCtx` from which to read it.
+            if let Some(info) = self.static_formals.get(&(self.inst, t)) {
+                return self.signal_read_expr(info);
+            }
             if !self.proc_local_is_shadowed(r) {
                 if let Some(info) = self.proc_local_info(t) {
                     if let Some(signal) = &info.static_signal {
@@ -1078,6 +1691,9 @@ impl<'a> Codegen<'a> {
             // Function/task body reads: formals, locals and the return
             // variable (by arena node).
             if let Some(f) = &self.func {
+                if let Some(storage) = f.persistent.get(&t) {
+                    return self.signal_read_expr(storage);
+                }
                 if let Some(ir) = f.arg_ir.get(&t) {
                     return Ok(ir.clone());
                 }
@@ -1136,6 +1752,12 @@ impl<'a> Codegen<'a> {
                     },
                 };
             }
+            if let Some(value) = self.lower_fixed_array_parameter_value(scope_path, t)? {
+                return Ok(value);
+            }
+            if let Some(value) = self.lower_subroutine_localparam_value(scope_path, t)? {
+                return Ok(value);
+            }
             if let NodeKind::EnumConst { value } = self.kind(t) {
                 return enum_value_expr(value.as_ref(), &self.node(t).name);
             }
@@ -1157,6 +1779,9 @@ impl<'a> Codegen<'a> {
                 }
                 for (node, (cname, w, s, _, _shortreal)) in &f.locals {
                     if self.node(*node).name == name {
+                        if let Some(storage) = f.persistent.get(node) {
+                            return self.signal_read_expr(storage);
+                        }
                         return Ok(IrExpr::new(
                             IrExprKind::LocalRead(cname.clone()),
                             *w,

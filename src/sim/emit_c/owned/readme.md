@@ -42,7 +42,7 @@ are never reparsed or treated as safe owners.
 - `expressions.rs`, `control.rs`, `system.rs`: expression evaluation and branch setup.
 - `stores.rs`: captured lvalues, masks, guarded array access, mutations.
 - `calls.rs`, `events.rs`, `formatting.rs`: call/address/output ownership boundaries.
-- `captures.rs`: evaluate numeric owners and typed handle snapshots before publishing activation frames.
+- `captures.rs`: evaluate numeric owners and typed handle snapshots before publishing activation frames; synchronous joined forks alias registered enclosing numeric cells until every branch completes.
 - `event_waits.rs`: snapshot wait addresses and publish per-field context references.
 - `model/callbacks.rs`: captured numeric branches and read-only evaluator entry points.
 - `statements.rs`: lexical/loop/control-flow cleanup.
@@ -62,9 +62,10 @@ are never reparsed or treated as safe owners.
 - `native_access.rs`, `references.rs`, `mailboxes.rs`: use-site member resolution,
   registered reference descriptors, synchronization handles and message transfers.
 - `native_tasks.rs`: owned text consumption, numeric queue/random calls and VPI arguments.
-- `pure_calls.rs`: bounded callback inlining of automatic numeric functions;
-  each expansion renames its internal labels and reserves its escaping result
-  in the caller scope before creating private callee storage.
+- `pure_calls.rs`: bounded callback inlining of automatic numeric functions and
+  static functions whose return was proven independent of prior calls; each
+  expansion renames its internal labels and reserves its escaping result in the
+  caller scope before creating private callee storage.
 - `streaming.rs`: snapshot the packed RHS, then evaluate, check and publish each
   destination in stream order. A selector can observe preceding unpacked fields. Fixed-selector
   loop indices use registered packed temporary slots and are destroyed on
@@ -263,3 +264,12 @@ array results retain their existing merge helpers; a real result becomes zero
 only after both alternatives have executed. Known selectors evaluate one arm.
 The detached expression renderer rejects `Predicate`, since a fragment string
 cannot express its guarded setup and ownership cleanup.
+
+## Memory-task views
+
+`runtime_tasks.rs` evaluates each dynamic higher-dimension memory selector into
+an owned temporary once, converts it to a checked physical origin, then calls
+the borrowed memory runtime while the selector and optional address-bound
+owners remain live. Invalid or unknown selector values produce an invalid view
+that the runtime rejects before touching storage. Static slice bounds and
+physical strides come from validated IR.

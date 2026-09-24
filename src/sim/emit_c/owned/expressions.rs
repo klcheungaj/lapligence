@@ -102,8 +102,10 @@ impl Frame<'_, '_> {
                     .get(*index)
                     .ok_or_else(|| "invalid formal index".to_owned())?;
                 if formal.is_ref() {
+                    // A forwarded descriptor may be a checked tagged view, so
+                    // runtime reads must preserve its tag diagnostic path.
                     self.value(
-                        format!("llg_ref_read(r{index})"),
+                        format!("llg_rt_ref_read(r{index})"),
                         formal.width,
                         formal.signed,
                     )
@@ -156,15 +158,8 @@ impl Frame<'_, '_> {
                 a,
                 b,
                 element_default,
-            } => {
-                self.mux(sel, a, b, expr, Some(element_default), None)?
-            }
-            IrExprKind::StructMux {
-                sel,
-                a,
-                b,
-                members,
-            } => {
+            } => self.mux(sel, a, b, expr, Some(element_default), None)?,
+            IrExprKind::StructMux { sel, a, b, members } => {
                 self.mux(sel, a, b, expr, None, Some(members))?
             }
             IrExprKind::Predicate { clauses } => self.predicate(clauses)?,
@@ -306,8 +301,85 @@ impl Frame<'_, '_> {
             IrExprKind::ObjectQuery(query) => self.object_query(query, expr)?,
             IrExprKind::EnumMethod(query) => self.enum_query(query, expr)?,
             IrExprKind::DynamicCast(cast) => self.dynamic_cast(cast)?,
+            IrExprKind::TaggedSelect {
+                base,
+                steps,
+                location,
+            } => self.tagged_select(base, steps, expr, location)?,
             IrExprKind::Verbatim { .. } => return Err(pending("opaque C expressions")),
         };
+        Ok(result)
+    }
+
+    pub(super) fn report_tagged_access(&mut self, member: &str, location: &str) {
+        let member = c_string_literal(member);
+        let location = c_string_literal(location);
+        self.line("llg_rt_mark_failed();");
+        self.line(format!(
+            "fprintf(stderr, \"llg: runtime error: access to inactive tagged-union member %s at %s\\n\", {member}, {location});"
+        ));
+        self.line("fflush(stderr);");
+    }
+
+    fn tagged_select(
+        &mut self,
+        base: &IrExpr,
+        steps: &[IrTaggedSelectStep],
+        expr: &IrExpr,
+        location: &str,
+    ) -> Result<Value, String> {
+        if steps.is_empty() {
+            return Err("tagged member selection has no projection steps".to_owned());
+        }
+        let mut value = self.expression(base)?;
+        let valid = self.scalar("int", "1".to_owned());
+        for step in steps {
+            let index = self.expression(&step.selection.base)?;
+            if let Some(guard) = &step.guard {
+                if guard.tag_width == 0 || guard.tag_width > value.width {
+                    return Err("tagged union guard width exceeds its receiver".to_owned());
+                }
+                let right = value.width - guard.tag_width;
+                let left = value.width - 1;
+                let tag = self.value(
+                    format!("sv4_part_select({}, {left}LL, {right}LL)", value.code),
+                    guard.tag_width,
+                    false,
+                );
+                let matches = self.scalar(
+                    "int",
+                    format!(
+                        "sv4_to_bool(sv4_case_eq({}, sv4_from_u64({}ULL, {}, 0)))",
+                        tag.code, guard.member_index, guard.tag_width
+                    ),
+                );
+                self.line(format!("if ({valid} && !{matches}) {{"));
+                self.report_tagged_access(&guard.member_name, location);
+                self.line(format!("{valid} = 0;"));
+                self.line("}");
+                self.discard(tag);
+            }
+            let width = step.selection.width;
+            let code = format!(
+                "sv4_idx_part_select_value({}, {}, {width}, 0)",
+                value.code, index.code
+            );
+            let selected = self.replace(value, code, width, false);
+            self.discard(index);
+            value = if step.two_state {
+                let code = format!("sv4_to_two_state({})", selected.code);
+                self.replace(selected, code, width, false)
+            } else {
+                selected
+            };
+        }
+        if value.width != expr.width {
+            return Err("tagged member projection width disagrees with expression".to_owned());
+        }
+        self.line(format!("if (!{valid}) {{"));
+        let code = format!("sv4_x({}, {})", expr.width, u8::from(expr.signed));
+        let result = self.replace(value, code, expr.width, expr.signed);
+        self.line("}");
         Ok(result)
     }
 

@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::core::db::AggregateLayout;
-use crate::sim::ir::{IrBinOp, IrPackedSelect};
+use crate::sim::ir::{IrBinOp, IrModel, IrPackedSelect};
 
 const MAX_FIXED_SORT_COMPARISONS: usize = 1 << 20;
 
@@ -284,26 +284,11 @@ impl<'a> Codegen<'a> {
                 ..descriptor.clone()
             }
         };
-        if !fixed_reverse_integral(&immediate) {
-            return Err(format!(
-                "array method `reverse` in `{path}` requires a fixed integral element"
-            ));
-        }
         let element_width = Self::fixed_descriptor_width(&immediate).ok_or_else(|| {
-            format!(
-                "array method `reverse` in `{path}` requires a supported fixed integral element"
-            )
+            format!("array method `reverse` in `{path}` requires a supported fixed element")
         })?;
         let count = usize::try_from(i64::from(left).abs_diff(i64::from(right)) + 1)
             .map_err(|_| format!("array method `reverse` in `{path}` has too many elements"))?;
-        let expected_width =
-            element_width
-                .checked_mul(u32::try_from(count).map_err(|_| {
-                    format!("array method `reverse` in `{path}` has too many elements")
-                })?)
-                .ok_or_else(|| {
-                    format!("array method `reverse` in `{path}` exceeds the supported width")
-                })?;
 
         let with_clause = self.db.method_call_has_with_clause(call);
         if with_clause {
@@ -323,35 +308,27 @@ impl<'a> Codegen<'a> {
         if let Some(view) =
             self.p30_array_view(path, receiver, &mut statements, &mut captured_indices)?
         {
-            if view.array.real
-                || view.array.elem_width != element_width
-                || view.coordinates.len() != count
-            {
-                return Err(format!(
-                    "array method `reverse` in `{path}` has an unsupported fixed-array representation"
-                ));
-            }
+            let groups =
+                fixed_array_permutation_groups(path, &view, count, element_width, "reverse")?;
             let array = self.reference_array(view.array.ir);
-            let two_state = self.model.arrays[array].two_state;
             let mut values = Vec::with_capacity(count);
-            for coordinates in &view.coordinates {
-                let value = IrExpr::new(
-                    IrExprKind::ArrayRead {
-                        arr: array,
-                        indices: coordinates.clone(),
-                        elem_sel: IrElemSel::Whole,
-                    },
+            for cells in &groups {
+                let value = fixed_array_group_read(
+                    path,
+                    array,
+                    cells,
+                    view.array.elem_width,
                     element_width,
                     immediate.info.signed,
-                    None,
-                );
+                    element.info.signed,
+                )?;
                 let name = self.new_fn_name(path, "reverse_value");
                 statements.push(IrStmt::DeclLocal {
                     name: name.clone(),
                     width: element_width,
                     signed: immediate.info.signed,
                     init: Some(Box::new(value)),
-                    two_state,
+                    two_state: immediate.two_state,
                 });
                 values.push(IrExpr::new(
                     IrExprKind::LocalRead(name),
@@ -360,27 +337,35 @@ impl<'a> Codegen<'a> {
                     None,
                 ));
             }
-            for (destination, coordinates) in view.coordinates.iter().enumerate() {
+            let element_descriptor = element.as_ref();
+            for (destination, cells) in groups.iter().enumerate() {
                 let rhs = ir_to_storage(
                     values[count - destination - 1].clone(),
                     element_width,
                     immediate.info.signed,
                     immediate.two_state,
                 )?;
-                let lhs = IrLhs::ArrayElem {
-                    arr: array,
-                    indices: coordinates.clone(),
-                    elem_sel: IrElemSel::Whole,
-                };
-                statements.push(IrStmt::Assign {
-                    lhs: lhs.clone(),
-                    rhs: apply_lhs_assignment_context(&self.model, &lhs, rhs),
-                    nba: false,
-                });
+                statements.extend(fixed_array_group_writes(
+                    &self.model,
+                    array,
+                    cells,
+                    view.array.elem_width,
+                    element_width,
+                    element_descriptor,
+                    rhs,
+                )?);
             }
             return Ok(Some(IrStmt::Block(statements)));
         }
 
+        let expected_width =
+            element_width
+                .checked_mul(u32::try_from(count).map_err(|_| {
+                    format!("array method `reverse` in `{path}` has too many elements")
+                })?)
+                .ok_or_else(|| {
+                    format!("array method `reverse` in `{path}` exceeds the supported width")
+                })?;
         let source = self
             .fixed_activation_read(path, receiver)?
             .ok_or_else(|| format!("fixed-array reverse in `{path}` has no readable storage"))?;
@@ -471,15 +456,34 @@ impl<'a> Codegen<'a> {
                 ..descriptor.clone()
             }
         };
-        if !fixed_sort_integral(&immediate) {
+        let with_node = self.container_method_with_node(path, call, receiver)?;
+        if with_node.is_none() && !fixed_sort_integral(&immediate) {
             return Err(format!(
                 "array method `{}` in `{path}` requires a fixed integral element",
                 if descending { "rsort" } else { "sort" }
             ));
         }
+        if with_node.is_some() && Self::fixed_descriptor_width(&immediate).is_none() {
+            return Err(format!(
+                "array method `{}` in `{path}` requires a supported fixed element for its `with` expression",
+                if descending { "rsort" } else { "sort" }
+            ));
+        }
+        if let Some(with_node) = with_node {
+            let key_type = self.query_descriptor(with_node).ok_or_else(|| {
+                format!(
+                    "fixed-array sort with expression in `{path}` has no owned comparison-key type"
+                )
+            })?;
+            if !fixed_sort_integral(key_type) {
+                return Err(format!(
+                    "fixed-array sort with expression in `{path}` must produce an integral value"
+                ));
+            }
+        }
         let element_width = Self::fixed_descriptor_width(&immediate).ok_or_else(|| {
             format!(
-                "array method `{}` in `{path}` requires a supported fixed integral element",
+                "array method `{}` in `{path}` requires a supported fixed element",
                 if descending { "rsort" } else { "sort" }
             )
         })?;
@@ -494,14 +498,6 @@ impl<'a> Codegen<'a> {
                 "fixed-array sort in `{path}` exceeds the finite comparison schedule limit"
             ));
         }
-        let expected_width = element_width
-            .checked_mul(
-                u32::try_from(count)
-                    .map_err(|_| format!("fixed-array sort in `{path}` has too many elements"))?,
-            )
-            .ok_or_else(|| format!("fixed-array sort in `{path}` exceeds the supported width"))?;
-
-        let with_node = self.container_method_with_node(path, call, receiver)?;
         if with_node.is_none()
             && !self
                 .container_method_arguments(path, call, receiver)?
@@ -524,40 +520,36 @@ impl<'a> Codegen<'a> {
         if let Some(view) =
             self.p30_array_view(path, receiver, &mut statements, &mut captured_indices)?
         {
-            if view.array.real
-                || view.array.elem_width != element_width
-                || view.coordinates.len() != count
-            {
-                return Err(format!(
-                    "array method `{}` in `{path}` has an unsupported fixed-array representation",
-                    if descending { "rsort" } else { "sort" }
-                ));
-            }
+            let groups = fixed_array_permutation_groups(
+                path,
+                &view,
+                count,
+                element_width,
+                if descending { "rsort" } else { "sort" },
+            )?;
             let array = self.reference_array(view.array.ir);
             let initial_statement_count = statements.len();
             for first in 0..count {
                 for second in (first + 1)..count {
                     let mut pair = Vec::new();
-                    let first_value = IrExpr::new(
-                        IrExprKind::ArrayRead {
-                            arr: array,
-                            indices: view.coordinates[first].clone(),
-                            elem_sel: IrElemSel::Whole,
-                        },
+                    let first_value = fixed_array_group_read(
+                        path,
+                        array,
+                        &groups[first],
+                        view.array.elem_width,
                         element_width,
                         immediate.info.signed,
-                        None,
-                    );
-                    let second_value = IrExpr::new(
-                        IrExprKind::ArrayRead {
-                            arr: array,
-                            indices: view.coordinates[second].clone(),
-                            elem_sel: IrElemSel::Whole,
-                        },
+                        element.info.signed,
+                    )?;
+                    let second_value = fixed_array_group_read(
+                        path,
+                        array,
+                        &groups[second],
+                        view.array.elem_width,
                         element_width,
                         immediate.info.signed,
-                        None,
-                    );
+                        element.info.signed,
+                    )?;
                     let first_index = sort_index_expr(left, right, first)?;
                     let second_index = sort_index_expr(left, right, second)?;
                     let (first_value, first_key) = self.lower_fixed_sort_capture(
@@ -580,24 +572,30 @@ impl<'a> Codegen<'a> {
                         second_index,
                         &mut pair,
                     )?;
-                    let first_lhs = IrLhs::ArrayElem {
-                        arr: array,
-                        indices: view.coordinates[first].clone(),
-                        elem_sel: IrElemSel::Whole,
-                    };
-                    let second_lhs = IrLhs::ArrayElem {
-                        arr: array,
-                        indices: view.coordinates[second].clone(),
-                        elem_sel: IrElemSel::Whole,
-                    };
+                    let first_from_second = fixed_array_group_writes(
+                        &self.model,
+                        array,
+                        &groups[first],
+                        view.array.elem_width,
+                        element_width,
+                        element.as_ref(),
+                        second_value.clone(),
+                    )?;
+                    let second_from_first = fixed_array_group_writes(
+                        &self.model,
+                        array,
+                        &groups[second],
+                        view.array.elem_width,
+                        element_width,
+                        element.as_ref(),
+                        first_value.clone(),
+                    )?;
                     pair.push(fixed_sort_swap(
                         descending,
-                        first_value,
-                        second_value,
                         first_key,
                         second_key,
-                        first_lhs,
-                        second_lhs,
+                        first_from_second,
+                        second_from_first,
                     ));
                     statements.push(IrStmt::Block(pair));
                 }
@@ -606,6 +604,12 @@ impl<'a> Codegen<'a> {
             return Ok(Some(IrStmt::Block(statements)));
         }
 
+        let expected_width = element_width
+            .checked_mul(
+                u32::try_from(count)
+                    .map_err(|_| format!("fixed-array sort in `{path}` has too many elements"))?,
+            )
+            .ok_or_else(|| format!("fixed-array sort in `{path}` exceeds the supported width"))?;
         let source = self
             .fixed_activation_read(path, receiver)?
             .ok_or_else(|| format!("fixed-array sort in `{path}` has no readable storage"))?;
@@ -664,14 +668,22 @@ impl<'a> Codegen<'a> {
                     immediate.info.signed,
                     immediate.two_state,
                 );
+                let first_from_second = vec![IrStmt::Assign {
+                    lhs: first_lhs.clone(),
+                    rhs: apply_lhs_assignment_context(&self.model, &first_lhs, second_value),
+                    nba: false,
+                }];
+                let second_from_first = vec![IrStmt::Assign {
+                    lhs: second_lhs.clone(),
+                    rhs: apply_lhs_assignment_context(&self.model, &second_lhs, first_value),
+                    nba: false,
+                }];
                 pair.push(fixed_sort_swap(
                     descending,
-                    first_value,
-                    second_value,
                     first_key,
                     second_key,
-                    first_lhs,
-                    second_lhs,
+                    first_from_second,
+                    second_from_first,
                 ));
                 statements.push(IrStmt::Block(pair));
             }
@@ -770,7 +782,7 @@ impl<'a> Codegen<'a> {
     }
 }
 
-fn fixed_reverse_integral(descriptor: &TypeDescriptor) -> bool {
+fn fixed_sort_integral(descriptor: &TypeDescriptor) -> bool {
     matches!(
         descriptor.shape,
         TypeShape::PackedAtom { .. }
@@ -781,8 +793,119 @@ fn fixed_reverse_integral(descriptor: &TypeDescriptor) -> bool {
     )
 }
 
-fn fixed_sort_integral(descriptor: &TypeDescriptor) -> bool {
-    fixed_reverse_integral(descriptor)
+fn fixed_array_permutation_groups(
+    path: &str,
+    view: &P30ArrayView,
+    count: usize,
+    element_width: u32,
+    method: &str,
+) -> Result<Vec<Vec<Vec<IrExpr>>>, String> {
+    if view.array.real
+        || view.array.elem_width == 0
+        || !element_width.is_multiple_of(view.array.elem_width)
+    {
+        return Err(format!(
+            "array method `{method}` in `{path}` has an unsupported fixed-array representation"
+        ));
+    }
+    let cells_per_element = usize::try_from(element_width / view.array.elem_width)
+        .map_err(|_| format!("array method `{method}` in `{path}` has too many row cells"))?;
+    if cells_per_element == 0 {
+        return Err(format!(
+            "array method `{method}` in `{path}` has an empty fixed-array element"
+        ));
+    }
+    let expected_cells = count.checked_mul(cells_per_element).ok_or_else(|| {
+        format!("array method `{method}` in `{path}` has too many fixed-array cells")
+    })?;
+    if view.coordinates.len() != expected_cells {
+        return Err(format!(
+            "array method `{method}` in `{path}` has an unsupported fixed-array representation"
+        ));
+    }
+    Ok(view
+        .coordinates
+        .chunks_exact(cells_per_element)
+        .map(|cells| cells.to_vec())
+        .collect())
+}
+
+fn fixed_array_group_read(
+    path: &str,
+    array: usize,
+    cells: &[Vec<IrExpr>],
+    cell_width: u32,
+    element_width: u32,
+    element_signed: bool,
+    cell_signed: bool,
+) -> Result<IrExpr, String> {
+    let parts = cells
+        .iter()
+        .map(|indices| {
+            IrExpr::new(
+                IrExprKind::ArrayRead {
+                    arr: array,
+                    indices: indices.clone(),
+                    elem_sel: IrElemSel::Whole,
+                },
+                cell_width,
+                cell_signed,
+                None,
+            )
+        })
+        .collect();
+    let value = Codegen::join_bitstream_parts(path, parts)?;
+    if value.width != element_width {
+        return Err(format!(
+            "fixed-array element width disagrees with its storage in `{path}`"
+        ));
+    }
+    Ok(IrExpr::resize_to(value, element_width, element_signed))
+}
+
+fn fixed_array_group_writes(
+    model: &IrModel,
+    array: usize,
+    cells: &[Vec<IrExpr>],
+    cell_width: u32,
+    element_width: u32,
+    cell_descriptor: &TypeDescriptor,
+    value: IrExpr,
+) -> Result<Vec<IrStmt>, String> {
+    if cell_width == 0 || !element_width.is_multiple_of(cell_width) {
+        return Err("fixed-array writeback has incompatible cell and element widths".into());
+    }
+    let expected_cells = usize::try_from(element_width / cell_width)
+        .map_err(|_| "fixed-array writeback has too many row cells")?;
+    if cells.len() != expected_cells {
+        return Err("fixed-array writeback has an incompatible row shape".into());
+    }
+    let mut statements = Vec::with_capacity(cells.len());
+    for (index, indices) in cells.iter().enumerate() {
+        let low_cell = cells.len() - index - 1;
+        let offset = u32::try_from(low_cell)
+            .ok()
+            .and_then(|cell| cell.checked_mul(cell_width))
+            .ok_or("fixed-array writeback offset overflows")?;
+        let lhs = IrLhs::ArrayElem {
+            arr: array,
+            indices: indices.clone(),
+            elem_sel: IrElemSel::Whole,
+        };
+        let rhs = fixed_reverse_slice(&value, offset, cell_width);
+        let rhs = ir_to_storage(
+            rhs,
+            cell_width,
+            cell_descriptor.info.signed,
+            cell_descriptor.two_state,
+        )?;
+        statements.push(IrStmt::Assign {
+            rhs: apply_lhs_assignment_context(model, &lhs, rhs),
+            lhs,
+            nba: false,
+        });
+    }
+    Ok(statements)
 }
 
 fn sort_index_expr(left: i32, right: i32, offset: usize) -> Result<IrExpr, String> {
@@ -809,12 +932,10 @@ fn sort_offset(offset: usize, count: usize, width: u32, path: &str) -> Result<u3
 
 fn fixed_sort_swap(
     descending: bool,
-    first_value: IrExpr,
-    second_value: IrExpr,
     first_key: IrExpr,
     second_key: IrExpr,
-    first_lhs: IrLhs,
-    second_lhs: IrLhs,
+    first_writeback: Vec<IrStmt>,
+    second_writeback: Vec<IrStmt>,
 ) -> IrStmt {
     let condition = IrExpr::new(
         IrExprKind::Bin {
@@ -828,18 +949,10 @@ fn fixed_sort_swap(
     );
     IrStmt::If {
         cond: condition,
-        then_: vec![
-            IrStmt::Assign {
-                lhs: first_lhs,
-                rhs: second_value,
-                nba: false,
-            },
-            IrStmt::Assign {
-                lhs: second_lhs,
-                rhs: first_value,
-                nba: false,
-            },
-        ],
+        then_: first_writeback
+            .into_iter()
+            .chain(second_writeback)
+            .collect(),
         els: None,
         check: IrUniquePriorityCheck::None,
     }

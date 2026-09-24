@@ -28,6 +28,40 @@ pub(super) fn render_memory(
         return Err("memory task requires a fixed packed memory view".to_owned());
     }
     let path = super::super::objects::string(ctx, path)?;
+    let mut selector_declarations = String::new();
+    let mut selector_cleanups = String::new();
+    let origin = if view.selectors.is_empty() {
+        format!("{}ULL", view.origin)
+    } else {
+        selector_declarations.push_str(&format!(
+            "             uint64_t _llg_memory_origin = {}ULL;\n",
+            view.origin
+        ));
+        for (index, selector) in view.selectors.iter().enumerate() {
+            let rendered = render_expr(ctx, &selector.value)?;
+            let selector_name = format!("_llg_memory_selector_{index}");
+            let index_name = format!("_llg_memory_selector_index_{index}");
+            let offset_name = format!("_llg_memory_selector_offset_{index}");
+            let (left, right) = (selector.left, selector.right);
+            let minimum = left.min(right);
+            let maximum = left.max(right);
+            let offset = if left >= right {
+                format!("(uint64_t)((int64_t){left} - {index_name})")
+            } else {
+                format!("(uint64_t)({index_name} - (int64_t){left})")
+            };
+            selector_declarations.push_str(&format!(
+                "             sv4_t {selector_name} = {};\n\
+                 int64_t {index_name} = 0;\n\
+                 if (_llg_memory_origin != UINT64_MAX) {{ if (!sv4_to_index_i64({selector_name}, &{index_name}) || {index_name} < {minimum} || {index_name} > {maximum}) {{ _llg_memory_origin = UINT64_MAX; }} else {{ uint64_t {offset_name} = {offset}; if ({offset_name} > (UINT64_MAX - _llg_memory_origin) / {}ULL) {{ _llg_memory_origin = UINT64_MAX; }} else {{ _llg_memory_origin += {offset_name} * {}ULL; }} }} }}\n",
+                rendered.code,
+                selector.stride,
+                selector.stride
+            ));
+            selector_cleanups.push_str(&format!("             sv4_destroy(&{selector_name});\n"));
+        }
+        "_llg_memory_origin".to_owned()
+    };
     let start_code = start
         .map(|value| render_expr(ctx, value).map(|rendered| rendered.code))
         .transpose()?;
@@ -86,13 +120,15 @@ pub(super) fn render_memory(
     Ok(format!(
         "{{\n\
              llg_string_t _llg_memory_path = {path};\n\
+             {selector_declarations}\
              sv4_t _llg_memory_start = {start_value};\n\
              sv4_t _llg_memory_finish = {finish_value};\n\
              {enum_declaration}\
              {runtime}(_llg_memory_path, {name}, {total}ULL, {width}u, {signed}, {two_state},\n\
                        (const int32_t[]){{ {dimensions} }}, {n_dims},\n\
-                       (const uint64_t[]){{ {strides} }}, {origin}ULL, {view_total}ULL,\n\
+                       (const uint64_t[]){{ {strides} }}, {origin}, {view_total}ULL,\n\
                        _llg_memory_start, _llg_memory_finish, {has_start}, {has_finish}, {addressing}, {enum_pointer}, {enum_count}, {radix});\n\
+             {selector_cleanups}\
              {enum_cleanup}\
          }}\n",
         name = array_info.c_name,
@@ -106,10 +142,12 @@ pub(super) fn render_memory(
         enum_pointer = enum_pointer,
         enum_count = enum_count,
         enum_cleanup = enum_cleanup,
+        selector_declarations = selector_declarations,
+        selector_cleanups = selector_cleanups,
+        origin = origin,
         dimensions = dimensions,
         n_dims = view.dims.len(),
         strides = strides,
-        origin = view.origin,
         view_total = view.total,
     ))
 }
@@ -207,6 +245,8 @@ mod tests {
             &IrMemoryView {
                 array: 0,
                 origin: 0,
+                selectors: Vec::new(),
+                sliced: false,
                 dims: vec![(0, 2)],
                 strides: vec![1],
                 total: 3,

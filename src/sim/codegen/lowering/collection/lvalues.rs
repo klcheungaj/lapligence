@@ -90,6 +90,9 @@ impl<'a> Codegen<'a> {
             if let Some(info) = self.signal_of(t) {
                 return Ok((info.global.clone(), info.clone()));
             }
+            if let Some(info) = self.static_proc_local_signal(t) {
+                return Ok((info.global.clone(), info.clone()));
+            }
         }
         let name = self.node(node).name.clone();
         Err(format!("cannot resolve assignment target `{name}`"))
@@ -185,11 +188,21 @@ impl<'a> Codegen<'a> {
     }
 
     pub(in super::super) fn analyze_lhs(&mut self, path: &str, lhs: NodeId) -> Result<Lhs, String> {
+        if let Some(target) = self.activation_packed_lhs(path, lhs)? {
+            return Ok(Lhs::Canonical(target));
+        }
         if let Some(target) = self.fixed_activation_lhs(path, lhs)? {
             return Ok(Lhs::Canonical(target));
         }
         if let Some(target) = self.packed_formal_lhs(path, lhs)? {
             return Ok(Lhs::Canonical(target));
+        }
+        if let Some(parts) = self.positional_pattern_lvalue_parts(path, lhs)? {
+            return Ok(Lhs::Stream {
+                parts,
+                slice: Some(1),
+                direction: IrStreamDirection::LeftToRight,
+            });
         }
         if let Some(target) = self
             .clocking_var_target(lhs)
@@ -311,6 +324,9 @@ impl<'a> Codegen<'a> {
                 }
                 if let Some(t) = *target {
                     if let Some(info) = self.signal_of(t) {
+                        return Ok(Lhs::Whole(info.clone()));
+                    }
+                    if let Some(info) = self.static_proc_local_signal(t) {
                         return Ok(Lhs::Whole(info.clone()));
                     }
                     if !self.proc_local_is_shadowed(lhs) {
@@ -663,6 +679,18 @@ impl<'a> Codegen<'a> {
                 ))
             }
             NodeKind::Expr(ExprKind::HierPath { .. }) => {
+                if let Some((root, steps)) = self.tagged_member_projection(lhs)? {
+                    let (_, member) = self
+                        .packed_member_info(lhs)
+                        .ok_or("tagged packed member has no terminal layout")?;
+                    return Ok(Lhs::Canonical(IrLhs::TaggedSelect {
+                        target: Box::new(IrLhs::Whole(root.ir)),
+                        steps,
+                        signed: member.signed,
+                        two_state: member.two_state,
+                        location: self.source_location(lhs),
+                    }));
+                }
                 if let Some((_target, _kind, member_info)) = self.unpacked_member_info(lhs) {
                     let member = member_info.member;
                     let member_width = member.ty.width.ok_or_else(|| {

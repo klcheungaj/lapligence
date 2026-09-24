@@ -45,6 +45,38 @@ impl Frame<'_, '_> {
         if array.real || view.dims.is_empty() || view.dims.len() != view.strides.len() {
             return Err("memory task requires a fixed packed memory view".to_owned());
         }
+        let mut selector_values = Vec::with_capacity(view.selectors.len());
+        for selector in &view.selectors {
+            let value = self.expression(&selector.value)?;
+            if value.width == 0 {
+                return Err("memory selector must be a packed integer".to_owned());
+            }
+            selector_values.push((selector, value));
+        }
+        let origin = if selector_values.is_empty() {
+            format!("{}ULL", view.origin)
+        } else {
+            let origin = self.scalar("uint64_t", format!("{}ULL", view.origin));
+            for (index, (selector, value)) in selector_values.iter().enumerate() {
+                let selected = self.name("memory_selector_index");
+                self.line(format!("int64_t {selected} = 0;"));
+                let (left, right) = (selector.left, selector.right);
+                let minimum = left.min(right);
+                let maximum = left.max(right);
+                let offset = if left >= right {
+                    format!("(uint64_t)((int64_t){left} - {selected})")
+                } else {
+                    format!("(uint64_t)({selected} - (int64_t){left})")
+                };
+                self.line(format!(
+                    "if ({origin} != UINT64_MAX) {{ if (!sv4_to_index_i64({}, &{selected}) || {selected} < {minimum} || {selected} > {maximum}) {{ {origin} = UINT64_MAX; }} else {{ uint64_t _llg_memory_offset_{index} = {offset}; if (_llg_memory_offset_{index} > (UINT64_MAX - {origin}) / {}ULL) {{ {origin} = UINT64_MAX; }} else {{ {origin} += _llg_memory_offset_{index} * {}ULL; }} }} }}",
+                    value.code,
+                    selector.stride,
+                    selector.stride
+                ));
+            }
+            origin
+        };
         let start_value = start
             .as_ref()
             .map(|expression| self.expression(expression))
@@ -104,9 +136,9 @@ impl Frame<'_, '_> {
             .map(u64::to_string)
             .collect::<Vec<_>>()
             .join(", ");
-        self.line(format!("{runtime}({}, {}, {}ULL, {}u, {}, {}, (const int32_t[]){{ {dimensions} }}, {}, (const uint64_t[]){{ {strides} }}, {}ULL, {}ULL, {first}, {last}, {}, {}, {addressing}, {enum_pointer}, {enum_count}, {radix});",
+        self.line(format!("{runtime}({}, {}, {}ULL, {}u, {}, {}, (const int32_t[]){{ {dimensions} }}, {}, (const uint64_t[]){{ {strides} }}, {origin}, {}ULL, {first}, {last}, {}, {}, {addressing}, {enum_pointer}, {enum_count}, {radix});",
             path.take_string(), array.c_name, array.total, array.elem_width, u8::from(array.signed),
-            u8::from(array.two_state), view.dims.len(), view.origin, view.total,
+            u8::from(array.two_state), view.dims.len(), view.total,
             u8::from(start.is_some()), u8::from(finish.is_some())));
         if let Some(enum_name) = enum_name {
             self.line(format!("sv4_destroy_array({enum_name}, {enum_count});"));
@@ -117,6 +149,9 @@ impl Frame<'_, '_> {
             self.discard(value);
         }
         if let Some(value) = finish_value {
+            self.discard(value);
+        }
+        for (_, value) in selector_values {
             self.discard(value);
         }
         Ok(())

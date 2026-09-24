@@ -115,7 +115,8 @@ fn walk_expr_mut(e: &mut IrExpr, f: &mut impl FnMut(&mut IrExpr)) {
             walk_expr_mut(b, f);
         }
         IrExprKind::Predicate { clauses: parts }
-        | IrExprKind::Concat { parts } | IrExprKind::Replicate { parts, .. } => {
+        | IrExprKind::Concat { parts }
+        | IrExprKind::Replicate { parts, .. } => {
             for p in parts {
                 walk_expr_mut(p, f);
             }
@@ -198,6 +199,12 @@ fn walk_expr_mut(e: &mut IrExpr, f: &mut impl FnMut(&mut IrExpr)) {
         IrExprKind::Mutation(mutation) => {
             walk_lhs_mut(&mut mutation.lhs, f);
             walk_expr_mut(&mut mutation.value, f);
+        }
+        IrExprKind::TaggedSelect { base, steps, .. } => {
+            walk_expr_mut(base, f);
+            for step in steps {
+                walk_expr_mut(&mut step.selection.base, f);
+            }
         }
         IrExprKind::DynamicCast(cast) => {
             walk_lhs_mut(&mut cast.lhs, f);
@@ -313,11 +320,15 @@ fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
         }
         IrStmt::Memory {
             path,
+            view,
             start,
             finish,
             ..
         } => {
             path.expressions_mut(&mut |child| walk_expr_mut(child, f));
+            for selector in &mut view.selectors {
+                walk_expr_mut(&mut selector.value, f);
+            }
             if let Some(start) = start {
                 walk_expr_mut(start, f);
             }

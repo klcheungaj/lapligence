@@ -291,6 +291,21 @@ pub(crate) fn reject_case_with_args(suite: &str, fixture: &str, diagnostic: &str
     }
 }
 
+pub(crate) fn reject_case_with_exact_stderr(
+    suite: &str,
+    fixture: &str,
+    expected_stderr: &str,
+    args: &[&str],
+) {
+    for optimized in [false, true] {
+        let output = invoke_with_args(suite, fixture, optimized, args);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(1), "{fixture}: {stderr}");
+        assert!(output.stdout.is_empty(), "{fixture}: {output:?}");
+        assert_eq!(stderr, expected_stderr, "{fixture}: unexpected diagnostic");
+    }
+}
+
 pub(crate) fn reject_case_with_runtime_args(
     suite: &str,
     fixture: &str,

@@ -71,6 +71,7 @@ fn persistent_local_functions_remain_rejected_in_read_only_callbacks() {
 fn static_formal_copies_are_private_in_read_only_callbacks() {
     let mut model = numeric_model();
     model.funcs[0].automatic = false;
+    model.funcs[0].callback_return_independent = true;
     model.funcs[0].body.insert(
         0,
         IrStmt::Assign {
@@ -103,6 +104,36 @@ fn static_formal_copies_are_private_in_read_only_callbacks() {
     frame.discard(value);
     assert!(!frame.body().contains("llg_ba(&G_value"));
     assert!(frame.body().contains("sv4_add("));
+}
+
+#[test]
+fn static_callback_returns_require_a_lowering_proof() {
+    let mut model = numeric_model();
+    model.funcs[0].automatic = false;
+    let ctx = RCtx {
+        model: &model,
+        func: None,
+        sampled: false,
+        activation_label: None,
+    };
+    let mut frame = Frame::new(&ctx);
+    frame.read_only_callback = true;
+    let call = IrExpr::new(
+        IrExprKind::CallFn(Box::new(IrCallExpr::new(
+            0,
+            vec![IrCallArg::Val(number(3, 65))],
+            IrDepth::PROC,
+            false,
+        ))),
+        65,
+        false,
+        None,
+    );
+    let error = frame
+        .expression(&call)
+        .err()
+        .expect("unproven static callback result is rejected");
+    assert!(error.contains("persistent return state"), "{error}");
 }
 
 #[test]

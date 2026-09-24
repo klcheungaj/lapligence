@@ -145,7 +145,10 @@ fn packed_ref_member_updates_via_the_original_reference_descriptor() {
     let value = frame.expression(&number(1, 8)).unwrap();
     frame.store(&target, value, false, "0").unwrap();
     frame.release_target(target);
-    assert!(frame.body().contains("llg_ref_read(r0)"));
+    // Ref descriptors can be tagged views, so the generated read must retain
+    // the runtime's checked dispatch while still using the original r0 view.
+    assert!(frame.body().contains("llg_rt_ref_read(r0)"));
+    assert!(!frame.body().contains("llg_ref_read(r0)"));
     assert!(frame.body().contains("llg_ref_write_masked(r0,"));
     assert!(frame.body().contains("sv4_select_plan_set("));
     assert!(!frame.body().contains("sv4_clone(&r0)"));

@@ -179,6 +179,9 @@ impl IrLocal {
 #[derive(Clone, Debug, PartialEq)]
 pub struct IrFunc {
     pub(in crate::sim) return_default: Option<IrConst>,
+    /// Optional model signal that owns a statically allocated numeric result
+    /// when the result is also targeted by a continuous assignment.
+    pub(in crate::sim) return_signal: Option<usize>,
     pub(in crate::sim) c_name: String,
     /// Automatic subprograms use fresh C locals per call; static subprograms
     /// retain their return/local storage across calls.
@@ -203,6 +206,11 @@ pub struct IrFunc {
     /// copies in its private formal bindings instead of publishing them to
     /// model storage.
     pub(in crate::sim) callback_private_formal_copies: Vec<(usize, usize)>,
+    /// True when a static function's result can be recomputed in fresh
+    /// callback storage without observing its persistent result from an
+    /// earlier call. The lowering proof requires a read-free result and a
+    /// result value established on every path.
+    pub(in crate::sim) callback_return_independent: bool,
     /// Resolved-static locals in emission order (node-id sorted at lowering).
     /// Resolved-automatic locals remain declaration-site [`IrStmt::DeclLocal`]
     /// operations so nested block reentry recreates them correctly.
@@ -226,6 +234,7 @@ impl IrFunc {
             c_name,
             automatic: true,
             return_default: None,
+            return_signal: None,
             ret_chandle: false,
             ret_string: false,
             ret,
@@ -234,6 +243,7 @@ impl IrFunc {
             virtual_slot: None,
             formals,
             callback_private_formal_copies: Vec::new(),
+            callback_return_independent: false,
             locals,
             pre_fns,
             body,

@@ -15,17 +15,35 @@ impl Validator<'_> {
                 let Some(function) = self.function.get() else {
                     return true;
                 };
+                let static_function_result = !function.automatic
+                    && addr == "&_ret"
+                    && function.ret.is_some_and(|ret| match ret {
+                        IrType::Packed {
+                            width: return_width,
+                            signed: return_signed,
+                            two_state: return_two_state,
+                        } => {
+                            *width == return_width
+                                && *signed == return_signed
+                                && *two_state == return_two_state
+                                && !*shortreal
+                        }
+                        IrType::Real {
+                            shortreal: return_shortreal,
+                        } => *width == 0 && !*two_state && *shortreal == return_shortreal,
+                    });
                 // IrFunc::locals contains only static declarations, including
                 // explicit static locals in automatic routines. Their owners
                 // are initialized and destroyed with the generated model.
-                !function.locals.iter().any(|local| {
-                    addr.strip_prefix('&') == Some(local.c_name.as_str())
-                        && !local.string
-                        && *width == local.width
-                        && *signed == local.signed
-                        && *two_state == local.two_state
-                        && *shortreal == local.shortreal
-                })
+                !static_function_result
+                    && !function.locals.iter().any(|local| {
+                        addr.strip_prefix('&') == Some(local.c_name.as_str())
+                            && !local.string
+                            && *width == local.width
+                            && *signed == local.signed
+                            && *two_state == local.two_state
+                            && *shortreal == local.shortreal
+                    })
             }
             IrLhs::Ref { .. } => true,
             IrLhs::PackedSelect { target, .. } => self.has_transient_target(target),
@@ -142,12 +160,84 @@ impl Validator<'_> {
                 let Some(prefix) = array.dims.len().checked_sub(view.dims.len()) else {
                     return self.fail(path, "memory task view rank exceeds its array rank");
                 };
+                let mut source_strides = vec![1u64; array.dims.len()];
+                let mut source_total = 1u64;
+                for dimension in (0..array.dims.len()).rev() {
+                    source_strides[dimension] = source_total;
+                    let (left, right) = array.dims[dimension];
+                    let Some(extent) = (i64::from(left) - i64::from(right))
+                        .unsigned_abs()
+                        .checked_add(1)
+                    else {
+                        return self.fail(path, "memory source dimension overflows");
+                    };
+                    let Some(total) = source_total.checked_mul(extent) else {
+                        return self.fail(path, "memory source extent overflows");
+                    };
+                    source_total = total;
+                }
+                if source_total != array.total {
+                    return self.fail(path, "memory source dimensions disagree with its storage");
+                }
+                let mut previous_selector = None;
+                let mut selector_offset = 0u64;
+                for (index, selector) in view.selectors.iter().enumerate() {
+                    if selector.dimension >= prefix
+                        || previous_selector.is_some_and(|previous| previous >= selector.dimension)
+                    {
+                        return self
+                            .fail(path, "memory selector dimension is invalid or unordered");
+                    }
+                    previous_selector = Some(selector.dimension);
+                    if array.dims[selector.dimension] != (selector.left, selector.right)
+                        || source_strides[selector.dimension] != selector.stride
+                    {
+                        return self.fail(
+                            path,
+                            "memory selector descriptor disagrees with its source array",
+                        );
+                    }
+                    self.validate_expr(
+                        &selector.value,
+                        formals,
+                        &format!("{path}.selector[{index}]"),
+                    )?;
+                    if selector.value.is_real() || selector.value.width == 0 {
+                        return self.fail(
+                            format!("{path}.selector[{index}]"),
+                            "memory selector must be a packed integer",
+                        );
+                    }
+                    let (left, right) = array.dims[selector.dimension];
+                    let extent = (i64::from(left) - i64::from(right)).unsigned_abs();
+                    let Some(offset) = extent.checked_mul(selector.stride) else {
+                        return self.fail(path, "memory selector range overflows");
+                    };
+                    let Some(total) = selector_offset.checked_add(offset) else {
+                        return self.fail(path, "memory selector offset overflows");
+                    };
+                    selector_offset = total;
+                }
                 let mut expected_total = 1u64;
                 for (offset, dimension) in view.dims.iter().enumerate() {
                     let Some(expected) = array.dims.get(prefix + offset) else {
                         return self.fail(path, "memory task view dimension is out of bounds");
                     };
-                    if expected != dimension {
+                    let dimension_matches = if view.sliced && offset == 0 {
+                        let (source_left, source_right) = *expected;
+                        let (view_left, view_right) = *dimension;
+                        let within = view_left >= source_left.min(source_right)
+                            && view_left <= source_left.max(source_right)
+                            && view_right >= source_left.min(source_right)
+                            && view_right <= source_left.max(source_right);
+                        let direction_matches = view_left == view_right
+                            || (view_left >= view_right) == (source_left >= source_right);
+                        within && direction_matches
+                    } else {
+                        expected == dimension
+                    };
+                    if !dimension_matches || source_strides[prefix + offset] != view.strides[offset]
+                    {
                         return self.fail(path, "memory task view bounds disagree with its array");
                     }
                     let Some(extent) = (i64::from(dimension.0) - i64::from(dimension.1))
@@ -164,24 +254,6 @@ impl Validator<'_> {
                 if expected_total != view.total {
                     return self.fail(path, "memory task view total disagrees with its bounds");
                 }
-                let mut expected_stride = 1u64;
-                for (offset, stride) in view.strides.iter().enumerate().rev() {
-                    if *stride != expected_stride {
-                        return self
-                            .fail(path, "memory task view stride disagrees with its bounds");
-                    }
-                    let dimension = view.dims[offset];
-                    let Some(extent) = (i64::from(dimension.0) - i64::from(dimension.1))
-                        .unsigned_abs()
-                        .checked_add(1)
-                    else {
-                        return self.fail(path, "memory task view dimension overflows");
-                    };
-                    let Some(stride) = expected_stride.checked_mul(extent) else {
-                        return self.fail(path, "memory task view stride overflows");
-                    };
-                    expected_stride = stride;
-                }
                 let Some(last) = view.strides.iter().zip(&view.dims).try_fold(
                     view.origin,
                     |offset, (stride, (left, right))| {
@@ -192,6 +264,9 @@ impl Validator<'_> {
                     },
                 ) else {
                     return self.fail(path, "memory task view exceeds its array");
+                };
+                let Some(last) = last.checked_add(selector_offset) else {
+                    return self.fail(path, "memory task selected view overflows its source array");
                 };
                 if last >= array.total {
                     return self.fail(path, "memory task view exceeds its array");

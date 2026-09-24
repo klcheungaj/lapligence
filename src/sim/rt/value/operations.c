@@ -1192,6 +1192,36 @@ sv4_t sv4_case_eq(sv4_t a, sv4_t b) {
     return sv4_from_u64(1, 1, 0);
 }
 
+int llg_ref_view_valid(const llg_ref_view_t* view, const sv4_t* parent,
+                       size_t* failed_check) {
+    if (failed_check) *failed_check = 0;
+    if (!view || !parent || (view->tag_check_count && !view->tag_checks)) return 0;
+    for (size_t index = 0; index < view->tag_check_count; ++index) {
+        const llg_ref_tag_check_t* check = &view->tag_checks[index];
+        sv4_t receiver = sv4_select_plan_read(*parent, &check->receiver_plan);
+        if (!check->tag_width || check->tag_width > receiver.width) {
+            sv4_destroy(&receiver);
+            if (failed_check) *failed_check = index;
+            return 0;
+        }
+        int64_t right = (int64_t)receiver.width - check->tag_width;
+        int64_t left = (int64_t)receiver.width - 1;
+        sv4_t tag = sv4_part_select(receiver, left, right);
+        sv4_t expected = sv4_from_u64(check->member_index, check->tag_width, 0);
+        sv4_t matches = sv4_case_eq(tag, expected);
+        int valid = sv4_to_bool(matches);
+        sv4_destroy(&matches);
+        sv4_destroy(&expected);
+        sv4_destroy(&tag);
+        sv4_destroy(&receiver);
+        if (!valid) {
+            if (failed_check) *failed_check = index;
+            return 0;
+        }
+    }
+    return 1;
+}
+
 sv4_t sv4_enum_navigate(sv4_t current, sv4_t step, const sv4_t* values,
                         uint32_t count, sv4_t default_value, int direction) {
     if (!values || count == 0) return sv4_clone(&default_value);
@@ -1316,10 +1346,10 @@ sv4_t sv4_mux(sv4_t sel, sv4_t a, sv4_t b) {
     r.is_signed = s;
     for (int i = 0; i < (int)w; i++) {
         int ab = sv4_extended_bit(a, i, s), bb = sv4_extended_bit(b, i, s);
-        // IEEE 1364-2001 §4.1.13 and IEEE 1800-2009 §11.4.11 merge the
-        // alternatives per bit: equal four-state values survive; differing
-        // values become X.
-        sv4_lsb_bit_set(&r, i, ab == bb ? ab : 2);
+        // IEEE 1364-2001 §4.1.13 Table 28 and IEEE 1800-2009 §11.4.11
+        // Table 11-20 preserve equal 0/1/X bits. Their Z/Z cell is X, as are
+        // all differing branch values.
+        sv4_lsb_bit_set(&r, i, ab == bb && ab != 3 ? ab : 2);
     }
     return r;
 }
@@ -1612,11 +1642,16 @@ sv4_t llg_ref_read(const llg_ref_t* ref) {
         if (remaining) { fputs("llg runtime fatal: incomplete composite reference\n", stderr); abort(); }
         return result;
     }
-    if ((llg_ref_kind_t)ref->kind == LLG_REF_VIEW) {
+    if ((llg_ref_kind_t)ref->kind == LLG_REF_VIEW ||
+        (llg_ref_kind_t)ref->kind == LLG_REF_TAGGED_VIEW) {
         const llg_ref_view_t* view = (const llg_ref_view_t*)ref->retained;
         if (!view || !view->parent) { fputs("llg runtime fatal: invalid reference view\n", stderr); abort(); }
         sv4_t parent = llg_ref_read(view->parent);
-        sv4_t result = sv4_select_plan_read(parent, &view->plan);
+        int valid = (llg_ref_kind_t)ref->kind != LLG_REF_TAGGED_VIEW ||
+                    llg_ref_view_valid(view, &parent, NULL);
+        sv4_t result = valid ? sv4_select_plan_read(parent, &view->plan)
+                             : (ref->two_state ? sv4_zero(ref->width, ref->is_signed)
+                                               : sv4_x(ref->width, ref->is_signed));
         sv4_destroy(&parent);
         if (ref->two_state) sv4_replace(&result, sv4_to_two_state(result));
         sv4_replace(&result, sv4_cast(result, ref->width, ref->is_signed));

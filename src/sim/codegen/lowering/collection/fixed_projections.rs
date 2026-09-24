@@ -8,7 +8,10 @@ enum FixedRoot {
     Activation(NodeId),
     /// A reduction iterator is a read-only lexical value, not an lvalue.
     ReadOnly(IrExpr),
-    Cell { read: IrExpr, target: IrLhs },
+    Cell {
+        read: IrExpr,
+        target: IrLhs,
+    },
 }
 
 struct Projection {
@@ -19,11 +22,11 @@ struct Projection {
     ref_legal: bool,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct TaggedMemberGuard {
-    total_width: u32,
     tag_width: u32,
     member_index: usize,
+    member_name: String,
 }
 
 impl Codegen<'_> {
@@ -69,12 +72,15 @@ impl Codegen<'_> {
 
     fn fixed_root(&mut self, path: &str, node: NodeId) -> Result<Option<Projection>, String> {
         let declaration = match self.kind(node) {
-            NodeKind::Expr(ExprKind::Ref { target: Some(target) }) => *target,
+            NodeKind::Expr(ExprKind::Ref {
+                target: Some(target),
+            }) => *target,
             _ => node,
         };
         if let Some(iterator) = self.fixed_method_iterators.get(&declaration) {
             let descriptor = iterator.descriptor.clone();
-            let width = fixed_width(&descriptor).ok_or("fixed reduction iterator width overflow")?;
+            let width =
+                fixed_width(&descriptor).ok_or("fixed reduction iterator width overflow")?;
             return Ok(Some(Projection {
                 root: FixedRoot::ReadOnly(IrExpr::new(
                     IrExprKind::LocalRead(iterator.item_name.clone()),
@@ -469,13 +475,12 @@ impl Codegen<'_> {
         let member = &layout.members[index];
         let width = fixed_width(&member.descriptor).ok_or("fixed member has no width")?;
         let tagged_guard = if layout.kind == AggregateKind::TaggedUnion {
-            let total_width = fixed_width(&projection.descriptor)
-                .ok_or("tagged union has no fixed width")?;
+            fixed_width(&projection.descriptor).ok_or("tagged union has no fixed width")?;
             let tag_width = layout.tag_bits().ok_or("tagged union tag width overflow")?;
             (tag_width > 0).then_some(TaggedMemberGuard {
-                total_width,
                 tag_width,
                 member_index: index,
+                member_name: name.to_owned(),
             })
         } else {
             None
@@ -486,9 +491,7 @@ impl Codegen<'_> {
             fixed_width(&projection.descriptor).ok_or("union has no width")? - width
         } else if matches!(
             layout.kind,
-            AggregateKind::PackedUnion
-                | AggregateKind::TaggedUnion
-                | AggregateKind::UnpackedUnion
+            AggregateKind::PackedUnion | AggregateKind::TaggedUnion | AggregateKind::UnpackedUnion
         ) {
             0
         } else {
@@ -610,66 +613,46 @@ impl Codegen<'_> {
                 }
             }
         };
-        for (step, state, tagged_guard) in projection.steps {
-            let source = value.clone();
+        let has_tagged_member = projection.steps.iter().any(|(_, _, guard)| guard.is_some());
+        if has_tagged_member {
+            let steps = projection
+                .steps
+                .into_iter()
+                .map(|(selection, two_state, tagged_guard)| {
+                    let guard = tagged_guard
+                        .map(|guard| -> Result<_, String> {
+                            Ok(crate::sim::ir::IrTaggedMemberGuard {
+                                member_index: u32::try_from(guard.member_index)
+                                    .map_err(|_| "tagged union member index overflow")?,
+                                tag_width: guard.tag_width,
+                                member_name: guard.member_name,
+                            })
+                        })
+                        .transpose()?;
+                    Ok(crate::sim::ir::IrTaggedSelectStep {
+                        selection,
+                        two_state,
+                        guard,
+                    })
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            let width = steps
+                .last()
+                .map(|step| step.selection.width)
+                .ok_or("tagged member access has no projection steps")?;
+            return Ok(Some(IrExpr::new(
+                IrExprKind::TaggedSelect {
+                    base: Box::new(value),
+                    steps,
+                    location: self.source_location(node),
+                },
+                width,
+                projection.signed,
+                None,
+            )));
+        }
+        for (step, state, _tagged_guard) in projection.steps {
             value = super::packed_formals::packed_step_read(value, step);
-            if let Some(guard) = tagged_guard {
-                let tag_right = guard
-                    .total_width
-                    .checked_sub(guard.tag_width)
-                    .ok_or("tagged union tag offset underflow")?;
-                let tag_left = tag_right
-                    .checked_add(guard.tag_width)
-                    .and_then(|width| width.checked_sub(1))
-                    .ok_or("tagged union tag offset overflow")?;
-                let tag = IrExpr::new(
-                    IrExprKind::PartSel {
-                        base: Box::new(source),
-                        left: i64::from(tag_left),
-                        right: i64::from(tag_right),
-                    },
-                    guard.tag_width,
-                    false,
-                    None,
-                );
-                let expected = IrConst::packed(
-                    vec![u64::try_from(guard.member_index)
-                        .map_err(|_| "tagged union member index overflow")?],
-                    vec![0],
-                    vec![0],
-                    guard.tag_width,
-                    false,
-                    None,
-                )
-                .map_err(|error| error.to_string())?;
-                let matches = IrExpr::new(
-                    IrExprKind::Bin {
-                        op: IrBinOp::CaseEq,
-                        a: Box::new(tag),
-                        b: Box::new(IrExpr::new(
-                            IrExprKind::Const(expected),
-                            guard.tag_width,
-                            false,
-                            None,
-                        )),
-                    },
-                    1,
-                    false,
-                    None,
-                );
-                let width = value.width;
-                let signed = value.signed;
-                value = IrExpr::new(
-                    IrExprKind::Mux {
-                        sel: Box::new(matches),
-                        a: Box::new(value),
-                        b: Box::new(const_x_expr(width)),
-                    },
-                    width,
-                    signed,
-                    None,
-                );
-            }
             if state {
                 value = IrExpr::to_two_state(value);
             }
@@ -716,7 +699,9 @@ impl Codegen<'_> {
             return Ok(None);
         };
         let target = match projection.root {
-            FixedRoot::ReadOnly(_) => return Err("fixed-array reduction iterator is read-only".into()),
+            FixedRoot::ReadOnly(_) => {
+                return Err("fixed-array reduction iterator is read-only".into())
+            }
             FixedRoot::Cell { target, .. } => target,
             FixedRoot::Activation(root) => {
                 if allow_const
@@ -734,6 +719,36 @@ impl Codegen<'_> {
                 }
             }
         };
+        if projection.steps.iter().any(|(_, _, guard)| guard.is_some()) {
+            let steps = projection
+                .steps
+                .into_iter()
+                .map(|(selection, two_state, tagged_guard)| {
+                    let guard = tagged_guard
+                        .map(|guard| -> Result<_, String> {
+                            Ok(crate::sim::ir::IrTaggedMemberGuard {
+                                member_index: u32::try_from(guard.member_index)
+                                    .map_err(|_| "tagged union member index overflow")?,
+                                tag_width: guard.tag_width,
+                                member_name: guard.member_name,
+                            })
+                        })
+                        .transpose()?;
+                    Ok(crate::sim::ir::IrTaggedSelectStep {
+                        selection,
+                        two_state,
+                        guard,
+                    })
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            return Ok(Some(IrLhs::TaggedSelect {
+                target: Box::new(target),
+                steps,
+                signed: projection.signed,
+                two_state: two_state(&projection.descriptor),
+                location: self.source_location(node),
+            }));
+        }
         if projection.steps.is_empty() {
             return Ok(Some(target));
         }

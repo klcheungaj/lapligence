@@ -23,13 +23,16 @@ fn sequential_predicate_ir_rejects_empty_and_noncanonical_results() {
 fn sequential_predicate_ir_validates_all_clauses_and_counts_wide_inputs() {
     let model = valid_model();
     let expr = predicate(vec![
-        packed_const(1, 1), packed_const(1, 129),
+        packed_const(1, 1),
+        packed_const(1, 129),
         IrExpr::new(IrExprKind::Const(IrConst::real(-0.25)), 0, false, None),
     ]);
     assert_eq!(model.expression_capacity(&expr, None).unwrap(), 129);
     for index in 0..3 {
         let mut bad = expr.clone();
-        let IrExprKind::Predicate { clauses } = &mut bad.kind else { unreachable!(); };
+        let IrExprKind::Predicate { clauses } = &mut bad.kind else {
+            unreachable!();
+        };
         clauses[index] = IrExpr::new(IrExprKind::SigRead(999), 1, false, None);
         let error = model.validate_expr(&bad, None).unwrap_err().to_string();
         assert!(error.contains(&format!("clauses[{index}]")), "{error}");

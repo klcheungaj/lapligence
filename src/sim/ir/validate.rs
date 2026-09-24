@@ -77,7 +77,7 @@ fn lhs_signed(model: &IrModel, lhs: &IrLhs) -> Option<bool> {
         IrLhs::WholeRef { width, signed, .. } | IrLhs::Ref { width, signed, .. } => {
             (*width != 0).then_some(*signed)
         }
-        IrLhs::PackedSelect { signed, .. } => Some(*signed),
+        IrLhs::PackedSelect { signed, .. } | IrLhs::TaggedSelect { signed, .. } => Some(*signed),
         IrLhs::Bit(..) | IrLhs::Part(..) | IrLhs::IdxPart(..) | IrLhs::Stream { .. } => Some(false),
         IrLhs::ArrayElem { arr, elem_sel, .. } => {
             let array = model.arrays.get(*arr)?;
@@ -95,6 +95,9 @@ fn lhs_signed(model: &IrModel, lhs: &IrLhs) -> Option<bool> {
 fn lhs_two_state(model: &IrModel, lhs: &IrLhs) -> Option<bool> {
     match lhs {
         IrLhs::PackedSelect {
+            target, two_state, ..
+        }
+        | IrLhs::TaggedSelect {
             target, two_state, ..
         } => lhs_two_state(model, target).map(|state| state || *two_state),
         IrLhs::Whole(index) => model

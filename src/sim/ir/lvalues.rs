@@ -119,6 +119,16 @@ pub enum IrLhs {
         signed: bool,
         two_state: bool,
     },
+    /// A tagged packed-member projection whose tag and payload share one
+    /// selected receiver. The emitter captures receiver selectors once for
+    /// both the runtime tag check and the eventual write.
+    TaggedSelect {
+        target: Box<IrLhs>,
+        steps: Vec<super::IrTaggedSelectStep>,
+        signed: bool,
+        two_state: bool,
+        location: String,
+    },
     /// Whole signal (packed global, real companion, or a collapsed-net member
     /// reached through `model.signals[..].net_driver`).
     Whole(usize),
@@ -203,7 +213,9 @@ impl IrLhs {
     pub(in crate::sim) fn has_activation_root(&self) -> bool {
         match self {
             Self::WholeRef { .. } | Self::Ref { .. } => true,
-            Self::PackedSelect { target, .. } => target.has_activation_root(),
+            Self::PackedSelect { target, .. } | Self::TaggedSelect { target, .. } => {
+                target.has_activation_root()
+            }
             Self::Stream { parts, .. } => parts.iter().any(|(part, _)| part.has_activation_root()),
             _ => false,
         }
@@ -215,6 +227,12 @@ impl IrLhs {
                 target.expressions(visit);
                 for step in steps {
                     visit(&step.base);
+                }
+            }
+            Self::TaggedSelect { target, steps, .. } => {
+                target.expressions(visit);
+                for step in steps {
+                    visit(&step.selection.base);
                 }
             }
             Self::Ref {
@@ -248,6 +266,12 @@ impl IrLhs {
                 target.expressions_mut(visit);
                 for step in steps {
                     visit(&mut step.base);
+                }
+            }
+            Self::TaggedSelect { target, steps, .. } => {
+                target.expressions_mut(visit);
+                for step in steps {
+                    visit(&mut step.selection.base);
                 }
             }
             Self::Ref {

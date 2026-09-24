@@ -2,6 +2,19 @@
 
 use super::*;
 
+#[derive(Clone, Copy)]
+enum MemorySliceNodes {
+    Range {
+        left: NodeId,
+        right: NodeId,
+    },
+    Indexed {
+        base: NodeId,
+        width: NodeId,
+        descending: bool,
+    },
+}
+
 impl EmitCtx<'_, '_> {
     /// Lower system-task calls ($display/$monitor/$strobe/$finish/…).
     /// Skippable constructs warn here and produce no statements.
@@ -58,6 +71,7 @@ impl EmitCtx<'_, '_> {
                 self.path
             )
         })?;
+        let array_rank = array.dims.len();
         if array.real {
             return Err(format!(
                 "{name} does not support real or shortreal memory elements in `{}`",
@@ -127,9 +141,15 @@ impl EmitCtx<'_, '_> {
             LanguageEdition::Verilog2001 => IrMemoryAddressingPolicy::Verilog2001,
             LanguageEdition::SystemVerilog2009 => IrMemoryAddressingPolicy::SystemVerilog2009,
         };
-        if view.dims.len() > 1 && self.cg.db.edition() == LanguageEdition::Verilog2001 {
+        if array_rank > 1 && self.cg.db.edition() == LanguageEdition::Verilog2001 {
             return Err(format!(
                 "{name} multidimensional memory views require SystemVerilog-2009 in `{}`",
+                self.path
+            ));
+        }
+        if view.sliced && self.cg.db.edition() == LanguageEdition::Verilog2001 {
+            return Err(format!(
+                "{name} memory slices require SystemVerilog-2009 in `{}`",
                 self.path
             ));
         }
@@ -145,12 +165,11 @@ impl EmitCtx<'_, '_> {
         })
     }
 
-    /// Capture a legal fixed memory view. SystemVerilog permits constant
-    /// higher-dimension index selectors, leaving at least one unpacked
-    /// dimension as the memory's addressable outer dimension. Range and
-    /// runtime selectors are rejected before IR construction.
+    /// Capture a fixed memory view. SystemVerilog permits constant or runtime
+    /// higher-dimension indices and a constant slice on the lowest specified
+    /// dimension. At least one unpacked dimension remains addressable.
     fn lower_memory_view(&mut self, name: &str, node: NodeId) -> Result<IrMemoryView, String> {
-        let (base, selectors) = self.memory_view_base(node)?;
+        let (base, selectors, slice) = self.memory_view_base(name, node)?;
         let array = self.cg.array_of(base).cloned().ok_or_else(|| {
             if self.cg.container_of(node).is_some() {
                 format!(
@@ -176,88 +195,138 @@ impl EmitCtx<'_, '_> {
                 self.path
             ));
         }
-        let mut selected = Vec::with_capacity(selectors.len());
-        for (dimension, selector) in selectors.iter().enumerate() {
-            let value = self.cg.eval_bound_i128(*selector).map_err(|_| {
-                format!(
-                    "{name} memory view selectors must be constant integral indices in `{}`",
-                    self.path
-                )
-            })?;
-            let value = i32::try_from(value).map_err(|_| {
-                format!(
-                    "{name} memory view selector is outside the supported index range in `{}`",
-                    self.path
-                )
-            })?;
-            let (left, right) = array.dims[dimension];
-            if value < left.min(right) || value > left.max(right) {
-                return Err(format!(
-                    "{name} memory view selector {value} is outside dimension {dimension} in `{}`",
-                    self.path
-                ));
-            }
-            selected.push(value);
-        }
+        let source_strides = Self::memory_dimension_strides(name, &array.dims, &self.path)?;
         let mut origin = 0u64;
-        for (dimension, value) in selected.iter().enumerate() {
+        let mut runtime_selectors = Vec::new();
+        for (dimension, selector) in selectors.iter().enumerate() {
             let (left, right) = array.dims[dimension];
-            let extent = (i64::from(left) - i64::from(right)).unsigned_abs() + 1;
-            let offset = if left >= right {
-                u64::try_from(i64::from(left) - i64::from(*value))
+            if let Ok(value) = self.cg.eval_bound_i128(*selector) {
+                let value = i32::try_from(value).map_err(|_| {
+                    format!(
+                        "{name} memory view selector is outside the supported index range in `{}`",
+                        self.path
+                    )
+                })?;
+                Self::validate_memory_index(name, dimension, value, (left, right), &self.path)?;
+                let offset = Self::memory_dimension_offset(left, right, value);
+                origin = origin
+                    .checked_add(offset.checked_mul(source_strides[dimension]).ok_or_else(
+                        || format!("{name} memory view offset overflow in `{}`", self.path),
+                    )?)
+                    .ok_or_else(|| {
+                        format!("{name} memory view offset overflow in `{}`", self.path)
+                    })?;
             } else {
-                u64::try_from(i64::from(*value) - i64::from(left))
+                let value = self.cg.lower_expr(&self.path, *selector)?;
+                if value.is_real() || value.width == 0 {
+                    return Err(format!(
+                        "{name} memory view selectors must be packed integral indices in `{}`",
+                        self.path
+                    ));
+                }
+                runtime_selectors.push(IrMemorySelector {
+                    dimension,
+                    left,
+                    right,
+                    stride: source_strides[dimension],
+                    value,
+                });
             }
-            .map_err(|_| format!("{name} memory view offset underflow in `{}`", self.path))?;
-            origin = origin
-                .checked_mul(extent)
-                .and_then(|value| value.checked_add(offset))
-                .ok_or_else(|| format!("{name} memory view offset overflow in `{}`", self.path))?;
         }
+        let sliced = slice.is_some();
+        let dims = if let Some(slice) = slice {
+            let dimension = selectors.len();
+            let (left, right) = array.dims[dimension];
+            let (slice_left, slice_right) = self.memory_slice_bounds(name, slice)?;
+            let slice_left = i32::try_from(slice_left).map_err(|_| {
+                format!(
+                    "{name} memory slice bound is outside the supported index range in `{}`",
+                    self.path
+                )
+            })?;
+            let slice_right = i32::try_from(slice_right).map_err(|_| {
+                format!(
+                    "{name} memory slice bound is outside the supported index range in `{}`",
+                    self.path
+                )
+            })?;
+            Self::validate_memory_index(name, dimension, slice_left, (left, right), &self.path)?;
+            Self::validate_memory_index(name, dimension, slice_right, (left, right), &self.path)?;
+            // A memory file addresses array indices. Keep the selected
+            // interval in the source declaration's physical direction so
+            // ascending/descending slice spelling cannot reverse file order.
+            let (view_left, view_right) = if left >= right {
+                (slice_left.max(slice_right), slice_left.min(slice_right))
+            } else {
+                (slice_left.min(slice_right), slice_left.max(slice_right))
+            };
+            let offset = Self::memory_dimension_offset(left, right, view_left);
+            origin =
+                origin
+                    .checked_add(offset.checked_mul(source_strides[dimension]).ok_or_else(
+                        || format!("{name} memory view offset overflow in `{}`", self.path),
+                    )?)
+                    .ok_or_else(|| {
+                        format!("{name} memory view offset overflow in `{}`", self.path)
+                    })?;
+            let mut selected = vec![(view_left, view_right)];
+            selected.extend_from_slice(&array.dims[dimension + 1..]);
+            selected
+        } else {
+            array.dims[selectors.len()..].to_vec()
+        };
+        if dims.is_empty() {
+            return Err(format!(
+                "{name} memory view must retain at least one unpacked dimension in `{}`",
+                self.path
+            ));
+        }
+        let dimensions_start = array.dims.len() - dims.len();
+        let strides = source_strides[dimensions_start..].to_vec();
         let mut suffix_total = 1u64;
-        for &(left, right) in &array.dims[selectors.len()..] {
+        for &(left, right) in &dims {
             let extent = (i64::from(left) - i64::from(right)).unsigned_abs() + 1;
             suffix_total = suffix_total
                 .checked_mul(extent)
                 .ok_or_else(|| format!("{name} memory view extent overflow in `{}`", self.path))?;
         }
-        origin = origin
-            .checked_mul(suffix_total)
-            .ok_or_else(|| format!("{name} memory view origin overflow in `{}`", self.path))?;
-        let dims = array.dims[selectors.len()..].to_vec();
-        let mut strides = vec![1u64; dims.len()];
-        for dimension in (0..dims.len().saturating_sub(1)).rev() {
-            let (left, right) = dims[dimension + 1];
-            let extent = (i64::from(left) - i64::from(right)).unsigned_abs() + 1;
-            strides[dimension] = strides[dimension + 1]
-                .checked_mul(extent)
-                .ok_or_else(|| format!("{name} memory view stride overflow in `{}`", self.path))?;
-        }
         Ok(IrMemoryView {
             array: array.ir,
             origin,
+            selectors: runtime_selectors,
+            sliced,
             dims,
             strides,
             total: suffix_total,
         })
     }
 
-    fn memory_view_base(&self, node: NodeId) -> Result<(NodeId, Vec<NodeId>), String> {
+    fn memory_view_base(
+        &self,
+        name: &str,
+        node: NodeId,
+    ) -> Result<(NodeId, Vec<NodeId>, Option<MemorySliceNodes>), String> {
         match self.cg.kind(node) {
-            NodeKind::Array { .. } => Ok((node, Vec::new())),
+            NodeKind::Array { .. } => Ok((node, Vec::new(), None)),
             NodeKind::Expr(ExprKind::Ref {
                 target: Some(target),
             }) => {
                 if self.cg.array_of(*target).is_some() {
-                    Ok((*target, Vec::new()))
+                    Ok((*target, Vec::new(), None))
                 } else {
-                    self.memory_view_base(*target)
+                    self.memory_view_base(name, *target)
                 }
             }
             NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
-                let (root, mut selectors) = self.memory_view_base(*base)?;
+                let (root, mut selectors, slice) = self.memory_view_base(name, *base)?;
+                if slice.is_some() {
+                    return Err(format!(
+                        "{name} memory slice cannot be followed by another selector in `{}`",
+                        self.path
+                    ));
+                }
                 selectors.extend(indices.iter().copied());
-                Ok((root, selectors))
+                Ok((root, selectors, None))
             }
             NodeKind::Expr(ExprKind::HierPath { refs, .. }) => {
                 let target = refs
@@ -266,7 +335,7 @@ impl EmitCtx<'_, '_> {
                     .flatten()
                     .or_else(|| refs.last().copied().flatten());
                 target
-                    .and_then(|target| self.cg.array_of(target).map(|_| (target, Vec::new())))
+                    .and_then(|target| self.cg.array_of(target).map(|_| (target, Vec::new(), None)))
                     .ok_or_else(|| {
                         format!(
                             "{} does not resolve to a fixed memory view in `{}`",
@@ -275,7 +344,54 @@ impl EmitCtx<'_, '_> {
                         )
                     })
             }
-            NodeKind::Expr(ExprKind::Cast { operand, .. }) => self.memory_view_base(*operand),
+            NodeKind::Expr(ExprKind::PartSelect { base, left, right })
+                if self.cg.query_descriptor(*base).is_some_and(|descriptor| {
+                    matches!(descriptor.shape, TypeShape::FixedArray { .. })
+                }) =>
+            {
+                let (root, selectors, prior_slice) = self.memory_view_base(name, *base)?;
+                if prior_slice.is_some() {
+                    return Err(format!(
+                        "{name} memory view contains more than one slice in `{}`",
+                        self.path
+                    ));
+                }
+                Ok((
+                    root,
+                    selectors,
+                    Some(MemorySliceNodes::Range {
+                        left: *left,
+                        right: *right,
+                    }),
+                ))
+            }
+            NodeKind::Expr(ExprKind::IndexedPartSelect {
+                base,
+                base_expr,
+                width_expr,
+                neg,
+            }) if self.cg.query_descriptor(*base).is_some_and(|descriptor| {
+                matches!(descriptor.shape, TypeShape::FixedArray { .. })
+            }) =>
+            {
+                let (root, selectors, prior_slice) = self.memory_view_base(name, *base)?;
+                if prior_slice.is_some() {
+                    return Err(format!(
+                        "{name} memory view contains more than one slice in `{}`",
+                        self.path
+                    ));
+                }
+                Ok((
+                    root,
+                    selectors,
+                    Some(MemorySliceNodes::Indexed {
+                        base: *base_expr,
+                        width: *width_expr,
+                        descending: *neg,
+                    }),
+                ))
+            }
+            NodeKind::Expr(ExprKind::Cast { operand, .. }) => self.memory_view_base(name, *operand),
             NodeKind::Expr(ExprKind::Operation {
                 op: Operation::Assignment,
                 operands,
@@ -288,7 +404,7 @@ impl EmitCtx<'_, '_> {
                         self.path
                     ))
                 },
-                |operand| self.memory_view_base(operand),
+                |operand| self.memory_view_base(name, operand),
             ),
             _ => Err(format!(
                 "{} requires a fixed memory view in `{}`",
@@ -298,8 +414,122 @@ impl EmitCtx<'_, '_> {
         }
     }
 
+    fn memory_slice_bounds(
+        &self,
+        name: &str,
+        slice: MemorySliceNodes,
+    ) -> Result<(i128, i128), String> {
+        match slice {
+            MemorySliceNodes::Range { left, right } => Ok((
+                self.cg.eval_bound_i128(left).map_err(|_| {
+                    format!(
+                        "{name} memory slice bounds must be constant integers in `{}`",
+                        self.path
+                    )
+                })?,
+                self.cg.eval_bound_i128(right).map_err(|_| {
+                    format!(
+                        "{name} memory slice bounds must be constant integers in `{}`",
+                        self.path
+                    )
+                })?,
+            )),
+            MemorySliceNodes::Indexed {
+                base,
+                width,
+                descending,
+            } => {
+                let base = self.cg.eval_bound_i128(base).map_err(|_| {
+                    format!(
+                        "{name} memory slice bounds must be constant integers in `{}`",
+                        self.path
+                    )
+                })?;
+                let width = self.cg.eval_bound_i128(width).map_err(|_| {
+                    format!(
+                        "{name} indexed memory slice width must be constant in `{}`",
+                        self.path
+                    )
+                })?;
+                if width <= 0 {
+                    return Err(format!(
+                        "{name} indexed memory slice width must be positive in `{}`",
+                        self.path
+                    ));
+                }
+                let extension = width.checked_sub(1).ok_or_else(|| {
+                    format!(
+                        "{name} indexed memory slice width overflows in `{}`",
+                        self.path
+                    )
+                })?;
+                if descending {
+                    Ok((
+                        base,
+                        base.checked_sub(extension).ok_or_else(|| {
+                            format!(
+                                "{name} indexed memory slice bound overflows in `{}`",
+                                self.path
+                            )
+                        })?,
+                    ))
+                } else {
+                    Ok((
+                        base.checked_add(extension).ok_or_else(|| {
+                            format!(
+                                "{name} indexed memory slice bound overflows in `{}`",
+                                self.path
+                            )
+                        })?,
+                        base,
+                    ))
+                }
+            }
+        }
+    }
+
+    fn memory_dimension_strides(
+        name: &str,
+        dims: &[(i32, i32)],
+        path: &str,
+    ) -> Result<Vec<u64>, String> {
+        let mut strides = vec![1u64; dims.len()];
+        for dimension in (0..dims.len().saturating_sub(1)).rev() {
+            let (left, right) = dims[dimension + 1];
+            let extent = (i64::from(left) - i64::from(right)).unsigned_abs() + 1;
+            strides[dimension] = strides[dimension + 1]
+                .checked_mul(extent)
+                .ok_or_else(|| format!("{name} memory view stride overflow in `{path}`"))?;
+        }
+        Ok(strides)
+    }
+
+    fn memory_dimension_offset(left: i32, right: i32, index: i32) -> u64 {
+        if left >= right {
+            (i64::from(left) - i64::from(index)) as u64
+        } else {
+            (i64::from(index) - i64::from(left)) as u64
+        }
+    }
+
+    fn validate_memory_index(
+        name: &str,
+        dimension: usize,
+        index: i32,
+        bounds: (i32, i32),
+        path: &str,
+    ) -> Result<(), String> {
+        let (left, right) = bounds;
+        if index < left.min(right) || index > left.max(right) {
+            return Err(format!(
+                "{name} memory view selector {index} is outside dimension {dimension} in `{path}`"
+            ));
+        }
+        Ok(())
+    }
+
     fn memory_element_descriptor(&self, node: NodeId) -> Option<TypeDescriptor> {
-        let (base, _) = self.memory_view_base(node).ok()?;
+        let (base, _, _) = self.memory_view_base("memory task", node).ok()?;
         let mut descriptor = self
             .cg
             .query_descriptor(node)

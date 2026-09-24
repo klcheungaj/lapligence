@@ -842,6 +842,33 @@ impl Validator<'_> {
                 })?;
                 self.validate_storage_default(value, ty.width(), ty.signed(), &path)?;
             }
+            if let Some(signal_index) = func.return_signal {
+                let signal = self.model.signals.get(signal_index).ok_or_else(|| {
+                    IrValidationError::new(
+                        format!("{path}.return_signal"),
+                        "return signal is out of bounds",
+                    )
+                })?;
+                let Some(return_type) = func.ret else {
+                    return self.fail(
+                        format!("{path}.return_signal"),
+                        "function without a numeric return cannot own a return signal",
+                    );
+                };
+                if func.automatic || func.ret_chandle || func.ret_string {
+                    return self.fail(
+                        format!("{path}.return_signal"),
+                        "return signal requires a static numeric function",
+                    );
+                }
+                if signal.ty != return_type || signal.net_driver.is_some() || signal.alias.is_some()
+                {
+                    return self.fail(
+                        format!("{path}.return_signal"),
+                        "return signal must be unaliased storage with the function return type",
+                    );
+                }
+            }
             if let Some(ret) = &func.ret {
                 self.validate_type(ret, &format!("{path}.ret"))?;
             }

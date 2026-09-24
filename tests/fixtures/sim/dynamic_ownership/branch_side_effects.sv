@@ -13,10 +13,10 @@ module tb;
         $display("%0d %0d", value, calls);
         value = {65{1'bz}};
         other = {65{1'bz}};
-        // IEEE 1364-2001 §4.1.13 / IEEE 1800-2009 §11.4.11: equal Z arms
-        // remain Z under an ambiguous selector.
+        // IEEE 1364-2001 §4.1.13 Table 28 / IEEE 1800-2009 §11.4.11
+        // Table 11-20: the Z/Z cell is X under an ambiguous selector.
         value = 1'bx ? value : other;
-        $display("%0d", value === {65{1'bz}});
+        $display("%0d", value === {65{1'bx}});
         $finish(0);
     end
 endmodule

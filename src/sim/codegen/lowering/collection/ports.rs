@@ -411,7 +411,9 @@ impl<'a> Codegen<'a> {
                 .and_then(|signal| signal.net_driver.map(|(group, _)| group))
         };
         match lhs {
-            IrLhs::PackedSelect { target, .. } => self.structural_group_for_lhs(target),
+            IrLhs::PackedSelect { target, .. } | IrLhs::TaggedSelect { target, .. } => {
+                self.structural_group_for_lhs(target)
+            }
             IrLhs::Whole(index)
             | IrLhs::Bit(index, ..)
             | IrLhs::Part(index, ..)
@@ -502,7 +504,7 @@ impl<'a> Codegen<'a> {
         mapped: &mut dyn FnMut(usize) -> Option<usize>,
     ) -> Option<usize> {
         match lhs {
-            IrLhs::PackedSelect { target, .. } => {
+            IrLhs::PackedSelect { target, .. } | IrLhs::TaggedSelect { target, .. } => {
                 self.unmapped_structural_group_for(target, mapped)
             }
             IrLhs::Whole(index)
@@ -1125,6 +1127,45 @@ impl<'a> Codegen<'a> {
         Ok(true)
     }
 
+    /// Input links are emitted before procedural bodies, but a hierarchical
+    /// port actual may name a static declaration inside a named process block.
+    /// Allocate that persistent storage before resolving the actual so the
+    /// link and its sensitivity set share the process-local declaration.
+    fn collect_static_hierarchical_port_actual(&mut self, actual: NodeId) -> Result<(), String> {
+        let target = match self.kind(actual) {
+            NodeKind::Expr(ExprKind::HierPath { refs, .. }) => refs.last().copied().flatten(),
+            NodeKind::Expr(ExprKind::Ref {
+                target: Some(target),
+            }) if self.db.semantic_detail(actual) == Some("HierarchicalValue") => Some(*target),
+            _ => None,
+        };
+        let Some(target) = target else {
+            return Ok(());
+        };
+        // Interface members also have static lifetime, but collect_design
+        // already assigned them owned signal storage. Only process-local
+        // static declarations need a late allocation here.
+        if !matches!(self.kind(target), NodeKind::Var { .. })
+            || self.db.variable_lifetime(target) != VariableLifetime::Static
+            || self.signal_of(target).is_some()
+        {
+            return Ok(());
+        }
+        let Some(instance) = self.owning_inst(target) else {
+            return Ok(());
+        };
+        if self.proc_local_instances.contains_key(&(instance, target)) {
+            return Ok(());
+        }
+
+        let path = self.instance_path_of(instance);
+        let previous_instance = self.inst;
+        self.inst = instance;
+        let result = self.collect_loop_var(&path, target).map(|_| ());
+        self.inst = previous_instance;
+        result
+    }
+
     pub(super) fn emit_links(
         &mut self,
         parent_path: &str,
@@ -1273,6 +1314,7 @@ impl<'a> Codegen<'a> {
             };
             let alias_bindings = self.alias_lvalue_bindings(port, alias_target)?;
             let (lhs, rhs, reads) = if direction == DbDirection::Input {
+                self.collect_static_hierarchical_port_actual(actual)?;
                 let rhs = self.lower_expr(parent_path, actual)?;
                 let reads = self.collect_read_signals(parent_path, actual)?;
                 let lhs = self.remap_structural_lhs(IrLhs::Whole(child_info.ir), port);

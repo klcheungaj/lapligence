@@ -1109,11 +1109,12 @@ fn sim_packed_aggregate_input_write_is_isolated() {
 /// slot; the caller copies the whole result and the input formal is unchanged.
 #[test]
 fn sim_packed_struct_return() {
-    sim_cli::run_case(
+    sim_cli::run_case_with_args(
         "feature_completion/g1_17",
         "packed_struct_return",
         "swap=3412 widen=13cb src=1234\n",
         "",
         &[],
+        &["--edition", "2009"],
     );
 }

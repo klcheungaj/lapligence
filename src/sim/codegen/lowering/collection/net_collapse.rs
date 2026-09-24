@@ -197,7 +197,9 @@ impl NetCollapsePlan {
         let (first, second) = self.roots(first, second)?;
         let mut resolved = self.entries[first].resolved.clone();
         if resolved.kind != self.entries[second].resolved.kind {
-            return Err("alias members have incompatible net types (ports use different rules)".into());
+            return Err(
+                "alias members have incompatible net types (ports use different rules)".into(),
+            );
         }
         if first != second {
             resolved
@@ -221,9 +223,13 @@ impl NetCollapsePlan {
         }
         let internal_kind = self.entries[internal].resolved.kind;
         let external_kind = self.entries[external].resolved.kind;
-        let choice =
-            port_choice(internal_kind, external_kind).ok_or("unsupported net type in port collapse")?;
-        let winner = if choice.internal() { internal } else { external };
+        let choice = port_choice(internal_kind, external_kind)
+            .ok_or("unsupported net type in port collapse")?;
+        let winner = if choice.internal() {
+            internal
+        } else {
+            external
+        };
         let resolved = self.entries[winner].resolved.clone();
         let warning = choice.warns().then_some(CollapseWarning {
             internal: internal_kind,

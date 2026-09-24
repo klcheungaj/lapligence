@@ -88,7 +88,8 @@ module tb #(parameter WIDTH = 4096, parameter HALF = WIDTH / 2);
         expected = '0;
         expected[WIDTH-1] = 1'b1;
         expected[64] = 1'bx;
-        expected[1] = 1'bz;
+        // Published packed ?: tables map an ambiguous Z/Z pair to X.
+        expected[1] = 1'bx;
         expected[0] = 1'bx;
         if (!failed && merged !== expected) begin
             $display("FAIL conditional-merge WIDTH=%0d", WIDTH);

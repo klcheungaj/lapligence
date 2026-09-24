@@ -263,10 +263,18 @@ impl EmitCtx<'_, '_> {
                 });
                 continue;
             }
+            let read_actual = matches!(
+                self.cg.kind(*io),
+                NodeKind::FuncArg {
+                    direction: DbDirection::Inout,
+                    ..
+                }
+            );
             let (lh, actual_read, selector_inits) = self.cg.lower_call_actual(
                 &self.path,
                 bound[idx].expr,
                 &format!("{}_{}", h.0, idx),
+                read_actual,
             )?;
             for (name, width, signed, two_state, init) in selector_inits {
                 before.push(IrStmt::DeclLocal {
@@ -279,14 +287,10 @@ impl EmitCtx<'_, '_> {
             }
             if let Some(storage) = self.cg.static_formals.get(&(callee_inst, *io)).cloned() {
                 let storage_lhs = IrLhs::Whole(storage.ir);
-                if matches!(
-                    self.cg.kind(*io),
-                    NodeKind::FuncArg {
-                        direction: DbDirection::Inout,
-                        ..
-                    }
-                ) {
-                    let value = actual_read.clone();
+                if read_actual {
+                    let value = actual_read.clone().ok_or_else(|| {
+                        "inout subroutine actual has no caller-side input value".to_owned()
+                    })?;
                     before.push(IrStmt::Assign {
                         rhs: apply_lhs_assignment_context(&self.cg.model, &storage_lhs, value),
                         lhs: storage_lhs.clone(),
@@ -790,6 +794,7 @@ impl EmitCtx<'_, '_> {
                         &self.path,
                         b.expr,
                         &format!("{}_{}", h.0, idx),
+                        is_inout,
                     )?;
                     for (name, width, signed, two_state, init) in selector_inits {
                         before.push(IrStmt::DeclLocal {
@@ -805,7 +810,10 @@ impl EmitCtx<'_, '_> {
                             rhs: apply_lhs_assignment_context(
                                 &self.cg.model,
                                 &storage_lhs,
-                                actual_read,
+                                actual_read.ok_or_else(|| {
+                                    "inout subroutine actual has no caller-side input value"
+                                        .to_owned()
+                                })?,
                             ),
                             lhs: storage_lhs,
                             nba: false,
@@ -822,9 +830,19 @@ impl EmitCtx<'_, '_> {
                     });
                 }
             } else if *is_out {
-                let (actual_lhs, actual_read, selector_inits) =
-                    self.cg
-                        .lower_call_actual(&self.path, b.expr, &format!("{}_{}", h.0, idx))?;
+                let is_inout = matches!(
+                    self.cg.kind(*io),
+                    NodeKind::FuncArg {
+                        direction: DbDirection::Inout,
+                        ..
+                    }
+                );
+                let (actual_lhs, actual_read, selector_inits) = self.cg.lower_call_actual(
+                    &self.path,
+                    b.expr,
+                    &format!("{}_{}", h.0, idx),
+                    is_inout,
+                )?;
                 for (name, width, signed, two_state, init) in selector_inits {
                     before.push(IrStmt::DeclLocal {
                         name,
@@ -835,13 +853,6 @@ impl EmitCtx<'_, '_> {
                     });
                 }
                 let cname = format!("_io{}_{}", h.0, idx);
-                let is_inout = matches!(
-                    self.cg.kind(*io),
-                    NodeKind::FuncArg {
-                        direction: DbDirection::Inout,
-                        ..
-                    }
-                );
                 let init = if is_inout {
                     self.cg
                         .lower_call_temp_init_from_expr(*io, b, actual_read)?

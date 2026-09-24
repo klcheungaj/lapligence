@@ -28,6 +28,16 @@ fn fixed_array_storage_rejects_one_cell_above_the_selected_limit() {
 }
 
 #[test]
+fn review_bundle_capacity_probe_rejects_the_65537th_cell() {
+    sim_cli::reject_case_with_exact_stderr(
+        "review_bundle",
+        "r11_array_capacity_65537",
+        "llg: codegen error: array `memory` in `tb`: fixed-array storage has 65537 cells; selected cell-wise storage limit is 65536 cells\n",
+        &["--edition", "2009"],
+    );
+}
+
+#[test]
 fn fixed_value_formals_reject_flattened_payloads_above_packed_capacity() {
     sim_cli::reject_case(
         SUITE,

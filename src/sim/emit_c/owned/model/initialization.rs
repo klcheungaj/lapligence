@@ -98,7 +98,7 @@ pub(in crate::sim::emit_c) fn storage_lifecycle(
             } else if function.ret_chandle {
                 initialize.push_str(&format!("    _llg_native_ret_{index} = NULL;\n"));
             }
-            if let Some(ty) = function.ret {
+            if let Some(ty) = function.ret.filter(|_| function.return_signal.is_none()) {
                 defaults(
                     &mut initialize,
                     &mut destroy,

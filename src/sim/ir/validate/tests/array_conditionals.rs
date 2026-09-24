@@ -75,7 +75,10 @@ fn array_conditional_rejects_nonconcrete_or_misaligned_defaults() {
     empty.width = 0;
     for value in [default(3), default(32), IrConst::real(0.0), fill, empty] {
         let mut expr = conditional();
-        let IrExprKind::ArrayMux { element_default, .. } = &mut expr.kind else {
+        let IrExprKind::ArrayMux {
+            element_default, ..
+        } = &mut expr.kind
+        else {
             unreachable!();
         };
         **element_default = value;

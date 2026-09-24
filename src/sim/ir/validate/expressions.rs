@@ -365,6 +365,45 @@ impl Validator<'_> {
                     self.validate_expr(value, formals, &format!("{path}.valid_values[{idx}]"))?;
                 }
             }
+            IrExprKind::TaggedSelect {
+                base,
+                steps,
+                location: _,
+            } => {
+                self.validate_expr(base, formals, &format!("{path}.base"))?;
+                if base.is_real() || steps.is_empty() {
+                    return self.fail(path, "tagged member selection requires a packed receiver");
+                }
+                let mut parent_width = base.width;
+                for (index, step) in steps.iter().enumerate() {
+                    let step_path = format!("{path}.steps[{index}]");
+                    self.validate_expr(
+                        &step.selection.base,
+                        formals,
+                        &format!("{step_path}.base"),
+                    )?;
+                    self.validate_width(step.selection.width, &format!("{step_path}.width"))?;
+                    if step.selection.base.is_real() || step.selection.width > parent_width {
+                        return self.fail(&step_path, "invalid packed tagged-member projection");
+                    }
+                    if let Some(guard) = &step.guard {
+                        if guard.tag_width == 0 || guard.tag_width > parent_width {
+                            return self
+                                .fail(&step_path, "tagged-union guard width exceeds its receiver");
+                        }
+                        if guard.member_name.is_empty()
+                            || (guard.tag_width < 32
+                                && guard.member_index >= (1u32 << guard.tag_width))
+                        {
+                            return self.fail(&step_path, "invalid tagged-union guard metadata");
+                        }
+                    }
+                    parent_width = step.selection.width;
+                }
+                if expr.width != parent_width || expr.fill.is_some() {
+                    return self.fail(path, "tagged member selection result shape is invalid");
+                }
+            }
             IrExprKind::BitStreamCast {
                 a,
                 source_width,

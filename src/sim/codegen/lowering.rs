@@ -419,6 +419,11 @@ fn generate_from_db_with_opts_impl(
     for unit in &compilation_units {
         cg.emit_func_bodies(*unit)?;
     }
+    // Function bodies register hidden storage for static subprogram locals.
+    // Re-run driver ownership checks with those declarations visible before
+    // any process is lowered, so hierarchical continuous writes participate
+    // in the same single-writer checks as module variables.
+    cg.validate_process_semantics()?;
     // Three passes over the instance tree so every comb process, then every
     // link, then every always/initial process runs at t=0 in that order;
     // push order equals spawn order.
@@ -1041,9 +1046,8 @@ struct Codegen<'a> {
     /// storage fills so runtime-dependent initializers never fall back to
     /// compile-time evaluation.
     declaration_inits: Vec<IrInitialization>,
-    /// Scalar declaration initializers whose expression contains a user
-    /// function call. Subroutine metadata does not exist until prototypes are
-    /// emitted, so lowering is deferred until then. Each tuple is
+    /// Scalar declaration initializers deferred until subroutine metadata or
+    /// bound child/interface signal storage is available. Each tuple is
     /// `(declaration, initializer, owning instance, resolved storage)`.
     deferred_declaration_inits: Vec<(NodeId, NodeId, NodeId, SignalInfo)>,
     /// ContAssign arena nodes already collected as scalar variable
@@ -2167,6 +2171,7 @@ fn packed_lhs_width(model: &IrModel, lhs: &IrLhs) -> Option<u32> {
     let width = match lhs {
         IrLhs::Whole(idx) => model.signal(*idx).ty.width(),
         IrLhs::PackedSelect { steps, .. } => steps.last().map_or(0, |step| step.width),
+        IrLhs::TaggedSelect { steps, .. } => steps.last().map_or(0, |step| step.selection.width),
         IrLhs::WholeRef { width, .. } | IrLhs::Ref { width, .. } => *width,
         IrLhs::Bit(..) => 1,
         IrLhs::Part(_, left, right, _) => ((left - right).abs() + 1) as u32,

@@ -243,12 +243,17 @@ impl Frame<'_, '_> {
             return Err(pending("recursive or excessively deep evaluator callbacks"));
         }
         let function = self.ctx.model.func(call.f).clone();
+        if !function.automatic && function.ret.is_some() && !function.callback_return_independent {
+            return Err(pending(
+                "side-effect-capable evaluator expressions: static callback result depends on persistent return state",
+            ));
+        }
         // Static functions normally retain return/formal storage, but a
-        // function with no static locals or stateful return reads can be
-        // materialized privately. Input copies and the return cell then stay
-        // inside the callback frame instead of publishing call state. Static
-        // locals remain excluded by `function.locals.is_empty()` and are
-        // therefore never hidden by the callback frame.
+        // function with no static locals and a lowering-proven independent
+        // result can be materialized privately. Input copies and the return
+        // cell then stay inside the callback frame instead of publishing call
+        // state. Static locals remain excluded by `function.locals.is_empty()`
+        // and are therefore never hidden by the callback frame.
         let stateless = function.automatic || function.locals.is_empty();
         let eligible = stateless
             && function.pre_fns.is_empty()

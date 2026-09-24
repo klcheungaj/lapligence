@@ -971,9 +971,10 @@ llg_proc_t* llg_fork(void (*fn)(llg_proc_t*), const char* name, llg_fork_group_t
 llg_proc_t* llg_fork_with_frame(void (*fn)(llg_proc_t*), const char* name,
                                 llg_fork_group_t* grp, llg_frame_t* frame);
 // Create and manage typed activation storage. Slots hold copied values by
-// default; frame aliases retain their source frame, while legacy model-storage
-// aliases borrow only the generated static cell. No activation slot retains a
-// host stack pointer.
+// default. Frame-to-frame aliases retain their source frame. Joined fork
+// aliases borrow a registered numeric cell in the suspended parent activation;
+// model-storage aliases borrow generated static cells. No activation slot
+// retains a host stack pointer.
 typedef enum {
     LLG_FRAME_PACKED = 0,
     LLG_FRAME_REAL = 1,
@@ -991,6 +992,10 @@ void llg_frame_alias_slot(llg_frame_t* frame, size_t slot,
                           llg_frame_t* target, size_t target_slot);
 llg_frame_slot_kind_t llg_frame_slot_kind(const llg_frame_t* frame,
                                           size_t slot);
+// Return the stable numeric cell for a joined child borrowing its enclosing
+// activation. The parent must remain suspended until that child completes.
+sv4_t* llg_frame_value_address(llg_frame_t* frame, size_t slot);
+double* llg_frame_real_address(llg_frame_t* frame, size_t slot);
 sv4_t llg_frame_read_value(const llg_frame_t* frame, size_t slot);
 void llg_frame_write_value(llg_frame_t* frame, size_t slot, sv4_t value);
 double llg_frame_read_real(const llg_frame_t* frame, size_t slot);
@@ -1255,6 +1260,8 @@ void llg_ref_scope_end(llg_ref_scope_t* scope);
 void llg_ref_scope_begin_owned(void);
 llg_ref_t* llg_ref_queue(llg_queue_t* queue, uint64_t index);
 void llg_ref_write(llg_ref_t* ref, sv4_t value);
+// Runtime-facing read reports checked tagged-union reference-view failures.
+sv4_t llg_rt_ref_read(const llg_ref_t* ref);
 /* Borrow value and mask; update only the selected logical reference bits. */
 void llg_ref_write_masked(llg_ref_t* ref, sv4_t value, sv4_t mask);
 /* Capture persistent fixed leaves now; the descriptor graph may expire before commit. */

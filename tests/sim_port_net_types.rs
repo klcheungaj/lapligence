@@ -115,26 +115,46 @@ fn port_net_type_ascending_disjoint_selections() {
 fn assert_collapse_warnings(output: std::process::Output, expected: &str, count: usize) {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(output.status.success(), "{stderr}");
-    assert_eq!(String::from_utf8_lossy(&output.stdout), expected, "{stderr}");
-    let warnings = stderr.lines().filter_map(|line| line.strip_prefix("llg: warning: "))
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        expected,
+        "{stderr}"
+    );
+    let warnings = stderr
+        .lines()
+        .filter_map(|line| line.strip_prefix("llg: warning: "))
         .collect::<Vec<_>>();
     assert_eq!(warnings.len(), count, "{stderr}");
     for warning in warnings {
         assert!(warning.starts_with("dissimilar inout port `"), "{warning}");
         assert!(warning.contains("Table 23-1) at "), "{warning}");
-        assert!(warning.contains(".sv:"), "warning must retain source location: {warning}");
+        assert!(
+            warning.contains(".sv:"),
+            "warning must retain source location: {warning}"
+        );
     }
     for line in stderr.lines() {
-        assert!(line.starts_with("llg: warning: ") || line.starts_with("Warning: "), "{stderr}");
+        assert!(
+            line.starts_with("llg: warning: ") || line.starts_with("Warning: "),
+            "{stderr}"
+        );
     }
 }
 
 #[test]
 fn port_net_type_warning_pairs_use_the_external_type() {
-    assert!(llg::sim::build::cmake_available(), "CLI tests require CMake");
+    assert!(
+        llg::sim::build::cmake_available(),
+        "CLI tests require CMake"
+    );
     for optimized in [false, true] {
         let output = sim_cli::invoke_with_env(
-            "port_net_types", "warnings", optimized, &["--edition", "2001"], &[], &[],
+            "port_net_types",
+            "warnings",
+            optimized,
+            &["--edition", "2001"],
+            &[],
+            &[],
         );
         assert_collapse_warnings(output, "conflicts=010101\n", 6);
     }
@@ -142,10 +162,18 @@ fn port_net_type_warning_pairs_use_the_external_type() {
 
 #[test]
 fn port_net_type_sibling_tie_order_is_deterministic() {
-    assert!(llg::sim::build::cmake_available(), "CLI tests require CMake");
+    assert!(
+        llg::sim::build::cmake_available(),
+        "CLI tests require CMake"
+    );
     for optimized in [false, true] {
         let output = sim_cli::invoke_with_env(
-            "port_net_types", "siblings", optimized, &["--edition", "2001"], &[], &[],
+            "port_net_types",
+            "siblings",
+            optimized,
+            &["--edition", "2001"],
+            &[],
+            &[],
         );
         assert_collapse_warnings(output, "siblings=000\n", 1);
     }
@@ -154,14 +182,19 @@ fn port_net_type_sibling_tie_order_is_deterministic() {
 #[test]
 fn port_net_type_preserves_frontend_uwire_port_rejection() {
     sim_cli::reject_case_with_args(
-        "port_net_types", "bad_uwire", "'uwire' port", &["--edition", "2009"],
+        "port_net_types",
+        "bad_uwire",
+        "'uwire' port",
+        &["--edition", "2009"],
     );
 }
 
 #[test]
 fn port_net_type_does_not_relax_alias_legality() {
     sim_cli::reject_case_with_args(
-        "port_net_types", "bad_alias", "all nets in a net alias statement must have a common nettype",
+        "port_net_types",
+        "bad_alias",
+        "all nets in a net alias statement must have a common nettype",
         &["--edition", "2009"],
     );
 }
@@ -169,14 +202,19 @@ fn port_net_type_does_not_relax_alias_legality() {
 #[test]
 fn port_net_type_trireg_remains_explicitly_unsupported() {
     sim_cli::reject_case_with_args(
-        "port_net_types", "bad_trireg", "unsupported net type", &["--edition", "2001"],
+        "port_net_types",
+        "bad_trireg",
+        "unsupported net type",
+        &["--edition", "2001"],
     );
 }
 
 #[test]
 fn port_net_type_preserves_frontend_uwire_actual_rejection() {
     sim_cli::reject_case_with_args(
-        "port_net_types", "bad_uwire_external", "cannot be connected to 'inout' port",
+        "port_net_types",
+        "bad_uwire_external",
+        "cannot be connected to 'inout' port",
         &["--edition", "2009"],
     );
 }
@@ -184,7 +222,11 @@ fn port_net_type_preserves_frontend_uwire_actual_rejection() {
 #[test]
 fn port_net_type_keeps_unconnected_same_type_uwire_aliases() {
     sim_cli::run_case_with_args(
-        "port_net_types", "uwire_alias", "alias=11\nalias=00\n", "", &[],
+        "port_net_types",
+        "uwire_alias",
+        "alias=11\nalias=00\n",
+        "",
+        &[],
         &["--edition", "2009"],
     );
 }

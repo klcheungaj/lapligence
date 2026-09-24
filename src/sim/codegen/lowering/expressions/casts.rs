@@ -16,6 +16,18 @@ impl<'a> Codegen<'a> {
                 *two_state || self.dynamic_cast_lhs_shape(target)?.2,
                 false,
             ),
+            IrLhs::TaggedSelect {
+                target,
+                steps,
+                signed,
+                two_state,
+                ..
+            } => (
+                steps.last().map_or(0, |step| step.selection.width),
+                *signed,
+                *two_state || self.dynamic_cast_lhs_shape(target)?.2,
+                false,
+            ),
             IrLhs::Whole(index) => match self.model.signal(*index).ty {
                 IrType::Real { shortreal } => (0, true, false, shortreal),
                 IrType::Packed {

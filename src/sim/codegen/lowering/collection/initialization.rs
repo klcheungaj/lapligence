@@ -43,11 +43,12 @@ impl<'a> Codegen<'a> {
                 }
             }
             let name = self.node(*c).name.clone();
-            if self.initializer_contains_call(init) {
-                // Subroutine metadata is not built until prototypes are
-                // emitted, after collection. Lower this initializer once the
-                // callee's model entry exists so a legal zero-time function
-                // call can run before processes observe the variable.
+            if self.initializer_contains_call(init)
+                || self.initializer_has_uncollected_signal_ref(init)
+            {
+                // Subroutine metadata and child-instance signal storage are
+                // not complete until collection finishes. Defer only affected
+                // initializers so all others keep their existing order.
                 self.deferred_declaration_inits.push((*c, init, inst, info));
                 continue;
             }
@@ -83,6 +84,32 @@ impl<'a> Codegen<'a> {
             .children
             .iter()
             .any(|child| self.initializer_contains_call(*child))
+    }
+
+    /// Whether an initializer names a bound variable or net whose signal
+    /// storage has not been collected yet, as can happen for child interfaces.
+    fn initializer_has_uncollected_signal_ref(&self, node: NodeId) -> bool {
+        let uncollected = |target| {
+            matches!(
+                self.kind(target),
+                NodeKind::Var { .. } | NodeKind::Net { .. }
+            ) && self.signal_of(target).is_none()
+        };
+        match self.kind(node) {
+            NodeKind::Expr(ExprKind::Ref {
+                target: Some(target),
+            }) if uncollected(*target) => return true,
+            NodeKind::Expr(ExprKind::HierPath { refs, .. })
+                if refs.iter().flatten().copied().any(uncollected) =>
+            {
+                return true;
+            }
+            _ => {}
+        }
+        self.node(node)
+            .children
+            .iter()
+            .any(|child| self.initializer_has_uncollected_signal_ref(*child))
     }
 
     /// Lower declaration initializers deferred by [`collect_var_inits`] now
@@ -425,6 +452,7 @@ impl<'a> Codegen<'a> {
                 key,
                 key_type,
                 value,
+                ..
             }) = self.kind(operand)
             else {
                 continue;
@@ -456,21 +484,6 @@ impl<'a> Codegen<'a> {
                     "aggregate assignment pattern key `{key}` has no matching member or type in `{path}`"
                 ));
             };
-            if !layout
-                .members
-                .iter()
-                .any(|member| aggregate_member_matches_type_key(member, key, Some(key_type)))
-            {
-                return Err(format!(
-                    "aggregate assignment pattern key `{key}` has no matching member or type in `{path}`"
-                ));
-            }
-            if type_values
-                .iter()
-                .any(|(_, previous, _)| pattern_key_types_equal(previous, key_type))
-            {
-                return Err(format!("duplicate aggregate type key `{key}` in `{path}`"));
-            }
             type_values.push((key.to_owned(), key_type.clone(), value));
         }
 

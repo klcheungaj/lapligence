@@ -1,8 +1,8 @@
 use super::*;
 
 mod array_conditionals;
-mod sequential_predicates;
 mod fixed_array_reductions;
+mod sequential_predicates;
 use crate::sim::ir::{
     IrAssertion, IrCall, IrCallArg, IrCaseItem, IrConcurrentAssertionKind, IrDependency, IrDepth,
     IrEdge, IrEventRef, IrFunc, IrLocal, IrProcess, IrShape, IrSignal, IrType,
@@ -446,6 +446,27 @@ fn fold_conditional_treats_known_one_with_unknown_as_true() {
     let mut m = model_with(vec![assign(IrLhs::Whole(0), mux)], sigs(1));
     run(&mut m, &fold_only());
     assert_eq!(const_payload(first_assign_rhs(&m)), Some((9, 8)));
+}
+
+#[test]
+fn fold_ambiguous_mux_maps_equal_z_arms_to_x() {
+    let mux = IrExpr::new(
+        IrExprKind::Mux {
+            sel: Box::new(xkonst(1)),
+            a: Box::new(zkonst(1)),
+            b: Box::new(zkonst(1)),
+        },
+        1,
+        false,
+        None,
+    );
+    let mut model = model_with(vec![assign(IrLhs::Whole(0), mux)], sigs(1));
+    run(&mut model, &fold_only());
+    let IrExprKind::Const(value) = &first_assign_rhs(&model).kind else {
+        panic!("expected folded constant");
+    };
+    assert_eq!(value.x[0] & 1, 1);
+    assert_eq!(value.z[0] & 1, 0);
 }
 
 #[test]

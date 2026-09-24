@@ -52,7 +52,7 @@ pub(in crate::sim::emit_c) fn persistent_returns(model: &IrModel, out: &mut Stri
                     }
                 ));
             }
-            if let Some(ty) = function.ret {
+            if let Some(ty) = function.ret.filter(|_| function.return_signal.is_none()) {
                 out.push_str(&format!(
                     "static {} _llg_ret_{index} = {};\n",
                     if ty.width() == 0 { "double" } else { "sv4_t" },
@@ -139,10 +139,14 @@ pub(in crate::sim::emit_c) fn function(
                 .iter()
                 .position(|candidate| candidate.c_name == function.c_name)
                 .ok_or_else(|| "function is missing from its model".to_owned())?;
+            let address = function.return_signal.map_or_else(
+                || format!("&_llg_ret_{index}"),
+                |signal| format!("&{}", ctx.model.signal(signal).c_name),
+            );
             frame.bindings[0].insert(
                 "_ret".to_owned(),
                 Binding {
-                    address: format!("&_llg_ret_{index}"),
+                    address,
                     width: ty.width(),
                     signed: ty.signed(),
                     two_state: ty.two_state(),

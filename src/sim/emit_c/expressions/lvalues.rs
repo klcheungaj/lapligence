@@ -109,6 +109,9 @@ pub(super) fn lhs_shape(ctx: &RCtx<'_>, lhs: &IrLhs) -> (u32, bool) {
         IrLhs::PackedSelect { steps, signed, .. } => {
             (steps.last().map_or(0, |step| step.width), *signed)
         }
+        IrLhs::TaggedSelect { steps, signed, .. } => {
+            (steps.last().map_or(0, |step| step.selection.width), *signed)
+        }
         IrLhs::Bit(..) => (1, false),
         IrLhs::Part(_, left, right, _) => (left.abs_diff(*right) as u32 + 1, false),
         IrLhs::IdxPart(_, _, _, width, _, _) => (*width, false),
@@ -160,6 +163,9 @@ fn lhs_two_state(ctx: &RCtx<'_>, lhs: &IrLhs) -> bool {
         IrLhs::PackedSelect { two_state, .. }
         | IrLhs::WholeRef { two_state, .. }
         | IrLhs::Ref { two_state, .. } => *two_state,
+        IrLhs::TaggedSelect {
+            target, two_state, ..
+        } => *two_state || lhs_two_state(ctx, target),
         IrLhs::Bit(index, _, selected_two_state)
         | IrLhs::Part(index, .., selected_two_state)
         | IrLhs::IdxPart(index, .., selected_two_state) => {
@@ -189,6 +195,9 @@ pub(super) fn render_lhs_value(
     let value = match lhs {
         IrLhs::PackedSelect { .. } => {
             return Err("packed activation selects require structured owned emission".to_owned())
+        }
+        IrLhs::TaggedSelect { .. } => {
+            return Err("tagged-union selects require structured owned emission".to_owned())
         }
         IrLhs::Whole(index) => {
             let signal = ctx.model.signal(*index);
@@ -369,6 +378,9 @@ pub(super) fn capture_lhs_indices_with_prefix(
                 return Err(
                     "packed activation selects require structured owned emission".to_owned(),
                 )
+            }
+            IrLhs::TaggedSelect { .. } => {
+                return Err("tagged-union selects require structured owned emission".to_owned())
             }
             IrLhs::Ref {
                 bit: Some(index), ..

@@ -166,23 +166,36 @@ fn predicate_database(first: ExprKind, second: ExprKind, left: ExprKind, right: 
     use crate::core::db::{ConditionalPredicate, Node, PredicateClause};
     let predicate = ConditionalPredicate {
         clauses: vec![
-            PredicateClause { expression: NodeId(1), pattern: None },
-            PredicateClause { expression: NodeId(2), pattern: None },
+            PredicateClause {
+                expression: NodeId(1),
+                pattern: None,
+            },
+            PredicateClause {
+                expression: NodeId(2),
+                pattern: None,
+            },
         ],
     };
-    let root = ExprKind::Conditional { predicate, if_true: NodeId(3), if_false: NodeId(4) };
-    let nodes = [root, first, second, left, right].into_iter().map(|expression| Node {
-        kind: NodeKind::Expr(expression),
-        children: Vec::new(),
-        parent: None,
-        name: String::new(),
-        full_name: String::new(),
-        file: None,
-        line: 0,
-        col: 0,
-        end_line: 0,
-        end_col: 0,
-    }).collect();
+    let root = ExprKind::Conditional {
+        predicate,
+        if_true: NodeId(3),
+        if_false: NodeId(4),
+    };
+    let nodes = [root, first, second, left, right]
+        .into_iter()
+        .map(|expression| Node {
+            kind: NodeKind::Expr(expression),
+            children: Vec::new(),
+            parent: None,
+            name: String::new(),
+            full_name: String::new(),
+            file: None,
+            line: 0,
+            col: 0,
+            end_line: 0,
+            end_col: 0,
+        })
+        .collect();
     Db::from_test_nodes("predicate", nodes, vec![], std::collections::HashMap::new()).unwrap()
 }
 
@@ -205,7 +218,10 @@ fn sequential_predicate_constant_evaluation_skips_unreached_clauses_and_arms() {
 
 #[test]
 fn sequential_predicate_constant_evaluation_stops_at_ambiguity_before_false() {
-    for second in [predicate_literal(ValueData::Bin("0".into()), 1), ExprKind::Other] {
+    for second in [
+        predicate_literal(ValueData::Bin("0".into()), 1),
+        ExprKind::Other,
+    ] {
         let db = predicate_database(
             predicate_literal(ValueData::Bin("z".into()), 1),
             second,
@@ -215,7 +231,9 @@ fn sequential_predicate_constant_evaluation_stops_at_ambiguity_before_false() {
         let semantic = crate::sim::semantic::SemanticModel::from_db(&db);
         let cg = Codegen::new(&semantic);
         let expected = val_from_value_data(&ValueData::Bin("101001xx".into()), 8).unwrap();
-        let Val::Bits(expected) = expected else { panic!("packed oracle expected"); };
+        let Val::Bits(expected) = expected else {
+            panic!("packed oracle expected");
+        };
         assert_eq!(cg.eval_bits(NodeId(0)).unwrap().bits, expected.bits);
         let Val::Bits(value) = cg.eval_decl_value(NodeId(0)).unwrap() else {
             panic!("packed conditional expected");
@@ -233,7 +251,13 @@ fn sequential_predicate_constant_evaluation_handles_real_truth_and_ambiguous_res
         ExprKind::Other,
     );
     let semantic = crate::sim::semantic::SemanticModel::from_db(&db);
-    assert_eq!(Codegen::new(&semantic).eval_bits(NodeId(0)).unwrap().to_u64(), Some(0xa5));
+    assert_eq!(
+        Codegen::new(&semantic)
+            .eval_bits(NodeId(0))
+            .unwrap()
+            .to_u64(),
+        Some(0xa5)
+    );
     for right in [predicate_literal(ValueData::Real(3.5), 0), ExprKind::Other] {
         let is_poison = matches!(&right, ExprKind::Other);
         let db = predicate_database(
@@ -245,7 +269,10 @@ fn sequential_predicate_constant_evaluation_handles_real_truth_and_ambiguous_res
         let semantic = crate::sim::semantic::SemanticModel::from_db(&db);
         let result = Codegen::new(&semantic).eval_decl_value(NodeId(0));
         if is_poison {
-            assert!(result.is_err(), "both ambiguous alternatives must be evaluated");
+            assert!(
+                result.is_err(),
+                "both ambiguous alternatives must be evaluated"
+            );
         } else {
             assert!(matches!(result, Ok(Val::Real(value)) if value == 0.0));
         }

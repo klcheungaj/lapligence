@@ -1333,6 +1333,7 @@ impl<'a> Codegen<'a> {
                 key,
                 key_type,
                 value,
+                ..
             }) = self.kind(operand)
             else {
                 continue;
@@ -1351,7 +1352,10 @@ impl<'a> Codegen<'a> {
                 }
                 continue;
             }
-            if let Some(index) = Self::parse_pattern_index(key) {
+            if let Some(index) = self.assignment_pattern_index_key(path, operand)? {
+                let index = i32::try_from(index).map_err(|_| {
+                    format!("array assignment pattern index `{key}` is out of range in `{path}")
+                })?;
                 let offset = if left >= right {
                     i64::from(left) - i64::from(index)
                 } else {
@@ -1377,23 +1381,6 @@ impl<'a> Codegen<'a> {
                     "array assignment pattern key `{key}` has no matching index or type in `{path}`"
                 ));
             };
-            if !super::super::collection::pattern_key_matches_descriptor(
-                key_type,
-                element,
-                Self::descriptor_two_state(element),
-                None,
-            ) {
-                return Err(format!(
-                    "array assignment pattern key `{key}` has no matching index or type in `{path}`"
-                ));
-            }
-            if type_values.iter().any(|(previous, _)| {
-                super::super::collection::pattern_key_types_equal(previous, key_type)
-            }) {
-                return Err(format!(
-                    "duplicate array assignment pattern type key `{key}` in `{path}`"
-                ));
-            }
             type_values.push((key_type.clone(), value));
         }
 
@@ -1426,16 +1413,6 @@ impl<'a> Codegen<'a> {
             resolved.push(value);
         }
         Ok(resolved)
-    }
-
-    fn parse_pattern_index(key: &str) -> Option<i32> {
-        let key = key.trim();
-        let key = key
-            .strip_prefix('[')
-            .and_then(|key| key.strip_suffix(']'))
-            .unwrap_or(key)
-            .trim();
-        key.parse::<i32>().ok()
     }
 
     fn descriptor_two_state(descriptor: &TypeDescriptor) -> bool {

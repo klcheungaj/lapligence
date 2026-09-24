@@ -56,7 +56,11 @@ impl Frame<'_, '_> {
             reduction.element_two_state,
             false,
         );
-        let direction = if reduction.left <= reduction.right { "+" } else { "-" };
+        let direction = if reduction.left <= reduction.right {
+            "+"
+        } else {
+            "-"
+        };
         let index = self.value(
             format!(
                 "sv4_from_u64((uint64_t)({}LL {direction} (int64_t){ordinal}), 32, 1)",

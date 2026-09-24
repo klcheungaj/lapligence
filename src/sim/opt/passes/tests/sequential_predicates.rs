@@ -35,13 +35,20 @@ fn sequential_predicate_fold_all_sixty_four_three_clause_combinations() {
 #[test]
 fn sequential_predicate_fold_normalizes_wide_real_and_fill_clauses() {
     let wide = IrExpr::new(
-        IrExprKind::Const(IrConst::packed(vec![0, 0, 1], vec![1], vec![], 129, true, None).unwrap()),
-        129, true, None,
+        IrExprKind::Const(
+            IrConst::packed(vec![0, 0, 1], vec![1], vec![], 129, true, None).unwrap(),
+        ),
+        129,
+        true,
+        None,
     );
     for clauses in [
         vec![wide.clone(), konst(1, 1)],
         vec![rkonst(-0.25), wide],
-        vec![IrExpr::new(IrExprKind::Fill(1), 65, false, Some(1)), konst(1, 1)],
+        vec![
+            IrExpr::new(IrExprKind::Fill(1), 65, false, Some(1)),
+            konst(1, 1),
+        ],
     ] {
         let mut expr = predicate(clauses);
         fold_expr(&mut expr);
@@ -53,9 +60,17 @@ fn sequential_predicate_fold_normalizes_wide_real_and_fill_clauses() {
 }
 
 fn call() -> IrExpr {
-    IrExpr::new(IrExprKind::CallFn(Box::new(crate::sim::ir::IrCallExpr::new(
-        0, vec![], IrDepth::PROC, false,
-    ))), 1, false, None)
+    IrExpr::new(
+        IrExprKind::CallFn(Box::new(crate::sim::ir::IrCallExpr::new(
+            0,
+            vec![],
+            IrDepth::PROC,
+            false,
+        ))),
+        1,
+        false,
+        None,
+    )
 }
 
 #[test]
@@ -64,13 +79,18 @@ fn sequential_predicate_fold_can_drop_only_an_unreached_suffix() {
         let mut expr = predicate(vec![konst(1, 1), state(decisive), call()]);
         fold_expr(&mut expr);
         let expected = if decisive == 0 { state(0) } else { state(2) };
-        assert_eq!(as_packed_const(&expr).unwrap().bits, as_packed_const(&expected).unwrap().bits);
+        assert_eq!(
+            as_packed_const(&expr).unwrap().bits,
+            as_packed_const(&expected).unwrap().bits
+        );
     }
     let mut expr = predicate(vec![call(), konst(0, 1)]);
     fold_expr(&mut expr);
     ident_expr(&mut expr);
-    assert!(matches!(expr.kind, IrExprKind::Predicate { .. }),
-        "a later zero must not discard a reached effectful clause");
+    assert!(
+        matches!(expr.kind, IrExprKind::Predicate { .. }),
+        "a later zero must not discard a reached effectful clause"
+    );
 }
 
 #[test]
@@ -86,9 +106,17 @@ fn sequential_predicate_walkers_keep_late_reads_and_visit_clauses() {
     let mut model = IrModel::new("predicate_walk".into(), 1).unwrap();
     model.signals = sigs(4);
     model.processes.push(IrProcess::new(
-        "p".into(), "p".into(), IrShape::RunOnce, vec![], vec![assign(
-            IrLhs::Whole(3), predicate((0..3).map(|index|
-                IrExpr::new(IrExprKind::SigRead(index), 8, false, None)).collect()),
+        "p".into(),
+        "p".into(),
+        IrShape::RunOnce,
+        vec![],
+        vec![assign(
+            IrLhs::Whole(3),
+            predicate(
+                (0..3)
+                    .map(|index| IrExpr::new(IrExprKind::SigRead(index), 8, false, None))
+                    .collect(),
+            ),
         )],
     ));
     model.validate().unwrap();
@@ -96,7 +124,9 @@ fn sequential_predicate_walkers_keep_late_reads_and_visit_clauses() {
     assert!(model.signals.iter().all(|signal| !signal.omit));
     let mut visits = 0;
     walk_model_exprs_mut(&mut model, &mut |expr| {
-        if matches!(expr.kind, IrExprKind::SigRead(_)) { visits += 1; }
+        if matches!(expr.kind, IrExprKind::SigRead(_)) {
+            visits += 1;
+        }
     });
     assert_eq!(visits, 3);
 }

@@ -17,38 +17,45 @@ mod patterns;
 mod queries;
 mod streaming;
 
+impl<'a> Codegen<'a> {
+    /// Return a pattern's semantic integral index, if it is an array-index
+    /// key. Source spelling is diagnostic-only because valid keys can be
+    /// arbitrary constant expressions.
+    pub(super) fn assignment_pattern_index_key(
+        &self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<Option<i128>, String> {
+        let NodeKind::Expr(ExprKind::TaggedPattern {
+            index_key,
+            index_value,
+            ..
+        }) = self.kind(node)
+        else {
+            return Ok(None);
+        };
+        if let Some(value) = index_value {
+            return value.to_i128().map(Some).ok_or_else(|| {
+                format!("assignment-pattern index key is not a known i128 value in `{path}`")
+            });
+        }
+        index_key
+            .as_ref()
+            .map(|index| {
+                self.eval_bound_i128(*index).map_err(|error| {
+                    format!("assignment-pattern index key is not constant in `{path}`: {error}")
+                })
+            })
+            .transpose()
+    }
+}
+
 /// A fixed-array view represented by complete coordinates in logical
 /// (declared left-to-right) order.
 #[derive(Clone)]
 struct P30ArrayView {
     array: ArrayInfo,
     coordinates: Vec<Vec<IrExpr>>,
-}
-
-fn parse_pattern_i128(key: &str) -> Option<i128> {
-    let key = key.trim();
-    let key = key
-        .strip_prefix('[')
-        .and_then(|key| key.strip_suffix(']'))
-        .unwrap_or(key)
-        .trim()
-        .replace('_', "");
-    if let Some((width, literal)) = key.split_once('\'') {
-        let _ = width.parse::<u32>().ok()?;
-        let (base, digits) = literal.split_at(1);
-        let radix = match base {
-            "b" | "B" => 2,
-            "o" | "O" => 8,
-            "d" | "D" => 10,
-            "h" | "H" => 16,
-            _ => return None,
-        };
-        let sign = digits.starts_with('-');
-        let digits = digits.trim_start_matches('-');
-        let value = i128::from_str_radix(digits, radix).ok()?;
-        return Some(if sign { -value } else { value });
-    }
-    key.parse::<i128>().ok()
 }
 
 fn parse_pattern_string_key(key: &str) -> Option<Vec<u8>> {

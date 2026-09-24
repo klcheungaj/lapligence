@@ -181,13 +181,7 @@ impl<'a> Codegen<'a> {
                         .or_default()
                         .insert(name, info);
                 }
-                NodeKind::Param { value, .. } => {
-                    if let Some(value) =
-                        self.collected_parameter_value(inst, nid, value.as_ref())?
-                    {
-                        self.param_vals.insert(nid, value);
-                    }
-                }
+                NodeKind::Param { .. } => self.collect_parameter_value(inst, nid)?,
                 NodeKind::NamedEvent => {
                     self.collect_named_event(path, nid, &mut seen)?;
                 }
@@ -231,6 +225,10 @@ impl<'a> Codegen<'a> {
                 _ => {}
             }
         }
+        // Parent declaration initializers may read elaborated child parameters
+        // through bound hierarchical references. Populate only parameter values
+        // here so descendant runtime initializers retain their normal order.
+        self.collect_descendant_parameter_values(inst)?;
         // Variable declaration initializers are folded AFTER the instance's
         // own parameters are collected: a `int y = P + 1;` RHS references the
         // instance's `P` through `param_vals` (params are walked after vars,
@@ -261,6 +259,52 @@ impl<'a> Codegen<'a> {
                 }
                 let child_path = format!("{path}.{}", ident(&cname));
                 self.collect_instance(*c, &child_path)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn collect_parameter_value(&mut self, scope: NodeId, parameter: NodeId) -> Result<(), String> {
+        if self.param_vals.contains_key(&parameter) {
+            return Ok(());
+        }
+        let frontend_value = match self.kind(parameter) {
+            NodeKind::Param { value, .. } => value.clone(),
+            _ => return Ok(()),
+        };
+        if let Some(value) =
+            self.collected_parameter_value(scope, parameter, frontend_value.as_ref())?
+        {
+            self.param_vals.insert(parameter, value);
+        }
+        Ok(())
+    }
+
+    fn collect_descendant_parameter_values(&mut self, scope: NodeId) -> Result<(), String> {
+        for child in self.node(scope).children.clone() {
+            if matches!(
+                self.kind(child),
+                NodeKind::GenScopeArray | NodeKind::GenScope | NodeKind::ModuleInst { .. }
+            ) {
+                self.collect_parameter_subtree(child)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn collect_parameter_subtree(&mut self, scope: NodeId) -> Result<(), String> {
+        let children = self.node(scope).children.clone();
+        for child in &children {
+            if matches!(self.kind(*child), NodeKind::Param { .. }) {
+                self.collect_parameter_value(scope, *child)?;
+            }
+        }
+        for child in children {
+            if matches!(
+                self.kind(child),
+                NodeKind::GenScopeArray | NodeKind::GenScope | NodeKind::ModuleInst { .. }
+            ) {
+                self.collect_parameter_subtree(child)?;
             }
         }
         Ok(())
@@ -439,11 +483,7 @@ impl<'a> Codegen<'a> {
                         .or_default()
                         .insert(name, info);
                 }
-                NodeKind::Param { value, .. } => {
-                    if let Some(value) = self.collected_parameter_value(gs, nid, value.as_ref())? {
-                        self.param_vals.insert(nid, value);
-                    }
-                }
+                NodeKind::Param { .. } => self.collect_parameter_value(gs, nid)?,
                 NodeKind::NamedEvent => {
                     self.collect_named_event(&gs_path, nid, &mut gseen)?;
                 }

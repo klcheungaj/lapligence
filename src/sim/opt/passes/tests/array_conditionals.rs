@@ -33,15 +33,7 @@ fn structure(sel: IrExpr, a: IrExpr, b: IrExpr) -> IrExpr {
                 IrConditionalMember {
                     offset: 0,
                     width: 4,
-                    default: IrConst::packed(
-                        vec![],
-                        vec![0xf],
-                        vec![],
-                        4,
-                        false,
-                        None,
-                    )
-                    .unwrap(),
+                    default: IrConst::packed(vec![], vec![0xf], vec![], 4, false, None).unwrap(),
                 },
                 IrConditionalMember {
                     offset: 4,
@@ -51,15 +43,7 @@ fn structure(sel: IrExpr, a: IrExpr, b: IrExpr) -> IrExpr {
                 IrConditionalMember {
                     offset: 5,
                     width: 8,
-                    default: IrConst::packed(
-                        vec![],
-                        vec![0xff],
-                        vec![],
-                        8,
-                        false,
-                        None,
-                    )
-                    .unwrap(),
+                    default: IrConst::packed(vec![], vec![0xff], vec![], 8, false, None).unwrap(),
                 },
             ],
         },
@@ -138,7 +122,10 @@ fn array_conditional_fold_defaults_entire_rows_and_mixed_state_records() {
 #[test]
 fn array_conditional_fold_uses_known_logical_equality_not_case_equality() {
     for value in [masked_konst(0xa0, 0xf, 0, 8), masked_konst(0xa0, 0, 0xf, 8)] {
-        check(array(unknown(1), value.clone(), value, unknown(8)), unknown(8));
+        check(
+            array(unknown(1), value.clone(), value, unknown(8)),
+            unknown(8),
+        );
     }
     check(
         array(unknown(1), konst(0xa5, 8), konst(0xa5, 8), unknown(8)),

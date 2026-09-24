@@ -5,7 +5,9 @@ use super::*;
 impl<'a> Codegen<'a> {
     pub(in super::super) fn query_descriptor(&self, node: NodeId) -> Option<&TypeDescriptor> {
         let target = match self.kind(node) {
-            NodeKind::Expr(ExprKind::Ref { target: Some(target) }) => *target,
+            NodeKind::Expr(ExprKind::Ref {
+                target: Some(target),
+            }) => *target,
             _ => node,
         };
         if let Some(iterator) = self.fixed_method_iterators.get(&target) {

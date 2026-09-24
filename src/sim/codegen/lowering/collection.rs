@@ -356,19 +356,6 @@ pub(super) fn pattern_key_matches_descriptor(
         )
 }
 
-pub(super) fn pattern_key_types_equal(
-    left: &AssignmentPatternKeyType,
-    right: &AssignmentPatternKeyType,
-) -> bool {
-    left.type_id == right.type_id
-        && left.descriptor == right.descriptor
-        && left.two_state == right.two_state
-        && left.ty.kind == right.ty.kind
-        && left.ty.width == right.ty.width
-        && left.ty.signed == right.ty.signed
-        && left.packed_ranges == right.packed_ranges
-}
-
 fn array_pattern_key_shapes_match(left: &TypeDescriptor, right: &TypeDescriptor) -> bool {
     match (&left.shape, &right.shape) {
         (

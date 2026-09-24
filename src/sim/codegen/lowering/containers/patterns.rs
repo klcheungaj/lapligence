@@ -66,6 +66,7 @@ impl<'a> Codegen<'a> {
                 key,
                 key_type,
                 value,
+                ..
             }) = self.kind(operand)
             else {
                 continue;
@@ -86,7 +87,7 @@ impl<'a> Codegen<'a> {
                 }
                 continue;
             }
-            if let Some(index) = parse_pattern_i128(key) {
+            if let Some(index) = self.assignment_pattern_index_key(path, operand)? {
                 let index = i64::try_from(index).map_err(|_| {
                     format!(
                         "resizable container assignment pattern index `{key}` is out of bounds in `{path}`"
@@ -110,27 +111,6 @@ impl<'a> Codegen<'a> {
                     "resizable container assignment pattern key `{key}` has no matching index or type in `{path}`"
                 ));
             };
-            let Some(element_descriptor) = element_descriptor.as_ref() else {
-                return Err(format!(
-                    "resizable container assignment pattern type key `{key}` has no captured element type in `{path}`"
-                ));
-            };
-            if !super::super::collection::pattern_key_matches_type_descriptor(
-                key_type,
-                element_descriptor,
-                element_two_state,
-            ) {
-                return Err(format!(
-                    "resizable container assignment pattern key `{key}` has no matching index or type in `{path}`"
-                ));
-            }
-            if type_values.iter().any(|(previous, _)| {
-                super::super::collection::pattern_key_types_equal(previous, key_type)
-            }) {
-                return Err(format!(
-                    "duplicate resizable container assignment pattern type key `{key}` in `{path}`"
-                ));
-            }
             type_values.push((key_type.clone(), value));
         }
         let Some(max_index) = explicit.iter().map(|(index, _)| *index).max() else {
@@ -153,7 +133,18 @@ impl<'a> Codegen<'a> {
                 .iter()
                 .find(|(key, _)| *key == index)
                 .map(|(_, value)| *value)
-                .or_else(|| type_values.last().map(|(_, value)| *value))
+                .or_else(|| {
+                    element_descriptor.as_ref().and_then(|element_descriptor| {
+                        type_values.iter().rev().find_map(|(key_type, value)| {
+                            super::super::collection::pattern_key_matches_type_descriptor(
+                                key_type,
+                                element_descriptor,
+                                element_two_state,
+                            )
+                            .then_some(*value)
+                        })
+                    })
+                })
                 .or(default)
                 .ok_or_else(|| {
                     format!(
@@ -200,6 +191,7 @@ impl<'a> Codegen<'a> {
                 key,
                 key_type,
                 value,
+                ..
             }) = self.kind(operand)
             else {
                 continue;
@@ -290,7 +282,9 @@ impl<'a> Codegen<'a> {
                     }));
                 }
                 IrContainerKind::Associative { key: assoc_key, .. } => {
-                    let index = parse_pattern_i128(key_text).ok_or_else(|| {
+                    let index = self
+                        .assignment_pattern_index_key(path, operand)?
+                        .ok_or_else(|| {
                         format!(
                             "integral associative assignment pattern key `{key_text}` is not a constant in `{path}`"
                         )
@@ -358,6 +352,7 @@ impl<'a> Codegen<'a> {
                 key,
                 key_type,
                 value,
+                ..
             }) = self.kind(operand)
             else {
                 continue;
@@ -410,9 +405,11 @@ impl<'a> Codegen<'a> {
                     }
                 }
                 IrContainerKind::Associative { key: assoc_key, .. } => {
-                    let index = parse_pattern_i128(key).ok_or_else(|| {
-                        format!("integral associative assignment pattern key `{key}` is not a constant in `{path}`")
-                    })?;
+                    let index = self
+                        .assignment_pattern_index_key(path, operand)?
+                        .ok_or_else(|| {
+                            format!("integral associative assignment pattern key `{key}` is not a constant in `{path}`")
+                        })?;
                     if seen_integral.contains(&index) {
                         return Err(format!(
                             "duplicate associative assignment pattern key `{key}` in `{path}`"

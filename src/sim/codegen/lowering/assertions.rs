@@ -1832,9 +1832,8 @@ pub(super) fn sampled_compatible(expression: &IrExpr) -> bool {
             sampled_compatible(sel) && sampled_compatible(a) && sampled_compatible(b)
         }
         IrExprKind::Predicate { clauses: parts }
-        | IrExprKind::Concat { parts } | IrExprKind::Replicate { parts, .. } => {
-            parts.iter().all(sampled_compatible)
-        }
+        | IrExprKind::Concat { parts }
+        | IrExprKind::Replicate { parts, .. } => parts.iter().all(sampled_compatible),
         // Pattern bindings are procedural state updates and are not sampled
         // assertion expressions. Conditional pattern support is confined to
         // executable procedural predicates.

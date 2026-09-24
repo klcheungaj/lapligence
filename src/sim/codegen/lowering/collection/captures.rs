@@ -61,6 +61,20 @@ impl<'a> Codegen<'a> {
             return None;
         }
         let function = self.func.as_ref()?;
+        if let Some(storage) = function.persistent.get(&target) {
+            return Some(CaptureSource {
+                info: ProcLocalInfo {
+                    c_name: storage.global.clone(),
+                    width: storage.width,
+                    signed: storage.signed,
+                    two_state: storage.two_state,
+                    static_signal: Some(storage.clone()),
+                },
+                initial: sig_read_expr_full(storage),
+                lifetime: StorageLifetime::Static,
+                kind: super::super::storage_kind(storage.width),
+            });
+        }
         if let Some((c_name, width, signed, two_state, _shortreal)) = function.locals.get(&target) {
             return Some(CaptureSource {
                 info: ProcLocalInfo {
@@ -77,20 +91,6 @@ impl<'a> Codegen<'a> {
                     StorageLifetime::Static
                 },
                 kind: super::super::storage_kind(*width),
-            });
-        }
-        if let Some(storage) = function.persistent.get(&target) {
-            return Some(CaptureSource {
-                info: ProcLocalInfo {
-                    c_name: storage.global.clone(),
-                    width: storage.width,
-                    signed: storage.signed,
-                    two_state: storage.two_state,
-                    static_signal: Some(storage.clone()),
-                },
-                initial: sig_read_expr_full(storage),
-                lifetime: StorageLifetime::Static,
-                kind: super::super::storage_kind(storage.width),
             });
         }
         if let Some(arg) = function.arg_read.get(&target) {
@@ -213,7 +213,9 @@ impl<'a> Codegen<'a> {
             };
             if let Some(target) = target {
                 if !cg.node_is_within(target, branch)
-                    && (cg.capture_source(target).is_some()
+                    && (cg
+                        .capture_source(target)
+                        .is_some_and(|source| source.info.static_signal.is_none())
                         || cg.proc_string_local_name(target).is_some())
                 {
                     out.insert(target);

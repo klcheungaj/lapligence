@@ -1,8 +1,8 @@
 use super::*;
 
 mod array_conditionals;
-mod sequential_predicates;
 mod fixed_array_reductions;
+mod sequential_predicates;
 
 fn valid_model() -> IrModel {
     let mut model = IrModel::new("top".to_string(), 1).unwrap();
@@ -296,6 +296,54 @@ fn delayed_nba_rejects_unproven_pointer_lifetimes() {
     };
     let error = valid_model().validate_stmt(&statement, None).unwrap_err();
     assert!(error.detail().contains("persistent"));
+}
+
+#[test]
+fn nonblocking_assignments_accept_only_static_function_return_slots() {
+    let statement = IrStmt::Assign {
+        lhs: IrLhs::WholeRef {
+            addr: "&_ret".into(),
+            width: 8,
+            signed: false,
+            two_state: false,
+            shortreal: false,
+        },
+        rhs: packed_const(0x99, 8),
+        nba: true,
+    };
+    let mut static_function = IrFunc::new(
+        "static_result".into(),
+        Some(IrType::Packed {
+            width: 8,
+            signed: false,
+            two_state: false,
+        }),
+        vec![],
+        vec![],
+        vec![],
+        vec![],
+    );
+    static_function.automatic = false;
+    valid_model()
+        .validate_stmt(&statement, Some(&static_function))
+        .unwrap();
+
+    let automatic_function = IrFunc::new(
+        "automatic_result".into(),
+        Some(IrType::Packed {
+            width: 8,
+            signed: false,
+            two_state: false,
+        }),
+        vec![],
+        vec![],
+        vec![],
+        vec![],
+    );
+    let error = valid_model()
+        .validate_stmt(&statement, Some(&automatic_function))
+        .unwrap_err();
+    assert!(error.detail().contains("persistent target storage"));
 }
 
 #[test]

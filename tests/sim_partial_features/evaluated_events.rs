@@ -38,12 +38,13 @@ fn callback_helpers_with_locals_loops_and_nested_calls_evaluate_events() {
 
 #[test]
 fn static_helpers_keep_fixed_array_and_qualified_values_private() {
-    super::sim_cli::run_case(
+    super::sim_cli::run_case_with_args(
         "syn011_rtl_helper_events",
         "fixed_array",
         "fixed_array changes=2 value=9\n",
         "",
         &[],
+        &["--edition", "2009"],
     );
     super::sim_cli::run_case(
         "syn011_rtl_helper_events",
@@ -67,6 +68,6 @@ fn stateful_static_helpers_keep_their_persistent_return_rejection() {
     super::sim_cli::reject_case(
         "syn011_rtl_helper_events",
         "stateful_static",
-        "function reads persistent return state",
+        "static function return is read or is not assigned on every path",
     );
 }

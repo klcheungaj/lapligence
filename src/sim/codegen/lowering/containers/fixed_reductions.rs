@@ -38,8 +38,13 @@ impl Codegen<'_> {
         let element_signed = element.info.signed;
         let with_node = self.container_method_with_node(path, call, receiver)?;
         if with_node.is_none() {
-            if !self.container_method_arguments(path, call, receiver)?.is_empty() {
-                return Err(format!("fixed-array reduction in `{path}` has unexpected arguments"));
+            if !self
+                .container_method_arguments(path, call, receiver)?
+                .is_empty()
+            {
+                return Err(format!(
+                    "fixed-array reduction in `{path}` has unexpected arguments"
+                ));
             }
             if !reduction_integral(&element) {
                 return Err(format!(
@@ -70,7 +75,9 @@ impl Codegen<'_> {
         };
         let source = if let Some(array) = direct {
             if self.model.arrays[array].total != count {
-                return Err(format!("fixed-array reduction storage extent mismatch in `{path}`"));
+                return Err(format!(
+                    "fixed-array reduction storage extent mismatch in `{path}`"
+                ));
             }
             IrFixedArrayReductionSource::Array(array)
         } else {
@@ -86,7 +93,9 @@ impl Codegen<'_> {
             })?;
             let value = self.lower_expr(path, receiver)?;
             if value.width != width || value.is_real() {
-                return Err(format!("fixed-array reduction receiver width mismatch in `{path}`"));
+                return Err(format!(
+                    "fixed-array reduction receiver width mismatch in `{path}`"
+                ));
             }
             IrFixedArrayReductionSource::Value(Box::new(value))
         };
@@ -157,7 +166,10 @@ impl Codegen<'_> {
         let Some(receiver) = args.first() else {
             return Ok(None);
         };
-        let NodeKind::Expr(ExprKind::Ref { target: Some(target) }) = self.kind(*receiver) else {
+        let NodeKind::Expr(ExprKind::Ref {
+            target: Some(target),
+        }) = self.kind(*receiver)
+        else {
             return Ok(None);
         };
         let Some(iterator) = self.fixed_method_iterators.get(target).cloned() else {
@@ -251,7 +263,11 @@ fn reduction_integral(descriptor: &TypeDescriptor) -> bool {
 /// Peel only the outer dimension; a row is one iterator value, not a flattened
 /// list of packed leaves. This is essential to nested reductions with `with`.
 fn reduction_element(descriptor: &TypeDescriptor) -> Result<(i32, i32, TypeDescriptor), String> {
-    let TypeShape::FixedArray { dimensions, element } = &descriptor.shape else {
+    let TypeShape::FixedArray {
+        dimensions,
+        element,
+    } = &descriptor.shape
+    else {
         return Err("reduction receiver is not a fixed unpacked array".to_owned());
     };
     let &(left, right) = dimensions

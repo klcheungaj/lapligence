@@ -299,6 +299,9 @@ impl EmitCtx<'_, '_> {
             self.cg.kind(expression),
             NodeKind::Expr(ExprKind::Ref { .. } | ExprKind::HierPath { .. })
         );
+        // Member paths share aggregate storage, so event waits must compare the selected value.
+        let selected_aggregate_member = self.cg.packed_member_info(expression).is_some()
+            || self.cg.unpacked_member_info(expression).is_some();
         let mapped_formal = matches!(
             self.cg.kind(expression),
             NodeKind::Expr(ExprKind::Ref {
@@ -308,12 +311,50 @@ impl EmitCtx<'_, '_> {
                 .as_ref()
                 .is_some_and(|func| func.arg_ir.contains_key(target))
         );
+        let persistent_subroutine_signal = match self.cg.kind(expression) {
+            NodeKind::Expr(ExprKind::Ref {
+                target: Some(target),
+            }) => Some(*target),
+            NodeKind::Expr(ExprKind::HierPath { refs, .. }) => {
+                refs.iter().rev().copied().flatten().next()
+            }
+            _ => None,
+        }
+        .and_then(|target| {
+            self.cg
+                .func
+                .as_ref()
+                .and_then(|function| function.persistent.get(&target))
+                .or_else(|| self.cg.static_formals.get(&(self.inst, target)))
+                .or_else(|| self.cg.static_task_locals.get(&(self.inst, target)))
+        });
         if simple
+            && !selected_aggregate_member
             && condition.is_none()
             && self.cg.nested_proc_local_ref(expression).is_none()
             && !mapped_formal
         {
-            let (name, info) = self.cg.resolve_signal_id(&self.path, expression)?;
+            let (name, info) = match self.cg.resolve_signal_id(&self.path, expression) {
+                Ok(resolved) => resolved,
+                Err(error) => {
+                    let Some(signal) = persistent_subroutine_signal else {
+                        return Err(error);
+                    };
+                    if signal.real {
+                        if edge != IrEdge::Any {
+                            return Err(format!(
+                                "edge control on real-valued signal `{}` is not supported in `{}`",
+                                signal.global, self.path
+                            ));
+                        }
+                        return Ok((IrWaitSrc::Real(signal.global.clone()), edge));
+                    }
+                    return Ok((
+                        IrWaitSrc::Sig(self.cg.signal_dependency_name(signal.ir)),
+                        edge,
+                    ));
+                }
+            };
             if info.real {
                 if edge != IrEdge::Any {
                     return Err(format!(

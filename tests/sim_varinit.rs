@@ -169,12 +169,13 @@ endmodule
 /// runs (with its side effects) before initial procedures observe it.
 #[test]
 fn initializer_function_before_initial() {
-    sim_cli::run_case(
+    sim_cli::run_case_with_args(
         "feature_completion/g1_18",
         "initializer_function_before_initial",
         "x=42 observed=41\n",
         "",
         &[],
+        &["--edition", "2009"],
     );
 }
 

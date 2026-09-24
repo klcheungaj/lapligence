@@ -120,18 +120,36 @@ pub enum IrMemoryAddressingPolicy {
 /// A fixed unpacked memory view captured at the system-task call site.
 ///
 /// `origin` and `strides` address the original flat array storage while
-/// `dims` describes the remaining unpacked dimensions after any constant
-/// higher-dimension selectors. The runtime uses the first remaining
-/// dimension for file addresses and walks all lower dimensions in row-major
-/// order. Keeping this metadata in the owned IR prevents a generated model
-/// from retaining a transient frontend expression or pointer.
-#[derive(Clone, Debug, Eq, PartialEq)]
+/// `dims` describes the remaining unpacked dimensions after any higher
+/// selectors and optional lowest-specified-dimension slice. The runtime uses
+/// the first remaining dimension for file addresses and walks all lower
+/// dimensions in row-major order. Keeping selectors as owned expressions
+/// prevents a generated model from retaining a transient frontend expression
+/// or pointer.
+#[derive(Clone, Debug, PartialEq)]
 pub struct IrMemoryView {
     pub array: usize,
     pub origin: u64,
+    /// Runtime selectors for already specified higher dimensions. Their
+    /// expressions are evaluated once before the memory operation, and each
+    /// selector's bounds and physical flat-array stride are retained here.
+    pub selectors: Vec<IrMemorySelector>,
+    /// True when the first retained dimension is a selected slice of the
+    /// corresponding source-array dimension.
+    pub sliced: bool,
     pub dims: Vec<(i32, i32)>,
     pub strides: Vec<u64>,
     pub total: u64,
+}
+
+/// One runtime-selected higher dimension of a fixed memory view.
+#[derive(Clone, Debug, PartialEq)]
+pub struct IrMemorySelector {
+    pub dimension: usize,
+    pub left: i32,
+    pub right: i32,
+    pub stride: u64,
+    pub value: IrExpr,
 }
 
 /// File-control tasks that do not produce a packed value.

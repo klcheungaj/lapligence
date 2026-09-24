@@ -131,7 +131,11 @@ static void check_pair(sv4_t left, sv4_t right) {
         check_shape(result, width, is_signed, left, right);
         for (uint32_t bit = 0; bit < width; ++bit) {
             unsigned x = extended(left, bit, is_signed), y = extended(right, bit, is_signed);
-            unsigned expected = digit == 0 ? y : (digit == 1 || digit == 4) ? x : x == y ? x : 2;
+            /* Published 1364-2001 / 1800-2009 packed mux tables map Z/Z to X
+             * for ambiguous selectors; known selectors still select an arm. */
+            unsigned expected = digit == 0 ? y :
+                                (digit == 1 || digit == 4) ? x :
+                                x == y && x != 3 ? x : 2;
             CHECK(state(result, bit) == expected);
         }
         sv4_destroy(&result);

@@ -108,6 +108,9 @@ typedef enum {
     LLG_REF_PACKED_PLAN = 6,
     LLG_REF_COMPOSITE = 7,
     LLG_REF_VIEW = 8,
+    // A selected tagged-union member with captured receiver plans for every
+    // active-tag check. Call scopes own the view and check array.
+    LLG_REF_TAGGED_VIEW = 9,
 } llg_ref_kind_t;
 
 typedef struct {
@@ -139,10 +142,23 @@ typedef struct {
 } llg_ref_composite_t;
 
 typedef struct {
+    sv4_select_plan_t receiver_plan;
+    uint32_t tag_width;
+    uint32_t member_index;
+    const char* member_name;
+} llg_ref_tag_check_t;
+
+typedef struct {
     llg_ref_t* parent;
     sv4_select_plan_t plan;
+    size_t tag_check_count;
+    const llg_ref_tag_check_t* tag_checks;
+    const char* location;
 } llg_ref_view_t;
 
+// Pure validation; runtime-facing reference access reports a failed check.
+int llg_ref_view_valid(const llg_ref_view_t* view, const sv4_t* parent,
+                       size_t* failed_check);
 sv4_t llg_ref_read(const llg_ref_t* ref);
 
 // Net resolution modes.  The pure resolver has no scheduler

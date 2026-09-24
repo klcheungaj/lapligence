@@ -31,14 +31,7 @@ impl Codegen<'_> {
             .map(structure_merge_members)
             .transpose()?;
         let sel = self.lower_boolean_expr(scope_path, operands[0])?;
-        self.lower_conditional_arms(
-            scope_path,
-            sel,
-            operands[1],
-            operands[2],
-            array,
-            structure,
-        )
+        self.lower_conditional_arms(scope_path, sel, operands[1], operands[2], array, structure)
     }
 
     pub(in super::super) fn lower_conditional_predicate(
@@ -47,7 +40,9 @@ impl Codegen<'_> {
         predicate: &crate::core::db::ConditionalPredicate,
     ) -> Result<IrExpr, String> {
         if predicate.clauses.is_empty() {
-            return Err(format!("conditional predicate has no clauses in `{scope_path}`"));
+            return Err(format!(
+                "conditional predicate has no clauses in `{scope_path}`"
+            ));
         }
         let clauses = predicate
             .clauses
@@ -57,7 +52,12 @@ impl Codegen<'_> {
         if let [clause] = clauses.as_slice() {
             return Ok(clause.clone());
         }
-        Ok(IrExpr::new(IrExprKind::Predicate { clauses }, 1, false, None))
+        Ok(IrExpr::new(
+            IrExprKind::Predicate { clauses },
+            1,
+            false,
+            None,
+        ))
     }
 
     fn lower_predicate_clause(
@@ -87,18 +87,14 @@ impl Codegen<'_> {
         match_kind: IrPatternMatchKind,
     ) -> Result<IrExpr, String> {
         let info = self.db.conditional_pattern(pattern_id).ok_or_else(|| {
-            format!(
-                "conditional predicate pattern metadata is missing in `{scope_path}`"
-            )
+            format!("conditional predicate pattern metadata is missing in `{scope_path}`")
         })?;
         if matches!(
             info.kind,
             ConditionalPatternKind::Structure | ConditionalPatternKind::Tagged
         ) {
             let descriptor = self.query_descriptor(expression).cloned().ok_or_else(|| {
-                format!(
-                    "conditional aggregate pattern source type is missing in `{scope_path}`"
-                )
+                format!("conditional aggregate pattern source type is missing in `{scope_path}`")
             })?;
             let source_width = Codegen::fixed_descriptor_width(&descriptor).ok_or_else(|| {
                 format!(
@@ -159,9 +155,7 @@ impl Codegen<'_> {
             ConditionalPatternKind::Wildcard => None,
             ConditionalPatternKind::Binding => {
                 let target = info.binding.ok_or_else(|| {
-                    format!(
-                        "conditional predicate binding has no declaration in `{scope_path}`"
-                    )
+                    format!("conditional predicate binding has no declaration in `{scope_path}`")
                 })?;
                 Some(self.lower_lhs(scope_path, target).map_err(|error| {
                     format!("conditional predicate binding cannot be assigned in `{scope_path}`: {error}")
@@ -188,7 +182,9 @@ impl Codegen<'_> {
             if constant.is_real()
                 || self
                     .query_descriptor(*constant_node)
-                    .is_some_and(|descriptor| !matches!(descriptor.shape, TypeShape::PackedAtom { .. }))
+                    .is_some_and(|descriptor| {
+                        !matches!(descriptor.shape, TypeShape::PackedAtom { .. })
+                    })
             {
                 return Err(format!(
                     "conditional predicate constant pattern requires an integral constant in `{scope_path}`"
@@ -258,7 +254,10 @@ impl Codegen<'_> {
                 "conditional structure pattern requires a structure source in `{scope_path}`"
             ));
         };
-        if !matches!(layout.kind, AggregateKind::PackedStruct | AggregateKind::UnpackedStruct) {
+        if !matches!(
+            layout.kind,
+            AggregateKind::PackedStruct | AggregateKind::UnpackedStruct
+        ) {
             return Err(format!(
                 "conditional structure pattern requires a fixed structure in `{scope_path}`"
             ));
@@ -267,9 +266,7 @@ impl Codegen<'_> {
             .db
             .conditional_pattern_fields(pattern_id)
             .ok_or_else(|| {
-                format!(
-                    "conditional structure pattern fields are missing in `{scope_path}`"
-                )
+                format!("conditional structure pattern fields are missing in `{scope_path}`")
             })?
             .to_vec();
         let mut seen_fields = HashSet::new();
@@ -322,14 +319,10 @@ impl Codegen<'_> {
                     )
                 })?;
             let offset = base_offset.checked_add(displacement).ok_or_else(|| {
-                format!(
-                    "conditional structure pattern member offset overflows in `{scope_path}`"
-                )
+                format!("conditional structure pattern member offset overflows in `{scope_path}`")
             })?;
             let info = self.db.conditional_pattern(field.pattern).ok_or_else(|| {
-                format!(
-                    "conditional structure pattern child metadata is missing in `{scope_path}`"
-                )
+                format!("conditional structure pattern child metadata is missing in `{scope_path}`")
             })?;
             match info.kind {
                 ConditionalPatternKind::Wildcard => {}
@@ -469,14 +462,10 @@ impl Codegen<'_> {
             ));
         }
         let info = self.db.conditional_pattern(pattern_id).ok_or_else(|| {
-            format!(
-                "conditional tagged pattern metadata is missing in `{scope_path}`"
-            )
+            format!("conditional tagged pattern metadata is missing in `{scope_path}`")
         })?;
         let member_id = info.tagged_member.ok_or_else(|| {
-            format!(
-                "conditional tagged pattern has no resolved union member in `{scope_path}`"
-            )
+            format!("conditional tagged pattern has no resolved union member in `{scope_path}`")
         })?;
         let member_name = self.db.node(member_id).name.clone();
         let member_index = layout
@@ -553,11 +542,12 @@ impl Codegen<'_> {
                     "void tagged pattern member `{member_name}` cannot have a payload pattern in `{scope_path}`"
                 ));
             }
-            let member_width = Codegen::fixed_descriptor_width(&member.descriptor).ok_or_else(|| {
-                format!(
+            let member_width =
+                Codegen::fixed_descriptor_width(&member.descriptor).ok_or_else(|| {
+                    format!(
                     "tagged pattern member `{member_name}` has no fixed payload in `{scope_path}`"
                 )
-            })?;
+                })?;
             if member_width > payload_width {
                 return Err(format!(
                     "tagged pattern member `{member_name}` exceeds its union payload in `{scope_path}`"
@@ -636,9 +626,7 @@ impl Codegen<'_> {
             }
             ConditionalPatternKind::Binding => {
                 let target = info.binding.ok_or_else(|| {
-                    format!(
-                        "nested conditional binding has no declaration in `{scope_path}`"
-                    )
+                    format!("nested conditional binding has no declaration in `{scope_path}`")
                 })?;
                 let target_descriptor = self.query_descriptor(target).ok_or_else(|| {
                     format!(
@@ -665,9 +653,7 @@ impl Codegen<'_> {
                     exact: false,
                     constant: None,
                     binding: Some(self.lower_lhs(scope_path, target).map_err(|error| {
-                        format!(
-                            "conditional binding cannot be assigned in `{scope_path}`: {error}"
-                        )
+                        format!("conditional binding cannot be assigned in `{scope_path}`: {error}")
                     })?),
                 });
                 Ok(())
@@ -722,14 +708,7 @@ impl Codegen<'_> {
             .map(structure_merge_members)
             .transpose()?;
         let sel = self.lower_conditional_predicate(scope_path, predicate)?;
-        self.lower_conditional_arms(
-            scope_path,
-            sel,
-            if_true,
-            if_false,
-            array,
-            structure,
-        )
+        self.lower_conditional_arms(scope_path, sel, if_true, if_false, array, structure)
     }
 
     fn lower_conditional_arms(
@@ -764,18 +743,11 @@ impl Codegen<'_> {
         if let Some(members) = structure {
             let width = members
                 .iter()
-                .try_fold(0u32, |total, member| {
-                    total.checked_add(member.width)
-                })
+                .try_fold(0u32, |total, member| total.checked_add(member.width))
                 .ok_or_else(|| {
                     format!("fixed-structure conditional payload width overflow in `{scope_path}`")
                 })?;
-            if width == 0
-                || a.width != width
-                || b.width != width
-                || a.is_real()
-                || b.is_real()
-            {
+            if width == 0 || a.width != width || b.width != width || a.is_real() || b.is_real() {
                 return Err(format!(
                     "fixed-structure conditional payload width mismatch in `{scope_path}`"
                 ));

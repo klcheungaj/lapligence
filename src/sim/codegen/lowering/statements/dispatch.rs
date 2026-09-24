@@ -167,7 +167,12 @@ impl EmitCtx<'_, '_> {
                     Ok(Vec::new())
                 }
             }
-            NodeKind::Stmt(StmtKind::IfElse { predicate, if_true, if_false, check }) => {
+            NodeKind::Stmt(StmtKind::IfElse {
+                predicate,
+                if_true,
+                if_false,
+                check,
+            }) => {
                 let c = self.cg.lower_conditional_predicate(&self.path, predicate)?;
                 let then_ = self.lower_stmt(*if_true)?;
                 let els = if_false.map(|branch| self.lower_stmt(branch)).transpose()?;

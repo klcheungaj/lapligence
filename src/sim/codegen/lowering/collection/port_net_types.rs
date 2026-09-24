@@ -32,7 +32,11 @@ impl Codegen<'_> {
             .ok_or_else(|| "port-connected net array has no owned declaration".into())
     }
 
-    fn insert_collapse_point(&self, plan: &mut NetCollapsePlan, point: NetPoint) -> Result<(), String> {
+    fn insert_collapse_point(
+        &self,
+        plan: &mut NetCollapsePlan,
+        point: NetPoint,
+    ) -> Result<(), String> {
         plan.insert(point, self.collapse_net_type(point.owner())?)
     }
 
@@ -60,7 +64,11 @@ impl Codegen<'_> {
                 .map(|(internal, bit)| {
                     (
                         NetPoint::Bit(internal),
-                        NetPoint::ArrayBit { owner, element, bit },
+                        NetPoint::ArrayBit {
+                            owner,
+                            element,
+                            bit,
+                        },
                     )
                 })
                 .collect());
@@ -188,7 +196,8 @@ impl Codegen<'_> {
                         "inout port `{}`: uwire endpoints remain unsupported at {}:{}:{}",
                         self.display_name(port),
                         self.node(port).file.as_deref().unwrap_or("<unknown>"),
-                        self.node(port).line, self.node(port).col,
+                        self.node(port).line,
+                        self.node(port).col,
                     ));
                 }
                 self.insert_collapse_point(&mut plan, internal)?;
@@ -203,7 +212,11 @@ impl Codegen<'_> {
                     let warning = CollapseWarning {
                         internal: internal_kind,
                         external: external_kind,
-                        selected: if choice.internal() { internal_kind } else { external_kind },
+                        selected: if choice.internal() {
+                            internal_kind
+                        } else {
+                            external_kind
+                        },
                     };
                     self.warn_port_collapse(port, warning, &mut warnings);
                 }
@@ -230,5 +243,4 @@ impl Codegen<'_> {
             ));
         }
     }
-
 }

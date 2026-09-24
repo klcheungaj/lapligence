@@ -5,11 +5,18 @@ use super::*;
 pub(super) enum CapturedValue {
     Numeric(Value),
     Handle(String),
+    Borrowed(String),
 }
 
 fn check_capture(storage: StorageRef) -> Result<(), String> {
-    if storage.ownership() != StorageOwnership::Owned {
-        return Err(pending("opaque, borrowed, or shared activation captures"));
+    if storage.ownership() == StorageOwnership::Shared {
+        return Err(pending("shared activation captures"));
+    }
+    if storage.ownership() == StorageOwnership::Borrowed
+        && (storage.lifetime() != StorageLifetime::Automatic
+            || storage.kind() == StorageKind::Opaque)
+    {
+        return Err("borrowed fork capture requires automatic numeric storage".to_owned());
     }
     Ok(())
 }
@@ -22,6 +29,46 @@ impl Frame<'_, '_> {
         let mut values = Vec::new();
         for (storage, initial) in captures {
             check_capture(storage)?;
+            if storage.ownership() == StorageOwnership::Borrowed {
+                let binding = match initial.kind() {
+                    IrExprKind::LocalRead(name) => self.resolve_lookup(name)?,
+                    IrExprKind::FormalRead(index) => {
+                        if let Some(formals) = self.formal_overrides.last() {
+                            formals
+                                .get(*index)
+                                .cloned()
+                                .ok_or_else(|| "invalid inline formal index".to_owned())?
+                        } else {
+                            let formal = self
+                                .ctx
+                                .func
+                                .and_then(|func| func.formals.get(*index))
+                                .ok_or_else(|| {
+                                    "borrowed capture has no enclosing formal".to_owned()
+                                })?;
+                            if formal.is_ref() {
+                                return Err("borrowed capture cannot alias a reference descriptor"
+                                    .to_owned());
+                            }
+                            if formal.is_out {
+                                self.address(&format!("o{index}"))?
+                            } else {
+                                self.resolve_lookup(&format!("a{index}"))?
+                            }
+                        }
+                    }
+                    _ => {
+                        return Err(
+                            "borrowed fork capture requires a local or formal source".to_owned()
+                        );
+                    }
+                };
+                if !binding.automatic || binding.width != initial.width {
+                    return Err("borrowed fork capture source is not the automatic cell".to_owned());
+                }
+                values.push((storage, CapturedValue::Borrowed(binding.address)));
+                continue;
+            }
             if storage.kind() == StorageKind::Opaque {
                 let handle = match initial.kind() {
                     IrExprKind::ObjectQuery(query) => match query.as_ref() {
@@ -62,6 +109,17 @@ impl Frame<'_, '_> {
         self.line(format!("llg_frame_t* {name} = llg_frame_new({count}ULL);"));
         for (storage, value) in values {
             match value {
+                CapturedValue::Borrowed(address) => {
+                    let operation = if storage.kind() == StorageKind::Real {
+                        "real"
+                    } else {
+                        "value"
+                    };
+                    self.line(format!(
+                        "llg_frame_alias_{operation}({name}, {}u, {address});",
+                        storage.slot()
+                    ));
+                }
                 CapturedValue::Handle(handle) => self.line(format!(
                     "llg_frame_capture_opaque({name}, {}u, {handle});",
                     storage.slot()
@@ -91,6 +149,33 @@ impl Frame<'_, '_> {
         source: &str,
     ) -> Result<(), String> {
         check_capture(storage)?;
+        if storage.ownership() == StorageOwnership::Borrowed {
+            let pointer = self.name("capture_alias");
+            let (ty, operation) = if storage.kind() == StorageKind::Real {
+                ("double", "real")
+            } else {
+                ("sv4_t", "value")
+            };
+            self.line(format!(
+                "{ty}* {pointer} = llg_frame_{operation}_address({source}, {}u);",
+                storage.slot()
+            ));
+            self.bindings
+                .last_mut()
+                .expect("frame always has a binding scope")
+                .insert(
+                    name.to_owned(),
+                    Binding {
+                        address: pointer,
+                        width: initial.width,
+                        signed: initial.signed,
+                        two_state: false,
+                        shortreal: false,
+                        automatic: true,
+                    },
+                );
+            return Ok(());
+        }
         if storage.kind() == StorageKind::Opaque {
             let binding = self.native_local(name, NativeKind::Chandle);
             self.line(format!(
@@ -129,6 +214,16 @@ impl Frame<'_, '_> {
         branches: &[IrCapturedBranch],
         target: Option<IrActivationTarget>,
     ) -> Result<(), String> {
+        if kind != IrJoinKind::Join
+            && branches.iter().any(|branch| {
+                branch
+                    .captures()
+                    .iter()
+                    .any(|capture| capture.storage().ownership() == StorageOwnership::Borrowed)
+            })
+        {
+            return Err("only a synchronous fork join may borrow automatic storage".to_owned());
+        }
         // Evaluate every initializer before creating a group or child frame.
         let mut prepared = Vec::new();
         for branch in branches {

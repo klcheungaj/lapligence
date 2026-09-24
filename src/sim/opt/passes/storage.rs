@@ -96,6 +96,12 @@ pub(super) fn mark_unused_storage(model: &mut IrModel, execution: Option<&[Execu
         }
     }
     for func in &model.funcs {
+        // A lowered static result signal is read by the generated function
+        // epilogue even when no IR expression directly names that return
+        // value. Keep its storage alive through unused-storage pruning.
+        if let Some(signal) = func.return_signal {
+            rw.read(signal);
+        }
         for local in &func.locals {
             if let Some(initial) = &local.initial {
                 collect_expr_reads(initial, model, &mut rw);
@@ -374,11 +380,15 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
         }
         IrStmt::Memory {
             path,
+            view,
             start,
             finish,
             ..
         } => {
             path.expressions(&mut |child| collect_expr_reads(child, model, rw));
+            for selector in &view.selectors {
+                collect_expr_reads(&selector.value, model, rw);
+            }
             if let Some(start) = start {
                 collect_expr_reads(start, model, rw);
             }
@@ -815,6 +825,12 @@ fn collect_lhs_rw(l: &IrLhs, model: &IrModel, rw: &mut Rw) {
                 collect_expr_reads(&step.base, model, rw);
             }
         }
+        IrLhs::TaggedSelect { target, steps, .. } => {
+            collect_lhs_rw(target, model, rw);
+            for step in steps {
+                collect_expr_reads(&step.selection.base, model, rw);
+            }
+        }
         IrLhs::Whole(i) => rw.write(*i),
         IrLhs::WholeRef { .. } => {}
         IrLhs::Ref { bit, .. } => {
@@ -854,6 +870,12 @@ fn collect_lhs_read(l: &IrLhs, model: &IrModel, rw: &mut Rw) {
             collect_lhs_read(target, model, rw);
             for step in steps {
                 collect_expr_reads(&step.base, model, rw);
+            }
+        }
+        IrLhs::TaggedSelect { target, steps, .. } => {
+            collect_lhs_read(target, model, rw);
+            for step in steps {
+                collect_expr_reads(&step.selection.base, model, rw);
             }
         }
         IrLhs::Whole(i) | IrLhs::Bit(i, ..) | IrLhs::Part(i, ..) | IrLhs::IdxPart(i, ..) => {
@@ -939,7 +961,8 @@ fn collect_children_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
             collect_expr_reads(b, model, rw);
         }
         IrExprKind::Predicate { clauses: parts }
-        | IrExprKind::Concat { parts } | IrExprKind::Replicate { parts, .. } => {
+        | IrExprKind::Concat { parts }
+        | IrExprKind::Replicate { parts, .. } => {
             for p in parts {
                 collect_expr_reads(p, model, rw);
             }
@@ -994,6 +1017,12 @@ fn collect_children_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
         IrExprKind::Mutation(mutation) => {
             collect_lhs_rw(&mutation.lhs, model, rw);
             collect_expr_reads(&mutation.value, model, rw);
+        }
+        IrExprKind::TaggedSelect { base, steps, .. } => {
+            collect_expr_reads(base, model, rw);
+            for step in steps {
+                collect_expr_reads(&step.selection.base, model, rw);
+            }
         }
         IrExprKind::DynamicCast(cast) => {
             collect_lhs_rw(&cast.lhs, model, rw);

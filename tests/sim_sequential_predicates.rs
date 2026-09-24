@@ -7,7 +7,11 @@ mod sim_harness;
 #[test]
 fn sequential_predicate_truth_table() {
     sim_cli::run_case_with_args(
-        "sequential_predicates", "truth_table", "truth_table=64 true=1 false=21 unknown=42\n", "", &[],
+        "sequential_predicates",
+        "truth_table",
+        "truth_table=64 true=1 false=21 unknown=42\n",
+        "",
+        &[],
         &["--edition", "2009"],
     );
 }
@@ -15,7 +19,11 @@ fn sequential_predicate_truth_table() {
 #[test]
 fn sequential_predicate_branch_roles() {
     sim_cli::run_case_with_args(
-        "sequential_predicates", "branch_roles", "branch_roles=pass\n", "", &[],
+        "sequential_predicates",
+        "branch_roles",
+        "branch_roles=pass\n",
+        "",
+        &[],
         &["--edition", "2009"],
     );
 }
@@ -23,7 +31,11 @@ fn sequential_predicate_branch_roles() {
 #[test]
 fn sequential_predicate_effects() {
     sim_cli::run_case_with_args(
-        "sequential_predicates", "effects", "effects=6 cases passed\n", "", &[],
+        "sequential_predicates",
+        "effects",
+        "effects=6 cases passed\n",
+        "",
+        &[],
         &["--edition", "2009"],
     );
 }
@@ -31,7 +43,11 @@ fn sequential_predicate_effects() {
 #[test]
 fn sequential_predicate_constant_prefix() {
     sim_cli::run_case_with_args(
-        "sequential_predicates", "constant_prefix", "constant_prefix=pass calls=2\n", "", &[],
+        "sequential_predicates",
+        "constant_prefix",
+        "constant_prefix=pass calls=2\n",
+        "",
+        &[],
         &["--edition", "2009"],
     );
 }
@@ -39,7 +55,11 @@ fn sequential_predicate_constant_prefix() {
 #[test]
 fn sequential_predicate_wide_truth() {
     sim_cli::run_case_with_args(
-        "sequential_predicates", "wide_truth", "wide_truth=pass\n", "", &[],
+        "sequential_predicates",
+        "wide_truth",
+        "wide_truth=pass\n",
+        "",
+        &[],
         &["--edition", "2009"],
     );
 }
@@ -47,7 +67,11 @@ fn sequential_predicate_wide_truth() {
 #[test]
 fn sequential_predicate_real_result() {
     sim_cli::run_case_with_args(
-        "sequential_predicates", "real_result", "real_result=pass calls=3,3\n", "", &[],
+        "sequential_predicates",
+        "real_result",
+        "real_result=pass calls=3,3\n",
+        "",
+        &[],
         &["--edition", "2009"],
     );
 }
@@ -55,7 +79,11 @@ fn sequential_predicate_real_result() {
 #[test]
 fn sequential_predicate_array_results() {
     sim_cli::run_case_with_args(
-        "sequential_predicates", "array_results", "array_results=pass\n", "", &[],
+        "sequential_predicates",
+        "array_results",
+        "array_results=pass\n",
+        "",
+        &[],
         &["--edition", "2009"],
     );
 }
@@ -63,7 +91,11 @@ fn sequential_predicate_array_results() {
 #[test]
 fn sequential_predicate_clock_sensitivity() {
     sim_cli::run_case_with_args(
-        "sequential_predicates", "clock_sensitivity", "clock_sensitivity=pass\n", "", &[],
+        "sequential_predicates",
+        "clock_sensitivity",
+        "clock_sensitivity=pass\n",
+        "",
+        &[],
         &["--edition", "2009"],
     );
 }
@@ -71,7 +103,11 @@ fn sequential_predicate_clock_sensitivity() {
 #[test]
 fn sequential_predicate_nested_qualifiers() {
     sim_cli::run_case_with_args(
-        "sequential_predicates", "nested_qualifiers", "nested_qualifiers=pass\n", "", &[],
+        "sequential_predicates",
+        "nested_qualifiers",
+        "nested_qualifiers=pass\n",
+        "",
+        &[],
         &["--edition", "2009"],
     );
 }
@@ -79,7 +115,11 @@ fn sequential_predicate_nested_qualifiers() {
 #[test]
 fn sequential_predicate_reduction_context() {
     sim_cli::run_case_with_args(
-        "sequential_predicates", "reduction_context", "reduction_context=pass\n", "", &[],
+        "sequential_predicates",
+        "reduction_context",
+        "reduction_context=pass\n",
+        "",
+        &[],
         &["--edition", "2009"],
     );
 }
@@ -141,7 +181,9 @@ fn syn_025_pattern_case_items_filters_and_qualifiers() {
 #[test]
 fn sequential_predicate_bad_matches_if() {
     sim_cli::reject_case_with_args(
-        "sequential_predicates", "bad_matches_if", "pattern",
+        "sequential_predicates",
+        "bad_matches_if",
+        "pattern",
         &["--edition", "2009"],
     );
 }
@@ -149,7 +191,9 @@ fn sequential_predicate_bad_matches_if() {
 #[test]
 fn sequential_predicate_bad_matches_conditional() {
     sim_cli::reject_case_with_args(
-        "sequential_predicates", "bad_matches_conditional", "too few",
+        "sequential_predicates",
+        "bad_matches_conditional",
+        "too few",
         &["--edition", "2009"],
     );
 }
@@ -157,7 +201,9 @@ fn sequential_predicate_bad_matches_conditional() {
 #[test]
 fn sequential_predicate_bad_matches_incompatible() {
     sim_cli::reject_case_with_args(
-        "sequential_predicates", "bad_matches_incompatible", "not a struct",
+        "sequential_predicates",
+        "bad_matches_incompatible",
+        "not a struct",
         &["--edition", "2009"],
     );
 }

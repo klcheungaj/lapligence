@@ -1,4 +1,42 @@
 
+static int llg_ref_report_tag_failure(const llg_ref_view_t* view,
+                                      const sv4_t* parent) {
+    size_t failed = 0;
+    if (llg_ref_view_valid(view, parent, &failed)) return 1;
+    const char* member = "<unknown>";
+    const char* location = "<unknown>";
+    if (view && failed < view->tag_check_count && view->tag_checks) {
+        if (view->tag_checks[failed].member_name)
+            member = view->tag_checks[failed].member_name;
+        if (view->location) location = view->location;
+    }
+    llg_rt_mark_failed();
+    fprintf(stderr,
+            "llg: runtime error: access to inactive tagged-union member %s at %s\n",
+            member, location);
+    fflush(stderr);
+    return 0;
+}
+
+sv4_t llg_rt_ref_read(const llg_ref_t* ref) {
+    if (!ref || (llg_ref_kind_t)ref->kind != LLG_REF_TAGGED_VIEW)
+        return llg_ref_read(ref);
+    const llg_ref_view_t* view = (const llg_ref_view_t*)ref->retained;
+    if (!view || !view->parent) {
+        fputs("llg runtime fatal: invalid tagged reference view\n", stderr);
+        abort();
+    }
+    sv4_t parent = llg_rt_ref_read(view->parent);
+    int valid = llg_ref_report_tag_failure(view, &parent);
+    sv4_t result = valid ? sv4_select_plan_read(parent, &view->plan)
+                         : (ref->two_state ? sv4_zero(ref->width, ref->is_signed)
+                                           : sv4_x(ref->width, ref->is_signed));
+    sv4_destroy(&parent);
+    if (ref->two_state) sv4_replace(&result, sv4_to_two_state(result));
+    sv4_replace(&result, sv4_cast(result, ref->width, ref->is_signed));
+    return result;
+}
+
 void llg_ref_write(llg_ref_t* ref, sv4_t value) {
     if (!ref) return;
     /* Signal publication can terminate the current coroutine. Both snapshots
@@ -29,7 +67,8 @@ void llg_ref_write(llg_ref_t* ref, sv4_t value) {
         if (remaining) abort();
         goto cleanup;
     }
-    if ((llg_ref_kind_t)ref->kind == LLG_REF_VIEW) {
+    if ((llg_ref_kind_t)ref->kind == LLG_REF_VIEW ||
+        (llg_ref_kind_t)ref->kind == LLG_REF_TAGGED_VIEW) {
         sv4_replace(&values[1], sv4_fill(1, ref->width, 0));
         llg_ref_write_masked(ref, values[0], values[1]);
         goto cleanup;
@@ -87,9 +126,14 @@ void llg_ref_write_masked(llg_ref_t* ref, sv4_t value, sv4_t mask) {
             if (sv4_to_bool(values[3])) llg_ref_write_masked(part, values[2], values[3]);
         }
         if (remaining) abort();
-    } else if ((llg_ref_kind_t)ref->kind == LLG_REF_VIEW) {
+    } else if ((llg_ref_kind_t)ref->kind == LLG_REF_VIEW ||
+               (llg_ref_kind_t)ref->kind == LLG_REF_TAGGED_VIEW) {
         const llg_ref_view_t* view = (const llg_ref_view_t*)ref->retained;
         if (!view || !view->parent) abort();
+        if ((llg_ref_kind_t)ref->kind == LLG_REF_TAGGED_VIEW) {
+            sv4_replace(&values[2], llg_rt_ref_read(view->parent));
+            if (!llg_ref_report_tag_failure(view, &values[2])) goto cleanup;
+        }
         sv4_replace(&values[2], sv4_zero(view->plan.storage_width, 0));
         sv4_replace(&values[3], sv4_zero(view->plan.storage_width, 0));
         sv4_select_plan_set(&values[2], &view->plan, values[0]);
@@ -106,6 +150,7 @@ void llg_ref_write_masked(llg_ref_t* ref, sv4_t value, sv4_t mask) {
         }
         llg_ref_write(ref, values[2]);
     }
+cleanup:
     llg_value_scope_end(scope);
 }
 
@@ -131,10 +176,15 @@ void llg_ref_nba_masked(llg_ref_t* ref, sv4_t value, sv4_t mask, uint64_t ticks)
             llg_ref_nba_masked(part, values[2], values[3], ticks);
         }
         if (remaining) abort();
-    } else if ((llg_ref_kind_t)ref->kind == LLG_REF_VIEW) {
+    } else if ((llg_ref_kind_t)ref->kind == LLG_REF_VIEW ||
+               (llg_ref_kind_t)ref->kind == LLG_REF_TAGGED_VIEW) {
         const llg_ref_view_t* view = (const llg_ref_view_t*)ref->retained;
         if (!view || !view->parent) abort();
-        values[2] = sv4_zero(view->plan.storage_width, 0);
+        if ((llg_ref_kind_t)ref->kind == LLG_REF_TAGGED_VIEW) {
+            sv4_replace(&values[2], llg_rt_ref_read(view->parent));
+            if (!llg_ref_report_tag_failure(view, &values[2])) goto cleanup;
+        }
+        sv4_replace(&values[2], sv4_zero(view->plan.storage_width, 0));
         values[3] = sv4_zero(view->plan.storage_width, 0);
         sv4_select_plan_set(&values[2], &view->plan, values[0]);
         sv4_select_plan_set(&values[3], &view->plan, values[1]);

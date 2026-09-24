@@ -4,8 +4,8 @@ use super::objects::object_query;
 use super::*;
 use crate::core::db::ConcurrentAssertionKind;
 use crate::sim::ir::{
-    IrAssertionControlKind, IrContainerElement, IrObjectQuery, IrObjectStmt, IrStringExpr,
-    IrVpiCompileArg, IrVpiCompileCall,
+    IrAssertionControlKind, IrContainerElement, IrMemorySelector, IrObjectQuery, IrObjectStmt,
+    IrStringExpr, IrVpiCompileArg, IrVpiCompileCall,
 };
 
 mod assertions;
@@ -337,9 +337,9 @@ fn validate_force_lhs(model: &IrModel, lhs: &IrLhs, path: &str) -> Result<bool, 
             })?;
             Ok(matches!(signal.ty, IrType::Real { .. }))
         }
-        IrLhs::PackedSelect { .. } | IrLhs::WholeRef { .. } => Err(format!(
-            "force/release target in `{path}` does not have persistent canonical storage"
-        )),
+        IrLhs::PackedSelect { .. } | IrLhs::TaggedSelect { .. } | IrLhs::WholeRef { .. } => Err(
+            format!("force/release target in `{path}` does not have persistent canonical storage"),
+        ),
         IrLhs::Ref { .. } => Err(format!(
             "force/release target in `{path}` cannot be a ref formal"
         )),

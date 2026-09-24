@@ -190,6 +190,10 @@ each eval/condition context field owns a reference, including shared pointers.
   owned activation-frame context. The expression wait takes ownership of the
   initial frame references and releases them on wake, cancellation, or runtime
   teardown; callbacks cannot suspend or mutate scheduler-observed storage.
+- **Joined fork captures:** borrowed frame slots point to registered numeric
+  cells in the suspended parent activation. `join` keeps that activation live
+  until every child completes; cancellation kills descendants before releasing
+  the parent scope. Detachable forks retain independent value snapshots.
 - **Storage helpers:** `llg_string.h/.c` provides owned strings;
   `llg_container.h/.c` provides packed fast-path containers plus descriptor-
   driven dynamic arrays for represented real, string, chandle, and nested

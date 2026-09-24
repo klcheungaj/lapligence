@@ -155,6 +155,18 @@ impl<'a, 'm> Frame<'a, 'm> {
                 target.binding.two_state |= *two_state;
                 return Ok(target);
             }
+            IrLhs::TaggedSelect {
+                target,
+                steps,
+                signed,
+                two_state,
+                location,
+            } => {
+                let target = self.target(target)?;
+                let target =
+                    self.target_tagged_select(target, steps, *signed, *two_state, location)?;
+                return Ok(target);
+            }
             IrLhs::Whole(index)
             | IrLhs::Bit(index, ..)
             | IrLhs::Part(index, ..)
@@ -322,6 +334,91 @@ impl<'a, 'm> Frame<'a, 'm> {
         }
     }
 
+    fn target_tagged_select(
+        &mut self,
+        mut target: Target,
+        steps: &[IrTaggedSelectStep],
+        signed: bool,
+        two_state: bool,
+        location: &str,
+    ) -> Result<Target, String> {
+        if steps.is_empty() || target.selection.is_some() || target.binding.width == 0 {
+            return Err("tagged lvalue requires an unselected packed receiver".to_owned());
+        }
+        let root_width = target.binding.width;
+        let plan = self.scalar(
+            "sv4_select_plan_t",
+            format!("sv4_select_plan_init({root_width})"),
+        );
+        let valid = self.scalar("int", format!("({})", target.valid));
+        let root_value = target.reference.as_ref().map_or_else(
+            || format!("sv4_clone({})", target.binding.address),
+            |reference| format!("llg_rt_ref_read({reference})"),
+        );
+        let mut current = self.value(
+            format!(
+                "({valid} ? {root_value} : sv4_x({root_width}, {}))",
+                u8::from(target.binding.signed)
+            ),
+            root_width,
+            target.binding.signed,
+        );
+        for step in steps {
+            let index = self.expression(&step.selection.base)?;
+            self.line(format!(
+                "sv4_select_plan_step(&{plan}, {}, {});",
+                index.code, step.selection.width
+            ));
+            if let Some(guard) = &step.guard {
+                if guard.tag_width == 0 || guard.tag_width > current.width {
+                    return Err("tagged union guard width exceeds its receiver".to_owned());
+                }
+                let right = current.width - guard.tag_width;
+                let left = current.width - 1;
+                let tag = self.value(
+                    format!("sv4_part_select({}, {left}LL, {right}LL)", current.code),
+                    guard.tag_width,
+                    false,
+                );
+                let matches = self.scalar(
+                    "int",
+                    format!(
+                        "sv4_to_bool(sv4_case_eq({}, sv4_from_u64({}ULL, {}, 0)))",
+                        tag.code, guard.member_index, guard.tag_width
+                    ),
+                );
+                self.line(format!("if ({valid} && !{matches}) {{"));
+                self.report_tagged_access(&guard.member_name, location);
+                self.line(format!("{valid} = 0;"));
+                self.line("}");
+                self.discard(tag);
+            }
+            let width = step.selection.width;
+            let selected = self.value(format!("sv4_x({width}, 0)"), width, false);
+            self.line(format!("if ({valid}) {{"));
+            self.line(format!(
+                "sv4_replace(&{}, sv4_idx_part_select_value({}, {}, {width}, 0));",
+                selected.code, current.code, index.code
+            ));
+            self.line("}");
+            self.discard(current);
+            current = selected;
+            if step.two_state {
+                let code = format!("sv4_to_two_state({})", current.code);
+                current = self.replace(current, code, width, false);
+            }
+            self.discard(index);
+        }
+        self.discard(current);
+        let last = steps.last().expect("tagged selection steps are nonempty");
+        target.selection = Some(Selection::PackedChain(plan, last.selection.width));
+        target.width = last.selection.width;
+        target.signed = signed;
+        target.binding.two_state |= two_state;
+        target.valid = valid;
+        Ok(target)
+    }
+
     fn select_code(&self, target: &Target, source: &str) -> String {
         match &target.selection {
             None => format!("sv4_clone(&({source}))"),
@@ -343,7 +440,7 @@ impl<'a, 'm> Frame<'a, 'm> {
     pub(super) fn read_target(&mut self, target: &Target) -> Value {
         if let Some(reference) = &target.reference {
             let whole = self.value(
-                format!("llg_ref_read({reference})"),
+                format!("llg_rt_ref_read({reference})"),
                 target.binding.width,
                 target.binding.signed,
             );
@@ -547,7 +644,7 @@ impl<'a, 'm> Frame<'a, 'm> {
                     }
                     Some(selection) => {
                         let updated = self.value(
-                            format!("llg_ref_read({reference})"),
+                            format!("llg_rt_ref_read({reference})"),
                             binding.width,
                             binding.signed,
                         );

@@ -29,12 +29,9 @@ pub(super) fn fold_expr(e: &mut IrExpr) {
             b,
             element_default,
         } => fold_array_mux(sel, a, b, element_default).map(Folded::Bits),
-        IrExprKind::StructMux {
-            sel,
-            a,
-            b,
-            members,
-        } => fold_struct_mux(sel, a, b, members).map(Folded::Bits),
+        IrExprKind::StructMux { sel, a, b, members } => {
+            fold_struct_mux(sel, a, b, members).map(Folded::Bits)
+        }
         IrExprKind::Predicate { clauses } => fold_predicate(clauses).map(Folded::Bits),
         // Pattern matching has ordered binding side effects. Leave even
         // wildcard/constant forms intact so optimization cannot erase the
@@ -306,11 +303,14 @@ fn fold_predicate(clauses: &[IrExpr]) -> Option<Value> {
     }
     for clause in clauses {
         let truth = if let IrExprKind::Fill(bit @ 0..=3) = &clause.kind {
-            Value::from_bits(vec![match bit {
-                0 => Bit::Zero,
-                1 => Bit::One,
-                _ => Bit::X,
-            }], false)
+            Value::from_bits(
+                vec![match bit {
+                    0 => Bit::Zero,
+                    1 => Bit::One,
+                    _ => Bit::X,
+                }],
+                false,
+            )
         } else if let Some(value) = as_packed_const(clause) {
             elab::unary_or(&value)
         } else {

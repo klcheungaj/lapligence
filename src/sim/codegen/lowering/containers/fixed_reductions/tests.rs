@@ -62,7 +62,8 @@ fn fixed_array_reduction_peels_one_unpacked_dimension_not_the_leaf() {
 #[test]
 fn fixed_array_reduction_bounds_include_both_signed_extremes() {
     for bounds in [(i32::MIN, i32::MAX), (i32::MAX, i32::MIN), (-1, -1)] {
-        let (left, right, _) = reduction_element(&array(atom(1, false, false), vec![bounds])).unwrap();
+        let (left, right, _) =
+            reduction_element(&array(atom(1, false, false), vec![bounds])).unwrap();
         assert_eq!((left, right), bounds);
         let count = i64::from(left).abs_diff(i64::from(right)) + 1;
         assert_eq!(count, if left == right { 1 } else { 1u64 << 32 });
@@ -72,14 +73,21 @@ fn fixed_array_reduction_bounds_include_both_signed_extremes() {
 #[test]
 fn fixed_array_reduction_distinguishes_packed_records_and_unpacked_maps() {
     let mut descriptor = atom(8, false, false);
-    for kind in [AggregateKind::PackedStruct, AggregateKind::PackedUnion, AggregateKind::UnpackedStruct] {
+    for kind in [
+        AggregateKind::PackedStruct,
+        AggregateKind::PackedUnion,
+        AggregateKind::UnpackedStruct,
+    ] {
         descriptor.shape = TypeShape::Aggregate(AggregateLayout {
             kind,
             type_identity: None,
             type_id: None,
             members: vec![],
         });
-        assert_eq!(reduction_integral(&descriptor), !matches!(kind, AggregateKind::UnpackedStruct));
+        assert_eq!(
+            reduction_integral(&descriptor),
+            !matches!(kind, AggregateKind::UnpackedStruct)
+        );
     }
 }
 

@@ -1,9 +1,59 @@
-//! Public CLI coverage for edition-specific memory-file addressing.
+//! Native-runtime and public CLI coverage for memory-file tasks.
+
+use std::path::Path;
+use std::process::Command;
+use std::time::Duration;
 
 #[path = "support/sim_cli.rs"]
 mod sim_cli;
 #[path = "support/sim.rs"]
 mod sim_harness;
+
+#[test]
+fn native_enum_memory_overflow_is_rejected_before_cast() {
+    if !llg::sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let dir = sim_harness::TempDir::new("native-enum-memory-overflow")
+        .expect("create native probe directory");
+    let probe = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/sim/review_bundle/native/native_probe.c"),
+    )
+    .expect("read native enum probe");
+    let executable =
+        llg::sim::build::build_model_cmake(dir.path(), &[("native_probe.c", probe.as_str())])
+            .expect("native runtime probe should compile");
+    std::fs::write(
+        dir.path().join("enum_overflow.hex"),
+        std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/sim/review_bundle/enum_overflow.hex"),
+        )
+        .expect("read enum memory input"),
+    )
+    .expect("write enum memory input");
+    let mut command = Command::new(executable);
+    command.current_dir(dir.path()).arg("enum_overflow.hex");
+    let output = sim_harness::run_command(&mut command, Duration::from_secs(60))
+        .expect("native enum runtime probe should run");
+    assert!(
+        output.status.success(),
+        "native probe failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.lines().any(|line| line == "enum_after_read: 1 0"),
+        "invalid and following enum words must leave memory unchanged: {stdout:?}"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        stderr,
+        "llg: memory file `enum_overflow.hex`: numeric memory data does not fit the enum base type; load terminated\n"
+    );
+}
 
 #[test]
 fn omitted_memory_range_keeps_the_selected_edition_order() {
@@ -131,6 +181,92 @@ fn enum_memory_data_stops_at_the_first_non_member() {
         &[],
         &["--edition", "2009"],
         &[("enum.mem", "00\n02\n")],
+    );
+}
+
+#[test]
+fn enum_memory_overflow_is_rejected_before_truncation() {
+    let cases = [
+        (
+            std::fs::read_to_string(
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests/fixtures/sim/review_bundle/enum_overflow.hex"),
+            )
+            .expect("read original enum overflow input"),
+            "AFTER_ENUM_LOAD 1 0\n",
+        ),
+        (
+            std::fs::read_to_string(
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests/fixtures/sim/review_bundle/enum_overflow_after_valid.hex"),
+            )
+            .expect("read enum overflow input after a valid word"),
+            "AFTER_ENUM_LOAD 0 0\n",
+        ),
+    ];
+    for (words, expected) in cases {
+        sim_cli::run_case_with_files(
+            "review_bundle",
+            "r08_enum_readmem_overflow",
+            expected,
+            concat!(
+                "llg: memory file `enum_overflow.hex`: numeric memory data does not fit the enum base type; load terminated\n",
+                "llg: $finish at time 0 at tb:10:5\n",
+            ),
+            &[],
+            &["--edition", "2009"],
+            &[("enum_overflow.hex", words.as_str())],
+        );
+    }
+}
+
+#[test]
+fn enum_memory_range_check_preserves_packed_truncation_and_signed_values() {
+    let overflow = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/sim/review_bundle/enum_overflow.hex"),
+    )
+    .expect("read enum overflow input");
+    let signed = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/sim/review_bundle/signed_enum.hex"),
+    )
+    .expect("read signed enum input");
+    let signed_nonextension = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/sim/review_bundle/signed_enum_nonextension.hex"),
+    )
+    .expect("read signed enum non-extension input");
+    let unknown = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/sim/review_bundle/enum_unknown.hex"),
+    )
+    .expect("read enum X/Z input");
+    sim_cli::run_case_with_files(
+        "review_bundle",
+        "r08_memory_readmem_controls",
+        concat!(
+            "PACKED_CONTROL 0 1\n",
+            "SIGNED_ENUM_CONTROL -1\n",
+            "SIGNED_ENUM_AFTER_NONEXTENSION -1 0\n",
+            "TWO_STATE_ENUM_CONTROL 0 0\n",
+        ),
+        concat!(
+            "llg: memory file `signed_enum_nonextension.hex`: numeric memory data does not fit the enum base type; load terminated\n",
+            "llg: memory file `enum_unknown.hex`: X/Z memory data converted to a two-state element\n",
+            "llg: $finish at time 0 at tb:17:5\n",
+        ),
+        &[],
+        &["--edition", "2009"],
+        &[
+            ("enum_overflow.hex", overflow.as_str()),
+            ("signed_enum.hex", signed.as_str()),
+            (
+                "signed_enum_nonextension.hex",
+                signed_nonextension.as_str(),
+            ),
+            ("enum_unknown.hex", unknown.as_str()),
+        ],
     );
 }
 

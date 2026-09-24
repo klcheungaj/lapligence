@@ -2,8 +2,8 @@
 use super::*;
 
 mod array_conditionals;
-mod sequential_predicates;
 mod fixed_array_reductions;
+mod sequential_predicates;
 use crate::sim::execution::ExecutionModel;
 
 mod group1_repairs;

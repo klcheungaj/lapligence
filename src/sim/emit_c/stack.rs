@@ -312,11 +312,15 @@ fn stmt_temp_slots(stmt: &IrStmt) -> Result<u64, String> {
         IrStmt::RandomStateSet { state } => string_expr_slots(state),
         IrStmt::Memory {
             path,
+            view,
             start,
             finish,
             ..
         } => {
             let mut slots = string_expr_slots(path)?;
+            for selector in &view.selectors {
+                slots = checked_add(slots, expr_slots(&selector.value)?, "memory selector slots")?;
+            }
             if let Some(start) = start {
                 slots = checked_add(slots, expr_slots(start)?, "memory start slots")?;
             }
@@ -853,6 +857,17 @@ fn expr_slots(expr: &IrExpr) -> Result<u64, String> {
             expr_slots(&mutation.value)?,
             "mutation expression slots",
         )?,
+        IrExprKind::TaggedSelect { base, steps, .. } => {
+            let mut slots = checked_add(expr_slots(base)?, 3, "tagged selection slots")?;
+            for step in steps {
+                slots = checked_add(
+                    slots,
+                    expr_slots(&step.selection.base)?,
+                    "tagged selection selector slots",
+                )?;
+            }
+            slots
+        }
         IrExprKind::DynamicCast(cast) => {
             let mut slots = checked_add(
                 lhs_slots(&cast.lhs)?,
@@ -946,11 +961,9 @@ fn expr_slots(expr: &IrExpr) -> Result<u64, String> {
                         "inside open range expression slots",
                     )?,
                     IrInsideItem::Container { .. } => 0,
-                    IrInsideItem::FixedArray { value, .. } => checked_add(
-                        expr_slots(value)?,
-                        1,
-                        "inside fixed-array matching slots",
-                    )?,
+                    IrInsideItem::FixedArray { value, .. } => {
+                        checked_add(expr_slots(value)?, 1, "inside fixed-array matching slots")?
+                    }
                 };
                 slots = checked_add(slots, item_slots, "inside expression slots")?;
             }
@@ -1124,6 +1137,17 @@ fn lhs_slots(lhs: &IrLhs) -> Result<u64, String> {
             }
             Ok(slots)
         }
+        IrLhs::TaggedSelect { target, steps, .. } => {
+            let mut slots = checked_add(lhs_slots(target)?, 4, "tagged lvalue storage")?;
+            for step in steps {
+                slots = checked_add(
+                    slots,
+                    expr_slots(&step.selection.base)?,
+                    "tagged lvalue selector slots",
+                )?;
+            }
+            Ok(slots)
+        }
         IrLhs::Ref {
             bit: Some(index), ..
         } => expr_slots(index),
@@ -1233,7 +1257,9 @@ mod tests {
 
     #[test]
     fn fixed_array_reduction_budget_reuses_iteration_slots() {
-        use crate::sim::ir::{IrContainerReduction, IrFixedArrayReduction, IrFixedArrayReductionSource};
+        use crate::sim::ir::{
+            IrContainerReduction, IrFixedArrayReduction, IrFixedArrayReductionSource,
+        };
         let mut expression = IrExpr::new(
             IrExprKind::FixedArrayReduce(Box::new(IrFixedArrayReduction {
                 source: IrFixedArrayReductionSource::Array(0),
@@ -1246,10 +1272,15 @@ mod tests {
                 item_name: "item".into(),
                 index_name: "index".into(),
                 value: constant(1),
-            })), 8, false, None,
+            })),
+            8,
+            false,
+            None,
         );
         let small = expr_slots(&expression).unwrap();
-        let IrExprKind::FixedArrayReduce(plan) = &mut expression.kind else { unreachable!(); };
+        let IrExprKind::FixedArrayReduce(plan) = &mut expression.kind else {
+            unreachable!();
+        };
         plan.right = i32::MAX;
         assert_eq!(expr_slots(&expression).unwrap(), small);
         assert!(small >= 4);

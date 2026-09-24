@@ -160,6 +160,7 @@ impl<'a> Codegen<'a> {
         let mut const_refs: HashSet<NodeId> = HashSet::new();
         let const_ref_lhs = HashMap::new();
         let mut persistent = HashMap::new();
+        let mut static_local_signals = HashMap::new();
         let mut chandle_read = HashMap::new();
         let mut chandle_write = HashMap::new();
         let mut process_read = HashMap::new();
@@ -169,6 +170,120 @@ impl<'a> Codegen<'a> {
         let mut string_addr = HashMap::new();
         let mut static_input_copies = Vec::new();
         let mut callback_private_formal_copies = Vec::new();
+
+        // A static scalar local has persistent storage for the whole
+        // simulation. Model it as an ordinary hidden signal so function-body
+        // accesses and legal hierarchical continuous assignments share the
+        // same typed storage. Automatic locals and native-object locals keep
+        // their existing activation/subprogram storage.
+        for (local, (_, width, signed, two_state, shortreal)) in &locals {
+            if self.db.variable_lifetime(*local) != VariableLifetime::Static {
+                continue;
+            }
+            let NodeKind::Var { ty } = self.kind(*local) else {
+                continue;
+            };
+            if ty.kind == "string" || is_handle_kind(&ty.kind) || ty.kind == "event" {
+                continue;
+            }
+            let real = is_real_kind(&ty.kind);
+            let info = SignalInfo {
+                global: format!("S_f{}_l{}", inst.index(), local.index()),
+                width: *width,
+                signed: *signed,
+                two_state: *two_state,
+                real,
+                shortreal: *shortreal,
+                net_driver: None,
+                ir: self.model.signals.len(),
+            };
+            self.model.signals.push(IrSignal {
+                fixed_default: self.fixed_default_literal(*local),
+                c_name: info.global.clone(),
+                hdl_name: None,
+                ty: if real {
+                    IrType::Real {
+                        shortreal: info.shortreal,
+                    }
+                } else {
+                    IrType::Packed {
+                        width: info.width,
+                        signed: info.signed,
+                        two_state: info.two_state,
+                    }
+                },
+                net_driver: None,
+                net_alias: Vec::new(),
+                alias: None,
+                omit: false,
+            });
+            self.signals.push(info.clone());
+            self.sig_globals.insert(*local, info.clone());
+            persistent.insert(*local, info.clone());
+            static_local_signals.insert(*local, info);
+        }
+        // A statically allocated numeric function result normally uses the
+        // emitter's persistent `_ret` cell. If hierarchy exposes that result
+        // as an assignment target or a user-defined `ref` actual, register
+        // the same storage as a hidden signal so reads and writes share one
+        // owner.
+        let static_return_signal = if !automatic {
+            let return_variable = self
+                .node(ft)
+                .children
+                .iter()
+                .copied()
+                .find(|child| matches!(self.kind(*child), NodeKind::Var { .. }))
+                .filter(|variable| {
+                    self.db.variable_lifetime(*variable) == VariableLifetime::Static
+                        && self.static_return_requires_signal(*variable)
+                });
+            match (return_variable, ret) {
+                (Some(return_variable), Some((width, signed, two_state, shortreal))) => {
+                    let real = width == 0;
+                    let info = SignalInfo {
+                        // Reuse the persistent return cell's emitted name;
+                        // the typed IR link prevents a second declaration.
+                        global: format!("_llg_ret_{meta_ir}"),
+                        width,
+                        signed,
+                        two_state,
+                        real,
+                        shortreal,
+                        net_driver: None,
+                        ir: self.model.signals.len(),
+                    };
+                    self.model.signals.push(IrSignal {
+                        fixed_default: self
+                            .fixed_default_literal(return_variable)
+                            .or_else(|| self.fixed_default_literal(ft)),
+                        c_name: info.global.clone(),
+                        hdl_name: None,
+                        ty: if real {
+                            IrType::Real { shortreal }
+                        } else {
+                            IrType::Packed {
+                                width,
+                                signed,
+                                two_state,
+                            }
+                        },
+                        net_driver: None,
+                        net_alias: Vec::new(),
+                        alias: None,
+                        omit: false,
+                    });
+                    self.signals.push(info.clone());
+                    self.sig_globals.insert(return_variable, info.clone());
+                    persistent.insert(return_variable, info.clone());
+                    persistent.insert(ft, info.clone());
+                    Some(info)
+                }
+                _ => None,
+            }
+        } else {
+            None
+        };
         for (local, name) in &chandle_locals {
             if self.db.variable_lifetime(*local) == VariableLifetime::Static {
                 let object = if let Some(object) = self
@@ -613,10 +728,13 @@ impl<'a> Codegen<'a> {
                     path,
                     *local,
                     initializer,
-                    IrInitTarget::StaticLocal {
-                        function: meta_ir,
-                        name: c_name.clone(),
-                    },
+                    static_local_signals.get(local).map_or_else(
+                        || IrInitTarget::StaticLocal {
+                            function: meta_ir,
+                            name: c_name.clone(),
+                        },
+                        |storage| IrInitTarget::Signal(storage.ir),
+                    ),
                     *width,
                     *signed,
                     *two_state,
@@ -644,6 +762,7 @@ impl<'a> Codegen<'a> {
             names
                 .into_iter()
                 .filter(|(local, _)| self.db.variable_lifetime(*local) == VariableLifetime::Static)
+                .filter(|(local, _)| !static_local_signals.contains_key(local))
                 .filter(|(_, (c_name, ..))| emitted.insert(c_name.clone()))
                 .map(|(local, (c_name, width, signed, two_state, shortreal))| {
                     Ok(crate::sim::ir::IrLocal {
@@ -660,15 +779,132 @@ impl<'a> Codegen<'a> {
                 })
                 .collect::<Result<Vec<_>, String>>()?
         };
+        // Static local signals are persistent observable state. Keep such a
+        // function out of private evaluator callbacks even though its
+        // storage is no longer represented by `IrFunc.locals`.
+        let callback_return_independent = automatic
+            || ret.is_none()
+            || (static_local_signals.is_empty()
+                && static_return_signal.is_none()
+                && self.static_return_is_callback_independent(body, ft));
         let no_entry = format!("function `{}` has no model entry", self.node(ft).name);
         let entry = self.model.funcs.get_mut(meta_ir).ok_or(no_entry)?;
         entry.locals = ir_locals;
         entry.automatic = automatic;
+        entry.return_signal = static_return_signal.map(|storage| storage.ir);
         entry.callback_private_formal_copies = callback_private_formal_copies;
+        entry.callback_return_independent = callback_return_independent;
         entry.pre_fns = pre_fns;
         entry.body = body_stmts;
         let _ = (guard, decl, has_ret, ret_x, c_name.as_str());
         Ok(())
+    }
+
+    fn static_return_requires_signal(&self, return_variable: NodeId) -> bool {
+        self.design_nodes()
+            .into_iter()
+            .any(|node| match self.kind(node) {
+                NodeKind::ContAssign { .. } => {
+                    self.node(node).children.first().is_some_and(|lhs| {
+                        self.lhs_references_return_variable(*lhs, return_variable)
+                    })
+                }
+                NodeKind::Stmt(StmtKind::Assign { .. }) => {
+                    self.node(node).children.first().is_some_and(|lhs| {
+                        self.hierarchical_lhs_references_return_variable(*lhs, return_variable)
+                    })
+                }
+                NodeKind::FuncCall {
+                    name,
+                    is_task,
+                    callee,
+                    ..
+                } => self.call_passes_hierarchical_return_by_ref(
+                    node,
+                    name,
+                    *is_task,
+                    *callee,
+                    return_variable,
+                ),
+                _ => false,
+            })
+    }
+
+    fn call_passes_hierarchical_return_by_ref(
+        &self,
+        call: NodeId,
+        name: &str,
+        is_task: bool,
+        callee: Option<NodeId>,
+        return_variable: NodeId,
+    ) -> bool {
+        let Some(caller_inst) = self.owning_inst(call) else {
+            return false;
+        };
+        let Ok((callee, _)) = self.resolve_callee_env(caller_inst, name, is_task, callee) else {
+            return false;
+        };
+        let arguments = self.call_argument_nodes(call);
+        self.func_formals(callee)
+            .iter()
+            .zip(arguments)
+            .any(|((formal, _), actual)| {
+                matches!(
+                    self.kind(*formal),
+                    NodeKind::FuncArg {
+                        direction: DbDirection::Ref,
+                        ..
+                    }
+                ) && self.hierarchical_lhs_references_return_variable(actual, return_variable)
+            })
+    }
+
+    fn hierarchical_lhs_references_return_variable(
+        &self,
+        node: NodeId,
+        return_variable: NodeId,
+    ) -> bool {
+        match self.kind(node) {
+            NodeKind::Expr(ExprKind::HierPath { refs, .. })
+                if refs
+                    .iter()
+                    .flatten()
+                    .any(|target| *target == return_variable) =>
+            {
+                true
+            }
+            NodeKind::Expr(ExprKind::Ref {
+                target: Some(target),
+            }) if *target == return_variable
+                && self.db.semantic_detail(node) == Some("HierarchicalValue") =>
+            {
+                true
+            }
+            _ => self.node(node).children.iter().any(|child| {
+                self.hierarchical_lhs_references_return_variable(*child, return_variable)
+            }),
+        }
+    }
+
+    fn lhs_references_return_variable(&self, node: NodeId, return_variable: NodeId) -> bool {
+        match self.kind(node) {
+            NodeKind::Expr(ExprKind::Ref {
+                target: Some(target),
+            }) => *target == return_variable,
+            NodeKind::Expr(ExprKind::HierPath { refs, .. })
+                if refs
+                    .iter()
+                    .flatten()
+                    .any(|target| *target == return_variable) =>
+            {
+                true
+            }
+            _ => self
+                .node(node)
+                .children
+                .iter()
+                .any(|child| self.lhs_references_return_variable(*child, return_variable)),
+        }
     }
 
     /// Collect the local variables declared by a function/task body's begin

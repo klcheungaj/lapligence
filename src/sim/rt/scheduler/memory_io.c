@@ -409,6 +409,22 @@ static int llg_memory_enum_value_allowed(sv4_t value,
     return 0;
 }
 
+// Memory-file words carry no signed marker. When a known word is wider than an
+// enum base, its discarded bits must be redundant for that base: zeroes for an
+// unsigned base, or copies of the retained sign bit for a signed base.
+static int llg_memory_enum_word_fits_width(sv4_t value, uint32_t width,
+                                            int8_t is_signed) {
+    if (sv4_is_unknown(value) || value.width <= width) return 1;
+    int sign = is_signed && width != 0
+                   ? (int)((value.bits[(width - 1u) / 64u] >> ((width - 1u) % 64u)) & 1u)
+                   : 0;
+    for (uint32_t bit = width; bit < value.width; ++bit) {
+        int high = (int)((value.bits[bit / 64u] >> (bit % 64u)) & 1u);
+        if (high != sign) return 0;
+    }
+    return 1;
+}
+
 void llg_memory_read_view(llg_string_t path, sv4_t* memory, uint64_t total,
                           uint32_t elem_width, int8_t elem_signed, int8_t two_state,
                           const int32_t* dims, int n_dims,
@@ -488,6 +504,22 @@ void llg_memory_read_view(llg_string_t path, sv4_t* memory, uint64_t total,
                     warned_extra = 1;
                 }
             } else {
+                // Check known enum numeric data while its original high bits
+                // are still present. Signed bases accept only redundant sign
+                // extension, unsigned bases only zero extension. X/Z-bearing
+                // words skip this check; after the target-width cast, two-state
+                // elements are normalized and enum membership is checked.
+                // Ordinary packed memories retain their established truncation.
+                if (enum_count != 0 &&
+                    !llg_memory_enum_word_fits_width(token.value, elem_width,
+                                                     elem_signed)) {
+                    llg_memory_warning(filename,
+                        "numeric memory data does not fit the enum base type; load terminated");
+                    sv4_destroy(&token.value);
+                    fclose(stream);
+                    free(filename);
+                    return;
+                }
                 sv4_t converted = sv4_cast(token.value, elem_width, elem_signed);
                 if (two_state && sv4_is_unknown(token.value)) {
                     if (!warned_unknown) {

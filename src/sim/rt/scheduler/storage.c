@@ -466,6 +466,32 @@ llg_frame_slot_kind_t llg_frame_slot_kind(const llg_frame_t* frame,
     return entry->kind;
 }
 
+sv4_t* llg_frame_value_address(llg_frame_t* frame, size_t slot) {
+    llg_frame_slot_t* entry = frame_slot(frame, slot);
+    if (entry->alias_kind == LLG_FRAME_ALIAS_SLOT) {
+        return llg_frame_value_address(entry->alias.slot.frame, entry->alias.slot.slot);
+    }
+    if (entry->kind != LLG_FRAME_PACKED) {
+        frame_kind_error(LLG_FRAME_PACKED, entry->kind);
+    }
+    return entry->alias_kind == LLG_FRAME_ALIAS_PACKED
+               ? entry->alias.packed
+               : &entry->value.packed;
+}
+
+double* llg_frame_real_address(llg_frame_t* frame, size_t slot) {
+    llg_frame_slot_t* entry = frame_slot(frame, slot);
+    if (entry->alias_kind == LLG_FRAME_ALIAS_SLOT) {
+        return llg_frame_real_address(entry->alias.slot.frame, entry->alias.slot.slot);
+    }
+    if (entry->kind != LLG_FRAME_REAL) {
+        frame_kind_error(LLG_FRAME_REAL, entry->kind);
+    }
+    return entry->alias_kind == LLG_FRAME_ALIAS_REAL
+               ? entry->alias.real
+               : &entry->value.real;
+}
+
 sv4_t llg_frame_read_value(const llg_frame_t* frame, size_t slot) {
     const llg_frame_slot_t* entry = frame_slot_const(frame, slot);
     if (entry->alias_kind == LLG_FRAME_ALIAS_SLOT) {

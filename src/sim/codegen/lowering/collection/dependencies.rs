@@ -230,6 +230,7 @@ impl<'a> Codegen<'a> {
                 }
                 let info = self
                     .signal_of(target)
+                    .or_else(|| self.static_proc_local_signal(target))
                     .or_else(|| self.hier_path_signal(node));
                 return info
                     .filter(|info| !info.real)
@@ -629,6 +630,22 @@ impl<'a> Codegen<'a> {
             NodeKind::Net { .. } | NodeKind::Var { .. } => {
                 if let Some(info) = self.signal_of(lhs) {
                     writes.insert(self.signal_dependency(info));
+                }
+            }
+            NodeKind::FuncTask { .. } => {
+                // Slang may bind an assignment to the function-name result
+                // directly to its subroutine symbol. A statically exposed
+                // result uses the signal registered for its implicit Var.
+                if let Some(result) = self
+                    .node(lhs)
+                    .children
+                    .iter()
+                    .copied()
+                    .find(|child| matches!(self.kind(*child), NodeKind::Var { .. }))
+                {
+                    if let Some(info) = self.signal_of(result) {
+                        writes.insert(self.signal_dependency(info));
+                    }
                 }
             }
             NodeKind::Expr(ExprKind::Ref {
@@ -1140,6 +1157,30 @@ impl<'a> Codegen<'a> {
             } => {
                 let (ft, callee_inst) =
                     self.resolve_callee_env(self.inst, name, *is_task, *callee)?;
+                // A static function result exposed as persistent signal
+                // storage can be written outside the function body (for
+                // example by a hierarchical continuous assignment). Calls
+                // return that cell, so a continuous assignment sourced by
+                // the call must also wake when the cell changes.
+                if !*is_task {
+                    let return_variable = self
+                        .node(ft)
+                        .children
+                        .iter()
+                        .copied()
+                        .find(|child| {
+                            self.node(*child).name == self.node(ft).name
+                                && matches!(self.kind(*child), NodeKind::Var { .. })
+                        })
+                        .filter(|variable| {
+                            self.db.variable_lifetime(*variable) == VariableLifetime::Static
+                        });
+                    if let Some(info) =
+                        return_variable.and_then(|variable| self.signal_of(variable))
+                    {
+                        self.add_dependency(self.signal_dependency(info), seen, out);
+                    }
+                }
                 let (_, _, formals) = self.func_info(ft, callee_inst)?;
                 let mut callee_bindings = HashMap::new();
                 for ((formal, is_out), actual) in formals.iter().zip(&self.node(node).children) {
@@ -1447,7 +1488,10 @@ impl<'a> Codegen<'a> {
                 }
             }
             NodeKind::Expr(ExprKind::Ref { target: Some(t) }) => {
-                if let Some(info) = self.signal_of(*t) {
+                if let Some(info) = self
+                    .signal_of(*t)
+                    .or_else(|| self.static_proc_local_signal(*t))
+                {
                     self.add_dependency(self.signal_dependency(info), seen, out);
                 }
             }

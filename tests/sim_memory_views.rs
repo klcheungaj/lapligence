@@ -1,5 +1,8 @@
 //! CLI acceptance tests for fixed multidimensional memory views.
 
+use std::process::Command;
+use std::time::Duration;
+
 #[path = "support/sim_cli.rs"]
 mod sim_cli;
 #[path = "support/sim.rs"]
@@ -109,5 +112,125 @@ fn unsupported_memory_view_shapes_fail_at_lowering() {
         "reject_real",
         "invalid argument type",
         &["--edition", "2009"],
+    );
+}
+
+#[test]
+fn review_bundle_readmem_accepts_slices_and_runtime_rows() {
+    sim_cli::run_case_with_files(
+        "review_bundle",
+        "r09_readmem_slice",
+        "PASS r09_readmem_slice\n",
+        "llg: $finish at time 0 at tb:11:5\n",
+        &[],
+        &["--edition", "2009"],
+        &[(
+            "words.hex",
+            include_str!("fixtures/sim/review_bundle/words.hex"),
+        )],
+    );
+    sim_cli::run_case_with_files(
+        "review_bundle",
+        "r09_readmem_runtime_row",
+        "PASS r09_readmem_runtime_row\n",
+        "llg: $finish at time 0 at tb:14:5\n",
+        &[],
+        &["--edition", "2009"],
+        &[(
+            "words.hex",
+            include_str!("fixtures/sim/review_bundle/words.hex"),
+        )],
+    );
+    sim_cli::run_case_with_files(
+        "review_bundle",
+        "r09_readmem_slice_address_bounds",
+        "PASS r09_readmem_slice_address_bounds\n",
+        concat!(
+            "llg: memory file `words.hex`: selected range includes an address outside the destination memory\n",
+            "llg: $finish at time 0 at tb:10:5\n",
+        ),
+        &[],
+        &["--edition", "2009"],
+        &[(
+            "words.hex",
+            include_str!("fixtures/sim/review_bundle/words.hex"),
+        )],
+    );
+    sim_cli::run_case_with_files(
+        "review_bundle",
+        "r09_readmem_reversed_decl",
+        "PASS r09_readmem_reversed_decl\n",
+        "llg: $finish at time 0 at tb:10:5\n",
+        &[],
+        &["--edition", "2009"],
+        &[(
+            "words.hex",
+            include_str!("fixtures/sim/review_bundle/words.hex"),
+        )],
+    );
+}
+
+#[test]
+fn runtime_memory_view_selector_is_evaluated_once() {
+    sim_cli::run_case_with_files(
+        "review_bundle",
+        "r09_readmem_runtime_selector_once",
+        "PASS r09_readmem_runtime_selector_once calls=1\n",
+        "llg: $finish at time 0 at tb:20:5\n",
+        &[],
+        &["--edition", "2009"],
+        &[(
+            "words.hex",
+            include_str!("fixtures/sim/review_bundle/words.hex"),
+        )],
+    );
+}
+
+#[test]
+fn native_memory_controls_preserve_edition_and_reversed_2d_order() {
+    if !llg::sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let dir = sim_harness::TempDir::new("native-memory-controls")
+        .expect("create native memory controls directory");
+    let source = include_str!("fixtures/sim/review_bundle/native/native_controls.c");
+    let executable =
+        llg::sim::build::build_model_cmake(dir.path(), &[("native_controls.c", source)])
+            .expect("native memory controls should compile");
+    std::fs::write(
+        dir.path().join("words.hex"),
+        include_str!("fixtures/sim/review_bundle/words.hex"),
+    )
+    .expect("write native memory input");
+    std::fs::write(
+        dir.path().join("native_reversed_2d.hex"),
+        include_str!("fixtures/sim/review_bundle/native_reversed_2d.hex"),
+    )
+    .expect("write native reversed 2D input");
+
+    let mut command = Command::new(executable);
+    command
+        .current_dir(dir.path())
+        .args(["words.hex", "native_reversed_2d.hex"]);
+    let output = sim_harness::run_command(&mut command, Duration::from_secs(60))
+        .expect("native memory controls should run");
+    assert!(
+        output.status.success(),
+        "native memory controls failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        concat!(
+            "memory_policy_0=PASS physical[11,22]\n",
+            "memory_policy_1=PASS physical[22,11]\n",
+            "memory_reversed_2d=PASS\n",
+        ),
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "native memory controls emitted stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
     );
 }

@@ -401,6 +401,40 @@ impl<'a> Codegen<'a> {
                  supported"
             ));
         }
+        if let Some(mut pattern_body) =
+            self.lower_p30_pattern_lvalue_assignment(path, lhs, rhs, true, Operation::Assignment)?
+        {
+            if matches!(self.kind(ca), NodeKind::ContAssign { delay: Some(_), .. }) {
+                return Err(format!(
+                    "delayed continuous assignment to a positional assignment-pattern LHS in `{path}` is not supported"
+                ));
+            }
+            if alias_bindings.is_some() || self.pattern_lvalue_touches_true_net_alias(lhs) {
+                return Err(format!(
+                    "continuous assignment-pattern LHS on a true-net alias in `{path}` is not supported"
+                ));
+            }
+            if has_structural_driver {
+                self.remap_pattern_continuous_targets(&mut pattern_body, ca)?;
+            }
+            let fn_name = self.new_fn_name(path, "ca");
+            let sigs = self.collect_read_signals(path, rhs)?;
+            let shape = if sigs.is_empty() {
+                IrShape::RunOnce
+            } else {
+                IrShape::SensLoop { reads: sigs }
+            };
+            let origin = self.origin(ca);
+            self.model.processes.push(IrProcess::new_with_origin(
+                fn_name,
+                format!("{path}.assign"),
+                shape,
+                Vec::new(),
+                vec![pattern_body],
+                origin,
+            ));
+            return Ok(());
+        }
         let mut lh = self.lower_lhs(path, lhs)?;
         if has_structural_driver {
             if let Some(group) = self.unmapped_structural_group(&lh, ca) {
@@ -502,6 +536,61 @@ impl<'a> Codegen<'a> {
         Ok(())
     }
 
+    fn remap_pattern_continuous_targets(
+        &self,
+        statement: &mut IrStmt,
+        source: NodeId,
+    ) -> Result<(), String> {
+        match statement {
+            IrStmt::Block(statements) => {
+                for statement in statements {
+                    self.remap_pattern_continuous_targets(statement, source)?;
+                }
+                Ok(())
+            }
+            IrStmt::DeclLocal { .. } => Ok(()),
+            IrStmt::Assign { lhs, .. } => {
+                if let Some(group) = self.unmapped_structural_group(lhs, source) {
+                    return Err(format!(
+                        "continuous assignment `{}` has no structural driver mapping for resolved net group {} at {}:{}:{}",
+                        self.display_name(source),
+                        group,
+                        self.node(source).file.as_deref().unwrap_or("<unknown>"),
+                        self.node(source).line,
+                        self.node(source).col,
+                    ));
+                }
+                *lhs = self.remap_structural_lhs(lhs.clone(), source);
+                Ok(())
+            }
+            _ => Err(
+                "continuous assignment-pattern lowering produced an unsupported target operation"
+                    .to_string(),
+            ),
+        }
+    }
+
+    fn pattern_lvalue_touches_true_net_alias(&self, node: NodeId) -> bool {
+        let signal = match self.kind(node) {
+            NodeKind::Net { .. } | NodeKind::Var { .. } => self.signal_of(node),
+            NodeKind::Expr(ExprKind::Ref {
+                target: Some(target),
+            }) => self.signal_of(*target),
+            NodeKind::Expr(ExprKind::HierPath { .. }) => self.hier_path_signal(node),
+            _ => None,
+        };
+        signal.is_some_and(|info| {
+            self.model
+                .signals
+                .get(info.ir)
+                .is_some_and(|signal| !signal.net_alias.is_empty())
+        }) || self
+            .node(node)
+            .children
+            .iter()
+            .any(|child| self.pattern_lvalue_touches_true_net_alias(*child))
+    }
+
     /// Net lvalues admit only constant selects. This runs after `self.inst`
     /// is set to the owning instance so elaborated parameters and genvars are
     /// accepted while runtime signal or array-dependent selectors fail.
@@ -531,6 +620,26 @@ impl<'a> Codegen<'a> {
                         .iter()
                         .all(|index| self.eval_bound_i128(*index).is_ok())
             }
+            NodeKind::Expr(ExprKind::Cast { operand, .. }) => {
+                self.net_lvalue_selects_are_constant(*operand)
+            }
+            NodeKind::Expr(ExprKind::Operation {
+                op: Operation::AssignmentPattern,
+                operands,
+                ..
+            }) => operands.iter().all(|operand| {
+                let NodeKind::Expr(ExprKind::Operation {
+                    op: Operation::Assignment,
+                    operands,
+                    ..
+                }) = self.kind(*operand)
+                else {
+                    return false;
+                };
+                operands
+                    .first()
+                    .is_some_and(|target| self.net_lvalue_selects_are_constant(*target))
+            }),
             _ => true,
         }
     }
@@ -790,6 +899,61 @@ impl<'a> Codegen<'a> {
             }
         }
 
+        // Slang reports a procedural write to a continuously driven static
+        // function result as a warning. The result is a variable with one
+        // legal continuous driver, so keep the simulator fail-closed when a
+        // function body also writes that same result slot.
+        for function in self.design_nodes() {
+            let NodeKind::FuncTask {
+                is_task: false,
+                automatic: false,
+                ..
+            } = self.kind(function)
+            else {
+                continue;
+            };
+            let Some(inst) = self.owning_inst(function) else {
+                continue;
+            };
+            self.inst = inst;
+            let Some(result) = self
+                .node(function)
+                .children
+                .iter()
+                .copied()
+                .find(|child| matches!(self.kind(*child), NodeKind::Var { .. }))
+            else {
+                continue;
+            };
+            let Some(storage) = self.signal_of(result) else {
+                continue;
+            };
+            let target = self.signal_dependency(storage);
+            let Some(driver) = continuous.iter().find(|writer| {
+                writer
+                    .writes
+                    .iter()
+                    .any(|write| self.same_storage(&target, write))
+            }) else {
+                continue;
+            };
+            let Some(body) = self.func_body(function) else {
+                continue;
+            };
+            let writes = self.collect_process_writes(body)?;
+            let assigned_return = writes.iter().any(|write| self.same_storage(&target, write))
+                || self.function_has_value_return(body)
+                || self.function_assigns_return(body, function, result);
+            if assigned_return {
+                return Err(format!(
+                    "semantic error: static function result `{}` has both a continuous driver at {} and a procedural write in its body at {}",
+                    self.node(function).name,
+                    self.source_location(driver.node),
+                    self.source_location(function),
+                ));
+            }
+        }
+
         for restricted in writers.iter().filter(|writer| {
             matches!(
                 self.kind(writer.node),
@@ -822,6 +986,53 @@ impl<'a> Codegen<'a> {
             }
         }
         Ok(())
+    }
+
+    fn function_has_value_return(&self, root: NodeId) -> bool {
+        if matches!(
+            self.kind(root),
+            NodeKind::Stmt(StmtKind::Return { value: Some(_) })
+        ) {
+            return true;
+        }
+        self.node(root)
+            .children
+            .iter()
+            .any(|child| self.function_has_value_return(*child))
+    }
+
+    fn function_assigns_return(&self, root: NodeId, function: NodeId, result: NodeId) -> bool {
+        if matches!(self.kind(root), NodeKind::Stmt(StmtKind::Assign { .. }))
+            && self
+                .node(root)
+                .children
+                .first()
+                .is_some_and(|lhs| self.lhs_targets_function_return(*lhs, function, result))
+        {
+            return true;
+        }
+        self.node(root)
+            .children
+            .iter()
+            .any(|child| self.function_assigns_return(*child, function, result))
+    }
+
+    fn lhs_targets_function_return(&self, node: NodeId, function: NodeId, result: NodeId) -> bool {
+        match self.kind(node) {
+            NodeKind::Expr(ExprKind::Ref {
+                target: Some(target),
+            }) if *target == function || *target == result => true,
+            NodeKind::Expr(ExprKind::HierPath { refs, .. })
+                if refs.iter().flatten().any(|target| *target == result) =>
+            {
+                true
+            }
+            _ => self
+                .node(node)
+                .children
+                .iter()
+                .any(|child| self.lhs_targets_function_return(*child, function, result)),
+        }
     }
 
     fn process_kind_label(&self, process_kind: Option<AlwaysKind>) -> &'static str {
