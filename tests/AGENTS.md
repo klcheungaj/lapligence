@@ -174,7 +174,13 @@ diagnostics. Keep the existing per-suite frontend, skip, timeout, and sanitizer 
   with exact stdout and retains the unsupported net-alias witness as an ignored test.
   The original inputs and separately reviewed counterexamples live in
   `fixtures/sim/imported_probes/`; its READMEs map cases to active feature suites.
-- `elab_resolve.rs` exercises resolved Slang parameter values; `config_effect.rs` observes
+- `sim_review_bundle_composition.rs` adds R13 cross-context public-CLI witnesses for recursive
+  fixed-array type keys through a function return and aggregate input port, plus packed-record
+  deconstruction into a selected NBA destination with source/address capture. Both cases use
+  exact stdout oracles in both optimizer modes under IEEE 1800-2009. Their fixtures live in
+  `fixtures/sim/review_bundle/` alongside the held-out issue cases.
+- `elab_resolve.rs` exercises resolved Slang parameter values, including the owned `X` value
+  from an ambiguous constant conditional with equal `Z` branches; `config_effect.rs` observes
   configured defines and top-level parameter overrides driving generate branches through the
   owned `DesignModel`.
 - `elaboration/run_elab_check.sh` runs `elab_check` over representative designs; the binary
