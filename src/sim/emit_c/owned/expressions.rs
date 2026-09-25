@@ -401,6 +401,14 @@ impl Frame<'_, '_> {
         let code = format!("sv4_x({}, {})", expr.width, u8::from(expr.signed));
         let result = self.replace(value, code, expr.width, expr.signed);
         self.line("}");
+        // Part-select helpers correctly return unsigned values. A typed member
+        // read must restore its own signedness on the valid path too; changing
+        // only Value metadata leaves later native casts zero-extending it.
+        self.line(format!(
+            "{}.is_signed = {};",
+            result.code,
+            u8::from(expr.signed)
+        ));
         Ok(result)
     }
 

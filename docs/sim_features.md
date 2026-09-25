@@ -47,8 +47,8 @@ released after converting the result to a native Boolean; exact tag checking,
 source diagnostics and single receiver capture are retained. The nested guard
 stress fixture and emitter ownership tests are added, but Rust/public HDL and
 actual generated-model sanitizer qualification remain pending. This change does
-not close N01's independent valid-member signedness defect or N09's pattern-case
-match-mode defect. SYN-000 identifies the supplied 03-2 baseline only; no new
+not itself close the separate valid-member signedness or pattern-case match-mode
+contracts; the N01 follow-up is described below and N09 remains open. SYN-000 identifies the supplied 03-2 baseline only; no new
 full-suite green baseline or final selected-profile acceptance is asserted.
 
 SYN-038-N11 corrects ordinary casez matching in the native runtime and owned
@@ -70,6 +70,16 @@ markers and `Fill` nodes cannot bypass this guard. The checked-in
 signed four-bit -2 -> unsigned 14 conversion and neighboring fill/width cases.
 These Rust/public-HDL regressions have not been run in the delivery environment;
 this source repair is not full SYN-015/SYN-038 acceptance.
+
+### Tagged-member signedness repair
+
+SYN-021-N01 now restores the selected member's `sv4_t.is_signed` on the valid
+read path, after checked projection and two-state conversion. Wider assignment,
+formal and return conversions therefore see the member's declared signedness;
+ordinary part-selects remain unsigned. N05's owned comparison temporaries and
+exact inactive-tag diagnostics are retained. Direct emitter and public signed/
+unsigned, bit/logic and nested/formal/selected-root regressions are supplied;
+Rust/public and actual generated-model qualification remain pending.
 
 ### Selected synthesis profiles
 

@@ -281,3 +281,8 @@ The expected-tag constructor and equality result are registered temporaries,
 released before the native Boolean controls a diagnostic branch. Packed helper
 arguments remain borrowed; ordinary active-member checks still use exact
 comparison. The dedicated emitter tests check both nested read and write paths.
+
+Typed tagged-member reads restore the selected member's runtime signedness
+after the checked projection, on both valid and invalid paths. Ordinary packed
+part-select results remain unsigned. Expected-tag and comparison owners use the
+same frame lifetime contract for reads and selected writes.

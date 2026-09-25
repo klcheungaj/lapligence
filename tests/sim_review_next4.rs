@@ -29,3 +29,15 @@ fn singleton_concat_retains_legacy_unsigned_assignment() {
         );
     }
 }
+
+#[test]
+fn tagged_member_reads_preserve_runtime_signedness() {
+    sim_cli::run_case_with_args(
+        "review_bundle",
+        "n01_tagged_signed_widen",
+        "PASS n01_tagged_signed_widen\n",
+        "",
+        &[],
+        &["--edition", "2009"],
+    );
+}

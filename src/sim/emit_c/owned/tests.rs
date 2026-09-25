@@ -14,6 +14,7 @@ mod packed_formals;
 mod packed_selections;
 mod review_regressions;
 mod tagged_guards;
+mod tagged_signed;
 mod toolchain;
 
 fn number(value: u64, width: u32) -> IrExpr {
