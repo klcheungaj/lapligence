@@ -37,6 +37,7 @@ pub(super) mod packed_formals;
 mod port_net_types;
 mod ports;
 mod processes;
+mod return_flow;
 mod signatures;
 mod virtual_interfaces;
 

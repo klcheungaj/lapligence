@@ -14,7 +14,11 @@
   storage roots; this avoids requiring a module-wide signal for those targets.
   `collection/call_contracts.rs` admits static return storage to read-only event
   callbacks only when it is not read and a result value is established on
-  every normal or explicit return path. A supported static function result
+  every normal or explicit return path. `collection/return_flow.rs` preserves
+  abrupt exits separately and consumes break/continue only at their lexical
+  loop. Unmodelled transfers fail the proof rather than reaching later writes.
+  Ordinary procedural static calls do not use this private-result substitution.
+  A supported static function result
   exposed to a hierarchical assignment or passed as a hierarchical ref actual
   is registered as a hidden model signal backed by the same persistent `_ret`
   storage for continuous/procedural writes and caller references.

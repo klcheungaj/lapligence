@@ -41,3 +41,29 @@ fn tagged_member_reads_preserve_runtime_signedness() {
         &["--edition", "2009"],
     );
 }
+
+#[test]
+fn abrupt_loop_exits_cannot_hide_a_stateful_static_callback() {
+    for fixture in ["n02_static_do_break_event", "n02_static_do_continue_event"] {
+        sim_cli::reject_case_with_args(
+            "review_bundle",
+            fixture,
+            "static function return is read or is not assigned on every path",
+            &["--edition", "2009"],
+        );
+    }
+}
+
+#[test]
+fn ordinary_static_state_and_proven_callback_results_remain_distinct() {
+    for fixture in ["n02_static_do_state_control", "n02_static_definite_event"] {
+        sim_cli::run_case_with_args(
+            "review_bundle",
+            fixture,
+            &format!("PASS {fixture}\n"),
+            "",
+            &[],
+            &["--edition", "2009"],
+        );
+    }
+}

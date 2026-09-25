@@ -81,6 +81,17 @@ exact inactive-tag diagnostics are retained. Direct emitter and public signed/
 unsigned, bit/logic and nested/formal/selected-root regressions are supplied;
 Rust/public and actual generated-model qualification remain pending.
 
+### Static callback result-flow repair
+
+SYN-011-N02 now keeps normal, explicit-return and lexical break/continue exits
+separate when proving static-result independence. An inner loop consumes only
+its own jumps, and a do-loop jump cannot reach a later result write. Unknown
+control transfers (including unproved named disable) fail closed; loop-header
+assignments are not credited as whole-result definitions. Existing conservative
+result-read/effect checks and ordinary procedural static storage are unchanged.
+Owned-graph tests plus public rejection, ordinary-persistence and eligible-event
+controls are added. Their Rust/public execution remains unqualified here.
+
 ### Selected synthesis profiles
 
 SYN-000 adopts the three profile axes from the implementation plan. The
