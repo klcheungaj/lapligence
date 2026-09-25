@@ -1101,3 +1101,10 @@ common-type conversions, and separate tri-state gates. The tracked Slang patch
 has a matching constant-evaluation regression; both that frontend test and the
 public/owned Rust tests require an actual prepared native build. Re-run
 `sim_conditional_policy` and the optimizer `conditional_policy` tests together.
+
+Direct-record continuation coverage includes constant parameters/functions,
+1/7/33/65/129-bit members, nested immediate defaults, lazy alternatives, live
+combinational reads and NBA capture. `owned::tests::conditional_records` adds
+cross-limb frame-owner checks and a real-emitter IR model for supported generated
+sanitizer runs. Keep it distinct from standalone handwritten C probes. Re-run
+`sim_rtl_completion` and the original array-conditional suite as neighbors.

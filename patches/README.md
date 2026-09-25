@@ -60,7 +60,10 @@ can admit without VCS metadata.
 - `slang/slang-conditional-z-merge.patch`: the selected published packed
   conditional policy. Logically true multi-bit predicates bypass ambiguous
   merging and evaluate only the chosen arm, even if other predicate bits are X/Z.
-  This is local edition-policy work, not an upstream erratum.
+  Unpacked structure constants additionally retain matching immediate members
+  and use each mismatching member type's default, independently of initializers.
+  Nested members default as a whole. This is local edition-policy work, not an
+  upstream erratum.
 
 When a tracked patch changes, do not mix old applied files with the new manifest.
 Use a verified transition from the prior complete applied state, or the documented

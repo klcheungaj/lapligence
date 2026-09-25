@@ -97,6 +97,25 @@ close SYN-020. The tracked patch's applied digests change, so an already patched
 vendor checkout must be transitioned to the matching complete patch-set state
 before rebuilding; a clean documented vendor base uses the normal preparer.
 
+### Direct unpacked-record conditional qualification
+
+SYN-004 preserves the existing runtime `StructMux` and its immediate member
+boundaries. Inspection found an additional frontend constant-evaluation cell:
+Slang's conditional evaluator merged arrays but defaulted an entire unpacked
+structure. The tracked conditional patch now compares each immediate structure
+member using logical equality and returns its type's default-uninitialized value
+on mismatch. Matching members survive. A differing nested record or row defaults
+as one member; declared member initializers are not fallback values. Packed
+structures remain integral and use the separate packed table.
+
+The added `struct_conditional_matrix` spans 1/7/33/65/129-bit members, frontend
+parameters and constant functions, known/X/Z and dominant-one predicates,
+automatic formal/return values, lazy call counts, combinational content changes,
+and legal module-storage NBA capture. Owned snapshot-drop and actual-emitter
+model tests supplement the public fixture. The frontend, Rust, public HDL and
+actual generated-model tests are added but unexecuted here; this is not full
+SYN-004 acceptance. Existing direct-record and arrays-of-record controls remain.
+
 ## Current source status and qualification — 2026-09-23
 
 This inventory records the source status reconciled against the task checkout

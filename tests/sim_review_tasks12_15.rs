@@ -120,3 +120,42 @@ fn packed_policy_lowers_from_owned_sources_after_native_teardown() {
         }
     }
 }
+
+#[test]
+fn structure_conditionals_keep_immediate_members_across_constant_runtime_and_nba_paths() {
+    sim_cli::run_case_with_args(
+        "continuation_12_15", "struct_conditional_matrix", "STRUCT_POLICY_PASS\n", "", &[],
+        &["--edition", "2009"],
+    );
+}
+
+#[test]
+fn structure_conditional_descriptors_and_lowering_survive_snapshot_teardown() {
+    use llg::core::{compile, db};
+    use llg::sim::{codegen, opt::OptConfig};
+    let database = {
+        let output = compile::compile_sources_checked(
+            &[compile::OwnedSource::compilation_unit("record-policy.sv",
+                include_str!("fixtures/sim/continuation_12_15/struct_conditional_matrix.sv"))],
+            &compile::CompileOpts { top: Some("tb".to_owned()), ..Default::default() },
+        ).expect("fixed record conditional qualification source");
+        db::Db::from_slang(&output.snapshot).expect("owned fixed record graph")
+    };
+    database.validate().unwrap();
+    let mut records = 0;
+    for id in database.node_ids() {
+        if matches!(database.node_kind(id), db::NodeKind::Expr(db::ExprKind::Operation {
+            op: db::Operation::Conditional, ..
+        })) && database.type_descriptor(id).is_some_and(|descriptor|
+            matches!(&descriptor.shape, db::TypeShape::Aggregate(layout)
+                if layout.kind == db::AggregateKind::UnpackedStruct))
+        {
+            records += 1;
+        }
+    }
+    assert!(records > 0, "a direct unpacked conditional must remain in owned source");
+    for options in [OptConfig::none(), OptConfig::default()] {
+        codegen::generate_from_db_with_opts(&database, &options)
+            .expect("direct and function-return record merging after snapshot drop");
+    }
+}

@@ -35,10 +35,36 @@ diff --git a/source/ast/expressions/OperatorExpressions.cpp b/source/ast/express
  
          auto combineArrays = [&](auto& result, auto& la, auto& ra) -> ConstantValue {
              ConstantValue defaultElement = type->getArrayElementType()->getDefaultValue();
+@@ -1670,6 +1686,25 @@
+             if (la.size() == ra.size() && type->isArray()) {
+                 std::vector<ConstantValue> result(la.size());
+                 return combineArrays(result, la, ra);
++            }
++            if (la.size() == ra.size() &&
++                type->getCanonicalType().kind == SymbolKind::UnpackedStructType) {
++                const auto& fields = type->getCanonicalType().as<UnpackedStructType>().fields;
++                if (fields.size() != la.size())
++                    return nullptr;
++
++                // The immediate structure member, not each nested leaf, is
++                // the merge element. Use its type default, not its initializer.
++                std::vector<ConstantValue> result;
++                result.reserve(fields.size());
++                for (size_t i = 0; i < fields.size(); i++) {
++                    ConstantValue comp = OpInfo::eval(BinaryOperator::Equality, la[i], ra[i]);
++                    if (!comp)
++                        return nullptr;
++                    result.emplace_back(comp.isTrue() ? la[i] :
++                                        fields[i]->getType().getDefaultValue());
++                }
++                return result;
+             }
+         }
+         else if (cvl.isQueue()) {
 diff --git a/tests/unittests/ast/ExpressionTests.cpp b/tests/unittests/ast/ExpressionTests.cpp
 --- a/tests/unittests/ast/ExpressionTests.cpp
 +++ b/tests/unittests/ast/ExpressionTests.cpp
-@@ -3790,6 +3790,52 @@
+@@ -3790,6 +3790,91 @@
      CHECK(var.getInitializer()->eval(eval_ctx).getBitstreamWidth() == 4);
  }
  
@@ -86,6 +112,45 @@ diff --git a/tests/unittests/ast/ExpressionTests.cpp b/tests/unittests/ast/Expre
 +    CHECK(exactlyEqual(q.getValue().integer(), "8'bxxxx0000"_si));
 +    auto& selected = root.lookupName<ParameterSymbol>("m.only_true_arm");
 +    CHECK(selected.getValue().integer() == 1);
++}
++
++TEST_CASE("Unpacked conditional constants merge immediate member type defaults") {
++    auto tree = SyntaxTree::fromText(R"(
++module m;
++    typedef struct {
++        logic [7:0] changed = 8'h11;
++        bit flag = 1;
++        logic [7:0] equal_value = 8'h22;
++        logic [7:0] row[2] = '{8'h10, 8'h11};
++    } S;
++    localparam S a = '{8'ha5, 1, 8'h5a, '{8'h10, 8'h11}};
++    localparam S b = '{8'ha6, 0, 8'h5a, '{8'h10, 8'h12}};
++    localparam S r = 1'bx ? a : b;
++    localparam S known = 4'b1xz0 ? a : b;
++    typedef struct { S child; logic [7:0] equal_value; } T;
++    localparam T ta = '{a, 8'hc3};
++    localparam T tb = '{b, 8'hc3};
++    localparam T tr = 1'bz ? ta : tb;
++endmodule
++)");
++
++    Compilation compilation;
++    compilation.addSyntaxTree(tree);
++    NO_COMPILATION_ERRORS;
++    auto& root = compilation.getRoot();
++    auto r = root.lookupName<ParameterSymbol>("m.r").getValue().elements();
++    CHECK(exactlyEqual(r[0].integer(), "8'hxx"_si));
++    CHECK(r[1].integer() == 0);
++    CHECK(r[2].integer() == 0x5a);
++    CHECK(exactlyEqual(r[3].elements()[0].integer(), "8'hxx"_si));
++    CHECK(exactlyEqual(r[3].elements()[1].integer(), "8'hxx"_si));
++    auto known = root.lookupName<ParameterSymbol>("m.known").getValue().elements();
++    CHECK(known[0].integer() == 0xa5);
++    CHECK(known[1].integer() == 1);
++    auto nested = root.lookupName<ParameterSymbol>("m.tr").getValue().elements();
++    CHECK(nested[0].elements()[1].integer() == 0);
++    CHECK(exactlyEqual(nested[0].elements()[2].integer(), "8'hxx"_si));
++    CHECK(nested[1].integer() == 0xc3);
 +}
 +
  TEST_CASE("Value range where implicit strings not allowed") {

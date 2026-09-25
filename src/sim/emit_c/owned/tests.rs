@@ -2,6 +2,7 @@
 use super::*;
 
 mod array_conditionals;
+mod conditional_records;
 mod fixed_array_reductions;
 mod sequential_predicates;
 use crate::sim::execution::ExecutionModel;
