@@ -433,6 +433,19 @@ with optimization enabled and disabled and covers:
 - rejection of overlapping packed writers, extra `always_ff` event controls
   and explicit `always_latch` event controls.
 
+The 2026-09-25 continuation requalifies these contracts against the
+expression kinds admitted in schedule positions 1–27
+(`repaired_expression_contexts.sv`): an unselected unpacked-structure
+conditional arm wakes its `always_comb` exactly once while an unchanged result
+does not notify a downstream reader; array-valued `inside`, structure-parameter
+equality, a tagged `matches` predicate's later `&&&` clause, positional-pattern
+lvalues fed by a helper call and `@*` memory selector/content reads all settle
+without stale outputs; a closed latch holds; and a whole-record `always_ff`
+nonblocking write changes only at its edge. Distinct array elements and record
+members remain legal separate writers, while positional-pattern, member and
+continuous overlaps are rejected. No collector or validator change was needed
+for these kinds.
+
 The accepted scope is fixed integral packed/unpacked records, fixed-array
 leaves, and the admitted value/input-link paths. Dynamic or native aggregate
 callbacks, event objects, clocking regions, and concurrent assertions remain

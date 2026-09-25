@@ -610,7 +610,11 @@ not behavioral coverage.
   in both optimizer modes: fixed record and nested-array sensitivity through
   helper calls and input links, ordinary `@*` call-site behavior, written
   member exclusion, disjoint packed writers, legal latch/flip-flop controls,
-  and single-fault writer/event rejection controls. See
+  and single-fault writer/event rejection controls. Its continuation witness
+  crosses the always family with repaired structure/array/pattern/tagged
+  expression kinds, asserts one wake for an unselected structure arm and no
+  downstream notification for an unchanged result, and adds disjoint-writer
+  and overlap controls. See
   [SYN-014 fixtures](fixtures/sim/syn014_process_contexts/readme.md).
 - `sim_process_control`: process-class identity/status observations,
   suspended waits, terminal awaits, recursive kill cleanup and independent

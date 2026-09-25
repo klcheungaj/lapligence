@@ -50,3 +50,60 @@ fn explicit_always_latch_event_is_rejected_without_lint() {
         "statements that pass time",
     );
 }
+
+#[test]
+fn repaired_expression_kinds_keep_sensitivity_without_spurious_wakeups() {
+    // Independent oracle: SV 9.2.2.2.1 always_comb reads (both conditional
+    // arms, called-function arguments, later predicate clauses), 11.4.11
+    // structure merge, 11.4.13 array set membership and V 9.7.5 `@*` reads.
+    sim_cli::run_case(
+        "syn014_process_contexts",
+        "repaired_expression_contexts",
+        concat!(
+            "initial merged=5a/1/12 hit=1 eq=1 matched=40 lanes=cd,ab word=d1 latch=5a reg=xx\n",
+            "unselected merged=5a/1/12 hit=1 eq=1 matched=40 lanes=cd,ab word=d1 latch=5a reg=xx\n",
+            "selected merged=33/0/7f hit=1 eq=1 matched=40 lanes=cd,ab word=d1 latch=5a reg=xx\n",
+            "members merged=33/0/7f hit=0 eq=0 matched=40 lanes=cd,ab word=d1 latch=5b reg=xx\n",
+            "predicate merged=33/0/7f hit=1 eq=0 matched=00 lanes=cd,ab word=d1 latch=5b reg=xx\n",
+            "contents merged=33/0/7f hit=1 eq=0 matched=40 lanes=cd,ee word=e1 latch=5b reg=xx\n",
+            "selector merged=33/0/7f hit=1 eq=0 matched=40 lanes=cd,ee word=d3 latch=5b reg=xx\n",
+            "held merged=33/0/7f hit=1 eq=0 matched=40 lanes=cd,ee word=d3 latch=5b reg=xx\n",
+            "edge merged=33/0/7f hit=1 eq=0 matched=40 lanes=cd,ee word=d3 latch=5b reg=33\n",
+        ),
+        "",
+        &[],
+    );
+}
+
+#[test]
+fn disjoint_pattern_element_and_member_writers_are_legal() {
+    sim_cli::run_case(
+        "syn014_process_contexts",
+        "disjoint_repaired_writers",
+        concat!(
+            "row2=aa first=bb row0=11 data=11 flag=0\n",
+            "row2=aa first=bb row0=22 data=22 flag=1\n",
+        ),
+        "",
+        &[],
+    );
+}
+
+#[test]
+fn overlapping_repaired_lvalue_writers_are_rejected() {
+    sim_cli::reject_case(
+        "syn014_process_contexts",
+        "pattern_writer_overlap",
+        "has multiple writers for `G_tb_second`",
+    );
+    sim_cli::reject_case(
+        "syn014_process_contexts",
+        "member_ff_overlap",
+        "has multiple writers for `G_tb_value__data`",
+    );
+    sim_cli::reject_case(
+        "syn014_process_contexts",
+        "pattern_continuous_overlap",
+        "has both a continuous assignment",
+    );
+}
