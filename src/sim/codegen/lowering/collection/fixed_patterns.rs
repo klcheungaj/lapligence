@@ -3,6 +3,9 @@ use super::fixed_values::{fixed_path_descriptor, fixed_width, two_state};
 use super::*;
 use crate::sim::ir::IrPackedSelect;
 
+#[cfg(test)]
+mod tests;
+
 impl Codegen<'_> {
     /// Return assignment-pattern operands in source/declaration order.
     ///
@@ -44,6 +47,11 @@ impl Codegen<'_> {
                         "replicated assignment pattern count is unknown in `{path}`"
                     ));
                 }
+                if count.signed && count.bits.first() == Some(&Bit::One) {
+                    return Err(format!(
+                        "replicated assignment pattern count must be positive in `{path}`"
+                    ));
+                }
                 let count = count.to_u128().ok_or_else(|| {
                     format!("replicated assignment pattern count does not fit in u128 in `{path}`")
                 })?;
@@ -69,7 +77,10 @@ impl Codegen<'_> {
                         "replicated assignment pattern has too many elements in `{path}`"
                     ));
                 }
-                let mut expanded = Vec::with_capacity(capacity);
+                let mut expanded = Vec::new();
+                expanded.try_reserve_exact(capacity).map_err(|_| {
+                    format!("replicated assignment pattern allocation failed in `{path}`")
+                })?;
                 for _ in 0..count {
                     expanded.extend(elements.iter().copied());
                 }

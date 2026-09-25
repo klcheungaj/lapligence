@@ -1118,3 +1118,11 @@ indices, missing coverage and incompatible values from legal unused or repeated
 type keys. No side-effect count is assumed for type/default expressions. Run the
 original `sim_syn001_type_keys` and `sim_review_bundle_patterns` suites together
 with the new public and snapshot-drop tests before recording full acceptance.
+
+## Continuation context qualification
+
+- `sim_review_tasks16_19` extends replicated fixed-pattern contexts and owned
+  snapshot-drop checks. Count, shape and signedness negatives remain specific;
+  side-effect counts are not asserted for type/default/replicated expressions.
+- Run new Rust/unit/public tests with the pinned toolchain and both optimizer
+  modes before acceptance. Fixture discovery alone does not execute the HDL.

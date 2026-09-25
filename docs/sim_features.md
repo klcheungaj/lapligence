@@ -222,6 +222,19 @@ checks and public local/input/inout/ref, record/row, singleton, signed-bound and
 const-ref controls are supplied. These Rust/public and actual generated-model
 ownership checks have not run here; SYN-027/SYN-028 acceptance remains pending.
 
+### Replicated fixed-pattern context qualification
+
+SYN-002 retains the shared per-dimension operand normalizer. It now also rejects
+negative signed owned counts before treating their bits as an unsigned extent,
+and uses fallible allocation after checked cardinality. Repeated operand slots
+remain distinct, including repeated references to the same node. Added owned
+unit tests and the `continuation_16_19/replicated_contexts.sv` matrix cover
+1/7/65/129-bit leaves, nested three-dimensional rows, packed dimensions, records,
+automatic initialization, calls/returns and NBA capture. These Rust/public tests
+are supplied but unexecuted in the delivery environment; full SYN-002 acceptance
+remains pending. No source side-effect evaluation count is promised for pattern
+replication, and replicated lvalues remain illegal.
+
 ### Selected synthesis profiles
 
 SYN-000 adopts the three profile axes from the implementation plan. The

@@ -22,6 +22,10 @@
   exposed to a hierarchical assignment or passed as a hierarchical ref actual
   is registered as a hidden model signal backed by the same persistent `_ret`
   storage for continuous/procedural writes and caller references.
+  `collection/fixed_patterns.rs` expands a replicated pattern's syntactic
+  operand slots once per dimension, without deduplicating shared node IDs.
+  Count sign, positivity and checked cardinality are validated before a fallible
+  allocation; already positional patterns are not expanded a second time.
 - **`statements.rs` / `statements/`:** `EmitCtx` coordinates procedural dispatch,
   declarations, assignments, control flow, events, forks, drivers, assertions,
   clocking, system tasks and calls. Fixed `foreach` nesting uses the owned
