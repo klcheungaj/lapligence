@@ -72,8 +72,9 @@ module tb;
             tagged invalid: result = 8'h01;
             default: result = 8'h00;
         endcase
-        if (result !== 8'h00)
-            $fatal(1, "casex wildcard ignored tagged X tag");
+        // SV 12.6.1 includes tag bits in casex wildcard matching.
+        if (result !== 8'h01)
+            $fatal(1, "casex did not wildcard tagged X tag");
 
         case (value) matches
             8'h5a: result = 8'h11;

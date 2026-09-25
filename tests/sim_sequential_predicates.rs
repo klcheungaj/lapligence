@@ -165,7 +165,7 @@ fn syn_025_pattern_case_items_filters_and_qualifiers() {
     let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/sim/sequential_predicates/syn_025_pattern_case.sv");
     let warning = format!(
-        "unique violation at {}:110:9: multiple matching items",
+        "unique violation at {}:111:9: multiple matching items",
         source.display()
     );
     sim_cli::run_case_with_args(

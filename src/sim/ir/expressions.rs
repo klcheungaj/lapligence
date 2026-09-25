@@ -306,9 +306,9 @@ pub struct IrPatternCheck {
     pub(in crate::sim) offset: u32,
     pub(in crate::sim) width: u32,
     pub(in crate::sim) signed: bool,
-    /// Tagged-union discriminants always use exact four-state equality. This
-    /// remains true when the containing pattern is lowered for `casez` or
-    /// `casex`; only payload constants inherit that case mode.
+    /// Explicit exact-comparison override for a check. Source pattern-case
+    /// tag and payload checks leave this false so both inherit `match_kind`.
+    /// Ordinary active-member access uses separate `IrTaggedMemberGuard`s.
     pub(in crate::sim) exact: bool,
     pub(in crate::sim) constant: Option<Box<IrExpr>>,
     pub(in crate::sim) binding: Option<IrLhs>,

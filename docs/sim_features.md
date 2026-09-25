@@ -16,6 +16,13 @@ coverage audit. They were not independently revalidated in this source-status
 audit.
 Detailed source investigations and run records belong in local `persistence/`.
 
+SYN-025-N09 now retains the enclosing pattern-case comparison mode for both
+union tag bits and payload constants. The prior casex/X-tag negative oracle is
+corrected; the casez/X-tag negative and ordinary checked-access diagnostics
+remain. `sim_review_tasks08_11` and owned emitter `pattern_modes` regressions
+cover the source and comparison-owner paths; Rust/public/generated-model
+qualification of this increment is pending.
+
 ## Current source status and qualification — 2026-09-24
 
 This inventory records the source status reconciled against the task checkout
@@ -48,7 +55,7 @@ source diagnostics and single receiver capture are retained. The nested guard
 stress fixture and emitter ownership tests are added, but Rust/public HDL and
 actual generated-model sanitizer qualification remain pending. This change does
 not itself close the separate valid-member signedness or pattern-case match-mode
-contracts; the N01 follow-up is described below and N09 remains open. SYN-000
+contracts; the N01 and N09 follow-ups are described below. SYN-000
 identifies the supplied 03-2 baseline only; no new
 full-suite green baseline or final selected-profile acceptance is asserted.
 
@@ -450,10 +457,11 @@ Implemented scope:
   in source order. SYN-025 adds `case`/`casez`/`casex ... matches` with one
   selector evaluation, source-ordered pattern-local filters, first-match and
   default behavior, unique/priority checks, and primitive/structure bindings.
-  SYN-024 adds finite packed tagged-union patterns with exact active-tag
-  guards, void arms, fixed primitive/structure payloads, nested tags and
-  automatic payload bindings. Tagged discriminants retain exact four-state
-  comparison under `casez`/`casex`; dynamic/native payloads remain fail-closed.
+  SYN-024 adds finite packed tagged-union patterns with void arms, fixed
+  primitive/structure payloads, nested tags and automatic payload bindings.
+  Pattern discriminants and payload constants inherit the enclosing
+  `case`/`casez`/`casex` mode (SV 12.6.1); ordinary checked member access and
+  `if ... matches` remain exact. Dynamic/native payloads remain fail-closed.
   The `sim_sequential_predicates` and owned-
   import tests cover these bounded forms in the recorded pre-SYN038 Linux
   baseline. Native

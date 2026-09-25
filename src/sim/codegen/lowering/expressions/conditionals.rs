@@ -521,7 +521,9 @@ impl Codegen<'_> {
                 offset: tag_offset,
                 width: tag_width,
                 signed: false,
-                exact: true,
+                // SV 12.6.1 applies the enclosing case wildcard mode to tag
+                // bits too. Ordinary member-access guards remain exact.
+                exact: false,
                 constant: Some(Box::new(IrExpr::new(
                     IrExprKind::Const(tag),
                     tag_width,

@@ -12,6 +12,7 @@ mod native_values;
 mod nextest_regressions;
 mod packed_formals;
 mod packed_selections;
+mod pattern_modes;
 mod review_regressions;
 mod tagged_guards;
 mod tagged_signed;

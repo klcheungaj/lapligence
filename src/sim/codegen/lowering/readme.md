@@ -31,6 +31,8 @@
   automatic numeric cells, while detachable branches retain value snapshots.
 - **`expressions.rs` / `expressions/`:** lower typed expressions, operations,
   conversions, aggregates, streaming, membership and system-function queries.
+  Pattern-case tag and payload comparisons both inherit the enclosing case
+  mode; ordinary checked tagged-member accesses remain exact.
   `expressions/aggregates/copies.rs` separates selected-value type compatibility
   from root storage and pairs fixed-array leaves in declaration order. Source
   leaves are captured before any destination leaf is written.
