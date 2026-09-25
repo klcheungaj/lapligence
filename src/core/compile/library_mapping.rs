@@ -65,6 +65,7 @@ struct Entry {
     name: String,
     choice: Option<Choice>,
     order: usize,
+    original_map: Option<String>,
 }
 
 /// Retains caller-owned buffers and their first discovery order. Disk and
@@ -100,6 +101,7 @@ impl<'a> LibraryMapBuffers<'a> {
                         name: source.name.clone(),
                         choice: None,
                         order: usize::MAX,
+                        original_map: None,
                     },
                 )
                 .is_some()
@@ -123,6 +125,7 @@ impl<'a> LibraryMapBuffers<'a> {
                             conflict: None,
                         }),
                         order: usize::MAX,
+                        original_map: None,
                     },
                 )
                 .is_some()
@@ -131,6 +134,61 @@ impl<'a> LibraryMapBuffers<'a> {
             }
         }
         Ok(result)
+    }
+
+    /// Retain a same-length configuration-only projection of an admitted map.
+    /// Maps already count against source/byte admission limits. Charge the
+    /// projection's extra workspace separately, and reuse any existing mapped
+    /// buffer/explicit library choice rather than assigning it a second time.
+    pub(super) fn retain_configuration(
+        &mut self,
+        name: &str,
+        original: &str,
+        projection: String,
+        work: &mut LibraryMapWorkBudget,
+    ) -> Result<(), StartupError> {
+        let key = logical_path_key(Path::new(name), work, "configuration source identity")?;
+        if let Some(entry) = self.entries.get_mut(&key) {
+            for source in self.sources.iter_mut() {
+                let source_key = logical_path_key(
+                    Path::new(&source.name), work, "configuration source lookup",
+                )?;
+                if source_key == key {
+                    check_map_source(&source.text, original, &projection, name, work)?;
+                    retain_original_map(entry, original, work)?;
+                    source.text = projection;
+                    source.is_compilation_unit = true;
+                    return Ok(());
+                }
+            }
+            for source in self.libraries.iter_mut() {
+                let source_key = logical_path_key(
+                    Path::new(&source.name), work, "configuration library lookup",
+                )?;
+                if source_key == key {
+                    check_map_source(&source.text, original, &projection, name, work)?;
+                    retain_original_map(entry, original, work)?;
+                    source.text = projection;
+                    return Ok(());
+                }
+            }
+            return Err(StartupError::new(
+                StartupErrorKind::Internal, "configuration candidate has no retained source",
+            ));
+        }
+        charge_library_map_clone(work, name, "configuration entry name")?;
+        charge_library_map_clone(work, name, "configuration source name")?;
+        charge_workspace::<OwnedSource>(work, 1, "configuration source record")?;
+        let mut entry = Entry {
+            name: name.to_owned(),
+            choice: None,
+            order: usize::MAX,
+            original_map: None,
+        };
+        retain_original_map(&mut entry, original, work)?;
+        self.entries.insert(key, entry);
+        self.sources.push(OwnedSource::compilation_unit(name, projection));
+        Ok(())
     }
 
     /// Return whether the source bytes were already admitted. Only a disk
@@ -153,6 +211,7 @@ impl<'a> LibraryMapBuffers<'a> {
                         name: name.to_owned(),
                         choice: None,
                         order: usize::MAX,
+                        original_map: None,
                     }),
                     false,
                 )
@@ -193,7 +252,7 @@ impl<'a> LibraryMapBuffers<'a> {
         self,
         remaining: &mut u64,
         work: &mut LibraryMapWorkBudget,
-    ) -> Result<(), StartupError> {
+    ) -> Result<Vec<OwnedSource>, StartupError> {
         charge_key_comparison_work(
             work,
             self.entries.values().map(|entry| entry.name.len()),
@@ -258,6 +317,11 @@ impl<'a> LibraryMapBuffers<'a> {
             .ok_or_else(|| work.limit_error("map source removal"))?;
         work.charge_usize(amount, "map source removal")?;
         charge_workspace::<Option<OwnedSource>>(work, self.sources.len(), "map removal workspace")?;
+        charge_workspace::<OwnedSource>(
+            work,
+            self.entries.values().filter(|entry| entry.original_map.is_some()).count(),
+            "original map publication",
+        )?;
         let mut available: Vec<_> = std::mem::take(self.sources).into_iter().map(Some).collect();
         for (_, index, library) in selected {
             let source = available[index].take().ok_or_else(|| {
@@ -266,8 +330,49 @@ impl<'a> LibraryMapBuffers<'a> {
             self.libraries.push(LibrarySource::new(source.name, source.text, library));
         }
         *self.sources = available.into_iter().flatten().collect();
-        Ok(())
+        Ok(self.entries.into_values().filter_map(|entry| {
+            entry.original_map.map(|text| OwnedSource::include(entry.name, text))
+        }).collect())
     }
+}
+
+fn retain_original_map(
+    entry: &mut Entry,
+    original: &str,
+    work: &mut LibraryMapWorkBudget,
+) -> Result<(), StartupError> {
+    work.charge_usize(original.len(), "original configuration map")?;
+    if let Some(retained) = &entry.original_map {
+        if retained != original {
+            return Err(StartupError::new(
+                StartupErrorKind::InvalidArgument,
+                format!("conflicting configuration map contents: {}", entry.name),
+            ));
+        }
+    } else {
+        work.charge_allocation_usize(original.len(), "original configuration map")?;
+        entry.original_map = Some(original.to_owned());
+    }
+    Ok(())
+}
+
+fn check_map_source(
+    retained: &str,
+    original: &str,
+    projection: &str,
+    name: &str,
+    work: &mut LibraryMapWorkBudget,
+) -> Result<(), StartupError> {
+    work.charge_usize(retained.len(), "configuration source comparison")?;
+    work.charge_usize(original.len(), "configuration source comparison")?;
+    work.charge_usize(projection.len(), "configuration source comparison")?;
+    if retained != original && retained != projection {
+        return Err(StartupError::new(
+            StartupErrorKind::InvalidArgument,
+            format!("library map configuration conflicts with admitted source: {name}"),
+        ));
+    }
+    Ok(())
 }
 
 fn duplicate_source(name: &str) -> StartupError {

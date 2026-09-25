@@ -1,0 +1,10 @@
+library cells rtl/cells.sv;
+config unused;
+    design work.tb;
+    cell selected_leaf use cells.low;
+endconfig
+config choose;
+    design work.tb;
+    cell selected_leaf use cells.low;
+    instance tb.u use cells.high;
+endconfig

@@ -140,7 +140,7 @@ fn filesystem_maps_share_precedence_and_charge_each_source_once() {
         assert_eq!(libraries.len(), 1);
         assert_eq!(libraries[0].library, "chosen");
         assert_eq!(libraries[0].text, "body");
-        assert_eq!(count, 1, "only one new source is admitted for all matching patterns");
+        assert_eq!(count, 2, "one map and one source are admitted for all matching patterns");
     }
 }
 
@@ -189,7 +189,7 @@ fn disk_map_uses_existing_cli_source_bytes_instead_of_reading_again() {
         &mut remaining, &mut work, &mut targets).unwrap();
     buffers.finish(&mut remaining, &mut work).unwrap();
     assert_eq!(libraries[0].text, "retained bytes");
-    assert_eq!(count, 1);
+    assert_eq!(count, 2, "the existing source plus its map input");
     assert!(sources.is_empty());
 }
 
@@ -204,4 +204,38 @@ fn unrecorded_buffers_fail_closed_before_publication() {
     assert_eq!(error.kind(), StartupErrorKind::Internal);
     assert!(libraries.is_empty());
     assert_eq!(sources.len(), 1);
+}
+
+
+#[test]
+fn filesystem_map_configurations_are_registered_before_mapping_later_files() {
+    let directory = Directory::new();
+    let first = directory.0.join("first.map");
+    let second = directory.0.join("second.map");
+    let configuration = "config chosen; design work.top; endconfig";
+    std::fs::write(&first, "include second.map; library configs second.map;").unwrap();
+    std::fs::write(&second, configuration).unwrap();
+    let opts = CompileOpts {
+        library_map_files: vec![first.to_string_lossy().into_owned()],
+        ..Default::default()
+    };
+    let mut sources = Vec::new();
+    let mut libraries = Vec::new();
+    let mut identities = HashSet::new();
+    let mut targets = HashMap::new();
+    let mut count = 0;
+    let mut remaining = u64::MAX;
+    let mut work = LibraryMapWorkBudget::new(MAX_LIBRARY_MAP_WORK);
+    let mut buffers = LibraryMapBuffers::new(&mut sources, &mut libraries, &mut work).unwrap();
+    admit_library_maps_with_targets(
+        &opts, &mut identities, &mut buffers, &mut count, &mut remaining, &mut work, &mut targets,
+    ).expect("admit each map once before mapping its configuration source");
+    let originals = buffers.finish(&mut remaining, &mut work).unwrap();
+    assert_eq!(count, 2, "one root map and one included map, not a third source read");
+    assert!(sources.is_empty());
+    assert_eq!(libraries.len(), 1);
+    assert_eq!(libraries[0].library, "configs");
+    assert_eq!(libraries[0].text, configuration);
+    assert_eq!(originals.len(), 1);
+    assert_eq!(originals[0].text, configuration);
 }

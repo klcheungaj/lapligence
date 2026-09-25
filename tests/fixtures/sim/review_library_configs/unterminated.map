@@ -1,0 +1,3 @@
+library cells rtl/cells.sv;
+config choose;
+    design work.tb;

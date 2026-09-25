@@ -1081,3 +1081,15 @@ run both target editions and optimizer modes. Exact-source tests retain owned
 configured hierarchy after dropping Slang; focused admission tests cover joint
 disk/logical matches, retained source bytes and pre-move budget failures. These
 new tests are supplied for host execution, not recorded here as passing results.
+
+### Continuation: map-configuration qualification
+
+`sim_review_tasks12_15` keeps literal configuration declarations in checked-in
+root, included, and multiple-configuration maps. It compares separate-source
+binding under both editions and both optimizer modes. Exact-source tests drop
+the frontend result before inspecting hierarchy and retain original map text;
+malformed configuration diagnostics must name the original map location.
+`core::compile::library_configs::tests` independently exercises lexical block
+boundaries, projection budgets, explicit library reuse and UTF-8 provenance.
+These tests require the normal prepared frontend build. Their presence is not a
+passing run, and unrelated native runtime tests cannot qualify source admission.

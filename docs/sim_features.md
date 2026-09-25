@@ -44,8 +44,39 @@ with trailing separator. Same-library repeats are coalesced, higher-rank matches
 resolve lower-rank ties, and explicit library assignments override maps. Matched
 CLI/buffer sources reuse their admitted text; source count and library metadata
 are charged once. The new core resolver and public configured-design fixtures
-have not been executed through Rust/Slang here. N12's map-configuration decision,
-Q04's `-incdir` contract, and overall library/profile acceptance remain open.
+have not been executed through Rust/Slang here. The N12 source interpretation
+is recorded below; Q04's `-incdir` contract and full library acceptance remain open.
+
+### Configuration declarations inside library maps
+
+SYN-032-N12 adopts the **formal-grammar product interpretation** for both target
+editions: V Annex A.1.1 and SV Annex A.1.1/33.3.1 include `config_declaration`
+in library text. V 13.2.2 and SV 33.3.2 contain narrower nearby prose. That
+source inconsistency is retained explicitly; this is the selected implementation
+policy, not an IEEE erratum or an assertion that the prose was corrected.
+
+Literal configuration blocks in admitted filesystem and logical maps, including
+included maps, now reach the normal Slang configuration parser and binding
+engine. Library clauses are handled by the existing authorized Rust map resolver.
+Configuration bytes retain their positions in a same-length projection; original
+map bytes are restored before diagnostic projection and owned import, preserving
+filenames, UTF-16 columns, and source/cache provenance. Separate source-file
+configurations remain supported. Malformed blocks and unexpected map tokens
+receive direct diagnostics rather than being silently discarded.
+
+The block boundary is lexical: comments, strings, escaped identifiers and named
+end clauses do not impersonate `endconfig`. Macro-generated map declarations or
+macro-generated block delimiters are not added by this input route. No extra
+filesystem discovery, native ABI change or runtime configuration interpreter is
+introduced. Existing per-library `-incdir` handling is not generalized; its Q04
+contract still requires separate qualification.
+
+`sim_review_tasks12_15` adds public root/included/multiple/separate-source map
+cases in both editions and optimizer modes, exact-source configuration-change
+and snapshot-teardown checks, and source-position diagnostics. Core tests cover
+lexing, bounded projection/publication, source conflicts and original UTF-8
+restoration. These Rust/Slang/HDL tests are supplied but not executed here;
+N12 and the selected profile are not marked fully accepted.
 
 ## Current source status and qualification — 2026-09-23
 

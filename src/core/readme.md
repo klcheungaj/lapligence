@@ -29,8 +29,12 @@ fail; repeated same-library matches reuse one source. Explicit `--libfile` and
 `LibrarySource` assignments override map candidates. Filesystem and logical map
 inputs share the resolver, with bounded matching/cloning and one metadata charge
 per newly mapped buffer. Original buffers and admitted path handles remain the
-source of truth; ranking never grants a native filesystem read. Embedded map
-configurations and per-library `-incdir` remain separately tracked policy work.
+source of truth; ranking never grants a native filesystem read. `compile/library_configs.rs` forwards literal map configuration declarations to
+Slang through a byte-position-preserving source projection. After capture, the
+exact admitted map text is restored for owned source provenance and UTF-16
+positions; this does not grant another native read or interpret bindings in
+Rust. Map include/library expansion remains under the same admission limits.
+Per-library `-incdir` has a separate input-policy boundary.
 
 Strict source admission is centralized in `compile/editions.rs`, over owned
 semantic records and classified lexical tokens. The table is shared by ordinary
