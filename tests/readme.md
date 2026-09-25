@@ -1163,3 +1163,13 @@ later defaults, const-ref aliases/forwarding, local disable and per-activation
 storage. `owned::tests::static_outputs` supplies a real-emitter model requiring
 Rust/CMake and relevant generated-model sanitizer execution. Q03 changing-tag NBA
 check timing remains a separately recorded oracle question, not a passing cell.
+
+The same continuation suite includes SYN-006 fixed variable/net value drivers,
+constant and source-sensitive processes, selected slices, record/array merges,
+function RHS capture, static positional net targets, and disjoint bit/element
+writers. It rejects ordinary procedural/initializer overlap with a continuous
+variable writer at the owned semantic boundary; force/release remain positive
+override controls. The private `collection::processes::tests` inspects actual
+collected dependency and per-site contribution identities after snapshot teardown.
+All these Rust/public tests are supplied for host execution, not reported passing
+from native-only validation.

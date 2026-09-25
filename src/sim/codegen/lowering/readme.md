@@ -171,3 +171,12 @@ Expression-call defaults for numeric static output/inout formals read their
 persistent model storage. Caller temporary defaults are only the automatic
 formal's initial value, not a static output copy-in. The owned call argument
 records still retain selector captures, writeback and typed storage effects.
+
+Continuous variable-driver conflicts use a dedicated mode of the shared procedural
+write traversal: ordinary assignments and explicit initializers count, whereas
+force/release/deassign controls do not become new procedural drivers. The existing
+sensitivity traversal is unchanged. `collection/processes.rs` compares those
+writes with explicit continuous variable sites using canonical storage intervals,
+while keeping net contribution identity and disjoint elements intact. Its tests
+also check source-only sensitivity and static pattern-target topology. These
+source/test additions require public and generated-model host qualification.

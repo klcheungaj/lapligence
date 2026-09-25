@@ -2,6 +2,12 @@
 
 use super::*;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ProcessWriteMode {
+    Sensitivity,
+    ContinuousConflict,
+}
+
 impl<'a> Codegen<'a> {
     fn unpacked_storage_dependencies(&self, node: NodeId) -> Option<Vec<IrDependency>> {
         let (root, prefix) = self.unpacked_path_for_expr(node).or_else(|| {
@@ -432,17 +438,27 @@ impl<'a> Codegen<'a> {
     ) -> Result<HashSet<IrDependency>, String> {
         let mut writes = HashSet::new();
         let mut visited = HashSet::new();
-        self.walk_process_writes(root, &mut writes, &mut visited)?;
+        self.walk_process_writes_bound(
+            root, &mut writes, &mut visited, &HashMap::new(), ProcessWriteMode::Sensitivity,
+        )?;
         Ok(writes)
     }
 
-    fn walk_process_writes(
+    /// Ordinary procedural assignments conflict with a continuous variable
+    /// driver. Force/release are overrides, not competing assignments (SV 6.5).
+    pub(super) fn collect_continuous_conflict_writes(
         &self,
-        node: NodeId,
-        writes: &mut HashSet<IrDependency>,
-        visited_functions: &mut HashSet<NodeId>,
-    ) -> Result<(), String> {
-        self.walk_process_writes_bound(node, writes, visited_functions, &HashMap::new())
+        root: NodeId,
+    ) -> Result<HashSet<IrDependency>, String> {
+        let mut writes = HashSet::new();
+        self.walk_process_writes_bound(
+            root,
+            &mut writes,
+            &mut HashSet::new(),
+            &HashMap::new(),
+            ProcessWriteMode::ContinuousConflict,
+        )?;
+        Ok(writes)
     }
 
     fn walk_process_writes_bound(
@@ -451,23 +467,38 @@ impl<'a> Codegen<'a> {
         writes: &mut HashSet<IrDependency>,
         visited_functions: &mut HashSet<NodeId>,
         bindings: &HashMap<NodeId, IrDependency>,
+        mode: ProcessWriteMode,
     ) -> Result<(), String> {
         if self.is_process_self_call(node) {
             return Ok(());
         }
         if self.is_semaphore_constructor_call(node) {
             for child in &self.node(node).children {
-                self.walk_process_writes_bound(*child, writes, visited_functions, bindings)?;
+                self.walk_process_writes_bound(*child, writes, visited_functions, bindings, mode)?;
             }
             return Ok(());
         }
         if self.is_mailbox_constructor_call(node) {
             for child in &self.node(node).children {
-                self.walk_process_writes_bound(*child, writes, visited_functions, bindings)?;
+                self.walk_process_writes_bound(*child, writes, visited_functions, bindings, mode)?;
             }
             return Ok(());
         }
         match self.kind(node) {
+            NodeKind::Stmt(StmtKind::Force { lhs, rhs })
+                if mode == ProcessWriteMode::ContinuousConflict => {
+                // The generic children can also contain Slang's assignment
+                // wrapper. Visit only the typed operands so that wrapper does
+                // not reclassify the override as an ordinary variable write.
+                self.walk_process_writes_bound(*lhs, writes, visited_functions, bindings, mode)?;
+                self.walk_process_writes_bound(*rhs, writes, visited_functions, bindings, mode)?;
+                return Ok(());
+            }
+            NodeKind::Stmt(StmtKind::Release { lhs } | StmtKind::Deassign { lhs })
+                if mode == ProcessWriteMode::ContinuousConflict => {
+                self.walk_process_writes_bound(*lhs, writes, visited_functions, bindings, mode)?;
+                return Ok(());
+            }
             NodeKind::Stmt(StmtKind::Assign { .. })
             | NodeKind::Stmt(StmtKind::ProcContAssign { .. })
             | NodeKind::Stmt(StmtKind::Force { .. })
@@ -482,15 +513,24 @@ impl<'a> Codegen<'a> {
                 return Ok(());
             }
             NodeKind::Stmt(StmtKind::VariableDecl { declaration }) => {
-                // A declaration itself is local storage, not a process write
-                // for implicit-sensitivity purposes. Its initializer can
-                // still call a side-effecting function.
-                if let Some(initializer) = self.db.var_initializer(*declaration) {
+                // Initializers are assignments for the continuous-driver
+                // conflict rule, but not writes in implicit sensitivity.
+                if let Some(initializer) = self.db.var_initializer(*declaration).or_else(|| {
+                    if mode == ProcessWriteMode::ContinuousConflict {
+                        self.db.array_meta(*declaration).filter(|meta| meta.net_type.is_none()).and_then(|meta| meta.init)
+                    } else {
+                        None
+                    }
+                }) {
+                    if mode == ProcessWriteMode::ContinuousConflict {
+                        self.add_process_lhs_write_bound(*declaration, writes, bindings);
+                    }
                     self.walk_process_writes_bound(
                         initializer,
                         writes,
                         visited_functions,
                         bindings,
+                        mode,
                     )?;
                 }
                 return Ok(());
@@ -568,6 +608,7 @@ impl<'a> Codegen<'a> {
                             writes,
                             visited_functions,
                             &callee_bindings,
+                            mode,
                         )?;
                     }
                     visited_functions.remove(&ft);
@@ -576,7 +617,7 @@ impl<'a> Codegen<'a> {
             _ => {}
         }
         for child in &self.node(node).children {
-            self.walk_process_writes_bound(*child, writes, visited_functions, bindings)?;
+            self.walk_process_writes_bound(*child, writes, visited_functions, bindings, mode)?;
         }
         Ok(())
     }

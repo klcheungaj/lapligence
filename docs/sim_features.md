@@ -44,6 +44,24 @@ and actual-emitter tests remain unexecuted here. Ordinary statement-call paths
 are retained. Q03's changing-tag NBA check timing is not resolved by this fix;
 stable-tag controls and the separate tagged-access checks remain in force.
 
+SYN-006's owned semantic gate now rejects an ordinary procedural write or declaration
+initializer overlapping an explicit continuous variable assignment, even when
+Slang reports the mix as a warning. It uses the existing typed storage-prefix
+comparison. Its conflict-only writer scan excludes force/release/deassign
+operations without changing the existing sensitivity/writer scan. Disjoint
+array elements and packed bits remain separate; net drivers still use their
+independent resolution slots. This is not a general redesign of port-driver
+validation or an acceptance claim for every topology.
+
+`sim_review_tasks20_23` adds continuous variable/net arrays, opposite bounds,
+selected slices, two-state conversion, array/record conditionals, function-value
+capture, static positional net targets, nested content/selector changes, and
+mixed/initialized-writer errors with override/disjoint controls. Collector tests
+inspect RHS-only dependencies, constant RunOnce behavior and distinct per-site
+net slots after native snapshot teardown. The newly added Rust/public tests have
+not run on the delivery host. Existing runtime checks do not establish acceptance
+of these Rust collector/lowering paths; SYN-006's full gate remains pending.
+
 SYN-025-N09 now retains the enclosing pattern-case comparison mode for both
 union tag bits and payload constants. The prior casex/X-tag negative oracle is
 corrected; the casez/X-tag negative and ordinary checked-access diagnostics

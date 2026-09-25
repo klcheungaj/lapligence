@@ -145,3 +145,63 @@ fn static_output_formals_and_defaults_lower_after_native_teardown() {
         }
     }
 }
+
+#[test]
+fn continuous_arrays_keep_values_dependencies_and_static_pattern_topology() {
+    sim_cli::run_case_with_args(
+        "continuation_20_23", "continuous_contexts", "CONTINUOUS_CONTEXTS_PASS\n", "", &[],
+        &["--edition", "2009"],
+    );
+    sim_cli::run_case_with_args(
+        "continuation_20_23", "continuous_rhs_once",
+        "CONTINUOUS_RHS_EVAL\nCONTINUOUS_RHS_EVAL\nCONTINUOUS_RHS_EVAL\nCONTINUOUS_RHS_ONCE_PASS\n",
+        "", &[], &["--edition", "2009"],
+    );
+    sim_cli::run_case_with_args(
+        "continuation_20_23", "continuous_identity", "CONTINUOUS_IDENTITY_PASS\n", "", &[],
+        &["--edition", "2009"],
+    );
+    sim_cli::run_case_with_args(
+        "continuation_20_23", "continuous_force_control", "CONTINUOUS_FORCE_CONTROL_PASS\n", "", &[],
+        &["--edition", "2009"],
+    );
+}
+
+#[test]
+fn continuous_array_conflicts_remain_errors() {
+    sim_cli::reject_case_with_args(
+        "rtl_completion", "syn_006_array_continuous_variable_conflict",
+        "multiple continuous assignments to variable storage", &["--edition", "2009"],
+    );
+    sim_cli::reject_case_with_args(
+        "continuation_20_23", "continuous_mixed_writer_error",
+        "has both a continuous assignment", &["--edition", "2009"],
+    );
+    sim_cli::reject_case_with_args(
+        "continuation_20_23", "continuous_initialized_writer_error",
+        "has both a continuous assignment", &["--edition", "2009"],
+    );
+}
+
+#[test]
+fn continuous_array_graph_lowers_without_a_native_snapshot() {
+    use llg::core::{compile, db};
+    use llg::sim::{codegen, opt::OptConfig};
+    for (name, source) in [
+        ("continuous_contexts.sv", include_str!("fixtures/sim/continuation_20_23/continuous_contexts.sv")),
+        ("continuous_rhs_once.sv", include_str!("fixtures/sim/continuation_20_23/continuous_rhs_once.sv")),
+    ] {
+        let database = {
+            let result = compile::compile_sources_checked(
+                &[compile::OwnedSource::compilation_unit(name, source)],
+                &compile::CompileOpts { top: Some("tb".to_owned()), ..Default::default() },
+            ).expect("legal continuous fixed-value contexts");
+            db::Db::from_slang(&result.snapshot).unwrap()
+        };
+        database.validate().unwrap();
+        for options in [OptConfig::none(), OptConfig::default()] {
+            codegen::generate_from_db_with_opts(&database, &options)
+                .expect("typed continuous paths after native destruction");
+        }
+    }
+}

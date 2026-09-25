@@ -3,6 +3,9 @@
 use super::*;
 use super::super::containers::PatternAssignmentKind;
 
+#[cfg(test)]
+mod tests;
+
 impl<'a> Codegen<'a> {
     // ── PCA site pre-scan (two-phase discovery, phase 1) ─────────────────────
 
@@ -899,6 +902,66 @@ impl<'a> Codegen<'a> {
                         self.source_location(writer.node),
                         other.label,
                         self.source_location(other.node),
+                    ));
+                }
+            }
+        }
+
+        let mut procedural_writers = Vec::new();
+        if !continuous.is_empty() {
+            for writer in &writers {
+                if !matches!(self.kind(writer.node), NodeKind::Process { .. }) {
+                    continue;
+                }
+                let Some(inst) = self.owning_inst(writer.node) else {
+                    continue;
+                };
+                self.inst = inst;
+                let statement = self.node(writer.node).children.first().copied().ok_or_else(|| {
+                    "procedural writer has no statement at continuous-driver validation".to_owned()
+                })?;
+                procedural_writers.push(ProcessWriter {
+                    node: writer.node,
+                    label: writer.label.clone(),
+                    writes: self.collect_continuous_conflict_writes(statement)?,
+                });
+            }
+            // A declared initializer is also a procedural assignment for this
+            // rule. Keep it out of sensitivity writer analysis, but do not let an
+            // initialized variable silently acquire another continuous writer.
+            for node in self.design_nodes() {
+                if !matches!(self.kind(node), NodeKind::Var { .. } | NodeKind::Array { .. }) {
+                    continue;
+                }
+                let Some(initializer) = self.db.var_initializer(node).or_else(|| {
+                    self.db.array_meta(node).filter(|meta| meta.net_type.is_none()).and_then(|meta| meta.init)
+                }) else {
+                    continue;
+                };
+                let Some(inst) = self.owning_inst(node) else {
+                    continue;
+                };
+                self.inst = inst;
+                let mut writes = self.collect_continuous_conflict_writes(initializer)?;
+                self.add_process_lhs_write(node, &mut writes);
+                procedural_writers.push(ProcessWriter {
+                    node,
+                    label: format!("{}.initializer", self.instance_path_of(inst)),
+                    writes,
+                });
+            }
+        }
+        for driver in &continuous {
+            for writer in &procedural_writers {
+                if let Some(storage) = driver.writes.iter().find(|write| {
+                    writer.writes.iter().any(|other| self.same_storage(write, other))
+                }) {
+                    return Err(format!(
+                        "semantic error: variable storage `{}` has both a continuous assignment at {} and a procedural assignment by `{}` at {}",
+                        self.dependency_label(storage),
+                        self.source_location(driver.node),
+                        writer.label,
+                        self.source_location(writer.node),
                     ));
                 }
             }
