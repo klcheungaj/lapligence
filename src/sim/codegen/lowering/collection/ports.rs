@@ -445,6 +445,19 @@ impl<'a> Codegen<'a> {
                 .unwrap_or(index)
         };
         match lhs {
+            IrLhs::PackedSelect {
+                target,
+                steps,
+                signed,
+                two_state,
+            } => IrLhs::PackedSelect {
+                target: Box::new(self.remap_structural_lhs_for_terminal(
+                    *target, source, terminal,
+                )),
+                steps,
+                signed,
+                two_state,
+            },
             IrLhs::Whole(index) => IrLhs::Whole(remap(index)),
             IrLhs::Bit(index, expression, two_state) => {
                 IrLhs::Bit(remap(index), expression, two_state)

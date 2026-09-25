@@ -90,3 +90,46 @@ fn fixed_input_scatter_snapshots_the_complete_converted_expression() {
             && function.ret.is_some_and(|ty| ty.two_state())
     }));
 }
+
+
+#[test]
+fn selected_terminal_remapping_keeps_each_output_contribution_distinct() {
+    // Exercise the non-alias fallback directly: ordinary source terminals may
+    // use the alias projection route, which must not hide a missing IR branch.
+    let database = cast_database();
+    let semantic = crate::sim::semantic::SemanticModel::from_db(&database);
+    let mut cg = Codegen::new(&semantic);
+    let source = database.node_ids().next().unwrap();
+    cg.model.net_groups.push(crate::sim::ir::IrNetGroup {
+        c_name: "selected_outputs".to_owned(), width: 129, signed: false,
+        kind: crate::sim::ir::IrNetKind::Wire, n_drivers: 0,
+        driver_strengths: Vec::new(), propagation_delay: None,
+    });
+    let first = cg.add_structural_driver_for_terminal(0, source, (6, 6), 0).unwrap();
+    let second = cg.add_structural_driver_for_terminal(0, source, (6, 6), 1).unwrap();
+    assert_ne!(first, second);
+    let steps = vec![crate::sim::ir::IrPackedSelect {
+        base: lhs_integer_expr(32), width: 65,
+    }];
+    let target = IrLhs::PackedSelect {
+        target: Box::new(IrLhs::Stream {
+            parts: vec![(IrLhs::Whole(first), 129)], width: 129, slice: 1,
+            direction: IrStreamDirection::LeftToRight,
+        }),
+        steps: steps.clone(), signed: true, two_state: false,
+    };
+    for (terminal, expected) in [(0, first), (1, second)] {
+        let mapped = cg.remap_structural_lhs_for_terminal(target.clone(), source, terminal);
+        assert_eq!(cg.structural_group_for_lhs(&mapped), Some(0));
+        assert!(cg.unmapped_structural_group_for_terminal(&mapped, source, terminal).is_none());
+        let IrLhs::PackedSelect { target, steps: actual, signed, two_state } = mapped else {
+            panic!("typed selection must remain intact");
+        };
+        assert_eq!(actual, steps);
+        assert!(signed);
+        assert!(!two_state);
+        let IrLhs::Stream { parts, .. } = *target else { panic!("composite target retained"); };
+        assert_eq!(parts, vec![(IrLhs::Whole(expected), 129)]);
+    }
+    assert_eq!(cg.model.net_groups[0].n_drivers, 2);
+}

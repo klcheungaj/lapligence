@@ -2138,3 +2138,15 @@ input cases; private port tests check the owned conversion boundary after native
 snapshot teardown. Source changes and tests are supplied; Rust/public HDL and
 actual generated-model qualification have not been executed for this increment.
 No ref/inout dynamic topology or new capacity profile is implied.
+
+### Continuation: output/ref and primitive target qualification (SYN-008)
+
+The per-terminal structural remapper now descends through typed packed projections,
+retaining selector/type metadata while replacing the underlying contribution slot.
+This is an internal remapping invariant repair; no public HDL failure is asserted
+from the direct test because many source terminals use alias-based projection.
+`continuation_24_27/port_shapes.sv` and `terminal_shapes.sv` extend output-slice,
+record-copy, transitive reference, modport-array and independent primitive-terminal
+coverage at 1/7/65/129 bits. The output-expression and inequivalent-ref negatives
+remain. Rust/import and public execution are pending; no full port matrix acceptance
+or runtime ref/inout rewiring is claimed.

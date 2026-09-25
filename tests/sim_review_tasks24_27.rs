@@ -45,3 +45,54 @@ fn fixed_input_graph_lowers_after_native_teardown() {
         }
     }
 }
+
+
+#[test]
+fn fixed_output_ref_and_primitive_shapes_keep_distinct_contracts() {
+    for width in [1, 7, 65, 129] {
+        let define = format!("CONTINUATION_PORT_W={width}");
+        let args = ["--edition", "2009", "--define", &define];
+        sim_cli::run_case_with_args(
+            "continuation_24_27", "port_shapes", &format!("PORT_SHAPES_PASS W={width}\n"),
+            "", &[], &args,
+        );
+        sim_cli::run_case_with_args(
+            "continuation_24_27", "terminal_shapes", &format!("TERMINALS_PASS W={width}\n"),
+            "", &[], &args,
+        );
+    }
+}
+
+#[test]
+fn port_value_permissiveness_does_not_weaken_output_or_reference_legality() {
+    sim_cli::reject_case_with_args(
+        "rtl_completion", "syn_008_output_expression_rejected", "expression is not assignable",
+        &["--edition", "2009"],
+    );
+    sim_cli::reject_case_with_args(
+        "rtl_completion", "syn_008_ref_shape_rejected", "inequivalent type",
+        &["--edition", "2009"],
+    );
+}
+
+#[test]
+fn fixed_structural_port_graphs_lower_after_native_teardown() {
+    use llg::core::{compile, db};
+    use llg::sim::{codegen, opt::OptConfig};
+    for (name, source) in [
+        ("port_shapes.sv", include_str!("fixtures/sim/continuation_24_27/port_shapes.sv")),
+        ("terminal_shapes.sv", include_str!("fixtures/sim/continuation_24_27/terminal_shapes.sv")),
+    ] {
+        let database = {
+            let result = compile::compile_sources_checked(
+                &[compile::OwnedSource::compilation_unit(name, source)],
+                &compile::CompileOpts { top: Some("tb".to_owned()), ..Default::default() },
+            ).expect("legal structural port shapes");
+            db::Db::from_slang(&result.snapshot).unwrap()
+        };
+        database.validate().unwrap();
+        for options in [OptConfig::none(), OptConfig::default()] {
+            codegen::generate_from_db_with_opts(&database, &options).unwrap();
+        }
+    }
+}

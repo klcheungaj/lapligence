@@ -189,3 +189,8 @@ snapshots the complete converted value, not its operand. This retains nested
 four/two/four-state conversions before declaration-order cell projection.
 Direct storage, runtime selected rows, and their source/selector dependencies
 keep the existing view path; ref/inout topology is not widened.
+
+Primitive terminal remapping also recurses through `PackedSelect` and preserves
+its steps/type flags. Every selected target within a composite uses that output
+terminal's contribution slot. Alias-projected source terminals keep their existing
+route; the direct remapper test protects the non-alias fallback separately.
