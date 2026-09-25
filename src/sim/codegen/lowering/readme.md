@@ -151,3 +151,12 @@ Hierarchical continuous drivers reuse canonical net groups and distinct
 (owner, source, group) contribution identities. The collector's snapshot-drop
 regression checks that independent sites and instances cannot share slots;
 selected/concatenated and inout interactions are public fixture obligations.
+
+## Positional destination capture
+
+Procedural assignment-pattern scatter uses `freeze_call_lhs` for the entire
+ordered target list before publishing any leaf. Source snapshots precede the
+coordinate declarations, and every write reads those declarations rather than
+reevaluating a selector after an earlier write. The explicit continuous-pattern
+mode retains static selectors for structural driver mapping. This does not
+change streaming `with` selectors or their component-by-component semantics.

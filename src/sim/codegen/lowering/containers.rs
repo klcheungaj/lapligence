@@ -18,6 +18,13 @@ mod patterns;
 mod queries;
 mod streaming;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum PatternAssignmentKind {
+    Blocking,
+    Nonblocking,
+    Continuous,
+}
+
 impl<'a> Codegen<'a> {
     /// Return a pattern's semantic integral index, if it is an array-index
     /// key. Source spelling is diagnostic-only because valid keys can be

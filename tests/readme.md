@@ -1144,3 +1144,9 @@ generated and selected hierarchical sites, 65/129-bit limbs, upward sibling
 references, homogeneous inout collapse and unchanged-resolution events. The
 owned collector tests site identity; native truth-table checks alone do not
 qualify hierarchical HDL capture or scheduling.
+
+`sim_review_tasks20_23` owns positional destination capture and width/state
+qualification in `continuation_20_23`. It retains the original SYN-003 illegal
+lvalue cases and adds native-snapshot-drop lowering. The private fixed-array
+capture tests check ordered and repeated selector occurrences independently of
+public HDL. Execute both optimizer modes before recording task acceptance.

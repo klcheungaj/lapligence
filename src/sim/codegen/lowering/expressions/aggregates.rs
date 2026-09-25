@@ -1,6 +1,7 @@
 //! Aggregates.
 
 use super::*;
+use super::super::containers::PatternAssignmentKind;
 
 mod copies;
 
@@ -175,8 +176,13 @@ impl<'a> Codegen<'a> {
         nba: bool,
         op: Operation,
     ) -> Result<Option<IrStmt>, String> {
+        let kind = if nba {
+            PatternAssignmentKind::Nonblocking
+        } else {
+            PatternAssignmentKind::Blocking
+        };
         if let Some(statement) =
-            self.lower_p30_pattern_lvalue_assignment(path, lhs, rhs, !nba, op)?
+            self.lower_p30_pattern_lvalue_assignment(path, lhs, rhs, kind, op)?
         {
             return Ok(Some(statement));
         }

@@ -1,6 +1,7 @@
 //! Processes.
 
 use super::*;
+use super::super::containers::PatternAssignmentKind;
 
 impl<'a> Codegen<'a> {
     // ── PCA site pre-scan (two-phase discovery, phase 1) ─────────────────────
@@ -401,9 +402,13 @@ impl<'a> Codegen<'a> {
                  supported"
             ));
         }
-        if let Some(mut pattern_body) =
-            self.lower_p30_pattern_lvalue_assignment(path, lhs, rhs, true, Operation::Assignment)?
-        {
+        if let Some(mut pattern_body) = self.lower_p30_pattern_lvalue_assignment(
+            path,
+            lhs,
+            rhs,
+            PatternAssignmentKind::Continuous,
+            Operation::Assignment,
+        )? {
             if matches!(self.kind(ca), NodeKind::ContAssign { delay: Some(_), .. }) {
                 return Err(format!(
                     "delayed continuous assignment to a positional assignment-pattern LHS in `{path}` is not supported"

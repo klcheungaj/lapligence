@@ -16,6 +16,17 @@ coverage audit. They were not independently revalidated in this source-status
 audit.
 Detailed source investigations and run records belong in local `persistence/`.
 
+## Destination, layout, call, and continuous-context continuation
+
+SYN-003 procedural positional deconstruction now captures every destination
+coordinate before any scatter write, using the shared typed call-target capture.
+An earlier destination write cannot redirect a later array/packed selection.
+The RHS remains a single value snapshot; legal NBA targets retain issue-time
+coordinates. Continuous patterns keep constant topology until net-site remapping.
+`sim_review_tasks20_23` adds array/record/packed and nested selector controls,
+width/state tests, and retained illegal-target diagnostics. New Rust/public
+and actual generated-model checks remain pending; this is not full acceptance.
+
 SYN-025-N09 now retains the enclosing pattern-case comparison mode for both
 union tag bits and payload constants. The prior casex/X-tag negative oracle is
 corrected; the casez/X-tag negative and ordinary checked-access diagnostics

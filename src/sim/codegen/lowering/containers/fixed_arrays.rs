@@ -2,6 +2,9 @@
 
 use super::*;
 
+#[cfg(test)]
+mod tests;
+
 impl<'a> Codegen<'a> {
     // Fixed unpacked-array assignment (P30).
 
@@ -11,17 +14,18 @@ impl<'a> Codegen<'a> {
     /// target-side walk before the ordinary lvalue lowerer can be used.
     ///
     /// The source values are lowered through the existing fixed-array source
-    /// path.  That path places all source captures before the returned writes,
-    /// which is required when a target overlaps the source storage or when the
-    /// assignment is nonblocking.
+    /// path. Procedural destinations are frozen as a group before any scatter
+    /// write, so an earlier output cannot change a later output's selector.
+    /// Continuous destinations retain their constant topology for net mapping.
     pub(in super::super) fn lower_p30_pattern_lvalue_assignment(
         &mut self,
         path: &str,
         lhs: NodeId,
         rhs: NodeId,
-        blocking: bool,
+        kind: PatternAssignmentKind,
         op: Operation,
     ) -> Result<Option<IrStmt>, String> {
+        let blocking = kind != PatternAssignmentKind::Nonblocking;
         let pattern = self.p30_unwrap_cast(lhs);
         let NodeKind::Expr(ExprKind::Operation { op: pattern_op, .. }) = self.kind(pattern) else {
             return Ok(None);
@@ -123,6 +127,11 @@ impl<'a> Codegen<'a> {
                 values.len()
             ));
         }
+        if kind != PatternAssignmentKind::Continuous {
+            let tag = self.new_fn_name(path, "pattern_targets");
+            lowered_targets =
+                self.capture_pattern_lvalue_targets(lowered_targets, &tag, &mut captures)?;
+        }
         for (target, value) in lowered_targets.into_iter().zip(values) {
             let value = apply_lhs_assignment_context(&self.model, &target, value);
             captures.push(IrStmt::Assign {
@@ -132,6 +141,34 @@ impl<'a> Codegen<'a> {
             });
         }
         Ok(Some(IrStmt::Block(captures)))
+    }
+
+    fn capture_pattern_lvalue_targets(
+        &self,
+        targets: Vec<IrLhs>,
+        tag: &str,
+        statements: &mut Vec<IrStmt>,
+    ) -> Result<Vec<IrLhs>, String> {
+        let mut captures = Vec::new();
+        let mut sequence = 0;
+        let mut frozen = Vec::new();
+        frozen
+            .try_reserve_exact(targets.len())
+            .map_err(|_| "cannot allocate assignment-pattern target captures".to_owned())?;
+        for target in targets {
+            let (target, _) = self.freeze_call_lhs(target, tag, &mut sequence, &mut captures)?;
+            frozen.push(target);
+        }
+        statements.extend(captures.into_iter().map(
+            |(name, width, signed, two_state, expr)| IrStmt::DeclLocal {
+                name,
+                width,
+                signed,
+                two_state,
+                init: Some(Box::new(expr)),
+            },
+        ));
+        Ok(frozen)
     }
 
     /// Lower the ordered writable leaves of a positional assignment-pattern

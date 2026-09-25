@@ -797,7 +797,7 @@ impl<'a> Codegen<'a> {
         Ok((lhs, read, captures))
     }
 
-    /// Freeze typed lvalue coordinates once for copy-in/out or fixed ordering.
+    /// Freeze typed lvalue coordinates once for calls, positional scatter, or ordering.
     /// The returned read stays live; only selectors, not storage values, are captured.
     pub(in super::super) fn freeze_call_lhs(
         &self,
