@@ -2,6 +2,9 @@
 
 use super::*;
 
+#[cfg(test)]
+mod tests;
+
 impl<'a> Codegen<'a> {
     pub(in super::super) fn check_event_expression_effects(
         &self,
@@ -128,15 +131,20 @@ impl<'a> Codegen<'a> {
                 }
             }
             NodeKind::Expr(ExprKind::Operation {
-                op:
-                    Operation::PostIncrement
-                    | Operation::PreIncrement
-                    | Operation::PostDecrement
-                    | Operation::PreDecrement
-                    | Operation::Assignment,
+                op,
+                assignment,
                 operands,
                 ..
-            }) => {
+            }) if *assignment
+                || matches!(
+                    op,
+                    Operation::PostIncrement
+                        | Operation::PreIncrement
+                        | Operation::PostDecrement
+                        | Operation::PreDecrement
+                        | Operation::Assignment
+                ) =>
+            {
                 let lhs = operands.first().copied().ok_or_else(|| {
                     format!(
                         "function calls in evaluated event controls are not supported in `{scope_path}`: malformed assignment expression"
@@ -289,6 +297,30 @@ impl<'a> Codegen<'a> {
         let Some(function) = function else {
             return false;
         };
+        // A composite target is harmless only when every actual leaf is
+        // private. Do not turn a concat containing one global into a local
+        // merely because its first operand is local.
+        let pattern = self.p30_unwrap_cast(lhs);
+        match self.kind(pattern) {
+            NodeKind::Expr(ExprKind::Operation { op: Operation::Concat, operands, .. }) => {
+                return !operands.is_empty()
+                    && operands.iter().all(|operand| {
+                        self.event_local_write_allowed(Some(function), *operand)
+                    });
+            }
+            NodeKind::Expr(ExprKind::Operation {
+                op: Operation::AssignmentPattern, operands, ..
+            }) => {
+                return !operands.is_empty()
+                    && operands.iter().all(|operand| {
+                        self.p30_pattern_lvalue_operand("callback", *operand)
+                            .is_ok_and(|target| {
+                                self.event_local_write_allowed(Some(function), target)
+                            })
+                    });
+            }
+            _ => {}
+        }
         let target = self.assignment_storage_root(lhs);
         let Some(target) = target else {
             return false;

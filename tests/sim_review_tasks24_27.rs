@@ -143,3 +143,67 @@ fn indexed_alias_graph_lowers_without_native_storage() {
         codegen::generate_from_db_with_opts(&database, &options).unwrap();
     }
 }
+
+
+#[test]
+fn private_composite_helpers_keep_transitive_dependencies_and_event_values() {
+    for width in [7, 65, 129] {
+        let define = format!("CONTINUATION_HELPER_W={width}");
+        sim_cli::run_case_with_args(
+            "continuation_24_27", "helper_private", &format!("HELPERS_PASS W={width}\n"),
+            "", &[], &["--edition", "2009", "--define", &define],
+        );
+    }
+}
+
+#[test]
+fn helper_qualification_rejects_external_leaves_and_compound_writes() {
+    sim_cli::reject_case_with_args(
+        "continuation_24_27", "helper_external_concat", "writes external or persistent storage",
+        &["--edition", "2009"],
+    );
+    sim_cli::reject_case_with_args(
+        "continuation_24_27", "helper_external_compound", "writes external or persistent storage",
+        &["--edition", "2009"],
+    );
+    sim_cli::reject_case_with_args(
+        "review_bundle", "n02_static_do_break_event", "static function return is read or is not assigned on every path",
+        &["--edition", "2009"],
+    );
+    sim_cli::reject_case_with_args(
+        "review_bundle", "n02_static_do_continue_event", "static function return is read or is not assigned on every path",
+        &["--edition", "2009"],
+    );
+}
+
+#[test]
+fn stateless_static_qualified_and_legacy_helpers_remain_controls() {
+    sim_cli::run_case_with_args(
+        "syn011_rtl_helper_events", "qualified_static", "qualified_static changes=2 classify=4 priority=4\n",
+        "", &[], &["--edition", "2009"],
+    );
+    for edition in ["2001", "2009"] {
+        sim_cli::run_case_with_args(
+            "syn011_rtl_helper_events", "verilog_static", "verilog_static changes=2 classify=4\n",
+            "", &[], &["--edition", edition],
+        );
+    }
+}
+
+#[test]
+fn private_helper_graph_lowers_after_native_teardown() {
+    use llg::core::{compile, db};
+    use llg::sim::{codegen, opt::OptConfig};
+    let database = {
+        let result=compile::compile_sources_checked(
+            &[compile::OwnedSource::compilation_unit("helper_private.sv",
+                include_str!("fixtures/sim/continuation_24_27/helper_private.sv"))],
+            &compile::CompileOpts { top: Some("tb".to_owned()), ..Default::default() },
+        ).unwrap();
+        db::Db::from_slang(&result.snapshot).unwrap()
+    };
+    database.validate().unwrap();
+    for options in [OptConfig::none(),OptConfig::default()] {
+        codegen::generate_from_db_with_opts(&database,&options).unwrap();
+    }
+}

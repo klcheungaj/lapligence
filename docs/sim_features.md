@@ -2162,3 +2162,19 @@ widths; `continuation_24_27/alias_indexed.sv` adds 1/7/65/129-bit bidirectional,
 packed-member, net-array, force/release and float controls. Same-net-type and
 self/duplicate/variable alias errors are retained. Rust/public and waveform-host
 qualification remain pending; no dynamic alias creation is introduced.
+
+### Continuation: private fixed helper composites (SYN-011)
+
+Source effect qualification now checks the assignment flag on arithmetic operations
+and rejects external compound mutation before callback emission. Concat and valid
+positional-pattern targets are eligible only when every destination leaf is private;
+typed pattern wrapper checks are shared with deconstruction. The callback emitter
+admits nonempty all-private composite targets and retains its per-store automatic,
+no-reference/no-net/no-NBA checks. Existing static result independence, lifetime,
+const-ref, transitive dependency and qualified-diagnostic contracts remain.
+`continuation_24_27/helper_private.sv` covers private values, concat/scatter,
+compound local writes, nested calls, const-ref and global-read changes; explicit
+external-leaf/compound-write negatives and earlier N02 abrupt-static negatives
+remain. Unit/source-effect, frame-ownership and actual-emitter event-model tests
+are supplied, not executed here. Ordinary stateful procedural calls are unchanged;
+this is not a general side-effecting callback engine or final SYN-011 acceptance.

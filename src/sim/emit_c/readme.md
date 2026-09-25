@@ -66,3 +66,8 @@ and conversion semantics and [the source map](../../../docs/source_layout.md).
 Captured `inside` array projections restore the declared element signedness on
 the native value before wildcard comparison. `sv4_part_select` remains unsigned
 for ordinary source part selects; frame metadata alone does not retag a value.
+
+Read-only numeric callbacks admit composite `IrLhs::Stream` assignments only when
+all leaves pass the private-target predicate. Each captured leaf is still checked
+by `store` for automatic storage, no net/reference/scheduler publication and no NBA.
+Qualified branch diagnostics and escaping-result ownership remain unchanged.

@@ -264,7 +264,7 @@ impl<'a> Codegen<'a> {
         Ok(())
     }
 
-    fn p30_pattern_lvalue_operand(&self, path: &str, node: NodeId) -> Result<NodeId, String> {
+    pub(in super::super) fn p30_pattern_lvalue_operand(&self, path: &str, node: NodeId) -> Result<NodeId, String> {
         let NodeKind::Expr(ExprKind::Operation {
             op: Operation::Assignment,
             assignment: true,
@@ -581,7 +581,7 @@ impl<'a> Codegen<'a> {
         self.p30_container_source(operand)
     }
 
-    pub(super) fn p30_unwrap_cast(&self, node: NodeId) -> NodeId {
+    pub(in super::super) fn p30_unwrap_cast(&self, node: NodeId) -> NodeId {
         match self.kind(node) {
             NodeKind::Expr(ExprKind::Cast { operand, .. }) => self.p30_unwrap_cast(*operand),
             _ => node,

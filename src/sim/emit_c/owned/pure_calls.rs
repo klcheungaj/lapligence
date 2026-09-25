@@ -101,6 +101,9 @@ pub(super) fn private_callback_target(lhs: &IrLhs) -> bool {
     match lhs {
         IrLhs::WholeRef { .. } => true,
         IrLhs::PackedSelect { target, .. } => private_callback_target(target),
+        IrLhs::Stream { parts, .. } => {
+            !parts.is_empty() && parts.iter().all(|(part, _)| private_callback_target(part))
+        }
         _ => false,
     }
 }

@@ -200,3 +200,10 @@ order. On an ascending declaration, `[base -: width]` starts at `base-width+1`
 and walks upward; descending declarations keep their downward walk. Extent and
 allocation checks precede materialization. Net-type, duplicate/self-alias and
 elaboration-only topology constraints remain separate from port compatibility.
+
+Read-only helper eligibility recognizes assignment-bearing arithmetic operations,
+not just the plain assignment opcode. Composite concat/positional targets are
+private only if every leaf is private; positional wrappers reuse the typed
+`EmptyArgument` validation. This does not admit external writes, writable refs,
+static locals, timing or unproved static return state. Private stream targets use
+ordinary owned leaf stores, so callback calculations do not notify model readers.
