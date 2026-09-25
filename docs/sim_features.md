@@ -250,6 +250,28 @@ fallback versus a definite wildcard match. Actual-emitter signedness/ownership
 regressions are supplied in `owned::tests::inside_values`. Rust, public HDL, and
 actual generated-model qualification remain pending; these are not new passes.
 
+### Memory-file conversion and diagnostic qualification
+
+Short binary/hexadecimal words now left-pad a leading X/Z digit with that state;
+known digits zero-extend even for signed storage. This follows the selected
+memory-file clauses' source-description digit convention together with V 2.5.1
+and SV 5.7.1. Two-state conversion occurs before enum width validation, retaining
+all original high bits for the numeric range check. The accepted signed enum
+redundant-extension and ordinary non-enum truncation paths remain unchanged.
+Sparse SV2009 files containing address directives no longer receive the
+no-address short-file warning (SV 21.4); V2001's count-warning policy remains, including
+excess data written by repeated in-range address directives.
+
+`sim_review_tasks16_19` supplies exact public value/diagnostic cases in the
+applicable editions and both optimizer modes. `runtime_value_storage` adds a
+native `memory_image` test with original-width enum overflow, short X/Z values
+and sparse-file controls, including zero live allocations on return. Execution
+results belong to the accompanying delivery record; public Rust/HDL qualification
+is still pending. These resolve the specified Q02 short-word and sparse-warning
+cells, not every possible malformed-token policy or four-state enum numeric
+interpretation. Existing memory view, ordering, range-stop and notification
+controls remain required.
+
 ### Selected synthesis profiles
 
 SYN-000 adopts the three profile axes from the implementation plan. The

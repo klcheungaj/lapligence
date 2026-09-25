@@ -190,6 +190,16 @@ if(LLG_STORAGE_TEST_SCHEDULER)
       set_tests_properties(${probe} PROPERTIES TIMEOUT 60
         WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/${probe}-output")
     endforeach()
+    add_executable(memory_image_probe memory_image_probe.c "${LLG_RT}/llg_rt.c")
+    target_compile_definitions(memory_image_probe PRIVATE LLG_SELFTEST_TRACK_STORAGE=1)
+    target_link_libraries(memory_image_probe PRIVATE owner_probe_aco owner_probe_container)
+    strict_c(memory_image_probe)
+    file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/memory-image-output")
+    add_test(NAME memory_image COMMAND "${CMAKE_COMMAND}"
+      "-DPROBE=$<TARGET_FILE:memory_image_probe>"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/memory_oracles.cmake")
+    set_tests_properties(memory_image PROPERTIES TIMEOUT 60
+      WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/memory-image-output")
     add_executable(vpi_ownership_probe vpi_ownership_probe.c)
     target_link_libraries(vpi_ownership_probe PRIVATE owner_probe_aco owner_probe_container ${CMAKE_DL_LIBS})
     strict_c(vpi_ownership_probe)

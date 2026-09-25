@@ -22,7 +22,7 @@ class InventoryTests(unittest.TestCase):
     def test_original_fixtures_follow_enabled_runtime_components(self):
         scheduler = {"port_net_collapse_values", "port_net_collapse_publication", "vpi_ownership", "scheduler_ownership", "generated_scope_patterns",
                      "scope_address_index", "runtime_value_vectors", "event_array_selection",
-                     "file_input_isolation", "file_output_isolation", "native_value_scopes", "native_reference_scopes", "review_native_index_and_reference_bits",
+                     "file_input_isolation", "file_output_isolation", "memory_image", "native_value_scopes", "native_reference_scopes", "review_native_index_and_reference_bits",
                      "packed_selection_nba", "packed_selection_input", "packed_formal_owner_contracts"}
         coroutines = {"coroutine_ownership", "generated_coroutine_patterns", "callback_finish_ownership",
                       "runtime_original_selftest", "runtime_region", "runtime_stop-resume",

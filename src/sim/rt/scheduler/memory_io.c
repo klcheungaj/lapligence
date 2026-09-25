@@ -425,6 +425,20 @@ static int llg_memory_enum_word_fits_width(sv4_t value, uint32_t width,
     return 1;
 }
 
+// Memory words are unsigned based digits. Only a leading X/Z digit pads with
+// its state; a known leading one still zero-extends, even into signed storage.
+static sv4_t llg_memory_word_cast(sv4_t word, uint32_t width, int8_t is_signed) {
+    int8_t extend_unknown = 0;
+    if (word.width != 0 && width > word.width) {
+        uint32_t bit = word.width - 1u;
+        uint64_t mask = UINT64_C(1) << (bit % 64u);
+        extend_unknown = ((word.x[bit / 64u] | word.z[bit / 64u]) & mask) != 0;
+    }
+    sv4_t result = sv4_resize(word, width, extend_unknown);
+    result.is_signed = is_signed;
+    return result;
+}
+
 void llg_memory_read_view(llg_string_t path, sv4_t* memory, uint64_t total,
                           uint32_t elem_width, int8_t elem_signed, int8_t two_state,
                           const int32_t* dims, int n_dims,
@@ -458,6 +472,7 @@ void llg_memory_read_view(llg_string_t path, sv4_t* memory, uint64_t total,
     uint64_t inner = 0;
     int warned_extra = 0;
     int warned_unknown = 0;
+    int saw_address = 0;
     llg_memory_value_t token = {0};
     for (;;) {
         int kind = llg_memory_next_token(stream, radix, &token);
@@ -467,6 +482,7 @@ void llg_memory_read_view(llg_string_t path, sv4_t* memory, uint64_t total,
             continue;
         }
         if (kind == LLG_MEMORY_TOKEN_ADDRESS) {
+            saw_address = 1;
             int64_t address;
             if (!sv4_to_index_i64(token.value, &address)) {
                 llg_memory_warning(filename, "address jump is not a known index");
@@ -504,12 +520,13 @@ void llg_memory_read_view(llg_string_t path, sv4_t* memory, uint64_t total,
                     warned_extra = 1;
                 }
             } else {
-                // Check known enum numeric data while its original high bits
-                // are still present. Signed bases accept only redundant sign
-                // extension, unsigned bases only zero extension. X/Z-bearing
-                // words skip this check; after the target-width cast, two-state
-                // elements are normalized and enum membership is checked.
-                // Ordinary packed memories retain their established truncation.
+                // Normalize two-state data before a narrowing conversion so a
+                // low X/Z digit cannot hide a known out-of-range enum high bit.
+                // Four-state enum membership remains an exact state comparison.
+                int had_unknown = sv4_is_unknown(token.value);
+                if (two_state && had_unknown) {
+                    sv4_replace(&token.value, sv4_to_two_state(token.value));
+                }
                 if (enum_count != 0 &&
                     !llg_memory_enum_word_fits_width(token.value, elem_width,
                                                      elem_signed)) {
@@ -520,13 +537,12 @@ void llg_memory_read_view(llg_string_t path, sv4_t* memory, uint64_t total,
                     free(filename);
                     return;
                 }
-                sv4_t converted = sv4_cast(token.value, elem_width, elem_signed);
-                if (two_state && sv4_is_unknown(token.value)) {
+                sv4_t converted = llg_memory_word_cast(token.value, elem_width, elem_signed);
+                if (two_state && had_unknown) {
                     if (!warned_unknown) {
                         llg_memory_warning(filename, "X/Z memory data converted to a two-state element");
                         warned_unknown = 1;
                     }
-                    sv4_replace(&converted, sv4_to_two_state(converted));
                 }
                 if (!llg_memory_enum_value_allowed(converted, enum_values, enum_count)) {
                     llg_memory_warning(filename,
@@ -555,8 +571,12 @@ void llg_memory_read_view(llg_string_t path, sv4_t* memory, uint64_t total,
         }
     }
     sv4_destroy(&token.value);
-    if (written < expected) {
+    if (written < expected &&
+        (!saw_address || addressing_policy == LLG_MEMORY_ADDRESSING_VERILOG_2001)) {
         llg_memory_warning(filename, "memory file contains too few words for the selected range");
+    } else if (written > expected && !warned_extra &&
+               addressing_policy == LLG_MEMORY_ADDRESSING_VERILOG_2001) {
+        llg_memory_warning(filename, "memory file contains more words than the selected range");
     }
     if (ferror(stream)) llg_memory_warning(filename, "read failed");
     fclose(stream);

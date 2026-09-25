@@ -301,3 +301,12 @@ A growable registry is still bounded by available memory and, for the
 `int`-indexed tables, by `INT_MAX` entries; both abort explicitly rather than
 truncate. `LLG_MAX_PROCS` is retained only as the standalone runtime
 self-test's sequential-fork iteration base, not as a scheduling ceiling.
+
+Memory words preserve leading X/Z digit padding independently of target
+signedness; known hexadecimal/binary digits zero-extend and ordinary packed
+truncation remains allowed. Two-state words are normalized at original width
+before enum representability checks, so low unknown digits cannot hide known
+high overflow. SystemVerilog sparse address files do not receive the no-address
+short-file warning; Verilog-2001 retains count warnings even when repeated
+addresses cause extra writes within the selected range. The native
+`memory_image` probe exercises these contracts with tracked value ownership.

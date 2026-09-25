@@ -1131,3 +1131,10 @@ The same continuation suite includes signed fixed-array membership, conversion
 boundaries, and owned snapshot-drop coverage. `owned::tests::inside_values`
 provides actual-emitter signedness and temporary-owner regressions; native helper
 probes do not replace these Rust/public/generated-model checks.
+
+Memory continuation cases distinguish 2001 declaration direction from 2009
+low/high defaults (including negative bounds), explicit range direction, short
+X/Z words, sparse-file warning policy and terminated loads retaining their
+committed prefix. The standalone native `memory_image` test checks actual C
+behavior and exact diagnostics; public source and emitter qualification remain
+separate.

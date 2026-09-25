@@ -356,3 +356,14 @@ ambiguous clause. `sequential_predicate_ownership` performs 10,000 iterations,
 checks exact live-allocation/byte restoration and bounded peak ownership, and
 verifies that skipped wide clauses allocate nothing. Both modes are registered
 in CTest and its exact-inventory checker, with and without sanitizers.
+
+### Memory image conversion and edition controls
+
+`memory_image_probe.c` directly calls the runtime on binary/hexadecimal words at
+1/7/8/65/129 bits, signed and unsigned storage, leading X/Z padding, numeric zero
+extension/truncation, full-word two-state enum overflow, and sparse address files.
+`memory_oracles.cmake` checks exact stdout/stderr for its seven modes. The probe
+releases every value and checks zero live tracked allocations after runtime
+cleanup; it does not switch coroutine stacks or claim HDL-generated coverage.
+The scheduler-capability inventory includes `memory_image` in normal and
+sanitizer configurations.
