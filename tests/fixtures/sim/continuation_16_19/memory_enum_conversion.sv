@@ -16,6 +16,9 @@ module tb;
         $readmemh("two_state.hex", bits_memory);
         if (bits_memory[0] !== 7 || bits_memory[1] !== 1)
             $fatal(1, "two-state memory conversion");
+        $readmemh("enum_unknown.hex", memory);
+        if (memory[0] !== ZERO || memory[1] !== ONE || memory[2] !== ZERO)
+            $fatal(1, "two-state enum X/Z words convert to zero before membership");
         $display("MEMORY_ENUM_CONVERSION_PASS");
         $finish(0);
     end

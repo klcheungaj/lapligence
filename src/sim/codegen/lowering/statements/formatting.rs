@@ -161,12 +161,14 @@ impl EmitCtx<'_, '_> {
                             self.path
                         ));
                     }
-                    if !matches!(
+                    // Packed values print as 8-bit ASCII codes (V 17.1.1.7 /
+                    // SV 21.2.1.8); only real arguments have no string form.
+                    if matches!(
                         &display_args[arg_idx],
-                        crate::sim::ir::IrDisplayArg::String(_)
+                        crate::sim::ir::IrDisplayArg::Real(_)
                     ) {
                         return Err(format!(
-                            "{name} format `%s` requires a string argument in `{}`",
+                            "{name} format `%s` requires a string or packed argument in `{}`",
                             self.path
                         ));
                     }
@@ -448,16 +450,10 @@ impl EmitCtx<'_, '_> {
                     self.require_format_arg(name, conversion, arg_idx, display_args, false)?;
                 }
                 's' => {
+                    // A packed argument is a sequence of 8-bit ASCII codes
+                    // (V 17.1.1.7 / SV 21.2.1.8); the runtime formatter
+                    // converts it without printing leading zero bytes.
                     self.require_format_arg(name, conversion, arg_idx, display_args, true)?;
-                    if !matches!(
-                        display_args[arg_idx],
-                        crate::sim::ir::IrDisplayArg::String(_)
-                    ) {
-                        return Err(format!(
-                            "{name} format `%s` requires a string argument in `{}`",
-                            self.path
-                        ));
-                    }
                 }
                 'f' | 'e' | 'g' => {
                     if !matches!(

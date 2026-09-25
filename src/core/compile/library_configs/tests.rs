@@ -62,7 +62,13 @@ fn malformed_map_configurations_fail_directly_and_budgeted_projection_fails_clos
         assert!(error.contains(expected), "{error}");
     }
     let mut work = LibraryMapWorkBudget::with_allocation_limit(MAX_LIBRARY_MAP_WORK, 0);
-    let error = project("config c; endconfig", &[0..18], &mut work).unwrap_err();
+    let whole = 0..18;
+    let error = project(
+        "config c; endconfig",
+        std::slice::from_ref(&whole),
+        &mut work,
+    )
+    .unwrap_err();
     assert_eq!(error.kind(), StartupErrorKind::LimitExceeded);
     assert!(error.contains("allocation budget"));
 }

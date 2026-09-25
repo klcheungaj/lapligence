@@ -40,8 +40,9 @@ module output_case #(parameter W = 65, parameter SEED = 11)(output bit done);
         done = 0;
         selected = 0;
         selector_calls = 0;
-        records = '{default:'{default:'0}};
-        rows = '{default:'{default:'0}};
+        // A default value reaches every nested leaf recursively (SV 10.9.1).
+        records = '{default:'0};
+        rows = '{default:'0};
         carry = word_t'(40);
         result = retained(1, records[pick()], rows[0], carry);
         if (records[0].data !== word_t'(SEED) || records[0].present !== 1 ||

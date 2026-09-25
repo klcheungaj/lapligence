@@ -234,6 +234,6 @@ fn generated_private_composite_callback_preserves_event_values_and_cleanup() {
         let output = toolchain::execute(&binary);
         assert!(output.status.success(), "{output:?}");
         assert_eq!(String::from_utf8_lossy(&output.stdout), "7\n9\n");
-        assert!(output.stderr.is_empty(), "{output:?}");
+        toolchain::assert_quiet_end(&output, 2);
     }
 }

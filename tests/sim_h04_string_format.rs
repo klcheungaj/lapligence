@@ -15,3 +15,25 @@ fn string_formatting_is_typed_and_retains_results() {
         &[],
     );
 }
+
+#[test]
+fn packed_arguments_print_as_ascii_strings_in_both_editions() {
+    // Independent oracle: the standards' `%s` examples (V 2.6.3 / 17.1.1,
+    // SV 11.10); leading zero bytes are never printed (V 17.1.1.7).
+    for edition in ["2001", "2009"] {
+        sim_cli::run_case_with_args(
+            "string_format",
+            "packed_string_conversion",
+            concat!(
+                "Hello world is stored as 00000048656c6c6f20776f726c64\n",
+                "Hello world!!! is stored as 48656c6c6f20776f726c64212121\n",
+                "e is ascii value for 101\n",
+                "[A][A]\n",
+                "<A>\n",
+            ),
+            "llg: simulation ended without $finish (no processes remain) at time 0\n",
+            &[],
+            &["--edition", edition],
+        );
+    }
+}

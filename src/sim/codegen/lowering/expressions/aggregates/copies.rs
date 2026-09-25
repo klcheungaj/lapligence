@@ -12,7 +12,7 @@ pub(super) struct AggregateSelection {
 /// retain nominal identity; fixed-array bounds may differ, but each dimension
 /// must have the same extent. Packed leaf state domains are checked against the
 /// captured leaf metadata, which (unlike TypeInfo) retains the two-state flag.
-fn equivalent_copy_shape(left: &TypeDescriptor, right: &TypeDescriptor) -> bool {
+pub(super) fn equivalent_copy_shape(left: &TypeDescriptor, right: &TypeDescriptor) -> bool {
     match (&left.shape, &right.shape) {
         (
             TypeShape::FixedArray {

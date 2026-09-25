@@ -1119,6 +1119,22 @@ type keys. No side-effect count is assumed for type/default expressions. Run the
 original `sim_syn001_type_keys` and `sim_review_bundle_patterns` suites together
 with the new public and snapshot-drop tests before recording full acceptance.
 
+## Continuation repair run — 2026-09-25
+
+The positions 1–27 continuation suites were executed with `cargo nextest`,
+which runs each test in its own process. Their failures were repaired in the
+product (array-valued pattern items, structure-parameter values, mixed aggregate
+equality, net-array slice and pattern drivers, initialized-array writer
+conflicts, packed `%s`, parent-relative map paths) or in fixtures that the
+frontend correctly rejected; `docs/sim_features.md` records each disposition.
+New regressions: `sim_review_tasks12_15` `nested_row_patterns` and
+`record_value_contexts`, `sim_h04_string_format` `packed_string_conversion`
+(the standards' own `%s` examples, both editions), the strengthened
+`continuous_identity` resolution checks, `memory_enum_conversion`'s valid X/Z
+enum control, and `core::compile` parent-relative map admission. Emitter
+execution tests use `toolchain::assert_quiet_end`, which accepts only the
+scheduler's normal end-of-processes notice on stderr.
+
 ## Continuation context qualification
 
 - `sim_review_tasks16_19` extends replicated fixed-pattern contexts and owned

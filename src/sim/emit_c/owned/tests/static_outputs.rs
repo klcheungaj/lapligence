@@ -182,6 +182,6 @@ fn generated_static_output_and_inout_calls_preserve_distinct_copy_contracts() {
         let output = toolchain::execute(&binary);
         assert!(output.status.success(), "{output:?}");
         assert_eq!(String::from_utf8_lossy(&output.stdout), "21\n21\n41\n8\n");
-        assert!(output.stderr.is_empty(), "{output:?}");
+        toolchain::assert_quiet_end(&output, 0);
     }
 }

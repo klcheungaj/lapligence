@@ -169,9 +169,15 @@ fn two_state_enum_load_checks_full_numeric_word_before_truncation() {
         concat!(
             "llg: memory file `enum.hex`: numeric memory data does not fit the enum base type; load terminated\n",
             "llg: memory file `two_state.hex`: X/Z memory data converted to a two-state element\n",
+            "llg: memory file `enum_unknown.hex`: X/Z memory data converted to a two-state element\n",
         ),
         &[], &["--edition", "2009"],
-        &[("enum.hex", "1 4x 0\n"), ("signed.hex", "ff 0\n"), ("two_state.hex", "x7 z1\n")],
+        &[
+            ("enum.hex", "1 4x 0\n"),
+            ("signed.hex", "ff 0\n"),
+            ("two_state.hex", "x7 z1\n"),
+            ("enum_unknown.hex", "x 1 z\n"),
+        ],
     );
 }
 

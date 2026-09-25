@@ -682,6 +682,13 @@ impl<'a> Codegen<'a> {
                     writes.insert(self.signal_dependency(info));
                 }
             }
+            // An initialized unpacked-array declaration writes its whole
+            // contents, like a scalar declaration writes its signal.
+            NodeKind::Array { .. } => {
+                if let Some(array) = self.array_of(lhs) {
+                    writes.insert(IrDependency::ArrayContents(self.reference_array(array.ir)));
+                }
+            }
             NodeKind::FuncTask { .. } => {
                 // Slang may bind an assignment to the function-name result
                 // directly to its subroutine symbol. A statically exposed

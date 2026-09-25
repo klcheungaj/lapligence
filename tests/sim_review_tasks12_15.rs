@@ -315,3 +315,27 @@ fn full_type_key_matrix_lowers_without_borrowing_frontend_storage() {
             .expect("type-key declaration, local, return, argument and NBA after snapshot drop");
     }
 }
+
+#[test]
+fn array_valued_pattern_items_fill_their_subarray_in_order() {
+    sim_cli::run_case_with_args(
+        "continuation_12_15",
+        "nested_row_patterns",
+        "NESTED_ROW_PATTERNS_PASS\n",
+        "",
+        &[],
+        &["--edition", "2009"],
+    );
+}
+
+#[test]
+fn structure_parameters_and_mixed_equality_operands_are_values() {
+    sim_cli::run_case_with_args(
+        "continuation_12_15",
+        "record_value_contexts",
+        "RECORD_VALUE_CONTEXTS_PASS\n",
+        "",
+        &[],
+        &["--edition", "2009"],
+    );
+}

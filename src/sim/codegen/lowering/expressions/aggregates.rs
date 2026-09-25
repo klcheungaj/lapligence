@@ -810,15 +810,17 @@ impl<'a> Codegen<'a> {
         let [lhs, rhs] = operands else {
             return Ok(None);
         };
-        let left = self.unpacked_aggregate_info(*lhs);
-        let right = self.unpacked_aggregate_info(*rhs);
-        if left.is_none() && right.is_none() {
+        // Leaf-wise comparison needs storage on both sides. A parameter,
+        // call or conditional operand is a fixed payload instead; the caller
+        // then compares complete payloads bit for bit, which is the same
+        // member-wise result for same-typed integral leaves (SV 11.4.5).
+        // Real or string leaves have no payload and fail in that lowering.
+        let (Some((left_target, left_aggregate)), Some((right_target, right_aggregate))) = (
+            self.unpacked_aggregate_info(*lhs),
+            self.unpacked_aggregate_info(*rhs),
+        ) else {
             return Ok(None);
-        }
-        let (left_target, left_aggregate) = left
-            .ok_or_else(|| format!("aggregate equality has a non-aggregate operand in `{path}`"))?;
-        let (right_target, right_aggregate) = right
-            .ok_or_else(|| format!("aggregate equality has a non-aggregate operand in `{path}`"))?;
+        };
         let compatible = match (
             left_aggregate.type_identity.as_deref(),
             right_aggregate.type_identity.as_deref(),
@@ -1093,9 +1095,12 @@ impl<'a> Codegen<'a> {
                 descriptor.shape,
                 TypeShape::Aggregate(_) | TypeShape::FixedArray { .. }
             )
-            && self
-                .query_descriptor(node)
-                .is_some_and(|source| source.id == descriptor.id)
+            && self.query_descriptor(node).is_some_and(|source| {
+                // An equivalent array item (SV 6.22.2: equal extents and
+                // equivalent elements) is one whole value for its subarray,
+                // left bound to left bound; only a scalar is a fill value.
+                source.id == descriptor.id || copies::equivalent_copy_shape(source, descriptor)
+            })
         {
             out.push((prefix.to_vec(), node));
             return Ok(());

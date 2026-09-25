@@ -422,9 +422,9 @@ impl<'a> Codegen<'a> {
                     "continuous assignment-pattern LHS on a true-net alias in `{path}` is not supported"
                 ));
             }
-            if has_structural_driver {
-                self.remap_pattern_continuous_targets(&mut pattern_body, ca)?;
-            }
+            // Remap even without a registered site so a resolved target that
+            // site discovery missed fails closed instead of bypassing its net.
+            self.remap_pattern_continuous_targets(&mut pattern_body, ca, &mut 0)?;
             let fn_name = self.new_fn_name(path, "ca");
             let sigs = self.collect_read_signals(path, rhs)?;
             let shape = if sigs.is_empty() {
@@ -548,16 +548,65 @@ impl<'a> Codegen<'a> {
         &self,
         statement: &mut IrStmt,
         source: NodeId,
+        captures: &mut usize,
     ) -> Result<(), String> {
         match statement {
             IrStmt::Block(statements) => {
                 for statement in statements {
-                    self.remap_pattern_continuous_targets(statement, source)?;
+                    self.remap_pattern_continuous_targets(statement, source, captures)?;
                 }
                 Ok(())
             }
             IrStmt::DeclLocal { .. } => Ok(()),
+            IrStmt::Assign {
+                lhs: IrLhs::Whole(signal),
+                rhs,
+                ..
+            } if !self.model.signals[*signal].net_alias.is_empty() => {
+                // A net-array cell has one electrical group per bit. Capture
+                // the element value once, then contribute each bit through
+                // this source's own driver slot like a whole-array driver.
+                let IrType::Packed { width, .. } = self.model.signals[*signal].ty else {
+                    return Err("resolved assignment-pattern target is not packed".to_string());
+                };
+                let mut bindings = Vec::new();
+                self.append_signal_alias_bindings(*signal, width, &mut bindings, &mut 0)?;
+                let name = format!("_pattern_net_{}_{}", source.index(), captures);
+                *captures += 1;
+                let value = IrExpr::new(
+                    IrExprKind::LocalRead(name.clone()),
+                    rhs.width(),
+                    rhs.signed(),
+                    None,
+                );
+                let mut block = vec![IrStmt::DeclLocal {
+                    name,
+                    width: rhs.width(),
+                    signed: rhs.signed(),
+                    init: Some(Box::new(rhs.clone())),
+                    two_state: false,
+                }];
+                for (driver, value) in
+                    self.alias_driver_assignments(source, &bindings, &value, |_| 0)?
+                {
+                    block.push(IrStmt::Assign {
+                        lhs: IrLhs::Whole(driver),
+                        rhs: value,
+                        nba: false,
+                    });
+                }
+                *statement = IrStmt::Block(block);
+                Ok(())
+            }
             IrStmt::Assign { lhs, .. } => {
+                if self.lhs_selects_net_alias_signal(lhs) {
+                    return Err(format!(
+                        "continuous assignment-pattern target within a resolved net-array element at {}:{}:{} is not supported",
+                        self.node(source).file.as_deref().unwrap_or("<unknown>"),
+                        self.node(source).line,
+                        self.node(source).col,
+                    ));
+                }
                 if let Some(group) = self.unmapped_structural_group(lhs, source) {
                     return Err(format!(
                         "continuous assignment `{}` has no structural driver mapping for resolved net group {} at {}:{}:{}",
@@ -575,6 +624,30 @@ impl<'a> Codegen<'a> {
                 "continuous assignment-pattern lowering produced an unsupported target operation"
                     .to_string(),
             ),
+        }
+    }
+
+    /// Whether a lowered target selects or streams part of a signal whose
+    /// bits are electrical alias bindings rather than ordinary storage.
+    fn lhs_selects_net_alias_signal(&self, lhs: &IrLhs) -> bool {
+        let aliased = |index: &usize| {
+            self.model
+                .signals
+                .get(*index)
+                .is_some_and(|signal| !signal.net_alias.is_empty())
+        };
+        match lhs {
+            IrLhs::PackedSelect { target, .. } | IrLhs::TaggedSelect { target, .. } => {
+                self.lhs_selects_net_alias_signal(target)
+            }
+            IrLhs::Whole(index)
+            | IrLhs::Bit(index, ..)
+            | IrLhs::Part(index, ..)
+            | IrLhs::IdxPart(index, ..) => aliased(index),
+            IrLhs::Stream { parts, .. } => parts
+                .iter()
+                .any(|(part, _)| self.lhs_selects_net_alias_signal(part)),
+            IrLhs::WholeRef { .. } | IrLhs::Ref { .. } | IrLhs::ArrayElem { .. } => false,
         }
     }
 

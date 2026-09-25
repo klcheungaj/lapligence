@@ -113,6 +113,6 @@ fn generated_tagged_member_widening_preserves_the_source_sign() {
         let output = toolchain::execute(&binary);
         assert!(output.status.success(), "{output:?}");
         assert_eq!(String::from_utf8_lossy(&output.stdout), "254 14 -2\n");
-        assert!(output.stderr.is_empty(), "{output:?}");
+        toolchain::assert_quiet_end(&output, 0);
     }
 }

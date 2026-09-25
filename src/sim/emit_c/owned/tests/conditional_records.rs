@@ -166,6 +166,6 @@ fn generated_record_member_defaults_preserve_equal_members_and_limb_boundaries()
             "x".repeat(129)
         );
         assert_eq!(String::from_utf8_lossy(&output.stdout), expected);
-        assert!(output.stderr.is_empty(), "{output:?}");
+        toolchain::assert_quiet_end(&output, 0);
     }
 }

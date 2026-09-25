@@ -253,7 +253,9 @@ fn enum_memory_range_check_preserves_packed_truncation_and_signed_values() {
         ),
         concat!(
             "llg: memory file `signed_enum_nonextension.hex`: numeric memory data does not fit the enum base type; load terminated\n",
-            "llg: memory file `enum_unknown.hex`: X/Z memory data converted to a two-state element\n",
+            // SV 21.4.2: `1x` becomes 0x10 before the enum range check, so its
+            // known high digit overflows and the load stops with the memory unchanged.
+            "llg: memory file `enum_unknown.hex`: numeric memory data does not fit the enum base type; load terminated\n",
             "llg: $finish at time 0 at tb:17:5\n",
         ),
         &[],

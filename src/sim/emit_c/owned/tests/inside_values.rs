@@ -112,6 +112,6 @@ fn generated_inside_array_value_preserves_signed_common_width() {
         let output = toolchain::execute(&binary);
         assert!(output.status.success(), "{output:?}");
         assert_eq!(String::from_utf8_lossy(&output.stdout), "1 0\n");
-        assert!(output.stderr.is_empty(), "{output:?}");
+        toolchain::assert_quiet_end(&output, 0);
     }
 }

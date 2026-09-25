@@ -159,6 +159,6 @@ fn generated_nested_tagged_guards_execute_with_owned_temporaries() {
         let result = toolchain::execute(&binary);
         assert!(result.status.success(), "{result:?}");
         assert_eq!(String::from_utf8_lossy(&result.stdout), "90\n");
-        assert!(result.stderr.is_empty(), "{result:?}");
+        toolchain::assert_quiet_end(&result, 0);
     }
 }

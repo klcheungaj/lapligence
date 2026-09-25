@@ -34,6 +34,7 @@ impl Codegen<'_> {
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
+        let slice = self.array_net_slice_bounds(node, &array, selected.len())?;
         let mut elements = Vec::new();
         for coordinates in super::port_array_index_vectors(&array.dims) {
             if coordinates
@@ -43,6 +44,12 @@ impl Codegen<'_> {
                 .any(|(coordinate, selected)| i128::from(*coordinate) != *selected)
             {
                 continue;
+            }
+            if let Some((low, high)) = slice {
+                let coordinate = i128::from(coordinates[prefix.len()]);
+                if coordinate < low || coordinate > high {
+                    continue;
+                }
             }
             let indices = coordinates
                 .iter()
@@ -55,6 +62,105 @@ impl Codegen<'_> {
             elements.push(element);
         }
         Ok(Some(elements))
+    }
+
+    /// Return the inclusive index interval of an unpacked slice (SV 7.4.6)
+    /// applied to the next dimension of a partially indexed net array. A
+    /// part-select of a fully indexed element is a packed select instead.
+    fn array_net_slice_bounds(
+        &self,
+        node: NodeId,
+        array: &ArrayInfo,
+        depth: usize,
+    ) -> Result<Option<(i128, i128)>, String> {
+        if depth >= array.dims.len() {
+            return Ok(None);
+        }
+        let mut node = node;
+        loop {
+            match self.kind(node) {
+                NodeKind::Expr(ExprKind::Cast { operand, .. }) => node = *operand,
+                NodeKind::Expr(ExprKind::Operation {
+                    op: Operation::Assignment,
+                    operands,
+                    ..
+                }) => match operands.first() {
+                    Some(operand) => node = *operand,
+                    None => return Ok(None),
+                },
+                _ => break,
+            }
+        }
+        let constant = |index: NodeId| {
+            self.eval_bound_i128(index).map_err(|_| {
+                format!(
+                    "continuous assignment to net array `{}` requires constant slice bounds",
+                    array.global
+                )
+            })
+        };
+        let bounds = match self.kind(node) {
+            NodeKind::Expr(ExprKind::PartSelect { left, right, .. }) => {
+                let (left, right) = (constant(*left)?, constant(*right)?);
+                (left.min(right), left.max(right))
+            }
+            NodeKind::Expr(ExprKind::IndexedPartSelect {
+                base_expr,
+                width_expr,
+                neg,
+                ..
+            }) => {
+                let start = constant(*base_expr)?;
+                let span = constant(*width_expr)?
+                    .checked_sub(1)
+                    .filter(|span| *span >= 0)
+                    .ok_or_else(|| {
+                        format!("net array `{}` slice has a nonpositive width", array.global)
+                    })?;
+                let overflow = || format!("net array `{}` slice bounds overflow", array.global);
+                if *neg {
+                    (start.checked_sub(span).ok_or_else(overflow)?, start)
+                } else {
+                    (start, start.checked_add(span).ok_or_else(overflow)?)
+                }
+            }
+            _ => return Ok(None),
+        };
+        Ok(Some(bounds))
+    }
+
+    /// Collect the `(array, element)` net cells driven by one structural
+    /// target. A positional assignment-pattern LHS is one driver site for
+    /// every cell named by its leaves (SV 10.9.1), so each such cell needs a
+    /// contribution slot for that source; other targets name one array.
+    fn continuous_net_array_cells(
+        &self,
+        target: NodeId,
+        cells: &mut Vec<(usize, u64)>,
+    ) -> Result<(), String> {
+        let pattern = self.p30_unwrap_cast(target);
+        if let NodeKind::Expr(ExprKind::Operation {
+            op: Operation::AssignmentPattern,
+            ..
+        }) = self.kind(pattern)
+        {
+            let path = self.display_name(target);
+            for operand in self
+                .assignment_pattern_operands(&path, pattern)?
+                .unwrap_or_default()
+            {
+                let leaf = self.p30_pattern_lvalue_operand(&path, operand)?;
+                self.continuous_net_array_cells(leaf, cells)?;
+            }
+            return Ok(());
+        }
+        let Some((array, _)) = self.array_net_target_parts(target) else {
+            return Ok(());
+        };
+        if let Some(elements) = self.array_net_target_elements(target)? {
+            cells.extend(elements.into_iter().map(|element| (array.ir, element)));
+        }
+        Ok(())
     }
 
     pub(super) fn array_net_target_parts(&self, node: NodeId) -> Option<(ArrayInfo, Vec<NodeId>)> {
@@ -264,10 +370,9 @@ impl Codegen<'_> {
                     ),
                     _ => continue,
                 };
-                if self
-                    .array_net_target_elements(target)?
-                    .is_some_and(|elements| elements.contains(&element))
-                {
+                let mut cells = Vec::new();
+                self.continuous_net_array_cells(target, &mut cells)?;
+                if cells.contains(&(array, element)) {
                     sources.push((*source, strengths));
                 }
             }

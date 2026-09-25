@@ -7,6 +7,7 @@ endmodule
 module continuous_case #(parameter W = 65)(output bit done);
     typedef logic [W-1:0] lane_t;
     typedef lane_t row_t[-1:1];
+    typedef bit [W-1:0] bit_row_t[-1:1];
     typedef struct { lane_t data; bit valid; } record_t;
     row_t a = '{'1, '0, '1};
     row_t b = '{'1, lane_t'(1), '1};
@@ -16,7 +17,7 @@ module continuous_case #(parameter W = 65)(output bit done);
     wire [W-1:0] relayed[-1:1];
     wire [W-1:0] window[3:0];
     lane_t copied[-1:1];
-    bit [W-1:0] converted[-1:1];
+    bit_row_t converted;
     lane_t disjoint[2];
     lane_t expected;
     record_t record_a[2] = '{'{lane_t'(1), 1'b1}, '{lane_t'(1), 1'b1}};
@@ -27,7 +28,9 @@ module continuous_case #(parameter W = 65)(output bit done);
     assign resolved = b;
     assign conditional = choice ? a : b;
     assign copied = a;
-    assign converted = a;
+    // Unpacked element types must be equivalent (SV 7.6); the four-to-two
+    // state conversion is an explicit bit-stream cast (SV 6.24.3).
+    assign converted = bit_row_t'(a);
     assign window[3:2] = a[-1:0];
     assign disjoint[0] = a[-1];
     assign record_result = choice ? record_a : record_b;

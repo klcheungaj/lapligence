@@ -682,26 +682,17 @@ impl<'a> Codegen<'a> {
                 let mut result = Vec::new();
                 let mut rhs_bit = 0u32;
                 for element in elements {
-                    let signal = self.model.arrays[array.ir]
+                    let signal = storage
                         .net_elements
                         .iter()
                         .find_map(|(index, signal)| (*index == element).then_some(*signal))
                         .ok_or("net-array target cell has no electrical signal")?;
-                    let signal = &self.model.signals[signal];
-                    if signal.net_alias.is_empty() {
-                        return Err("net-array target cell has no electrical bindings".into());
-                    }
-                    for bit in (0..storage.elem_width).rev() {
-                        let binding = signal
-                            .net_alias
-                            .iter()
-                            .find(|binding| binding.signal_bit == bit)
-                            .ok_or("net-array target bit has no electrical binding")?;
-                        result.push((binding.clone(), rhs_bit));
-                        rhs_bit = rhs_bit
-                            .checked_add(1)
-                            .ok_or("net-array source bit index overflow")?;
-                    }
+                    self.append_signal_alias_bindings(
+                        signal,
+                        storage.elem_width,
+                        &mut result,
+                        &mut rhs_bit,
+                    )?;
                 }
                 if !result.is_empty() {
                     return Ok(Some(result));
@@ -772,6 +763,33 @@ impl<'a> Codegen<'a> {
     /// group touched by a continuous assignment.  Group values contain Z in
     /// untouched canonical bits, so one assignment site cannot accidentally
     /// drive bits selected by another site in the same alias network.
+    /// Append a net-bound signal's physical bits in assignment-value order
+    /// (MSB first), numbering their RHS bits from `rhs_bit`.
+    pub(super) fn append_signal_alias_bindings(
+        &self,
+        signal: usize,
+        width: u32,
+        result: &mut Vec<(IrNetAliasBinding, u32)>,
+        rhs_bit: &mut u32,
+    ) -> Result<(), String> {
+        let signal = &self.model.signals[signal];
+        if signal.net_alias.is_empty() {
+            return Err("net-array target cell has no electrical bindings".into());
+        }
+        for bit in (0..width).rev() {
+            let binding = signal
+                .net_alias
+                .iter()
+                .find(|binding| binding.signal_bit == bit)
+                .ok_or("net-array target bit has no electrical binding")?;
+            result.push((binding.clone(), *rhs_bit));
+            *rhs_bit = rhs_bit
+                .checked_add(1)
+                .ok_or("net-array source bit index overflow")?;
+        }
+        Ok(())
+    }
+
     pub(super) fn alias_driver_assignments<F: Fn(usize) -> usize>(
         &self,
         source: NodeId,

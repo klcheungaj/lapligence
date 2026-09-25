@@ -33,6 +33,17 @@ impl Drop for Directory {
     }
 }
 
+/// Asserts a successful run whose only diagnostic is the scheduler's normal
+/// end-of-processes notice, so any runtime error or leak report still fails.
+pub(super) fn assert_quiet_end(output: &Output, time: u64) {
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        format!("llg: simulation ended without $finish (no processes remain) at time {time}\n"),
+        "{output:?}"
+    );
+}
+
 pub(super) fn execute(binary: &Path) -> Output {
     let mut child = Command::new(binary)
         .stdin(Stdio::null())

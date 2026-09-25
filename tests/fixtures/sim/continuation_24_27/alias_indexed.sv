@@ -18,7 +18,9 @@ module tb;
     alias u_plus = up[1 +: W];
     alias d_minus = down[W -: W];
     alias d_plus = down[1 +: W];
-    alias member = record_net.payload[W -: W];
+    // The pinned frontend rejects member selects in a net alias, so alias the
+    // same packed-struct bits: payload[W -: W] of [0:W+1] is record_net[W+1:2].
+    alias member = record_net[W+1:2];
     alias row_alias = rows[0];
     assign up = raw_enable ? {1'b1,raw,1'b0} : 'z;
     assign down = raw_enable ? {1'b1,raw,1'b0} : 'z;

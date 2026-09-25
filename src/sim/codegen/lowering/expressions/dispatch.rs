@@ -29,6 +29,7 @@ impl<'a> Codegen<'a> {
         })
     }
 
+    /// Lower a fixed unpacked array, structure or union parameter as a value.
     fn lower_fixed_array_parameter_value(
         &mut self,
         path: &str,
@@ -37,14 +38,37 @@ impl<'a> Codegen<'a> {
         if !matches!(
             self.query_descriptor(parameter)
                 .map(|descriptor| &descriptor.shape),
-            Some(TypeShape::FixedArray { .. })
+            Some(
+                TypeShape::FixedArray { .. }
+                    | TypeShape::Aggregate(crate::core::db::AggregateLayout {
+                        kind: AggregateKind::UnpackedStruct | AggregateKind::UnpackedUnion,
+                        ..
+                    })
+            )
         ) {
             return Ok(None);
         }
-        let Some(initializer) = self.fixed_array_parameter_initializer(parameter) else {
+        if let Some(initializer) = self.fixed_array_parameter_initializer(parameter) {
+            return self.fixed_pattern_value(path, initializer);
+        }
+        // Another constant fixed-value initializer, such as a conditional of
+        // other parameters, uses the ordinary fixed-value expression path;
+        // its runtime merge is the same element rule as SV 11.4.11 folding.
+        // An override expression belongs to the parent scope, so only the
+        // parameter's own declaration initializer is lowered here.
+        if self.db.parameter_is_overridden(parameter) {
+            return Ok(None);
+        }
+        let Some(initializer) = self
+            .node(parameter)
+            .children
+            .iter()
+            .copied()
+            .find(|child| matches!(self.kind(*child), NodeKind::Expr(_)))
+        else {
             return Ok(None);
         };
-        self.fixed_pattern_value(path, initializer)
+        self.lower_expr(path, initializer).map(Some)
     }
 
     fn lower_subroutine_localparam_value(
@@ -301,10 +325,7 @@ impl<'a> Codegen<'a> {
         if width == 0 {
             return Ok(None);
         }
-        let Some(initializer) = self.fixed_array_parameter_initializer(parameter) else {
-            return Ok(None);
-        };
-        let Some(value) = self.fixed_pattern_value(path, initializer)? else {
+        let Some(value) = self.lower_fixed_array_parameter_value(path, parameter)? else {
             return Ok(None);
         };
         let Some(end) = offset.checked_add(width).filter(|end| *end <= value.width) else {
@@ -376,10 +397,7 @@ impl<'a> Codegen<'a> {
         if width == 0 {
             return Ok(None);
         }
-        let Some(initializer) = self.fixed_array_parameter_initializer(parameter) else {
-            return Ok(None);
-        };
-        let Some(value) = self.fixed_pattern_value(path, initializer)? else {
+        let Some(value) = self.lower_fixed_array_parameter_value(path, parameter)? else {
             return Ok(None);
         };
         let Some(end) = offset.checked_add(width).filter(|end| *end <= value.width) else {

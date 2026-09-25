@@ -5,6 +5,20 @@ use super::*;
 #[cfg(test)]
 mod tests;
 
+/// One target cell's source in a flattened fixed-array assignment pattern.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(in super::super) enum P30PatternSource {
+    /// A leaf expression; a scalar `default:` value repeats for every cell.
+    Leaf(NodeId),
+    /// Declaration-order element `index` of an array-valued item covering
+    /// the remaining target dimensions `dims` (SV 10.9.1 positional items).
+    Element {
+        node: NodeId,
+        index: usize,
+        dims: Vec<(i32, i32)>,
+    },
+}
+
 impl<'a> Codegen<'a> {
     // Fixed unpacked-array assignment (P30).
 
@@ -1037,39 +1051,50 @@ impl<'a> Codegen<'a> {
         path: &str,
         node: NodeId,
         dims: &[(i32, i32)],
-    ) -> Result<Vec<NodeId>, String> {
+    ) -> Result<Vec<P30PatternSource>, String> {
         let Some((bounds, rest)) = dims.split_first() else {
-            return Ok(vec![node]);
+            return Ok(vec![P30PatternSource::Leaf(node)]);
         };
         let values = match self.assignment_pattern_operands(path, node)? {
             Some(_) => self.p30_pattern_level(path, node, *bounds)?,
             None => {
-                let count = dims[1..]
+                let total = dims
                     .iter()
                     .map(|(left, right)| (i64::from(*left) - i64::from(*right)).unsigned_abs() + 1)
                     .try_fold(1u64, |total, extent| total.checked_mul(extent))
+                    .and_then(|total| usize::try_from(total).ok())
                     .ok_or_else(|| {
                         format!("fixed unpacked-array pattern is too large in `{path}`")
                     })?;
-                let count = usize::try_from(count).map_err(|_| {
-                    format!("fixed unpacked-array pattern is too large in `{path}`")
-                })?;
-                let total = count
-                    .checked_mul(
-                        usize::try_from((i64::from(bounds.0) - i64::from(bounds.1)).unsigned_abs())
-                            .map_err(|_| {
-                                format!("fixed unpacked-array pattern is too large in `{path}`")
-                            })?
-                            .saturating_add(1),
-                    )
-                    .ok_or_else(|| {
-                        format!("fixed unpacked-array pattern is too large in `{path}`")
-                    })?;
-                return Ok(std::iter::repeat_n(node, total).collect());
+                // An unpacked-array item supplies one element per remaining
+                // cell, left bound to left bound; only a scalar value (such
+                // as a `default:` leaf) is replicated into every cell.
+                let array_elements = self.query_descriptor(node).and_then(|descriptor| {
+                    let TypeShape::FixedArray { dimensions, .. } = &descriptor.shape else {
+                        return None;
+                    };
+                    dimensions
+                        .iter()
+                        .map(|(left, right)| i64::from(*left).abs_diff(i64::from(*right)) + 1)
+                        .try_fold(1u64, |total, extent| total.checked_mul(extent))
+                });
+                return match array_elements {
+                    None => Ok(std::iter::repeat_n(P30PatternSource::Leaf(node), total).collect()),
+                    Some(count) if usize::try_from(count).ok() == Some(total) => Ok((0..total)
+                        .map(|index| P30PatternSource::Element {
+                            node,
+                            index,
+                            dims: dims.to_vec(),
+                        })
+                        .collect()),
+                    Some(count) => Err(format!(
+                        "fixed unpacked-array pattern item has {count} elements where {total} are required in `{path}`"
+                    )),
+                };
             }
         };
         if rest.is_empty() {
-            return Ok(values);
+            return Ok(values.into_iter().map(P30PatternSource::Leaf).collect());
         }
         let mut flattened = Vec::new();
         for value in values {
@@ -1281,11 +1306,38 @@ impl<'a> Codegen<'a> {
             .assignment_pattern_operands(path, source_node)?
             .is_some()
         {
-            let nodes = self.p30_pattern_values(path, source_node, target_dims)?;
-            let mut values = Vec::with_capacity(nodes.len());
-            for (ordinal, node) in nodes.into_iter().enumerate() {
-                let value = self.lower_expr(path, node)?;
-                values.push(self.p30_capture_value(lhs, rhs, ordinal, value, captures));
+            let sources = self.p30_pattern_values(path, source_node, target_dims)?;
+            let mut values = Vec::with_capacity(sources.len());
+            // A repeated array-valued item (for example a row `default:`) is
+            // evaluated once and its captured elements fan out.
+            let mut array_items: HashMap<NodeId, Vec<IrExpr>> = HashMap::new();
+            for (ordinal, source) in sources.into_iter().enumerate() {
+                match source {
+                    P30PatternSource::Leaf(node) => {
+                        let value = self.lower_expr(path, node)?;
+                        values.push(self.p30_capture_value(lhs, rhs, ordinal, value, captures));
+                    }
+                    P30PatternSource::Element { node, index, dims } => {
+                        if let std::collections::hash_map::Entry::Vacant(entry) =
+                            array_items.entry(node)
+                        {
+                            entry.insert(self.p30_lower_source_values(
+                                path,
+                                lhs,
+                                node,
+                                &dims,
+                                captures,
+                                captured_indices,
+                            )?);
+                        }
+                        let element = array_items[&node].get(index).cloned().ok_or_else(|| {
+                            format!(
+                                "fixed unpacked-array pattern item is missing element {index} in `{path}`"
+                            )
+                        })?;
+                        values.push(element);
+                    }
+                }
             }
             return Ok(values);
         }

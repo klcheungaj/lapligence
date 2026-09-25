@@ -291,8 +291,9 @@ fn unrecorded_buffers_fail_closed_before_publication() {
     buffers
         .sources
         .push(OwnedSource::compilation_unit("unrecorded.sv", "body"));
+    let mut remaining = u64::MAX;
     let error = buffers
-        .finish(&mut u64::MAX, &mut work)
+        .finish(&mut remaining, &mut work)
         .expect_err("missing candidate record");
     assert_eq!(error.kind(), StartupErrorKind::Internal);
     assert!(libraries.is_empty());

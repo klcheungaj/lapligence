@@ -16,6 +16,52 @@ coverage audit. They were not independently revalidated in this source-status
 audit.
 Detailed source investigations and run records belong in local `persistence/`.
 
+## Qualification repairs for schedule positions 1–27 — 2026-09-25
+
+Executing the continuation suites added for positions 1–27 exposed defects that
+the delivery notes below had recorded as unexecuted. They are now repaired and
+the suites (`sim_review_tasks08_11` through `sim_review_tasks24_27`, the owned
+emitter regressions and `sim_memory_editions`) run in both optimizer modes:
+
+- **Array-valued pattern items** (SV 10.9.1, 7.6, 6.22.2). A positional item
+  that is itself an unpacked array (`m = '{row_a, row_b}`, `'{default: row}`,
+  declaration initializers) supplies one element per subarray cell, left bound
+  to left bound, and is evaluated once. Equivalent arrays with different
+  names or bounds qualify; only a scalar is replicated as a fill value. This
+  was previously broadcast/truncated from element zero.
+- **Structure parameters as values** (SV 11.4.11, 7.2). Unpacked struct/union
+  `localparam`s are readable as whole values and through member selects,
+  including a conditional initializer, whose runtime merge uses the same
+  member rule as constant folding. An overridden parameter's parent-scope
+  expression is not reinterpreted in the child.
+- **Mixed aggregate equality** (SV 11.4.5). When only one operand is
+  storage-backed (the other a parameter, call or conditional), integral
+  aggregates compare their complete payloads, giving the member-wise result.
+- **Net-array continuous drivers** (SV 7.4.6, 10.9.1, 6.5). An unpacked slice
+  target (`assign w[3:2] = ...`, constant or indexed bounds) drives only its
+  selected elements, and a positional-pattern LHS contributes one resolution
+  slot per named element instead of bypassing the resolved net. An initialized
+  unpacked array now counts as a procedural writer for the continuous-conflict
+  rule.
+- **Packed `%s`** (V 17.1.1.7, SV 21.2.1.8). Display and string-format tasks
+  accept packed arguments as 8-bit ASCII codes; leading zero bytes are not
+  printed. Only real arguments remain rejected for `%s`.
+- **Library-map parent paths** (V 13.2.1, SV 33.3.1). Leading `..` components
+  of a relative disk map path resolve from the map's directory; the ancestor
+  is opened with the same trust as an absolute map path, and the remaining
+  walk stays handle-relative.
+- **Enum memory X/Z words** keep SYN-029's SV 21.4.2 order: X/Z become zero at
+  the original word width before the enum range check, so `1x` loaded into a
+  two-bit enum is an out-of-range error rather than a truncated member.
+
+Fixture corrections, not product changes: `continuous_contexts.sv` now uses an
+explicit bit-stream cast for its four-to-two-state array (SV 7.6 requires
+equivalent element types); `static_output_values.sv` uses one recursive
+`'{default:'0}`; and `alias_indexed.sv` aliases the packed-struct bits by
+part-select because the pinned frontend rejects a member select in a net
+`alias`, which therefore remains an explicit frontend restriction. Six emitter
+tests now accept the scheduler's normal end-of-processes notice.
+
 ## Destination, layout, call, and continuous-context continuation
 
 SYN-003 procedural positional deconstruction now captures every destination

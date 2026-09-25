@@ -81,10 +81,13 @@ fn continuous_array_graph_keeps_static_topology_and_rhs_only_dependencies() {
             *counts.entry(actual_group).or_insert(0usize) += 1;
         }
     }
-    assert_eq!(counts.len(), 2, "two fixed net elements");
+    // Each bit of a fixed net-array cell is its own electrical group, and
+    // two whole-array sources and the positional-pattern source
+    // each own one contribution slot on every bit of both elements.
+    assert_eq!(counts.len(), 2 * 65, "one group per fixed net-array bit");
     assert!(counts.values().all(|count| *count == 3));
     for group in counts.keys() {
-        assert_eq!(cg.model.net_groups[*group].width, 65);
+        assert_eq!(cg.model.net_groups[*group].width, 1);
     }
 }
 

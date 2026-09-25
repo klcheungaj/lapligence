@@ -2603,6 +2603,55 @@ fn expand_library_pattern_admitted_with_base(
     }
     work.charge_usize(component_count, "filesystem pattern component storage")?;
     let components = pattern_path.components().collect::<Vec<_>>();
+    // Relative map paths are relative to the map file (V 13.2.1 / SV 33.3.1),
+    // including leading `..` components. The descriptor-relative walk below
+    // cannot climb above its anchor, so re-anchor at the ancestor directory,
+    // which is opened with the same trust as an absolute pattern path.
+    let leading = components
+        .iter()
+        .take_while(|component| {
+            matches!(
+                component,
+                std::path::Component::CurDir | std::path::Component::ParentDir
+            )
+        })
+        .count();
+    let parents = components[..leading]
+        .iter()
+        .filter(|component| matches!(component, std::path::Component::ParentDir))
+        .count();
+    if !pattern_path.is_absolute() && parents > 0 {
+        let mut anchor = admitted_base
+            .map(|base| base.actual_path().to_path_buf())
+            .unwrap_or_else(|| base.to_path_buf());
+        for _ in 0..parents {
+            if !anchor.pop() {
+                return Err(StartupError::new(
+                    StartupErrorKind::Input,
+                    format!("library map path `{pattern}` climbs above its filesystem root"),
+                ));
+            }
+        }
+        let rest = components[leading..].iter().collect::<PathBuf>();
+        let Some(rest) = rest.to_str().filter(|rest| !rest.is_empty()) else {
+            return Ok(Vec::new());
+        };
+        charge_library_path_bytes(work, &anchor, "filesystem pattern anchor base bytes")?;
+        work.charge(1, "filesystem pattern anchor admission")?;
+        let anchor_handle = secure_fs::open_path(&anchor).map_err(|error| {
+            StartupError::new(
+                StartupErrorKind::Input,
+                format!("cannot open library map base {}: {error}", anchor.display()),
+            )
+        })?;
+        return expand_library_pattern_admitted_with_base(
+            anchor_handle.actual_path(),
+            rest,
+            max_matches,
+            work,
+            Some(&anchor_handle),
+        );
+    }
     let wildcard_index = components
         .iter()
         .position(|component| component_has_wildcard(component.as_os_str()));
@@ -4858,22 +4907,22 @@ mod tests {
     }
 
     #[test]
-    fn matched_library_source_comparison_is_budgeted() {
-        let map_library = "L".repeat(256);
-        let map_text = format!("library {map_library} candidate.sv;\n");
-        let maps = [OwnedSource::include("root.map", map_text)];
-        let source_library = map_library.clone();
-        let run = |limit| {
-            let mut sources = Vec::new();
-            let mut library_sources = vec![LibrarySource::new(
-                "candidate.sv",
-                "",
-                source_library.clone(),
-            )];
+    fn equal_rank_map_library_comparison_is_budgeted() {
+        // Explicit assignments now outrank every map pattern without a
+        // comparison; an equal-rank repeat still compares both library names
+        // before coalescing, and that comparison must consume both lengths.
+        let library = "L".repeat(256);
+        let maps = [OwnedSource::include(
+            "root.map",
+            format!("library {library} candidate.sv, candidate.sv;\n"),
+        )];
+        let comparison_failure = |limit| {
+            let mut sources = vec![OwnedSource::compilation_unit("candidate.sv", "")];
+            let mut library_sources = Vec::new();
             let mut source_count = 0;
             let mut remaining = u64::MAX;
             let mut work = LibraryMapWorkBudget::with_allocation_limit(limit, u64::MAX);
-            let result = admit_in_memory_library_maps(
+            admit_in_memory_library_maps(
                 &maps,
                 &mut sources,
                 &mut library_sources,
@@ -4881,15 +4930,71 @@ mod tests {
                 &mut remaining,
                 128,
                 &mut work,
-            );
-            (result, work.used)
+            )
+            .err()
+            .filter(|error| error.contains("map library comparison"))
         };
-        let (_, used) = run(MAX_LIBRARY_MAP_WORK);
-        let error = run(used.saturating_sub((source_library.len() + map_library.len()) as u64) + 1)
-            .0
-            .expect_err("matched library comparison must consume its string lengths");
+        let first = (0..MAX_LIBRARY_MAP_WORK)
+            .find(|&limit| comparison_failure(limit).is_some())
+            .expect("an equal-rank repeat must charge its library comparison");
+        let error = comparison_failure(first).unwrap();
         assert_eq!(error.kind(), StartupErrorKind::LimitExceeded);
-        assert!(error.contains("library comparison"));
+        let length = library.len() as u64;
+        for limit in [first + length - 1, first + length, first + 2 * length - 1] {
+            assert!(
+                comparison_failure(limit).is_some(),
+                "limit {limit} must still fail inside the comparison"
+            );
+        }
+        assert!(comparison_failure(first + 2 * length).is_none());
+    }
+
+    #[test]
+    fn filesystem_map_parent_components_resolve_from_the_map_directory() {
+        // V 13.2.1 / SV 33.3.1: relative map paths, including leading `..`,
+        // are relative to the map file, for both library patterns and includes.
+        let root = temporary_path("library-map-parent");
+        let nested = root.join("maps").join("nested");
+        std::fs::create_dir_all(&nested).expect("create nested map directory");
+        std::fs::create_dir_all(root.join("rtl")).expect("create source directory");
+        let source = root.join("rtl").join("cell.sv");
+        std::fs::write(&source, "module mapped; endmodule\n").expect("write mapped source");
+        std::fs::write(nested.join("child.map"), "library L ../../rtl/*.sv;\n")
+            .expect("write child map");
+        let map = root.join("maps").join("root.map");
+        std::fs::write(&map, "include ./nested/../nested/child.map;\n").expect("write root map");
+        let opts = CompileOpts {
+            library_map_files: vec![map
+                .canonicalize()
+                .expect("canonical root map")
+                .to_string_lossy()
+                .into_owned()],
+            ..CompileOpts::default()
+        };
+        let mut identities = HashSet::new();
+        let mut library_sources = Vec::new();
+        let mut source_count = 0;
+        let mut remaining = u64::MAX;
+        let mut work = LibraryMapWorkBudget::new(MAX_LIBRARY_MAP_WORK);
+        admit_library_maps(
+            &opts,
+            &mut identities,
+            &mut library_sources,
+            &mut source_count,
+            &mut remaining,
+            &mut work,
+        )
+        .expect("parent-relative map paths resolve from their map");
+        assert_eq!(library_sources.len(), 1);
+        assert_eq!(
+            library_sources[0].name,
+            source
+                .canonicalize()
+                .expect("canonical mapped source")
+                .to_string_lossy()
+        );
+        assert_eq!(library_sources[0].library, "L");
+        std::fs::remove_dir_all(root).expect("remove parent map root");
     }
 
     #[test]

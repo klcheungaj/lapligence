@@ -16,12 +16,18 @@ module tb;
         #1;
         if (selected !== left || constant_value[0] !== 65'd9 || constant_value[1] !== 65'd10)
             $fatal(1, "initial continuous graph");
+        // Positional items take left[0] -> resolved[1], left[1] -> resolved[0];
+        // equal-strength 0/1 contributions resolve to x.
+        if (resolved[0] !== {63'd0, 2'bxx} || resolved[1] !== {62'd0, 3'bxxx})
+            $fatal(1, "three net-array contributions");
         choice = 0;
         #1;
         if (selected !== right) $fatal(1, "continuous selector");
         right[1] = 65'd8;
         #1;
         if (selected[1] !== 65'd8) $fatal(1, "continuous content");
+        if (resolved[0] !== {63'd0, 2'bxx} || resolved[1] !== {61'd0, 4'bx0xx})
+            $fatal(1, "net-array content contribution");
         $display("CONTINUOUS_IDENTITY_PASS");
         $finish(0);
     end
