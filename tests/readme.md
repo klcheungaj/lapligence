@@ -19,6 +19,20 @@
 - Use focused in-memory sources for frontend, database and IR unit tests.
 - Run generated C under GCC ASan/UBSan; sanitizer coverage does not instrument the vendored Slang archive.
 
+### Review continuation: concat, tagged reads, helper flow and ordering
+
+- `cargo test --locked --test sim_review_next4 -- --test-threads=1` runs the
+  checked-in `review_bundle/n01_*`, `n02_*`, `n06_*` and `n07_*` cases selected by
+  that suite. It uses both optimizer modes, with a paired-edition legacy concat
+  control, strict positive output, and specific eligibility/const-ref errors.
+- Unit filters `singleton_concat`, `return_flow::tests`, and
+  `arguments::tests::frozen_activation_receivers` cover typed rewrites, lexical
+  exits and frozen receiver paths without treating source recognition as execution.
+- `owned::tests::tagged_signed` includes a model built by the actual emitter.
+  Run it with the established generated-C sanitizer flags to check ownership;
+  handwritten native-runtime probes are not a substitute for that model or CLI
+  execution. See the maintained feature checklist for qualification status.
+
 ### Vendor patch preparation
 
 `vendor_patches.rs` covers clean and already-applied checkouts, source trees

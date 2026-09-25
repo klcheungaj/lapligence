@@ -94,6 +94,15 @@ sources, evaluated once by the backend. Result widths/signs come from the
 integral element or `with` expression, not the destination. This path does not
 introduce generated callbacks or change resizable-container callback contracts.
 
+## Fixed ordering receiver capture
+
+`containers/fixed_receiver.rs` freezes selected activation/formal coordinates
+using the existing typed call copy-back helper in `collection/arguments.rs`.
+Reverse snapshots the selected value after capture. Sort and rsort reread live
+storage through the same frozen coordinates after each swap; they do not
+relower the source receiver during comparisons or writes. Singleton receivers
+still execute their selectors. The collected-array view path is unchanged.
+
 ## Sequential conditional predicates
 
 `expressions/conditionals.rs` lowers a Boolean `ConditionalPredicate` to one

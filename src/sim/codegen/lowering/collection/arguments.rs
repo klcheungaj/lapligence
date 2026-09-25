@@ -797,7 +797,9 @@ impl<'a> Codegen<'a> {
         Ok((lhs, read, captures))
     }
 
-    fn freeze_call_lhs(
+    /// Freeze typed lvalue coordinates once for copy-in/out or fixed ordering.
+    /// The returned read stays live; only selectors, not storage values, are captured.
+    pub(in super::super) fn freeze_call_lhs(
         &self,
         lhs: IrLhs,
         tag: &str,
@@ -1159,3 +1161,6 @@ impl<'a> Codegen<'a> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

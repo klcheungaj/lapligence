@@ -174,6 +174,12 @@ diagnostics. Keep the existing per-suite frontend, skip, timeout, and sanitizer 
   with exact stdout and retains the unsupported net-alias witness as an ignored test.
   The original inputs and separately reviewed counterexamples live in
   `fixtures/sim/imported_probes/`; its READMEs map cases to active feature suites.
+- `sim_review_next4.rs` owns the N06 singleton-concat, N01 typed tagged-read,
+  N02 static-callback abrupt-exit and N07 selected fixed-ordering fixtures in
+  `fixtures/sim/review_bundle/`. Keep literal fixture arguments visible to the
+  integrity checker, exact positive stdout in both optimizer modes, the paired
+  legacy editions, and specific eligibility/const-ref rejection reasons. Source
+  presence and native helper tests do not establish these public outcomes.
 - `sim_review_bundle_composition.rs` adds R13 cross-context public-CLI witnesses for recursive
   fixed-array type keys through a function return and aggregate input port, plus packed-record
   deconstruction into a selected NBA destination with source/address capture. Both cases use

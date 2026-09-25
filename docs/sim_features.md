@@ -48,7 +48,8 @@ source diagnostics and single receiver capture are retained. The nested guard
 stress fixture and emitter ownership tests are added, but Rust/public HDL and
 actual generated-model sanitizer qualification remain pending. This change does
 not itself close the separate valid-member signedness or pattern-case match-mode
-contracts; the N01 follow-up is described below and N09 remains open. SYN-000 identifies the supplied 03-2 baseline only; no new
+contracts; the N01 follow-up is described below and N09 remains open. SYN-000
+identifies the supplied 03-2 baseline only; no new
 full-suite green baseline or final selected-profile acceptance is asserted.
 
 SYN-038-N11 corrects ordinary casez matching in the native runtime and owned
@@ -91,6 +92,17 @@ assignments are not credited as whole-result definitions. Existing conservative
 result-read/effect checks and ordinary procedural static storage are unchanged.
 Owned-graph tests plus public rejection, ordinary-persistence and eligible-event
 controls are added. Their Rust/public execution remains unqualified here.
+
+### Fixed ordering receiver repair
+
+SYN-027-N07 now captures automatic/formal receiver coordinates once for reverse,
+sort and rsort using the same typed freezing contract as call copy-back. Reverse
+snapshots the selected value; sorting rereads live storage through captured
+coordinates after swaps. The collected-array view implementation, element
+conversion, bounds and write notifications are retained. New owned-IR selector
+checks and public local/input/inout/ref, record/row, singleton, signed-bound and
+const-ref controls are supplied. These Rust/public and actual generated-model
+ownership checks have not run here; SYN-027/SYN-028 acceptance remains pending.
 
 ### Selected synthesis profiles
 

@@ -366,17 +366,13 @@ impl<'a> Codegen<'a> {
                 .ok_or_else(|| {
                     format!("array method `reverse` in `{path}` exceeds the supported width")
                 })?;
-        let source = self
-            .fixed_activation_read(path, receiver)?
-            .ok_or_else(|| format!("fixed-array reverse in `{path}` has no readable storage"))?;
-        if source.is_real() || source.width != expected_width {
-            return Err(format!(
-                "array method `reverse` in `{path}` has an unsupported fixed-array representation"
-            ));
-        }
-        let target = self
-            .fixed_activation_lhs(path, receiver)?
-            .ok_or_else(|| format!("fixed-array reverse in `{path}` has no writable storage"))?;
+        let (source, target) = self.capture_fixed_ordering_receiver(
+            path,
+            receiver,
+            expected_width,
+            "reverse",
+            &mut statements,
+        )?;
         let name = self.new_fn_name(path, "reverse_source");
         statements.push(IrStmt::DeclLocal {
             name: name.clone(),
@@ -610,26 +606,19 @@ impl<'a> Codegen<'a> {
                     .map_err(|_| format!("fixed-array sort in `{path}` has too many elements"))?,
             )
             .ok_or_else(|| format!("fixed-array sort in `{path}` exceeds the supported width"))?;
-        let source = self
-            .fixed_activation_read(path, receiver)?
-            .ok_or_else(|| format!("fixed-array sort in `{path}` has no readable storage"))?;
-        if source.is_real() || source.width != expected_width {
-            return Err(format!(
-                "array method `{}` in `{path}` has an unsupported fixed-array representation",
-                if descending { "rsort" } else { "sort" }
-            ));
-        }
-        let target = self
-            .fixed_activation_lhs(path, receiver)?
-            .ok_or_else(|| format!("fixed-array sort in `{path}` has no writable storage"))?;
+        let (source, target) = self.capture_fixed_ordering_receiver(
+            path,
+            receiver,
+            expected_width,
+            if descending { "rsort" } else { "sort" },
+            &mut statements,
+        )?;
+        let initial_statement_count = statements.len();
         for first in 0..count {
             for second in (first + 1)..count {
                 let mut pair = Vec::new();
                 let first_offset = sort_offset(first, count, element_width, path)?;
                 let second_offset = sort_offset(second, count, element_width, path)?;
-                let source = self.fixed_activation_read(path, receiver)?.ok_or_else(|| {
-                    format!("fixed-array sort in `{path}` has no readable storage")
-                })?;
                 let first_value = fixed_reverse_slice(&source, first_offset, element_width);
                 let second_value = fixed_reverse_slice(&source, second_offset, element_width);
                 let first_index = sort_index_expr(left, right, first)?;
@@ -688,7 +677,7 @@ impl<'a> Codegen<'a> {
                 statements.push(IrStmt::Block(pair));
             }
         }
-        debug_assert_eq!(comparisons, statements.len());
+        debug_assert_eq!(comparisons, statements.len() - initial_statement_count);
         Ok(Some(IrStmt::Block(statements)))
     }
 

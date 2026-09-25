@@ -10,6 +10,7 @@ mod assignments;
 mod callbacks;
 mod fixed_arrays;
 mod fixed_reductions;
+mod fixed_receiver;
 mod indexing;
 mod initialization;
 mod methods;

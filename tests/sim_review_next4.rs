@@ -44,26 +44,86 @@ fn tagged_member_reads_preserve_runtime_signedness() {
 
 #[test]
 fn abrupt_loop_exits_cannot_hide_a_stateful_static_callback() {
-    for fixture in ["n02_static_do_break_event", "n02_static_do_continue_event"] {
-        sim_cli::reject_case_with_args(
-            "review_bundle",
-            fixture,
-            "static function return is read or is not assigned on every path",
-            &["--edition", "2009"],
-        );
-    }
+    sim_cli::reject_case_with_args(
+        "review_bundle",
+        "n02_static_do_break_event",
+        "static function return is read or is not assigned on every path",
+        &["--edition", "2009"],
+    );
+    sim_cli::reject_case_with_args(
+        "review_bundle",
+        "n02_static_do_continue_event",
+        "static function return is read or is not assigned on every path",
+        &["--edition", "2009"],
+    );
 }
 
 #[test]
 fn ordinary_static_state_and_proven_callback_results_remain_distinct() {
-    for fixture in ["n02_static_do_state_control", "n02_static_definite_event"] {
-        sim_cli::run_case_with_args(
+    sim_cli::run_case_with_args(
+        "review_bundle",
+        "n02_static_do_state_control",
+        "PASS n02_static_do_state_control\n",
+        "",
+        &[],
+        &["--edition", "2009"],
+    );
+    sim_cli::run_case_with_args(
+        "review_bundle",
+        "n02_static_definite_event",
+        "PASS n02_static_definite_event\n",
+        "",
+        &[],
+        &["--edition", "2009"],
+    );
+}
+
+#[test]
+fn fixed_ordering_captures_automatic_and_formal_receivers_once() {
+    sim_cli::run_case_with_args(
+        "review_bundle",
+        "n07_selected_automatic_ordering",
+        "PASS n07_selected_automatic_ordering\n",
+        "",
+        &[],
+        &["--edition", "2009"],
+    );
+    sim_cli::run_case_with_args(
+        "review_bundle",
+        "n07_selected_formal_ordering",
+        "PASS n07_selected_formal_ordering\n",
+        "",
+        &[],
+        &["--edition", "2009"],
+    );
+    sim_cli::run_case_with_args(
+        "review_bundle",
+        "n07_selected_record_and_row_ordering",
+        "PASS n07_selected_record_and_row_ordering\n",
+        "",
+        &[],
+        &["--edition", "2009"],
+    );
+}
+
+#[test]
+fn fixed_ordering_does_not_make_a_const_ref_receiver_writable() {
+    for optimized in [false, true] {
+        let output = sim_cli::invoke_with_env(
             "review_bundle",
-            fixture,
-            &format!("PASS {fixture}\n"),
-            "",
-            &[],
+            "n07_const_ref_receiver",
+            optimized,
             &["--edition", "2009"],
+            &[],
+            &[],
+        );
+        assert!(!output.status.success(), "const ref receiver was writable");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("fixed value is not writable")
+                || stderr.contains("cannot write through const ref")
+                || stderr.contains("constant 'matrix' is not modifiable"),
+            "unexpected const-ref diagnostic: {stderr}"
         );
     }
 }
