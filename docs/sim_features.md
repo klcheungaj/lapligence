@@ -23,7 +23,14 @@ remain. `sim_review_tasks08_11` and owned emitter `pattern_modes` regressions
 cover the source and comparison-owner paths; Rust/public/generated-model
 qualification of this increment is pending.
 
-## Current source status and qualification — 2026-09-24
+SYN-022-N08 extends wildcard and identifier-binding patterns to supported whole
+fixed values, including packed/unpacked records and finite tagged values.
+Binding identity and payload width are checked before the existing typed
+assignment path is used; integral constant-pattern and dynamic/native gates
+are not weakened. The `n08_whole_patterns` and scope-error public fixtures,
+plus snapshot-drop import/lowering tests, are added but unexecuted here.
+
+## Current source status and qualification — 2026-09-23
 
 This inventory records the source status reconciled against the task checkout
 on 2026-09-24. The committed source identity, vendored base revisions and

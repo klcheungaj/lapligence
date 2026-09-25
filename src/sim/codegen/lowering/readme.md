@@ -32,7 +32,10 @@
 - **`expressions.rs` / `expressions/`:** lower typed expressions, operations,
   conversions, aggregates, streaming, membership and system-function queries.
   Pattern-case tag and payload comparisons both inherit the enclosing case
-  mode; ordinary checked tagged-member accesses remain exact.
+  mode; ordinary checked tagged-member accesses remain exact. Whole-value
+  wildcard/binding patterns admit the existing fixed payload layouts, validate
+  binding type identity and width, and retain one source snapshot. Native and
+  resizable values do not acquire a packed pattern representation.
   `expressions/aggregates/copies.rs` separates selected-value type compatibility
   from root storage and pairs fixed-array leaves in declaration order. Source
   leaves are captured before any destination leaf is written.

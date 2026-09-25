@@ -100,7 +100,7 @@ impl<'a> Codegen<'a> {
                 continue;
             }
             let ty = match self.kind(*target) {
-                NodeKind::Var { ty } => ty,
+                NodeKind::Var { ty } | NodeKind::Array { ty } => ty,
                 other => {
                     return Err(format!(
                         "unsupported conditional pattern binding `{}` (node kind {other:?})",

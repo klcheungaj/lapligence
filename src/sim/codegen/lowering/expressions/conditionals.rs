@@ -142,6 +142,62 @@ impl Codegen<'_> {
                 None,
             ));
         }
+        if matches!(
+            info.kind,
+            ConditionalPatternKind::Wildcard | ConditionalPatternKind::Binding
+        ) {
+            // Wildcards and identifier patterns act on the complete matched
+            // type, not just scalar integral syntax (SV 12.6). Only fixed
+            // values with an owned payload are admitted by this backend.
+            let descriptor = self.query_descriptor(expression).ok_or_else(|| {
+                format!("conditional whole-value pattern source type is missing in `{scope_path}`")
+            })?;
+            let width = Codegen::fixed_descriptor_width(descriptor).ok_or_else(|| {
+                format!("conditional whole-value pattern requires a supported fixed value in `{scope_path}`")
+            })?;
+            if value.is_real() || value.width != width {
+                return Err(format!(
+                    "conditional whole-value pattern source width disagrees with its type in `{scope_path}`"
+                ));
+            }
+            let binding = if info.kind == ConditionalPatternKind::Binding {
+                let target = info.binding.ok_or_else(|| {
+                    format!("conditional predicate binding has no declaration in `{scope_path}`")
+                })?;
+                let target_descriptor = self.query_descriptor(target).ok_or_else(|| {
+                    format!("conditional predicate binding type is missing in `{scope_path}`")
+                })?;
+                if target_descriptor.id != descriptor.id
+                    || Codegen::fixed_descriptor_width(target_descriptor) != Some(width)
+                {
+                    return Err(format!(
+                        "conditional predicate binding has an incompatible matched type in `{scope_path}`"
+                    ));
+                }
+                Some(self.lower_lhs(scope_path, target).map_err(|error| {
+                    format!("conditional predicate binding cannot be assigned in `{scope_path}`: {error}")
+                })?)
+            } else {
+                None
+            };
+            return Ok(IrExpr::new(
+                IrExprKind::Pattern(Box::new(IrPatternExpr {
+                    value: Box::new(value),
+                    constant: None,
+                    binding,
+                    match_kind,
+                    checks: Vec::new(),
+                })),
+                1,
+                false,
+                None,
+            ));
+        }
+        if info.kind != ConditionalPatternKind::Constant {
+            return Err(format!(
+                "unsupported conditional predicate pattern in `{scope_path}`"
+            ));
+        }
         if value.is_real()
             || self
                 .query_descriptor(expression)
@@ -151,63 +207,31 @@ impl Codegen<'_> {
                 "conditional predicate pattern requires an integral value in `{scope_path}`"
             ));
         }
-        let binding = match info.kind {
-            ConditionalPatternKind::Wildcard => None,
-            ConditionalPatternKind::Binding => {
-                let target = info.binding.ok_or_else(|| {
-                    format!("conditional predicate binding has no declaration in `{scope_path}`")
-                })?;
-                Some(self.lower_lhs(scope_path, target).map_err(|error| {
-                    format!("conditional predicate binding cannot be assigned in `{scope_path}`: {error}")
-                })?)
-            }
-            ConditionalPatternKind::Constant => None,
-            ConditionalPatternKind::Invalid
-            | ConditionalPatternKind::Tagged
-            | ConditionalPatternKind::Structure
-            | ConditionalPatternKind::Unsupported => {
-                return Err(format!(
-                    "unsupported conditional predicate pattern in `{scope_path}`"
-                ));
-            }
+        let children = self.db.node(pattern_id).children();
+        let [constant_node] = children else {
+            return Err(format!(
+                "conditional predicate constant pattern has invalid shape in `{scope_path}`"
+            ));
         };
-        let constant = if info.kind == ConditionalPatternKind::Constant {
-            let children = self.db.node(pattern_id).children();
-            let [constant_node] = children else {
-                return Err(format!(
-                    "conditional predicate constant pattern has invalid shape in `{scope_path}`"
-                ));
-            };
-            let constant = self.lower_expr(scope_path, *constant_node)?;
-            if constant.is_real()
-                || self
-                    .query_descriptor(*constant_node)
-                    .is_some_and(|descriptor| {
-                        !matches!(descriptor.shape, TypeShape::PackedAtom { .. })
-                    })
-            {
-                return Err(format!(
-                    "conditional predicate constant pattern requires an integral constant in `{scope_path}`"
-                ));
-            }
-            let width = value.width.max(constant.width);
-            let signed = value.signed && constant.signed;
-            Some(Box::new(checked_operand_with_context(
-                constant,
-                width,
-                signed,
-                scope_path,
-                "conditional pattern context",
-            )?))
-        } else {
-            None
-        };
-        let width = constant
-            .as_ref()
-            .map_or(value.width, |constant| constant.width);
-        let signed = constant
-            .as_ref()
-            .map_or(value.signed, |constant| constant.signed);
+        let constant = self.lower_expr(scope_path, *constant_node)?;
+        if constant.is_real()
+            || self
+                .query_descriptor(*constant_node)
+                .is_some_and(|descriptor| !matches!(descriptor.shape, TypeShape::PackedAtom { .. }))
+        {
+            return Err(format!(
+                "conditional predicate constant pattern requires an integral constant in `{scope_path}`"
+            ));
+        }
+        let width = value.width.max(constant.width);
+        let signed = value.signed && constant.signed;
+        let constant = Some(Box::new(checked_operand_with_context(
+            constant,
+            width,
+            signed,
+            scope_path,
+            "conditional pattern context",
+        )?));
         let value = if value.width == width && value.signed == signed {
             value
         } else {
@@ -223,7 +247,7 @@ impl Codegen<'_> {
             IrExprKind::Pattern(Box::new(IrPatternExpr {
                 value: Box::new(value),
                 constant,
-                binding,
+                binding: None,
                 match_kind,
                 checks: Vec::new(),
             })),

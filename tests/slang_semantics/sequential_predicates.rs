@@ -304,3 +304,40 @@ fn syn_025_pattern_case_is_owned_and_generates_in_both_modes() {
         assert!(model.model_c.contains("sv4_case_eq("));
     }
 }
+
+#[test]
+fn whole_fixed_bindings_and_tag_modes_lower_after_native_teardown() {
+    for (name, source) in [
+        (
+            "n08_whole_patterns.sv",
+            include_str!("../fixtures/sim/review_bundle/n08_whole_patterns.sv"),
+        ),
+        (
+            "n09_tagged_case_modes.sv",
+            include_str!("../fixtures/sim/review_bundle/n09_tagged_case_modes.sv"),
+        ),
+    ] {
+        let db = capture(name, source);
+        db.validate().unwrap();
+        let mut bindings = 0;
+        for id in db.node_ids() {
+            if let Some(info) = db.conditional_pattern(id) {
+                if info.kind == ConditionalPatternKind::Binding {
+                    let target = info.binding.expect("binding retains declaration identity");
+                    assert!(db.type_descriptor(target).is_some());
+                    bindings += 1;
+                }
+            }
+        }
+        assert!(bindings > 0, "no binding captured from {name}");
+        for options in [OptConfig::none(), OptConfig::default()] {
+            let model = codegen::generate_from_db_with_opts(&db, &options)
+                .expect("whole fixed patterns and match modes lower from owned data");
+            assert!(model.model_c.contains("sv4_clone("));
+            if name.starts_with("n09") {
+                assert!(model.model_c.contains("sv4_casex_eq("));
+                assert!(model.model_c.contains("sv4_casez_eq("));
+            }
+        }
+    }
+}

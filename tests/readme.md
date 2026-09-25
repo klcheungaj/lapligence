@@ -1064,6 +1064,7 @@ checks generation after snapshot destruction in both optimizer modes. These
 tests do not relax positional-count validation or the CLI diagnostic checks.
 
 - `sim_review_tasks08_11.rs` uses checked-in source fixtures in both optimizer
-  modes for tagged pattern-case match modes. Ordinary inactive-member errors
+  modes for tagged pattern-case match modes and whole fixed-value pattern
+  bindings, snapshot isolation, sequential suppression and scope rejection. Ordinary inactive-member errors
   remain covered by `sim_tagged_union_access`; mode-aware pattern matching does
   not weaken those access guards.
