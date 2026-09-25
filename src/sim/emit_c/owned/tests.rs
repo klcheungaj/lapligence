@@ -8,6 +8,7 @@ mod sequential_predicates;
 use crate::sim::execution::ExecutionModel;
 
 mod group1_repairs;
+mod inside_values;
 mod native_boundaries;
 mod native_values;
 mod nextest_regressions;

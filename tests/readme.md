@@ -1126,3 +1126,8 @@ with the new public and snapshot-drop tests before recording full acceptance.
   side-effect counts are not asserted for type/default/replicated expressions.
 - Run new Rust/unit/public tests with the pinned toolchain and both optimizer
   modes before acceptance. Fixture discovery alone does not execute the HDL.
+
+The same continuation suite includes signed fixed-array membership, conversion
+boundaries, and owned snapshot-drop coverage. `owned::tests::inside_values`
+provides actual-emitter signedness and temporary-owner regressions; native helper
+probes do not replace these Rust/public/generated-model checks.

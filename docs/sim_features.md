@@ -235,6 +235,21 @@ are supplied but unexecuted in the delivery environment; full SYN-002 acceptance
 remains pending. No source side-effect evaluation count is promised for pattern
 replication, and replicated lvalues remain illegal.
 
+### Fixed-array membership context qualification
+
+`inside` storage shortcuts now require a declared fixed array and a direct
+storage reference, retaining existing real-array storage as a neighboring control.
+A packed cast remains one set member; an array cast or value
+expression retains its conversion/evaluation before element traversal. Unpacked
+records are not silently enumerated as member bags. Captured integral array
+leaves restore their native signedness before wildcard equality and common-width
+extension, without changing ordinary unsigned part selects or RHS-only wildcard
+rules. Tests in `sim_review_tasks16_19` cover signed 7/65/129-bit array values,
+function/conditional/row/member receivers, packed and two-state casts, and X
+fallback versus a definite wildcard match. Actual-emitter signedness/ownership
+regressions are supplied in `owned::tests::inside_values`. Rust, public HDL, and
+actual generated-model qualification remain pending; these are not new passes.
+
 ### Selected synthesis profiles
 
 SYN-000 adopts the three profile axes from the implementation plan. The

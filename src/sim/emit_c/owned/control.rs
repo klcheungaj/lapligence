@@ -448,6 +448,13 @@ impl Frame<'_, '_> {
                             element.width,
                             element.signed,
                         );
+                        // A packed slice is unsigned; this projection denotes a
+                        // typed array element whose sign controls common sizing.
+                        self.line(format!(
+                            "{}.is_signed = {};",
+                            item.code,
+                            u8::from(element.signed)
+                        ));
                         let code = if source.width == 0 {
                             format!("sv4_from_u64(({} == {}), 1, 0)", source.real(), item.real())
                         } else {

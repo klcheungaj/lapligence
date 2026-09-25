@@ -50,3 +50,34 @@ fn replicated_pattern_capture_preserves_unexpanded_count_and_element_slots() {
             .expect("replicated runtime contexts after native snapshot destruction");
     }
 }
+
+#[test]
+fn inside_values_keep_array_element_types_and_singular_casts() {
+    sim_cli::run_case_with_args(
+        "continuation_16_19", "inside_value_contexts", "INSIDE_VALUE_CONTEXTS_PASS\n", "", &[],
+        &["--edition", "2009"],
+    );
+    sim_cli::reject_case_with_args(
+        "continuation_16_19", "inside_aggregate_error", "for inside expression",
+        &["--edition", "2009"],
+    );
+}
+
+#[test]
+fn inside_value_graph_lowers_after_native_snapshot_destruction() {
+    use llg::core::{compile, db};
+    use llg::sim::{codegen, opt::OptConfig};
+    let database = {
+        let output = compile::compile_sources_checked(
+            &[compile::OwnedSource::compilation_unit("inside.sv",
+                include_str!("fixtures/sim/continuation_16_19/inside_value_contexts.sv"))],
+            &compile::CompileOpts { top: Some("tb".to_owned()), ..Default::default() },
+        ).expect("legal fixed-array and packed-cast membership");
+        db::Db::from_slang(&output.snapshot).unwrap()
+    };
+    database.validate().unwrap();
+    for options in [OptConfig::none(), OptConfig::default()] {
+        codegen::generate_from_db_with_opts(&database, &options)
+            .expect("typed membership after native snapshot destruction");
+    }
+}

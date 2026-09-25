@@ -62,3 +62,7 @@ frontend-to-executable and native-platform verification remain acceptance gates.
 
 See [`docs/sim_data_semantics.md`](../../../docs/sim_data_semantics.md) for width
 and conversion semantics and [the source map](../../../docs/source_layout.md).
+
+Captured `inside` array projections restore the declared element signedness on
+the native value before wildcard comparison. `sv4_part_select` remains unsigned
+for ordinary source part selects; frame metadata alone does not retag a value.

@@ -3,6 +3,26 @@
 use super::*;
 
 impl<'a> Codegen<'a> {
+    fn inside_has_integral_leaves(descriptor: &TypeDescriptor) -> bool {
+        match &descriptor.shape {
+            TypeShape::FixedArray { element, .. } => Self::inside_has_integral_leaves(element),
+            TypeShape::PackedAtom { .. } => true,
+            TypeShape::Aggregate(layout) => matches!(
+                layout.kind,
+                AggregateKind::PackedStruct | AggregateKind::PackedUnion | AggregateKind::TaggedUnion
+            ),
+            _ => false,
+        }
+    }
+
+    fn inside_has_stored_leaves(descriptor: &TypeDescriptor) -> bool {
+        match &descriptor.shape {
+            TypeShape::FixedArray { element, .. } => Self::inside_has_stored_leaves(element),
+            TypeShape::Real { .. } => true,
+            _ => Self::inside_has_integral_leaves(descriptor),
+        }
+    }
+
     fn lower_fixed_array_elements(
         descriptor: &TypeDescriptor,
         right: u32,
@@ -73,6 +93,11 @@ impl<'a> Codegen<'a> {
         };
         if !matches!(descriptor.shape, TypeShape::FixedArray { .. }) {
             return Ok(None);
+        }
+        if !Self::inside_has_integral_leaves(&descriptor) {
+            return Err(format!(
+                "fixed-array inside set item requires singular integral elements in `{path}`"
+            ));
         }
         let width = Self::fixed_descriptor_width(&descriptor).ok_or_else(|| {
             format!("fixed-array inside set item has no supported width in `{path}`")
@@ -159,58 +184,78 @@ impl<'a> Codegen<'a> {
             return Ok(());
         }
 
-        if let Some((_, aggregate)) = self.unpacked_aggregate_info(node) {
-            for leaf in aggregate.leaves {
-                let value = self.aggregate_leaf_read(&leaf).map_err(|error| {
-                    format!(
-                        "inside set aggregate member is not a scalar value in `{path}`: {error}"
-                    )
-                })?;
-                out.push(IrInsideItem::Value(value));
-            }
-            return Ok(());
+        if self.query_descriptor(node).is_some_and(|descriptor| {
+            matches!(&descriptor.shape, TypeShape::Aggregate(layout)
+                if matches!(layout.kind, AggregateKind::UnpackedStruct | AggregateKind::UnpackedUnion))
+        }) {
+            return Err(format!(
+                "inside set item requires a singular value or an array of singular values in `{path}`"
+            ));
         }
-        if let Some((target, prefix)) = self.unpacked_path_for_expr(node) {
-            if let Some(aggregate) = self.unpacked_aggregates.get(&target) {
-                let leaves = aggregate
-                    .leaves
-                    .iter()
-                    .filter(|leaf| leaf.path.starts_with(&prefix))
-                    .cloned()
-                    .collect::<Vec<_>>();
-                if !leaves.is_empty() {
-                    for leaf in leaves {
-                        let value = self.aggregate_leaf_read(&leaf).map_err(|error| {
-                            format!(
-                                "inside set aggregate member is not a scalar value in `{path}`: {error}"
-                            )
-                        })?;
-                        out.push(IrInsideItem::Value(value));
+        let storage_array = self.query_descriptor(node).is_some_and(|descriptor| {
+            matches!(descriptor.shape, TypeShape::FixedArray { .. })
+                && Self::inside_has_stored_leaves(descriptor)
+        }) && matches!(
+            self.kind(node),
+            NodeKind::Array { .. }
+                | NodeKind::Expr(
+                    ExprKind::Ref { .. } | ExprKind::HierPath { .. } | ExprKind::ArraySelect { .. }
+                )
+        );
+        if storage_array {
+            if let Some((_, aggregate)) = self.unpacked_aggregate_info(node) {
+                for leaf in aggregate.leaves {
+                    let value = self.aggregate_leaf_read(&leaf).map_err(|error| {
+                        format!(
+                            "inside set aggregate member is not a scalar value in `{path}`: {error}"
+                        )
+                    })?;
+                    out.push(IrInsideItem::Value(value));
+                }
+                return Ok(());
+            }
+            if let Some((target, prefix)) = self.unpacked_path_for_expr(node) {
+                if let Some(aggregate) = self.unpacked_aggregates.get(&target) {
+                    let leaves = aggregate
+                        .leaves
+                        .iter()
+                        .filter(|leaf| leaf.path.starts_with(&prefix))
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    if !leaves.is_empty() {
+                        for leaf in leaves {
+                            let value = self.aggregate_leaf_read(&leaf).map_err(|error| {
+                                format!(
+                                    "inside set aggregate member is not a scalar value in `{path}`: {error}"
+                                )
+                            })?;
+                            out.push(IrInsideItem::Value(value));
+                        }
+                        return Ok(());
                     }
-                    return Ok(());
                 }
             }
-        }
-        if let Some(array) = self.array_of(node).cloned() {
-            if array.dims.is_empty() {
-                return Err(format!("inside set array has no dimensions in `{path}`"));
+            if let Some(array) = self.array_of(node).cloned() {
+                if array.dims.is_empty() {
+                    return Err(format!("inside set array has no dimensions in `{path}`"));
+                }
+                for indices in inside_array_index_vectors(&array.dims) {
+                    out.push(IrInsideItem::Value(IrExpr::new(
+                        IrExprKind::ArrayRead {
+                            arr: self.reference_array(array.ir),
+                            indices: indices
+                                .into_iter()
+                                .map(|index| lhs_integer_expr(i128::from(index)))
+                                .collect(),
+                            elem_sel: IrElemSel::Whole,
+                        },
+                        array.elem_width,
+                        array.signed,
+                        None,
+                    )));
+                }
+                return Ok(());
             }
-            for indices in inside_array_index_vectors(&array.dims) {
-                out.push(IrInsideItem::Value(IrExpr::new(
-                    IrExprKind::ArrayRead {
-                        arr: self.reference_array(array.ir),
-                        indices: indices
-                            .into_iter()
-                            .map(|index| lhs_integer_expr(i128::from(index)))
-                            .collect(),
-                        elem_sel: IrElemSel::Whole,
-                    },
-                    array.elem_width,
-                    array.signed,
-                    None,
-                )));
-            }
-            return Ok(());
         }
         if let Some(item) = self.lower_fixed_array_value_item(path, node)? {
             out.push(item);

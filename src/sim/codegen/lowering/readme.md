@@ -140,3 +140,9 @@ the source array's declared direction, while file addresses continue to map to
 their numeric indices. The view retains physical flat-array strides and checks
 file start/finish addresses against the selected range. Dynamic, native and
 associative memories remain outside this path.
+
+Fixed-array `inside` dispatch follows the result descriptor before considering
+storage identity. Direct collected references, including existing real storage,
+retain cell-wise traversal; casts
+and other value expressions are evaluated with their conversions intact. Arrays
+descend to singular integral values, not arbitrary unpacked record members.
