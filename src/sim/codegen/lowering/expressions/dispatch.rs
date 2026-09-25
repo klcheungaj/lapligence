@@ -1363,6 +1363,49 @@ impl<'a> Codegen<'a> {
                 } else {
                     v
                 };
+                // Slang wraps a streaming source in a conversion to its
+                // assignment target. A wider fixed target receives the stream
+                // left-aligned and zero-filled on the right (SV 11.4.14); an
+                // explicit bit-stream cast of a stream has equal widths.
+                let streaming_operand = matches!(
+                    self.kind(*operand),
+                    NodeKind::Expr(ExprKind::Streaming { .. })
+                );
+                // A runtime `with`/container stream learns its width only when
+                // evaluated, so the runtime aligns it (and rejects an oversize
+                // stream) against the fixed target.
+                if bitstream_source.is_none()
+                    && streaming_operand
+                    && !v.is_real()
+                    && v.width == LLG_MAX_WIDTH
+                    && w < LLG_MAX_WIDTH
+                {
+                    let aligned =
+                        IrExpr::new(IrExprKind::StreamToFixed { a: Box::new(v) }, w, s, None);
+                    let aligned = if *two_state || is_two_state_kind(&ty.kind) {
+                        IrExpr::to_two_state(aligned)
+                    } else {
+                        aligned
+                    };
+                    return self.convert_fixed_payload(h, aligned);
+                }
+                if bitstream_source.is_none() && streaming_operand && !v.is_real() && v.width < w {
+                    let stream_width = v.width;
+                    let aligned = IrExpr::new(
+                        IrExprKind::Concat {
+                            parts: vec![v, const_zero_expr(w - stream_width)],
+                        },
+                        w,
+                        false,
+                        None,
+                    );
+                    let aligned = if *two_state || is_two_state_kind(&ty.kind) {
+                        IrExpr::to_two_state(aligned)
+                    } else {
+                        aligned
+                    };
+                    return self.convert_fixed_payload(h, IrExpr::resize_to(aligned, w, s));
+                }
                 if let Some(source) = bitstream_source {
                     if source.width != w {
                         return Err(format!(

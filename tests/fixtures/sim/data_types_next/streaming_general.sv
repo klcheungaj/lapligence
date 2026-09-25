@@ -74,13 +74,15 @@ module tb;
             $finish;
         end
 
+        // A 16-bit stream in a 24-bit target is left-aligned (SV 11.4.14).
         packed_value = {>>8{ascending with [1 +: 2]}};
-        if (packed_value[15:0] !== 16'hb2_c3) begin
+        if (packed_value !== {16'hb2_c3, 8'h00}) begin
             $display("FAIL streaming_general fixed_with_plus");
             $finish;
         end
+        // [2 -: 2] is the slice [1:2] in storage order; `<<8` then reverses it.
         packed_value = {<<8{ascending with [2 -: 2]}};
-        if (packed_value[15:0] !== 16'hb2_c3) begin
+        if (packed_value !== {16'hc3_b2, 8'h00}) begin
             $display("FAIL streaming_general fixed_with_minus");
             $finish;
         end
@@ -192,7 +194,7 @@ module tb;
             $finish;
         end
         packed_value = {>>8{queue_value with [1 +: 2]}};
-        if (packed_value[15:0] !== 16'h22_33) begin
+        if (packed_value !== {16'h22_33, 8'h00}) begin
             $display("FAIL streaming_general queue_with");
             $finish;
         end

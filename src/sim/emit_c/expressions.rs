@@ -788,6 +788,18 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
                 fill: None,
             }
         }
+        IrExprKind::StreamToFixed { a } => {
+            let ra = w(a)?;
+            RenderedExpr {
+                code: format!(
+                    "llg_stream_to_fixed({}, {}u, {})",
+                    ra.code, e.width, e.signed as u8
+                ),
+                width: e.width,
+                signed: e.signed,
+                fill: None,
+            }
+        }
         IrExprKind::Fill(f) => RenderedExpr {
             code: format!("sv4_fill({f}, {}, {})", e.width, e.signed as u8),
             width: e.width,

@@ -71,18 +71,15 @@ impl<'a> Codegen<'a> {
             }
             let count = usize::try_from(count)
                 .map_err(|_| format!("streaming selector is too large in `{path}`"))?;
-            let descending = left > right;
+            // A `with` range streams in storage order like a slice (SV
+            // 11.4.14.4): ascending here; descending fixed arrays re-orient.
+            let low = left.min(right);
             (0..count)
                 .map(|offset| {
                     let offset = i128::try_from(offset)
                         .map_err(|_| format!("streaming selector overflows in `{path}`"))?;
-                    if descending {
-                        left.checked_sub(offset)
-                            .ok_or_else(|| format!("streaming selector overflows in `{path}`"))
-                    } else {
-                        left.checked_add(offset)
-                            .ok_or_else(|| format!("streaming selector overflows in `{path}`"))
-                    }
+                    low.checked_add(offset)
+                        .ok_or_else(|| format!("streaming selector overflows in `{path}`"))
                 })
                 .collect()
         };
@@ -149,20 +146,22 @@ impl<'a> Codegen<'a> {
                 "real array streaming operand is not supported in `{path}`"
             ));
         }
-        let indices = selected.map(|indices| indices.to_vec()).unwrap_or_else(|| {
-            let (left, right) = array.dims[0];
-            let step = if left <= right { 1 } else { -1 };
-            let mut values = Vec::new();
-            let mut index = i128::from(left);
-            loop {
-                values.push(index);
-                if index == i128::from(right) {
-                    break;
+        let indices = selected
+            .map(|indices| Self::fixed_stream_storage_order(array, indices))
+            .unwrap_or_else(|| {
+                let (left, right) = array.dims[0];
+                let step = if left <= right { 1 } else { -1 };
+                let mut values = Vec::new();
+                let mut index = i128::from(left);
+                loop {
+                    values.push(index);
+                    if index == i128::from(right) {
+                        break;
+                    }
+                    index += i128::from(step);
                 }
-                index += i128::from(step);
-            }
-            values
-        });
+                values
+            });
         let rest = inside_array_index_vectors(&array.dims[1..]);
         let rest_count = u128::try_from(rest.len())
             .map_err(|_| format!("fixed streaming array is too large in `{path}`"))?;
@@ -236,6 +235,27 @@ impl<'a> Codegen<'a> {
         Self::join_bitstream_parts(path, parts)
     }
 
+    /// Order ascending `with` indices by the fixed array's declaration, which
+    /// is its storage order; a descending array streams its high index first.
+    pub(in super::super) fn fixed_stream_storage_order(
+        array: &ArrayInfo,
+        indices: &[i128],
+    ) -> Vec<i128> {
+        let mut indices = indices.to_vec();
+        if array.dims.first().is_some_and(|(left, right)| left > right) {
+            indices.reverse();
+        }
+        indices
+    }
+
+    /// SV 11.4.14.4 admits a `with` range only on a one-dimensional unpacked
+    /// array; the pinned frontend does not diagnose a multidimensional operand.
+    pub(in super::super) fn multidimensional_with_error(path: &str) -> String {
+        format!(
+            "streaming `with` range requires a one-dimensional unpacked array (SV 11.4.14.4) in `{path}`"
+        )
+    }
+
     pub(in super::super) fn lower_stream_operand(
         &mut self,
         path: &str,
@@ -294,6 +314,9 @@ impl<'a> Codegen<'a> {
                 None => None,
             };
             if let Some(selected) = selected {
+                if array.dims.len() != 1 {
+                    return Err(Self::multidimensional_with_error(path));
+                }
                 let parts = self.fixed_stream_parts(path, &array, Some(&selected))?;
                 return Self::join_bitstream_parts(path, parts);
             }

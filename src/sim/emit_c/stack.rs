@@ -851,6 +851,7 @@ fn expr_slots(expr: &IrExpr) -> Result<u64, String> {
         | IrExprKind::Convert { a }
         | IrExprKind::BitStreamCast { a, .. }
         | IrExprKind::ToTwoState { a }
+        | IrExprKind::StreamToFixed { a }
         | IrExprKind::RealUn { a, .. } => expr_slots(a)?,
         IrExprKind::Mutation(mutation) => checked_add(
             lhs_slots(&mutation.lhs)?,

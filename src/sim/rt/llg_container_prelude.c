@@ -213,6 +213,26 @@ static void llg_stream_bounds(int selector_kind, sv4_t first, sv4_t second,
     if (distance == UINT64_MAX)
         llg_container_fatal("streaming selector range is too large");
     *count = llg_checked_count(distance + 1, sizeof(sv4_t));
+    // A `with` range streams the selected elements in storage order, like an
+    // array slice (IEEE 1800-2009 11.4.14.4): ascending for queues, dynamic
+    // arrays and ascending fixed arrays. Descending fixed arrays re-orient.
+    if (*left > *right) {
+        int64_t low = *right;
+        *right = *left;
+        *left = low;
+    }
+}
+
+/* Walk a selected range from the declaration's left bound toward its right
+ * bound, which is the storage order of a fixed unpacked array. */
+static void llg_fixed_stream_orient(int64_t declaration_left,
+                                    int64_t declaration_right, int64_t* left,
+                                    int64_t* right) {
+    if (declaration_left > declaration_right && *left < *right) {
+        int64_t high = *right;
+        *right = *left;
+        *left = high;
+    }
 }
 
 uint32_t llg_stream_selector_width(int selector_kind, sv4_t first,
@@ -231,8 +251,10 @@ uint32_t llg_stream_selector_width(int selector_kind, sv4_t first,
 }
 
 void llg_fixed_stream_bounds(int selector_kind, sv4_t first, sv4_t second,
+                             int64_t declaration_left, int64_t declaration_right,
                              int64_t* left, int64_t* right, size_t* count) {
     llg_stream_bounds(selector_kind, first, second, 0, left, right, count);
+    llg_fixed_stream_orient(declaration_left, declaration_right, left, right);
 }
 
 uint32_t llg_fixed_stream_width(int selector_kind, sv4_t first, sv4_t second,
@@ -278,6 +300,16 @@ int64_t llg_fixed_stream_index_at(int64_t left, int64_t right, size_t offset) {
     return llg_stream_index_at(left, right, offset);
 }
 
+sv4_t llg_stream_to_fixed(sv4_t value, uint32_t width, int is_signed) {
+    if (value.width > width)
+        llg_container_fatal("streaming concatenation is larger than its fixed-size target");
+    sv4_t result = sv4_zero(width, is_signed);
+    if (value.width)
+        sv4_part_select_set(&result, (int64_t)width - 1,
+                            (int64_t)(width - value.width), value);
+    return result;
+}
+
 sv4_t llg_fixed_stream_source(const sv4_t* values, int64_t declaration_left,
                               int64_t declaration_right, uint32_t element_width,
                               int element_two_state, int selector_kind,
@@ -289,6 +321,7 @@ sv4_t llg_fixed_stream_source(const sv4_t* values, int64_t declaration_left,
     int64_t right;
     size_t count;
     llg_stream_bounds(selector_kind, first, second, 0, &left, &right, &count);
+    llg_fixed_stream_orient(declaration_left, declaration_right, &left, &right);
     if (!count) {
         sv4_t empty;
         memset(&empty, 0, sizeof(empty));

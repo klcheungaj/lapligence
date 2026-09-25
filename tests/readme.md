@@ -606,6 +606,10 @@ not behavioral coverage.
 - [Process semantic regressions](fixtures/sim/process_semantics/readme.md):
   always-family sensitivity, time-zero execution, writer/timing contracts and
   legal latch/flip-flop controls.
+- `sim_syn015_stream_contexts.rs` runs the SYN-015 fixed stream/cast matrix
+  (7/65/129-bit lanes, concat/select-only oracles), runtime-sized alignment and
+  `with` storage-order cases, and single-fault size/type/dimension rejections,
+  including a runtime oversize stream, in both optimizer modes.
 - `sim_syn014_process_contexts.rs` runs the SYN-014 aggregate/process witness
   in both optimizer modes: fixed record and nested-array sensitivity through
   helper calls and input links, ordinary `@*` call-site behavior, written

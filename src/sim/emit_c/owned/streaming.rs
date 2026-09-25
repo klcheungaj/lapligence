@@ -237,10 +237,10 @@ impl Frame<'_, '_> {
                     let left = self.scalar("int64_t", "0".to_owned());
                     let right = self.scalar("int64_t", "0".to_owned());
                     let count = self.scalar("size_t", "0".to_owned());
-                    self.line(format!(
-                        "llg_fixed_stream_bounds({kind}, {first}, {second}, &{left}, &{right}, &{count});"
-                    ));
                     let (declared_left, declared_right) = array.dims[0];
+                    self.line(format!(
+                        "llg_fixed_stream_bounds({kind}, {first}, {second}, {declared_left}, {declared_right}, &{left}, &{right}, &{count});"
+                    ));
                     let in_bounds = self.scalar(
                         "int",
                         format!(

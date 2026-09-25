@@ -68,7 +68,11 @@ fragments or extend those paths as a workaround.
   before unpacking.
   Runtime `with` selectors lower on one-dimensional fixed-array destinations
   (`IrStreamTarget::FixedSelector`) and fixed-array sources (`IrExprKind::FixedStream`);
-  decorators on nested concatenations and multidimensional array targets remain rejected.
+  decorators on nested concatenations and any `with` on a multidimensional array
+  are rejected (§11.4.14.4). Every `with` range streams in storage order like a
+  slice. A stream in a wider fixed target is left-aligned and zero-filled on the
+  right (`IrExprKind::StreamToFixed` when runtime-sized); unpacking a longer
+  source consumes its leftmost bits (§11.4.14.3).
   `inside` evaluates selector and
   every scalar/range endpoint once; scalars use wildcard equality, ranges
   ordinary inclusive comparison.

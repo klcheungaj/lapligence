@@ -676,6 +676,7 @@ sv4_t llg_system(llg_string_t command, int has_command);
 // bounds; the returned bit width is the actual selected extent, never the
 // index expression's storage width.
 void llg_fixed_stream_bounds(int selector_kind, sv4_t first, sv4_t second,
+                             int64_t declaration_left, int64_t declaration_right,
                              int64_t* left, int64_t* right, size_t* count);
 uint32_t llg_fixed_stream_width(int selector_kind, sv4_t first, sv4_t second,
                                 uint32_t element_width);
@@ -691,6 +692,9 @@ sv4_t llg_fixed_stream_source(const sv4_t* values, int64_t declaration_left,
                               int64_t declaration_right, uint32_t element_width,
                               int element_two_state, int selector_kind,
                               sv4_t first, sv4_t second);
+/* Left-align a runtime-sized stream in a fixed-size bit-stream target; an
+ * oversize stream is an error (IEEE 1800-2009 11.4.14). Borrows `value`. */
+sv4_t llg_stream_to_fixed(sv4_t value, uint32_t width, int is_signed);
 
 // ── File descriptors and output ─────────────────────────────────────────────
 // A mode-string fopen returns a bit-31-tagged FD. Preopened FDs 0x80000000,

@@ -252,6 +252,16 @@ impl Frame<'_, '_> {
                 let code = format!("sv4_to_two_state({})", value.code);
                 self.replace(value, code, expr.width, expr.signed)
             }
+            IrExprKind::StreamToFixed { a } => {
+                let value = self.expression(a)?;
+                let code = format!(
+                    "llg_stream_to_fixed({}, {}u, {})",
+                    value.code,
+                    expr.width,
+                    u8::from(expr.signed)
+                );
+                self.replace(value, code, expr.width, expr.signed)
+            }
             IrExprKind::BitStreamCast {
                 a,
                 target_two_state,

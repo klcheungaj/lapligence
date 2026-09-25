@@ -434,6 +434,13 @@ impl Validator<'_> {
             | IrExprKind::ToTwoState { a } => {
                 self.validate_expr(a, formals, &format!("{path}.a"))?;
             }
+            IrExprKind::StreamToFixed { a } => {
+                if expr.width == 0 || a.is_real() || expr.fill.is_some() {
+                    return self.fail(path, "fixed stream target requires a packed nonzero width");
+                }
+                self.validate_width(expr.width, &format!("{path}.width"))?;
+                self.validate_expr(a, formals, &format!("{path}.a"))?;
+            }
             IrExprKind::Predicate { clauses } => {
                 if clauses.is_empty() || expr.width != 1 || expr.signed || expr.fill.is_some() {
                     return self.fail(

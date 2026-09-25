@@ -1220,6 +1220,7 @@ fn collect_expression_effects(
         | IrExprKind::Convert { a }
         | IrExprKind::BitStreamCast { a, .. }
         | IrExprKind::ToTwoState { a }
+        | IrExprKind::StreamToFixed { a }
         | IrExprKind::PartSel { base: a, .. }
         | IrExprKind::Stream { value: a, .. } => {
             collect_expression_effects(ir, a, effects, visited_calls)

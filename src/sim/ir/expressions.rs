@@ -276,6 +276,13 @@ pub enum IrExprKind {
     ToTwoState {
         a: Box<IrExpr>,
     },
+    /// Assign a runtime-sized streaming concatenation to a fixed-size
+    /// bit-stream target (`llg_stream_to_fixed`): left-aligned, zero-filled
+    /// on the right, and a runtime error when the stream is larger (SV
+    /// 11.4.14). The node width is the target width.
+    StreamToFixed {
+        a: Box<IrExpr>,
+    },
     /// Unsized fill literal used as a value (`sv4_fill(f, width, signed)`).
     Fill(u8),
     /// A verbatim C fragment produced by lowering (source-text-recovered

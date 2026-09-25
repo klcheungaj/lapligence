@@ -1825,7 +1825,8 @@ pub(super) fn sampled_compatible(expression: &IrExpr) -> bool {
         | IrExprKind::CastToPacked { a }
         | IrExprKind::Resize { a }
         | IrExprKind::Convert { a }
-        | IrExprKind::ToTwoState { a } => sampled_compatible(a),
+        | IrExprKind::ToTwoState { a }
+        | IrExprKind::StreamToFixed { a } => sampled_compatible(a),
         IrExprKind::Mux { sel, a, b }
         | IrExprKind::ArrayMux { sel, a, b, .. }
         | IrExprKind::StructMux { sel, a, b, .. } => {

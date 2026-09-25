@@ -20,7 +20,7 @@ module tb;
         {>>8{lanes with [base +: 2]}} = 16'ha4_b5;
         $display("plus %h %h %h", lanes[0], lanes[1], lanes[2]);
 
-        // [base -: 2] selects logical lanes 2 then 1.
+        // [base -: 2] unpacks into lanes 1 then 2, the slice's storage order.
         lanes[0] = 8'h00;
         lanes[1] = 8'h00;
         lanes[2] = 8'h00;
@@ -45,7 +45,7 @@ module tb;
         {>>8{lanes with [lo:hi]}} = 16'h12_34;
         $display("range %h %h %h", lanes[0], lanes[1], lanes[2]);
 
-        // The declared descending range keeps its own element order.
+        // A descending array unpacks in its storage order: desc[1], desc[0].
         desc[0] = 8'h00;
         desc[1] = 8'h00;
         desc[2] = 8'h00;

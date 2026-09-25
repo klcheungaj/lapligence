@@ -2237,3 +2237,29 @@ external-leaf/compound-write negatives and earlier N02 abrupt-static negatives
 remain. Unit/source-effect, frame-ownership and actual-emitter event-model tests
 are supplied, not executed here. Ordinary stateful procedural calls are unchanged;
 this is not a general side-effecting callback engine or final SYN-011 acceptance.
+
+### Continuation: fixed stream and cast qualification (SYN-015)
+
+Qualifying fixed bit-stream casts and streams across 7/65/129-bit lanes
+(`sim_syn015_stream_contexts`) found and repaired four ordering defects, each
+checked against Slang's constant evaluator as the reference:
+
+- a stream assigned to a wider fixed target is left-aligned and zero-filled on
+  the right (SV 11.4.14), including runtime-sized sources (runtime `with`,
+  queues), which use `llg_stream_to_fixed` and fail on an oversize stream;
+- unpacking a longer source consumes its leftmost bits (SV 11.4.14.3);
+- `with [b -: w]`, and any range on a descending array, streams the selected
+  elements in storage order like an array slice (SV 11.4.14.4) for sources and
+  targets; the previous order was reversed; and
+- `with` on a multidimensional array is rejected, since the pinned frontend
+  accepts it without diagnosis (SV 11.4.14.4).
+
+Five existing streaming oracles that encoded right alignment or the reversed
+`-:` order were corrected. Array-shape, record, nested and non-dividing member
+casts, four-to-two-state conversion, selected rows/members, call results,
+partial `<<` slices, type slices, overlapping snapshots and the singleton
+concatenation and signed tagged-member intersections (N06, N01) already held.
+Fixed-size mismatches, oversize and undersized streams, real and associative
+operands and multidimensional `with` ranges are rejected. Dynamic resizing
+targets beyond the existing single-container rule remain outside SYN-015.
+

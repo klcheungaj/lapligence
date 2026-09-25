@@ -22,12 +22,14 @@ module tb;
         result = {>>8{lanes with [base +: 2]}};
         $display("plus %h", result);
 
-        // [base -: 2] selects logical lanes 2 then 1.
+        // [base -: 2] selects lanes 1 and 2, streamed in storage order like
+        // the slice lanes[1:2] (SV 11.4.14.4).
         base = 2;
         result = {>>8{lanes with [base -: 2]}};
         $display("minus %h", result);
 
-        // A single runtime index selects one element.
+        // A single runtime index selects one element; the 8-bit stream is
+        // left-aligned in the 16-bit result (SV 11.4.14).
         i = 0;
         result = {>>8{lanes with [i]}};
         $display("index %h", result);
@@ -38,7 +40,8 @@ module tb;
         result = {>>8{lanes with [lo:hi]}};
         $display("range %h", result);
 
-        // A descending declared array keeps its own element order.
+        // A descending declared array streams in its storage order: desc[1]
+        // before desc[0].
         desc[0] = 8'haa;
         desc[1] = 8'hbb;
         desc[2] = 8'hcc;

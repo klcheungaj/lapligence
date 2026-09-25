@@ -172,6 +172,7 @@ uint32_t llg_stream_selector_width(int selector_kind, sv4_t first,
  * an error AND writes to the in-range elements, not a silent clipped success.
  * Operands are borrowed; these helpers neither allocate nor publish writes. */
 void llg_fixed_stream_bounds(int selector_kind, sv4_t first, sv4_t second,
+                             int64_t declaration_left, int64_t declaration_right,
                              int64_t* left, int64_t* right, size_t* count);
 uint32_t llg_fixed_stream_width(int selector_kind, sv4_t first, sv4_t second,
                                 uint32_t element_width);
@@ -188,6 +189,11 @@ sv4_t llg_fixed_stream_source(const sv4_t* values, int64_t declaration_left,
                               int64_t declaration_right, uint32_t element_width,
                               int element_two_state, int selector_kind,
                               sv4_t first, sv4_t second);
+/* Assign a runtime-sized streaming concatenation to a fixed-size bit-stream
+ * target: the stream is left-aligned and zero-filled on the right, and a
+ * stream larger than the target is an error (IEEE 1800-2009 11.4.14). The
+ * source is borrowed; the returned value is owned by the caller. */
+sv4_t llg_stream_to_fixed(sv4_t value, uint32_t width, int is_signed);
 
 enum {
     LLG_CONTAINER_METHOD_FIND = 0,

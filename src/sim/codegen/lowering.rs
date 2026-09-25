@@ -2129,6 +2129,25 @@ fn const_z_expr(width: u32) -> IrExpr {
     )
 }
 
+/// An all-zero unsigned constant over `width` bits.
+fn const_zero_expr(width: u32) -> IrExpr {
+    let nlimbs = (width as usize).div_ceil(64);
+    IrExpr::new(
+        IrExprKind::Const(IrConst {
+            bits: vec![0; nlimbs],
+            x: vec![0; nlimbs],
+            z: vec![0; nlimbs],
+            width,
+            signed: false,
+            real: None,
+            fill: None,
+        }),
+        width,
+        false,
+        None,
+    )
+}
+
 /// An all-X constant over `width` bits. UDP input `x` matching treats runtime
 /// Z as X explicitly in the evaluator, while unmatched rows return this value.
 fn const_x_expr(width: u32) -> IrExpr {
@@ -2189,6 +2208,27 @@ fn packed_lhs_width(model: &IrModel, lhs: &IrLhs) -> Option<u32> {
 }
 
 fn apply_lhs_assignment_context(model: &IrModel, lhs: &IrLhs, rhs: IrExpr) -> IrExpr {
+    if let IrLhs::Stream { width, .. } = lhs {
+        // An unpack consumes the source's leftmost bits; extra low-order
+        // bits are left unread (SV 11.4.14.3). A narrower source is a
+        // frontend error, and the self-determined source is not widened.
+        // A runtime-sized source records the maximum width; its own unpack
+        // path checks and consumes the actual stream.
+        if rhs.is_real() || rhs.width <= *width || rhs.width == LLG_MAX_WIDTH {
+            return rhs;
+        }
+        let source_width = rhs.width;
+        return IrExpr::new(
+            IrExprKind::PartSel {
+                base: Box::new(rhs),
+                left: i64::from(source_width - 1),
+                right: i64::from(source_width - width),
+            },
+            *width,
+            false,
+            None,
+        );
+    }
     if let Some(width) = packed_lhs_width(model, lhs) {
         apply_assignment_expression_width(rhs, width)
     } else {

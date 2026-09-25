@@ -181,6 +181,11 @@ before that operand is unpacked (IEEE 1800-2009 11.4.14.4). Source-size checks
 precede that component's writes. Earlier components can therefore update the
 values used by later selectors. Bounds diagnostics preserve valid destination
 positions. This sequencing also applies to mixed packed/container streams.
+`llg_fixed_stream_bounds` orients the selected range by the declared bounds, so
+a fixed destination is unpacked in storage order like a slice; container
+ranges are ascending. `StreamToFixed` renders `llg_stream_to_fixed`, which
+left-aligns a runtime-sized stream in its fixed target and fails on an
+oversize stream.
 
 Fixed array and aggregate calls keep declaration-order payloads in activation
 storage. Input/default arguments are captured once in formal order; composite

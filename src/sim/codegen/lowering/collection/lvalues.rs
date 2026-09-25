@@ -138,14 +138,20 @@ impl<'a> Codegen<'a> {
                 "real array streaming assignment target is not supported in `{path}`"
             ));
         }
+        if with_node.is_some() && array.dims.len() != 1 {
+            return Err(Self::multidimensional_with_error(path));
+        }
         let selected = match with_node {
-            Some(with_node) => self
-                .static_stream_selector_indices(path, with_node)?
-                .ok_or_else(|| {
-                    format!(
-                        "runtime `with` selector on a fixed streaming target is not supported in `{path}`"
-                    )
-                })?,
+            Some(with_node) => {
+                let indices = self
+                    .static_stream_selector_indices(path, with_node)?
+                    .ok_or_else(|| {
+                        format!(
+                            "runtime `with` selector on a fixed streaming target is not supported in `{path}`"
+                        )
+                    })?;
+                Self::fixed_stream_storage_order(&array, &indices)
+            }
             None => {
                 let (left, right) = array.dims.first().copied().ok_or_else(|| {
                     format!("fixed streaming target has no dimensions in `{path}`")

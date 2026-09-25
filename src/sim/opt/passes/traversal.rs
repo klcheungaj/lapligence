@@ -105,7 +105,8 @@ fn walk_expr_mut(e: &mut IrExpr, f: &mut impl FnMut(&mut IrExpr)) {
         | IrExprKind::Resize { a }
         | IrExprKind::Convert { a }
         | IrExprKind::BitStreamCast { a, .. }
-        | IrExprKind::ToTwoState { a } => walk_expr_mut(a, f),
+        | IrExprKind::ToTwoState { a }
+        | IrExprKind::StreamToFixed { a } => walk_expr_mut(a, f),
         IrExprKind::CastToReal { a, .. } => walk_expr_mut(a, f),
         IrExprKind::Mux { sel, a, b }
         | IrExprKind::ArrayMux { sel, a, b, .. }
