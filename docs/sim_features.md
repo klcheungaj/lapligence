@@ -61,6 +61,16 @@ selected-profile qualification remain pending. The packed conditional policy,
 asymmetric wildcard equality/inside rules and N09's separate tagged-pattern
 comparator dispatch are unchanged.
 
+### Singleton-concatenation identity repair
+
+SYN-038-N06 now removes a singleton concatenation only when the child keeps
+its width, signedness and self-determined fill boundary. Literal-owned fill
+markers and `Fill` nodes cannot bypass this guard. The checked-in
+`n06_singleton_concat_signed_cast.sv` and optimizer metadata tests cover the
+signed four-bit -2 -> unsigned 14 conversion and neighboring fill/width cases.
+These Rust/public-HDL regressions have not been run in the delivery environment;
+this source repair is not full SYN-015/SYN-038 acceptance.
+
 ### Selected synthesis profiles
 
 SYN-000 adopts the three profile axes from the implementation plan. The

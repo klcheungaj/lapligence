@@ -331,9 +331,18 @@ fn try_identity(e: &mut IrExpr) -> bool {
             }
             false
         }
-        // single-part concat whose part already has the full width → part
+        // Concatenation is unsigned and self-determined, including a single
+        // operand. Do not expose a signed child or resurrect a fill marker
+        // (which can also live on the literal rather than its enclosing node).
         IrExprKind::Concat { parts } if parts.len() == 1 => {
-            if parts[0].width == e.width {
+            let part = &parts[0];
+            if part.width == e.width
+                && part.signed == e.signed
+                && e.fill.is_none()
+                && part.fill.is_none()
+                && !matches!(&part.kind, IrExprKind::Fill(_))
+                && !matches!(&part.kind, IrExprKind::Const(value) if value.fill.is_some())
+            {
                 let replacement = parts[0].clone();
                 *e = replacement;
                 return true;

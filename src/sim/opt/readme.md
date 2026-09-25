@@ -3,6 +3,9 @@
 - **Facade:** `opt.rs` accepts only `ExecutionModel`, exposes optimization
   configuration, and revalidates scheduling summaries after transformations.
 - **Passes:** `passes.rs` walks and transforms typed IR conservatively.
+- **Singleton concatenations:** identities preserve unsignedness and the
+  self-determined boundary, including fill markers carried by literal nodes.
+  Equal bit width alone does not justify replacing the concat with its child.
 - **Invariants:** passes preserve table indices and lowering-time sensitivity
   sets; they do not recompute wake behavior.
 - **Validation:** callers validate the model after enabled passes complete.
