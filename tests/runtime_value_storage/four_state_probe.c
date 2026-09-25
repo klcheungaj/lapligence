@@ -57,6 +57,9 @@ static const unsigned xor_table[4][4] = {
 
 /* Selector rows and item columns are 0/1/X/Z. These are independent
  * reference tables, not generated from core::elab or the C helpers. */
+static const unsigned packed_mux_table[4][4] = {
+    {0, 2, 2, 2}, {2, 1, 2, 2}, {2, 2, 2, 2}, {2, 2, 2, 2}
+};
 static const unsigned casez_table[4][4] = {
     {1, 0, 0, 1}, {0, 1, 0, 1}, {0, 0, 1, 1}, {1, 1, 1, 1}
 };
@@ -154,7 +157,7 @@ static void check_pair(sv4_t left, sv4_t right) {
              * for ambiguous selectors; known selectors still select an arm. */
             unsigned expected = digit == 0 ? y :
                                 (digit == 1 || digit == 4) ? x :
-                                x == y && x != 3 ? x : 2;
+                                packed_mux_table[x][y];
             CHECK(state(result, bit) == expected);
         }
         sv4_destroy(&result);

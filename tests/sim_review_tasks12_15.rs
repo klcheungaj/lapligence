@@ -89,3 +89,34 @@ fn map_configuration_frontend_diagnostics_keep_original_lines_and_name() {
             && diagnostic.message.contains("identifier")
     ), "{diagnostics:?}");
 }
+
+#[test]
+fn packed_policy_matrix_keeps_frontend_runtime_and_lazy_arm_semantics() {
+    for edition in ["2001", "2009"] {
+        sim_cli::run_case_with_args(
+            "continuation_12_15", "packed_conditional_matrix", "PACKED_POLICY_PASS\n", "", &[],
+            &["--edition", edition],
+        );
+    }
+}
+
+#[test]
+fn packed_policy_lowers_from_owned_sources_after_native_teardown() {
+    use llg::core::{compile, db};
+    use llg::sim::{codegen, opt::OptConfig};
+    for edition in [compile::LanguageEdition::Verilog2001, compile::LanguageEdition::SystemVerilog2009] {
+        let database = {
+            let output = compile::compile_sources_checked(
+                &[compile::OwnedSource::compilation_unit("packed-policy.sv",
+                    include_str!("fixtures/sim/continuation_12_15/packed_conditional_matrix.sv"))],
+                &compile::CompileOpts { top: Some("tb".to_owned()), edition, ..Default::default() },
+            ).expect("target-edition packed conditional source");
+            db::Db::from_slang(&output.snapshot).expect("owned packed conditional source")
+        };
+        database.validate().unwrap();
+        for options in [OptConfig::none(), OptConfig::default()] {
+            codegen::generate_from_db_with_opts(&database, &options)
+                .expect("owned packed conditional lowering after snapshot destruction");
+        }
+    }
+}

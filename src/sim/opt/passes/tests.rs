@@ -1,6 +1,7 @@
 use super::*;
 
 mod array_conditionals;
+mod conditional_policy;
 mod fixed_array_reductions;
 mod sequential_predicates;
 mod singleton_concat;

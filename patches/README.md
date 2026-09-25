@@ -57,6 +57,17 @@ can admit without VCS metadata.
   re-exports for finite declarations and keeps ambiguous re-export names as
   frontend diagnostics.
 
+- `slang/slang-conditional-z-merge.patch`: the selected published packed
+  conditional policy. Logically true multi-bit predicates bypass ambiguous
+  merging and evaluate only the chosen arm, even if other predicate bits are X/Z.
+  This is local edition-policy work, not an upstream erratum.
+
+When a tracked patch changes, do not mix old applied files with the new manifest.
+Use a verified transition from the prior complete applied state, or the documented
+clean vendor base, then run the existing preparer. Its exact full-file checks
+must not be relaxed to admit arbitrary intermediate or locally edited files.
+Never discard unrelated vendor edits to make a patch-state check pass.
+
 ## libaco
 
 - Base: `d00631a9e143a8711c0a6e7b603a72b1e379b661`

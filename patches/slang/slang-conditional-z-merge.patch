@@ -1,8 +1,16 @@
 diff --git a/source/ast/expressions/OperatorExpressions.cpp b/source/ast/expressions/OperatorExpressions.cpp
-index 03e33e9c1..6b4af5fbb 100644
 --- a/source/ast/expressions/OperatorExpressions.cpp
 +++ b/source/ast/expressions/OperatorExpressions.cpp
-@@ -1639,8 +1639,22 @@ ConstantValue ConditionalExpression::evalImpl(EvalContext& context) const {
+@@ -1633,14 +1633,30 @@
+ 
+     // When the conditional predicate is unknown, there are rules to combine both sides
+     // and return the hybrid result.
+-    if (cp.isInteger() && cp.integer().hasUnknown()) {
++    // A known one dominates other X/Z predicate bits. Do not evaluate the
++    // false arm or run the ambiguous Z-merge policy for such a true value.
++    if (cp.isInteger() && cp.integer().hasUnknown() && !cp.isTrue()) {
+         ConstantValue cvl = left().eval(context);
+         ConstantValue cvr = right().eval(context);
          if (!cvl || !cvr)
              return nullptr;
  
@@ -28,10 +36,9 @@ index 03e33e9c1..6b4af5fbb 100644
          auto combineArrays = [&](auto& result, auto& la, auto& ra) -> ConstantValue {
              ConstantValue defaultElement = type->getArrayElementType()->getDefaultValue();
 diff --git a/tests/unittests/ast/ExpressionTests.cpp b/tests/unittests/ast/ExpressionTests.cpp
-index 7664576c6..e4a67e87d 100644
 --- a/tests/unittests/ast/ExpressionTests.cpp
 +++ b/tests/unittests/ast/ExpressionTests.cpp
-@@ -3790,6 +3790,25 @@ endmodule
+@@ -3790,6 +3790,52 @@
      CHECK(var.getInitializer()->eval(eval_ctx).getBitstreamWidth() == 4);
  }
  
@@ -52,6 +59,33 @@ index 7664576c6..e4a67e87d 100644
 +    CHECK(exactlyEqual(p.getValue().integer(), "1'bx"_si));
 +    auto& q = root.lookupName<ParameterSymbol>("m.q");
 +    CHECK(exactlyEqual(q.getValue().integer(), "8'b10xx01x0"_si));
++}
++
++TEST_CASE("Conditional known-one predicate retains a selected Z arm") {
++    auto tree = SyntaxTree::fromText(R"(
++module m;
++    localparam logic [128:0] p = 4'b1xz0 ? {129{1'bz}} : 129'b0;
++    localparam logic [7:0] q = 4'b0xz0 ? 8'bzzzz0000 : 8'bzzzz0000;
++    function automatic logic chosen();
++        int calls = 0;
++        logic value;
++        value = 4'b1xz0 ? 1'bz : (calls++ == 0);
++        return (calls == 0) && (value === 1'bz);
++    endfunction
++    localparam logic only_true_arm = chosen();
++endmodule
++)");
++
++    Compilation compilation;
++    compilation.addSyntaxTree(tree);
++    NO_COMPILATION_ERRORS;
++    auto& root = compilation.getRoot();
++    auto& p = root.lookupName<ParameterSymbol>("m.p");
++    CHECK(p.getValue().integer().countZs() == 129);
++    auto& q = root.lookupName<ParameterSymbol>("m.q");
++    CHECK(exactlyEqual(q.getValue().integer(), "8'bxxxx0000"_si));
++    auto& selected = root.lookupName<ParameterSymbol>("m.only_true_arm");
++    CHECK(selected.getValue().integer() == 1);
 +}
 +
  TEST_CASE("Value range where implicit strings not allowed") {

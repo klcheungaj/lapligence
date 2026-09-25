@@ -78,6 +78,25 @@ lexing, bounded projection/publication, source conflicts and original UTF-8
 restoration. These Rust/Slang/HDL tests are supplied but not executed here;
 N12 and the selected profile are not marked fully accepted.
 
+### Packed conditional pipeline qualification
+
+SYN-020 retains the supplied published-table policy: an ambiguous packed
+selector merges Z/Z to X, while a known-true selector must retain a selected Z.
+Qualification inspection found a narrower frontend gap in the tracked Slang
+conditional patch: `hasUnknown()` also accepted a multi-bit selector containing
+a known one. Its merge path could evaluate the unchosen arm and rewrite that
+selected Z. The tracked patch now excludes logically true predicates from the
+ambiguous branch. It does not change `SVInt` globally or weaken gate truth rules.
+
+The dual-edition `packed_conditional_matrix` adds all 64 scalar state triples
+through 129-bit runtime formals and constant generate results, vector logical
+truth, exact arm-call counts, common signedness/width and tri-state controls.
+Owned folding/identity tests and a literal native mux table supplement it.
+The new frontend and public tests have not run here; native helpers alone cannot
+close SYN-020. The tracked patch's applied digests change, so an already patched
+vendor checkout must be transitioned to the matching complete patch-set state
+before rebuilding; a clean documented vendor base uses the normal preparer.
+
 ## Current source status and qualification — 2026-09-23
 
 This inventory records the source status reconciled against the task checkout

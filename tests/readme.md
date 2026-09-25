@@ -1093,3 +1093,11 @@ malformed configuration diagnostics must name the original map location.
 boundaries, projection budgets, explicit library reuse and UTF-8 provenance.
 These tests require the normal prepared frontend build. Their presence is not a
 passing run, and unrelated native runtime tests cannot qualify source admission.
+
+The same continuation suite's packed-conditional matrix checks 129-bit runtime
+formals against all 64 constant-generate cells in both target editions. It
+includes a logically true X/Z-containing selector, lazy arm-call counters,
+common-type conversions, and separate tri-state gates. The tracked Slang patch
+has a matching constant-evaluation regression; both that frontend test and the
+public/owned Rust tests require an actual prepared native build. Re-run
+`sim_conditional_policy` and the optimizer `conditional_policy` tests together.
