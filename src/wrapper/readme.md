@@ -48,10 +48,10 @@ from silently converting `value matches pattern` into a Boolean test of `value`.
 
 Simple assignment patterns export one indexed `OPERAND` edge for each entry
 in Slang's bound element list, even when several positions share one expression
-identity. Structured fixed-array patterns with type setters and no explicit
-index setters export Slang's resolved elements in declaration order; Slang has
-already applied recursive type matching, the last matching type setter, and
-defaults. Fixed-array patterns whose nested default is an error-typed
+identity. Structured fixed-array patterns with type setters, including mixed
+explicit-index/type/default forms, export Slang's resolved elements in
+declaration order; Slang has already applied explicit-index precedence,
+recursive type matching, the last matching type setter, and defaults. Fixed-array patterns whose nested default is an error-typed
 intermediate also export their valid bound elements, omitting those synthetic
 placeholders. Fixed-array elements are reordered from Slang's increasing-index
 storage to declared left-to-right order. Other explicit index-key patterns keep

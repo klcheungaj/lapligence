@@ -1068,3 +1068,8 @@ tests do not relax positional-count validation or the CLI diagnostic checks.
   bindings, snapshot isolation, sequential suppression and scope rejection. Ordinary inactive-member errors
   remain covered by `sim_tagged_union_access`; mode-aware pattern matching does
   not weaken those access guards.
+
+- The same review suite covers mixed explicit-index/recursive-type patterns in
+  local, call, return, NBA and input-port contexts. Slang semantic tests inspect
+  resolved declaration-order operands after snapshot drop; existing key-index
+  and uncovered-pattern negative tests remain independent controls.

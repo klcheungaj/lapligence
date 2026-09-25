@@ -3370,12 +3370,13 @@ private:
     // Slang binds an untyped nested default against an error type as a
     // placeholder, then binds executable values against each element. Keep
     // the resolved elements for that legacy path as well as type-keyed
-    // patterns. Ordinary explicit index keys stay in the semantic graph so
-    // the simulator can evaluate their constant expressions from owned data.
+    // patterns, including mixtures with explicit indices. The resolved list
+    // preserves explicit-index precedence while recursively filling the other
+    // elements; an immediate-type-only consumer cannot reconstruct that list.
+    // Index-only patterns still retain their owned semantic key expressions.
     const bool bad_default = expression.defaultSetter &&
                              expression.defaultSetter->bad();
-    const bool resolved_type_keys = !expression.typeSetters.empty() &&
-                                    expression.indexSetters.empty();
+    const bool resolved_type_keys = !expression.typeSetters.empty();
     if (!bad_default && !resolved_type_keys)
       return false;
 

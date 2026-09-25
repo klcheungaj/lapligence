@@ -30,6 +30,14 @@ assignment path is used; integral constant-pattern and dynamic/native gates
 are not weakened. The `n08_whole_patterns` and scope-error public fixtures,
 plus snapshot-drop import/lowering tests, are added but unexecuted here.
 
+SYN-001-N03 captures Slang's resolved declaration-order fixed-array elements
+whenever type setters are present, including explicit-index/type/default
+mixtures. Recursive record/row values and shared operand occurrences are kept;
+index-only patterns still retain semantic constant keys. Public local/call/
+return/NBA/input-port fixtures and snapshot-drop operand tests are added.
+The wrapper/Rust/public pipeline has not been executed for this increment;
+existing duplicate-index and uncovered-pattern diagnostics remain controls.
+
 ## Current source status and qualification — 2026-09-23
 
 This inventory records the source status reconciled against the task checkout

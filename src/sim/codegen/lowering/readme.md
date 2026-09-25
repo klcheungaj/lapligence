@@ -47,7 +47,8 @@
   their selectors once before projecting source cells. Module-procedural
   expressions and fixed-array input value ports reuse the same typed conditional
   operation as subroutine values. Assignment-pattern consumers use Slang's
-  resolved declaration-order operands for recursive type-key/default patterns;
+  resolved declaration-order operands for recursive type-key/default patterns,
+  including mixtures with explicit index overrides;
   explicit index keys are evaluated from owned constant values or expression
   nodes. Positional pattern lvalues recursively scatter fixed unpacked arrays,
   structures, and packed arrays after one RHS snapshot. Bound references to

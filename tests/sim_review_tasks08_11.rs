@@ -33,3 +33,37 @@ fn whole_fixed_patterns_keep_types_snapshots_and_scopes() {
         &["--edition", "2009"],
     );
 }
+
+#[test]
+fn mixed_recursive_assignment_patterns_preserve_contexts_and_precedence() {
+    sim_cli::run_case_with_args(
+        "review_bundle",
+        "n03_mixed_record_patterns",
+        "PASS n03_mixed_record_patterns\n",
+        "",
+        &[],
+        &["--edition", "2009"],
+    );
+    sim_cli::run_case_with_args(
+        "review_bundle",
+        "n03_mixed_row_patterns",
+        "PASS n03_mixed_row_patterns\n",
+        "",
+        &[],
+        &["--edition", "2009"],
+    );
+    sim_cli::run_case_with_args(
+        "review_bundle",
+        "n03_mixed_pattern_port",
+        "PASS n03_mixed_pattern_port\n",
+        "",
+        &[],
+        &["--edition", "2009"],
+    );
+    sim_cli::reject_case_with_args(
+        "review_bundle",
+        "n03_mixed_duplicate_index",
+        "multiple keys",
+        &["--edition", "2009"],
+    );
+}
