@@ -1701,12 +1701,7 @@ mod tests {
     fn casez_eq_all_one_bit_states() {
         // Rows are selectors, columns are items, in 0/1/X/Z order.
         // This literal oracle does not call the runtime or another comparator.
-        let expected = [
-            [1, 0, 0, 1],
-            [0, 1, 0, 1],
-            [0, 0, 1, 1],
-            [1, 1, 1, 1],
-        ];
+        let expected = [[1, 0, 0, 1], [0, 1, 0, 1], [0, 0, 1, 1], [1, 1, 1, 1]];
         let states = ["0", "1", "x", "z"];
         for (row, sel) in states.iter().enumerate() {
             for (col, item) in states.iter().enumerate() {

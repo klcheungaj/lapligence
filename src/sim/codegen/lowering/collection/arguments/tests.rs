@@ -73,8 +73,14 @@ fn frozen_activation_receivers_share_one_ordered_selector_capture() {
         let target = IrLhs::PackedSelect {
             target: Box::new(root.clone()),
             steps: vec![
-                IrPackedSelect { base: selector(0), width: 96 },
-                IrPackedSelect { base: selector(1), width: 24 },
+                IrPackedSelect {
+                    base: selector(0),
+                    width: 96,
+                },
+                IrPackedSelect {
+                    base: selector(1),
+                    width: 24,
+                },
             ],
             signed: false,
             two_state: false,
@@ -108,7 +114,10 @@ fn frozen_activation_receivers_share_one_ordered_selector_capture() {
         };
         assert_eq!(read_root, &expected_root);
         for (index, step) in steps.iter().enumerate() {
-            assert_eq!(step.base.kind, IrExprKind::LocalRead(captures[index].0.clone()));
+            assert_eq!(
+                step.base.kind,
+                IrExprKind::LocalRead(captures[index].0.clone())
+            );
             assert_eq!(read_indices[index], captures[index].0);
         }
         // Cloning the read/target for a comparison or swap cannot invoke the

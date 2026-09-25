@@ -65,7 +65,9 @@ fn replicated_operands_preserve_interleaved_occurrences_and_order() {
         let semantic = crate::sim::semantic::SemanticModel::from_db(&db);
         let cg = Codegen::new(&semantic);
         assert_eq!(
-            cg.assignment_pattern_operands("tb", pattern).unwrap().unwrap(),
+            cg.assignment_pattern_operands("tb", pattern)
+                .unwrap()
+                .unwrap(),
             vec![a, b, a, a, b, a, a, b, a],
         );
     }
@@ -82,8 +84,14 @@ fn replication_expands_only_the_current_dimension() {
     let db = ast.database();
     let semantic = crate::sim::semantic::SemanticModel::from_db(&db);
     let cg = Codegen::new(&semantic);
-    assert_eq!(cg.assignment_pattern_operands("tb", outer).unwrap(), Some(vec![inner, inner]));
-    assert_eq!(cg.assignment_pattern_operands("tb", inner).unwrap(), Some(vec![a, a, a]));
+    assert_eq!(
+        cg.assignment_pattern_operands("tb", outer).unwrap(),
+        Some(vec![inner, inner])
+    );
+    assert_eq!(
+        cg.assignment_pattern_operands("tb", inner).unwrap(),
+        Some(vec![a, a, a])
+    );
 }
 
 #[test]
@@ -94,7 +102,10 @@ fn plain_patterns_keep_shared_positions_without_replicating_again() {
     let db = ast.database();
     let semantic = crate::sim::semantic::SemanticModel::from_db(&db);
     let cg = Codegen::new(&semantic);
-    assert_eq!(cg.assignment_pattern_operands("tb", pattern).unwrap(), Some(vec![a, a, a]));
+    assert_eq!(
+        cg.assignment_pattern_operands("tb", pattern).unwrap(),
+        Some(vec![a, a, a])
+    );
     assert_eq!(cg.assignment_pattern_operands("tb", a).unwrap(), None);
 }
 
@@ -102,12 +113,23 @@ fn plain_patterns_keep_shared_positions_without_replicating_again() {
 fn invalid_replication_counts_fail_before_expansion() {
     for (value, size, expected) in [
         (ValueData::UInt(0), 32, "must be positive"),
-        (ValueData::Vector {
-            bit_width: 4, is_signed: true, value_words: vec![15], unknown_words: vec![0],
-        }, 4, "must be positive"),
+        (
+            ValueData::Vector {
+                bit_width: 4,
+                is_signed: true,
+                value_words: vec![15],
+                unknown_words: vec![0],
+            },
+            4,
+            "must be positive",
+        ),
         (ValueData::Bin("x".to_owned()), 1, "count is unknown"),
         (ValueData::UInt(u64::MAX), 64, "too large"),
-        (ValueData::UInt(u64::from(LLG_MAX_WIDTH) + 1), 64, "too many elements"),
+        (
+            ValueData::UInt(u64::from(LLG_MAX_WIDTH) + 1),
+            64,
+            "too many elements",
+        ),
     ] {
         let mut ast = Ast::default();
         let count = ast.constant(value, size);
@@ -137,6 +159,13 @@ fn malformed_replication_requires_count_and_elements() {
         let semantic = crate::sim::semantic::SemanticModel::from_db(&db);
         let cg = Codegen::new(&semantic);
         let error = cg.assignment_pattern_operands("tb", pattern).unwrap_err();
-        assert!(error.contains(if missing_count { "has no count" } else { "has no elements" }), "{error}");
+        assert!(
+            error.contains(if missing_count {
+                "has no count"
+            } else {
+                "has no elements"
+            }),
+            "{error}"
+        );
     }
 }

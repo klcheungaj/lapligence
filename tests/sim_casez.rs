@@ -5,10 +5,10 @@
 //! Each test: Slang compile → codegen → CMake build → run, asserting the exact
 //! stdout (hand-simulated traces in the comments).
 
-#[path = "support/sim.rs"]
-mod sim_harness;
 #[path = "support/sim_cli.rs"]
 mod sim_cli;
+#[path = "support/sim.rs"]
+mod sim_harness;
 
 fn run_sim(dir_name: &str, sv: &str) -> Result<String, String> {
     sim_harness::run_sim(sv, "tb", dir_name)

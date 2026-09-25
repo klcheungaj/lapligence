@@ -18,7 +18,9 @@ fn projection_keeps_configuration_bytes_and_source_offsets() {
     assert!(projected.contains("endconfig : cfg"));
     assert!(!projected.contains("library cells"));
     for (offset, byte) in text.bytes().enumerate() {
-        if matches!(byte, b'\r' | b'\n') { assert_eq!(projected.as_bytes()[offset], byte); }
+        if matches!(byte, b'\r' | b'\n') {
+            assert_eq!(projected.as_bytes()[offset], byte);
+        }
     }
 }
 
@@ -36,7 +38,10 @@ fn config_lexing_does_not_treat_keywords_in_paths_comments_or_strings_as_declara
     let map = parse_library_map(text, &mut work).unwrap();
     assert_eq!(map.entries.len(), 2);
     assert_eq!(map.entries[0].patterns[0], "config");
-    assert!(map.configuration.unwrap().contains("endconfig : \\endconfig"));
+    assert!(map
+        .configuration
+        .unwrap()
+        .contains("endconfig : \\endconfig"));
 }
 
 #[test]
@@ -44,7 +49,10 @@ fn malformed_map_configurations_fail_directly_and_budgeted_projection_fails_clos
     for (text, expected) in [
         ("config c; design work.top;", "missing endconfig"),
         ("config c; /* endconfig", "unterminated comment"),
-        ("config c; localparam S = \"endconfig", "unterminated string"),
+        (
+            "config c; localparam S = \"endconfig",
+            "unterminated string",
+        ),
         ("endconfig", "unexpected library map token"),
         ("include other.map", "terminating semicolon"),
     ] {
@@ -63,13 +71,24 @@ fn malformed_map_configurations_fail_directly_and_budgeted_projection_fails_clos
 fn in_memory_configs_are_compilation_units_without_extra_source_admission() {
     let text = "library L cell.v;\nconfig cfg; design work.top; default liblist L; endconfig\n";
     let maps = [OwnedSource::include("virtual/root.map", text)];
-    let mut sources = vec![OwnedSource::compilation_unit("virtual/cell.v", "module cell; endmodule")];
+    let mut sources = vec![OwnedSource::compilation_unit(
+        "virtual/cell.v",
+        "module cell; endmodule",
+    )];
     let mut libraries = Vec::new();
     let mut count = 2;
     let mut bytes = 32;
     let mut work = LibraryMapWorkBudget::new(MAX_LIBRARY_MAP_WORK);
-    admit_in_memory_library_maps(&maps, &mut sources, &mut libraries, &mut count,
-        &mut bytes, 2, &mut work).unwrap();
+    admit_in_memory_library_maps(
+        &maps,
+        &mut sources,
+        &mut libraries,
+        &mut count,
+        &mut bytes,
+        2,
+        &mut work,
+    )
+    .unwrap();
     assert_eq!(count, 2, "the map was already counted as one input");
     assert_eq!(sources.len(), 1);
     assert_eq!(sources[0].name, "virtual/root.map");
@@ -77,7 +96,10 @@ fn in_memory_configs_are_compilation_units_without_extra_source_admission() {
     assert_eq!(sources[0].text.len(), text.len());
     assert!(sources[0].text.contains("config cfg;"));
     assert_eq!(libraries[0].library, "L");
-    assert_eq!(bytes, 31, "only the mapped library-name metadata is new input");
+    assert_eq!(
+        bytes, 31,
+        "only the mapped library-name metadata is new input"
+    );
 }
 
 #[test]
@@ -85,27 +107,58 @@ fn configs_in_later_maps_can_be_mapped_and_explicit_library_choices_survive() {
     for explicit in [false, true] {
         let first = "library chosen second.map;";
         let second = "config c; design work.top; endconfig";
-        let maps = [OwnedSource::include("first.map", first), OwnedSource::include("second.map", second)];
+        let maps = [
+            OwnedSource::include("first.map", first),
+            OwnedSource::include("second.map", second),
+        ];
         let mut sources = Vec::new();
-        let mut libraries = if explicit { vec![LibrarySource::new("second.map", second, "manual")] }
-            else { Vec::new() };
+        let mut libraries = if explicit {
+            vec![LibrarySource::new("second.map", second, "manual")]
+        } else {
+            Vec::new()
+        };
         let mut work = LibraryMapWorkBudget::new(MAX_LIBRARY_MAP_WORK);
-        admit_in_memory_library_maps(&maps, &mut sources, &mut libraries, &mut 3,
-            &mut 100, 4, &mut work).unwrap();
+        admit_in_memory_library_maps(
+            &maps,
+            &mut sources,
+            &mut libraries,
+            &mut 3,
+            &mut 100,
+            4,
+            &mut work,
+        )
+        .unwrap();
         assert!(sources.is_empty());
         assert_eq!(libraries.len(), 1);
-        assert_eq!(libraries[0].library, if explicit { "manual" } else { "chosen" });
+        assert_eq!(
+            libraries[0].library,
+            if explicit { "manual" } else { "chosen" }
+        );
         assert_eq!(libraries[0].text, second);
     }
 }
 
 #[test]
 fn conflicting_same_name_source_is_not_overwritten_by_a_map() {
-    let maps = [OwnedSource::include("same.map", "config c; design work.top; endconfig")];
-    let mut sources = vec![OwnedSource::compilation_unit("same.map", "module different; endmodule")];
+    let maps = [OwnedSource::include(
+        "same.map",
+        "config c; design work.top; endconfig",
+    )];
+    let mut sources = vec![OwnedSource::compilation_unit(
+        "same.map",
+        "module different; endmodule",
+    )];
     let mut work = LibraryMapWorkBudget::new(MAX_LIBRARY_MAP_WORK);
-    let error = admit_in_memory_library_maps(&maps, &mut sources, &mut Vec::new(), &mut 2,
-        &mut 100, 3, &mut work).unwrap_err();
+    let error = admit_in_memory_library_maps(
+        &maps,
+        &mut sources,
+        &mut Vec::new(),
+        &mut 2,
+        &mut 100,
+        3,
+        &mut work,
+    )
+    .unwrap_err();
     assert!(error.contains("configuration conflicts with admitted source"));
     assert_eq!(sources[0].text, "module different; endmodule");
 }
@@ -114,19 +167,39 @@ fn conflicting_same_name_source_is_not_overwritten_by_a_map() {
 fn restored_map_text_keeps_same_line_utf16_positions_and_unknown_sources_fail_closed() {
     let text = "/* \u{e9}\u{1f600} */ config/*gap*/ c; design work.top; endconfig\n";
     let mut work = LibraryMapWorkBudget::new(MAX_LIBRARY_MAP_WORK);
-    let projected = parse_library_map(text, &mut work).unwrap().configuration.unwrap();
+    let projected = parse_library_map(text, &mut work)
+        .unwrap()
+        .configuration
+        .unwrap();
     let offset = text.find("design").unwrap() as u64;
     let expected = crate::core::compile::one_based_utf16_position(text, offset);
-    assert_ne!(crate::core::compile::one_based_utf16_position(&projected, offset), expected);
+    assert_ne!(
+        crate::core::compile::one_based_utf16_position(&projected, offset),
+        expected
+    );
     let mut files = vec![crate::ffi::slang::File {
-        id: 0, name: "unicode.map".to_owned(), byte_len: text.len() as u64, text: projected,
+        id: 0,
+        name: "unicode.map".to_owned(),
+        byte_len: text.len() as u64,
+        text: projected,
     }];
-    restore_source_text(&mut files, vec![OwnedSource::include("unicode.map", text)], &mut work)
-        .expect("restore the owned original without changing offsets");
+    restore_source_text(
+        &mut files,
+        vec![OwnedSource::include("unicode.map", text)],
+        &mut work,
+    )
+    .expect("restore the owned original without changing offsets");
     assert_eq!(files[0].text, text);
-    assert_eq!(crate::core::compile::one_based_utf16_position(&files[0].text, offset), expected);
-    let error = restore_source_text(&mut files,
-        vec![OwnedSource::include("missing.map", text)], &mut work).unwrap_err();
+    assert_eq!(
+        crate::core::compile::one_based_utf16_position(&files[0].text, offset),
+        expected
+    );
+    let error = restore_source_text(
+        &mut files,
+        vec![OwnedSource::include("missing.map", text)],
+        &mut work,
+    )
+    .unwrap_err();
     assert_eq!(error.kind(), StartupErrorKind::Internal);
 }
 
@@ -137,7 +210,15 @@ fn duplicate_logical_maps_cannot_silently_discard_a_different_configuration() {
         OwnedSource::include("./same.map", "config b; design work.top; endconfig"),
     ];
     let mut work = LibraryMapWorkBudget::new(MAX_LIBRARY_MAP_WORK);
-    let error = admit_in_memory_library_maps(&maps, &mut Vec::new(), &mut Vec::new(),
-        &mut 2, &mut 1000, 4, &mut work).unwrap_err();
+    let error = admit_in_memory_library_maps(
+        &maps,
+        &mut Vec::new(),
+        &mut Vec::new(),
+        &mut 2,
+        &mut 1000,
+        4,
+        &mut work,
+    )
+    .unwrap_err();
     assert!(error.contains("conflicting in-memory library map contents"));
 }

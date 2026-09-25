@@ -25,17 +25,28 @@ fn continuous_array_graph_keeps_static_topology_and_rhs_only_dependencies() {
         cg.emit_pass(top, Pass::Comb).unwrap();
     }
     let array = |name: &str| {
-        cg.array_globals.iter().find_map(|(node, array)| {
-            (database.node(*node).name == name).then_some(cg.reference_array(array.ir))
-        }).expect("named source array")
+        cg.array_globals
+            .iter()
+            .find_map(|(node, array)| {
+                (database.node(*node).name == name).then_some(cg.reference_array(array.ir))
+            })
+            .expect("named source array")
     };
     let left = IrDependency::ArrayContents(array("left"));
     let right = IrDependency::ArrayContents(array("right"));
-    let choice = database.nodes().iter().enumerate().find_map(|(index, node)| {
-        if node.name == "choice" {
-            cg.signal_of(NodeId::from_index(index)).map(|signal| cg.signal_dependency(signal))
-        } else { None }
-    }).expect("selector signal");
+    let choice = database
+        .nodes()
+        .iter()
+        .enumerate()
+        .find_map(|(index, node)| {
+            if node.name == "choice" {
+                cg.signal_of(NodeId::from_index(index))
+                    .map(|signal| cg.signal_dependency(signal))
+            } else {
+                None
+            }
+        })
+        .expect("selector signal");
     let expected: HashSet<_> = [left.clone(), right, choice].into_iter().collect();
     let mut constant = 0;
     let mut conditional = 0;
@@ -63,7 +74,10 @@ fn continuous_array_graph_keeps_static_topology_and_rhs_only_dependencies() {
             let driver = &cg.structural_drivers[id.0 as usize];
             let (actual_group, slot) = cg.model.signals[driver.signal].net_driver.unwrap();
             assert_eq!(*group, actual_group);
-            assert!(slots.insert((actual_group, slot)), "independent continuous sources share storage");
+            assert!(
+                slots.insert((actual_group, slot)),
+                "independent continuous sources share storage"
+            );
             *counts.entry(actual_group).or_insert(0usize) += 1;
         }
     }

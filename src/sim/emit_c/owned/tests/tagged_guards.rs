@@ -66,9 +66,10 @@ fn check_owners(frame: &Frame<'_, '_>) {
     assert!(!source.contains("sv4_to_bool(sv4_case_eq("), "{source}");
     assert_eq!(source.matches("sv4_case_eq(").count(), 2);
     assert_eq!(source.matches("sv4_from_u64(1ULL, 1, 0)").count(), 2);
-    for line in source.lines().filter(|line| {
-        line.contains("sv4_case_eq(") || line.contains("sv4_from_u64(1ULL, 1, 0)")
-    }) {
+    for line in source
+        .lines()
+        .filter(|line| line.contains("sv4_case_eq(") || line.contains("sv4_from_u64(1ULL, 1, 0)"))
+    {
         assert!(
             line.trim_start().starts_with("sv4_replace(&_llg_t["),
             "{line}"
@@ -150,11 +151,9 @@ fn generated_nested_tagged_guards_execute_with_owned_temporaries() {
         crate::sim::opt::run(&mut execution, &config).unwrap();
         let source = super::super::super::model::render(&execution).unwrap();
         let directory = toolchain::Directory::new("tagged-guards");
-        let binary = crate::sim::build::build_model_cmake(
-            directory.path(),
-            &[("model.c", &source)],
-        )
-        .unwrap();
+        let binary =
+            crate::sim::build::build_model_cmake(directory.path(), &[("model.c", &source)])
+                .unwrap();
         // LLG_CFLAGS and ASAN_OPTIONS enable leak checks of this emitted model,
         // rather than of a handwritten reconstruction of the guard expression.
         let result = toolchain::execute(&binary);

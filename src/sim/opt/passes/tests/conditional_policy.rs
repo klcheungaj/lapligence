@@ -2,28 +2,45 @@
 use super::*;
 
 fn digit(state: usize) -> IrExpr {
-    masked_konst(u64::from(state == 1), u64::from(state == 2), u64::from(state == 3), 1)
+    masked_konst(
+        u64::from(state == 1),
+        u64::from(state == 2),
+        u64::from(state == 3),
+        1,
+    )
 }
 
 fn mux(selector: IrExpr, a: IrExpr, b: IrExpr, width: u32) -> IrExpr {
-    IrExpr::new(IrExprKind::Mux {
-        sel: Box::new(selector), a: Box::new(a), b: Box::new(b),
-    }, width, false, None)
+    IrExpr::new(
+        IrExprKind::Mux {
+            sel: Box::new(selector),
+            a: Box::new(a),
+            b: Box::new(b),
+        },
+        width,
+        false,
+        None,
+    )
 }
 
 #[test]
 fn packed_conditional_folding_matches_the_independent_published_table() {
-    let ambiguous = [
-        [0, 2, 2, 2], [2, 1, 2, 2], [2, 2, 2, 2], [2, 2, 2, 2],
-    ];
+    let ambiguous = [[0, 2, 2, 2], [2, 1, 2, 2], [2, 2, 2, 2], [2, 2, 2, 2]];
     for selector in 0..4 {
         for (left, row) in ambiguous.iter().enumerate() {
             for (right, merged) in row.iter().enumerate() {
-                let expected = match selector { 0 => right, 1 => left, _ => *merged };
+                let expected = match selector {
+                    0 => right,
+                    1 => left,
+                    _ => *merged,
+                };
                 let mut expression = mux(digit(selector), digit(left), digit(right), 1);
                 fold_expr(&mut expression);
-                assert_eq!(as_packed_const(&expression), as_packed_const(&digit(expected)),
-                    "selector={selector} left={left} right={right}");
+                assert_eq!(
+                    as_packed_const(&expression),
+                    as_packed_const(&digit(expected)),
+                    "selector={selector} left={left} right={right}"
+                );
             }
         }
     }

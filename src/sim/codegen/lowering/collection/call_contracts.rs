@@ -302,14 +302,20 @@ impl<'a> Codegen<'a> {
         // merely because its first operand is local.
         let pattern = self.p30_unwrap_cast(lhs);
         match self.kind(pattern) {
-            NodeKind::Expr(ExprKind::Operation { op: Operation::Concat, operands, .. }) => {
+            NodeKind::Expr(ExprKind::Operation {
+                op: Operation::Concat,
+                operands,
+                ..
+            }) => {
                 return !operands.is_empty()
-                    && operands.iter().all(|operand| {
-                        self.event_local_write_allowed(Some(function), *operand)
-                    });
+                    && operands
+                        .iter()
+                        .all(|operand| self.event_local_write_allowed(Some(function), *operand));
             }
             NodeKind::Expr(ExprKind::Operation {
-                op: Operation::AssignmentPattern, operands, ..
+                op: Operation::AssignmentPattern,
+                operands,
+                ..
             }) => {
                 return !operands.is_empty()
                     && operands.iter().all(|operand| {

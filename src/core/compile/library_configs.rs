@@ -116,15 +116,21 @@ pub(super) fn project(
     let mut previous = 0;
     for range in declarations {
         if range.start < previous || range.end < range.start || range.end > bytes.len() {
-            return Err(StartupError::new(StartupErrorKind::Internal, "invalid map configuration span"));
+            return Err(StartupError::new(
+                StartupErrorKind::Internal,
+                "invalid map configuration span",
+            ));
         }
         mask(&mut bytes[previous..range.start]);
         previous = range.end;
     }
     mask(&mut bytes[previous..]);
-    String::from_utf8(bytes)
-        .map(Some)
-        .map_err(|_| StartupError::new(StartupErrorKind::Internal, "invalid configuration projection UTF-8"))
+    String::from_utf8(bytes).map(Some).map_err(|_| {
+        StartupError::new(
+            StartupErrorKind::Internal,
+            "invalid configuration projection UTF-8",
+        )
+    })
 }
 
 fn mask(bytes: &mut [u8]) {
@@ -148,14 +154,19 @@ pub(super) fn restore_source_text(
     if originals.is_empty() {
         return Ok(());
     }
-    let size = originals.len().checked_mul(std::mem::size_of::<(String, String)>())
+    let size = originals
+        .len()
+        .checked_mul(std::mem::size_of::<(String, String)>())
         .ok_or_else(|| work.limit_error("configuration provenance index"))?;
     work.charge_allocation_usize(size, "configuration provenance index")?;
     let mut texts = std::collections::HashMap::with_capacity(originals.len());
     for original in originals {
         work.charge_usize(original.name.len(), "configuration provenance name")?;
         if texts.insert(original.name, original.text).is_some() {
-            return Err(StartupError::new(StartupErrorKind::Internal, "duplicate original map"));
+            return Err(StartupError::new(
+                StartupErrorKind::Internal,
+                "duplicate original map",
+            ));
         }
     }
     for file in files {
@@ -164,7 +175,10 @@ pub(super) fn restore_source_text(
             if file.byte_len != text.len() as u64 || file.text.len() != text.len() {
                 return Err(StartupError::new(
                     StartupErrorKind::Internal,
-                    format!("configuration map length changed during capture: {}", file.name),
+                    format!(
+                        "configuration map length changed during capture: {}",
+                        file.name
+                    ),
                 ));
             }
             file.text = text;
@@ -172,7 +186,8 @@ pub(super) fn restore_source_text(
     }
     if !texts.is_empty() {
         return Err(StartupError::new(
-            StartupErrorKind::Internal, "configuration map missing from native snapshot",
+            StartupErrorKind::Internal,
+            "configuration map missing from native snapshot",
         ));
     }
     Ok(())

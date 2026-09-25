@@ -7,15 +7,23 @@ mod sim_harness;
 #[test]
 fn replicated_patterns_preserve_order_state_and_value_contexts() {
     sim_cli::run_case_with_args(
-        "continuation_16_19", "replicated_contexts", "REPLICATED_CONTEXTS_PASS\n", "", &[],
+        "continuation_16_19",
+        "replicated_contexts",
+        "REPLICATED_CONTEXTS_PASS\n",
+        "",
+        &[],
         &["--edition", "2009"],
     );
     sim_cli::reject_case_with_args(
-        "continuation_16_19", "replicated_negative_count", "value must be positive",
+        "continuation_16_19",
+        "replicated_negative_count",
+        "value must be positive",
         &["--edition", "2009"],
     );
     sim_cli::reject_case_with_args(
-        "continuation_16_19", "replicated_nested_shape", "assignment pattern",
+        "continuation_16_19",
+        "replicated_nested_shape",
+        "assignment pattern",
         &["--edition", "2009"],
     );
 }
@@ -26,25 +34,37 @@ fn replicated_pattern_capture_preserves_unexpanded_count_and_element_slots() {
     use llg::sim::{codegen, opt::OptConfig};
     let database = {
         let output = compile::compile_sources_checked(
-            &[compile::OwnedSource::compilation_unit("replication.sv",
-                include_str!("fixtures/sim/continuation_16_19/replicated_contexts.sv"))],
-            &compile::CompileOpts { top: Some("tb".to_owned()), ..Default::default() },
-        ).expect("legal replicated pattern contexts");
+            &[compile::OwnedSource::compilation_unit(
+                "replication.sv",
+                include_str!("fixtures/sim/continuation_16_19/replicated_contexts.sv"),
+            )],
+            &compile::CompileOpts {
+                top: Some("tb".to_owned()),
+                ..Default::default()
+            },
+        )
+        .expect("legal replicated pattern contexts");
         db::Db::from_slang(&output.snapshot).expect("owned replicated pattern graph")
     };
     database.validate().unwrap();
     let mut pair_patterns = 0;
     for node in database.nodes() {
         if let db::NodeKind::Expr(db::ExprKind::Operation {
-            op: db::Operation::MultiAssignmentPattern, operands, ..
-        }) = &node.kind {
+            op: db::Operation::MultiAssignmentPattern,
+            operands,
+            ..
+        }) = &node.kind
+        {
             assert!(!operands.is_empty(), "count is an owned operand");
             if operands.len() == 3 {
                 pair_patterns += 1;
             }
         }
     }
-    assert!(pair_patterns > 0, "the syntactic pair is retained, not a flattened six-element expansion");
+    assert!(
+        pair_patterns > 0,
+        "the syntactic pair is retained, not a flattened six-element expansion"
+    );
     for options in [OptConfig::none(), OptConfig::default()] {
         codegen::generate_from_db_with_opts(&database, &options)
             .expect("replicated runtime contexts after native snapshot destruction");
@@ -54,11 +74,17 @@ fn replicated_pattern_capture_preserves_unexpanded_count_and_element_slots() {
 #[test]
 fn inside_values_keep_array_element_types_and_singular_casts() {
     sim_cli::run_case_with_args(
-        "continuation_16_19", "inside_value_contexts", "INSIDE_VALUE_CONTEXTS_PASS\n", "", &[],
+        "continuation_16_19",
+        "inside_value_contexts",
+        "INSIDE_VALUE_CONTEXTS_PASS\n",
+        "",
+        &[],
         &["--edition", "2009"],
     );
     sim_cli::reject_case_with_args(
-        "continuation_16_19", "inside_aggregate_error", "for inside expression",
+        "continuation_16_19",
+        "inside_aggregate_error",
+        "for inside expression",
         &["--edition", "2009"],
     );
 }
@@ -69,10 +95,16 @@ fn inside_value_graph_lowers_after_native_snapshot_destruction() {
     use llg::sim::{codegen, opt::OptConfig};
     let database = {
         let output = compile::compile_sources_checked(
-            &[compile::OwnedSource::compilation_unit("inside.sv",
-                include_str!("fixtures/sim/continuation_16_19/inside_value_contexts.sv"))],
-            &compile::CompileOpts { top: Some("tb".to_owned()), ..Default::default() },
-        ).expect("legal fixed-array and packed-cast membership");
+            &[compile::OwnedSource::compilation_unit(
+                "inside.sv",
+                include_str!("fixtures/sim/continuation_16_19/inside_value_contexts.sv"),
+            )],
+            &compile::CompileOpts {
+                top: Some("tb".to_owned()),
+                ..Default::default()
+            },
+        )
+        .expect("legal fixed-array and packed-cast membership");
         db::Db::from_slang(&output.snapshot).unwrap()
     };
     database.validate().unwrap();
@@ -86,10 +118,16 @@ fn inside_value_graph_lowers_after_native_snapshot_destruction() {
 fn memory_tokens_and_partial_address_errors_work_in_both_editions() {
     for edition in ["2001", "2009"] {
         sim_cli::run_case_with_files(
-            "continuation_16_19", "memory_tokens", "MEMORY_TOKENS_PASS\n", "", &[],
+            "continuation_16_19",
+            "memory_tokens",
+            "MEMORY_TOKENS_PASS\n",
+            "",
+            &[],
             &["--edition", edition],
-            &[("tokens.hex", "/* based digits */ x z 0x x7 0z z0 f 1_ff\n"),
-              ("tokens.bin", "// binary digits\nx z 0x x1 0z z0 1 1_01\n")],
+            &[
+                ("tokens.hex", "/* based digits */ x z 0x x7 0z z0 f 1_ff\n"),
+                ("tokens.bin", "// binary digits\nx z 0x x1 0z z0 1 1_01\n"),
+            ],
         );
         sim_cli::run_case_with_files(
             "continuation_16_19", "memory_partial_error", "retained=aa 0b 0c 0d\n",
@@ -141,16 +179,26 @@ fn two_state_enum_load_checks_full_numeric_word_before_truncation() {
 fn hierarchical_wired_sites_match_tables_and_port_resolution_in_both_editions() {
     for edition in ["2001", "2009"] {
         sim_cli::run_case_with_args(
-            "continuation_16_19", "wired_matrix", "WIRED_MATRIX_PASS\n", "", &[],
+            "continuation_16_19",
+            "wired_matrix",
+            "WIRED_MATRIX_PASS\n",
+            "",
+            &[],
             &["--edition", edition],
         );
         sim_cli::run_case_with_args(
-            "continuation_16_19", "wired_upward_ports", "WIRED_UPWARD_PORTS_PASS\n", "", &[],
+            "continuation_16_19",
+            "wired_upward_ports",
+            "WIRED_UPWARD_PORTS_PASS\n",
+            "",
+            &[],
             &["--edition", edition],
         );
         sim_cli::reject_case_with_args(
-            "net_resolution", "hierarchical_procedural_net",
-            "cannot assign to a net within a procedural context", &["--edition", edition],
+            "net_resolution",
+            "hierarchical_procedural_net",
+            "cannot assign to a net within a procedural context",
+            &["--edition", edition],
         );
     }
 }
@@ -166,8 +214,12 @@ fn hierarchical_wired_graph_lowers_after_native_snapshot_destruction() {
         let database = {
             let output = compile::compile_sources_checked(
                 &[compile::OwnedSource::compilation_unit("wired.sv", source)],
-                &compile::CompileOpts { top: Some("tb".to_owned()), ..Default::default() },
-            ).expect("legal hierarchical driver sources");
+                &compile::CompileOpts {
+                    top: Some("tb".to_owned()),
+                    ..Default::default()
+                },
+            )
+            .expect("legal hierarchical driver sources");
             db::Db::from_slang(&output.snapshot).unwrap()
         };
         database.validate().unwrap();

@@ -72,13 +72,23 @@ fn library_fixture(name: &str) -> String {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/sim/review_library_precedence")
         .join(name);
-    assert!(path.is_file(), "missing library fixture: {}", path.display());
+    assert!(
+        path.is_file(),
+        "missing library fixture: {}",
+        path.display()
+    );
     path.to_string_lossy().into_owned()
 }
 
 #[test]
 fn library_specificity_and_duplicate_safe_mapping_work_in_both_editions() {
-    for name in ["forward.map", "reversed.map", "resolved_tie.map", "same_library.map", "directory.map"] {
+    for name in [
+        "forward.map",
+        "reversed.map",
+        "resolved_tie.map",
+        "same_library.map",
+        "directory.map",
+    ] {
         let map = library_fixture(name);
         for edition in ["2001", "2009"] {
             sim_cli::run_case_with_source_prefix(
@@ -88,7 +98,14 @@ fn library_specificity_and_duplicate_safe_mapping_work_in_both_editions() {
                 "mapped=22\n",
                 "",
                 &[],
-                &["--edition", edition, "--top", "choose:config", "--libmap", &map],
+                &[
+                    "--edition",
+                    edition,
+                    "--top",
+                    "choose:config",
+                    "--libmap",
+                    &map,
+                ],
             );
         }
     }
@@ -106,8 +123,16 @@ fn explicit_library_assignment_overrides_overlapping_maps() {
             "mapped=22\n",
             "",
             &[],
-            &["--edition", edition, "--top", "choose:config", "--libmap", &map,
-                "--libfile", &source],
+            &[
+                "--edition",
+                edition,
+                "--top",
+                "choose:config",
+                "--libmap",
+                &map,
+                "--libfile",
+                &source,
+            ],
         );
     }
 }
@@ -128,7 +153,10 @@ fn unresolved_winning_rank_library_ties_are_diagnosed() {
 #[test]
 fn exact_source_library_maps_preserve_configured_owned_hierarchy() {
     use llg::core::{compile, db, model};
-    for edition in [compile::LanguageEdition::Verilog2001, compile::LanguageEdition::SystemVerilog2009] {
+    for edition in [
+        compile::LanguageEdition::Verilog2001,
+        compile::LanguageEdition::SystemVerilog2009,
+    ] {
         for map in [
             "library A rtl/*.sv; library B rtl/*.sv; library chosen */cell.sv;",
             "library chosen */cell.sv; library A rtl/*.sv; library B rtl/*.sv;",
@@ -136,12 +164,18 @@ fn exact_source_library_maps_preserve_configured_owned_hierarchy() {
             let database = {
                 let output = compile::compile_sources_checked(
                     &[
-                        compile::OwnedSource::compilation_unit("virtual/top.sv",
-                            "module top; cell_body instance_name(); endmodule"),
-                        compile::OwnedSource::compilation_unit("virtual/config.sv",
-                            "config choose; design work.top; default liblist chosen; endconfig"),
-                        compile::OwnedSource::compilation_unit("virtual/rtl/cell.sv",
-                            "module cell_body; endmodule"),
+                        compile::OwnedSource::compilation_unit(
+                            "virtual/top.sv",
+                            "module top; cell_body instance_name(); endmodule",
+                        ),
+                        compile::OwnedSource::compilation_unit(
+                            "virtual/config.sv",
+                            "config choose; design work.top; default liblist chosen; endconfig",
+                        ),
+                        compile::OwnedSource::compilation_unit(
+                            "virtual/rtl/cell.sv",
+                            "module cell_body; endmodule",
+                        ),
                     ],
                     &compile::CompileOpts {
                         top: Some("choose:config".to_owned()),
@@ -149,11 +183,14 @@ fn exact_source_library_maps_preserve_configured_owned_hierarchy() {
                         library_maps: vec![compile::OwnedSource::include("virtual/root.map", map)],
                         ..Default::default()
                     },
-                ).expect("configured in-memory library specificity");
+                )
+                .expect("configured in-memory library specificity");
                 db::Db::from_slang(&output.snapshot).expect("owned mapped design")
             };
             let design = model::DesignModel::from_db(&database);
-            let instance = design.instance("top.instance_name").expect("configured child");
+            let instance = design
+                .instance("top.instance_name")
+                .expect("configured child");
             assert_eq!(instance.def_name, "cell_body");
             assert_eq!(design.modules_in("virtual/rtl/cell.sv").len(), 1);
         }

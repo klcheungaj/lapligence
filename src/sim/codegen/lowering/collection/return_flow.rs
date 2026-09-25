@@ -154,12 +154,8 @@ fn statement(
             returns: Some(value.is_some() || input),
             ..Flow::default()
         },
-        NodeKind::Stmt(StmtKind::Break) => {
-            Flow::jump(loop_target.map(Jump::Break), input)
-        }
-        NodeKind::Stmt(StmtKind::Continue) => {
-            Flow::jump(loop_target.map(Jump::Continue), input)
-        }
+        NodeKind::Stmt(StmtKind::Break) => Flow::jump(loop_target.map(Jump::Break), input),
+        NodeKind::Stmt(StmtKind::Continue) => Flow::jump(loop_target.map(Jump::Continue), input),
         NodeKind::Stmt(StmtKind::IfElse {
             if_true, if_false, ..
         }) => branch(Some(*if_true)).merge(branch(*if_false)),
@@ -185,8 +181,7 @@ fn statement(
             | StmtKind::Repeat { body, .. }
             | StmtKind::For { body, .. }
             | StmtKind::Foreach { body, .. },
-        ) => statement(cg, *body, function, input, Some(node))
-            .exit_loop(node, Some(input), false),
+        ) => statement(cg, *body, function, input, Some(node)).exit_loop(node, Some(input), false),
         NodeKind::Stmt(StmtKind::DoWhile { body, .. }) => {
             statement(cg, *body, function, input, Some(node)).exit_loop(node, None, true)
         }

@@ -218,7 +218,10 @@ impl Frame<'_, '_> {
                             if storage.width == 0 {
                                 self.line(format!("*({}) = {};", storage.address, initial.code));
                             } else {
-                                self.line(format!("sv4_move({}, &{});", storage.address, initial.code));
+                                self.line(format!(
+                                    "sv4_move({}, &{});",
+                                    storage.address, initial.code
+                                ));
                             }
                             self.discard(initial);
                         }

@@ -1,7 +1,7 @@
 //! Processes.
 
-use super::*;
 use super::super::containers::PatternAssignmentKind;
+use super::*;
 
 #[cfg(test)]
 mod tests;
@@ -917,9 +917,15 @@ impl<'a> Codegen<'a> {
                     continue;
                 };
                 self.inst = inst;
-                let statement = self.node(writer.node).children.first().copied().ok_or_else(|| {
-                    "procedural writer has no statement at continuous-driver validation".to_owned()
-                })?;
+                let statement = self
+                    .node(writer.node)
+                    .children
+                    .first()
+                    .copied()
+                    .ok_or_else(|| {
+                        "procedural writer has no statement at continuous-driver validation"
+                            .to_owned()
+                    })?;
                 procedural_writers.push(ProcessWriter {
                     node: writer.node,
                     label: writer.label.clone(),
@@ -930,11 +936,17 @@ impl<'a> Codegen<'a> {
             // rule. Keep it out of sensitivity writer analysis, but do not let an
             // initialized variable silently acquire another continuous writer.
             for node in self.design_nodes() {
-                if !matches!(self.kind(node), NodeKind::Var { .. } | NodeKind::Array { .. }) {
+                if !matches!(
+                    self.kind(node),
+                    NodeKind::Var { .. } | NodeKind::Array { .. }
+                ) {
                     continue;
                 }
                 let Some(initializer) = self.db.var_initializer(node).or_else(|| {
-                    self.db.array_meta(node).filter(|meta| meta.net_type.is_none()).and_then(|meta| meta.init)
+                    self.db
+                        .array_meta(node)
+                        .filter(|meta| meta.net_type.is_none())
+                        .and_then(|meta| meta.init)
                 }) else {
                     continue;
                 };
@@ -954,7 +966,10 @@ impl<'a> Codegen<'a> {
         for driver in &continuous {
             for writer in &procedural_writers {
                 if let Some(storage) = driver.writes.iter().find(|write| {
-                    writer.writes.iter().any(|other| self.same_storage(write, other))
+                    writer
+                        .writes
+                        .iter()
+                        .any(|other| self.same_storage(write, other))
                 }) {
                     return Err(format!(
                         "semantic error: variable storage `{}` has both a continuous assignment at {} and a procedural assignment by `{}` at {}",

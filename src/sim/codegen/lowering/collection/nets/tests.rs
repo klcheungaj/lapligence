@@ -27,23 +27,31 @@ fn hierarchical_sources_keep_distinct_slots_per_instance_and_group() {
             let record = &cg.structural_drivers[id.0 as usize];
             let (actual_group, slot) = cg.model.signals[record.signal].net_driver.unwrap();
             assert_eq!(*group, actual_group);
-            assert!(slots.insert((actual_group, slot)), "continuous sites must not share a slot");
+            assert!(
+                slots.insert((actual_group, slot)),
+                "continuous sites must not share a slot"
+            );
             *counts.entry(actual_group).or_insert(0usize) += 1;
         }
     }
-    assert_eq!(counts.len(), 4, "two independent wired kinds in each of two instances");
+    assert_eq!(
+        counts.len(),
+        4,
+        "two independent wired kinds in each of two instances"
+    );
     assert!(counts.values().all(|count| *count == 3));
     for group in counts.keys() {
         assert_eq!(cg.model.net_groups[*group].width, 65);
     }
 }
 
-
 #[test]
 fn indexed_aliases_use_declaration_order_in_both_directions() {
     let database = {
         let result = crate::core::compile::compile_sources_checked(
-            &[crate::core::compile::OwnedSource::compilation_unit("indexed_aliases.sv", r#"
+            &[crate::core::compile::OwnedSource::compilation_unit(
+                "indexed_aliases.sv",
+                r#"
 module tb;
     wire [0:7] up;
     wire [7:0] down;
@@ -57,9 +65,14 @@ module tb;
     alias n_minus = negative[1 -: 3];
     alias singleton = negative[0 -: 1];
 endmodule
-"#)],
-            &crate::core::compile::CompileOpts { top: Some("tb".to_owned()), ..Default::default() },
-        ).unwrap();
+"#,
+            )],
+            &crate::core::compile::CompileOpts {
+                top: Some("tb".to_owned()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
         Db::from_slang(&result.snapshot).unwrap()
     };
     database.validate().unwrap();
@@ -68,7 +81,9 @@ endmodule
     cg.collect_design().unwrap();
     let mut count = 0;
     for node in database.node_ids() {
-        let NodeKind::NetAlias { nets } = cg.kind(node) else { continue; };
+        let NodeKind::NetAlias { nets } = cg.kind(node) else {
+            continue;
+        };
         let left_bits = cg.alias_expression_bits(node, nets[0]).unwrap();
         let AliasBit::Net { net: left, .. } = left_bits[0] else {
             panic!("simple left alias endpoint");
@@ -80,10 +95,20 @@ endmodule
             "singleton" => ("negative", &[3]),
             other => panic!("unexpected alias endpoint {other}"),
         };
-        let root = database.node_ids().find(|candidate| {
-            cg.node(*candidate).name == root && matches!(cg.kind(*candidate), NodeKind::Net { .. })
-        }).unwrap();
-        let expected: Vec<_> = physical.iter().map(|bit| AliasBit::Net { net: root, bit: *bit }).collect();
+        let root = database
+            .node_ids()
+            .find(|candidate| {
+                cg.node(*candidate).name == root
+                    && matches!(cg.kind(*candidate), NodeKind::Net { .. })
+            })
+            .unwrap();
+        let expected: Vec<_> = physical
+            .iter()
+            .map(|bit| AliasBit::Net {
+                net: root,
+                bit: *bit,
+            })
+            .collect();
         assert_eq!(cg.alias_expression_bits(node, nets[1]).unwrap(), expected);
         count += 1;
     }

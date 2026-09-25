@@ -267,9 +267,8 @@ impl<'a> Codegen<'a> {
             return Err(self.alias_error(alias, "has an indexed part-select outside its net"));
         }
         let start = self.eval_bound_i128(base_expr)?;
-        let span = i128::try_from(width - 1).map_err(|_| {
-            self.alias_error(alias, "has an overflowing indexed part-select")
-        })?;
+        let span = i128::try_from(width - 1)
+            .map_err(|_| self.alias_error(alias, "has an overflowing indexed part-select"))?;
         // Return MSB-to-LSB order, not the direction in which the interval
         // was specified. For [0:N], [base -: W] is [base-W+1 : base].
         let ascending = range.left < range.right;
@@ -279,9 +278,8 @@ impl<'a> Codegen<'a> {
             (true, false) => (Some(start), 1),
             (false, true) => (Some(start), -1),
         };
-        let start = start.ok_or_else(|| {
-            self.alias_error(alias, "has an overflowing indexed part-select")
-        })?;
+        let start = start
+            .ok_or_else(|| self.alias_error(alias, "has an overflowing indexed part-select"))?;
         let mut result = Vec::new();
         result.try_reserve_exact(width).map_err(|_| {
             self.alias_error(alias, "cannot allocate indexed part-select projection")

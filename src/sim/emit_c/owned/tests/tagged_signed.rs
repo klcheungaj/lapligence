@@ -107,11 +107,9 @@ fn generated_tagged_member_widening_preserves_the_source_sign() {
         crate::sim::opt::run(&mut execution, &config).unwrap();
         let source = super::super::super::model::render(&execution).unwrap();
         let directory = toolchain::Directory::new("tagged-signed");
-        let binary = crate::sim::build::build_model_cmake(
-            directory.path(),
-            &[("model.c", &source)],
-        )
-        .unwrap();
+        let binary =
+            crate::sim::build::build_model_cmake(directory.path(), &[("model.c", &source)])
+                .unwrap();
         let output = toolchain::execute(&binary);
         assert!(output.status.success(), "{output:?}");
         assert_eq!(String::from_utf8_lossy(&output.stdout), "254 14 -2\n");

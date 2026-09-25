@@ -383,26 +383,46 @@ fn mixed_index_type_patterns_export_bound_operands_in_declaration_order() {
         if database.semantic_detail(id) != Some("StructuredAssignmentPattern") {
             continue;
         }
-        let Some(descriptor) = database.type_descriptor(id) else { continue };
-        let TypeShape::FixedArray { dimensions, .. } = &descriptor.shape else { continue };
-        if dimensions.as_slice() != [(2, 0)] { continue; }
-        let NodeKind::Expr(ExprKind::Operation { operands, .. }) = database.node_kind(id)
-        else { panic!("pattern operation was lost") };
+        let Some(descriptor) = database.type_descriptor(id) else {
+            continue;
+        };
+        let TypeShape::FixedArray { dimensions, .. } = &descriptor.shape else {
+            continue;
+        };
+        if dimensions.as_slice() != [(2, 0)] {
+            continue;
+        }
+        let NodeKind::Expr(ExprKind::Operation { operands, .. }) = database.node_kind(id) else {
+            panic!("pattern operation was lost")
+        };
         assert_eq!(operands.len(), 3);
-        assert_eq!(operands[0], operands[2], "shared recursive values keep both positions");
-        let NodeKind::Expr(ExprKind::Ref { target: Some(target) }) = database.node_kind(operands[1])
-        else { panic!("middle declared element must retain its explicit override") };
+        assert_eq!(
+            operands[0], operands[2],
+            "shared recursive values keep both positions"
+        );
+        let NodeKind::Expr(ExprKind::Ref {
+            target: Some(target),
+        }) = database.node_kind(operands[1])
+        else {
+            panic!("middle declared element must retain its explicit override")
+        };
         assert_eq!(database.node(*target).name, "special");
         for operand in [operands[0], operands[2]] {
-            let NodeKind::Expr(ExprKind::Operation { op, operands, .. }) = database.node_kind(operand)
-            else { panic!("recursive record must be a resolved pattern value") };
+            let NodeKind::Expr(ExprKind::Operation { op, operands, .. }) =
+                database.node_kind(operand)
+            else {
+                panic!("recursive record must be a resolved pattern value")
+            };
             assert_eq!(*op, Operation::AssignmentPattern);
             assert_eq!(operands.len(), 2);
             assert_eq!(operands[0], operands[1]);
         }
         found += 1;
     }
-    assert_eq!(found, 1, "mixed root must not remain an unresolved setter list");
+    assert_eq!(
+        found, 1,
+        "mixed root must not remain an unresolved setter list"
+    );
     for options in [OptConfig::none(), OptConfig::default()] {
         codegen::generate_from_db_with_opts(&database, &options)
             .expect("mixed type/index values lower after snapshot destruction");

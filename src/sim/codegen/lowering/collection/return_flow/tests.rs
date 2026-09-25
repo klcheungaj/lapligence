@@ -122,7 +122,11 @@ fn do_loop_jumps_do_not_reach_later_writes() {
         for assignment_position in [0, 1, 2] {
             let mut ast = Ast::new();
             let jump = ast.add(
-                NodeKind::Stmt(if is_break { StmtKind::Break } else { StmtKind::Continue }),
+                NodeKind::Stmt(if is_break {
+                    StmtKind::Break
+                } else {
+                    StmtKind::Continue
+                }),
                 vec![],
             );
             let branch = ast.conditional(jump);
@@ -145,7 +149,11 @@ fn nested_loop_jumps_are_consumed_by_their_lexical_loop() {
     for is_break in [false, true] {
         let mut ast = Ast::new();
         let jump = ast.add(
-            NodeKind::Stmt(if is_break { StmtKind::Break } else { StmtKind::Continue }),
+            NodeKind::Stmt(if is_break {
+                StmtKind::Break
+            } else {
+                StmtKind::Continue
+            }),
             vec![],
         );
         let inner = ast.do_loop(jump);
@@ -173,7 +181,10 @@ fn zero_trip_loop_cannot_establish_a_result() {
     let mut ast = Ast::new();
     let write = ast.assign();
     let cond = ast.literal();
-    let root = ast.add(NodeKind::Stmt(StmtKind::While { cond, body: write }), vec![cond, write]);
+    let root = ast.add(
+        NodeKind::Stmt(StmtKind::While { cond, body: write }),
+        vec![cond, write],
+    );
     assert!(!ast.proof(root));
 }
 
@@ -181,7 +192,10 @@ fn zero_trip_loop_cannot_establish_a_result() {
 fn explicit_return_does_not_require_a_fallthrough_write() {
     let mut ast = Ast::new();
     let value = ast.literal();
-    let ret = ast.add(NodeKind::Stmt(StmtKind::Return { value: Some(value) }), vec![value]);
+    let ret = ast.add(
+        NodeKind::Stmt(StmtKind::Return { value: Some(value) }),
+        vec![value],
+    );
     let root = ast.do_loop(ret);
     assert!(ast.proof(root));
 }
@@ -199,7 +213,12 @@ fn unassigned_return_cannot_be_repaired_by_a_later_write() {
 #[test]
 fn unmodelled_control_transfer_fails_closed() {
     let mut ast = Ast::new();
-    let disable = ast.add(NodeKind::Stmt(StmtKind::Disable { target: Some(NodeId(0)) }), vec![]);
+    let disable = ast.add(
+        NodeKind::Stmt(StmtKind::Disable {
+            target: Some(NodeId(0)),
+        }),
+        vec![],
+    );
     let write = ast.assign();
     let root = ast.block(vec![disable, write]);
     assert!(!ast.proof(root));
@@ -209,11 +228,16 @@ fn unmodelled_control_transfer_fails_closed() {
 fn partial_result_assignment_is_not_a_whole_result_definition() {
     let mut ast = Ast::new();
     let base = ast.add(
-        NodeKind::Expr(ExprKind::Ref { target: Some(NodeId(0)) }),
+        NodeKind::Expr(ExprKind::Ref {
+            target: Some(NodeId(0)),
+        }),
         vec![],
     );
     let index = ast.literal();
-    let lhs = ast.add(NodeKind::Expr(ExprKind::BitSelect { base, index }), vec![base, index]);
+    let lhs = ast.add(
+        NodeKind::Expr(ExprKind::BitSelect { base, index }),
+        vec![base, index],
+    );
     let rhs = ast.literal();
     let root = ast.add(
         NodeKind::Stmt(StmtKind::Assign {
@@ -230,10 +254,17 @@ fn partial_result_assignment_is_not_a_whole_result_definition() {
 fn persistent_result_reads_remain_conservatively_rejected() {
     let mut ast = Ast::new();
     let result = ast.add(
-        NodeKind::Expr(ExprKind::Ref { target: Some(NodeId(0)) }),
+        NodeKind::Expr(ExprKind::Ref {
+            target: Some(NodeId(0)),
+        }),
         vec![],
     );
-    let ret = ast.add(NodeKind::Stmt(StmtKind::Return { value: Some(result) }), vec![result]);
+    let ret = ast.add(
+        NodeKind::Stmt(StmtKind::Return {
+            value: Some(result),
+        }),
+        vec![result],
+    );
     let write = ast.assign();
     let root = ast.block(vec![write, ret]);
     assert!(!ast.proof(root));

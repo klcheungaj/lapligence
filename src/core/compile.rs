@@ -732,7 +732,14 @@ pub fn compile(opts: &CompileOpts) -> Result<CompileOut, StartupError> {
             "source count exceeds the configured Slang limit",
         ));
     }
-    compile_source_groups(&owned, &[], &library_owned, map_originals, &mut library_map_work, opts)
+    compile_source_groups(
+        &owned,
+        &[],
+        &library_owned,
+        map_originals,
+        &mut library_map_work,
+        opts,
+    )
 }
 
 /// Compile exact source buffers without reading the filesystem.
@@ -811,7 +818,14 @@ pub fn compile_sources(
         source_limit,
         &mut library_map_work,
     )?;
-    compile_source_groups(&owned, &[], &library_owned, map_originals, &mut library_map_work, opts)
+    compile_source_groups(
+        &owned,
+        &[],
+        &library_owned,
+        map_originals,
+        &mut library_map_work,
+        opts,
+    )
 }
 
 fn preflight_options(opts: &CompileOpts) -> Result<(), StartupError> {
@@ -1405,12 +1419,20 @@ fn admit_library_maps_with_targets(
         let (map_path, text, map_target) = pending[cursor].clone();
         cursor += 1;
         work.charge(1, "map parsing")?;
-        let ParsedLibraryMap { includes, entries, configuration } =
-            parse_library_map(&text, work).map_err(|error| {
-                StartupError::new(error.kind(), format!("{}: {error}", map_path.display()))
-            })?;
+        let ParsedLibraryMap {
+            includes,
+            entries,
+            configuration,
+        } = parse_library_map(&text, work).map_err(|error| {
+            StartupError::new(error.kind(), format!("{}: {error}", map_path.display()))
+        })?;
         if let Some(configuration) = configuration {
-            buffers.retain_configuration(&map_path.to_string_lossy(), &text, configuration, work)?;
+            buffers.retain_configuration(
+                &map_path.to_string_lossy(),
+                &text,
+                configuration,
+                work,
+            )?;
         }
         let base = map_path.parent().unwrap_or_else(|| Path::new("."));
         for include in includes {
@@ -1549,7 +1571,9 @@ fn admit_library_maps_with_targets(
                             format!("source path {name} exceeds the configured Slang byte limit"),
                         )
                     })?;
-                    buffers.sources.push(OwnedSource::compilation_unit(name, source_text));
+                    buffers
+                        .sources
+                        .push(OwnedSource::compilation_unit(name, source_text));
                 }
             }
         }
@@ -1629,9 +1653,8 @@ fn collect_in_memory_library_maps(
     // resolves; a map can name itself or another admitted map as library source.
     let mut parsed = Vec::new();
     for (name, text) in &pending {
-        let mut map = parse_library_map(text, work).map_err(|error| {
-            StartupError::new(error.kind(), format!("{name}: {error}"))
-        })?;
+        let mut map = parse_library_map(text, work)
+            .map_err(|error| StartupError::new(error.kind(), format!("{name}: {error}")))?;
         if let Some(configuration) = map.configuration.take() {
             buffers.retain_configuration(name, text, configuration, work)?;
         }
@@ -1646,7 +1669,9 @@ fn collect_in_memory_library_maps(
         let map_name = pending[cursor].0.clone();
         cursor += 1;
         work.charge(1, "in-memory map parsing")?;
-        let ParsedLibraryMap { includes, entries, .. } = parsed[cursor - 1].take().ok_or_else(|| {
+        let ParsedLibraryMap {
+            includes, entries, ..
+        } = parsed[cursor - 1].take().ok_or_else(|| {
             StartupError::new(StartupErrorKind::Internal, "missing parsed library map")
         })?;
         let base = logical_map_parent(&map_name);
@@ -2142,7 +2167,10 @@ fn parse_library_map(
             continue;
         }
         match tokens[index].value.as_str() {
-            ";" => { index += 1; continue; }
+            ";" => {
+                index += 1;
+                continue;
+            }
             "include" => {
                 let Some(path) = tokens.get(index + 1).filter(|token| !token.is(";")) else {
                     return Err(StartupError::new(
@@ -2179,7 +2207,9 @@ fn parse_library_map(
                         break;
                     }
                     charge_library_map_clone(
-                        work, &tokens[index].value, "library map pattern clone",
+                        work,
+                        &tokens[index].value,
+                        "library map pattern clone",
                     )?;
                     patterns.push(tokens[index].value.clone());
                     index += 1;
@@ -2191,7 +2221,10 @@ fn parse_library_map(
                     ));
                 }
                 work.charge(1, "library map entry allocation")?;
-                entries.push(LibraryMapEntry { library: name.value.clone(), patterns });
+                entries.push(LibraryMapEntry {
+                    library: name.value.clone(),
+                    patterns,
+                });
             }
             _ => {
                 return Err(StartupError::new(
@@ -2209,7 +2242,11 @@ fn parse_library_map(
         index += 1;
     }
     let configuration = library_configs::project(text, &configurations, work)?;
-    Ok(ParsedLibraryMap { includes, entries, configuration })
+    Ok(ParsedLibraryMap {
+        includes,
+        entries,
+        configuration,
+    })
 }
 
 fn charge_library_map_clone(
@@ -2275,13 +2312,14 @@ fn library_map_tokens(
             index += 1;
             continue;
         }
-        let at_statement_start = tokens.last().is_none_or(|token: &LibraryMapToken| {
-            token.is(";") || token.configuration.is_some()
-        });
-        if at_statement_start && bytes[index..].starts_with(b"config")
-            && bytes.get(index + 6).is_none_or(|byte| {
-                !byte.is_ascii_alphanumeric() && !matches!(byte, b'_' | b'$')
-            })
+        let at_statement_start = tokens
+            .last()
+            .is_none_or(|token: &LibraryMapToken| token.is(";") || token.configuration.is_some());
+        if at_statement_start
+            && bytes[index..].starts_with(b"config")
+            && bytes
+                .get(index + 6)
+                .is_none_or(|byte| !byte.is_ascii_alphanumeric() && !matches!(byte, b'_' | b'$'))
         {
             // Only delimit the unchanged configuration block. The ordinary
             // Slang parser still owns its grammar, names and binding rules.
@@ -4748,7 +4786,8 @@ mod tests {
             library drive_unquoted C:\work\rtl\source.sv;
         "#;
         let mut work = LibraryMapWorkBudget::new(MAX_LIBRARY_MAP_WORK);
-        let ParsedLibraryMap { entries, .. } = parse_library_map(text, &mut work).expect("parse path spellings");
+        let ParsedLibraryMap { entries, .. } =
+            parse_library_map(text, &mut work).expect("parse path spellings");
         assert_eq!(entries.len(), 4);
         assert_eq!(entries[0].library, "unc");
         assert_eq!(entries[0].patterns, vec!["//server/share/source.sv"]);
@@ -4764,7 +4803,8 @@ mod tests {
     fn library_map_lexer_keeps_unambiguous_comments() {
         let text = "library L source.sv; // trailing comment\n// whole-line comment\nlibrary M other.sv;\n";
         let mut work = LibraryMapWorkBudget::new(MAX_LIBRARY_MAP_WORK);
-        let ParsedLibraryMap { entries, .. } = parse_library_map(text, &mut work).expect("parse comments");
+        let ParsedLibraryMap { entries, .. } =
+            parse_library_map(text, &mut work).expect("parse comments");
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].patterns, vec!["source.sv"]);
         assert_eq!(entries[1].patterns, vec!["other.sv"]);
@@ -4774,7 +4814,8 @@ mod tests {
     fn library_map_lexer_uses_path_context_for_unc_and_comment_paths() {
         let text = "library L source.sv; //comment/path\nlibrary M //server/share/source.sv;\n";
         let mut work = LibraryMapWorkBudget::new(MAX_LIBRARY_MAP_WORK);
-        let ParsedLibraryMap { entries, .. } = parse_library_map(text, &mut work).expect("parse path context");
+        let ParsedLibraryMap { entries, .. } =
+            parse_library_map(text, &mut work).expect("parse path context");
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].patterns, vec!["source.sv"]);
         assert_eq!(entries[1].patterns, vec!["//server/share/source.sv"]);
@@ -4784,7 +4825,8 @@ mod tests {
     fn library_map_lexer_keeps_block_comments_and_absolute_star_paths_distinct() {
         let text = "/* header comment */\nlibrary L /*/*.sv;\n";
         let mut work = LibraryMapWorkBudget::new(MAX_LIBRARY_MAP_WORK);
-        let ParsedLibraryMap { entries, .. } = parse_library_map(text, &mut work).expect("parse absolute star path");
+        let ParsedLibraryMap { entries, .. } =
+            parse_library_map(text, &mut work).expect("parse absolute star path");
         assert_eq!(entries[0].patterns, vec!["/*/*.sv"]);
     }
 
@@ -4810,7 +4852,8 @@ mod tests {
     fn line_comments_keep_unc_paths_only_in_path_context() {
         let text = "//server/share is a comment here\nlibrary L //server/share/source.sv;";
         let mut work = LibraryMapWorkBudget::new(MAX_LIBRARY_MAP_WORK);
-        let ParsedLibraryMap { entries, .. } = parse_library_map(text, &mut work).expect("parse UNC context");
+        let ParsedLibraryMap { entries, .. } =
+            parse_library_map(text, &mut work).expect("parse UNC context");
         assert_eq!(entries[0].patterns, vec!["//server/share/source.sv"]);
     }
 

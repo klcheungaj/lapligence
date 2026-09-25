@@ -9,7 +9,9 @@ impl<'a> Codegen<'a> {
             TypeShape::PackedAtom { .. } => true,
             TypeShape::Aggregate(layout) => matches!(
                 layout.kind,
-                AggregateKind::PackedStruct | AggregateKind::PackedUnion | AggregateKind::TaggedUnion
+                AggregateKind::PackedStruct
+                    | AggregateKind::PackedUnion
+                    | AggregateKind::TaggedUnion
             ),
             _ => false,
         }

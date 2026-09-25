@@ -439,7 +439,11 @@ impl<'a> Codegen<'a> {
         let mut writes = HashSet::new();
         let mut visited = HashSet::new();
         self.walk_process_writes_bound(
-            root, &mut writes, &mut visited, &HashMap::new(), ProcessWriteMode::Sensitivity,
+            root,
+            &mut writes,
+            &mut visited,
+            &HashMap::new(),
+            ProcessWriteMode::Sensitivity,
         )?;
         Ok(writes)
     }
@@ -486,7 +490,8 @@ impl<'a> Codegen<'a> {
         }
         match self.kind(node) {
             NodeKind::Stmt(StmtKind::Force { lhs, rhs })
-                if mode == ProcessWriteMode::ContinuousConflict => {
+                if mode == ProcessWriteMode::ContinuousConflict =>
+            {
                 // The generic children can also contain Slang's assignment
                 // wrapper. Visit only the typed operands so that wrapper does
                 // not reclassify the override as an ordinary variable write.
@@ -495,7 +500,8 @@ impl<'a> Codegen<'a> {
                 return Ok(());
             }
             NodeKind::Stmt(StmtKind::Release { lhs } | StmtKind::Deassign { lhs })
-                if mode == ProcessWriteMode::ContinuousConflict => {
+                if mode == ProcessWriteMode::ContinuousConflict =>
+            {
                 self.walk_process_writes_bound(*lhs, writes, visited_functions, bindings, mode)?;
                 return Ok(());
             }
@@ -517,7 +523,10 @@ impl<'a> Codegen<'a> {
                 // conflict rule, but not writes in implicit sensitivity.
                 if let Some(initializer) = self.db.var_initializer(*declaration).or_else(|| {
                     if mode == ProcessWriteMode::ContinuousConflict {
-                        self.db.array_meta(*declaration).filter(|meta| meta.net_type.is_none()).and_then(|meta| meta.init)
+                        self.db
+                            .array_meta(*declaration)
+                            .filter(|meta| meta.net_type.is_none())
+                            .and_then(|meta| meta.init)
                     } else {
                         None
                     }

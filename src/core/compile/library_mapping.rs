@@ -150,9 +150,8 @@ impl<'a> LibraryMapBuffers<'a> {
         let key = logical_path_key(Path::new(name), work, "configuration source identity")?;
         if let Some(entry) = self.entries.get_mut(&key) {
             for source in self.sources.iter_mut() {
-                let source_key = logical_path_key(
-                    Path::new(&source.name), work, "configuration source lookup",
-                )?;
+                let source_key =
+                    logical_path_key(Path::new(&source.name), work, "configuration source lookup")?;
                 if source_key == key {
                     check_map_source(&source.text, original, &projection, name, work)?;
                     retain_original_map(entry, original, work)?;
@@ -163,7 +162,9 @@ impl<'a> LibraryMapBuffers<'a> {
             }
             for source in self.libraries.iter_mut() {
                 let source_key = logical_path_key(
-                    Path::new(&source.name), work, "configuration library lookup",
+                    Path::new(&source.name),
+                    work,
+                    "configuration library lookup",
                 )?;
                 if source_key == key {
                     check_map_source(&source.text, original, &projection, name, work)?;
@@ -173,7 +174,8 @@ impl<'a> LibraryMapBuffers<'a> {
                 }
             }
             return Err(StartupError::new(
-                StartupErrorKind::Internal, "configuration candidate has no retained source",
+                StartupErrorKind::Internal,
+                "configuration candidate has no retained source",
             ));
         }
         charge_library_map_clone(work, name, "configuration entry name")?;
@@ -187,7 +189,8 @@ impl<'a> LibraryMapBuffers<'a> {
         };
         retain_original_map(&mut entry, original, work)?;
         self.entries.insert(key, entry);
-        self.sources.push(OwnedSource::compilation_unit(name, projection));
+        self.sources
+            .push(OwnedSource::compilation_unit(name, projection));
         Ok(())
     }
 
@@ -290,7 +293,10 @@ impl<'a> LibraryMapBuffers<'a> {
             let entry = self.entries.get(&key).ok_or_else(|| {
                 StartupError::new(
                     StartupErrorKind::Internal,
-                    format!("library map source has no candidate record: {}", source.name),
+                    format!(
+                        "library map source has no candidate record: {}",
+                        source.name
+                    ),
                 )
             })?;
             let Some(choice) = &entry.choice else {
@@ -319,7 +325,10 @@ impl<'a> LibraryMapBuffers<'a> {
         charge_workspace::<Option<OwnedSource>>(work, self.sources.len(), "map removal workspace")?;
         charge_workspace::<OwnedSource>(
             work,
-            self.entries.values().filter(|entry| entry.original_map.is_some()).count(),
+            self.entries
+                .values()
+                .filter(|entry| entry.original_map.is_some())
+                .count(),
             "original map publication",
         )?;
         let mut available: Vec<_> = std::mem::take(self.sources).into_iter().map(Some).collect();
@@ -327,12 +336,19 @@ impl<'a> LibraryMapBuffers<'a> {
             let source = available[index].take().ok_or_else(|| {
                 StartupError::new(StartupErrorKind::Internal, "map source was published twice")
             })?;
-            self.libraries.push(LibrarySource::new(source.name, source.text, library));
+            self.libraries
+                .push(LibrarySource::new(source.name, source.text, library));
         }
         *self.sources = available.into_iter().flatten().collect();
-        Ok(self.entries.into_values().filter_map(|entry| {
-            entry.original_map.map(|text| OwnedSource::include(entry.name, text))
-        }).collect())
+        Ok(self
+            .entries
+            .into_values()
+            .filter_map(|entry| {
+                entry
+                    .original_map
+                    .map(|text| OwnedSource::include(entry.name, text))
+            })
+            .collect())
     }
 }
 

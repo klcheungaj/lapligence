@@ -1,7 +1,7 @@
 //! Aggregates.
 
-use super::*;
 use super::super::containers::PatternAssignmentKind;
+use super::*;
 
 mod copies;
 

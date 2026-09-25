@@ -451,9 +451,7 @@ impl<'a> Codegen<'a> {
                 signed,
                 two_state,
             } => IrLhs::PackedSelect {
-                target: Box::new(self.remap_structural_lhs_for_terminal(
-                    *target, source, terminal,
-                )),
+                target: Box::new(self.remap_structural_lhs_for_terminal(*target, source, terminal)),
                 steps,
                 signed,
                 two_state,

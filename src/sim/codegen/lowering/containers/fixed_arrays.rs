@@ -159,15 +159,17 @@ impl<'a> Codegen<'a> {
             let (target, _) = self.freeze_call_lhs(target, tag, &mut sequence, &mut captures)?;
             frozen.push(target);
         }
-        statements.extend(captures.into_iter().map(
-            |(name, width, signed, two_state, expr)| IrStmt::DeclLocal {
-                name,
-                width,
-                signed,
-                two_state,
-                init: Some(Box::new(expr)),
-            },
-        ));
+        statements.extend(
+            captures
+                .into_iter()
+                .map(|(name, width, signed, two_state, expr)| IrStmt::DeclLocal {
+                    name,
+                    width,
+                    signed,
+                    two_state,
+                    init: Some(Box::new(expr)),
+                }),
+        );
         Ok(frozen)
     }
 
@@ -264,7 +266,11 @@ impl<'a> Codegen<'a> {
         Ok(())
     }
 
-    pub(in super::super) fn p30_pattern_lvalue_operand(&self, path: &str, node: NodeId) -> Result<NodeId, String> {
+    pub(in super::super) fn p30_pattern_lvalue_operand(
+        &self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<NodeId, String> {
         let NodeKind::Expr(ExprKind::Operation {
             op: Operation::Assignment,
             assignment: true,
