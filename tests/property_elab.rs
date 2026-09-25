@@ -338,24 +338,23 @@ fn prop_concat_split_round_trip() {
 // ── casez/casex wildcard truth tables ─────────────────────────────────────────
 
 fn naive_casez(sel: &Value, item: &Value) -> bool {
+    // Literal IEEE casez table, not a copy of the production control flow.
+    let table = [
+        [true, false, false, true],
+        [false, true, false, true],
+        [false, false, true, true],
+        [true, true, true, true],
+    ];
+    let state = |bit| match bit {
+        Bit::Zero => 0,
+        Bit::One => 1,
+        Bit::X => 2,
+        Bit::Z => 3,
+    };
     let w = sel.width().max(item.width());
     let rs = sel.resize(w, false);
     let ri = item.resize(w, false);
-    for i in 0..w {
-        let ib = ri.bit_lsb(i);
-        if ib == Bit::Z {
-            continue; // item z/? -> don't-care
-        }
-        let sb = rs.bit_lsb(i);
-        if ib == Bit::X {
-            if sb != Bit::X {
-                return false; // item x matches selector x only
-            }
-        } else if sb != ib {
-            return false; // known item: selector must equal it
-        }
-    }
-    true
+    (0..w).all(|i| table[state(rs.bit_lsb(i))][state(ri.bit_lsb(i))])
 }
 
 fn naive_casex(sel: &Value, item: &Value) -> bool {

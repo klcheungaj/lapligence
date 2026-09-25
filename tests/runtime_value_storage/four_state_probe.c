@@ -55,6 +55,15 @@ static const unsigned xor_table[4][4] = {
     {0, 1, 2, 2}, {1, 0, 2, 2}, {2, 2, 2, 2}, {2, 2, 2, 2}
 };
 
+/* Selector rows and item columns are 0/1/X/Z. These are independent
+ * reference tables, not generated from core::elab or the C helpers. */
+static const unsigned casez_table[4][4] = {
+    {1, 0, 0, 1}, {0, 1, 0, 1}, {0, 0, 1, 1}, {1, 1, 1, 1}
+};
+static const unsigned casex_table[4][4] = {
+    {1, 0, 1, 1}, {0, 1, 1, 1}, {1, 1, 1, 1}, {1, 1, 1, 1}
+};
+
 static void check_shape(sv4_t result, uint32_t width, int is_signed,
                         sv4_t left, sv4_t right) {
     CHECK(result.width == width && result.is_signed == is_signed);
@@ -122,6 +131,16 @@ static void check_pair(sv4_t left, sv4_t right) {
     check_scalar(sv4_case_neq(left, right), case_equal ^ 1u, left, right);
     check_scalar(sv4_wild_eq(left, right), wild_equal, left, right);
     check_scalar(sv4_wild_neq(left, right), wild_equal == 2 ? 2 : wild_equal ^ 1u, left, right);
+
+    unsigned casez_match = 1, casex_match = 1;
+    for (uint32_t bit = 0; bit < width; ++bit) {
+        /* Case helpers consume caller-normalized operands, then zero-extend. */
+        unsigned x = extended(left, bit, 0), y = extended(right, bit, 0);
+        casez_match &= casez_table[x][y];
+        casex_match &= casex_table[x][y];
+    }
+    check_scalar(sv4_casez_eq(left, right), casez_match, left, right);
+    check_scalar(sv4_casex_eq(left, right), casex_match, left, right);
 
     for (unsigned digit = 0; digit < 5; ++digit) {
         sv4_t selector = sv4_zero(2, 0);

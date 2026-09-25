@@ -51,6 +51,16 @@ not close N01's independent valid-member signedness defect or N09's pattern-case
 match-mode defect. SYN-000 identifies the supplied 03-2 baseline only; no new
 full-suite green baseline or final selected-profile acceptance is asserted.
 
+SYN-038-N11 corrects ordinary casez matching in the native runtime and owned
+constant evaluator: Z in either operand is a wildcard; other states compare
+exactly. Constant case pruning uses that same corrected owned operation. The
+property-test reference and affected original C vector expectation are corrected,
+with independent one-bit, mixed-width, optimizer and dual-edition public cases
+added. Runtime-facade checks can establish native behavior; Rust/HDL and final
+selected-profile qualification remain pending. The packed conditional policy,
+asymmetric wildcard equality/inside rules and N09's separate tagged-pattern
+comparator dispatch are unchanged.
+
 ### Selected synthesis profiles
 
 SYN-000 adopts the three profile axes from the implementation plan. The

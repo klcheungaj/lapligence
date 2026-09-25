@@ -454,10 +454,12 @@ static void test_sv4_ops(void) {
         // casez: ?/z in the ITEM is a don't-care
         CHECK(u(test_temp(sv4_casez_eq(test_temp(b4("1000")), test_temp(b4("1z0z"))))) == 1); // ? bits don't-care
         CHECK(u(test_temp(sv4_casez_eq(test_temp(b4("1110")), test_temp(b4("1z0z"))))) == 0); // known 0 vs sel 1
-        // casez: x in the item matches a selector x only
+        // casez: X is exact unless the opposite operand is Z
         CHECK(u(test_temp(sv4_casez_eq(test_temp(b4("1x00")), test_temp(b4("1x0z"))))) == 1); // item x vs sel x
         CHECK(u(test_temp(sv4_casez_eq(test_temp(b4("1010")), test_temp(b4("1x0z"))))) == 0); // item x vs sel 1
         CHECK(u(test_temp(sv4_casez_eq(test_temp(b4("1000")), test_temp(b4("100z"))))) == 1); // plain known match
+        CHECK(u(test_temp(sv4_casez_eq(test_temp(b4("1z00")), test_temp(b4("1x0z"))))) == 1); // selector z vs item x
+        CHECK(u(test_temp(sv4_casez_eq(test_temp(b4("zz00")), test_temp(b4("1000"))))) == 1); // selector z vs known item
         // casex: x/z/? in the ITEM are don't-cares
         CHECK(u(test_temp(sv4_casex_eq(test_temp(b4("1001")), test_temp(b4("1x0z"))))) == 1);
         CHECK(u(test_temp(sv4_casex_eq(test_temp(b4("1000")), test_temp(b4("1x0z"))))) == 1);
@@ -812,7 +814,7 @@ static const sv4_vec_t VECTORS[] = {
     { V_CASEZ, 0xaULL, 0x0ULL, 0x0ULL, 4, 0, 0x8ULL, 0x4ULL, 0x1ULL, 4, 0, 0x0ULL, 0x0ULL, 0x0ULL, 0, 0, 0x0ULL, 0x0ULL, 0x0ULL, 1, 0 },
     { V_CASEZ, 0x8ULL, 0x4ULL, 0x1ULL, 4, 0, 0x8ULL, 0x4ULL, 0x1ULL, 4, 0, 0x0ULL, 0x0ULL, 0x0ULL, 0, 0, 0x1ULL, 0x0ULL, 0x0ULL, 1, 0 },
     { V_CASEZ, 0x8ULL, 0x0ULL, 0x0ULL, 8, 0, 0x8ULL, 0x0ULL, 0x5ULL, 4, 0, 0x0ULL, 0x0ULL, 0x0ULL, 0, 0, 0x1ULL, 0x0ULL, 0x0ULL, 1, 0 },
-    { V_CASEZ, 0x8ULL, 0x0ULL, 0x4ULL, 4, 0, 0x8ULL, 0x4ULL, 0x1ULL, 4, 0, 0x0ULL, 0x0ULL, 0x0ULL, 0, 0, 0x0ULL, 0x0ULL, 0x0ULL, 1, 0 },
+    { V_CASEZ, 0x8ULL, 0x0ULL, 0x4ULL, 4, 0, 0x8ULL, 0x4ULL, 0x1ULL, 4, 0, 0x0ULL, 0x0ULL, 0x0ULL, 0, 0, 0x1ULL, 0x0ULL, 0x0ULL, 1, 0 },
     { V_CASEZ, 0x9ULL, 0x0ULL, 0x0ULL, 4, 0, 0x8ULL, 0x0ULL, 0x0ULL, 4, 0, 0x0ULL, 0x0ULL, 0x0ULL, 0, 0, 0x0ULL, 0x0ULL, 0x0ULL, 1, 0 },
     { V_CASEX, 0x9ULL, 0x0ULL, 0x0ULL, 4, 0, 0x8ULL, 0x4ULL, 0x1ULL, 4, 0, 0x0ULL, 0x0ULL, 0x0ULL, 0, 0, 0x1ULL, 0x0ULL, 0x0ULL, 1, 0 },
     { V_CASEX, 0x8ULL, 0x0ULL, 0x0ULL, 4, 0, 0x8ULL, 0x4ULL, 0x1ULL, 4, 0, 0x0ULL, 0x0ULL, 0x0ULL, 0, 0, 0x1ULL, 0x0ULL, 0x0ULL, 1, 0 },

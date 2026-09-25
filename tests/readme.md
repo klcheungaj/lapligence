@@ -513,6 +513,14 @@ existing generated-runtime sanitizer configuration to check N05: correct stdout
 and handwritten value-helper probes alone cannot establish guard leak freedom.
 The `owned::tests::tagged_guards` unit tests separately track both emitted guard
 paths. Existing inactive read/write/ref/NBA cases remain diagnostic controls.
+`sim_casez::case_matching_tables_and_selector_z_work_in_both_editions` runs
+`review_bundle/n11_casez_selector_z.sv` under 2001 and 2009, optimized and
+unoptimized. Runtime task formals cover all sixteen state pairs for ordinary
+case/casez/casex; separate constant-function, generate-if, constant procedural
+and 129-bit cases check the remaining routes. Literal tables in the core,
+optimizer and standalone four-state tests supply independent oracles. The
+property-test reference and original C vector expectations use the corrected
+symmetric casez rule; wildcard equality and inside remain separate contracts.
 `sim_review_bundle` covers static-return callback classification and
 read-modify-write return access (R03). `sim_review_bundle_patterns` covers
 recursive and duplicate type keys, constant index expressions, and typed

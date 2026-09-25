@@ -1699,3 +1699,49 @@ fn packed_selection_walkers_fold_each_step_without_flattening_its_bounds() {
         assert_eq!(const_payload(&steps[1].base), Some((6, 32)));
     }
 }
+
+#[test]
+fn prune_case_matches_independent_four_state_tables() {
+    // Selector/item order: 0, 1, X, Z. Verify all three dispatch modes,
+    // rather than merely comparing optimized and unoptimized output.
+    let exact = [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]];
+    let casez = [[1, 0, 0, 1], [0, 1, 0, 1], [0, 0, 1, 1], [1, 1, 1, 1]];
+    let casex = [[1, 0, 1, 1], [0, 1, 1, 1], [1, 1, 1, 1], [1, 1, 1, 1]];
+    let states = [
+        konst(0, 1),
+        konst(1, 1),
+        masked_konst(0, 1, 0, 1),
+        masked_konst(0, 0, 1, 1),
+    ];
+    for (kind, table) in [
+        (IrCaseKind::Exact, exact),
+        (IrCaseKind::Casez, casez),
+        (IrCaseKind::Casex, casex),
+    ] {
+        for (row, selector) in states.iter().enumerate() {
+            for (column, item) in states.iter().enumerate() {
+                let mut model = model_with(
+                    vec![case_stmt(
+                        selector.clone(),
+                        kind,
+                        vec![
+                            IrCaseItem {
+                                exprs: vec![item.clone()],
+                                body: vec![marker(20)],
+                            },
+                            def_item(30),
+                        ],
+                    )],
+                    sigs(1),
+                );
+                run(&mut model, &prune_only());
+                let expected = if table[row][column] == 1 { 20 } else { 30 };
+                assert_eq!(
+                    const_payload(first_assign_rhs_of(single_pruned_stmt(&model))),
+                    Some((expected, 8)),
+                    "kind={kind:?} selector={row} item={column}"
+                );
+            }
+        }
+    }
+}

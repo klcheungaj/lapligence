@@ -1275,21 +1275,15 @@ sv4_t sv4_wild_neq(sv4_t lhs, sv4_t rhs) {
     return result;
 }
 
-// casez per LRM 12.5.1: a z (or ?) bit in the case ITEM is a don't-care; an x
-// in the item matches an x selector bit only; a known item bit must equal the
-// selector bit (a selector x/z never matches a known item bit).  Operands are
-// zero-extended to max width before comparing, like `case`.
+// casez (1364-2001 9.5.1 / 1800-2009 12.5.1): Z in either operand
+// is a don't-care; every other state must match exactly. Case expression
+// normalization is done by the caller; this helper zero-extends to max width.
 sv4_t sv4_casez_eq(sv4_t sel, sv4_t item) {
     uint32_t w = sv4_maxw(sel, item);
-    for (int i = 0; i < (int)w; i++) {
-        int ib = sv4_extended_bit(item, i, 0); // 0/1/2(x)/3(z)
-        if (ib == 3) continue;       // item z/? -> don't-care
-        int sb = sv4_extended_bit(sel, i, 0);
-        if (ib == 2) {               // item x matches selector x only
-            if (sb != 2) return SV4_C(0, 1);
-        } else if (sb != ib) {       // known item: selector must equal it
-            return SV4_C(0, 1);
-        }
+    for (uint32_t i = 0; i < w; ++i) {
+        int sb = sv4_extended_bit(sel, i, 0); // 0/1/2(x)/3(z)
+        int ib = sv4_extended_bit(item, i, 0);
+        if (sb != 3 && ib != 3 && sb != ib) return SV4_C(0, 1);
     }
     return SV4_C(1, 1);
 }

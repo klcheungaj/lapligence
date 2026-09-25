@@ -7,6 +7,8 @@
 
 #[path = "support/sim.rs"]
 mod sim_harness;
+#[path = "support/sim_cli.rs"]
+mod sim_cli;
 
 fn run_sim(dir_name: &str, sv: &str) -> Result<String, String> {
     sim_harness::run_sim(sv, "tb", dir_name)
@@ -65,8 +67,8 @@ endmodule
     );
 }
 
-/// casex: x in the case item is a don't-care (unlike casez, where item x
-/// matches only selector x).
+/// casex: x in the case item is a don't-care (unlike casez, where X compares exactly
+/// unless the opposite operand is Z).
 #[test]
 fn sim_casex() {
     if !llg::sim::build::cmake_available() {
@@ -221,4 +223,38 @@ endmodule
     //   t=1  $display("r1=1 r2=0 r3=1"); $finish.
     let stdout = run_sim("llg_caseq", sv).expect("case-equality simulation should run");
     assert_eq!(stdout, "r1=1 r2=0 r3=1\n");
+}
+
+#[test]
+fn case_matching_tables_and_selector_z_work_in_both_editions() {
+    let expected = concat!(
+        "pair=00 exact=1 z=1 x=1\n",
+        "pair=01 exact=0 z=0 x=0\n",
+        "pair=0x exact=0 z=0 x=1\n",
+        "pair=0z exact=0 z=1 x=1\n",
+        "pair=10 exact=0 z=0 x=0\n",
+        "pair=11 exact=1 z=1 x=1\n",
+        "pair=1x exact=0 z=0 x=1\n",
+        "pair=1z exact=0 z=1 x=1\n",
+        "pair=x0 exact=0 z=0 x=1\n",
+        "pair=x1 exact=0 z=0 x=1\n",
+        "pair=xx exact=1 z=1 x=1\n",
+        "pair=xz exact=0 z=1 x=1\n",
+        "pair=z0 exact=0 z=1 x=1\n",
+        "pair=z1 exact=0 z=1 x=1\n",
+        "pair=zx exact=0 z=1 x=1\n",
+        "pair=zz exact=1 z=1 x=1\n",
+        "constant=1 frontend=1 generated=1\n",
+        "wide=1\nwide=0\n",
+    );
+    for edition in ["2001", "2009"] {
+        sim_cli::run_case_with_args(
+            "review_bundle",
+            "n11_casez_selector_z",
+            expected,
+            "",
+            &[],
+            &["--edition", edition],
+        );
+    }
 }

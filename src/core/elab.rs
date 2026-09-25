@@ -1065,30 +1065,18 @@ pub fn isunknown(value: &Value) -> Value {
     Value::from_u64(u64::from(value.is_unknown()), 1, false)
 }
 
-/// Casez wildcard equality (`casez` item match, LRM 12.5.1): 1-bit result,
-/// never X.  Operands are zero-extended to max width (like `case`).  Per-bit
-/// rules, mirroring `sv4_casez_eq` in the C runtime:
-/// - item `z` (or `?`) is a don't-care;
-/// - item `x` matches a selector `x` only;
-/// - a known item bit must equal the selector bit (a selector x/z never
-///   matches a known item bit).
+/// Casez equality (1364-2001 9.5.1 / 1800-2009 12.5.1), never X.
+/// Z is a don't-care in either operand; all other states compare exactly.
+/// Inputs are zero-extended to the same width. Case-expression type/width
+/// normalization belongs to the caller, as for [`casex_eq`].
 pub fn casez_eq(sel: &Value, item: &Value) -> Value {
     let w = max_width(sel, item);
     let rs = sel.resize(w, false);
     let ri = item.resize(w, false);
     for i in 0..w {
-        let ib = ri.bit_lsb(i);
-        if ib == Bit::Z {
-            continue; // item z/? -> don't-care
-        }
         let sb = rs.bit_lsb(i);
-        if ib == Bit::X {
-            if sb != Bit::X {
-                // item x matches a selector x only
-                return Value::from_u64(0, 1, false);
-            }
-        } else if sb != ib {
-            // known item: selector must equal it
+        let ib = ri.bit_lsb(i);
+        if sb != Bit::Z && ib != Bit::Z && sb != ib {
             return Value::from_u64(0, 1, false);
         }
     }
@@ -1695,7 +1683,7 @@ mod tests {
         // casez: ?/z in the ITEM is a don't-care
         assert_eq!(casez_eq(&bits("1000"), &bits("1z0z")), bits("1"));
         assert_eq!(casez_eq(&bits("1110"), &bits("1z0z")), bits("0"));
-        // casez: x in the item matches a selector x only
+        // casez: X is exact unless the opposite operand is Z
         assert_eq!(casez_eq(&bits("1x00"), &bits("1x0z")), bits("1"));
         assert_eq!(casez_eq(&bits("1010"), &bits("1x0z")), bits("0"));
         assert_eq!(casez_eq(&bits("1000"), &bits("100z")), bits("1"));
@@ -1707,6 +1695,45 @@ mod tests {
         assert!(!casez_eq(&bits("1x0z"), &bits("1x0z")).is_unknown());
         // width mismatch zero-extends both operands
         assert_eq!(casez_eq(&bits("00001000"), &bits("1z0z")), bits("1"));
+    }
+
+    #[test]
+    fn casez_eq_all_one_bit_states() {
+        // Rows are selectors, columns are items, in 0/1/X/Z order.
+        // This literal oracle does not call the runtime or another comparator.
+        let expected = [
+            [1, 0, 0, 1],
+            [0, 1, 0, 1],
+            [0, 0, 1, 1],
+            [1, 1, 1, 1],
+        ];
+        let states = ["0", "1", "x", "z"];
+        for (row, sel) in states.iter().enumerate() {
+            for (col, item) in states.iter().enumerate() {
+                let result = casez_eq(&bits(sel), &bits(item));
+                assert_eq!(result, Value::from_u64(expected[row][col], 1, false));
+            }
+        }
+    }
+
+    #[test]
+    fn casez_eq_wide_states_and_zero_extension() {
+        // Exercise wildcard and nonwildcard bits above the first two C limbs.
+        let mut selector = Value::from_bits(vec![Bit::Zero; 129], false);
+        let mut item = selector.clone();
+        selector.bits[0] = Bit::Z;
+        item.bits[0] = Bit::X;
+        selector.bits[64] = Bit::Z;
+        item.bits[64] = Bit::One;
+        assert_eq!(casez_eq(&selector, &item), bits("1"));
+        item.bits[128] = Bit::One;
+        assert_eq!(casez_eq(&selector, &item), bits("0"));
+        // Caller-normalized helpers do not sign-extend narrow operands.
+        assert_eq!(casez_eq(&bits_signed("z"), &bits("1z")), bits("0"));
+        assert_eq!(casez_eq(&bits("z"), &bits("0x")), bits("1"));
+        // The asymmetric wildcard-equality contract must stay unchanged.
+        assert_eq!(wildcard_eq(&bits("z"), &bits("0")), bits("x"));
+        assert_eq!(wildcard_eq(&bits("0"), &bits("z")), bits("1"));
     }
 
     #[test]
