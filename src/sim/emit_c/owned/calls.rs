@@ -203,20 +203,25 @@ impl Frame<'_, '_> {
                     let target = self.capture_assignment(writeback)?;
                     let storage = if let Some(address) = storage_addr {
                         let storage = self.address(address)?;
-                        let initial = self.read_binding(&temporary);
-                        let initial = self.convert(
-                            initial,
-                            storage.width,
-                            storage.signed,
-                            storage.two_state,
-                            storage.shortreal,
-                        );
-                        if storage.width == 0 {
-                            self.line(format!("*({}) = {};", storage.address, initial.code));
-                        } else {
-                            self.line(format!("sv4_move({}, &{});", storage.address, initial.code));
+                        // Only inout has a copy-in value. A static output
+                        // keeps its persistent formal until the callee writes it;
+                        // a fresh caller temporary is not an output initializer.
+                        if init.is_some() {
+                            let initial = self.read_binding(&temporary);
+                            let initial = self.convert(
+                                initial,
+                                storage.width,
+                                storage.signed,
+                                storage.two_state,
+                                storage.shortreal,
+                            );
+                            if storage.width == 0 {
+                                self.line(format!("*({}) = {};", storage.address, initial.code));
+                            } else {
+                                self.line(format!("sv4_move({}, &{});", storage.address, initial.code));
+                            }
+                            self.discard(initial);
                         }
-                        self.discard(initial);
                         storage
                     } else {
                         temporary

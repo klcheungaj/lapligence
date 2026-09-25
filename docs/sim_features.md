@@ -35,6 +35,15 @@ Private descriptor tests independently check offsets, nominal leaf identity,
 union overlap and capacity/native-leaf boundaries. No new independent layout
 failure was established; new Rust/public qualification is unexecuted here.
 
+SYN-013 numeric expression-call output temporaries no longer reset persistent
+static formal storage. Only an inout initializer copies into that storage;
+automatic outputs still receive their typed default. Later default arguments
+read the actual static formal rather than an unused caller temporary. Added
+static-output, selected copy-back, const-ref alias, package/interface, lifetime
+and actual-emitter tests remain unexecuted here. Ordinary statement-call paths
+are retained. Q03's changing-tag NBA check timing is not resolved by this fix;
+stable-tag controls and the separate tagged-access checks remain in force.
+
 SYN-025-N09 now retains the enclosing pattern-case comparison mode for both
 union tag bits and payload constants. The prior casex/X-tag negative oracle is
 corrected; the casez/X-tag negative and ordinary checked-access diagnostics

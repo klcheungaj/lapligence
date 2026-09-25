@@ -100,3 +100,48 @@ fn fixed_layout_graph_retains_nominal_shapes_after_native_teardown() {
             .expect("all descriptor projections use owned type data");
     }
 }
+
+#[test]
+fn finite_calls_keep_static_outputs_copyin_and_reference_identity_distinct() {
+    sim_cli::run_case_with_args(
+        "continuation_20_23", "static_output_values", "STATIC_OUTPUT_VALUES_PASS\n", "", &[],
+        &["--edition", "2009"],
+    );
+    sim_cli::run_case_with_args(
+        "continuation_20_23", "call_contexts", "CALL_CONTEXTS_PASS\n", "", &[],
+        &["--edition", "2009"],
+    );
+    sim_cli::reject_case_with_args(
+        "syn003_pattern_lvalues", "syn_003_ref_nba", "automatic assignment-pattern target",
+        &["--edition", "2009"],
+    );
+    for edition in ["2001", "2009"] {
+        sim_cli::run_case_with_args(
+            "syn013_zero_time_calls", "legacy_calls", "legacy value=40 result=42 calls=2\n",
+            "", &[], &["--edition", edition],
+        );
+    }
+}
+
+#[test]
+fn static_output_formals_and_defaults_lower_after_native_teardown() {
+    use llg::core::{compile, db};
+    use llg::sim::{codegen, opt::OptConfig};
+    for (name, source) in [
+        ("static_output_values.sv", include_str!("fixtures/sim/continuation_20_23/static_output_values.sv")),
+        ("call_contexts.sv", include_str!("fixtures/sim/continuation_20_23/call_contexts.sv")),
+    ] {
+        let database = {
+            let result = compile::compile_sources_checked(
+                &[compile::OwnedSource::compilation_unit(name, source)],
+                &compile::CompileOpts { top: Some("tb".to_owned()), ..Default::default() },
+            ).expect("legal zero-time fixed calls");
+            db::Db::from_slang(&result.snapshot).unwrap()
+        };
+        database.validate().unwrap();
+        for options in [OptConfig::none(), OptConfig::default()] {
+            codegen::generate_from_db_with_opts(&database, &options)
+                .expect("call storage and defaults use owned data");
+        }
+    }
+}

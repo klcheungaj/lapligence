@@ -166,3 +166,8 @@ member offsets and leaf identities separately from public value tests. A stream
 backed by multiple cells is a composite reference in the owned emitter; it must
 not be replaced by a detached packed pointer. Union overlap and packed capacity
 remain distinct from declaration-order record/array layout.
+
+Expression-call defaults for numeric static output/inout formals read their
+persistent model storage. Caller temporary defaults are only the automatic
+formal's initial value, not a static output copy-in. The owned call argument
+records still retain selector captures, writeback and typed storage effects.

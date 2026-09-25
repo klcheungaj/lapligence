@@ -1156,3 +1156,10 @@ records/rows, union values and signed/state-aware projections at ten limb-edge
 widths. It uses strict logical/case equality and deep-copy/NBA controls; distinct
 nominal types and illegal union casts remain negative tests. Descriptor unit
 oracles are not a substitute for running the public and snapshot-drop paths.
+
+Continuation call coverage distinguishes persistent static expression-call
+outputs from automatic defaults and inout copy-in. It includes selected actuals,
+later defaults, const-ref aliases/forwarding, local disable and per-activation
+storage. `owned::tests::static_outputs` supplies a real-emitter model requiring
+Rust/CMake and relevant generated-model sanitizer execution. Q03 changing-tag NBA
+check timing remains a separately recorded oracle question, not a passing cell.

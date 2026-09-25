@@ -16,6 +16,7 @@ mod packed_formals;
 mod packed_selections;
 mod pattern_modes;
 mod review_regressions;
+mod static_outputs;
 mod tagged_guards;
 mod tagged_signed;
 mod toolchain;

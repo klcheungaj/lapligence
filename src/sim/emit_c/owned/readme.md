@@ -286,3 +286,10 @@ Typed tagged-member reads restore the selected member's runtime signedness
 after the checked projection, on both valid and invalid paths. Ordinary packed
 part-select results remain unsigned. Expected-tag and comparison owners use the
 same frame lifetime contract for reads and selected writes.
+
+Numeric `OutTemp` calls copy an initializer into persistent formal storage only
+for inout (`init: Some`). A static output retains its prior value until the
+callee writes it; an automatic output receives its typed default. Both copy
+back from the formal after return to previously captured destinations. The
+`static_outputs` tests distinguish these contracts and provide a real-emitter
+model; source inspection and standalone C probes do not constitute its execution.

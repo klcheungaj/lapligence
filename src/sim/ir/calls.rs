@@ -43,18 +43,17 @@ pub enum IrCallArg {
         read: Box<IrExpr>,
     },
     /// Output/inout formal bound to a registered caller-side temporary.
-    /// `init` is `None` for
-    /// outputs (all-X temp sized by the formal's type) and the actual's
-    /// current value for inouts; `writeback` copies the temp back into the
-    /// actual after the call.
+    /// `init` is `None` for outputs (a typed default for automatic storage)
+    /// and the actual's current value for inouts. `writeback` receives the
+    /// formal's value after return, not a caller value on entry.
     OutTemp {
         name: String,
         init: Option<Box<IrExpr>>,
         writeback: Box<IrLhs>,
         /// Optional persistent formal storage used by a static function call.
-        /// The caller-side temp still stages the actual value, while the C
-        /// call receives this address and the value is copied back from the
-        /// typed storage after return.
+        /// The caller-side temp stages copy-in only when `init` is present.
+        /// An output does not reset this persistent storage. The C call receives
+        /// this address and copy-back reads it after return.
         storage_addr: Option<String>,
         storage_lhs: Option<Box<IrLhs>>,
         storage_read: Option<Box<IrExpr>>,

@@ -258,14 +258,17 @@ impl<'a> Codegen<'a> {
                 } else {
                     (None, None, None)
                 };
-                // The temp is the correctly-sized value of the formal while
-                // the call runs (all-X for outputs, the actual for inouts).
-                arg_irs[idx] = Some(IrExpr::new(
-                    IrExprKind::LocalRead(tname.clone()),
-                    bound[idx].width,
-                    bound[idx].signed,
-                    None,
-                ));
+                // Later defaults observe the actual formal storage. Static
+                // outputs retain their old value; only inouts copy in. An
+                // automatic output instead starts with its typed local default.
+                arg_irs[idx] = Some(storage_read.as_deref().cloned().unwrap_or_else(|| {
+                    IrExpr::new(
+                        IrExprKind::LocalRead(tname.clone()),
+                        bound[idx].width,
+                        bound[idx].signed,
+                        None,
+                    )
+                }));
                 out_args.push(IrCallArg::OutTemp {
                     name: tname,
                     init: init_ir.map(Box::new),
