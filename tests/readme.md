@@ -1138,3 +1138,9 @@ X/Z words, sparse-file warning policy and terminated loads retaining their
 committed prefix. The standalone native `memory_image` test checks actual C
 behavior and exact diagnostics; public source and emitter qualification remain
 separate.
+
+Wired continuation fixtures cross equal-strength four-state tables with
+generated and selected hierarchical sites, 65/129-bit limbs, upward sibling
+references, homogeneous inout collapse and unchanged-resolution events. The
+owned collector tests site identity; native truth-table checks alone do not
+qualify hierarchical HDL capture or scheduling.

@@ -3,6 +3,9 @@
 use super::net_collapse::NetPoint;
 use super::*;
 
+#[cfg(test)]
+mod tests;
+
 impl<'a> Codegen<'a> {
     // ── Collapsed inout-net groups ────────────────────────────────────────
 

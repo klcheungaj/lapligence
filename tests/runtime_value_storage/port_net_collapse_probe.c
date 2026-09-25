@@ -35,6 +35,27 @@ static void resolver_values(void) {
             net.resolved = sv4_fill(3, widths[w], 0);
             llg_net_resolve(&net);
             expect_state(net.resolved, floats[k]);
+            if (kinds[k] == LLG_RESOLVE_WAND || kinds[k] == LLG_RESOLVE_WOR) {
+                static const unsigned and_table[4][4] = {
+                    {0,0,0,0}, {0,1,2,1}, {0,2,2,2}, {0,1,2,3}
+                };
+                static const unsigned or_table[4][4] = {
+                    {0,1,2,0}, {1,1,1,1}, {2,1,2,2}, {0,1,2,3}
+                };
+                for (int a = 0; a < 4; ++a) {
+                    for (int b = 0; b < 4; ++b) {
+                        sv4_t av = sv4_fill(a, widths[w], 0);
+                        sv4_t bv = sv4_fill(b, widths[w], 0);
+                        llg_net_write(&net, 0, av);
+                        llg_net_write(&net, 1, bv);
+                        sv4_destroy(&av);
+                        sv4_destroy(&bv);
+                        expect_state(net.resolved, (int)(kinds[k] == LLG_RESOLVE_WAND
+                            ? and_table[a][b] : or_table[a][b]));
+                        CHECK(value_test_live() == 3);
+                    }
+                }
+            }
             for (int round = 0; round < 200; ++round) {
                 sv4_t one = sv4_fill(1, widths[w], 0);
                 sv4_t zero = sv4_zero(widths[w], 0);

@@ -146,3 +146,8 @@ storage identity. Direct collected references, including existing real storage,
 retain cell-wise traversal; casts
 and other value expressions are evaluated with their conversions intact. Arrays
 descend to singular integral values, not arbitrary unpacked record members.
+
+Hierarchical continuous drivers reuse canonical net groups and distinct
+(owner, source, group) contribution identities. The collector's snapshot-drop
+regression checks that independent sites and instances cannot share slots;
+selected/concatenated and inout interactions are public fixture obligations.

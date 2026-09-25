@@ -136,3 +136,44 @@ fn two_state_enum_load_checks_full_numeric_word_before_truncation() {
         &[("enum.hex", "1 4x 0\n"), ("signed.hex", "ff 0\n"), ("two_state.hex", "x7 z1\n")],
     );
 }
+
+#[test]
+fn hierarchical_wired_sites_match_tables_and_port_resolution_in_both_editions() {
+    for edition in ["2001", "2009"] {
+        sim_cli::run_case_with_args(
+            "continuation_16_19", "wired_matrix", "WIRED_MATRIX_PASS\n", "", &[],
+            &["--edition", edition],
+        );
+        sim_cli::run_case_with_args(
+            "continuation_16_19", "wired_upward_ports", "WIRED_UPWARD_PORTS_PASS\n", "", &[],
+            &["--edition", edition],
+        );
+        sim_cli::reject_case_with_args(
+            "net_resolution", "hierarchical_procedural_net",
+            "cannot assign to a net within a procedural context", &["--edition", edition],
+        );
+    }
+}
+
+#[test]
+fn hierarchical_wired_graph_lowers_after_native_snapshot_destruction() {
+    use llg::core::{compile, db};
+    use llg::sim::{codegen, opt::OptConfig};
+    for source in [
+        include_str!("fixtures/sim/continuation_16_19/wired_matrix.sv"),
+        include_str!("fixtures/sim/continuation_16_19/wired_upward_ports.sv"),
+    ] {
+        let database = {
+            let output = compile::compile_sources_checked(
+                &[compile::OwnedSource::compilation_unit("wired.sv", source)],
+                &compile::CompileOpts { top: Some("tb".to_owned()), ..Default::default() },
+            ).expect("legal hierarchical driver sources");
+            db::Db::from_slang(&output.snapshot).unwrap()
+        };
+        database.validate().unwrap();
+        for options in [OptConfig::none(), OptConfig::default()] {
+            codegen::generate_from_db_with_opts(&database, &options)
+                .expect("hierarchical wired contribution lowering after native teardown");
+        }
+    }
+}

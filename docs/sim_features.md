@@ -272,6 +272,20 @@ cells, not every possible malformed-token policy or four-state enum numeric
 interpretation. Existing memory view, ordering, range-stop and notification
 controls remain required.
 
+### Hierarchical wired-net context qualification
+
+The existing canonical electrical groups and per-source contribution slots are
+retained; no second hierarchical driver implementation is introduced.
+`sim_review_tasks16_19` adds generated, constant-selected and concatenated driver
+sites at widths 1/7/65/129, all 64 three-input four-state combinations, Z removal,
+unchanged-resolution event suppression, and upward sibling drives through
+homogeneous inout collapse. A private collector test checks independent
+continuous-site slots for two wired kinds in two instances after native snapshot
+teardown. Illegal procedural net assignments remain rejection controls in both
+editions. These new Rust/HDL entries remain unexecuted pending host qualification.
+The native collapsed-net probe additionally checks the literal wand/wor tables;
+that checks the runtime contract, not the hierarchical source-admission path.
+
 ### Selected synthesis profiles
 
 SYN-000 adopts the three profile axes from the implementation plan. The
