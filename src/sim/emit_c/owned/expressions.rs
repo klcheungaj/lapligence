@@ -321,6 +321,34 @@ impl Frame<'_, '_> {
         self.line("fflush(stderr);");
     }
 
+    pub(super) fn tagged_member_matches(
+        &mut self,
+        tag: Value,
+        guard: &IrTaggedMemberGuard,
+    ) -> String {
+        // Packed helpers borrow their operands and return independent owners.
+        // Keep both the expected tag and equality result in the frame, even
+        // though only a native Boolean survives this check.
+        let expected = self.value(
+            format!(
+                "sv4_from_u64({}ULL, {}, 0)",
+                guard.member_index, guard.tag_width
+            ),
+            guard.tag_width,
+            false,
+        );
+        let equal = self.value(
+            format!("sv4_case_eq({}, {})", tag.code, expected.code),
+            1,
+            false,
+        );
+        let matches = self.scalar("int", equal.truth());
+        self.discard(equal);
+        self.discard(expected);
+        self.discard(tag);
+        matches
+    }
+
     fn tagged_select(
         &mut self,
         base: &IrExpr,
@@ -346,18 +374,11 @@ impl Frame<'_, '_> {
                     guard.tag_width,
                     false,
                 );
-                let matches = self.scalar(
-                    "int",
-                    format!(
-                        "sv4_to_bool(sv4_case_eq({}, sv4_from_u64({}ULL, {}, 0)))",
-                        tag.code, guard.member_index, guard.tag_width
-                    ),
-                );
+                let matches = self.tagged_member_matches(tag, guard);
                 self.line(format!("if ({valid} && !{matches}) {{"));
                 self.report_tagged_access(&guard.member_name, location);
                 self.line(format!("{valid} = 0;"));
                 self.line("}");
-                self.discard(tag);
             }
             let width = step.selection.width;
             let code = format!(

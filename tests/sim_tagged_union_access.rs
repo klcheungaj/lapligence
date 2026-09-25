@@ -126,3 +126,17 @@ fn tagged_member_receiver_and_selected_nba_indices_are_evaluated_once() {
         );
     }
 }
+
+#[test]
+fn repeated_nested_tagged_guards_release_value_owners() {
+    // Functional success alone does not establish leak freedom. This test
+    // inherits LLG_CFLAGS/ASAN_OPTIONS for the generated-model sanitizer lane.
+    sim_cli::run_case_with_args(
+        "review_bundle",
+        "n05_tagged_guard_stress",
+        "PASS n05_tagged_guard_stress\n",
+        "",
+        &[],
+        &["--edition", "2009"],
+    );
+}

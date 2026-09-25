@@ -39,6 +39,18 @@ implemented forms and remaining restrictions, including corrections to older
 contradictory rows for `defparam`, `let`, initialization and read-only helper
 calls.
 
+### Review-derived continuation repairs
+
+SYN-021-N05 now routes ordinary tagged read and selected-target comparisons
+through frame-owned expected-tag and equality-result temporaries. Both are
+released after converting the result to a native Boolean; exact tag checking,
+source diagnostics and single receiver capture are retained. The nested guard
+stress fixture and emitter ownership tests are added, but Rust/public HDL and
+actual generated-model sanitizer qualification remain pending. This change does
+not close N01's independent valid-member signedness defect or N09's pattern-case
+match-mode defect. SYN-000 identifies the supplied 03-2 baseline only; no new
+full-suite green baseline or final selected-profile acceptance is asserted.
+
 ### Selected synthesis profiles
 
 SYN-000 adopts the three profile axes from the implementation plan. The

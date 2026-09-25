@@ -507,6 +507,12 @@ cargo test --locked --test sim_tagged_union_access --test sim_review_bundle \
 
 `sim_tagged_union_access` covers inactive tagged-member reads and writes,
 receiver evaluation, and captured selected NBA addresses (R01–R02).
+Its `n05_tagged_guard_stress` fixture repeats nested selected reads/writes and
+reference forwarding with a receiver-call counter. Run this suite under the
+existing generated-runtime sanitizer configuration to check N05: correct stdout
+and handwritten value-helper probes alone cannot establish guard leak freedom.
+The `owned::tests::tagged_guards` unit tests separately track both emitted guard
+paths. Existing inactive read/write/ref/NBA cases remain diagnostic controls.
 `sim_review_bundle` covers static-return callback classification and
 read-modify-write return access (R03). `sim_review_bundle_patterns` covers
 recursive and duplicate type keys, constant index expressions, and typed

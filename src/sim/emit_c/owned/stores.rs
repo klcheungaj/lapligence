@@ -380,18 +380,11 @@ impl<'a, 'm> Frame<'a, 'm> {
                     guard.tag_width,
                     false,
                 );
-                let matches = self.scalar(
-                    "int",
-                    format!(
-                        "sv4_to_bool(sv4_case_eq({}, sv4_from_u64({}ULL, {}, 0)))",
-                        tag.code, guard.member_index, guard.tag_width
-                    ),
-                );
+                let matches = self.tagged_member_matches(tag, guard);
                 self.line(format!("if ({valid} && !{matches}) {{"));
                 self.report_tagged_access(&guard.member_name, location);
                 self.line(format!("{valid} = 0;"));
                 self.line("}");
-                self.discard(tag);
             }
             let width = step.selection.width;
             let selected = self.value(format!("sv4_x({width}, 0)"), width, false);

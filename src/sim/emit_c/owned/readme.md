@@ -273,3 +273,11 @@ the borrowed memory runtime while the selector and optional address-bound
 owners remain live. Invalid or unknown selector values produce an invalid view
 that the runtime rejects before touching storage. Static slice bounds and
 physical strides come from validated IR.
+
+## Tagged guard ownership
+
+Read and selected-target guards use the same frame-owned comparison path.
+The expected-tag constructor and equality result are registered temporaries,
+released before the native Boolean controls a diagnostic branch. Packed helper
+arguments remain borrowed; ordinary active-member checks still use exact
+comparison. The dedicated emitter tests check both nested read and write paths.
