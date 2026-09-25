@@ -1173,3 +1173,8 @@ override controls. The private `collection::processes::tests` inspects actual
 collected dependency and per-site contribution identities after snapshot teardown.
 All these Rust/public tests are supplied for host execution, not reported passing
 from native-only validation.
+
+- `sim_review_tasks24_27` covers the continuation's value-port, output/ref, net-alias
+  and callback cases in `fixtures/sim/continuation_24_27/`. Keep typed conversions,
+  independent coordinate/value oracles and exact callback diagnostics, run both
+  optimizer modes, and distinguish added source from executed pipeline evidence.

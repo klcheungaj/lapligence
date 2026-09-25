@@ -591,6 +591,12 @@ impl Codegen<'_> {
         path: &str,
         node: NodeId,
     ) -> Result<Option<IrExpr>, String> {
+        // array_of follows conversions for storage discovery, not value
+        // evaluation. A cast must run its state/type conversion before any
+        // projection; otherwise nested four/two/four-state casts lose zeros.
+        if matches!(self.kind(node), NodeKind::Expr(ExprKind::Cast { .. })) {
+            return Ok(None);
+        }
         let Some(projection) = self.fixed_projection(path, node)? else {
             return Ok(None);
         };

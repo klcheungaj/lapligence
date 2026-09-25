@@ -762,7 +762,8 @@ impl<'a> Codegen<'a> {
         if let Some(value) = self.fixed_pattern_value(scope_path, h)? {
             return Ok(value);
         }
-        if (self.array_of(h).is_some() || self.unpacked_aggregate_info(h).is_some())
+        if !matches!(self.kind(h), NodeKind::Expr(ExprKind::Cast { .. }))
+            && (self.array_of(h).is_some() || self.unpacked_aggregate_info(h).is_some())
             && self.packed_member_info(h).is_none()
         {
             if let Some(value) = self.lower_bitstream_source(scope_path, h)? {

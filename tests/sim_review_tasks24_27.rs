@@ -1,0 +1,47 @@
+//! Continuation coverage for value ports, structural connectivity and callbacks.
+#[path = "support/sim_cli.rs"]
+mod sim_cli;
+#[path = "support/sim.rs"]
+mod sim_harness;
+
+#[test]
+fn fixed_inputs_retain_nested_conversions_at_every_limb_width() {
+    for width in [1, 7, 65, 129] {
+        let define = format!("CONTINUATION_PORT_W={width}");
+        sim_cli::run_case_with_args(
+            "continuation_24_27", "input_casts", &format!("INPUT_CASTS_PASS W={width}\n"),
+            "", &[], &["--edition", "2009", "--define", &define],
+        );
+    }
+}
+
+#[test]
+fn fixed_inputs_track_values_rows_selectors_and_single_evaluations() {
+    sim_cli::run_case_with_args(
+        "continuation_24_27", "input_values", "INPUT_VALUES_PASS\n", "", &[],
+        &["--edition", "2009"],
+    );
+}
+
+#[test]
+fn fixed_input_graph_lowers_after_native_teardown() {
+    use llg::core::{compile, db};
+    use llg::sim::{codegen, opt::OptConfig};
+    for (name, source) in [
+        ("input_casts.sv", include_str!("fixtures/sim/continuation_24_27/input_casts.sv")),
+        ("input_values.sv", include_str!("fixtures/sim/continuation_24_27/input_values.sv")),
+    ] {
+        let database = {
+            let result = compile::compile_sources_checked(
+                &[compile::OwnedSource::compilation_unit(name, source)],
+                &compile::CompileOpts { top: Some("tb".to_owned()), ..Default::default() },
+            ).expect("legal fixed input values");
+            db::Db::from_slang(&result.snapshot).unwrap()
+        };
+        database.validate().unwrap();
+        for options in [OptConfig::none(), OptConfig::default()] {
+            codegen::generate_from_db_with_opts(&database, &options)
+                .expect("input conversions and projections retain owned type data");
+        }
+    }
+}

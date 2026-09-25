@@ -1164,7 +1164,7 @@ impl<'a> Codegen<'a> {
         captures: &mut Vec<IrStmt>,
         captured_indices: &mut HashMap<NodeId, (String, u32, bool)>,
     ) -> Result<Vec<IrExpr>, String> {
-        if let NodeKind::Expr(ExprKind::Cast { operand, .. }) = self.kind(rhs) {
+        if matches!(self.kind(rhs), NodeKind::Expr(ExprKind::Cast { .. })) {
             let target_is_fixed = self
                 .query_descriptor(rhs)
                 .is_some_and(|descriptor| matches!(descriptor.shape, TypeShape::FixedArray { .. }));
@@ -1180,10 +1180,10 @@ impl<'a> Codegen<'a> {
                         "real fixed-array bit-stream destination is not supported in `{path}`"
                     ));
                 }
-                let source = match self.lower_bitstream_source(path, *operand)? {
-                    Some(value) => value,
-                    None => self.lower_expr(path, *operand)?,
-                };
+                // Preserve every conversion before scattering the snapshot.
+                // The destination's state domain cannot stand in for an
+                // intermediate cast (for example logic'(bit'(source))).
+                let source = self.lower_expr(path, rhs)?;
                 if source.is_real() {
                     return Err(format!(
                         "real bit-stream source cannot initialize a packed array in `{path}`"

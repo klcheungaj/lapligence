@@ -2,6 +2,9 @@
 
 use super::*;
 
+#[cfg(test)]
+mod tests;
+
 #[derive(Clone)]
 struct FixedArrayPortShape {
     dims: Vec<(i32, i32)>,

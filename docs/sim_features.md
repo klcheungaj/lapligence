@@ -2127,3 +2127,14 @@ is rejected by the frontend; parsing or declaration capture is not execution.
 | 70 | Partial | DPI | Bounded scalar DPI-C imports stage owned outputs while borrowing inputs; all foreign string results are cloned before aliased copy-out, which follows cancellation checks. Existing contracts cover scalar bit/logic/reg, integral atoms, real/shortreal, chandle/string and explicit libraries. Exports, packed/open arrays, ref/event formals and context callbacks remain unsupported; foreign-code execution has no new acceptance result. | [signatures.rs](../src/sim/codegen/lowering/collection/signatures.rs), [dpi.rs](../src/sim/emit_c/model/dpi.rs) |
 | 71 | Partial | PLI/VPI | Bounded generated VPI metadata, registration, compiletf/sizetf/calltf, scalar/vector/real values, hierarchy lookup/iteration, plugin startup and start/end callbacks have source paths. Call arguments borrow registered snapshots. Full tf_/acc_/vpi_ interfaces, arbitrary properties/iterators/regions/control and VPI calls from read-only evaluators remain restricted. | [native_tasks.rs](../src/sim/emit_c/owned/native_tasks.rs), [llg_vpi.c](../src/sim/rt/llg_vpi.c) |
 | 72 | Partial | Virtual interfaces | Typed instance/modport handles, packed members, delay-free methods, clocking-input reads, null/type checks and bounded fixed/dynamic/queue handle storage have paths. Timing-bearing tasks, event-formal virtual dispatch, dynamic output/inout clocking, associative/nested layouts and general polymorphic/native-capture forms remain restricted. | [virtual_interfaces.rs](../src/sim/codegen/lowering/collection/virtual_interfaces.rs), [native_access.rs](../src/sim/emit_c/owned/native_access.rs), [interfaces.rs](../src/sim/emit_c/model/interfaces.rs) |
+
+### Continuation: fixed input conversion qualification (SYN-007)
+
+Fixed input/assignment value capture now preserves every explicit or implicit
+cast instead of treating converted arrays as storage aliases. Nested two-state
+conversion is retained even when the final formal/result is four-state.
+`sim_review_tasks24_27` adds 1/7/65/129-bit nested-cast and value/selector-only
+input cases; private port tests check the owned conversion boundary after native
+snapshot teardown. Source changes and tests are supplied; Rust/public HDL and
+actual generated-model qualification have not been executed for this increment.
+No ref/inout dynamic topology or new capacity profile is implied.

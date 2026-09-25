@@ -180,3 +180,12 @@ writes with explicit continuous variable sites using canonical storage intervals
 while keeping net contribution identity and disjoint elements intact. Its tests
 also check source-only sensitivity and static pattern-target topology. These
 source/test additions require public and generated-model host qualification.
+
+## Fixed input conversion boundaries
+
+Storage discovery may follow casts, but value projection and bit-stream discovery
+defer a cast to the expression lowerer. Fixed-array input/assignment scattering
+snapshots the complete converted value, not its operand. This retains nested
+four/two/four-state conversions before declaration-order cell projection.
+Direct storage, runtime selected rows, and their source/selector dependencies
+keep the existing view path; ref/inout topology is not widened.

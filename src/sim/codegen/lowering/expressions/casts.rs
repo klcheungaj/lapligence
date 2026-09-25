@@ -114,6 +114,11 @@ impl<'a> Codegen<'a> {
         path: &str,
         node: NodeId,
     ) -> Result<Option<IrExpr>, String> {
+        // Callers lower a conversion as an expression. Looking through it for
+        // a storage array would erase the cast, even when its result is packed.
+        if matches!(self.kind(node), NodeKind::Expr(ExprKind::Cast { .. })) {
+            return Ok(None);
+        }
         if self.query_descriptor(node).is_some_and(|descriptor| {
             matches!(
                 &descriptor.shape,
