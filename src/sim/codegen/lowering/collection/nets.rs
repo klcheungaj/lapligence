@@ -263,25 +263,29 @@ impl<'a> Codegen<'a> {
             .ok()
             .filter(|width| *width != 0)
             .ok_or_else(|| self.alias_error(alias, "has an invalid indexed part-select width"))?;
+        if width > bits.len() {
+            return Err(self.alias_error(alias, "has an indexed part-select outside its net"));
+        }
         let start = self.eval_bound_i128(base_expr)?;
+        let span = i128::try_from(width - 1).map_err(|_| {
+            self.alias_error(alias, "has an overflowing indexed part-select")
+        })?;
+        // Return MSB-to-LSB order, not the direction in which the interval
+        // was specified. For [0:N], [base -: W] is [base-W+1 : base].
         let ascending = range.left < range.right;
-        let (start, step) = if ascending {
-            (start, if neg { -1 } else { 1 })
-        } else {
-            (
-                if neg {
-                    start
-                } else {
-                    start
-                        .checked_add(i128::try_from(width - 1).unwrap_or(i128::MAX))
-                        .ok_or_else(|| {
-                            self.alias_error(alias, "has an overflowing indexed part-select")
-                        })?
-                },
-                -1,
-            )
+        let (start, step) = match (ascending, neg) {
+            (true, true) => (start.checked_sub(span), 1),
+            (false, false) => (start.checked_add(span), -1),
+            (true, false) => (Some(start), 1),
+            (false, true) => (Some(start), -1),
         };
-        let mut result = Vec::with_capacity(width);
+        let start = start.ok_or_else(|| {
+            self.alias_error(alias, "has an overflowing indexed part-select")
+        })?;
+        let mut result = Vec::new();
+        result.try_reserve_exact(width).map_err(|_| {
+            self.alias_error(alias, "cannot allocate indexed part-select projection")
+        })?;
         for offset in 0..width {
             let label = start
                 .checked_add(i128::try_from(offset).unwrap_or(i128::MAX) * step)

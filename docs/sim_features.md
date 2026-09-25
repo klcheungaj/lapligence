@@ -2150,3 +2150,15 @@ record-copy, transitive reference, modport-array and independent primitive-termi
 coverage at 1/7/65/129 bits. The output-expression and inequivalent-ref negatives
 remain. Rust/import and public execution are pending; no full port matrix acceptance
 or runtime ref/inout rewiring is claimed.
+
+### Continuation: indexed fixed net aliases (SYN-010)
+
+Corrected the ascending-declaration / negative-indexed selection in static alias
+bit pairing: `wire [0:7] up; up[5 -: 3]` pairs labels 3,4,5, not 5,4,3.
+The other three declaration/indexed-direction combinations remain unchanged.
+Projection width is bounded before allocation, which is fallible. Exact owned
+physical-bit tests include all four combinations, negative labels and singleton
+widths; `continuation_24_27/alias_indexed.sv` adds 1/7/65/129-bit bidirectional,
+packed-member, net-array, force/release and float controls. Same-net-type and
+self/duplicate/variable alias errors are retained. Rust/public and waveform-host
+qualification remain pending; no dynamic alias creation is introduced.

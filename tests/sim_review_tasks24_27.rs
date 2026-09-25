@@ -96,3 +96,50 @@ fn fixed_structural_port_graphs_lower_after_native_teardown() {
         }
     }
 }
+
+
+#[test]
+fn indexed_fixed_aliases_preserve_both_directions_and_release() {
+    for width in [1, 7, 65, 129] {
+        let define = format!("CONTINUATION_ALIAS_W={width}");
+        sim_cli::run_case_with_args(
+            "continuation_24_27", "alias_indexed", &format!("ALIASES_PASS W={width}\n"),
+            "", &[], &["--edition", "2009", "--define", &define],
+        );
+    }
+}
+
+#[test]
+fn static_alias_legality_remains_stricter_than_port_matching() {
+    sim_cli::reject_case_with_args(
+        "net_resolution", "syn_010_self_alias", "cannot alias a net to itself", &["--edition", "2009"],
+    );
+    sim_cli::reject_case_with_args(
+        "net_resolution", "syn_010_duplicate_alias", "same bits of the same nets more than once",
+        &["--edition", "2009"],
+    );
+    sim_cli::reject_case_with_args(
+        "net_resolution", "syn_010_incompatible_alias", "common nettype", &["--edition", "2009"],
+    );
+    sim_cli::reject_case_with_args(
+        "net_resolution", "syn_010_variable_alias", "is not a net", &["--edition", "2009"],
+    );
+}
+
+#[test]
+fn indexed_alias_graph_lowers_without_native_storage() {
+    use llg::core::{compile, db};
+    use llg::sim::{codegen, opt::OptConfig};
+    let database = {
+        let result = compile::compile_sources_checked(
+            &[compile::OwnedSource::compilation_unit("alias_indexed.sv",
+                include_str!("fixtures/sim/continuation_24_27/alias_indexed.sv"))],
+            &compile::CompileOpts { top: Some("tb".to_owned()), ..Default::default() },
+        ).unwrap();
+        db::Db::from_slang(&result.snapshot).unwrap()
+    };
+    database.validate().unwrap();
+    for options in [OptConfig::none(), OptConfig::default()] {
+        codegen::generate_from_db_with_opts(&database, &options).unwrap();
+    }
+}

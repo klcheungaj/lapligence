@@ -194,3 +194,9 @@ Primitive terminal remapping also recurses through `PackedSelect` and preserves
 its steps/type flags. Every selected target within a composite uses that output
 terminal's contribution slot. Alias-projected source terminals keep their existing
 route; the direct remapper test protects the non-alias fallback separately.
+
+Static indexed aliases enumerate the selected interval in declaration MSB-to-LSB
+order. On an ascending declaration, `[base -: width]` starts at `base-width+1`
+and walks upward; descending declarations keep their downward walk. Extent and
+allocation checks precede materialization. Net-type, duplicate/self-alias and
+elaboration-only topology constraints remain separate from port compatibility.
