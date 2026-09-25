@@ -160,3 +160,9 @@ coordinate declarations, and every write reads those declarations rather than
 reevaluating a selector after an earlier write. The explicit continuous-pattern
 mode retains static selectors for structural driver mapping. This does not
 change streaming `with` selectors or their component-by-component semantics.
+
+Fixed-layout qualification in `collection/fixed_values/tests.rs` checks nested
+member offsets and leaf identities separately from public value tests. A stream
+backed by multiple cells is a composite reference in the owned emitter; it must
+not be replaced by a detached packed pointer. Union overlap and packed capacity
+remain distinct from declaration-order record/array layout.

@@ -1,6 +1,9 @@
 //! Fixed value activations keep declaration-order payloads and typed projections.
 use super::*;
 
+#[cfg(test)]
+mod tests;
+
 /// Compute a flattened width without applying the packed-value capacity.
 ///
 /// Fixed-array reductions can consume a model array cell by cell, so their

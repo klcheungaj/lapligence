@@ -1150,3 +1150,9 @@ qualification in `continuation_20_23`. It retains the original SYN-003 illegal
 lvalue cases and adds native-snapshot-drop lowering. The private fixed-array
 capture tests check ordered and repeated selector occurrences independently of
 public HDL. Execute both optimizer modes before recording task acceptance.
+
+The continuation layout matrix extends the retained SYN-012 suite with nested
+records/rows, union values and signed/state-aware projections at ten limb-edge
+widths. It uses strict logical/case equality and deep-copy/NBA controls; distinct
+nominal types and illegal union casts remain negative tests. Descriptor unit
+oracles are not a substitute for running the public and snapshot-drop paths.

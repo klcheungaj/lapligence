@@ -27,6 +27,14 @@ coordinates. Continuous patterns keep constant topology until net-site remapping
 width/state tests, and retained illegal-target diagnostics. New Rust/public
 and actual generated-model checks remain pending; this is not full acceptance.
 
+SYN-012 retains the fixed descriptor, composite-reference projection and copy
+machinery. The continuation matrix adds nested array/record/union values,
+1/7/8/31/32/33/63/64/65/129-bit leaves, signed views, mixed state domains,
+logical/case equality, immediate-member conditionals and deep NBA snapshots.
+Private descriptor tests independently check offsets, nominal leaf identity,
+union overlap and capacity/native-leaf boundaries. No new independent layout
+failure was established; new Rust/public qualification is unexecuted here.
+
 SYN-025-N09 now retains the enclosing pattern-case comparison mode for both
 union tag bits and payload constants. The prior casex/X-tag negative oracle is
 corrected; the casez/X-tag negative and ordinary checked-access diagnostics
