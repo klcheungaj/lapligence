@@ -1,0 +1,2 @@
+library mapped "rtl/*.sv";
+library other "rtl/cell.sv";

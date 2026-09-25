@@ -1,0 +1,2 @@
+library A "rtl/cell.sv";
+library B "*/cell.sv";

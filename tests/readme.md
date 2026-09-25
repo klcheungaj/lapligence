@@ -1073,3 +1073,11 @@ tests do not relax positional-count validation or the CLI diagnostic checks.
   local, call, return, NBA and input-port contexts. Slang semantic tests inspect
   resolved declaration-order operands after snapshot drop; existing key-index
   and uncovered-pattern negative tests remain independent controls.
+
+The `sim_review_tasks08_11` library fixtures exercise explicit/wildcard/directory
+precedence, declaration-order reversal, a lower-rank tie resolved later, repeated
+same-library patterns, explicit library overrides and genuine ambiguity. They
+run both target editions and optimizer modes. Exact-source tests retain owned
+configured hierarchy after dropping Slang; focused admission tests cover joint
+disk/logical matches, retained source bytes and pre-move budget failures. These
+new tests are supplied for host execution, not recorded here as passing results.

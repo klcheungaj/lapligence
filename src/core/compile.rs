@@ -15,7 +15,9 @@ pub use crate::ffi::slang::{
     DiagnosticSubsystem, LanguageEdition, Snapshot, Source, SourceRange,
 };
 mod editions;
+mod library_mapping;
 use editions::edition_diagnostics;
+use library_mapping::{library_match_pattern, LibraryMapBuffers, LibrarySpecificity};
 
 /// A source buffer owned by a compile request.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -650,27 +652,30 @@ pub fn compile(opts: &CompileOpts) -> Result<CompileOut, StartupError> {
         MAX_LIBRARY_MAP_WORK,
         effective_source_byte_limit(opts.limits),
     );
-    admit_library_maps_with_targets(
-        opts,
-        &mut identities,
-        &mut library_owned,
-        &mut source_count,
-        &mut remaining,
-        &mut library_map_work,
-        &mut admitted_targets,
-    )?;
     let path_roots = owned;
     let mut owned = opts.sources.clone();
     owned.extend(path_roots.iter().cloned());
-    admit_in_memory_library_maps(
-        &opts.library_maps,
-        &mut owned,
-        &mut library_owned,
-        &mut source_count,
-        &mut remaining,
-        effective_source_count_limit(opts.limits),
-        &mut library_map_work,
-    )?;
+    if !opts.library_map_files.is_empty() || !opts.library_maps.is_empty() {
+        let mut buffers =
+            LibraryMapBuffers::new(&mut owned, &mut library_owned, &mut library_map_work)?;
+        admit_library_maps_with_targets(
+            opts,
+            &mut identities,
+            &mut buffers,
+            &mut source_count,
+            &mut remaining,
+            &mut library_map_work,
+            &mut admitted_targets,
+        )?;
+        collect_in_memory_library_maps(
+            &opts.library_maps,
+            &mut buffers,
+            source_count,
+            effective_source_count_limit(opts.limits),
+            &mut library_map_work,
+        )?;
+        buffers.finish(&mut remaining, &mut library_map_work)?;
+    }
     let mut macros = macro_environment_from_defines(&opts.defines);
     let expansion_budget = MacroExpansionBudget::new(effective_source_byte_limit(opts.limits));
     for path_root in path_roots {
@@ -1316,21 +1321,24 @@ fn admit_library_maps(
     work: &mut LibraryMapWorkBudget,
 ) -> Result<(), StartupError> {
     let mut admitted_targets = HashMap::new();
+    let mut sources = Vec::new();
+    let mut buffers = LibraryMapBuffers::new(&mut sources, library_sources, work)?;
     admit_library_maps_with_targets(
         opts,
         identities,
-        library_sources,
+        &mut buffers,
         source_count,
         remaining,
         work,
         &mut admitted_targets,
-    )
+    )?;
+    buffers.finish(remaining, work)
 }
 
 fn admit_library_maps_with_targets(
     opts: &CompileOpts,
     identities: &mut HashSet<PathBuf>,
-    library_sources: &mut Vec<LibrarySource>,
+    buffers: &mut LibraryMapBuffers<'_>,
     source_count: &mut usize,
     remaining: &mut u64,
     work: &mut LibraryMapWorkBudget,
@@ -1432,9 +1440,11 @@ fn admit_library_maps_with_targets(
         }
         for entry in entries {
             for pattern in entry.patterns {
+                let specificity = LibrarySpecificity::of_pattern(&pattern);
+                let match_pattern = library_match_pattern(&pattern, work)?;
                 let paths = expand_library_pattern_admitted_under(
                     base,
-                    &pattern,
+                    &match_pattern,
                     source_limit as u64,
                     work,
                     &map_target,
@@ -1452,10 +1462,21 @@ fn admit_library_maps_with_targets(
                     let path = target.actual_path();
                     let path_len = path.to_string_lossy().len();
                     work.charge_usize(path_len, "library source identity admission")?;
+                    let name = path.to_string_lossy();
+                    let already_admitted =
+                        buffers.offer(&name, &entry.library, specificity, work)?;
+                    if already_admitted {
+                        admitted_targets
+                            .entry(path.to_path_buf())
+                            .or_insert_with(|| target.clone());
+                        // A repeated map match or an explicit library assignment
+                        // reuses the admitted bytes. It never authorizes a reread.
+                        continue;
+                    }
                     if identities.contains(path) {
                         return Err(StartupError::new(
-                            StartupErrorKind::InvalidArgument,
-                            format!("source is assigned more than once: {}", path.display()),
+                            StartupErrorKind::Internal,
+                            format!("admitted source has no retained buffer: {}", path.display()),
                         ));
                     }
                     charge_library_map_source(source_count, source_limit, "library source")?;
@@ -1471,20 +1492,7 @@ fn admit_library_maps_with_targets(
                             format!("source path {name} exceeds the configured Slang byte limit"),
                         )
                     })?;
-                    let library_bytes = u64::try_from(entry.library.len()).map_err(|_| {
-                        StartupError::new(
-                            StartupErrorKind::LimitExceeded,
-                            "library name exceeds the configured Slang byte limit",
-                        )
-                    })?;
-                    let metadata_bytes =
-                        name_bytes.checked_add(library_bytes).ok_or_else(|| {
-                            StartupError::new(
-                                StartupErrorKind::LimitExceeded,
-                                "source metadata byte count overflow",
-                            )
-                        })?;
-                    let content_limit = remaining.checked_sub(metadata_bytes).ok_or_else(|| {
+                    let content_limit = remaining.checked_sub(name_bytes).ok_or_else(|| {
                         StartupError::new(
                             StartupErrorKind::LimitExceeded,
                             format!("source path {name} exceeds the configured Slang byte limit"),
@@ -1509,13 +1517,7 @@ fn admit_library_maps_with_targets(
                             format!("source path {name} exceeds the configured Slang byte limit"),
                         )
                     })?;
-                    work.charge_usize(entry.library.len(), "library source library clone")?;
-                    work.charge(1, "library source library clone")?;
-                    library_sources.push(LibrarySource::new(
-                        name,
-                        source_text,
-                        entry.library.clone(),
-                    ));
+                    buffers.sources.push(OwnedSource::compilation_unit(name, source_text));
                 }
             }
         }
@@ -1540,7 +1542,22 @@ fn admit_in_memory_library_maps(
     if maps.is_empty() {
         return Ok(());
     }
-    if *source_count > source_limit {
+    let mut buffers = LibraryMapBuffers::new(sources, library_sources, work)?;
+    collect_in_memory_library_maps(maps, &mut buffers, *source_count, source_limit, work)?;
+    buffers.finish(remaining, work)
+}
+
+fn collect_in_memory_library_maps(
+    maps: &[OwnedSource],
+    buffers: &mut LibraryMapBuffers<'_>,
+    source_count: usize,
+    source_limit: usize,
+    work: &mut LibraryMapWorkBudget,
+) -> Result<(), StartupError> {
+    if maps.is_empty() {
+        return Ok(());
+    }
+    if source_count > source_limit {
         return Err(StartupError::new(
             StartupErrorKind::LimitExceeded,
             "library map expansion exceeds the configured source limit",
@@ -1568,7 +1585,6 @@ fn admit_in_memory_library_maps(
         }
     }
 
-    let mut assigned = HashSet::new();
     let mut cursor = 0;
     while cursor < pending.len() {
         let map_name_len = pending[cursor].0.len();
@@ -1627,23 +1643,24 @@ fn admit_in_memory_library_maps(
         for entry in entries {
             for pattern in entry.patterns {
                 work.charge(1, "in-memory library pattern")?;
-                let mut source_matches = Vec::new();
-                for (index, source) in sources.iter().enumerate() {
+                let specificity = LibrarySpecificity::of_pattern(&pattern);
+                let match_pattern = library_match_pattern(&pattern, work)?;
+                let mut matches = Vec::new();
+                for source in buffers.sources.iter() {
                     work.charge(1, "in-memory source candidate scan")?;
-                    if map_pattern_matches(&base, &pattern, Path::new(&source.name), work)? {
-                        work.charge(1, "in-memory source match storage")?;
-                        source_matches.push(index);
+                    if map_pattern_matches(&base, &match_pattern, Path::new(&source.name), work)? {
+                        charge_library_map_clone(work, &source.name, "in-memory match name")?;
+                        matches.push(source.name.clone());
                     }
                 }
-                let mut library_matches = Vec::new();
-                for (index, source) in library_sources.iter().enumerate() {
+                for source in buffers.libraries.iter() {
                     work.charge(1, "in-memory library candidate scan")?;
-                    if map_pattern_matches(&base, &pattern, Path::new(&source.name), work)? {
-                        work.charge(1, "in-memory library match storage")?;
-                        library_matches.push(index);
+                    if map_pattern_matches(&base, &match_pattern, Path::new(&source.name), work)? {
+                        charge_library_map_clone(work, &source.name, "in-memory match name")?;
+                        matches.push(source.name.clone());
                     }
                 }
-                if source_matches.is_empty() && library_matches.is_empty() {
+                if matches.is_empty() {
                     return Err(StartupError::new(
                         StartupErrorKind::Input,
                         format!(
@@ -1652,88 +1669,18 @@ fn admit_in_memory_library_maps(
                         ),
                     ));
                 }
-
                 charge_key_comparison_work(
                     work,
-                    source_matches
-                        .iter()
-                        .map(|index| sources[*index].name.len()),
+                    matches.iter().map(String::len),
                     true,
                     "in-memory source ordering comparisons",
                 )?;
-                source_matches
-                    .sort_by(|left, right| sources[*left].name.cmp(&sources[*right].name));
-                if !source_matches.is_empty() {
-                    let source_count = sources.len();
-                    let removal_work = source_count
-                        .checked_mul(3)
-                        .and_then(|amount| amount.checked_add(source_matches.len()))
-                        .ok_or_else(|| work.limit_error("in-memory source removal"))?;
-                    work.charge_usize(removal_work, "in-memory source removal")?;
-                    for &index in source_matches.iter().rev() {
-                        work.charge(1, "in-memory library source admission")?;
-                        charge_library_source_metadata(remaining, &entry.library)?;
-                        let key = logical_path_key(
-                            Path::new(&sources[index].name),
-                            work,
-                            "in-memory source assignment",
-                        )?;
-                        if !assigned.insert(key) {
-                            return Err(StartupError::new(
-                                StartupErrorKind::InvalidArgument,
-                                format!(
-                                    "source is assigned more than once: {}",
-                                    sources[index].name
-                                ),
-                            ));
-                        }
-                    }
-                    let mut available = std::mem::take(sources)
-                        .into_iter()
-                        .map(Some)
-                        .collect::<Vec<_>>();
-                    for index in source_matches.into_iter().rev() {
-                        let source = available[index].take().ok_or_else(|| {
-                            StartupError::new(
-                                StartupErrorKind::Internal,
-                                "library map source match indices were not unique",
-                            )
-                        })?;
-                        work.charge(1, "in-memory source library clone")?;
-                        work.charge_usize(entry.library.len(), "in-memory source library clone")?;
-                        library_sources.push(LibrarySource::new(
-                            source.name,
-                            source.text,
-                            entry.library.clone(),
-                        ));
-                    }
-                    *sources = available.into_iter().flatten().collect();
-                }
-
-                for index in library_matches.drain(..).rev() {
-                    let source = &library_sources[index];
-                    work.charge_usize(
-                        source.library.len(),
-                        "in-memory matched source library comparison",
-                    )?;
-                    work.charge_usize(entry.library.len(), "in-memory map library comparison")?;
-                    if source.library != entry.library {
-                        return Err(StartupError::new(
-                            StartupErrorKind::InvalidArgument,
-                            format!("source is assigned more than once: {}", source.name),
-                        ));
-                    }
-                    let key = logical_path_key(
-                        Path::new(&source.name),
-                        work,
-                        "in-memory source assignment",
-                    )?;
-                    if !assigned.insert(key) {
-                        return Err(StartupError::new(
-                            StartupErrorKind::InvalidArgument,
-                            format!("source is assigned more than once: {}", source.name),
-                        ));
-                    }
+                // Retain the existing deterministic in-memory admission order.
+                // Assignment winners, unlike discovery order, are independent
+                // of map declaration order. No source moves during collection.
+                matches.sort_by(|left, right| right.cmp(left));
+                for name in matches {
+                    buffers.offer(&name, &entry.library, specificity, work)?;
                 }
             }
         }

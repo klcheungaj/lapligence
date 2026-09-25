@@ -38,6 +38,15 @@ return/NBA/input-port fixtures and snapshot-drop operand tests are added.
 The wrapper/Rust/public pipeline has not been executed for this increment;
 existing duplicate-index and uncovered-pattern diagnostics remain controls.
 
+SYN-032-N10 now defers assignment until authorized filesystem/logical map
+candidates have been ranked: explicit filename > wildcarded filename > directory
+with trailing separator. Same-library repeats are coalesced, higher-rank matches
+resolve lower-rank ties, and explicit library assignments override maps. Matched
+CLI/buffer sources reuse their admitted text; source count and library metadata
+are charged once. The new core resolver and public configured-design fixtures
+have not been executed through Rust/Slang here. N12's map-configuration decision,
+Q04's `-incdir` contract, and overall library/profile acceptance remain open.
+
 ## Current source status and qualification — 2026-09-23
 
 This inventory records the source status reconciled against the task checkout
