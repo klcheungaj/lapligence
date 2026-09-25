@@ -116,6 +116,24 @@ model tests supplement the public fixture. The frontend, Rust, public HDL and
 actual generated-model tests are added but unexecuted here; this is not full
 SYN-004 acceptance. Existing direct-record and arrays-of-record controls remain.
 
+### Fixed-array type-key context qualification
+
+SYN-001 continues the N03 resolved-element repair without a second key resolver.
+The `type_key_context_matrix` adds 1/7/65/129-bit typedef and signed leaves,
+recursive mixed-state records, explicit constant-function/arithmetic indices,
+last-type precedence, immediate row-type precedence, unused keys with defaults,
+module/automatic initialization, argument/return values, and legal NBA capture.
+Packed-structure type keys and index-only semantic keys remain neighboring paths.
+Runtime fill values are side-effect free; the tests do not impose an evaluation
+count where the assignment-pattern rules leave it undefined.
+
+New duplicate-equivalent-index, uncovered-element, and incompatible-value
+fixtures require their specific frontend diagnostic classes. Snapshot-drop
+lowering supplements public execution in both optimizer modes. These are added
+qualification owners, not executed passes or closure of every SYN-001 context.
+The earlier N03 input-port and original pattern suites remain required controls;
+no production key-resolution rewrite was justified by this scoped source check.
+
 ## Current source status and qualification — 2026-09-23
 
 This inventory records the source status reconciled against the task checkout

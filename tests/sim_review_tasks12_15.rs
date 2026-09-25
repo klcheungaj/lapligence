@@ -159,3 +159,52 @@ fn structure_conditional_descriptors_and_lowering_survive_snapshot_teardown() {
             .expect("direct and function-return record merging after snapshot drop");
     }
 }
+
+#[test]
+fn type_keys_preserve_precedence_types_and_contexts_with_strict_negative_neighbors() {
+    sim_cli::run_case_with_args(
+        "continuation_12_15", "type_key_context_matrix", "TYPE_KEYS_PASS\n", "", &[],
+        &["--edition", "2009"],
+    );
+    sim_cli::reject_case_with_args(
+        "continuation_12_15", "type_key_duplicate_index", "multiple keys for index",
+        &["--edition", "2009"],
+    );
+    sim_cli::reject_case_with_args(
+        "continuation_12_15", "type_key_missing_coverage", "not all elements",
+        &["--edition", "2009"],
+    );
+    for optimized in [false, true] {
+        let output = sim_cli::invoke_with_env(
+            "continuation_12_15", "type_key_incompatible_value", optimized,
+            &["--edition", "2009"], &[], &[],
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(1), "{stderr}");
+        assert!(output.stdout.is_empty(), "{output:?}");
+        assert!(
+            stderr.contains("cannot be assigned to type")
+                || stderr.contains("no implicit conversion from"),
+            "expected a type-conversion diagnostic, not a generic rejection: {stderr}",
+        );
+    }
+}
+
+#[test]
+fn full_type_key_matrix_lowers_without_borrowing_frontend_storage() {
+    use llg::core::{compile, db};
+    use llg::sim::{codegen, opt::OptConfig};
+    let database = {
+        let output = compile::compile_sources_checked(
+            &[compile::OwnedSource::compilation_unit("type-key-contexts.sv",
+                include_str!("fixtures/sim/continuation_12_15/type_key_context_matrix.sv"))],
+            &compile::CompileOpts { top: Some("tb".to_owned()), ..Default::default() },
+        ).expect("runtime-valued fixed type-key context matrix");
+        db::Db::from_slang(&output.snapshot).expect("owned type-key context graph")
+    };
+    database.validate().unwrap();
+    for options in [OptConfig::none(), OptConfig::default()] {
+        codegen::generate_from_db_with_opts(&database, &options)
+            .expect("type-key declaration, local, return, argument and NBA after snapshot drop");
+    }
+}

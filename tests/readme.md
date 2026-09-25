@@ -1108,3 +1108,13 @@ combinational reads and NBA capture. `owned::tests::conditional_records` adds
 cross-limb frame-owner checks and a real-emitter IR model for supported generated
 sanitizer runs. Keep it distinct from standalone handwritten C probes. Re-run
 `sim_rtl_completion` and the original array-conditional suite as neighbors.
+
+
+Type-key continuation coverage in `sim_review_tasks12_15` retains the earlier
+N03 bridge and input-port controls. Its width-parameterized matrix tests type,
+index and row precedence; mixed state/signedness; declaration/local/call/return
+values; and NBA issue-time capture. Single-fault negatives distinguish duplicate
+indices, missing coverage and incompatible values from legal unused or repeated
+type keys. No side-effect count is assumed for type/default expressions. Run the
+original `sim_syn001_type_keys` and `sim_review_bundle_patterns` suites together
+with the new public and snapshot-drop tests before recording full acceptance.
