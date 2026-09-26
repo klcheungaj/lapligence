@@ -690,6 +690,10 @@ real values use a separate representation.
   `@` addresses the highest remaining dimension. Invalid selected ranges leave
   every cell unchanged; invalid later jumps stop while retaining earlier writes.
   Incomplete rows leave unread subwords unchanged.
+  Public SV2009 coverage includes mixed-direction 3-D declarations, a runtime
+  selected slice with explicit descending bounds, a 129-bit selected word, and
+  settled per-leaf reader notification after a selected load. Same-time-slot
+  wakeup order is unqualified.
   V §17.2.8; SV §21.4 **[1995/SV-2005]**.
 
   Short words pad a leading X/Z with that state; known digits zero-extend.
@@ -698,8 +702,10 @@ real values use a separate representation.
   without undoing earlier writes. Two-state X/Z conversion occurs before enum
   range checking, without discarding high bits. Sparse addressed 2009 files omit
   the no-address short-file warning; 2001 count warnings remain, including excess
-  data from repeated in-range addresses. General malformed-token and four-state
-  enum numeric policies are not fully qualified. Dynamic/queue/associative,
+  data from repeated in-range addresses. Q02's additional diagnostics and short
+  X/Z token-extension intersections, including selected views, remain unqualified.
+  General malformed-token and four-state enum numeric policies are not fully
+  qualified. Dynamic/queue/associative,
   real/non-packed memories and fully indexed scalar memory-element targets reject.
 - 🟦 **Memory writers** — `$writememh/$writememb` emit consumable four-state words
   from admitted fixed-memory views in low-to-high row-major order. The same
