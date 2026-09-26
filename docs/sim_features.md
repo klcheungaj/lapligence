@@ -482,11 +482,15 @@ real values use a separate representation.
   integral elements or fixed row/record `with` integral keys, preserving
   signed/enum keys and non-key fields. Selected receiver coordinates are
   captured once; swaps reread live storage and snapshot overlapping elements.
-  Automatic locals/formals are represented. Integral `with` keys may query the
+  Automatic locals/formals are represented. Reverse qualification covers
+  1/2/3/17 elements, negative/reversed bounds, selected 2-D/3-D rows, unpacked
+  records, input/inout/ref formals, and settled reader notifications in both
+  optimizer modes; SV2001 rejects the method. Integral `with` keys may query the
   live iterator's declared index on ascending, descending and row arrays.
   Repeated-key stability is unspecified. Reverse `with`,
   const-ref receivers, record sorting without a key, fixed shuffle/locators,
-  native/real/string elements and incompatible maps reject.
+  native/real/string elements and incompatible maps are outside this fixed
+  integral profile and reject.
   SV §7.12.2 **[SV-2009]**.
 - 🟨 **Resizable-container methods** — Packed reductions/`with` callbacks,
   locators, min/max/unique result queues, sort/rsort/reverse/shuffle are present.
