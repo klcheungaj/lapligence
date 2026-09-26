@@ -111,10 +111,15 @@ requirements above apply without repeating them for each suite.
   modes, then checks elaborated names and parameters after snapshot destruction;
   unknown/illegal targets, duplicate names and out-of-scope actuals reject.
 - [SYN-036 capacity](fixtures/sim/syn036_capacity/readme.md) separates syntax from
-  resource limits. Test 65,536/1,048,575-bit values and rejection at 1,048,576;
-  fixed-array cell limits are distinct from flattened-value limits. Two-state net
-  illegality is distinct from conversion into two-state storage. Registry growth
-  probes must exceed retired ceilings without silently changing HDL semantics.
+  resource limits. Public cases cover below/at/above 65,536 cells and the
+  exclusive 1,048,576-bit packed boundary in both editions and optimizer modes;
+  2009 fixed-value formals cover the separate flattened payload bound. Nested
+  values, cell-wise reductions, recursion and checked dimension products/strides retain
+  separate controls. Run the large generated models in the dedicated resource lane:
+  `scripts/run-tests.sh --test-work-dir /build --test-threads 10 --test sim_syn036_capacity --run-ignored only`.
+  `sim_nonconvergence` and `runtime_boundaries` own scheduler/process budget
+  probes; `sim_capacity` owns retired registry-growth controls. Two-state net
+  illegality remains distinct from conversion into two-state storage.
 - SYN-037 [finite-loop fixtures](fixtures/sim/loops/readme.md) include function
   step lists, ordered copy-out, continue versus break/return, named disable,
   shadowing and repeated wide-owner activations. Task-step rejection stays separate.

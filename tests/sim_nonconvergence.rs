@@ -121,6 +121,14 @@ fn budget_limit_boundary_and_configuration_are_checked() {
             "missing boundary diagnostic: {below_stderr}"
         );
 
+        let above = invoke(
+            "finite_zero_time_loop",
+            optimized,
+            &[("LLG_PROCESS_STEP_LIMIT", "200001")],
+        );
+        assert!(above.status.success(), "above boundary failed: {above:?}");
+        assert_eq!(above.stdout, b"finite=200000\n");
+
         for (name, value) in [
             ("LLG_PROCESS_STEP_LIMIT", "0"),
             ("LLG_PROCESS_STEP_LIMIT", "18446744073709551616"),
@@ -176,5 +184,35 @@ fn budget_limit_boundary_and_configuration_are_checked() {
             invalid_alias_stderr.contains("invalid LLG_NONCONVERGENCE_LIMIT"),
             "missing alias config diagnostic: {invalid_alias_stderr}"
         );
+    }
+}
+
+#[test]
+fn region_pass_budget_has_below_at_and_above_boundaries() {
+    assert!(
+        llg::sim::build::cmake_available(),
+        "CLI tests require CMake"
+    );
+    for optimized in [false, true] {
+        for (limit, success) in [("1", false), ("2", true), ("3", true)] {
+            let output = invoke(
+                "region_pass_boundary",
+                optimized,
+                &[
+                    ("LLG_ZERO_LOOP_LIMIT", limit),
+                    ("LLG_PROCESS_STEP_LIMIT", "100"),
+                ],
+            );
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            if success {
+                assert!(output.status.success(), "limit {limit}: {stderr}");
+                assert_eq!(output.stdout, b"PASS region passes\n");
+                assert!(stderr.is_empty(), "limit {limit}: {stderr}");
+            } else {
+                assert_eq!(output.status.code(), Some(1), "limit {limit}: {stderr}");
+                assert!(output.stdout.is_empty(), "limit {limit}: {output:?}");
+                assert!(stderr.contains("scheduler pass limit 1"), "{stderr}");
+            }
+        }
     }
 }

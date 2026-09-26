@@ -543,4 +543,49 @@ mod tests {
             "{error}"
         );
     }
+
+    #[test]
+    fn callback_inline_depth_accepts_31_and_32_but_rejects_33() {
+        let mut model = IrModel::new("pure_depth".to_owned(), 1).unwrap();
+        model.funcs.push(IrFunc::new(
+            "f_pure".to_owned(),
+            Some(IrType::Packed {
+                width: 1,
+                signed: false,
+                two_state: false,
+            }),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        ));
+        let ctx = RCtx {
+            model: &model,
+            func: None,
+            sampled: false,
+            activation_label: None,
+        };
+        let call = IrCallExpr::new(0, Vec::new(), IrDepth::PROC, false);
+        for already_nested in [30, 31] {
+            let mut frame = Frame::new(&ctx);
+            frame.read_only_callback = true;
+            frame.formal_overrides = vec![Vec::new(); already_nested];
+            assert!(
+                frame.pure_callback_call(&call).is_ok(),
+                "depth {}",
+                already_nested + 1
+            );
+        }
+        let mut frame = Frame::new(&ctx);
+        frame.read_only_callback = true;
+        frame.formal_overrides = vec![Vec::new(); 32];
+        let error = frame
+            .pure_callback_call(&call)
+            .err()
+            .expect("33rd callback must be rejected");
+        assert!(
+            error.contains("excessively deep evaluator callbacks"),
+            "{error}"
+        );
+    }
 }

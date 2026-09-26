@@ -57,12 +57,13 @@ supported.
 
 | Resource | Limit or behavior |
 | --- | --- |
-| Packed value / single aggregate payload | At most 1,048,575 bits; `LLG_SUPPORTED_WIDTH_LIMIT = 1 << 20` is exclusive. Packed storage uses the actual width. |
-| Generated fixed unpacked array | At most 65,536 total cells (`LLG_MAX_FIXED_ARRAY_CELLS`); dimensions and products are checked before allocation. Each packed cell has the packed-value limit. |
-| Fixed array used as a value, formal or stream | Must fit one packed payload. Direct rank-one reductions read cells individually and may exceed that total payload width. |
-| Subroutine recursion | Guard at depth 256; diagnoses exhaustion and returns the type default. |
-| Read-only helper inlining | Guard at 32 levels. |
-| Scheduler/process work | Default budgets of 10,000,000; controlled by `LLG_ZERO_LOOP_LIMIT`, `LLG_PROCESS_STEP_LIMIT` and its `LLG_NONCONVERGENCE_LIMIT` alias. |
+| Packed element or value | 1–1,048,575 bits inclusive; `LLG_SUPPORTED_WIDTH_LIMIT = 1 << 20` is exclusive. Each packed cell uses its actual width. |
+| Generated fixed unpacked array | At most 65,536 cells in the product of all dimensions (`LLG_MAX_FIXED_ARRAY_CELLS`). Extents/products are checked before allocation; an over-limit declaration receives a resource diagnostic. |
+| Fixed array used as a value, formal or stream | The complete flattened payload must fit 1,048,575 bits, independently of the cell-count limit. Direct rank-one reductions read cells individually and may exceed that flattened width. |
+| Subroutine recursion | At most 256 active calls; a further call emits a recursion-limit diagnostic and returns the result type's default. |
+| Read-only helper inlining | At most 32 nested callback calls; deeper emission receives an explicit diagnostic. |
+| Scheduler region passes | Default 10,000,000 per time slot; `LLG_ZERO_LOOP_LIMIT` accepts a positive decimal `uint64`. Exhaustion diagnoses a zero-delay loop. |
+| Process back-edges | Default 10,000,000 per process; `LLG_PROCESS_STEP_LIMIT` overrides the `LLG_NONCONVERGENCE_LIMIT` alias. An explicitly set region limit also supplies the process limit when neither process variable is set. Both require positive decimal `uint64` values. |
 | Driver, alias, process, final, event-waiter, procedural-driver and force registries | Size to the design or grow with checked allocation; the former 16-driver and 256-alias ceilings do not apply. |
 
 **The 65,536-cell array limit does not meet the cited 16,777,216-element minimum

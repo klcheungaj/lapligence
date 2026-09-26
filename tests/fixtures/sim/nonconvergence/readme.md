@@ -10,3 +10,6 @@ optimized and `--no-opt` modes.
 generated loop back-edges inside a coroutine (`LLG_NONCONVERGENCE_LIMIT` is an
 alias); both require positive decimal `uint64_t` values. Setting only the
 scheduler variable applies that value to the process budget as well.
+`region_pass_boundary.sv` uses one finite `#0` yield to probe region budgets
+1/2/3 with a separate process budget. The finite loop probes process budgets
+199,999/200,000/200,001 for one below/at/above the selected test threshold.

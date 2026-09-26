@@ -152,3 +152,40 @@ fn fixed_layout_capacity_and_native_leaf_gates_stay_separate() {
     let mixed = aggregate(15, AggregateKind::UnpackedStruct, vec![("native", native)]);
     assert!(fixed_width_bits(&mixed).is_none());
 }
+
+#[test]
+fn flattened_value_width_has_independent_below_at_and_above_boundaries() {
+    let below = array(16, atom(17, 524_287, false, false), vec![(0, 1)]);
+    let at = array(18, atom(19, 349_525, false, false), vec![(0, 2)]);
+    let above = array(20, atom(21, 524_288, false, false), vec![(0, 1)]);
+    assert_eq!(fixed_width_bits(&below), Some(1_048_574));
+    assert_eq!(fixed_width(&below), Some(1_048_574));
+    assert_eq!(fixed_width_bits(&at), Some(1_048_575));
+    assert_eq!(fixed_width(&at), Some(1_048_575));
+    assert_eq!(fixed_width_bits(&above), Some(1_048_576));
+    assert_eq!(fixed_width(&above), None);
+}
+
+#[test]
+fn dimension_products_are_checked_before_fixed_array_allocation() {
+    assert_eq!(fixed_array_cell_count(&[(0, 65_534)]), Ok(65_535));
+    assert_eq!(fixed_array_cell_count(&[(0, 65_535)]), Ok(65_536));
+    assert!(fixed_array_cell_count(&[(0, 65_536)])
+        .unwrap_err()
+        .contains("65537 cells"));
+
+    let maximum_extent = (i32::MIN, i32::MAX);
+    let error = fixed_array_cell_count(&[maximum_extent; 3]).unwrap_err();
+    assert_eq!(
+        error,
+        "fixed-array dimension product overflows u64 at dimension 1"
+    );
+    let descriptor = array(22, atom(23, 1, false, false), vec![maximum_extent; 3]);
+    assert_eq!(fixed_width_bits(&descriptor), None);
+    assert!(fixed_path_descriptor(&descriptor, &[AggregatePathPart::Index(i32::MIN)]).is_none());
+
+    let stride_overflow = array(24, atom(25, 2, false, false), vec![maximum_extent]);
+    assert!(
+        fixed_path_descriptor(&stride_overflow, &[AggregatePathPart::Index(i32::MIN)]).is_none()
+    );
+}
