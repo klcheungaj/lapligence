@@ -495,7 +495,11 @@ real values use a separate representation.
   records, input/inout/ref formals, and settled reader notifications in both
   optimizer modes; SV2001 rejects the method. Integral `with` keys may query the
   live iterator's declared index on ascending, descending and row arrays.
-  Repeated-key stability is unspecified. Reverse `with`,
+  Sort/rsort qualification covers signed and unsigned integral and enum elements,
+  packed and unpacked record maps, repeated keys, ascending/descending bounds,
+  singleton arrays, zero-time function calls and selected automatic/formal rows
+  in both optimizer modes; SV2001 rejects fixed ordering. Repeated-key stability
+  and X/Z key order are unspecified. Reverse `with`,
   const-ref receivers, record sorting without a key, fixed shuffle/locators,
   native/real/string elements and incompatible maps are outside this fixed
   integral profile and reject.

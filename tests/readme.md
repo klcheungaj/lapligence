@@ -55,7 +55,7 @@ requirements above apply without repeating them for each suite.
 | Datatypes | `sim_data_types`, `sim_data_types_extended`, `sim_data_type_edges`, `sim_data_types_next`, `sim_data_types_completion`; [mixed-type/net matrix](fixtures/sim/type_conformance/readme.md) for independent arithmetic, conversion and resolution oracles. |
 | Ports and nets | `sim_port_net_types`, `sim_net_resolution`, `sim_net_defaults`, `sim_net_decl`, `sim_inout`: directional collapse, independent drivers, strengths/defaults, aliases, selections and delayed publication. Port-type unit tests cover all 81 cells; frontend tests cover 49 resolved pairs. |
 | Practical RTL | [RTL composition](fixtures/sim/rtl_completion/readme.md), `sim_rtl_completion`: initialization, fixed values/references/unions, ports and array/interface/inout composition. |
-| Arrays and projections | `sim_fixed_array_reductions`, `sim_syn026_iterator_indices`, `sim_array_conditional_assignments`, `sim_fixed_ordering_review`, `sim_syn027_fixed_reverse`, `sim_group1_repairs`, `sim_group1_formal_repairs`: [reductions](fixtures/sim/fixed_array_reductions/readme.md), [iterator indices](fixtures/sim/syn026_iterator_indices/readme.md), [conditional assignments](fixtures/sim/array_conditional_assignments/readme.md), [fixed reverse](fixtures/sim/syn027_fixed_reverse/readme.md), activation isolation, signed member conversion, captured outputs and const/NBA negatives. |
+| Arrays and projections | `sim_fixed_array_reductions`, `sim_syn026_iterator_indices`, `sim_array_conditional_assignments`, `sim_fixed_ordering_review`, `sim_syn027_fixed_reverse`, `sim_syn028_fixed_sort`, `sim_group1_repairs`, `sim_group1_formal_repairs`: [reductions](fixtures/sim/fixed_array_reductions/readme.md), [iterator indices](fixtures/sim/syn026_iterator_indices/readme.md), [conditional assignments](fixtures/sim/array_conditional_assignments/readme.md), [fixed reverse](fixtures/sim/syn027_fixed_reverse/readme.md), fixed sort/rsort maps and permutation, activation isolation, signed member conversion, captured outputs and const/NBA negatives. |
 | Expressions | `sim_fill_literals`, `sim_wildcard_eq`, `sim_bit_queries`, `sim_packed_strings`, `sim_sequential_predicates`, `sim_syn022_primitive_patterns`, `sim_syn023_structure_patterns`, `sim_syn024_tagged_patterns`: fills, wildcard equality/inside, queries, [ordered predicates/patterns](fixtures/sim/sequential_predicates/readme.md), [primitive pattern scope/edition checks](fixtures/sim/syn022_primitive_patterns/readme.md), [recursive fixed structure patterns](fixtures/sim/syn023_structure_patterns/readme.md), and [tagged pattern modes and bindings](fixtures/sim/syn024_tagged_patterns/readme.md). |
 | Processes and loops | [Always-family](fixtures/sim/process_semantics/readme.md), [loops](fixtures/sim/loops/readme.md), `sim_loops`, `sim_syn014_process_contexts`: source-loop exits, omissions/bounds, aggregate sensitivity, legal disjoint writers and illegal writer/event controls. |
 | Scheduling and synchronization | `sim_process_control`, `sim_semaphore`, `sim_mailboxes`, `sim_procedural_assign`, `sim_force`; [processes](fixtures/sim/process_control/readme.md), [semaphores](fixtures/sim/semaphore/readme.md), [mailboxes](fixtures/sim/mailboxes/readme.md), [nonconvergence](fixtures/sim/nonconvergence/readme.md). |
@@ -78,6 +78,12 @@ requirements above apply without repeating them for each suite.
   and repaired pattern/array/record writer contexts. `sim_syn015_stream_contexts`
   checks fixed casts, ref projections, storage-order selectors, alignment and
   runtime oversize rejection; native preflight checks do not replace this suite.
+- `sim_syn028_fixed_sort` checks signed/unsigned/enum and mapped packed/unpacked
+  records, repeated-key permutation, reverse declared bounds, zero-time function
+  use, 2001 rejection and illegal map/const-ref cases. `sim_review_next4`
+  retains selected automatic/formal receiver checks; `sim_data_types_completion`
+  retains queue and dynamic-array ordering controls. All positive fixtures run
+  in both optimizer modes.
 - [SYN-016 elaboration](fixtures/sim/syn016_elaboration/readme.md),
   [SYN-017 directives](fixtures/sim/syn017_directives/readme.md),
   [SYN-018 modules](fixtures/sim/syn018_module_declarations/readme.md) and `sim_edition`

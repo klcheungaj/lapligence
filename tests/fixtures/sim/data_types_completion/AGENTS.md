@@ -1,6 +1,6 @@
 # Datatype completion fixture contracts
 
-These seventeen black-box positive contracts use the local IEEE 1800-2009 LRM. Reductions preserve
+These seventeen completion-suite positives and the focused SYN-028 witnesses use the local IEEE 1800-2009 LRM. Reductions preserve
 typed wide arithmetic, X/Z behavior, empty identities, and the specified associative order
 independence; array callbacks retain their result width and item binding.
 
@@ -22,6 +22,8 @@ independence; array callbacks retain their result width and item binding.
 | `array_methods.sv` | queue and integral-key associative locator/min/max/unique result order, sort/rsort/reverse/shuffle mutation, and typed `with` callback evaluation including `item.index()` | §7.12 |
 | `syn_027_fixed_reverse.sv` | fixed-array `reverse()` for lengths 1/2/3/17, ascending/descending/negative bounds, byte and packed-record elements, automatic locals/formals, selected rows, and reverse-twice restoration | §7.12.2 |
 | `syn_028_fixed_sort.sv` | fixed-array `sort()`/`rsort()` for signed, unsigned, enum, packed-record-map, repeated-key, ascending/descending-bound, singleton, and automatic-ref cases | §7.12.2 |
+| `syn028_unpacked_record_maps.sv` | signed mapped ordering of unpacked records in a zero-time function and descending declared range; repeated keys preserve record membership without a stability requirement | §7.12.2 |
+| `syn028_edition_boundary.sv` | fixed `sort()`/`rsort()` operate in 2009 and reject in 2001 with an otherwise 2001-valid array declaration | §7.12.2 |
 | `reduction_with_unsupported.sv` | legal width-changing reduction `with` callback evaluates each item and retains the callback result type | §7.12.3 |
 
 The eight negative contracts each contain one fault: `syn_027_reverse_with.sv` and
@@ -34,7 +36,7 @@ typedef keys. The listed fixed nested cases cover copy/member updates with packe
 real and string leaves. Other tagged/class/virtual-interface, nominal-key,
 recursive-default, resizable/object-member and aggregate port/net/subprogram forms
 are outside this bounded contract; the listed positives do not qualify them.
-Run all seventeen positives in both modes. Recursive-fixture ASan/UBSan/leak
+Run all seventeen completion-suite positives and both focused 2009 witnesses in both modes. Recursive-fixture ASan/UBSan/leak
 validation remains a separate gate, not implied by native execution.
 
 Local specification anchors verified in `docs/specification/spec-reference-sv.md`: §§6.12.2,
