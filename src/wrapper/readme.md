@@ -10,6 +10,8 @@ recovery supplies bounded declaration/navigation data without claiming executabl
 completeness. Named connections retain separate child-port labels and parent-scope
 actuals; array instances retain HDL indices. Pattern operands preserve position
 and declaration order even when expression IDs repeat.
+Loop-generate entries retain their parent array's external name and their
+elaborated source index for owned hierarchical paths.
 
 Native source access is cache-only. See [safe FFI](../ffi/readme.md),
 [owned DB](../core/db/readme.md), [source layout](../../docs/source_layout.md)

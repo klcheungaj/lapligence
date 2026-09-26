@@ -13,42 +13,71 @@ const SUITE: &str = "syn033_structural_bind";
 
 #[test]
 fn module_and_instance_bind_execute_in_both_optimizer_modes() {
-    sim_cli::run_case(
+    sim_cli::run_case_with_args(
         SUITE,
         "syn_033_structural_bind",
         "bind=1/0 selected=x/0\nbind=0/1 selected=x/1\n",
         "llg: $finish at time 2000 at tb:38:5\n",
         &[],
+        &["--edition", "2009"],
     );
 }
 
 #[test]
 fn interface_bind_executes_in_both_optimizer_modes() {
-    sim_cli::run_case(
+    sim_cli::run_case_with_args(
         SUITE,
         "syn_033_interface_bind",
         "interface_bind=1\ninterface_bind=0\n",
         "llg: $finish at time 2000 at tb:28:5\n",
         &[],
+        &["--edition", "2009"],
+    );
+}
+
+#[test]
+fn generated_instance_binds_execute_in_both_optimizer_modes() {
+    sim_cli::run_case_with_args(
+        SUITE,
+        "syn_033_generated_bind",
+        "generated=100\ngenerated=011\n",
+        "llg: $finish at time 2000 at tb:36:5\n",
+        &[],
+        &["--edition", "2009"],
     );
 }
 
 #[test]
 fn bind_diagnostics_keep_unknown_and_illegal_targets_single_fault() {
-    sim_cli::reject_case(
+    sim_cli::reject_case_with_args(
         SUITE,
         "syn_033_unknown_target",
         "unknown module 'syn033_missing_target'",
+        &["--edition", "2009"],
     );
-    sim_cli::reject_case(
+    sim_cli::reject_case_with_args(
         SUITE,
         "syn_033_illegal_target",
         "not a valid bind target; only modules and interfaces are allowed",
+        &["--edition", "2009"],
     );
-    sim_cli::reject_case(
+    sim_cli::reject_case_with_args(
         SUITE,
         "syn_033_interface_module",
         "cannot instantiate a module in an interface",
+        &["--edition", "2009"],
+    );
+    sim_cli::reject_case_with_args(
+        SUITE,
+        "syn_033_duplicate_bind",
+        "redefinition of 'repeated'",
+        &["--edition", "2009"],
+    );
+    sim_cli::reject_case_with_args(
+        SUITE,
+        "syn_033_outside_scope",
+        "use of undeclared identifier 'only_in_tb'",
+        &["--edition", "2009"],
     );
 }
 
@@ -148,4 +177,60 @@ fn owned_model_retains_bound_instance_identity_after_frontend_drop() {
         .instance("tb.bus.by_interface")
         .expect("interface binding path");
     assert_eq!(bound_interface.def_name, "syn033_if_observer");
+
+    let generated_source = root.join("syn_033_generated_bind.sv");
+    let generated_output = compile::compile_checked(&compile::CompileOpts {
+        files: vec![generated_source.to_string_lossy().into_owned()],
+        top: Some("tb".to_owned()),
+        ..Default::default()
+    })
+    .expect("SYN-033 generated instance binds should compile");
+    let generated_db =
+        db::Db::from_slang(&generated_output.snapshot).expect("owned generated bind DB");
+    drop(generated_output);
+    let generated_design = model::DesignModel::from_db(&generated_db);
+    drop(generated_db);
+    let top = generated_design.instance("tb").expect("generated bind top");
+    for (path, seed, invert) in [
+        ("tb.rows[0]", 0, 0),
+        ("tb.rows[1]", 1, 1),
+        ("tb.chosen", 1, 0),
+    ] {
+        let scope = top
+            .gen_scopes
+            .iter()
+            .find(|scope| scope.full_name == path)
+            .expect("generated scope path");
+        let target = scope
+            .children
+            .iter()
+            .find(|child| child.name == "dut")
+            .expect("generated target instance");
+        assert_eq!(target.full_name, format!("{path}.dut"));
+        let observer = target
+            .children
+            .iter()
+            .find(|child| child.name == "bound_probe")
+            .expect("bound instance under generated target");
+        assert_eq!(observer.full_name, format!("{path}.dut.bound_probe"));
+        assert_eq!(observer.def_name, "syn033_generated_observer");
+        let seed_param = target
+            .params
+            .iter()
+            .find(|param| param.name == "SEED")
+            .expect("generated target parameter");
+        assert!(matches!(
+            seed_param.value,
+            Some(llg::core::elab::Val::Bits(ref value)) if value.to_u64() == Some(seed)
+        ));
+        let invert_param = observer
+            .params
+            .iter()
+            .find(|param| param.name == "INVERT")
+            .expect("generated bind parameter");
+        assert!(matches!(
+            invert_param.value,
+            Some(llg::core::elab::Val::Bits(ref value)) if value.to_u64() == Some(invert)
+        ));
+    }
 }

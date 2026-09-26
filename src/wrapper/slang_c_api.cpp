@@ -1800,6 +1800,14 @@ public:
       if (symbol.isUninstantiated)
         result.flags |= LLG_SLANG_SEMANTIC_UNINSTANTIATED;
       if (const SVInt* arrayIndex = symbol.getArrayIndex()) {
+        const Scope* parentScope = symbol.getParentScope();
+        if (!parentScope ||
+            parentScope->asSymbol().kind != SymbolKind::GenerateBlockArray)
+          throw BridgeFailure(LLG_SLANG_STATUS_INTERNAL_ERROR,
+                              "loop generate block has no array parent");
+        externalName = parentScope->asSymbol()
+                           .as<GenerateBlockArraySymbol>()
+                           .getExternalName();
         externalName += '[' + arrayIndex->toString() + ']';
         result.constant_id = capture.constant(ConstantValue(*arrayIndex));
       }

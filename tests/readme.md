@@ -105,6 +105,10 @@ requirements above apply without repeating them for each suite.
   also checks both input contracts and editions for selected bindings,
   same-name map composition changes, binding failures and direct rejection of
   per-library map `-incdir` (V §13.2; SV §33.3).
+  `sim_syn033_structural_bind` checks type-wide, selected-instance,
+  generate-for/if and interface binds through the public CLI in both optimizer
+  modes, then checks elaborated names and parameters after snapshot destruction;
+  unknown/illegal targets, duplicate names and out-of-scope actuals reject.
 - [SYN-036 capacity](fixtures/sim/syn036_capacity/readme.md) separates syntax from
   resource limits. Test 65,536/1,048,575-bit values and rejection at 1,048,576;
   fixed-array cell limits are distinct from flattened-value limits. Two-state net

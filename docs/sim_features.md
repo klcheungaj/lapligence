@@ -242,8 +242,12 @@ real values use a separate representation.
   narrower nearby V §13.2.2 / SV §33.3.2 prose is an acknowledged source
   inconsistency, not a claimed IEEE correction. Macro-generated map declarations
   or block delimiters are not admitted by this route.
-- 🟨 **Structural bind** — Finite module-type/selected-instance and interface-to-interface binds preserve parameters, target-local ports and instance identity.
-  Unknown/primitive targets reject; module injection into an interface is illegal.
+- 🟨 **Structural bind** — Finite module-type/selected-instance and
+  interface-to-interface binds preserve parameters, target-local ports and
+  instance identity after frontend snapshot destruction. Selected generate-for/if
+  instance paths execute in both optimizer modes. Unknown/primitive targets,
+  duplicate bound instance names and port actuals outside the target scope reject;
+  module injection into an interface is illegal.
   Checker/program/coverage injection is outside the selected scope.
   SV §23.11 **[SV-2005]**.
 

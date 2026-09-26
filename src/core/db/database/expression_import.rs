@@ -450,7 +450,12 @@ pub(super) fn semantic_full_name(nodes: &[Node], id: NodeId) -> Result<String, D
         let node = nodes.get(node_id.index()).ok_or_else(|| {
             DbError::InvalidSnapshot("Slang semantic parent is outside the node arena".into())
         })?;
-        if !node.name.is_empty() {
+        // The concrete loop block already carries the array name and index.
+        // Its container remains addressable on its own but is not an extra
+        // segment in a concrete hierarchical path (SV 27.4).
+        if !node.name.is_empty()
+            && (node_id == id || !matches!(node.kind(), NodeKind::GenScopeArray))
+        {
             parts.push(node.name.as_str());
         }
         current = node.parent;
