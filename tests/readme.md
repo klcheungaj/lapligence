@@ -82,7 +82,8 @@ requirements above apply without repeating them for each suite.
   [SYN-017 directives](fixtures/sim/syn017_directives/readme.md),
   [SYN-018 modules](fixtures/sim/syn018_module_declarations/readme.md) and `sim_edition`
   retain strict edition gates, macros/keyword regions, legal defaults/types,
-  namespace and actual separate/merged-file boundaries.
+  namespace, enclosing-instance specializations and actual separate/merged-file
+  boundaries.
 - [SYN-021 tagged unions](fixtures/sim/syn021_tagged_union/readme.md) qualifies
   finite packed struct payloads through constructor, value, formal, static local,
   ref and stable-tag NBA contexts in 2009, with 2001 and invalid-constructor

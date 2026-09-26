@@ -11,8 +11,8 @@ use super::{
     Source,
 };
 use crate::ffi::slang::{
-    LexicalKind, LexicalRole, SemanticEdgeRole, SemanticKind, SemanticNode, SemanticOperation,
-    SourceRange, TypeKind, CLASS_INTERFACE, SEMANTIC_ASSERTION_FINAL,
+    LexicalKind, LexicalRole, SemanticDefinitionKind, SemanticEdgeRole, SemanticKind, SemanticNode,
+    SemanticOperation, SourceRange, TypeKind, CLASS_INTERFACE, SEMANTIC_ASSERTION_FINAL,
     SEMANTIC_STMT_CONCURRENT_ASSERT, SEMANTIC_STMT_CONCURRENT_ASSUME,
     SEMANTIC_STMT_CONCURRENT_COVER, SEMANTIC_STMT_CONCURRENT_EXPECT, SEMANTIC_STMT_FOR,
     SEMANTIC_STMT_IMMEDIATE_ASSERT, SEMANTIC_STMT_IMMEDIATE_ASSUME, SEMANTIC_STMT_IMMEDIATE_COVER,
@@ -781,6 +781,12 @@ pub(super) fn edition_diagnostics(
     let mut violations: Vec<(Option<SourceRange>, String)> = Vec::new();
     for node in &snapshot.semantic_nodes {
         if edition == LanguageEdition::Verilog2001 {
+            if node.kind == SemanticKind::Definition
+                && node.definition_kind == Some(SemanticDefinitionKind::Module)
+                && node.is_local
+            {
+                violations.push((node.range, "nested module declaration".to_owned()));
+            }
             if is_systemverilog_for_header(snapshot, &nodes, node) {
                 violations.push((node.range, "SystemVerilog for-loop header".to_owned()));
             }

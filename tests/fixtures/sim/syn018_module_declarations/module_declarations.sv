@@ -1,20 +1,26 @@
 // llg-test-fixture: tests/fixtures/sim/syn018_module_declarations/module_declarations.sv
-// IEEE 1800-2009 §23.4: nested module definitions can resolve a parameter
-// from their enclosing module instance.
+// IEEE 1800-2009 §23.4: enclosing names are used by a nested module
+// declared and instantiated in the same scope. Generated instances use ports.
 module syn018_left #(parameter int BASE = 10) (
   input logic [3:0] a,
   output logic [3:0] y
 );
+  logic [3:0] base_y;
+  module captured_base(input logic [3:0] base_a, output logic [3:0] base_out);
+    assign base_out = base_a + BASE;
+  endmodule
+  captured_base captured(a, base_y);
+
   module leaf #(parameter int EXTRA = 1) (
     input logic [3:0] leaf_a,
     output logic [3:0] leaf_y
   );
-    assign leaf_y = leaf_a + BASE + EXTRA;
+    assign leaf_y = leaf_a + EXTRA;
   endmodule
 
   generate
     if (BASE == 10) begin : generated
-      leaf #(.EXTRA(2)) u(a, y);
+      leaf #(.EXTRA(2)) u(base_y, y);
     end
   endgenerate
 endmodule
@@ -25,16 +31,22 @@ module syn018_right #(parameter int BASE = 20) (
   input logic [3:0] a,
   output logic [3:0] y
 );
+  logic [3:0] base_y;
+  module captured_base(input logic [3:0] base_a, output logic [3:0] base_out);
+    assign base_out = base_a + BASE;
+  endmodule
+  captured_base captured(a, base_y);
+
   module leaf #(parameter int EXTRA = 1) (
     input logic [3:0] leaf_a,
     output logic [3:0] leaf_y
   );
-    assign leaf_y = leaf_a + BASE + EXTRA;
+    assign leaf_y = leaf_a + EXTRA;
   endmodule
 
   generate
     if (BASE == 20) begin : generated
-      leaf #(.EXTRA(3)) u(a, y);
+      leaf #(.EXTRA(3)) u(base_y, y);
     end
   endgenerate
 endmodule

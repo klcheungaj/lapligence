@@ -202,9 +202,13 @@ real values use a separate representation.
   `.name` and `.*` connection shorthands retain their resolved links. Runtime
   virtual handles are covered in §12. SV §§23.3.2, 25.3, 25.5 **[SV-2005]**.
 - 🟦 **Extern and nested modules** — Parameterized declarations/matching bodies,
-  enclosing parameter references and independently scoped same-named nested
-  definitions work in both compilation-unit modes. Missing bodies and signature
-  mismatches are diagnosed. SV §§23.4–23.5 **[SV-2005]**.
+  same-scope enclosing parameter references, distinct enclosing-instance
+  specializations and independently scoped same-named definitions work in both
+  compilation-unit modes. Nested instances in selected generate branches use
+  explicit ports/parameters; declarations directly inside generate blocks are
+  illegal under 2009 Annex A.1.4/A.4.2. Missing bodies, signature mismatches and
+  out-of-scope references are diagnosed; 2001 rejects both declaration forms.
+  SV §§23.4–23.5 **[SV-2005]**.
 - 🟨 **Value ports** — Packed expressions/defaults, scalar-real links and
   collected string/aggregate/container copies have typed value behavior. Fixed
   integral input arrays accept call/conditional/pattern/cast values, slices and

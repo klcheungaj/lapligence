@@ -403,9 +403,13 @@ impl<'db> SemanticModel<'db> {
         profile: SynthesisProfile,
     ) -> Result<SynthDesignView<'_, 'db>, Vec<SynthesisIssue>> {
         let mut issues = Vec::new();
+        let elaboration_placeholders = self.simulation_elaboration_placeholders();
         let mut reachable = vec![false; self.db.nodes().len()];
         let mut pending = self.db.tops().to_vec();
         while let Some(id) = pending.pop() {
+            if synthesis_output_port_placeholder(self.db, id) {
+                continue;
+            }
             if reachable[id.index()] {
                 continue;
             }
@@ -547,8 +551,9 @@ impl<'db> SemanticModel<'db> {
                 } if is_synthesis_primitive(*prim_type) => None,
                 NodeKind::Gate { .. } => Some(SynthesisIssueKind::UnsupportedPrimitive),
                 NodeKind::Other
-                    if classify_simulation_node(self.db, id, false)
-                        == SimulationNodeClass::DeclarationOnly =>
+                    if elaboration_placeholders[id.index()]
+                        || classify_simulation_node(self.db, id, false)
+                            == SimulationNodeClass::DeclarationOnly =>
                 {
                     None
                 }
@@ -571,6 +576,52 @@ impl<'db> SemanticModel<'db> {
             Err(issues)
         }
     }
+}
+
+fn synthesis_output_port_placeholder(db: &Db, id: NodeId) -> bool {
+    let NodeKind::Expr(ExprKind::Operation {
+        op: Operation::Assignment,
+        operands,
+        ..
+    }) = db.node_kind(id)
+    else {
+        return false;
+    };
+    let [actual, empty] = operands.as_slice() else {
+        return false;
+    };
+    let NodeKind::Expr(ExprKind::Ref {
+        target: Some(target),
+    }) = db.node_kind(*actual)
+    else {
+        return false;
+    };
+    if !matches!(db.node_kind(*empty), NodeKind::Expr(ExprKind::Other))
+        || db.semantic_detail(*empty) != Some("EmptyArgument")
+    {
+        return false;
+    }
+    let Some(instance) = db.node(id).parent() else {
+        return false;
+    };
+    if !matches!(db.node_kind(instance), NodeKind::ModuleInst { .. }) {
+        return false;
+    }
+    // Slang also records a link for a variable output as an assignment with
+    // an empty RHS. The resolved Port carries the actual structural binding.
+    db.node(instance).children().iter().any(|child| {
+        matches!(
+            db.node_kind(*child),
+            NodeKind::Port {
+                direction: Direction::Output,
+                high: Some(high),
+                high_expr: Some(high_expr),
+                high_present: true,
+                high_open: false,
+                ..
+            } if high == target && high_expr == actual
+        )
+    })
 }
 
 fn assignment_pattern_metadata_node(db: &Db, id: NodeId) -> bool {

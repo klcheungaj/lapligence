@@ -1811,6 +1811,11 @@ public:
     }
     if constexpr (std::same_as<T, DefinitionSymbol>) {
       addDefinitionKind(result, symbol.definitionKind);
+      const Scope* parentScope = symbol.getParentScope();
+      if (parentScope &&
+          parentScope->asSymbol().kind != SymbolKind::CompilationUnit &&
+          parentScope->asSymbol().kind != SymbolKind::Root)
+        result.flags |= LLG_SLANG_SEMANTIC_LOCAL;
       addTimeScale(result, symbol.timeScale);
       if (symbol.unconnectedDrive == UnconnectedDrive::Pull0)
         result.auxiliary |= LLG_SLANG_UNCONNECTED_PULL0;
