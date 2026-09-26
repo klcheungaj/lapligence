@@ -2,9 +2,10 @@
 
 `module_declarations.sv` is the positive SystemVerilog-2009 witness. It uses
 two parent modules with independently scoped nested definitions. Each
-`captured_base` reads its parent's `BASE` parameter from a same-scope instance;
-each `leaf` receives that result through a port in a selected generate scope
-and applies its own `EXTRA` override.
+`captured_base` reads its parent's `BASE` parameter from a same-scope instance.
+Each generated `leaf` connects the enclosing input `a` and output `y` directly,
+receives the captured `BASE` contribution through a separate port, and applies
+its own `EXTRA` override.
 `extern_child.sv` and `extern_child_body.sv` exercise a parameterized
 extern declaration and matching body across separate source files.
 `extern_specializations.sv` instantiates that pair at widths four and five;

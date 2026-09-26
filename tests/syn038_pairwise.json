@@ -490,7 +490,7 @@
       "owner": "tests/sim_syn018_module_declarations.rs::nested_and_extern_modules_execute_in_both_compilation_unit_modes",
       "invocation": "syn018_module_declarations/module_declarations",
       "stdout": "extern=7 nested=13/8\n",
-      "stderr": "llg: $finish at time 1000 at tb:59:5\n",
+      "stderr": "llg: $finish at time 1000 at tb:73:5\n",
       "tokens": ["module_declarations"],
       "runner": "tests/sim_syn018_module_declarations.rs",
       "editions": ["2009"],
@@ -3039,7 +3039,7 @@
       "id": "O78-generated-scalar-input",
       "evidence_id": "W34",
       "focus": "generated nested leaf input actual a from enclosing input formal",
-      "source_anchors": ["leaf #(.EXTRA(2)) u(a, y);", "input logic [3:0] a,"],
+      "source_anchors": ["leaf #(.EXTRA(2)) u(a, base_y, y);", "input logic [3:0] a,"],
       "levels": {"CO": "port_actual", "LV": "none", "SL": "formal", "FM": "input", "HC": "generate", "HR": "child_port", "PC": "none"},
       "qualifiers": "Q045"
     },
@@ -3047,7 +3047,7 @@
       "id": "O79-generated-scalar-output",
       "evidence_id": "W34",
       "focus": "generated nested leaf output actual y into enclosing output formal",
-      "source_anchors": ["leaf #(.EXTRA(2)) u(a, y);", "output logic [3:0] y"],
+      "source_anchors": ["leaf #(.EXTRA(2)) u(a, base_y, y);", "output logic [3:0] y"],
       "levels": {"CO": "port_actual", "SL": "formal", "FM": "output", "HC": "generate", "HR": "child_port", "PC": "none"},
       "qualifiers": "Q045"
     },

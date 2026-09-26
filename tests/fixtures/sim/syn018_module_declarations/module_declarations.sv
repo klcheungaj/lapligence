@@ -6,21 +6,22 @@ module syn018_left #(parameter int BASE = 10) (
   output logic [3:0] y
 );
   logic [3:0] base_y;
-  module captured_base(input logic [3:0] base_a, output logic [3:0] base_out);
-    assign base_out = base_a + BASE;
+  module captured_base(output logic [3:0] base_out);
+    assign base_out = BASE;
   endmodule
-  captured_base captured(a, base_y);
+  captured_base captured(base_y);
 
   module leaf #(parameter int EXTRA = 1) (
     input logic [3:0] leaf_a,
+    input logic [3:0] base_bias,
     output logic [3:0] leaf_y
   );
-    assign leaf_y = leaf_a + EXTRA;
+    assign leaf_y = leaf_a + base_bias + EXTRA;
   endmodule
 
   generate
     if (BASE == 10) begin : generated
-      leaf #(.EXTRA(2)) u(base_y, y);
+      leaf #(.EXTRA(2)) u(a, base_y, y);
     end
   endgenerate
 endmodule
@@ -32,21 +33,22 @@ module syn018_right #(parameter int BASE = 20) (
   output logic [3:0] y
 );
   logic [3:0] base_y;
-  module captured_base(input logic [3:0] base_a, output logic [3:0] base_out);
-    assign base_out = base_a + BASE;
+  module captured_base(output logic [3:0] base_out);
+    assign base_out = BASE;
   endmodule
-  captured_base captured(a, base_y);
+  captured_base captured(base_y);
 
   module leaf #(parameter int EXTRA = 1) (
     input logic [3:0] leaf_a,
+    input logic [3:0] base_bias,
     output logic [3:0] leaf_y
   );
-    assign leaf_y = leaf_a + EXTRA;
+    assign leaf_y = leaf_a + base_bias + EXTRA;
   endmodule
 
   generate
     if (BASE == 20) begin : generated
-      leaf #(.EXTRA(3)) u(base_y, y);
+      leaf #(.EXTRA(3)) u(a, base_y, y);
     end
   endgenerate
 endmodule

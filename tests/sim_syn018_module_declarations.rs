@@ -15,7 +15,7 @@ const EXPECTED: &str = "extern=7 nested=13/8\n";
 
 #[test]
 fn nested_and_extern_modules_execute_in_both_compilation_unit_modes() {
-    let expected_stderr = "llg: $finish at time 1000 at tb:71:5\n";
+    let expected_stderr = "llg: $finish at time 1000 at tb:73:5\n";
     for policy in ["separate", "merged"] {
         sim_cli::run_case_with_source_prefix(
             SUITE,
