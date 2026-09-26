@@ -460,17 +460,19 @@ real values use a separate representation.
   lexical `with` maps support immediate integral elements and admitted fixed-row/
   record maps. Result width/sign comes from the element/map, not the destination;
   first-element seeding preserves singleton X/Z. Maps may capture automatic
-  locals/formals and distinct nested iterators. `index()`, `index(1)` and checked
-  dynamic dimensions address the live fixed unpacked iterator with declared
-  bounds. Packed/higher/unvisited dimensions and native/string/real/resizable
-  maps reject. Receiver capacity is defined above.
+  locals/formals and distinct nested iterators. `index`, `index()`, `index(1)`
+  and checked dynamic dimensions address the live fixed unpacked iterator
+  with declared bounds. Packed, higher and unvisited dimensions reject;
+  native/string/real/resizable maps also reject. Receiver capacity is defined above.
   SV §§7.12.3–7.12.4 **[SV-2005]**.
 - 🟨 **Fixed ordering** — `reverse()` moves immediate integral/fixed-record
   elements in declaration order; rows move whole. `sort()`/`rsort()` accept
-  integral elements or record `with` integral keys, preserving signed/enum keys
-  and non-key fields. Selected receiver coordinates are captured once; swaps
-  reread live storage and snapshot overlapping elements. Automatic locals/formals
-  are represented. Repeated-key stability is unspecified. Reverse `with`,
+  integral elements or fixed row/record `with` integral keys, preserving
+  signed/enum keys and non-key fields. Selected receiver coordinates are
+  captured once; swaps reread live storage and snapshot overlapping elements.
+  Automatic locals/formals are represented. Integral `with` keys may query the
+  live iterator's declared index on ascending, descending and row arrays.
+  Repeated-key stability is unspecified. Reverse `with`,
   const-ref receivers, record sorting without a key, fixed shuffle/locators,
   native/real/string elements and incompatible maps reject.
   SV §7.12.2 **[SV-2009]**.

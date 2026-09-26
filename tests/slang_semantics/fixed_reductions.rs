@@ -1,7 +1,7 @@
 //! R03: owned method result types and lexical iterator identities reach lowering.
 
 use llg::core::compile;
-use llg::core::db::{Db, NodeKind};
+use llg::core::db::{Db, NodeKind, TypeShape};
 use std::collections::HashSet;
 
 fn capture(source: &str) -> Db {
@@ -73,6 +73,52 @@ endmodule
     let generated = llg::sim::codegen::generate(&database)
         .expect("owned reductions lower after capture is dropped");
     assert!(generated.model_c.contains("reduction_ordinal"));
+}
+
+#[test]
+fn fixed_iterator_index_queries_keep_nested_bounds_after_snapshot_drop() {
+    let database = capture(
+        r#"// llg-test-fixture: tests/slang_semantics/fixed_reductions.rs/index-bounds
+module tb;
+    int matrix [1:0][-2:-1];
+    int result;
+    initial result = matrix.sum(row) with
+        (row.sum(value) with (row.index(1) + value.index()));
+endmodule
+"#,
+    );
+    database.validate().expect("valid captured iterator bounds");
+    let mut iterators = HashSet::new();
+    let mut receiver_dimensions = Vec::new();
+    for id in database.node_ids() {
+        let NodeKind::MethodCall {
+            name,
+            receiver: Some(receiver),
+            ..
+        } = database.node_kind(id)
+        else {
+            continue;
+        };
+        if name != "sum" {
+            continue;
+        }
+        assert!(iterators.insert(database.method_call_iterator(id).expect("owned iterator")));
+        let TypeShape::FixedArray { dimensions, .. } = &database
+            .type_descriptor(*receiver)
+            .expect("owned receiver bounds")
+            .shape
+        else {
+            panic!("nested reduction receiver must be a fixed array");
+        };
+        receiver_dimensions.push(dimensions.clone());
+    }
+    receiver_dimensions.sort();
+    assert_eq!(
+        receiver_dimensions,
+        [vec![(-2, -1)], vec![(1, 0), (-2, -1)]]
+    );
+    assert_eq!(iterators.len(), 2);
+    llg::sim::codegen::generate(&database).expect("index queries lower from owned bounds");
 }
 
 #[test]
