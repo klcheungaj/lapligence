@@ -682,10 +682,17 @@ fn syn_019_for_headers_are_qualified_in_the_selected_edition() {
         ("edition_for_multiple_steps", "for_list=3/6\n"),
     ] {
         sim_cli::run_case_with_args(
-            "partial_features", fixture, expected, "", &[], &["--edition", "2009"],
+            "partial_features",
+            fixture,
+            expected,
+            "",
+            &[],
+            &["--edition", "2009"],
         );
         sim_cli::reject_case_with_args(
-            "partial_features", fixture, "SystemVerilog for-loop header",
+            "partial_features",
+            fixture,
+            "SystemVerilog for-loop header",
             &["--edition", "2001"],
         );
     }
@@ -695,9 +702,7 @@ fn syn_019_for_headers_are_qualified_in_the_selected_edition() {
         "i = 0, j = 0; i < 2; i = i + 1",
         "i = 0; i < 2; i = i + 1, j = j + 1",
     ] {
-        let source = format!(
-            "module tb; integer i, j; initial for ({header}) begin end endmodule"
-        );
+        let source = format!("module tb; integer i, j; initial for ({header}) begin end endmodule");
         let output = compile::compile(&CompileOpts {
             sources: vec![OwnedSource::compilation_unit("for-header.sv", &source)],
             top: Some("tb".to_owned()),
@@ -705,9 +710,13 @@ fn syn_019_for_headers_are_qualified_in_the_selected_edition() {
             ..Default::default()
         })
         .expect("capture legacy for-header control");
-        assert!(output.diagnostics.iter().any(|d| {
-            d.message.contains("SystemVerilog for-loop header") && d.line > 0 && d.col > 0
-        }), "{:?}", output.diagnostics);
+        assert!(
+            output.diagnostics.iter().any(|d| {
+                d.message.contains("SystemVerilog for-loop header") && d.line > 0 && d.col > 0
+            }),
+            "{:?}",
+            output.diagnostics
+        );
     }
 }
 
@@ -730,12 +739,29 @@ endmodule
         ..Default::default()
     })
     .expect("capture both memory uses");
-    let value_line = source.lines().position(|line| line.contains("b = a;")).unwrap() as u32 + 1;
-    let storage_line = source.lines().position(|line| line.contains("$fread")).unwrap() as u32 + 1;
-    assert!(output.diagnostics.iter().any(|d| {
-        d.message.contains("whole unpacked array value") && d.line == value_line
-    }), "{:?}", output.diagnostics);
-    assert!(!output.diagnostics.iter().any(|d| {
-        d.message.contains("whole unpacked array value") && d.line == storage_line
-    }), "the storage operand was rejected: {:?}", output.diagnostics);
+    let value_line = source
+        .lines()
+        .position(|line| line.contains("b = a;"))
+        .unwrap() as u32
+        + 1;
+    let storage_line = source
+        .lines()
+        .position(|line| line.contains("$fread"))
+        .unwrap() as u32
+        + 1;
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|d| { d.message.contains("whole unpacked array value") && d.line == value_line }),
+        "{:?}",
+        output.diagnostics
+    );
+    assert!(
+        !output.diagnostics.iter().any(|d| {
+            d.message.contains("whole unpacked array value") && d.line == storage_line
+        }),
+        "the storage operand was rejected: {:?}",
+        output.diagnostics
+    );
 }

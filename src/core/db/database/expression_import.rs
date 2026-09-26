@@ -43,6 +43,45 @@ pub(super) fn expression_from_slang(
     if node.detail == "UnboundedLiteral" {
         return Ok(NodeKind::Expr(ExprKind::Unbounded));
     }
+    // A comparison of types has no runtime operands. Slang evaluates it
+    // during elaboration and retains the result on the comparison node;
+    // import that value while keeping its children for source navigation.
+    if node.subkind == 67
+        && node.constant_id.is_some()
+        && edges.iter().any(|edge| {
+            matches!(edge.role, SemanticEdgeRole::Left | SemanticEdgeRole::Right)
+                && usize::try_from(edge.target_id)
+                    .ok()
+                    .and_then(|index| snapshot.semantic_nodes.get(index))
+                    .is_some_and(|child| child.detail == "TypeReference")
+        })
+    {
+        let value = node
+            .constant_id
+            .and_then(|id| snapshot.constants.get(id as usize))
+            .map(|constant| value_data_from_slang(&constant.value))
+            .ok_or_else(|| {
+                DbError::InvalidSnapshot("type comparison constant is missing".into())
+            })?;
+        let (size, const_type) = match &value {
+            ValueData::Vector { bit_width, .. } => (
+                i32::try_from(*bit_width).unwrap_or(i32::MAX),
+                ConstantType::Integer,
+            ),
+            _ => {
+                return Err(DbError::InvalidSnapshot(
+                    "type comparison is not integral".into(),
+                ))
+            }
+        };
+        return Ok(NodeKind::Expr(ExprKind::Constant {
+            value,
+            size,
+            const_type,
+            source: ConstantSource::NotCaptured,
+            time_scale: None,
+        }));
+    }
     Ok(NodeKind::Expr(match node.subkind {
         64 | 85 => {
             let value = node

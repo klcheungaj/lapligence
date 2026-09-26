@@ -932,8 +932,13 @@ fn compile_source_groups(
     .map_err(startup_from_slang)?;
     library_configs::restore_source_text(&mut snapshot.files, map_originals, map_work)?;
     let mut diagnostics = project_diagnostics(&snapshot);
-    let edition_diagnostics =
-        edition_diagnostics(&snapshot, opts.edition, &opts.system_subroutines);
+    let edition_diagnostics = edition_diagnostics(
+        &snapshot,
+        opts.edition,
+        &opts.system_subroutines,
+        opts.compilation_unit_mode,
+        &borrowed,
+    );
     let owned_errors = edition_diagnostics
         .iter()
         .any(|diagnostic| diagnostic.severity == Severity::Error);

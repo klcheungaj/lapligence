@@ -6,14 +6,16 @@
 //! Tables describe admission, not executable simulator support. Unknown system
 //! names require an explicit prototype; they are never silently treated as a
 //! standard builtin of an older edition.
-use super::{one_based_utf16_position, Diag, LanguageEdition, Severity, Snapshot};
+use super::{
+    one_based_utf16_position, CompilationUnitMode, Diag, LanguageEdition, Severity, Snapshot,
+    Source,
+};
 use crate::ffi::slang::{
     LexicalKind, LexicalRole, SemanticEdgeRole, SemanticKind, SemanticNode, SemanticOperation,
     SourceRange, TypeKind, CLASS_INTERFACE, SEMANTIC_ASSERTION_FINAL,
     SEMANTIC_STMT_CONCURRENT_ASSERT, SEMANTIC_STMT_CONCURRENT_ASSUME,
-    SEMANTIC_STMT_CONCURRENT_COVER, SEMANTIC_STMT_CONCURRENT_EXPECT,
-    SEMANTIC_STMT_FOR, SEMANTIC_STMT_IMMEDIATE_ASSERT, SEMANTIC_STMT_IMMEDIATE_ASSUME,
-    SEMANTIC_STMT_IMMEDIATE_COVER,
+    SEMANTIC_STMT_CONCURRENT_COVER, SEMANTIC_STMT_CONCURRENT_EXPECT, SEMANTIC_STMT_FOR,
+    SEMANTIC_STMT_IMMEDIATE_ASSERT, SEMANTIC_STMT_IMMEDIATE_ASSUME, SEMANTIC_STMT_IMMEDIATE_COVER,
 };
 use std::collections::{HashMap, HashSet};
 
@@ -556,7 +558,8 @@ fn is_whole_unpacked_value(
             | SemanticKind::FunctionCall
             | SemanticKind::MethodCall
             | SemanticKind::Argument
-    ) {
+    ) || node.detail == "EmptyArgument"
+    {
         return false;
     }
     if node
@@ -650,9 +653,9 @@ fn is_memory_task_operand(
         let Some(node) = nodes.get(&id) else {
             continue;
         };
-        // Traverse storage wrappers only. Following Reference / Callee / Child
-        // edges would exempt other uses or bodies just because this call names
-        // the same memory or subroutine.
+        // Slang wraps writable memory arguments in an Assignment expression
+        // with an EmptyArgument RHS. Its Lhs is the storage reference. Do not
+        // follow Reference / Callee / Child edges into unrelated uses.
         stack.extend(
             semantic_edges(snapshot, node)
                 .iter()
@@ -662,7 +665,15 @@ fn is_memory_task_operand(
                         SemanticEdgeRole::Actual
                             | SemanticEdgeRole::Operand
                             | SemanticEdgeRole::Base
-                    )
+                    ) || (edge.role == SemanticEdgeRole::Lhs
+                        && node.kind == SemanticKind::Expression
+                        && node.operation == SemanticOperation::Assign
+                        && semantic_edges(snapshot, node).iter().any(|rhs| {
+                            rhs.role == SemanticEdgeRole::Rhs
+                                && nodes
+                                    .get(&rhs.target_id)
+                                    .is_some_and(|child| child.detail == "EmptyArgument")
+                        }))
                 })
                 .map(|edge| edge.target_id),
         );
@@ -712,7 +723,9 @@ fn is_systemverilog_for_header(
             return true;
         }
     }
-    !edges.iter().any(|edge| edge.role == SemanticEdgeRole::Condition)
+    !edges
+        .iter()
+        .any(|edge| edge.role == SemanticEdgeRole::Condition)
 }
 
 /// Native prototype parsing has already succeeded. Match the same first-dollar
@@ -740,12 +753,26 @@ pub(super) fn edition_diagnostics(
     snapshot: &Snapshot,
     edition: LanguageEdition,
     prototypes: &[String],
+    compilation_unit_mode: CompilationUnitMode,
+    sources: &[Source<'_>],
 ) -> Vec<Diag> {
     let extensions: HashSet<_> = prototypes
         .iter()
         .filter_map(|p| extension_name(p))
         .collect();
     let files: HashMap<_, _> = snapshot.files.iter().map(|f| (f.id, f)).collect();
+    // SourceManager does not always order locations in different merged
+    // buffers. Use the admitted buffer order for resolved $unit references.
+    let unit_order: HashMap<_, _> = if compilation_unit_mode == CompilationUnitMode::Merged {
+        sources
+            .iter()
+            .filter(|source| source.is_compilation_unit)
+            .enumerate()
+            .map(|(index, source)| (source.name, index))
+            .collect()
+    } else {
+        HashMap::new()
+    };
     let nodes: HashMap<_, _> = snapshot
         .semantic_nodes
         .iter()
@@ -824,7 +851,39 @@ pub(super) fn edition_diagnostics(
         .collect();
     tokens.sort_by_key(|t| t.range.map(|r| (r.file_id, r.start, r.end)));
     for (i, token) in tokens.iter().enumerate() {
-        if edition == LanguageEdition::SystemVerilog2009 && token.is_unit_forward_reference {
+        let cross_buffer_forward_reference = matches!(
+            token.role,
+            LexicalRole::Reference | LexicalRole::ConnectionActual
+        ) && token
+            .semantic_id
+            .and_then(|id| nodes.get(&id))
+            .filter(|declaration| {
+                matches!(
+                    declaration.kind,
+                    SemanticKind::Parameter
+                        | SemanticKind::Variable
+                        | SemanticKind::Array
+                        | SemanticKind::Net
+                ) && declaration.parent_id.is_some_and(|parent| {
+                    nodes
+                        .get(&parent)
+                        .is_some_and(|scope| scope.detail == "CompilationUnit")
+                })
+            })
+            .and_then(|declaration| declaration.range)
+            .zip(token.range)
+            .and_then(|(declaration, reference)| {
+                let declaration_file = files.get(&declaration.file_id)?;
+                let reference_file = files.get(&reference.file_id)?;
+                Some((
+                    unit_order.get(declaration_file.name.as_str())?,
+                    unit_order.get(reference_file.name.as_str())?,
+                ))
+            })
+            .is_some_and(|(declaration, reference)| reference < declaration);
+        if edition == LanguageEdition::SystemVerilog2009
+            && (token.is_unit_forward_reference || cross_buffer_forward_reference)
+        {
             violations.push((
                 token.range,
                 format!("compilation-unit forward reference to {}", token.text),

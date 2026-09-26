@@ -1868,8 +1868,8 @@ fn exclusions_and_context_axes_are_explicit() {
 
     let manifest_bytes = fs::read(root.join("tests/syn038_pairwise.json"))
         .expect("read the compact SYN-038 pairwise source");
-    let manifest: serde_json::Value = serde_json::from_slice(&manifest_bytes)
-        .expect("parse the compact SYN-038 pairwise source");
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&manifest_bytes).expect("parse the compact SYN-038 pairwise source");
     let factor_ids = manifest["factors"]
         .as_object()
         .unwrap_or_else(|| panic!("SYN-038 manifest must define factor IDs"))

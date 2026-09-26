@@ -210,7 +210,10 @@ fn equal_width_nominal_types_select_different_generate_branches_in_owned_model()
             "original_enum"
         };
         assert!(
-            !instance.gen_scopes.iter().any(|scope| scope.name == unselected),
+            !instance
+                .gen_scopes
+                .iter()
+                .any(|scope| scope.name == unselected),
             "{path}"
         );
     }
@@ -247,7 +250,10 @@ fn legal_large_extent_is_a_backend_capacity_error_not_an_edition_error() {
             .expect("exclusive width limit must reject before compiling C");
         let message = error.to_string();
         assert!(message.contains("1048576"), "{message}");
-        assert!(message.contains("maximum") || message.contains("limit"), "{message}");
+        assert!(
+            message.contains("maximum") || message.contains("limit"),
+            "{message}"
+        );
         assert!(!message.contains("strict edition profile"), "{message}");
     }
 }

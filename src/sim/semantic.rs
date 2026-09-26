@@ -369,9 +369,15 @@ impl<'db> SemanticModel<'db> {
             let declaration_only_other = matches!(node.kind(), NodeKind::Other)
                 && classify_simulation_node(self.db, id, false)
                     == SimulationNodeClass::DeclarationOnly;
+            let folded_type_comparison =
+                matches!(node.kind(), NodeKind::Expr(ExprKind::Constant { .. }))
+                    && self.db.semantic_detail(id) == Some("BinaryOp");
             if !matches!(node.kind(), NodeKind::ClassDef | NodeKind::Package)
                 && !declaration_only_other
+                && !folded_type_comparison
             {
+                // The folded type comparison keeps its type-only children for
+                // navigation, but none of them is executable.
                 pending.extend_from_slice(node.children());
             }
             // A metadata reference does not make a scope's contents executable.
