@@ -30,7 +30,7 @@ struct TaggedMemberGuard {
 }
 
 impl Codegen<'_> {
-    fn fixed_activation_root(&self, node: NodeId) -> Option<Projection> {
+    fn fixed_activation_root(&self, node: NodeId) -> Result<Option<Projection>, String> {
         let node = match self.kind(node) {
             NodeKind::Expr(ExprKind::Ref {
                 target: Some(target),
@@ -38,14 +38,18 @@ impl Codegen<'_> {
             _ => node,
         };
         let root = self.canonical_func_target(node).unwrap_or(node);
-        let function = self.func.as_ref()?;
+        let Some(function) = self.func.as_ref() else {
+            return Ok(None);
+        };
         if !function.arg_ir.contains_key(&root)
             && !function.locals.contains_key(&root)
             && function.ret_node != Some(root)
         {
-            return None;
+            return Ok(None);
         }
-        let descriptor = self.query_descriptor(root)?.clone();
+        let Some(descriptor) = self.query_descriptor(root).cloned() else {
+            return Ok(None);
+        };
         if !matches!(
             &descriptor.shape,
             TypeShape::FixedArray { .. }
@@ -58,16 +62,26 @@ impl Codegen<'_> {
                     ..
                 })
         ) {
-            return None;
+            return Ok(None);
         }
-        fixed_width(&descriptor)?;
-        Some(Projection {
-            root: FixedRoot::Activation(root),
+        if fixed_width(&descriptor).is_none() {
+            return Ok(None);
+        }
+        let storage = if let Some(signal) = function.persistent.get(&root) {
+            FixedRoot::Cell {
+                read: self.signal_read_expr(signal)?,
+                target: self.reference_lhs(IrLhs::Whole(signal.ir))?,
+            }
+        } else {
+            FixedRoot::Activation(root)
+        };
+        Ok(Some(Projection {
+            root: storage,
             signed: descriptor.info.signed,
             descriptor,
             steps: Vec::new(),
             ref_legal: true,
-        })
+        }))
     }
 
     fn fixed_root(&mut self, path: &str, node: NodeId) -> Result<Option<Projection>, String> {
@@ -94,7 +108,7 @@ impl Codegen<'_> {
                 ref_legal: false,
             }));
         }
-        if let Some(root) = self.fixed_activation_root(node) {
+        if let Some(root) = self.fixed_activation_root(node)? {
             return Ok(Some(root));
         }
         let declaration = match self.kind(node) {

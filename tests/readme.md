@@ -83,6 +83,13 @@ requirements above apply without repeating them for each suite.
   [SYN-018 modules](fixtures/sim/syn018_module_declarations/readme.md) and `sim_edition`
   retain strict edition gates, macros/keyword regions, legal defaults/types,
   namespace and actual separate/merged-file boundaries.
+- [SYN-021 tagged unions](fixtures/sim/syn021_tagged_union/readme.md) qualifies
+  finite packed struct payloads through constructor, value, formal, static local,
+  ref and stable-tag NBA contexts in 2009, with 2001 and invalid-constructor
+  rejections. It also checks nested wrong-tag access and issue-time NBA targets.
+  `sim_tagged_union_access` retains guard-owner stress; `sim_data_types_next`
+  retains void, nested and unsupported-unpacked controls. A valid target
+  retagged before commit is Q03-open.
 - [SYN-032 configurations](fixtures/sim/syn032_library_configs/readme.md) and
   [SYN-033 bind](fixtures/sim/syn033_structural_bind/readme.md) keep bounded library,
   configuration and structural composition separate from arbitrary verification

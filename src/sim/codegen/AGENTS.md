@@ -70,6 +70,9 @@ resolved defaults/delayed driver X contributions retain their separate phases.
 A time-zero process write must win over initialization. Static locals initialize
 once in hidden model storage; automatic locals initialize per lexical entry,
 including inherited lifetimes and loop/block scopes.
+Fixed aggregate projections of static function locals use that persistent signal
+as their read/write owner, including tagged-member guards; activation locals do
+not name the persistent cell.
 
 Collect parameters and concrete genvars with each generated path. Replay deferred
 initializer calls/child references only after storage/prototypes exist, with

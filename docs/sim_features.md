@@ -142,10 +142,16 @@ real values use a separate representation.
   layouts, declaration/net combinations and arbitrary slices remain restricted.
   SV §§7.2–7.4 **[SV-2005]**.
 - 🟨 **Tagged unions** — Finite packed storage, construction and checked member
-  access support void, primitive, fixed-structure and nested-tag payloads.
-  Valid reads restore the selected member's state/sign; inactive-tag access is
-  diagnosed. Dynamic/native payloads remain restricted. Changing-tag NBA
-  access-check timing remains unresolved; pattern matching is covered in §5.
+  access support void, primitive, fixed-structure and nested-tag payloads in
+  module storage, static/automatic locals, value, constructor, port,
+  input/output/inout, const-ref/ref and stable-tag selected NBA contexts. Valid
+  reads restore the selected member's state/sign; inactive-tag reads and writes
+  produce source-addressed runtime errors. Dynamic/native payloads remain
+  restricted. Q03: SV §§4.9.4 and 10.4.2 fix the NBA target and RHS using
+  issue-time values; a wrong tag at issue still diagnoses if the variable is
+  retagged before commit. The selected successful NBAs keep the tag stable.
+  Whether a valid issue target requires another tag check after an intervening
+  retag remains unqualified. Pattern matching is covered in §5.
   SV §§7.3, 11.9, 12.6 **[SV-2005]**.
 - 🟨 **Strings** — Module/static/automatic byte strings support copies, casts,
   core methods, `atoreal/realtoa`, formatting, value/reference formals, copy-out,
