@@ -339,8 +339,12 @@ real values use a separate representation.
   two-state member in a four-state packed record converts X/Z to zero before
   exact constant comparison (SV §§7.2.1, 12.6). Fixed arrays of structs can
   be bound as complete members; §12.6 defines no recursive array pattern form.
-  Whole dynamic/native wildcard and binding patterns, and dynamic/native tagged
-  payloads, remain restricted. SV §12.6 **[SV-2005]**.
+  Finite tagged payload patterns check their tag before payload checks; `casez`
+  wildcards Z tag bits and `casex` wildcards X/Z tag bits. Whole tagged bindings
+  retain their type through later `&&&` clauses. Wrong tag names and non-tagged
+  sources reject. Whole dynamic/native wildcard and binding patterns, and
+  dynamic/native tagged payloads, remain restricted. SV §§7.3.2, 12.6
+  **[SV-2005]**.
 - 🟦 **Qualified selection** — `unique`, `unique0`, `priority` diagnose no-match/
   multiple-match with source locations and default/else suppression. `case inside`
   supports wildcard items, ranges, qualified string cases and one selector

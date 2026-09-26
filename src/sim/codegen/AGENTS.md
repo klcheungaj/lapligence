@@ -195,8 +195,9 @@ still NBA. Detached repeat counts remain constant until capture is represented.
 Sequential predicates evaluate clauses once, left-to-right, continuing only on
 definite true. Preserve explicit branches/pattern bindings and short-circuit
 unreachable constants; never replace with `&&`. Matching sources/selectors are
-captured once; filters use per-item bindings, first-match/default order and exact
-tag guards. Recursive constant checks read each structure member in its own
+captured once; filters use per-item bindings and first-match/default order.
+Tagged pattern checks use the enclosing case mode; ordinary member guards are exact.
+Recursive constant checks read each structure member in its own
 state domain, including two-state conversion inside a four-state packed record.
 `inside` follows expression result types before storage roots, keeps
 casts, descends arrays to singulars (not struct members), evaluates selector and

@@ -29,14 +29,16 @@ patterns, wildcard members, mixed signedness/state domains, and lexical
 bindings are checked through the public CLI. Function-returning sources prove
 that each matched value is captured once before ordered member checks.
 
-`syn_024_tagged_patterns.sv` adds finite packed tagged-union patterns. It checks
-exact active-tag guards, void arms, fixed structure and nested tagged payloads,
-X/Z data in inactive arms, source-order filters, and true/false conditional
-arms. `bad_tagged_pattern_tag.sv` and `bad_tagged_pattern_type.sv` are
-single-fault frontend controls.
+`syn_024_tagged_patterns.sv` adds finite packed tagged-union predicates. It
+checks exact `if ... matches` tag checks, void arms, fixed structure and nested
+tagged payloads, X/Z data in inactive arms, source-order filters, and true/false
+conditional arms. `bad_tagged_pattern_tag.sv` and
+`bad_tagged_pattern_type.sv` are single-fault frontend controls. The
+[SYN-024 matrix](../syn024_tagged_patterns/readme.md) additionally qualifies
+whole tagged bindings and enclosing case modes.
 
 `syn_025_pattern_case.sv` adds primitive, fixed-structure and tagged `case`,
 `casez` and `casex ... matches` items. It checks one selector evaluation,
 source-order filters over per-item bindings, first-match/default behavior and
-unique/priority qualifiers in both optimizer modes. Tagged discriminants keep
-exact matching even when a case item uses a wildcard case mode.
+unique/priority qualifiers in both optimizer modes. Tagged discriminants use
+the enclosing case mode; ordinary checked member access remains exact.

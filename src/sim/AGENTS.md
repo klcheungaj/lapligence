@@ -52,8 +52,8 @@ indices, partial clipping and missing-bit X/no-write behavior. Never sum offsets
 and erase intermediate bounds. Count index temporaries in capacity estimates.
 Fixed-array folds operate on immediate elements, use the first mapped value as
 seed, preserve Z, and restore nested iterator bindings. Ordered predicates and
-case patterns capture selectors once; tagged discriminants match exactly while
-payloads use their case mode.
+case patterns capture selectors once; tagged pattern discriminants and payloads
+use their enclosing case mode. Ordinary checked-member guards remain exact.
 
 ## Capacity and runtime packaging
 
