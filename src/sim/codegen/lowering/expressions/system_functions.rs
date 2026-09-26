@@ -656,20 +656,16 @@ impl<'a> Codegen<'a> {
                     .get(3)
                     .map(|node| self.lower_expr(scope_path, *node))
                     .transpose()?;
-                if let Some(value) = start.as_ref().or(count.as_ref()) {
+                for value in start.iter().chain(count.iter()) {
                     if value.is_real() {
                         return Err(format!(
                             "$fread start/count must be packed expressions in `{scope_path}`"
                         ));
                     }
                 }
-                if matches!(target, IrFileReadTarget::Packed { .. })
-                    && (start.is_some() || count.is_some())
-                {
-                    return Err(format!(
-                        "$fread start/count bounds require an unpacked array destination in `{scope_path}`"
-                    ));
-                }
+                // Both source editions allow start/count for a packed target
+                // but ignore their values. The owned emitter already releases
+                // these argument temporaries without applying memory bounds.
                 Ok(IrExpr::new(
                     IrExprKind::SysFunc(IrSysFunc::FileInput(IrFileInput::Read {
                         descriptor: Box::new(descriptor),

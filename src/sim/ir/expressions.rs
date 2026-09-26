@@ -756,8 +756,9 @@ pub enum IrFileInputTarget {
     },
 }
 
-/// Destination of `$fread`: one packed value or an unpacked array in HDL
-/// declaration order.
+/// Destination of `$fread`: one packed value or an unpacked array stored in
+/// HDL declaration order. The runtime maps rank-one memory reads to ascending
+/// HDL addresses, independently of that storage order.
 #[derive(Clone, Debug, PartialEq)]
 pub enum IrFileReadTarget {
     Packed {

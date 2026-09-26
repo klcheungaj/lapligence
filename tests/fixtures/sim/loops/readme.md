@@ -40,3 +40,13 @@ cargo test --locked --test sim_loops foreach_mixed -- --test-threads=1
 Use the full `sim_loops` suite to check the existing resizable-container and
 omission cases as well. Passing fixture-integrity checks only establishes that
 inputs are present and registered; it is not language-execution validation.
+
+- `syn_037_function_steps.sv` adds void and value-returning HDL function
+  steps, step-list ordering, ref/inout/output propagation, continue versus
+  break/return, local named disable, shadowed controls, and 64 repeated
+  activations with 130-bit owners. Its exact oracle is in `sim_loops.rs`.
+- `syn_037_task_step_rejected.sv` keeps tasks out of the function-step grammar.
+
+The new function-step cases are authored regression requirements, not a record
+of a successful Rust/CLI run. Use the full `sim_loops` suite and generated-model
+sanitizer lane on a configured host before closing their acceptance gate.

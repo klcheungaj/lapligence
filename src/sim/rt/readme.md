@@ -2,7 +2,7 @@
 
 ## Dynamic-value ownership boundaries
 
-The active model/cache contract is value ABI 3, independent of model maximum
+The active model/cache contract is value ABI 4, independent of model maximum
 width. See [ownership](value/ownership.md) and the authoritative
 [feature boundary](../../../docs/sim_features.md#dynamic-value-migration-acceptance-boundary).
 A standalone C runtime probe is not a test of the Rust emitter or HDL lowering.
@@ -310,3 +310,19 @@ high overflow. SystemVerilog sparse address files do not receive the no-address
 short-file warning; Verilog-2001 retains count warnings even when repeated
 addresses cause extra writes within the selected range. The native
 `memory_image` probe exercises these contracts with tracked value ownership.
+
+## Binary memory input order
+
+`scheduler/scanning.c::llg_file_read_array` maps rank-one memory reads from
+ascending HDL addresses to declaration-ordered storage. Descending declarations
+therefore start at the last physical slot by default and walk backward. An
+explicit start maps to that address; count is capped at the remaining addresses
+through the declared high bound. Unknown, negative-count and out-of-bounds
+selectors do not consume input or change destination storage. The registered
+per-element value scope remains live across publication callbacks.
+
+This is the binary `$fread` rule in both supplied editions, not the distinct
+`$readmemh`/`$readmemb` declaration-order default. The continuation changes and
+qualifies rank-one memory order only; multidimensional binary input remains
+outside this evidence. See the native `file_input_isolation_probe.c` and public
+`sim_file_io.rs` / `sim_edition.rs` tests.

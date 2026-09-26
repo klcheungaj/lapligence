@@ -307,3 +307,28 @@ fn syn_037_verilog_2001_local_disable_preserves_loop_and_copyout() {
         &["--edition", "2001"],
     );
 }
+
+#[test]
+fn syn_037_function_steps_preserve_order_copyout_and_automatic_owners() {
+    sim_cli::run_case_with_args(
+        "loops",
+        "syn_037_function_steps",
+        concat!(
+            "steps=3 audit=123 copy=13 sum=3 discarded=2 calls=3 shadow=99 ",
+            "task=4 function=25\n",
+        ),
+        "",
+        &[],
+        &["--edition", "2009"],
+    );
+}
+
+#[test]
+fn syn_037_task_calls_are_not_admitted_as_function_steps() {
+    sim_cli::reject_case_with_args(
+        "loops",
+        "syn_037_task_step_rejected",
+        "requires a function call, not a task",
+        &["--edition", "2009"],
+    );
+}

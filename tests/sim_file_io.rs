@@ -82,7 +82,7 @@ fn file_input_operations_match_in_both_optimizer_modes() {
             + "sscanf=2 decimal=42 hexadecimal=00xz\n"
             + "selected=aa,bb bytes=2\n"
             + "wide=123456 bytes=3\n"
-            + "descending=xx,12,34,xx bytes=2\n"
+            + "descending=34,12,xx,xx bytes=2\n"
             + "ascending=12,34,56,78 bytes=4\n";
         for (name, options) in [
             ("optimized", OptConfig::default()),

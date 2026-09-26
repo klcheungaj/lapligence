@@ -17,6 +17,76 @@ static llg_ref_t whole(sv4_t* value) {
     return ref;
 }
 
+/* Physical slots follow the declaration; $fread memory addresses do not. */
+static int check_memory_address_order(uint32_t descriptor) {
+    const int32_t bounds[][2] = {
+        {3, 0}, {0, 3}, {-1, -4}, {-4, -1},
+        {INT32_MIN + 3, INT32_MIN}, {INT32_MAX, INT32_MAX - 3}
+    };
+    const uint64_t bytes[] = {0x12u, 0x34u, 0x56u, 0x78u};
+    sv4_t zero = test_value(sv4_from_u64(0, 32, 1));
+    sv4_t excessive_count = test_value(sv4_from_u64(9, 32, 1));
+    sv4_t negative_count = test_value(sv4_from_u64(UINT64_MAX, 64, 1));
+    sv4_t unknown = test_value(sv4_x(32, 1));
+    for (size_t test = 0; test < sizeof(bounds) / sizeof(bounds[0]); test++) {
+        const int32_t* dims = bounds[test];
+        int descending = dims[0] > dims[1];
+        int64_t low = descending ? dims[1] : dims[0];
+        int64_t high = descending ? dims[0] : dims[1];
+        sv4_t values[4];
+        for (size_t i = 0; i < 4; i++) values[i] = sv4_x(8, 0);
+        const char* error = NULL;
+        if (llg_file_seek(descriptor, zero, zero) != 0 ||
+            llg_file_read_array(descriptor, values, 8, 0, 0, 4, dims, 1,
+                                0, zero, 0, zero) != 4) {
+            error = "default memory read count";
+        }
+        for (size_t i = 0; i < 4 && !error; i++) {
+            size_t physical = descending ? 3u - i : i;
+            if (sv4_to_u64(values[physical]) != bytes[i])
+                error = "default memory read address order";
+        }
+        for (size_t i = 0; i < 4; i++) sv4_replace(&values[i], sv4_x(8, 0));
+        sv4_t start = test_value(sv4_from_u64((uint64_t)(low + 2), 64, 1));
+        if (!error && (llg_file_seek(descriptor, zero, zero) != 0 ||
+            llg_file_read_array(descriptor, values, 8, 0, 0, 4, dims, 1,
+                                1, start, 1, excessive_count) != 2)) {
+            error = "memory count stops at highest address";
+        }
+        for (size_t i = 0; i < 4 && !error; i++) {
+            size_t physical = descending ? 3u - i : i;
+            if ((i < 2 && !sv4_is_unknown(values[physical])) ||
+                (i >= 2 && sv4_to_u64(values[physical]) != bytes[i - 2]))
+                error = "explicit memory read address order";
+        }
+        /* No-op/error bounds must not consume bytes or mutate storage. */
+        sv4_t outside = test_value(sv4_from_u64((uint64_t)(high + 1), 64, 1));
+        if (!error && (llg_file_seek(descriptor, zero, zero) != 0 ||
+            llg_file_read_array(descriptor, values, 8, 0, 0, 4, dims, 1,
+                                1, start, 1, zero) != 0 ||
+            llg_file_read_array(descriptor, values, 8, 0, 0, 4, dims, 1,
+                                1, outside, 0, zero) != 0 ||
+            llg_file_read_array(descriptor, values, 8, 0, 0, 4, dims, 1,
+                                1, unknown, 0, zero) != 0 ||
+            llg_file_read_array(descriptor, values, 8, 0, 0, 4, dims, 1,
+                                0, zero, 1, negative_count) != 0 ||
+            llg_file_read_array(descriptor, values, 8, 0, 0, 4, dims, 1,
+                                0, zero, 1, unknown) != 0 ||
+            llg_file_getc(descriptor) != 0x12)) {
+            error = "empty/invalid memory bounds consume no input";
+        }
+        for (size_t i = 0; i < 4; i++) {
+            size_t physical = descending ? 3u - i : i;
+            if (!error && ((i < 2 && !sv4_is_unknown(values[physical])) ||
+                (i >= 2 && sv4_to_u64(values[physical]) != bytes[i - 2])))
+                error = "empty/invalid memory bounds preserve storage";
+            sv4_destroy(&values[physical]);
+        }
+        if (error) return fail(error);
+    }
+    return 0;
+}
+
 static int check_file_io(void) {
     llg_rt_init();
     FILE* host = fopen("input.txt", "wb");
@@ -132,8 +202,8 @@ static int check_file_io(void) {
     int descending_result = llg_file_read_array(binary, descending, 8, 0, 0, 4, descending_dims, 1,
                             1, test_value(sv4_from_u64(2, 32, 1)), 1, test_value(sv4_from_u64(2, 32, 1)));
     if (descending_result != 2 ||
-        sv4_to_u64(descending[1]) != 0x12u || sv4_to_u64(descending[2]) != 0x34u ||
-        !sv4_is_unknown(descending[0]) || !sv4_is_unknown(descending[3]))
+        sv4_to_u64(descending[1]) != 0x12u || sv4_to_u64(descending[0]) != 0x34u ||
+        !sv4_is_unknown(descending[2]) || !sv4_is_unknown(descending[3]))
         return fail("descending memory fread");
     sv4_t ascending[4];
     for (int i = 0; i < 4; i++) ascending[i] = sv4_x(8, 0);
@@ -144,6 +214,7 @@ static int check_file_io(void) {
         sv4_to_u64(ascending[0]) != 0x12u || sv4_to_u64(ascending[3]) != 0x78u)
         return fail("ascending memory fread");
 
+    if (check_memory_address_order(binary) != 0) return 1;
     if (llg_file_getc(0) != EOF) return fail("invalid descriptor input");
     llg_string_destroy(&word);
     llg_file_close(descriptor);

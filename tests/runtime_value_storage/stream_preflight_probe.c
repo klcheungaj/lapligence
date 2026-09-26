@@ -5,21 +5,30 @@
 #include <string.h>
 
 static void check_bounds(int kind, int64_t base, int64_t extent,
-                         int64_t expected_right, size_t expected_count) {
+                         int64_t low, int64_t high, size_t expected_count) {
     sv4_t first = sv4_from_i64(base, 64);
     sv4_t second = sv4_from_i64(extent, 64);
-    int64_t left = 0, right = 0;
-    size_t count = 0;
-    llg_fixed_stream_bounds(kind, first, second, &left, &right, &count);
-    CHECK(left == base && right == expected_right && count == expected_count);
-    CHECK(llg_stream_selector_width(kind, first, second, 8) == expected_count * 8);
-    CHECK(llg_fixed_stream_width(kind, first, second, 8) == expected_count * 8);
-    CHECK(llg_fixed_stream_index_at(left, right, 0) == base);
-    CHECK(llg_fixed_stream_index_at(left, right, count - 1) == expected_right);
-    CHECK(llg_fixed_stream_target_in_bounds(left, right, left, right, count));
-    CHECK(llg_fixed_stream_target_in_bounds(right, left, left, right, count));
-    llg_stream_require_bits((int64_t)(count * 8), (uint32_t)(count * 8));
-    llg_stream_require_bits((int64_t)(count * 8 + 8), (uint32_t)(count * 8));
+    /* Selector spelling does not choose traversal direction: the declaration
+     * does. Exercise both orders, including singleton host-limit endpoints. */
+    for (int descending = 0; descending < 2; ++descending) {
+        int64_t declaration_left = descending ? high : low;
+        int64_t declaration_right = descending ? low : high;
+        int64_t left = 0, right = 0;
+        size_t count = 0;
+        llg_fixed_stream_bounds(kind, first, second,
+                                declaration_left, declaration_right,
+                                &left, &right, &count);
+        CHECK(left == declaration_left && right == declaration_right);
+        CHECK(count == expected_count);
+        CHECK(llg_stream_selector_width(kind, first, second, 8) == expected_count * 8);
+        CHECK(llg_fixed_stream_width(kind, first, second, 8) == expected_count * 8);
+        CHECK(llg_fixed_stream_index_at(left, right, 0) == declaration_left);
+        CHECK(llg_fixed_stream_index_at(left, right, count - 1) == declaration_right);
+        CHECK(llg_fixed_stream_target_in_bounds(low, high, left, right, count));
+        CHECK(llg_fixed_stream_target_in_bounds(high, low, left, right, count));
+        llg_stream_require_bits((int64_t)(count * 8), (uint32_t)(count * 8));
+        llg_stream_require_bits((int64_t)(count * 8 + 8), (uint32_t)(count * 8));
+    }
     sv4_destroy(&first);
     sv4_destroy(&second);
     CHECK(value_test_live() == 0);
@@ -27,13 +36,19 @@ static void check_bounds(int kind, int64_t base, int64_t extent,
 
 int main(int argc, char** argv) {
     if (argc == 1) {
-        check_bounds(LLG_STREAM_SELECTOR_INDEXED_PLUS, INT64_MAX, 1, INT64_MAX, 1);
-        check_bounds(LLG_STREAM_SELECTOR_INDEXED_MINUS, INT64_MIN, 1, INT64_MIN, 1);
-        check_bounds(LLG_STREAM_SELECTOR_INDEXED_PLUS, INT64_MIN, 2, INT64_MIN + 1, 2);
-        check_bounds(LLG_STREAM_SELECTOR_INDEXED_MINUS, INT64_MAX, 2, INT64_MAX - 1, 2);
-        check_bounds(LLG_STREAM_SELECTOR_INDEXED_PLUS, -2, 4, 1, 4);
-        check_bounds(LLG_STREAM_SELECTOR_INDEXED_MINUS, 5, 4, 2, 4);
-        check_bounds(LLG_STREAM_SELECTOR_RANGE, 2, -2, -2, 5);
+        check_bounds(LLG_STREAM_SELECTOR_INDEXED_PLUS, INT64_MAX, 1,
+                     INT64_MAX, INT64_MAX, 1);
+        check_bounds(LLG_STREAM_SELECTOR_INDEXED_MINUS, INT64_MIN, 1,
+                     INT64_MIN, INT64_MIN, 1);
+        check_bounds(LLG_STREAM_SELECTOR_INDEXED_PLUS, INT64_MIN, 2,
+                     INT64_MIN, INT64_MIN + 1, 2);
+        check_bounds(LLG_STREAM_SELECTOR_INDEXED_MINUS, INT64_MAX, 2,
+                     INT64_MAX - 1, INT64_MAX, 2);
+        check_bounds(LLG_STREAM_SELECTOR_INDEXED_PLUS, -2, 4, -2, 1, 4);
+        check_bounds(LLG_STREAM_SELECTOR_INDEXED_MINUS, 5, 4, 2, 5, 4);
+        check_bounds(LLG_STREAM_SELECTOR_RANGE, 2, -2, -2, 2, 5);
+        check_bounds(LLG_STREAM_SELECTOR_RANGE, -2, 2, -2, 2, 5);
+        check_bounds(LLG_STREAM_SELECTOR_INDEX, -2, 0, -2, -2, 1);
         CHECK(!llg_fixed_stream_target_in_bounds(-2, 1, -3, 0, 4));
         CHECK(!llg_fixed_stream_target_in_bounds(1, -2, 0, 2, 3));
         CHECK(!llg_fixed_stream_target_in_bounds(1, -2, 0, -1, 0));
@@ -44,7 +59,7 @@ int main(int argc, char** argv) {
             size_t count;
             llg_fixed_stream_bounds(LLG_STREAM_SELECTOR_RANGE,
                                     unknown_second ? known : unknown,
-                                    unknown_second ? unknown : known,
+                                    unknown_second ? unknown : known, -2, 1,
                                     &left, &right, &count);
             CHECK(count == 0);
             CHECK(!llg_fixed_stream_target_in_bounds(-2, 1, left, right, count));
@@ -85,7 +100,7 @@ int main(int argc, char** argv) {
         sv4_t second = sv4_from_i64(extent, 64);
         int64_t left, right;
         size_t count;
-        llg_fixed_stream_bounds(kind, first, second, &left, &right, &count);
+        llg_fixed_stream_bounds(kind, first, second, 0, 7, &left, &right, &count);
         sv4_destroy(&first);
         sv4_destroy(&second);
     }

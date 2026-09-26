@@ -615,6 +615,9 @@ pub const SEMANTIC_UNIQUE_PRIORITY_UNIQUE: u64 = 1;
 pub const SEMANTIC_UNIQUE_PRIORITY_UNIQUE0: u64 = 2;
 pub const SEMANTIC_UNIQUE_PRIORITY_PRIORITY: u64 = 3;
 
+/// Procedural for-loop statement tag owned by the C ABI.
+pub const SEMANTIC_STMT_FOR: u32 = 35;
+
 /// Immediate assertion statement tags owned by the C ABI.
 pub const SEMANTIC_STMT_IMMEDIATE_ASSERT: u32 = 61;
 pub const SEMANTIC_STMT_IMMEDIATE_ASSUME: u32 = 62;

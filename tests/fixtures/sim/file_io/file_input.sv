@@ -85,8 +85,9 @@ module tb;
     descending[0] = 8'hxx;
     status = $fseek(binary_fd, 0, 0);
     status = $fread(descending, binary_fd, 2, 2);
-    if (status !== 2 || descending[3] !== 8'hxx || descending[2] !== 8'h12 ||
-        descending[1] !== 8'h34 || descending[0] !== 8'hxx) begin
+    // $fread walks increasing addresses: element 2, then element 3.
+    if (status !== 2 || descending[3] !== 8'h34 || descending[2] !== 8'h12 ||
+        descending[1] !== 8'hxx || descending[0] !== 8'hxx) begin
       $display("FAIL descending status=%0d values=%h,%h,%h,%h", status,
                descending[3], descending[2], descending[1], descending[0]);
       $finish;

@@ -45,3 +45,11 @@ make it a standard builtin. Directive replacement text is excluded until used;
 missing, skipped, string and escaped-identifier tokens are not treated as code.
 Keep the table tests, located frontend tests and both compilation modes aligned
 when updating edition capabilities.
+
+The selected 2001 edition boundary also rejects classified unbased-unsized
+number tokens and procedural `for` headers with SV-only initializer/step
+shapes. The latter check uses executable semantic edges, so it does not promise
+body-level diagnostics in declaration-only navigation snapshots. The memory
+exception is argument-position-specific: `$fread` consumes storage in argument
+zero, while `$readmem*` consumes it in argument one. It does not exempt other
+whole-array expressions that happen to name the same memory.

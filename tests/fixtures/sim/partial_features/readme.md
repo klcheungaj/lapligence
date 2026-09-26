@@ -51,3 +51,15 @@ for the boundaries these tests do not cover.
 | `severity_*.sv` | Typed `$info/$warning/$error` diagnostics, `$fatal` continuation/termination/final behavior, stable counts, and finish-number validation |
 | `assertions*.sv`, `deferred_assertions*.sv` | Immediate and deferred assert/assume/cover four-state truth, issue-time value and action-time reference captures, Reactive reports, same-slot glitch coalescing, module-level actions, defaults, labels and optimizer parity |
 | `stop_*.sv` | Resumable nested-call suspension, retained future work/finals, explicit batch exit policy, and diagnostic levels |
+
+### Selected edition continuation
+
+`sim_edition.rs` adds paired edition checks for `edition_fread_memory.sv`,
+`edition_unbased_fill.sv` / `edition_unbased_rejected.sv`,
+`edition_for_function_step.sv`, and `edition_for_multiple_steps.sv`.
+The memory probe distinguishes declaration order from `$fread`'s lowest-address
+loading order, and checks that start/count (including zero count and an omitted
+start) are ignored for packed reads. The single-fault negatives isolate a fill literal, a function
+step, or a comma-separated step list; macro/keyword-region and in-memory
+navigation controls accompany them. New runtime oracles still require execution
+on a Rust-enabled host.

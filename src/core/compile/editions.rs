@@ -12,7 +12,8 @@ use crate::ffi::slang::{
     SourceRange, TypeKind, CLASS_INTERFACE, SEMANTIC_ASSERTION_FINAL,
     SEMANTIC_STMT_CONCURRENT_ASSERT, SEMANTIC_STMT_CONCURRENT_ASSUME,
     SEMANTIC_STMT_CONCURRENT_COVER, SEMANTIC_STMT_CONCURRENT_EXPECT,
-    SEMANTIC_STMT_IMMEDIATE_ASSERT, SEMANTIC_STMT_IMMEDIATE_ASSUME, SEMANTIC_STMT_IMMEDIATE_COVER,
+    SEMANTIC_STMT_FOR, SEMANTIC_STMT_IMMEDIATE_ASSERT, SEMANTIC_STMT_IMMEDIATE_ASSUME,
+    SEMANTIC_STMT_IMMEDIATE_COVER,
 };
 use std::collections::{HashMap, HashSet};
 
@@ -604,6 +605,18 @@ fn is_whole_unpacked_value(
         })
         .filter_map(|edge| nodes.get(&edge.target_id).copied())
         .any(|child| is_fixed_unpacked_type(snapshot, child.type_id))
+        && !is_memory_task_operand(snapshot, nodes, node.id)
+}
+
+/// The array exemption applies only to the storage operand, never to a
+/// filename, descriptor, bound, or an unrelated use of the same declaration.
+fn memory_storage_argument(name: &str) -> Option<u32> {
+    match name {
+        "$readmemb" | "$readmemh" | "$writememb" | "$writememh" => Some(1),
+        // IEEE 1364-2001 17.2.4.4 explicitly admits $fread(memory, fd).
+        "$fread" => Some(0),
+        _ => None,
+    }
 }
 
 fn is_memory_task_operand(
@@ -611,34 +624,21 @@ fn is_memory_task_operand(
     nodes: &HashMap<u64, &SemanticNode>,
     target: u64,
 ) -> bool {
-    let mut stack = snapshot
-        .semantic_nodes
-        .iter()
-        .filter(|call| {
-            matches!(call.kind, SemanticKind::SystemCall)
-                && matches!(
-                    call.name.as_str(),
-                    "$readmemb" | "$readmemh" | "$writememb" | "$writememh"
-                )
-        })
-        .flat_map(|call| {
-            usize::try_from(call.edge_start)
-                .ok()
-                .zip(usize::try_from(call.edge_count).ok())
-                .and_then(|(start, count)| {
-                    snapshot
-                        .semantic_edges
-                        .get(start..start.saturating_add(count))
-                })
-                .into_iter()
-                .flat_map(|edges| {
-                    edges
-                        .iter()
-                        .filter(|edge| edge.role == SemanticEdgeRole::Argument)
-                        .map(|edge| edge.target_id)
-                })
-        })
-        .collect::<Vec<_>>();
+    let mut stack = Vec::new();
+    for call in &snapshot.semantic_nodes {
+        if call.kind != SemanticKind::SystemCall {
+            continue;
+        }
+        let Some(argument) = memory_storage_argument(&call.name) else {
+            continue;
+        };
+        stack.extend(
+            semantic_edges(snapshot, call)
+                .iter()
+                .filter(|edge| edge.role == SemanticEdgeRole::Argument && edge.index == argument)
+                .map(|edge| edge.target_id),
+        );
+    }
     let mut visited = HashSet::new();
     while let Some(id) = stack.pop() {
         if id == target {
@@ -650,20 +650,69 @@ fn is_memory_task_operand(
         let Some(node) = nodes.get(&id) else {
             continue;
         };
-        let Some(start) = usize::try_from(node.edge_start).ok() else {
-            continue;
-        };
-        let Some(count) = usize::try_from(node.edge_count).ok() else {
-            continue;
-        };
-        if let Some(edges) = snapshot
-            .semantic_edges
-            .get(start..start.saturating_add(count))
-        {
-            stack.extend(edges.iter().map(|edge| edge.target_id));
-        }
+        // Traverse storage wrappers only. Following Reference / Callee / Child
+        // edges would exempt other uses or bodies just because this call names
+        // the same memory or subroutine.
+        stack.extend(
+            semantic_edges(snapshot, node)
+                .iter()
+                .filter(|edge| {
+                    matches!(
+                        edge.role,
+                        SemanticEdgeRole::Actual
+                            | SemanticEdgeRole::Operand
+                            | SemanticEdgeRole::Base
+                    )
+                })
+                .map(|edge| edge.target_id),
+        );
     }
     false
+}
+
+fn semantic_edges<'a>(
+    snapshot: &'a Snapshot,
+    node: &SemanticNode,
+) -> &'a [crate::ffi::slang::SemanticEdge] {
+    usize::try_from(node.edge_start)
+        .ok()
+        .zip(usize::try_from(node.edge_count).ok())
+        .and_then(|(start, count)| {
+            snapshot
+                .semantic_edges
+                .get(start..start.saturating_add(count))
+        })
+        .unwrap_or(&[])
+}
+
+/// IEEE 1364-2001 9.6 requires a single variable_assignment on either side
+/// of the condition. Later Slang accepts SV lists and function-call steps
+/// even under a legacy keyword set; inspect typed edges, not source spelling.
+fn is_systemverilog_for_header(
+    snapshot: &Snapshot,
+    nodes: &HashMap<u64, &SemanticNode>,
+    node: &SemanticNode,
+) -> bool {
+    if node.kind != SemanticKind::Statement || node.subkind != SEMANTIC_STMT_FOR {
+        return false;
+    }
+    let edges = semantic_edges(snapshot, node);
+    for role in [SemanticEdgeRole::Initializer, SemanticEdgeRole::Increment] {
+        let mut assignments = edges.iter().filter(|edge| edge.role == role);
+        let Some(first) = assignments.next() else {
+            return true;
+        };
+        if assignments.next().is_some()
+            || !nodes.get(&first.target_id).is_some_and(|assignment| {
+                assignment.kind == SemanticKind::Expression
+                    && assignment.operation == SemanticOperation::Assign
+                    && !assignment.is_nonblocking
+            })
+        {
+            return true;
+        }
+    }
+    !edges.iter().any(|edge| edge.role == SemanticEdgeRole::Condition)
 }
 
 /// Native prototype parsing has already succeeded. Match the same first-dollar
@@ -705,6 +754,9 @@ pub(super) fn edition_diagnostics(
     let mut violations: Vec<(Option<SourceRange>, String)> = Vec::new();
     for node in &snapshot.semantic_nodes {
         if edition == LanguageEdition::Verilog2001 {
+            if is_systemverilog_for_header(snapshot, &nodes, node) {
+                violations.push((node.range, "SystemVerilog for-loop header".to_owned()));
+            }
             if node.kind == SemanticKind::Port && is_fixed_unpacked_type(snapshot, node.type_id) {
                 violations.push((node.range, "unpacked array port".to_owned()));
             } else if is_whole_unpacked_value(snapshot, &nodes, node) {
@@ -777,6 +829,12 @@ pub(super) fn edition_diagnostics(
                 token.range,
                 format!("compilation-unit forward reference to {}", token.text),
             ));
+        }
+        if edition == LanguageEdition::Verilog2001
+            && token.kind == LexicalKind::Number
+            && matches!(token.text.as_str(), "'0" | "'1" | "'x" | "'X" | "'z" | "'Z")
+        {
+            violations.push((token.range, "unbased unsized literal".to_owned()));
         }
         let keyword = token.kind == LexicalKind::Keyword || token.role == LexicalRole::Keyword;
         if keyword && !keyword_allowed(&token.text, edition) {
@@ -858,6 +916,17 @@ pub(super) fn edition_diagnostics(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn memory_storage_exception_is_position_specific() {
+        assert_eq!(memory_storage_argument("$fread"), Some(0));
+        assert_eq!(memory_storage_argument("$readmemh"), Some(1));
+        assert_eq!(memory_storage_argument("$readmemb"), Some(1));
+        assert_eq!(memory_storage_argument("$writememh"), Some(1));
+        assert_eq!(memory_storage_argument("$display"), None);
+        assert_eq!(memory_storage_argument("$fwrite"), None);
+        assert_eq!(memory_storage_argument("$custom_fread"), None);
+    }
 
     #[test]
     fn capability_tables_are_sorted_unique_and_disjoint() {

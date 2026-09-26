@@ -1202,3 +1202,36 @@ from native-only validation.
   and callback cases in `fixtures/sim/continuation_24_27/`. Keep typed conversions,
   independent coordinate/value oracles and exact callback diagnostics, run both
   optimizer modes, and distinguish added source from executed pipeline evidence.
+
+### Scheduled continuation: SYN-015 repair and SYN-037 / SYN-019 / SYN-016
+
+Run the supplied regression targets on the pinned toolchain:
+
+```sh
+cargo test --locked --lib core::compile::editions::tests -- --test-threads=1
+cargo test --locked --test sim_loops --test sim_edition --test sim_syn016_elaboration --test sim_file_io --test runtime_file_io -- --test-threads=1
+```
+
+The shared CLI harness tests both optimization modes. New fixtures cover function
+steps and abrupt local exits; edition-specific fill literals/for headers and
+legal memory `$fread`, address order and ignored packed bounds; specialized constant/type/namespace combinations and
+single-fault language-versus-capacity controls. Owned-model checks supplement,
+not replace, those CLI tests. Run the existing full regression and generated-C
+sanitizer lanes as separate acceptance gates.
+
+The standalone `runtime_value_storage` CMake suite is independent of Cargo.
+`stream_preflight_probe.c` now supplies both declared bounds to the existing
+8-argument `llg_fixed_stream_bounds` API, tests both traversal directions and
+retains host-limit/unknown-selector rejection checks. The continuation's Linux
+GCC and Clang runs each passed all 63 native tests; the Clang ASan/UBSan run
+passed 51 sanitizer-safe tests. Stack-switching tests are deliberately excluded
+from that sanitizer configuration. These results do not validate newly emitted
+models, Rust code, Windows, or macOS. The continuation Rust targets were not run
+in the editing environment because no Rust toolchain was available.
+
+The `$fread` address-order repair corrects both the native probe and the public
+`file_input.sv` oracle: reading two bytes at address 2 of a `[3:0]` memory
+updates HDL addresses 2 and 3, not 2 and 1. The native probe additionally checks
+default/explicit starts, both declaration directions, negative and extreme
+32-bit bounds, count clamping, zero counts and rejected unknown/out-of-range
+bounds without input consumption. Multidimensional `$fread` was not requalified.

@@ -599,3 +599,143 @@ fn compilation_unit_value_order_is_checked_in_both_snapshot_modes() {
         }
     }
 }
+
+#[test]
+fn syn_019_memory_fread_is_legal_storage_in_both_editions() {
+    for edition in ["2001", "2009"] {
+        sim_cli::run_case_with_args(
+            "partial_features",
+            "edition_fread_memory",
+            concat!(
+                "fread=3 desc=41/42/43 partial=2 asc=ff/41/42\n",
+                "packed=4142 bytes=2\nomitted=4142 bytes=2\n",
+            ),
+            "",
+            &[],
+            &["--edition", edition],
+        );
+    }
+}
+
+#[test]
+fn syn_019_unbased_literals_have_a_real_edition_boundary() {
+    sim_cli::run_case_with_args(
+        "partial_features",
+        "edition_unbased_fill",
+        "fill=fff/000 x=1 z=1 self=1\n",
+        "",
+        &[],
+        &["--edition", "2009"],
+    );
+    sim_cli::reject_case_with_args(
+        "partial_features",
+        "edition_unbased_rejected",
+        "unbased unsized literal",
+        &["--edition", "2001"],
+    );
+    for literal in ["'0", "'1", "'x", "'X", "'z", "'Z"] {
+        let source = format!(
+            "`begin_keywords \"1800-2009\"\n`define FILL {literal}\nmodule tb; reg [7:0] value; initial value = `FILL; endmodule\n`end_keywords\n"
+        );
+        strict_profile_rejects_in_both_snapshot_modes(
+            &source,
+            LanguageEdition::Verilog2001,
+            "unbased unsized literal",
+        );
+    }
+}
+
+#[test]
+fn syn_019_number_gate_does_not_scan_inactive_or_non_numeric_text() {
+    let source = r#"
+`define UNUSED_FILL '1
+`ifdef NEVER_DEFINED
+module inactive; reg [7:0] unused = '0; endmodule
+`endif
+module tb;
+    reg [7:0] value;
+    reg [15:0] text;
+    reg \has'1 ;
+    initial begin
+        value = 'hff;
+        text = "'1";
+        \has'1 = 1'b1;
+    end
+endmodule
+"#;
+    for library_units in [false, true] {
+        compile::compile_checked(&CompileOpts {
+            sources: vec![OwnedSource::compilation_unit("numbers.sv", source)],
+            edition: LanguageEdition::Verilog2001,
+            library_units,
+            top: Some("tb".to_owned()),
+            ..Default::default()
+        })
+        .expect("inactive macros, strings, based numbers and escaped identifiers stay legal");
+    }
+}
+
+#[test]
+fn syn_019_for_headers_are_qualified_in_the_selected_edition() {
+    for (fixture, expected) in [
+        ("edition_for_function_step", "for_call=6 i=4\n"),
+        ("edition_for_multiple_steps", "for_list=3/6\n"),
+    ] {
+        sim_cli::run_case_with_args(
+            "partial_features", fixture, expected, "", &[], &["--edition", "2009"],
+        );
+        sim_cli::reject_case_with_args(
+            "partial_features", fixture, "SystemVerilog for-loop header",
+            &["--edition", "2001"],
+        );
+    }
+    // The semantic check is deliberately tested on an execution snapshot:
+    // declaration-only navigation snapshots need not retain procedural headers.
+    for header in [
+        "i = 0, j = 0; i < 2; i = i + 1",
+        "i = 0; i < 2; i = i + 1, j = j + 1",
+    ] {
+        let source = format!(
+            "module tb; integer i, j; initial for ({header}) begin end endmodule"
+        );
+        let output = compile::compile(&CompileOpts {
+            sources: vec![OwnedSource::compilation_unit("for-header.sv", &source)],
+            top: Some("tb".to_owned()),
+            edition: LanguageEdition::Verilog2001,
+            ..Default::default()
+        })
+        .expect("capture legacy for-header control");
+        assert!(output.diagnostics.iter().any(|d| {
+            d.message.contains("SystemVerilog for-loop header") && d.line > 0 && d.col > 0
+        }), "{:?}", output.diagnostics);
+    }
+}
+
+#[test]
+fn syn_019_memory_exception_does_not_whitelist_other_array_uses() {
+    let source = r#"
+module tb;
+    reg [7:0] a [0:1], b [0:1];
+    integer fd, count;
+    initial begin
+        count = $fread(a, fd);
+        b = a;
+    end
+endmodule
+"#;
+    let output = compile::compile(&CompileOpts {
+        sources: vec![OwnedSource::compilation_unit("memory-value.sv", source)],
+        top: Some("tb".to_owned()),
+        edition: LanguageEdition::Verilog2001,
+        ..Default::default()
+    })
+    .expect("capture both memory uses");
+    let value_line = source.lines().position(|line| line.contains("b = a;")).unwrap() as u32 + 1;
+    let storage_line = source.lines().position(|line| line.contains("$fread")).unwrap() as u32 + 1;
+    assert!(output.diagnostics.iter().any(|d| {
+        d.message.contains("whole unpacked array value") && d.line == value_line
+    }), "{:?}", output.diagnostics);
+    assert!(!output.diagnostics.iter().any(|d| {
+        d.message.contains("whole unpacked array value") && d.line == storage_line
+    }), "the storage operand was rejected: {:?}", output.diagnostics);
+}

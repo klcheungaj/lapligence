@@ -661,6 +661,20 @@ impl EmitCtx<'_, '_> {
                 {
                     incr_stmts.push(self.lower_inc_dec(*op, operands)?)
                 }
+                NodeKind::FuncCall { is_task: false, .. } => {
+                    // IEEE 1800-2009 12.7.1 admits function calls as steps.
+                    // Use the statement-call owner for discarded results,
+                    // reference arguments and output/inout copy-out. Keeping
+                    // the call here (not in the body) also makes continue run
+                    // every step exactly once in source order.
+                    incr_stmts.extend(self.lower_stmt(*s)?);
+                }
+                NodeKind::FuncCall { is_task: true, .. } => {
+                    return Err(format!(
+                        "for-loop step in `{}` requires a function call, not a task",
+                        self.path
+                    ));
+                }
                 other => {
                     return Err(format!(
                         "unsupported for-loop increment in `{}` (node kind {other:?})",

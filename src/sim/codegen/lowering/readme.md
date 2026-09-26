@@ -207,3 +207,15 @@ private only if every leaf is private; positional wrappers reuse the typed
 `EmptyArgument` validation. This does not admit external writes, writable refs,
 static locals, timing or unproved static return state. Private stream targets use
 ordinary owned leaf stores, so callback calculations do not notify model readers.
+
+Procedural `for` steps admit ordinary HDL function calls through the same
+statement-call lowering used elsewhere. The IR increment list retains source
+order, discarded-result ownership and formal copy-out; the owned emitter runs
+that list after the body/continue target and bypasses it on break or return.
+Task calls remain rejected as steps. This does not add arbitrary method or
+system-call step support.
+
+Binary `$fread` accepts optional start/count arguments for packed destinations
+and leaves their values unused, as both source editions specify. The existing
+owned emitter evaluates and releases admitted argument temporaries but applies
+bounds only to memories; lowering checks each supplied bound's packed type.

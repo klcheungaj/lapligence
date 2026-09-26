@@ -393,7 +393,7 @@ separate qualifications.
 
 ### SYN-037 finite loop control and local named disable — 2026-09-21
 
-SYN-037 closes the finite, zero-time local control matrix for the selected
+SYN-037 records the finite, zero-time local control matrix for the selected
 Core simulator scope. The public command-line fixtures run in optimized and
 unoptimized modes through the ordinary simulator test harness:
 
@@ -968,6 +968,26 @@ not claim that those later boundaries are complete. The pinned Slang frontend
 exposes SystemVerilog semantic checks starting at its 2017 API level, so the
 2009 policy uses its exact 2009 keyword table and Lapligence's 2009 time rules
 while those later semantic boundaries remain an explicit inventory item.
+
+### Continuation scope: SYN-037 / SYN-019 / SYN-016
+
+The following source and regression additions target schedule positions 30-32.
+Their Rust/frontend/public-CLI qualification is **pending**; historical PASS rows
+elsewhere in this document do not establish results for these new cases.
+
+| Task | Source / selected behavior | Regression and remaining gate |
+| --- | --- | --- |
+| SYN-037 | Ordinary HDL function calls in `for` steps use statement-call lowering, including ref/output/inout effects and discarded values. Continue executes the step list; break/return bypass it. Tasks remain rejected as steps. | `sim_loops::syn_037_function_steps_preserve_order_copyout_and_automatic_owners` and the task-step negative, alongside the retained finite-loop matrices. Rust/CLI and freshly generated-model ownership runs pending. |
+| SYN-019 | Verilog-2001 rejects classified unbased-unsized literals and SV-only semantic for-header shapes. `$fread(memory, fd)` is admitted as procedural storage in its exact argument position, without whitelisting other uses of that array. Rank-one `$fread` walks lowest-to-highest HDL addresses in either declaration direction; packed reads accept and ignore start/count. | New `sim_edition::syn_019_*` tests pair editions and add macro/navigation/storage-versus-value controls. Procedural-header checks require executable snapshots. The corrected native memory-order probe passes GCC, Clang and the sanitizer-safe lane; packed-bound and public-edition cases still require Rust/CLI execution. Full Annex A coverage is not claimed. |
+| SYN-016 | Retained constant-elaboration owners receive expanded matrices for defparam specialization, recursive constant calls, type-dependent defaults, equal-width nominal enums, type()/queries, real/string-derived fixed extents, keyed runtime payloads, packages and real `$unit` file boundaries. | `sim_syn016_elaboration` adds CLI and owned-model checks. Zero/negative sizes are language errors; negative range labels remain valid; the exclusive backend width limit is a resource boundary. No new runtime native-type feature is claimed. |
+
+The language basis is IEEE 1364-2001 9.6, 10.3.5, 11, 17.2.4.4 and
+IEEE 1800-2009 5.7.1, 6.20.3, 6.23, 12.7-12.8, 13.4.3, 21.3.4.4,
+25.8 and 26.4-26.6. In particular, the references leave results involving
+constant functions that read defparam-affected parameters undefined, and leave
+task output/inout results unspecified when the task itself is disabled. Positive
+oracles avoid those ambiguities; local block-disable plus normal task return
+has a separate copy-out witness.
 
 ### SYN-019 selected edition boundary ledger — 2026-09-20
 

@@ -482,7 +482,11 @@ int llg_file_read_array(uint32_t descriptor, sv4_t* values, uint32_t elem_width,
     llg_file_slot_t* slot;
     if (!values || total == 0 || elem_width == 0 || !dimensions || dimension_count <= 0 ||
         !llg_file_single_ordinary(descriptor, &slot)) return 0;
-    uint64_t offset = 0;
+    /* IEEE 1364-2001 17.2.4.4 / 1800-2009 21.3.4.4: a memory
+       is read from its lowest address toward its highest, not in declaration
+       order. Rank-one descending storage therefore walks backward. */
+    int reverse_storage = dimension_count == 1 && dimensions[0] > dimensions[1];
+    uint64_t offset = reverse_storage ? total - 1u : 0;
     if (has_start) {
         int64_t index;
         int64_t low = dimensions[0] < dimensions[1] ? dimensions[0] : dimensions[1];
@@ -499,7 +503,8 @@ int llg_file_read_array(uint32_t descriptor, sv4_t* values, uint32_t elem_width,
         llg_file_slot_failure(slot, "file read start index is out of bounds");
         return 0;
     }
-    uint64_t requested = total - offset;
+    uint64_t available = reverse_storage ? offset + 1u : total - offset;
+    uint64_t requested = available;
     if (has_count) {
         int64_t value;
         if (!sv4_to_index_i64(count, &value) || value < 0) {
@@ -507,12 +512,13 @@ int llg_file_read_array(uint32_t descriptor, sv4_t* values, uint32_t elem_width,
             return 0;
         }
         requested = (uint64_t)value;
-        if (requested > total - offset) requested = total - offset;
+        if (requested > available) requested = available;
     }
     size_t bytes_per_element = ((size_t)elem_width + 7u) / 8u;
     int result = 0;
     for (uint64_t element = 0; element < requested; element++) {
-        sv4_t value = sv4_clone(&values[offset + element]);
+        uint64_t position = reverse_storage ? offset - element : offset + element;
+        sv4_t value = sv4_clone(&values[position]);
         int read = 0;
         for (size_t index = 0; index < bytes_per_element; index++) {
             unsigned char byte;
@@ -528,7 +534,7 @@ int llg_file_read_array(uint32_t descriptor, sv4_t* values, uint32_t elem_width,
         llg_value_scope_t* value_scope = llg_value_scope_begin(1);
         sv4_t* owned = llg_value_scope_values(value_scope);
         owned[0] = value;
-        llg_ba(&values[offset + element], owned[0]);
+        llg_ba(&values[position], owned[0]);
         llg_value_scope_end(value_scope);
         result += read;
         if ((size_t)read < bytes_per_element) break;
