@@ -116,6 +116,18 @@ cargo nextest run --locked --bin llg_ls response_budget
 
 ## CI and release gate
 
+For concurrent worktrees using tmpfs, run `scripts/run-tests.sh --test-work-dir PATH`
+from each worktree; append normal nextest selection/concurrency arguments. The
+path is explicit and must exist and permit execution. Use the same root to share
+compatible runtime-cache entries; the runner isolates worktree/run scratch and
+keeps Cargo target/build directories in each worktree. Do not override those
+directories into a common tree. Keep logs and evidence in local `persistence/`.
+Successful runs remove their scratch; failures/interruption may leave it for
+inspection. Remove only inactive runs owned by your task; prune the shared
+runtime cache only when all users have stopped. Four runners at eight threads
+mean 32 concurrent tests, with no global quota or automatic cache eviction.
+See [the storage guide](readme.md#parallel-worktrees) for commands and limits.
+
 Run the complete [repository gate](readme.md#repository-gate), not fmt/check/clippy
 alone. [ci.yml](../.github/workflows/ci.yml) defines Ubuntu gates and five-platform
 builds on master pushes, manual dispatch and published Releases (including

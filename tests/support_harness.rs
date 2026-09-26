@@ -3,6 +3,96 @@
 #[path = "support/sim.rs"]
 mod sim_harness;
 
+#[test]
+fn test_build_directory_configuration() {
+    use std::path::Path;
+    use std::process::Command;
+    use std::time::Duration;
+
+    let directory = sim_harness::TempDir::new("build root with spaces").expect("test root");
+    let custom_root = directory.path().join("new root");
+    let sentinel = directory.path().join("keep.txt");
+    std::fs::write(&sentinel, "preserve parent contents").expect("sentinel");
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let default_root = std::env::temp_dir();
+    for (configured, expected, error) in [
+        (Some(custom_root.as_path()), custom_root.as_path(), ""),
+        (Some(Path::new(".")), workspace, ""),
+        (None, default_root.as_path(), ""),
+        (Some(Path::new("")), workspace, "must not be empty"),
+        (
+            Some(sentinel.as_path()),
+            workspace,
+            "create test build root",
+        ),
+    ] {
+        let mut command = Command::new(std::env::current_exe().expect("test executable"));
+        command
+            .args(["--exact", "test_build_directory_child", "--nocapture"])
+            .current_dir(directory.path())
+            .env("LLG_TEST_BUILD_PROBE_ROOT", expected)
+            .env("LLG_TEST_BUILD_PROBE_ERROR", error)
+            .env_remove("LLG_TEST_BUILD_DIR");
+        if let Some(path) = configured {
+            command.env("LLG_TEST_BUILD_DIR", path);
+        }
+        let output = sim_harness::run_command(&mut command, Duration::from_secs(30))
+            .expect("directory configuration probe");
+        assert!(output.status.success(), "{configured:?}: {output:?}");
+    }
+    assert_eq!(
+        std::fs::read_to_string(sentinel).unwrap(),
+        "preserve parent contents"
+    );
+    assert!(custom_root.is_dir(), "configured root must survive cleanup");
+    assert_eq!(std::fs::read_dir(custom_root).unwrap().count(), 0);
+}
+
+#[test]
+fn test_build_directory_child() {
+    let Some(expected) = std::env::var_os("LLG_TEST_BUILD_PROBE_ROOT") else {
+        return;
+    };
+    let expected = std::path::PathBuf::from(expected);
+    let error = std::env::var("LLG_TEST_BUILD_PROBE_ERROR").expect("probe error setting");
+    if !error.is_empty() {
+        let actual = sim_harness::TempDir::new("invalid-root")
+            .err()
+            .expect("invalid root must fail");
+        assert!(actual.contains(&error), "{actual}");
+        return;
+    }
+
+    sim_harness::with_temp_cwd("build-root-nested", |_| {
+        let directories: Vec<_> = std::thread::scope(|scope| {
+            let workers: Vec<_> = (0..8)
+                .map(|_| scope.spawn(|| sim_harness::TempDir::new("parallel-build")))
+                .collect();
+            workers
+                .into_iter()
+                .map(|worker| worker.join().unwrap().unwrap())
+                .collect()
+        });
+        let paths: std::collections::HashSet<_> = directories
+            .iter()
+            .map(|directory| directory.path().to_path_buf())
+            .collect();
+        assert_eq!(
+            paths.len(),
+            8,
+            "parallel builds must have distinct directories"
+        );
+        for path in &paths {
+            assert_eq!(path.parent(), Some(expected.as_path()));
+            std::fs::write(path.join("model.c"), "probe").expect("writable build directory");
+        }
+        drop(directories);
+        assert!(paths.iter().all(|path| !path.exists()));
+        Ok(())
+    })
+    .expect("nested build directories");
+}
+
 #[cfg(unix)]
 #[test]
 fn command_timeout_stops_descendants_holding_output_pipes() {

@@ -33,15 +33,27 @@ pub(crate) struct TempDir {
 }
 
 impl TempDir {
+    /// Create an isolated build directory under `LLG_TEST_BUILD_DIR`, or the
+    /// system temporary directory when unset. Relative overrides are anchored
+    /// to the workspace so nested CWD guards cannot change their meaning.
     pub(crate) fn new(prefix: &str) -> Result<Self, String> {
+        let root = match std::env::var_os("LLG_TEST_BUILD_DIR") {
+            Some(path) if path.is_empty() => {
+                return Err("LLG_TEST_BUILD_DIR must not be empty".to_owned());
+            }
+            Some(path) => Path::new(env!("CARGO_MANIFEST_DIR")).join(path),
+            None => std::env::temp_dir(),
+        };
         let id = NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed);
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|error| format!("clock before epoch: {error}"))?
             .as_nanos();
-        let path =
-            std::env::temp_dir().join(format!("llg-{prefix}-{}-{nonce}-{id}", std::process::id()));
-        std::fs::create_dir_all(&path).map_err(|error| format!("create temp dir: {error}"))?;
+        std::fs::create_dir_all(&root)
+            .map_err(|error| format!("create test build root {}: {error}", root.display()))?;
+        let path = root.join(format!("llg-{prefix}-{}-{nonce}-{id}", std::process::id()));
+        std::fs::create_dir(&path)
+            .map_err(|error| format!("create temp dir {}: {error}", path.display()))?;
         Ok(Self { path })
     }
 

@@ -167,6 +167,94 @@ support; the corresponding execution tests must also pass.
   Preserve suite-specific skips: `sim_cmake` may skip absent CMake; native DPI
   shared-library tests need Unix/CMake/compiler. These are not blanket skips.
 
+### Test build storage
+
+#### Parallel worktrees
+
+Use the opt-in runner when several worktrees share a limited tmpfs. Run this
+command in each worktree, substituting your existing executable mount path:
+
+```sh
+scripts/run-tests.sh --test-work-dir /build --test-threads 8
+# Focused run; all nextest selection arguments remain available:
+scripts/run-tests.sh --test-work-dir /build --test sim_counter
+```
+
+`--test-work-dir` selects the root for temporary test files, generated simulator
+builds and the shared runtime cache. Rust and Slang builds stay in each worktree.
+
+The runner needs Bash and `sha256sum` or `shasum`. It checks execution permission
+before building, so a `noexec` mount fails early. Relative `--test-work-dir` paths
+resolve from the caller's directory. The option overrides inherited scratch,
+runtime-cache and Cargo output-directory environment settings for this run.
+Omitting it preserves existing settings and defaults; `/build` is never assumed.
+
+| Storage | Placement with `--test-work-dir PATH` |
+| --- | --- |
+| Generated model sources, CMake trees, objects and simulators | `PATH/lapligence/worktrees/<worktree-hash>/run.<unique>/tests/` |
+| Temporary files from tests/tools honoring Unix `TMPDIR` | The same run's `tmp/` |
+| Compatible simulation runtime/libaco archives | Shared `PATH/lapligence/runtime-cache/` |
+| Cargo targets and intermediate build artifacts | Each worktree's `target/` on its existing filesystem |
+| Native Slang CMake build | Each worktree's existing `target/slang/` |
+| Cargo downloads and optional compiler caches | Existing persistent locations |
+
+The hash uses the canonical worktree path, and each invocation receives a fresh
+run directory even within the same worktree. All agents can use the same command;
+no manual agent number is needed. Runtime entries are keyed by sources, ABI,
+toolchain, flags and build options, with process locks for cache population.
+Do not share mutable model/CMake/Cargo build directories between worktrees or
+pass `--target-dir` to override the runner's worktree-local Cargo location.
+
+Successful runs remove their run directory, including leftover temporary files.
+Failures retain remaining scratch and print its path; interrupted runs can also
+leave scratch behind. Preserve needed logs/artifacts in the worktree's ignored
+`persistence/` before removing an inactive run. Never delete another running
+agent's directory or prune the shared runtime cache while tests use it. The
+worktree parent directories and runtime cache persist; cache eviction is manual.
+
+With four agents, eight test threads per agent means up to 32 concurrent tests,
+plus compiler subprocesses. The runner adds no global concurrency limit or disk
+quota. Keep Rust targets on disk for a 32 GiB tmpfs; monitor `df -h /build` and
+`du -sh /build/lapligence/*`, adjusting the example paths as needed. Leave RAM
+for the agents and compilers. Directory isolation alone does not prevent a full
+tmpfs, and mounting a filesystem as tmpfs does not preallocate its capacity.
+
+Runner regression checks (no Rust compiler required):
+
+```sh
+python3 -m unittest discover -s scripts -p test_run_tests.py
+```
+
+#### Individual environment overrides
+
+Set `LLG_TEST_BUILD_DIR` to place the shared simulator harness's temporary builds
+on another filesystem, such as a tmpfs. This covers generated C sources, CMake
+build trees and simulator executables, including public CLI acceptance runs:
+
+```sh
+LLG_TEST_BUILD_DIR=/build/llg-tests \
+LLG_RUNTIME_CACHE_DIR=/build/llg-runtime-cache \
+cargo nextest run --locked --test-threads 8
+```
+
+Both overrides are optional; `/build` is only an example. Without
+`LLG_TEST_BUILD_DIR`, the harness continues to use the system temporary directory.
+Relative overrides resolve from the Cargo workspace, including inside nested
+temporary CWDs. Missing directories are created; empty or unusable overrides
+fail rather than falling back to another disk. The filesystem must permit
+execution (`noexec` prevents CMake compiler checks and simulators from running).
+
+Parallelism is unchanged. Every invocation owns a unique child directory and
+removes that child on completion or unwind; the configured root and unrelated
+files are retained. `LLG_RUNTIME_CACHE_DIR` separately relocates the shared runtime
+archive cache, which persists across tests and runs until removed or unmounted.
+Size tmpfs for concurrent builds and leave RAM for compilers and tests.
+
+`LLG_TEST_BUILD_DIR` does not relocate Cargo artifacts or tests that use their own
+temporary-directory helpers. Cargo supports `CARGO_TARGET_DIR`; system temporary
+files follow platform settings such as `TMPDIR` on Unix. The native Slang build
+still uses the repository's `target/slang` directory.
+
 ### Focused simulator suites
 
 ```sh

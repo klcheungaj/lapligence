@@ -254,6 +254,7 @@ lint settings.
 cargo install cargo-nextest --locked
 scripts/run-tests.sh                         # complete suite
 scripts/run-tests.sh --test sim_counter      # one integration suite
+scripts/run-tests.sh --test-work-dir /build      # opt-in tmpfs for test scratch/cache
 cargo nextest run --locked --all-features    # direct invocation
 ```
 

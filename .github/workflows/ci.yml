@@ -47,6 +47,9 @@ jobs:
           python3 scripts/check_sim_fixture_integrity.py --tracked
           python3 -m unittest discover -s scripts -p test_sim_fixture_integrity.py
 
+      - name: Check parallel test runner
+        run: python3 -m unittest discover -s scripts -p test_run_tests.py
+
       - uses: dtolnay/rust-toolchain@1.98.0
         with:
           components: rustfmt, clippy

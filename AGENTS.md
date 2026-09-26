@@ -51,6 +51,13 @@ Root `build.rs` drives CMake for Slang, fmt and the C wrapper; even `cargo check
 may trigger a native build. Build `llg_ls`, `llg` or `elab_check` with
 `cargo build --bin <name>`; demo bins are also available.
 
+For parallel worktrees with an available executable tmpfs, use
+`scripts/run-tests.sh --test-work-dir /build` (substitute the actual mount path;
+append nextest filters as needed). This opt-in flow isolates scratch per
+worktree/run, shares the runtime cache, and keeps Cargo/Slang builds on disk.
+Do not share mutable Cargo/CMake build trees or delete another active run's
+scratch. Follow [test storage and cleanup](tests/readme.md#parallel-worktrees).
+
 The portable Rust patch preparer applies tracked `patches/slang/` and
 `patches/libaco/` before consuming native sources. Keep documented upstream-base
 vendor gitlinks; no project-specific submodule commits. Accept clean or fully
