@@ -8,9 +8,11 @@ from pathlib import Path
 import re
 import sys
 
+from syn038_pairwise_source import canonical_sha256, expand_source, format_source, read_source
+
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_MANIFEST = ROOT / "tests/sim_syn038_pairwise_manifest.json"
+DEFAULT_MANIFEST = ROOT / "tests/syn038_pairwise.json"
 SCHEMA = "lapligence.syn038.selected-pairwise/v4"
 
 FACTORS = {
@@ -635,6 +637,14 @@ def generated_catalog(manifest: dict) -> list[dict]:
     return result
 
 
+def rule_basis_digest() -> str:
+    return canonical_sha256({
+        "core_path_basis": {f"SYN038-CORE-PATH-{key}": value for key, value in PATH_BASIS.items()},
+        "structural_rule_basis": RULE_BASIS,
+        "outside_rule_basis": OUTSIDE_BASIS,
+    })
+
+
 def validate_manifest(manifest: dict, expected: list[dict]) -> Counter:
     if manifest.get("schema") != SCHEMA:
         raise ValueError(f"schema must be {SCHEMA}")
@@ -644,16 +654,10 @@ def validate_manifest(manifest: dict, expected: list[dict]) -> Counter:
         row = manifest["factors"][factor]
         if row.get("meaning") != FACTOR_MEANINGS[factor] or tuple(row.get("levels", [])) != values:
             raise ValueError(f"factor {factor} meaning or levels differ from frozen denominator")
-    if manifest.get("core_path_basis") != {f"SYN038-CORE-PATH-{key}": value for key, value in PATH_BASIS.items()}:
-        raise ValueError("Core path provenance differs from checker")
-    if manifest.get("structural_rule_basis") != RULE_BASIS:
-        raise ValueError("structural rule provenance differs from checker")
-    if manifest.get("outside_rule_basis") != OUTSIDE_BASIS:
-        raise ValueError("outside-profile provenance differs from checker")
-    if manifest.get("pair_catalog") != expected:
-        by_id = {row.get("id"): row for row in manifest.get("pair_catalog", [])}
-        first = next((row["id"] for row in expected if by_id.get(row["id"]) != row), "unknown")
-        raise ValueError(f"pair catalog differs from rule-derived cells at {first}; run --refresh-cells after reviewing rules")
+    if manifest.get("rule_basis_sha256") != rule_basis_digest():
+        raise ValueError("rule provenance differs from the reviewed baseline")
+    if manifest.get("catalog_sha256") != canonical_sha256(expected):
+        raise ValueError("derived pair catalog differs from the reviewed baseline; review changes before --refresh-baseline")
     counts = Counter(row["applicability"] for row in expected)
     counts.update({"covered": sum(row.get("evidence_status") == "covered" for row in expected), "planned_legal_gap": sum(row.get("evidence_status") == "planned_legal_gap" for row in expected)})
     if manifest.get("baseline_counts") != {"raw": len(expected), **dict(counts)}:
@@ -794,22 +798,28 @@ def validate_manifest(manifest: dict, expected: list[dict]) -> Counter:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Check the frozen SYN-038 Core value-pair denominator and evidence mapping")
+    parser = argparse.ArgumentParser(description="Derive and check SYN-038 pairwise coverage from the compact source; no catalog file is needed")
     parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
-    parser.add_argument("--refresh-cells", action="store_true")
+    parser.add_argument("--refresh-baseline", action="store_true",
+                        help="update only the reviewed counts and digests after validation; never store the catalog")
     parser.add_argument("--emit-cells", action="store_true")
     parser.add_argument("--gaps-by-block", action="store_true")
     args = parser.parse_args()
     try:
-        manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
+        source = read_source(args.manifest)
+        manifest = expand_source(source)
         expected = generated_catalog(manifest)
-        if args.refresh_cells:
-            manifest["pair_catalog"] = expected
+        if args.refresh_baseline:
             counts = Counter(row["applicability"] for row in expected)
             counts.update({"covered": sum(row.get("evidence_status") == "covered" for row in expected), "planned_legal_gap": sum(row.get("evidence_status") == "planned_legal_gap" for row in expected)})
             manifest["baseline_counts"] = {"raw": len(expected), **dict(counts)}
-            args.manifest.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+            manifest["catalog_sha256"] = canonical_sha256(expected)
+            manifest["rule_basis_sha256"] = rule_basis_digest()
         counts = validate_manifest(manifest, expected)
+        if args.refresh_baseline:
+            for key in ("baseline_counts", "catalog_sha256", "rule_basis_sha256"):
+                source[key] = manifest[key]
+            args.manifest.write_text(format_source(source), encoding="utf-8", newline="\n")
     except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
         print(f"SYN-038 pairwise manifest: {exc}", file=sys.stderr)
         return 1

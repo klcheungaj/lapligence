@@ -1,54 +1,41 @@
 # Event and executable model
 
-`ExecutionModel` owns typed process operations and is the sole whole-model
-input to optimization and C emission. Each process has explicit blocks, an
-entry block, effects, and a terminator. Terminators distinguish completion,
-backedges, and atomic suspend/resume with a trigger plan and scheduling region.
+`ExecutionModel` owns typed process operations and is the sole whole-model input
+to optimization and C emission. Processes have an entry block, explicit blocks,
+effects, and terminators. Wrapper control is explicit; nested branches and loops
+remain structured operations with source evaluation order.
 
-The current vertical slice makes process-wrapper control explicit. Nested
-branches and loops remain structured typed operations because flattening them
-would not improve the C coroutine backend. Blocking stores and NBA enqueue,
-suspension, event triggers, process spawning, and runtime services remain
-distinct effects. Optimizers walk every execution-owned block in place, then
-recompute and validate effect summaries. Resume blocks may differ from entry
-blocks; no process body is reconstructed from the staging shape.
+Ordinary processes use the design scheduling regions. Program processes start
+in Reactive, route zero-delay/NBA work through Re-Inactive/Re-NBA, and retain
+natural or `$exit` completion accounting.
 
-The scheduling-region enum covers the IEEE design and reactive sets. Ordinary
-processes emit active work and NBA updates, while owned program processes are
-launched in Reactive and route zero-delay/NBA work through Re-Inactive/Re-NBA;
-the runtime also accounts for their natural or `$exit` completion.
-
-| Executable item | Current meaning |
+| Item | Meaning |
 | --- | --- |
-| `ExecutionBlock.operations` | Ordered typed operations; structured branches and loops retain source evaluation order. |
+| `ExecutionBlock.operations` | Ordered typed operations, including structured branches and loops. |
 | `Complete` | End the process and release its coroutine. |
-| `Jump` | Continue at another block without advancing simulation time. |
-| `Suspend(Signals)` | Atomically wait on its unique signal-address set, then continue in the named resume block. |
-| `Suspend(BodyControlled)` | Continue in the named resume block after a waiting operation in the block yields and returns. |
-| `ImmediateStore` | Blocking variable/net contribution update in the active region. |
-| `EnqueueUpdate(NonblockingAssign)` | Capture the update payload now and commit it in the NBA region. |
-| `Trigger` | Wake the waiters registered on a named event. |
-| `Spawn` | Create dynamic process ancestry for a fork operation. |
-| `RuntimeService` | Observable simulator service such as display, waveform control, or termination. |
+| `Jump` | Enter another block without advancing time. |
+| `Suspend(Signals)` | Atomically wait on unique signal addresses, then enter the named resume block. |
+| `Suspend(BodyControlled)` | Enter the resume block after a waiting operation yields and returns. |
+| `ImmediateStore` | Blocking variable/net-contribution update. |
+| `EnqueueUpdate(NonblockingAssign)` | Capture a payload for its later NBA commit. |
+| `Trigger` | Wake registered named-event waiters. |
+| `Spawn` | Create dynamic fork-process ancestry. |
+| `RuntimeService` | Observable services such as display, waveform control, or termination. |
 
-`ExecutionModel::validate` checks block reachability and target closure,
-typed-operation references, unique signal triggers backed by emitted packed
-storage (including bounded constant array elements), block-local control-label
-closure, body-controlled wait ownership, supported resume regions, and packed
-capacity. The C emitter uses reserved C labels and independent declaration
-scopes for distinct execution blocks, then follows terminators directly. It
-derives coroutine stack capacity from all blocks of each process, rather than
-from the emptied staging process bodies.
+Optimizers update every execution-owned block, recompute effects, and validate
+summaries. Resume and entry blocks may differ; bodies are never reconstructed
+from the emptied staging table.
 
-Structured waits have not yet been split into separate execution blocks. That
-future lowering must first move locals that live across suspension into checked
-frame storage; jumping past a C local initializer cannot represent their
-lifetime safely. Current multi-block emission therefore assumes block-local
-temporaries do not escape their defining block.
+`ExecutionModel::validate` checks reachable targets, typed references, unique
+signal triggers backed by emitted packed storage (including bounded constant
+array elements), block-local labels, body-controlled wait ownership, resume
+regions, and packed capacity. Emission follows terminators using reserved C
+labels and independent declaration scopes. Stack sizing covers every block.
 
-Source-backed process origins are copied from the semantic database into the
-staging process and preserved when execution takes ownership. Processes made
-by structural lowering use the origin of the continuous assignment, primitive,
-port, or procedural statement that caused them. Future tracing and coverage
-passes can therefore attach metadata without reconstructing source locations
-from generated C names.
+Structured waits remain inside operations, not separate blocks. Block-local
+temporaries cannot escape; cross-block live locals require checked frame storage,
+not jumps past C initializers.
+
+Process origins survive transfer from semantic capture through staging to
+execution. Structurally created processes retain the origin of their assignment,
+primitive, port, or procedural statement rather than generated C names.

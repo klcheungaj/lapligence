@@ -1,35 +1,16 @@
 # Lapligence (`llg`)
 
-Lapligence provides Verilog/SystemVerilog simulation and editor tooling through
-two programs:
+Lapligence shares a Slang frontend and owned Rust analysis between two programs:
 
-- **`llg`** compiles, lints, builds, and runs Verilog/SystemVerilog simulations.
-- **`llg_ls`** provides Language Server Protocol (LSP) features to editors.
+- **`llg`** compiles/elaborates HDL, runs 24 configurable lint rules, and emits
+  optimized C11 that CMake builds and executes. It supports source-only output,
+  readable/JSON lint reports and VCD/FST waveform tasks.
+- **`llg_ls`** is a stdio language server with compiler/lint diagnostics, semantic
+  highlighting, hover, completion, definitions/references, symbols, rename and a
+  read-only hierarchy explorer. It tracks unsaved buffers and configuration for
+  independent workspace roots.
 
-## What it can do
-
-### Simulator and linter: `llg`
-
-- Compile and elaborate Verilog/SystemVerilog designs.
-- Run 24 built-in lint rules, with configurable severities.
-- Generate an optimized C11 simulation model.
-- Build and run the generated model automatically with CMake.
-- Produce VCD or FST waveforms from standard `$dump*` system tasks.
-- Emit lint results as readable diagnostics or JSON.
-- Stop after source generation for integration with another build flow.
-
-### Language server: `llg_ls`
-
-- Publish compiler and lint diagnostics.
-- Provide semantic highlighting, hover information, and completion.
-- Find definitions and references.
-- Provide document and workspace symbols.
-- Support rename and prepare-rename requests.
-- Analyze multiple workspace roots independently.
-- Track unsaved editor buffers and configuration changes.
-- Expose a read-only module and instance hierarchy explorer.
-
-## Simplified workflow
+## Simplified simulator workflow
 
 ```text
 Verilog/SystemVerilog
@@ -44,28 +25,10 @@ Verilog/SystemVerilog
         |
         +----> optimize ----> emit C11 ----> build ----> run ----> llg
 ```
-
-The first build also compiles the vendored HDL frontend and can take several
-minutes. Its native build artifacts can use several gigabytes.
-
-## Supported HDL features
-
-The simulator currently covers a practical RTL-oriented subset, including:
-
-- Verilog and SystemVerilog modules, ports, parameters, and generate blocks.
-- Four-state values, packed vectors, arrays, memories, strings, and scalar
-  real/shortreal values.
-- `initial`, `always`, `always_comb`, `always_ff`, tasks, and functions.
-- Blocking and non-blocking assignments, event controls, delays, and `#0`/NBA
-  scheduling.
-- Continuous assignments, common logic and tri-state gates, and basic net
-  resolution.
-- Hierarchical reads and writes, interfaces, and module instance arrays.
-- `$display`, `$monitor`, `$strobe`, `$time`, `$finish`, and waveform tasks.
-
-Lapligence does not yet implement the complete Verilog/SystemVerilog language.
-See [simulator feature status](docs/sim_features.md) for tested features and
-known limitations. See [lint rules](src/core/lint/readme.md) for the rule list.
+The language implementation is incomplete. See
+[simulator feature status](docs/sim_features.md) for supported forms/limits and
+[lint rules](src/core/lint/readme.md) for linting. The first native frontend build
+can take several minutes and use several gigabytes.
 
 ## Platform support
 
@@ -80,9 +43,8 @@ targets:
 | Windows arm64 | `aarch64-pc-windows-msvc` | Release target | Not yet supported |
 | macOS arm64 | `aarch64-apple-darwin` | Release target | Not yet supported |
 
-The matrix lists configured release targets, not equivalent validation claims.
-The Slang-only pipeline has native test evidence on Linux x86_64 with glibc.
-Musl build support has been source-reviewed but has not been run locally.
+These are configured targets, not equivalent validation claims. Recorded native
+Slang-only evidence is Linux x86_64/glibc; local musl execution remains pending.
 
 CI tests and builds all targets above on pushes to `master`, or when you select
 a branch under **Actions → CI and Release → Run workflow**. Publishing a release
@@ -144,11 +106,9 @@ docker run --rm --platform linux/amd64 -v "$(pwd)":/workspace \
   --target x86_64-unknown-linux-musl
 ```
 
-The image runs as a non-root user with the UID/GID supplied at image build
-time. The repository mount already includes `target`; create it as your host
-user before running Docker. If an earlier run created root-owned build output,
-restore its ownership with `sudo chown -R "$(id -u):$(id -g)" target`.
-Rebuild the image with the arguments above if its user does not match yours.
+The image uses the supplied non-root UID/GID. Create the mounted `target` as your
+host user; repair root-owned output with
+`sudo chown -R "$(id -u):$(id -g)" target`. Rebuild the image when its user differs.
 
 ### macOS arm64
 
@@ -205,12 +165,9 @@ Common options:
 - `--`: pass the remaining arguments to the generated simulator for
   `$test$plusargs`/`$value$plusargs` (for example, `llg tb.sv -- +mode=fast`).
 
-Normal builds cache compatible C runtime archives under
-`target/llg-runtime-cache` in the repository, so generated models usually
-compile only their model-specific C file. Set `LLG_RUNTIME_CACHE_DIR` to choose
-a different cache root; relative override paths are resolved from the
-repository root. `--gen-only` output remains self-contained and does not require
-that cache.
+Compatible runtime archives are cached in `target/llg-runtime-cache`, leaving
+model-specific C to compile. `LLG_RUNTIME_CACHE_DIR` overrides the cache (relative
+to repository root). `--gen-only` output is self-contained and cache-independent.
 
 Exit status is `0` on success, `1` on compile/lint/build errors, and `2` for
 invalid command-line usage. A completed simulator's exit status is propagated.
@@ -293,48 +250,17 @@ lint settings.
 
 ## Running tests
 
-Run the complete suite:
-
-```sh
-scripts/run-tests.sh
-```
-
-Run one integration-test binary:
-
-```sh
-scripts/run-tests.sh --test sim_counter
-```
-
-The script uses `cargo-nextest`, which is the repository's default test
-runner. Install it with:
-
 ```sh
 cargo install cargo-nextest --locked
+scripts/run-tests.sh                         # complete suite
+scripts/run-tests.sh --test sim_counter      # one integration suite
+cargo nextest run --locked --all-features    # direct invocation
 ```
 
-Run tests directly through nextest:
-
-```sh
-cargo nextest run --locked --all-features
-```
-
-The default profile runs up to 8 tests concurrently. On a machine with enough
-CPU and memory, opt in to the 32-thread profile:
-
-```sh
-cargo nextest run --locked --profile max-threads --all-features
-```
-
-Before submitting a change, run the main checks:
-
-```sh
-cargo fmt --check
-cargo check --locked --all-targets --all-features
-cargo check --locked --lib --no-default-features
-cargo clippy --locked --all-targets --all-features -- -D warnings
-cargo nextest run --locked --all-features
-cargo test --locked --doc --all-features
-```
+Nextest defaults to 8 concurrent tests; a large host can opt into
+`cargo nextest run --locked --profile max-threads --all-features` for 32.
+Before submitting, run the full [repository gate](tests/readme.md#repository-gate),
+including checks with/without LSP, clippy, tests and doctests.
 
 ## Build cleanup
 
@@ -353,9 +279,8 @@ private C runtime fragments, and test ownership. Use
 [Coding Practices](docs/coding_practices.md) when extending these boundaries.
 
 
-### Dynamic-value migration validation
+## Dynamic ownership validation
 
 See [dynamic ownership validation](tests/readme.md#dynamic-ownership-validation)
-for the component, generated-model and HDL acceptance commands. Scope and
-unexecuted prerequisites are recorded separately; a component pass is not full
-simulator acceptance.
+for component, generated-model and HDL checks. Component success does not establish
+full simulator or platform acceptance.

@@ -9,8 +9,9 @@ in [the test guide](readme.md).
 `sim_syn038_ledger` reads the section markers and tables below. Preserve stable
 IDs, edition gates, fixtures, owners, invocation arguments and expected oracles
 when editing. The pair-value denominator is defined by
-`tests/sim_syn038_pairwise_manifest.json` and
-`scripts/check_syn038_pairwise_manifest.py`, which require zero legal gaps.
+`tests/syn038_pairwise.json` and
+`scripts/check_syn038_pairwise_manifest.py`, which derive the pair catalog in
+memory and require zero legal gaps.
 Paths in the tables are relative to the repository root.
 
 ### SYN-038 selected Core grammar-by-context ledger

@@ -2,7 +2,7 @@
 
 These designs exercise corrected port, event, timing, packed-selection, math,
 immediate assertion, and gated host-command behavior through the simulator executable. Every
-positive case runs with optimization enabled and disabled; expected results and
+positive case runs in both optimizer modes; expected results and
 test names live in
 [the Rust suite](../../../sim_partial_features.rs). `event_effectful_*.sv` are
 intentional rejection cases.
@@ -52,7 +52,7 @@ for the boundaries these tests do not cover.
 | `assertions*.sv`, `deferred_assertions*.sv` | Immediate and deferred assert/assume/cover four-state truth, issue-time value and action-time reference captures, Reactive reports, same-slot glitch coalescing, module-level actions, defaults, labels and optimizer parity |
 | `stop_*.sv` | Resumable nested-call suspension, retained future work/finals, explicit batch exit policy, and diagnostic levels |
 
-### Selected edition continuation
+### Edition controls
 
 `sim_edition.rs` adds paired edition checks for `edition_fread_memory.sv`,
 `edition_unbased_fill.sv` / `edition_unbased_rejected.sv`,
@@ -61,5 +61,4 @@ The memory probe distinguishes declaration order from `$fread`'s lowest-address
 loading order, and checks that start/count (including zero count and an omitted
 start) are ignored for packed reads. The single-fault negatives isolate a fill literal, a function
 step, or a comma-separated step list; macro/keyword-region and in-memory
-navigation controls accompany them. New runtime oracles still require execution
-on a Rust-enabled host.
+navigation controls accompany them.

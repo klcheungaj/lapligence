@@ -1,11 +1,6 @@
-# Random-stream simulator fixtures
+# Random-stream fixture contracts
 
-`random_streams.sv` covers the H07 SystemVerilog 2009 random facilities:
-`$urandom` (including its input seed), `$urandom_range`, process stream
-seeding/state replay, and fork stream isolation. The assertions intentionally
-check relationships and range invariants rather than pinning the
-implementation's unspecified numeric sequence.
-
-The fixture is compiled and executed with both optimizer configurations by
-`tests/sim_random_streams.rs`. Its source-header anchors are §18.13 and
-§18.14 of the local IEEE 1800-2009 specification.
+`sim_random_streams.rs` runs `random_streams.sv` in both optimizer modes. Check
+`$urandom` seed input, `$urandom_range`, process seed/state replay and fork isolation
+through relationships/range invariants, not an unspecified numeric sequence.
+Source anchors: local IEEE 1800-2009 §§18.13–18.14 (H07).

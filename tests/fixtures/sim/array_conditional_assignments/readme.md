@@ -21,6 +21,5 @@ are observation scaffolding, not claims that each complete module is synthesizab
 | `wrong_shape.sv` | Different unpacked ranks remain incompatible despite equal flattened bit counts. |
 | `wrong_elements.sv` | Equal array extents do not permit incompatible element types. |
 
-The new HDL and owned-import tests are unexecuted in the patch environment.
-See [test methodology](../../../readme.md) for the Rust-host commands. Array
-conditional merge semantics remain owned by the R01 IR/emitter/runtime path.
+See [test methodology](../../../readme.md) for commands and validation layers.
+Array merges use the R01 IR/emitter/runtime path.

@@ -1,7 +1,7 @@
 # SYN-017 directive effects
 
 These exact fixtures exercise the public `llg` CLI with the `--edition 2001`
-and `--edition 2009` profiles and with optimization enabled and disabled.
+and `--edition 2009` profiles and in both optimizer modes.
 Positive cases compare stdout and runtime stderr; rejection cases require the
 same diagnostic in both optimizer modes.
 

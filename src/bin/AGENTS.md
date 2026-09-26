@@ -1,58 +1,45 @@
 # Executables
 
-Keep frontend-independent logic in the library. Bins use `llg::core`,
-`llg::ffi`, and `llg::sim` imports; no `#[path]` includes or `unsafe`.
-LSP-only tower-lsp/tokio/dashmap code stays in `llg_ls`.
+Keep reusable processing in the library. Bins import `llg::core`, `llg::ffi` and
+`llg::sim`; no `#[path]` includes or `unsafe`. LSP-only dependencies stay in `llg_ls`.
 
 | Binary | Role |
 | --- | --- |
-| `llg_ls` (`llg_ls/`) | tower-lsp stdio language server; [guide](llg_ls/AGENTS.md) |
-| `llg` (`llg.rs`) | Simulator: compile → lower/IR/opt/emit → automatic CMake build → run |
-| `elab_check` (`elab_check.rs`) | Verifies the owned Slang semantic database and resolved hierarchy |
-| `helloslang`, `helloworld`, `llg_demo` | Owned Slang snapshot demonstrations |
+| `llg_ls` | tower-lsp stdio server; [guide](llg_ls/AGENTS.md) |
+| `llg` | compile → lower/IR/opt/emit → CMake build → run |
+| `elab_check` | Owned DB and resolved-hierarchy validation |
+| `helloslang`, `helloworld`, `llg_demo` | Owned snapshot demonstrations |
 
 ## Simulator driver
 
-- `--generator <backend>` selects CMake `-G`; `--gen-only` stops after model
-  sources + `CMakeLists.txt`. CMake is the only model builder; see
-  [../sim/AGENTS.md](../sim/AGENTS.md) for compiler/flags/environment selection.
-- `--dpi-lib <path>` may be repeated to link explicitly supplied DPI-C
-  libraries; paths are validated before CMake and are also retained by
-  `--gen-only` in the generated project.
-- `--no-opt` disables simulator IR optimization passes; the default enables
-  them. File-based conformance tests exercise both CLI modes.
-- `--include-dir <path>`/`-I <path>` adds an include-search directory. The
-  compile facade admits only bounded, canonical files under the source or
-  explicitly configured include roots; the native frontend remains cache-only.
-- `--define <NAME[=VALUE]>`/`-D <NAME[=VALUE]>` seeds preprocessing before
-  source admission, so macro-expanded include names work from the CLI as well
-  as through the library API.
-- `--lint` runs the shared linter before codegen and exits 1 on lint errors.
-  `--lint-config <path>` loads `llg-lint.toml` rule enable/severity settings.
-- `--lint-json [<path>]` is report-only: one JSON object to stdout or file,
-  exiting without codegen/simulation. It wins over `--lint`; see
-  [../core/lint/AGENTS.md](../core/lint/AGENTS.md) for schema and exit behavior.
-- `--stop-policy <resume|exit>` controls noninteractive `$stop` handling in the
-  generated simulator. `resume` (the default) continues the stopped coroutine
-  at the same simulation time; `exit` returns from the child without draining
-  pending work or running final blocks. The runtime C API additionally exposes
-  an explicit resume hook for embedders.
-- Simulation builds one owned DB using the compilation's physical source-file
-  inventory for bounded time-literal recovery and reuses it after lint.
-  Report-only lint retains ordinary DB capture without new constant-source reads.
+- `--generator <backend>` selects CMake `-G`; `--gen-only` writes model sources
+  and `CMakeLists.txt` only. CMake is the sole builder;
+  [sim](../sim/AGENTS.md) owns compiler/flags/environment selection.
+- Repeated `--dpi-lib <path>` validates explicit DPI-C libraries before CMake and
+  retains them in source-only output. `--no-opt` disables normally enabled IR
+  passes; conformance fixtures exercise both modes.
+- `--include-dir`/`-I` admits bounded canonical files under source/configured
+  include roots. `--define`/`-D <NAME[=VALUE]>` seeds preprocessing before admission,
+  including macro-expanded include names. Native reads remain cache-only.
+- `--lint` runs shared lint before codegen and exits 1 on errors.
+  `--lint-config <path>` loads `llg-lint.toml`. `--lint-json [<path>]` takes
+  precedence over `--lint`, emits one JSON object to stdout/file and exits without
+  simulation. [Lint](../core/lint/AGENTS.md) owns schema and exit details.
+- `--stop-policy <resume|exit>` defaults to same-time coroutine resumption.
+  `exit` returns from the child without draining work or running finals; embedders
+  also have an explicit runtime resume hook.
+- Simulation builds one owned DB using the physical source inventory for bounded
+  time-literal recovery and reuses it after lint. Report-only lint uses ordinary
+  capture without new constant-source reads.
 
 ## Startup and process state
 
-Both `llg` and `llg_ls` accept `--help`/`-h` and `--version`/`-V`.
-These modes print to stdout and exit successfully before installing memory
-guards, compiling, or serving. Version text uses `env!("CARGO_PKG_VERSION")`.
+`--help`/`-h` and `--version`/`-V` print to stdout and succeed before memory guards,
+compilation or serving. Version text uses `env!("CARGO_PKG_VERSION")`.
 
-`llg_ls` and `helloworld` set mimalloc's `#[global_allocator]`; musl builds
-also wrap C allocation for every binary in the root build script. The combined
-shim and mimalloc archive is carried through library metadata and passed to
-every final package target because the wrap flags also apply to tests that do
-not directly import `llg`. Binaries may install
-`llg::memory_limit::install[_with_logger]`; policy, defaults, native behavior,
-and generated-child limits are in [../AGENTS.md](../AGENTS.md).
-Platform calls stay in `ffi/process_memory.rs`. The LSP logger uses `LLG_LOG`
-and `LLG_LOG_FILE`, never stdout (the framed JSON-RPC transport).
+`llg_ls` and `helloworld` install mimalloc. On musl, root build wrapping applies to
+every binary, including tests not importing `llg`; carry the shim/mimalloc archive
+through library metadata and every final package target. Bins may install
+`llg::memory_limit::install[_with_logger]`; [shared policy](../AGENTS.md) owns
+native/default/child limits. Keep platform calls in `ffi/process_memory.rs`.
+LSP logging uses `LLG_LOG`/`LLG_LOG_FILE`, never serving stdout.

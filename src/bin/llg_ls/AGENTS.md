@@ -1,77 +1,60 @@
 # Verilog/SystemVerilog language server
 
-This guide covers the Tower-LSP stdio server. The server provides diagnostics,
-semantic tokens, hover, definition, references, symbols, completion,
-prepareRename/rename, inactive ranges, token dumps, and the read-only module
-explorer.
+Tower-LSP stdio serves diagnostics, tokens, hover, definition, references, symbols,
+completion, prepareRename/rename, inactive ranges, token dumps and a read-only
+module explorer.
 
-## Ownership
+## Ownership and transport
 
-- [lsp/AGENTS.md](lsp/AGENTS.md) owns backend scheduling, source admission,
-  root snapshots, diagnostics, watchers, and wire handlers.
-- [features/AGENTS.md](features/AGENTS.md) owns analysis, exact bindings, the
-  symbol index, and feature projections.
-- Shared memory safeguards are in [../../AGENTS.md](../../AGENTS.md), and
-  validation contracts are in [../../../tests/AGENTS.md](../../../tests/AGENTS.md).
-- LSP dependencies stay in this binary behind the default-on `lsp` feature.
-  While serving, keep stdout exclusively for JSON-RPC framing and send logs
-  to stderr or a configured file. Standalone help, version and token-dump
-  modes print ordinary text and exit without serving. Invalid CLI arguments
-  exit 2 with usage guidance on stderr.
+[lsp](lsp/AGENTS.md) owns scheduling, admission, snapshots, diagnostics, watchers
+and handlers; [features](features/AGENTS.md) owns analysis, bindings, indexes and
+projections. Read [shared safeguards](../../AGENTS.md) and
+[validation](../../../tests/AGENTS.md).
+
+Keep LSP dependencies in this binary behind default-on `lsp`. Serving stdout is
+JSON-RPC only; logs go to stderr/configured file. Help, version and token dumps
+print ordinary text without serving. Invalid CLI arguments exit 2 with stderr usage.
 
 ## Frontend boundary
 
-Root jobs take bounded snapshots of every compilation unit and literal include.
-The blocking analysis closure passes those exact buffers to Slang, builds the
-owned semantic database and indexes, and returns an owned `Analysis`. Request
-handlers never access native objects or start project compilation.
+Root jobs snapshot every unit/literal include within budgets. One blocking closure
+compiles those exact buffers and builds owned DB/indexes/`Analysis`. Request
+handlers neither access native objects nor start project compilation.
 
-Slang diagnostics retain their provider, name/code, full message, primary
-range, and related locations. Core diagnostics represent admission and database
-failures. Failed compilation publishes current diagnostics while navigation
-continues from the root's last-good snapshot.
+Preserve Slang diagnostic provider, name/code, full message, primary range and
+related locations. Core diagnostics classify admission/DB failures. Publish current
+failures while serving navigation from the last-good root snapshot.
 
-Open-document semantic token requests compile the exact admitted unsaved buffer
-in isolation. A syntax error produces an authoritative empty token stream.
-Unopened documents use committed project tokens. Cache keys include the buffer,
-effective defines, URI, request arguments, and analysis epoch as appropriate.
+Open-document semantic tokens compile the exact admitted unsaved buffer in
+isolation; syntax errors return an authoritative empty stream. Unopened documents
+use committed tokens. Cache keys include applicable buffer, defines, URI, request
+arguments and analysis epoch. Parameters/localparams use `property.readonly`;
+data/net types and port directions use `type`; control/module words remain `keyword`.
 
-Parameter and localparam declarations and references use `property.readonly`.
-Built-in data/net types and port-direction words use `type`, matching the
-extension grammar; control-flow and module keywords remain `keyword`.
+## Source and serving rules
 
-## Source identity and limits
+Each root has independent config/scheduling. Only `.v`/`.sv` are compilation units;
+headers are include-only. Resolve literal includes beside the including file,
+then configured source/include directories; canonical identities deduplicate cycles.
+Native reads must never reach unmeasured paths.
 
-Each workspace root has independent config and scheduling. Only `.v` and
-`.sv` files are compilation units; headers enter through admitted includes.
-Resolve literal includes beside the including file, then through configured
-source and include directories. Canonical identities deduplicate cycles.
-Never allow the native frontend to read an unmeasured path.
+Apply `analysis.max_file_bytes` and `analysis.max_total_input_bytes` before cloning,
+staging, caching or compiling. Use max-plus-one closed reads and exact open UTF-8
+byte lengths. Admission failure preserves the last valid snapshot.
 
-Apply `analysis.max_file_bytes` and `analysis.max_total_input_bytes` before
-cloning, staging, cache insertion, or compilation. Closed files use max-plus-one
-bounded reads. Open UTF-8 text is measured by its actual byte length. Admission
-failure preserves the previous valid snapshot.
+Use trailing debounce and generation checks. Triggers during a run mark the root
+dirty for one newest-input follow-up. Hold no backend lock during discovery, I/O
+or compilation. Navigation, token dumps and explorer requests read committed owned
+data; exact semantic bindings outrank scoped fallback, and ambiguity yields no
+target. Snapshot replacement/clearing advances the epoch; servable module-graph
+changes notify explorer clients.
 
-## Serving and cache behavior
-
-Root scheduling uses a trailing debounce and generation checks. Triggers during
-a run mark the root dirty and schedule one follow-up with the newest inputs.
-No backend state lock may be held across discovery, I/O, or compilation.
-
-Definition, references, rename, hover, symbols, completion, token dumps, and
-module explorer requests read committed owned data. Exact Slang semantic
-bindings take precedence over scoped name fallback. Ambiguous bindings yield no
-target. Any snapshot replacement or clearing advances the analysis epoch;
-servable module graph changes notify module explorer clients.
-
-The bounded request caches store definition, hover, references, and isolated
-semantic token results. Apply shadow-to-real presentation mapping after cache
-lookup. Cache values must not pin retired native state.
+Bound definition/hover/reference/isolated-token caches. Apply shadow-to-real
+presentation mapping after lookup; cache values must not pin retired native state.
 
 ## Logging
 
-`LLG_LOG` accepts `off`, `error`, `warn`, `info`, `debug`, or
-`trace`; `LLG_LOG_FILE` selects an append-only file with stderr fallback.
-Lifecycle records may contain bounded paths, counts, outcomes, timing, and
-memory samples. Never log source buffers or unbounded LSP payloads.
+`LLG_LOG`: `off`, `error`, `warn`, `info`, `debug`, `trace`.
+`LLG_LOG_FILE`: append-only file with stderr fallback. Lifecycle logs may contain
+bounded paths, counts, outcomes, timings and memory samples, never source buffers
+or unbounded LSP payloads.

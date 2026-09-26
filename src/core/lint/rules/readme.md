@@ -1,9 +1,5 @@
 # Lint rules
 
-- Purpose: individual checks over the owned `Db` and `DesignModel`.
-- Components:
-  - `mod.rs`: authoritative rule registry.
-  - `analysis.rs`: shared graph and data-flow helpers.
-  - Rule modules: policy-specific checks and diagnostics.
-- Boundaries: use `LintCtx`; no native AST traversal or I/O.
-- Related: [shared linter](../readme.md).
+Rules read owned `Db`/`DesignModel` through `LintCtx`, with no native traversal or
+I/O. `mod.rs` owns registry order, `analysis.rs` shared graph/data-flow helpers,
+and rule modules their policies/diagnostics. See [shared lint](../readme.md).

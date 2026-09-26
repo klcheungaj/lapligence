@@ -30,7 +30,7 @@ The source forms are mapped to IEEE 1364-2001 §9.7.5 and §9.9.2 and
 IEEE 1800-2009 §§7.2, 7.4.2, 7.4.6, 7.7, and 9.2.2.2–9.2.2.4 in
 [`docs/specification/spec-reference-verilog.md`](../../../../docs/specification/spec-reference-verilog.md)
 and [`docs/specification/spec-reference-sv.md`](../../../../docs/specification/spec-reference-sv.md).
-The public suite runs the positive witness in optimized and unoptimized modes.
+The public suite runs the positive witness in both optimizer modes.
 This is bounded execution evidence; dynamic/native aggregate callbacks,
 testbench event objects, and concurrent assertion scheduling remain outside
 SYN-014.

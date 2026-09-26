@@ -33,19 +33,15 @@ Datatype fixture authors derive expected behavior from the local
 
 The campaign accepts only complete exact `PASS` markers. Self-checking HDL
 uses case inequality so unexpected X/Z values cannot become unknown `if`
-conditions. The original 40-case campaign is active without ignored tests and
-has regular and sanitizer coverage. Independent truth-table, positional
-arithmetic, cast, and partial-limb oracles cover exact-width values. Packed
+conditions. Keep the campaign active, with regular and sanitizer gates. Independent
+truth-table, arithmetic, cast and partial-limb oracles cover exact-width values. Packed
 all-bit/mixed-state structs and multidimensional packed-bit arrays are covered
 at exercised widths; packed unions, unpacked aggregates, and unsupported
 net/member contexts remain unclaimed.
 
 The C backend supported width is strictly below `1 << 20` bits; the near-limit
 campaign uses 1,048,575 bits. Selected widths exercise the supported boundary but
-do not establish unbounded support. Wide division/modulo/power, two-state X/Z
-coercion, wide real conversion, and logical equality with a known mismatch are
-active oracle contracts.
-
+do not establish unbounded support.
 Normative anchors verified against `docs/specification/spec-reference-verilog.md`
 and `spec-reference-sv.md`: IEEE 1364-2001 §§4.1.5–4.1.14 and 4.5; IEEE
 1800-2009 §§6.11, 6.24.1, 11.4.5, 11.8, and 20.5. Icarus may independently

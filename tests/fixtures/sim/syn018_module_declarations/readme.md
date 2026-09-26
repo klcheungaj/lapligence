@@ -8,7 +8,7 @@ parameter-selected generate scope, and applies its own `EXTRA` override.
 extern declaration and matching body across separate source files.
 
 The public CLI suite runs the positive witness with separate and merged
-compilation-unit policies, in optimized and unoptimized modes. The owned model
+compilation-unit policies, in both optimizer modes. The owned model
 assertions check the two nested instance paths, their distinct parameter values,
 and the parameterized extern instance. `extern_mismatch.sv` and
 `extern_missing.sv` each contain one frontend fault and remain rejection

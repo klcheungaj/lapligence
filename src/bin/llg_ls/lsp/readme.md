@@ -1,16 +1,9 @@
 # LSP backend
 
-- Purpose: the `lsp.rs` facade connects tower-lsp requests to the backend
-  implementation.
-- Scope: manages workspace state, configuration, bounded input admission,
-  shadow staging, analysis scheduling, and diagnostic publication.
+`lsp.rs` connects tower-lsp requests to workspace/configuration state, bounded
+admission, private shadow staging, analysis scheduling and diagnostics. Blocking
+Slang work uses admitted buffers; async requests use owned `Analysis`.
 
-- `handlers/state.rs`: backend and per-root state queries/updates.
-- `handlers/scheduling.rs`: rescans, jobs, debounce, config reloads, watchers.
-- `handlers/staging.rs`: bounded snapshots, shadow paths, includes, isolation.
-- `handlers/diagnostics.rs`: publication, deduplication, shared-file findings.
-- `handlers.rs`: protocol types, custom requests, and `LanguageServer`.
-- `handlers/tests.rs`: backend unit and async regressions.
-
-- Boundary: blocking Slang compilation consumes admitted buffers; async request
-  paths consume owned `Analysis` results.
+`handlers.rs` defines protocol types, custom requests and `LanguageServer`.
+[Handler domains](handlers/readme.md) own state, scheduling, staging and diagnostic
+publication; `handlers/tests.rs` contains private unit/async regressions.

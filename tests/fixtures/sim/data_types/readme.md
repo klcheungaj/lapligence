@@ -1,10 +1,11 @@
 # Datatype end-to-end fixtures
 
-- Purpose: black-box Verilog/SystemVerilog datatype fixtures.
-- Coverage: wide four-state values, arithmetic, casts, equality, and two-state
+black-box Verilog/SystemVerilog datatype fixtures.
+
+Coverage: wide four-state values, arithmetic, casts, equality, and two-state
   conversion.
-- Execution: each case runs with optimization enabled and disabled.
-- Result: exact self-checking `PASS` output is required.
+- Runs: each case runs in both optimizer modes.
+- Oracle: exact self-checking `PASS` output.
 - Limits: normative datatype and width rules are summarized in
   [sim_data_semantics.md](../../../../docs/sim_data_semantics.md).
 

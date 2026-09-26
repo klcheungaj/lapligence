@@ -1,305 +1,109 @@
 # Repository validation
 
-Prefer Rust unit and integration tests, including Rust-side FFI probes. Tests must be
-deterministic. End-to-end simulation designs belong in checked-in `.v` or `.sv` fixtures passed
-to the `llg` executable; do not embed or generate those designs in Rust test source. Rust owns
-orchestration and independent expected-result oracles. In-memory sources remain suitable for
-focused library, frontend and IR tests. Tests which change the process CWD must serialize that
-change, use a fresh temporary directory, and restore it through an unwind-safe guard. Use
-`compile_checked` for successful execution/elaboration. Raw `compile` is for tests inspecting
-partial snapshots and diagnostics; assert that the checked contract withholds a snapshot
-containing blocking errors.
+Prefer deterministic Rust unit/integration tests, including Rust-side FFI probes.
+Checked-in `.v`/`.sv` files go directly to `llg` for end-to-end simulation: never
+embed/generate those designs in Rust. Rust owns independent expected results.
+Focused frontend/DB/IR tests may use in-memory sources. Serialize parent CWD changes
+with a fresh temp directory and unwind-safe restoration. Use `compile_checked` for
+successful execution/elaboration; raw `compile` is for partial snapshots/diagnostics,
+including proof that checked compilation withholds blocking-error snapshots.
+
+## Simulator and native acceptance
+
+- Shared `support/sim_cli.rs` suites require CMake, isolated child directories,
+  both default and `--no-opt` public CLI runs, exact stdout, expected stderr and
+  status, and specific frontend/lowering/runtime diagnostics. Positive migration
+  or unsupported-feature rejection is failure, never a skip/success substitute.
+  Preserve each suite's existing frontend, timeout and sanitizer contracts.
+- Independent oracles use explicit truth tables, bit strings and width/sign
+  arithmetic, not production implementation helpers. Keep specification-derived
+  X/Z, scope, signedness and capacity boundaries. Expected-output changes need
+  feature/clause justification; never automatically bless them. Prefer behavioral
+  assertions to private generated-name substrings.
+- `support_harness` checks CWD/mutex unwind recovery and descendant timeout cleanup:
+  POSIX process groups with kill, Windows taskkill /T. Conformance inputs must
+  exist and be staged. Before publishing run
+  `python3 scripts/check_sim_fixture_integrity.py --tracked` and its Python unit
+  tests from [the test guide](readme.md). The checker recognizes static harness
+  forms, not arbitrary Rust expressions; extend recognizers for new forms.
+- `sim_dynamic_ownership` is positive public-HDL acceptance. Keep original
+  runtime/waveform assertions, exact CTest inventories and cleanup tests active;
+  smaller components, parser-only checks or recognized source shapes do not
+  replace them. `runtime_value_storage/validate.py --full` requires Rust, real
+  emitted-model tests, CLI acceptance and repository tests. Missing prerequisites
+  are blocked, not passed; reject zero/missing/duplicate/disabled tests and stale
+  products. Non-fiber sanitizer components and native stack-switch tests are
+  separate gates.
+- `slang_frontend`, `slang_semantics` and `model_tests` independently exercise
+  safe capture, typed relationships, complete delays, declaration-owned ranges,
+  source topology and copy-before-destroy; downstream tests use validated DB/IR
+  builders. Unsupported capture is not silently complete. `emit_decoupling`
+  source checks and fragment-order checks are architecture checks, not execution.
+- `property_elab` mirrors identical Rust value vectors in the C self-test;
+  retain independent arithmetic/real conversion/net-resolution probes.
+  `runtime_values` compiles values without scheduler/libaco; random tests cover
+  Annex N and process-stream rules, including explicit seeds/ranges at -O0/-O2.
+- Preserve `sim_cmake` missing-CMake graceful skips and its source-generation,
+  generator, configure-error and stale-source checks. Native DPI shared-library
+  cases skip on non-Unix or missing CMake/C compiler; do not generalize these
+  exceptions to mandatory public conformance suites.
+- Preserve supplied imported sources/provenance. C VPI fragments are not standalone
+  plugins; handwritten output-shape probes are not Rust-emitted C. Recreated
+  missing inputs are replacement witnesses, not recovered historical evidence.
+
+Suite ownership and focused commands are in [readme.md](readme.md); datatype
+fixture guides retain their local LRM/oracle contracts. Do not duplicate progress
+reports or complete feature inventories here.
 
 ## LSP acceptance and fixtures
 
-`lsp_stdio.rs` and its responsibility-named `lsp_stdio/` modules launch **`llg_ls`** and use
-only framed standard LSP JSON-RPC; never depend on stdout debug text. `lsp_stdio.rs`,
-`shadowing.rs`, and `dump_tokens.rs` are gated by the `lsp` feature so no-default builds cannot
-launch a stale language-server binary. Cover these contracts:
+`lsp_stdio.rs` and its domain modules launch `llg_ls` over framed standard JSON-RPC,
+never stdout debug text. Gate `lsp_stdio`, `shadowing` and `dump_tokens` by `lsp`,
+so no-default builds cannot launch stale binaries. Preserve these wire contracts:
 
-- Default and client-overridden per-root `llg.toml`, `llg.configFiles`, hot reload without
-  restart, `llg/configChanged` only on changed parsed configs, per-root lint policies and
-  independent multi-root scans.
-- `.v`/`.sv` compilation units, include-only headers/arbitrary extensions, include/exclude
-  precedence, longest-root ownership transfer on workspace add/remove, and dynamic
-  config/source/include watchers re-registered after feature-data-bearing commits. Dependency
-  events refresh every dependent root.
-- Shared-file diagnostic unions: identical findings once, distinct findings labeled
-  `[<root-name>]`; owner-wins semantic tokens and hover labeling. Publish never-opened files,
-  refresh on watched disk fixes and clear stale findings. Shared careless-mistake rules have
-  project-wide diagnostic coverage and the same stable IDs exercised through simulator
-  `--lint-json`.
-- Unsaved source/header buffers, configured-directory include authorization and rejected
-  escapes, last-good navigation after failed compiles, read-only staging and no compiler
-  artifacts in the server workspace CWD.
-- Feature serving for non-syntax error projects with surviving semantic data, and
-  declaration-level document/workspace symbols/hover for syntax-broken roots (e.g. an
-  unterminated sibling module). Fatal-only roots are feature-less; watched fixes upgrade
-  analyses. Syntax-invalid current open buffers yield authoritative empty semantic tokens.
-- Binding-precise instance-scope navigation; named port/parameter LABELS bind to child
-  declarations while ACTUALS/override RHS stay in parent scope. Cover single/multiline forms and
-  syntax-fallback bindings with `dumpTokens` `bind=` as oracle. Module-type navigation stays
-  distinct from same-named instance identifiers. Parse-backed enum navigation also has wire
-  coverage.
-- `lsp_stdio/genvar.rs` exercises explicit and inline genvars through standard
-  hover/definition/references/prepareRename/rename/symbol/token requests. Keep exact
-  scope-isolation assertions, including unused and pruned declarations, ordinary namesakes,
-  labels/members, syntax fallback, and UTF-16 columns. HDL lives in `fixtures/lsp/genvar/` and
-  `fixtures/lsp/genvar-fallback/`.
-- Module explorer: configured-top/source-graph roots, recursive children and leaves, declaration
-  fallback, typed contents, no shadow URIs, and useful hierarchy roots surviving module-content
-  budget truncation.
-- Semantic colors: parameters/localparams remain `property.readonly` in dimensions, expressions,
-  and instance actuals; data/net/direction words are `type`. Cover cached project and isolated
-  unsaved-buffer responses, including absent child modules. Unit tests also cover compact
-  capture and shadowing.
+- Independent multi-root scans, default/client-overridden `llg.toml`,
+  `llg.configFiles`, per-root lint and hot reload; `llg/configChanged` fires only
+  for changed parsed config. Dynamic config/source/include watchers re-register
+  after feature-data commits; dependency changes refresh every dependent root.
+- `.v`/`.sv` units, include-only headers/arbitrary extensions, include/exclude
+  precedence and longest-root ownership transfer on workspace add/remove.
+  Unsaved sources/headers are authoritative; reject include escapes, use read-only
+  staging and create no compiler artifacts in workspace CWD.
+- Shared-file diagnostics deduplicate identical findings and label distinct ones
+  `[<root-name>]`. Owner-wins tokens/hover labeling; publish unopened files,
+  watched fixes and stale-diagnostic clearing. New lint rules need triggering and
+  nearby quiet controls with identical stable IDs in CLI JSON and LSP publication/
+  config tests.
+- Failed compiles preserve last-good navigation. Non-syntax errors with surviving
+  data retain features; syntax-broken roots retain declaration symbols/hover where
+  possible, fatal-only roots do not. Watched fixes upgrade analysis. Current
+  syntax-invalid open buffers return authoritative empty semantic tokens.
+- Exact instance-scope bindings: named port/parameter labels refer to child
+  declarations, actuals/override RHS to parent scope. Check single/multiline and
+  syntax-fallback forms with dumpTokens `bind=`. Module types stay distinct from
+  namesake instances; enum navigation also has wire coverage.
+- `lsp_stdio/genvar.rs` covers explicit/inline genvars in hover/definition/
+  references/prepareRename/rename/symbols/tokens, including unused/pruned scopes,
+  ordinary namesakes, labels/members, fallback and UTF-16 columns. Keep
+  `fixtures/lsp/genvar/` and `genvar-fallback/` inputs.
+- Explorer roots honor configured tops/source graphs; preserve recursive children,
+  leaves, typed contents, declaration fallback and useful roots under truncation;
+  never return shadow URIs. Tokens keep parameters/localparams `property.readonly`
+  in dimensions/expressions/actuals and data/net/directions `type`, for committed
+  and isolated buffers, including missing children. Retain compact-capture tests.
 
-Fixtures use `fixtures/lsp/test.json`, schema `llg.lsp.fixture/v1`, an effective `llg.toml` per
-root, and `// llg-lsp-fixture:` source headers. Keep the dedicated
-`fixtures/lsp/module-explorer/` manifest/header convention in sync with its suite. Shared lint
-additions need one fixture with triggering and nearby quiet controls, simulator CLI JSON, and
-LSP publication/config coverage for the same rule IDs.
+Fixtures use `fixtures/lsp/test.json`, schema `llg.lsp.fixture/v1`, effective
+per-root `llg.toml` and `// llg-lsp-fixture:` headers. Synchronize the separate
+module-explorer manifest/header convention with its suite. Keep domain facades
+explicit; nested implementation files must not become accidental Cargo test targets.
 
-## Suite map
+## Safeguards
 
-- `sim_rtl_completion.rs` exercises the practical RTL repairs through both public
-  optimizer modes: elaborated parameter values, ordered streaming/defaults,
-  fixed activation values/references/unions, defaults and initialization phases,
-  aggregate ports and sensitivity, and resolved array/interface/inout composition.
-  Its independent oracles and clause references live with `fixtures/sim/rtl_completion/`.
-
-- `sim_dynamic_ownership.rs` is a positive P07 CLI gate: checked-in HDL fixtures
-  run through `llg` with and without optimization. Migration rejections fail the
-  test; never turn them into skips or expected successes. It covers numeric and
-  recursive results, branch side effects, wide intermediates, selected NBA
-  capture, task suspension/copy-out, finish cleanup, numeric input/default/inout
-  ownership, indexed/evaluated event waits and detached numeric fork captures.
-- `runtime_value_storage/validate.py` records host-scoped C, ABI, independent
-  oracle, allocation plateau and optional Rust/HDL evidence. It checks the exact
-  CTest inventory and distinguishes pass/failure/blocked/excluded results. A
-  component-only pass is not full P07 acceptance. `--full` requires Cargo, the
-  generated-model smoke/host tests, CLI acceptance and the repository suite.
-  The native stack-switch probes remain excluded from the component sanitizer
-  lane until the shared-stack sanitizer contract is validated.
-
-- `runtime_value_storage.rs` runs the standalone CMake suite in
-  `runtime_value_storage/`: exact-width allocation accounting, copy/move/release,
-  zero and supported-limit boundaries, injected allocation failure, deterministic
-  waveform ring transfers, threaded VCD/FST snapshots, error disposal and close/
-  reinitialization. The same CMake project runs without Cargo or Slang. Keep its
-  legacy ABI/portability limitations explicit; it is not full generated-simulator
-  ownership coverage.
-
-Suites designated below as shared CLI suites use
-`support/sim_cli.rs`: run `llg` and `llg --no-opt` in separate temporary child directories,
-require CMake, compare independent exact stdout oracles, and assert expected lowering/runtime
-diagnostics. Keep the existing per-suite frontend, skip, timeout, and sanitizer contracts below.
-
-- `cli_info.rs` checks help/version output, early exit with stdin held open, and usage errors
-  before memory guards, logging or LSP serving start.
-- `slang_frontend.rs` probes the release-pinned native bridge through safe Rust APIs: owned
-  hierarchy/parameters/constants, compiler/analysis diagnostics, checked failure,
-  repeated/concurrent compilation isolation, and admitted-buffer includes versus rejected
-  external files.
-- `slang_semantics.rs` pins the safe semantic snapshot contract independently of database and
-  simulator lowering: process and assignment relationships, timing and event edges, type ranges
-  and aggregate members, and paired module port declarations and actuals.
-- `support_harness.rs` verifies that simulator test CWD restoration and mutex recovery remain
-  sound when a test action unwinds, and that command timeouts stop descendants holding output
-  pipes. Unix commands use a separate process group; timeout cleanup uses `kill` there and
-  `taskkill /T` on Windows.
-- `sim_data_types.rs`, `sim_data_types_extended.rs`, and `sim_data_type_edges.rs` cover datatype
-  semantics and boundaries; detailed contracts are in
-  [data_types/AGENTS.md](fixtures/sim/data_types/AGENTS.md),
-  [data_types_extended/AGENTS.md](fixtures/sim/data_types_extended/AGENTS.md), and
-  [data_type_edges/AGENTS.md](fixtures/sim/data_type_edges/AGENTS.md).
-- `sim_data_types_next.rs` is a bounded next-phase inventory for aggregate and container
-  features, with explicit unsupported cases; its contract is in
-  [data_types_next/AGENTS.md](fixtures/sim/data_types_next/AGENTS.md).
-- `sim_data_types_completion.rs` freezes seventeen positive completion contracts for string,
-  aggregate, reduction, and array-method behavior; its contract is in
-  [data_types_completion/AGENTS.md](fixtures/sim/data_types_completion/AGENTS.md).
-- `sim_type_conformance.rs` checks independent data/data and data/net operation matrices, all
-  three-driver resolution combinations, conversion and storage-boundary checks, and
-  65,536/1,048,575-bit net/state-conversion probes. It requires CMake and compares exact
-  specification-derived output in both optimizer modes through `llg` / `llg --no-opt`, rejecting
-  unexpected lowering warnings. Its HDL lives in `fixtures/sim/type_conformance/`. The human
-  coverage map and limits are in [readme.md](readme.md).
-- `sim_group1_formal_repairs.rs` checks activation-relative packed members,
-  private input mutation, recursion, selected output/inout copy-out addresses,
-  whole packed-variable references, and const/NBA negatives in both optimizer modes.
-- `sim_group1_repairs.rs` carries the other Group 1
-  review regressions. Use the checked-in fixtures; do not replace them with parser-only
-  checks or generated substring assertions.
-- The original Group 1 delta advertised six extra closure/constant/control/composition/
-  capacity suites which were not delivered. Those unavailable suites are not part of
-  the current test inventory and their supposed executions must not be counted.
-  Recreated inputs for the delivered topic suites live in `fixtures/sim/feature_completion/`
-  and the existing topic directories. They are replacement witnesses, not recovered originals.
-- Before publishing a patch, run `python3 scripts/check_sim_fixture_integrity.py --tracked`
-  from the repository root. It checks the static CLI, per-topic helper and datatype-macro
-  references in Git's index, including additions; it cannot discover arbitrary dynamically
-  constructed Rust paths. Extend its recognizers when adding a new fixture harness.
-- `sim_partial_features.rs` covers expression/default/ref ports, trigger-time event
-  qualification, expression/LSB edges, constant waits, delayed and selected NBAs, runtime
-  procedural delays, real blocking captures, declared packed ranges and array indexed
-  part-selects, inertial driver scheduling and settled strobe output, runtime real math,
-  fractional time, and `$timeformat` state. HDL lives in `fixtures/sim/partial_features/`; the
-  shared `support/sim_cli.rs` harness passes each file to `llg` in both optimizer modes,
-  isolates child working directories, compares specification-derived output and asserts
-  diagnostics. Both suites require CMake and run in the sanitizer job.
-- `sim_concurrent_assertions.rs` covers the H20–H26 concurrent-assertion subset: Preponed
-  sampling across NBA updates, asynchronous `disable iff` cancellation and restart, FIFO
-  overlapping attempts, vacuity accounting, end-of-simulation pending-attempt disposal, sequence
-  concatenation and ranges, consecutive/nonconsecutive/goto repetition (including unbounded
-  endpoints), sequence composition and `first_match`, plus bounded named sequence/property
-  instances, declaration argument expansion, and one-cycle property boolean composition. H24
-  fixtures additionally cover per-attempt sequence locals, local input-formal defaults, ordered
-  match-item assignments, increments and subroutine calls, and branch-thread local-state
-  isolation. H25 fixtures additionally cover legal `##0`/`##1` multiclock sequence boundaries,
-  default-clock inheritance, conditional properties, and accept/reject controls including
-  synchronous variants. HDL lives in `fixtures/sim/concurrent_assertions/`; use the shared CLI
-  contract above. H26 fixtures additionally cover bounded blocking `expect`, sequence
-  `.matched`, and level-0 assertion ON/OFF/KILL controls with rejection coverage for unsupported
-  action controls and scope/argument forms.
-- `sim_sampled_values.rs` covers H21 sampled-value domains: preponed `$sampled`, explicit and
-  default clocks, initial/gated `$past` history, global-clock history/status functions, packed
-  status values and LSB/X/Z edge transitions. Future global forms are checked for fail-closed
-  diagnostics in both optimizer modes. HDL lives in `fixtures/sim/concurrent_assertions/`; use
-  the shared CLI contract above.
-- `sim_procedural_assign.rs` covers procedural continuous-assignment priority, replacement,
-  deassign retention, function dependencies and PCA/force layering. HDL lives in
-  `fixtures/sim/procedural_assign/`; use the shared CLI contract above.
-- `sim_imported_probes.rs` runs five supplied acceptance witnesses in both optimizer modes
-  with exact stdout and retains the unsupported net-alias witness as an ignored test.
-  The original inputs and separately reviewed counterexamples live in
-  `fixtures/sim/imported_probes/`; its READMEs map cases to active feature suites.
-- `sim_review_next4.rs` owns the N06 singleton-concat, N01 typed tagged-read,
-  N02 static-callback abrupt-exit and N07 selected fixed-ordering fixtures in
-  `fixtures/sim/review_bundle/`. Keep literal fixture arguments visible to the
-  integrity checker, exact positive stdout in both optimizer modes, the paired
-  legacy editions, and specific eligibility/const-ref rejection reasons. Source
-  presence and native helper tests do not establish these public outcomes.
-- `sim_review_bundle_composition.rs` adds R13 cross-context public-CLI witnesses for recursive
-  fixed-array type keys through a function return and aggregate input port, plus packed-record
-  deconstruction into a selected NBA destination with source/address capture. Both cases use
-  exact stdout oracles in both optimizer modes under IEEE 1800-2009. Their fixtures live in
-  `fixtures/sim/review_bundle/` alongside the held-out issue cases.
-- `elab_resolve.rs` exercises resolved Slang parameter values, including the owned `X` value
-  from an ambiguous constant conditional with equal `Z` branches; `config_effect.rs` observes
-  configured defines and top-level parameter overrides driving generate branches through the
-  owned `DesignModel`.
-- `elaboration/run_elab_check.sh` runs `elab_check` over representative designs; the binary
-  validates the owned semantic database and prints hierarchy, binding and resolved-parameter
-  summaries.
-- `sim_counter.rs` checks real designs end-to-end (codegen → `cc` → execute) against documented
-  hand-simulated stdout traces, plus the C runtime self-test (`llg_rt_selftest.c`, sv4 vectors +
-  scheduler checks).
-- `region_conformance.rs` pins the IEEE 1800 §4 scheduling-region semantics (active/inactive
-  `#0`/NBA ordering, multi-delta settle, fork/join timing); a `// REGION-BUG:` case means the
-  scheduler deviates.
-- `property_elab.rs` runs proptest properties over `core::elab::Value` (X-propagation,
-  resize/concat round-trips, casez/casex truth tables) and hosts the generator for the
-  deterministic C vector table checked by `llg_rt_selftest.c` — keep elab.rs and the runtime
-  semantically in sync.
-- `sim_*.rs` are the per-feature simulator suites (counter, function, fork, memory, interface,
-  interface_body, casez, monitor, timescale, stress, geninit, varinit, wait, force, hier,
-  inout): each compiles a design, codegens, builds the C model through
-  `sim::build::build_model_cmake`, runs it and asserts the exact stdout.  Model-building suites
-  require cmake and skip gracefully (`SKIP: cmake not available`) when
-  `sim::build::cmake_available()` is false.
-- `sim_array_sensitivity.rs` checks fixed-array, dynamic-array, and queue fixtures in both CLI
-  modes: continuous, implicit/explicit combinational, and level-sensitive readers wake after
-  element, resize, push, and delete changes.
-- `sim_process_semantics.rs` checks always-family fixtures in both CLI modes: implicit
-  sensitivity, time-zero execution, function dependencies, writer/timing contracts, and legal
-  latch/flip-flop controls.
-- `sim_program.rs` checks program-block fixtures in both optimizer modes:
-  Reactive/Re-Inactive/Re-NBA ordering, natural completion, `$exit` child cleanup/finals, and
-  prohibited members.
-- `emit_decoupling.rs` pins the pipeline shape with architectural greps: `sim::emit_c` consumes
-  only the execution IR, while `sim::codegen` lowers the semantic model without emitting runtime
-  C calls directly.
-- `sim_opt_differential.rs` runs designs twice — once with `OptConfig::default()` (all passes)
-  and once with `OptConfig::none()` — building both models via `sim::build::build_model_cmake`
-  and asserting byte-identical stdout.
-- `sim_variable_lifetime.rs` runs in-memory Slang designs with optimization enabled and
-  disabled, proving resolved static procedural locals retain storage across block/subroutine
-  reentry while automatic locals are recreated, static storage is per elaborated instance,
-  declaration initializers preserve ordering, and the selected edition's initialization race
-  boundary is respected.
-- `sim_classes.rs` checks class fixtures through the owned database in both optimizer modes:
-  bounded nominal handles, heap construction, property defaults, constructors, static members,
-  this-bound methods/tasks, shallow aliasing, inheritance, virtual/super dispatch, checked
-  casts, parameterized layouts, pure virtual methods, out-of-block definitions, forward class
-  typedefs, const properties, and the null-handle runtime failure contract.
-- `sim_virtual_interfaces.rs` checks virtual-interface fixtures in both CLI modes: rebinding,
-  class-held methods and clocking samples, modport views, fixed/dynamic/queue handle arrays,
-  null access, and nominal parameter mismatch diagnostics.
-- `sim_mailboxes.rs` checks mailbox fixtures in both optimizer modes: typed/untyped bounded and
-  unbounded FIFO storage, all blocking/nonblocking mailbox methods, native value ownership and
-  handle identity, waiter handoff, and cancellation cleanup.
-- `sim_cmake.rs` covers the build path (5 cases: library-level end-to-end CMake build, explicit
-  `CmakeBuildOpts` generator backend, invalid-generator configure error, driver default,
-  missing-cmake actionable error); skips gracefully when cmake is absent. Its source-generation
-  check also pins the separate value-runtime translation unit and retention of both value files
-  during stale-source cleanup.
-- `sim_dpi.rs` covers bounded DPI-C scalar (`bit`/`logic`/`reg` and two-state integral) imports,
-  owned aliases and pure/context metadata, explicit CMake library linkage, roundtrip values and
-  out/inout directions, plus missing-symbol, conflicting-signature and unsupported-vector
-  failures. Native shared-library cases skip on non-Unix hosts or when CMake/a C compiler is
-  unavailable.
-- `vendor_patches.rs` exercises clean-checkout application, already-applied acceptance, and
-  mismatch rejection for the portable native-build patch preparer.
-- `runtime_values.rs` compiles `llg_value.c` independently of the scheduler and libaco, checking
-  packed value operations, real/shortreal conversions, and wire/wired-AND/wired-OR truth tables
-  and wide-vector normalization.
-- `runtime_random.rs` compiles the scheduler-independent stream service and checks
-  hierarchy-stable child derivation, state replay, and inclusive range endpoints.
-  `sim_net_resolution.rs` covers per-site wired drivers, aliases, repeated updates, optimizer
-  parity, driver/alias registry growth past the retired ceilings and unsupported-context
-  rejection. `sim_net_defaults.rs` covers implicit
-  pull/supply ordering, initial defaults, driver release and unchanged resolved-value
-  notifications.
-- `model_tests.rs` covers the explorer-facing model projection: formal ports are not duplicated
-  as backing signals, concrete net kinds are kept, and packed ranges remain owned by declaration
-  identity without absorbing unpacked dimensions or merging same-named locals in unnamed blocks.
-  Continuous-assignment and primitive rise/fall/turn-off delays retain every expression in
-  order, even when simulation rejects the multi-delay form.
-- `sim_memory_guard.rs` exercises the shared `memory_limit` safeguard end-to-end via
-  `LLG_MEMORY_LIMIT_MB`.
-- `sim_waveform.rs` covers HDL→VCD/FST dump controls, X/Z and real values, hierarchy, timestamps
-  and final blocks. The waveform runtime self-test owns ring wrap/backpressure, flush
-  acknowledgement, aliases and FST reader reopening.
-- `sim_packed_strings.rs`, `sim_bit_queries.rs`, `sim_real_conversions.rs`,
-  `sim_wildcard_eq.rs`, and `sim_loops.rs` compare optimized/unoptimized execution for packed
-  strings, bit queries, numeric conversions, wildcard equality/case-inside, and lexical loop
-  declarations/foreach over fixed arrays and supported resizable containers. `sim_random.rs`
-  covers the legacy `$random` and seven `$dist_*` functions through checked-in HDL fixtures and
-  exact Annex N vectors in both optimizer modes; `runtime_random.rs` compiles the
-  scheduler-independent C module at `-O0`/`-O2` with signed-range and invalid-parameter
-  boundaries. `sim_delay.rs` covers typed constant/runtime delay expressions, negative packed
-  time conversion, overflow and unsupported-control boundaries.
-- `sim_plusargs.rs` runs checked-in plusarg fixtures through `llg` with arguments after `--`,
-  comparing optimized/unoptimized conversion, prefix, retention, malformed-value, and
-  CLI-delimiter behavior. `sim_time_literals.rs` checks typed unit-suffixed, scientific and real
-  parameter delays, lexical shadowing, and rounding of completed delays to the local precision
-  before global scheduling, with optimizer parity. `sim_time_values.rs` covers Slang's typed
-  time-literal values, module-unit scaling with local precision rounding, integral assignment
-  conversion, and ownership after admitted source buffers are removed. `sim_edition.rs` adds
-  checked-in 2009 rounding and 2001 keyword/edition CLI probes. `sim_fill_literals.rs` checks
-  context-determined fills through expressions and case operands, self-determined boundaries,
-  and wide-operation rejection. `sim_random_streams.rs` exercises `$urandom`, `$urandom_range`,
-  process seeding/state methods, and fork-child stream isolation in both optimizer modes.
-
-## Safeguard validation
-
-Contracts live in [../src/AGENTS.md](../src/AGENTS.md) (shared process memory and review
-checklist), [LSP backend](../src/bin/llg_ls/lsp/AGENTS.md) (input admission/staging/config), and
-[LSP guide](../src/bin/llg_ls/AGENTS.md) (request limits, cache backpressure, explorer
-serialization and logging). Keep these aligned with `memory_limit.rs`, `ffi/process_memory.rs`,
-`llg_ls/config.rs`, `lsp/handlers.rs` and its children, and `module_explorer.rs`. The driver
-startup integration probe is `sim_memory_guard.rs`.
+Align tests with [shared memory policy](../src/AGENTS.md),
+[LSP admission](../src/bin/llg_ls/lsp/AGENTS.md) and
+[request/cache/explorer policy](../src/bin/llg_ls/AGENTS.md), plus their source
+implementations. Cover exact input/response budgets, cache backpressure, logging
+and startup integration:
 
 ```sh
 cargo nextest run --locked --lib memory_limit::tests
@@ -312,60 +116,45 @@ cargo nextest run --locked --bin llg_ls response_budget
 
 ## CI and release gate
 
-[ci.yml](../.github/workflows/ci.yml) runs the Ubuntu test gates and five-platform build matrix
-on pushes to `master`, manual dispatch for the selected branch, and GitHub Release publication
-(`release: published`, including prereleases). Draft saves and standalone tag pushes do not
-trigger CI. Before release, run its complete `lint` gate:
+Run the complete [repository gate](readme.md#repository-gate), not fmt/check/clippy
+alone. [ci.yml](../.github/workflows/ci.yml) defines Ubuntu gates and five-platform
+builds on master pushes, manual dispatch and published Releases (including
+prereleases), not draft saves or standalone tag pushes.
 
-```sh
-cargo fmt --check
-cargo check --locked --all-targets --all-features
-cargo check --locked --lib --no-default-features
-cargo clippy --locked --all-targets --all-features -- -D warnings
-cargo nextest run --locked --all-features
-cargo test --locked --doc --all-features
-```
+Lint/sanitizer jobs disable Rust debug info/incremental compilation and strip native
+frontend debug sections while retaining debug assertions/overflow checks. Preserve
+nextest's bounded heavyweight group, compatible shared runtime caches and failure-
+time disk/memory telemetry. Generated C sanitizer flags remain separate.
 
-The Ubuntu lint and sanitizer jobs disable Rust debug info and incremental
-compilation and strip debug sections (including the linked native frontend's)
-from Rust executables. Nextest applies the repository's bounded heavyweight
-test group while generated runtimes share compatible cached static archives.
-Jobs report disk/memory use even after failures. Debug assertions and overflow
-checks remain enabled; generated C sanitizer flags are unchanged.
+The 180-minute generated-runtime-sanitizers job runs runtime_values, runtime_random,
+runtime_boundaries, sim_counter, sim_data_types, sim_data_types_next,
+sim_data_types_completion, sim_type_conformance, sim_partial_features,
+sim_net_resolution, sim_net_defaults, sim_function, sim_loops and
+sim_procedural_assign with GCC ASan/UBSan; this is not LSP admission coverage.
+The 15-minute dependency-audit runs cargo audit on those triggers and Mondays
+04:17 UTC. Reports stay in workflow logs, not uploaded artifacts.
 
-Workflow caches retain Cargo downloads only, excluding compiled targets and installed Cargo
-binaries to reduce use of the repository's 10 GB cache budget. Only release events upload
-packages as Actions artifacts, which expire after one day; branch pushes and manual builds
-upload no artifacts. Retention does not enforce the account's 500 MB artifact budget across
-concurrent runs or other repositories. Runner working-disk usage is separate from these quotas.
+Cache Cargo downloads only, excluding compiled targets/installed binaries, within
+the repository's documented 10 GB cache budget. Only release events upload Actions
+packages, retained one day; pushes/manual builds upload none. Retention does not
+cap the documented account-wide 500 MB artifact allowance across concurrent runs/
+repositories. Runner disk is a separate resource.
 
-The `generated-runtime-sanitizers` job has a 180-minute limit and runs `runtime_values`,
-`runtime_random`, `runtime_boundaries`, `sim_counter`, `sim_data_types`, `sim_data_types_next`,
-`sim_data_types_completion`, `sim_type_conformance`, `sim_partial_features`,
-`sim_net_resolution`, `sim_net_defaults`, `sim_function`, `sim_loops`, and
-`sim_procedural_assign` with GCC ASan/UBSan.
-This checks generated C/runtime memory safety, not LSP admission. The 15-minute
-`dependency-audit` job runs `cargo audit` on those triggers and Mondays at 04:17 UTC. Neither
-uploads reports; workflow logs are evidence.
-
-The `build` matrix in [ci.yml](../.github/workflows/ci.yml) is configured to produce release
-binaries for Linux x86_64/arm64, Windows x86_64/arm64, and macOS arm64. It checks target
-architecture, fully static Linux linkage, static Windows CRT linkage, system-only Windows/macOS
-dynamic imports, and a driver startup smoke test before packaging both executables with
-checksums. The Alpine legs also list `cli_info` tests from a small release test binary to catch
-allocator or libc startup failures before runtime tests execute. On release publication,
-`release` waits for every test/audit/build job, checks the five package checksums, and attaches
-packages and checksum files to the existing GitHub Release.
-Only that job receives `contents: write`. CI never creates or publishes a release or edits its
-metadata; reruns replace assets with matching names. Packages use
-`lapligence-<version>-<os>-<arch>.<ext>`, removing the tag's leading `v`, with
-`linux`/`windows`/`macos`, `x64`/`arm64`, and `tar.gz` for Unix or `zip` for Windows. Each
-contains both executables, `readme.md`, and `LICENSE`. Keep platform claims aligned with local
-`persistence/platforms.md` evidence.
+Matrix: Linux x86_64/arm64, Windows x86_64/arm64, macOS arm64. Audit architecture,
+static Linux/static Windows CRT linkage, system-only Windows/macOS imports and
+startup before packaging. Alpine also lists cli_info from a small release test
+binary to catch allocator/libc startup failures. The release job waits for every
+test/audit/build, checks all five checksums and attaches to the existing Release.
+Only it receives contents:write; never create/publish/edit release metadata.
+Reruns replace matching asset names. Package naming is
+`lapligence-<version>-<os>-<arch>.<ext>`: strip leading v, use linux/windows/macos,
+x64/arm64 and tar.gz on Unix/zip on Windows; include both executables, readme.md,
+LICENSE and checksum files. Configuration is not validated platform support;
+keep evidence in ignored `persistence/platforms.md`.
 
 ## Documentation ownership
 
-- Testing methodology, limitations and commands belong in concise, hierarchical bullets in
-  `tests/readme.md`.
-- Simulator feature-status updates belong only in `docs/sim_features.md`.
-- Session findings, plans and run evidence belong in ignored `persistence/`.
+Keep concise test methodology/commands/limitations in `tests/readme.md`, simulation
+feature status only in `docs/sim_features.md`, and dated plans/findings/run evidence
+in ignored `persistence/`. Preserve module and fixture safety rules when compacting
+human documentation.

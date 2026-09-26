@@ -1,7 +1,6 @@
 # Dynamic-owner HDL acceptance
 
-These are positive P07 acceptance fixtures, not evidence that the partial P05
-emitter already supports them. `tests/sim_dynamic_ownership.rs` launches each
+These are positive P07 acceptance requirements, not an execution record. `tests/sim_dynamic_ownership.rs` launches each
 file through the public `llg` executable in optimized and `--no-opt` modes,
 requires CMake, isolates working directories, bounds child execution, and
 compares independent exact output. A migration rejection is a failure, not a
@@ -17,11 +16,6 @@ skip or an expected-success substitute.
 | `recursive_return.sv` | Independent recursive results and early-return cleanup; `2176` |
 | `yielding_task.sv` | Automatic task locals and output copy-out across a wait; `47` |
 | `finish_cleanup.sv` | Nonreturning finish with another live process; `finish` |
-
-The review-correction fixtures additionally cover:
-
-| Fixture | Required result / ownership boundary |
-| --- | --- |
 | `function_numeric_input.sv` | Runtime numeric input conversion; `42` |
 | `numeric_default_argument.sv` | Default referring to an earlier stable numeric argument; `42` |
 | `numeric_inout_argument.sv` | Numeric inout copy-in and output copy-out across a delay; `42 43` |

@@ -1,7 +1,8 @@
 # Next-phase datatype fixtures
 
-- Purpose: bounded, non-exhaustive next-phase datatype inventory.
-- Coverage: untagged and finite packed tagged unions/structs, streaming and
+bounded, non-exhaustive next-phase datatype inventory.
+
+Coverage: untagged and finite packed tagged unions/structs, streaming and
   `inside`, static subprogram storage,
   packed and descriptor-backed dynamic containers (including nested copy,
   resize, delete, and negative-size diagnostics), descriptor-backed real and
@@ -15,8 +16,8 @@
 - Its source header follows IEEE 1800-2009 §§6.24.1, 6.24.3, 7.2, 11.4.14,
   and 13.5.2; the section index is
   [`docs/specification/spec-reference-sv.md`](../../../../docs/specification/spec-reference-sv.md).
-- Execution: each self-checking fixture runs in optimized and unoptimized models.
-- Result: exact fixture `PASS` markers are required, except explicit rejection
+- Runs: each self-checking fixture runs in both optimizer modes.
+- Oracle: exact fixture `PASS` markers are required, except explicit rejection
   cases, which must produce their expected diagnostics.
 - Limits: this inventory does not imply exhaustive SystemVerilog compatibility.
 

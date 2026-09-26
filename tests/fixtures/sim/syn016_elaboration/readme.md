@@ -15,7 +15,7 @@ packed extent.
 The matrix does not claim runtime real/string hardware, unbounded constant
 recursion, arbitrary package/native layouts, or post-2009 language forms.
 
-## Continuation matrix
+## Additional elaboration cases
 
 | Fixture | Independent requirement |
 | --- | --- |
@@ -30,6 +30,4 @@ recursion, arbitrary package/native layouts, or post-2009 language forms.
 
 `sim_syn016_elaboration.rs` owns exact public stdout, negative diagnostics,
 owned-model width/signedness/branch checks and the file-boundary checks.
-The newly added matrix is pending a configured Rust/Slang/public-CLI run.
-It does not expand the Core profile to runtime native/string/real hardware,
-nonterminating constant recursion or unsupported source productions.
+These cases retain the profile limits stated above; their presence is not run evidence.

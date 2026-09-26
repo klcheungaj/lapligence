@@ -36,6 +36,30 @@ fn selected_core_pairwise_manifest_matches_frozen_rules() {
     );
 }
 
+#[test]
+fn selected_core_pairwise_source_format_regressions() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let result = Command::new("python3")
+        .args([
+            "-m",
+            "unittest",
+            "discover",
+            "-s",
+            "scripts",
+            "-p",
+            "test_syn038_pairwise_source.py",
+        ])
+        .current_dir(&root)
+        .output()
+        .expect("run the compact SYN-038 source regression tests");
+    assert!(
+        result.status.success(),
+        "SYN-038 source regressions failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&result.stdout),
+        String::from_utf8_lossy(&result.stderr)
+    );
+}
+
 fn section<'a>(document: &'a str, start: &str, end: &str) -> &'a str {
     let start_at = document
         .find(start)
@@ -1842,10 +1866,10 @@ fn exclusions_and_context_axes_are_explicit() {
         .expect("read the SYN-038 coverage ledger");
     let ledger = section(&document, LEDGER_START, LEDGER_END);
 
-    let manifest_bytes = fs::read(root.join("tests/sim_syn038_pairwise_manifest.json"))
-        .expect("read the checked-in SYN-038 pairwise manifest");
+    let manifest_bytes = fs::read(root.join("tests/syn038_pairwise.json"))
+        .expect("read the compact SYN-038 pairwise source");
     let manifest: serde_json::Value = serde_json::from_slice(&manifest_bytes)
-        .expect("parse the checked-in SYN-038 pairwise manifest");
+        .expect("parse the compact SYN-038 pairwise source");
     let factor_ids = manifest["factors"]
         .as_object()
         .unwrap_or_else(|| panic!("SYN-038 manifest must define factor IDs"))
@@ -1881,7 +1905,7 @@ fn exclusions_and_context_axes_are_explicit() {
     );
     assert_eq!(
         documented_factor_ids, factor_ids,
-        "SYN-038 factor table must match the checked-in manifest IDs"
+        "SYN-038 factor table must match the compact source IDs"
     );
     let normalized_ledger = ledger.split_whitespace().collect::<Vec<_>>().join(" ");
     assert!(

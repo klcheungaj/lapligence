@@ -1,67 +1,16 @@
-# Rust FFI boundary
+# FFI and platform boundary
 
-- Purpose: expose safe Rust APIs over the native Slang and platform C ABIs.
-- Modules:
-  - `slang.rs`: blocking in-memory Slang compilation and a bounded, owned
-    snapshot of files, diagnostics, elaborated metadata, semantic graph records,
-    and lexical tokens.
-  - `process_memory.rs`: platform memory sampling for the process-memory guard.
-  - `secure_fs.rs`: handle-backed admission and descriptor-relative containment
-    checks for source, include, and library-map files.
-- Ownership: inputs are borrowed only for the compile call. The C++ shim owns
-  snapshot storage while Rust validates and copies it; RAII destroys the opaque
-  owner afterward. No Slang AST address or native allocation crosses the safe
-  API.
-- Admission: compilation units and include-only buffers are supplied from
-  bounded process memory. Include lookup remains cache-only and cannot read an
-  unadmitted file. Named library buffers, their default search order, and the
-  selected default library are borrowed for the same compile call; they do not
-  widen native filesystem access.
-- Representation: source ranges are zero-based half-open byte ranges. Stable
-  repository codes describe semantic operations and edge roles; unsupported
-  Slang constructs remain explicit records. Four-state values preserve value
-  and unknown limbs, and SystemVerilog strings preserve arbitrary bytes.
-- DPI metadata: imported subroutine C names and context/pure qualifiers are
-  copied into owned records; no native syntax view is exposed to consumers.
-- Errors: HDL errors remain diagnostics in a successful snapshot. Invalid
-  input, configured-limit failures, frontend/bridge failures, and malformed ABI
-  output return typed Rust errors.
-- UDP capture: combinational UDP table records use the semantic-node ceiling and
-  their rows use the semantic-edge ceiling before native vectors or row strings
-  are grown. The safe facade rejects a caller `max_semantic_edges` above the
-  native 16,000,000-record hard ceiling. The owned decoder requires every
-  exported row to belong to exactly one table window and validates wildcard
-  overlap through one reused concrete-assignment index. Overlap validation has
-  a separate 65,536-assignment budget charged across all tables in the
-  snapshot and an 8 MiB budget for indexed key bytes; a row whose expansion
-  exceeds either remaining budget fails before index allocation. These smaller
-  boundaries cover hash buckets and per-key allocations that the native record
-  ceiling does not measure.
-- Safety: this is the only Rust directory permitted to contain `unsafe`; every
-  exported API is safe and owns its returned data.
-- Consumers: shared-core capture, simulator lowering, language-server features,
-  and process safeguards.
-- Related: [C wrapper](../wrapper/readme.md) and
-  [shared core](../core/readme.md).
+This module contains the project's Rust unsafe/native operations and exposes safe
+owned APIs to the rest of the library.
 
-## Source organization
+| Component | Responsibility |
+| --- | --- |
+| `slang.rs` and `slang/` | C ABI v4 requests, bounded snapshot/error owners, layout/tag validation, exact value/text copies and RAII destruction. |
+| `process_memory.rs` | Platform process-memory counters and native resource limits. |
+| `secure_fs` | Handle-relative filesystem admission and identity/race protection. |
 
-`slang.rs` retains raw ABI declarations, native link attributes, resource
-ownership/cleanup and safe compile entry points. Its `slang/` children separate
-snapshot capture, semantic records, tokens, diagnostics and value decoding.
-They remain inside the same FFI safety boundary; consumers receive owned data.
-
-See [the source map](../../docs/source_layout.md).
-
-Lexical flag bit 3 (`LLG_SLANG_LEXICAL_DIRECTIVE`, owned `is_directive`) identifies
-preprocessor directive text, including unexpanded macro replacement bodies.
-It is independent of macro-expansion and skipped-token flags. The Rust decoder
-accepts only these four known flag bits and still rejects unknown bits/reserved
-fields. Update both sides together: source edition checks use the provenance to
-avoid rejecting a directive body which never becomes executable source.
-
-Conditional capture includes `SemanticEdgeRole::ConditionPattern` (C role 38),
-paired by clause index with `Condition`. Raw record layouts and snapshot ownership
-are unchanged; the semantic tag set is extended, so the shim and decoder must be
-rebuilt together. Unknown role values continue to fail checked decoding. The
-owned DB, not an FFI client or emitter, validates clause/branch relationships.
+Snapshot data includes source/lexical provenance, typed semantic edges, UDP tables,
+sequence metadata and aggregate defaults. No native pointer or borrowed buffer
+escapes the safe interface. See [wrapper](../wrapper/readme.md),
+[owned database](../core/db/readme.md) and
+[patch preparation](../../patches/README.md).

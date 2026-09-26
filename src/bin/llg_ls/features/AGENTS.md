@@ -1,62 +1,49 @@
-# LSP analysis and feature projections
+# LSP analysis and projections
 
-Applies to `features.rs` and its children: `analysis.rs`, `source_graph.rs`, `fallback.rs`,
-`symbol_index.rs`, `requests.rs`, and `tests.rs`. Read [../AGENTS.md](../AGENTS.md) for protocol
-and cache contracts and [../lsp/AGENTS.md](../lsp/AGENTS.md) for snapshot serving and source
-admission.
+Applies to `features.rs`, `analysis.rs`, `source_graph.rs`, `fallback.rs`,
+`symbol_index.rs`, `requests.rs` and `tests.rs`. Read [server](../AGENTS.md) and
+[admission](../lsp/AGENTS.md) contracts.
 
-## Analysis boundary
+## Analysis and identity
 
-`Analysis` owns every value used by request handlers. `analyze()` compiles the admitted buffers
-with Slang, builds `core::db::Db` from the owned snapshot, projects the design model, runs lint
-when the frontend is valid, and constructs the lexical token and symbol indexes. Native handles
-and AST pointers never enter feature code.
+`Analysis` owns all request data. `analyze()` compiles admitted buffers, imports
+`core::db::Db`, projects the model, lints valid frontend results and builds lexical
+and symbol indexes. No native handles/AST pointers enter feature code.
 
-The module source graph merges elaborated DB instances with the snapshot's owned source-instance
-records. Slang does not elaborate bodies excluded by an explicit top selection, so those records
-preserve incoming edges, root classification, and declaration fallback without reparsing or
-reading files.
+Merge elaborated instances with owned source-instance records to preserve incoming
+edges, roots and declaration fallback for bodies excluded by explicit top selection;
+never reparse or reread files. Slang lexical tokens/semantic IDs define identity.
+`core::tokens::RefBindings` maps zero-based positions to exact owned declarations;
+conflicting targets remain unbound, never selected by name.
 
-Use Slang lexical tokens and their semantic IDs for declaration/reference identity.
-`core::tokens::RefBindings` maps zero-based source positions to exact owned declaration targets.
-Conflicting targets at the same position remain unbound; request code must omit a result rather
-than choose by name.
+## Diagnostics and recovery
 
-## Diagnostics and last-good serving
+Preserve provider, code, ranges, related locations and formatted Slang messages in
+`frontend_diagnostics`. Compact core diagnostics classify validity/preflight failures.
+Syntax/compile failures do not replace last-good navigation.
 
-Preserve Slang's diagnostic provider, code, ranges, related locations, and formatted message in
-`frontend_diagnostics`. The compact core diagnostic list only classifies snapshot validity and
-supplies preflight failures. Syntax or compile failures must not replace a root's last-good
-navigation snapshot.
+Root semantic capture is capped at 100,000 nodes. On a native limit, retry the same
+buffers once as library units under unchanged limits, even for one unit. Visit each
+module/generate body once, check every definition's source body and capture direct
+reference/named-connection bindings without expression/statement graphs. Retain lexical
+tokens and definition topology, omitting lint and instance-specific elaboration.
+Do not import this partial graph into execution or diagnose its intentionally absent
+expressions as DB failure. Never raise limits or read more files during recovery.
 
-LSP root jobs limit full semantic capture to 100,000 nodes. On a native limit, retry the same
-admitted buffers once as Slang library units under the same limits, including for a single
-compilation unit. This source-navigation profile visits each module body and generate block
-syntax once, ensures every definition has a checked source body, and captures direct reference
-and named connection bindings without storing expression/statement graphs. It keeps lexical
-tokens and definition-based source topology but omits lint and instance-specific elaboration. Do
-not import this intentionally partial graph into the execution database or report its missing
-expression data as a DB failure. It must never raise the native limit or read additional files.
-
-Log native source/export/capture limit failures at error level before recovery, including
-configured limits and exclusion guidance. Retain that guidance in fatal or reduced-mode
-diagnostics even when recovery succeeds. Native caps are not `llg.toml` settings and do not
-increase with `LLG_MEMORY_LIMIT_MB`.
+Log source/export/capture limits at error level before recovery with configured
+limits and exclusion guidance. Retain guidance in fatal/reduced-mode diagnostics
+when recovery succeeds. Native caps are neither `llg.toml` settings nor raised by
+`LLG_MEMORY_LIMIT_MB`.
 
 ## Requests
 
-Request projections are pure reads of committed `Analysis`. Open-document semantic tokens may
-compile the exact admitted unsaved buffer in isolation; syntax errors yield an authoritative
-empty stream. Definition, references, rename, hover, symbols, completion, and the module
-explorer must not read files or start compilation.
+Read committed `Analysis` only; navigation/explorer requests do not read files or
+compile. Isolated semantic tokens are the exception: exact admitted unsaved buffers,
+with authoritative empty output on syntax errors. Parameter hover/lint uses owned
+DB/model data; macro hover uses the bounded analysis-time source table. Preserve
+UTF-16 boundary conversion and one-based internal token coordinates until response
+construction.
 
-Parameter hover values and lint findings come from the owned DB/model. Macro hover uses the
-bounded source table constructed during analysis. Preserve UTF-16 conversion at the source
-boundary and keep internal token coordinates one-based until LSP response construction.
-
-## Limits
-
-Navigation outside an exact semantic binding can use the existing scoped index fallback, but it
-must not override an exact binding or invent a target for an ambiguous location. Class instance
-member selection and positional connection pairing remain unsupported until Slang exposes the
-required exact associations.
+Scoped fallback must not override exact bindings or resolve ambiguous locations.
+Class-instance member selection and positional connection pairing remain unsupported
+until Slang provides exact associations.

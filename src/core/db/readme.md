@@ -1,72 +1,16 @@
 # Owned semantic database
 
-- `database.rs`: the `NodeId` arena, Slang snapshot projection, normalized
-  instance hierarchy, and read-only consumer API.
-- `slang_types.rs`: validated type, array, packed-range, and aggregate
-  projection from typed ABI tables, including explicit constant member defaults.
-  `slang_types/foreach.rs` projects per-iterator fixed/runtime bounds directly
-  from the iterated expression's type chain.
-- `domain.rs`: frontend-independent semantic enums.
-- `validate.rs`: arena, root, side-table, embedded-reference, and cycle checks.
+`Db::from_slang` validates and imports the flat owned Slang snapshot. The arena
+retains declaration identity, source text/ranges, types, constants, dimensions,
+lifetimes, initialization, bindings, timing and unsupported-node metadata.
+A validated builder supports frontend-independent tests.
 
-`Db::from_slang` copies no native data and performs no filesystem reads.
-Native semantic kind/detail metadata is retained beside the frontend-neutral
-node kind so simulator coverage can reject an unknown reachable executable
-record with its source span instead of silently treating it as `Other`.
-Program definitions and elaborated instances retain their owned program
-identity as well, allowing simulator lowering to assign Reactive scheduling
-and program-completion accounting without consulting Slang or source text.
-Unsupported facts stay explicit. Simulator, model, lint, and language-server
-analysis share this database rather than querying Slang independently.
-Variable metadata keeps Slang's resolved static or automatic lifetime separate
-from the explicit source qualifier used for override diagnostics.
-Packed ranges retain declaration identity, so same-named locals in unnamed
-blocks and differently parameterized instances keep their own bounds.
-Enumerated types retain a canonical `TypeId`-keyed declaration-order table of
-resolved values and owned names for runtime enum methods.
-Foreach statements retain one bound entry for every source iterator slot,
-including omitted slots. Packed element dimensions remain independent of
-flattened storage; enum ranges belong to the integral enum value, not its base.
-Subroutine bodies are explicit arena references; consumers never infer a body
-from the order of declarations or auxiliary statement children.
-Assignment-pattern index keys retain their owned expression and any
-front-end-folded integral value; their printed spelling is diagnostic text,
-not the numeric source of truth for array matching.
-Instance-body and instance-array containers are expanded recursively in module
-and generate-scope child lists, so every elaborated primitive remains reachable.
-Container expansion rejects cyclic or repeated containers before traversal.
+Projection normalizes implicit instance bodies and expands concrete instance-array
+entries without losing source indices or explicit statement scopes. Packed ranges
+use declaration IDs rather than names. Typed references distinguish subroutine
+bodies, indexed pattern keys, event qualifiers and ordered conditional clauses.
 
-Event controls retain their expression, edge and optional `iff` condition as
-validated owned node references, including mixed named-event lists and fixed
-unpacked event-array selects. Named-event declarations retain identity-bearing
-array metadata for hierarchy and runtime-indexed lowering; nonblocking
-named-event triggers retain their mode and supported delay/event/repeat timing.
-Unsupported timing or resizable event-storage nodes remain explicit owned
-references for source-located lowering rejection.
-Driver delays preserve single or separate rise/fall/turn-off expressions.
-
-## Source organization
-
-`database.rs` retains the arena owner and consumer facade. Its `database/`
-children separate owned types and records (`types`, `nodes`, `references`,
-`values`, `assertions`, `clocking`, `connections`) from snapshot projection
-(`capture`, `node_import`, `statement_import`, `expression_import`,
-`assertion_import`). `Db::from_slang` remains the single import entry point.
-
-See [the source map](../../../docs/source_layout.md) for the ownership boundaries.
-
-## Ordered conditional predicates
-
-`database/predicates.rs` imports dense, unique condition indices and pairs each
-optional pattern with its expression. `ConditionalPredicate` owns the complete
-clause sequence; `IfElse` owns explicit true/optional-false branch references.
-Branch roles never depend on positions in the structural child vector. The
-single Boolean-clause expression retains `Operation::Conditional`; a multiple-
-clause or pattern-bearing expression uses `ExprKind::Conditional`. Embedded
-references and nonempty predicates are validated with the rest of the database.
-Lint, dependency and simulator consumers must visit every clause without treating
-conditional writes as definite on early-exit paths. Primitive and fixed-structure
-patterns retain owned metadata for conditional expressions and pattern-case items;
-tagged patterns retain a resolved union member and an optional payload pattern.
-Validation rejects missing member identities and non-tagged records carrying
-tagged metadata.
+The DB is the common semantic source for model/lint/LSP projections and simulator
+lowering. Invalid IDs, table windows, ranges, cycles or relationship metadata fail
+construction. See the [shared core](../readme.md) and
+[source map](../../../docs/source_layout.md) for module ownership.

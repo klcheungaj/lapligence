@@ -1,72 +1,59 @@
 # Shared source policies
 
-`lib.rs` exposes `ffi`, `core`, `sim`, and `memory_limit`. Root architecture rules apply
-throughout. See child guides for module contracts.
+`lib.rs` exposes `ffi`, `core`, `sim` and `memory_limit`. Root architecture rules
+apply throughout; child guides own module contracts.
 
 ## Process-memory safeguard
 
-Owned by [memory_limit.rs](memory_limit.rs), with platform primitives in
-[ffi/process_memory.rs](ffi/process_memory.rs). Both frontend entry points install it after
-accepting command-line work and before admitting source input; help, version, and usage-error
-exits do not install the policy. `llg_ls` wires the sampler into lifecycle logging and `llg`
-reports status and warnings to stderr.
+[memory_limit.rs](memory_limit.rs) owns policy;
+[ffi/process_memory.rs](ffi/process_memory.rs) owns platform primitives. `llg` and
+`llg_ls` install the guard after accepting CLI work and before source admission,
+not for help, version or usage errors. `llg_ls` integrates lifecycle logging;
+`llg` sends status/warnings to stderr.
 
-The process-wide ceiling includes Rust and in-process Slang/C++ allocations. It is disabled by
-default; configure it before starting `llg_ls` or `llg`:
+The optional process-wide budget covers Rust and in-process Slang/C++ allocations.
+Configure it before starting either frontend:
 
 | Variable | Meaning | Default |
 | --- | --- | --- |
-| `LLG_MEMORY_LIMIT_MB` | Maximum physical-memory budget in MiB. A positive integer enables the safeguard. | unset (disabled) |
-| `LLG_MEMORY_WARNING_PERCENT` | Emit one warning when physical usage reaches this percentage of the budget. | `80` |
-| `LLG_MEMORY_POLL_MS` | Watchdog sampling interval in milliseconds. | `1000` |
-| `LLG_MEMORY_ADDRESS_SPACE_LIMIT` | On Linux/macOS, also request a reversible `RLIMIT_AS` limit. Accepts `true`/`false`, `yes`/`no`, `on`/`off`, or `1`/`0`. | `false` |
+| `LLG_MEMORY_LIMIT_MB` | Positive integer physical-memory budget in MiB | unset/disabled |
+| `LLG_MEMORY_WARNING_PERCENT` | Percentage triggering one warning | `80` |
+| `LLG_MEMORY_POLL_MS` | Sampling interval in milliseconds | `1000` |
+| `LLG_MEMORY_ADDRESS_SPACE_LIMIT` | Reversible Linux/macOS `RLIMIT_AS`; accepts `true/false`, `yes/no`, `on/off`, `1/0` | `false` |
 
-The watchdog measures whole-process Linux RSS, macOS physical footprint/resident usage, or
-Windows working set. Exceeding the physical budget prints a fixed emergency message to stderr
-and terminates immediately, avoiding shutdown allocations beyond the safety boundary.
+The watchdog samples Linux RSS, macOS physical footprint/resident usage or Windows
+working set. Budget exhaustion prints a fixed emergency stderr message and
+terminates immediately, avoiding shutdown allocations. Windows also uses a Job
+Object process limit. Optional Unix `RLIMIT_AS` limits virtual, not physical,
+memory and may fail allocations before the watchdog. Failed native installation
+is reported; retain the watchdog when it can start, including inside an existing
+Windows host job.
 
-Native enforcement is platform-specific:
+Budget for startup and peak Slang parsing/capture, not idle usage. The guard covers
+concurrent LSP work, frontend compilations and driver activity. It samples and
+terminates only the frontend, not its generated simulator or aggregate child RSS.
+Unix children inherit enabled `RLIMIT_AS`; Windows descendants remaining in the job
+may inherit native limits. These effects are host-dependent; guard child physical
+memory separately.
 
-- Windows uses a Job Object process-memory limit in addition to the watchdog.
-- Linux and macOS use the watchdog by default. The optional `RLIMIT_AS` setting limits virtual
-  address space, not physical memory, and may cause an allocation to fail earlier than the
-  physical watchdog.
-- If a native limit cannot be installed (for example, because the process is already inside a
-  host job on Windows), `llg_ls` logs the error and retains the portable watchdog when it can
-  start. `llg` reports the same safeguard status and warnings to stderr.
+## Safeguard changes
 
-Budget above startup and peak Slang parsing/capture usage, not idle usage; too small a budget
-can terminate the first analysis. Native limits and the watchdog cover all concurrent LSP work,
-Slang compilations, and driver work.
+[LSP admission](bin/llg_ls/lsp/AGENTS.md) owns staging;
+[LSP policy](bin/llg_ls/AGENTS.md) owns requests, caches, explorer limits and tracing;
+[validation](../tests/AGENTS.md) owns gates.
 
-The generated simulator is a separate child: the watchdog only samples and terminates `llg`,
-neither aggregating child RSS nor guarding the generated binary. Unix children inherit enabled
-`RLIMIT_AS`; Windows Job Object limits may cover descendants remaining in the job. These native
-effects depend on the platform/host. Guard a child's physical-memory budget separately.
-
-## Safeguard change review
-
-LSP input admission and staging live in [bin/llg_ls/lsp/AGENTS.md](bin/llg_ls/lsp/AGENTS.md);
-request/cache/explorer limits and diagnostic tracing in
-[bin/llg_ls/AGENTS.md](bin/llg_ls/AGENTS.md). Validation commands and CI scope live in
-[../tests/AGENTS.md](../tests/AGENTS.md).
-
-- Apply byte and count limits before cloning input, allocating from an input-derived size,
-  computing cache keys, joining a single flight, staging, parsing, or serializing optional
-  response content.
-- Preserve exact-boundary behavior and use checked or saturating arithmetic for totals,
-  percentages, timeouts, and size conversions.
-- Keep open-buffer text authoritative while bounding closed-file reads to the configured maximum
-  plus one byte; reuse the admitted snapshot afterward.
-- Preserve include authorization, canonical-path deduplication, and the fail-closed rule that
-  Slang reads only admitted in-memory buffers through its cache-only source manager.
-- Keep invalid configuration atomic and retain the last valid config and last servable analysis
-  snapshot where documented.
-- Verify scheduler and cache backpressure: stale revisions and saturated flights must not start
-  new frontend work.
-- Keep emergency logging allocation-light, bounded, redacted, and off stdout; stdout remains the
-  JSON-RPC transport.
-- Exercise Linux/macOS limit restoration and Windows Job Object ownership on their native
-  platforms before changing platform-specific claims.
-- Update defaults, diagnostics, tests, and the owning AGENTS.md together whenever an environment
-  variable, configuration key, limit, or fallback changes.
+- Apply byte/count limits before input cloning, size-derived allocation, cache
+  keys, single-flight admission, staging, parsing or optional-response serialization.
+  Preserve exact boundaries; check or saturate arithmetic for totals, percentages,
+  timeouts and size conversions.
+- Keep open buffers authoritative. Bound closed reads to maximum plus one byte
+  and reuse admitted snapshots. Preserve include authorization, canonical
+  deduplication and cache-only native reads; never reopen unadmitted paths.
+- Reject invalid configuration atomically, retaining the documented last-valid
+  config and servable analysis. Stale revisions or saturated flights must not
+  start frontend work.
+- Keep emergency logs allocation-light, bounded, redacted and off JSON-RPC stdout.
+  Test Unix limit restoration and Windows Job Object ownership natively before
+  changing platform claims.
+- Update defaults, diagnostics, tests and owning guides together for any changed
+  environment variable, configuration key, limit or fallback.

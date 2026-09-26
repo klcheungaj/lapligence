@@ -1,27 +1,16 @@
 # `llg_ls`
 
-- Purpose: Tower-LSP stdio server for owned Verilog/SystemVerilog analysis
-  snapshots.
-- Scope: manages independent workspace roots, schedules serialized analysis,
-  stages read-only inputs, and presents navigation and diagnostics over
-  JSON-RPC.
+Tower-LSP stdio serves owned HDL analysis over JSON-RPC, with independent roots,
+serialized analysis and read-only staged inputs. Bounded admitted buffers enter
+Slang; only owned snapshots/indexes reach requests. Serving stdout is JSON-RPC only.
 
-- `main.rs` selects the async runner and process setup.
-- `transport.rs` owns framed stdio service construction and lifecycle hooks.
-- `features.rs` projects owned analysis into navigation, symbols, tokens,
-  hover, completion, references, rename, and explorer data.
-- `lsp.rs` and `lsp/` own workspace state, scheduling, staging, diagnostics,
-  configuration, and wire handlers.
+| Component | Responsibility |
+| --- | --- |
+| `main.rs`, `transport.rs` | Process setup, async runner, framed stdio and lifecycle. |
+| `features.rs`, `features/` | Navigation, symbols, tokens, hover, completion, references, rename and explorer projections. |
+| `lsp.rs`, `lsp/` | Workspace/configuration state, scheduling, staging, diagnostics and handlers. |
+| `module_explorer.rs`, `module_explorer/` | Catalog, budgets, contents, hierarchy, compatibility, presentation and types. |
 
-- Boundary: the backend passes bounded, admitted source buffers to Slang and
-  returns only owned snapshots and indexes to request handling. The transport
-  keeps stdout exclusively for JSON-RPC.
-
-## Source organization
-
-`module_explorer.rs` coordinates `module_explorer/` domains for catalog,
-resource budgets, contents, hierarchy, compatibility, presentation and types.
-Its unit tests are in `module_explorer/tests.rs`. The feature-test facade and
-its domain suites live in `features/tests.rs` and `features/tests/`.
-
-See [the source map](../../../docs/source_layout.md).
+Explorer tests live in `module_explorer/tests.rs`; feature-test helpers and domain
+suites in `features/tests.rs` and `features/tests/`. See
+[source layout](../../../docs/source_layout.md).

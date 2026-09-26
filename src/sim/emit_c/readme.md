@@ -1,73 +1,15 @@
-# C emitter
+# C11 model emission
 
-## Structured ownership path
+The emitter consumes validated execution IR and renders standalone models with
+ordered setup, evaluation and cleanup. It has no frontend dependency.
 
-Whole-model rendering consumes a validated `ExecutionModel`; it does not access
-frontend or FFI objects. `model.rs` emits static descriptors/prototypes and
-coordinates `owned/`, which emits ordered setup, tracked packed results,
-borrowing runtime calls, and explicit cleanup. Operands are evaluated once;
-short-circuit and conditional branches retain their separate setup paths.
-`ArrayMux` adds a typed default payload for each immediate unpacked element.
-Its ambiguous branch captures both alternatives before calling
-`sv4_array_conditional_merge`; known selectors evaluate only the chosen arm.
-The fallback constant is another tracked owner and is included in stack sizing.
-`StructMux` applies the same owned merge helper separately to each immediate
-unpacked-structure member boundary, using that member's default-uninitialized
-payload and tracked part-select owners.
-Ordinary `Mux` still uses `sv4_mux` and its packed-bit semantics. Aggregate
-merge plans are self-determined: enclosing packed casts must not resize their
-immediate elements or members.
-Temporary slots are reused, and lexical packed cells have distinct registered
-scopes when a pending write might outlive the declaration.
+`owned/` handles expressions, typed lvalues, calls, captures, native services and
+registered temporary/local scopes. Its model layer emits persistent storage,
+initialization, procedures and the start/advance/close embedding API. A suspended
+model remains live until resumed or closed; the process-global runtime supports
+one model at a time. Legacy string-only fragment APIs remain fail-closed when
+ownership cannot be represented.
 
-The active numeric path covers ordinary packed/real model storage, fixed arrays,
-numeric procedures, loops, basic waits, assignments, and typed numeric output.
-Further source paths cover assertion/sampling callbacks, aliases, clocking and
-qualified branching; their bounded contracts and unverified acceptance status are
-recorded in `owned/readme.md`.
-It is an incremental migration, not full HDL support. Unsupported feature
-families return an error without legacy fallback. The legacy expression and
-statement fragment APIs remain gated. Read the exact boundary in
-[`owned/readme.md`](owned/readme.md).
-
-## Model lifetime and ABI
-
-Packed globals, static returns/locals, net drivers and array elements are empty
-file-scope descriptors, constructed at model startup and destroyed at close.
-`llg_model_start`, `llg_model_advance` and `llg_model_close` provide an embeddable
-lifetime. A suspended advance returns 2 without destroying queues or owners;
-close explicitly cancels a suspended run. Define `LLG_MODEL_NO_MAIN` when a host
-provides `main`. One model instance may be live at a time; this is not a new
-thread-safe or multi-instance runtime.
-
-The generated `LLG_MODEL_VALUE_ABI` must equal `LLG_VALUE_ABI_VERSION` (4).
-Model capacity is not an allocation size or a build/cache dimension. The width
-scan enforces only the exclusive backend limit. `LLG_MODEL_STACK_VALUES` remains
-a checked conservative descriptor/stack-headroom estimate. CMake requests C11
-with extensions disabled and hashes the ownership ABI into runtime-cache keys.
-
-## Source organization and verification
-
-`model/` retains static metadata and prototype helpers; its old procedure and
-initialization implementations are not a fallback for `owned/`. Existing
-`expressions/` and `statements/` fragment renderers are migration references and
-legacy test subjects. New ownership responsibilities are split into the modules
-listed in `owned/readme.md`.
-
-The Rust structural and numeric-model execution tests are checked in
-but were not executable in the delivery environment (no Rust toolchain).
-Standalone C ownership tests exercise hand-authored output patterns; they do
-not establish that the Rust renderer builds or emits compiling models. Full
-frontend-to-executable and native-platform verification remain acceptance gates.
-
-See [`docs/sim_data_semantics.md`](../../../docs/sim_data_semantics.md) for width
-and conversion semantics and [the source map](../../../docs/source_layout.md).
-
-Captured `inside` array projections restore the declared element signedness on
-the native value before wildcard comparison. `sv4_part_select` remains unsigned
-for ordinary source part selects; frame metadata alone does not retag a value.
-
-Read-only numeric callbacks admit composite `IrLhs::Stream` assignments only when
-all leaves pass the private-target predicate. Each captured leaf is still checked
-by `store` for automatic storage, no net/reference/scheduler publication and no NBA.
-Qualified branch diagnostics and escaping-result ownership remain unchanged.
+See [owned-emitter components](owned/readme.md), [runtime](../rt/readme.md),
+[feature status](../../../docs/sim_features.md) and
+[ownership validation](../../../tests/readme.md#dynamic-ownership-validation).

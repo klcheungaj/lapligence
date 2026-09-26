@@ -25,5 +25,4 @@ observation scaffolding, not claims that those entire modules are synthesizable.
 | `nonintegral_map.sv` | Reject a real-valued map. |
 | `iterator_without_with.sv` | Reject a named iterator without a with expression. |
 
-These are unexecuted HDL regression sources in the R03 patch environment.
-Handwritten C probes in `tests/runtime_value_storage` do not replace them.
+Handwritten C probes in `tests/runtime_value_storage` do not replace these HDL runs.

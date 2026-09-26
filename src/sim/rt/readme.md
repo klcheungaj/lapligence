@@ -1,328 +1,50 @@
-# `sim/rt`
+# Embedded C11 simulation runtime
 
-## Dynamic-value ownership boundaries
+Generated models compile this runtime separately from Rust. Exact-width values use
+unique ownership (ABI 4); registered scopes and retained destinations support
+suspension, cancellation and queued publication. See
+[value ownership](value/ownership.md) for the allocation contract.
 
-The active model/cache contract is value ABI 4, independent of model maximum
-width. See [ownership](value/ownership.md) and the authoritative
-[feature boundary](../../../docs/sim_features.md#dynamic-value-migration-acceptance-boundary).
-A standalone C runtime probe is not a test of the Rust emitter or HDL lowering.
+## Components
 
-`value_scopes.c` indexes live packed descriptor addresses with an exact-key hash
-table. Pointer identity comparisons use equality, not ordering of unrelated
-objects. Lexical release does not remove an NBA-retained cell: removal happens
-only at final scope release. Emptying the registry releases the index. The index
-adds per-cell bookkeeping in exchange for avoiding a full-scope scan on global
-or automatic NBA targets; workload throughput and total memory still require
-measurement.
+| Source pair / directory | Responsibility |
+| --- | --- |
+| `llg_value.h/.c`, `value/` | Four-state values, arithmetic, selection, resolution, formatting and numeric conversion; scheduler-independent. |
+| `llg_random.h/.c` | Verilog random/distribution functions and explicit seed updates. |
+| `llg_rng.h/.c` | Process/object random streams, independent of scheduling. |
+| `llg_string.h/.c` | Owned byte strings, conversion and change notification. |
+| `llg_container.h/.c`, `container/` | Dynamic arrays, queues, associative storage and retained element identities. |
+| `llg_rt.h/.c`, `scheduler/` | IEEE region scheduling, processes, events, assignments, synchronization, assertions, I/O and VPI. |
+| `llg_wave.h/.c` | Optional asynchronous VCD/FST output with one producer/writer and flush/close barriers. |
+| `gtkwave/` | Pinned libfst, compression support and provenance; included only for waveform models. |
+| `llg_rt_selftest.c`, `llg_wave_selftest.c` | Value/scheduler checks and VCD/FST lifecycle/reader checks. |
 
-Signal-write snapshots, evaluator results and force/PCA values spanning callbacks
-are registered owners. Normal returns end their scopes; process termination can
-unwind those scopes without returning through a C stack frame. Multi-source event
-registration adopts every descriptor/context before invoking the first evaluator;
-each eval/condition context field owns a reference, including shared pointers.
+The scheduler keeps typed region queues, owned pending values and process origins.
+Stop/resume retains a live context; close releases observers/queues before model
+storage. Runtime ticks are integer design-precision units; lowering supplies
+per-module scaling. Memory text loading and binary reads keep their distinct
+address-order rules.
 
-## Runtime components
+## Embedding and build
 
-- **Purpose:** embedded C11 runtime sources compiled into cached static archives
-  for generated models; they are not linked into Rust binaries.
-- **Value layer:** `llg_value.h/.c` implements dynamically allocated four-state
-  values, operations, resolution, formatting, and conversions. The private
-  `value/` fragments separate allocation ownership from arithmetic. `sv4_t` is
-  a unique owner, with exact-width payload storage independent of model-wide
-  capacity. See [the ownership contract](value/ownership.md).
-  `value/array_conditional.c` merges already-captured fixed-array alternatives
-  using their immediate element width and default payload. Inputs are borrowed;
-  the independent result has one exact-width allocation, not one per element.
-- **Legacy random layer:** `llg_random.h/.c` implements Verilog-2001
-  `$random` and the seven `$dist_*` functions using the specified Annex N
-  algorithms. It is scheduler-independent and can be compiled as a standalone
-  C11 translation unit.
-- **Reference layer:** `llg_ref_t` describes a whole packed value or legal
-  packed/array selection; `llg_ref_read` and `llg_ref_write` preserve immediate
-  alias visibility while routing writes through normal force/PCA notifications.
-  `llg_ref_write_bit` updates one bit through that same descriptor; unknown or
-  out-of-range indices leave the value unchanged.
-  Packed queue refs retain shared element cells: removals detach a snapshot,
-  while surviving refs follow element identities through shifts and reorders.
-  Generated call scopes release pins on return; cancellation/teardown unwinds
-  the remaining scopes. Detached writes do not notify or modify the queue.
-- **True-net aliases:** generated `llg_net_alias_t` descriptors project each
-  aliased bit from its canonical resolved net group into visible storage;
-  driver/force commits and delayed net-publication commits refresh dependencies
-  and waveform observations for every alias name. Reading an alias is pure;
-  postponed observers never refresh storage as a side effect of a read.
-- **Simulation layer:** `llg_rt.h/.c` implements typed IEEE event-region
-  scheduling, signal/driver updates, process services, simulator system tasks,
-  region callback hooks, immutable sampled views, nonreturning `$finish`
-  controls, typed runtime severity diagnostics (`$info`, `$warning`, `$error`,
-  `$fatal`) with stable counters, resumable `$stop` suspension with explicit
-  resume/exit policy, the exactly-once final-block phase, and checked zero-time
-  budgets.
-  `$system` is a separately gated generated-process host boundary: the child
-  must opt in with `LLG_ALLOW_SYSTEM`, and enabled calls return the host C
-  `system()` status without normalizing shell or platform behavior. Its omitted
-  form preserves `system(NULL)`, distinct from an explicit empty command.
-  `$swrite`/`$sformat`/`$sformatf` use the same typed formatter as display tasks;
-  formatted results own their bytes independently of source arguments.
-  Semaphores (§1800-2009 15.3) keep runtime-owned key counts and a specified
-  FIFO waiter queue; blocking `get` registrations are removed on process
-  cancellation. After a live cancellation batch, newly satisfiable FIFO
-  heads are granted existing keys without requiring another `put`; teardown
-  only removes waiters and never grants new requests. All semaphore storage
-  is reclaimed at runtime cleanup.
-  Hosted C targets are required; freestanding targets are unsupported.
-  File output keeps separate ordinary-FD and MCD banks. Ordinary FDs carry
-  bit 31; the three preopened FDs name stdin/stdout/stderr. MCD bit 0 names
-  stdout and bits 1..30 name reusable output channels. Only MCDs fan out.
-  Closing a channel cancels its pending deferred output before slot reuse.
-  Ordinary host files, typed deferred output, checked
-  seek/rewind/flush/error/EOF controls, an HDL-aware formatted scanner, line
-  and character pushback, and declaration-order binary reads are kept separate
-  from scheduler state. File-input target descriptors are borrowed for one
-  call; packed X/Z state and native string ownership remain explicit.
-  Numeric scanning stops at the conversion-specific prefix and leaves a
-  delimiter unread; suppression skips storage but still validates conversion.
-  Clocking input samples use the preponed/observed history services. Named
-  clocking-block events are published in Observed after all block samples, while
-  procedural clocking output/inout drives enqueue captured Re-NBA values after
-  their constant output skew; an off-event drive is retained until the next
-  matching clocking event, and net drives retain their resolved driver slot.
-  Clocking-bound `##N` waits are lowered as repeated event waits, so they count
-  published clocking-block events instead of assuming a clock period.
-  Memory-file tasks parse four-state binary/hex words, comments and address
-  jumps into bounded fixed packed memory views. SystemVerilog-2009 views may
-  retain multiple unpacked dimensions or constant higher-dimension selections;
-  remaining dimensions use low-to-high row-major file order while declaration
-  direction maps to flat storage. Verilog-2001 omitted ranges use declaration
-  order, SystemVerilog-2009 omitted ranges use low-to-high order, and explicit
-  ranges retain their source direction. Out-of-range address jumps and
-  non-member enum words terminate a load after preserving prior writes.
-  Resizable, associative, queue, range-selected, non-packed aggregate and
-  real memories remain an explicit lowering boundary.
-  Deferred immediate assertion actions use an owned per-time-slot report queue:
-  conditions and value arguments are sampled at issue time, legal references
-  are resolved by the Reactive callback, and same-process assertion identities
-  coalesce before the Observed-to-Reactive handoff. Off prevents new checks
-  without stopping existing concurrent attempts or flushing deferred reports;
-  kill cancels attempts, reports and queued actions and disables new checks.
-  Finish/deadlock teardown
-  drains pending reports before releasing the scheduler.
-  `LLG_ZERO_LOOP_LIMIT` bounds scheduler passes (default 10,000,000), while
-  `LLG_PROCESS_STEP_LIMIT` bounds generated loop back-edges inside a coroutine
-  (`LLG_NONCONVERGENCE_LIMIT` is an accepted alias). Both accept positive
-  decimal `uint64_t` values through the environment;
-  invalid or overflowing values fail before model execution. A process budget
-  exhaustion emits its process source location and makes the generated model
-  exit nonzero. Scheduler ticks are exact femtoseconds; the generated model
-  supplies checked local-unit conversions for `$time`, `$stime`, and
-  `$realtime`. Fine-grain `process` handles use a reference-counted identity
-  separate from coroutine storage; `self`, status, kill, suspend, resume and
-  await retain terminal state and clean wait/frame/descendant ownership.
-- **VPI bridge:** `llg_vpi.c` and the emitted `vpi_user.h` expose a bounded,
-  generation-checked object/iteration/value API, startup-loaded system-task and
-  function plugins, compiletf/sizetf/calltf dispatch, and start/end callbacks;
-  unsupported standard properties fail through `vpi_chk_error`.
-  Array metadata distinguishes packed element widths from real elements, which
-  use zero packed-bit width; both remain discoverable in the object catalog.
-  `vpi_get_value(vpiVectorVal)` returns simulator-owned scratch storage, valid
-  until the next value query or shutdown; the caller supplies no vector buffer.
-  Call/argument handles and argument iterators borrow one callback's call
-  record. They are tagged with its owner and invalidated at every `compiletf`,
-  `sizetf`, and `calltf` exit before the borrowed storage can be released.
-- **Mailboxes:**
-  Typed and untyped mailbox handles use owned FIFO message nodes with optional
-  bounds (`new(0)` is unbounded), exact `num`/`put`/`get`/`peek` and
-  `try_*` operations, native string ownership, four-state packed copies, and
-  class/chandle pointer identity. Blocking producers and consumers have FIFO
-  wait lists; process cancellation removes waiters and destroys pending
-  string messages before mailbox teardown. Retrieval distinguishes empty from
-  mismatch: try-get/peek return -1 on mismatch without consuming or assigning;
-  blocking mismatch reports an error and stops the current run. Waiter service
-  only considers FIFO heads. Packed width, sign and state domain, and
-  real/shortreal are checked. Each admitted message and destination also retain
-  the declared nominal enum/handle type identity, independent of the handle's
-  dynamic value (including null). Typedef aliases share identity; equivalent
-  virtual-interface types are interned at the owned frontend boundary. Packed
-  ref destinations use the reference write operation, not a value-pointer cast.
-- **Program origins:** the spawn ABI carries a stable elaborated instance ID
-  and an initial-procedure flag. Only initials are counted; their descendants
-  inherit the origin without extending program lifetime. Last-initial completion
-  cancels remaining descendants of that origin, and all-program completion is
-  immediate. `$exit` consults the executing thread's origin, not the lexical
-  scope of a called task. A non-program origin returns without terminating.
-- **Random streams:** `llg_rng.h/.c` provides deterministic PCG streams with
-  next-parent-draw dynamic child seeding, unbiased inclusive ranges, and
-  versioned state snapshots. Creating a child consumes exactly one parent draw;
-  draws in an already-created child never perturb its parent or siblings.
-  Per-instance/package initialization RNGs and full class-object RNG ownership
-  still require integration; the dynamic-child fix alone does not close H07.
-- **Concurrent assertions:** Registrations retain per-instance FIFO attempts;
-  predicates read immutable Preponed packed snapshots in Observed, asynchronous
-  `disable iff` and abort controls clear pending attempts at writes, and
-  pass/fail actions queue in Reactive. Failed-attempt accounting is separate
-  from severity reporting: explicit failure actions (including `else ;`) replace
-  the default, and an absent failure action reports the default error in
-  Reactive. Vacuous implication successes are
-  counted separately, while pending attempts are discarded at end of
-  simulation. Sequence graphs carry bounded local-variable descriptors,
-  per-thread four-state snapshots, local input-formal initializers, ordered
-  match-item callbacks, and owned per-transition clock/edge descriptors for
-  legal multiclock `##0`/`##1` boundaries; branch joins deduplicate only
-  equivalent local snapshots, so overlapping attempts and distinct sequence
-  threads do not share mutable state. Empty alternatives are represented
-  separately and concatenations are normalized before emission. Repetition gaps
-  explicitly require a false operand; first-match scopes cancel only their own
-  invocation's later alternatives while retaining tied endpoints. Multiclock
-  boundaries use endpoint physical time and current-slot clock history, not
-  callback order. Accepted antecedent endpoints carry owned local snapshots
-  keyed by declaration identity into each consequent; inherited locals are not
-  reinitialized. All tokens, scope records and snapshots are reclaimed on
-  termination, disable or teardown.
-- **Packed dependencies:** longest-static-prefix intervals survive lowering and
-  writer checks. Typed waits compare the selected bits, including packed slices
-  behind fixed-array change markers; unrelated bit updates do not wake them.
-- **Real dependencies:** scalar `real`/`shortreal` storage uses typed double
-  dependencies for `wait`, any-change `@` controls, combinational links, and
-  scalar ports. Writes notify only when the IEEE representation changes:
-  signed-zero transitions wake, identical NaN payloads do not, and changed NaN
-  payloads wake deterministically.
-- **Evaluated events:** event and trigger-time qualifier callbacks receive an
-  owned activation-frame context. The expression wait takes ownership of the
-  initial frame references and releases them on wake, cancellation, or runtime
-  teardown; callbacks cannot suspend or mutate scheduler-observed storage.
-- **Joined fork captures:** borrowed frame slots point to registered numeric
-  cells in the suspended parent activation. `join` keeps that activation live
-  until every child completes; cancellation kills descendants before releasing
-  the parent scope. Detachable forks retain independent value snapshots.
-- **Storage helpers:** `llg_string.h/.c` provides owned strings;
-  `llg_container.h/.c` provides packed fast-path containers plus descriptor-
-  driven dynamic arrays for represented real, string, chandle, and nested
-  values. Queues and associative arrays remain packed-only until their typed
-  container paths are implemented.
-- **Optional components:** `llg_wave.h/.c` provides waveform output with VCD/FST
-  headers expressed in the exact femtosecond tick unit; `gtkwave/`
-  contains the pinned FST sources; libaco sources provide model coroutines.
-- **Embedding:** `mod.rs` exposes source pairs; `sim::build` writes them with
-  generated model sources, caches compatible runtime archives, and builds with
-  CMake. Generated source-only projects remain self-contained.
-- **Checks:** standalone value/random/container runtime probes and Rust
-  integration tests cover the runtime boundary.
+`mod.rs` returns header/flat-source pairs through `value_sources`,
+`random_sources`, `rng_sources`, `runtime_sources`, `string_sources` and
+`container_sources`; libaco, waveform and self-test accessors provide their related
+files. Facades include ordered private fragments; emitted sources flatten the same
+order. Only facades are compiled.
 
-See [`docs/sim_data_semantics.md`](../../../docs/sim_data_semantics.md) for
-language-level value semantics.
+`generate_model_sources` writes a self-contained CMake tree, including libaco and
+`aco_assert_override.h`. Normal builds may reuse a compatible runtime archive.
+Model-specific stack headroom is passed at startup, not encoded in the archive ABI.
+Waveforms additionally need zlib and CMake Threads support.
 
-## Source organization
+## Validation and limits
 
-`llg_rt.c` is an ordered facade over `llg_rt_prelude.c` and `scheduler/*.c`;
-`llg_container.c` similarly owns `llg_container_prelude.c` and `container/*.c`.
-These are private fragments, not independent translation units. This keeps
-private state and declaration order with their existing owner.
-
-`mod.rs` concatenates each ordered fragment list into the original flat C
-implementation returned by `runtime_sources()` or `container_sources()`.
-Generated builds retain the existing filenames and CMake source lists. Keep
-both orders synchronized and do not compile the fragments separately.
-`tests.rs` checks embedding order against the source facades.
-
-See [the source map](../../../docs/source_layout.md).
-
-## Dynamic value ownership and migration boundary
-
-`sv4_t` is now the sole dynamic packed representation. A value owns one allocation
-containing three `ceil(width / 64)`-limb planes; width zero owns nothing. The only
-value-width boundary is the exclusive `LLG_SUPPORTED_WIDTH_LIMIT`. Constructors
-and value-returning operations produce independent owners; input packed values
-are borrowed unless an API explicitly consumes them. Destination cells must be
-initialized. Container/scheduler destructors reclaim retained values, and
-registered value scopes handle coroutine completion and cancellation without
-compiler-specific stack unwinding.
-
-Waveform queues move independent snapshots between producer and writer. Both
-packed payloads and file-event paths are allocated for their actual content;
-slots no longer embed a 1,024-byte path. Writer scratch is dynamic and is released
-on close. Other formatting, parsing and VPI scratch is sized for the current
-request rather than the model maximum.
-
-**This is a staged branch, not a validated generated-model release.** The
-structured numeric P05 emitter now implements temporary cleanup, owned model
-initialization, numeric calls and registered lifetime boundaries. Unmigrated
-features and legacy fragment APIs remain gated; no old by-value fallback is
-permitted. Old selftests with static-owner assumptions remain fenced. Active
-P06 metadata/cache sizing now uses ownership ABI 3 rather than model width.
-Rust compilation, generated simulations, complete P05 coverage, Rust/C parity,
-native platforms and benchmarks remain acceptance work.
-
-Use the [standalone owner tests](../../../tests/runtime_value_storage/readme.md)
-for this stage. They exercise actual runtime code without Rust or Slang. Native
-macOS/Windows, the full HDL pipeline and net performance are not certified by a
-Linux component test. Heap allocation and deep cloning can add costs; no speedup
-is assumed without measurement.
-
-## Resource capacity
-
-Legal net connectivity is not subject to a fixed per-net driver or alias
-ceiling. A generated `llg_net_t` points at exact elaborated-size
-`drivers`/`strength0`/`strength1` tables instead of embedding a fixed array,
-and each net's alias list grows on demand with checked allocation: the grown
-copy is completed before it replaces the old table, so an allocation failure
-aborts without leaving a partially rebound net. The driver count is bounded
-only by the emitted C `int` representation and available memory.
-`wired_nets_resolve_more_than_sixteen_continuous_driver_sites` and
-`net_alias_chain_grows_past_the_old_driver_and_alias_limits` execute 18 driver
-sites and a 258-net alias chain (259 driver slots, 257 alias descriptors) in
-both optimizer modes.
-
-The scheduler's live registries are checked-growable as well: the concurrent
-process slot table, the final-block registration list, each named event's
-ordinary and persistent-trigger waiter tables, the active packed/real
-procedural-continuous-assignment binding tables, and the force/release live
-entry table all grow on demand. Every grown table is fully populated before it
-replaces the live one, so an allocation failure aborts with its named
-diagnostic rather than leaving a partially rebound registry. Consumers
-therefore either index the current table or retain a stable process/handle
-identity, never a stale row address. `llg_event_object_reset` releases a
-generated event's grown waiter tables from model initialization and teardown.
-The retired ceilings (4096 processes, 1024 finals, 64 waiters per event, 64
-forces, 4096 PCA bindings) are exercised by the `sim_capacity` suite, with
-`event_waiter_growth`, `process_registry_growth`, `force_entry_growth`,
-4100 PCA bindings and 1100 final registrations. There is no fixed nonblocking
-assignment capacity: each NBA is an owned heap node on its issuing process or
-the delayed queue.
-
-Retained explicit limits are checked with an actionable diagnostic rather than
-silent truncation:
-
-| Limit | Value | Failure mode |
-| --- | --- | --- |
-| Packed value width | exclusive `1 << 20` bits | lowering/backend diagnostic |
-| Function recursion depth | 256 frames | `recursion limit exceeded` |
-
-A growable registry is still bounded by available memory and, for the
-`int`-indexed tables, by `INT_MAX` entries; both abort explicitly rather than
-truncate. `LLG_MAX_PROCS` is retained only as the standalone runtime
-self-test's sequential-fork iteration base, not as a scheduling ceiling.
-
-Memory words preserve leading X/Z digit padding independently of target
-signedness; known hexadecimal/binary digits zero-extend and ordinary packed
-truncation remains allowed. Two-state words are normalized at original width
-before enum representability checks, so low unknown digits cannot hide known
-high overflow. SystemVerilog sparse address files do not receive the no-address
-short-file warning; Verilog-2001 retains count warnings even when repeated
-addresses cause extra writes within the selected range. The native
-`memory_image` probe exercises these contracts with tracked value ownership.
-
-## Binary memory input order
-
-`scheduler/scanning.c::llg_file_read_array` maps rank-one memory reads from
-ascending HDL addresses to declaration-ordered storage. Descending declarations
-therefore start at the last physical slot by default and walk backward. An
-explicit start maps to that address; count is capped at the remaining addresses
-through the declared high bound. Unknown, negative-count and out-of-bounds
-selectors do not consume input or change destination storage. The registered
-per-element value scope remains live across publication callbacks.
-
-This is the binary `$fread` rule in both supplied editions, not the distinct
-`$readmemh`/`$readmemb` declaration-order default. The continuation changes and
-qualifies rank-one memory order only; multidimensional binary input remains
-outside this evidence. See the native `file_input_isolation_probe.c` and public
-`sim_file_io.rs` / `sim_edition.rs` tests.
+[Native runtime tests](../../../tests/runtime_value_storage/readme.md) cover
+allocation accounting, failure cleanup, values, queues, callbacks and waveform
+transfers. [Repository tests](../../../tests/readme.md#dynamic-ownership-validation)
+separately exercise real emission and public HDL. Component-only results, handwritten
+output-shape probes and configured platforms do not establish full model acceptance.
+Real coroutine sanitizer and native Windows/libaco limits remain separate gates.
+Use [feature status](../../../docs/sim_features.md), not this component map, for
+supported language contexts and outstanding qualification.

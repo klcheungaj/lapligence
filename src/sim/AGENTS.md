@@ -1,89 +1,83 @@
-# sim — Verilog/SV to C11 simulator
+# Simulator pipeline
 
-## Pipeline and ownership
+`llg` runs compile → owned DB → semantic/execution IR → optimization → C11 →
+CMake build → execution. [Lowering](codegen/AGENTS.md),
+[emission](emit_c/AGENTS.md) and [runtime](rt/AGENTS.md) own domain contracts;
+[source layout](../../docs/source_layout.md) locates implementation modules.
 
-The driver `src/bin/llg.rs` runs compile → lower → IR → optimize → emit →
-CMake build → execute. Read [codegen/AGENTS.md](codegen/AGENTS.md) for
-initialization, sensitivity, ports/interfaces, inout nets, tasks/forks,
-force/release, reals, timescales, arrays, supported forms and rejection
-boundaries; [rt/AGENTS.md](rt/AGENTS.md) owns value/scheduler/waveform contracts.
-The [source map](../../docs/source_layout.md) locates responsibility modules.
+## Ownership and validation
 
-- `codegen.rs` exposes `generate(&db)` and `generate_with_opts(&db, ...)` over
-  an owned DB. `codegen/lowering/` decides behavior and builds expressions,
-  statements/LHSs, processes, links, functions and initialization through
-  `SemanticModel` and `ExecutionModel`, then delegates optimization/emission.
-  `GeneratedModel` retains `pub design_name: String`, `model_c` and warnings.
-- `semantic::SemanticModel` wraps the frontend-neutral DB and owns synthesis
-  classification: return checked `SynthDesignView` or origin-linked reasons.
-- `ir.rs` and `ir/` stage validated typed signals, arrays, nets, functions,
-  processes, initialization and `IrExpr`/`IrStmt`. `execution::ExecutionModel`
-  owns executable operations/blocks, effects, suspend/resume plans and regions.
-  Optimization and whole-model emission consume only that model. Emit block
-  terminators directly, including distinct resume blocks; body-controlled
-  suspension must contain a validated waiting operation.
-- `opt.rs` uses `OptConfig { fold_constants, identities, prune_branches,
-  unused_storage }`, `default()`/`none()` and per-pass bisection. Constant
-  folding reuses X/Z-correct `core::elab::Value`; shortreal rounds through `f32`,
-  and div/mod/pow operate over the actual operand/result limb counts. Shape-guard identities; prune
-  only proven branches/cases, never past nonconstant items or to default unless
-  ALL items are proven unmatched. Omit unused storage without remapping indices.
-  Read collection covers processes, functions, init, spawns, monitor evaluators,
-  links, force targets, display, waits, trigger plans and task-call temporaries.
-- `emit_c.rs`/`emit_c/` consumes ONLY IR: no `core::db`/`ffi`/`vpi` dependency.
-  Preserve G_/p_/D_ naming and the `model.c` first-line header.
-  `tests/emit_decoupling.rs` enforces this like the repository's
-  `unsafe`-confinement rule.
-- `mod.rs::write_sim_sources` writes runtime/libaco/extra sources for `build`.
-  `rt/` embeds pure C with `include_str!` into `target/sim/<design>/`: independent
-  `llg_value.h`/`llg_value.c`, `llg_random.h`/`llg_random.c`, scheduler
-  `llg_rt.h`/`llg_rt.c`, libaco `aco.c`/`acosw.S`, and C self-tests. Scheduler
-  and container domain fragments assemble into their existing flat sources.
-  Normal builds compile the runtime/libaco sources into a compatible cached
-  archive; source-only projects remain self-contained. They are never linked
-  into Rust; `core::compile`, `core::db` and `core::value` supply frontend data/values.
+- `codegen::{generate, generate_with_opts}` accepts owned DB data.
+  `GeneratedModel` retains public `design_name: String`, `model_c` and warnings.
+  `SemanticModel` owns synthesis classification and returns a checked
+  `SynthDesignView` or origin-linked reasons. Never equate simulation admission
+  with the conservative synthesis profile.
+- Typed IR stages signals, arrays, nets, functions, processes and initialization.
+  `ExecutionModel` owns executable blocks/operations, effects, suspend/resume
+  plans and regions. Optimization and whole-model emission consume only it.
+  Emit distinct resume-block terminators; body-controlled suspension requires a
+  validated waiting operation.
+- Treat `IrModelParts` as untrusted until `IrModel::from_parts` validates IDs,
+  shapes, registrations and nested nodes. Keep model/detached-node validation
+  before optimizer/emitter indexing; semantic and executable layers stay owned
+  and independently testable.
+- Simulator Rust has no unsafe/native/FFI calls. The emitter has no DB/FFI/VPI
+  dependencies; preserve `G_`/`p_`/`D_` names and the first `model.c` header line.
+  `tests/emit_decoupling.rs` enforces this boundary.
+- Whole models use `emit_c/owned/` with registered values/scopes and explicit
+  startup/teardown. Unrepresented storage/captures/callbacks produce specific
+  errors, never legacy-fragment fallbacks. Detached string-only APIs cannot
+  represent setup/cleanup and remain fail-closed.
 
-## Validation and capacity
+## IR and optimization
 
-Dynamic-runtime migration uses unique owners. Whole-model rendering now routes
-through `emit_c/owned/`: ordered numeric expressions, registered temporary/local
-scopes, and model startup/teardown. Unsupported storage, captures and callbacks
-must return a feature-specific error without falling back to legacy fragments.
-The detached expression/statement APIs remain fail-closed because a string alone
-cannot convey setup and cleanup. See [emitter coverage](emit_c/owned/readme.md)
-and [runtime ownership](rt/value/ownership.md). Original runtime/waveform selftests use explicit ownership and remain active;
-the standalone owner suite includes their relevant assertions. The new Rust emitter still
-requires a Rust build and generated-model validation before acceptance.
+Keep `OptConfig`'s `fold_constants`, `identities`, `prune_branches` and
+`unused_storage`, default/none modes and per-pass bisection. Fold with exact
+`core::elab::Value` X/Z semantics, f32 shortreal rounding and actual-width
+arithmetic. Shape-guard identities. Prune only proven branches/cases: never pass
+an unknown item or select default until all items are proven unmatched. Omit
+unused storage without renumbering indices.
 
-Treat `IrModelParts` as untrusted until `IrModel::from_parts` validates table
-references, storage shapes, registrations and nested nodes. Keep
-`IrModel::validate` and detached-node validation before optimizer/emitter
-indexing. Semantic and executable representations remain separately owned.
+Read collection includes processes, functions, initialization, spawns, monitors,
+links, force targets, display, waits, triggers and task temporaries. `Predicate`
+retains ordered true-only evaluation, not logical-AND identities; drop suffixes
+only when unreachable without discarding reached effects. Singleton concat still
+forces unsigned/self-determined semantics. Array/structure conditionals retain
+immediate boundaries and default-uninitialized values, not member initializers;
+equal flattened width does not imply equal shape.
 
-Derive `LLG_MODEL_STACK_VALUES` from validated frames:
-`(max_function_frame * recursion_depth_256 + max_process_frame) * 8`, retaining
-the historical minimum. Account for typed expression storage across sequential
-statements and lexical arms: C compilers, especially sanitizers, may retain
-return-by-value temporaries for the whole function. Checked sizing failure
-stops emission. Runtime values now allocate by their own width; never reintroduce
-a model-maximum storage layout. `LLG_MODEL_VALUE_ABI` must match
-`LLG_VALUE_ABI_VERSION`; cache archives by this ownership ABI and runtime content,
-not a model width. Pass `LLG_MODEL_STACK_VALUES` from model startup through
-`llg_rt_init_with_args_precision_and_stack`, keeping stack headroom outside the
-compiled runtime ABI and retaining defensive runtime checks.
+`PackedChain` steps are relative to the preceding selected value. Validate
+nonempty/nonzero packed plans and unsigned read shape; preserve negative/X/Z
+indices, partial clipping and missing-bit X/no-write behavior. Never sum offsets
+and erase intermediate bounds. Count index temporaries in capacity estimates.
+Fixed-array folds operate on immediate elements, use the first mapped value as
+seed, preserve Z, and restore nested iterator bindings. Ordered predicates and
+case patterns capture selectors once; tagged discriminants match exactly while
+payloads use their case mode.
 
-Validate each packed width against the exclusive `1 << 20` backend limit, not
-a model-wide capacity or a fixed 1024-/64-bit IR semantic cap. Runtime `sv4_t`
-widths are `uint32_t`; div/mod/pow allocate operand-width scratch. Preserve typed selected-index trees,
-elaborated indexed-part extents and capacity for intermediate indices wider
-than stored signals. Emit static extents, not a width expression's integer
-storage width. Named packed-member writes preserve member-specific two-state
-conversion. See [data semantics](../../docs/sim_data_semantics.md) for standard
-width/sign/X/Z rules.
+## Capacity and runtime packaging
 
-The pre-migration `llg_rt_selftest.c::VECTORS[]` cross-checks C `sv4_*` against identical
-`core::elab::Value` inputs in `tests/property_elab.rs`. Regenerate with the
-ignored Rust generator:
+Validate each packed value against exclusive `1 << 20`, not a model maximum or
+64/1024-bit IR cap. `sv4_t` widths are `uint32_t`; div/mod/pow scratch follows
+operand width. Preserve typed index trees, elaborated indexed-part extents,
+wide intermediate indices and member-specific two-state conversion. Emit static
+extents, not the width expression's integer storage size.
+
+Derive `LLG_MODEL_STACK_VALUES` with checked arithmetic:
+`(max_function_frame * 256 + max_process_frame) * 8`, retaining the historical
+minimum. Count typed expression storage across sequential statements and lexical
+arms: compilers/sanitizers may retain return-by-value temporaries for the entire
+C activation. Fail emission on overflow. Pass headroom at startup through
+`llg_rt_init_with_args_precision_and_stack`, not the compiled runtime ABI.
+Values allocate by their own widths; never restore model-maximum arrays.
+`LLG_MODEL_VALUE_ABI` must match `LLG_VALUE_ABI_VERSION`.
+
+`write_sim_sources` embeds flat value, random, scheduler, container, waveform and
+libaco sources plus self-tests into `target/sim/<design>/`. Private fragments
+assemble in facade order. Runtime/libaco archives belong only to generated C,
+never Rust binaries; source-only output remains self-contained. Keep original
+runtime/waveform ownership self-tests active. Property vectors mirror
+`core::elab::Value`; regenerate with:
 
 ```sh
 cargo test --test property_elab gen_c_vectors -- --ignored --nocapture > /tmp/vectors.inc
@@ -91,40 +85,29 @@ cargo test --test property_elab gen_c_vectors -- --ignored --nocapture > /tmp/ve
 
 ## Build contract
 
-CMake is the only model builder, automatically invoked after emission through
-`build_model_cmake`. It writes C11 sources and `CMakeLists.txt`, defaults to
-Release, emits the executable under `<build>/bin/`, and links `m`:
+CMake is the only model builder: C11, Release by default, executable under
+`<build>/bin/`, and `m` linkage. The configure command retains:
 
 ```sh
 <cmake> -S <out_dir> -B <out_dir>/build [-G <generator>] [-DCMAKE_C_COMPILER_LAUNCHER=<launcher>] -DCMAKE_C_COMPILER=<LLG_CC|$CC|cc> -DCMAKE_C_FLAGS:STRING="-O2 -Wall -Wno-unused-function [$LLG_CFLAGS]" -DLLG_RUNTIME_LIBRARY=<cache>
 cmake --build --config Release
 ```
 
-Generator precedence: `CmakeBuildOpts.generator` (`--generator <backend>` via
-`build_model_cmake_with_opts`) > `$CMAKE_GENERATOR` > host default.
-`CmakeBuildOpts.launcher` (`--launcher <program>`) forwards
-`CMAKE_C_COMPILER_LAUNCHER` without choosing a default.
-`CmakeBuildOpts.dpi_libraries` (`--dpi-lib <path>`, repeatable) accepts validated
-explicit link files; copy `svdpi.h` into generated trees.
-`generate_model_sources` (`--gen-only`) writes sources and CMake without building.
-`LLG_CMAKE` selects CMake; `LLG_CC`/`CC` selects the compiler; append `LLG_CFLAGS`.
-Reject double quotes in flags; missing CMake must name installation guidance.
-`cmake_available()` probes once per process. Cache runtime archives by ownership
-ABI, source content, toolchain, flags, generator, launcher, platform and
-waveform support. The default cache is `<workspace>/target/llg-runtime-cache`;
-`LLG_RUNTIME_CACHE_DIR` overrides it, with relative paths resolved from the
-workspace root.
-Prune stale model sources, discard incompatible/partial build trees, and retry
-a failed configure once cleanly.
+`CmakeBuildOpts.generator`/`--generator` overrides `CMAKE_GENERATOR`, then host
+default. `launcher`/`--launcher` forwards `CMAKE_C_COMPILER_LAUNCHER` without inventing
+a default. Repeatable `dpi_libraries`/`--dpi-lib` accepts validated explicit link
+files; include `svdpi.h` in generated output. `generate_model_sources`/`--gen-only`
+writes sources/CMake without building. `LLG_CMAKE` selects CMake, `LLG_CC`/`CC`
+the compiler, and `LLG_CFLAGS` appends flags. Reject double quotes in flags;
+missing-CMake errors include installation guidance. Probe availability once.
 
-Root `build.rs` applies repository Slang/libaco `patches/` before native source
-consumption. Keep upstream-base gitlinks; the portable preparer accepts clean
-or fully-applied states and rejects partial/mismatched edits.
+Cache by ownership ABI, runtime content, toolchain, flags, generator, launcher,
+platform and waveform support. Default: `<workspace>/target/llg-runtime-cache`;
+resolve relative `LLG_RUNTIME_CACHE_DIR` from the workspace root. Prune stale
+sources/incompatible partial builds and retry failed configuration once cleanly.
+Root portable patch preparation accepts clean/fully-applied vendors and rejects
+partial/mismatched edits; retain upstream-base gitlinks.
 
-## Required boundaries
-
-No `unsafe`, direct frontend or FFI calls in simulator Rust: use owned safe
-`core::db`. Library optimizer comparisons build one `core::db::Db` and call
-`generate_from_db_with_opts`; end-to-end comparisons use checked-in HDL through
-both `llg` CLI modes, with independent frontend-to-executable runs. libaco is
-not a Rust dependency and compiles only with generated C models.
+Library optimizer comparisons reuse one DB through `generate_from_db_with_opts`;
+CLI comparisons independently run checked-in HDL in both modes. Follow
+[tests](../../tests/AGENTS.md) and [data semantics](../../docs/sim_data_semantics.md).

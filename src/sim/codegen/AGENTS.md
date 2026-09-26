@@ -1,400 +1,248 @@
 # Simulator lowering
 
-Applies to `codegen.rs` and its children. Read [../AGENTS.md](../AGENTS.md) for
-pipeline/build rules and [../rt/AGENTS.md](../rt/AGENTS.md) for runtime contracts.
-`lower_expr`/`lower_stmt`/`lower_lhs` produce typed IR only. Responsibility-named
-modules live under `lowering/`; shared state stays in `lowering.rs`. Preserve
-the smallest existing visibility boundary. See the
-[source map](../../../docs/source_layout.md).
+Applies to `codegen.rs` and children. Read [pipeline](../AGENTS.md),
+[emitter](../emit_c/AGENTS.md) and [runtime](../rt/AGENTS.md) contracts.
+`lower_expr`/`lower_stmt`/`lower_lhs` produce typed IR only. Keep shared state in
+`lowering.rs`, responsibility-named children and the smallest existing visibility.
+[Feature status](../../../docs/sim_features.md) owns supported type/context
+inventories; do not broaden a guard because another context accepts the syntax.
 
-## Dynamic ownership and emitter boundary
+## Values and selections
 
-Packed values use exact-width runtime storage. `LLG_MAX_WIDTH` is the Rust-side
-upper bound (`LLG_SUPPORTED_WIDTH_LIMIT - 1`), not a per-model allocation
-capacity; div/mod/pow and conversions use the operand or result width they need.
-The structured owned emitter is the active C11 path and keeps feature guards when
-it cannot establish setup, ownership, or cleanup. A few legacy lowerer paths still
-produce `Verbatim` IR for the fenced fragment emitter; do not add new detached C
-fragments or extend those paths as a workaround.
+- Allocate exact-width values; `LLG_MAX_WIDTH` is the exclusive backend limit
+  minus one, not model allocation capacity. Check constants, parameters, signals,
+  concatenations, replications and intermediates; never truncate silently.
+  Do not add detached C/`Verbatim` workarounds: the owned emitter rejects legacy
+  fragments whose setup/cleanup cannot be represented.
+- Preserve imported fill operations. Unbased fills expand in context-determined
+  arithmetic, comparisons, conditionals, assignments and arguments; self-determined
+  concat/replication positions stay one bit. Ordinary case uses common width/sign.
+  Preserve X/Z for copies, display and case/literal equality; Z otherwise behaves
+  as X under the operation's rules. Wide div/mod/pow must survive context widening.
+- `==?`/`!=?` wildcards apply only to converted RHS X/Z. Known mismatch beats
+  unknown bits; otherwise unmasked LHS X/Z yields X. Bit queries evaluate once:
+  countones ignores X/Z, isunknown detects both; counts are signed 32-bit,
+  predicates unsigned one-bit. Real operands remain invalid here.
+- Get selectors, for-loop relationships, extents and delays from owned typed
+  fields, not source names or frontend numeric codes. Widen signed/X/Z-aware
+  coordinate arithmetic before subtraction/multiplication; unsigned high bits
+  must not wrap into valid indices. Indexed widths/part bounds are static;
+  bit/indexed bases may be runtime integral values. Missing metadata rejects.
+- `PackedChain` preserves each selection relative to its preceding result,
+  including remaining packed-element stride, bounds, direction and right bound.
+  Partial reads keep valid bits and fill missing bits with X; invalid writes do
+  nothing. Never flatten a chain to one unchecked root offset. Primitive-terminal
+  projections recurse through the same typed steps, preserving per-step flags.
+- Fixed layouts retain recursive shape, member identity, state domains, defaults
+  and declaration order. Left dimensions vary slowest. Unpacked unions use their
+  maximum storage width separately from streamed leaf order; packed members are
+  one vector owner. Do not infer nominal identity from spelling or flattened size.
+- Replicated patterns expand every dimension/position, even shared expression IDs.
+  Check positive count and extent before allocation; do not expand twice.
+  Resolve keys as expressions and preserve type/default precedence without
+  assuming side-effect order. Capture a default once before fan-out.
+- Lower array and direct unpacked-structure conditionals before flattening loses
+  immediate boundaries. Use default-uninitialized values, not declaration member
+  initializers. Capture selector once; known truth evaluates one arm, ambiguity
+  evaluates both with type-specific merging. Array assignment snapshots all RHS
+  cells before writes and retains explicit conversions/casts on fallback paths.
+- Positional-pattern assignment snapshots the RHS, freezes all destination
+  selectors before any write, then scatters. Fixed bit-stream casts convert the
+  complete RHS, including nested state-domain conversion, before scattering;
+  reference/inout identity is a separate contract.
 
-## Processes, expressions and delays
+## Processes, dependencies and initialization
 
-- Continuous assigns and `always_comb`/`always_latch`/`@*` evaluate at t=0, then
-  `wait_any` on RHS/body **reads**, never the LHS base (self-wake bug).
-  Ordinary `always` remains a repeated procedural loop, even without timing.
-  Generated back-edges enforce cooperative zero-time budgets and report the
-  owning source location; do not replace them with comb/run-once nodes.
-- Event or-lists (`@(posedge a or negedge b)`) require one atomic
-  `llg_wait_any_events`, never sequential waits. `wait (cond) stmt` uses packed
-  `sv4_to_bool` or scalar real truth and re-evaluates on typed storage changes.
-  Inline wait-bearing tasks. For `wait (expr) stmt`, true executes the body
-  once immediately; false/unknown constants suspend on an empty dependency
-  set without preventing time advancement.
-- Input/output links evaluate inputs in the parent context and preserve
-  untouched output-selection bits. Constants and omitted-port defaults run
-  once; explicitly open inputs ignore defaults. Matching whole packed-variable
-  `ref` ports, including nested references, share canonical storage without
-  copy links. Scalar `real`/`shortreal` links use doubles and notify changed
-  real dependents. Fixed array/aggregate reference ports retain canonical member
-  views, including constant selected array elements. Inouts use their
-  net group, not a link. Interface/modport references and body processes use
-  storage on the actual interface instance bound by Slang.
-- Parse `$display` formats during lowering. `%t` accepts integral/real values
-  (usually `$time`/`$realtime`) with their owning physical unit; `$timeformat`
-  arguments remain runtime expressions updating design-wide state.
-- Check constants, parameters, signals, concat and replication against the
-  backend `LLG_MAX_WIDTH` (`LLG_SUPPORTED_WIDTH_LIMIT - 1`), aligned with
-  generated `llg_value.h`. The exclusive backend limit is `1 << 20`; IR has no
-  fixed 1024-/64-bit arithmetic cap. Keep backend/runtime checks; never silently
-  truncate `sv4_concat`.
-- Get `for` initializer/condition/increment/body relationships from typed owned
-  data, not syntax or frontend numeric codes. Statement/intra-assignment
-  delays retain expression `NodeId`; continuous/primitive delays retain ordered
-  `DriverDelay`. Evaluate owned constants or typed runtime IR and round a
-  complete real delay once at module precision. Preserve single, rise/fall,
-  and rise/fall/turn-off forms; select delay per changed bit, using the minimum
-  applicable delay for ambiguous X transitions. Reject unsupported forms
-  without guessing source text or keeping only the first expression.
-- `->` triggers in Active. `->>` queues an NBA event: capture delay timing at
-  issue; event/repeat timing uses an independent `join_none` waiter whose final
-  trigger remains an NBA. Detached repeat counts must be constant until
-  activation capture is represented.
-- Select-LHS targets retain typed indices, ranges and write-back metadata in IR.
-  The old fragment emitter still has GNU statement-expression code for some
-  legacy paths, but the structured owned emitter rejects those fragments and
-  emits standard C11 setup/calls/cleanup. Packed streams retain resolved
-  direction, slice size, ordered operands, aggregate width and unsigned result.
-  Streaming targets retain typed component LHSs/widths and evaluate RHS once
-  before unpacking.
-  Runtime `with` selectors lower on one-dimensional fixed-array destinations
-  (`IrStreamTarget::FixedSelector`) and fixed-array sources (`IrExprKind::FixedStream`);
-  decorators on nested concatenations and any `with` on a multidimensional array
-  are rejected (§11.4.14.4). Every `with` range streams in storage order like a
-  slice. A stream in a wider fixed target is left-aligned and zero-filled on the
-  right (`IrExprKind::StreamToFixed` when runtime-sized); unpacking a longer
-  source consumes its leftmost bits (§11.4.14.3).
-  `inside` evaluates selector and
-  every scalar/range endpoint once; scalars use wildcard equality, ranges
-  ordinary inclusive comparison.
-- Dynamic arrays, queues and associative arrays have distinct IR/storage and
-  exact-width packed elements bounded by the backend limit. The bounded slice covers one resizable dimension,
-  dynamic `new`/copy/delete, positional dynamic/queue patterns, queue elements
-  and methods, `sum`/`product`/`and`/`or`/`xor` reductions, and integral/string-key
-  associative access/delete/existence/traversal. Reject resizable-element NBAs
-  (LRM §6.21), sensitivity/wait reads until mutations notify the scheduler,
-  declaration initializers, keyed/default container patterns, resizable
-  subprogram/port storage, and traversal keys requiring assignment conversion.
+Continuous assignments and comb/latch/implicit-sensitivity processes evaluate at
+zero, then wait on RHS/body reads, not their LHS base. Combinational sensitivity
+includes called-function reads and excludes written storage; plain `@*` retains
+call-site behavior. Carry exact always-kind and typed writes through validation;
+writer, timing and flip-flop violations reject independently of lint. Ordinary
+`always` remains a procedural loop with cooperative, source-located back-edge
+budgets, not a comb/run-once replacement.
 
-## Inout ports and resolved nets
+Preserve program-instance origin and Reactive launch, rejecting prohibited program
+members before lowering; `$exit` admission requires program-process context.
+Preserve source-origin classification and declaration lifetime rather than
+qualifier spelling. Defaults precede initialization and processes: ordinary nets
+start Z, arrays/scalar variables receive their typed fills/initializers, and
+resolved defaults/delayed driver X contributions retain their separate phases.
+A time-zero process write must win over initialization. Static locals initialize
+once in hidden model storage; automatic locals initialize per lexical entry,
+including inherited lifetimes and loop/block scopes.
 
-Collapse each inout's parent/child nets into one `llg_net_t` (LRM §23.3.3.7),
-with one driver slot per member. Whole writes use `llg_net_write`; refs,
-`$display`/`$monitor`, sensitivity and other reads use `resolved`. Apply Table
-6-2 and Table 28-7 strength endpoints: all-Z → Z, one non-Z → its value,
-equal-strength conflicts → X. Reject non-net members, incompatible widths or
-resolution kinds and unsupported driver contexts. Selected inouts use canonical
-bit bindings. Inouts emit no value-copy links; input/output links keep their own
-structural driver identity when they feed a resolved group.
+Collect parameters and concrete genvars with each generated path. Replay deferred
+initializer calls/child references only after storage/prototypes exist, with
+recursion depth reset; fail the whole replay on error. Declaration-call and member
+default initialization finish before SystemVerilog processes start, never lazily
+on first call. Reject unavailable lifetime/provenance or unrepresented native/
+resizable initialization rather than fabricating storage.
 
-Standalone packed `wand/triand` and `wor/trior` use one group per declaration,
-with one contribution slot per whole-net continuous-assignment site (including
-declaration assignments), ordered deterministically by node. The runtime
-driver/strength tables are sized exactly at elaboration, so there is no fixed
-per-net driver ceiling. Synthetic slots have no
-waveform names; reads/sensitivity observe only the resolved cell. All-Z/no
-sources → Z; wired-AND 0 dominates X, wired-OR 1 dominates X. Retain scalar
-  continuous, gate and port strengths. Fixed wired-net arrays and interface
-  instances retain per-site drivers and pull/supply defaults. Array inouts and
-  selected scalar ports join canonical electrical bits, with resolved array
-  publication notifying array dependencies. Reject incompatible net kinds,
-  procedural writes and function/task-output drivers; a resolved
-  hierarchical or concatenated continuous-assignment LHS is admitted as a
-  structural driver site, and only the unresolved source-text fallback still fails.
-  Keep the older per-member wire/inout model unchanged. Tests:
-`tests/sim_net_resolution.rs`, standalone `tests/runtime_values.rs`.
+Input links evaluate in the parent scope; selected outputs preserve untouched
+bits. Constants/omitted defaults run once; explicit opens ignore defaults. Whole
+packed/fixed aggregate refs retain canonical storage and member views without
+copy links. Scalar real links use doubles and notify changed dependencies.
+Interface/modport bodies use the actual Slang-bound instance. Connection indices
+must be elaborated constants (including genvars), not dynamic connections.
+Precollect hierarchical actual dependencies per instance.
 
-Standalone scalar/packed `wire/tri/uwire` uses the same per-site identity for
-whole and constant-selected continuous assignments. Rebuild each selected
-contribution from Z on every evaluation; undriven bits remain Z. Explicit
-continuous strengths are scalar-only (§10.3.4 forbids vectors). Table 28-7 and
-§28.12 apply: X exposes both strength0/strength1 endpoints; a known driver wins
-only when strictly stronger than every possible opposite endpoint; highz adds
-no drive. Reject dynamic net selectors; variable lvalues have a separate path.
-Delayed whole drivers start X until their first update; genuinely driverless
-wires use synthetic Z. Delayed packed selections are masked per site; fixed-
-unpacked array selections have one inertial handle per element, so index
-changes cancel only that element's event. Port/interface nets retain links or
-collapsed inouts. Each gate output has an independent canonical slot, including
-mixed gate/continuous and multiple-gate nets. Standalone net force overlays the
-resolved cell while live strength-bearing slots continue updating; release
-recomputes selected/multidriver targets. Slang rejects overlapping `uwire`
-drivers; disjoint constant selections remain legal with Z elsewhere.
+Variable-continuous conflict analysis follows canonical intervals and counts
+ordinary assignments/declaration initialization, not force/release/deassign;
+keep disjoint writers legal and preserve original read sensitivities separately.
+Hierarchical structural driver identity includes owner, source and group.
 
-The same bounded standalone path supports `tri0/tri1` pull and
-`supply0/supply1` supply defaults as implicit strength-bearing sources.
-Equal-strength opposition may yield X; stronger drives override defaults.
-Resolved cells start at their default, contribution slots at Z. Retain scalar
-strengths for wired/pull/supply nets, ports and gates; reject explicit vector
-continuous strengths (§10.3.4). Reject every `trireg` declaration before
-storage collection, including undriven nets and arrays: no charge storage.
-See `tests/sim_net_defaults.rs`.
+## Nets and procedural drivers
 
-## Initialization, generate scopes and interfaces
+Collapse inout nets to canonical electrical storage; emit no value-copy link.
+Input/output links feeding a group retain their own structural driver sites.
+Resolve net-type/delay selection through `net_collapse`/`port_net_types` before
+storage union; same-net-type alias checks precede more permissive port rules.
+Whole connections keep declaration-level metadata; selected connections map
+physical electrical bits. Reject incompatible/non-net members and unsupported
+resolution/sensitivity, never recover an unresolved driver from source text.
 
-- True-net declaration assignments (`wire w = expr;`, including dynamic RHS)
-  use explicit continuous assignments' `RunOnce`/`SensLoop` path. Reject dynamic
-  true-net drivers reading unpacked arrays or requiring unrepresentable
-  sensitivity/resolution. Ungrouped ordinary nets, ports, interface members
-  and net-array elements start Z. Preserve resolved-group defaults and pending
-  delayed continuous/gate X contributions, including collapsed inout gates.
-- Initialize variables in `main()` before processes, allowing a t=0 process
-  write to win. Order: ordinary-net defaults, unpacked-array fills, scalar
-  `reg` fills (`reg y = 0;`), scalar variables (`logic l = 1'b0;`,
-  `int x = 5;`, `logic [7:0] v = 8'ha5;` through `Db::vars_init`). Fold collected
-  parameters (`int y = P + 1;`). Runtime-dependent scalar initializers
-  (`logic z = a;`) use owned declaration identity and edition-specific phase
-  for supported type/lifetime combinations. Fixed integral aggregate initializers
-  use persistent typed destinations; reject unrepresented native/resizable storage.
-- Use Slang's resolved lifetime, not explicit qualifier spelling alone. Static
-  block locals use hidden model signals initialized once before processes;
-  automatic locals use lexical C storage initialized per entry. Include
-  inherited default-static locals and automatic loop/block scopes.
-- Inline concrete genvars; preserve per-iteration instance paths (`top.g[0].u`),
-  parameters, signals, processes and links. Array-element actuals
-  (`.cnt(cnts[i])`) require constant indices, including elaborated genvars;
-  reject dynamic connections. Interfaces support actuals, direct modport
-  bindings and parameter-folded widths; emit always/initial/always_comb bodies
-  under the bound actual instance.
+Give continuous/declaration/gate sites deterministic independent contribution slots,
+sized at elaboration without a fixed driver ceiling. Selected contributions restart
+from Z each evaluation. Synthetic slots have no waveform names; reads/dependencies
+observe resolved cells only. Wire/wired/pull/supply resolution retains both
+strength endpoints of X; a known drive wins only when stronger than every opposite
+possibility. High-Z adds no drive. Wired-AND 0 and wired-OR 1 dominate X; all-Z
+sources resolve Z unless a default source applies. Pull/supply defaults are
+strength-bearing, not unconditional values. Preserve scalar strengths; explicit
+vector continuous strengths reject. Reject trireg before storage collection,
+including undriven arrays, and dynamic net selectors. Keep disjoint constant
+uwire selections legal; overlapping drivers reject.
 
-## Subprograms, control flow and procedural drivers
+Fixed net arrays, selected ports and interfaces share canonical bits; array
+publication notifies array dependencies. True aliases flatten MSB-to-LSB, with
+ascending indexed-minus starts checked as base-width+1 before materialization.
+Retain self/duplicate/net-kind/cross-scope restrictions. Hierarchical/concatenated
+continuous targets use resolved sites, not function/task-output or procedural-net
+write paths.
 
-- Functions/tasks support recursion and defaults referencing earlier formals.
-  Capture each input once before lowering subsequent default reads. Fixed integral
-  arrays/structs/unions use exact-width activation payloads with recursive shape
-  and default metadata; automatic locals/returns remain independent, while
-  static storage persists. Composite output destinations are captured before
-  invocation. `ref` and `const ref` retain original leaf identities through
-  selected views and nested calls; never synthesize global cells for automatic
-  formals. Packed members nested in unpacked storage remain one vector owner.
-  Struct member defaults come from the owned type capture, and fixed declaration
-  initializer calls finish before SystemVerilog processes start.
-  Inline delay/wait-bearing tasks; reject recursive delay-bearing tasks and
-  task calls from functions. Per 1800-2009 §§6.21/13.4.2 and 1364-2001
-  §§10.2.3/10.3.1, static formals/locals/returns retain definition-wide storage;
-  input/inout copy-in occurs per call and output/inout copy-out at return.
-  Inlined timed static tasks use hidden model storage; automatic routines get
-  fresh per-call storage. Constant/provenance-supported local initializers run
-  once for static storage, per automatic call otherwise. Reject runtime-dependent
-  static initializers rather than evaluating on first call. NBAs may target
-  static packed storage, never automatic formals/locals or unpacked subprogram
-  storage. Resolve each explicit local qualifier: static-in-automatic persists,
-  automatic-in-static is per-call. Reject unavailable/ambiguous provenance;
-  never infer it from spelling or the enclosing routine.
-- Admitted chandle-returning functions and chandle inputs/locals/fields retain
-  `void *` through IR/C calls; static inputs use definition-wide object storage.
-  Output/inout/ref/const-ref aliases and bounded delayed tasks use typed native
-  ownership. Reject ports, packed containment, arithmetic, continuous/sensitivity
-  paths and unsupported timed/native captures; never encode pointers as integers.
-- Admitted string expressions, locals, returns, string/chandle addresses and
-  scalar string formals use typed native ownership in the structured emitter.
-  Automatic string NBA destinations, unsupported aggregate/continuous paths and
-  arbitrary native/shared captures remain rejected. Automatic string-key
-  `foreach` iterators are the bounded loop-scoped exception.
-- DPI-C imports use canonical `svdpi.h` thunks for scalar `bit`/`logic`/`reg`,
-  two-state integral atoms, real/shortreal, chandle and string formals. Preserve
-  owned C names and pure/context qualifiers. Missing/conflicting explicit
-  libraries or signatures fail before simulation; packed/open arrays, `ref`,
-  exports and context callbacks remain deferred.
-- Fork/join supports process bodies and legal detached `join_none` branches in
-  automatic packed subroutines. Owned activation frames release captures on
-  completion/cancellation. Reject blocking function joins, recursive timed
-  tasks, richer subroutine storage and cross-process `disable <label>;`.
-  The bounded process API supports `process::self()`, status/equality,
-  kill/suspend/resume/await and automatic/static handles; reject process
-  formals, arrays and broader class APIs.
-- Inline `for` locals are lexical packed/real storage with unique nested/shadow
-  names. `foreach` follows fixed-array declared dimension order, preserves
-  omitted dimensions, and supports dynamic arrays, queues and integral/string
-  associative keys. Break/continue targets the innermost source loop. Reject
-  NBAs outliving loop-local storage, nested resizable elements and string-
-  iterator captures. Packed/real captures retain each iteration's value in
-  typed owned frames. `tests/sim_loops.rs` compares optimizer modes.
-- `case (...) inside` evaluates its selector once into a temporary, preserves
-  first-match/default ordering, and accepts wildcard scalar items/inclusive
-  ranges (`tests/sim_wildcard_eq.rs`).
-- Event expressions compare successive values, not every operand change.
-  Packed edges use the LSB; real controls are any-change IEEE-bit comparisons
-  (signed zero wakes, identical NaN payloads do not). Evaluate `iff` at trigger
-  before resuming. Qualified named/mixed events register atomically. Evaluators
-  use owned IR; bounded automatic numeric expression-only/const-ref calls with
-  no side effects may be evaluated in owned frames, while array dependencies,
-  mutating or otherwise effectful callbacks and unsupported captures remain
-  rejected. See
-  `tests/sim_partial_features.rs`.
-- Force uses live evaluators with packed/real dependencies; procedural writes
-  remain beneath it and net slots keep updating. Release retains a variable's
-  forced value, resumes active PCA, or resolves current net drivers. Preserve
-  constant-selected net parts and packed-concat descriptors; reject variable
-  selects, arrays and automatic/local references. Re-force replaces the live
-  matching entry. Normal signal writes must wake `@(sig)`/wait observers.
-- Procedural `assign <variable> = expr;` / `deassign <variable>;` uses one
-  pre-scanned enable-guarded process per site. Deassign retains the last value
-  (`tests/sim_force.rs`). Reject subroutine assignments and RHS captures until
-  the guard owns an activation environment.
+Delayed contributions start X; genuinely driverless nets start Z. Inertial updates
+own one Active event per site/array element without suspending their evaluator.
+Compare pending contribution values, not resolved nets; unchanged values keep
+original deadlines, changed values cancel, return to current value cancels without
+replacement. Preserve full single/rise-fall/three-way delays and choose each
+changed bit's delay, taking minimum applicable endpoints for ambiguous transitions.
+Force overlays visible storage while ordinary writes/driver slots remain live;
+release retains variable value, resumes PCA or recomputes current net resolution.
+Re-force replaces a matching entry. Keep typed constant-selected/concat targets;
+reject unsupported variable selects, automatic/local captures and arrays.
+Procedural assign uses pre-scanned enable-guarded sites; deassign retains value.
+No subroutine/captured RHS admission without an owned activation environment.
 
-## Hierarchical references and output
+## Calls, loops and callbacks
 
-Resolved N-part paths (`top.u0.sig`) support expression/display/monitor reads
-and whole blocking/NBA writes, including collapsed inout drivers. Preserve
-Slang's typed hierarchical bit/part/indexed-part selections. Bit/indexed bases
-may be runtime integral values; part bounds and indexed widths must be static.
-Reject absent bounds/selectors rather than recovering names/source lines.
-Translate ascending/nonzero single packed dimensions and fixed-array element
-selects using owned bounds. Widen signed/X/Z-aware index arithmetic first;
-invalid bit writes do nothing. Partial out-of-range reads preserve valid bits,
-filling only missing bits with X. Regressions:
-`tests/fixtures/sim/partial_features/*select_ranges.sv`.
+Capture each input once before dependent defaults. Preserve exact fixed activation
+payloads; automatic locals/returns are independent, static formals/locals/returns
+persist definition-wide. Input/inout copy in per call, output/inout copy out at
+return; freeze composite destinations before invocation. Explicit local lifetimes
+apply individually (static-in-automatic and automatic-in-static). Static output
+formals are not implicitly reset/copied in. Static return storage is ordinary
+hidden model storage, not an opportunistic expression substitute.
 
-`$monitor`/`$monitoron`/`$monitoroff` report after Active/Inactive/NBA settling.
-Registration/enabling forces one report; only signal-valued arguments trigger
-later reports, and only the latest monitor is active. Reject deferred output
-from subprograms/captures until callbacks own their environment. `$strobe`
-prints once per timestep using post-NBA values, including NBA-triggered comb
-updates. `$write` omits the newline. `%d` respects two's-complement
-`is_signed`; unsized decimal negatives such as `-3` are signed.
+Ref/const-ref forward original leaves through selected views/nested calls; never
+invent globals for automatic formals. Inline delay/wait-bearing tasks; reject
+recursive timed tasks and task calls from functions. NBA targets must outlive
+publication: no automatic/loop-local or unsupported unpacked subprogram storage.
+String/chandle/native paths need typed owners/captures; chandles stay `void *`,
+never integers. Preserve explicit C names and pure/context qualifiers in canonical
+`svdpi.h` scalar thunks; reject missing/conflicting libraries/signatures before
+simulation and retain packed/open-array/ref/export/context-callback guards.
 
-`$dumpfile` selects `.vcd`/`.fst`; `$dumpvars`/`$dumpon`/`$dumpoff`/`$dumpall`/
-`$dumpflush`/`$dumplimit` lower through IR to asynchronous output. Preserve owned
-`$dumpvars` depth/source identities and match the catalog before the fixed
-header. Omit waveform runtime/libfst from models without controls. Reject
-`$dumpports`; warn/skip `$displayon`/`$displayoff`. Bounded module/generate
-SystemVerilog `string` declarations, assignment/copy, casts, display,
-formals/locals/returns and automatic packed-input returns are supported.
-Automatic string NBA destinations, general aggregate/continuous/sensitivity
-paths and unsupported native captures remain rejected. `atoreal` parses a
-decimal prefix; `realtoa` converts its real argument before replacement.
-Packed Verilog literals remain separate unsigned byte vectors (leftmost byte
-most significant). Decode owned bytes before width checks; empty is one zero
-byte. Assignments pad/truncate; explicitly packed parameters may initialize
-packed storage. See `tests/fixtures/sim/data_types_next/readme.md`.
+Ordinary forks use owned activation frames. Completion/cancellation releases
+captures; synchronous join may borrow live parent storage, detached joins snapshot
+admitted values. Keep blocking-function-join and unsupported capture/formal guards.
+Loop variables have unique lexical identities; foreach retains omitted dimensions,
+declared traversal order and signed endpoints. Break/continue target the innermost
+source loop. Function steps preserve list order, discarded-result ownership and
+copy-out; continue executes the step, break/return do not. Reject task/method/system
+steps not admitted by the function-step path.
 
-## Values and real numbers
+Numeric expression callbacks are automatic and effect-free, or static with a proof
+that every normal return ignores previous state. Analyze abrupt exits separately;
+loops consume their own break/continue, unmodeled flow fails closed. Private
+assignment-bearing arithmetic/stream leaves are allowed only after proving every
+target private; reject external refs, scheduler/net writes, timing, NBAs, static
+locals or unproved static returns. `EmptyArgument` wrappers do not bypass checks.
 
-Preserve X/Z distinction for display, literal equality, casez/casex (LRM
-12.5.1); Z behaves as X elsewhere (LRM 11.4.5), except identity/copy preserves
-it. Keep the backend supported-width rules above and runtime value contracts.
+Fixed reductions map immediate elements rather than recursively flattening rows;
+peel one unpacked dimension at a time. Preserve named/default iterator identity,
+signed 32-bit declared indices, enclosing reads and restored bindings even on
+failure. Reject iterator writes, illegal dimensions, unmapped nonintegral rows or
+nonintegral maps. Seed with the first mapped element to preserve singleton Z.
+Reverse freezes receiver coordinates once; sort rereads that live receiver at
+fixed coordinates for swaps, including singleton-selector side effects.
 
-Unbased fills (`'0/'1/'x/'z`) expand in context-determined arithmetic/bitwise,
-comparison, conditional, assignment and argument operands. Ordinary
-case/casez/casex uses maximum operand width and common signedness. Concat,
-replication and other self-determined positions remain one bit. Preserve the
-imported fill operation; never infer it from unrelated tokens. Context widening
-must retain wide div/mod/pow (`tests/sim_fill_literals.rs`).
+## Events, predicates and streams
 
-`==?`/`!=?` makes only RHS X/Z wildcard after common width/sign conversion.
-A known mismatch beats an unknown elsewhere; otherwise unmasked LHS X/Z → X.
-Reject reals. `$countones`, `$onehot`, `$onehot0`, `$isunknown` evaluate one
-exact-width packed argument once and retain optimizer/sensitivity dependencies.
-One-counts ignore X/Z; unknown query detects either. Counts are signed 32-bit,
-predicates unsigned one-bit; reject real arguments. Tests:
-`tests/sim_wildcard_eq.rs`, `tests/sim_bit_queries.rs`.
+Register event or-lists atomically with `llg_wait_any_events`, never sequential
+waits. True waits execute once immediately; false/X/Z constant waits suspend on
+empty dependencies without polling or blocking time advancement. Evaluated events
+compare expression values, not every operand change; qualifiers run at trigger.
+Packed edges use LSB, real any-change uses IEEE bits (signed-zero changes wake;
+identical NaN payloads do not). Copy supported automatic evaluator captures and
+transitively reject disallowed callback effects/captures. Named/mixed events retain
+identity and atomic registration. `->>` captures delay at issue and queues NBA;
+event/repeat timing uses an independent detached waiter, whose final trigger is
+still NBA. Detached repeat counts remain constant until capture is represented.
 
-B6 scalar `real`/`shortreal` uses companion `double` storage: constant init,
-real parameters, blocking/NBA, scalar ports, mixed arithmetic, relational/logical
-operations, ordinary real `case`, conditionals/casts, `if`/`while`/`for`/`wait`,
-comb sensitivity, any-change events, and `%f`/`%e`/`%g` width/precision.
-Shortreal assignments round through C `float`; real-to-packed rounds nearest,
-halves away from zero, up to the exclusive supported-width limit. Packed-to-real
-accepts every legal runtime width with X/Z positions zero. IEEE-bit event comparison observes signed-zero and
-changed NaN payloads, not identical NaNs. Consume typed conversions/resolved
-real parameters directly; never reconstruct comparisons from source text.
+Sequential predicates evaluate clauses once, left-to-right, continuing only on
+definite true. Preserve explicit branches/pattern bindings and short-circuit
+unreachable constants; never replace with `&&`. Matching sources/selectors are
+captured once; filters use per-item bindings, first-match/default order and exact
+tag guards. `inside` follows expression result types before storage roots, keeps
+casts, descends arrays to singulars (not struct members), evaluates selector and
+scalar/range endpoints once, and uses wildcard equality/inclusive comparisons.
 
-`$rtoi` truncates to signed 32-bit (nonfinite → X; finite overflow modulo
-2^32). `$itor` preserves packed width/sign; real arguments first round to
-signed 32-bit. Real-valued functions accept implicit packed-to-real coercion.
-`$realtobits`/`$bitstoreal` and `$shortrealtobits`/`$bitstoshortreal` reinterpret
-IEEE representations; inverse casts require exactly 64/32 bits, X/Z → zero.
-Typed parameters/constant initializers share these rules
-(`tests/sim_real_conversions.rs`). All 21 IEEE 1800-2009 Table 20-4 math
-functions use validated IR/C math, one numeric-real evaluation per argument,
-and C libm domain/nonfinite behavior. `$realtime` retains fractional module
-units (`tests/sim_partial_features/system_functions.rs`).
+Streams retain typed direction, slice size, operand order, unsigned result and
+component LHS widths. Snapshot RHS once. Runtime fixed-array `with` selectors are
+one-dimensional only, not multidimensional arrays or decorated nested concats;
+traverse declared storage order. Each target selector may observe earlier unpacked
+fields, unlike frozen positional targets. Wider fixed destinations left-align and
+zero-fill; oversize fixed sources diagnose, while longer unpack sources consume
+leftmost bits. Composite call/ref layouts use the same recursive descriptors.
+Memory views evaluate each dynamic selector once, retaining static strides and HDL
+bounds; invalid views fail before writes. Binary rank-one reads advance numeric
+addresses independently of declaration order. Packed `$fread` optional bounds
+are evaluated/disposed but their values are ignored; memory bounds remain active.
 
-Retain the real-context rejection boundary: arrays, function/task types,
-continuous assignments, monitor/strobe arguments, variable selects, force/release
-selects, `casez`/`casex`, `inside` selectors, repeat, bitwise/reduction/shift/
-concat/case-equality operations. Reject before C compilation;
-`tests/sim_real.rs` pins support and diagnostics.
+## Time, output and native services
 
-## Timescale
+Use owned nearest-module units/precision and typed `IrDelay`; round complete real
+delays once locally before checked scaling. Packed X/Z delay becomes zero, negative
+packed values convert to unsigned 64-bit time; reject nonfinite/negative real delays
+and overflow. `timescale.rs` owns tick representation; keep the runtime timescale-
+agnostic. `$time`/`$stime` round to calling units with halves upward; `$realtime`
+keeps fractions. `%t` carries physical units through runtime `$timeformat`;
+`$printtimescale` uses caller metadata. Frontend owns inheritance.
 
-- `IrStmt::InertialAssign` supports whole/selected packed and fixed-unpacked
-  drivers without suspending. Capture converted values in one cancelable
-  Active event per driver (per array element). Initialize delayed contributions
-  after defaults, including output/inout slots. Compare pending driver values,
-  not resolved nets. Choose transition-specific single/rise-fall/three-way
-  delays when scheduling; ambiguous X uses the minimum applicable endpoint.
-- Read unit/precision from the nearest owning Slang module. Scale delays by
-  `N * unit / design_precision` before `llg_wait_time`. `$time`/`$stime` use
-  `llg_time_scaled`, rounding to calling-module units with exact halves upward;
-  `$realtime` keeps fractions. `%t` converts that owning unit through design-wide
-  `$timeformat` units/precision/suffix/minimum width. `$printtimescale` prints
-  the caller's unit/precision; compilation-unit/declaration inheritance belongs
-  to the frontend.
-- Scheduler ticks use the finest design precision across modules (default
-  1ns/1ps without directives): 1 tick = design_precision ps. Runtime remains
-  timescale-agnostic and receives scaled ticks. Sub-picosecond precision still
-  clamps to 1 ps in this representation.
-- `core::db` preserves delay identity. Evaluate typed integer/real parameters,
-  casts, integer operations and real/time arithmetic without source spelling;
-  round the complete real delay locally before nonnegative 64-bit ticks.
-  Ordinary time literals keep Slang v11's unrounded module-scaled `real` value;
-  parameters/initializers share that constant path. Runtime `IrDelay` evaluates
-  once with owning unit/precision: packed X/Z → zero; negative packed values
-  convert to unsigned 64-bit time before checked scaling. Real delays round
-  once; reject nonfinite/negative real values and tick overflow. Tests:
-  `tests/sim_delay.rs`, `tests/sim_time_literals.rs`, `tests/sim_time_values.rs`.
+Real/shortreal use typed doubles and f32 rounding at shortreal writes. Real-to-packed
+rounds nearest, ties away; packed-to-real zeroes X/Z positions at actual width.
+`$rtoi` truncates to signed 32-bit (nonfinite X, finite overflow modulo 2^32);
+`$itor` preserves packed width/sign and rounds real input through signed 32-bit.
+IEEE bit-reinterpretation inverses require 64/32 bits and zero X/Z. Typed constants
+share conversions. Validate all 21 Table 20-4 math functions, evaluate each argument
+once and retain libm domain/nonfinite behavior. Do not infer real expressions from
+source or bypass context-specific rejection guards.
 
-## Unpacked arrays and memories
+Parse display formats during lowering; `%d` retains signedness and `$write` omits
+newline. Monitors/strobes run after settled Active/Inactive/NBA work; latest monitor
+only, registration/enabling forces a report, time-only arguments do not retrigger.
+Deferred callbacks need owned environments. Waveform controls preserve source/depth
+identity against the fixed catalog; omit waveform/libfst when unused, reject
+`$dumpports`, warn/skip `$displayon`/`$displayoff`. Packed string literals remain
+unsigned MSB-first byte vectors (empty is one zero byte), with normal pad/truncate;
+SystemVerilog strings remain separate native owners.
 
-- Model-global arrays flatten to `sv4_t G_<path>_<name>[N]`, where `N` multiplies
-  each dimension's `|left - right| + 1`. Fixed activation values use one owned
-  declaration-order payload. Defaults preserve captured state domains and member
-  initializers; ordinary nets start Z and resolved cells retain pull/supply defaults.
-  Fixed integral initializer expressions, including zero-time calls, execute in
-  the typed declaration-initialization phase before SystemVerilog processes.
-- Support reads/writes of `mem[i]`, `a[i][j]`, `mem[i][3:0]`, `mem[i][2]`,
-  and `mem[i][base +: width]`. Indexed widths are constant; normalize runtime
-  base/direction against packed bounds. Row-major order makes the **leftmost
-  dimension slowest**; `[255:0]` maps `left` to offset zero.
-- Out-of-range/X/Z indices read the element default (X or two-state zero) and
-  do not write. `sv4_to_index_i64` retains sign, rejects high-limb overflow,
-  checks bounds before offset subtraction, then computes flat addresses.
-  Partial indexing and constant unpacked slices retain their remaining dimensions.
-  Reject unresolved bounds and packed payload widths at or beyond the exclusive
-  backend limit (`LLG_MAX_WIDTH + 1`).
-- NBAs capture address/RHS at issue. Bit/part/indexed masks merge into current
-  storage at commit, preserving disjoint/intervening writes; packed selections
-  and constant/runtime-delay NBAs share this rule. Future NBAs outlive the
-  issuer without suspension. Blocking delayed assignment captures then
-  suspends; real/shortreal values use local doubles before assignment conversion.
-- Array reads retain exact-element or contents dependencies plus selector reads.
-  `always_comb`/`@*` must wake on the underlying cells, including aggregate value
-  arguments and reference-port views. Preserve static member prefixes when
-  excluding a process's written expressions from implicit sensitivity.
-
-## Structures and unions
-
-Packed untagged structs/unions are packed values. Union members overlay bit
-zero, require equal widths, and preserve named member signedness/two-state
-conversion. Reject tagged unions.
-
-Fixed integral unpacked structures and untagged unions use owned recursive
-layouts across variables, arrays, subprogram values and module value/ref ports.
-Struct leaves retain state-specific conversions; untagged unions share one
-maximum-width payload and preserve common initial struct sequences. Fixed
-aggregate nets use a packed backing owner with typed member projections.
-Patterns preserve nominal member/type keys and recursive default distribution;
-shared source nodes evaluate once before fan-out. Explicit member defaults are
-part of captured type metadata. Keep unsupported native/resizable combinations
-and tagged unions explicit; never infer aggregate identity from a display name.
+Concurrent assertions use dedicated instances, immutable sampled predicates,
+explicit clocks/disable/control metadata, per-attempt/thread locals and ordered
+match-item effects. Preserve Slang actual/default expansion; reject conflicting
+clocks, unsupported temporal/cross-clock forms or unrepresented copy-out. Deferred
+assertions retain issue-time values and Reactive actions under the single-call
+contract, rejecting unowned automatic/dynamic refs or timing/control actions.
+Mailboxes preserve typed copy/identity semantics and delegate waits/cancellation to
+runtime queues. Container kinds keep distinct storage, key conversion, notification
+and lifetime rules; another container's admitted operation is not a fallback.

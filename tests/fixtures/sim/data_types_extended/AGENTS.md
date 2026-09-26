@@ -25,7 +25,6 @@ Inventory:
 - `max_width_probe.sv`: acceptance at 1,048,575 bits; 1,048,576-bit variants
   define the exclusive rejection boundary.
 
-Portable functional fixtures were independently run with Icarus Verilog 12.0;
-Icarus is a reference check, not a dependency. Normative anchors verified in
-the local specification indexes are IEEE 1364-2001 §§3.7, 4.1, and 7.13 and
+Icarus is an optional reference check, not a dependency. Local specification
+anchors are IEEE 1364-2001 §§3.7, 4.1, and 7.13 and
 IEEE 1800-2009 §§6.11, 6.24.1, 7.2.1, 7.4.1, and 11.4–11.8.

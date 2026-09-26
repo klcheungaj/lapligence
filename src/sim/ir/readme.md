@@ -1,122 +1,94 @@
 # Typed executable operations
 
-- **Purpose:** define typed storage, expressions, lvalues and operations used by
-  executable lowering. Process scheduling ownership lives in
-  `sim::execution`; frontend meaning and synthesis classification live in
-  `sim::semantic`.
-- **Validation:** check table references, widths, constants, array shapes, and
-  process registrations at lowering and optimization boundaries.
-- **Ownership:** IR tables and representation fields are implementation
-  details; public constructors and accessors enforce local invariants.
-- **Cross-table checks:** `IrModel::validate` and detached-node validation run
-  before backend table indexing.
+The IR represents typed storage, expressions, lvalues, and operations. Frontend
+meaning and synthesis classification belong to `sim::semantic`; scheduling
+ownership belongs to `sim::execution`. Constructors/accessors enforce local
+invariants; `IrModel::validate` and detached-node validation check references,
+widths, constants, shapes, and registrations before backend indexing. Recursive
+validation covers each variant and its cross-table constraints.
 
-Recursive validation covers each IR variant and owns new cross-structure
-invariants.
+## Ownership and source organization
 
-`IrExprKind::StructMux` retains direct fixed unpacked-structure member
-boundaries and default-uninitialized member constants while its operands use
-the existing flattened packed payload. Validation checks disjoint complete
-coverage; ownership and optimization consume those boundaries without changing
-ordinary packed mux or fixed-array `ArrayMux` semantics.
+`ExecutionModel::lower` moves staging process bodies into executable blocks.
+Staging entries retain names, helpers, spawn/process/program identities, and
+write dependencies because functions, storage, and calls share their checked
+tables. Concurrent assertions remain in `IrModel::assertions`, with validated
+clock/disable sources, sampled predicates, overlap modes, labels, and Reactive
+action identities rather than ordinary procedural blocks.
 
-`IrModel` is the staging owner used while converting semantic database nodes.
-`ExecutionModel::lower` moves every process body out of that staging table and
-into executable basic blocks. The staging process entries retain names,
-helpers, spawn identity, process kind, program identity, and typed write
-dependencies because functions, storage, and call references share their
-checked index tables.
-Concurrent assertion instances stay in a separate `IrModel::assertions` table;
-their clock/disable sources, sampled predicate expressions, overlap mode,
-labels, and Reactive action identities are validated without becoming ordinary
-procedural blocks.
+`ir.rs` owns `IrModel` and re-exports expression, lvalue, call, statement, event,
+assertion, process, function, initialization, storage, and VPI domains. Containers
+and objects remain separate. `validate.rs` supplies the shared context for
+`validate/` domain checks. See the [source map](../../../docs/source_layout.md).
 
-Variable aliases identify canonical storage explicitly. Event-evaluation helpers,
-typed evaluator contexts, read dependencies, delayed NBA operations, deferred
-immediate-assertion action frames and real math functions are validated before
-optimization/emission; deferred updates remain distinct from suspension.
-Evaluator contexts and assertion actions carry activation-owned storage
-identities rather than transient C addresses.
-Packed bit writes through subroutine references retain a typed index on the
-reference lvalue. Validation, operand traversal, optimization and stack sizing
-include that index. Unpacked member/element references can forward selected
-views; frontend-illegal packed bit/part reference actuals remain rejected.
-True-net aliases retain bit-level bindings to canonical resolved net groups so
-optimized storage pruning cannot disconnect alias reads, dependencies, force/
-release descriptors, or waveform observations.
-`IrInitialization` keeps declaration identity, `StorageLifetime`, source origin,
-and the Verilog/SystemVerilog execution phase attached to scalar and fixed
-composite static initializers. Fixed targets retain checked persistent lvalues. Automatic declaration values remain activation-local operations;
-static local storage is never initialized lazily by a first subprogram call.
-Procedural delays retain either constant ticks or a typed runtime expression
-with module-unit and precision scales. Validation, effect analysis, optimization
-and stack sizing traverse that expression like other statement operands.
-Inertial driver operations capture packed values for cancelable active-region
-updates; their validation requires persistent whole-driver storage.
+## Storage, views, and delayed work
 
-## Source organization
+Variable aliases identify canonical storage. True-net aliases retain bit-level
+resolved-group bindings through pruning, including read dependencies,
+force/release descriptors, and waveform observations. Net-array cells retain
+checked bounds and electrical target widths.
 
-`ir.rs` retains `IrModel` and re-exports the existing operation API from domain
-files for expressions, lvalues, calls, statements, events, assertions,
-processes, functions, initialization, storage and VPI. Existing container and
-object domains remain separate. `validate.rs` owns the validation context;
-its `validate/` children check individual domains against that shared context.
+Fixed formals carry recursive shapes and exact-width payloads. Union sizes use
+the largest member; structs/arrays follow declaration order. Defaults preserve
+unpacked leaf state domains and explicit member initializers. `StructMux`
+retains immediate unpacked-member boundaries and default-uninitialized constants
+over a flattened payload; validation requires disjoint complete coverage without
+changing packed mux or `ArrayMux` semantics.
 
-See [the source map](../../../docs/source_layout.md).
+Reference bit writes carry typed indices through validation, traversal,
+optimization, and stack sizing. Unpacked member/element references can forward
+selected views; frontend-illegal packed bit/part reference actuals remain rejected.
+
+`IrInitialization` retains declaration identity, lifetime, origin, execution
+phase, and checked persistent targets for static scalar/fixed composites.
+Automatic initialization stays activation-local; static locals are not lazily
+initialized on first call.
+
+Event evaluators, contexts, read dependencies, delayed NBAs, deferred assertion
+actions, and real math functions are validated before optimization/emission.
+Contexts/actions use activation-owned storage identities, not transient C
+addresses. Deferred updates remain distinct from suspension. Procedural delays
+hold constant ticks or typed expressions with unit/precision scales, traversed
+by validation, effects, optimization, and stack sizing. Cancelable inertial
+updates capture packed values and require persistent whole-driver storage.
 
 ## Bounded packed selection chains
 
-`IrElemSel::PackedChain(Vec<IrPackedSelect>)` describes successive packed slices
-inside a fixed-array element. Each step contains a typed integral physical-LSB
-base and a positive result width. Its base is relative to the immediately
-preceding value; its width includes any remaining element stride. Bases may be
-negative, unknown, or outside the selected value. These are language-level
-X/no-write cases, not invalid IR.
+`IrElemSel::PackedChain(Vec<IrPackedSelect>)` stores successive fixed-array-element
+slices. Each step has a typed integral physical-LSB base relative to the preceding
+value and a positive result width including remaining element stride. Negative,
+unknown, or out-of-range bases represent X/no-write behavior, not malformed IR.
 
-Validation rejects empty chains, real selectors/elements, zero step widths and
-read results whose unsigned width disagrees with the final step. It also checks
-all nested expression references and includes their widths in capacity accounting.
-The `IrElemSel::expressions` and `expressions_mut` visitors cover every step;
-optimization, effects/dependency discovery, address snapshots and stack sizing
-must retain this traversal. Folding a base expression must not erase intermediate
-bounds or merge adjacent steps. Runtime clipping is defined by the selected value
-at each step, even if the root storage has further accessible bits.
-
-Fixed formals retain recursive shape metadata and an exact-width payload. Union
-shapes use their maximum member width; struct/array shapes use declaration
-order. Default constants preserve each unpacked leaf's state domain and explicit
-member initializer. Net arrays bind cells to canonical resolved signal/alias
-storage; validators check the cell bounds and electrical target width.
+Validation rejects empty chains, real selectors/elements, zero widths, and read
+results not matching the final unsigned width. Nested expressions participate in
+reference checks and capacity accounting. Both expression visitors expose every
+step to optimization, dependency discovery, address snapshots, and stack sizing.
+Folding cannot merge steps or erase intermediate bounds: clipping is relative to
+each selected value, even when the root contains more bits.
 
 ## Fixed-array reductions
 
-`fixed_array_reductions.rs` represents a nonempty fold over immediate unpacked
-array elements. `Array` sources reference rank-one model storage; `Value` sources
-hold a declaration-order payload expression. The map binds an item and signed
-32-bit declared index lexically, while retaining enclosing local/formal reads.
-Nested sources evaluate before the inner map shadows its bindings.
+`fixed_array_reductions.rs` models nonempty folds over immediate unpacked elements.
+`Array` sources reference rank-one storage; `Value` sources hold declaration-order
+payloads. Maps bind an item and signed 32-bit declared index lexically, preserving
+enclosing locals/formals. Nested sources evaluate before inner bindings shadow them.
 
-Validation checks source extent, element/result widths, map result tags and
-bound iterator read shapes. Capacity scans include the materialized index.
-Traversal, storage-read collection, execution effects and stack accounting visit
-both payload and map expressions. Optimization may simplify children but must
-not promote destination widths into the fold or remove receiver/map effects.
-First-element seeding is intentional: an arithmetic identity would corrupt
-singleton Z values. Array methods do not become resizable storage operations.
+Validation checks extent, element/result widths, map tags, and iterator shapes.
+Capacity includes the materialized index; traversal, reads, effects, and stack
+accounting cover payload and map expressions. Optimization may simplify children,
+not promote destination widths or discard receiver/map effects. Seeding from the
+first element preserves singleton Z values. Folds do not imply resizable storage.
 
-## Sequential predicates
+## Sequential predicates and patterns
 
-`IrExprKind::Predicate` contains a nonempty source-ordered sequence with an
-unsigned one-bit result and no contextual fill. Convert each reached clause to
-truth across its complete value (real nonzero, or packed reduction-OR). Continue
-only after definite true; otherwise return zero or X without evaluating later
-clauses. In particular this is not `LogAnd`. Validation, capacity, effects,
-operand traversal, storage reads and stack budgets must still inspect every
-potential clause. This IR carries no pattern bindings or source DB references.
+`IrExprKind::Predicate` is a nonempty ordered sequence producing unsigned one-bit
+truth without contextual fill. Each reached clause uses its entire value: real
+nonzero or packed reduction-OR. Only definite true advances; false/X returns
+zero/X without evaluating later clauses. This is not `LogAnd`. Validation,
+capacity, effects, traversal, reads, and stack budgets inspect every potential
+clause. The IR carries no pattern bindings or source DB references.
 
-`IrExprKind::Pattern` carries exact, `casez` or `casex` matching mode along with
-its owned value, optional constant or binding, and recursive structure/tagged
-checks. Tagged discriminant checks are marked exact so a surrounding `casez`
-or `casex` mode applies only to payload constants. Pattern-case statements use
-a captured selector `LocalRead`, so each item sees the same selector value
-while its filter remains a source-ordered logical continuation.
+`IrExprKind::Pattern` owns its value, optional constant/binding, recursive
+structure/tagged checks, and exact/`casez`/`casex` mode. Tag discriminants always
+match exactly; wildcard modes affect payload constants only. Pattern cases
+capture one selector `LocalRead` shared by all items, with ordered filters.

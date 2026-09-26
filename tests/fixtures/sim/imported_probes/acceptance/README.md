@@ -22,5 +22,5 @@ The remaining eight cases are already covered by active feature suites:
 | `Release_Variable_Retains_Forced_Value` | `force/Release_Variable_Retains_Forced_Value.sv` |
 | `Time_Literal_Rounding_2009` | `partial_features/time_literal_rounding_2009.sv` |
 
-The runner requires CMake and uses separate temporary child directories for
-optimized and `--no-opt` execution. See `tests/AGENTS.md` for its contract.
+The runner requires CMake and isolated optimizer-mode directories;
+see [test methodology](../../../../readme.md).

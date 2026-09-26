@@ -28,21 +28,18 @@ native traversal or I/O.
   in edge-sensitive/initial/final processes and in function/task bodies.
   Skips statements already in the incomplete-case domain so one location
   is never reported by both rules.
-- `comparison_width.rs` — `comparison-width-mismatch`: comparisons (`==`,
-  `!=`, `<`, `<=`, `>`, `>=`, `===`, `!==`) whose operands both have known
-  self-determined widths that differ; skips when either width is unknown.
+- `comparison_width.rs` — `comparison-width-mismatch`: `==`, `!=`, `<`, `<=`,
+  `>`, `>=`, `===`, `!==` with differing known self-determined operand widths.
 - `unconnected_port.rs` — `unconnected-port`: flags omitted, positional-gap,
   and explicitly open child ports. Resolved expressions and declaration
   defaults count as connected; top ports are external boundaries. Interface
   connections refer to actual instances, without frontend-generated copies.
-- `mixed_assign.rs` — `mixed-assignments`: one Error per process whose
-  statement body contains BOTH blocking (`=`) and non-blocking (`<=`)
-  assignments ([`StmtKind::Assign`] only; proc-cont assign, force/release
-  and declaration initializers are ignored), positioned at the process
-  keyword.  Deliberate overlap with `blocking-in-always_ff` /
-  `nba-in-always_comb` (kind-vs-block-type mismatches): no suppression,
-  the diagnoses differ and this rule also covers block kinds the other
-  two never check (plain level-sensitive always, initial/final).
+- `mixed_assign.rs` — `mixed-assignments`: one Error at the process keyword
+  when its body contains both blocking and nonblocking `StmtKind::Assign`.
+  Ignore procedural continuous assignments, force/release and declaration
+  initializers. Do not suppress overlap with `blocking-in-always_ff` or
+  `nba-in-always_comb`: these diagnose different conditions, and this rule
+  also covers plain level-sensitive always and initial/final processes.
 - `undriven.rs` — `undriven-signal`: flags a declared signal that is read
   but has no active procedural/continuous driver, declaration initializer,
   connected output/inout flow, or primitive output terminal. Top-level

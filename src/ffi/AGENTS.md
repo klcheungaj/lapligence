@@ -1,87 +1,73 @@
-# ffi — Rust ↔ native boundary
+# Safe native boundary
 
-## Purpose
+Only `src/ffi/` may contain Rust `unsafe`. Keep platform/native primitives here,
+expose stable safe ownership APIs, and explain every unsafe operation's soundness.
+Each module denies `clippy::undocumented_unsafe_blocks` and
+`unsafe_op_in_unsafe_fn`; explain validity, lifetime, alignment, initialization
+and ownership at every unsafe operation. No panic may cross C. Native owners
+remain on the calling thread; do not implement `Send` or `Sync`.
 
-Only this directory calls native APIs:
+## Slang snapshot ABI
 
-- `slang.rs` provides the safe, blocking Slang compilation API and converts the versioned C ABI
-  snapshot into owned Rust data.
-- `process_memory.rs` samples the process's physical footprint on Linux, macOS, and Windows for
-  the shared memory-limit safeguard.
+- Mirror `slang_c_api.h` layouts with `#[repr(C)]`. Validate ABI version, tags,
+  known flags, reserved fields, pointer/length pairs, IDs, ranges and table windows.
+  Use module error types, preserving native status/message; malformed output is
+  `InvalidNativeData`, distinct from valid unsupported HDL.
+- ABI v4 `CompileRequest` borrows sources/options until blocking
+  `llg_slang_compile` returns, distinguishing units from include-only buffers.
+  Library-unit recovery uses the same buffers/limits; reject unknown request flags.
+  Cache keys are lexically normalized; include directories are lookup prefixes,
+  not permission to read the filesystem.
+- Bound defines, tops, includes, parameter overrides, source bytes, diagnostics,
+  value bits, output bytes, semantic records/edges and tokens on both ABI sides
+  before/during allocation. OK transfers one unique snapshot owner; non-OK an
+  error owner. Destroy unexpected snapshots on failure; both destructors accept
+  null. HDL errors set snapshot `has_errors`; argument/resource/setup/exception/
+  bridge failures return `SlangError`. Validate and copy snapshot/error views
+  before RAII destruction, including early returns. Expose no native pointer
+  or native-storage lifetime.
+- Preserve paired value/unknown limbs, distinct real/shortreal widths and
+  arbitrary-byte SystemVerilog strings; every other ABI string is UTF-8.
+  Source ranges use admitted file IDs and zero-based half-open byte offsets;
+  absent IDs use the invalid-ID sentinel. Kinds/operations/subkinds/flags/roles/
+  lexical categories are stable repository codes, never Slang enums or pointers.
+- Check sequence repetition/ranges and `SequenceConcat` cycle ranges; convert
+  unbounded `UINT32_MAX` maxima to `Option<u32>`, rejecting invalid ranges/flags/
+  kinds. Validate optional member-default constant IDs; fixed-array defaults
+  cross as exact flattened bitstreams. Retain declaration-order violations in
+  compilation-unit lexical uses, including macro expansions.
+- Keep static `#[link]` metadata for wrapper, Slang and fmt. The library and every
+  final musl target must retain the required native archives/wrapping.
+- Bound UDP semantic nodes/edges; reject an edge budget above 16 million. Each
+  row owns exactly one valid window. Wildcard indexing has snapshot-wide ceilings
+  of 65,536 assignments and 8 MiB key bytes; check expanded bucket/key costs before
+  allocation.
+- Lexical flag bit 3 (`LLG_SLANG_LEXICAL_DIRECTIVE`, owned `is_directive`)
+  identifies directive text, including unexpanded macro bodies, independently of
+  expanded/skipped state. Edition checks must not treat unused bodies as source. Accept only the four defined bits and reject reserved bits; update both
+  ABI sides together.
+- `ConditionPattern` (`LLG_SLANG_EDGE_CONDITION_PATTERN`, role 38) pairs by index
+  with `Condition`; `THEN`/`ELSE` are separate branch roles at index zero. Extending the
+  semantic tag set does not change pointer/layout contracts. DB import validates
+  these relationships; capture must not turn a pattern match into a Boolean test.
 
-The native Slang implementation and public C declarations live under
-[`../wrapper/`](../wrapper/AGENTS.md). Core, simulator, LSP, and binary code must use the safe
-APIs from this directory and must not call the C ABI.
+## Platform and filesystem calls
 
-## Safety boundary
+`process_memory.rs` reads Linux resident pages from `/proc/self/statm`, macOS
+`task_info` and Windows `GetProcessMemoryInfo`. Validate handles/structures;
+footprint multiplication saturates at `u64::MAX`. Preserve platform error sources.
+Unsupported platforms return a typed error, never a misleading zero footprint.
+Use checked/saturating conversions; shared policy remains in `memory_limit.rs`.
 
-- This is the only source directory allowed to contain Rust `unsafe`. Enforcement: `grep -rn
-  "unsafe" src --include=*.rs | grep -v src/ffi` must be empty.
-- Shared layouts use `#[repr(C)]`; declarations must exactly mirror `src/wrapper/slang_c_api.h`.
-  Treat any ABI version, enum tag, flag, reserved field, pointer, length, ID, range, or table
-  window mismatch as invalid native data.
-- Each module denies `clippy::undocumented_unsafe_blocks` and `unsafe_op_in_unsafe_fn`. Document
-  the validity, lifetime, alignment, initialization, and ownership basis at every unsafe
-  operation.
-- Safe APIs never expose native pointers or a lifetime tied to native storage. Do not add `Send`
-  or `Sync` implementations for native owners. The compile call and snapshot decoding remain on
-  the calling thread.
-- Fallible APIs use their module error types. Preserve native failure status and message where
-  available; malformed native output is a separate `InvalidNativeData` failure.
+`secure_fs` admits paths through owned directory handles and identity checks.
+Preserve capability-relative containment and race/symlink/reparse/hardlink
+protections rather than reverting to path-check-then-open operations.
+See [patch preparation](../../patches/README.md) for authenticated native inputs
+and staging guarantees.
 
-## Slang ABI v4 contract
+## Tests
 
-- `CompileRequest` borrows admitted source buffers and typed options for one blocking
-  `llg_slang_compile` call. Input arrays and strings remain alive until it returns. Sources are
-  explicitly compilation units or include-only buffers.
-- The library-unit request flag keeps the same admitted buffers and limits but requests a
-  declaration-only snapshot for bounded language-server recovery. Unknown request flags remain
-  invalid ABI input.
-- The native source manager performs cache-only reads with lexical path normalization. Include
-  directories define lookup prefixes over admitted buffers; they do not authorize filesystem
-  reads.
-- Defines, top modules, include directories, parameter overrides, source bytes, diagnostics,
-  value bits, output bytes, semantic records, edges, and lexical tokens are bounded before or
-  during allocation on both sides of the ABI.
-- An OK native status transfers one unique opaque snapshot owner. Non-OK status transfers an
-  error owner and must not leak an unexpected snapshot. Both destroy functions accept null.
-- HDL compilation errors are represented by a successful snapshot whose `has_errors()` flag is
-  set. Argument, resource, frontend setup, exception, and bridge failures return `SlangError`.
-- `llg_slang_snapshot_view` borrows arrays and strings from the snapshot. Rust validates every
-  table and copies all records before the RAII owner calls `llg_slang_snapshot_destroy`. Error
-  views follow the same copy-before-drop rule.
-- Assertion sequence records carry checked repetition/range metadata and `SequenceConcat` edges
-  carry checked cycle-delay ranges. Unbounded maxima use the ABI-owned `UINT32_MAX` sentinel and
-  are converted to `Option<u32>` before leaving this FFI module; invalid ranges, flags, and
-  repetition kinds are rejected as `InvalidNativeData`.
-- Preserve the unconditional static link attributes for `llg_slang_wrapper`, `svlang`, and
-  `fmt`; they carry the native archives through the Rust library target.
-
-Aggregate member records carry an optional checked constant-table ID for their
-explicit default initializer. Fixed array defaults are flattened to exact
-bitstream constants before crossing the ABI. Compilation-unit variable lexical
-uses retain declaration-order violations, including macro-expanded references,
-for the owned edition policy. Unknown lexical flag bits remain invalid.
-
-The owned snapshot contains admitted files; compiler and analysis diagnostics with related
-locations; elaborated instances, parameters, types, and constant values; a flat semantic
-node/edge graph; and lexical tokens linked to semantic records where Slang supplies a
-relationship. Semantic kinds, operations, subkinds, flags, edge roles, and lexical categories
-are repository-owned stable codes. Slang's C++ enum values and AST pointers never cross the ABI.
-
-Source ranges use admitted file IDs and zero-based half-open byte offsets. Absent IDs use the
-ABI's invalid-ID sentinel. Four-state integers use paired value/unknown limb arrays; real and
-short-real retain distinct widths; SystemVerilog string constants remain byte vectors because
-their content need not be UTF-8. All other ABI strings must decode as UTF-8.
-
-## Process-memory contract
-
-- Linux reads resident pages from `/proc/self/statm`; macOS uses `task_info`; Windows uses
-  `GetProcessMemoryInfo`.
-- Platform handles and returned structures are validated before conversion. Footprint
-  multiplication saturates at `u64::MAX`; errors retain the platform source where possible.
-- Unsupported platforms return a typed error. They must not silently report a zero footprint,
-  because that would disable the shared safeguard.
-
-For memory-limit policy and platform validation, read [`../AGENTS.md`](../AGENTS.md). For native
-ownership and exception handling, read [`../wrapper/AGENTS.md`](../wrapper/AGENTS.md).
+Exercise layout/tag validation, ownership on every error path, budget boundaries,
+exact values and copy-before-release. Prefer Rust-side FFI tests. Coordinate
+capture changes with [wrapper](../wrapper/AGENTS.md) and
+[owned DB](../core/AGENTS.md); consumers must not add independent native traversals.

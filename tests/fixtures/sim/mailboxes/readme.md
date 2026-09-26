@@ -6,5 +6,4 @@ copy semantics, and class-handle identity; `blocking.sv` checks producer and
 consumer waiter order plus non-consuming peeks; `cancellation.sv` checks
 `disable fork` cleanup; `typed_values.sv` checks four-state, real, shortreal,
 typedef, and enum elements; and `locals.sv` checks nested and automatic local
-mailbox storage. `tests/sim_mailboxes.rs` runs each fixture with and without
-optimization and compares exact output.
+mailbox storage. `tests/sim_mailboxes.rs` runs each fixture in both optimizer modes and compares exact output.

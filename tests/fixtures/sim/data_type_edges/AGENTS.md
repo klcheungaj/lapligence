@@ -1,7 +1,6 @@
 # Datatype edge fixture contracts
 
-These self-checking fixtures target IEEE 1800-2009 datatype boundaries. The
-Rust harness runs applicable cases with optimization disabled and enabled.
+These self-checking IEEE 1800-2009 boundaries run in both applicable optimizer modes.
 
 The edge campaign covers signed and unsigned indices, real conversions,
 two-state subprogram and aggregate storage, enum defaults, numeric size-cast

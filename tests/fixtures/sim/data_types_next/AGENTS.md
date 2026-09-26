@@ -1,9 +1,8 @@
 # Next-phase datatype fixture contracts
 
-`sim_data_types_next.rs` runs each fixture in optimized and unoptimized models
-and requires its exact `PASS` marker. The bounded inventory has positive
-focused cases for static initialization and mixed subprogram lifetimes, plus
-one vector-strength rejection.
+`sim_data_types_next.rs` requires exact `PASS` markers in both optimizer modes.
+Keep positive static-initialization/mixed-lifetime cases separate from the
+vector-strength rejection; this is bounded coverage.
 
 Inventory:
 

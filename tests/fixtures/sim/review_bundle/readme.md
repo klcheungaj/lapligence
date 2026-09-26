@@ -52,5 +52,5 @@ selector and source before the NBA commits.
 `reverse()`, `sort() with (...)`, and `rsort() with (...)` move complete rows,
 including record fields outside the comparison key. The companion
 `tests/sim_fixed_ordering_review.rs` runs it and the two held-out R07 record
-witnesses through `llg` with and without optimization. It also checks that a
+witnesses through `llg` in both optimizer modes. It also checks that a
 record sort without a legal integral comparison key is rejected.

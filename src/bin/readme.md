@@ -1,17 +1,12 @@
 # Executables
 
-- Purpose: keep argument parsing, transport wiring, and presentation thin;
-  reusable processing lives in the library.
+Binaries keep CLI/transport/presentation thin and reuse the core, FFI and simulator
+libraries. LSP dependencies remain behind `lsp`.
 
-- `llg`: simulator driver and compile/lint/build/run presentation.
-- `llg_ls`: feature-gated tower-lsp stdio server; see
-  [llg_ls/readme.md](llg_ls/readme.md).
-- `elab_check`: owned semantic-database and instance-tree checker.
-- `helloslang`, `helloworld`, `llg_demo`: Slang snapshot demonstrations.
+- `llg`: compile, lint, build and run simulations.
+- [`llg_ls`](llg_ls/readme.md): feature-gated tower-lsp stdio server.
+- `elab_check`: owned DB and instance-tree checker.
+- `helloslang`, `helloworld`, `llg_demo`: Slang snapshot demos.
 
-Both `llg` and `llg_ls` support `--help` (`-h`) and `--version` (`-V`).
-The version is the package version from `Cargo.toml`. These commands print
-to stdout and exit without compiling sources or starting the language server.
-
-- Boundary: binaries use the shared core/FFI/simulator libraries; LSP-specific
-  dependencies remain behind the `lsp` feature.
+`llg`/`llg_ls` help (`--help`/`-h`) and version (`--version`/`-V`) print to stdout
+and exit without compilation/serving. Versions come from Cargo.toml.
