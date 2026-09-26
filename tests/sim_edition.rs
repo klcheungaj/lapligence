@@ -166,7 +166,7 @@ fn selected_edition_matrix_rejects_single_fault_2001_and_later_builtin_fixtures(
 }
 
 #[test]
-fn begin_keywords_does_not_change_the_selected_global_edition() {
+fn begin_keywords_is_rejected_without_changing_the_selected_global_edition() {
     let output = compile::compile(&CompileOpts {
         sources: vec![OwnedSource::compilation_unit(
             "begin-keywords.sv",
@@ -177,7 +177,13 @@ fn begin_keywords_does_not_change_the_selected_global_edition() {
         ..CompileOpts::default()
     })
     .expect("bridge compile");
-    assert!(!output.snapshot.has_errors(), "{:?}", output.diagnostics);
+    assert!(
+        output.diagnostics.iter().any(|diag| diag
+            .message
+            .contains("`begin_keywords` is not available in IEEE 2001")),
+        "{:?}",
+        output.diagnostics
+    );
     assert_eq!(output.snapshot.edition(), LanguageEdition::Verilog2001);
     let database = Db::from_slang(&output.snapshot).expect("owned database");
     assert_eq!(database.edition(), LanguageEdition::Verilog2001);

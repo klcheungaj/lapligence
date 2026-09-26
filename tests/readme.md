@@ -65,6 +65,7 @@ requirements above apply without repeating them for each suite.
 | Build and safeguards | `sim_cmake`, `cli_info`, `sim_memory_guard`, `support_harness`, `emit_decoupling`: CMake/generator failures, source cleanup, early CLI exits, memory limits, timeout trees, CWD recovery and frontend-independent emission. |
 | Native components | `runtime_values`, `runtime_random`, `runtime_file_io`, `runtime_boundaries`, `runtime_value_storage`: direct runtime probes, independent of HDL lowering. |
 | Integrated selected profile | `sim_syn038_ledger`, pairwise suites and `sim_syn039_acceptance`; [ledger](syn038_coverage_ledger.md), [integrated fixtures](fixtures/sim/syn039_acceptance/readme.md). |
+| Compiler directives | `sim_directive_effects`, `sim_syn017_directive_effects`, `sim_edition` and `sim_syn038_ledger`; [SYN-017 matrix](fixtures/sim/syn017_directives/readme.md) covers both editions, both optimizer modes, preprocessing into execution, unit state and strict older-edition gates. |
 
 ### Selected-profile qualifications
 
@@ -78,7 +79,7 @@ requirements above apply without repeating them for each suite.
   checks fixed casts, ref projections, storage-order selectors, alignment and
   runtime oversize rejection; native preflight checks do not replace this suite.
 - [SYN-016 elaboration](fixtures/sim/syn016_elaboration/readme.md),
-  [SYN-017 directives](fixtures/sim/directive_effects/readme.md),
+  [SYN-017 directives](fixtures/sim/syn017_directives/readme.md),
   [SYN-018 modules](fixtures/sim/syn018_module_declarations/readme.md) and `sim_edition`
   retain strict edition gates, macros/keyword regions, legal defaults/types,
   namespace and actual separate/merged-file boundaries.

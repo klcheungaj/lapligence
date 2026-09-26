@@ -28,10 +28,10 @@ References: **V** = IEEE 1364-2001; **SV** = IEEE 1800-2009. Revision tags retai
 ## Target language editions
 
 `--edition 2001|2009` selects one compilation-wide policy; the default is 2009.
-`` `begin_keywords `` / `` `end_keywords `` change lexical keywords, not that
-policy. The pinned Slang API exposes semantic checks from 2017 onward; the
-project's 2009 keyword, time and later-form gates do not establish complete
-2009 semantic conformance.
+`` `begin_keywords `` / `` `end_keywords `` change lexical keywords in 2009,
+not that policy; the 2001 profile rejects them. The pinned Slang API exposes
+semantic checks from 2017 onward; the project's 2009 keyword, time and
+later-form gates do not establish complete 2009 semantic conformance.
 
 | Boundary | Verilog-2001 | SystemVerilog-2009 |
 | --- | --- | --- |
@@ -759,22 +759,33 @@ real values use a separate representation.
 
 ## 11. Compiler directives affecting simulation
 
+- 🟦 **Macros, includes and conditional compilation** — 2001 parameter macros,
+  `define`/`undef`, `ifdef`/`ifndef`/`elsif`/`else`, generated ranges and
+  caller-ordered admitted includes affect executable values in separate and
+  merged units. 2009 adds token paste and stringification to construct names
+  and strings; the strict 2001 profile rejects those later operators, predefined
+  `__FILE__`/`__LINE__`, `undefineall`, `pragma` and keyword directives.
+  Unavailable include paths fail admission. V §§19.3–19.5; SV §§22.4–22.6,
+  22.11, 22.13–22.14 **[2001/SV-2009]**.
 - 🟦 **`` `timescale ``** — Resolved module/declaration inheritance scales delays
   and time reporting; local `timeunit/timeprecision` and rounding are covered in
   §§1 and 6. V §19.8 **[1995]**.
 - 🟦 **`` `default_nettype `` / `` `resetall ``** — Control implicit-net admission
-  and reset later directive state; `none` rejects undeclared nets.
+  and reset later directive state; `none` rejects undeclared nets, `wire`
+  restores them, and separate/merged units retain their specified boundaries.
   V §§19.2, 19.6 **[1995]**.
 - 🟦 **Cell tags and pragmas** — `` `celldefine `` / `` `endcelldefine `` and
   `` `pragma `` are frontend-consumed; no dedicated simulator effects are claimed.
-  `vectored/scalared` remain advisory and retain packed values. V §§3.3.2, 19.1;
+  `vectored/scalared` and standard attributes are accepted as simulation-neutral
+  metadata, with packed values unchanged. V §§2.8, 3.3.2, 19.1;
   SV §22.11 **[1995/SV-2009]**.
 - 🟨 **`` `unconnected_drive `` / `` `nounconnected_drive ``** — Omitted scalar/
   packed inputs receive pull0/pull1/Z. Strength conflicts and aggregate/resizable
   formals remain outside the qualified boundary. V §19.9 **[1995]**.
 - 🟨 **Source mapping** — `` `line ``, `` `__FILE__ `` and `` `__LINE__ `` expose
-  mapped values; diagnostics retain physical source ranges.
-  V §19.7; SV §22.13 **[2001/SV-2009]**.
+  mapped values in 2009; 2001 admits `` `line `` without the later predefined
+  macros. Diagnostics retain physical source ranges.
+  V §19.7; SV §§22.12–22.13 **[2001/SV-2009]**.
 - 🟦 **Keyword/macro state** — `` `begin_keywords `` / `` `end_keywords `` retain
   lexical tables without changing the edition; `` `undefineall `` clears macros.
   SV §§22.5.3, 22.14 **[SV-2005/SV-2009]**; keyword directives first appeared in

@@ -44,8 +44,10 @@ remain on the calling thread; do not implement `Send` or `Sync`.
   allocation.
 - Lexical flag bit 3 (`LLG_SLANG_LEXICAL_DIRECTIVE`, owned `is_directive`)
   identifies directive text, including unexpanded macro bodies, independently of
-  expanded/skipped state. Edition checks must not treat unused bodies as source. Accept only the four defined bits and reject reserved bits; update both
-  ABI sides together.
+  expanded/skipped state. Disabled conditional branch tokens also carry the skipped
+  flag, even when they occur inside a directive. Edition checks must not treat
+  inactive branches as source. Accept only the four defined bits and reject
+  reserved bits; update both ABI sides together.
 - `ConditionPattern` (`LLG_SLANG_EDGE_CONDITION_PATTERN`, role 38) pairs by index
   with `Condition`; `THEN`/`ELSE` are separate branch roles at index zero. Extending the
   semantic tag set does not change pointer/layout contracts. DB import validates

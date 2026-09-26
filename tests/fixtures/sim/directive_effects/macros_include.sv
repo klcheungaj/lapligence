@@ -1,5 +1,4 @@
-// IEEE 1364-2001 sections 19.3.1, 19.4, 19.5 and IEEE 1800-2009
-// sections 22.4–22.6:
+// IEEE 1800-2009 sections 22.4–22.6:
 // include guards, argument macros, token concatenation, stringification and
 // conditional branches reach the executable design.
 `include "macro_header.svh"

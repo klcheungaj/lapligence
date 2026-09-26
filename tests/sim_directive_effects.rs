@@ -13,27 +13,25 @@ fn editions() -> [&'static str; 2] {
 
 #[test]
 fn macro_include_and_conditional_state_reaches_execution() {
-    for edition in editions() {
-        for (defines, branch) in [
-            (&["--define", "ENABLE"][..], 11),
-            (&["--define", "ALT"][..], 22),
-            (&[][..], 33),
-        ] {
-            let args: Vec<&str> = if defines.is_empty() {
-                vec!["--edition", edition]
-            } else {
-                vec!["--edition", edition, defines[0], defines[1]]
-            };
-            let expected = format!("branch={branch} cat=a text=syn017\n");
-            sim_cli::run_case_with_args(
-                SUITE,
-                "macros_include",
-                &expected,
-                "llg: $finish at time 0 at tb:20:5\n",
-                &[],
-                &args,
-            );
-        }
+    for (defines, branch) in [
+        (&["--define", "ENABLE"][..], 11),
+        (&["--define", "ALT"][..], 22),
+        (&[][..], 33),
+    ] {
+        let args: Vec<&str> = if defines.is_empty() {
+            vec!["--edition", "2009"]
+        } else {
+            vec!["--edition", "2009", defines[0], defines[1]]
+        };
+        let expected = format!("branch={branch} cat=a text=syn017\n");
+        sim_cli::run_case_with_args(
+            SUITE,
+            "macros_include",
+            &expected,
+            "llg: $finish at time 0 at tb:19:5\n",
+            &[],
+            &args,
+        );
     }
 }
 
@@ -67,17 +65,14 @@ fn default_nettype_none_rejects_implicit_net() {
 
 #[test]
 fn line_directive_reaches_predefined_macros() {
-    for edition in editions() {
-        let args = ["--edition", edition];
-        sim_cli::run_case_with_args(
-            SUITE,
-            "line_mapping",
-            "file=syn017_mapped.sv line=125\n",
-            "llg: $finish at time 0 at tb:8:5\n",
-            &[],
-            &args,
-        );
-    }
+    sim_cli::run_case_with_args(
+        SUITE,
+        "line_mapping",
+        "file=syn017_mapped.sv line=125\n",
+        "llg: $finish at time 0 at tb:9:5\n",
+        &[],
+        &["--edition", "2009"],
+    );
 }
 
 #[test]

@@ -3779,6 +3779,24 @@ public:
     visitDefault(syntax);
   }
 
+  void handle(const syntax::ConditionalBranchDirectiveSyntax& syntax) {
+    visitToken(syntax.directive);
+    syntax.expr->visit(*this);
+    // Slang stores an untaken arm here instead of in skipped-token trivia.
+    skippedDepth++;
+    for (parsing::Token token : syntax.disabledTokens)
+      visitToken(token);
+    skippedDepth--;
+  }
+
+  void handle(const syntax::UnconditionalBranchDirectiveSyntax& syntax) {
+    visitToken(syntax.directive);
+    skippedDepth++;
+    for (parsing::Token token : syntax.disabledTokens)
+      visitToken(token);
+    skippedDepth--;
+  }
+
   void visitToken(parsing::Token token) {
     for (const parsing::Trivia& trivia : token.trivia()) {
       for (parsing::Token skipped : trivia.getSkippedTokens())
@@ -4000,6 +4018,7 @@ private:
   Capture& capture;
   std::unordered_set<const syntax::SyntaxNode*> directives;
   uint32_t directiveDepth = 0;
+  uint32_t skippedDepth = 0;
   std::map<std::tuple<uint64_t, uint64_t, uint64_t>, SourceLocation> tokenLocations;
 
   void addToken(parsing::Token token, uint32_t extraFlags) {
@@ -4029,6 +4048,8 @@ private:
     // Directive replacement text is not executable source until expanded.
     if (directiveDepth != 0)
       flags |= LLG_SLANG_LEXICAL_DIRECTIVE;
+    if (skippedDepth != 0)
+      flags |= LLG_SLANG_LEXICAL_SKIPPED;
     if (token.isMissing())
       flags |= LLG_SLANG_LEXICAL_MISSING;
     if (token.location().valid() &&

@@ -14,7 +14,7 @@ fn invoke_with_args(suite: &str, fixture: &str, optimized: bool, args: &[&str]) 
 /// Invoke a fixture after source files which must precede it in a merged
 /// compilation unit. The paths are still checked-in fixture stems, so the
 /// public CLI observes the same admission and file ordering as a user command.
-fn invoke_with_source_prefix(
+pub(crate) fn invoke_with_source_prefix(
     suite: &str,
     fixture: &str,
     prefix: &[&str],

@@ -839,6 +839,33 @@ pub(super) fn edition_diagnostics(
             violations.push((node.range, "SystemVerilog expression".to_owned()));
         }
     }
+    // The frontend lexes with later macro rules even for its legacy keyword
+    // profile. Directive tokens retain the original spelling and location,
+    // including replacement text in admitted includes, before expansion.
+    // IEEE 1364-2001 19.3 has neither these macro operators nor the later
+    // predefined macros / directives (IEEE 1800-2009 22.5, 22.11, 22.13-14).
+    if edition == LanguageEdition::Verilog2001 {
+        for token in snapshot
+            .lexical_tokens
+            .iter()
+            .filter(|t| t.is_directive && !t.is_skipped && !t.is_missing)
+        {
+            let label = match token.text.as_str() {
+                "``" => Some("macro token paste"),
+                "`\"" | "`\\`\"" => Some("macro stringification"),
+                "`__FILE__" => Some("__FILE__"),
+                "`__LINE__" => Some("__LINE__"),
+                "`undefineall" => Some("undefineall"),
+                "`pragma" => Some("pragma"),
+                "`begin_keywords" => Some("begin_keywords"),
+                "`end_keywords" => Some("end_keywords"),
+                _ => None,
+            };
+            if let Some(label) = label {
+                violations.push((token.range, label.to_owned()));
+            }
+        }
+    }
     // Navigation snapshots deliberately omit executable bodies. Use the
     // frontend's classified tokens as well, not a raw-source substring scan.
     // This covers macros, inactive branches, strings and escaped identifiers

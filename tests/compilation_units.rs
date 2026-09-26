@@ -283,63 +283,75 @@ fn compile_p52_files(
 }
 
 #[test]
-fn macro_expanded_includes_follow_unit_mode_and_edition() {
+fn macro_expanded_includes_follow_unit_mode_in_2009() {
     let root = p52_temp_dir();
     write_p52_fixture(&root);
-    for edition in [
+    let edition = LanguageEdition::SystemVerilog2009;
+    let merged = compile_p52_files(
+        &root,
+        &["a.sv", "b.sv"],
+        edition,
+        CompilationUnitMode::Merged,
+        &[],
+    )
+    .expect("merged macro-expanded include admission");
+    assert!(
+        merged.ok(),
+        "merged {edition:?} diagnostics: {:?}",
+        merged.diagnostics
+    );
+    assert!(merged
+        .snapshot
+        .files
+        .iter()
+        .any(|file| file.name.ends_with("include/header.svh")));
+
+    let separate_root = compile_p52_files(
+        &root,
+        &["a.sv"],
+        edition,
+        CompilationUnitMode::Separate,
+        &[],
+    )
+    .expect("separate root-local macro-expanded include admission");
+    assert!(
+        separate_root.ok(),
+        "separate {edition:?} diagnostics: {:?}",
+        separate_root.diagnostics
+    );
+
+    let separate = compile_p52_files(
+        &root,
+        &["a.sv", "b.sv"],
+        edition,
+        CompilationUnitMode::Separate,
+        &[],
+    )
+    .expect("separate macro visibility should reach Slang diagnostics");
+    assert!(
+        !separate.ok(),
+        "separate {edition:?} unexpectedly shared the filename macro",
+    );
+    assert!(separate.diagnostics.iter().any(|diagnostic| diagnostic
+        .file
+        .as_deref()
+        .is_some_and(|file| file.ends_with("b.sv"))));
+    let older = compile_p52_files(
+        &root,
+        &["a.sv", "b.sv"],
         LanguageEdition::Verilog2001,
-        LanguageEdition::SystemVerilog2009,
-    ] {
-        let merged = compile_p52_files(
-            &root,
-            &["a.sv", "b.sv"],
-            edition,
-            CompilationUnitMode::Merged,
-            &[],
-        )
-        .expect("merged macro-expanded include admission");
-        assert!(
-            merged.ok(),
-            "merged {edition:?} diagnostics: {:?}",
-            merged.diagnostics
-        );
-        assert!(merged
-            .snapshot
-            .files
+        CompilationUnitMode::Merged,
+        &[],
+    )
+    .expect("2001 edition gate should retain diagnostics");
+    assert!(
+        older
+            .diagnostics
             .iter()
-            .any(|file| file.name.ends_with("include/header.svh")));
-
-        let separate_root = compile_p52_files(
-            &root,
-            &["a.sv"],
-            edition,
-            CompilationUnitMode::Separate,
-            &[],
-        )
-        .expect("separate root-local macro-expanded include admission");
-        assert!(
-            separate_root.ok(),
-            "separate {edition:?} diagnostics: {:?}",
-            separate_root.diagnostics
-        );
-
-        let separate = compile_p52_files(
-            &root,
-            &["a.sv", "b.sv"],
-            edition,
-            CompilationUnitMode::Separate,
-            &[],
-        )
-        .expect("separate macro visibility should reach Slang diagnostics");
-        assert!(
-            !separate.ok(),
-            "separate {edition:?} unexpectedly shared the filename macro",
-        );
-        assert!(separate.diagnostics.iter().any(|diagnostic| diagnostic
-            .file
-            .as_deref()
-            .is_some_and(|file| file.ends_with("b.sv"))));
-    }
+            .any(|diagnostic| diagnostic.message.contains("macro stringification")),
+        "2001 diagnostics: {:?}",
+        older.diagnostics
+    );
     fs::remove_dir_all(root).expect("remove P52 fixture");
 }
 
