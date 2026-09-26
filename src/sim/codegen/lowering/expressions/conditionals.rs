@@ -68,6 +68,24 @@ impl Codegen<'_> {
         let Some(pattern_id) = clause.pattern else {
             return self.lower_boolean_expr(scope_path, clause.expression);
         };
+        let info = self.db.conditional_pattern(pattern_id).ok_or_else(|| {
+            format!("conditional predicate pattern metadata is missing in `{scope_path}`")
+        })?;
+        if matches!(
+            info.kind,
+            ConditionalPatternKind::Wildcard | ConditionalPatternKind::Binding
+        ) {
+            // An unsupported source may not lower as a value, so diagnose its
+            // pattern type before resolving the expression reference.
+            let descriptor = self.query_descriptor(clause.expression).ok_or_else(|| {
+                format!("conditional whole-value pattern source type is missing in `{scope_path}`")
+            })?;
+            if Codegen::fixed_descriptor_width(descriptor).is_none() {
+                return Err(format!(
+                    "conditional whole-value pattern requires a supported fixed value in `{scope_path}`"
+                ));
+            }
+        }
         let value = self.lower_expr(scope_path, clause.expression)?;
         self.lower_pattern_value(
             scope_path,

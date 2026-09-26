@@ -324,7 +324,9 @@ real values use a separate representation.
   patterns. One selector capture feeds ordered member checks/filters; successful
   automatic bindings extend to later clauses and the true arm. Cases keep first-match/default and unique/priority behavior. Tag/payload comparisons inherit the
   enclosing case mode; ordinary member access and `if ... matches` remain exact.
-  Dynamic/native tagged payloads remain restricted. SV §12.6 **[SV-2005]**.
+  Primitive integral constant patterns compare X/Z exactly; bindings end at the true arm.
+  Whole dynamic/native wildcard and binding patterns, and dynamic/native tagged
+  payloads, remain restricted. SV §12.6 **[SV-2005]**.
 - 🟦 **Qualified selection** — `unique`, `unique0`, `priority` diagnose no-match/
   multiple-match with source locations and default/else suppression. `case inside`
   supports wildcard items, ranges, qualified string cases and one selector
