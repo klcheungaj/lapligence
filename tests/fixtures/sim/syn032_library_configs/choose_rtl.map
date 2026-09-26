@@ -1,0 +1,8 @@
+library rtl "rtl.sv";
+library gate "gate.sv";
+config choose;
+  design work.top;
+  default liblist rtl;
+  cell logic_cell use rtl.logic_cell;
+  instance top.from_instance use rtl.logic_cell;
+endconfig

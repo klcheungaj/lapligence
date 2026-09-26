@@ -1,0 +1,6 @@
+library rtl "rtl.sv";
+config choose;
+  design work.top;
+  default liblist rtl;
+  cell logic_cell use missing.logic_cell;
+endconfig

@@ -232,7 +232,9 @@ real values use a separate representation.
   filename > wildcard filename > trailing-separator directory; explicit library
   assignments override maps. Relative parent paths resolve from the map directory.
   Missing/ambiguous bindings, encrypted IP, foreign co-simulation and unrestricted
-  filesystem discovery reject. Per-library `-incdir` remains unqualified.
+  filesystem discovery reject. The legal per-library `-incdir` map clause is
+  explicitly rejected as unsupported at map admission in both editions; no
+  per-library include search is performed. V §13.2; SV §33.3.
   V ch.13; SV ch.33 **[2001]**.
 
   Literal configuration blocks are admitted in root/included library maps as

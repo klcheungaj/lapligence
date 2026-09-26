@@ -1,0 +1,5 @@
+library rtl "rtl.sv" -incdir "headers";
+config choose;
+  design work.top;
+  default liblist rtl;
+endconfig

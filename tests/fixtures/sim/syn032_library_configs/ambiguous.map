@@ -1,0 +1,6 @@
+library rtl "rtl.sv";
+library gate "rtl.sv";
+config choose;
+  design work.top;
+  default liblist rtl;
+endconfig

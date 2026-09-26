@@ -60,7 +60,8 @@ as source truth, with no native I/O.
 
 `library_configs.rs` projects literal configuration text without shifting byte
 positions and restores original map text after capture for UTF-16 presentation.
-Keep `-incdir` policy separate.
+Reject unquoted per-library `-incdir` clauses at admission until bounded include
+search can preserve authorization and source ordering; do not discard their tokens.
 
 Edition checks use classified tokens and owned semantic edges shared by execution
 and navigation. Explicit `system_subroutines` prototypes distinguish extensions

@@ -17,3 +17,6 @@ Library-map selection, source-preserving configuration projection and strict
 edition checks are shared by execution and navigation. See the
 [database](db/readme.md), [linter](lint/readme.md) and
 [source map](../../docs/source_layout.md).
+
+Per-library `-incdir` in a map is diagnosed during input admission; the
+bounded map flow does not perform per-library include search.

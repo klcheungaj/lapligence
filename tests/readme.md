@@ -101,7 +101,10 @@ requirements above apply without repeating them for each suite.
   [SYN-033 bind](fixtures/sim/syn033_structural_bind/readme.md) keep bounded library,
   configuration and structural composition separate from arbitrary verification
   injection. Library-map tests cover final-rank ties, explicit overrides, original
-  source locations, bounded logical/disk buffers and snapshot lifetime.
+  source locations, bounded logical/disk buffers and snapshot lifetime. SYN-032
+  also checks both input contracts and editions for selected bindings,
+  same-name map composition changes, binding failures and direct rejection of
+  per-library map `-incdir` (V §13.2; SV §33.3).
 - [SYN-036 capacity](fixtures/sim/syn036_capacity/readme.md) separates syntax from
   resource limits. Test 65,536/1,048,575-bit values and rejection at 1,048,576;
   fixed-array cell limits are distinct from flattened-value limits. Two-state net

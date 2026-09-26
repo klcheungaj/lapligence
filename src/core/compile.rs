@@ -2202,14 +2202,20 @@ fn parse_library_map(
                         index += 1;
                         continue;
                     }
-                    if tokens[index].is("-incdir") && !tokens[index].quoted {
-                        // Existing per-library include policy is separate from
-                        // configuration-source admission (Q04).
-                        index += 1;
-                        while index < tokens.len() && !tokens[index].is(";") {
-                            index += 1;
-                        }
-                        break;
+                    let incdir_clause = !tokens[index].quoted
+                        && (tokens[index].is("-incdir")
+                            || (tokens[index].is("-")
+                                && tokens
+                                    .get(index + 1)
+                                    .is_some_and(|token| token.is("incdir") && !token.quoted)));
+                    if incdir_clause {
+                        return Err(StartupError::new(
+                            StartupErrorKind::InvalidArgument,
+                            format!(
+                                "library `{}` uses unsupported map -incdir include search",
+                                name.value
+                            ),
+                        ));
                     }
                     charge_library_map_clone(
                         work,
