@@ -597,8 +597,12 @@ real values use a separate representation.
 - 🟨 **Combinational UDPs** — Scalar tables/instances and primitive arrays admit
   `0/1/x/b/?`, treat input Z as X, return X for unmatched combinations and reject
   conflicting overlapping rows. Independent drivers, optional legal strengths
-  and delays are represented. Vector/aggregate terminals and sequential
-  level/edge/state-initialization semantics remain unsupported.
+  and delays are represented. The paired Verilog-2001/SystemVerilog-2009
+  SYN-031 matrix checks mux/parity tables, repeated input changes, arrays,
+  resolved nets and delays in both optimizer modes. Invalid port lists and row
+  widths reject; sequential and edge-table UDPs retain explicit rejection.
+  Vector/aggregate terminals and sequential level/edge/state-initialization
+  semantics remain unsupported.
   V §§8.1–8.2, 8.6; SV §§29.3–29.4, 29.8 **[1995/SV-2009]**.
 - ❌ **Switches and charge storage** — MOS/CMOS/resistive forms
   (`nmos/pmos/cmos/rnmos/rpmos/rcmos`), bidirectional `tran/tranif/rtran` families,
