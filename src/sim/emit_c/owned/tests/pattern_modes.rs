@@ -29,6 +29,7 @@ fn recursive_pattern_checks_use_the_selected_comparator() {
                         offset,
                         width: 1,
                         signed: false,
+                        two_state: false,
                         exact: false,
                         constant: Some(Box::new(number(0, 1))),
                         binding: None,

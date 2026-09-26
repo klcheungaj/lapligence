@@ -313,6 +313,9 @@ pub struct IrPatternCheck {
     pub(in crate::sim) offset: u32,
     pub(in crate::sim) width: u32,
     pub(in crate::sim) signed: bool,
+    /// Read a two-state member of an enclosing four-state packed value in
+    /// the member's state domain before comparing or binding it.
+    pub(in crate::sim) two_state: bool,
     /// Explicit exact-comparison override for a check. Source pattern-case
     /// tag and payload checks leave this false so both inherit `match_kind`.
     /// Ordinary active-member access uses separate `IrTaggedMemberGuard`s.

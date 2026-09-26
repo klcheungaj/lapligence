@@ -81,7 +81,7 @@ impl Frame<'_, '_> {
                     .and_then(|end| end.checked_sub(1))
                     .ok_or_else(|| "conditional pattern member range overflows".to_owned())?;
                 self.line(format!("if ({}) {{", matched.truth()));
-                let member = self.value(
+                let mut member = self.value(
                     format!(
                         "sv4_part_select({}, {}LL, {}LL)",
                         snapshot.code, high, check.offset
@@ -89,6 +89,10 @@ impl Frame<'_, '_> {
                     check.width,
                     check.signed,
                 );
+                if check.two_state {
+                    let code = format!("sv4_to_two_state({})", member.code);
+                    member = self.replace(member, code, check.width, check.signed);
+                }
                 let captured = check.binding.as_ref().map(|_| {
                     self.value(
                         format!("sv4_clone(&{})", member.code),

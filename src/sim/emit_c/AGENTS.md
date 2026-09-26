@@ -35,6 +35,8 @@ ArrayMux uses immediate-element defaults; StructMux uses immediate-member plans.
 Evaluate each branch once and preserve its self-determined shape; an enclosing cast
 must not resize operands before the merge. Predicates evaluate only reached clauses,
 convert packed/real truth to one bit, and allocate nothing for skipped clauses.
+Pattern member projections convert two-state fields before comparison or binding;
+dispose the raw slice when replacing it with the converted value.
 Ambiguous muxes evaluate both arms before merging (real results become zero).
 Do not emit detached predicates or bypass eligibility through wrappers.
 

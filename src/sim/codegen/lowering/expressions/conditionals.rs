@@ -398,6 +398,7 @@ impl Codegen<'_> {
                         offset,
                         width,
                         signed: member.descriptor.info.signed,
+                        two_state: member.descriptor.two_state,
                         exact: false,
                         constant: Some(Box::new(constant)),
                         binding: None,
@@ -437,6 +438,7 @@ impl Codegen<'_> {
                         offset,
                         width,
                         signed: member.descriptor.info.signed,
+                        two_state: member.descriptor.two_state,
                         exact: false,
                         constant: None,
                         binding: Some(self.lower_lhs(scope_path, target).map_err(|error| {
@@ -563,6 +565,7 @@ impl Codegen<'_> {
                 offset: tag_offset,
                 width: tag_width,
                 signed: false,
+                two_state: false,
                 // SV 12.6.1 applies the enclosing case wildcard mode to tag
                 // bits too. Ordinary member-access guards remain exact.
                 exact: false,
@@ -662,6 +665,7 @@ impl Codegen<'_> {
                     offset: base_offset,
                     width,
                     signed: descriptor.info.signed,
+                    two_state: descriptor.two_state,
                     exact: false,
                     constant: Some(Box::new(constant)),
                     binding: None,
@@ -694,6 +698,7 @@ impl Codegen<'_> {
                     offset: base_offset,
                     width,
                     signed: descriptor.info.signed,
+                    two_state: descriptor.two_state,
                     exact: false,
                     constant: None,
                     binding: Some(self.lower_lhs(scope_path, target).map_err(|error| {

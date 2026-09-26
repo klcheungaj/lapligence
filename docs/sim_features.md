@@ -335,6 +335,10 @@ real values use a separate representation.
   automatic bindings extend to later clauses and the true arm. Cases keep first-match/default and unique/priority behavior. Tag/payload comparisons inherit the
   enclosing case mode; ordinary member access and `if ... matches` remain exact.
   Primitive integral constant patterns compare X/Z exactly; bindings end at the true arm.
+  Fixed structure pattern checks read each member in its own state domain: a
+  two-state member in a four-state packed record converts X/Z to zero before
+  exact constant comparison (SV §§7.2.1, 12.6). Fixed arrays of structs can
+  be bound as complete members; §12.6 defines no recursive array pattern form.
   Whole dynamic/native wildcard and binding patterns, and dynamic/native tagged
   payloads, remain restricted. SV §12.6 **[SV-2005]**.
 - 🟦 **Qualified selection** — `unique`, `unique0`, `priority` diagnose no-match/

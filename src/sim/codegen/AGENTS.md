@@ -196,7 +196,9 @@ Sequential predicates evaluate clauses once, left-to-right, continuing only on
 definite true. Preserve explicit branches/pattern bindings and short-circuit
 unreachable constants; never replace with `&&`. Matching sources/selectors are
 captured once; filters use per-item bindings, first-match/default order and exact
-tag guards. `inside` follows expression result types before storage roots, keeps
+tag guards. Recursive constant checks read each structure member in its own
+state domain, including two-state conversion inside a four-state packed record.
+`inside` follows expression result types before storage roots, keeps
 casts, descends arrays to singulars (not struct members), evaluates selector and
 scalar/range endpoints once, and uses wildcard equality/inclusive comparisons.
 
