@@ -334,9 +334,14 @@ real values use a separate representation.
   packed/unpacked structures and finite tagged payloads work in `if`/`?:` and
   `case`/`casez`/`casex ... matches`. Whole fixed values admit wildcard/binding
   patterns. One selector capture feeds ordered member checks/filters; successful
-  automatic bindings extend to later clauses and the true arm. Cases keep first-match/default and unique/priority behavior. Tag/payload comparisons inherit the
-  enclosing case mode; ordinary member access and `if ... matches` remain exact.
-  Primitive integral constant patterns compare X/Z exactly; bindings end at the true arm.
+  automatic bindings extend to later clauses and the true arm. Cases keep
+  first-match/default behavior; `unique` reports zero or multiple matches,
+  `unique0` reports multiple matches, and `priority` reports zero matches
+  after item filters. A default suppresses zero-match reports. Tag/payload
+  comparisons inherit the enclosing case mode; ordinary member access and
+  `if ... matches` remain exact. Primitive integral constant patterns follow
+  the same enclosing mode; outside `casez`/`casex` they compare X/Z exactly.
+  Bindings end at the true arm or case item.
   Fixed structure pattern checks read each member in its own state domain: a
   two-state member in a four-state packed record converts X/Z to zero before
   exact constant comparison (SV §§7.2.1, 12.6). Fixed arrays of structs can

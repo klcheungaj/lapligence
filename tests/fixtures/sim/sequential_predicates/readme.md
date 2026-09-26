@@ -40,5 +40,7 @@ whole tagged bindings and enclosing case modes.
 `syn_025_pattern_case.sv` adds primitive, fixed-structure and tagged `case`,
 `casez` and `casex ... matches` items. It checks one selector evaluation,
 source-order filters over per-item bindings, first-match/default behavior and
-unique/priority qualifiers in both optimizer modes. Tagged discriminants use
+unique/priority qualifiers in both optimizer modes. The [SYN-025 matrix](../syn025_pattern_cases/readme.md)
+adds `unique0`, filtered diagnostic counts, no-match/default rules, ordinary
+case controls and rejection boundaries. Tagged discriminants use
 the enclosing case mode; ordinary checked member access remains exact.
