@@ -67,8 +67,9 @@ Edition checks use classified tokens and owned semantic edges shared by executio
 and navigation. Explicit `system_subroutines` prototypes distinguish extensions
 from standards. Directive bodies are ignored until expanded; executable for-loop
 header edges differ from navigation-only capture. Memory-storage exemptions are
-argument-specific (`$fread` argument 0; `$readmem*` argument 1), never exemptions
-for unrelated whole-array uses of the same declaration.
+argument-specific (`$fread` and legacy PLA personality argument 0;
+`$readmem*` argument 1), never exemptions for unrelated whole-array uses of the
+same declaration. PLA syntax admission does not select a simulator PLA target.
 
 See [FFI](../ffi/AGENTS.md), [simulator](../sim/AGENTS.md),
 [LSP](../bin/llg_ls/AGENTS.md) and [lint](lint/AGENTS.md) for their contracts.

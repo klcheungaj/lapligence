@@ -785,9 +785,11 @@ real values use a separate representation.
   support ID-indexed FIFO/LIFO state, job/information IDs, status codes,
   precision-tick arrivals and six statistics. Outputs must be whole packed
   integers; selected/real targets reject. V §17.6; SV §20.16 **[1995]**.
-- ❌ **PLA tasks** — All synchronous/asynchronous AND/NAND/OR/NOR array/plane
-  families (such as `$async$and$array`) lack supported simulator lowering. Name admission or a generic VPI
-  fallback does not implement PLA semantics. V §17.5; SV §20.17 **[1995]**.
+- ❌ **PLA tasks** — No legacy PLA target is selected. All synchronous/asynchronous
+  AND/NAND/OR/NOR array/plane families (such as `$async$and$array`) lack
+  simulator lowering. A call receives an explicit unsupported-PLA diagnostic;
+  it does not execute as a no-op. V §17.5;
+  SV §20.17 **[1995]**.
 - 🟦 **Plusargs** — Arguments after `--` reach `$test$plusargs/$value$plusargs`.
   Leading-`+` prefix matching, first repeated match, literal `%%`,
   `%d/%h/%x/%o/%b/%f/%e/%g/%s`, wide four-state values and unchanged destinations

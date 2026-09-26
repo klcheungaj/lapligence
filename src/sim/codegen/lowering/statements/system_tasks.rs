@@ -15,6 +15,15 @@ enum MemorySliceNodes {
     },
 }
 
+fn is_pla_system_task(name: &str) -> bool {
+    let mut parts = name.split('$');
+    parts.next() == Some("")
+        && matches!(parts.next(), Some("async" | "sync"))
+        && matches!(parts.next(), Some("and" | "nand" | "or" | "nor"))
+        && matches!(parts.next(), Some("array" | "plane"))
+        && parts.next().is_none()
+}
+
 impl EmitCtx<'_, '_> {
     /// Lower system-task calls ($display/$monitor/$strobe/$finish/…).
     /// Skippable constructs warn here and produce no statements.
@@ -641,6 +650,12 @@ impl EmitCtx<'_, '_> {
 
     pub(super) fn lower_sys_call(&mut self, h: NodeId, name: &str) -> Result<Vec<IrStmt>, String> {
         let args: Vec<NodeId> = self.cg.node(h).children.clone();
+        if is_pla_system_task(name) {
+            return Err(format!(
+                "unsupported PLA system task `{name}` in `{}`: no legacy PLA target is selected",
+                self.path
+            ));
+        }
         if let Some(level) = severity_task_variant(name) {
             let first_is_string = match args.first().copied() {
                 Some(first) => {
@@ -1203,6 +1218,25 @@ impl EmitCtx<'_, '_> {
                 })))
             }
             _ => Err(format!("unsupported system task {name} in `{}`", self.path)),
+        }
+    }
+}
+
+#[cfg(test)]
+mod pla_tests {
+    use super::is_pla_system_task;
+
+    #[test]
+    fn only_the_sixteen_standard_pla_task_names_are_excluded() {
+        for timing in ["async", "sync"] {
+            for gate in ["and", "nand", "or", "nor"] {
+                for form in ["array", "plane"] {
+                    assert!(is_pla_system_task(&format!("${timing}${gate}${form}")));
+                }
+            }
+        }
+        for other in ["$async$and$other", "$sync$and$array$extra", "$display"] {
+            assert!(!is_pla_system_task(other));
         }
     }
 }

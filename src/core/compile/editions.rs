@@ -570,9 +570,9 @@ fn is_whole_unpacked_value(
         return false;
     }
     if is_fixed_unpacked_type(snapshot, node.type_id) {
-        // Memory-file tasks consume a procedural storage reference; Slang's
-        // semantic graph may still label that argument as a fixed-array value.
-        if is_memory_task_operand(snapshot, nodes, node.id) {
+        // Memory-file and PLA tasks consume a procedural storage operand;
+        // Slang's semantic graph may still label it as a fixed-array value.
+        if is_legacy_storage_operand(snapshot, nodes, node.id) {
             return false;
         }
         return true;
@@ -608,21 +608,27 @@ fn is_whole_unpacked_value(
         })
         .filter_map(|edge| nodes.get(&edge.target_id).copied())
         .any(|child| is_fixed_unpacked_type(snapshot, child.type_id))
-        && !is_memory_task_operand(snapshot, nodes, node.id)
+        && !is_legacy_storage_operand(snapshot, nodes, node.id)
 }
 
 /// The array exemption applies only to the storage operand, never to a
 /// filename, descriptor, bound, or an unrelated use of the same declaration.
-fn memory_storage_argument(name: &str) -> Option<u32> {
+fn legacy_storage_argument(name: &str) -> Option<u32> {
     match name {
         "$readmemb" | "$readmemh" | "$writememb" | "$writememh" => Some(1),
         // IEEE 1364-2001 17.2.4.4 explicitly admits $fread(memory, fd).
         "$fread" => Some(0),
+        // IEEE 1364-2001 17.5 admits a memory personality as PLA argument 0.
+        name if (name.starts_with("$async$") || name.starts_with("$sync$"))
+            && listed(VERILOG_SYSTEM_NAMES, name) =>
+        {
+            Some(0)
+        }
         _ => None,
     }
 }
 
-fn is_memory_task_operand(
+fn is_legacy_storage_operand(
     snapshot: &Snapshot,
     nodes: &HashMap<u64, &SemanticNode>,
     target: u64,
@@ -632,7 +638,7 @@ fn is_memory_task_operand(
         if call.kind != SemanticKind::SystemCall {
             continue;
         }
-        let Some(argument) = memory_storage_argument(&call.name) else {
+        let Some(argument) = legacy_storage_argument(&call.name) else {
             continue;
         };
         stack.extend(
@@ -1010,14 +1016,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn memory_storage_exception_is_position_specific() {
-        assert_eq!(memory_storage_argument("$fread"), Some(0));
-        assert_eq!(memory_storage_argument("$readmemh"), Some(1));
-        assert_eq!(memory_storage_argument("$readmemb"), Some(1));
-        assert_eq!(memory_storage_argument("$writememh"), Some(1));
-        assert_eq!(memory_storage_argument("$display"), None);
-        assert_eq!(memory_storage_argument("$fwrite"), None);
-        assert_eq!(memory_storage_argument("$custom_fread"), None);
+    fn legacy_storage_exception_is_position_specific() {
+        assert_eq!(legacy_storage_argument("$fread"), Some(0));
+        assert_eq!(legacy_storage_argument("$readmemh"), Some(1));
+        assert_eq!(legacy_storage_argument("$readmemb"), Some(1));
+        assert_eq!(legacy_storage_argument("$writememh"), Some(1));
+        assert_eq!(legacy_storage_argument("$async$and$array"), Some(0));
+        assert_eq!(legacy_storage_argument("$sync$nor$plane"), Some(0));
+        assert_eq!(legacy_storage_argument("$async$and$other"), None);
+        assert_eq!(legacy_storage_argument("$display"), None);
+        assert_eq!(legacy_storage_argument("$fwrite"), None);
+        assert_eq!(legacy_storage_argument("$custom_fread"), None);
     }
 
     #[test]

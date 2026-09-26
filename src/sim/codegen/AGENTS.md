@@ -14,6 +14,9 @@ inventories; do not broaden a guard because another context accepts the syntax.
   concatenations, replications and intermediates; never truncate silently.
   Do not add detached C/`Verbatim` workarounds: the owned emitter rejects legacy
   fragments whose setup/cleanup cannot be represented.
+- PLA system-task names have no selected legacy target. Diagnose them before
+  the generic VPI task path; admitting their Verilog-2001 memory personality
+  operand in the frontend does not select PLA execution.
 - Preserve imported fill operations. Unbased fills expand in context-determined
   arithmetic, comparisons, conditionals, assignments and arguments; self-determined
   concat/replication positions stay one bit. Ordinary case uses common width/sign.
