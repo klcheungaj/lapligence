@@ -16,7 +16,7 @@ use std::process::Command;
 
 const LEDGER_START: &str = "### SYN-038 selected Core grammar-by-context ledger";
 const DISPOSITION_START: &str = "#### SYN-038 72-group disposition";
-const LEDGER_END: &str = "### Compilation-unit grouping";
+const LEDGER_END: &str = "## Validation scope";
 const EVIDENCE_MAP_START: &str = "#### SYN-038 audited evidence map";
 const EVIDENCE_MAP_END: &str = "#### SYN-038 selected-profile exclusions";
 
@@ -1129,8 +1129,8 @@ fn assert_fixture_exists(root: &Path, row_id: &str, value: &str) {
 #[test]
 fn selected_rows_are_traceable_and_unique() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let document = fs::read_to_string(root.join("docs/sim_features.md"))
-        .expect("read the maintained simulator feature document");
+    let document = fs::read_to_string(root.join("tests/syn038_coverage_ledger.md"))
+        .expect("read the SYN-038 coverage ledger");
     let ledger = section(&document, LEDGER_START, EVIDENCE_MAP_START);
     let selected = ledger
         .lines()
@@ -1210,8 +1210,8 @@ fn selected_rows_are_traceable_and_unique() {
 #[test]
 fn audited_evidence_map_names_real_fixtures_and_test_invocations() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let document = fs::read_to_string(root.join("docs/sim_features.md"))
-        .expect("read the maintained simulator feature document");
+    let document = fs::read_to_string(root.join("tests/syn038_coverage_ledger.md"))
+        .expect("read the SYN-038 coverage ledger");
     let evidence_map = section(&document, EVIDENCE_MAP_START, EVIDENCE_MAP_END);
     let rows = evidence_map
         .lines()
@@ -1749,8 +1749,8 @@ fn owned_record_array_database_lowers_after_snapshot_drop() {
 #[test]
 fn edition_gates_match_sv_only_boundaries_and_witnesses() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let document = fs::read_to_string(root.join("docs/sim_features.md"))
-        .expect("read the maintained simulator feature document");
+    let document = fs::read_to_string(root.join("tests/syn038_coverage_ledger.md"))
+        .expect("read the SYN-038 coverage ledger");
     let ledger = section(&document, LEDGER_START, LEDGER_END);
 
     // These rows either name an SV-only production or use a witness whose
@@ -1838,8 +1838,8 @@ fn edition_gates_match_sv_only_boundaries_and_witnesses() {
 #[test]
 fn exclusions_and_context_axes_are_explicit() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let document = fs::read_to_string(root.join("docs/sim_features.md"))
-        .expect("read the maintained simulator feature document");
+    let document = fs::read_to_string(root.join("tests/syn038_coverage_ledger.md"))
+        .expect("read the SYN-038 coverage ledger");
     let ledger = section(&document, LEDGER_START, LEDGER_END);
 
     let manifest_bytes = fs::read(root.join("tests/sim_syn038_pairwise_manifest.json"))
@@ -1934,8 +1934,8 @@ fn exclusions_and_context_axes_are_explicit() {
 #[test]
 fn all_historical_groups_have_one_disposition() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let document = fs::read_to_string(root.join("docs/sim_features.md"))
-        .expect("read the maintained simulator feature document");
+    let document = fs::read_to_string(root.join("tests/syn038_coverage_ledger.md"))
+        .expect("read the SYN-038 coverage ledger");
     let ledger = section(&document, LEDGER_START, LEDGER_END);
     let disposition = ledger
         .split_once(DISPOSITION_START)

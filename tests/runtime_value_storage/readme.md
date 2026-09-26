@@ -132,7 +132,7 @@ instrumentation, not a change to the production allocation policy.
 
 C component success does not certify Rust generation, frontend feature parity,
 native macOS/Windows behavior or whole-simulator performance. See the maintained
-[feature boundary](../../docs/sim_features.md#dynamic-value-migration-acceptance-boundary).
+[feature boundary](../../docs/sim_features.md#status-markers).
 
 ## P05/P06 increment
 
@@ -165,7 +165,7 @@ cargo test --lib --no-default-features structured_owned_model_
 
 The structured renderer keeps feature-specific guards until captured objects,
 callbacks and other outstanding ownership paths are implemented; see its
-[feature boundary](../../docs/sim_features.md#dynamic-value-migration-acceptance-boundary).
+[feature boundary](../../docs/sim_features.md#status-markers).
 The active original C fixtures are part of this suite; unexecuted Rust/golden
 expectations are not evidence of successful HDL compilation.
 

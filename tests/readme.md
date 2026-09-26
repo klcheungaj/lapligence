@@ -66,7 +66,7 @@ Their historical pass counts are not part of the current acceptance record.
 
 ### SYN-038 grammar/context ledger and pairwise CLI witnesses — 2026-09-23
 
-`sim_syn038_ledger` checks the maintained [SYN-038 ledger](../docs/sim_features.md#syn-038-selected-core-grammar-by-context-ledger--2026-09-23)
+`sim_syn038_ledger` checks the maintained [SYN-038 ledger](syn038_coverage_ledger.md#syn-038-selected-core-grammar-by-context-ledger)
 without running HDL for its structural checks. It verifies selected rows have
 unique stable IDs, explicit `V2001`/`SV2009` gates, `PASS` or `REJECT`
 outcomes, existing fixture paths and required context axes. It also checks
@@ -1134,7 +1134,8 @@ which runs each test in its own process. Their failures were repaired in the
 product (array-valued pattern items, structure-parameter values, mixed aggregate
 equality, net-array slice and pattern drivers, initialized-array writer
 conflicts, packed `%s`, parent-relative map paths) or in fixtures that the
-frontend correctly rejected; `docs/sim_features.md` records each disposition.
+frontend correctly rejected; `docs/sim_features.md` summarizes the resulting
+feature boundaries.
 New regressions: `sim_review_tasks12_15` `nested_row_patterns` and
 `record_value_contexts`, `sim_h04_string_format` `packed_string_conversion`
 (the standards' own `%s` examples, both editions), the strengthened
