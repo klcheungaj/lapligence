@@ -26,7 +26,7 @@ use values::{
     decode_constants, decode_instances, decode_parameters, decode_types, validate_parameter_windows,
 };
 
-const ABI_VERSION: u32 = 6;
+const ABI_VERSION: u32 = 7;
 const INVALID_ID: u64 = u64::MAX;
 
 const STATUS_OK: u32 = 0;
@@ -82,6 +82,13 @@ pub struct LibrarySource<'a> {
     pub name: &'a str,
     pub text: &'a str,
     pub library: &'a str,
+}
+
+/// Ordered library-scoped include lookup prefix. Contents must already be admitted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LibraryIncludeDir {
+    pub library: String,
+    pub path: String,
 }
 
 impl<'a> Source<'a> {
@@ -284,6 +291,7 @@ pub struct CompileOptions {
     /// Logical lookup prefixes for admitted include buffers. These paths do
     /// not authorize filesystem reads because the shim uses cache-only mode.
     pub include_dirs: Vec<String>,
+    pub library_include_dirs: Vec<LibraryIncludeDir>,
     /// Top-level elaboration parameter overrides.
     pub parameter_overrides: Vec<ParameterOverride>,
     /// User-defined system-task/function prototypes accepted by Slang. Each
@@ -1075,6 +1083,12 @@ struct RawLibrarySource {
 }
 
 #[repr(C)]
+struct RawLibraryIncludeDir {
+    library: RawString,
+    path: RawString,
+}
+
+#[repr(C)]
 #[derive(Clone, Copy)]
 struct RawDefine {
     name: RawString,
@@ -1121,6 +1135,8 @@ struct RawCompileRequest {
     system_subroutine_count: u64,
     library_sources: *const RawLibrarySource,
     library_source_count: u64,
+    library_include_dirs: *const RawLibraryIncludeDir,
+    library_include_dir_count: u64,
     library_order: *const RawString,
     library_order_count: u64,
     default_library: RawString,
@@ -1426,6 +1442,15 @@ pub fn compile(request: &CompileRequest<'_>) -> Result<Snapshot, SlangError> {
             reserved: 0,
         })
         .collect();
+    let raw_library_include_dirs: Vec<_> = request
+        .options
+        .library_include_dirs
+        .iter()
+        .map(|dir| RawLibraryIncludeDir {
+            library: raw_string(&dir.library),
+            path: raw_string(&dir.path),
+        })
+        .collect();
     let raw_defines: Vec<_> = request
         .options
         .defines
@@ -1503,6 +1528,8 @@ pub fn compile(request: &CompileRequest<'_>) -> Result<Snapshot, SlangError> {
         system_subroutine_count: raw_system_subroutines.len() as u64,
         library_sources: raw_library_sources.as_ptr(),
         library_source_count: raw_library_sources.len() as u64,
+        library_include_dirs: raw_library_include_dirs.as_ptr(),
+        library_include_dir_count: raw_library_include_dirs.len() as u64,
         library_order: raw_library_order.as_ptr(),
         library_order_count: raw_library_order.len() as u64,
         default_library: raw_default_library,
@@ -1638,6 +1665,11 @@ fn validate_request(request: &CompileRequest<'_>) -> Result<(), SlangError> {
             "include directory count exceeds the native limit",
         ));
     }
+    if request.options.library_include_dirs.len() > MAX_INCLUDE_DIRS {
+        return Err(limit_exceeded(
+            "library include directory count exceeds the native limit",
+        ));
+    }
     if request.options.parameter_overrides.len() > MAX_PARAMETER_OVERRIDES {
         return Err(limit_exceeded(
             "parameter override count exceeds the native limit",
@@ -1675,6 +1707,16 @@ fn validate_request(request: &CompileRequest<'_>) -> Result<(), SlangError> {
             return Err(invalid_argument("include directory contains a NUL byte"));
         }
         add_input_bytes(&mut config_bytes, path.len(), "configuration")?;
+    }
+    for dir in &request.options.library_include_dirs {
+        validate_name(&dir.library, "library include directory library")?;
+        if dir.path.is_empty() || dir.path.contains('\0') {
+            return Err(invalid_argument(
+                "library include directory path is empty or contains a NUL byte",
+            ));
+        }
+        add_input_bytes(&mut config_bytes, dir.library.len(), "configuration")?;
+        add_input_bytes(&mut config_bytes, dir.path.len(), "configuration")?;
     }
     for parameter in &request.options.parameter_overrides {
         validate_name(&parameter.name, "parameter override name")?;

@@ -18,5 +18,9 @@ edition checks are shared by execution and navigation. See the
 [database](db/readme.md), [linter](lint/readme.md) and
 [source map](../../docs/source_layout.md).
 
-Per-library `-incdir` in a map is diagnosed during input admission; the
-bounded map flow does not perform per-library include search.
+Per-library `-incdir` in a map adds ordered search prefixes for that library.
+Paths are relative to the containing map; Rust admits reachable headers before
+Slang's cache-only lookup. Local source directory, global command-line include
+directories, then library directories is the selected precedence. Wildcard directory
+matches are sorted; logical directories are represented by admitted buffers
+under their path, so an empty logical directory cannot be selected.

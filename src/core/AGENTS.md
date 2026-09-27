@@ -60,8 +60,10 @@ as source truth, with no native I/O.
 
 `library_configs.rs` projects literal configuration text without shifting byte
 positions and restores original map text after capture for UTF-16 presentation.
-Reject unquoted per-library `-incdir` clauses at admission until bounded include
-search can preserve authorization and source ordering; do not discard their tokens.
+Admit unquoted per-library `-incdir` directories with the containing map as
+relative base. Keep declaration order and library scope through Rust include
+preflight and cache-only native lookup. Missing or inadmissible directories
+reject at map admission; quoted `"-incdir"` remains a literal file pattern.
 
 Edition checks use classified tokens and owned semantic edges shared by execution
 and navigation. Explicit `system_subroutines` prototypes distinguish extensions

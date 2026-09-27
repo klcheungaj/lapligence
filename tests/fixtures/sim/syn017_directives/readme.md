@@ -25,5 +25,5 @@ The existing `directive_effects` fixtures cover command-line `ifdef`/`elsif`/
 mapped `line`/`__FILE__`/`__LINE__` output in 2009, physical diagnostic ranges,
 `unconnected_drive` pull0/pull1 and `nounconnected_drive`, and advisory
 `vectored`/`scalared` values. `sim_syn038_ledger` covers another escaped-name
-and simulation-neutral attribute/pragma witness. Library-map `-incdir` remains
-SYN-032 Q04, outside this qualification.
+and simulation-neutral attribute/pragma witness. Library-map `-incdir` is
+covered by SYN-032 Q04, with library-scoped include lookup in both editions.

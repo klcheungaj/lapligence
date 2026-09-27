@@ -107,8 +107,9 @@ requirements above apply without repeating them for each suite.
   injection. Library-map tests cover final-rank ties, explicit overrides, original
   source locations, bounded logical/disk buffers and snapshot lifetime. SYN-032
   also checks both input contracts and editions for selected bindings,
-  same-name map composition changes, binding failures and direct rejection of
-  per-library map `-incdir` (V §13.2; SV §33.3).
+  same-name map composition changes, binding failures and library-scoped
+  `-incdir` headers, ordered directory lookup, logical buffer resolution and
+  missing/unauthorized directory diagnostics (V §13.2; SV §33.3).
   `sim_syn033_structural_bind` checks type-wide, selected-instance,
   generate-for/if and interface binds through the public CLI in both optimizer
   modes, then checks elaborated names and parameters after snapshot destruction;

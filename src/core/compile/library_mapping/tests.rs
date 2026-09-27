@@ -229,6 +229,7 @@ fn disk_and_logical_maps_resolve_one_joint_candidate_set() {
     let mut buffers = LibraryMapBuffers::new(&mut sources, &mut libraries, &mut work).unwrap();
     admit_library_maps_with_targets(
         &opts,
+        &mut Vec::new(),
         &mut identities,
         &mut buffers,
         &mut count,
@@ -237,7 +238,15 @@ fn disk_and_logical_maps_resolve_one_joint_candidate_set() {
         &mut targets,
     )
     .expect("defer disk-map tie");
-    collect_in_memory_library_maps(&logical_maps, &mut buffers, count, 8, &mut work).unwrap();
+    collect_in_memory_library_maps(
+        &logical_maps,
+        &mut Vec::new(),
+        &mut buffers,
+        count,
+        8,
+        &mut work,
+    )
+    .unwrap();
     buffers
         .finish(&mut remaining, &mut work)
         .expect("logical explicit filename resolves tie");
@@ -268,6 +277,7 @@ fn disk_map_uses_existing_cli_source_bytes_instead_of_reading_again() {
     let mut buffers = LibraryMapBuffers::new(&mut sources, &mut libraries, &mut work).unwrap();
     admit_library_maps_with_targets(
         &opts,
+        &mut Vec::new(),
         &mut identities,
         &mut buffers,
         &mut count,
@@ -322,6 +332,7 @@ fn filesystem_map_configurations_are_registered_before_mapping_later_files() {
     let mut buffers = LibraryMapBuffers::new(&mut sources, &mut libraries, &mut work).unwrap();
     admit_library_maps_with_targets(
         &opts,
+        &mut Vec::new(),
         &mut identities,
         &mut buffers,
         &mut count,

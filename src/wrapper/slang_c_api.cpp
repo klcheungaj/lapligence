@@ -4211,6 +4211,9 @@ std::unique_ptr<LlgSlangSnapshot> compileImpl(const LlgSlangCompileRequest& requ
   if (request.library_source_count != 0 && request.library_sources == nullptr)
     throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT,
                         "library_sources has a null pointer");
+  if (request.library_include_dir_count != 0 && request.library_include_dirs == nullptr)
+    throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT,
+                        "library_include_dirs has a null pointer");
   if (request.library_order_count != 0 && request.library_order == nullptr)
     throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT,
                         "library_order has a null pointer");
@@ -4236,6 +4239,9 @@ std::unique_ptr<LlgSlangSnapshot> compileImpl(const LlgSlangCompileRequest& requ
   if (request.include_dir_count > kHardMaxIncludeDirs)
     throw BridgeFailure(LLG_SLANG_STATUS_LIMIT_EXCEEDED,
                         "include directory count limit exceeded");
+  if (request.library_include_dir_count > kHardMaxIncludeDirs)
+    throw BridgeFailure(LLG_SLANG_STATUS_LIMIT_EXCEEDED,
+                        "library include directory count limit exceeded");
   if (request.parameter_override_count > kHardMaxParameterOverrides)
     throw BridgeFailure(LLG_SLANG_STATUS_LIMIT_EXCEEDED,
                         "parameter override count limit exceeded");
@@ -4446,6 +4452,19 @@ std::unique_ptr<LlgSlangSnapshot> compileImpl(const LlgSlangCompileRequest& requ
       continue;
     libraryFor(name);
     compilationOptions.defaultLiblist.push_back(name);
+  }
+  for (uint64_t i = 0; i < request.library_include_dir_count; i++) {
+    const auto& input = request.library_include_dirs[i];
+    const std::string_view library = checkedView(input.library, "library include directory library");
+    const std::string_view path = checkedView(input.path, "library include directory path");
+    if (library.empty() || path.empty() || library.find('\0') != std::string_view::npos ||
+        path.find('\0') != std::string_view::npos)
+      throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT,
+                          "library include directories require nonempty names without NUL bytes");
+    addChecked(configBytes, library.size(), kHardMaxConfigBytes, "configuration byte");
+    addChecked(configBytes, path.size(), kHardMaxConfigBytes, "configuration byte");
+    libraryFor(std::string(library))->includeDirs.emplace_back(
+        std::filesystem::path(path).lexically_normal());
   }
 
   std::vector<std::shared_ptr<driver::UserDefinedSubroutine>> userDefinedSubroutines;

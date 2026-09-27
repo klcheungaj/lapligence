@@ -18,6 +18,8 @@ redirects C malloc/free through GNU/LLD wrapping on musl.
   before content reads. Preserve source identity and typed facts. Apply mappings
   through `DiagnosticEngine`, synchronously copy `ReportedDiagnostic` records,
   and retain intrinsic errors despite suppression plus effective error severities.
+- Apply ordered library include prefixes to the matching `SourceLibrary` only;
+  every selected header must already be in the cache-only source set.
 - Snapshot ownership includes typed tables, lexical/source data and uninstantiated
   source-instance records. Bound all size-derived allocation/traversal before work.
   Preserve source spelling/coordinates without deriving semantics from text.

@@ -1,0 +1,2 @@
+library rtl "incdir_rtl.sv" -incdir "incdir_headers/rtl_*";
+library gate "incdir_gate.sv" -incdir "incdir_headers/gate";

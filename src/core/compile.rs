@@ -56,6 +56,13 @@ pub struct LibrarySource {
     pub library: String,
 }
 
+/// An ordered include search directory for one source library.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LibraryIncludeDir {
+    pub library: String,
+    pub path: String,
+}
+
 impl LibrarySource {
     pub fn new(
         name: impl Into<String>,
@@ -106,6 +113,8 @@ pub struct CompileOpts {
     pub library_files: Vec<String>,
     /// Already-admitted named library sources.
     pub library_sources: Vec<LibrarySource>,
+    /// Include directories from admitted library maps, scoped to their library.
+    pub library_include_dirs: Vec<LibraryIncludeDir>,
     /// Default liblist search order used when a configuration has no local
     /// `liblist` clause.
     pub library_order: Vec<String>,
@@ -199,6 +208,7 @@ const NATIVE_HARD_MAX_SOURCE_BYTES: u64 = 512 * 1024 * 1024;
 const NATIVE_HARD_MAX_SOURCES: u64 = 4_096;
 const MAX_LIBRARY_MAP_WORK: u64 = 1_000_000;
 const MAX_LIBRARY_PATTERN_COMPONENTS: usize = 512;
+const MAX_LIBRARY_INCLUDE_DIRS: usize = 4_096;
 const MAX_LIBRARY_PATH_BYTES: usize = 16 * 1024;
 const LIBRARY_MAP_READ_CHUNK_BYTES: usize = 8 * 1024;
 // Regular files normally satisfy one read per chunk. Keep a separate I/O
@@ -649,6 +659,7 @@ pub fn compile(opts: &CompileOpts) -> Result<CompileOut, StartupError> {
         })?;
         library_owned.push(LibrarySource::new(name, text, library));
     }
+    let mut library_include_dirs = opts.library_include_dirs.clone();
     let mut library_map_work = LibraryMapWorkBudget::with_allocation_limit(
         MAX_LIBRARY_MAP_WORK,
         effective_source_byte_limit(opts.limits),
@@ -661,6 +672,7 @@ pub fn compile(opts: &CompileOpts) -> Result<CompileOut, StartupError> {
             LibraryMapBuffers::new(&mut owned, &mut library_owned, &mut library_map_work)?;
         admit_library_maps_with_targets(
             opts,
+            &mut library_include_dirs,
             &mut identities,
             &mut buffers,
             &mut source_count,
@@ -670,6 +682,7 @@ pub fn compile(opts: &CompileOpts) -> Result<CompileOut, StartupError> {
         )?;
         collect_in_memory_library_maps(
             &opts.library_maps,
+            &mut library_include_dirs,
             &mut buffers,
             source_count,
             effective_source_count_limit(opts.limits),
@@ -694,6 +707,7 @@ pub fn compile(opts: &CompileOpts) -> Result<CompileOut, StartupError> {
             &root.name,
             &root.text,
             opts,
+            &opts.include_dirs,
             &mut macros,
             root_target.as_ref(),
             &mut admitted_targets,
@@ -708,12 +722,20 @@ pub fn compile(opts: &CompileOpts) -> Result<CompileOut, StartupError> {
     }
     for root in library_owned.clone() {
         let mut library_macros = macro_environment_from_defines(&opts.defines);
+        let mut include_dirs = opts.include_dirs.clone();
+        include_dirs.extend(
+            library_include_dirs
+                .iter()
+                .filter(|dir| dir.library == root.library)
+                .map(|dir| dir.path.clone()),
+        );
         let root_target = admitted_targets.get(Path::new(&root.name)).cloned();
         let mut include_stack = vec![PathBuf::from(&root.name)];
         admit_macro_includes(
             &root.name,
             &root.text,
             opts,
+            &include_dirs,
             &mut library_macros,
             root_target.as_ref(),
             &mut admitted_targets,
@@ -736,6 +758,7 @@ pub fn compile(opts: &CompileOpts) -> Result<CompileOut, StartupError> {
         &owned,
         &[],
         &library_owned,
+        &library_include_dirs,
         map_originals,
         &mut library_map_work,
         opts,
@@ -805,12 +828,14 @@ pub fn compile_sources(
         })?;
     let mut owned = sources.to_vec();
     let mut library_owned = opts.library_sources.clone();
+    let mut library_include_dirs = opts.library_include_dirs.clone();
     let mut library_map_work = LibraryMapWorkBudget::with_allocation_limit(
         MAX_LIBRARY_MAP_WORK,
         effective_source_byte_limit(opts.limits),
     );
-    let map_originals = admit_in_memory_library_maps(
+    let map_originals = admit_in_memory_library_maps_with_dirs(
         &opts.library_maps,
+        &mut library_include_dirs,
         &mut owned,
         &mut library_owned,
         &mut source_count,
@@ -822,6 +847,7 @@ pub fn compile_sources(
         &owned,
         &[],
         &library_owned,
+        &library_include_dirs,
         map_originals,
         &mut library_map_work,
         opts,
@@ -834,6 +860,7 @@ fn preflight_options(opts: &CompileOpts) -> Result<(), StartupError> {
     if opts.defines.len() > MAX_OPTIONS
         || opts.param_overrides.len() > MAX_OPTIONS
         || opts.include_dirs.len() > MAX_OPTIONS
+        || opts.library_include_dirs.len() > MAX_OPTIONS
         || opts.system_subroutines.len() > MAX_OPTIONS
         || opts.library_map_files.len() > MAX_OPTIONS
         || opts.library_maps.len() > MAX_OPTIONS
@@ -851,6 +878,8 @@ fn preflight_options(opts: &CompileOpts) -> Result<(), StartupError> {
         .iter()
         .chain(&opts.param_overrides)
         .chain(&opts.include_dirs)
+        .chain(opts.library_include_dirs.iter().map(|entry| &entry.library))
+        .chain(opts.library_include_dirs.iter().map(|entry| &entry.path))
         .chain(&opts.system_subroutines)
         .chain(&opts.library_map_files)
         .chain(&opts.library_files)
@@ -878,6 +907,7 @@ fn compile_source_groups(
     first: &[OwnedSource],
     second: &[OwnedSource],
     library_sources: &[LibrarySource],
+    library_include_dirs: &[LibraryIncludeDir],
     map_originals: Vec<OwnedSource>,
     map_work: &mut LibraryMapWorkBudget,
     opts: &CompileOpts,
@@ -910,6 +940,13 @@ fn compile_source_groups(
             .include_dirs
             .iter()
             .map(|dir| normalize_include_dir(dir))
+            .collect(),
+        library_include_dirs: library_include_dirs
+            .iter()
+            .map(|entry| crate::ffi::slang::LibraryIncludeDir {
+                library: entry.library.clone(),
+                path: entry.path.clone(),
+            })
             .collect(),
         parameter_overrides: opts
             .param_overrides
@@ -1318,6 +1355,7 @@ fn open_regular_library_file_at(
 struct LibraryMapEntry {
     library: String,
     patterns: Vec<String>,
+    include_dirs: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -1346,11 +1384,13 @@ fn admit_library_maps(
     remaining: &mut u64,
     work: &mut LibraryMapWorkBudget,
 ) -> Result<(), StartupError> {
+    let mut library_include_dirs = Vec::new();
     let mut admitted_targets = HashMap::new();
     let mut sources = Vec::new();
     let mut buffers = LibraryMapBuffers::new(&mut sources, library_sources, work)?;
     admit_library_maps_with_targets(
         opts,
+        &mut library_include_dirs,
         identities,
         &mut buffers,
         source_count,
@@ -1361,8 +1401,10 @@ fn admit_library_maps(
     buffers.finish(remaining, work).map(|_| ())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn admit_library_maps_with_targets(
     opts: &CompileOpts,
+    library_include_dirs: &mut Vec<LibraryIncludeDir>,
     identities: &mut HashSet<PathBuf>,
     buffers: &mut LibraryMapBuffers<'_>,
     source_count: &mut usize,
@@ -1498,6 +1540,20 @@ fn admit_library_maps_with_targets(
     for (map_path, map_target, entries) in parsed_maps {
         let base = map_path.parent().unwrap_or_else(|| Path::new("."));
         for entry in entries {
+            for dir in &entry.include_dirs {
+                for path in admit_library_include_dirs(base, dir, &map_target, work)? {
+                    charge_library_include_dir_entry(
+                        library_include_dirs.len(),
+                        &entry.library,
+                        &path,
+                        work,
+                    )?;
+                    library_include_dirs.push(LibraryIncludeDir {
+                        library: entry.library.clone(),
+                        path,
+                    });
+                }
+            }
             for pattern in entry.patterns {
                 let specificity = LibrarySpecificity::of_pattern(&pattern);
                 let match_pattern = library_match_pattern(&pattern, work)?;
@@ -1591,8 +1647,32 @@ fn admit_library_maps_with_targets(
 /// path. Its parent is used as the explicit base for relative map patterns and
 /// includes; matching never opens a path, which preserves the cache-only FFI
 /// contract for exact-source compilation.
+#[cfg(test)]
 fn admit_in_memory_library_maps(
     maps: &[OwnedSource],
+    sources: &mut Vec<OwnedSource>,
+    library_sources: &mut Vec<LibrarySource>,
+    source_count: &mut usize,
+    remaining: &mut u64,
+    source_limit: usize,
+    work: &mut LibraryMapWorkBudget,
+) -> Result<Vec<OwnedSource>, StartupError> {
+    admit_in_memory_library_maps_with_dirs(
+        maps,
+        &mut Vec::new(),
+        sources,
+        library_sources,
+        source_count,
+        remaining,
+        source_limit,
+        work,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn admit_in_memory_library_maps_with_dirs(
+    maps: &[OwnedSource],
+    library_include_dirs: &mut Vec<LibraryIncludeDir>,
     sources: &mut Vec<OwnedSource>,
     library_sources: &mut Vec<LibrarySource>,
     source_count: &mut usize,
@@ -1604,12 +1684,20 @@ fn admit_in_memory_library_maps(
         return Ok(Vec::new());
     }
     let mut buffers = LibraryMapBuffers::new(sources, library_sources, work)?;
-    collect_in_memory_library_maps(maps, &mut buffers, *source_count, source_limit, work)?;
+    collect_in_memory_library_maps(
+        maps,
+        library_include_dirs,
+        &mut buffers,
+        *source_count,
+        source_limit,
+        work,
+    )?;
     buffers.finish(remaining, work)
 }
 
 fn collect_in_memory_library_maps(
     maps: &[OwnedSource],
+    library_include_dirs: &mut Vec<LibraryIncludeDir>,
     buffers: &mut LibraryMapBuffers<'_>,
     source_count: usize,
     source_limit: usize,
@@ -1717,6 +1805,22 @@ fn collect_in_memory_library_maps(
         }
 
         for entry in entries {
+            for dir in &entry.include_dirs {
+                for path in
+                    logical_map_include_dirs(&base, dir, buffers.sources, buffers.libraries, work)?
+                {
+                    charge_library_include_dir_entry(
+                        library_include_dirs.len(),
+                        &entry.library,
+                        &path,
+                        work,
+                    )?;
+                    library_include_dirs.push(LibraryIncludeDir {
+                        library: entry.library.clone(),
+                        path,
+                    });
+                }
+            }
             for pattern in entry.patterns {
                 work.charge(1, "in-memory library pattern")?;
                 let specificity = LibrarySpecificity::of_pattern(&pattern);
@@ -2195,6 +2299,8 @@ fn parse_library_map(
                     ));
                 };
                 let mut patterns = Vec::new();
+                let mut include_dirs = Vec::new();
+                let mut in_incdir = false;
                 charge_library_map_clone(work, &name.value, "library map library-name clone")?;
                 index += 2;
                 while index < tokens.len() && !tokens[index].is(";") {
@@ -2209,20 +2315,26 @@ fn parse_library_map(
                                     .get(index + 1)
                                     .is_some_and(|token| token.is("incdir") && !token.quoted)));
                     if incdir_clause {
-                        return Err(StartupError::new(
-                            StartupErrorKind::InvalidArgument,
-                            format!(
-                                "library `{}` uses unsupported map -incdir include search",
-                                name.value
-                            ),
-                        ));
+                        if in_incdir {
+                            return Err(StartupError::new(
+                                StartupErrorKind::InvalidArgument,
+                                format!("library `{}` has repeated -incdir clause", name.value),
+                            ));
+                        }
+                        in_incdir = true;
+                        index += if tokens[index].is("-") { 2 } else { 1 };
+                        continue;
                     }
                     charge_library_map_clone(
                         work,
                         &tokens[index].value,
                         "library map pattern clone",
                     )?;
-                    patterns.push(tokens[index].value.clone());
+                    if in_incdir {
+                        include_dirs.push(tokens[index].value.clone());
+                    } else {
+                        patterns.push(tokens[index].value.clone());
+                    }
                     index += 1;
                 }
                 if patterns.is_empty() {
@@ -2231,10 +2343,17 @@ fn parse_library_map(
                         format!("library `{}` has no source patterns", name.value),
                     ));
                 }
+                if in_incdir && include_dirs.is_empty() {
+                    return Err(StartupError::new(
+                        StartupErrorKind::InvalidArgument,
+                        format!("library `{}` -incdir requires a directory", name.value),
+                    ));
+                }
                 work.charge(1, "library map entry allocation")?;
                 entries.push(LibraryMapEntry {
                     library: name.value.clone(),
                     patterns,
+                    include_dirs,
                 });
             }
             _ => {
@@ -2562,7 +2681,7 @@ fn expand_library_pattern_admitted(
     max_matches: u64,
     work: &mut LibraryMapWorkBudget,
 ) -> Result<Vec<AdmittedTarget>, StartupError> {
-    expand_library_pattern_admitted_with_base(base, pattern, max_matches, work, None)
+    expand_library_pattern_admitted_with_kind(base, pattern, max_matches, work, None, false)
 }
 
 fn expand_library_pattern_admitted_under(
@@ -2579,15 +2698,47 @@ fn expand_library_pattern_admitted_under(
             format!("cannot reopen library map base {}: {error}", base.display()),
         )
     })?;
-    expand_library_pattern_admitted_with_base(base, pattern, max_matches, work, Some(&base_handle))
+    expand_library_pattern_admitted_with_kind(
+        base,
+        pattern,
+        max_matches,
+        work,
+        Some(&base_handle),
+        false,
+    )
 }
 
-fn expand_library_pattern_admitted_with_base(
+fn expand_library_include_pattern_admitted_under(
+    base: &Path,
+    pattern: &str,
+    max_matches: u64,
+    work: &mut LibraryMapWorkBudget,
+    map_target: &AdmittedTarget,
+) -> Result<Vec<AdmittedTarget>, StartupError> {
+    work.charge(2, "filesystem map include anchor admission")?;
+    let base_handle = secure_fs::open_parent_of_target(map_target).map_err(|error| {
+        StartupError::new(
+            StartupErrorKind::Input,
+            format!("cannot reopen library map base {}: {error}", base.display()),
+        )
+    })?;
+    expand_library_pattern_admitted_with_kind(
+        base,
+        pattern,
+        max_matches,
+        work,
+        Some(&base_handle),
+        true,
+    )
+}
+
+fn expand_library_pattern_admitted_with_kind(
     base: &Path,
     pattern: &str,
     max_matches: u64,
     work: &mut LibraryMapWorkBudget,
     admitted_base: Option<&OpenedPath>,
+    directories: bool,
 ) -> Result<Vec<AdmittedTarget>, StartupError> {
     work.charge_usize(pattern.len(), "filesystem pattern preparation")?;
     if pattern.contains('$') {
@@ -2655,12 +2806,13 @@ fn expand_library_pattern_admitted_with_base(
                 format!("cannot open library map base {}: {error}", anchor.display()),
             )
         })?;
-        return expand_library_pattern_admitted_with_base(
+        return expand_library_pattern_admitted_with_kind(
             anchor_handle.actual_path(),
             rest,
             max_matches,
             work,
             Some(&anchor_handle),
+            directories,
         );
     }
     let wildcard_index = components
@@ -2721,7 +2873,11 @@ fn expand_library_pattern_admitted_with_base(
             }
         };
         work.charge(1, "filesystem source check")?;
-        if !opened.is_file() {
+        if !(if directories {
+            opened.is_dir()
+        } else {
+            opened.is_file()
+        }) {
             return Ok(Vec::new());
         }
         work.charge(1, "filesystem source matching")?;
@@ -2795,7 +2951,15 @@ fn expand_library_pattern_admitted_with_base(
         max_matches,
     };
     let mut ancestors = Vec::new();
-    walk_library_pattern(&anchor, &rest, &mut matches, &mut budget, 0, &mut ancestors)?;
+    walk_library_pattern(
+        &anchor,
+        &rest,
+        &mut matches,
+        &mut budget,
+        0,
+        &mut ancestors,
+        directories,
+    )?;
     charge_key_comparison_work(
         budget.work,
         matches.iter().map(|target: &AdmittedTarget| {
@@ -2824,6 +2988,7 @@ fn walk_library_pattern(
     budget: &mut LibraryPatternBudget,
     depth: usize,
     ancestors: &mut Vec<FileIdentity>,
+    directories: bool,
 ) -> Result<(), StartupError> {
     if depth > MAX_LIBRARY_PATTERN_COMPONENTS {
         return Err(StartupError::new(
@@ -2850,7 +3015,12 @@ fn walk_library_pattern(
     ancestors.push(current_identity);
     if components.is_empty() {
         budget.work.charge(1, "filesystem source check")?;
-        if current.is_file() {
+        let is_match = if directories {
+            current.is_dir()
+        } else {
+            current.is_file()
+        };
+        if is_match {
             budget.match_path()?;
             budget.work.charge(1, "filesystem match storage")?;
             matches.push(current.admitted_target());
@@ -2870,6 +3040,7 @@ fn walk_library_pattern(
             budget,
             next_depth,
             ancestors,
+            directories,
         )?;
         let mut children = Vec::new();
         budget.work.charge(1, "filesystem directory scan")?;
@@ -2914,7 +3085,15 @@ fn walk_library_pattern(
         )?;
         children.sort_by(|left, right| left.0.cmp(&right.0));
         for (_, child) in children {
-            walk_library_pattern(&child, components, matches, budget, next_depth, ancestors)?;
+            walk_library_pattern(
+                &child,
+                components,
+                matches,
+                budget,
+                next_depth,
+                ancestors,
+                directories,
+            )?;
         }
     } else if component_has_wildcard(components[0].as_os_str()) {
         let mut children = Vec::new();
@@ -2973,6 +3152,7 @@ fn walk_library_pattern(
                 budget,
                 next_depth,
                 ancestors,
+                directories,
             )?;
         }
     } else {
@@ -2992,6 +3172,7 @@ fn walk_library_pattern(
                 budget,
                 next_depth,
                 ancestors,
+                directories,
             )?;
         }
     }
@@ -3046,6 +3227,119 @@ fn normalize_include_dir(value: &str) -> String {
     std::env::current_dir()
         .map(|cwd| cwd.join(path).to_string_lossy().into_owned())
         .unwrap_or_else(|_| value.to_owned())
+}
+
+fn charge_library_include_dir_entry(
+    count: usize,
+    library: &str,
+    path: &str,
+    work: &mut LibraryMapWorkBudget,
+) -> Result<(), StartupError> {
+    if count >= MAX_LIBRARY_INCLUDE_DIRS {
+        return Err(StartupError::new(
+            StartupErrorKind::LimitExceeded,
+            "library include directory count exceeds the native limit",
+        ));
+    }
+    let bytes = std::mem::size_of::<LibraryIncludeDir>()
+        .checked_add(library.len())
+        .and_then(|bytes| bytes.checked_add(path.len()))
+        .ok_or_else(|| work.limit_error("library include directory metadata"))?;
+    work.charge_allocation_usize(bytes, "library include directory metadata")
+}
+
+fn admit_library_include_dirs(
+    base: &Path,
+    spec: &str,
+    map_target: &AdmittedTarget,
+    work: &mut LibraryMapWorkBudget,
+) -> Result<Vec<String>, StartupError> {
+    work.charge_usize(spec.len(), "library include directory path")?;
+    if spec.is_empty() {
+        return Err(StartupError::new(
+            StartupErrorKind::InvalidArgument,
+            "library -incdir requires a directory path",
+        ));
+    }
+    let matches = expand_library_include_pattern_admitted_under(
+        base,
+        spec,
+        MAX_LIBRARY_INCLUDE_DIRS as u64,
+        work,
+        map_target,
+    )
+    .map_err(|error| {
+        StartupError::new(
+            error.kind(),
+            format!("library -incdir `{spec}` cannot be admitted: {error}"),
+        )
+    })?;
+    if matches.is_empty() {
+        return Err(StartupError::new(
+            StartupErrorKind::Input,
+            format!("library -incdir `{spec}` matched no directories"),
+        ));
+    }
+    Ok(matches
+        .into_iter()
+        .map(|entry| entry.actual_path().to_string_lossy().into_owned())
+        .collect())
+}
+
+fn logical_map_include_dirs(
+    base: &Path,
+    spec: &str,
+    sources: &[OwnedSource],
+    libraries: &[LibrarySource],
+    work: &mut LibraryMapWorkBudget,
+) -> Result<Vec<String>, StartupError> {
+    if spec.is_empty() || spec.contains('$') {
+        return Err(StartupError::new(
+            StartupErrorKind::InvalidArgument,
+            format!("logical library -incdir requires a valid directory path: `{spec}`"),
+        ));
+    }
+    let pattern = logical_map_pattern_key(base, spec, work)?;
+    let mut directories = Vec::new();
+    let mut seen = HashSet::new();
+    for name in sources
+        .iter()
+        .map(|source| source.name.as_str())
+        .chain(libraries.iter().map(|source| source.name.as_str()))
+    {
+        work.charge(1, "logical include directory candidate")?;
+        let key = logical_path_key(Path::new(name), work, "logical include directory candidate")?;
+        for end in 1..key.len() {
+            work.charge(1, "logical include directory ancestor")?;
+            if logical_path_pattern_matches(&pattern, &key[..end], work)? {
+                let path = key[..end].join("/");
+                work.charge_allocation_usize(path.len(), "logical include directory match")?;
+                if seen.insert(path.clone()) {
+                    if directories.len() >= MAX_LIBRARY_INCLUDE_DIRS {
+                        return Err(StartupError::new(
+                            StartupErrorKind::LimitExceeded,
+                            "logical library -incdir matches exceed the include directory limit",
+                        ));
+                    }
+                    directories.push(path);
+                }
+            }
+        }
+    }
+    if directories.is_empty() {
+        return Err(StartupError::new(
+            StartupErrorKind::Input,
+            format!("logical library -incdir `{spec}` matched no admitted directories"),
+        ));
+    }
+    charge_key_comparison_work(
+        work,
+        directories.iter().map(String::len),
+        true,
+        "logical include directory ordering",
+    )?;
+    directories.sort();
+    Ok(directories)
 }
 
 #[cfg(test)]
@@ -3191,6 +3485,7 @@ fn admit_macro_includes(
     name: &str,
     text: &str,
     opts: &CompileOpts,
+    include_dirs: &[String],
     macros: &mut MacroEnvironment,
     including_target: Option<&AdmittedTarget>,
     admitted_targets: &mut HashMap<PathBuf, AdmittedTarget>,
@@ -3211,7 +3506,7 @@ fn admit_macro_includes(
     let including = Path::new(name);
     let mut admit = |target: String, macros: &mut MacroEnvironment| -> Result<(), StartupError> {
         let Some(path) =
-            resolve_include_checked(including, including_target, &target, &opts.include_dirs)
+            resolve_include_checked(including, including_target, &target, include_dirs)
         else {
             // Leave missing, malformed, and unauthorized targets for Slang so
             // its diagnostic retains the original directive and source range.
@@ -3262,6 +3557,7 @@ fn admit_macro_includes(
             &child.name,
             &child.text,
             opts,
+            include_dirs,
             macros,
             Some(&path),
             admitted_targets,

@@ -1,5 +1,2 @@
-library rtl "rtl.sv" -incdir "headers";
-config choose;
-  design work.top;
-  default liblist rtl;
-endconfig
+library rtl "incdir_rtl.sv" -incdir "incdir_headers/rtl_first", "incdir_headers/rtl_second";
+library gate "incdir_gate.sv" - incdir "incdir_headers/gate";

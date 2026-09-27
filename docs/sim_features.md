@@ -244,9 +244,16 @@ real values use a separate representation.
   filename > wildcard filename > trailing-separator directory; explicit library
   assignments override maps. Relative parent paths resolve from the map directory.
   Missing/ambiguous bindings, encrypted IP, foreign co-simulation and unrestricted
-  filesystem discovery reject. The legal per-library `-incdir` map clause is
-  explicitly rejected as unsupported at map admission in both editions; no
-  per-library include search is performed. V §13.2; SV §33.3.
+  filesystem discovery reject. Per-library `-incdir` paths resolve from the
+  containing map, expand wildcard directory matches in sorted order, keep
+  declaration order, and search only for that library's sources. The including
+  file's directory wins first, followed by global command-line include
+  directories and then library directories. This precedence is the pinned Slang
+  default where V §13.2 and SV §33.3 do not prescribe a tie rule.
+  All include content is admitted before cache-only native compilation;
+  invalid or missing directories reject at map admission. In-memory maps need
+  admitted buffers below each selected logical include directory; empty logical
+  directories have no representation. V §13.2; SV §33.3.
   V ch.13; SV ch.33 **[2001]**.
 
   Literal configuration blocks are admitted in root/included library maps as

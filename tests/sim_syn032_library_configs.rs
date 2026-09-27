@@ -656,50 +656,270 @@ fn cyclic_config_binding_is_a_frontend_error() {
 }
 
 #[test]
-fn library_map_incdir_is_diagnosed_for_both_input_contracts_and_editions() {
+fn library_map_incdirs_select_scoped_headers_in_both_editions() {
     let map_path = fixture("incdir.map");
+    let wildcard_map = fixture("incdir_wildcard.map");
+    let _ = fixture("incdir_top.sv");
+    let _ = fixture("incdir_rtl.sv");
+    let _ = fixture("incdir_gate.sv");
+    let _ = fixture("incdir_headers/rtl_first/value.vh");
+    let _ = fixture("incdir_headers/rtl_second/value.vh");
+    let _ = fixture("incdir_headers/gate/value.vh");
+    let global_header = fixture("incdir_headers/global/value.vh");
+    let global = Path::new(&global_header)
+        .parent()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
     for (edition, language_edition) in [
         ("2001", compile::LanguageEdition::Verilog2001),
         ("2009", compile::LanguageEdition::SystemVerilog2009),
     ] {
-        sim_cli::reject_case_with_args(
-            SUITE,
-            "top",
-            "unsupported map -incdir include search",
-            &[
-                "--edition",
-                edition,
-                "--top",
-                "choose:config",
-                "--libmap",
-                &map_path,
-            ],
-        );
+        for map in [&map_path, &wildcard_map] {
+            for (global_dir, expected) in [(false, "incdir=17,23\n"), (true, "incdir=66,66\n")] {
+                let mut args = vec![
+                    "--edition",
+                    edition,
+                    "--top",
+                    "incdir_top",
+                    "--libmap",
+                    map,
+                    "--library-order",
+                    "rtl,gate",
+                ];
+                if global_dir {
+                    args.extend(["--include-dir", &global]);
+                }
+                sim_cli::run_case_with_args(
+                    SUITE,
+                    "incdir_top",
+                    expected,
+                    "llg: $finish at time 1000 at incdir_top:10:5\n",
+                    &[],
+                    &args,
+                );
+            }
+        }
 
         for map_text in [
-            "library rtl cells.sv -incdir headers;",
-            "library rtl cells.sv - incdir headers;",
+            "library rtl rtl.sv -incdir headers/rtl;",
+            "library rtl rtl.sv - incdir headers/rtl;",
         ] {
-            let error = compile::compile_sources_checked(
-                &[compile::OwnedSource::compilation_unit(
-                    "virtual/top.sv",
-                    "module top; endmodule",
-                )],
+            let output = compile::compile_sources_checked(
+                &[
+                    compile::OwnedSource::compilation_unit("virtual/top.sv", "module top; rtl_cell a(); endmodule"),
+                    compile::OwnedSource::compilation_unit("virtual/rtl.sv", "`include \"value.vh\"\nmodule rtl_cell; localparam integer MARK = `VALUE; endmodule"),
+                    compile::OwnedSource::include("virtual/headers/rtl/value.vh", "`define VALUE 17\n"),
+                ],
                 &compile::CompileOpts {
                     edition: language_edition,
                     top: Some("top".to_owned()),
                     library_maps: vec![compile::OwnedSource::include("virtual/root.map", map_text)],
+                    library_order: vec!["rtl".to_owned()],
                     ..Default::default()
                 },
             )
-            .expect_err("per-library include search must not be silently omitted");
-            let compile::CompileError::Startup(error) = error else {
-                panic!("map admission must report a startup error");
-            };
-            assert_eq!(error.kind(), compile::StartupErrorKind::InvalidArgument);
-            assert!(error
-                .to_string()
-                .contains("unsupported map -incdir include search"));
+            .expect("in-memory headers should resolve under the library's logical incdir");
+            let database = db::Db::from_slang(&output.snapshot).expect("owned database");
+            let design = model::DesignModel::from_db(&database);
+            let mark = design
+                .instance("top.a")
+                .unwrap()
+                .params
+                .iter()
+                .find(|parameter| parameter.name == "MARK")
+                .and_then(|parameter| parameter.value.as_ref())
+                .and_then(|value| match value {
+                    llg::core::elab::Val::Bits(value) => value.to_u64(),
+                    _ => None,
+                });
+            assert_eq!(mark, Some(17));
         }
+    }
+}
+
+#[test]
+fn library_incdir_failures_are_reported_in_both_editions_and_modes() {
+    let no_leak = fixture("incdir_no_leak.map");
+    let missing_dir = fixture("incdir_missing_dir.map");
+    let missing_header = fixture("incdir_missing_header.map");
+    let _ = fixture("incdir_missing_header.sv");
+    for edition in ["2001", "2009"] {
+        for (map, diagnostic) in [
+            (&no_leak, "value.vh"),
+            (&missing_dir, "incdir_headers/absent"),
+            (&missing_header, "absent.vh"),
+        ] {
+            sim_cli::reject_case_with_args(
+                SUITE,
+                "incdir_top",
+                diagnostic,
+                &[
+                    "--edition",
+                    edition,
+                    "--top",
+                    "incdir_top",
+                    "--libmap",
+                    map,
+                    "--library-order",
+                    "rtl,gate",
+                ],
+            );
+        }
+    }
+}
+
+#[test]
+fn logical_incdir_choice_is_part_of_compile_input_identity() {
+    for (directory, expected) in [("first", 17), ("second", 99), ("*", 17)] {
+        let output = compile::compile_sources_checked(
+            &[
+                compile::OwnedSource::compilation_unit("virtual/top.sv", "module top; rtl_cell a(); endmodule"),
+                compile::OwnedSource::compilation_unit("virtual/rtl.sv", "`include \"value.vh\"\nmodule rtl_cell; localparam integer MARK = `VALUE; endmodule"),
+                compile::OwnedSource::include("virtual/headers/first/value.vh", "`define VALUE 17\n"),
+                compile::OwnedSource::include("virtual/headers/second/value.vh", "`define VALUE 99\n"),
+            ],
+            &compile::CompileOpts {
+                top: Some("top".to_owned()),
+                library_order: vec!["rtl".to_owned()],
+                library_maps: vec![compile::OwnedSource::include(
+                    "virtual/root.map",
+                    format!("library rtl rtl.sv -incdir headers/{directory};"),
+                )],
+                ..Default::default()
+            },
+        ).expect("logical map compiles with selected include directory");
+        let database = db::Db::from_slang(&output.snapshot).expect("owned database");
+        let design = model::DesignModel::from_db(&database);
+        let mark = design
+            .instance("top.a")
+            .unwrap()
+            .params
+            .iter()
+            .find(|parameter| parameter.name == "MARK")
+            .and_then(|parameter| parameter.value.as_ref())
+            .and_then(|value| match value {
+                llg::core::elab::Val::Bits(value) => value.to_u64(),
+                _ => None,
+            });
+        assert_eq!(mark, Some(expected));
+    }
+}
+
+#[test]
+fn including_file_directory_precedes_library_incdir() {
+    let output = compile::compile_sources_checked(
+        &[
+            compile::OwnedSource::compilation_unit("virtual/top.sv", "module top; rtl_cell a(); endmodule"),
+            compile::OwnedSource::compilation_unit("virtual/rtl.sv", "`include \"value.vh\"\nmodule rtl_cell; localparam integer MARK = `VALUE; endmodule"),
+            compile::OwnedSource::include("virtual/value.vh", "`define VALUE 42\n"),
+            compile::OwnedSource::include("virtual/headers/rtl/value.vh", "`define VALUE 17\n"),
+        ],
+        &compile::CompileOpts {
+            top: Some("top".to_owned()),
+            library_order: vec!["rtl".to_owned()],
+            library_maps: vec![compile::OwnedSource::include(
+                "virtual/root.map",
+                "library rtl rtl.sv -incdir headers/rtl;",
+            )],
+            ..Default::default()
+        },
+    ).expect("local include should resolve before library search");
+    let database = db::Db::from_slang(&output.snapshot).expect("owned database");
+    let design = model::DesignModel::from_db(&database);
+    let mark = design
+        .instance("top.a")
+        .unwrap()
+        .params
+        .iter()
+        .find(|parameter| parameter.name == "MARK")
+        .and_then(|parameter| parameter.value.as_ref())
+        .and_then(|value| match value {
+            llg::core::elab::Val::Bits(value) => value.to_u64(),
+            _ => None,
+        });
+    assert_eq!(mark, Some(42));
+}
+
+#[test]
+fn logical_library_incdir_missing_inputs_have_precise_diagnostics() {
+    let sources = [
+        compile::OwnedSource::compilation_unit(
+            "virtual/top.sv",
+            "module top; rtl_cell a(); endmodule",
+        ),
+        compile::OwnedSource::compilation_unit(
+            "virtual/rtl.sv",
+            "`include \"absent.vh\"\nmodule rtl_cell; endmodule",
+        ),
+        compile::OwnedSource::include(
+            "virtual/headers/rtl/other.vh",
+            "// admitted directory witness\n",
+        ),
+    ];
+    for edition in [
+        compile::LanguageEdition::Verilog2001,
+        compile::LanguageEdition::SystemVerilog2009,
+    ] {
+        let opts = compile::CompileOpts {
+            edition,
+            top: Some("top".to_owned()),
+            library_order: vec!["rtl".to_owned()],
+            library_maps: vec![compile::OwnedSource::include(
+                "virtual/root.map",
+                "library rtl rtl.sv -incdir headers/rtl;",
+            )],
+            ..Default::default()
+        };
+        let error = compile::compile_sources_checked(&sources, &opts)
+            .expect_err("missing include must fail at its directive");
+        let compile::CompileError::FrontendDiagnostics(diagnostics) = error else {
+            panic!("expected frontend diagnostics")
+        };
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diag| diag.file.as_deref() == Some("virtual/rtl.sv")
+                    && diag.line == 1
+                    && diag.message.contains("absent.vh")),
+            "{diagnostics:?}"
+        );
+
+        let mut missing_dir = opts;
+        missing_dir.library_maps = vec![compile::OwnedSource::include(
+            "virtual/root.map",
+            "library rtl rtl.sv -incdir headers/missing;",
+        )];
+        let error = compile::compile_sources_checked(&sources, &missing_dir)
+            .expect_err("logical directory without admitted buffers must reject");
+        let compile::CompileError::Startup(error) = error else {
+            panic!("expected admission diagnostic")
+        };
+        assert_eq!(error.kind(), compile::StartupErrorKind::Input);
+        assert!(error
+            .to_string()
+            .contains("matched no admitted directories"));
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn library_incdir_symlink_escape_is_rejected_before_compilation() {
+    use std::os::unix::fs::symlink;
+
+    let map_dir = sim_harness::TempDir::new("incdir_map").expect("map directory");
+    let outside = sim_harness::TempDir::new("incdir_outside").expect("outside directory");
+    let map = map_dir.path().join("root.map");
+    std::fs::write(&map, "library rtl rtl.sv -incdir escape;\n").expect("map");
+    std::fs::copy(fixture("incdir_rtl.sv"), map_dir.path().join("rtl.sv")).expect("library source");
+    symlink(outside.path(), map_dir.path().join("escape")).expect("escape link");
+    let map = map.to_string_lossy().into_owned();
+    for edition in ["2001", "2009"] {
+        sim_cli::reject_case_with_args(
+            SUITE,
+            "incdir_top",
+            "library -incdir `escape` cannot be admitted",
+            &["--edition", edition, "--libmap", &map],
+        );
     }
 }
