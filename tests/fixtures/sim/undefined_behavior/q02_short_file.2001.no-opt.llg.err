@@ -1,0 +1,2 @@
+llg: memory file `q02_short_file.mem`: memory file contains too few words for the selected range
+llg: simulation ended without $finish (no processes remain) at time 0

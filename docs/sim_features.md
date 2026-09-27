@@ -15,6 +15,7 @@ synthesis-tool acceptance.
 | ❌ Not implemented / rejected | No supported execution path; language-illegal forms are identified separately. |
 | ⬜ Out of scope | Unimplemented advanced forms outside the current scope. |
 | ✅ Accepted | A specific scope has matching post-change HDL evidence; not a whole-family claim. |
+| ⚠️ Undefined behavior (Qxx) | User-directed provisional disposition for the named interaction: its recorded `llg` result has no conformance oracle under the supplied references; cross-simulator comparison is pending. This does not label the whole feature or claim an IEEE designation. |
 
 Source and test presence are not acceptance. Recorded Linux results do not qualify
 later changes, full generated-model sanitizer coverage, or native Windows/macOS
@@ -153,8 +154,16 @@ real values use a separate representation.
   restricted. Q03: SV §§4.9.4 and 10.4.2 fix the NBA target and RHS using
   issue-time values; a wrong tag at issue still diagnoses if the variable is
   retagged before commit. The selected successful NBAs keep the tag stable.
-  Whether a valid issue target requires another tag check after an intervening
-  retag remains unqualified. Pattern matching is covered in §5.
+  **Undefined behavior (Q03):** When a member NBA has a valid tag at issue but
+  a blocking write retags the variable before commit, the commit-time tag
+  check, payload update and tag bits have no settled oracle in the supplied
+  SV §§4.9.4, 10.4.2, 7.3.2 and 11.9 text. This includes retagging to the
+  same member, another member, void or a different-width member, and a retag
+  from another process in the same slot. `q03_retag_blocking`,
+  `q03_retag_process`, `q03_whole_vs_member` and `q03_control` in
+  `sim_undefined_behavior` record current `llg` output, **not a conformance
+  claim**. Resolution awaits cross-simulator comparison. Pattern matching is
+  covered in §5.
   SV §§7.3, 11.9, 12.6 **[SV-2005]**.
 - 🟨 **Strings** — Module/static/automatic byte strings support copies, casts,
   core methods, `atoreal/realtoa`, formatting, value/reference formals, copy-out,
@@ -725,8 +734,12 @@ real values use a separate representation.
   Incomplete rows leave unread subwords unchanged.
   Public SV2009 coverage includes mixed-direction 3-D declarations, a runtime
   selected slice with explicit descending bounds, a 129-bit selected word, and
-  settled per-leaf reader notification after a selected load. Same-time-slot
-  wakeup order is unqualified.
+  settled per-leaf reader notification after a selected load.
+  **Undefined behavior (Q02):** The order in which same-slot readers wake
+  after one load writes several memory words is unresolved by the supplied
+  V §17.2.8 / SV §21.4 memory-load text. `q02_wakeup` in
+  `sim_undefined_behavior` records current `llg` order, **not a conformance
+  claim**; cross-simulator comparison is pending.
   V §17.2.8; SV §21.4 **[1995/SV-2005]**.
 
   Short words pad a leading X/Z with that state; known digits zero-extend.
@@ -735,10 +748,15 @@ real values use a separate representation.
   without undoing earlier writes. Two-state X/Z conversion occurs before enum
   range checking, without discarding high bits. Sparse addressed 2009 files omit
   the no-address short-file warning; 2001 count warnings remain, including excess
-  data from repeated in-range addresses. Q02's additional diagnostics and short
-  X/Z token-extension intersections, including selected views, remain unqualified.
-  General malformed-token and four-state enum numeric policies are not fully
-  qualified. Dynamic/queue/associative,
+  data from repeated in-range addresses. **Undefined behavior (Q02):** The
+  short X/Z token-extension intersections for binary and hex words of different
+  widths, signed/two-state/enum destinations and selected views, plus malformed
+  token handling, four-state enum numeric corners and diagnostic details beyond
+  the prescribed warning/error categories, have no settled oracle in the
+  supplied V §17.2.8 / SV §§21.4–21.4.3 text. The `q02_*` fixtures in
+  `sim_undefined_behavior` record current `llg` values, diagnostics and status,
+  **not a conformance claim**; resolution awaits cross-simulator comparison.
+  Dynamic/queue/associative,
   real/non-packed memories and fully indexed scalar memory-element targets reject.
 - 🟦 **Memory writers** — `$writememh/$writememb` emit consumable four-state words
   from admitted fixed-memory views in low-to-high row-major order. The same

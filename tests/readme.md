@@ -25,8 +25,10 @@
 ### Fixture integrity before a native build
 
 Stage new fixtures before the tracked check; missing/unindexed inputs are errors,
-not reasons to skip. The checker recognizes known static harness forms, not all
-possible Rust expressions.
+not reasons to skip. The checker recognizes known static harness forms, including
+`sim_undefined_behavior`'s `fixture!(stem, extension)` registrations, not all
+possible Rust expressions. Use its working-tree mode before handoff when new
+fixtures remain untracked.
 
 ```sh
 python3 scripts/check_sim_fixture_integrity.py --tracked
@@ -62,6 +64,7 @@ requirements above apply without repeating them for each suite.
 | Scheduling and synchronization | `sim_process_control`, `sim_semaphore`, `sim_mailboxes`, `sim_procedural_assign`, `sim_force`; [processes](fixtures/sim/process_control/readme.md), [semaphores](fixtures/sim/semaphore/readme.md), [mailboxes](fixtures/sim/mailboxes/readme.md), [nonconvergence](fixtures/sim/nonconvergence/readme.md). |
 | Time and numeric services | `sim_delay`, `sim_time_literals`, `sim_time_values`, `sim_physical_time`, `sim_real`, `sim_real_conversions`, `sim_random`, `sim_random_streams`: exact units/rounding, overflow, real precision, Annex N vectors and child-stream isolation. |
 | I/O and observation | `sim_file_io`, `sim_memory_editions`, `sim_memory_views`, `sim_syn030_memory_views`, `sim_plusargs`, `sim_waveform`, `sim_vpi`, `sim_syn035_pla`; [SYN-030 memory views](fixtures/sim/syn030_memory_views/readme.md), [SYN-035 PLA exclusion](fixtures/sim/syn035_pla/readme.md), [file I/O](fixtures/sim/file_io/readme.md), [waveforms](fixtures/sim/waveform/readme.md), [partial features](fixtures/sim/partial_features/readme.md). |
+| Undefined behavior characterization | `sim_undefined_behavior` compares exact CLI stdout, stderr and status to checked-in [Q02/Q03 goldens](fixtures/sim/undefined_behavior/readme.md) in both optimizer modes and each legal edition. These are observations for later cross-simulator comparison, not independent conformance oracles. |
 | Verification and native objects | `sim_classes`, `sim_virtual_interfaces`, `sim_dpi`, [concurrent assertions](fixtures/sim/concurrent_assertions/readme.md): nominal identity, dispatch/casts, interface bindings, scalar native ABI, sampled/sequence/property behavior and explicit rejection boundaries. |
 | Build and safeguards | `sim_cmake`, `cli_info`, `sim_memory_guard`, `support_harness`, `emit_decoupling`: CMake/generator failures, source cleanup, early CLI exits, memory limits, timeout trees, CWD recovery and frontend-independent emission. |
 | Native components | `runtime_values`, `runtime_random`, `runtime_file_io`, `runtime_boundaries`, `runtime_value_storage`: direct runtime probes, independent of HDL lowering. |

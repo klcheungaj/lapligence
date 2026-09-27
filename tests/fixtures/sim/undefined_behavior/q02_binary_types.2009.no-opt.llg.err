@@ -1,0 +1,3 @@
+llg: memory file `q02_binary.mem`: X/Z memory data converted to a two-state element
+llg: memory file `q02_binary.mem`: memory data value is not a member of the enum; load terminated
+llg: simulation ended without $finish (no processes remain) at time 0

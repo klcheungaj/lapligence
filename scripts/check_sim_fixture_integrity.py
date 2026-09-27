@@ -119,6 +119,8 @@ def source_references(text: str, source: str) -> set[Reference]:
             add(m[1], m.start())
     if len(roots) == 1:
         root = next(iter(roots))
+        for m in re.finditer(r'fixture!\(\s*(\w+)\s*,\s*"(v|sv)"\s*\)', text):
+            add(f"{root}/{m[1]}.{m[2]}", m.start())
         for m in re.finditer(r'datatype_case!\(\s*\w+\s*,\s*' + STRING, text):
             add(f"{root}/{m[1]}", m.start())
         for m in re.finditer(r'(?:run_fixture\w*|reject_fixture\w*|fixture_rejection|fixture_path|run_rejection_fixture|with_compiled_fixture|run_assignment_pattern_rejection_fixture|fixture)\(\s*' + STRING, text):

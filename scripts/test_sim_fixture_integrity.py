@@ -32,6 +32,14 @@ class FixtureIntegrityTests(unittest.TestCase):
         self.assertEqual(self.paths('p.join("tests/fixtures/sim/net_resolution/example.sv")'),
                          {"tests/fixtures/sim/net_resolution/example.sv"})
 
+    def test_undefined_behavior_fixture_macro(self) -> None:
+        source = 'p.join("tests/fixtures/sim/undefined_behavior");\n'
+        source += 'fixture!(q02_short_hex, "v");\nfixture!(q03_control, "sv");'
+        self.assertEqual(self.paths(source), {
+            "tests/fixtures/sim/undefined_behavior/q02_short_hex.v",
+            "tests/fixtures/sim/undefined_behavior/q03_control.sv",
+        })
+
     def test_comments_are_not_discovered_and_lines_are_preserved(self) -> None:
         source = '// sim_cli::run_case("absent", "one", "", "", &[]);\n'
         source += '/* nested /* comment */ sim_cli::run_case("absent", "two", "", "", &[]); */\n'

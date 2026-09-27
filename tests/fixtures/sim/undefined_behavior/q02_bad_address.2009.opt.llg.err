@@ -1,0 +1,2 @@
+llg: memory file `q02_bad_address.mem`: address jump is outside the destination memory or selected range; load terminated
+llg: simulation ended without $finish (no processes remain) at time 0

@@ -1,0 +1,6 @@
+Q02.wakeup mem0_A=00010001
+Q02.wakeup mem0_B=00010001
+Q02.wakeup mem1=00100010
+Q02.wakeup mem2=00110011
+Q02.wakeup tick=1
+Q02.wakeup done=00010001,00100010,00110011

@@ -1,0 +1,11 @@
+llg: memory file `q02_hex_x.mem`: memory data value is not a member of the enum; load terminated
+llg: memory file `q02_hex_z.mem`: memory data value is not a member of the enum; load terminated
+llg: memory file `q02_hex_1x.mem`: memory data value is not a member of the enum; load terminated
+llg: memory file `q02_hex_x1.mem`: memory data value is not a member of the enum; load terminated
+llg: memory file `q02_hex_zX.mem`: memory data value is not a member of the enum; load terminated
+llg: memory file `q02_bin_x.mem`: memory data value is not a member of the enum; load terminated
+llg: memory file `q02_bin_z.mem`: memory data value is not a member of the enum; load terminated
+llg: memory file `q02_bin_1x.mem`: memory data value is not a member of the enum; load terminated
+llg: memory file `q02_bin_x1.mem`: memory data value is not a member of the enum; load terminated
+llg: memory file `q02_bin_zX.mem`: memory data value is not a member of the enum; load terminated
+llg: simulation ended without $finish (no processes remain) at time 0
