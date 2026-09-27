@@ -30,23 +30,6 @@ use llg::core::tokens;
 
 // ── Entry point ───────────────────────────────────────────────────────────────
 
-/// Inspect the process arguments: when the first argument is `--dump-tokens`,
-/// run the dump for the following path and return the process exit code.
-/// `None` when the arguments do not select dump mode (normal LSP serving).
-pub fn run_from_env() -> Option<i32> {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    if args.first().map(String::as_str) != Some("--dump-tokens") {
-        return None;
-    }
-    Some(match args.get(1) {
-        Some(raw) => run(Path::new(raw)),
-        None => {
-            eprintln!("usage: llg --dump-tokens <PATH>");
-            2
-        }
-    })
-}
-
 /// A resolved dump target: the analysis root, its effective config and — for
 /// single-file invocations — the one file whose rows survive filtering.
 struct Resolved {

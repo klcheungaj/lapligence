@@ -24,13 +24,14 @@
 //! none (cmake picks its default generator for the host). The optional
 //! [`CmakeBuildOpts::launcher`] is forwarded without selecting a default.
 //!
-//! Normal builds compile the runtime into the repository-local
-//! `target/llg-runtime-cache` (override with `LLG_RUNTIME_CACHE_DIR`) and
+//! Normal builds compile the runtime into a cache (see
+//! [`CmakeBuildOpts::runtime_cache_dir`]) and
 //! link each generated model against the cached static archive. The cache key
 //! covers the packed-value ABI, sources, toolchain, flags, generator, launcher,
 //! platform, and waveform support. `--gen-only` output remains self-contained.
 //!
-//! Environment variables:
+//! Environment variables (each is a fallback for the matching
+//! [`CmakeBuildOpts`] field, which wins when set):
 //!
 //! - `LLG_CC` / `CC` — C compiler handed to CMake as `-DCMAKE_C_COMPILER`;
 //!   falls back to `cc`.
@@ -41,8 +42,9 @@
 //! - `LLG_CMAKE` — explicit cmake program override; default `cmake`
 //!   (also used by [`cmake_available`]).
 //! - `LLG_RUNTIME_CACHE_DIR` — shared static-runtime cache root; defaults to
-//!   `target/llg-runtime-cache` under the Cargo workspace. Relative overrides
-//!   are resolved from the workspace root.
+//!   `build/llg-runtime-cache` under the current directory. Relative values
+//!   resolve from the current directory; an empty value selects the default.
+//!   No path is fixed at compile time.
 
 use std::error::Error;
 use std::fmt;
@@ -124,6 +126,28 @@ pub struct CmakeBuildOpts {
     /// `CMAKE_C_COMPILER_LAUNCHER` (for example `ccache` or `sccache`). No
     /// launcher is selected when this is `None`.
     pub launcher: Option<String>,
+    /// Runtime archive cache root. `None` uses `$LLG_RUNTIME_CACHE_DIR`, then
+    /// `build/llg-runtime-cache` under the current directory. Relative paths
+    /// resolve from the current directory.
+    pub runtime_cache_dir: Option<PathBuf>,
+    /// C compiler. `None` uses `$LLG_CC`, then `$CC`, then `cc`.
+    pub cc: Option<String>,
+    /// Extra whitespace-separated C flags. `None` uses `$LLG_CFLAGS`; an
+    /// explicit value replaces it rather than appending.
+    pub cflags: Option<String>,
+    /// CMake program. `None` uses `$LLG_CMAKE`, then `cmake`.
+    pub cmake: Option<String>,
+}
+
+/// Environment variable naming the runtime archive cache root.
+pub const RUNTIME_CACHE_DIR_ENV: &str = "LLG_RUNTIME_CACHE_DIR";
+
+/// Non-empty `$LLG_RUNTIME_CACHE_DIR`, for drivers that choose their own
+/// default when it is unset.
+pub fn runtime_cache_dir_from_env() -> Option<PathBuf> {
+    std::env::var_os(RUNTIME_CACHE_DIR_ENV)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
 }
 
 /// Failure while writing, configuring, or compiling a generated model.
@@ -239,10 +263,10 @@ pub fn build_model_cmake_with_opts(
     validate_dpi_libraries(opts)?;
     generate_model_sources_with_opts(out_dir, extra, opts)?;
 
-    let cc = resolve_cc();
-    let flags = c_flags()?;
+    let cc = resolve_cc(opts);
+    let flags = c_flags(opts)?;
     let build_dir = out_dir.join("build");
-    let cmake_prog = resolve_cmake();
+    let cmake_prog = resolve_cmake(opts);
     let waveform = waveform_enabled(extra);
     let runtime_library = prepare_runtime_cache(waveform, &cc, &flags, &cmake_prog, opts)?;
 
@@ -376,7 +400,7 @@ const FIXED_SOURCE_NAMES: [&str; 21] = [
 /// source set).  Refuses to run unless the canonicalized `out_dir` is an
 /// absolute path at least two levels below the filesystem root: unresolvable
 /// (e.g. empty) paths, `/`, and shallow roots like `/tmp` are rejected, while
-/// real callers (`target/sim/<design>`, tempdir subdirectories) are
+/// real callers (`<out-dir>/sim/<design>`, tempdir subdirectories) are
 /// unaffected.
 fn prune_stale_entries(out_dir: &Path, extra: &[(&str, &str)], waveform: bool) {
     let canonical = match out_dir.canonicalize() {
@@ -560,7 +584,7 @@ fn prepare_runtime_cache(
     opts: &CmakeBuildOpts,
 ) -> Result<PathBuf, BuildError> {
     let key = runtime_cache_key(waveform, cc, flags, cmake_prog, opts);
-    let cache_root = runtime_cache_root();
+    let cache_root = runtime_cache_root(opts)?;
     let entry = cache_root.join(key);
     if let Some(library) = cached_runtime_library(&entry) {
         return Ok(library);
@@ -699,16 +723,28 @@ fn runtime_source_names(waveform: bool) -> Vec<&'static str> {
     sources
 }
 
-fn runtime_cache_root() -> PathBuf {
-    runtime_cache_root_with_override(std::env::var_os("LLG_RUNTIME_CACHE_DIR").map(PathBuf::from))
+/// Resolve the runtime cache: explicit option, then `$LLG_RUNTIME_CACHE_DIR`,
+/// then `build/llg-runtime-cache`, all relative to the current directory. The
+/// result is absolute because it is handed to CMake as `LLG_RUNTIME_LIBRARY`.
+fn runtime_cache_root(opts: &CmakeBuildOpts) -> Result<PathBuf, BuildError> {
+    let cwd = std::env::current_dir().map_err(|source| BuildError::Io {
+        action: "resolve current directory for runtime cache",
+        path: PathBuf::from("."),
+        source,
+    })?;
+    Ok(runtime_cache_root_with_override(
+        &cwd,
+        opts.runtime_cache_dir
+            .clone()
+            .or_else(runtime_cache_dir_from_env),
+    ))
 }
 
-fn runtime_cache_root_with_override(override_root: Option<PathBuf>) -> PathBuf {
-    let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+fn runtime_cache_root_with_override(base: &Path, override_root: Option<PathBuf>) -> PathBuf {
     match override_root {
         Some(path) if path.is_absolute() => path,
-        Some(path) => workspace.join(path),
-        None => workspace.join("target/llg-runtime-cache"),
+        Some(path) if !path.as_os_str().is_empty() => base.join(path),
+        _ => base.join("build/llg-runtime-cache"),
     }
 }
 
@@ -911,7 +947,7 @@ fn waveform_enabled(extra: &[(&str, &str)]) -> bool {
 pub fn cmake_available() -> bool {
     static AVAILABLE: OnceLock<bool> = OnceLock::new();
     *AVAILABLE.get_or_init(|| {
-        Command::new(resolve_cmake())
+        Command::new(default_cmake())
             .arg("--version")
             .output()
             .map(|o| o.status.success())
@@ -926,23 +962,33 @@ fn generator_for(opts: &CmakeBuildOpts) -> Option<String> {
         .or_else(|| std::env::var("CMAKE_GENERATOR").ok())
 }
 
-/// `$LLG_CC`, else `$CC`, else `cc`.
-fn resolve_cc() -> String {
-    std::env::var("LLG_CC")
-        .or_else(|_| std::env::var("CC"))
-        .unwrap_or_else(|_| "cc".to_string())
+/// Explicit option, else `$LLG_CC`, else `$CC`, else `cc`.
+fn resolve_cc(opts: &CmakeBuildOpts) -> String {
+    opts.cc
+        .clone()
+        .or_else(|| std::env::var("LLG_CC").ok())
+        .or_else(|| std::env::var("CC").ok())
+        .unwrap_or_else(|| "cc".to_string())
 }
 
-/// `$LLG_CMAKE`, else `cmake`.
-fn resolve_cmake() -> String {
+/// Explicit option, else `$LLG_CMAKE`, else `cmake`.
+fn resolve_cmake(opts: &CmakeBuildOpts) -> String {
+    opts.cmake.clone().unwrap_or_else(default_cmake)
+}
+
+fn default_cmake() -> String {
     std::env::var("LLG_CMAKE").unwrap_or_else(|_| "cmake".to_string())
 }
 
 /// `-DCMAKE_C_FLAGS` payload: the base warning/optimization set plus every
-/// whitespace-separated token of `$LLG_CFLAGS`.
-fn c_flags() -> Result<String, BuildError> {
+/// whitespace-separated token of the explicit flags, else `$LLG_CFLAGS`.
+fn c_flags(opts: &CmakeBuildOpts) -> Result<String, BuildError> {
     let mut flags = String::from("-O2 -Wall -Wno-unused-function");
-    if let Ok(extra) = std::env::var("LLG_CFLAGS") {
+    if let Some(extra) = opts
+        .cflags
+        .clone()
+        .or_else(|| std::env::var("LLG_CFLAGS").ok())
+    {
         for flag in extra.split_whitespace() {
             if flag.contains('"') {
                 return Err(BuildError::InvalidCompilerFlag(flag.to_string()));
@@ -1144,20 +1190,48 @@ mod tests {
     }
 
     #[test]
-    fn runtime_cache_defaults_to_workspace_target_and_accepts_override() {
-        let workspace_default =
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/llg-runtime-cache");
-        assert_eq!(runtime_cache_root_with_override(None), workspace_default);
+    fn explicit_tool_options_override_the_environment() {
+        let opts = CmakeBuildOpts {
+            cc: Some("explicit-cc".to_owned()),
+            cflags: Some("-g  -DX=1".to_owned()),
+            cmake: Some("explicit-cmake".to_owned()),
+            ..Default::default()
+        };
+        assert_eq!(resolve_cc(&opts), "explicit-cc");
+        assert_eq!(resolve_cmake(&opts), "explicit-cmake");
+        let flags = c_flags(&opts).unwrap();
+        assert!(flags.ends_with(" -g -DX=1"), "{flags}");
+
+        let quoted = CmakeBuildOpts {
+            cflags: Some("-DX=\"y\"".to_owned()),
+            ..Default::default()
+        };
+        assert!(matches!(
+            c_flags(&quoted),
+            Err(BuildError::InvalidCompilerFlag(_))
+        ));
+    }
+
+    #[test]
+    fn runtime_cache_defaults_to_base_build_and_accepts_override() {
+        let base = std::env::temp_dir().join("llg-runtime-cache-base");
+        let default = base.join("build/llg-runtime-cache");
+        assert_eq!(runtime_cache_root_with_override(&base, None), default);
+        assert_eq!(
+            runtime_cache_root_with_override(&base, Some(PathBuf::new())),
+            default,
+            "an empty override must not place the cache in the base itself"
+        );
 
         let relative_override = PathBuf::from("custom/runtime-cache");
         assert_eq!(
-            runtime_cache_root_with_override(Some(relative_override.clone())),
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(relative_override)
+            runtime_cache_root_with_override(&base, Some(relative_override.clone())),
+            base.join(relative_override)
         );
 
         let absolute_override = std::env::temp_dir().join("llg-custom-runtime-cache");
         assert_eq!(
-            runtime_cache_root_with_override(Some(absolute_override.clone())),
+            runtime_cache_root_with_override(&base, Some(absolute_override.clone())),
             absolute_override
         );
     }

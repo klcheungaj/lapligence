@@ -366,7 +366,7 @@ void llg_rt_init_with_args_precision_and_stack(int argc, char** argv,
     }
     llg_stack_values = stack_values;
     llg_timeformat_defaults(precision_fs);
-    if (!configure_limits() || !configure_stop_policy()) {
+    if (!configure_limits() || !configure_stop_policy() || !configure_output_files()) {
         llg_last_failure = 1;
         llg_last_config_error = 1;
         g.config_error = 1;

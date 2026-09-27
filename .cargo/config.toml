@@ -1,6 +1,13 @@
 [build]
 # target = "x86_64-unknown-linux-musl"
 
+# Processes launched by Cargo (`cargo run`, `cargo test`, `cargo nextest`)
+# share one runtime cache even when tests run `llg` from temporary CWDs.
+# Installed binaries do not see this; they default to
+# `./target/llg-runtime-cache`. An explicit environment value still wins.
+[env]
+LLG_RUNTIME_CACHE_DIR = { value = "target/llg-runtime-cache", relative = true }
+
 [target.x86_64-unknown-linux-musl]
 # The linker must come from a musl cross-toolchain.
 # Override it with CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER when needed.

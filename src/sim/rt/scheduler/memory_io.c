@@ -603,7 +603,9 @@ void llg_memory_write_view(llg_string_t path, sv4_t* memory, uint64_t total,
     (void)two_state;
     (void)enum_values;
     (void)enum_count;
-    char* filename = llg_memory_path_copy(path);
+    char* requested = llg_memory_path_copy(path);
+    char* filename = llg_output_path(requested);
+    free(requested);
     FILE* stream = fopen(filename, "w");
     if (!stream) {
         llg_memory_warning(filename, "open for writing failed: %s", strerror(errno));

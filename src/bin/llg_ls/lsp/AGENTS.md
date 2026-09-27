@@ -39,5 +39,8 @@ cache lookup, flight admission and blocking compile. Saturated bounded single-fl
 tables refuse new work and fall back to committed tokens. Keep stdout JSON-RPC only.
 
 Shutdown clears roots, caches, flights, watchers and the private process mirror.
+The mirror is `<root>/llg-<pid>-<nanos>`, where `<root>` is `--staging-dir`
+(made absolute and created in `main.rs` before serving) or the OS temp dir;
+only the per-process child is ever removed.
 `handlers/tests.rs` preserves last-good, cancellation and exact-buffer regressions;
 keep fixtures within configured admission limits.

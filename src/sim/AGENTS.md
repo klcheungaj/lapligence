@@ -73,7 +73,8 @@ Values allocate by their own widths; never restore model-maximum arrays.
 `LLG_MODEL_VALUE_ABI` must match `LLG_VALUE_ABI_VERSION`.
 
 `write_sim_sources` embeds flat value, random, scheduler, container, waveform and
-libaco sources plus self-tests into `target/sim/<design>/`. Private fragments
+libaco sources plus self-tests into `<out-dir>/sim/<design>/` (driver default
+`build`). Private fragments
 assemble in facade order. Runtime/libaco archives belong only to generated C,
 never Rust binaries; source-only output remains self-contained. Keep original
 runtime/waveform ownership self-tests active. Property vectors mirror
@@ -89,7 +90,7 @@ CMake is the only model builder: C11, Release by default, executable under
 `<build>/bin/`, and `m` linkage. The configure command retains:
 
 ```sh
-<cmake> -S <out_dir> -B <out_dir>/build [-G <generator>] [-DCMAKE_C_COMPILER_LAUNCHER=<launcher>] -DCMAKE_C_COMPILER=<LLG_CC|$CC|cc> -DCMAKE_C_FLAGS:STRING="-O2 -Wall -Wno-unused-function [$LLG_CFLAGS]" -DLLG_RUNTIME_LIBRARY=<cache>
+<cmake> -S <out_dir> -B <out_dir>/build [-G <generator>] [-DCMAKE_C_COMPILER_LAUNCHER=<launcher>] -DCMAKE_C_COMPILER=<cc|LLG_CC|$CC|cc> -DCMAKE_C_FLAGS:STRING="-O2 -Wall -Wno-unused-function [cflags|$LLG_CFLAGS]" -DLLG_RUNTIME_LIBRARY=<cache>
 cmake --build --config Release
 ```
 
@@ -97,13 +98,17 @@ cmake --build --config Release
 default. `launcher`/`--launcher` forwards `CMAKE_C_COMPILER_LAUNCHER` without inventing
 a default. Repeatable `dpi_libraries`/`--dpi-lib` accepts validated explicit link
 files; include `svdpi.h` in generated output. `generate_model_sources`/`--gen-only`
-writes sources/CMake without building. `LLG_CMAKE` selects CMake, `LLG_CC`/`CC`
-the compiler, and `LLG_CFLAGS` appends flags. Reject double quotes in flags;
+writes sources/CMake without building. `CmakeBuildOpts` `cmake`/`cc`/`cflags`
+(`--cmake`/`--cc`/`--cflags`) win over `LLG_CMAKE`, `LLG_CC`/`CC` and
+`LLG_CFLAGS`; explicit flags replace, not append to, `LLG_CFLAGS`. Reject double quotes in flags;
 missing-CMake errors include installation guidance. Probe availability once.
 
 Cache by ownership ABI, runtime content, toolchain, flags, generator, launcher,
-platform and waveform support. Default: `<workspace>/target/llg-runtime-cache`;
-resolve relative `LLG_RUNTIME_CACHE_DIR` from the workspace root. Prune stale
+platform and waveform support. Root: `runtime_cache_dir` (`--runtime-cache`) >
+`LLG_RUNTIME_CACHE_DIR` > library default `<cwd>/build/llg-runtime-cache` (the
+driver passes `<out-dir>/llg-runtime-cache`); relative paths resolve from the CWD.
+Never bake build-machine paths (`CARGO_MANIFEST_DIR`) into runtime defaults;
+`.cargo/config.toml` `[env]` points Cargo-launched runs at the repo cache. Prune stale
 sources/incompatible partial builds and retry failed configuration once cleanly.
 Root portable patch preparation accepts clean/fully-applied vendors and rejects
 partial/mismatched edits; retain upstream-base gitlinks.

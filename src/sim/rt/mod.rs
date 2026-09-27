@@ -48,6 +48,7 @@ pub fn runtime_sources() -> (&'static str, &'static str) {
             include_str!("scheduler/storage.c"),
             include_str!("scheduler/state.c"),
             include_str!("scheduler/policy.c"),
+            include_str!("scheduler/output_files.c"),
             include_str!("scheduler/process_registry.c"),
             include_str!("scheduler/activations.c"),
             include_str!("scheduler/value_scopes.c"),

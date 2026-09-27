@@ -15,6 +15,11 @@ Keep reusable processing in the library. Bins import `llg::core`, `llg::ffi` and
 - `--generator <backend>` selects CMake `-G`; `--gen-only` writes model sources
   and `CMakeLists.txt` only. CMake is the sole builder;
   [sim](../sim/AGENTS.md) owns compiler/flags/environment selection.
+- `--out-dir <dir>` (default `build`) places the model in `<dir>/sim/<design>`.
+  `--runtime-cache` > `$LLG_RUNTIME_CACHE_DIR` > `<out-dir>/llg-runtime-cache`;
+  `--cc`, `--cflags` and `--cmake` override their environment fallbacks. Build
+  options are ignored with a warning under `--gen-only`. Never derive defaults
+  from compile-time paths.
 - Repeated `--dpi-lib <path>` validates explicit DPI-C libraries before CMake and
   retains them in source-only output. `--no-opt` disables normally enabled IR
   passes; conformance fixtures exercise both modes.
@@ -42,4 +47,6 @@ every binary, including tests not importing `llg`; carry the shim/mimalloc archi
 through library metadata and every final package target. Bins may install
 `llg::memory_limit::install[_with_logger]`; [shared policy](../AGENTS.md) owns
 native/default/child limits. Keep platform calls in `ffi/process_memory.rs`.
-LSP logging uses `LLG_LOG`/`LLG_LOG_FILE`, never serving stdout.
+LSP logging uses `LLG_LOG`/`LLG_LOG_FILE`, never serving stdout. `llg_ls` accepts
+`--stdio`, `--dump-tokens <PATH>` and `--staging-dir <DIR>` once each, parsed
+only in `main.rs`.

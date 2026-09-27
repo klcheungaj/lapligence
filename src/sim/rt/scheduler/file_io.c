@@ -137,6 +137,13 @@ uint32_t llg_file_open(llg_string_t path, llg_string_t mode, int has_mode) {
         free(mode_copy);
         return 0;
     }
+    // Files the simulation creates follow LLG_SIM_OUT_DIR; reads ("r", "r+")
+    // keep resolving from the current directory.
+    if (mode_copy[0] == 'w' || mode_copy[0] == 'a') {
+        char* resolved = llg_output_path(path_copy);
+        free(path_copy);
+        path_copy = resolved;
+    }
     FILE* stream = fopen(path_copy, mode_copy);
     if (!stream) {
         char message[160];

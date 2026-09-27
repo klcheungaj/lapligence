@@ -1291,7 +1291,25 @@ pub fn real_path(shadow: &Path, base: &Path) -> Option<PathBuf> {
     Some(PathBuf::from("/").join(relative))
 }
 
-/// The process-global private shadow base: `<os temp dir>/llg-<pid>-<rand>`.
+static STAGING_ROOT: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+
+/// Select the directory that holds the per-process shadow base
+/// (`llg_ls --staging-dir`). Call before the first [`process_shadow_base`];
+/// returns `false` when a root was already chosen.
+pub fn set_staging_root(root: std::path::PathBuf) -> bool {
+    STAGING_ROOT.set(root).is_ok()
+}
+
+/// `--staging-dir` when given, else the OS temp dir (`$TMPDIR`, `/tmp`, ...).
+fn staging_root() -> std::path::PathBuf {
+    STAGING_ROOT
+        .get()
+        .cloned()
+        .unwrap_or_else(std::env::temp_dir)
+}
+
+/// The process-global private shadow base: `<staging root>/llg-<pid>-<rand>`,
+/// where the staging root is `--staging-dir` or the OS temp dir.
 ///
 /// Created once per process and reused by every root.  All staged copies live
 /// here, never in the project tree, so compilation and reloads never create,
@@ -1305,7 +1323,8 @@ pub fn process_shadow_base() -> std::path::PathBuf {
     static BASE: OnceLock<std::path::PathBuf> = OnceLock::new();
     BASE.get_or_init(|| {
         let pid = std::process::id();
-        let mut last = std::env::temp_dir().join(format!("llg-{pid}"));
+        let root = staging_root();
+        let mut last = root.join(format!("llg-{pid}"));
         // Eager exclusive creation: a stale directory from a crashed process
         // with the same PID and timestamp must never be silently shared — or
         // deleted by `cleanup_process_shadow`.  Retry with a fresh `rand`
@@ -1318,7 +1337,7 @@ pub fn process_shadow_base() -> std::path::PathBuf {
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.subsec_nanos())
                 .unwrap_or(0);
-            last = std::env::temp_dir().join(format!("llg-{pid}-{rand}"));
+            last = root.join(format!("llg-{pid}-{rand}"));
             match std::fs::create_dir(&last) {
                 Ok(()) => return last,
                 Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,

@@ -12,6 +12,7 @@ slpp_all
 /core
 /core.*
 build-cache/
+/build/
 
 docs/*
 !docs/AGENTS.md

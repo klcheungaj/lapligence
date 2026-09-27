@@ -365,9 +365,15 @@ fn assert_no_shadow_uris(value: &Value) {
 /// Mirrors the leak scan the Node E2E performs (`listTmpLlgShadowDirs`
 /// filtered by the server pid).
 fn tmp_llg_shadow_dirs_for(pid: u32) -> Vec<PathBuf> {
+    llg_shadow_dirs_in(&std::env::temp_dir(), pid)
+}
+
+/// `llg-{pid}-*` shadow bases directly under `dir` (the temp dir or an
+/// explicit `--staging-dir`).
+fn llg_shadow_dirs_in(dir: &Path, pid: u32) -> Vec<PathBuf> {
     let prefix = format!("llg-{pid}-");
     let mut found = Vec::new();
-    if let Ok(entries) = fs::read_dir(std::env::temp_dir()) {
+    if let Ok(entries) = fs::read_dir(dir) {
         for entry in entries.flatten() {
             if entry.file_name().to_string_lossy().starts_with(&prefix) {
                 found.push(entry.path());

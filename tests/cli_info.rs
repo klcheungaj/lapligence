@@ -67,12 +67,29 @@ fn simulator_information_exits_without_compiling_or_installing_memory_limits() {
     assert!(String::from_utf8_lossy(&output.stdout).contains("--default-library"));
     assert!(String::from_utf8_lossy(&output.stdout).contains("--stop-policy <resume|exit>"));
     assert!(String::from_utf8_lossy(&output.stdout).contains("--launcher"));
+    for option in [
+        "--out-dir <dir>",
+        "--runtime-cache <dir>",
+        "--cc <program>",
+        "--cflags <flags>",
+        "--cmake <program>",
+    ] {
+        assert!(
+            String::from_utf8_lossy(&output.stdout).contains(option),
+            "missing {option}"
+        );
+    }
 }
 
 #[cfg(feature = "lsp")]
 #[test]
 fn server_information_exits_without_serving_or_logging() {
     check_information(env!("CARGO_BIN_EXE_llg_ls"), "llg_ls", "--dump-tokens");
+    check_information(
+        env!("CARGO_BIN_EXE_llg_ls"),
+        "llg_ls",
+        "--staging-dir <DIR>",
+    );
 }
 
 #[test]
@@ -89,6 +106,11 @@ fn simulator_missing_option_value_is_a_usage_error() {
             "--default-library",
             "--default-library requires a library name",
         ),
+        ("--out-dir", "--out-dir requires a directory"),
+        ("--runtime-cache", "--runtime-cache requires a directory"),
+        ("--cc", "--cc requires a compiler program"),
+        ("--cflags", "--cflags requires a flag string"),
+        ("--cmake", "--cmake requires a program"),
     ] {
         let output = invoke(env!("CARGO_BIN_EXE_llg"), &[option]);
         assert_eq!(output.status.code(), Some(2), "{output:?}");
@@ -181,6 +203,9 @@ fn simulator_include_and_define_options_require_values() {
 fn server_invalid_arguments_do_not_start_the_protocol() {
     for args in [
         vec!["--dump-tokens"],
+        vec!["--staging-dir"],
+        vec!["--stdio", "--stdio"],
+        vec!["--stdio", "--dump-tokens", "."],
         vec!["--unknown"],
         vec!["--version", "extra"],
         vec!["--help", "extra"],

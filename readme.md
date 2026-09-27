@@ -159,15 +159,23 @@ Common options:
 - `--lint-json [<path>]`: write a JSON lint report and exit.
 - `--lint-config <file>`: load rule settings from a TOML file.
 - `--gen-only`: generate C11 sources and `CMakeLists.txt` without building.
+- `--out-dir <dir>`: output root (default `build`). The model is written to
+  `<dir>/sim/<design>`; its executable is `<dir>/sim/<design>/build/bin/sim`.
+- `--runtime-cache <dir>`: runtime archive cache (default
+  `<out-dir>/llg-runtime-cache`).
+- `--cc <program>`: C compiler for the model (default `cc`).
+- `--cflags <flags>`: extra C compiler flags.
+- `--cmake <program>`: CMake program (default `cmake`).
 - `--generator <name>`: choose a CMake generator, such as `Ninja`.
 - `--launcher <program>`: optionally set CMake's C compiler launcher, such as
   `ccache` or `sccache`; no launcher is selected by default.
 - `--`: pass the remaining arguments to the generated simulator for
   `$test$plusargs`/`$value$plusargs` (for example, `llg tb.sv -- +mode=fast`).
 
-Compatible runtime archives are cached in `target/llg-runtime-cache`, leaving
-model-specific C to compile. `LLG_RUNTIME_CACHE_DIR` overrides the cache (relative
-to repository root). `--gen-only` output is self-contained and cache-independent.
+Relative paths resolve from the current directory. The runtime cache holds
+compiled runtime archives shared by compatible models, so only model-specific C
+is compiled per design. `--gen-only` output is self-contained and does not use
+the cache.
 
 Exit status is `0` on success, `1` on compile/lint/build errors, and `2` for
 invalid command-line usage. A completed simulator's exit status is propagated.
@@ -191,7 +199,7 @@ Build and run it:
 target/release/llg --top hello hello.sv
 ```
 
-The generated sources and executable are written under `target/sim/hello/`.
+The generated sources and executable are written under `build/sim/hello/`.
 
 Other useful invocations:
 
@@ -208,6 +216,54 @@ target/release/llg --gen-only --top hello hello.sv
 
 To generate waveforms, use `$dumpfile("trace.vcd")` or
 `$dumpfile("trace.fst")` with `$dumpvars` in the HDL source.
+
+### Rerunning a built model
+
+The simulator executable can be run again without `llg`. Run-time environment
+variables choose where each run writes its files:
+
+```sh
+target/release/llg --top tb tb.sv      # build build/sim/tb and run once
+LLG_SIM_OUT_DIR=runs/a LLG_SIM_LOG_FILE=sim.log build/sim/tb/build/bin/sim +seed=1
+LLG_SIM_OUT_DIR=runs/b LLG_SIM_WAVE_FILE=wave.fst build/sim/tb/build/bin/sim +seed=2
+```
+
+### Environment variables
+
+Command-line options take precedence over the matching variable.
+
+Model build (`llg`):
+
+| Variable | Effect |
+| --- | --- |
+| `LLG_RUNTIME_CACHE_DIR` | Runtime cache when `--runtime-cache` is not given. |
+| `LLG_CC`, then `CC` | C compiler when `--cc` is not given. |
+| `LLG_CFLAGS` | Extra C flags when `--cflags` is not given. |
+| `LLG_CMAKE` | CMake program when `--cmake` is not given. |
+| `CMAKE_GENERATOR` | CMake generator when `--generator` is not given. |
+
+Simulation run time (read by the simulator executable; `llg` passes its
+environment through):
+
+| Variable | Effect |
+| --- | --- |
+| `LLG_SIM_OUT_DIR` | Directory for relative files the simulation writes: the waveform, `$fopen` in write/append mode, `$writememh`/`$writememb` and `LLG_SIM_LOG_FILE`. Created if missing. Files the simulation reads stay relative to the current directory. |
+| `LLG_SIM_WAVE_FILE` | Waveform file (`.vcd` or `.fst`). Replaces the `$dumpfile` name and the default `dump.vcd`. |
+| `LLG_SIM_LOG_FILE` | Copy of stdout and stderr (Linux and macOS). |
+| `LLG_STOP_POLICY` | `$stop` handling, `resume` (default) or `exit`. `llg` sets it from `--stop-policy`. |
+| `LLG_ZERO_LOOP_LIMIT` | Maximum region passes at one time step (default 10000000). |
+| `LLG_PROCESS_STEP_LIMIT` | Maximum loop steps one process may run at one time step (default 10000000). |
+| `LLG_ALLOW_SYSTEM` | `1`, `true`, `yes` or `on` enables `$system`. |
+| `LLG_VPI_PLUGIN` | VPI plugin libraries to load, separated by `:` (`;` on Windows). |
+
+Both `llg` and `llg_ls`:
+
+| Variable | Effect |
+| --- | --- |
+| `LLG_MEMORY_LIMIT_MB` | Memory budget in MiB for the frontend process; unset disables it. |
+| `LLG_MEMORY_WARNING_PERCENT` | Warn at this percentage of the budget (default 80). |
+| `LLG_MEMORY_POLL_MS` | Memory sampling interval in milliseconds (default 1000). |
+| `LLG_MEMORY_ADDRESS_SPACE_LIMIT` | `true` also applies the budget as a Linux/macOS address-space limit. |
 
 ## Using `llg_ls`
 
@@ -244,6 +300,12 @@ severity = "error"
 - Logs go to stderr and never corrupt the stdio protocol.
 - Set `LLG_LOG=debug` for diagnostic logging or `LLG_LOG_FILE=<path>` to write
   logs to a file.
+- Unsaved editor buffers are staged under `--staging-dir <dir>`, or the OS temp
+  directory (`TMPDIR`) by default. Each server uses its own subdirectory and
+  removes it on exit. Keep the staging directory outside workspace roots.
+
+Options: `--stdio` (default mode), `--staging-dir <dir>`, `--dump-tokens <path>`
+(print token bindings for a file or directory and exit).
 
 See [LSP configuration](docs/config.md) for all source, compile, analysis, and
 lint settings.

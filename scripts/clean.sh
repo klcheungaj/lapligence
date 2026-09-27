@@ -5,14 +5,16 @@
 # target/slang/<triple>/<profile>/<workspace-path-key>/ so switching triples,
 # profiles, or container mount paths can accumulate full copies (gigabytes
 # each); simulator model outputs pile up one directory per design under
-# target/sim/. None of these are garbage-collected by cargo.
+# build/sim/ (llg's default --out-dir, plus the legacy target/sim/). None of
+# these are garbage-collected by cargo.
 #
 # Removes, by default:
 #   (a) target/slang/<triple>/<profile>/     for every triple/profile EXCEPT the
 #       currently selected one ($CARGO_BUILD_TARGET, else the uncommented
 #       `[build] target` from .cargo/config.toml, else `rustc -vV` host
 #       triple; $CARGO_BUILD_PROFILE, else "debug")
-#   (b) target/sim/<design>/                generated simulator model trees
+#   (b) build/sim/<design>/, target/sim/<design>/
+#                                           generated simulator model trees
 # Options:
 #   --dry-run   list what would be removed (with sizes); delete nothing
 #   --all       also remove the currently selected target/slang tree
@@ -116,13 +118,15 @@ if [ -d "$target/slang" ]; then
     done
 fi
 
-# ---- (b) target/sim: generated model sources + CMake trees (dir itself stays)
-if [ -d "$target/sim" ]; then
-    for dir in "$target/sim"/*/; do
+# ---- (b) build/sim and legacy target/sim: generated model sources + CMake
+#      trees (the sim dirs themselves stay)
+for sim in "$repo/build/sim" "$target/sim"; do
+    [ -d "$sim" ] || continue
+    for dir in "$sim"/*/; do
         [ -d "$dir" ] || continue
         remove "${dir%/}" "simulator model output"
     done
-fi
+done
 
 # ---- (c) optional: stale logs near the root
 if [ "$logs" = 1 ]; then

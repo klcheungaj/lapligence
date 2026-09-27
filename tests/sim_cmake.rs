@@ -1,6 +1,6 @@
 //! Integration tests for the CMake-based model builder (`sim::build`) — the
 //! only supported model-build path — and the `llg` driver's build-time
-//! generator/launcher options.
+//! generator/launcher, output-directory and toolchain options.
 //!
 //! The
 //! library-level cases run with the CWD pointed at a fresh harness temp dir;
@@ -287,6 +287,80 @@ fn driver_default_uses_cmake() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(stdout, EXPECTED_STDOUT);
+    assert!(
+        dir.path().join("build/sim/tb/model.c").is_file(),
+        "default model output is build/sim/<design>"
+    );
+    assert!(
+        !dir.path().join("target").exists(),
+        "the driver must not write the legacy target/ tree"
+    );
+}
+
+/// Driver output and tool flags win over their environment fallbacks: every
+/// fallback below is unusable, so the run succeeds only through the flags.
+/// `--runtime-cache` names the suite's shared cache to avoid a runtime rebuild.
+#[test]
+fn driver_output_and_tool_flags_override_environment() {
+    let _guard = TEST_LOCK.lock().unwrap();
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let dir = fresh_dir("driver_flags");
+    std::fs::write(dir.path().join("counter.sv"), COUNTER_SV).expect("write source");
+    let blocked = dir.path().join("not-a-directory");
+    std::fs::write(&blocked, "").expect("write blocking file");
+    let cache = sim::build::runtime_cache_dir_from_env()
+        .unwrap_or_else(|| dir.path().join("runtime-cache"));
+
+    let mut generate = Command::new(env!("CARGO_BIN_EXE_llg"));
+    generate
+        .args([
+            "--top",
+            "tb",
+            "--gen-only",
+            "--out-dir",
+            "gen",
+            "counter.sv",
+        ])
+        .current_dir(dir.path());
+    let output =
+        sim_harness::run_command(&mut generate, Duration::from_secs(60)).expect("llg should start");
+    assert!(output.status.success(), "{output:?}");
+    let printed = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(
+        std::path::Path::new(printed.trim()),
+        std::path::Path::new("gen/sim/tb")
+    );
+    assert!(dir.path().join("gen/sim/tb/CMakeLists.txt").is_file());
+
+    let mut command = Command::new(env!("CARGO_BIN_EXE_llg"));
+    command
+        .args(["--top", "tb", "--out-dir", "out/run1", "--cmake", "cmake"])
+        .args(["--cc", "cc", "--cflags", ""])
+        .arg("--runtime-cache")
+        .arg(&cache)
+        .arg("counter.sv")
+        .env(sim::build::RUNTIME_CACHE_DIR_ENV, &blocked)
+        .env("LLG_CMAKE", dir.path().join("missing-cmake"))
+        .env("LLG_CC", dir.path().join("missing-cc"))
+        .env("LLG_CFLAGS", "-DX=\"quoted\"")
+        .current_dir(dir.path());
+    let output =
+        sim_harness::run_command(&mut command, Duration::from_secs(120)).expect("llg should start");
+    assert!(
+        output.status.success(),
+        "exit {:?}, stderr: {}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), EXPECTED_STDOUT);
+    assert!(dir.path().join("out/run1/sim/tb/model.c").is_file());
+    assert!(
+        !dir.path().join("out/run1/llg-runtime-cache").exists(),
+        "--runtime-cache must replace the <out-dir> default"
+    );
 }
 
 /// Panic-safe `$LLG_CMAKE` scope: remembers the previous value and restores

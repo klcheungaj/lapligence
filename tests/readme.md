@@ -252,8 +252,10 @@ support; the corresponding execution tests must also pass.
 - Pinned Rust 1.98.0, initialized vendors, and
   `cargo install cargo-nextest --locked`.
 - CMake/C compiler for public conformance; run commands at repository root.
-- Runtime cache defaults to `target/llg-runtime-cache`; relative
-  `LLG_RUNTIME_CACHE_DIR` overrides resolve from the root.
+- Cargo-launched runs get `LLG_RUNTIME_CACHE_DIR=<repo>/target/llg-runtime-cache`
+  from `.cargo/config.toml` `[env]`, so CLI tests in temporary CWDs share it.
+  An explicit value wins; use an absolute path, because `llg` resolves
+  relative values from its own CWD.
 - Nextest defaults to 8 concurrent tests; `--profile max-threads` opts into 32.
   Preserve suite-specific skips: `sim_cmake` may skip absent CMake; native DPI
   shared-library tests need Unix/CMake/compiler. These are not blanket skips.
@@ -330,9 +332,10 @@ cargo nextest run --locked --test-threads 8
 
 Both overrides are optional; `/build` is only an example. Without
 `LLG_TEST_BUILD_DIR`, the harness continues to use the system temporary directory.
-Relative overrides resolve from the Cargo workspace, including inside nested
-temporary CWDs. Missing directories are created; empty or unusable overrides
-fail rather than falling back to another disk. The filesystem must permit
+A relative `LLG_TEST_BUILD_DIR` resolves from the Cargo workspace, including
+inside nested temporary CWDs; give `LLG_RUNTIME_CACHE_DIR` as an absolute path.
+Missing directories are created; an empty or unusable `LLG_TEST_BUILD_DIR` fails
+rather than falling back to another disk. The filesystem must permit
 execution (`noexec` prevents CMake compiler checks and simulators from running).
 
 Parallelism is unchanged. Every invocation owns a unique child directory and

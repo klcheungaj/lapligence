@@ -199,6 +199,10 @@ typedef struct {
     int initialized;
     int worker_started;
     int producer_dumping;
+    // Run-time placement read at init, before the writer thread starts; this
+    // unit stays independent of the scheduler runtime.
+    char* out_dir;        // LLG_SIM_OUT_DIR, or NULL
+    char* file_override;  // LLG_SIM_WAVE_FILE, or NULL
 } wave_state_t;
 
 static wave_state_t g_wave;
@@ -731,12 +735,50 @@ static void writer_close_file(writer_t* w) {
     w->format = FORMAT_NONE;
 }
 
-static int writer_open(writer_t* w, const char* path) {
+static int writer_open_resolved(writer_t* w, const char* path);
+
+static int wave_path_is_absolute(const char* path) {
+#if defined(_WIN32)
+    return path[0] == '/' || path[0] == '\\' ||
+           (isalpha((unsigned char)path[0]) && path[1] == ':');
+#else
+    return path[0] == '/';
+#endif
+}
+
+// LLG_SIM_WAVE_FILE replaces the requested name; a relative result is placed
+// under LLG_SIM_OUT_DIR (created by runtime initialization).
+static char* wave_output_path(const char* requested) {
+    const char* name = g_wave.file_override ? g_wave.file_override : requested;
+    if (!g_wave.out_dir || name[0] == '\0' || wave_path_is_absolute(name))
+        return wave_strdup(name);
+    size_t dir_len = strlen(g_wave.out_dir);
+    size_t name_len = strlen(name);
+    char* joined = (char*)malloc(dir_len + name_len + 2u);
+    if (!joined) return NULL;
+    memcpy(joined, g_wave.out_dir, dir_len);
+    joined[dir_len] = '/';
+    memcpy(joined + dir_len + 1u, name, name_len + 1u);
+    return joined;
+}
+
+static int writer_open(writer_t* w, const char* requested) {
     if (w->format != FORMAT_NONE) {
         wave_error("$dumpfile cannot change `%s` to `%s` after writing started",
-                   w->path, path);
+                   w->path, requested);
         return 0;
     }
+    char* path = wave_output_path(requested);
+    if (!path) {
+        wave_error("out of memory while opening `%s`", requested);
+        return 0;
+    }
+    int ok = writer_open_resolved(w, path);
+    free(path);
+    return ok;
+}
+
+static int writer_open_resolved(writer_t* w, const char* path) {
     const char* ext = path_extension(path);
     if (extension_is(ext, ".vcd")) w->format = FORMAT_VCD;
     else if (extension_is(ext, ".fst")) w->format = FORMAT_FST;
@@ -1075,6 +1117,8 @@ static void free_state(void) {
     cond_destroy(&g_wave.not_empty);
     cond_destroy(&g_wave.not_full);
     cond_destroy(&g_wave.ack_changed);
+    free(g_wave.out_dir);
+    free(g_wave.file_override);
     memset(&g_wave, 0, sizeof(g_wave));
 }
 
@@ -1090,6 +1134,18 @@ int llg_wave_model_init(uint64_t precision_fs) {
     cond_init(&g_wave.ack_changed);
     g_wave.precision_fs = precision_fs ? precision_fs : 1u;
     g_wave.producer = thread_self();
+    const char* out_dir = getenv("LLG_SIM_OUT_DIR");
+    const char* file_override = getenv("LLG_SIM_WAVE_FILE");
+    if (out_dir && out_dir[0]) g_wave.out_dir = wave_strdup(out_dir);
+    if (file_override && file_override[0]) g_wave.file_override = wave_strdup(file_override);
+    if ((out_dir && out_dir[0] && !g_wave.out_dir) ||
+        (file_override && file_override[0] && !g_wave.file_override)) {
+        fprintf(stderr, "llg: waveform: out of memory reading output settings\n");
+        free(g_wave.out_dir);
+        free(g_wave.file_override);
+        g_wave.out_dir = g_wave.file_override = NULL;
+        return -1;
+    }
     g_wave.initialized = 1;
     return 0;
 }

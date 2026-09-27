@@ -143,6 +143,15 @@ suppressed assignments and leave unmatched delimiters unread; targets are borrow
 for calls. `$system` requires explicit `LLG_ALLOW_SYSTEM`; retain host C status and
 distinguish omitted system(NULL) from an empty command.
 
+`scheduler/output_files.c` reads run-time output settings at every init:
+`LLG_SIM_OUT_DIR` (created if missing) prefixes relative write paths only —
+waveform, `$fopen` w/a modes, `$writemem*`, the log — never reads;
+`LLG_SIM_WAVE_FILE` replaces `$dumpfile`/`dump.vcd`; `LLG_SIM_LOG_FILE` starts a
+once-per-process forked tee (POSIX only; Windows reports an error) that survives
+simulator crashes, shares one pipe when stdout/stderr reach the same file, and is
+joined at exit. `llg_wave.c` reads `LLG_SIM_OUT_DIR`/`LLG_SIM_WAVE_FILE` itself in
+`llg_wave_model_init`, keeping the waveform unit scheduler-independent.
+
 Memory images preserve X/Z, comments, addresses, views and loaded prefixes on
 failure. Keep edition-specific default address order, explicit direction, short-word
 padding, truncation/original-width enum validation and sparse-file diagnostics.

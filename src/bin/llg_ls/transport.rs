@@ -221,7 +221,7 @@ fn memory_log(level: llg::memory_limit::LogLevel, message: std::fmt::Arguments<'
     logging::write(level, message);
 }
 
-pub(crate) async fn run() -> i32 {
+pub(crate) async fn run(dump_target: Option<std::path::PathBuf>) -> i32 {
     logging::init();
     let _ = logging::set_memory_sampler(llg::memory_limit::current_physical_bytes);
     // Keep this guard in scope for the entire server lifetime.  It owns both
@@ -232,8 +232,8 @@ pub(crate) async fn run() -> i32 {
     // Offline diagnostic mode: dump every computed token/binding for a
     // project (or a single file) and exit before the LSP runtime starts.
     // stdout carries plain report lines here, not LSP framing.
-    if let Some(code) = dump::run_from_env() {
-        return code;
+    if let Some(target) = dump_target {
+        return dump::run(&target);
     }
 
     let stdin = tokio::io::stdin();

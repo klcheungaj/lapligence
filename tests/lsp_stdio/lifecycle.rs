@@ -148,6 +148,41 @@ fn lsp_stdio_exit_terminates_promptly_and_removes_temp_shadow_tree() {
     );
 }
 
+/// `--staging-dir` moves the per-process shadow base out of the OS temp dir;
+/// clean shutdown removes it and leaves the chosen directory itself.
+#[test]
+fn lsp_stdio_staging_dir_holds_the_shadow_tree() {
+    let fixture = FixtureTree::new();
+    let root_a = fixture.root("root-a");
+    let staging = fixture.root.join("staging");
+    let mut client = LspProcess::spawn_configured(&fixture.root, |command| {
+        command.arg("--staging-dir").arg(&staging);
+    });
+    let path = root_a.join("navigation").join("snapshot.sv");
+    let valid = fs::read_to_string(&path).expect("read snapshot fixture");
+    client
+        .initialize(&[("root-a", &root_a)], default_init_options())
+        .expect("initialize staging workspace");
+    client.open(&path, &valid).expect("open snapshot source");
+    wait_for_diagnostics(&mut client, &file_uri(&path), has_no_severity_1);
+
+    let pid = client.pid();
+    let staged = llg_shadow_dirs_in(&staging, pid);
+    assert_eq!(
+        staged.len(),
+        1,
+        "one shadow base under --staging-dir: {staged:?}"
+    );
+    assert!(
+        tmp_llg_shadow_dirs_for(pid).is_empty(),
+        "--staging-dir must replace the OS temp dir"
+    );
+
+    client.shutdown();
+    assert!(llg_shadow_dirs_in(&staging, pid).is_empty());
+    assert!(staging.is_dir(), "the chosen staging dir itself is kept");
+}
+
 fn assert_exit_after_immediate_stdin_close(shutdown_first: bool) {
     let fixture = FixtureTree::new();
     let root_a = fixture.root("root-a");

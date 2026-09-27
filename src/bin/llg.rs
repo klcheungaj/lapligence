@@ -5,7 +5,8 @@
 //! ```text
 //! llg [generate options] [build options] <file.sv>... [-- <plusargs>...]
 //! generate: --top <module[:config]>  --edition <2001|2009>  --compilation-units <separate|merged>  --include-dir <path>  --define <NAME[=VALUE]>  --define-system-task <prototype>  --libmap <file>  --libfile [<library>=]<file>  --library-order <library>[,<library>...]  --default-library <library>  --lint  --lint-json [<path>]  --lint-config <file>  --gen-only  --no-opt  --stop-policy <resume|exit>
-//! build:    --generator <backend>  --launcher <program>  --dpi-lib <path>...
+//! build:    --generator <backend>  --launcher <program>  --dpi-lib <path>...  --cc <program>  --cflags <flags>  --cmake <program>
+//! output:   --out-dir <dir>  --runtime-cache <dir>
 //! ```
 //!
 //! `--lint` runs the shared linter (`core::lint`) over the compiled design
@@ -29,22 +30,25 @@
 //! Model build (CMake is the only supported model builder):
 //!
 //! - After C emission the driver writes the model plus runtime/libaco sources
-//!   into `target/sim/<design>` and automatically configures + builds them
-//!   with CMake (`sim::build::build_model_cmake_with_opts`; `$LLG_CMAKE` or
-//!   `cmake`; compiler from `$LLG_CC` / `$CC` / `cc`; extra flags via
-//!   `$LLG_CFLAGS`).
+//!   into `<out-dir>/sim/<design>` (`--out-dir`, default `build`) and
+//!   automatically configures + builds them with CMake
+//!   (`sim::build::build_model_cmake_with_opts`). Each tool option wins over
+//!   its environment fallback: `--cmake` > `$LLG_CMAKE` > `cmake`;
+//!   `--cc` > `$LLG_CC` > `$CC` > `cc`; `--cflags` > `$LLG_CFLAGS`.
+//! - The runtime archive cache is `--runtime-cache` >
+//!   `$LLG_RUNTIME_CACHE_DIR` > `<out-dir>/llg-runtime-cache`.
 //! - `--generator <backend>` selects cmake's generator backend (`-G`,
 //!   e.g. `Ninja`, `"Unix Makefiles"`); it overrides `$CMAKE_GENERATOR`.
 //! - `--launcher <program>` selects `CMAKE_C_COMPILER_LAUNCHER` (for example,
 //!   `ccache` or `sccache`). No launcher is selected by default.
 //!   Build options are ignored with a warning when combined with `--gen-only`.
 //! - `--gen-only` stops after emitting the model + runtime +
-//!   `CMakeLists.txt` into `target/sim/<design>` (prints the directory,
+//!   `CMakeLists.txt` into `<out-dir>/sim/<design>` (prints the directory,
 //!   exits 0) without configuring/building/running.
 //!
 //! Flow: compile + elaborate with Slang (via `core::compile`), lower the
 //! owned semantic database to C11 (`sim::codegen::generate`), write the model plus the
-//! runtime and libaco into `target/sim/<design>`, build through CMake
+//! runtime and libaco into `<out-dir>/sim/<design>`, build through CMake
 //! (unless `--gen-only`), and run the resulting simulator (stdout inherits;
 //! the exit code is the simulator's).
 
@@ -53,6 +57,10 @@ use std::process::Command;
 
 use llg::core::compile;
 use llg::sim;
+
+/// Default output root: models go to `build/sim/<design>` and the runtime
+/// cache to `build/llg-runtime-cache`, both under the current directory.
+const DEFAULT_OUT_DIR: &str = "build";
 
 #[derive(Debug)]
 struct DriverOptions {
@@ -75,6 +83,11 @@ struct DriverOptions {
     generator: Option<String>,
     dpi_libraries: Vec<PathBuf>,
     launcher: Option<String>,
+    cc: Option<String>,
+    cflags: Option<String>,
+    cmake: Option<String>,
+    out_dir: PathBuf,
+    runtime_cache: Option<PathBuf>,
     gen_only: bool,
     no_opt: bool,
     stop_policy: StopPolicy,
@@ -120,7 +133,8 @@ fn parse_args(args: Vec<String>) -> Result<DriverOptions, i32> {
         eprintln!(
             "usage: llg [generate options] [build options] <file.sv>... [-- <plusargs>...]\n\
              generate: --top <module[:config]>  --edition <2001|2009>  --compilation-units <separate|merged>  --include-dir <path>  --define <NAME[=VALUE]>  --define-system-task <prototype>  --libmap <file>  --libfile [<library>=]<file>  --library-order <library>[,<library>...]  --default-library <library>  --lint  --lint-json [<path>]  --lint-config <file>  --gen-only  --no-opt\n\
-             build:    --generator <backend>  --launcher <program>  --dpi-lib <path>...\n\
+             build:    --generator <backend>  --launcher <program>  --dpi-lib <path>...  --cc <program>  --cflags <flags>  --cmake <program>\n\
+             output:   --out-dir <dir>  --runtime-cache <dir>\n\
              stop:     --stop-policy <resume|exit>  # `$stop` handling (default: resume)"
         );
         return Err(2);
@@ -145,6 +159,11 @@ fn parse_args(args: Vec<String>) -> Result<DriverOptions, i32> {
     let mut generator: Option<String> = None;
     let mut dpi_libraries: Vec<PathBuf> = Vec::new();
     let mut launcher: Option<String> = None;
+    let mut cc: Option<String> = None;
+    let mut cflags: Option<String> = None;
+    let mut cmake: Option<String> = None;
+    let mut out_dir = PathBuf::from(DEFAULT_OUT_DIR);
+    let mut runtime_cache: Option<PathBuf> = None;
     let mut gen_only = false;
     let mut no_opt = false;
     let mut stop_policy = StopPolicy::Resume;
@@ -189,7 +208,14 @@ Options:
       --                    Pass remaining arguments to the generated simulator
       --generator <backend>  Select the CMake generator
       --launcher <program>   Select the CMake C compiler launcher
-      --dpi-lib <path>       Link one explicit DPI-C library (repeatable)"
+      --dpi-lib <path>       Link one explicit DPI-C library (repeatable)
+      --cc <program>         C compiler for the model (default: $LLG_CC, $CC, cc)
+      --cflags <flags>       Extra C compiler flags (default: $LLG_CFLAGS)
+      --cmake <program>      CMake program (default: $LLG_CMAKE, cmake)
+      --out-dir <dir>        Output root; the model goes to <dir>/sim/<design>
+                              (default: build)
+      --runtime-cache <dir>  Runtime archive cache (default: $LLG_RUNTIME_CACHE_DIR,
+                              <out-dir>/llg-runtime-cache)"
                 );
                 return Err(0);
             }
@@ -305,6 +331,42 @@ Options:
                     return Err(2);
                 }
             },
+            "--cc" => match it.next() {
+                Some(value) if !value.is_empty() => cc = Some(value),
+                _ => {
+                    eprintln!("llg: --cc requires a compiler program");
+                    return Err(2);
+                }
+            },
+            // Empty flags are meaningful: they clear an inherited $LLG_CFLAGS.
+            "--cflags" => match it.next() {
+                Some(value) => cflags = Some(value),
+                None => {
+                    eprintln!("llg: --cflags requires a flag string");
+                    return Err(2);
+                }
+            },
+            "--cmake" => match it.next() {
+                Some(value) if !value.is_empty() => cmake = Some(value),
+                _ => {
+                    eprintln!("llg: --cmake requires a program");
+                    return Err(2);
+                }
+            },
+            "--out-dir" => match it.next() {
+                Some(value) if !value.is_empty() => out_dir = PathBuf::from(value),
+                _ => {
+                    eprintln!("llg: --out-dir requires a directory");
+                    return Err(2);
+                }
+            },
+            "--runtime-cache" => match it.next() {
+                Some(value) if !value.is_empty() => runtime_cache = Some(PathBuf::from(value)),
+                _ => {
+                    eprintln!("llg: --runtime-cache requires a directory");
+                    return Err(2);
+                }
+            },
             "--gen-only" | "-gen-only" => gen_only = true,
             "--no-opt" => no_opt = true,
             "--stop-policy" => match it.next() {
@@ -367,6 +429,11 @@ Options:
         generator,
         dpi_libraries,
         launcher,
+        cc,
+        cflags,
+        cmake,
+        out_dir,
+        runtime_cache,
         gen_only,
         no_opt,
         stop_policy,
@@ -394,6 +461,11 @@ fn run(options: DriverOptions) -> i32 {
         generator,
         dpi_libraries,
         launcher,
+        cc,
+        cflags,
+        cmake,
+        out_dir: out_root,
+        runtime_cache,
         gen_only,
         no_opt,
         stop_policy,
@@ -560,16 +632,21 @@ fn run(options: DriverOptions) -> i32 {
 
     // 4. Write sources (+ CMakeLists.txt).  With --gen-only, stop here: the
     //    emitted directory is the output, nothing is configured or run.
-    let out_dir = PathBuf::from("target/sim").join(gen_name(&gen));
+    let out_dir = out_root.join("sim").join(gen_name(&gen));
     let model = [("model.c", gen.model_c.as_str())];
     if gen_only {
-        if generator.is_some() || launcher.is_some() {
+        if generator.is_some()
+            || launcher.is_some()
+            || cc.is_some()
+            || cflags.is_some()
+            || cmake.is_some()
+            || runtime_cache.is_some()
+        {
             eprintln!("llg: warning: build options ignored with --gen-only");
         }
         let opts = sim::build::CmakeBuildOpts {
-            generator: None,
             dpi_libraries,
-            launcher: None,
+            ..Default::default()
         };
         if let Err(e) = sim::build::generate_model_sources_with_opts(&out_dir, &model, &opts) {
             eprintln!("llg: {e}");
@@ -580,10 +657,18 @@ fn run(options: DriverOptions) -> i32 {
     }
 
     // 5. Build the model with CMake (the only supported builder).
+    // The cache follows --out-dir unless the flag or environment moves it.
+    let runtime_cache_dir = runtime_cache
+        .or_else(sim::build::runtime_cache_dir_from_env)
+        .unwrap_or_else(|| out_root.join("llg-runtime-cache"));
     let opts = sim::build::CmakeBuildOpts {
         generator,
         dpi_libraries,
         launcher,
+        runtime_cache_dir: Some(runtime_cache_dir),
+        cc,
+        cflags,
+        cmake,
     };
     let exe = match sim::build::build_model_cmake_with_opts(&out_dir, &model, &opts) {
         Ok(e) => e,

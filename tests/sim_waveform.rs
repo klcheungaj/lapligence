@@ -72,6 +72,15 @@ fn run_checked_in_fixture(
     fixture: &str,
     optimized: bool,
 ) -> Result<(sim_harness::TempDir, std::process::Output), String> {
+    run_checked_in_fixture_with_files(fixture, optimized, &[])
+}
+
+/// Like [`run_checked_in_fixture`], after writing `files` into the run's CWD.
+fn run_checked_in_fixture_with_files(
+    fixture: &str,
+    optimized: bool,
+    files: &[(&str, &str)],
+) -> Result<(sim_harness::TempDir, std::process::Output), String> {
     let source = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/sim/waveform")
         .join(format!("{fixture}.sv"));
@@ -79,6 +88,10 @@ fn run_checked_in_fixture(
         return Err(format!("missing waveform fixture {}", source.display()));
     }
     let dir = sim_harness::TempDir::new(&format!("waveform-{fixture}"))?;
+    for (name, contents) in files {
+        std::fs::write(dir.path().join(name), contents)
+            .map_err(|error| format!("write {name}: {error}"))?;
+    }
     let mut command = Command::new(env!("CARGO_BIN_EXE_llg"));
     command.current_dir(dir.path()).args(["--top", "tb"]);
     if !optimized {
@@ -657,4 +670,86 @@ fn validate_generated_fst(_dir: &std::path::Path) -> Result<(), String> {
     // Windows. The portable runtime self-test exercises the reader there once
     // that CI lane is enabled.
     Ok(())
+}
+
+/// One built model reruns with different run-time output settings: writes
+/// follow `LLG_SIM_OUT_DIR`, `LLG_SIM_WAVE_FILE` replaces `$dumpfile`,
+/// `LLG_SIM_LOG_FILE` copies the console, and reads stay CWD-relative.
+#[test]
+fn run_time_output_settings_redirect_one_built_model() {
+    const INPUT: &str = "a5\n00\n";
+    for optimized in [false, true] {
+        let label = format!("optimized={optimized}");
+        let (dir, output) = run_checked_in_fixture_with_files(
+            "output_redirect",
+            optimized,
+            &[("input.hex", INPUT)],
+        )
+        .unwrap_or_else(|error| panic!("{label}: {error}"));
+        assert!(
+            output.status.success(),
+            "{label}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "console a5\n");
+        for name in ["trace.vcd", "note.txt", "mem.hex"] {
+            assert!(dir.path().join(name).is_file(), "{label}: default {name}");
+        }
+
+        let exe = dir
+            .path()
+            .join("build/sim/tb/build/bin")
+            .join(if cfg!(windows) { "sim.exe" } else { "sim" });
+        let run = |envs: &[(&str, &str)]| {
+            let mut command = Command::new(&exe);
+            command.current_dir(dir.path()).envs(envs.iter().copied());
+            let output = sim_harness::run_command(&mut command, Duration::from_secs(60))
+                .unwrap_or_else(|error| panic!("{label}: {error}"));
+            assert!(
+                output.status.success(),
+                "{label}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert_eq!(String::from_utf8_lossy(&output.stdout), "console a5\n");
+        };
+
+        let log = cfg!(unix).then_some(("LLG_SIM_LOG_FILE", "console.log"));
+        let mut first = vec![("LLG_SIM_OUT_DIR", "runs/one")];
+        first.extend(log);
+        run(&first);
+        let one = dir.path().join("runs/one");
+        assert_eq!(
+            std::fs::read_to_string(one.join("note.txt")).unwrap(),
+            "note a5\n"
+        );
+        let mem = std::fs::read_to_string(one.join("mem.hex")).unwrap();
+        assert!(
+            mem.contains("a5") && mem.contains("a6"),
+            "{label}: $writememh follows the out dir and $readmemh read the CWD: {mem}"
+        );
+        assert!(std::fs::read_to_string(one.join("trace.vcd"))
+            .unwrap()
+            .contains("$enddefinitions"));
+        if log.is_some() {
+            assert_eq!(
+                std::fs::read_to_string(one.join("console.log")).unwrap(),
+                "console a5\n"
+            );
+        }
+
+        run(&[
+            ("LLG_SIM_OUT_DIR", "runs/two"),
+            ("LLG_SIM_WAVE_FILE", "wave.fst"),
+        ]);
+        let two = dir.path().join("runs/two");
+        assert!(
+            two.join("wave.fst").is_file(),
+            "{label}: overridden waveform"
+        );
+        assert!(
+            !two.join("trace.vcd").exists(),
+            "{label}: $dumpfile replaced"
+        );
+        assert!(two.join("note.txt").is_file() && two.join("mem.hex").is_file());
+    }
 }

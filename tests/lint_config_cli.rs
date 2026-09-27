@@ -1,7 +1,7 @@
 //! CLI integration tests for `llg --lint --lint-config <path>`.
 //!
 //! Each test drives the real `llg` binary (via `CARGO_BIN_EXE_llg`)
-//! in a fresh temp dir, so the generated `target/sim/` tree stays isolated
+//! in a fresh temp dir, so the generated `build/sim/` tree stays isolated
 //! per test.
 
 use std::path::Path;

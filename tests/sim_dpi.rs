@@ -113,7 +113,7 @@ fn dpi_scalar_imports_roundtrip_in_both_optimizer_modes() {
         );
     }
 
-    let model = directory.path().join("target/sim/tb/model.c");
+    let model = directory.path().join("build/sim/tb/model.c");
     let model_c = std::fs::read_to_string(&model).expect("generated model source");
     assert!(model_c.contains("#include \"svdpi.h\""));
     assert!(model_c.contains("extern int32_t dpi_add(int32_t p0, int32_t p1);"));

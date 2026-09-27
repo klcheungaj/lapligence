@@ -5,6 +5,7 @@
 #include "scheduler/storage.c"
 #include "scheduler/state.c"
 #include "scheduler/policy.c"
+#include "scheduler/output_files.c"
 #include "scheduler/process_registry.c"
 #include "scheduler/activations.c"
 #include "scheduler/value_scopes.c"

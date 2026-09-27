@@ -15,6 +15,9 @@ These file-backed designs cover the ordinary Verilog waveform tasks in IEEE
 - `true_net_alias.sv` checks that both names of a true net alias receive the
   resolved driver value in the VCD catalog.
 - `fst.sv` is the FST counterpart for the generated-model reader probe.
+- `output_redirect.sv` writes a waveform, a `$fopen` file and `$writememh`
+  output and reads `$readmemh` input, so one built model can be rerun with
+  `LLG_SIM_OUT_DIR`, `LLG_SIM_WAVE_FILE` and `LLG_SIM_LOG_FILE`.
 
 The owning Rust suite runs every fixture in optimized and `--no-opt` modes and
 uses independent VCD/FST metadata and value oracles.
