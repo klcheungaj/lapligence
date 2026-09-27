@@ -56,10 +56,15 @@ Native Windows/macOS and other release-matrix hosts have not been executed for
 this acceptance. The targeted generated-model ASan/UBSan/leak lane passed
 62/62 test cases here; its 100 report files contained only the documented
 libaco stack-switch warning, with no sanitizer error. Handwritten native
-probes are separate evidence. The orchestrator will record the final
-current-source full-suite result and SYN-000 green revision after integration;
-focused results do not supply that record. The command and generated-model
-sanitizer lane are in the [test guide](../tests/readme.md).
+probes are separate evidence. The final SYN-000/SYN-039 green record tested
+code revision `6628c478369e7e978aab574b5ab0b814685bd4e7`, immediately
+preceding this docs-only update, on WSL2 Linux x86_64. With rustc 1.98.0 and
+cargo-nextest 0.9.146, `scripts/run-tests.sh --test-work-dir /build
+--test-threads 30 --all-features --no-fail-fast` ran 3,033 tests: 3,033
+passed, 0 failed, 5 skipped (387.4 s). Repeating that command with
+`--run-ignored only` ran the five skipped resource-lane tests: 5 passed,
+0 failed (92.2 s). The generated-model sanitizer lane is in the
+[test guide](../tests/readme.md).
 
 The generated fixed-array ceiling is 65,536 cells, below the cited
 16,777,216-element minimum (V §3.10; SV §7.4.2). The selected packed
