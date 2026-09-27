@@ -18,12 +18,14 @@ fn zero_time_calls_preserve_fixed_values_lifetimes_and_references() {
 
 #[test]
 fn verilog_2001_zero_time_calls_preserve_automatic_activations() {
-    sim_cli::run_case_with_args(
-        "syn013_zero_time_calls",
-        "legacy_calls",
-        "legacy value=40 result=42 calls=2\n",
-        "",
-        &[],
-        &["--edition", "2001"],
-    );
+    for edition in ["2001", "2009"] {
+        sim_cli::run_case_with_args(
+            "syn013_zero_time_calls",
+            "legacy_calls",
+            "legacy value=40 result=42 calls=2\n",
+            "",
+            &[],
+            &["--edition", edition],
+        );
+    }
 }

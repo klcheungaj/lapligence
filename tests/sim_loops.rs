@@ -298,14 +298,16 @@ fn syn_037_finite_control_preserves_local_targets_and_copyout() {
 
 #[test]
 fn syn_037_verilog_2001_local_disable_preserves_loop_and_copyout() {
-    sim_cli::run_case_with_args(
-        "loops",
-        "syn_037_finite_control_2001",
-        "value=31 body=4 repeat=4 while=8 forever=3 function=3 task=6\n",
-        "",
-        &[],
-        &["--edition", "2001"],
-    );
+    for edition in ["2001", "2009"] {
+        sim_cli::run_case_with_args(
+            "loops",
+            "syn_037_finite_control_2001",
+            "value=31 body=4 repeat=4 while=8 forever=3 function=3 task=6\n",
+            "",
+            &[],
+            &["--edition", edition],
+        );
+    }
 }
 
 #[test]

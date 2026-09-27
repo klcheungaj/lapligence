@@ -120,8 +120,10 @@ real values use a separate representation.
 - 🟨 **Initialization and lifetimes** — Scalar and fixed integral composite
   initializers, including zero-time calls, run before 2009 processes; 2001 keeps
   its initialization schedule. Static locals/formals initialize once, not on
-  first call; automatic storage initializes per activation. Explicit member
-  defaults, recursive array defaults and mixed state domains are retained.
+  first call; automatic storage initializes per activation. SV `const` module
+  variables and automatic-function locals retain their initialized values;
+  subsequent writes diagnose. Explicit member defaults, recursive array
+  defaults and mixed state domains are retained.
   Timing-bearing initializer calls are illegal; unsupported native/resizable
   layouts and ambiguous/opposite-lifetime captures remain rejected.
   V §6.2.1; SV §§6.8, 6.21, 10.5 **[2001/SV-2005]**.
@@ -432,7 +434,10 @@ real values use a separate representation.
 ## 7. Expressions & operators
 
 - 🟨 **Arithmetic** — `+ - * / % **` operate at actual packed widths below the
-  resource limit. V §4.1.5 **[1995/2001]**.
+  resource limit. Public 2001/2009 witnesses cover runtime signed and unsigned
+  operands at widths 7, 33 and 65, including unary signs, X/Z propagation and
+  division by zero in both optimizer modes. V §§4.1.5–4.1.6; SV §11.4
+  **[1995/2001/SV-2009]**.
 - 🟦 **Bitwise, logical, reduction, shift and relational operators** — `& | ^ ~`,
   XNOR forms, `&& || !`, reduction AND/NAND/OR/NOR/XOR/XNOR, `<< >> <<< >>>`
   and `< <= > >=` retain resolved widths, signs and four-state behavior.

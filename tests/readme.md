@@ -163,6 +163,17 @@ The [grammar/context ledger](syn038_coverage_ledger.md) and
 contexts to fixtures, test owners and expected results.
 `sim_syn038_ledger` validates the ledger and runs selected public-CLI
 witnesses.
+Its N04 witnesses check 7/33/65-bit signed and unsigned runtime arithmetic in
+both editions and optimizer modes, including X/Z and zero divisors, and check
+SV `const` reads plus a rejected write. The ledger's review/Extended links name
+their behavioral test owners separately from open policy, excluded forms,
+generated-model sanitizer lanes, the SYN-035 PLA exclusion and SYN-036
+capacity limits. SYN-036 has four ignored resource tests that require an
+explicit `--run-ignored` invocation for execution.
+
+The Core audit checks fixture paths and named test functions, then compares
+claimed syntax, widths, editions and contexts with the actual fixture and
+harness; a fixture path alone does not establish a passing outcome.
 
 Check pairwise metadata from the repository root:
 

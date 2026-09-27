@@ -19,6 +19,7 @@ const DISPOSITION_START: &str = "#### SYN-038 72-group disposition";
 const LEDGER_END: &str = "## Validation scope";
 const EVIDENCE_MAP_START: &str = "#### SYN-038 audited evidence map";
 const EVIDENCE_MAP_END: &str = "#### SYN-038 selected-profile exclusions";
+const REVIEW_LINK_START: &str = "#### SYN-038 review and Extended evidence links";
 
 #[test]
 fn selected_core_pairwise_manifest_matches_frozen_rules() {
@@ -1162,7 +1163,7 @@ fn selected_rows_are_traceable_and_unique() {
         .collect::<Vec<_>>();
     assert_eq!(
         selected.len(),
-        78,
+        81,
         "SYN-038 selected Core grammar denominator changed"
     );
 
@@ -1229,6 +1230,115 @@ fn selected_rows_are_traceable_and_unique() {
         );
         assert_fixture_exists(&root, id, cells[4]);
     }
+}
+
+#[test]
+fn review_and_extended_links_name_real_owners_and_keep_open_cells_visible() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let document = fs::read_to_string(root.join("tests/syn038_coverage_ledger.md"))
+        .expect("read the SYN-038 coverage ledger");
+    let links = section(&document, REVIEW_LINK_START, EVIDENCE_MAP_END);
+    let mut ids = HashSet::new();
+    for line in links
+        .lines()
+        .filter(|line| line.starts_with("| SYN038-LINK-"))
+    {
+        let cells = table_cells(line);
+        assert_eq!(cells.len(), 6, "malformed review/Extended row: {line}");
+        assert!(
+            ids.insert(cells[0]),
+            "duplicate review/Extended ID: {}",
+            cells[0]
+        );
+        assert!(
+            cells[1].contains("2001") || cells[1].contains("2009"),
+            "{} has no edition gate",
+            cells[0]
+        );
+        assert!(
+            !cells[2].is_empty() && !cells[5].is_empty(),
+            "{} has no disposition or boundary",
+            cells[0]
+        );
+        let owners = code_spans(cells[4]).collect::<Vec<_>>();
+        assert!(!owners.is_empty(), "{} has no owner", cells[0]);
+        let mut owner_sources = Vec::new();
+        for owner in owners {
+            if owner == "docs/sim_features.md" {
+                assert!(
+                    cells[2].starts_with("OPEN") || cells[2].starts_with("PENDING"),
+                    "{} cannot call documentation behavioral PASS evidence",
+                    cells[0]
+                );
+                continue;
+            }
+            let (file, name) = owner
+                .split_once("::")
+                .unwrap_or_else(|| panic!("{} owner is not file::test: {owner}", cells[0]));
+            let source = fs::read_to_string(root.join(file))
+                .unwrap_or_else(|error| panic!("{} cannot read {file}: {error}", cells[0]));
+            assert!(
+                source.contains(&format!("fn {name}(")),
+                "{} missing test {owner}",
+                cells[0]
+            );
+            owner_sources.push((name, source));
+        }
+        let fixtures = fixture_paths(cells[3]);
+        for fixture in &fixtures {
+            assert!(
+                root.join(fixture).is_file(),
+                "{} missing {}",
+                cells[0],
+                fixture.display()
+            );
+            if cells[2].starts_with("PASS") {
+                let stem = fixture.file_stem().and_then(|stem| stem.to_str()).unwrap();
+                assert!(
+                    owner_sources
+                        .iter()
+                        .any(|(name, source)| test_owner_invokes_fixture(source, name, stem)),
+                    "{} PASS fixture {} is not invoked by its named owner",
+                    cells[0],
+                    fixture.display()
+                );
+            }
+        }
+        if cells[2].starts_with("PASS") {
+            assert!(
+                !fixtures.is_empty(),
+                "{} PASS cannot rest on metadata alone",
+                cells[0]
+            );
+        }
+    }
+    assert_eq!(
+        ids.len(),
+        31,
+        "N01-N12, Q01-Q04, SYN-021..033, 035/036 links required"
+    );
+    let pla = links
+        .lines()
+        .find(|line| line.starts_with("| SYN038-LINK-SYN-035 |"))
+        .expect("SYN-035 link");
+    assert!(pla.contains("EXCLUDED") && pla.contains("unsupported PLA system task"));
+    let capacity = links
+        .lines()
+        .find(|line| line.starts_with("| SYN038-LINK-SYN-036 |"))
+        .expect("SYN-036 link");
+    assert!(
+        capacity.contains("65,536")
+            && capacity.contains("16,777,216")
+            && capacity.contains("--run-ignored"),
+        "SYN-036 must disclose its deviation and separate resource lane"
+    );
+    let capacity_tests =
+        fs::read_to_string(root.join("tests/sim_syn036_capacity.rs")).expect("read SYN-036 owner");
+    assert_eq!(
+        capacity_tests.matches("#[ignore =").count(),
+        4,
+        "SYN-036 resource-lane count changed"
+    );
 }
 
 #[test]
@@ -1653,6 +1763,90 @@ fn escaped_identifier_grammar_fixture_executes_in_both_editions() {
 }
 
 #[test]
+fn runtime_arithmetic_widths_match_independent_signed_and_unsigned_oracle() {
+    // Independently computed as width-limited two's-complement values using
+    // V 4.1.5-4.1.6 / SV 11.4 (see the N04 handoff for the Python derivation).
+    const EXPECTED: &str = concat!(
+        "s7=7b,05,7d,79,76,7e,7f,19\n",
+        "u7=05,7b,07,03,0a,02,01,19\n",
+        "zero7=xx,xx,xx,xx\n",
+        "xz7=xx,xx,xx,xx\n",
+        "zx7=xx,xx,xx,xx\n",
+        "s33=1fffffffb,000000005,1fffffffd,1fffffff9,1fffffff6,1fffffffe,1ffffffff,000000019\n",
+        "u33=000000005,1fffffffb,000000007,000000003,00000000a,000000002,000000001,000000019\n",
+        "zero33=xxxxxxxxx,xxxxxxxxx,xxxxxxxxx,xxxxxxxxx\n",
+        "xz33=xxxxxxxxx,xxxxxxxxx,xxxxxxxxx,xxxxxxxxx\n",
+        "zx33=xxxxxxxxx,xxxxxxxxx,xxxxxxxxx,xxxxxxxxx\n",
+        "s65=1fffffffffffffffb,00000000000000005,1fffffffffffffffd,1fffffffffffffff9,1fffffffffffffff6,1fffffffffffffffe,1ffffffffffffffff,00000000000000019\n",
+        "u65=00000000000000005,1fffffffffffffffb,00000000000000007,00000000000000003,0000000000000000a,00000000000000002,00000000000000001,00000000000000019\n",
+        "zero65=xxxxxxxxxxxxxxxxx,xxxxxxxxxxxxxxxxx,xxxxxxxxxxxxxxxxx,xxxxxxxxxxxxxxxxx\n",
+        "xz65=xxxxxxxxxxxxxxxxx,xxxxxxxxxxxxxxxxx,xxxxxxxxxxxxxxxxx,xxxxxxxxxxxxxxxxx\n",
+        "zx65=xxxxxxxxxxxxxxxxx,xxxxxxxxxxxxxxxxx,xxxxxxxxxxxxxxxxx,xxxxxxxxxxxxxxxxx\n",
+    );
+    let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/sim/review_bundle/r12_runtime_arithmetic_widths.sv");
+    for edition in ["2001", "2009"] {
+        for optimized in [false, true] {
+            let directory =
+                sim_harness::TempDir::new("runtime-arithmetic-widths").expect("CLI test directory");
+            let mut command = Command::new(env!("CARGO_BIN_EXE_llg"));
+            command.current_dir(directory.path()).args(["--top", "tb"]);
+            if !optimized {
+                command.arg("--no-opt");
+            }
+            let output = sim_harness::run_command(
+                command
+                    .args(["--edition", edition])
+                    .arg(&source)
+                    .args(["--", "+seed=1"]),
+                std::time::Duration::from_secs(180),
+            )
+            .expect("run arithmetic fixture");
+            assert!(
+                output.status.success(),
+                "{edition}/{optimized}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert_eq!(
+                String::from_utf8_lossy(&output.stdout),
+                EXPECTED,
+                "{edition}/{optimized}"
+            );
+            assert_eq!(output.stderr, b"", "{edition}/{optimized}");
+        }
+    }
+}
+
+#[test]
+fn const_module_and_local_variables_are_read_only() {
+    sim_cli::run_case_with_args(
+        "review_bundle",
+        "r12_const_variable",
+        "const=7,10\n",
+        "",
+        &[],
+        &["--edition", "2009"],
+    );
+    for optimized in [false, true] {
+        let output = sim_cli::invoke_with_env(
+            "review_bundle",
+            "r12_const_variable",
+            optimized,
+            &["--edition", "2009", "--define", "WRITE_CONST"],
+            &[],
+            &[],
+        );
+        assert_eq!(output.status.code(), Some(1));
+        assert!(output.stdout.is_empty());
+        let diagnostic = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            diagnostic.contains("const") && diagnostic.contains("module_value"),
+            "{diagnostic}"
+        );
+    }
+}
+
+#[test]
 fn constant_time_literal_parameter_fixture_executes() {
     sim_cli::run_case_with_args(
         "review_bundle",
@@ -1662,6 +1856,20 @@ fn constant_time_literal_parameter_fixture_executes() {
         &[],
         &["--edition", "2009"],
     );
+}
+
+#[test]
+fn radix_literals_execute_in_both_editions() {
+    for edition in ["2001", "2009"] {
+        sim_cli::run_case_with_args(
+            "review_bundle",
+            "r12_radix_literals",
+            "literals=1,3f,a5,xz\n",
+            "",
+            &[],
+            &["--edition", edition],
+        );
+    }
 }
 
 #[test]
@@ -1791,10 +1999,13 @@ fn edition_gates_match_sv_only_boundaries_and_witnesses() {
         "SYN038-CORE-TY-04",
         "SYN038-CORE-TY-09",
         "SYN038-CORE-EX-01",
+        "SYN038-CORE-EX-03",
+        "SYN038-CORE-EX-04",
         "SYN038-CORE-EX-05",
         "SYN038-CORE-EX-06",
         "SYN038-CORE-EX-07",
         "SYN038-CORE-EX-08",
+        "SYN038-CORE-EX-13",
         "SYN038-CORE-AS-01",
         "SYN038-CORE-AS-02",
         "SYN038-CORE-AS-03",
@@ -1807,6 +2018,7 @@ fn edition_gates_match_sv_only_boundaries_and_witnesses() {
         "SYN038-CORE-SB-04",
         "SYN038-CORE-SB-07",
         "SYN038-CORE-SB-08",
+        "SYN038-CORE-SB-09",
         "SYN038-CORE-HY-01",
         "SYN038-CORE-HY-02",
         "SYN038-CORE-HY-03",
@@ -1814,6 +2026,7 @@ fn edition_gates_match_sv_only_boundaries_and_witnesses() {
         "SYN038-CORE-HY-05",
         "SYN038-CORE-HY-06",
         "SYN038-CORE-HY-10",
+        "SYN038-CORE-PI-02",
         "SYN038-CORE-ED-05",
     ];
     for id in sv_only_rows {
@@ -1832,6 +2045,7 @@ fn edition_gates_match_sv_only_boundaries_and_witnesses() {
     let dual_edition_sv_witnesses = [
         "SYN038-CORE-LX-01",
         "SYN038-CORE-LX-04",
+        "SYN038-CORE-LX-07",
         "SYN038-CORE-EX-02",
         "SYN038-CORE-PR-01",
         "SYN038-CORE-PR-04",
