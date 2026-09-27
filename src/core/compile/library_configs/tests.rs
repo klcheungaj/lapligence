@@ -53,7 +53,10 @@ fn malformed_map_configurations_fail_directly_and_budgeted_projection_fails_clos
             "config c; localparam S = \"endconfig",
             "unterminated string",
         ),
-        ("endconfig", "unexpected library map token"),
+        (
+            "endconfig",
+            "library map line 1: unexpected token `endconfig`",
+        ),
         ("include other.map", "terminating semicolon"),
     ] {
         let mut work = LibraryMapWorkBudget::new(MAX_LIBRARY_MAP_WORK);
