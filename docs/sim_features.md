@@ -58,23 +58,36 @@ forms; SV-only constructs remain edition-gated.
 This is a bounded simulator claim on the tested WSL2 Linux x86_64 host.
 Native Windows/macOS and other release-matrix hosts have not been executed for
 this acceptance. The targeted generated-model ASan/UBSan/leak lane passed
-62/62 test cases here; its 100 report files contained only the documented
-libaco stack-switch warning, with no sanitizer error. Handwritten native
-probes are separate evidence. The final SYN-000/SYN-039 green record tested
-code revision `6628c478369e7e978aab574b5ab0b814685bd4e7`, immediately
-preceding this docs-only update, on WSL2 Linux x86_64. With rustc 1.98.0 and
-cargo-nextest 0.9.146, `scripts/run-tests.sh --test-work-dir /build
---test-threads 30 --all-features --no-fail-fast` ran 3,033 tests: 3,033
-passed, 0 failed, 5 skipped (387.4 s). Repeating that command with
-`--run-ignored only` ran the five skipped resource-lane tests: 5 passed,
-0 failed (92.2 s). The generated-model sanitizer lane is in the
+111 tests across the documented SYN-039 lane, `sim_syn013_zero_time_calls`,
+and `sim_audit_a1_packed_constant_patterns`; `tagged_guards` library tests
+passed 3/3. Its 248 report files contained only the documented libaco
+stack-switch warning, with no sanitizer errors. Handwritten native probes
+are separate evidence. The final SYN-000/SYN-039 green record tested a clean
+export (git worktree and submodules, without `plan/`, `docs/specification/` or
+`persistence/`) of code revision `006e874851d05ecda2a0964b6fb097d0933a3fc4`,
+immediately preceding this docs-only update. On WSL2 Linux x86_64 with rustc
+1.98.0 and cargo-nextest 0.9.146,
+`scripts/run-tests.sh --test-work-dir /build --test-threads 30 --all-features --no-fail-fast`
+ran 3,055 tests: 3,055 passed, 0 failed, 5 skipped (364.5 s). Repeating it
+with `--run-ignored only` passed the five resource-lane tests, 0 failed
+(91.5 s). Formatting, Clippy with `-D warnings`, the no-default-features
+library build, unsafe scan, diff check, fixture integrity (1,171 references,
+0 errors), pairwise audit (1,849/1,849), Annex assignment audit (940 names,
+0 unassigned), and Python checker unit tests passed. No tracked test or
+script depends on the omitted directories. The sanitizer method is in the
 [test guide](../tests/readme.md).
 
 The generated fixed-array ceiling is 65,536 cells, below the cited
 16,777,216-element minimum (V §3.10; SV §7.4.2). The selected packed
 conditional policy turns Z/Z into X in an ambiguous conditional (SYN-020;
-§7 below). N12 admits literal and macro-generated configuration blocks in
-library maps by the formal grammar despite conflicting adjacent prose;
+§7 below). Audited selected cases include whole packed struct/untagged union
+integral constant-pattern subjects (A1), NBAs to per-instance static local
+fixed arrays (A2), and signed `@` memory-file addresses within signed 64-bit
+and selected-view bounds (A3). Unpacked/real constant-pattern subjects,
+automatic-local NBA targets, and out-of-range memory jumps remain outside
+those admitted cases. N12 admits literal and macro-generated configuration
+blocks in library maps by the formal grammar despite conflicting adjacent
+prose (owner-directed, 2026-09-27);
 `define`/`ifdef` selection and command-line defines also apply to map
 declarations. Q04 per-library `-incdir` is implemented with
 library-scoped lookup and the precedence stated in §3. Q01 mixed-state
