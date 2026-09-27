@@ -6,104 +6,119 @@ synthesis-tool acceptance.
 
 <a id="dynamic-value-migration-acceptance-boundary"></a>
 
-## Status markers
+<a id="status-markers"></a>
+
+## Status and review basis
+
+**Source review: 2026-09-27, supplied project snapshot.** This inventory follows
+frontend admission and the owned elaborated database through semantic checks,
+IR/lowering, whole-model C emission and runtime consumers. Regression sources
+were inspected alongside those paths. Parser acceptance, an IR variant, a
+legacy C-rendering helper or a test name alone does not establish execution
+support. Simulator status is not an LSP or synthesis-support guarantee.
 
 | Marker | Meaning |
 | --- | --- |
-| 🟦 Source-implemented | An implementation path exists for the stated scope. |
-| 🟨 Partial | Implemented forms have the listed context, lifetime or representation limits. |
-| ❌ Not implemented / rejected | No supported execution path; language-illegal forms are identified separately. |
+| 🟦 Source-implemented | A source implementation exists for the explicitly stated scope; not a claim of full family or IEEE conformance. |
+| 🟨 Partial | Some forms execute, but context, lifetime, representation or known behavior gaps are identified. |
+| ❌ Not implemented / rejected | No supported built-in execution path for the named scope; language-illegal forms are identified separately. |
 | ⬜ Out of scope | Unimplemented advanced forms outside the current scope. |
-| ✅ Accepted | A specific scope has matching post-change HDL evidence; not a whole-family claim. |
-| ⚠️ Undefined behavior (Qxx) | User-directed provisional disposition for the named interaction: its recorded `llg` result has no conformance oracle under the supplied references; cross-simulator comparison is pending. This does not label the whole feature or claim an IEEE designation. |
+| ✅ Accepted | Reserved for a specific scope with matching post-change HDL execution evidence, not a whole-family claim. |
+| ⚠️ Undefined behavior (Qxx) | Owner-directed provisional disposition for a named interaction whose recorded result lacks a settled conformance oracle under the supplied references. This is not an IEEE designation for the whole feature. |
 
-The project owner directed the Q02/Q03 provisional disposition on 2026-09-27,
-pending cross-simulator resolution. The checked-in captures remain product
-characterizations rather than IEEE conformance results.
-
-Source and test presence are not acceptance. Recorded Linux results do not qualify
-later changes, full generated-model sanitizer coverage, or native Windows/macOS
-execution. Combinations of implemented features can still encounter the listed
-storage and callback restrictions. Test methodology and coverage data are in the
-[test guide](../tests/readme.md).
+The current review did **not** rerun the Rust/frontend/public-CLI HDL suites:
+a Rust toolchain was unavailable. Coverage-data checks and handwritten native C
+component probes were run, including a sanitized value-isolation probe; these do
+not qualify generated HDL models. No row is promoted to ✅ by this review.
+Historical Linux acceptance is not evidence for subsequent changes or native
+Windows/macOS execution. See the [test guide](../tests/readme.md) for test
+contracts and the [source/test map](#source-and-regression-evidence) below for
+implementation entry points.
 
 References: **V** = IEEE 1364-2001; **SV** = IEEE 1800-2009. Revision tags retain
 **[1995]**, **[2001]**, **[1364-2005]**, **[SV-2005]** and **[SV-2009]**.
 
-The [SYN-038 Annex assignment table](../tests/syn038_annex_assignments.json)
-reconciles 811 distinct PDF-extracted Annex A left-hand-side names with 794
-reference-checklist names: 665 overlap, 146 appear only in the PDF extraction,
-and 129 only in the checklist (940 in the union). Its name dispositions are
-228 Core-row assignments, 61 qualified Extended forms, 18 implemented
-simulator forms outside Core, 411 named profile exclusions and 222 syntax
-aliases/helpers, with zero unassigned names. The former four boundary names
-are classified by their qualified combinational or rejected sequential UDP
-form. These are grammar-name audit counts, not a support percentage; the
-exact admitted forms and execution limits are stated in this checklist.
+## Coverage summary
 
-## SYN-039 selected-profile completion boundary
+<!-- Capability counts: one marker + bold feature heading in sections 1-12.
+     Do not count legend entries, paragraphs, test cases or Annex productions. -->
+| Section | 🟦 Source | 🟨 Partial | ❌ Missing | ⬜ Out of scope | ✅ Accepted | Total |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1. Lexical/literals | 4 | 0 | 0 | 0 | 0 | 4 |
+| 2. Data types | 3 | 10 | 0 | 0 | 0 | 13 |
+| 3. Modules/ports/elaboration | 4 | 5 | 0 | 0 | 0 | 9 |
+| 4. Scheduling/processes | 4 | 4 | 0 | 0 | 0 | 8 |
+| 5. Procedural statements | 5 | 8 | 0 | 0 | 0 | 13 |
+| 6. Timing controls | 0 | 7 | 0 | 0 | 0 | 7 |
+| 7. Expressions/operators | 4 | 12 | 1 | 0 | 0 | 17 |
+| 8. Continuous/structural | 3 | 6 | 3 | 0 | 0 | 12 |
+| 9. Functions/tasks | 1 | 5 | 1 | 0 | 0 | 7 |
+| 10. System tasks/functions | 9 | 11 | 3 | 0 | 0 | 23 |
+| 11. Compiler directives | 5 | 2 | 0 | 0 | 0 | 7 |
+| 12. Verification/foreign interfaces | 1 | 12 | 0 | 3 | 0 | 16 |
+| **Total** | **43** | **82** | **8** | **3** | **0** | **136** |
 
-The selected simulator profile targets Verilog-2001 and SystemVerilog-2009.
-Core acceptance is the finite RTL grammar/context set mapped by the SYN-038
-ledger, including fixed values, ports, processes, expressions, nets and
-elaboration. Selected Extended acceptance covers bounded tagged/pattern cases,
-fixed-array methods and memory views, combinational UDPs, libraries and
-configurations, and structural bind in the edition and context stated by each
-feature row. The SYN-039 integrated CLI fixtures compose an array-of-record
-datapath, a parameterized interface/generate memory, an aliased wired network,
-and a tagged-pattern/UDP/configuration/bind design. They use runtime stimulus
-in both optimizer modes. Verilog-2001 shares only its legal Core and Extended
-forms; SV-only constructs remain edition-gated.
+**125 rows have some source implementation; 82 of those remain partial.**
+Zero accepted rows means no row-level acceptance promotion in this review,
+not that the project has no historical passing tests.
 
-This is a bounded simulator claim on the tested WSL2 Linux x86_64 host.
-Native Windows/macOS and other release-matrix hosts have not been executed for
-this acceptance. The targeted generated-model ASan/UBSan/leak lane passed
-111 tests across the documented SYN-039 lane, `sim_syn013_zero_time_calls`,
-and `sim_audit_a1_packed_constant_patterns`; `tagged_guards` library tests
-passed 3/3. Its 248 report files contained only the documented libaco
-stack-switch warning, with no sanitizer errors. Handwritten native probes
-are separate evidence. The final SYN-000/SYN-039 green record tested a clean
-export (git worktree and submodules, without `plan/`, `docs/specification/` or
-`persistence/`) of code revision `006e874851d05ecda2a0964b6fb097d0933a3fc4`,
-immediately preceding this docs-only update. On WSL2 Linux x86_64 with rustc
-1.98.0 and cargo-nextest 0.9.146,
-`scripts/run-tests.sh --test-work-dir /build --test-threads 30 --all-features --no-fail-fast`
-ran 3,055 tests: 3,055 passed, 0 failed, 5 skipped (364.5 s). Repeating it
-with `--run-ignored only` passed the five resource-lane tests, 0 failed
-(91.5 s). Formatting, Clippy with `-D warnings`, the no-default-features
-library build, unsafe scan, diff check, fixture integrity (1,171 references,
-0 errors), pairwise audit (1,849/1,849), Annex assignment audit (940 names,
-0 unassigned), and Python checker unit tests passed. No tracked test or
-script depends on the omitted directories. The sanitizer method is in the
-[test guide](../tests/readme.md).
+These are **grouped capability rows**, not individual grammar productions or a
+language-support percentage. A partial row can contain both substantial working
+behavior and unsupported combinations. Macros/includes are counted once in §11;
+immediate/deferred assertions, sequential UDPs and major missing verification
+families are distinguished rather than hidden in broader rows. Changes in row
+count therefore do not imply newly implemented simulator functionality.
 
-The generated fixed-array ceiling is 65,536 cells, below the cited
-16,777,216-element minimum (V §3.10; SV §7.4.2). The selected packed
-conditional policy turns Z/Z into X in an ambiguous conditional (SYN-020;
-§7 below). Audited selected cases include whole packed struct/untagged union
-integral constant-pattern subjects (A1), NBAs to per-instance static local
-fixed arrays (A2), and signed `@` memory-file addresses within signed 64-bit
-and selected-view bounds (A3). Unpacked/real constant-pattern subjects,
-automatic-local NBA targets, and out-of-range memory jumps remain outside
-those admitted cases. N12 admits literal and macro-generated configuration
-blocks in library maps by the formal grammar despite conflicting adjacent
-prose (owner-directed, 2026-09-27);
-`define`/`ifdef` selection and command-line defines also apply to map
-declarations. Q04 per-library `-incdir` is implemented with
-library-scoped lookup and the precedence stated in §3. Q01 mixed-state
-structure-pattern constants have a fixed two-state member conversion. Q02
-memory-file intersections and same-slot wake order, and Q03 tagged-member
-NBA retagging remain **undefined behavior pending cross-simulator
-resolution**. Their characterization outputs are not conformance evidence.
+The [SYN-038 Annex assignments](../tests/syn038_annex_assignments.json) are a
+separate finite-profile inventory: 811 extracted Annex names and 794 reference
+names have 665 in common, yielding 940 distinct names. Their dispositions are
+228 Core, 61 Extended, 18 implemented simulator forms outside Core, 411 profile
+exclusions and 222 aliases/helpers, with zero unassigned names. The
+[pairwise source](../tests/syn038_pairwise.json) accounts for 1,849
+selected Core cases, 296 impossible cases and 102 cases outside the profile
+(2,247 raw cases). A ledger assignment or covered case records its selected
+scope and witness; it does not establish all legal contexts or a fresh pass.
 
-The six SYN-034 optional target uses remain excluded from this selected
-profile: elaboration-only static class methods/constant objects; operator
-overloading declarations; elaboration-only fixed-input locator results;
-legacy procedural assign/deassign or static-initialization force; module-body
-specparams; and finite assertion/monitor synthesis. These exclusions do not
-deny separately documented simulator behavior. SYN-035 PLA modeling remains
-unimplemented and rejects with an explicit diagnostic. This profile does not
-claim universal IEEE language coverage or hardware synthesis acceptance.
+<a id="syn-039-selected-profile-completion-boundary"></a>
+
+## Selected-profile acceptance boundary
+
+SYN-038/SYN-039 targets a finite Verilog-2001/SystemVerilog-2009 RTL Core plus
+selected Extended forms: fixed values/ports/processes, bounded tagged/pattern
+cases, fixed-array methods and memory views, combinational UDPs, library/config
+selection and structural bind. The [integrated regression sources](../tests/sim_syn039_acceptance.rs)
+compose array-of-record, interface/generate-memory, aliased wired-network and
+tagged-pattern/UDP/configuration/bind designs with runtime stimulus in both
+optimizer modes. This is not universal IEEE or hardware-synthesis coverage.
+
+The preceding checklist records a historical clean-export acceptance at code
+revision `006e874851d05ecda2a0964b6fb097d0933a3fc4`: 3,055 main-suite passes,
+five separately run ignored resource tests and 111 targeted generated-model
+sanitizer tests on WSL2 Linux x86_64. Those results are retained as historical
+provenance, **not re-executed or independently confirmed by this review**. Native
+Windows/macOS and other release-matrix hosts remain unqualified here. Current
+feature rows must still honor their explicit limits even when a selected-profile
+ledger is complete.
+
+The selected packed conditional policy converts Z/Z to X for an ambiguous
+condition (§7). The generated fixed-array ceiling is 65,536 cells ([resource
+limits](#resource-limits)), not unlimited language capacity. N12 admits literal/macro-generated
+configuration blocks in library maps under the formal grammar despite conflicting
+adjacent prose; this remains the owner's 2026-09-27 policy, not a claimed IEEE
+correction. Per-library `-incdir` behavior is described in §3. Q01 mixed-state
+structure-pattern constants have a member-specific two-state conversion path.
+Q02 memory-file intersections/same-slot wake order and Q03 tagged-member NBA
+retagging retain the owner's provisional **undefined behavior pending
+cross-simulator resolution** disposition. Their
+[characterization fixtures](../tests/fixtures/sim/undefined_behavior/readme.md)
+are not independent conformance oracles.
+
+The six SYN-034 optional target uses remain outside this selected profile:
+elaboration-only static class methods/constant objects; operator overloading;
+elaboration-only fixed-input locator results; legacy procedural assign/deassign
+or static-initialization force; module-body specparams; and finite
+assertion/monitor synthesis. Profile exclusion does not negate separately
+implemented simulator behavior. PLA tasks remain explicitly unsupported (§10).
 
 ## Target language editions
 
@@ -123,9 +138,12 @@ later-form gates do not establish complete 2009 semantic conformance.
 | `$clog2` | Rejected | Admitted |
 | Later `$countbits`, `assert final`, `$assertcontrol` forms | Rejected | Rejected; later internal paths do not override the selected edition |
 
-Unknown system names require explicit registration. Expanded unbased-literal,
-`for`-header and memory-argument edition checks still require Rust/frontend and
-public-CLI qualification; complete Annex A coverage is not claimed.
+Unknown system names require explicit registration. The selected edition's
+standard-name allowlist is an **admission policy, not a built-in implementation
+list**: unimplemented standard routines can reach the VPI fallback and fail for
+lack of a registration (§10). [Edition regression sources](../tests/sim_edition.rs)
+include unbased literals, function/multiple-step `for` headers and memory-storage
+exceptions; they were not rerun here. Complete Annex A coverage is not claimed.
 
 `--compilation-units separate|merged` defaults to `separate`. Separate mode gives
 each source its own preprocessor and `$unit` scope; merged mode shares them in
@@ -154,19 +172,14 @@ real values use a separate representation.
 
 ## 1. Lexical & preprocessing relevant to simulation
 
+Macros, includes and their edition-specific behavior are counted in §11.
+
 - 🟦 **Lexical base and literals** — Comments, whitespace, ordinary/escaped
   identifiers, operators, sized/unsized binary/octal/decimal/hex integers, X/Z
   digits, underscores, real/scientific and string literals. Signed literals and
   signed declarations retain their resolved meaning. V §§2.1–2.7 **[1995/2001]**.
 - 🟦 **Attributes** — Parsed without simulator-specific effects, including
   `(* full_case *)`. V §2.8 **[2001]**.
-- 🟦 **Macros and conditional compilation** — `` `define `` / `` `undef ``,
-  arguments, token concatenation, stringification and the `` `ifdef `` family;
-  `` `elsif `` / `` `ifndef `` are the 2001 additions. V §§19.3–19.4
-  **[1995/2001]**.
-- 🟦 **Includes** — Literal and bounded object/function-like macro-expanded names
-  resolve beneath admitted source/include roots in both compilation-unit modes.
-  Missing, dynamic and unauthorized paths are diagnosed. V §19.5 **[1995]**.
 - 🟦 **Fill literals** — `'0`, `'1`, `'x`, `'z` follow context sizing in admitted
   expressions, assignments, calls and case operands. Self-determined
   concatenation/replication operands remain one bit. SV §5.7.1 **[SV-2005]**.
@@ -247,9 +260,16 @@ real values use a separate representation.
 - 🟨 **Strings** — Module/static/automatic byte strings support copies, casts,
   core methods, `atoreal/realtoa`, formatting, value/reference formals, copy-out,
   returns and collected input/output links. Contents changes feed sensitivity;
-  inputs/returns have independent ownership. Automatic string NBAs, unsupported
-  captures, automatic monitors and broader aggregate/continuous combinations
-  remain restricted. SV §6.16 **[SV-2005]**.
+  inputs/returns have independent ownership. Blocking delayed assignments and
+  delayed NBAs to persistent strings have an owned-value path, covered by the
+  [delayed-string regression](../tests/fixtures/sim/data_types_next/string_delayed_nba.sv).
+  **Ordinary untimed native-string NBAs still reject**, including persistent
+  targets: [object assignment lowering](../src/sim/codegen/lowering/objects/assignments.rs)
+  rejects nonblocking writes, whereas the
+  [delayed-assignment path](../src/sim/codegen/lowering/statements/assignments.rs)
+  handles `s <= #delay value` separately. Automatic delayed-NBA targets,
+  unsupported captures, automatic monitors and broader aggregate/continuous
+  combinations remain restricted. SV §6.16 **[SV-2005]**.
 - 🟨 **Events** — Scalar/fixed-array declarations, indexed/hierarchical access,
   null/default handles, reassignment and task aliases retain event identity.
   Dynamic/associative/queue event storage is unsupported. SV §6.17 **[SV-2005]**.
@@ -263,8 +283,9 @@ real values use a separate representation.
 - 🟨 **Chandle** — Typed native-pointer null/copy/identity/Boolean operations,
   locals, admitted aggregate/class fields, mixed signatures, returns and
   input/output/inout/ref/const-ref calls are present. Matching collected reference
-  ports share storage. Value-port links, packed containment, arithmetic, general
-  continuous assignment and non-string object sensitivity remain unsupported.
+  ports share storage. Nonblocking object assignment, value-port links, packed
+  containment, arithmetic, general continuous assignment and non-string object
+  sensitivity remain unsupported.
   SV §6.14 **[SV-2005]**.
 
 ## 3. Modules, ports, parameters, hierarchy
@@ -280,8 +301,9 @@ real values use a separate representation.
   defaults, nominal enums, `type()`, constant queries and folded real/string
   values support finite extents and names. Fixed struct/union parameters are
   readable whole or by member; override expressions retain their parent scope.
-  Expanded recursion/type/namespace checks still need Rust/frontend/CLI
-  qualification. Constant functions reading `defparam`-affected parameters have
+  [Elaboration regression sources](../tests/sim_syn016_elaboration.rs) exercise
+  bounded function/type/namespace cases; source presence is not fresh acceptance.
+  Constant functions reading `defparam`-affected parameters have
   undefined results under the supplied references. V §§3.11, 10.3.5, 12.2;
   SV §§6.20, 6.23, 13.4.3 **[1995/2001/SV-2005]**.
 - 🟨 **Packages and `$unit`** — Qualified/imported/re-exported names, wildcard
@@ -316,7 +338,10 @@ real values use a separate representation.
   collected recursive aggregate/string/chandle leaves share storage. Admitted
   module ref-port packed projections are distinct from subroutine ref-actual
   legality (§9). Inequivalent shapes and runtime reference rewiring reject;
-  dissimilar resolved-net inouts follow §8. SV §23.2.2 **[SV-2005]**.
+  nested selections must match the represented projections. The
+  [reference-port lowerer](../src/sim/codegen/lowering/references.rs) still rejects
+  unrepresented nested indexed/bit/part selections through an already selected
+  reference. Dissimilar resolved-net inouts follow §8. SV §23.2.2 **[SV-2005]**.
 - 🟨 **Libraries and configurations** — Explicit `--libmap`, repeatable
   `--libfile [library=]path`, `--library-order`, `--default-library`, top
   `module:config`, default `liblist`, cell/instance `use`, nested configurations
@@ -477,8 +502,9 @@ real values use a separate representation.
   the for-step list or condition back edge; break exits the innermost loop.
   For headers support multiple initializers/steps and ordinary HDL function
   steps, including copy-out/ref effects and discarded values. Tasks as steps
-  reject; break/return bypass the steps. Function-step additions still need
-  Rust/CLI and generated-model ownership qualification. V §9.6; SV §§12.7–12.8
+  reject; break/return bypass the steps. Function-step and multiple-step cases
+  have [edition regression sources](../tests/sim_edition.rs); generated-model
+  execution/ownership was not requalified here. V §9.6; SV §§12.7–12.8
   **[1995/SV-2005]**.
 - 🟨 **Loop declarations and `foreach`** — Packed/real loop locals preserve
   shadowing and admitted fork captures. Fixed foreach retains mixed packed/
@@ -509,11 +535,12 @@ real values use a separate representation.
   convert to unsigned 64-bit time before scaling; negative/nonfinite reals and
   tick overflow reject. Continuous/gate delays are separately bounded in §8.
   V §9.7.1; SV §§3.14, 5.8 **[1995/SV-2005]**.
-- 🟦 **Implicit sensitivity** — `@*`/`@(*)` use call-site body reads, unlike
+- 🟨 **Implicit sensitivity** — `@*`/`@(*)` use call-site body reads, unlike
   `always_comb`'s transitive function reads. Fixed-array elements/contents,
   container contents/shape and string markers wake admitted readers after copies,
   mutations or resizing. Non-string object and unrepresented nested dependencies
-  remain restricted. V §9.7.5 **[2001]**.
+  remain restricted; these are dependency-collection limits, not full
+  implicit-sensitivity support. V §9.7.5 **[2001]**.
 - 🟨 **Evaluated events** — Packed/scalar-real any-change expressions, packed LSB
   edges, trigger-time `iff`, numeric activation captures and atomic mixed named-event lists are represented. Sensitivity follows operands and eligible helpers,
   not unrelated body reads. Real edge descriptors, unsupported qualifiers/captures
@@ -648,16 +675,22 @@ real values use a separate representation.
   Unpacking consumes the leftmost required bits; undersized sources reject.
   `with` follows slice/declaration order, including descending arrays and `-:`
   ranges, and requires a one-dimensional operand. At most one resizable
-  destination is allowed. Fixed-size cast mismatches, real/associative operands,
-  native strings, recursive objects and unsupported reference combinations reject.
+  destination is allowed. Mixed/resizable destinations and fixed destinations
+  requiring a runtime `with` selector use a
+  [blocking-only assignment path](../src/sim/codegen/lowering/containers/streaming.rs);
+  nonblocking and compound assignments on that path reject. This does not reject
+  every statically represented packed/fixed streaming NBA. Fixed-size cast
+  mismatches, unpacked-union bit-stream casts, real/associative operands, native
+  strings, recursive objects and unsupported reference combinations reject.
   SV §§6.24.3, 11.4.14 **[SV-2005]**.
 - 🟨 **Let expressions** — Numeric expansions bind free names in declaration
   scope; runtime and constant actuals with a declaration-scope parameter execute in SV2009,
   while V2001 rejects the syntax. Recursive lets reject. Expanded assertion,
   native and aggregate bodies still need an admitted consumer representation.
-  Operator-overloading declarations
-  have no separately qualified simulation path; ordinary operator support does not
-  establish overload support. SV §§11.11, 11.13 **[SV-2009]**.
+  SV §11.13 **[SV-2009]**.
+- ❌ **Operator overloading** — No dedicated simulator contract for
+  operator-overloading declarations. Parsing or ordinary built-in operator
+  evaluation does not establish overload execution. SV §11.11 **[SV-2005]**.
 
 ## 8. Continuous assignments & structural
 
@@ -672,8 +705,11 @@ real values use a separate representation.
   Variable storage permits
   one overlapping continuous writer and separate disjoint cells. Overlapping
   ordinary procedural writes or declaration initializers reject; force/release/
-  deassign are not ordinary writers for this check. Dynamic topology, net-array
-  declaration delays and unsupported aggregate shapes remain restricted.
+  deassign are not ordinary writers for this check.
+  [Continuous-process lowering](../src/sim/codegen/lowering/collection/processes.rs)
+  rejects delayed positional assignment-pattern lvalues and pattern lvalues
+  touching true-net aliases. Dynamic topology, net-array declaration delays and
+  unsupported aggregate shapes remain restricted.
   SV §§6.5–6.7, 7.6, 10.3 **[SV-2005]**.
 - 🟨 **Resolution and strengths** — Continuous, gate, port and admitted
   hierarchical/fixed-array drivers retain independent contributions. `wire/tri`,
@@ -724,10 +760,14 @@ real values use a separate representation.
   and delays are represented. The paired Verilog-2001/SystemVerilog-2009
   SYN-031 matrix checks mux/parity tables, repeated input changes, arrays,
   resolved nets and delays in both optimizer modes. Invalid port lists and row
-  widths reject; sequential and edge-table UDPs retain explicit rejection.
-  Vector/aggregate terminals and sequential level/edge/state-initialization
-  semantics remain unsupported.
+  widths reject; vector/aggregate terminals remain unsupported. Sequential UDPs
+  are a separate missing capability below.
   V §§8.1–8.2, 8.6; SV §§29.3–29.4, 29.8 **[1995/SV-2009]**.
+- ❌ **Sequential UDPs** — State-holding level/edge tables and UDP
+  state-initialization semantics are not implemented. The
+  [UDP regression sources](../tests/sim_udp.rs) retain explicit sequential/edge
+  rejection checks; combinational UDP support does not imply sequential support.
+  V §8.3; SV §§29.5–29.6 **[1995]**.
 - ❌ **Switches and charge storage** — MOS/CMOS/resistive forms
   (`nmos/pmos/cmos/rnmos/rpmos/rcmos`), bidirectional `tran/tranif/rtran` families,
   `trireg`, charge strength, decay and sharing. V §§3.7.3, 7.5–7.7 **[1995]**.
@@ -828,13 +868,15 @@ real values use a separate representation.
   bounded start/count. Rank-one memories advance from lowest to highest HDL
   address in either declaration direction. Packed reads accept and ignore
   start/count; the exact memory-storage argument is legal in 2001 without
-  admitting unrelated whole-array value uses. Packed-bound/public-edition
-  additions still need Rust/CLI qualification. V §17.2.4.4; SV §21.3.4.4
+  admitting unrelated whole-array value uses. Packed-bound and memory-edition
+  cases have [file-I/O](../tests/sim_file_io.rs) and
+  [edition](../tests/sim_edition.rs) regression sources; these were not rerun here.
+  V §17.2.4.4; SV §21.3.4.4
   **[2001/SV-2005]**.
 - 🟦 **File position/status** — `$ftell/$fseek/$rewind/$fflush/$ferror/$feof`
   preserve EOF/error and invalid/closed-descriptor status. V §§17.2.5–17.2.7;
   SV §§21.3.5–21.3.8 **[2001/SV-2005]**.
-- 🟦 **Memory images** — `$readmemh/$readmemb` accept owned string paths,
+- 🟨 **Memory images** — `$readmemh/$readmemb` accept owned string paths,
   whitespace/comments, binary/hex digits, X/Z and `@` addresses.
   Fixed packed memories may have multiple unpacked dimensions and selected
   rows/slices; runtime view selectors are captured once. Remaining dimensions
@@ -879,12 +921,24 @@ real values use a separate representation.
   element/view restrictions apply; writers reject in 2001 mode.
   SV §21.5 **[SV-2005]**.
 
+- ❌ **String-sourced memory loading** — `$sreadmemb/$sreadmemh` appear in the
+  frontend's standard-name allowlist, but have no built-in simulator lowering or
+  runtime implementation. File-based memory loading and `$sscanf` do not provide
+  these routines; the generic VPI fallback requires an external registration.
+
 ### Time, control and utility services
 
-- 🟦 **Time reporting** — `$time` rounds to the calling module's unit (exact
+- 🟨 **Time reporting** — `$time` rounds to the calling module's unit (exact
   halves upward); `$stime` then returns its low 32 bits; `$realtime` retains
-  fractions. `$printtimescale`, design-wide `$timeformat` units/precision/suffix/
-  minimum width and `%t` integral/real conversions are represented.
+  fractions. Design-wide `$timeformat` units/precision/suffix/minimum width and
+  `%t` integral/real conversions are represented. **`$printtimescale(scope)`
+  does not honor its scope operand**: the
+  [system-task lowerer](../src/sim/codegen/lowering/statements/system_tasks.rs)
+  emits the caller's timescale and label without reading that operand. Only the
+  no-argument caller-scope behavior is represented correctly by this path.
+  `$timeformat` currently accepts zero or four arguments, not intermediate arities.
+  The [timescale regressions](../tests/sim_timescale.rs) contain a no-argument
+  witness, not proof of explicit-scope behavior.
   V §§17.3, 17.7; SV §20.4 **[1995/SV-2009]**.
 - 🟦 **Finish and severity** — `$finish` is nonreturning with default diagnostic
   level 1; `$fatal/$error/$warning/$info` format messages once in source order
@@ -940,6 +994,16 @@ real values use a separate representation.
   calls return raw host status. Embedded NUL rejects; shell/status behavior is
   platform-specific. SV §20.18 **[SV-2009]**.
 
+- ❌ **Unimplemented legacy system services** — No built-in paths were found
+  for `$countdrivers`, `$getpattern`, `$scale`, `$scope/$showscopes/$showvars`,
+  `$list/$input/$key/$nokey/$log/$nolog`, or
+  `$save/$incsave/$restart/$reset/$reset_count/$reset_value`. Their presence in
+  the [edition allowlist](../src/core/compile/editions.rs) is not implementation
+  evidence. An admitted call can reach generic VPI dispatch; without a matching
+  plugin, the [runtime bridge](../src/sim/rt/llg_vpi.c) reports an unresolved or
+  unregistered call. Other contexts may reject earlier. This is distinct from
+  the implemented numeric conversions, file I/O, `$stop` policy and VPI API.
+
 ### Waveforms
 
 - 🟨 **VCD/FST** — `$dumpfile` selects `.vcd`/`.fst`; `$dumpvars` filters depth,
@@ -958,7 +1022,9 @@ real values use a separate representation.
   merged units. 2009 adds token paste and stringification to construct names
   and strings; the strict 2001 profile rejects those later operators, predefined
   `__FILE__`/`__LINE__`, `undefineall`, `pragma` and keyword directives.
-  Unavailable include paths fail admission. V §§19.3–19.5; SV §§22.4–22.6,
+  Literal and bounded object/function-like macro-expanded include names resolve
+  within admitted source/include roots. Missing, dynamic and unauthorized paths
+  fail admission. V §§19.3–19.5; SV §§22.4–22.6,
   22.11, 22.13–22.14 **[2001/SV-2009]**.
 - 🟦 **`` `timescale ``** — Resolved module/declaration inheritance scales delays
   and time reporting; local `timeunit/timeprecision` and rounding are covered in
@@ -1011,8 +1077,12 @@ These are bounded implementations, not full verification-infrastructure support.
   samples. Constant output/inout skews capture values for Re-NBA; off-event
   drives wait for the next event. Inouts retain resolved-net drives and sampled
   reads; admitted signal-edge qualifiers and packed selected targets are present.
-  Dynamic skews, unsupported cross-clock forms and concatenated clockvar lvalues
-  rejected by the frontend remain excluded. SV ch.14 **[SV-2005]**.
+  [Input collection](../src/sim/codegen/lowering/clocking_context.rs) requires a
+  collected packed signal: real-valued inputs and uncollected source expressions
+  reject. Output/inout writes must use admitted nonblocking assignments; compound
+  writes reject. Dynamic skews, unsupported cross-clock forms and concatenated
+  clockvar lvalues rejected by the frontend remain excluded.
+  SV ch.14 **[SV-2005]**.
 - 🟨 **Process control** — `process::self/status/kill/suspend/resume/await`
   retain identity, wait conditions, descendant cleanup and terminal status.
   Process formals/arrays and the broader class API remain unsupported.
@@ -1030,10 +1100,21 @@ These are bounded implementations, not full verification-infrastructure support.
 
 ### Assertions and sampled values — partial
 
-🟨 **Immediate/deferred assertions** evaluate `assert/assume/cover` once with
-four-state truth. Deferred `#0` forms retain issue-time values, legal action-time
-references, same-slot glitch coalescing and Reactive actions. Module-level members
-are represented. SV §§16.3–16.4 **[SV-2009]**.
+- 🟦 **Immediate assertions** — Ordinary `assert/assume/cover` evaluates its
+  condition once with four-state truth and executes the selected admitted action.
+  Actions inherit the restrictions of their containing process/subroutine and
+  statement kinds. SV §16.3 **[SV-2005]**.
+- 🟨 **Deferred immediate assertions** — `#0` forms retain copied issue-time
+  values, admitted action-time references, same-slot coalescing and Reactive
+  actions; module-level members are represented. The
+  [deferred-action lowerer](../src/sim/codegen/lowering/statements/assertions.rs)
+  rejects function/task/final-block contexts. An action must lower to one
+  supported call (or an empty action); packed/real values and admitted static
+  packed/string references have capture paths. Native-string value arguments,
+  chandle arguments, output/inout copy-out, `$fatal`, `$finish` and `$stop`
+  actions reject. A literal formatting string is not a captured native-string
+  value argument. Post-2009 `assert final` remains edition-gated and unsupported
+  by this lowerer. SV §16.4 **[SV-2009]**.
 
 🟨 **Concurrent assertions** support the following bounded forms (SV ch.16, Annex F):
 
@@ -1042,14 +1123,17 @@ are represented. SV §§16.3–16.4 **[SV-2009]**.
 | Attempts and actions | Preponed packed sampling, Observed resolution, overlapping attempts, vacuity accounting and Reactive actions. |
 | Clock/disable flow | Nearest default-clock inheritance, compatible declaration/call-site clocks, legal multiclock `##0`/`##1` boundaries, asynchronous single-signal `disable iff`, bounded `accept_on/reject_on` and synchronous variants. |
 | Sequences | `##` concatenation/ranges; consecutive/nonconsecutive/goto repetition with unbounded endpoints; `or`; direct one-cycle `and/intersect/throughout/within`; `first_match`. |
-| Properties and instances | One-cycle `not/and/or/iff/implies` and conditional forms; named sequence/property instances with positional/named/default arguments. |
+| Properties and instances | One-cycle `not/and/or/iff/implies` and `if/else` forms; named sequence/property instances with positional/named/default arguments. |
 | Locals and match items | Per-attempt local input capture/defaults, ordered assignment/increment/subroutine-call items and isolated local snapshots for overlapping/branching threads. |
 | Control | Bounded blocking `expect`, sequence `.matched`, `$asserton/$assertoff/$assertkill` and hierarchy selectors. Internal post-2009 level-0 ON/OFF/KILL `$assertcontrol` support is not admitted by either target edition. |
 
 Output/inout/ref formal copy-out, delayed/nested local-formal calls, selected-local
 lvalues, repeated match-item bodies, unsupported expanded bodies, conflicting
-clock/disable metadata, other temporal/cross-clock combinators, pass/fail/vacuity
-action controls, `.triggered` and invalid scopes/arguments remain rejected.
+clock/disable metadata, nested `disable iff` or nested `accept_on/reject_on`
+controls, conditional properties without an `else`, other temporal/cross-clock
+combinators, pass/fail/vacuity action controls, `.triggered` and invalid
+scopes/arguments remain rejected by the
+[assertion lowerer](../src/sim/codegen/lowering/assertions.rs).
 Match-item callees and shared/native captures must also satisfy §9's read-only
 rules; graph/lowering support alone is not executable acceptance.
 
@@ -1072,8 +1156,42 @@ forms, complex clocks and real-valued sampling remain rejected. SV §§16.9.3–
   snapshots. Full `tf_/acc_/vpi_`, arbitrary properties/iterators/regions/control
   and VPI calls from read-only evaluators remain unsupported.
   V ch.20–27 **[1995/2001]**.
-- ⬜ **Checkers, functional coverage and constrained/structured randomization** —
-  Checker execution, covergroups/coverpoints/bins/crosses, coverage sampling/
-  queries/control/database tasks, `rand/randc`, constraints, object or
-  `std::randomize`, `randcase` and `randsequence` are not implemented.
-  SV **[SV-2005/SV-2009]**.
+- ⬜ **Checkers** — Checker execution and checker bind are not implemented;
+  module/interface structural bind and ordinary assertion instances do not imply
+  checker support. SV **[SV-2009]**.
+- ⬜ **Functional coverage** — Covergroups, coverpoints, bins, crosses and their
+  sampling/query/control/database services are not implemented. `cover` assertions
+  and waveform/VPI observation are separate capabilities. SV **[SV-2005]**.
+- ⬜ **Constrained and structured randomization** — `rand/randc`, constraints,
+  object or `std::randomize`, `randcase` and `randsequence` are not implemented.
+  Numeric random functions and container shuffle do not establish these features.
+  SV **[SV-2005]**.
+
+## Source and regression evidence
+
+The following are representative implementation and regression entry points,
+not a list of tests executed during this review. A test may be a positive case,
+an explicit rejection or a product-characterization oracle. The
+[test guide](../tests/readme.md) maps the larger fixture families; the feature
+rows above remain the authority for scope and known gaps.
+
+| Area | Implementation entry points | Representative regression sources |
+| --- | --- | --- |
+| Editions, preprocessing and frontend ownership (§§1, 11) | [Edition admission](../src/core/compile/editions.rs), [compile facade](../src/core/compile.rs), [Slang bridge](../src/wrapper/slang_c_api.cpp) | [Edition gates](../tests/sim_edition.rs), [compilation units](../tests/compilation_units.rs), [directives](../tests/sim_syn017_directive_effects.rs), [owned model](../tests/model_tests.rs) |
+| Storage and lifetimes (§2) | [Collected aggregates](../src/sim/codegen/lowering/collection/aggregates.rs), [objects](../src/sim/codegen/lowering/objects/), [value runtime](../src/sim/rt/value/), [container runtime](../src/sim/rt/container/) | [Type matrix](../tests/sim_type_conformance.rs), [native datatypes](../tests/sim_data_types_next.rs), [dynamic ownership](../tests/sim_dynamic_ownership.rs) |
+| Elaboration, ports and hierarchy (§3) | [Design collection](../src/sim/codegen/lowering/collection/design.rs), [ports](../src/sim/codegen/lowering/collection/ports.rs), [library mapping](../src/core/compile/library_mapping.rs), [configs](../src/core/compile/library_configs.rs) | [Elaboration](../tests/sim_syn016_elaboration.rs), [library configurations](../tests/sim_syn032_library_configs.rs), [bind](../tests/sim_syn033_structural_bind.rs) |
+| Processes and timing (§§4, 6) | [Statement dispatch](../src/sim/codegen/lowering/statements/dispatch.rs), [event lowering](../src/sim/codegen/lowering/statements/events.rs), [scheduler](../src/sim/rt/scheduler/) | [Process semantics](../tests/sim_process_semantics.rs), [events](../tests/sim_events.rs), [timing/regions](../tests/sim_partial_features.rs) |
+| Statements, values and expressions (§§5, 7) | [Assignments](../src/sim/codegen/lowering/statements/assignments.rs), [expressions](../src/sim/codegen/lowering/expressions/), [container streaming](../src/sim/codegen/lowering/containers/streaming.rs) | [Loops](../tests/sim_loops.rs), [stream contexts](../tests/sim_syn015_stream_contexts.rs), [tagged patterns](../tests/sim_syn024_tagged_patterns.rs), [fixed reductions](../tests/sim_fixed_array_reductions.rs) |
+| Structural drivers (§8) | [Continuous processes](../src/sim/codegen/lowering/collection/processes.rs), [nets](../src/sim/codegen/lowering/collection/nets.rs), [gates/UDPs](../src/sim/codegen/lowering/collection/gates.rs) | [Resolution](../tests/sim_net_resolution.rs), [port types](../tests/sim_port_net_types.rs), [UDPs](../tests/sim_udp.rs) |
+| Subroutines and callback limits (§9) | [Call contracts](../src/sim/codegen/lowering/collection/call_contracts.rs), [function bodies](../src/sim/codegen/lowering/collection/function_bodies.rs), [owned emitter](../src/sim/emit_c/owned/) | [Functions](../tests/sim_function.rs), [zero-time calls](../tests/sim_syn013_zero_time_calls.rs), [activation frames](../tests/sim_partial_features/activation_frames.rs) |
+| System tasks and memory I/O (§10) | [System tasks](../src/sim/codegen/lowering/statements/system_tasks.rs), [system functions](../src/sim/codegen/lowering/expressions/system_functions.rs), [runtime](../src/sim/rt/llg_rt.c) | [File I/O](../tests/sim_file_io.rs), [memory views](../tests/sim_memory_views.rs), [memory editions](../tests/sim_memory_editions.rs), [time reporting](../tests/sim_timescale.rs) |
+| Assertions, clocking and verification objects (§12) | [Immediate/deferred assertions](../src/sim/codegen/lowering/statements/assertions.rs), [concurrent assertions](../src/sim/codegen/lowering/assertions.rs), [clocking](../src/sim/codegen/lowering/clocking_context.rs), [class collection](../src/sim/codegen/lowering/collection/classes.rs) | [Concurrent assertions](../tests/sim_concurrent_assertions.rs), [deferred assertions](../tests/sim_partial_features/assertions.rs), [clocking](../tests/sim_partial_features/clocking.rs), [classes](../tests/sim_classes.rs), [virtual interfaces](../tests/sim_virtual_interfaces.rs) |
+| Foreign interfaces and observation (§§10, 12) | [Native access IR](../src/sim/ir/native_access.rs), [VPI runtime](../src/sim/rt/llg_vpi.c), [waveforms](../src/sim/rt/llg_wave.c) | [DPI](../tests/sim_dpi.rs), [VPI](../tests/sim_vpi.rs), [waveforms](../tests/sim_waveform.rs) |
+| Executable validation and cross-feature boundaries | [Semantic coverage](../src/sim/semantic.rs), [IR validation](../src/sim/ir/validate.rs), [whole-model emission](../src/sim/emit_c.rs) | [Optimizer comparison](../tests/sim_opt_differential.rs), [integrated profile](../tests/sim_syn039_acceptance.rs), [Q02/Q03 characterization](../tests/sim_undefined_behavior.rs) |
+
+Source support must survive the **whole-model ownership emitter**, not only
+frontend/lowering checks. Legacy expression/statement fragment APIs deliberately
+return an ownership-migration error; unsupported owned callbacks, captures,
+queued writes or native layouts can still reject a combination of otherwise
+implemented features. Such rejection must not be counted as complete support
+because an older rendering helper contains code for the operation.
