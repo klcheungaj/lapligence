@@ -111,6 +111,35 @@ impl Codegen<'_> {
         if let Some(root) = self.fixed_activation_root(node)? {
             return Ok(Some(root));
         }
+        // A hierarchical reference can reach a static subroutine declaration
+        // after its activation has returned. Its fixed selections must use the
+        // same persistent signal as writes made inside the subroutine.
+        if self.db.variable_lifetime(declaration) == VariableLifetime::Static
+            && self.enclosing_func_task(declaration).is_some()
+        {
+            if let (Some(signal), Some(descriptor)) = (
+                self.static_proc_local_signal(declaration)
+                    .or_else(|| self.signal_of(declaration)),
+                self.query_descriptor(declaration),
+            ) {
+                if matches!(
+                    &descriptor.shape,
+                    TypeShape::FixedArray { .. } | TypeShape::Aggregate(_)
+                ) && fixed_width(descriptor).is_some()
+                {
+                    return Ok(Some(Projection {
+                        root: FixedRoot::Cell {
+                            read: self.signal_read_expr(signal)?,
+                            target: self.reference_lhs(IrLhs::Whole(signal.ir))?,
+                        },
+                        signed: descriptor.info.signed,
+                        descriptor: descriptor.clone(),
+                        steps: Vec::new(),
+                        ref_legal: true,
+                    }));
+                }
+            }
+        }
         let declaration = match self.kind(node) {
             NodeKind::Expr(ExprKind::Ref {
                 target: Some(target),

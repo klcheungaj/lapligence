@@ -390,9 +390,12 @@ real values use a separate representation.
 - 🟨 **Fixed-array assignments** — Whole/selected fixed integral values, slices,
   concatenations, patterns, casts, calls and conditionals capture the complete
   RHS before any store or NBA issue. Overlap, declared element order and per-cell
-  conversions are retained. Native/resizable and over-limit values remain
-  restricted; automatic-variable and subroutine-reference-formal NBAs reject.
-  SV §§7.6, 10.4 **[SV-2005]**.
+  conversions are retained. Static task-local arrays and explicitly static arrays
+  in automatic tasks retain per-declaration, per-instance storage through NBA
+  publication; changed elements notify sensitive readers. Native/resizable and
+  over-limit values remain restricted; automatic-variable and
+  subroutine-reference-formal NBAs reject. SV §§7.6, 10.4.2, 13.3.2
+  **[SV-2005]**.
 - 🟨 **Assignment-pattern values** — Positional, member/integer-index, type and
   default keys support admitted fixed arrays/records. Explicit-index > type-key >
   default precedence, last matching type key, immediate row types and recursive
@@ -726,7 +729,9 @@ real values use a separate representation.
   V §§10.2–10.3; SV §§13.3–13.5 **[1995/2001/SV-2005]**.
 - 🟦 **Automatic/reentrant and finite zero-time calls** — Per-activation
   storage, finite recursion, local named-block exits, selected copy-out and
-  nested const-ref forwarding are represented. Static storage is per instance.
+  nested const-ref forwarding are represented. Static scalar and fixed-array
+  storage is per declaration and module instance, including explicit static
+  locals in automatic subroutines.
   Recursion is capacity-limited as stated above. V §§10.2.3, 10.3.1;
   SV §§6.21–6.22, 13.3–13.5 **[2001/SV-2005]**.
 - 🟨 **References** — `ref`/`const ref` alias matching packed variables, fixed
@@ -743,9 +748,10 @@ real values use a separate representation.
   cancellation before copy-out. Synchronous joined numeric branches can share
   the suspended activation; join_any/join_none retain supported snapshots of
   automatic packed/real values and recognized handles. This does not provide
-  arbitrary detached alias propagation or ref-formal captures. Static task NBAs
-  are represented; automatic-subroutine NBAs reject. V §§9.8.2, 10.2;
-  SV §9.3.2 **[1995/SV-2005]**.
+  arbitrary detached alias propagation or ref-formal captures. Static-local
+  task NBAs are represented, including arrays; NBAs targeting automatic locals
+  or automatic formals reject. V §§9.8.2, 10.2; SV §§9.3.2, 10.4.2, 13.3.2
+  **[1995/SV-2005]**.
 - 🟨 **Hierarchical calls and special formals** — Resolved module/interface/
   package/parent callees retain their owning instance. Event formals use inline
   task paths, not numeric value calls; event-formal virtual dispatch and process-handle formal ABI remain unsupported. Unresolved environments and broader

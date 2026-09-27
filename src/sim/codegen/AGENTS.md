@@ -152,7 +152,9 @@ hidden model storage, not an opportunistic expression substitute.
 Ref/const-ref forward original leaves through selected views/nested calls; never
 invent globals for automatic formals. Inline delay/wait-bearing tasks; reject
 recursive timed tasks and task calls from functions. NBA targets must outlive
-publication: no automatic/loop-local or unsupported unpacked subprogram storage.
+publication: fixed static subroutine arrays use persistent per-instance signal
+storage and typed selections; automatic/loop-local and unsupported native
+subprogram storage reject.
 String/chandle/native paths need typed owners/captures; chandles stay `void *`,
 never integers. Preserve explicit C names and pure/context qualifiers in canonical
 `svdpi.h` scalar thunks; reject missing/conflicting libraries/signatures before

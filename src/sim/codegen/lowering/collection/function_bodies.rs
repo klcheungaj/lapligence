@@ -171,7 +171,7 @@ impl<'a> Codegen<'a> {
         let mut static_input_copies = Vec::new();
         let mut callback_private_formal_copies = Vec::new();
 
-        // A static scalar local has persistent storage for the whole
+        // A static fixed-value local has persistent storage for the whole
         // simulation. Model it as an ordinary hidden signal so function-body
         // accesses and legal hierarchical continuous assignments share the
         // same typed storage. Automatic locals and native-object locals keep
@@ -180,10 +180,16 @@ impl<'a> Codegen<'a> {
             if self.db.variable_lifetime(*local) != VariableLifetime::Static {
                 continue;
             }
-            let NodeKind::Var { ty } = self.kind(*local) else {
+            let (NodeKind::Var { ty } | NodeKind::Array { ty }) = self.kind(*local) else {
                 continue;
             };
             if ty.kind == "string" || is_handle_kind(&ty.kind) || ty.kind == "event" {
+                continue;
+            }
+            if let Some(info) = self.static_task_locals.get(&(inst, *local)).cloned() {
+                self.sig_globals.insert(*local, info.clone());
+                persistent.insert(*local, info.clone());
+                static_local_signals.insert(*local, info);
                 continue;
             }
             let real = is_real_kind(&ty.kind);
@@ -716,9 +722,13 @@ impl<'a> Codegen<'a> {
             if self.db.variable_lifetime(*local) != VariableLifetime::Static {
                 continue;
             }
+            if self.static_task_locals.contains_key(&(inst, *local)) {
+                continue;
+            }
             let initializer = self
                 .db
                 .var_initializer(*local)
+                .or_else(|| self.db.array_meta(*local).and_then(|array| array.init))
                 .or_else(|| declaration_initializers.get(local).copied());
             let Some(initializer) = initializer else {
                 continue;

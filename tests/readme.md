@@ -76,7 +76,9 @@ requirements above apply without repeating them for each suite.
 - [SYN-012 fixed layouts](fixtures/sim/syn012_fixed_layout/readme.md) spans widths
   1/7/8/31/32/33/64/65/129, nested records/unions, state conversion and nominal
   rejection controls. [SYN-013 calls](fixtures/sim/syn013_zero_time_calls/readme.md)
-  preserves static output state versus automatic defaults/inout copy-in.
+  preserves static output state versus automatic defaults/inout copy-in and
+  checks persistent static task-local array NBAs, selected rows, per-instance
+  state, notification and automatic-storage rejection in both optimizer modes.
 - [SYN-014 processes](fixtures/sim/syn014_process_contexts/readme.md) checks an
   unselected aggregate arm as a dependency, no notification for unchanged results,
   and repaired pattern/array/record writer contexts. `sim_syn015_stream_contexts`

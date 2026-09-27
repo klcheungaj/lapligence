@@ -254,7 +254,7 @@ impl<'a> Codegen<'a> {
                             ir: signal,
                         };
                         self.model.signals.push(IrSignal {
-                            fixed_default: None,
+                            fixed_default: self.fixed_default_literal(local),
                             c_name: info.global.clone(),
                             hdl_name: None,
                             ty: if width == 0 {
@@ -272,7 +272,11 @@ impl<'a> Codegen<'a> {
                             omit: false,
                         });
                         self.signals.push(info.clone());
-                        if let Some(initializer) = self.db.var_initializer(local) {
+                        if let Some(initializer) = self
+                            .db
+                            .var_initializer(local)
+                            .or_else(|| self.db.array_meta(local).and_then(|array| array.init))
+                        {
                             self.inst = inst;
                             let lowered = self.lower_declaration_initializer(
                                 &self.instance_path_of(inst),

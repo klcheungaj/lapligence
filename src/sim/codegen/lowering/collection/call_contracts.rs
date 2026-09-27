@@ -551,11 +551,10 @@ impl<'a> Codegen<'a> {
                         return declaration.is_some_and(|declaration| {
                             match self.kind(declaration) {
                                 NodeKind::FuncArg { .. } => automatic,
-                                NodeKind::Var { .. } => {
+                                NodeKind::Var { .. } | NodeKind::Array { .. } => {
                                     self.db.variable_lifetime(declaration)
                                         == VariableLifetime::Automatic
                                 }
-                                NodeKind::Array { .. } => true,
                                 _ => false,
                             }
                         });
@@ -943,7 +942,7 @@ impl<'a> Codegen<'a> {
         }
     }
 
-    fn enclosing_func_task(&self, node: NodeId) -> Option<NodeId> {
+    pub(in super::super) fn enclosing_func_task(&self, node: NodeId) -> Option<NodeId> {
         let mut parent = self.node(node).parent;
         while let Some(candidate) = parent {
             if matches!(self.kind(candidate), NodeKind::FuncTask { .. }) {

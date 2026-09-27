@@ -16,8 +16,9 @@ state domains. Assignment plans distinguish frozen positional targets from
 streaming selectors that can observe earlier unpacked fields. Packed selections
 retain every intermediate bound; memory views distinguish HDL addresses from
 physical strides. Subroutine lowering retains activation-relative storage,
-reference identity and static/automatic initialization rather than inventing
-synthetic global values.
+reference identity and static/automatic initialization. Static fixed-array
+locals use one persistent signal per declaration and instance, shared by
+subroutine writes, delayed NBAs and hierarchical fixed selections.
 
 See [lowering overview](../readme.md),
 [execution model](../../execution/readme.md),

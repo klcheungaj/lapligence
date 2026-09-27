@@ -534,3 +534,20 @@ Traceability and a zero-gap denominator do not establish runtime acceptance.
 A newly discovered legal failing cell needs its own requirement and dependency;
 do not silently convert it into an exclusion. Record dated runs and source
 identities in `persistence/`, not in these tables.
+
+### SYN-013 A2 static-array NBA interaction evidence
+
+These supplemental cells qualify the static-local-array × NBA intersection of
+existing `SYN038-CORE-AS-03` and `SYN038-CORE-SB-08`. They do not change the
+frozen 93-row Core grammar denominator. Expected publication, lifetime and
+rejection follow V §§9.2.2, 10.2.2 and SV §§6.21, 10.4.2, 13.3.2.
+
+| ID | Edition | Context | Fixture | Oracle | Behavioral owner |
+| --- | --- | --- | --- | --- | --- |
+| SYN038-A2-01 | SV2009 | Static task array initialization and element NBA after return | `tests/fixtures/sim/syn013_zero_time_calls/static_array_nba.sv` | initialized `11/22`; after NBA `a5/22` | `tests/sim_syn013_zero_time_calls.rs::static_local_array_nba_publishes_after_task_return` |
+| SYN038-A2-02 | SV2009 | 2-D row, selected slice, repeated call, two instances and wakeups | `tests/fixtures/sim/syn013_zero_time_calls/static_array_matrix.sv` | `first=23/21 second=43 wakeups=4/2` | `tests/sim_syn013_zero_time_calls.rs::static_array_rows_slices_instances_and_wakeups` |
+| SYN038-A2-03 | SV2009 | Explicit static array in automatic task | `tests/fixtures/sim/syn013_zero_time_calls/explicit_static_array_nba.sv` | `value=67` after second return | `tests/sim_syn013_zero_time_calls.rs::explicit_static_array_in_automatic_task_publishes_after_return` |
+| SYN038-A2-04 | SV2009 | Timed static array initialization, same-slot and delayed array-element NBA order | `tests/fixtures/sim/syn013_zero_time_calls/static_array_delayed_nba.sv` | initialized `10/20`; then `ordered=22 delayed=44` | `tests/sim_syn013_zero_time_calls.rs::static_array_delayed_nbas_publish_in_time_and_issue_order` |
+| SYN038-A2-05 | V2001/SV2009 | Static task-local memory element NBA | `tests/fixtures/sim/syn013_zero_time_calls/legacy_static_array_nba.sv` | `legacy=5a` | `tests/sim_syn013_zero_time_calls.rs::legacy_static_task_memory_nba_runs_in_both_editions` |
+| SYN038-A2-06 | SV2009 | Automatic local array and automatic formal NBA legality | `tests/fixtures/sim/syn013_zero_time_calls/automatic_array_nba_rejected.sv`; `tests/fixtures/sim/syn013_zero_time_calls/automatic_formal_nba_rejected.sv` | frontend rejection: `nonblocking assignment to automatic variable` | `tests/sim_syn013_zero_time_calls.rs::automatic_array_and_formal_nbas_remain_rejected` |
+| SYN038-A2-07 | SV2009 | Static function and explicit static local inside automatic function | `tests/fixtures/sim/syn013_zero_time_calls/static_function_array_nba.sv` | `static=46 explicit=64 old=35/53` after both NBA regions | `tests/sim_syn013_zero_time_calls.rs::static_function_arrays_keep_issued_nbas_and_previous_values` |
