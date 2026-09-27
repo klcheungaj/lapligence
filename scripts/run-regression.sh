@@ -270,7 +270,7 @@ run_phase generated-runtime-sanitizers \
     env \
     LLG_CC=gcc \
     LLG_CFLAGS='-DACO_USE_ASAN -fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all' \
-    ASAN_OPTIONS='detect_leaks=1:strict_string_checks=1' \
+    ASAN_OPTIONS='detect_leaks=1:strict_string_checks=1:log_path=/tmp/llg-asan-regression-model' \
     UBSAN_OPTIONS='print_stacktrace=1:halt_on_error=1' \
     cargo test --locked --jobs 2 --all-features \
     --test runtime_values \
@@ -286,7 +286,20 @@ run_phase generated-runtime-sanitizers \
     --test sim_function \
     --test sim_loops \
     --test sim_procedural_assign \
+    --test sim_tagged_union_access \
+    --test sim_review_next4 \
+    --test sim_review_tasks08_11 \
+    --test sim_fixed_ordering_review \
+    --test sim_casez \
     -- --test-threads=1
+run_phase generated-tagged-guard-sanitizers \
+    env \
+    LLG_CC=gcc \
+    LLG_CFLAGS='-DACO_USE_ASAN -fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all' \
+    ASAN_OPTIONS='detect_leaks=1:strict_string_checks=1:log_path=/tmp/llg-asan-regression-model' \
+    UBSAN_OPTIONS='print_stacktrace=1:halt_on_error=1' \
+    cargo test --locked --jobs 2 --all-features --lib \
+    sim::emit_c::owned::tests::tagged_guards -- --test-threads=1
 run_phase source-location-diagnostics \
     cargo test --locked --jobs 2 \
     --test compile_errors \

@@ -1,0 +1,2464 @@
+{
+  "schema": "syn038-annex-reference-names/v1",
+  "source": "docs/specification/spec-reference-annex-a.md",
+  "source_sha256": "b7f6880b2169c90264a359b0b6915c2b2f44bcb7546e58630f1a9149387049fb",
+  "generator": "python3 scripts/generate_syn038_annex_reference_names.py",
+  "sections_by_name": {
+    "actual_argument": [
+      "B.10"
+    ],
+    "always_construct": [
+      "B.6"
+    ],
+    "always_keyword": [
+      "B.6"
+    ],
+    "anonymous_program": [
+      "B.20"
+    ],
+    "anonymous_program_item": [
+      "B.20"
+    ],
+    "ansi_port_declaration": [
+      "B.19"
+    ],
+    "array_dimension_function": [
+      "B.4"
+    ],
+    "array_identifier": [
+      "B.4"
+    ],
+    "array_manipulation_call": [
+      "B.4"
+    ],
+    "array_method_call": [
+      "B.4"
+    ],
+    "array_method_name": [
+      "B.4"
+    ],
+    "array_pattern_key": [
+      "B.4"
+    ],
+    "array_query_function": [
+      "B.4"
+    ],
+    "array_type": [
+      "B.4"
+    ],
+    "arrayed_identifier": [
+      "B.1",
+      "B.4"
+    ],
+    "assert_action_control_task": [
+      "B.13"
+    ],
+    "assert_action_task": [
+      "B.13"
+    ],
+    "assert_boolean_function": [
+      "B.13"
+    ],
+    "assert_control_task": [
+      "B.13"
+    ],
+    "assert_function": [
+      "B.13"
+    ],
+    "assert_property_statement": [
+      "B.13"
+    ],
+    "assert_task": [
+      "B.13"
+    ],
+    "assertion_item": [
+      "B.13"
+    ],
+    "assertion_item_declaration": [
+      "B.13"
+    ],
+    "assignment_operator": [
+      "B.7",
+      "B.8"
+    ],
+    "assignment_pattern": [
+      "B.4"
+    ],
+    "assignment_pattern_expression(_type)": [
+      "B.4"
+    ],
+    "assignment_pattern_key": [
+      "B.4"
+    ],
+    "assignment_pattern_net_lvalue": [
+      "B.4"
+    ],
+    "assignment_pattern_variable_lvalue": [
+      "B.4"
+    ],
+    "associative_dimension": [
+      "B.3"
+    ],
+    "assume_property_statement": [
+      "B.13"
+    ],
+    "attr_name": [
+      "B.1"
+    ],
+    "attr_spec": [
+      "B.1"
+    ],
+    "attribute_instance": [
+      "B.1"
+    ],
+    "base_expression": [
+      "B.2"
+    ],
+    "bin_identifier": [
+      "B.16"
+    ],
+    "binary_base(a)": [
+      "B.2"
+    ],
+    "binary_digit": [
+      "B.2"
+    ],
+    "binary_module_path_operator": [
+      "B.26",
+      "B.8"
+    ],
+    "binary_number": [
+      "B.2"
+    ],
+    "binary_operator": [
+      "B.8"
+    ],
+    "binary_value(a)": [
+      "B.2"
+    ],
+    "bind_directive": [
+      "B.19"
+    ],
+    "bind_instantiation": [
+      "B.19"
+    ],
+    "bind_target_instance(_list)": [
+      "B.19"
+    ],
+    "bind_target_scope": [
+      "B.19"
+    ],
+    "bins_expression": [
+      "B.16"
+    ],
+    "bins_keyword": [
+      "B.16"
+    ],
+    "bins_or_empty": [
+      "B.16"
+    ],
+    "bins_or_options": [
+      "B.16"
+    ],
+    "bins_selection": [
+      "B.16"
+    ],
+    "bins_selection_or_option": [
+      "B.16"
+    ],
+    "bit_select": [
+      "B.4"
+    ],
+    "block_comment": [
+      "B.1"
+    ],
+    "block_event_expression": [
+      "B.6"
+    ],
+    "blocking_assignment": [
+      "B.7"
+    ],
+    "boolean_abbrev": [
+      "B.13"
+    ],
+    "built_in_data_type": [
+      "B.3"
+    ],
+    "built_in_method_call": [
+      "B.5"
+    ],
+    "c_identifier": [
+      "B.29"
+    ],
+    "case_generate_construct": [
+      "B.23"
+    ],
+    "case_generate_item": [
+      "B.23"
+    ],
+    "case_inside_item": [
+      "B.9"
+    ],
+    "case_item": [
+      "B.9"
+    ],
+    "case_item_expression": [
+      "B.9"
+    ],
+    "case_keyword": [
+      "B.9"
+    ],
+    "case_pattern_item": [
+      "B.13",
+      "B.9"
+    ],
+    "case_statement": [
+      "B.9"
+    ],
+    "cast": [
+      "B.3",
+      "B.8"
+    ],
+    "casting_type": [
+      "B.3",
+      "B.8"
+    ],
+    "cell_clause": [
+      "B.27"
+    ],
+    "cell_identifier": [
+      "B.27"
+    ],
+    "charge_strength": [
+      "B.24"
+    ],
+    "checker_always_construct": [
+      "B.14"
+    ],
+    "checker_declaration": [
+      "B.14"
+    ],
+    "checker_generate_item": [
+      "B.14"
+    ],
+    "checker_identifier": [
+      "B.14"
+    ],
+    "checker_instantiation": [
+      "B.14"
+    ],
+    "checker_or_generate_item": [
+      "B.14"
+    ],
+    "checker_or_generate_item_declaration": [
+      "B.14"
+    ],
+    "checker_port_item": [
+      "B.14"
+    ],
+    "checker_port_list": [
+      "B.14"
+    ],
+    "checktime_condition": [
+      "B.26"
+    ],
+    "class_constructor_declaration": [
+      "B.5"
+    ],
+    "class_constructor_prototype": [
+      "B.5"
+    ],
+    "class_declaration": [
+      "B.5"
+    ],
+    "class_identifier": [
+      "B.5"
+    ],
+    "class_item": [
+      "B.5"
+    ],
+    "class_item_qualifier": [
+      "B.5"
+    ],
+    "class_method": [
+      "B.5"
+    ],
+    "class_new": [
+      "B.5"
+    ],
+    "class_property": [
+      "B.5"
+    ],
+    "class_scope": [
+      "B.5"
+    ],
+    "class_type": [
+      "B.5"
+    ],
+    "class_variable_identifier": [
+      "B.5"
+    ],
+    "clocking_decl_assign": [
+      "B.11"
+    ],
+    "clocking_declaration": [
+      "B.11"
+    ],
+    "clocking_direction": [
+      "B.11"
+    ],
+    "clocking_drive": [
+      "B.11"
+    ],
+    "clocking_event": [
+      "B.11"
+    ],
+    "clocking_identifier": [
+      "B.11"
+    ],
+    "clocking_item": [
+      "B.11"
+    ],
+    "clocking_skew": [
+      "B.11"
+    ],
+    "clockvar": [
+      "B.11"
+    ],
+    "clockvar_expression": [
+      "B.11"
+    ],
+    "cmos_switch_instance": [
+      "B.24"
+    ],
+    "cmos_switchtype": [
+      "B.24"
+    ],
+    "combinational_body": [
+      "B.25"
+    ],
+    "combinational_entry": [
+      "B.25"
+    ],
+    "command_text": [
+      "B.30"
+    ],
+    "comment": [
+      "B.1"
+    ],
+    "comment_text": [
+      "B.1"
+    ],
+    "concatenation": [
+      "B.4"
+    ],
+    "concurrent_assertion_item": [
+      "B.13"
+    ],
+    "concurrent_assertion_statement": [
+      "B.13"
+    ],
+    "cond_pattern": [
+      "B.13",
+      "B.8"
+    ],
+    "cond_predicate": [
+      "B.13",
+      "B.8"
+    ],
+    "conditional_compilation_directive": [
+      "B.18"
+    ],
+    "conditional_expression": [
+      "B.8"
+    ],
+    "conditional_generate_construct": [
+      "B.23"
+    ],
+    "conditional_statement": [
+      "B.9"
+    ],
+    "config_declaration": [
+      "B.27"
+    ],
+    "config_identifier": [
+      "B.27"
+    ],
+    "config_rule_statement": [
+      "B.27",
+      "B.30"
+    ],
+    "consecutive_repetition": [
+      "B.13"
+    ],
+    "const_identifier": [
+      "B.3"
+    ],
+    "constant_assignment_pattern_expression": [
+      "B.4"
+    ],
+    "constant_bit_select": [
+      "B.4"
+    ],
+    "constant_cast": [
+      "B.3",
+      "B.8"
+    ],
+    "constant_concatenation": [
+      "B.4"
+    ],
+    "constant_expression": [
+      "B.8"
+    ],
+    "constant_indexed_range": [
+      "B.4"
+    ],
+    "constant_let_expression": [
+      "B.8"
+    ],
+    "constant_mintypmax_expression": [
+      "B.8"
+    ],
+    "constant_multiple_concatenation": [
+      "B.4"
+    ],
+    "constant_part_select_range": [
+      "B.4"
+    ],
+    "constant_primary": [
+      "B.8"
+    ],
+    "constant_range": [
+      "B.4"
+    ],
+    "constant_range_expression": [
+      "B.4"
+    ],
+    "constant_select": [
+      "B.4"
+    ],
+    "constraint_block": [
+      "B.15"
+    ],
+    "constraint_block_item": [
+      "B.15"
+    ],
+    "constraint_declaration": [
+      "B.15"
+    ],
+    "constraint_expression": [
+      "B.15"
+    ],
+    "constraint_identifier": [
+      "B.15"
+    ],
+    "constraint_prototype": [
+      "B.15"
+    ],
+    "constraint_prototype_qualifier": [
+      "B.15"
+    ],
+    "constraint_set": [
+      "B.15"
+    ],
+    "continuous_assign": [
+      "B.7"
+    ],
+    "controlled_reference_event": [
+      "B.26"
+    ],
+    "controlled_timing_check_event": [
+      "B.26"
+    ],
+    "cover_cross": [
+      "B.16"
+    ],
+    "cover_point": [
+      "B.16"
+    ],
+    "cover_point_identifier": [
+      "B.16"
+    ],
+    "cover_property_statement": [
+      "B.13"
+    ],
+    "cover_sequence_statement": [
+      "B.13"
+    ],
+    "coverage_event": [
+      "B.16"
+    ],
+    "coverage_option": [
+      "B.16"
+    ],
+    "coverage_spec": [
+      "B.16"
+    ],
+    "coverage_spec_or_option": [
+      "B.16"
+    ],
+    "covergroup_declaration": [
+      "B.16"
+    ],
+    "covergroup_identifier": [
+      "B.16"
+    ],
+    "covergroup_variable_identifier": [
+      "B.16"
+    ],
+    "cross_identifier": [
+      "B.16"
+    ],
+    "cross_item": [
+      "B.16"
+    ],
+    "current_state": [
+      "B.25"
+    ],
+    "cycle_delay": [
+      "B.11",
+      "B.6"
+    ],
+    "cycle_delay_const_range_expression": [
+      "B.11",
+      "B.6"
+    ],
+    "cycle_delay_range": [
+      "B.11",
+      "B.6"
+    ],
+    "data_event": [
+      "B.26"
+    ],
+    "data_type": [
+      "B.3"
+    ],
+    "data_type_or_implicit": [
+      "B.3"
+    ],
+    "data_type_or_void": [
+      "B.3"
+    ],
+    "decimal_base(a)": [
+      "B.2"
+    ],
+    "decimal_digit": [
+      "B.2"
+    ],
+    "decimal_number": [
+      "B.2"
+    ],
+    "declaration_command": [
+      "B.30"
+    ],
+    "declaration_keyword": [
+      "B.30"
+    ],
+    "default_nettype_compiler_directive": [
+      "B.18"
+    ],
+    "default_nettype_value": [
+      "B.18"
+    ],
+    "default_skew": [
+      "B.11"
+    ],
+    "defparam_assignment": [
+      "B.19"
+    ],
+    "delay_control": [
+      "B.6"
+    ],
+    "delay_or_event_control": [
+      "B.6"
+    ],
+    "delayed_data": [
+      "B.26"
+    ],
+    "delayed_reference": [
+      "B.26"
+    ],
+    "design_statement": [
+      "B.27"
+    ],
+    "dimension": [
+      "B.3"
+    ],
+    "disable_statement": [
+      "B.9"
+    ],
+    "display_task_name": [
+      "B.17"
+    ],
+    "display_tasks": [
+      "B.17"
+    ],
+    "dist_functions": [
+      "B.15",
+      "B.17"
+    ],
+    "dist_item": [
+      "B.15",
+      "B.8"
+    ],
+    "dist_list": [
+      "B.15",
+      "B.8"
+    ],
+    "dist_weight": [
+      "B.15",
+      "B.8"
+    ],
+    "dpi_function_import_property": [
+      "B.29"
+    ],
+    "dpi_import_export": [
+      "B.29"
+    ],
+    "dpi_spec_string": [
+      "B.29"
+    ],
+    "dpi_task_import_property": [
+      "B.29"
+    ],
+    "dpi_task_proto": [
+      "B.29"
+    ],
+    "drive_strength": [
+      "B.24"
+    ],
+    "dumpall_task": [
+      "B.17"
+    ],
+    "dumpfile_task": [
+      "B.17"
+    ],
+    "dumpflush_task": [
+      "B.17"
+    ],
+    "dumplimit_task": [
+      "B.17"
+    ],
+    "dumpoff_task": [
+      "B.17"
+    ],
+    "dumpon_task": [
+      "B.17"
+    ],
+    "dumpports_command": [
+      "B.30"
+    ],
+    "dumpports_task": [
+      "B.17"
+    ],
+    "dumpportsall_task": [
+      "B.17"
+    ],
+    "dumpportsflush_task": [
+      "B.17"
+    ],
+    "dumpportslimit_task": [
+      "B.17"
+    ],
+    "dumpportsoff_task": [
+      "B.17"
+    ],
+    "dumpportson_task": [
+      "B.17"
+    ],
+    "dumpvars_task": [
+      "B.17"
+    ],
+    "dynamic_array_variable_identifier": [
+      "B.4"
+    ],
+    "edge_control_specifier": [
+      "B.26"
+    ],
+    "edge_descriptor": [
+      "B.26"
+    ],
+    "edge_identifier": [
+      "B.26"
+    ],
+    "edge_indicator": [
+      "B.26"
+    ],
+    "edge_input_list": [
+      "B.25"
+    ],
+    "edge_sensitive_path_declaration": [
+      "B.26"
+    ],
+    "edge_symbol": [
+      "B.25"
+    ],
+    "elaboration_system_task": [
+      "B.17"
+    ],
+    "empty_queue": [
+      "B.4"
+    ],
+    "enable_gate_instance": [
+      "B.24"
+    ],
+    "enable_gatetype": [
+      "B.24"
+    ],
+    "enable_terminal": [
+      "B.24"
+    ],
+    "end_edge_offset": [
+      "B.26"
+    ],
+    "endkeywords_directive": [
+      "B.1",
+      "B.18"
+    ],
+    "enum_base_type": [
+      "B.3"
+    ],
+    "enum_identifier": [
+      "B.3"
+    ],
+    "enum_name_declaration": [
+      "B.3"
+    ],
+    "error_limit_value": [
+      "B.26"
+    ],
+    "escaped_arrayed_identifier": [
+      "B.1"
+    ],
+    "escaped_hierarchical_branch": [
+      "B.19"
+    ],
+    "escaped_hierarchical_identifier": [
+      "B.19"
+    ],
+    "escaped_identifier": [
+      "B.1"
+    ],
+    "event_based_flag": [
+      "B.26"
+    ],
+    "event_control": [
+      "B.6"
+    ],
+    "event_declaration": [
+      "B.6"
+    ],
+    "event_expression": [
+      "B.6"
+    ],
+    "event_identifier": [
+      "B.6"
+    ],
+    "event_trigger": [
+      "B.6",
+      "B.9"
+    ],
+    "exp": [
+      "B.2"
+    ],
+    "expression": [
+      "B.8"
+    ],
+    "expression_or_cond_pattern": [
+      "B.13",
+      "B.8"
+    ],
+    "expression_or_dist": [
+      "B.8"
+    ],
+    "extern_constraint_declaration": [
+      "B.15"
+    ],
+    "extern_tf_declaration": [
+      "B.29"
+    ],
+    "fatal_message_task": [
+      "B.17"
+    ],
+    "file_close_task": [
+      "B.17"
+    ],
+    "file_eof_detect_function": [
+      "B.17"
+    ],
+    "file_error_detect_function": [
+      "B.17"
+    ],
+    "file_flush_task": [
+      "B.17"
+    ],
+    "file_open_function": [
+      "B.17"
+    ],
+    "file_output_task_name": [
+      "B.17"
+    ],
+    "file_output_tasks": [
+      "B.17"
+    ],
+    "file_positioning_functions": [
+      "B.17"
+    ],
+    "file_read_functions": [
+      "B.17"
+    ],
+    "final_construct": [
+      "B.6"
+    ],
+    "final_simulation_time": [
+      "B.17"
+    ],
+    "finish_number": [
+      "B.17"
+    ],
+    "finish_task": [
+      "B.17"
+    ],
+    "fixed_point_number": [
+      "B.2"
+    ],
+    "for_initialization": [
+      "B.9"
+    ],
+    "for_step": [
+      "B.9"
+    ],
+    "for_step_assignment": [
+      "B.7",
+      "B.9"
+    ],
+    "for_variable_declaration": [
+      "B.9"
+    ],
+    "formal_argument": [
+      "B.10"
+    ],
+    "formal_identifier": [
+      "B.10"
+    ],
+    "full_edge_sensitive_path_description": [
+      "B.26"
+    ],
+    "full_path_description": [
+      "B.26"
+    ],
+    "function_blocking_assignment": [
+      "B.9"
+    ],
+    "function_body_declaration": [
+      "B.10"
+    ],
+    "function_case_item": [
+      "B.9"
+    ],
+    "function_case_statement": [
+      "B.9"
+    ],
+    "function_conditional_statement": [
+      "B.9"
+    ],
+    "function_data_type_or_implicit": [
+      "B.3",
+      "B.30"
+    ],
+    "function_declaration": [
+      "B.10"
+    ],
+    "function_identifier": [
+      "B.10"
+    ],
+    "function_if_else_if_statement": [
+      "B.9"
+    ],
+    "function_item_declaration": [
+      "B.10"
+    ],
+    "function_loop_statement": [
+      "B.9"
+    ],
+    "function_port_list": [
+      "B.10"
+    ],
+    "function_prototype": [
+      "B.10"
+    ],
+    "function_seq_block": [
+      "B.9"
+    ],
+    "function_statement": [
+      "B.9"
+    ],
+    "function_statement_or_null": [
+      "B.9"
+    ],
+    "function_subroutine_call": [
+      "B.10"
+    ],
+    "gate_instance_identifier": [
+      "B.24"
+    ],
+    "gate_instantiation": [
+      "B.24"
+    ],
+    "generate_block": [
+      "B.23"
+    ],
+    "generate_block_identifier": [
+      "B.23"
+    ],
+    "generate_case_statement": [
+      "B.23"
+    ],
+    "generate_conditional_statement": [
+      "B.23"
+    ],
+    "generate_item": [
+      "B.23"
+    ],
+    "generate_item_or_null": [
+      "B.23"
+    ],
+    "generate_loop_statement": [
+      "B.23"
+    ],
+    "generate_region": [
+      "B.23"
+    ],
+    "genvar_assignment": [
+      "B.23"
+    ],
+    "genvar_declaration": [
+      "B.23"
+    ],
+    "genvar_expression": [
+      "B.23"
+    ],
+    "genvar_function_call": [
+      "B.23"
+    ],
+    "genvar_function_identifier": [
+      "B.23"
+    ],
+    "genvar_identifier": [
+      "B.23"
+    ],
+    "genvar_initialization": [
+      "B.23"
+    ],
+    "genvar_iteration": [
+      "B.23"
+    ],
+    "goto_repetition": [
+      "B.13"
+    ],
+    "hex_base(a)": [
+      "B.2"
+    ],
+    "hex_digit": [
+      "B.2"
+    ],
+    "hex_number": [
+      "B.2"
+    ],
+    "hex_value(a)": [
+      "B.2"
+    ],
+    "hierarchical_array_identifier": [
+      "B.19"
+    ],
+    "hierarchical_block_identifier": [
+      "B.19"
+    ],
+    "hierarchical_btf_identifier": [
+      "B.30"
+    ],
+    "hierarchical_event_identifier": [
+      "B.19"
+    ],
+    "hierarchical_function_identifier": [
+      "B.19"
+    ],
+    "hierarchical_identifier": [
+      "B.19"
+    ],
+    "hierarchical_instance": [
+      "B.19"
+    ],
+    "hierarchical_net_identifier": [
+      "B.19"
+    ],
+    "hierarchical_parameter_identifier": [
+      "B.19"
+    ],
+    "hierarchical_property_identifier": [
+      "B.13"
+    ],
+    "hierarchical_sequence_identifier": [
+      "B.13"
+    ],
+    "hierarchical_task_identifier": [
+      "B.19"
+    ],
+    "hierarchical_tf_identifier": [
+      "B.30"
+    ],
+    "hierarchical_variable_identifier": [
+      "B.19"
+    ],
+    "identifier": [
+      "B.1"
+    ],
+    "if_else_if_statement": [
+      "B.9"
+    ],
+    "if_generate_construct": [
+      "B.23"
+    ],
+    "ifdef_directive": [
+      "B.18"
+    ],
+    "ifndef_directive": [
+      "B.18"
+    ],
+    "immediate_assertion_statement": [
+      "B.13",
+      "B.9"
+    ],
+    "implicit_class_handle": [
+      "B.5"
+    ],
+    "implicit_data_type": [
+      "B.3"
+    ],
+    "import_export": [
+      "B.22"
+    ],
+    "inc_or_dec_expression": [
+      "B.7"
+    ],
+    "inc_or_dec_operator": [
+      "B.7",
+      "B.8"
+    ],
+    "include_compiler_directive": [
+      "B.18"
+    ],
+    "indexed_range": [
+      "B.4"
+    ],
+    "init_val": [
+      "B.25"
+    ],
+    "initial_construct": [
+      "B.6"
+    ],
+    "inout_declaration": [
+      "B.19"
+    ],
+    "inout_port_identifier": [
+      "B.19"
+    ],
+    "inout_terminal": [
+      "B.24"
+    ],
+    "input_declaration": [
+      "B.19"
+    ],
+    "input_identifier": [
+      "B.19"
+    ],
+    "input_port_identifier": [
+      "B.19"
+    ],
+    "input_terminal": [
+      "B.24"
+    ],
+    "input_value": [
+      "B.25"
+    ],
+    "inside_expression": [
+      "B.8"
+    ],
+    "inst_clause": [
+      "B.27"
+    ],
+    "inst_name": [
+      "B.27",
+      "B.30"
+    ],
+    "integer_atom_type": [
+      "B.3"
+    ],
+    "integer_type": [
+      "B.3"
+    ],
+    "integer_vector_type": [
+      "B.3"
+    ],
+    "integral_number": [
+      "B.2"
+    ],
+    "interface_ansi_header": [
+      "B.21"
+    ],
+    "interface_declaration": [
+      "B.21"
+    ],
+    "interface_identifier": [
+      "B.21",
+      "B.5"
+    ],
+    "interface_instance_identifier": [
+      "B.21"
+    ],
+    "interface_instantiation": [
+      "B.21"
+    ],
+    "interface_item": [
+      "B.21"
+    ],
+    "interface_nonansi_header": [
+      "B.21"
+    ],
+    "interface_or_generate_item": [
+      "B.21"
+    ],
+    "interface_port_declaration": [
+      "B.21"
+    ],
+    "interface_port_header": [
+      "B.21"
+    ],
+    "item_name": [
+      "B.19"
+    ],
+    "join_keyword": [
+      "B.6"
+    ],
+    "jump_statement": [
+      "B.9"
+    ],
+    "keywords_directive": [
+      "B.1",
+      "B.18"
+    ],
+    "let_expression": [
+      "B.8"
+    ],
+    "level_input_list": [
+      "B.25"
+    ],
+    "level_symbol": [
+      "B.25"
+    ],
+    "liblist_clause": [
+      "B.27"
+    ],
+    "library_cell": [
+      "B.27",
+      "B.30"
+    ],
+    "library_declaration": [
+      "B.27",
+      "B.30"
+    ],
+    "library_description": [
+      "B.27",
+      "B.30"
+    ],
+    "library_descriptions": [
+      "B.27",
+      "B.30"
+    ],
+    "library_identifier": [
+      "B.27"
+    ],
+    "library_text": [
+      "B.27"
+    ],
+    "lifetime": [
+      "B.10",
+      "B.3"
+    ],
+    "line_compiler_directive": [
+      "B.18"
+    ],
+    "list_of_actual_arguments": [
+      "B.10"
+    ],
+    "list_of_checker_port_connections": [
+      "B.14"
+    ],
+    "list_of_clocking_decl_assign": [
+      "B.11"
+    ],
+    "list_of_coverpoints": [
+      "B.16"
+    ],
+    "list_of_defparam_assignments": [
+      "B.19"
+    ],
+    "list_of_event_identifiers": [
+      "B.6"
+    ],
+    "list_of_formal_arguments": [
+      "B.10"
+    ],
+    "list_of_genvar_identifiers": [
+      "B.23"
+    ],
+    "list_of_interface_identifiers": [
+      "B.21"
+    ],
+    "list_of_modules_or_assertions": [
+      "B.13"
+    ],
+    "list_of_net_assignments": [
+      "B.7"
+    ],
+    "list_of_net_decl_assignments": [
+      "B.7"
+    ],
+    "list_of_param_assignments": [
+      "B.19"
+    ],
+    "list_of_parameter_assignments": [
+      "B.19"
+    ],
+    "list_of_path_delay_expressions": [
+      "B.26"
+    ],
+    "list_of_path_inputs": [
+      "B.26"
+    ],
+    "list_of_path_outputs": [
+      "B.26"
+    ],
+    "list_of_port_connections": [
+      "B.19"
+    ],
+    "list_of_port_declarations": [
+      "B.19"
+    ],
+    "list_of_port_identifiers": [
+      "B.19"
+    ],
+    "list_of_ports": [
+      "B.19"
+    ],
+    "list_of_type_assignments": [
+      "B.19"
+    ],
+    "list_of_udp_port_identifiers": [
+      "B.25"
+    ],
+    "list_of_virtual_interface_decl": [
+      "B.21"
+    ],
+    "load_memory_tasks": [
+      "B.17"
+    ],
+    "local_parameter_declaration": [
+      "B.19"
+    ],
+    "logic": [
+      "B.3"
+    ],
+    "loop_generate_construct": [
+      "B.23"
+    ],
+    "loop_statement": [
+      "B.9"
+    ],
+    "loop_variables": [
+      "B.9"
+    ],
+    "lsb_constant_expression": [
+      "B.2"
+    ],
+    "method_call": [
+      "B.5"
+    ],
+    "method_call_body": [
+      "B.5"
+    ],
+    "method_call_root": [
+      "B.5"
+    ],
+    "method_identifier": [
+      "B.5"
+    ],
+    "method_prototype": [
+      "B.5"
+    ],
+    "method_qualifier": [
+      "B.5"
+    ],
+    "mintypmax_expression": [
+      "B.8"
+    ],
+    "modport_clocking_declaration": [
+      "B.11",
+      "B.21"
+    ],
+    "modport_declaration": [
+      "B.21"
+    ],
+    "modport_item": [
+      "B.21"
+    ],
+    "modport_ports_declaration": [
+      "B.21"
+    ],
+    "modport_simple_port": [
+      "B.21"
+    ],
+    "modport_simple_ports_declaration": [
+      "B.21"
+    ],
+    "modport_tf_port": [
+      "B.21"
+    ],
+    "modport_tf_ports_declaration": [
+      "B.21"
+    ],
+    "module_ansi_header": [
+      "B.19"
+    ],
+    "module_common_item": [
+      "B.19"
+    ],
+    "module_declaration": [
+      "B.19"
+    ],
+    "module_instance": [
+      "B.19"
+    ],
+    "module_instance_identifier": [
+      "B.19"
+    ],
+    "module_instantiation": [
+      "B.19"
+    ],
+    "module_item": [
+      "B.19"
+    ],
+    "module_keyword": [
+      "B.19"
+    ],
+    "module_nonansi_header": [
+      "B.19"
+    ],
+    "module_or_assertion": [
+      "B.13",
+      "B.19"
+    ],
+    "module_or_generate_item": [
+      "B.19"
+    ],
+    "module_or_generate_item_declaration": [
+      "B.19"
+    ],
+    "module_or_variable": [
+      "B.19"
+    ],
+    "module_parameter_port_list": [
+      "B.19"
+    ],
+    "module_path_concatenation": [
+      "B.26",
+      "B.8"
+    ],
+    "module_path_conditional_expression": [
+      "B.26",
+      "B.8"
+    ],
+    "module_path_expression": [
+      "B.26",
+      "B.8"
+    ],
+    "module_path_mintypmax_expression": [
+      "B.26",
+      "B.8"
+    ],
+    "module_path_multiple_concatenation": [
+      "B.26",
+      "B.8"
+    ],
+    "module_path_primary": [
+      "B.26",
+      "B.8"
+    ],
+    "monitor_task_name": [
+      "B.17"
+    ],
+    "monitor_tasks": [
+      "B.17"
+    ],
+    "mos_switch_instance": [
+      "B.24"
+    ],
+    "mos_switchtype": [
+      "B.24"
+    ],
+    "msb_constant_expression": [
+      "B.2"
+    ],
+    "multiple_concatenation": [
+      "B.4"
+    ],
+    "n_input_gate_instance": [
+      "B.24"
+    ],
+    "n_input_gatetype": [
+      "B.24"
+    ],
+    "n_output_gate_instance": [
+      "B.24"
+    ],
+    "n_output_gatetype": [
+      "B.24"
+    ],
+    "name_of_gate_instance": [
+      "B.24"
+    ],
+    "name_of_instance": [
+      "B.19"
+    ],
+    "name_of_udp_instance": [
+      "B.25"
+    ],
+    "named_checker_port_connection": [
+      "B.14"
+    ],
+    "named_port_connection": [
+      "B.19"
+    ],
+    "ncontrol_terminal": [
+      "B.24"
+    ],
+    "net_alias": [
+      "B.19",
+      "B.7"
+    ],
+    "net_assignment": [
+      "B.7"
+    ],
+    "net_concatenation(value)": [
+      "B.4"
+    ],
+    "net_decl_assignment": [
+      "B.7"
+    ],
+    "net_port_header": [
+      "B.19"
+    ],
+    "net_port_type": [
+      "B.19"
+    ],
+    "next_state": [
+      "B.25"
+    ],
+    "non_consecutive_repetition": [
+      "B.13"
+    ],
+    "non_integer_type": [
+      "B.3"
+    ],
+    "non_port_interface_item": [
+      "B.21"
+    ],
+    "non_port_module_item": [
+      "B.19"
+    ],
+    "non_port_program_item": [
+      "B.20"
+    ],
+    "non_zero_decimal_digit": [
+      "B.2"
+    ],
+    "non_zero_unsigned_number(a)": [
+      "B.2"
+    ],
+    "nonblocking_assignment": [
+      "B.7"
+    ],
+    "nonfatal_message_task": [
+      "B.17"
+    ],
+    "nonrange_select": [
+      "B.4"
+    ],
+    "notifier": [
+      "B.26"
+    ],
+    "number": [
+      "B.2"
+    ],
+    "octal_base(a)": [
+      "B.2"
+    ],
+    "octal_digit": [
+      "B.2"
+    ],
+    "octal_number": [
+      "B.2"
+    ],
+    "octal_value(a)": [
+      "B.2"
+    ],
+    "one_line_comment": [
+      "B.1"
+    ],
+    "open_range_list": [
+      "B.4"
+    ],
+    "open_value_range": [
+      "B.4"
+    ],
+    "operator_assignment": [
+      "B.7"
+    ],
+    "ordered_checker_port_connection": [
+      "B.14"
+    ],
+    "ordered_port_connection": [
+      "B.19"
+    ],
+    "output_declaration": [
+      "B.19"
+    ],
+    "output_identifier": [
+      "B.19"
+    ],
+    "output_port_identifier": [
+      "B.19"
+    ],
+    "output_symbol": [
+      "B.25"
+    ],
+    "output_terminal": [
+      "B.24"
+    ],
+    "output_value": [
+      "B.25"
+    ],
+    "overload_declaration": [
+      "B.8"
+    ],
+    "overload_operator": [
+      "B.8"
+    ],
+    "overload_proto_formals": [
+      "B.8"
+    ],
+    "package_declaration": [
+      "B.22"
+    ],
+    "package_export_declaration": [
+      "B.22"
+    ],
+    "package_identifier": [
+      "B.22"
+    ],
+    "package_import_declaration": [
+      "B.22"
+    ],
+    "package_import_item": [
+      "B.22"
+    ],
+    "package_item": [
+      "B.22"
+    ],
+    "package_or_generate_item_declaration": [
+      "B.22"
+    ],
+    "package_scope": [
+      "B.19",
+      "B.22"
+    ],
+    "packed_dimension": [
+      "B.3"
+    ],
+    "par_block": [
+      "B.6"
+    ],
+    "parallel_edge_sensitive_path_description": [
+      "B.26"
+    ],
+    "parallel_path_description": [
+      "B.26"
+    ],
+    "param_assignment": [
+      "B.19"
+    ],
+    "param_expression": [
+      "B.19"
+    ],
+    "parameter_declaration": [
+      "B.19"
+    ],
+    "parameter_override": [
+      "B.19"
+    ],
+    "parameter_port_declaration": [
+      "B.19"
+    ],
+    "parameter_port_list": [
+      "B.19"
+    ],
+    "parameter_value_assignment": [
+      "B.19"
+    ],
+    "part_select_range": [
+      "B.4"
+    ],
+    "pass_en_switchtype": [
+      "B.24"
+    ],
+    "pass_enable_switch_instance": [
+      "B.24"
+    ],
+    "pass_switch_instance": [
+      "B.24"
+    ],
+    "pass_switchtype": [
+      "B.24"
+    ],
+    "path_declaration": [
+      "B.26"
+    ],
+    "path_delay_expression": [
+      "B.26"
+    ],
+    "path_delay_value": [
+      "B.26"
+    ],
+    "pattern": [
+      "B.13"
+    ],
+    "pcontrol_terminal": [
+      "B.24"
+    ],
+    "pla_system_task": [
+      "B.17"
+    ],
+    "polarity_operator": [
+      "B.26"
+    ],
+    "port": [
+      "B.19"
+    ],
+    "port_declaration": [
+      "B.19"
+    ],
+    "port_direction": [
+      "B.19"
+    ],
+    "port_expression": [
+      "B.19"
+    ],
+    "port_identifier": [
+      "B.19"
+    ],
+    "port_reference": [
+      "B.19"
+    ],
+    "port_value": [
+      "B.19"
+    ],
+    "pragma": [
+      "B.1",
+      "B.18"
+    ],
+    "pragma_expression": [
+      "B.1",
+      "B.18"
+    ],
+    "pragma_keyword": [
+      "B.1",
+      "B.18"
+    ],
+    "pragma_name": [
+      "B.1",
+      "B.18"
+    ],
+    "pragma_value": [
+      "B.1",
+      "B.18"
+    ],
+    "primary": [
+      "B.8"
+    ],
+    "primary_literal": [
+      "B.8"
+    ],
+    "printtimescale_task": [
+      "B.17"
+    ],
+    "procedural_assertion_statement": [
+      "B.9"
+    ],
+    "procedural_continuous_assignment(s)": [
+      "B.7"
+    ],
+    "procedural_timing_control": [
+      "B.6"
+    ],
+    "procedural_timing_control_statement": [
+      "B.6"
+    ],
+    "program_ansi_header": [
+      "B.20"
+    ],
+    "program_declaration": [
+      "B.20"
+    ],
+    "program_generate_item": [
+      "B.20"
+    ],
+    "program_identifier": [
+      "B.20"
+    ],
+    "program_instantiation": [
+      "B.20"
+    ],
+    "program_item": [
+      "B.20"
+    ],
+    "program_nonansi_header": [
+      "B.20"
+    ],
+    "property_actual_arg": [
+      "B.13"
+    ],
+    "property_case_item": [
+      "B.13"
+    ],
+    "property_declaration": [
+      "B.13"
+    ],
+    "property_expr": [
+      "B.13"
+    ],
+    "property_formal_type": [
+      "B.13"
+    ],
+    "property_identifier": [
+      "B.13"
+    ],
+    "property_instance": [
+      "B.13"
+    ],
+    "property_list_of_arguments": [
+      "B.13"
+    ],
+    "property_lvar_port_direction": [
+      "B.13"
+    ],
+    "property_port_item": [
+      "B.13"
+    ],
+    "property_port_list": [
+      "B.13"
+    ],
+    "property_qualifier": [
+      "B.13"
+    ],
+    "property_spec": [
+      "B.13"
+    ],
+    "property_statement": [
+      "B.13"
+    ],
+    "property_statement_spec": [
+      "B.13"
+    ],
+    "ps_class_identifier": [
+      "B.19",
+      "B.5"
+    ],
+    "ps_covergroup_identifier": [
+      "B.16",
+      "B.19"
+    ],
+    "ps_identifier": [
+      "B.19",
+      "B.3"
+    ],
+    "ps_or_hierarchical_array_identifier": [
+      "B.19"
+    ],
+    "ps_or_hierarchical_net_identifier": [
+      "B.19"
+    ],
+    "ps_or_hierarchical_property_identifier": [
+      "B.13"
+    ],
+    "ps_or_hierarchical_sequence_identifier": [
+      "B.13"
+    ],
+    "ps_or_hierarchical_tf_identifier": [
+      "B.19"
+    ],
+    "ps_parameter_identifier": [
+      "B.19"
+    ],
+    "ps_type_identifier": [
+      "B.19",
+      "B.3"
+    ],
+    "pull_gate_instance": [
+      "B.24"
+    ],
+    "pulldown_strength": [
+      "B.24"
+    ],
+    "pullup_strength": [
+      "B.24"
+    ],
+    "pulse_control_specparam": [
+      "B.26"
+    ],
+    "pulsestyle_declaration": [
+      "B.26"
+    ],
+    "queue_dimension": [
+      "B.3"
+    ],
+    "randcase_item": [
+      "B.15",
+      "B.9"
+    ],
+    "randcase_statement": [
+      "B.15",
+      "B.9"
+    ],
+    "random_function": [
+      "B.15",
+      "B.17"
+    ],
+    "random_qualifier": [
+      "B.15"
+    ],
+    "randomize_call": [
+      "B.15"
+    ],
+    "randsequence_statement": [
+      "B.15"
+    ],
+    "range_expression": [
+      "B.4"
+    ],
+    "range_function": [
+      "B.4"
+    ],
+    "real_number": [
+      "B.2"
+    ],
+    "real_numbera": [
+      "B.2"
+    ],
+    "real_type": [
+      "B.3"
+    ],
+    "realtime_function": [
+      "B.17"
+    ],
+    "ref_declaration": [
+      "B.19"
+    ],
+    "reference_event": [
+      "B.26"
+    ],
+    "reject_limit_value": [
+      "B.26"
+    ],
+    "remain_active_flag": [
+      "B.26"
+    ],
+    "restrict_property_statement": [
+      "B.13"
+    ],
+    "rs_case": [
+      "B.15"
+    ],
+    "rs_case_item": [
+      "B.15"
+    ],
+    "rs_code_block": [
+      "B.15"
+    ],
+    "rs_if_else": [
+      "B.15"
+    ],
+    "rs_prod": [
+      "B.15"
+    ],
+    "rs_production_list": [
+      "B.15"
+    ],
+    "rs_repeat": [
+      "B.15"
+    ],
+    "rs_rule": [
+      "B.15"
+    ],
+    "scalar_constant": [
+      "B.2"
+    ],
+    "scalar_timing_check_condition": [
+      "B.26"
+    ],
+    "scope_randomize": [
+      "B.15"
+    ],
+    "sdf_annotate_task": [
+      "B.17",
+      "B.30"
+    ],
+    "select": [
+      "B.4"
+    ],
+    "select_bins_or_empty": [
+      "B.16"
+    ],
+    "select_condition": [
+      "B.16"
+    ],
+    "select_expression": [
+      "B.16"
+    ],
+    "seq_block": [
+      "B.6"
+    ],
+    "seq_input_list": [
+      "B.25"
+    ],
+    "sequence_abbrev": [
+      "B.13"
+    ],
+    "sequence_actual_arg": [
+      "B.13"
+    ],
+    "sequence_declaration": [
+      "B.13"
+    ],
+    "sequence_expr": [
+      "B.13"
+    ],
+    "sequence_formal_type": [
+      "B.13"
+    ],
+    "sequence_identifier": [
+      "B.13"
+    ],
+    "sequence_instance": [
+      "B.13"
+    ],
+    "sequence_list_of_arguments": [
+      "B.13"
+    ],
+    "sequence_lvar_port_direction": [
+      "B.13"
+    ],
+    "sequence_match_item": [
+      "B.13"
+    ],
+    "sequence_method_call": [
+      "B.13"
+    ],
+    "sequence_port_item": [
+      "B.13"
+    ],
+    "sequence_port_list": [
+      "B.13"
+    ],
+    "sequential_body": [
+      "B.25"
+    ],
+    "sequential_entry": [
+      "B.25"
+    ],
+    "severity_message_task": [
+      "B.17"
+    ],
+    "severity_task": [
+      "B.17"
+    ],
+    "showcancelled_declaration": [
+      "B.26"
+    ],
+    "sign": [
+      "B.2",
+      "B.3"
+    ],
+    "signing": [
+      "B.3"
+    ],
+    "simple_arrayed_identifier": [
+      "B.1"
+    ],
+    "simple_hierarchical_branch": [
+      "B.19"
+    ],
+    "simple_hierarchical_identifier": [
+      "B.19"
+    ],
+    "simple_identifier": [
+      "B.1"
+    ],
+    "simple_path_declaration": [
+      "B.26"
+    ],
+    "simple_type": [
+      "B.3"
+    ],
+    "simulation_command": [
+      "B.30"
+    ],
+    "simulation_control_task": [
+      "B.17"
+    ],
+    "simulation_keyword": [
+      "B.30"
+    ],
+    "simulation_time": [
+      "B.17",
+      "B.30"
+    ],
+    "size": [
+      "B.2"
+    ],
+    "size_function": [
+      "B.4"
+    ],
+    "solve_before_list": [
+      "B.15"
+    ],
+    "solve_before_primary": [
+      "B.15"
+    ],
+    "specify_block": [
+      "B.26"
+    ],
+    "specify_input_terminal_descriptor": [
+      "B.26"
+    ],
+    "specify_item": [
+      "B.26"
+    ],
+    "specify_output_terminal_descriptor": [
+      "B.26"
+    ],
+    "specify_terminal_descriptor": [
+      "B.26"
+    ],
+    "specparam_assignment": [
+      "B.19",
+      "B.26"
+    ],
+    "specparam_declaration": [
+      "B.19",
+      "B.26"
+    ],
+    "specparam_identifier": [
+      "B.19"
+    ],
+    "stamptime_condition": [
+      "B.26"
+    ],
+    "start_edge_offset": [
+      "B.26"
+    ],
+    "state_dependent_path_declaration": [
+      "B.26"
+    ],
+    "statement": [
+      "B.9"
+    ],
+    "statement_item": [
+      "B.9"
+    ],
+    "statement_or_null": [
+      "B.9"
+    ],
+    "stime_function": [
+      "B.17"
+    ],
+    "stop_task": [
+      "B.17"
+    ],
+    "stream_concatenation": [
+      "B.4"
+    ],
+    "stream_expression": [
+      "B.4"
+    ],
+    "stream_operator": [
+      "B.4"
+    ],
+    "streaming_concatenation": [
+      "B.4"
+    ],
+    "strength": [
+      "B.24"
+    ],
+    "strength_component": [
+      "B.24"
+    ],
+    "string": [
+      "B.1"
+    ],
+    "string_literal": [
+      "B.1"
+    ],
+    "string_output_task_name": [
+      "B.17"
+    ],
+    "string_output_tasks": [
+      "B.17"
+    ],
+    "strobe_task_name": [
+      "B.17"
+    ],
+    "strobe_tasks": [
+      "B.17"
+    ],
+    "struct_union": [
+      "B.3"
+    ],
+    "struct_union_member": [
+      "B.3"
+    ],
+    "structure_pattern_key": [
+      "B.4"
+    ],
+    "subroutine_call": [
+      "B.10"
+    ],
+    "subroutine_call_statement": [
+      "B.10"
+    ],
+    "system_call": [
+      "B.1"
+    ],
+    "system_function_call": [
+      "B.10",
+      "B.17"
+    ],
+    "system_function_identifier(a)": [
+      "B.1",
+      "B.17"
+    ],
+    "system_task": [
+      "B.17"
+    ],
+    "system_task_enable": [
+      "B.10",
+      "B.17"
+    ],
+    "system_task_identifier(a)": [
+      "B.1",
+      "B.17"
+    ],
+    "system_tf_call": [
+      "B.10",
+      "B.17"
+    ],
+    "system_tf_identifier": [
+      "B.1",
+      "B.17"
+    ],
+    "system_timing_check": [
+      "B.26"
+    ],
+    "t_path_delay_expression": [
+      "B.26"
+    ],
+    "tagged_union_expression": [
+      "B.3",
+      "B.8"
+    ],
+    "task_body_declaration": [
+      "B.10"
+    ],
+    "task_declaration": [
+      "B.10"
+    ],
+    "task_identifier": [
+      "B.10"
+    ],
+    "task_port_item": [
+      "B.10"
+    ],
+    "task_port_list": [
+      "B.10"
+    ],
+    "task_port_type": [
+      "B.10"
+    ],
+    "task_prototype": [
+      "B.10"
+    ],
+    "text_macro_definition": [
+      "B.1",
+      "B.18"
+    ],
+    "text_macro_identifier": [
+      "B.1",
+      "B.18"
+    ],
+    "text_macro_name": [
+      "B.1",
+      "B.18"
+    ],
+    "text_macro_usage": [
+      "B.1",
+      "B.18"
+    ],
+    "tf_call": [
+      "B.10"
+    ],
+    "tf_inout_declaration": [
+      "B.30"
+    ],
+    "tf_input_declaration": [
+      "B.30"
+    ],
+    "tf_item_declaration": [
+      "B.30"
+    ],
+    "tf_output_declaration": [
+      "B.30"
+    ],
+    "tf_port_declaration": [
+      "B.30"
+    ],
+    "tf_port_item": [
+      "B.30"
+    ],
+    "tf_port_list": [
+      "B.30"
+    ],
+    "threshold": [
+      "B.26"
+    ],
+    "time_function": [
+      "B.17"
+    ],
+    "time_literal": [
+      "B.1"
+    ],
+    "time_number": [
+      "B.2"
+    ],
+    "time_unit": [
+      "B.2"
+    ],
+    "timecheck_condition": [
+      "B.26"
+    ],
+    "timeformat_task": [
+      "B.17"
+    ],
+    "timescale_compiler_directive": [
+      "B.18"
+    ],
+    "timestamp_condition": [
+      "B.26"
+    ],
+    "timeunits_declaration": [
+      "B.18",
+      "B.22"
+    ],
+    "timing_check_condition": [
+      "B.26"
+    ],
+    "timing_check_event": [
+      "B.26"
+    ],
+    "timing_check_event_control": [
+      "B.26"
+    ],
+    "timing_check_limit": [
+      "B.26"
+    ],
+    "topmodule_identifier": [
+      "B.27"
+    ],
+    "trans_item": [
+      "B.16"
+    ],
+    "trans_list": [
+      "B.16"
+    ],
+    "trans_range_list": [
+      "B.16"
+    ],
+    "trans_set": [
+      "B.16"
+    ],
+    "type_assignment": [
+      "B.19"
+    ],
+    "type_declaration": [
+      "B.3"
+    ],
+    "type_identifier": [
+      "B.3"
+    ],
+    "type_reference": [
+      "B.3"
+    ],
+    "typename_function": [
+      "B.4"
+    ],
+    "udp_ansi_declaration": [
+      "B.25"
+    ],
+    "udp_body": [
+      "B.25"
+    ],
+    "udp_declaration": [
+      "B.25"
+    ],
+    "udp_declaration_port_list": [
+      "B.25"
+    ],
+    "udp_identifier": [
+      "B.25"
+    ],
+    "udp_initial_statement": [
+      "B.25"
+    ],
+    "udp_input_declaration": [
+      "B.25"
+    ],
+    "udp_instance": [
+      "B.25"
+    ],
+    "udp_instance_identifier": [
+      "B.25"
+    ],
+    "udp_instantiation": [
+      "B.25"
+    ],
+    "udp_nonansi_declaration": [
+      "B.25"
+    ],
+    "udp_output_declaration": [
+      "B.25"
+    ],
+    "udp_port_declaration": [
+      "B.25"
+    ],
+    "udp_port_list": [
+      "B.25"
+    ],
+    "udp_reg_declaration": [
+      "B.25"
+    ],
+    "unary_module_path_operator": [
+      "B.26",
+      "B.8"
+    ],
+    "unary_operator": [
+      "B.8"
+    ],
+    "unbased_unsized_literal": [
+      "B.1"
+    ],
+    "undefine_compiler_directive": [
+      "B.18"
+    ],
+    "unique_priority": [
+      "B.9"
+    ],
+    "unpacked_dimension": [
+      "B.3"
+    ],
+    "unsigned_number(a)": [
+      "B.2"
+    ],
+    "unsized_dimension": [
+      "B.3"
+    ],
+    "upward_name_reference": [
+      "B.19"
+    ],
+    "use_clause": [
+      "B.22",
+      "B.27"
+    ],
+    "value_change": [
+      "B.30"
+    ],
+    "value_change_dump_definitions": [
+      "B.30"
+    ],
+    "value_range": [
+      "B.4"
+    ],
+    "var_data_type": [
+      "B.3"
+    ],
+    "var_type": [
+      "B.3"
+    ],
+    "variable_assignment": [
+      "B.7"
+    ],
+    "variable_concatenation(value)": [
+      "B.4"
+    ],
+    "variable_dimension": [
+      "B.3"
+    ],
+    "variable_identifier": [
+      "B.4"
+    ],
+    "variable_port_header": [
+      "B.19"
+    ],
+    "variable_port_type": [
+      "B.19"
+    ],
+    "variable_type": [
+      "B.3"
+    ],
+    "vcdclose_task": [
+      "B.17"
+    ],
+    "virtual_interface_declaration": [
+      "B.21",
+      "B.5"
+    ],
+    "wait_statement": [
+      "B.9"
+    ],
+    "weight_specification": [
+      "B.16"
+    ],
+    "white_space": [
+      "B.1"
+    ],
+    "width_constant_expression": [
+      "B.2"
+    ],
+    "writemem_tasks": [
+      "B.17"
+    ],
+    "x_digit": [
+      "B.2"
+    ],
+    "z_digit": [
+      "B.2"
+    ]
+  }
+}

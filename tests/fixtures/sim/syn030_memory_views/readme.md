@@ -10,6 +10,9 @@ before an invalid address jump. `leaf_notification` checks settled per-leaf
 readers after a selected load, without asserting an intra-time-slot order.
 `enum_selected_stop` retains a valid prefix before a non-fitting enum word.
 `selected_element_types` checks packed-struct and two-state binary row elements.
+`signed_selected` checks the admitted signed `@` extension: equivalent
+zero-padded jumps select one row, a later out-of-view jump preserves prior
+writes, and unrelated rows stay unchanged.
 `wide_selected` checks exact 129-bit words and an untouched neighboring row.
 `legacy_slice` isolates the older-edition slice boundary with Verilog syntax.
 

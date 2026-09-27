@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
+import hashlib
 import importlib.util
 import json
 from pathlib import Path
@@ -63,6 +64,12 @@ def load_inventory_module():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def load_reference_names(path: Path) -> dict:
+    if not path.is_file():
+        fail(f"required frozen reference-name snapshot is missing: {path}")
+    return json.loads(path.read_text())
 
 
 def ledger_rows(ledger: str) -> dict[str, list[str]]:
@@ -144,7 +151,8 @@ def check_evidence(name: str, evidence: object, disposition: str, ledger: str, p
             fail(f"{name} has no outside-Core profile reason")
 
 
-def check_manifest(manifest: dict, ledger: str, inventory, pdf_root: Path | None) -> Counter:
+def check_manifest(manifest: dict, ledger: str, inventory, pdf_root: Path | None,
+                   addendum_path: Path | None = None) -> Counter:
     if manifest.get("schema") != "syn038-annex-assignments/v2":
         fail("unknown manifest schema")
     source_names = manifest.get("source_names")
@@ -155,17 +163,41 @@ def check_manifest(manifest: dict, ledger: str, inventory, pdf_root: Path | None
         if not isinstance(names, list) or names != sorted(set(names)):
             fail(f"{label} names are not sorted and unique")
 
-    addendum = (ROOT / "docs/specification/spec-reference-annex-a.md").read_text()
+    snapshot = load_reference_names(ROOT / "tests/syn038_annex_reference_names.json")
+    if snapshot.get("schema") != "syn038-annex-reference-names/v1":
+        fail("unknown reference-name snapshot schema")
+    sections = snapshot.get("sections_by_name")
+    if not isinstance(sections, dict) or any(
+        not isinstance(name, str) or not isinstance(ids, list) or
+        ids != sorted(set(ids)) or not ids or
+        any(not re.fullmatch(r"B\.\d+", section) for section in ids)
+        for name, ids in sections.items()
+    ):
+        fail("reference-name snapshot has invalid sections")
     product_docs = (ROOT / "docs/sim_features.md").read_text()
-    addendum_names = {row[1] for row in inventory.inventory(addendum, ledger)}
+    addendum_names = set(sections)
     if addendum_names != set(source_names["ADDENDUM"]):
-        fail("reference-addendum names differ from the checked-in snapshot")
+        fail("reference-name snapshot differs from assignment source names")
+    if addendum_path is not None:
+        if not addendum_path.is_file():
+            fail(f"optional reference addendum is missing: {addendum_path}")
+        content = addendum_path.read_bytes()
+        if hashlib.sha256(content).hexdigest() != snapshot.get("source_sha256"):
+            fail("reference addendum source hash differs from frozen snapshot")
+        observed = {}
+        for section, name, *_ in inventory.inventory(content.decode(), ledger):
+            observed.setdefault(name, set()).add(section)
+        if {name: sorted(ids) for name, ids in observed.items()} != sections:
+            fail("reference addendum names or sections differ from frozen snapshot")
     if pdf_root is not None:
         for label, filename, first, last in (
             ("V2001_PDF", "Verilog-1364-2001.pdf", 783, 809),
             ("SV2009_PDF", "SystemVerilog-1800-2009.pdf", 1095, 1144),
         ):
-            names = inventory.pdf_productions(pdf_root / filename, first, last)
+            path = pdf_root / filename
+            if not path.is_file():
+                fail(f"optional Annex PDF is missing: {path}")
+            names = inventory.pdf_productions(path, first, last)
             if names != set(source_names[label]):
                 fail(f"{label} PDF extraction differs from the checked-in snapshot")
 
@@ -221,6 +253,8 @@ def check_manifest(manifest: dict, ledger: str, inventory, pdf_root: Path | None
                 fail(f"{name} omits its {edition} PDF edition")
         if "ADDENDUM" in sources and not item.get("reference_families"):
             fail(f"{name} has no addendum B family")
+        if "ADDENDUM" in sources and set(item.get("reference_families", [])) != set(sections[name]):
+            fail(f"{name} addendum section IDs differ from frozen snapshot")
         if any(label.endswith("_PDF") for label in sources) and not item.get("annex_sections"):
             fail(f"{name} has no Annex A section")
         if sources == ["ADDENDUM"] and "edition_basis" not in item:
@@ -290,10 +324,12 @@ def check_manifest(manifest: dict, ledger: str, inventory, pdf_root: Path | None
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--pdf-root", type=Path)
+    parser.add_argument("--reference-addendum", type=Path)
     args = parser.parse_args()
     manifest = json.loads((ROOT / "tests/syn038_annex_assignments.json").read_text())
     ledger = (ROOT / "tests/syn038_coverage_ledger.md").read_text()
-    counts = check_manifest(manifest, ledger, load_inventory_module(), args.pdf_root)
+    counts = check_manifest(manifest, ledger, load_inventory_module(), args.pdf_root,
+                            args.reference_addendum)
     print(f"SYN-038 Annex assignments: {sum(counts.values())} names, " + ", ".join(f"{name}={counts[name]}" for name in sorted(counts)))
 
 

@@ -116,7 +116,7 @@ jobs:
       LLG_CFLAGS: >-
         -DACO_USE_ASAN -fsanitize=address,undefined
         -fno-omit-frame-pointer -fno-sanitize-recover=all
-      ASAN_OPTIONS: detect_leaks=1:strict_string_checks=1
+      ASAN_OPTIONS: detect_leaks=1:strict_string_checks=1:log_path=/tmp/llg-asan-ci-model
       UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
     steps:
       - uses: actions/checkout@v7
@@ -145,6 +145,13 @@ jobs:
           --test sim_data_types --test sim_data_types_next --test sim_data_types_completion
           --test sim_type_conformance --test sim_partial_features --test sim_net_resolution --test sim_net_defaults
           --test sim_function --test sim_loops --test sim_procedural_assign
+          --test sim_tagged_union_access --test sim_review_next4 --test sim_review_tasks08_11
+          --test sim_fixed_ordering_review --test sim_casez
+
+      - name: Run generated tagged guard library models under sanitizers
+        run: >-
+          cargo nextest run --locked --all-features --lib
+          -E 'test(sim::emit_c::owned::tests::tagged_guards)'
 
       - name: Report runner resources
         if: always()

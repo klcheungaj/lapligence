@@ -99,6 +99,24 @@ static void repeated_addresses(int policy) {
     sv4_destroy(&memory[1]);
 }
 
+static void signed_address_spellings(void) {
+    const int32_t dims[] = {-9, 9};
+    const uint64_t strides[] = {1};
+    sv4_t memory[19];
+    for (int i = 0; i < 19; ++i) memory[i] = sv4_zero(8, 0);
+    write_input("signed_addresses.hex", "@-9 aa @-09 bb @-0009 cc\n");
+    sv4_t selected = sv4_from_i64(-9, 64);
+    llg_memory_read_view(llg_string_bytes("signed_addresses.hex", 20), memory, 19,
+                         8, 0, 0, dims, 1, strides, 0, 19,
+                         selected, selected, 1, 1,
+                         LLG_MEMORY_ADDRESSING_SYSTEMVERILOG_2009,
+                         NULL, 0, 16);
+    CHECK(sv4_to_u64(memory[0]) == 0xcc);
+    for (int i = 1; i < 19; ++i) CHECK(sv4_to_u64(memory[i]) == 0);
+    sv4_destroy(&selected);
+    for (int i = 0; i < 19; ++i) sv4_destroy(&memory[i]);
+}
+
 static void conversion_controls(void) {
     const int32_t dims[] = {0, 1};
     sv4_t memory[] = {sv4_zero(7, 0), sv4_zero(7, 0)};
@@ -130,6 +148,7 @@ int main(int argc, char** argv) {
     else if (strcmp(argv[1], "repeated2009") == 0) repeated_addresses(LLG_MEMORY_ADDRESSING_SYSTEMVERILOG_2009);
     else if (strcmp(argv[1], "repeated2001") == 0) repeated_addresses(LLG_MEMORY_ADDRESSING_VERILOG_2001);
     else if (strcmp(argv[1], "conversion") == 0) conversion_controls();
+    else if (strcmp(argv[1], "signed") == 0) signed_address_spellings();
     else CHECK(0);
     llg_rt_cleanup();
     CHECK(value_test_live() == 0 && value_test_bytes() == 0);

@@ -10,6 +10,66 @@ mod sim_cli;
 mod sim_harness;
 
 #[test]
+fn signed_address_spellings_and_hex_boundaries_select_the_same_cells() {
+    let words = "@-9 aa @-09 bb @-0009 cc @-7 17 @-8 18 @-f 1f @-80 80 @-81 81\n";
+    let expected = "asc=17,18,cc,1f,80,81 desc=17,18,cc,1f,80,81\n";
+    for edition in ["2001", "2009"] {
+        let warning = "llg: memory file `signed.mem`: memory file contains too few words for the selected range\n";
+        let stderr = if edition == "2001" {
+            format!("{warning}{warning}llg: simulation ended without $finish (no processes remain) at time 0\n")
+        } else {
+            "llg: simulation ended without $finish (no processes remain) at time 0\n".to_owned()
+        };
+        sim_cli::run_case_with_files(
+            "memory_editions",
+            "signed_address",
+            expected,
+            &stderr,
+            &[],
+            &["--edition", edition],
+            &[("signed.mem", words)],
+        );
+    }
+}
+
+#[test]
+fn signed_address_overflow_and_out_of_range_stop_before_writing() {
+    for edition in ["2001", "2009"] {
+        for (word, diagnostic) in [
+            ("@-8000000000000001", "address jump is not a known index"),
+            ("@8000000000000000", "address jump is not a known index"),
+            ("@-fffffffffffffffff", "address jump is not a known index"),
+            (
+                "@-100",
+                "address jump is outside the destination memory or selected range; load terminated",
+            ),
+            (
+                "@-8000000000000000",
+                "address jump is outside the destination memory or selected range; load terminated",
+            ),
+            (
+                "@7fffffffffffffff",
+                "address jump is outside the destination memory or selected range; load terminated",
+            ),
+        ] {
+            let contents = format!("@-9 aa {word} bb\n");
+            let stderr = format!(
+                "llg: memory file `signed.mem`: {diagnostic}\nllg: memory file `signed.mem`: {diagnostic}\nllg: simulation ended without $finish (no processes remain) at time 0\n"
+            );
+            sim_cli::run_case_with_files(
+                "memory_editions",
+                "signed_address",
+                "asc=00,00,aa,00,00,00 desc=00,00,aa,00,00,00\n",
+                &stderr,
+                &[],
+                &["--edition", edition],
+                &[("signed.mem", &contents)],
+            );
+        }
+    }
+}
+
+#[test]
 fn native_enum_memory_overflow_is_rejected_before_cast() {
     if !llg::sim::build::cmake_available() {
         eprintln!("SKIP: cmake not available");

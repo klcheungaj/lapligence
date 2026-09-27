@@ -1,4 +1,4 @@
-foreach(mode IN ITEMS tokens enum sparse2009 sparse2001 repeated2009 repeated2001 conversion)
+foreach(mode IN ITEMS tokens enum sparse2009 sparse2001 repeated2009 repeated2001 conversion signed)
   execute_process(COMMAND "${PROBE}" "${mode}" RESULT_VARIABLE result
     OUTPUT_VARIABLE output ERROR_VARIABLE errors TIMEOUT 30)
   if(NOT result EQUAL 0)

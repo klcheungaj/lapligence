@@ -63,7 +63,7 @@ requirements above apply without repeating them for each suite.
 | Processes and loops | [Always-family](fixtures/sim/process_semantics/readme.md), [loops](fixtures/sim/loops/readme.md), `sim_loops`, `sim_syn014_process_contexts`: source-loop exits, omissions/bounds, aggregate sensitivity, legal disjoint writers and illegal writer/event controls. |
 | Scheduling and synchronization | `sim_process_control`, `sim_semaphore`, `sim_mailboxes`, `sim_procedural_assign`, `sim_force`; [processes](fixtures/sim/process_control/readme.md), [semaphores](fixtures/sim/semaphore/readme.md), [mailboxes](fixtures/sim/mailboxes/readme.md), [nonconvergence](fixtures/sim/nonconvergence/readme.md). |
 | Time and numeric services | `sim_delay`, `sim_time_literals`, `sim_time_values`, `sim_physical_time`, `sim_real`, `sim_real_conversions`, `sim_random`, `sim_random_streams`: exact units/rounding, overflow, real precision, Annex N vectors and child-stream isolation. |
-| I/O and observation | `sim_file_io`, `sim_memory_editions`, `sim_memory_views`, `sim_syn030_memory_views`, `sim_plusargs`, `sim_waveform`, `sim_vpi`, `sim_syn035_pla`; [SYN-030 memory views](fixtures/sim/syn030_memory_views/readme.md), [SYN-035 PLA exclusion](fixtures/sim/syn035_pla/readme.md), [file I/O](fixtures/sim/file_io/readme.md), [waveforms](fixtures/sim/waveform/readme.md), [partial features](fixtures/sim/partial_features/readme.md). |
+| I/O and observation | `sim_file_io`, `sim_memory_editions`, `sim_memory_views`, `sim_syn030_memory_views`, `sim_plusargs`, `sim_waveform`, `sim_vpi`, `sim_syn035_pla`; [SYN-030 memory views](fixtures/sim/syn030_memory_views/readme.md), checked signed `@` spellings/bounds in both editions and selected views in SV2009, [SYN-035 PLA exclusion](fixtures/sim/syn035_pla/readme.md), [file I/O](fixtures/sim/file_io/readme.md), [waveforms](fixtures/sim/waveform/readme.md), [partial features](fixtures/sim/partial_features/readme.md). |
 | Undefined behavior characterization | `sim_undefined_behavior` compares exact CLI stdout, stderr and status to checked-in [Q02/Q03 goldens](fixtures/sim/undefined_behavior/readme.md) in both optimizer modes and each legal edition. These are observations for later cross-simulator comparison, not independent conformance oracles. |
 | Verification and native objects | `sim_classes`, `sim_virtual_interfaces`, `sim_dpi`, [concurrent assertions](fixtures/sim/concurrent_assertions/readme.md): nominal identity, dispatch/casts, interface bindings, scalar native ABI, sampled/sequence/property behavior and explicit rejection boundaries. |
 | Build and safeguards | `sim_cmake`, `cli_info`, `sim_memory_guard`, `support_harness`, `emit_decoupling`: CMake/generator failures, source cleanup, early CLI exits, memory limits, timeout trees, CWD recovery and frontend-independent emission. |
@@ -209,11 +209,15 @@ requires Extended entries to name real owning task fixtures and test functions;
 implemented outside-Core entries name a product row and execution owner.
 Sequential UDP edge/state forms remain excluded while scalar combinational
 UDP forms have SYN-031 evidence. The ordinary checker validates the frozen PDF
-name sets and re-parses the reference addendum; its optional PDF mode needs
-`pypdf` and the local specification pack:
+name sets and the checked-in [addendum name/section snapshot](syn038_annex_reference_names.json).
+The snapshot records the ignored source file's SHA-256 and generator command;
+it contains names and section IDs only. Optional source re-verification needs
+the local specification pack (and `pypdf` for PDFs). Missing requested inputs
+fail explicitly:
 
 ```sh
 python3 scripts/check_syn038_annex_assignments.py
+python3 scripts/check_syn038_annex_assignments.py --reference-addendum docs/specification/spec-reference-annex-a.md
 python3 scripts/check_syn038_annex_assignments.py --pdf-root docs/specification
 ```
 
@@ -221,6 +225,9 @@ python3 scripts/check_syn038_annex_assignments.py --pdf-root docs/specification
 those optional PDFs and the addendum. Run the checker and review every changed
 disposition after regeneration; grammar names that share a parent do not by
 themselves prove every semantic variant executes.
+Regenerate the addendum snapshot with
+`python3 scripts/generate_syn038_annex_reference_names.py` when that reference
+changes; review its name/section diff with the assignment table.
 
 Check pairwise metadata from the repository root:
 
@@ -369,15 +376,19 @@ For SYN-039, use those same sanitizer/compiler settings with the worktree
 runner and the following filters:
 
 ```sh
-export CARGO_BUILD_JOBS=16
+export CARGO_BUILD_JOBS=10
 LLG_CC=gcc \
 LLG_CFLAGS='-DACO_USE_ASAN -fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all' \
 ASAN_OPTIONS='detect_leaks=1:strict_string_checks=1:log_path=/tmp/llg-asan-syn039-model' \
 UBSAN_OPTIONS='print_stacktrace=1:halt_on_error=1' \
-scripts/run-tests.sh --test-work-dir /build --test-threads 16 \
+scripts/run-tests.sh --test-work-dir /build --test-threads 10 \
   --test sim_syn039_acceptance --test sim_syn038_ledger \
   --test sim_syn033_structural_bind --test sim_syn032_library_configs \
-  --test sim_syn024_tagged_patterns
+  --test sim_syn024_tagged_patterns --test sim_tagged_union_access \
+  --test sim_review_next4 --test sim_review_tasks08_11 \
+  --test sim_fixed_ordering_review --test sim_casez
+scripts/run-tests.sh --test-work-dir /build --test-threads 10 --lib \
+  -E 'test(sim::emit_c::owned::tests::tagged_guards)'
 ```
 
 The integrated Extended fixture includes the combinational UDP; the ledger

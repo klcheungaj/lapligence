@@ -146,6 +146,9 @@ distinguish omitted system(NULL) from an empty command.
 Memory images preserve X/Z, comments, addresses, views and loaded prefixes on
 failure. Keep edition-specific default address order, explicit direction, short-word
 padding, truncation/original-width enum validation and sparse-file diagnostics.
+For the admitted signed `@` extension, check hexadecimal magnitude against the
+signed index range before applying the sign; leading zeroes cannot affect the
+index, and selected-view bounds must be checked before writes.
 Binary rank-one `$fread` advances low-to-high HDL addresses independently of physical
 declaration order, clamps count at the high bound, and consumes/writes nothing for
 invalid/unknown bounds or negative count. Keep element owners across callbacks;

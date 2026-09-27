@@ -12,6 +12,8 @@ typedef struct {
     sv4_t value;
     uint64_t digits;
     int too_wide;
+    int64_t address;
+    int invalid_index;
 } llg_memory_value_t;
 
 static void llg_memory_warning(const char* path, const char* format, ...) {
@@ -184,6 +186,8 @@ static int llg_memory_next_token(FILE* stream, int radix,
     if (c == '@') {
         c = fgetc(stream);
         int negative = 0;
+        uint64_t magnitude = 0;
+        int saw_digit = 0;
         if (c == '-' || c == '+') {
             negative = c == '-';
             c = fgetc(stream);
@@ -192,7 +196,12 @@ static int llg_memory_next_token(FILE* stream, int radix,
         unsigned numeric;
         while (c != EOF) {
             if (llg_memory_digit(c, 16, &state, &numeric) && state == 0) {
-                llg_memory_append_digit(value, 4u, 0, numeric);
+                saw_digit = 1;
+                if (magnitude > (UINT64_MAX - numeric) / 16u) {
+                    value->invalid_index = 1;
+                } else if (!value->invalid_index) {
+                    magnitude = magnitude * 16u + numeric;
+                }
             } else if (c == '_') {
                 // Underscores are separators inside an address.
             } else if (isspace((unsigned char)c)) {
@@ -206,12 +215,13 @@ static int llg_memory_next_token(FILE* stream, int radix,
             }
             c = fgetc(stream);
         }
-        if (value->digits == 0 || value->too_wide) return LLG_MEMORY_TOKEN_ERROR;
-        sv4_replace(&value->value, sv4_resize(value->value,
-                    (uint32_t)(value->digits * 4u), 0));
-        if (negative) {
-            value->value.is_signed = 1;
-            sv4_replace(&value->value, sv4_neg(value->value));
+        if (!saw_digit) return LLG_MEMORY_TOKEN_ERROR;
+        uint64_t limit = negative ? (uint64_t)INT64_MAX + 1u : (uint64_t)INT64_MAX;
+        if (magnitude > limit) value->invalid_index = 1;
+        if (!value->invalid_index) {
+            value->address = negative
+                                 ? (magnitude == limit ? INT64_MIN : -(int64_t)magnitude)
+                                 : (int64_t)magnitude;
         }
         return LLG_MEMORY_TOKEN_ADDRESS;
     }
@@ -483,8 +493,8 @@ void llg_memory_read_view(llg_string_t path, sv4_t* memory, uint64_t total,
         }
         if (kind == LLG_MEMORY_TOKEN_ADDRESS) {
             saw_address = 1;
-            int64_t address;
-            if (!sv4_to_index_i64(token.value, &address)) {
+            int64_t address = token.address;
+            if (token.invalid_index) {
                 llg_memory_warning(filename, "address jump is not a known index");
                 sv4_destroy(&token.value);
                 fclose(stream);

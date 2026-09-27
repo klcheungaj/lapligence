@@ -8,6 +8,32 @@ mod sim_harness;
 const DONE: &str = "llg: simulation ended without $finish (no processes remain) at time 0\n";
 
 #[test]
+fn signed_jumps_in_selected_multidimensional_view_preserve_other_cells() {
+    sim_cli::run_case_with_files(
+        "syn030_memory_views",
+        "signed_selected",
+        "selected=31,32,41,51 retained=ee,ee\n",
+        DONE,
+        &[],
+        &["--edition", "2009"],
+        &[(
+            "selected.mem",
+            "@-9 11 12 @-09 21 22 @-0009 31 32 @-8 41 42 @-7 51 52\n",
+        )],
+    );
+    sim_cli::run_case_with_files(
+        "syn030_memory_views", "signed_selected",
+        "selected=aa,ee,ee,ee retained=ee,ee\n",
+        concat!(
+            "llg: memory file `selected.mem`: address jump is outside the destination memory or selected range; load terminated\n",
+            "llg: simulation ended without $finish (no processes remain) at time 0\n",
+        ),
+        &[], &["--edition", "2009"],
+        &[("selected.mem", "@-9 aa @-b bb\n")],
+    );
+}
+
+#[test]
 fn mixed_direction_3d_addresses_walk_each_dimension_low_to_high() {
     sim_cli::run_case_with_files(
         "syn030_memory_views",

@@ -1383,6 +1383,19 @@ fn review_and_extended_links_name_real_owners_and_keep_open_cells_visible() {
                 cells[0]
             );
         }
+        if cells[0] == "SYN038-LINK-N12" {
+            assert!(
+                cells[3].contains("choose_rtl.map")
+                    && cells[4].contains("filesystem_map_binding_changes_selected_composition")
+                    && cells[4]
+                        .contains("selected_map_composition_changes_owned_instance_identity"),
+                "N12 must cite disk and in-memory configuration-in-map owners"
+            );
+            assert!(
+                !cells[4].contains("library_map_incdirs_select_scoped_headers"),
+                "N12 cannot borrow Q04 include-directory evidence"
+            );
+        }
         if cells[0] == "SYN038-LINK-Q02" || cells[0] == "SYN038-LINK-Q03" {
             assert!(
                 cells[2].starts_with("UNDEFINED BEHAVIOR") && !fixtures.is_empty(),

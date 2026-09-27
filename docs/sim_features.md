@@ -17,6 +17,10 @@ synthesis-tool acceptance.
 | ✅ Accepted | A specific scope has matching post-change HDL evidence; not a whole-family claim. |
 | ⚠️ Undefined behavior (Qxx) | User-directed provisional disposition for the named interaction: its recorded `llg` result has no conformance oracle under the supplied references; cross-simulator comparison is pending. This does not label the whole feature or claim an IEEE designation. |
 
+The project owner directed the Q02/Q03 provisional disposition on 2026-09-27,
+pending cross-simulator resolution. The checked-in captures remain product
+characterizations rather than IEEE conformance results.
+
 Source and test presence are not acceptance. Recorded Linux results do not qualify
 later changes, full generated-model sanitizer coverage, or native Windows/macOS
 execution. Combinations of implemented features can still encounter the listed
@@ -813,6 +817,10 @@ real values use a separate representation.
   calls, are low-to-high; explicit ranges retain requested direction.
   `@` addresses the highest remaining dimension. Invalid selected ranges leave
   every cell unchanged; invalid later jumps stop while retaining earlier writes.
+  The admitted signed `@` extension converts checked hexadecimal magnitude to
+  a signed index after sign application; zero padding of the token does not
+  change the selected cell. Magnitudes outside signed 64-bit index range and
+  jumps outside a selected view diagnose before another write.
   Incomplete rows leave unread subwords unchanged.
   Public SV2009 coverage includes mixed-direction 3-D declarations, a runtime
   selected slice with explicit descending bounds, a 129-bit selected word, and

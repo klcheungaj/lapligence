@@ -27,6 +27,29 @@ class AnnexAssignmentCheckerTests(unittest.TestCase):
         manifest["assignments"] = [entry for entry in manifest["assignments"] if entry["production"] != "genvar_function_call"]
         self.check_rejects(manifest, "unassigned extracted names")
 
+    def test_addendum_section_mismatch_fails(self):
+        manifest = copy.deepcopy(self.manifest)
+        entry = next(entry for entry in manifest["assignments"] if entry["production"] == "genvar_function_call")
+        entry["reference_families"] = ["B.99"]
+        self.check_rejects(manifest, "addendum section IDs differ from frozen snapshot")
+
+    def test_missing_optional_addendum_fails_precisely(self):
+        with self.assertRaises(SystemExit) as failure:
+            checker.check_manifest(self.manifest, self.ledger, self.inventory, None,
+                                   ROOT / "missing-spec-reference-annex-a.md")
+        self.assertIn("optional reference addendum is missing", str(failure.exception))
+
+    def test_missing_required_snapshot_fails_precisely(self):
+        with self.assertRaises(SystemExit) as failure:
+            checker.load_reference_names(ROOT / "tests/missing-syn038-annex-reference-names.json")
+        self.assertIn("required frozen reference-name snapshot is missing", str(failure.exception))
+
+    def test_missing_optional_pdf_fails_precisely(self):
+        with self.assertRaises(SystemExit) as failure:
+            checker.check_manifest(self.manifest, self.ledger, self.inventory,
+                                   ROOT / "missing-specification")
+        self.assertIn("optional Annex PDF is missing", str(failure.exception))
+
     def test_comma_separated_pdf_footnote_is_retained(self):
         source = "dpi_function_proto21,22 ::= function_prototype"
         matches = self.inventory.PDF_PRODUCTION.findall(source)

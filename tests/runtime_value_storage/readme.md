@@ -65,7 +65,7 @@ capabilities; check the exact inventory rather than assuming a fixed count.
 | `packed_formal_probe.c` | 4,096 private-input mutations without caller changes, immediate ref publication, two-state member conversion and neighboring-field preservation; sanitizer-safe. |
 | `fixed_array_reduction_probe.c` | Five folds, first-element X/Z seeding, signed/widened maps, nested values/declared indices and 65/129-bit owners; 200,000 separate eight-bit cells without flattening and exact cleanup. |
 | `sequential_predicate_probe.c` | 64 truth/prefix combinations, 129-bit and real truth, packed/array merge differences; 10,000 ownership cycles, bounded peaks and zero skipped-clause allocations. |
-| `memory_image_probe.c` | Seven exact-output modes at 1/7/8/65/129 bits, signedness, X/Z padding, numeric extension/truncation, original-width two-state enum overflow and sparse files; no stack switches. |
+| `memory_image_probe.c` | Eight exact-output modes at 1/7/8/65/129 bits, signedness, X/Z padding, numeric extension/truncation, original-width two-state enum overflow, sparse files and equivalent signed address spellings; no stack switches. |
 | `value_lifetime_benchmark.c` | Mixed-width clone/replace/add/resize/move with a 1,048,575-bit sentinel; exact per-cycle baseline, bounded peak, zero teardown, counts/checksum/CPU time. |
 
 Retain capability-specific entries such as `packed_selection_map`, zero/storage/
