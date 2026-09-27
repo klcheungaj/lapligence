@@ -26,6 +26,18 @@ storage and callback restrictions. Test methodology and coverage data are in the
 References: **V** = IEEE 1364-2001; **SV** = IEEE 1800-2009. Revision tags retain
 **[1995]**, **[2001]**, **[1364-2005]**, **[SV-2005]** and **[SV-2009]**.
 
+The [SYN-038 Annex assignment table](../tests/syn038_annex_assignments.json)
+reconciles 811 distinct PDF-extracted Annex A left-hand-side names with 794
+reference-checklist names: 665 overlap, 146 appear only in the PDF extraction,
+and 129 only in the checklist (940 in the union). Its name dispositions are
+228 Core-row assignments, 61 qualified Extended forms, 18 implemented
+simulator forms outside Core, 411 named profile exclusions and 222 syntax
+aliases/helpers, with zero unassigned names. The former four boundary names
+are classified by their qualified combinational or rejected sequential UDP
+form. These
+are grammar-name audit counts, not a support percentage; the exact admitted
+forms and execution limits are stated in this checklist.
+
 ## Target language editions
 
 `--edition 2001|2009` selects one compilation-wide policy; the default is 2009.
@@ -192,7 +204,9 @@ real values use a separate representation.
 
 - 🟦 **Modules and hierarchy** — ANSI/non-ANSI headers, positional/named ports,
   instance arrays, `generate for/if/case`, `genvar`, hierarchical/upward reads and
-  admitted selected blocking/NBA writes. V §§12.1–12.4 **[1995/2001]**.
+  admitted selected blocking/NBA writes. Constant functions in a generate-loop
+  bound and step elaborate three lanes whose values follow a runtime input in
+  both selected editions and optimizer modes. V §§12.1–12.4 **[1995/2001]**.
 - 🟦 **Parameters and constant elaboration** — Parameters, `localparam`, named/
   positional overrides and `defparam` re-elaboration propagate values and widths;
   overriding `localparam` is illegal. Finite constant functions, type-dependent
@@ -471,7 +485,10 @@ real values use a separate representation.
   immediate members: known-equal boundaries survive; differing boundaries take
   their type's uninitialized default. Nested rows/records default as whole
   members, not recursively merged leaves; explicit member initializers are not
-  fallbacks. Dynamic/native aggregate merges remain restricted.
+  fallbacks. A runtime-selected unpacked record with an eight-bit `logic` member
+  and a one-bit `bit` member retains these defaults through a persistent NBA:
+  unequal data becomes X and the two-state member becomes zero at commit.
+  Dynamic/native aggregate merges remain restricted.
   V Table 28; SV Table 11-20, §11.4.11 **[2001/SV-2009]**.
 - 🟦 **Concatenation, replication and selection** — Preserve order and
   self-determined widths, including singleton-concatenation unsigned/fill
@@ -556,8 +573,10 @@ real values use a separate representation.
   native strings, recursive objects and unsupported reference combinations reject.
   SV §§6.24.3, 11.4.14 **[SV-2005]**.
 - 🟨 **Let expressions** — Numeric expansions bind free names in declaration
-  scope; recursive lets reject. Expanded assertion/native/aggregate bodies still
-  need an admitted consumer representation. Operator-overloading declarations
+  scope; runtime and constant actuals with a declaration-scope parameter execute in SV2009,
+  while V2001 rejects the syntax. Recursive lets reject. Expanded assertion,
+  native and aggregate bodies still need an admitted consumer representation.
+  Operator-overloading declarations
   have no separately qualified simulation path; ordinary operator support does not
   establish overload support. SV §§11.11, 11.13 **[SV-2009]**.
 
@@ -569,7 +588,9 @@ real values use a separate representation.
 - 🟨 **Fixed-array continuous assignments** — Whole/selected fixed values,
   slices, conditionals, patterns and function returns capture one RHS per
   activation. Net arrays retain per-cell/per-bit contribution slots; static
-  positional net patterns drive only named elements. Variable storage permits
+  positional net patterns drive only named elements, including selected bits
+  with an independent competing net driver and a changing runtime RHS.
+  Variable storage permits
   one overlapping continuous writer and separate disjoint cells. Overlapping
   ordinary procedural writes or declaration initializers reject; force/release/
   deassign are not ordinary writers for this check. Dynamic topology, net-array
@@ -608,7 +629,9 @@ real values use a separate representation.
   net-array declaration delays and unsupported terminals remain restricted.
   V §§6.1.3, 7.14 **[1995]**.
 - 🟦 **Logic and pull gates** — `and/nand/or/nor/xor/xnor/buf/not/pullup/pulldown`
-  use typed terminals and independent output drivers. Multi-output buf/not,
+  use typed terminals and independent output drivers. Pullup/pulldown values
+  and an undriven Z net have a dual-edition public-CLI witness in both modes.
+  Multi-output buf/not,
   input expressions/constants, selected/hierarchical references, mixed-width
   normalization and built-in instance arrays are represented; no blanket equal-width or 64-terminal limit applies. Outputs need an admitted packed structural
   target; real/invalid terminals and incompatible driver contexts reject.

@@ -11,15 +11,18 @@ module tb;
     record_t right_value;
     record_t result;
     logic selector;
+    integer seed;
 
     initial begin
-        left_value.data = 8'h00;
+        if (!$value$plusargs("seed=%d", seed) || seed != 1)
+            $fatal(1, "seed must be 1");
+        left_value.data = seed[0] ? 8'h00 : 8'hff;
         left_value.valid = 1'b0;
-        right_value.data = 8'hff;
+        right_value.data = seed[0] ? 8'hff : 8'h00;
         right_value.valid = 1'b1;
         result.data = 8'h55;
         result.valid = 1'b1;
-        selector = 1'bx;
+        selector = seed[0] ? 1'bx : 1'b0;
 
         result <= selector ? left_value : right_value;
         if (result.data !== 8'h55 || result.valid !== 1'b1)

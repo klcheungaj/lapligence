@@ -38,6 +38,46 @@ fn selected_core_pairwise_manifest_matches_frozen_rules() {
 }
 
 #[test]
+fn annex_production_assignments_cover_frozen_sources_and_real_ledger_rows() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let result = Command::new("python3")
+        .arg(root.join("scripts/check_syn038_annex_assignments.py"))
+        .current_dir(&root)
+        .output()
+        .expect("run the SYN-038 Annex A assignment checker");
+    assert!(
+        result.status.success(),
+        "SYN-038 Annex A assignment checker failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&result.stdout),
+        String::from_utf8_lossy(&result.stderr)
+    );
+}
+
+#[test]
+fn annex_assignment_checker_rejects_missing_names_rows_and_parents() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let result = Command::new("python3")
+        .args([
+            "-m",
+            "unittest",
+            "discover",
+            "-s",
+            "scripts",
+            "-p",
+            "test_syn038_annex_assignments.py",
+        ])
+        .current_dir(&root)
+        .output()
+        .expect("run the SYN-038 Annex A assignment checker regressions");
+    assert!(
+        result.status.success(),
+        "SYN-038 Annex A assignment regressions failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&result.stdout),
+        String::from_utf8_lossy(&result.stderr)
+    );
+}
+
+#[test]
 fn selected_core_pairwise_source_format_regressions() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let result = Command::new("python3")
@@ -1163,11 +1203,23 @@ fn selected_rows_are_traceable_and_unique() {
         .collect::<Vec<_>>();
     assert_eq!(
         selected.len(),
-        81,
-        "SYN-038 selected Core grammar denominator changed"
+        93,
+        "SYN-038 Core and boundary row register changed"
     );
 
+    // Retain the original IDs for negative and Extended controls, but never
+    // include them in the positive selected-Core denominator.
+    let boundary_controls = [
+        ("SYN038-CORE-AS-06", "REJECT"),
+        ("SYN038-CORE-ED-02", "REJECT"),
+        ("SYN038-CORE-ED-03", "REJECT"),
+        ("SYN038-CORE-ED-06", "REJECT"),
+        ("SYN038-CORE-PI-03", "PASS"),
+        ("SYN038-CORE-PI-04", "REJECT"),
+    ];
+
     let mut ids = HashSet::new();
+    let mut selected_positive_count = 0;
     for line in selected {
         let cells = table_cells(line);
         assert_eq!(cells.len(), 7, "malformed selected SYN-038 row: {line}");
@@ -1188,6 +1240,18 @@ fn selected_rows_are_traceable_and_unique() {
             "{id} has no explicit expected outcome: {}",
             cells[5]
         );
+        if let Some((_, expected)) = boundary_controls.iter().find(|(name, _)| *name == id) {
+            assert_eq!(cells[5], *expected, "{id} boundary oracle changed");
+        } else {
+            assert_eq!(cells[5], "PASS", "{id} is not positive Core evidence");
+            assert!(
+                !cells[2].contains("outside Core")
+                    && !cells[2].contains("Extended")
+                    && !cells[3].contains("negative"),
+                "{id} is outside the positive Core profile"
+            );
+            selected_positive_count += 1;
+        }
         let owners = code_spans(cells[6]).collect::<Vec<_>>();
         assert!(!owners.is_empty(), "{id} has no behavioral test owner");
         let owner_sources = owners
@@ -1230,6 +1294,10 @@ fn selected_rows_are_traceable_and_unique() {
         );
         assert_fixture_exists(&root, id, cells[4]);
     }
+    assert_eq!(
+        selected_positive_count, 87,
+        "selected positive Core denominator changed"
+    );
 }
 
 #[test]
@@ -1277,8 +1345,12 @@ fn review_and_extended_links_name_real_owners_and_keep_open_cells_visible() {
                 .unwrap_or_else(|| panic!("{} owner is not file::test: {owner}", cells[0]));
             let source = fs::read_to_string(root.join(file))
                 .unwrap_or_else(|error| panic!("{} cannot read {file}: {error}", cells[0]));
+            let named_test = source.contains(&format!("fn {name}("));
+            let characterization = cells[2].starts_with("UNDEFINED BEHAVIOR")
+                && file == "tests/sim_undefined_behavior.rs"
+                && source.contains(&format!("fixture!({name},"));
             assert!(
-                source.contains(&format!("fn {name}(")),
+                named_test || characterization,
                 "{} missing test {owner}",
                 cells[0]
             );
@@ -1311,6 +1383,13 @@ fn review_and_extended_links_name_real_owners_and_keep_open_cells_visible() {
                 cells[0]
             );
         }
+        if cells[0] == "SYN038-LINK-Q02" || cells[0] == "SYN038-LINK-Q03" {
+            assert!(
+                cells[2].starts_with("UNDEFINED BEHAVIOR") && !fixtures.is_empty(),
+                "{} must retain characterization without a conformance claim",
+                cells[0]
+            );
+        }
     }
     assert_eq!(
         ids.len(),
@@ -1338,6 +1417,32 @@ fn review_and_extended_links_name_real_owners_and_keep_open_cells_visible() {
         capacity_tests.matches("#[ignore =").count(),
         4,
         "SYN-036 resource-lane count changed"
+    );
+}
+
+#[test]
+fn requirement_ids_are_unique_across_selected_boundary_and_excluded_tables() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let document = fs::read_to_string(root.join("tests/syn038_coverage_ledger.md"))
+        .expect("read the SYN-038 coverage ledger");
+    let core = section(&document, LEDGER_START, EVIDENCE_MAP_START);
+    let links = section(&document, REVIEW_LINK_START, EVIDENCE_MAP_END);
+    let exclusions = section(&document, EVIDENCE_MAP_END, DISPOSITION_START);
+    let mut ids = HashSet::new();
+    for (table, prefix) in [
+        (core, "| SYN038-CORE-"),
+        (links, "| SYN038-LINK-"),
+        (exclusions, "| SYN038-EX-"),
+    ] {
+        for line in table.lines().filter(|line| line.starts_with(prefix)) {
+            let id = table_cells(line)[0];
+            assert!(ids.insert(id), "duplicate stable requirement ID: {id}");
+        }
+    }
+    assert_eq!(
+        ids.len(),
+        141,
+        "stable SYN-038 requirement register changed"
     );
 }
 
@@ -1689,6 +1794,18 @@ fn audited_evidence_map_names_real_fixtures_and_test_invocations() {
             .filter(|span| span.starts_with("--") && span.contains(' '))
             .filter(|_| !source_bound_cli_case)
         {
+            if let Some(runtime_arg) = span.strip_prefix("-- +") {
+                assert!(
+                    owner_bodies.iter().any(|body| owner_passes_cli_arg(
+                        body,
+                        &test_source,
+                        &format!("+{runtime_arg}")
+                    )),
+                    "{} runtime plusarg is not passed by {owner}: {span}",
+                    cells[0]
+                );
+                continue;
+            }
             let (flag, argument) = span
                 .split_once(' ')
                 .unwrap_or_else(|| panic!("{} malformed CLI argument span {span:?}", cells[0]));
@@ -1886,10 +2003,72 @@ fn attribute_and_pragma_fixture_executes() {
 
 #[test]
 fn record_conditional_two_state_nba_context_executes() {
-    sim_cli::run_case_with_args(
+    sim_cli::run_case_with_cli_and_runtime_args(
         "review_bundle",
         "r12_record_conditional_2state_nba",
         "record_nba=xx,0\n",
+        "",
+        &["--edition", "2009"],
+        &["+seed=1"],
+    );
+}
+
+#[test]
+fn numeric_let_uses_runtime_actual_and_lexical_parameter_scope() {
+    sim_cli::run_case_with_cli_and_runtime_args(
+        "review_bundle",
+        "r12_let_numeric",
+        "let=7,7\n",
+        "",
+        &["--edition", "2009"],
+        &["+seed=4"],
+    );
+}
+
+#[test]
+fn numeric_let_is_rejected_in_verilog_2001() {
+    sim_cli::reject_case_with_args(
+        "review_bundle",
+        "r12_let_numeric",
+        "let",
+        &["--edition", "2001"],
+    );
+}
+
+#[test]
+fn genvar_function_calls_select_runtime_visible_lanes_in_both_editions() {
+    for edition in ["2001", "2009"] {
+        sim_cli::run_case_with_cli_and_runtime_args(
+            "review_bundle",
+            "r12_genvar_function_call",
+            "genvar=5 case=1 task=6/6 parts=1,6 doubled=44 hier=44\n",
+            "",
+            &["--edition", edition],
+            &["+seed=22"],
+        );
+    }
+}
+
+#[test]
+fn pull_gate_instances_drive_undriven_nets_in_both_editions() {
+    for edition in ["2001", "2009"] {
+        sim_cli::run_case_with_args(
+            "review_bundle",
+            "r12_pull_gate_dual",
+            "PASS pull_undriven\n",
+            "",
+            &[],
+            &["--edition", edition],
+        );
+    }
+}
+
+#[test]
+fn ansi_combinational_udp_uses_declared_scalar_ports() {
+    sim_cli::run_case_with_args(
+        "review_bundle",
+        "r12_udp_ansi",
+        "udp_ansi=0,1,0\n",
         "",
         &[],
         &["--edition", "2009"],
@@ -1993,6 +2172,7 @@ fn edition_gates_match_sv_only_boundaries_and_witnesses() {
         "SYN038-CORE-LX-03",
         "SYN038-CORE-LX-05",
         "SYN038-CORE-LX-06",
+        "SYN038-CORE-LX-08",
         "SYN038-CORE-TY-01",
         "SYN038-CORE-TY-02",
         "SYN038-CORE-TY-03",
@@ -2006,6 +2186,7 @@ fn edition_gates_match_sv_only_boundaries_and_witnesses() {
         "SYN038-CORE-EX-07",
         "SYN038-CORE-EX-08",
         "SYN038-CORE-EX-13",
+        "SYN038-CORE-EX-14",
         "SYN038-CORE-AS-01",
         "SYN038-CORE-AS-02",
         "SYN038-CORE-AS-03",
@@ -2026,7 +2207,6 @@ fn edition_gates_match_sv_only_boundaries_and_witnesses() {
         "SYN038-CORE-HY-05",
         "SYN038-CORE-HY-06",
         "SYN038-CORE-HY-10",
-        "SYN038-CORE-PI-02",
         "SYN038-CORE-ED-05",
     ];
     for id in sv_only_rows {
@@ -2046,13 +2226,23 @@ fn edition_gates_match_sv_only_boundaries_and_witnesses() {
         "SYN038-CORE-LX-01",
         "SYN038-CORE-LX-04",
         "SYN038-CORE-LX-07",
+        "SYN038-CORE-TY-13",
+        "SYN038-CORE-TY-14",
         "SYN038-CORE-EX-02",
+        "SYN038-CORE-EX-15",
+        "SYN038-CORE-AS-12",
         "SYN038-CORE-PR-01",
         "SYN038-CORE-PR-04",
         "SYN038-CORE-PR-09",
         "SYN038-CORE-PR-10",
         "SYN038-CORE-SB-06",
+        "SYN038-CORE-SB-10",
+        "SYN038-CORE-HY-11",
+        "SYN038-CORE-HY-12",
+        "SYN038-CORE-HY-13",
+        "SYN038-CORE-HY-14",
         "SYN038-CORE-PI-01",
+        "SYN038-CORE-PI-02",
         "SYN038-CORE-PI-03",
         "SYN038-CORE-PI-04",
     ];
@@ -2157,6 +2347,11 @@ fn exclusions_and_context_axes_are_explicit() {
             cells[0]
         );
         assert!(!cells[4].is_empty(), "{} has no exclusion reason", cells[0]);
+        assert!(
+            cells[4].contains("Core") || cells[4].contains("target"),
+            "{} exclusion lacks a selected-profile boundary",
+            cells[0]
+        );
         let paths = fixture_paths(cells[3]);
         for path in paths {
             assert!(
@@ -2182,6 +2377,9 @@ fn all_historical_groups_have_one_disposition() {
 
     let mut ids = Vec::new();
     let allowed = ["CORE", "RETAIN", "EXT", "POLICY", "CAPACITY", "OUTSIDE"];
+    let verification_only = [
+        18, 19, 31, 53, 55, 56, 57, 60, 63, 64, 65, 67, 68, 69, 70, 71,
+    ];
     for line in disposition.lines().filter(|line| line.starts_with('|')) {
         let cells = table_cells(line);
         if cells.len() != 4 || cells[0] == "Old ID" || cells[0].starts_with("---") {
@@ -2200,6 +2398,12 @@ fn all_historical_groups_have_one_disposition() {
             !cells[3].is_empty(),
             "old group {id} has no evidence boundary"
         );
+        if verification_only.contains(&id) {
+            assert!(
+                !cells[2].contains("CORE"),
+                "verification-only old group {id} is counted as Core RTL"
+            );
+        }
         ids.push(id);
     }
     ids.sort_unstable();

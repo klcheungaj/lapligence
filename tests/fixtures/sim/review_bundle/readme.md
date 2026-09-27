@@ -13,6 +13,26 @@ CLI. R01 and R08 require a specific runtime diagnostic; a frontend or lowering
 error does not satisfy them. R03 tests the project's read-only callback policy.
 R10 records a conditional-policy choice in both editions. R11 is an optional
 generation-only capacity probe, not a memory-stress simulation.
+`r12_record_conditional_2state_nba.sv` takes `+seed=1` as runtime stimulus.
+The seed chooses an X selector between 00 and FF data members; after NBA
+commit, the differing four-state byte is XX and the two-state bit is zero
+(SV §11.4.11). The pre-commit read checks issue/commit ordering.
+`r12_let_numeric.sv` takes `+seed=4` in SV2009 and checks typed and untyped
+lets: declaration-scope parameter 3, rather than call-site local 100, is
+added to the runtime actual, producing 7/7; a constant expansion also yields 7;
+its separate V2001 control requires rejection (SV §11.13).
+`r12_genvar_function_call.sv` uses a function case and loop to compute a
+generate-loop bound, plus a constant function in the next-index expression;
+runtime `+seed=22` drives the three elaborated
+XOR lanes to 5, a generate case to 1, ANSI task output/inout to 6/6,
+variable-concatenation nibbles to 1/6, and child output/hierarchical function
+results to 44/44 in V2001/SV2009 and both modes (V §§10–12, SV §§11–13, 27).
+`r12_pull_gate_dual.sv` checks pullup, pulldown and undriven Z values through
+the public CLI in both editions and modes (V §§3.7.1, 7.8).
+`r12_udp_ansi.sv` checks the SV2009 ANSI-port form of a scalar combinational
+UDP with the independent 0, 1, 0 truth-table oracle in both optimizer modes
+(SV §§29.3–29.4). It qualifies the ANSI grammar branch of the SYN-031
+Extended subset; sequential UDP forms remain rejected.
 
 `tests/sim_review_bundle_patterns.rs` checks the R04–R06 type-key and
 deconstruction cases in both optimizer modes. The R04 cases cover duplicate

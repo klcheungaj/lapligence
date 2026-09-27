@@ -100,7 +100,8 @@ requirements above apply without repeating them for each suite.
   rejections. It also checks nested wrong-tag access and issue-time NBA targets.
   `sim_tagged_union_access` retains guard-owner stress; `sim_data_types_next`
   retains void, nested and unsupported-unpacked controls. A valid target
-  retagged before commit is Q03-open.
+  retagged before commit has Q03 undefined-behavior characterization, not a
+  conformance oracle.
 - [SYN-032 configurations](fixtures/sim/syn032_library_configs/readme.md) and
   [SYN-033 bind](fixtures/sim/syn033_structural_bind/readme.md) keep bounded library,
   configuration and structural composition separate from arbitrary verification
@@ -167,6 +168,10 @@ The [grammar/context ledger](syn038_coverage_ledger.md) and
 contexts to fixtures, test owners and expected results.
 `sim_syn038_ledger` validates the ledger and runs selected public-CLI
 witnesses.
+The grammar register retains 93 stable IDs: 87 positive Core rows, five
+negative legality/profile controls and one positive Extended UDP control.
+Negative controls and verification-only old groups are excluded from the
+positive Core denominator.
 Its N04 witnesses check 7/33/65-bit signed and unsigned runtime arithmetic in
 both editions and optimizer modes, including X/Z and zero divisors, and check
 SV `const` reads plus a rejected write. The ledger's review/Extended links name
@@ -178,6 +183,44 @@ explicit `--run-ignored` invocation for execution.
 The Core audit checks fixture paths and named test functions, then compares
 claimed syntax, widths, editions and contexts with the actual fixture and
 harness; a fixture path alone does not establish a passing outcome.
+The four named three-way chains are separate from the pairwise count; the
+record conditional/NBA chain takes `+seed=1` through the public CLI so its
+X-selector and differing data arms are runtime selected.
+The numeric let witness takes `+seed=4` in SV2009, checks typed/untyped
+formals, constant expansion, lexical parameter scope and runtime substitution,
+and has a V2001 rejection control.
+The genvar-function witness takes `+seed=22` through both editions and modes;
+its constant function uses a case and loop to set the generate bound. It checks three generated XOR lanes (5), generate-case selection (1),
+ANSI task output/inout copy-out (6/6), variable-concatenation nibbles (1/6), and a child
+integer output and hierarchical function call (44 each).
+The pull-gate fixture now has a dual-edition public-CLI owner.
+
+The [Annex A assignment table](syn038_annex_assignments.json) assigns each of
+940 reconciled PDF/addendum names to a witnessed Core row, qualified Extended
+owner, implemented outside-Core owner, named exclusion or assigned parent
+production. The PDF extraction has 811
+distinct names and the reference addendum has 794: 665 overlap, 146 appear
+only in the PDF extraction and 129 only in the addendum. The addendum-only
+entries mark their edition as an inference. These are name inventories, not
+grammar-support percentages. The 940 assignments contain 228 direct Core
+names, 61 Extended forms, 18 implemented outside-Core forms, 411 exclusions
+and 222 aliases/helpers, with zero OPEN or BOUNDARY names. The checker
+requires Extended entries to name real owning task fixtures and test functions;
+implemented outside-Core entries name a product row and execution owner.
+Sequential UDP edge/state forms remain excluded while scalar combinational
+UDP forms have SYN-031 evidence. The ordinary checker validates the frozen PDF
+name sets and re-parses the reference addendum; its optional PDF mode needs
+`pypdf` and the local specification pack:
+
+```sh
+python3 scripts/check_syn038_annex_assignments.py
+python3 scripts/check_syn038_annex_assignments.py --pdf-root docs/specification
+```
+
+`scripts/generate_syn038_annex_assignments.py` regenerates the table from
+those optional PDFs and the addendum. Run the checker and review every changed
+disposition after regeneration; grammar names that share a parent do not by
+themselves prove every semantic variant executes.
 
 Check pairwise metadata from the repository root:
 
