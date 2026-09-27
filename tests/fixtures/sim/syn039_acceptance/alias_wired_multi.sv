@@ -16,15 +16,18 @@ module tb;
     wand mirror;
     logic enable_zero;
     logic enable_one;
+    integer start_zero;
 
     alias network = mirror;
     wired_source #(.VALUE(1'b0)) zero(.enable(enable_zero), .bus(network));
     wired_source #(.VALUE(1'b1)) one(.enable(enable_one), .bus(mirror));
 
     initial begin
-        enable_zero = 1'b0;
+        if (!$value$plusargs("start=%d", start_zero))
+            $fatal(1, "missing runtime start");
+        enable_zero = 1'(start_zero);
         enable_one = 1'b0;
-        #1 $display("none=%b/%b", network, mirror);
+        #1 $display("start=%b/%b", network, mirror);
         enable_zero = 1'b1;
         #1 $display("zero=%b/%b", network, mirror);
         enable_zero = 1'b0;

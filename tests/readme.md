@@ -68,7 +68,7 @@ requirements above apply without repeating them for each suite.
 | Verification and native objects | `sim_classes`, `sim_virtual_interfaces`, `sim_dpi`, [concurrent assertions](fixtures/sim/concurrent_assertions/readme.md): nominal identity, dispatch/casts, interface bindings, scalar native ABI, sampled/sequence/property behavior and explicit rejection boundaries. |
 | Build and safeguards | `sim_cmake`, `cli_info`, `sim_memory_guard`, `support_harness`, `emit_decoupling`: CMake/generator failures, source cleanup, early CLI exits, memory limits, timeout trees, CWD recovery and frontend-independent emission. |
 | Native components | `runtime_values`, `runtime_random`, `runtime_file_io`, `runtime_boundaries`, `runtime_value_storage`: direct runtime probes, independent of HDL lowering. |
-| Integrated selected profile | `sim_syn038_ledger`, pairwise suites and `sim_syn039_acceptance`; [ledger](syn038_coverage_ledger.md), [integrated fixtures](fixtures/sim/syn039_acceptance/readme.md). |
+| Integrated selected profile | `sim_syn038_ledger`, pairwise suites and `sim_syn039_acceptance`; [ledger](syn038_coverage_ledger.md), [integrated fixtures](fixtures/sim/syn039_acceptance/readme.md). SYN-039 runs four runtime-stimulated compositions in both optimizer modes and preserves the sequential-UDP rejection. |
 | Compiler directives | `sim_directive_effects`, `sim_syn017_directive_effects`, `sim_edition` and `sim_syn038_ledger`; [SYN-017 matrix](fixtures/sim/syn017_directives/readme.md) covers both editions, both optimizer modes, preprocessing into execution, unit state and strict older-edition gates. |
 
 ### Selected-profile qualifications
@@ -364,6 +364,26 @@ Inspect every `/tmp/llg-asan-model.*` file for errors. Generated coroutine model
 may emit the `__asan_handle_no_return` stack-switch warning; file routing preserves
 exact program-stderr assertions without hiding sanitizer reports. Real stack-switch
 acceptance is distinct from sanitizer-safe components.
+
+For SYN-039, use those same sanitizer/compiler settings with the worktree
+runner and the following filters:
+
+```sh
+export CARGO_BUILD_JOBS=16
+LLG_CC=gcc \
+LLG_CFLAGS='-DACO_USE_ASAN -fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all' \
+ASAN_OPTIONS='detect_leaks=1:strict_string_checks=1:log_path=/tmp/llg-asan-syn039-model' \
+UBSAN_OPTIONS='print_stacktrace=1:halt_on_error=1' \
+scripts/run-tests.sh --test-work-dir /build --test-threads 16 \
+  --test sim_syn039_acceptance --test sim_syn038_ledger \
+  --test sim_syn033_structural_bind --test sim_syn032_library_configs \
+  --test sim_syn024_tagged_patterns
+```
+
+The integrated Extended fixture includes the combinational UDP; the ledger
+also runs its ANSI control. Inspect generated-model reports separately from
+handwritten native probes. Test counts represent repeated optimizer
+executions, not unique designs.
 
 ### Repository gate
 

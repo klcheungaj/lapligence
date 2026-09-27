@@ -34,9 +34,53 @@ and 129 only in the checklist (940 in the union). Its name dispositions are
 simulator forms outside Core, 411 named profile exclusions and 222 syntax
 aliases/helpers, with zero unassigned names. The former four boundary names
 are classified by their qualified combinational or rejected sequential UDP
-form. These
-are grammar-name audit counts, not a support percentage; the exact admitted
-forms and execution limits are stated in this checklist.
+form. These are grammar-name audit counts, not a support percentage; the
+exact admitted forms and execution limits are stated in this checklist.
+
+## SYN-039 selected-profile completion boundary
+
+The selected simulator profile targets Verilog-2001 and SystemVerilog-2009.
+Core acceptance is the finite RTL grammar/context set mapped by the SYN-038
+ledger, including fixed values, ports, processes, expressions, nets and
+elaboration. Selected Extended acceptance covers bounded tagged/pattern cases,
+fixed-array methods and memory views, combinational UDPs, libraries and
+configurations, and structural bind in the edition and context stated by each
+feature row. The SYN-039 integrated CLI fixtures compose an array-of-record
+datapath, a parameterized interface/generate memory, an aliased wired network,
+and a tagged-pattern/UDP/configuration/bind design. They use runtime stimulus
+in both optimizer modes. Verilog-2001 shares only its legal Core and Extended
+forms; SV-only constructs remain edition-gated.
+
+This is a bounded simulator claim on the tested WSL2 Linux x86_64 host.
+Native Windows/macOS and other release-matrix hosts have not been executed for
+this acceptance. The targeted generated-model ASan/UBSan/leak lane passed
+62/62 test cases here; its 100 report files contained only the documented
+libaco stack-switch warning, with no sanitizer error. Handwritten native
+probes are separate evidence. The orchestrator will record the final
+current-source full-suite result and SYN-000 green revision after integration;
+focused results do not supply that record. The command and generated-model
+sanitizer lane are in the [test guide](../tests/readme.md).
+
+The generated fixed-array ceiling is 65,536 cells, below the cited
+16,777,216-element minimum (V §3.10; SV §7.4.2). The selected packed
+conditional policy turns Z/Z into X in an ambiguous conditional (SYN-020;
+§7 below). N12 admits literal configuration blocks in library maps by the
+formal grammar despite conflicting adjacent prose; macro-generated map
+declarations are excluded. Q04 per-library `-incdir` is implemented with
+library-scoped lookup and the precedence stated in §3. Q01 mixed-state
+structure-pattern constants have a fixed two-state member conversion. Q02
+memory-file intersections and same-slot wake order, and Q03 tagged-member
+NBA retagging remain **undefined behavior pending cross-simulator
+resolution**. Their characterization outputs are not conformance evidence.
+
+The six SYN-034 optional target uses remain excluded from this selected
+profile: elaboration-only static class methods/constant objects; operator
+overloading declarations; elaboration-only fixed-input locator results;
+legacy procedural assign/deassign or static-initialization force; module-body
+specparams; and finite assertion/monitor synthesis. These exclusions do not
+deny separately documented simulator behavior. SYN-035 PLA modeling remains
+unimplemented and rejects with an explicit diagnostic. This profile does not
+claim universal IEEE language coverage or hardware synthesis acceptance.
 
 ## Target language editions
 

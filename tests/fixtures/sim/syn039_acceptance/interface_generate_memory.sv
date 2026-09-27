@@ -35,6 +35,7 @@ endmodule
 
 module tb;
     logic [7:0] values [0:1];
+    integer address_seed;
     genvar index;
     generate
         for (index = 0; index < 2; index = index + 1) begin : generated_bank
@@ -47,8 +48,13 @@ module tb;
     endgenerate
 
     initial begin
-        generated_bank[0].u_bus.address = 2'd0;
-        generated_bank[1].u_bus.address = 2'd1;
+        if (!$value$plusargs("address=%d", address_seed))
+            $fatal(1, "missing runtime address");
+        if (address_seed == 0)
+            generated_bank[0].u_bus.address = 2'd0;
+        else
+            generated_bank[0].u_bus.address = 2'(address_seed);
+        generated_bank[1].u_bus.address = 2'(address_seed + 1);
         #1;
         $display("first=%h/%h bus=%h/%h", values[0], values[1],
                  generated_bank[0].u_bus.data, generated_bank[1].u_bus.data);

@@ -21,6 +21,17 @@ pub(crate) fn invoke_with_source_prefix(
     optimized: bool,
     args: &[&str],
 ) -> Output {
+    invoke_with_source_prefix_and_runtime_args(suite, fixture, prefix, optimized, args, &[])
+}
+
+fn invoke_with_source_prefix_and_runtime_args(
+    suite: &str,
+    fixture: &str,
+    prefix: &[&str],
+    optimized: bool,
+    args: &[&str],
+    runtime_args: &[&str],
+) -> Output {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/sim")
         .join(suite);
@@ -45,6 +56,9 @@ pub(crate) fn invoke_with_source_prefix(
         command.arg(path);
     }
     command.arg(source);
+    if !runtime_args.is_empty() {
+        command.arg("--").args(runtime_args);
+    }
     sim_harness::run_command(&mut command, Duration::from_secs(180))
         .unwrap_or_else(|error| panic!("{suite}/{fixture}, optimized={optimized}: {error}"))
 }
@@ -293,6 +307,33 @@ pub(crate) fn run_case_with_source_prefix(
         let output = invoke_with_source_prefix(suite, fixture, prefix, optimized, args);
         let label = format!("{suite}/{fixture}, optimized={optimized}");
         assert_case_output(output, &label, expected, expected_stderr, expected_warnings);
+    }
+}
+
+pub(crate) fn run_case_with_source_prefix_and_runtime_args(
+    suite: &str,
+    fixture: &str,
+    prefix: &[&str],
+    expected: &str,
+    expected_stderr: &str,
+    args: &[&str],
+    runtime_args: &[&str],
+) {
+    assert!(
+        llg::sim::build::cmake_available(),
+        "CLI tests require CMake"
+    );
+    for optimized in [false, true] {
+        let output = invoke_with_source_prefix_and_runtime_args(
+            suite,
+            fixture,
+            prefix,
+            optimized,
+            args,
+            runtime_args,
+        );
+        let label = format!("{suite}/{fixture}, optimized={optimized}");
+        assert_case_output(output, &label, expected, expected_stderr, &[]);
     }
 }
 

@@ -46,6 +46,7 @@ module tb;
     logic clk;
     logic reset_n;
     logic [8:0] total;
+    integer seed;
 
     record_stage #(.N(2)) dut (
         .clk(clk),
@@ -56,15 +57,17 @@ module tb;
     );
 
     initial begin
+        if (!$value$plusargs("seed=%d", seed))
+            $fatal(1, "missing runtime seed");
         clk = 1'b0;
         reset_n = 1'b0;
-        input_records[0] = '{tag: 8'd3, value: 8'd4};
-        input_records[1] = '{tag: 8'd5, value: 8'd6};
+        input_records[0] = '{tag: 8'd3, value: 8'(4 + seed)};
+        input_records[1] = '{tag: 8'd5, value: 8'(6 + seed)};
         #1;
         if (output_records[0].tag !== 8'd4
-                || output_records[0].value !== 8'd11
+                || output_records[0].value !== 8'(11 + 2 * seed)
                 || output_records[1].tag !== 8'd6
-                || output_records[1].value !== 8'd17)
+                || output_records[1].value !== 8'(17 + 2 * seed))
             $fatal(1, "array record combinational result");
         clk = 1'b1;
         #1 clk = 1'b0;

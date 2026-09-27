@@ -27,6 +27,7 @@ module pattern_udp (
 );
     logic parity;
     choice_t choice;
+    logic [7:0] bound_result;
 
     syn039_xor xor_gate(parity, left[0], right[0]);
 
@@ -41,20 +42,35 @@ module pattern_udp (
     end
 endmodule
 
+module syn039_bound_observer (
+    input logic [7:0] source,
+    output logic [7:0] observed
+);
+    assign observed = source;
+endmodule
+
+bind pattern_udp syn039_bound_observer observer(
+    .source(result), .observed(bound_result)
+);
+
 module top;
     logic [7:0] left;
     logic [7:0] right;
     logic [7:0] pattern_result;
     logic [7:0] cell_result;
+    integer runtime_left;
 
     pattern_udp pattern(.left(left), .right(right), .result(pattern_result));
     syn039_cell configured(.input_value(left), .output_value(cell_result));
 
     initial begin
-        left = 8'h5a;
+        if (!$value$plusargs("left=%h", runtime_left))
+            $fatal(1, "missing runtime left operand");
+        left = 8'(runtime_left);
         right = 8'h00;
         #1;
-        $display("configured=%h pattern=%h", cell_result, pattern_result);
+        $display("configured=%h pattern=%h bound=%h", cell_result,
+                 pattern_result, pattern.bound_result);
         $finish(0);
     end
 endmodule
