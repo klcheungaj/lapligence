@@ -202,6 +202,9 @@ captured once; filters use per-item bindings and first-match/default order.
 Tagged pattern checks use the enclosing case mode; ordinary member guards are exact.
 Recursive constant checks read each structure member in its own
 state domain, including two-state conversion inside a four-state packed record.
+Constant-pattern operands admit fixed integral atoms, packed structures and
+untagged packed unions; reject unpacked, real and native shapes before scalar
+comparison without changing their owned descriptors.
 `inside` follows expression result types before storage roots, keeps
 casts, descends arrays to singulars (not struct members), evaluates selector and
 scalar/range endpoints once, and uses wildcard equality/inclusive comparisons.

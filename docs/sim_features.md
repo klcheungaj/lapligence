@@ -425,8 +425,11 @@ real values use a separate representation.
   `unique0` reports multiple matches, and `priority` reports zero matches
   after item filters. A default suppresses zero-match reports. Tag/payload
   comparisons inherit the enclosing case mode; ordinary member access and
-  `if ... matches` remain exact. Primitive integral constant patterns follow
-  the same enclosing mode; outside `casez`/`casex` they compare X/Z exactly.
+  `if ... matches` remain exact. Integral constant patterns also accept whole
+  packed structs and untagged packed unions, including nested packed members
+  and tagged packed payloads. A packed struct in a matching case retains the
+  enclosing case mode; outside `casez`/`casex` it compares X/Z exactly.
+  Unpacked aggregates and real values are not integral constant patterns.
   Bindings end at the true arm or case item.
   Fixed structure pattern checks read each member in its own state domain: a
   two-state member in a four-state packed record converts X/Z to zero before

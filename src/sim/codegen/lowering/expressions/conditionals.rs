@@ -4,6 +4,17 @@ use crate::core::db::ConditionalPatternKind;
 use crate::sim::ir::{IrPatternCheck, IrPatternExpr, IrPatternMatchKind};
 use std::collections::HashSet;
 
+fn supported_fixed_integral_value(descriptor: &TypeDescriptor) -> bool {
+    matches!(
+        &descriptor.shape,
+        TypeShape::PackedAtom { .. }
+            | TypeShape::Aggregate(crate::core::db::AggregateLayout {
+                kind: AggregateKind::PackedStruct | AggregateKind::PackedUnion,
+                ..
+            })
+    ) && Codegen::fixed_descriptor_width(descriptor).is_some()
+}
+
 impl Codegen<'_> {
     pub(super) fn lower_conditional(
         &mut self,
@@ -219,7 +230,7 @@ impl Codegen<'_> {
         if value.is_real()
             || self
                 .query_descriptor(expression)
-                .is_some_and(|descriptor| !matches!(descriptor.shape, TypeShape::PackedAtom { .. }))
+                .is_some_and(|descriptor| !supported_fixed_integral_value(descriptor))
         {
             return Err(format!(
                 "conditional predicate pattern requires an integral value in `{scope_path}`"
@@ -235,7 +246,7 @@ impl Codegen<'_> {
         if constant.is_real()
             || self
                 .query_descriptor(*constant_node)
-                .is_some_and(|descriptor| !matches!(descriptor.shape, TypeShape::PackedAtom { .. }))
+                .is_some_and(|descriptor| !supported_fixed_integral_value(descriptor))
         {
             return Err(format!(
                 "conditional predicate constant pattern requires an integral constant in `{scope_path}`"
@@ -369,6 +380,11 @@ impl Codegen<'_> {
             match info.kind {
                 ConditionalPatternKind::Wildcard => {}
                 ConditionalPatternKind::Constant => {
+                    if !supported_fixed_integral_value(&member.descriptor) {
+                        return Err(format!(
+                            "conditional structure constant pattern requires an integral member in `{scope_path}`"
+                        ));
+                    }
                     let children = self.db.node(field.pattern).children();
                     let [constant_node] = children else {
                         return Err(format!(
@@ -377,11 +393,9 @@ impl Codegen<'_> {
                     };
                     let constant = self.lower_expr(scope_path, *constant_node)?;
                     if constant.is_real()
-                        || !matches!(
-                            self.query_descriptor(*constant_node)
-                                .map(|descriptor| &descriptor.shape),
-                            Some(TypeShape::PackedAtom { .. })
-                        )
+                        || !self
+                            .query_descriptor(*constant_node)
+                            .is_some_and(supported_fixed_integral_value)
                     {
                         return Err(format!(
                             "conditional structure constant pattern requires an integral constant in `{scope_path}`"
@@ -631,6 +645,11 @@ impl Codegen<'_> {
         match info.kind {
             ConditionalPatternKind::Wildcard => Ok(()),
             ConditionalPatternKind::Constant => {
+                if !supported_fixed_integral_value(descriptor) {
+                    return Err(format!(
+                        "nested conditional constant pattern requires an integral payload in `{scope_path}`"
+                    ));
+                }
                 let children = self.db.node(pattern_id).children();
                 let [constant_node] = children else {
                     return Err(format!(
@@ -639,11 +658,9 @@ impl Codegen<'_> {
                 };
                 let constant = self.lower_expr(scope_path, *constant_node)?;
                 if constant.is_real()
-                    || !matches!(
-                        self.query_descriptor(*constant_node)
-                            .map(|descriptor| &descriptor.shape),
-                        Some(TypeShape::PackedAtom { .. })
-                    )
+                    || !self
+                        .query_descriptor(*constant_node)
+                        .is_some_and(supported_fixed_integral_value)
                 {
                     return Err(format!(
                         "nested conditional constant pattern requires an integral constant in `{scope_path}`"

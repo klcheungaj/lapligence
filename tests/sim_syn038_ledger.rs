@@ -1393,8 +1393,8 @@ fn review_and_extended_links_name_real_owners_and_keep_open_cells_visible() {
     }
     assert_eq!(
         ids.len(),
-        31,
-        "N01-N12, Q01-Q04, SYN-021..033, 035/036 links required"
+        35,
+        "N01-N12, Q01-Q04, SYN-021..033, 035/036 and A1 links required"
     );
     let pla = links
         .lines()
@@ -1441,7 +1441,7 @@ fn requirement_ids_are_unique_across_selected_boundary_and_excluded_tables() {
     }
     assert_eq!(
         ids.len(),
-        141,
+        145,
         "stable SYN-038 requirement register changed"
     );
 }
