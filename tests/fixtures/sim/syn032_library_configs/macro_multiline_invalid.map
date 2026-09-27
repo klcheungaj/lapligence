@@ -1,0 +1,3 @@
+`define BAD not_a_library \
+chosen macro_rtl.sv;
+`BAD

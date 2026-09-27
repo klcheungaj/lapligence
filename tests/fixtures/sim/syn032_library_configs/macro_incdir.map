@@ -1,0 +1,3 @@
+`define DIRS -incdir incdir_headers/rtl_first, incdir_headers/rtl_second
+library rtl incdir_rtl.sv `DIRS;
+library gate incdir_gate.sv -incdir incdir_headers/gate;

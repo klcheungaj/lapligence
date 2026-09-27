@@ -4262,7 +4262,9 @@ std::unique_ptr<LlgSlangSnapshot> compileImpl(const LlgSlangCompileRequest& requ
   sourceTexts.reserve(static_cast<size_t>(request.source_count + request.library_source_count));
   for (uint64_t i = 0; i < request.source_count; i++) {
     const auto& input = request.sources[i];
-    if ((input.flags & ~LLG_SLANG_SOURCE_COMPILATION_UNIT) != 0 || input.reserved != 0)
+    if ((input.flags & ~(LLG_SLANG_SOURCE_COMPILATION_UNIT | LLG_SLANG_SOURCE_LIBRARY_MAP)) != 0 ||
+        ((input.flags & LLG_SLANG_SOURCE_LIBRARY_MAP) != 0 &&
+         (input.flags & LLG_SLANG_SOURCE_COMPILATION_UNIT) == 0) || input.reserved != 0)
       throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT,
                           "unknown source flags or nonzero reserved field");
     const std::string_view name = checkedView(input.name, "source name");
@@ -4287,7 +4289,7 @@ std::unique_ptr<LlgSlangSnapshot> compileImpl(const LlgSlangCompileRequest& requ
   librarySourceTexts.reserve(static_cast<size_t>(request.library_source_count));
   for (uint64_t i = 0; i < request.library_source_count; i++) {
     const auto& input = request.library_sources[i];
-    if (input.flags != 0 || input.reserved != 0)
+    if ((input.flags & ~LLG_SLANG_LIBRARY_SOURCE_MAP) != 0 || input.reserved != 0)
       throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT,
                           "unknown library source flags or nonzero reserved field");
     const std::string_view name = checkedView(input.name, "library source name");
@@ -4490,6 +4492,7 @@ std::unique_ptr<LlgSlangSnapshot> compileImpl(const LlgSlangCompileRequest& requ
   std::vector<SourceBuffer> libraryBuffers;
   libraryBuffers.reserve(static_cast<size_t>(request.library_source_count));
   std::vector<std::pair<SourceLibrary*, std::vector<SourceBuffer>>> libraryBufferGroups;
+  std::vector<SourceBuffer> libraryMapBuffers;
   for (uint64_t i = 0; i < request.library_source_count; i++) {
     auto* library = libraryFor(libraryNames[static_cast<size_t>(i)]);
     auto buffer = sourceManager.assignText(
@@ -4497,6 +4500,10 @@ std::unique_ptr<LlgSlangSnapshot> compileImpl(const LlgSlangCompileRequest& requ
         librarySourceTexts[static_cast<size_t>(i)], SourceLocation(), library);
     sourceManager.setBufferKind(buffer.id, SourceManager::BufferKind::LibraryFile);
     libraryBuffers.push_back(buffer);
+    if ((request.library_sources[i].flags & LLG_SLANG_LIBRARY_SOURCE_MAP) != 0) {
+      libraryMapBuffers.push_back(buffer);
+      continue;
+    }
     auto group = std::find_if(libraryBufferGroups.begin(), libraryBufferGroups.end(),
                               [library](const auto& entry) { return entry.first == library; });
     if (group == libraryBufferGroups.end()) {
@@ -4531,11 +4538,17 @@ std::unique_ptr<LlgSlangSnapshot> compileImpl(const LlgSlangCompileRequest& requ
     std::vector<SourceBuffer> compilationBuffers;
     compilationBuffers.reserve(static_cast<size_t>(request.source_count));
     for (uint64_t i = 0; i < request.source_count; i++) {
-      if ((request.sources[i].flags & LLG_SLANG_SOURCE_COMPILATION_UNIT) != 0)
+      if ((request.sources[i].flags & LLG_SLANG_SOURCE_LIBRARY_MAP) != 0) {
+        auto tree = syntax::SyntaxTree::fromLibraryMapBuffer(
+            buffers[static_cast<size_t>(i)], sourceManager, parseOptions);
+        compilation.addSyntaxTree(std::move(tree));
+        anyCompilationUnit = true;
+      } else if ((request.sources[i].flags & LLG_SLANG_SOURCE_COMPILATION_UNIT) != 0) {
         compilationBuffers.push_back(buffers[static_cast<size_t>(i)]);
+      }
     }
-    anyCompilationUnit = !compilationBuffers.empty();
-    if (anyCompilationUnit) {
+    anyCompilationUnit |= !compilationBuffers.empty();
+    if (!compilationBuffers.empty()) {
       auto tree = syntax::SyntaxTree::fromBuffers(
           compilationBuffers, sourceManager, parseOptions);
       if ((request.flags & LLG_SLANG_COMPILE_LIBRARY_UNITS) != 0)
@@ -4547,8 +4560,11 @@ std::unique_ptr<LlgSlangSnapshot> compileImpl(const LlgSlangCompileRequest& requ
       if ((request.sources[i].flags & LLG_SLANG_SOURCE_COMPILATION_UNIT) == 0)
         continue;
       anyCompilationUnit = true;
-      auto tree = syntax::SyntaxTree::fromBuffer(
-          buffers[static_cast<size_t>(i)], sourceManager, parseOptions);
+      auto tree = (request.sources[i].flags & LLG_SLANG_SOURCE_LIBRARY_MAP) != 0
+          ? syntax::SyntaxTree::fromLibraryMapBuffer(
+                buffers[static_cast<size_t>(i)], sourceManager, parseOptions)
+          : syntax::SyntaxTree::fromBuffer(
+                buffers[static_cast<size_t>(i)], sourceManager, parseOptions);
       if ((request.flags & LLG_SLANG_COMPILE_LIBRARY_UNITS) != 0)
         tree->isLibraryUnit = true;
       compilation.addSyntaxTree(std::move(tree));
@@ -4556,6 +4572,11 @@ std::unique_ptr<LlgSlangSnapshot> compileImpl(const LlgSlangCompileRequest& requ
   }
   for (auto& group : libraryBufferGroups) {
     auto tree = syntax::SyntaxTree::fromBuffers(group.second, sourceManager, parseOptions);
+    tree->isLibraryUnit = true;
+    compilation.addSyntaxTree(std::move(tree));
+  }
+  for (auto& buffer : libraryMapBuffers) {
+    auto tree = syntax::SyntaxTree::fromLibraryMapBuffer(buffer, sourceManager, parseOptions);
     tree->isLibraryUnit = true;
     compilation.addSyntaxTree(std::move(tree));
   }

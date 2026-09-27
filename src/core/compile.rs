@@ -26,6 +26,8 @@ pub struct OwnedSource {
     pub name: String,
     pub text: String,
     pub is_compilation_unit: bool,
+    /// Parse an admitted map with Slang's library-map grammar.
+    pub is_library_map: bool,
 }
 
 impl OwnedSource {
@@ -34,6 +36,7 @@ impl OwnedSource {
             name: name.into(),
             text: text.into(),
             is_compilation_unit: true,
+            is_library_map: false,
         }
     }
 
@@ -42,6 +45,7 @@ impl OwnedSource {
             name: name.into(),
             text: text.into(),
             is_compilation_unit: false,
+            is_library_map: false,
         }
     }
 }
@@ -54,6 +58,8 @@ pub struct LibrarySource {
     pub name: String,
     pub text: String,
     pub library: String,
+    /// Parse this library source as a library map.
+    pub is_library_map: bool,
 }
 
 /// An ordered include search directory for one source library.
@@ -73,6 +79,7 @@ impl LibrarySource {
             name: name.into(),
             text: text.into(),
             library: library.into(),
+            is_library_map: false,
         }
     }
 }
@@ -682,6 +689,8 @@ pub fn compile(opts: &CompileOpts) -> Result<CompileOut, StartupError> {
         )?;
         collect_in_memory_library_maps(
             &opts.library_maps,
+            &opts.defines,
+            opts.edition,
             &mut library_include_dirs,
             &mut buffers,
             source_count,
@@ -835,6 +844,8 @@ pub fn compile_sources(
     );
     let map_originals = admit_in_memory_library_maps_with_dirs(
         &opts.library_maps,
+        &opts.defines,
+        opts.edition,
         &mut library_include_dirs,
         &mut owned,
         &mut library_owned,
@@ -919,6 +930,7 @@ fn compile_source_groups(
             name: &source.name,
             text: &source.text,
             is_compilation_unit: source.is_compilation_unit,
+            is_library_map: source.is_library_map,
         })
         .collect();
     let borrowed_libraries: Vec<_> = library_sources
@@ -927,6 +939,7 @@ fn compile_source_groups(
             name: &source.name,
             text: &source.text,
             library: &source.library,
+            is_library_map: source.is_library_map,
         })
         .collect();
     let options = CompileOptions {
@@ -1363,6 +1376,7 @@ struct LibraryMapToken {
     value: String,
     quoted: bool,
     configuration: Option<std::ops::Range<usize>>,
+    offset: usize,
 }
 
 impl LibraryMapToken {
@@ -1466,20 +1480,20 @@ fn admit_library_maps_with_targets(
         let (map_path, text, map_target) = pending[cursor].clone();
         cursor += 1;
         work.charge(1, "map parsing")?;
+        let expanded =
+            preprocess_library_map(&text, &opts.defines, opts.edition, work).map_err(|error| {
+                StartupError::new(error.kind(), format!("{}: {error}", map_path.display()))
+            })?;
         let ParsedLibraryMap {
             includes,
             entries,
             configuration,
-        } = parse_library_map(&text, work).map_err(|error| {
+        } = parse_library_map(&expanded, work).map_err(|error| {
             StartupError::new(error.kind(), format!("{}: {error}", map_path.display()))
         })?;
-        if let Some(configuration) = configuration {
-            buffers.retain_configuration(
-                &map_path.to_string_lossy(),
-                &text,
-                configuration,
-                work,
-            )?;
+        if configuration.is_some() {
+            charge_library_map_text_allocation(work, &text, "native map source clone")?;
+            buffers.retain_configuration(&map_path.to_string_lossy(), &text, text.clone(), work)?;
         }
         let base = map_path.parent().unwrap_or_else(|| Path::new("."));
         for include in includes {
@@ -1659,6 +1673,8 @@ fn admit_in_memory_library_maps(
 ) -> Result<Vec<OwnedSource>, StartupError> {
     admit_in_memory_library_maps_with_dirs(
         maps,
+        &[],
+        LanguageEdition::SystemVerilog2009,
         &mut Vec::new(),
         sources,
         library_sources,
@@ -1672,6 +1688,8 @@ fn admit_in_memory_library_maps(
 #[allow(clippy::too_many_arguments)]
 fn admit_in_memory_library_maps_with_dirs(
     maps: &[OwnedSource],
+    defines: &[String],
+    edition: LanguageEdition,
     library_include_dirs: &mut Vec<LibraryIncludeDir>,
     sources: &mut Vec<OwnedSource>,
     library_sources: &mut Vec<LibrarySource>,
@@ -1686,6 +1704,8 @@ fn admit_in_memory_library_maps_with_dirs(
     let mut buffers = LibraryMapBuffers::new(sources, library_sources, work)?;
     collect_in_memory_library_maps(
         maps,
+        defines,
+        edition,
         library_include_dirs,
         &mut buffers,
         *source_count,
@@ -1695,8 +1715,11 @@ fn admit_in_memory_library_maps_with_dirs(
     buffers.finish(remaining, work)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn collect_in_memory_library_maps(
     maps: &[OwnedSource],
+    defines: &[String],
+    edition: LanguageEdition,
     library_include_dirs: &mut Vec<LibraryIncludeDir>,
     buffers: &mut LibraryMapBuffers<'_>,
     source_count: usize,
@@ -1746,10 +1769,13 @@ fn collect_in_memory_library_maps(
     // resolves; a map can name itself or another admitted map as library source.
     let mut parsed = Vec::new();
     for (name, text) in &pending {
-        let mut map = parse_library_map(text, work)
+        let expanded = preprocess_library_map(text, defines, edition, work)
             .map_err(|error| StartupError::new(error.kind(), format!("{name}: {error}")))?;
-        if let Some(configuration) = map.configuration.take() {
-            buffers.retain_configuration(name, text, configuration, work)?;
+        let mut map = parse_library_map(&expanded, work)
+            .map_err(|error| StartupError::new(error.kind(), format!("{name}: {error}")))?;
+        if map.configuration.take().is_some() {
+            charge_library_map_text_allocation(work, text, "native map source clone")?;
+            buffers.retain_configuration(name, text, text.clone(), work)?;
         }
         work.charge_allocation_usize(std::mem::size_of::<ParsedLibraryMap>(), "parsed map record")?;
         parsed.push(Some(map));
@@ -2255,6 +2281,168 @@ struct ParsedLibraryMap {
     configuration: Option<String>,
 }
 
+/// Expand only the map's lexical input for bounded path admission. Slang
+/// independently preprocesses the original map when it owns configurations,
+/// preserving the macro invocation's native source range.
+fn preprocess_library_map(
+    text: &str,
+    defines: &[String],
+    edition: LanguageEdition,
+    work: &mut LibraryMapWorkBudget,
+) -> Result<String, StartupError> {
+    let mut macros = macro_environment_from_defines(defines);
+    let budget = MacroExpansionBudget::new(work.allocation_limit);
+    let mut conditions: Vec<ConditionalFrame> = Vec::new();
+    let mut output = String::new();
+    let mut block_comment = false;
+    for (line_number, raw_line) in logical_preprocessor_lines(text) {
+        let line = strip_preprocessor_comments(&raw_line, &mut block_comment);
+        let trimmed = line.trim_start();
+        let directive = if trimmed.starts_with('`') {
+            preprocessor_directive(trimmed)
+        } else {
+            None
+        };
+        let active = conditions.last().is_none_or(|frame| frame.active);
+        let mut emitted = false;
+        let error = |message: &str| {
+            StartupError::new(
+                StartupErrorKind::InvalidArgument,
+                format!("library map line {line_number}: {message}"),
+            )
+        };
+        match directive {
+            Some(("ifdef" | "ifndef", arguments)) => {
+                let name = first_macro_identifier(arguments)
+                    .ok_or_else(|| error("conditional requires a macro name"))?;
+                let selected = macros.contains_key(name) == trimmed.starts_with("`ifdef");
+                conditions.push(ConditionalFrame {
+                    parent_active: active,
+                    branch_taken: active && selected,
+                    active: active && selected,
+                    seen_else: false,
+                });
+            }
+            Some(("elsif", arguments)) => {
+                let name = first_macro_identifier(arguments)
+                    .ok_or_else(|| error("`elsif requires a macro name"))?;
+                let frame = conditions
+                    .last_mut()
+                    .ok_or_else(|| error("`elsif without `ifdef"))?;
+                if frame.seen_else {
+                    return Err(error("`elsif after `else"));
+                }
+                frame.active =
+                    frame.parent_active && !frame.branch_taken && macros.contains_key(name);
+                frame.branch_taken |= frame.active;
+            }
+            Some(("else", _)) => {
+                let frame = conditions
+                    .last_mut()
+                    .ok_or_else(|| error("`else without `ifdef"))?;
+                if frame.seen_else {
+                    return Err(error("duplicate `else"));
+                }
+                frame.active = frame.parent_active && !frame.branch_taken;
+                frame.branch_taken = true;
+                frame.seen_else = true;
+            }
+            Some(("endif", _)) => {
+                conditions
+                    .pop()
+                    .ok_or_else(|| error("`endif without `ifdef"))?;
+            }
+            Some(("define", arguments)) if active => {
+                let arguments = arguments.trim_start();
+                let name = first_macro_identifier(arguments)
+                    .ok_or_else(|| error("`define requires a macro name"))?;
+                if !arguments.starts_with(name) {
+                    return Err(error("`define requires a valid macro name"));
+                }
+                let remainder = &arguments[name.len()..];
+                if remainder.starts_with('(') && macro_parameters(remainder, 0).is_none() {
+                    return Err(error("malformed function-like macro definition"));
+                }
+                if matches!(
+                    name,
+                    "define"
+                        | "undef"
+                        | "undefineall"
+                        | "include"
+                        | "ifdef"
+                        | "ifndef"
+                        | "elsif"
+                        | "else"
+                        | "endif"
+                        | "resetall"
+                        | "timescale"
+                        | "default_nettype"
+                        | "celldefine"
+                        | "endcelldefine"
+                        | "line"
+                        | "begin_keywords"
+                        | "end_keywords"
+                        | "pragma"
+                ) {
+                    return Err(error("compiler directive names cannot be redefined"));
+                }
+                define_macro(arguments, &mut macros);
+            }
+            Some(("undef", arguments)) if active => {
+                let name = first_macro_identifier(arguments)
+                    .ok_or_else(|| error("`undef requires a macro name"))?;
+                macros.remove(name);
+            }
+            Some(("undefineall", _)) if active => {
+                if edition == LanguageEdition::Verilog2001 {
+                    return Err(error("`undefineall requires SystemVerilog-2009"));
+                }
+                macros.clear();
+            }
+            Some(("include", _)) if active => {
+                return Err(error(
+                    "`include in a library map is unsupported; use a map include declaration",
+                ));
+            }
+            _ if active => {
+                let expanded = expand_macros(&raw_line, &macros, &budget)?;
+                let mut comment = false;
+                let visible = strip_preprocessor_comments(&expanded, &mut comment);
+                if let Some((name, _)) = preprocessor_directive(&visible) {
+                    let message = if macros.contains_key(name) {
+                        format!("recursive or over-depth macro `{name}")
+                    } else {
+                        format!("undefined macro `{name}")
+                    };
+                    return Err(error(&message));
+                }
+                work.charge_usize(expanded.len() + 1, "expanded library map")?;
+                work.charge_allocation_usize(expanded.len() + 1, "expanded library map")?;
+                output.push_str(&expanded);
+                emitted = true;
+            }
+            _ => {}
+        }
+        let newlines = if emitted {
+            1
+        } else {
+            raw_line.bytes().filter(|byte| *byte == b'\n').count() + 1
+        };
+        work.charge_usize(newlines, "expanded library map lines")?;
+        work.charge_allocation_usize(newlines, "expanded library map lines")?;
+        for _ in 0..newlines {
+            output.push('\n');
+        }
+    }
+    if !conditions.is_empty() {
+        return Err(StartupError::new(
+            StartupErrorKind::InvalidArgument,
+            "library map has an unbalanced conditional directive",
+        ));
+    }
+    Ok(output)
+}
+
 fn parse_library_map(
     text: &str,
     work: &mut LibraryMapWorkBudget,
@@ -2359,7 +2547,15 @@ fn parse_library_map(
             _ => {
                 return Err(StartupError::new(
                     StartupErrorKind::InvalidArgument,
-                    format!("unexpected library map token `{}`", tokens[index].value),
+                    format!(
+                        "library map line {}: unexpected token `{}`",
+                        text[..tokens[index].offset]
+                            .bytes()
+                            .filter(|byte| *byte == b'\n')
+                            .count()
+                            + 1,
+                        tokens[index].value
+                    ),
                 ));
             }
         }
@@ -2391,6 +2587,7 @@ fn charge_library_map_clone(
 fn push_library_map_token(
     tokens: &mut Vec<LibraryMapToken>,
     value: &str,
+    offset: usize,
     work: &mut LibraryMapWorkBudget,
     operation: &str,
 ) -> Result<(), StartupError> {
@@ -2399,6 +2596,7 @@ fn push_library_map_token(
         value: value.to_owned(),
         quoted: false,
         configuration: None,
+        offset,
     });
     Ok(())
 }
@@ -2454,7 +2652,13 @@ fn library_map_tokens(
             // Only delimit the unchanged configuration block. The ordinary
             // Slang parser still owns its grammar, names and binding rules.
             let end = library_configs::declaration_end(text, index + 6)?;
-            push_library_map_token(&mut tokens, "config", work, "map configuration token")?;
+            push_library_map_token(
+                &mut tokens,
+                "config",
+                index,
+                work,
+                "map configuration token",
+            )?;
             if let Some(token) = tokens.last_mut() {
                 token.configuration = Some(index..end);
             }
@@ -2530,6 +2734,7 @@ fn library_map_tokens(
                 value: token,
                 quoted: true,
                 configuration: None,
+                offset: content_start - 1,
             });
             continue;
         }
@@ -2538,6 +2743,7 @@ fn library_map_tokens(
             push_library_map_token(
                 &mut tokens,
                 punctuation,
+                index,
                 work,
                 "library map punctuation token allocation",
             )?;
@@ -2554,6 +2760,7 @@ fn library_map_tokens(
         push_library_map_token(
             &mut tokens,
             &text[start..index],
+            start,
             work,
             "library map token allocation",
         )?;
@@ -3462,6 +3669,7 @@ struct ConditionalFrame {
     parent_active: bool,
     branch_taken: bool,
     active: bool,
+    seen_else: bool,
 }
 
 fn macro_environment_from_defines(defines: &[String]) -> MacroEnvironment {
@@ -3609,7 +3817,7 @@ where
 {
     let mut conditions = Vec::new();
     let mut block_comment = false;
-    for raw_line in logical_preprocessor_lines(source) {
+    for (_, raw_line) in logical_preprocessor_lines(source) {
         let line = strip_preprocessor_comments(&raw_line, &mut block_comment);
         let Some((directive, arguments)) = preprocessor_directive(&line) else {
             continue;
@@ -3630,6 +3838,7 @@ where
                     parent_active,
                     branch_taken: parent_active && condition,
                     active: parent_active && condition,
+                    seen_else: false,
                 });
             }
             "elsif" => {
@@ -3689,23 +3898,31 @@ where
     Ok(())
 }
 
-fn logical_preprocessor_lines(source: &str) -> Vec<String> {
+fn logical_preprocessor_lines(source: &str) -> Vec<(usize, String)> {
     let mut lines = Vec::new();
     let mut current = String::new();
-    for raw in source.split_inclusive('\n') {
+    let mut start_line = 1;
+    let mut continuing = false;
+    for (index, raw) in source.split_inclusive('\n').enumerate() {
+        if !continuing {
+            start_line = index + 1;
+        }
         let mut line = raw.strip_suffix('\n').unwrap_or(raw);
         if line.ends_with('\r') {
             line = &line[..line.len() - 1];
         }
         if let Some(stripped) = line.strip_suffix('\\') {
             current.push_str(stripped);
+            current.push('\n');
+            continuing = true;
         } else {
             current.push_str(line);
-            lines.push(std::mem::take(&mut current));
+            lines.push((start_line, std::mem::take(&mut current)));
+            continuing = false;
         }
     }
     if !current.is_empty() {
-        lines.push(current);
+        lines.push((start_line, current));
     }
     lines
 }

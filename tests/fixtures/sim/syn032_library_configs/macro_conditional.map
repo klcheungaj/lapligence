@@ -1,0 +1,6 @@
+`ifdef PICK_GATE
+  library chosen macro_gate.sv;
+`else
+  library chosen macro_rtl.sv;
+`endif
+config choose; design work.macro_top; default liblist chosen; endconfig

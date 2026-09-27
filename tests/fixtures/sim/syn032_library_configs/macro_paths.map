@@ -1,0 +1,3 @@
+`define PATHS(first, second) first, second
+library chosen `PATHS(macro_rtl.sv, macro_unused.sv);
+config choose; design work.macro_top; default liblist chosen; endconfig

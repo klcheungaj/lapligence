@@ -112,7 +112,12 @@ requirements above apply without repeating them for each suite.
   also checks both input contracts and editions for selected bindings,
   same-name map composition changes, binding failures and library-scoped
   `-incdir` headers, ordered directory lookup, logical buffer resolution and
-  missing/unauthorized directory diagnostics (V §13.2; SV §33.3).
+  missing/unauthorized directory diagnostics. Macro maps test generated
+  declarations, paths, config delimiters, conditional command-line selection,
+  included-map scope, macro `-incdir`, edition-specific directives and located
+  failures through disk CLI in both modes/editions and logical owned compilation
+  (V §13.2/§19.3-§19.5;
+  SV §33.3/§22.4-§22.6).
   `sim_syn033_structural_bind` checks type-wide, selected-instance,
   generate-for/if and interface binds through the public CLI in both optimizer
   modes, then checks elaborated names and parameters after snapshot destruction;

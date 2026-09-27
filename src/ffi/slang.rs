@@ -26,7 +26,7 @@ use values::{
     decode_constants, decode_instances, decode_parameters, decode_types, validate_parameter_windows,
 };
 
-const ABI_VERSION: u32 = 7;
+const ABI_VERSION: u32 = 8;
 const INVALID_ID: u64 = u64::MAX;
 
 const STATUS_OK: u32 = 0;
@@ -70,6 +70,8 @@ pub struct Source<'a> {
     /// Parse this source as a compilation unit. `false` preloads an admitted
     /// include buffer that can only be opened through Slang's in-memory cache.
     pub is_compilation_unit: bool,
+    /// Parse this compilation unit using Slang's library-map grammar.
+    pub is_library_map: bool,
 }
 
 /// One source buffer assigned to an explicit named source library.
@@ -82,6 +84,8 @@ pub struct LibrarySource<'a> {
     pub name: &'a str,
     pub text: &'a str,
     pub library: &'a str,
+    /// Parse this library source using Slang's library-map grammar.
+    pub is_library_map: bool,
 }
 
 /// Ordered library-scoped include lookup prefix. Contents must already be admitted.
@@ -97,6 +101,7 @@ impl<'a> Source<'a> {
             name,
             text,
             is_compilation_unit: true,
+            is_library_map: false,
         }
     }
 
@@ -105,6 +110,7 @@ impl<'a> Source<'a> {
             name,
             text,
             is_compilation_unit: false,
+            is_library_map: false,
         }
     }
 }
@@ -1427,7 +1433,7 @@ pub fn compile(request: &CompileRequest<'_>) -> Result<Snapshot, SlangError> {
         .map(|source| RawSource {
             name: raw_string(source.name),
             text: raw_string(source.text),
-            flags: u32::from(source.is_compilation_unit),
+            flags: u32::from(source.is_compilation_unit) | (u32::from(source.is_library_map) << 1),
             reserved: 0,
         })
         .collect();
@@ -1438,7 +1444,7 @@ pub fn compile(request: &CompileRequest<'_>) -> Result<Snapshot, SlangError> {
             name: raw_string(source.name),
             text: raw_string(source.text),
             library: raw_string(source.library),
-            flags: 0,
+            flags: u32::from(source.is_library_map),
             reserved: 0,
         })
         .collect();
@@ -1625,6 +1631,11 @@ fn validate_request(request: &CompileRequest<'_>) -> Result<(), SlangError> {
     let mut names = HashSet::with_capacity(total_sources);
     for source in request.sources {
         validate_name(source.name, "source name")?;
+        if source.is_library_map && !source.is_compilation_unit {
+            return Err(invalid_argument(
+                "library map sources must be compilation units",
+            ));
+        }
         if !names.insert(source.name) {
             return Err(invalid_argument("source names must be unique"));
         }

@@ -1,10 +1,9 @@
-//! Separate configuration declarations from map paths without interpreting HDL.
+//! Identify bounded configuration declarations in expanded map text.
 //!
 //! The product follows the supplied V/SV Annex A library-text grammar. The
-//! native parser still owns configuration syntax and semantics. The derived
-//! input retains the original name, byte length and byte offsets; only
-//! non-configuration bytes are replaced by whitespace. No emitted-C fallback
-//! or additional filesystem access is involved.
+//! native map parser owns configuration syntax and semantics on the original
+//! buffer, including macro expansion source locations. The projection here is
+//! used only to detect configuration spans during Rust map admission.
 
 use super::{LibraryMapWorkBudget, StartupError, StartupErrorKind};
 use std::ops::Range;
@@ -141,11 +140,9 @@ fn mask(bytes: &mut [u8]) {
     }
 }
 
-/// Restore exact admitted map text after Slang parsed the position-preserving
-/// projection. Semantic ranges still refer to the same configuration bytes.
-/// Diagnostics and owned import must see original UTF-8, not a space per byte,
-/// so UTF-16 columns remain correct even after non-ASCII text on the same line.
-/// Ownership moves from the already-budgeted originals; no second text clone.
+/// Verify and retain exact admitted map text after native map parsing. Semantic
+/// ranges and diagnostics refer to this original UTF-8 buffer, including macro
+/// invocation sites. Ownership moves from the already-budgeted originals.
 pub(super) fn restore_source_text(
     files: &mut [crate::ffi::slang::File],
     originals: Vec<super::OwnedSource>,

@@ -136,10 +136,8 @@ impl<'a> LibraryMapBuffers<'a> {
         Ok(result)
     }
 
-    /// Retain a same-length configuration-only projection of an admitted map.
-    /// Maps already count against source/byte admission limits. Charge the
-    /// projection's extra workspace separately, and reuse any existing mapped
-    /// buffer/explicit library choice rather than assigning it a second time.
+    /// Retain an admitted map as a native map compilation unit. Slang parses
+    /// configurations with macro expansion locations on the original buffer.
     pub(super) fn retain_configuration(
         &mut self,
         name: &str,
@@ -157,6 +155,7 @@ impl<'a> LibraryMapBuffers<'a> {
                     retain_original_map(entry, original, work)?;
                     source.text = projection;
                     source.is_compilation_unit = true;
+                    source.is_library_map = true;
                     return Ok(());
                 }
             }
@@ -170,6 +169,7 @@ impl<'a> LibraryMapBuffers<'a> {
                     check_map_source(&source.text, original, &projection, name, work)?;
                     retain_original_map(entry, original, work)?;
                     source.text = projection;
+                    source.is_library_map = true;
                     return Ok(());
                 }
             }
@@ -189,8 +189,9 @@ impl<'a> LibraryMapBuffers<'a> {
         };
         retain_original_map(&mut entry, original, work)?;
         self.entries.insert(key, entry);
-        self.sources
-            .push(OwnedSource::compilation_unit(name, projection));
+        let mut map = OwnedSource::compilation_unit(name, projection);
+        map.is_library_map = true;
+        self.sources.push(map);
         Ok(())
     }
 
@@ -336,8 +337,9 @@ impl<'a> LibraryMapBuffers<'a> {
             let source = available[index].take().ok_or_else(|| {
                 StartupError::new(StartupErrorKind::Internal, "map source was published twice")
             })?;
-            self.libraries
-                .push(LibrarySource::new(source.name, source.text, library));
+            let mut published = LibrarySource::new(source.name, source.text, library);
+            published.is_library_map = source.is_library_map;
+            self.libraries.push(published);
         }
         *self.sources = available.into_iter().flatten().collect();
         Ok(self

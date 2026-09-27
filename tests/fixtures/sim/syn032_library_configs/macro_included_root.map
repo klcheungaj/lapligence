@@ -1,0 +1,2 @@
+`define MAP_INCLUDE include "macro_included.map";
+`MAP_INCLUDE

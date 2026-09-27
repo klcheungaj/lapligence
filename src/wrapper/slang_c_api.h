@@ -13,7 +13,7 @@
 extern "C" {
 #endif
 
-#define LLG_SLANG_ABI_VERSION 7u
+#define LLG_SLANG_ABI_VERSION 8u
 #define LLG_SLANG_INVALID_ID UINT64_MAX
 
 typedef struct LlgSlangSnapshot LlgSlangSnapshot;
@@ -41,6 +41,11 @@ typedef struct {
   uint32_t reserved;
 } LlgSlangLibrarySource;
 
+enum {
+  /* Parse this named-library buffer as a library map. */
+  LLG_SLANG_LIBRARY_SOURCE_MAP = 1u << 0
+};
+
 /* Ordered lookup prefix for one named source library. Borrowed for the call. */
 typedef struct {
   LlgSlangString library;
@@ -50,7 +55,9 @@ typedef struct {
 enum {
   /* Parse and add this buffer to the compilation. Buffers without this flag
    * are admitted include files available only through cache-only lookup. */
-  LLG_SLANG_SOURCE_COMPILATION_UNIT = 1u << 0
+  LLG_SLANG_SOURCE_COMPILATION_UNIT = 1u << 0,
+  /* Parse this compilation-unit buffer as a library map. */
+  LLG_SLANG_SOURCE_LIBRARY_MAP = 1u << 1
 };
 
 typedef struct {

@@ -107,6 +107,7 @@ fn library_name_bytes_consume_the_native_source_budget() {
         name: "library.sv",
         text: "module library; endmodule\n",
         library: "named_library",
+        is_library_map: false,
     }];
     let max_source_bytes = (sources[0].name.len()
         + sources[0].text.len()

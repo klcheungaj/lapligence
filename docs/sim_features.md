@@ -73,9 +73,10 @@ passed, 0 failed, 5 skipped (387.4 s). Repeating that command with
 The generated fixed-array ceiling is 65,536 cells, below the cited
 16,777,216-element minimum (V §3.10; SV §7.4.2). The selected packed
 conditional policy turns Z/Z into X in an ambiguous conditional (SYN-020;
-§7 below). N12 admits literal configuration blocks in library maps by the
-formal grammar despite conflicting adjacent prose; macro-generated map
-declarations are excluded. Q04 per-library `-incdir` is implemented with
+§7 below). N12 admits literal and macro-generated configuration blocks in
+library maps by the formal grammar despite conflicting adjacent prose;
+`define`/`ifdef` selection and command-line defines also apply to map
+declarations. Q04 per-library `-incdir` is implemented with
 library-scoped lookup and the precedence stated in §3. Q01 mixed-state
 structure-pattern constants have a fixed two-state member conversion. Q02
 memory-file intersections and same-slot wake order, and Q03 tagged-member
@@ -323,11 +324,17 @@ real values use a separate representation.
   directories have no representation. V §13.2; SV §33.3.
   V ch.13; SV ch.33 **[2001]**.
 
-  Literal configuration blocks are admitted in root/included library maps as
-  well as source files. This follows the formal grammar in both editions; the
-  narrower nearby V §13.2.2 / SV §33.3.2 prose is an acknowledged source
-  inconsistency, not a claimed IEEE correction. Macro-generated map declarations
-  or block delimiters are not admitted by this route.
+  Literal and macro-generated `library`, `include`, and `config ... endconfig`
+  declarations are admitted in root/included library maps. Conditional compilation,
+  macro path lists and macro-generated config delimiters use the same selected
+  edition as design sources. Command-line defines seed each map; definitions
+  persist in source order within that map, but maps and design source units do
+  not inherit each other's local macros. Map `include` opens another map with
+  its own macro environment. Compiler `` `include`` inside a map is diagnosed;
+  use a map `include` declaration. V §13.2 / §19.3-§19.5 and SV §33.3 /
+  §22.4-§22.6 supply the grammar and preprocessing basis. The narrower nearby
+  V §13.2.2 / SV §33.3.2 prose is an acknowledged source inconsistency, not a
+  claimed IEEE correction.
 - 🟨 **Structural bind** — Finite module-type/selected-instance and
   interface-to-interface binds preserve parameters, target-local ports and
   instance identity after frontend snapshot destruction. Selected generate-for/if

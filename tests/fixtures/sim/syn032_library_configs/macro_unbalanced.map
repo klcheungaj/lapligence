@@ -1,0 +1,2 @@
+`ifdef PICK_GATE
+library chosen macro_gate.sv;

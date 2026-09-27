@@ -22,3 +22,18 @@ keeping the same chosen configuration name. The negative maps distinguish a
 missing library, a missing cell, equal-rank ambiguity and an unmatched path.
 `cycle_config.sv`/`cycle_top.sv` keep the negative cycle in ordinary source
 grammar so the frontend can locate it.
+
+`macro_root.map` produces a library declaration and both a complete config
+block and separate `config`/`endconfig` delimiters from macros. `macro_paths.map`
+supplies a comma-separated path list through a function-like macro;
+`macro_conditional.map` chooses a runtime
+cell with or without the command-line `PICK_GATE` define. The root map produces
+an `include` declaration for `macro_included.map`, whose local macro supplies
+its library declaration. `macro_incdir.map` supplies the RTL library's ordered
+`-incdir` clause through a macro. Negative maps cover an undefined or
+recursive macro, an unbalanced conditional and an invalid expanded declaration;
+`macro_reserved.map` rejects a directive-name macro and `macro_bad_define.map`
+rejects a malformed function-like definition. `macro_sv_only.map` admits
+`` `undefineall`` in 2009 and rejects it in 2001. The positive design prints
+11 or 22 according to the chosen library, in both editions and optimizer modes.
+The oracle follows V §13.2/§19.3-§19.5 and SV §33.3/§22.4-§22.6.

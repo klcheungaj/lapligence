@@ -13,11 +13,13 @@ remain on the calling thread; do not implement `Send` or `Sync`.
   known flags, reserved fields, pointer/length pairs, IDs, ranges and table windows.
   Use module error types, preserving native status/message; malformed output is
   `InvalidNativeData`, distinct from valid unsupported HDL.
-- ABI v7 `CompileRequest` borrows sources/options until blocking
+- ABI v8 `CompileRequest` borrows sources/options until blocking
   `llg_slang_compile` returns, distinguishing units from include-only buffers.
   Library-unit recovery uses the same buffers/limits; reject unknown request flags.
   Cache keys are lexically normalized; include directories are lookup prefixes,
   not permission to read the filesystem.
+- The source library-map flag requires a compilation-unit flag and parses the
+  original admitted buffer with Slang's map preprocessor and grammar.
 - Library include directories are ordered name/path pairs in the request;
   `SourceLibrary` lookup uses them only for that library's admitted buffers.
 - Bound defines, tops, includes, parameter overrides, source bytes, diagnostics,

@@ -1,7 +1,7 @@
 # Slang C wrapper
 
 The C++ wrapper compiles admitted source buffers and exports an owned flat snapshot
-through C ABI v7. C++ lifetime management stays behind the boundary; Rust copies
+through C ABI v8. C++ lifetime management stays behind the boundary; Rust copies
 and validates the result before releasing its owner.
 
 Capture preserves typed declarations, values, dimensions, source/lexical data,
@@ -15,6 +15,8 @@ elaborated source index for owned hierarchical paths.
 
 Native source access is cache-only. Ordered library include prefixes attach to
 their named `SourceLibrary` and cannot authorize a native filesystem read.
+Flagged library-map buffers use Slang's map parser and preprocessor; its
+configuration syntax nodes enter the same compilation as ordinary sources.
 See [safe FFI](../ffi/readme.md),
 [owned DB](../core/db/readme.md), [source layout](../../docs/source_layout.md)
 and [patch preparation](../../patches/README.md).

@@ -58,8 +58,11 @@ matches and preserve explicit library overrides. Disk and logical inputs share
 one bounded resolver; capture metadata once, retaining original buffers/handles
 as source truth, with no native I/O.
 
-`library_configs.rs` projects literal configuration text without shifting byte
-positions and restores original map text after capture for UTF-16 presentation.
+`library_configs.rs` identifies configuration spans for bounded map admission.
+Configuration-bearing maps are parsed by Slang's map preprocessor on the original
+buffer, retaining macro-use locations and source text. Rust expands declarations
+with bounded work before path admission; command-line defines seed each map,
+while map-local defines stay in that map's source order and scope.
 Admit unquoted per-library `-incdir` directories with the containing map as
 relative base. Keep declaration order and library scope through Rust include
 preflight and cache-only native lookup. Missing or inadmissible directories

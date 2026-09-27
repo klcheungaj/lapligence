@@ -1,7 +1,7 @@
 use super::*;
 use crate::core::compile::{
     admit_in_memory_library_maps, admit_library_maps, admit_library_maps_with_targets,
-    collect_in_memory_library_maps, CompileOpts, MAX_LIBRARY_MAP_WORK,
+    collect_in_memory_library_maps, CompileOpts, LanguageEdition, MAX_LIBRARY_MAP_WORK,
 };
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -240,6 +240,8 @@ fn disk_and_logical_maps_resolve_one_joint_candidate_set() {
     .expect("defer disk-map tie");
     collect_in_memory_library_maps(
         &logical_maps,
+        &[],
+        LanguageEdition::SystemVerilog2009,
         &mut Vec::new(),
         &mut buffers,
         count,

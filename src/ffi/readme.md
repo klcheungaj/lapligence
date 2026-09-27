@@ -5,7 +5,7 @@ owned APIs to the rest of the library.
 
 | Component | Responsibility |
 | --- | --- |
-| `slang.rs` and `slang/` | C ABI v7 requests, bounded snapshot/error owners, layout/tag validation, exact value/text copies and RAII destruction. |
+| `slang.rs` and `slang/` | C ABI v8 requests, bounded snapshot/error owners, layout/tag validation, exact value/text copies and RAII destruction. |
 | `process_memory.rs` | Platform process-memory counters and native resource limits. |
 | `secure_fs` | Handle-relative filesystem admission and identity/race protection. |
 
@@ -14,3 +14,7 @@ sequence metadata and aggregate defaults. No native pointer or borrowed buffer
 escapes the safe interface. See [wrapper](../wrapper/readme.md),
 [owned database](../core/db/readme.md) and
 [patch preparation](../../patches/README.md).
+
+The source map flag asks Slang to parse an admitted original map buffer with
+its preprocessor. It requires compilation-unit admission and preserves macro
+invocation locations in configuration diagnostics.
