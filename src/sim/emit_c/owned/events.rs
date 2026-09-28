@@ -137,6 +137,7 @@ impl Frame<'_, '_> {
         &mut self,
         sens: &[IrDependency],
         region: Option<ScheduleRegion>,
+        operation: SuspensionOperation,
     ) -> Result<(), String> {
         if let Some(region) = region {
             self.line(format!(
@@ -145,7 +146,7 @@ impl Frame<'_, '_> {
             ));
         }
         if sens.is_empty() {
-            self.line("llg_wait_any(NULL, 0);");
+            self.await_arm(operation, "llg_arm_any(self, NULL, 0)")?;
         } else {
             let values = sens
                 .iter()
@@ -157,10 +158,10 @@ impl Frame<'_, '_> {
                 values.len(),
                 &values.join(", "),
             );
-            self.line(format!(
-                "llg_wait_any_dependencies({array}, {});",
-                sens.len()
-            ));
+            self.await_arm(
+                operation,
+                format!("llg_arm_any_dependencies(self, {array}, {})", sens.len()),
+            )?;
         }
         self.cancellation_check()
     }

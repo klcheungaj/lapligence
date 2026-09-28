@@ -489,7 +489,15 @@ fn scan_statements(
 ) {
     for (index, statement) in statements.iter().enumerate() {
         let path = parent.child(OperationPathElement::Statement(index));
-        if let Some((operation, call)) = suspension_operation(statement, function_effects) {
+        if matches!(statement, IrStmt::ClockingCycleWait { .. }) {
+            for branch in [OperationPathElement::Then, OperationPathElement::Else] {
+                sites.push(SiteDraft {
+                    path: path.child(branch),
+                    operation: SuspensionOperation::ClockingCycle,
+                    call: None,
+                });
+            }
+        } else if let Some((operation, call)) = suspension_operation(statement, function_effects) {
             sites.push(SiteDraft {
                 path: path.clone(),
                 operation,
@@ -608,7 +616,7 @@ fn suspension_operation(
         IrStmt::WaitCond { .. } => SuspensionOperation::ConditionWait,
         IrStmt::WaitEventTriggered { .. } => SuspensionOperation::EventTriggeredWait,
         IrStmt::WaitOrder { .. } => SuspensionOperation::WaitOrder,
-        IrStmt::ClockingCycleWait { .. } => SuspensionOperation::ClockingCycle,
+        IrStmt::ClockingCycleWait { .. } => return None,
         IrStmt::Fork {
             join_kind,
             branches,
@@ -1150,7 +1158,7 @@ mod tests {
     }
 
     #[test]
-    fn every_suspending_statement_kind_has_one_site() {
+    fn every_suspending_statement_kind_is_numbered() {
         let mailbox_value = IrMailboxValue::Packed {
             value: one(),
             two_state: false,
@@ -1180,10 +1188,6 @@ mod tests {
                 events: vec![crate::sim::ir::IrEventRef::Null],
                 success: vec![],
                 failure: vec![],
-            },
-            IrStmt::ClockingCycleWait {
-                count: one(),
-                specs: vec![],
             },
             IrStmt::Fork {
                 join_kind: IrJoinKind::Join,
@@ -1242,6 +1246,27 @@ mod tests {
         for statement in cases {
             assert!(suspension_operation(&statement, &function_effects).is_some());
         }
+
+        let clocking = IrStmt::ClockingCycleWait {
+            count: one(),
+            specs: vec![],
+        };
+        assert!(suspension_operation(&clocking, &function_effects).is_none());
+        let mut sites = Vec::new();
+        scan_statements(
+            std::slice::from_ref(&clocking),
+            &OperationPath::default(),
+            &function_effects,
+            &mut sites,
+        );
+        assert_eq!(
+            sites.len(),
+            2,
+            "##0 and positive counts have distinct awaits"
+        );
+        assert!(sites
+            .iter()
+            .all(|site| site.operation == SuspensionOperation::ClockingCycle));
 
         assert!(suspension_operation(
             &IrStmt::Fork {

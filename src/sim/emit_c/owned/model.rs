@@ -110,7 +110,9 @@ fn render_function(
         }
         return Ok((super::super::model::owned_dpi_thunk(function)?, None));
     }
-    let return_type = if function.ret_string {
+    let return_type = if coroutine {
+        "llg_co_status_t"
+    } else if function.ret_string {
         "llg_string_t"
     } else if function.ret_chandle {
         "void*"
@@ -245,7 +247,10 @@ fn render_function(
     frame.block(&function.body)?;
     frame.line("goto _llg_return;");
     frame.line("_llg_return: ;");
-    if function.ret_string || function.ret_chandle {
+    if coroutine {
+        frame.line("llg_value_scopes_end_since(_llg_frame_base);");
+        frame.line("return LLG_CO_DONE;");
+    } else if function.ret_string || function.ret_chandle {
         let kind = if function.ret_string {
             NativeKind::String
         } else {
@@ -286,7 +291,9 @@ fn render_function(
         frame.line("llg_value_scopes_end_since(_llg_frame_base);");
         frame.line("return;");
     }
-    let guard = if function.ret_string {
+    let guard = if coroutine {
+        "return LLG_CO_DONE;".to_owned()
+    } else if function.ret_string {
         "return (llg_string_t){0};".to_owned()
     } else if function.ret_chandle {
         "return NULL;".to_owned()
@@ -296,11 +303,12 @@ fn render_function(
         "return;".to_owned()
     };
     let signature = if coroutine {
-        format!("{}_frame_t* F", function.c_name)
+        "llg_co_frame_t* co, llg_co_chain_t* ch".to_owned()
     } else {
         super::super::model::owned_func_params(function)
     };
     let prologue = frame.prologue();
+    let dispatch = frame.dispatch();
     let macro_epilogue = frame.macro_epilogue();
     let (body, layout) = if coroutine {
         let (body, layout) = frame.into_coframe()?;
@@ -309,7 +317,15 @@ fn render_function(
         (frame.body().to_owned(), None)
     };
     let depth = if coroutine { "F->depth" } else { "depth" };
-    let source = format!("static {return_type} {}({signature}) {{\n    if ({depth} >= 256) {{ fprintf(stderr, \"llg: recursion limit exceeded\\n\"); {guard} }}\n{prologue}{body}\n}}\n{macro_epilogue}",
+    let coroutine_prologue = if coroutine {
+        format!(
+            "    {}_frame_t* F = ({}_frame_t*)co;\n{dispatch}",
+            function.c_name, function.c_name
+        )
+    } else {
+        String::new()
+    };
+    let source = format!("static {return_type} {}({signature}) {{\n{coroutine_prologue}    if ({depth} >= 256) {{ fprintf(stderr, \"llg: recursion limit exceeded\\n\"); {guard} }}\n{prologue}{body}\n}}\n{macro_epilogue}",
         function.c_name);
     Ok((source, layout))
 }
@@ -364,7 +380,11 @@ fn render_process(
             ..
         } = &block.terminator
         {
-            frame.wait_any(reads, Some(*region))?;
+            frame.wait_any(
+                reads,
+                Some(*region),
+                crate::sim::execution::SuspensionOperation::ProcessTrigger,
+            )?;
         }
         frame.end_block();
         match &block.terminator {
@@ -373,8 +393,13 @@ fn render_process(
             | ExecutionTerminator::Suspend { resume: target, .. } => {
                 if *target <= index {
                     frame.line(format!(
-                        "llg_budget_point({});",
-                        c_string_literal(process.label())
+                        "if (LLG_CO_UNLIKELY(llg_budget_point({}))) {}",
+                        c_string_literal(process.label()),
+                        if coroutine {
+                            "return LLG_CO_EXIT;"
+                        } else {
+                            "goto _llg_return;"
+                        }
                     ));
                 }
                 frame.line(format!("goto {};", label(*target)));
@@ -384,9 +409,13 @@ fn render_process(
     frame.line("goto _llg_return;");
     frame.line("_llg_return: ;");
     frame.line("llg_value_scopes_end_since(_llg_frame_base);");
-    frame.line("llg_proc_done(self);");
-    frame.line("return;");
+    if coroutine {
+        frame.line("return LLG_CO_DONE;");
+    } else {
+        frame.line("return;");
+    }
     let prologue = frame.prologue();
+    let dispatch = frame.dispatch();
     let macro_epilogue = frame.macro_epilogue();
     let (body, layout) = if coroutine {
         let (body, layout) = frame.into_coframe()?;
@@ -396,15 +425,21 @@ fn render_process(
     };
     let frame_pointer = if coroutine {
         format!(
-            "    {}_frame_t* F = ({}_frame_t*)llg_proc_co_frame(self);\n    F->arena = llg_proc_co_arena(self);\n",
+            "    {}_frame_t* F = ({}_frame_t*)co;\n{dispatch}",
             process.c_name, process.c_name
         )
     } else {
         String::new()
     };
     let source = format!(
-        "static void {}(llg_proc_t* self) {{\n{frame_pointer}{prologue}{body}\n}}\n{macro_epilogue}",
+        "static {} {}({}) {{\n{frame_pointer}{prologue}{body}\n}}\n{macro_epilogue}",
+        if coroutine { "llg_co_status_t" } else { "void" },
         process.c_name,
+        if coroutine {
+            "llg_co_frame_t* co, llg_co_chain_t* ch"
+        } else {
+            "void"
+        },
     );
     Ok((source, layout))
 }

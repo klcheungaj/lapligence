@@ -93,11 +93,11 @@ struct Activation {
     lexical_depth: usize,
 }
 
-#[derive(Clone, Copy)]
-struct PendingCall {
+#[derive(Clone)]
+struct PendingSite {
     resume: u32,
-    callee: Option<usize>,
-    mechanism: CallMechanism,
+    operation: SuspensionOperation,
+    mechanism: Option<CallMechanism>,
 }
 
 pub(super) struct Frame<'a, 'm> {
@@ -129,7 +129,8 @@ pub(super) struct Frame<'a, 'm> {
     in_block_comment: bool,
     structural_error: Option<String>,
     resume_probe: bool,
-    pending_calls: VecDeque<PendingCall>,
+    pending_sites: VecDeque<PendingSite>,
+    resume_numbers: Vec<u32>,
     frame_upper_bounds: BTreeMap<usize, usize>,
     coroutine_functions: BTreeSet<usize>,
 }
@@ -154,21 +155,19 @@ impl<'a, 'm> Frame<'a, 'm> {
         frame.coroutine_functions = (0..ctx.model.funcs.len())
             .filter(|function| analysis.is_coroutine_function(*function))
             .collect();
-        let mut calls = analysis
+        let mut sites = analysis
             .sites(owner)
             .into_iter()
             .flat_map(|sites| sites.values())
-            .filter_map(|site| match site.operation() {
-                SuspensionOperation::Call { callee } => Some(PendingCall {
-                    resume: site.resume(),
-                    callee: *callee,
-                    mechanism: site.mechanism()?,
-                }),
-                _ => None,
+            .map(|site| PendingSite {
+                resume: site.resume(),
+                operation: site.operation().clone(),
+                mechanism: site.mechanism(),
             })
             .collect::<Vec<_>>();
-        calls.sort_by_key(|call| call.resume);
-        frame.pending_calls = calls.into();
+        sites.sort_by_key(|site| site.resume);
+        frame.resume_numbers = sites.iter().map(|site| site.resume).collect();
+        frame.pending_sites = sites.into();
         Ok(frame)
     }
 
@@ -176,7 +175,6 @@ impl<'a, 'm> Frame<'a, 'm> {
         let mut layout = FrameLayout::new(storage);
         if storage == FrameStorage::CoFrame {
             for (ty, name) in [
-                ("llg_co_arena_t*", "arena"),
                 ("llg_value_scope_t*", "_llg_frame_base"),
                 ("llg_value_scope_t*", "_llg_temp_scope"),
                 ("sv4_t*", "_llg_t"),
@@ -215,7 +213,8 @@ impl<'a, 'm> Frame<'a, 'm> {
             in_block_comment: false,
             structural_error: None,
             resume_probe: false,
-            pending_calls: VecDeque::new(),
+            pending_sites: VecDeque::new(),
+            resume_numbers: Vec::new(),
             frame_upper_bounds: BTreeMap::new(),
             coroutine_functions: BTreeSet::new(),
         }
@@ -231,11 +230,7 @@ impl<'a, 'm> Frame<'a, 'm> {
         if self.layout.storage() == FrameStorage::CoFrame {
             self.track_frame_blocks(text);
         }
-        let text = if self.layout.storage() == FrameStorage::CoFrame {
-            self.rewrite_frame_accesses(text)
-        } else {
-            text.to_owned()
-        };
+        let text = self.rewrite_frame_accesses(text);
         self.code.push_str("    ");
         self.code.push_str(&text);
         self.code.push('\n');
@@ -389,7 +384,15 @@ impl<'a, 'm> Frame<'a, 'm> {
                 }
                 let ident = &text[start..index];
                 let member_access = start > 0 && matches!(bytes[start - 1], b'.' | b'>');
-                if let Some(access) = self.layout.field_access(ident).filter(|_| !member_access) {
+                if ident == "self" && !member_access {
+                    out.push_str(if self.layout.storage() == FrameStorage::CoFrame {
+                        "LLG_CO_OWNER(ch, llg_proc_t)"
+                    } else {
+                        "llg_current()"
+                    });
+                } else if let Some(access) =
+                    self.layout.field_access(ident).filter(|_| !member_access)
+                {
                     out.push_str("F->");
                     out.push_str(access);
                 } else {
@@ -430,16 +433,28 @@ impl<'a, 'm> Frame<'a, 'm> {
         callee_type: &str,
     ) -> Result<super::frame_layout::CallSlot, String> {
         let plan = self
-            .pending_calls
+            .pending_sites
             .pop_front()
             .ok_or_else(|| format!("missing coroutine call-site analysis for callee {callee}"))?;
-        if plan.callee.is_some_and(|expected| expected != callee) {
+        let SuspensionOperation::Call {
+            callee: expected_callee,
+        } = plan.operation
+        else {
+            return Err(format!(
+                "coroutine suspension site {} is {:?}, emitted call to callee {callee}",
+                plan.resume, plan.operation
+            ));
+        };
+        if expected_callee.is_some_and(|expected| expected != callee) {
             return Err(format!(
                 "coroutine call-site analysis expected callee {:?}, emitted {callee}",
-                plan.callee
+                expected_callee
             ));
         }
-        let upper_bound = if plan.mechanism == CallMechanism::Arena {
+        let mechanism = plan
+            .mechanism
+            .ok_or_else(|| format!("coroutine call site {} has no mechanism", plan.resume))?;
+        let upper_bound = if mechanism == CallMechanism::Arena {
             0
         } else {
             self.frame_upper_bounds
@@ -448,7 +463,37 @@ impl<'a, 'm> Frame<'a, 'm> {
                 .ok_or_else(|| format!("missing frame upper bound for coroutine callee {callee}"))?
         };
         self.layout
-            .add_call(plan.resume, callee_type, plan.mechanism, upper_bound)
+            .add_call(plan.resume, callee_type, mechanism, upper_bound)
+    }
+    fn take_resume(&mut self, operation: SuspensionOperation) -> Result<u32, String> {
+        let site = self
+            .pending_sites
+            .pop_front()
+            .ok_or_else(|| format!("emitted unnumbered coroutine suspension site {operation:?}"))?;
+        if site.operation != operation {
+            return Err(format!(
+                "coroutine suspension site {} is {:?}, emitted {:?}",
+                site.resume, site.operation, operation
+            ));
+        }
+        Ok(site.resume)
+    }
+    fn await_arm(
+        &mut self,
+        operation: SuspensionOperation,
+        arm: impl AsRef<str>,
+    ) -> Result<(), String> {
+        let resume = self.take_resume(operation)?;
+        self.line(format!("LLG_CO_AWAIT(co, ch, {resume}, {});", arm.as_ref()));
+        Ok(())
+    }
+    fn dispatch(&self) -> String {
+        let mut dispatch = String::from("    LLG_CO_DISPATCH_BEGIN(co)\n");
+        for resume in &self.resume_numbers {
+            dispatch.push_str(&format!("    LLG_CO_RESUME_CASE({resume})\n"));
+        }
+        dispatch.push_str("    LLG_CO_DISPATCH_END(co)\n");
+        dispatch
     }
     fn declare_named(&mut self, ty: &str, name: &str, init: String) -> String {
         let access = match self.layout.declare(ty, name) {
@@ -718,7 +763,8 @@ impl<'a, 'm> Frame<'a, 'm> {
         let pointer = self.name("local");
         let address = if width == 0 {
             // Another coroutine may publish through this address while ours is
-            // suspended. libaco's shared stack is not stable variable storage.
+            // suspended. A native C stack address cannot survive a stackless
+            // return, so the registered scope owns stable storage.
             let owner = self.scalar(
                 "llg_value_scope_t*",
                 "llg_value_scope_begin_object(sizeof(double), NULL)".to_owned(),
@@ -786,32 +832,11 @@ impl<'a, 'm> Frame<'a, 'm> {
         // site in the pre-emission execution analysis. Preserve storage and
         // descriptor offsets for those unreachable sites even though no call
         // expression consumed their slots.
-        while let Some(call) = self.pending_calls.pop_front() {
-            let (callee_type, upper_bound) = match call.callee {
-                Some(callee) => {
-                    let callee_type = format!("{}_frame_t", self.ctx.model.func(callee).c_name);
-                    let upper_bound = if call.mechanism == CallMechanism::Arena {
-                        0
-                    } else {
-                        self.frame_upper_bounds
-                            .get(&callee)
-                            .copied()
-                            .ok_or_else(|| {
-                                format!("missing frame upper bound for coroutine callee {callee}")
-                            })?
-                    };
-                    (callee_type, upper_bound)
-                }
-                None if call.mechanism == CallMechanism::Arena => ("void".to_owned(), 0),
-                None => {
-                    return Err(format!(
-                        "embedded coroutine call-site analysis entry {} has no callee",
-                        call.resume
-                    ));
-                }
-            };
-            self.layout
-                .add_call(call.resume, &callee_type, call.mechanism, upper_bound)?;
+        if let Some(site) = self.pending_sites.front() {
+            return Err(format!(
+                "coroutine suspension site {} ({:?}) was not emitted",
+                site.resume, site.operation
+            ));
         }
         if !self.brace_kinds.is_empty() {
             self.structural_error.get_or_insert_with(|| {
@@ -875,7 +900,10 @@ fn has_statement_boundary(text: &str) -> bool {
 /// calls arm the same probe explicitly at their emission site.
 fn is_runtime_suspension(text: &str) -> bool {
     [
-        "llg_wait_",
+        "LLG_CO_AWAIT(",
+        "LLG_CO_CALL(",
+        "LLG_CO_CALL_ANCHOR(",
+        "LLG_CO_CALL_ARENA(",
         "llg_join(",
         "llg_process_suspend(",
         "llg_process_await(",
