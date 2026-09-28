@@ -74,6 +74,12 @@ static int ev_matches(sv4_t old, sv4_t new, int kind) {
                                   : (a == 1 && b != 1) || (a == 2 && b == 0);
 }
 
+// Signal publication calls this only after establishing that some bit changed.
+// Directional controls still inspect the packed value's LSB.
+static int ev_matches_changed(sv4_t old, sv4_t new, int kind) {
+    return kind == LLG_EV_ANY || ev_matches(old, new, kind);
+}
+
 static llg_clocking_edge_t* find_clocking_edge(sv4_t* signal) {
     for (llg_clocking_edge_t* edge = g.clocking_edges; edge; edge = edge->next) {
         if (edge->signal == signal) return edge;
@@ -82,7 +88,7 @@ static llg_clocking_edge_t* find_clocking_edge(sv4_t* signal) {
 }
 
 static void clocking_record_edge(sv4_t* signal, sv4_t old, sv4_t value) {
-    if (!signal || sv4_same(old, value)) return;
+    if (!signal) return;
     llg_clocking_edge_t* edge = find_clocking_edge(signal);
     if (!edge) {
         edge = (llg_clocking_edge_t*)llg_checked_malloc(
@@ -165,7 +171,8 @@ static int clocking_drive_source_matches_signal(
     const llg_clocking_drive_t* drive, sv4_t* signal, sv4_t old, sv4_t value) {
     for (int i = 0; i < drive->n_specs; i++) {
         const llg_wait_src_t* source = &drive->specs[i];
-        if (source->sig == signal && ev_matches(old, value, source->kind)) return 1;
+        if (source->sig == signal &&
+            ev_matches_changed(old, value, source->kind)) return 1;
     }
     return 0;
 }
@@ -397,21 +404,13 @@ static void deferred_trigger_event(llg_event_object_t* ev) {
     }
 }
 
-static void sig_write(sv4_t* target, sv4_t value) {
-    if (!region_can_mutate("signal write")) return;
-    if (target->width == value.width && sv4_same(*target, value)) return;
-    // Callbacks can finish/disable the writer without returning through here.
-    // Heap-backed registered owners survive both suspension and stack discard.
-    llg_value_scope_t* target_pin = value_target_pin(target);
-    llg_value_scope_t* snapshots = llg_value_scope_begin(2);
-    sv4_t* owned = llg_value_scope_values(snapshots);
-    sv4_copy(&owned[0], &value);
-    sv4_copy(&owned[1], target);
-    value = owned[0]; /* Borrows the registered snapshot until scope end. */
-    sv4_t old = owned[1];
+static void sig_publish_changed(sv4_t* target, sv4_t old, sv4_t value,
+                                sv4_t published) {
+#ifndef LLG_WAVEFORM
+    (void)published;
+#endif
     clocking_record_edge(target, old, value);
     clocking_drive_signal_match(target, old, value);
-    sv4_copy(target, &value);
     sampled_record_write(target);
     sampled_domain_clock_signal_changed(target, old, value);
     // `disable iff` is an asynchronous, unsampled control. Abort pending
@@ -442,7 +441,7 @@ static void sig_write(sv4_t* target, sv4_t value) {
         }
     }
 #ifdef LLG_WAVEFORM
-    llg_wave_changed_sv4(target, &value, g.now);
+    llg_wave_changed_sv4(target, &published, g.now);
 #endif
     llg_wait_t* w = g.waiters;
     while (w) {
@@ -498,8 +497,118 @@ static void sig_write(sv4_t* target, sv4_t value) {
         if (binding->target == target) llg_dependency_changed(binding->dependency);
     }
     force_dependency_changed(target, NULL, 0);
+}
+
+static void sig_write(sv4_t* target, sv4_t value) {
+    if (!region_can_mutate("signal write")) return;
+    if (target->width == value.width && sv4_same(*target, value)) return;
+    // Callbacks can finish/disable the writer without returning through here.
+    // Heap-backed registered owners survive both suspension and stack discard.
+    llg_value_scope_t* target_pin = value_target_pin(target);
+    llg_value_scope_t* snapshots = llg_value_scope_begin(2);
+    sv4_t* owned = llg_value_scope_values(snapshots);
+    sv4_copy(&owned[0], &value);
+    sv4_copy(&owned[1], target);
+    value = owned[0]; /* Borrows the registered snapshot until scope end. */
+    sv4_t old = owned[1];
+    sv4_copy(target, &value);
+    sig_publish_changed(target, old, value, value);
     llg_value_scope_end(snapshots);
     if (target_pin) llg_value_scope_end(target_pin);
+}
+
+static int sig_range_same(const sv4_t* target, uint32_t offset,
+                          const sv4_t* value) {
+    for (uint32_t bit = 0; bit < value->width; bit++) {
+        uint32_t target_bit = offset + bit;
+        uint64_t target_mask = UINT64_C(1) << (target_bit % 64u);
+        uint64_t value_mask = UINT64_C(1) << (bit % 64u);
+        uint32_t target_limb = target_bit / 64u;
+        uint32_t value_limb = bit / 64u;
+        if (!!(target->bits[target_limb] & target_mask) !=
+                !!(value->bits[value_limb] & value_mask) ||
+            !!(target->x[target_limb] & target_mask) !=
+                !!(value->x[value_limb] & value_mask) ||
+            !!(target->z[target_limb] & target_mask) !=
+                !!(value->z[value_limb] & value_mask))
+            return 0;
+    }
+    return 1;
+}
+
+static void sig_range_copy(sv4_t* target, uint32_t offset,
+                           const sv4_t* value) {
+    for (uint32_t bit = 0; bit < value->width; bit++) {
+        uint32_t target_bit = offset + bit;
+        uint64_t target_mask = UINT64_C(1) << (target_bit % 64u);
+        uint64_t value_mask = UINT64_C(1) << (bit % 64u);
+        uint32_t target_limb = target_bit / 64u;
+        uint32_t value_limb = bit / 64u;
+        target->bits[target_limb] =
+            (target->bits[target_limb] & ~target_mask) |
+            ((value->bits[value_limb] & value_mask)
+             ? target_mask : UINT64_C(0));
+        target->x[target_limb] =
+            (target->x[target_limb] & ~target_mask) |
+            ((value->x[value_limb] & value_mask)
+             ? target_mask : UINT64_C(0));
+        target->z[target_limb] =
+            (target->z[target_limb] & ~target_mask) |
+            ((value->z[value_limb] & value_mask)
+             ? target_mask : UINT64_C(0));
+    }
+}
+
+// Publish a changed slice without cloning the full packed signal. Waiters
+// still subscribe to the canonical full-net address: full-value and selected
+// dependency checks below read the already-updated target exactly as before.
+static int sig_write_ranges(sv4_t* target,
+                            uint32_t first_offset, sv4_t first,
+                            uint32_t second_offset, sv4_t second,
+                            int has_second) {
+    if (!region_can_mutate("signal write")) return 0;
+    if (!first.width || first_offset > target->width ||
+        first.width > target->width - first_offset ||
+        (has_second &&
+         (!second.width || second_offset > target->width ||
+          second.width > target->width - second_offset))) {
+        fputs("llg: fatal: invalid signal write range\n", stderr);
+        abort();
+    }
+    int first_changed = !sig_range_same(target, first_offset, &first);
+    int second_changed = has_second &&
+        !sig_range_same(target, second_offset, &second);
+    if (!first_changed && !second_changed) return 0;
+    llg_value_scope_t* target_pin = value_target_pin(target);
+    llg_value_scope_t* snapshots = llg_value_scope_begin(
+#ifdef LLG_WAVEFORM
+        3
+#else
+        2
+#endif
+    );
+    sv4_t* edges = llg_value_scope_values(snapshots);
+    // Every directional packed edge rule consumes only the LSB. Publication
+    // has already established that some bit changed, so these stable one-bit
+    // snapshots also preserve any-change behavior through nested callbacks.
+    sv4_replace(&edges[0], sv4_bit_select(*target, 0));
+    if (first_changed) sig_range_copy(target, first_offset, &first);
+    if (second_changed) sig_range_copy(target, second_offset, &second);
+    sv4_replace(&edges[1], sv4_bit_select(*target, 0));
+#ifdef LLG_WAVEFORM
+    sv4_copy(&edges[2], target);
+    sv4_t published = edges[2];
+#else
+    sv4_t published = *target;
+#endif
+    sig_publish_changed(target, edges[0], edges[1], published);
+    llg_value_scope_end(snapshots);
+    if (target_pin) llg_value_scope_end(target_pin);
+    return 1;
+}
+
+static int sig_write_range(sv4_t* target, uint32_t offset, sv4_t value) {
+    return sig_write_ranges(target, offset, value, 0, (sv4_t)SV4_EMPTY, 0);
 }
 
 // Real equality is bitwise: repeated NaNs with the same payload are

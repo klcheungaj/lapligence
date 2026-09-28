@@ -288,6 +288,19 @@ sv4_t sv4_resolve_strengths(const sv4_t* const* drivers,
                             const uint8_t* strength0,
                             const uint8_t* strength1, int n_drivers,
                             uint32_t width, int8_t is_signed, int mode);
+// Resolve one contiguous slice of aligned full-width contributions. `indices`
+// selects the overlapping entries from the original driver and strength
+// tables; the returned owner has `range_width` bits, with bit zero
+// corresponding to `range_offset` in the source net. This keeps the value
+// layer scheduler-independent while allowing a scheduler-side interval index.
+sv4_t sv4_resolve_strengths_range(const sv4_t* const* drivers,
+                                  const uint8_t* strength0,
+                                  const uint8_t* strength1,
+                                  const int* indices, int n_indices,
+                                  uint32_t source_width,
+                                  uint32_t range_offset,
+                                  uint32_t range_width,
+                                  int8_t is_signed, int mode);
 
 // Format one value into `buf` (NUL-terminated).  `fmt` is 'd', 'h', 'b' or 'o'.
 // %b prints all width bits: 'x' for X bits and 'z' for Z bits; %h prints

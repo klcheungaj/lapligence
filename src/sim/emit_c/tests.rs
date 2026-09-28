@@ -296,9 +296,12 @@ fn selected_net_driver_preserves_member_state_conversion() {
     let rendered = render(&model).unwrap();
     let fill = rendered.find("sv4_fill(2, 4, 0)").unwrap();
     let conversion = rendered.find("sv4_to_two_state(").unwrap();
-    let update = rendered.find("sv4_part_select_set(").unwrap();
-    let write = rendered.find("llg_net_write(&net, 0, F->_llg_t[").unwrap();
-    assert!(fill < conversion && conversion < update && update < write);
+    let write = rendered
+        .find("llg_net_write_selected(&net, 0, F->_llg_t[")
+        .unwrap();
+    let plan = rendered.find("sv4_select_plan_part(8, 7LL, 4LL)").unwrap();
+    assert!(fill < conversion && conversion < write && write < plan);
+    assert!(!rendered.contains("sv4_part_select_set("));
     assert!(!rendered.contains("sv4_to_two_state(sv4_"));
 }
 

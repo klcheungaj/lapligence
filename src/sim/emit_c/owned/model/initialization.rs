@@ -47,6 +47,7 @@ pub(in crate::sim::emit_c) fn storage_lifecycle(
             ));
             destroy.push_str(&format!("    sv4_destroy(&{}_d{slot});\n", group.c_name));
         }
+        initialize.push_str(&format!("    llg_net_index_reset(&{});\n", group.c_name));
         let fill = match group.kind {
             IrNetKind::Tri0 | IrNetKind::Supply0 => 0,
             IrNetKind::Tri1 | IrNetKind::Supply1 => 1,
