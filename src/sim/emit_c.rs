@@ -11,7 +11,6 @@ mod model;
 mod names;
 mod objects;
 mod owned;
-mod stack;
 mod statements;
 
 /// Exclusive packed-width safeguard of the C runtime, not an IR restriction.

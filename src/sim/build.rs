@@ -166,8 +166,6 @@ pub enum BuildError {
     InvalidCompilerFlag(String),
     /// Generated source is missing or has an incompatible value ownership ABI.
     InvalidModelAbi(String),
-    /// Generated source requested invalid coroutine stack metadata.
-    InvalidModelStack(String),
     /// A user-supplied DPI-C library is missing or cannot be represented
     /// safely in the generated CMake file.
     InvalidDpiLibrary { path: PathBuf, reason: String },
@@ -206,7 +204,6 @@ impl fmt::Display for BuildError {
                 "LLG_CFLAGS flag `{flag}` contains a double quote; quoted flags cannot be passed through the CMake cache"
             ),
             Self::InvalidModelAbi(value) => write!(f, "incompatible generated model value ABI `{value}`; regenerate the model with ABI {}", super::emit_c::VALUE_ABI_VERSION),
-            Self::InvalidModelStack(value) => write!(f, "invalid generated model stack value count `{value}`"),
             Self::InvalidDpiLibrary { path, reason } => write!(
                 f,
                 "invalid DPI-C library {}: {reason}",
@@ -467,9 +464,6 @@ fn write_cmakelists(
     waveform: bool,
     opts: &CmakeBuildOpts,
 ) -> Result<(), BuildError> {
-    // Keep validating emitted frame metadata even though it is now consumed
-    // only by model.c at runtime initialization, not by runtime compilation.
-    let _ = model_stack_values(extra)?;
     let mut sources: Vec<&str> = extra
         .iter()
         .map(|(name, _)| *name)
@@ -919,29 +913,6 @@ fn validate_model_abi(extra: &[(&str, &str)]) -> Result<(), BuildError> {
     Ok(())
 }
 
-fn model_stack_values(extra: &[(&str, &str)]) -> Result<u64, BuildError> {
-    let mut slots = None;
-    for (_, source) in extra {
-        for line in source.lines() {
-            if let Some(value) = line.strip_prefix("#define LLG_MODEL_STACK_VALUES ") {
-                let parsed = value
-                    .trim()
-                    .parse::<u64>()
-                    .ok()
-                    .filter(|value| *value > 0)
-                    .ok_or_else(|| BuildError::InvalidModelStack(value.to_string()))?;
-                if slots.is_some_and(|previous| previous != parsed) {
-                    return Err(BuildError::InvalidModelStack(
-                        "conflicting stack counts".into(),
-                    ));
-                }
-                slots = Some(parsed);
-            }
-        }
-    }
-    Ok(slots.unwrap_or(256))
-}
-
 fn waveform_enabled(extra: &[(&str, &str)]) -> bool {
     extra.iter().any(|(_, text)| {
         text.lines()
@@ -1104,13 +1075,11 @@ mod tests {
     #[test]
     fn model_metadata_requires_current_ownership_abi() {
         assert!(validate_model_abi(&[]).is_ok());
-        assert_eq!(model_stack_values(&[]).unwrap(), 256);
         let source = format!(
-            "#define LLG_MODEL_VALUE_ABI {}\n#define LLG_MODEL_STACK_VALUES 4096\n",
+            "#define LLG_MODEL_VALUE_ABI {}\n#define LLG_MODEL_PROCESS_ABI 2\n",
             super::super::emit_c::VALUE_ABI_VERSION
         );
         assert!(validate_model_abi(&[("model.c", &source)]).is_ok());
-        assert_eq!(model_stack_values(&[("model.c", &source)]).unwrap(), 4096);
         for invalid in [
             "",
             "#define LLG_MODEL_VALUE_ABI 0\n",
@@ -1123,7 +1092,6 @@ mod tests {
         }
         let duplicate = format!("{source}{source}");
         assert!(validate_model_abi(&[("model.c", &duplicate)]).is_err());
-        assert!(model_stack_values(&[("a.c", "#define LLG_MODEL_STACK_VALUES 0\n")]).is_err());
         assert!(!CMAKELISTS_TEMPLATE.contains("MODEL_WIDTH"));
         assert!(!RUNTIME_CMAKELISTS_TEMPLATE.contains("MODEL_WIDTH"));
     }
