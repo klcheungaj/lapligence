@@ -406,16 +406,20 @@ endmodule
         .find("static sv4_t fn_tb_plain_loop(sv4_t a0, int depth) {")
         .unwrap()..];
     let plain = &plain[..plain.find("\n}\n").unwrap()];
-    assert!(plain.contains("llg_budget_point(\"fn_tb_plain_loop\")"), "{plain}");
+    assert!(
+        plain.contains("llg_budget_point(\"fn_tb_plain_loop\")"),
+        "{plain}"
+    );
     assert!(plain.contains("goto _llg_return;"), "{plain}");
 
     let timed = &c[c
-        .find(
-            "static llg_co_status_t fn_tb_timed_loop(llg_co_frame_t* co, llg_co_chain_t* ch) {",
-        )
+        .find("static llg_co_status_t fn_tb_timed_loop(llg_co_frame_t* co, llg_co_chain_t* ch) {")
         .unwrap()..];
     let timed = &timed[..timed.find("\n}\n").unwrap()];
-    assert!(timed.contains("llg_budget_point(\"fn_tb_timed_loop\")"), "{timed}");
+    assert!(
+        timed.contains("llg_budget_point(\"fn_tb_timed_loop\")"),
+        "{timed}"
+    );
     assert!(timed.contains("return LLG_CO_EXIT;"), "{timed}");
 }
 
