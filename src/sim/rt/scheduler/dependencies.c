@@ -152,6 +152,9 @@ static void clocking_drive_enqueue(const llg_clocking_drive_t* drive) {
     sv4_copy(&n->value, &drive->value);
     sv4_copy(&n->mask, &drive->mask);
     n->has_mask = drive->has_mask;
+    n->range_offset = drive->range_offset;
+    n->range_width = drive->range_width;
+    n->has_range = drive->has_range;
     n->is_real = drive->is_real;
     n->real_target = drive->real_target;
     n->real_value = drive->real_value;

@@ -23,7 +23,9 @@ static void apply_nba(llg_nba_t* next) {
             target = next->net_target->drivers[next->net_slot];
         } else if (llg_is_forced(target) || pca_active(target)) return;
         if (!target) return;
-        sv4_t value = next->has_mask ? sv4_clone(target) : sv4_clone(&next->value);
+        sv4_t value = (next->has_mask || next->has_range)
+                          ? sv4_clone(target)
+                          : sv4_clone(&next->value);
         if (next->has_mask) {
             uint32_t n = (value.width + 63u) / 64u;
             uint32_t mn = (next->mask.width + 63u) / 64u;
@@ -34,6 +36,14 @@ static void apply_nba(llg_nba_t* next) {
                 value.bits[i] = (value.bits[i] & ~mask) | (next->value.bits[i] & mask);
                 value.x[i] = (value.x[i] & ~mask) | (next->value.x[i] & mask);
                 value.z[i] = (value.z[i] & ~mask) | (next->value.z[i] & mask);
+            }
+        } else if (next->has_range) {
+            if (next->range_width) {
+                sv4_select_plan_t plan = {
+                    value.width, next->range_width, next->range_offset, 0,
+                    next->range_width,
+                };
+                sv4_select_plan_set(&value, &plan, next->value);
             }
         }
         if (next->net_target) llg_net_write(next->net_target, next->net_slot, value);

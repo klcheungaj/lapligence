@@ -127,6 +127,47 @@ static void check_nba_fifo_and_cancellation(void) {
     CHECK(value_test_live() == 0);
 }
 
+static void check_narrow_selected_nbas(void) {
+    llg_rt_init();
+    g.current_region = LLG_REGION_ACTIVE;
+    sv4_t target = sv4_from_u64(0xa55a, 16, 0);
+    sv4_t expected = sv4_clone(&target);
+    sv4_t source = sv4_from_masks(0x9, 0x2, 0x4, 4, 0);
+    sv4_select_plan_t plan = sv4_select_plan_part(target.width, 2, 5);
+    sv4_part_select_set(&expected, 2, 5, source);
+
+    llg_nba_selected_after(&target, source, plan, 1, 0);
+    llg_nba_t* queued = g.nba_queues[LLG_REGION_NBA].head;
+    CHECK(queued && queued->has_range && !queued->has_mask);
+    CHECK(queued->range_offset == 2 && queued->range_width == 4);
+    CHECK(queued->value.width == 4);
+    commit_nbas(LLG_REGION_NBA);
+    CHECK(sv4_same(target, expected));
+
+    sv4_t mask = sv4_from_u64(5, 16, 0);
+    llg_nba_masked(&target, target, mask, 0);
+    queued = g.nba_queues[LLG_REGION_NBA].head;
+    CHECK(queued && queued->has_mask && !queued->has_range);
+    commit_nbas(LLG_REGION_NBA);
+
+    plan = sv4_select_plan_bit(target.width, UINT64_MAX);
+    sv4_t invalid_source = sv4_zero(1, 0);
+    llg_nba_selected_after(&target, invalid_source, plan, 0, 1);
+    CHECK(g.delayed_nba_buckets &&
+          g.delayed_nba_buckets->queues[LLG_REGION_NBA].head->range_width == 0);
+    ++g.now;
+    commit_nbas(LLG_REGION_NBA);
+    CHECK(sv4_same(target, expected));
+
+    sv4_destroy(&invalid_source);
+    sv4_destroy(&mask);
+    sv4_destroy(&source);
+    sv4_destroy(&expected);
+    sv4_destroy(&target);
+    llg_rt_cleanup();
+    CHECK(value_test_live() == 0);
+}
+
 static void check_frames(void) {
     llg_rt_init();
     sv4_t source = sv4_from_u64(17, 65, 0);
@@ -380,6 +421,7 @@ int main(void) {
     check_time_and_io();
     check_nba_and_scopes();
     check_nba_fifo_and_cancellation();
+    check_narrow_selected_nbas();
     check_frames();
     check_inertial_and_force();
     check_sequence_snapshots();

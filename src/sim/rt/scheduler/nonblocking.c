@@ -14,6 +14,7 @@ static llg_nba_t* new_nba_in_region(uint64_t ticks, llg_region_t region) {
     n->is_real = 0;
     n->is_event = 0;
     n->has_mask = 0;
+    n->has_range = 0;
     n->real_target = NULL;
     n->real_value = 0.0;
     n->is_string = 0;
@@ -100,6 +101,69 @@ static void enqueue_nba(llg_nba_t* n) {
     }
 }
 
+static sv4_t nba_range_slice(uint32_t target_width, sv4_t value,
+                             sv4_select_plan_t plan, int reverse,
+                             uint32_t* offset, uint32_t* width) {
+    if (plan.storage_width != target_width) {
+        fputs("llg runtime fatal: selected NBA storage width mismatch\n", stderr);
+        abort();
+    }
+    *offset = plan.storage_lsb;
+    *width = plan.count;
+    return sv4_select_plan_slice(value, &plan, reverse);
+}
+
+static void nba_capture_range(llg_nba_t* n, uint32_t target_width,
+                              sv4_t value, sv4_select_plan_t plan,
+                              int reverse) {
+    n->value = nba_range_slice(target_width, value, plan, reverse,
+                               &n->range_offset, &n->range_width);
+    n->has_range = 1;
+}
+
+static int nba_mask_contiguous(uint32_t target_width, sv4_t value, sv4_t mask,
+                               uint32_t* offset, uint32_t* width) {
+    uint32_t limit = target_width;
+    if (value.width < limit) limit = value.width;
+    if (mask.width < limit) limit = mask.width;
+    uint32_t first = limit;
+    uint32_t last = 0;
+    uint32_t count = 0;
+    for (uint32_t bit = 0; bit < limit; ++bit) {
+        if (!((mask.bits[bit / 64u] >> (bit % 64u)) & 1u)) continue;
+        if (first == limit) first = bit;
+        last = bit;
+        ++count;
+    }
+    if (!count) {
+        *offset = *width = 0;
+        return 1;
+    }
+    if (count != last - first + 1) return 0;
+    *offset = first;
+    *width = count;
+    return 1;
+}
+
+static void nba_capture_masked(llg_nba_t* n, uint32_t target_width,
+                               sv4_t value, sv4_t mask) {
+    uint32_t offset;
+    uint32_t width;
+    if (nba_mask_contiguous(target_width, value, mask, &offset, &width)) {
+        n->range_offset = offset;
+        n->range_width = width;
+        n->has_range = 1;
+        sv4_select_plan_t plan = {
+            target_width, value.width, offset, offset, width,
+        };
+        n->value = sv4_select_plan_slice(value, &plan, 0);
+        return;
+    }
+    sv4_copy(&n->value, &value);
+    sv4_copy(&n->mask, &mask);
+    n->has_mask = 1;
+}
+
 static void promote_delayed_nbas(void) {
     while (g.delayed_nba_buckets && g.delayed_nba_buckets->time == g.now) {
         llg_nba_bucket_t* bucket = g.delayed_nba_buckets;
@@ -182,9 +246,19 @@ void llg_nba_net_masked_after(llg_net_t* net, int slot, sv4_t value,
     if (!n) return;
     n->net_target = net;
     n->net_slot = slot;
-    sv4_copy(&n->value, &value);
-    sv4_copy(&n->mask, &mask);
-    n->has_mask = 1;
+    nba_capture_masked(n, net->drivers[slot]->width, value, mask);
+    enqueue_nba(n);
+}
+
+void llg_nba_net_selected_after(llg_net_t* net, int slot, sv4_t value,
+                                sv4_select_plan_t plan, int reverse,
+                                uint64_t ticks) {
+    if (!net || slot < 0 || slot >= net->n_drivers || !net->drivers[slot]) return;
+    llg_nba_t* n = new_nba(ticks);
+    if (!n) return;
+    n->net_target = net;
+    n->net_slot = slot;
+    nba_capture_range(n, net->drivers[slot]->width, value, plan, reverse);
     enqueue_nba(n);
 }
 
@@ -210,6 +284,9 @@ static void clocking_drive_schedule(const llg_clocking_drive_t* drive,
     sv4_copy(&pending->value, &drive->value);
     sv4_copy(&pending->mask, &drive->mask);
     pending->has_mask = drive->has_mask;
+    pending->range_offset = drive->range_offset;
+    pending->range_width = drive->range_width;
+    pending->has_range = drive->has_range;
     pending->is_real = drive->is_real;
     pending->real_value = drive->real_value;
     pending->ticks = drive->ticks;
@@ -263,6 +340,36 @@ void llg_clocking_nba_net_sync_masked_after(
     clocking_drive_schedule(&drive, specs, n_specs);
 }
 
+void llg_clocking_nba_sync_selected_after(
+    sv4_t* target, sv4_t value, sv4_select_plan_t plan, int reverse,
+    uint64_t ticks, const llg_wait_src_t* specs, int n_specs) {
+    if (!target) return;
+    llg_clocking_drive_t drive = {0};
+    drive.target = target;
+    drive.value = nba_range_slice(target->width, value, plan, reverse,
+                                  &drive.range_offset, &drive.range_width);
+    drive.has_range = 1;
+    drive.ticks = ticks;
+    clocking_drive_schedule(&drive, specs, n_specs);
+    sv4_destroy(&drive.value);
+}
+
+void llg_clocking_nba_net_sync_selected_after(
+    llg_net_t* net, int slot, sv4_t value, sv4_select_plan_t plan, int reverse,
+    uint64_t ticks, const llg_wait_src_t* specs, int n_specs) {
+    if (!net || slot < 0 || slot >= net->n_drivers || !net->drivers[slot]) return;
+    llg_clocking_drive_t drive = {0};
+    drive.net_target = net;
+    drive.net_slot = slot;
+    drive.value = nba_range_slice(net->drivers[slot]->width, value, plan,
+                                  reverse, &drive.range_offset,
+                                  &drive.range_width);
+    drive.has_range = 1;
+    drive.ticks = ticks;
+    clocking_drive_schedule(&drive, specs, n_specs);
+    sv4_destroy(&drive.value);
+}
+
 void llg_clocking_nba_d_sync_after(double* target, double value, uint64_t ticks,
                                    const llg_wait_src_t* specs, int n_specs) {
     llg_clocking_drive_t drive = {0};
@@ -291,13 +398,24 @@ void llg_nba(sv4_t* target, sv4_t value) {
 }
 
 void llg_nba_masked(sv4_t* target, sv4_t value, sv4_t mask, uint64_t ticks) {
+    if (!target) return;
     llg_nba_t* n = new_nba(ticks);
     if (!n) return;
     n->target = target;
     n->target_scope = value_scope_retain_target(target);
-    sv4_copy(&n->value, &value);
-    sv4_copy(&n->mask, &mask);
-    n->has_mask = 1;
+    nba_capture_masked(n, target->width, value, mask);
+    enqueue_nba(n);
+}
+
+void llg_nba_selected_after(sv4_t* target, sv4_t value,
+                            sv4_select_plan_t plan, int reverse,
+                            uint64_t ticks) {
+    if (!target) return;
+    llg_nba_t* n = new_nba(ticks);
+    if (!n) return;
+    n->target = target;
+    n->target_scope = value_scope_retain_target(target);
+    nba_capture_range(n, target->width, value, plan, reverse);
     enqueue_nba(n);
 }
 

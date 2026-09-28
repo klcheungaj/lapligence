@@ -37,6 +37,9 @@ typedef struct llg_nba {
     sv4_t value;
     sv4_t mask;
     int has_mask;
+    uint32_t range_offset;
+    uint32_t range_width;
+    int has_range;
     uint64_t time;
     uint64_t sequence;
     llg_region_t region;

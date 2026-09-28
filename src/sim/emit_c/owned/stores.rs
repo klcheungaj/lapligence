@@ -524,6 +524,32 @@ impl<'a, 'm> Frame<'a, 'm> {
         });
     }
 
+    pub(super) fn selection_plan(
+        &self,
+        selection: &Selection,
+        storage_width: u32,
+    ) -> (String, bool) {
+        match selection {
+            Selection::PackedChain(plan, _) => (plan.clone(), false),
+            Selection::Bit(index) => (
+                format!("sv4_select_plan_bit({storage_width}, {index})"),
+                false,
+            ),
+            Selection::Part(left, right) => (
+                format!("sv4_select_plan_part({storage_width}, {left}LL, {right}LL)"),
+                left < right,
+            ),
+            Selection::Indexed(base, width, negative) => (
+                format!(
+                    "sv4_select_plan_indexed({storage_width}, {}, {width}, {})",
+                    base.code,
+                    u8::from(*negative)
+                ),
+                false,
+            ),
+        }
+    }
+
     pub(super) fn store(
         &mut self,
         target: &Target,
@@ -682,45 +708,36 @@ impl<'a, 'm> Frame<'a, 'm> {
             };
             self.line(call);
         } else if let Some(selection) = &target.selection {
-            let updated = self.value(
-                format!("sv4_clone({})", binding.address),
-                binding.width,
-                binding.signed,
-            );
-            self.set_selected(selection, &updated.code, &value.code);
             if nba {
-                let mask = self.value(
-                    format!("sv4_zero({}, 0)", binding.width),
-                    binding.width,
-                    false,
-                );
-                let ones = self.value(
-                    format!("sv4_fill(1, {}, 0)", target.width),
-                    target.width,
-                    false,
-                );
-                self.set_selected(selection, &mask.code, &ones.code);
-                self.discard(ones);
+                let (plan, reverse) = self.selection_plan(selection, binding.width);
                 self.line(if let Some((name, slot)) = &target.net {
                     format!(
-                        "llg_nba_net_masked_after(&{name}, {slot}, {}, {}, {ticks});",
-                        updated.code, mask.code
+                        "llg_nba_net_selected_after(&{name}, {slot}, {}, {plan}, {}, {ticks});",
+                        value.code,
+                        u8::from(reverse)
                     )
                 } else {
                     format!(
-                        "llg_nba_masked({}, {}, {}, {ticks});",
-                        binding.address, updated.code, mask.code
+                        "llg_nba_selected_after({}, {}, {plan}, {}, {ticks});",
+                        binding.address,
+                        value.code,
+                        u8::from(reverse)
                     )
                 });
-                self.discard(mask);
             } else {
+                let updated = self.value(
+                    format!("sv4_clone({})", binding.address),
+                    binding.width,
+                    binding.signed,
+                );
+                self.set_selected(selection, &updated.code, &value.code);
                 self.line(if let Some((name, slot)) = &target.net {
                     format!("llg_net_write(&{name}, {slot}, {});", updated.code)
                 } else {
                     format!("llg_ba({}, {});", binding.address, updated.code)
                 });
+                self.discard(updated);
             }
-            self.discard(updated);
         } else {
             self.line(match (&target.net, nba) {
                 (Some((name, slot)), false) => {

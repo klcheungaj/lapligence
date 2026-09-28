@@ -274,6 +274,9 @@ typedef struct llg_clocking_drive {
     sv4_t value;
     sv4_t mask;
     int has_mask;
+    uint32_t range_offset;
+    uint32_t range_width;
+    int has_range;
     int is_real;
     double real_value;
     uint64_t ticks;

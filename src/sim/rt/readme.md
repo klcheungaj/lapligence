@@ -23,6 +23,8 @@ The scheduler keeps typed region queues, owned pending values and process origin
 Current-slot nonblocking assignments use an issue-ordered FIFO per region and a
 separate per-process cancellation link. Future assignments live in time-ordered
 buckets and are independent of the issuing process until their slot is promoted.
+Selected nonblocking assignments retain an offset and narrow four-state slice;
+the full mask representation remains only for non-contiguous fallback writes.
 Stop/resume retains a live context; close releases observers/queues before model
 storage. Runtime ticks are integer design-precision units; lowering supplies
 per-module scaling. Memory text loading and binary reads keep their distinct
