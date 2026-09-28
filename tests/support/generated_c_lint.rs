@@ -372,6 +372,8 @@ fn address_of_narrowed_local(
     facts: &BodyFacts,
 ) -> bool {
     let operand = body[operand_start..].trim_start();
+    let operand = operand
+        .trim_start_matches(|ch: char| ch.is_ascii_whitespace() || matches!(ch, '(' | '*' | '&'));
     let ident_len = operand
         .bytes()
         .take_while(|byte| *byte == b'_' || byte.is_ascii_alphanumeric())
@@ -551,8 +553,8 @@ static llg_co_status_t fn_bad(llg_co_frame_t* co, llg_co_chain_t* ch) {
         let c = r#"
 static llg_co_status_t fn_ok(llg_co_frame_t* co, llg_co_chain_t* ch) {
     fn_ok_frame_t* F = (fn_ok_frame_t*)co;
-    int local = 0;
-    runtime(&local);
+    int* local = 0;
+    runtime(&(*local));
 }
 "#;
         assert_eq!(lint_generated_coroutine_c(c), Ok(()));
