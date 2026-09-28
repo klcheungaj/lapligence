@@ -651,9 +651,10 @@ fn suspension_operation(
         IrStmt::Call(call) => {
             let indirect = call.virtual_dispatch || call.virtual_call.is_some();
             let callee = function_effects.get(call.function_index());
-            if !indirect
-                && callee.is_some_and(|effects| !effects.contains(&ExecutionEffect::Suspend))
-            {
+            // Lowering rejects timing-bearing class and virtual-interface
+            // dispatch.  The dispatch mechanism alone therefore cannot make
+            // an otherwise synchronous target suspend.
+            if callee.is_some_and(|effects| !effects.contains(&ExecutionEffect::Suspend)) {
                 return None;
             }
             let call = DirectCall {

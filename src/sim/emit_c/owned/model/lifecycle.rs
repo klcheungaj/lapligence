@@ -18,7 +18,7 @@ pub(in crate::sim::emit_c) fn main(execution: &ExecutionModel) -> Result<String,
     out.push_str("    (void)llg_owned_string_drop; (void)llg_owned_process_drop;\n");
     // Mark otherwise unused generated function definitions as intentional.
     for function in &model.funcs {
-        if !inline_event_template(function) {
+        if !function.is_inline_expanded() {
             out.push_str(&format!("    (void){};\n", function.c_name));
         }
     }
