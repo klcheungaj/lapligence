@@ -236,6 +236,9 @@ impl<'a, 'm> Frame<'a, 'm> {
         if self.layout.storage() == FrameStorage::CoFrame {
             self.track_frame_blocks(text);
         }
+        let rewritten = (self.layout.storage() == FrameStorage::CStack)
+            .then(|| self.rewrite_frame_accesses(text));
+        let text = rewritten.as_deref().unwrap_or(text);
         self.code.push_str("    ");
         self.code.push_str(text);
         self.code.push('\n');
@@ -424,7 +427,7 @@ impl<'a, 'm> Frame<'a, 'm> {
         name.to_owned()
     }
     fn frame_field(&mut self, ty: &str, name: &str) -> Result<String, String> {
-        self.layout.declare(ty, name)
+        self.layout.declare_required(ty, name)
     }
     fn take_call_slot(
         &mut self,
@@ -508,8 +511,10 @@ impl<'a, 'm> Frame<'a, 'm> {
             } else {
                 init
             };
+            let declaration_index = self.declarations.len();
             let target = self.defer_declaration(ty, name, false);
             self.line(format!("{target} = {init};"));
+            self.line(format!("__llg_local_use_{declaration_index}__;"));
             name.to_owned()
         } else {
             self.line(format!("{} = {init};", declaration(ty, name)));
@@ -876,7 +881,8 @@ impl<'a, 'm> Frame<'a, 'm> {
                     .code
                     .replace(&format!("F->{original}"), &format!("F->{flattened}"));
             }
-            self.code = self.resolve_declarations()?;
+            let declarations = self.resolve_declarations()?;
+            self.code = self.resolve_local_uses(&declarations)?;
             let rewritten = self.rewrite_frame_accesses(&self.code);
             self.code = rewritten;
             Ok((self.code, self.layout))
@@ -907,6 +913,34 @@ impl<'a, 'm> Frame<'a, 'm> {
                 }
             } else {
                 output.push_str(&declaration(&record.ty, &record.name));
+            }
+            rest = &suffix[end + 2..];
+        }
+        output.push_str(rest);
+        Ok(output)
+    }
+
+    fn resolve_local_uses(&self, code: &str) -> Result<String, String> {
+        const PREFIX: &str = "__llg_local_use_";
+        let mut output = String::with_capacity(code.len());
+        let mut rest = code;
+        while let Some(start) = rest.find(PREFIX) {
+            output.push_str(&rest[..start]);
+            let suffix = &rest[start + PREFIX.len()..];
+            let end = suffix
+                .find("__")
+                .ok_or_else(|| "unterminated deferred coroutine local use".to_owned())?;
+            let index = suffix[..end]
+                .parse::<usize>()
+                .map_err(|_| "invalid deferred coroutine local use".to_owned())?;
+            let record = self
+                .declarations
+                .get(index)
+                .ok_or_else(|| format!("unknown deferred coroutine local use {index}"))?;
+            if self.layout.field_access(&record.name).is_none() {
+                output.push_str("(void)sizeof(");
+                output.push_str(&record.name);
+                output.push(')');
             }
             rest = &suffix[end + 2..];
         }

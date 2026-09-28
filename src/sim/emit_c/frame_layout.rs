@@ -21,6 +21,7 @@ struct Field {
     size: usize,
     align: usize,
     hot: bool,
+    always_frame: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -129,6 +130,22 @@ impl FrameLayout {
 
     /// Register one typed declaration and return the expression used to access it.
     pub(super) fn declare(&mut self, ty: &str, name: &str) -> Result<String, String> {
+        self.register_field(ty, name, false)
+    }
+
+    /// Register entry storage supplied by the caller. Unlike a declaration,
+    /// arguments must remain addressable through the ABI frame even when the
+    /// selected coroutine body itself has no resume point.
+    pub(super) fn declare_required(&mut self, ty: &str, name: &str) -> Result<String, String> {
+        self.register_field(ty, name, true)
+    }
+
+    fn register_field(
+        &mut self,
+        ty: &str,
+        name: &str,
+        always_frame: bool,
+    ) -> Result<String, String> {
         if self.storage == FrameStorage::CStack {
             return Ok(name.to_owned());
         }
@@ -145,6 +162,7 @@ impl FrameLayout {
             size,
             align,
             hot: false,
+            always_frame,
         });
         Ok(format!("F->{name}"))
     }
@@ -298,7 +316,10 @@ impl FrameLayout {
             .blocks
             .iter()
             .map(|block| {
-                block.contains_resume && !block.fields.is_empty()
+                block
+                    .fields
+                    .iter()
+                    .any(|field| block.contains_resume || field.always_frame)
                     || block
                         .calls
                         .iter()
@@ -348,8 +369,8 @@ impl FrameLayout {
     ) {
         let chain = self.flat_chain(block, storage);
         for &item in &chain {
-            if self.blocks[item].contains_resume {
-                for field in &self.blocks[item].fields {
+            for field in &self.blocks[item].fields {
+                if self.blocks[item].contains_resume || field.always_frame {
                     fields.insert(field.name.clone(), format!("{prefix}{}", field.name));
                 }
             }
@@ -386,8 +407,12 @@ impl FrameLayout {
         for hot in [true, false] {
             for field in chain
                 .iter()
-                .filter(|item| self.blocks[**item].contains_resume)
-                .flat_map(|item| self.blocks[*item].fields.iter())
+                .flat_map(|item| {
+                    self.blocks[*item]
+                        .fields
+                        .iter()
+                        .filter(|field| self.blocks[*item].contains_resume || field.always_frame)
+                })
                 .filter(|field| field.hot == hot)
             {
                 out.push_str(&pad);
@@ -438,8 +463,12 @@ impl FrameLayout {
         for hot in [true, false] {
             for field in chain
                 .iter()
-                .filter(|item| self.blocks[**item].contains_resume)
-                .flat_map(|item| self.blocks[*item].fields.iter())
+                .flat_map(|item| {
+                    self.blocks[*item]
+                        .fields
+                        .iter()
+                        .filter(|field| self.blocks[*item].contains_resume || field.always_frame)
+                })
                 .filter(|field| field.hot == hot)
             {
                 size = align_up(size, field.align)?;
@@ -604,6 +633,20 @@ mod tests {
         assert_eq!(layout.field_access("root"), Some("root"));
         assert_eq!(layout.field_access("leaf_local"), None);
         assert_eq!(layout.field_access("resumed"), Some("resumed"));
+        assert_eq!(layout.upper_bound().unwrap(), 48);
+    }
+
+    #[test]
+    fn caller_supplied_arguments_remain_in_a_resume_free_callee_frame() {
+        let mut layout = FrameLayout::new(FrameStorage::CoFrame);
+        layout.declare_required("sv4_t", "a0").unwrap();
+        layout.declare_required("int", "depth").unwrap();
+        layout.declare("uint64_t", "local").unwrap();
+        layout.finalize_paths().unwrap();
+
+        assert_eq!(layout.field_access("a0"), Some("a0"));
+        assert_eq!(layout.field_access("depth"), Some("depth"));
+        assert_eq!(layout.field_access("local"), None);
         assert_eq!(layout.upper_bound().unwrap(), 48);
     }
 
