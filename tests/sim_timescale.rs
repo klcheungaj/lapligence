@@ -71,7 +71,7 @@ fn run_design(name: &str, files: &[(&str, &str)]) -> Result<String, String> {
         // 2. Codegen.
         let gen = sim::codegen::generate(&db).map_err(|e| format!("codegen: {e}"))?;
 
-        // 3. Build model + runtime + libaco with CMake.
+        // 3. Build model + runtime with CMake.
         let exe = sim::build::build_model_cmake(dir, &[("model.c", gen.model_c.as_str())])
             .map_err(|e| format!("cmake: {e}"))?;
 

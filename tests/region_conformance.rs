@@ -29,7 +29,7 @@ mod sim_harness;
 static CWD_LOCK: Mutex<()> = Mutex::new(());
 
 /// Compile `sv` (top module `tb`), codegen, compile the model with the
-/// runtime + libaco and run it; returns `(stdout, stderr)`.  Each call uses
+/// runtime and run it; returns `(stdout, stderr)`. Each call uses
 /// its own temp dir and restores the CWD afterwards.
 fn run_design(sv: &str, tag: &str) -> Result<(String, String), String> {
     sim_harness::with_temp_cwd(tag, |dir| {

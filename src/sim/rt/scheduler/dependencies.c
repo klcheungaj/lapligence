@@ -266,7 +266,10 @@ static int expression_update(llg_wait_t* wait, int index, sv4_t* sig,
     if (spec->event || !expression_dependency_changed(spec, sig, real)) return 0;
     if (spec->real || spec->real_eval || spec->real_sig) {
         double value;
-        if (spec->real_eval) spec->real_eval(&value, spec->eval_context);
+        if (spec->real_eval) {
+            spec->real_eval(&value, spec->eval_context);
+            if (llg_rt_exiting()) return 0;
+        }
         else if (spec->real_sig) value = *spec->real_sig;
         else return 0;
         int matched = real_ev_matches(payload->real_last[index], value, spec->kind);
@@ -276,7 +279,13 @@ static int expression_update(llg_wait_t* wait, int index, sv4_t* sig,
     if (!spec->eval && !spec->sig) return 0;
     llg_value_scope_t* scope = llg_value_scope_begin(1);
     sv4_t* value = llg_value_scope_values(scope);
-    if (spec->eval) spec->eval(value, spec->eval_context);
+    if (spec->eval) {
+        spec->eval(value, spec->eval_context);
+        if (llg_rt_exiting()) {
+            llg_value_scope_end(scope);
+            return 0;
+        }
+    }
     else sv4_copy(value, spec->sig);
     int matched = ev_matches(payload->last[index], *value, spec->kind);
     sv4_move(&payload->last[index], value);
@@ -290,7 +299,10 @@ static int deferred_expression_update(llg_deferred_trigger_t* trigger,
     if (spec->event || !expression_dependency_changed(spec, sig, real)) return 0;
     if (spec->real || spec->real_eval || spec->real_sig) {
         double value;
-        if (spec->real_eval) spec->real_eval(&value, spec->eval_context);
+        if (spec->real_eval) {
+            spec->real_eval(&value, spec->eval_context);
+            if (llg_rt_exiting()) return 0;
+        }
         else if (spec->real_sig) value = *spec->real_sig;
         else return 0;
         int matched = real_ev_matches(trigger->real_last[index], value, spec->kind);
@@ -300,7 +312,13 @@ static int deferred_expression_update(llg_deferred_trigger_t* trigger,
     if (!spec->eval && !spec->sig) return 0;
     llg_value_scope_t* scope = llg_value_scope_begin(1);
     sv4_t* value = llg_value_scope_values(scope);
-    if (spec->eval) spec->eval(value, spec->eval_context);
+    if (spec->eval) {
+        spec->eval(value, spec->eval_context);
+        if (llg_rt_exiting()) {
+            llg_value_scope_end(scope);
+            return 0;
+        }
+    }
     else sv4_copy(value, spec->sig);
     int matched = ev_matches(trigger->last[index], *value, spec->kind);
     sv4_move(&trigger->last[index], value);

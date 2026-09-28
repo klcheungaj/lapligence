@@ -14,11 +14,11 @@ pub(in crate::sim::emit_c) fn main(execution: &ExecutionModel) -> Result<String,
     if model.waveform {
         out.push_str("static int llg_model_wave_live;\n");
     }
-    out.push_str(&format!("int llg_model_start(int argc, char** argv) {{\n    if (llg_model_live) return 1;\n    llg_model_live = 1;\n    llg_model_done = llg_model_status = 0;\n    llg_rt_init_with_args_precision_and_stack(argc, argv, {}ULL, LLG_MODEL_STACK_VALUES);\n    if (llg_rt_failed()) goto start_failed;\n    llg_model_storage_defaults();\n    llg_model_initializers();\n    if (llg_rt_failed()) goto start_failed;\n", model.precision_fs));
+    out.push_str(&format!("int llg_model_start(int argc, char** argv) {{\n    if (llg_model_live) return 1;\n    llg_model_live = 1;\n    llg_model_done = llg_model_status = 0;\n    llg_rt_init_with_args_and_precision(argc, argv, {}ULL);\n    if (llg_rt_failed()) goto start_failed;\n    llg_model_storage_defaults();\n    llg_model_initializers();\n    if (llg_rt_failed()) goto start_failed;\n", model.precision_fs));
     out.push_str("    (void)llg_owned_string_drop; (void)llg_owned_process_drop;\n");
     // Mark otherwise unused generated function definitions as intentional.
     for function in &model.funcs {
-        if !inline_event_template(function) {
+        if !inline_template(function) {
             out.push_str(&format!("    (void){};\n", function.c_name));
         }
     }
@@ -105,14 +105,14 @@ pub(in crate::sim::emit_c) fn main(execution: &ExecutionModel) -> Result<String,
         if let Some(instance) = semantic.and_then(|item| item.program) {
             let initial = semantic.is_some_and(|item| item.kind() == IrProcessKind::Initial);
             out.push_str(&format!(
-                "    llg_spawn_program_in_region(&{name}_desc, {name}, {}, {}, {instance}ULL, {});\n",
+                "    llg_spawn_program_in_region(&{name}_desc, {}, {}, {instance}ULL, {});\n",
                 c_string_literal(label),
                 region.runtime_symbol(),
                 u8::from(initial)
             ));
         } else {
             out.push_str(&format!(
-                "    llg_spawn_in_region(&{name}_desc, {name}, {}, {});\n",
+                "    llg_spawn_in_region(&{name}_desc, {}, {});\n",
                 c_string_literal(label),
                 region.runtime_symbol()
             ));

@@ -12,7 +12,7 @@ suspension, cancellation and queued publication. See
 | `llg_value.h/.c`, `value/` | Four-state values, arithmetic, selection, resolution, formatting and numeric conversion; scheduler-independent. |
 | `llg_random.h/.c` | Verilog random/distribution functions and explicit seed updates. |
 | `llg_rng.h/.c` | Process/object random streams, independent of scheduling. |
-| `llg_co.h/.c` | Stackless coroutine frames, anchors and arena cold paths; packaged in the runtime but not yet used by generated code. |
+| `llg_co.h/.c` | Stackless coroutine frames, anchors and arena cold paths; the generated-process contract is [process ABI version 2](process_abi.md). |
 | `llg_string.h/.c` | Owned byte strings, conversion and change notification. |
 | `llg_container.h/.c`, `container/` | Dynamic arrays, queues, associative storage and retained element identities. |
 | `llg_rt.h/.c`, `scheduler/` | IEEE region scheduling, processes, events, assignments, synchronization, assertions, I/O and VPI. |
@@ -42,10 +42,10 @@ address-order rules.
 
 `mod.rs` returns header/flat-source pairs through `value_sources`,
 `random_sources`, `rng_sources`, `coroutine_sources`, `runtime_sources`,
-`string_sources` and `container_sources`; libaco, waveform and self-test accessors
-provide their related files. Facades include ordered private fragments; emitted
-sources flatten the same order. `llg_co.c` is an independent translation unit, not
-a scheduler fragment.
+`string_sources` and `container_sources`; waveform and self-test accessors provide
+their related files. Facades include ordered private fragments; emitted sources
+flatten the same order. `llg_co.c` is an independent translation unit, not a
+scheduler fragment.
 
 `llg_co` owns no global or thread-local state. The runtime supplies its allocation
 hooks and owns one simulation-thread chunk cache, capped by
@@ -54,10 +54,15 @@ the exported counter snapshot records system allocations, cache hits, system
 frees, current cached bytes and the peak. Runtime cleanup frees every retained
 chunk. Under the future MT-1 design, each worker will own an equivalent cache.
 
-`generate_model_sources` writes a self-contained CMake tree, including libaco and
-`aco_assert_override.h`. Normal builds may reuse a compatible runtime archive.
-Model-specific stack headroom is passed at startup, not encoded in the archive ABI.
+`generate_model_sources` writes a self-contained CMake tree with `llg_co`. ABI 2
+models define `LLG_MODEL_PROCESS_ABI` and initialize through
+`llg_rt_init_with_args_and_precision`; there is no process-stack sizing input.
 Waveforms additionally need zlib and CMake Threads support.
+
+The generated 256-call recursion guard remains the plain-function bound. On
+POSIX, startup warns when `RLIMIT_STACK` is below the named 8 MiB estimate for
+the scheduler, one polled segment and that guard. Generated MSVC projects reserve
+the same default with `/STACK`.
 
 ## Validation and limits
 
@@ -66,6 +71,9 @@ allocation accounting, failure cleanup, values, queues, callbacks and waveform
 transfers. [Repository tests](../../../tests/readme.md#dynamic-ownership-validation)
 separately exercise real emission and public HDL. Component-only results, handwritten
 output-shape probes and configured platforms do not establish full model acceptance.
-Real coroutine sanitizer and native Windows/libaco limits remain separate gates.
+Stackless coroutine probes run under ASan/UBSan without stack-switch exceptions.
+Windows x64/ARM64 generated-model build/run lanes are configured in CI but remain
+unvalidated until native results are recorded. Complete platform qualification
+remains a separate gate.
 Use [feature status](../../../docs/sim_features.md), not this component map, for
 supported language contexts and outstanding qualification.

@@ -2,8 +2,12 @@
 // on coroutine timing. The separate coroutine probe tests real suspension.
 #include "llg_rt.c"
 #include "probe.h"
+#include "probe_co.h"
 
-static void never_run(llg_proc_t* proc) { (void)proc; abort(); }
+LLG_PROBE_SIMPLE_PROCESS(never_run, 0) {
+    LLG_PROBE_SIMPLE_BEGIN(0);
+    abort();
+}
 
 static void check_file_messages(void) {
     char text[160];
@@ -49,9 +53,9 @@ static void check_nba_and_scopes(void) {
         CHECK(target.bits[0] == 99);
         CHECK(value_test_live() == baseline);
     }
-    llg_proc_t* proc = llg_spawn(&llg_libaco_desc, never_run, "cancel-owner");
+    llg_proc_t* proc = llg_spawn(&never_run_desc, "cancel-owner");
     // Supply current-process identity without switching the C stack.
-    aco_gtls_co = proc->co;
+    g.current = proc;
     llg_value_scope_t* scope = llg_value_scope_begin(2);
     sv4_t* values = llg_value_scope_values(scope);
     sv4_replace(&values[0], sv4_clone(&source));
@@ -67,7 +71,7 @@ static void check_nba_and_scopes(void) {
     proc->wait.next = g.waiters;
     g.waiters = &proc->wait;
     ++g.wait_count;
-    aco_gtls_co = g.main_co;
+    g.current = NULL;
     llg_kill_proc(proc, 0);
     reap_retired_procs();
     CHECK(g.wait_count == 0 && g.waiters == NULL);
@@ -95,18 +99,18 @@ static void check_nba_fifo_and_cancellation(void) {
     sv4_t two = sv4_from_u64(2, 8, 0);
     sv4_t three = sv4_from_u64(3, 8, 0);
     llg_proc_t* first =
-        llg_spawn(&llg_libaco_desc, never_run, "first NBA owner");
+        llg_spawn(&never_run_desc, "first NBA owner");
     llg_proc_t* second =
-        llg_spawn(&llg_libaco_desc, never_run, "second NBA owner");
+        llg_spawn(&never_run_desc, "second NBA owner");
 
-    aco_gtls_co = first->co;
+    g.current = first;
     llg_nba_after(&target, one, 0);
-    aco_gtls_co = second->co;
+    g.current = second;
     llg_nba_after(&target, two, 0);
-    aco_gtls_co = first->co;
+    g.current = first;
     llg_nba_after(&target, three, 0);
     llg_nba_after(&target, three, 1);
-    aco_gtls_co = g.main_co;
+    g.current = NULL;
 
     // Cancelling one issuer removes only its current-slot entries. The
     // future write retains its independent payload and destination.

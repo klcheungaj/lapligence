@@ -181,20 +181,22 @@ static void budget_abort(llg_proc_t* p, const char* location) {
             (unsigned long long)g.process_step_limit);
     llg_last_failure = 1;
     g.finish = 1;
-    aco_exit();
-    abort();
+    if (p) p->chain.exiting = LLG_EXIT_ABANDON;
 }
 
-void llg_budget_point(const char* location) {
+int llg_budget_point(const char* location) {
     llg_proc_t* p = llg_current();
-    if (!p || g.config_error) return;
+    llg_runtime_service_enter(p, "budget point");
+    if (!p || g.config_error) return 0;
     if (p->budget_time != g.now) {
         p->budget_time = g.now;
         p->budget_steps = 0;
     }
     if (!consume_limit(&p->budget_steps, g.process_step_limit)) {
         budget_abort(p, location);
+        return 1;
     }
+    return 0;
 }
 
 void llg_unique_priority_check(int check, int matched, int has_default,

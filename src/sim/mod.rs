@@ -2,8 +2,7 @@
 //!
 //! [`codegen::generate`] lowers a frontend-neutral [`semantic`] model into
 //! typed [`execution`] blocks, applies [`opt`], and renders them through
-//! [`emit_c`]. [`rt`] provides
-//! the embedded C runtime and vendored libaco sources. The single model builder is
+//! [`emit_c`]. [`rt`] provides the embedded C runtime. The single model builder is
 //! [`build::build_model_cmake`] (CMake-only; invoked automatically right
 //! after C emission — see the `build` module docs for env vars and generator
 //! selection).
@@ -22,7 +21,7 @@ pub mod semantic;
 
 use std::path::Path;
 
-/// Create `out_dir` and write the runtime + libaco sources plus `extra`
+/// Create `out_dir` and write the runtime sources plus `extra`
 /// (e.g. the generated `model.c`) into it.  Shared by
 /// [`build::generate_model_sources`] / [`build::build_model_cmake_with_opts`].
 pub(crate) fn write_sim_sources(
@@ -44,7 +43,6 @@ pub(crate) fn write_sim_sources(
     let vpi_bridge_h = rt::vpi_bridge_header();
     let (container_h, container_c) = rt::container_sources();
     let (string_h, string_c) = rt::string_sources();
-    let (aco_h, aco_c, aco_s) = rt::libaco_sources();
     let mut files = vec![
         ("llg_rt.h", rt_h),
         ("llg_rt.c", rt_c),
@@ -63,13 +61,6 @@ pub(crate) fn write_sim_sources(
         ("llg_container.c", container_c),
         ("llg_string.h", string_h),
         ("llg_string.c", string_c),
-        ("aco.h", aco_h),
-        ("aco.c", aco_c),
-        ("acosw.S", aco_s),
-        (
-            "aco_assert_override.h",
-            include_str!("../../vendor/libaco/aco_assert_override.h"),
-        ),
         (
             "svdpi.h",
             include_str!("../../vendor/slang/external/ieee1800/svdpi.h"),

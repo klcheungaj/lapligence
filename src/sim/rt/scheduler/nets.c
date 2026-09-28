@@ -662,6 +662,8 @@ static void inertial_update(llg_inertial_t** handle, sv4_t* target,
         selected_mask = sv4_resize(*mask, target->width, 0);
     }
     const sv4_t* effective_mask = mask ? &selected_mask : NULL;
+    uint64_t ticks;
+    llg_inertial_t** entry;
     if (driver->pending) {
         // Unchanged expression values keep the original propagation time.
         if (driver->has_mask == (effective_mask != NULL) &&
@@ -678,7 +680,7 @@ static void inertial_update(llg_inertial_t** handle, sv4_t* target,
     driver->rise = rise;
     driver->fall = fall;
     driver->turn_off = turn_off;
-    uint64_t ticks = inertial_transition_ticks(
+    ticks = inertial_transition_ticks(
         &driver->current, &value, effective_mask, rise, fall, turn_off);
     if (ticks > UINT64_MAX - g.now) {
         fprintf(stderr, "llg: fatal: simulation time overflow while scheduling an inertial update\n");
@@ -687,7 +689,7 @@ static void inertial_update(llg_inertial_t** handle, sv4_t* target,
     sv4_move(&driver->value, &value);
     driver->time = g.now + ticks;
     driver->pending = 1;
-    llg_inertial_t** entry = &g.inertial_pending;
+    entry = &g.inertial_pending;
     while (*entry && (*entry)->time <= driver->time) entry = &(*entry)->next_pending;
     driver->next_pending = *entry;
     *entry = driver;

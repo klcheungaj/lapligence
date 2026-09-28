@@ -5,8 +5,8 @@
 //!
 //! [`generate`] accepts the owned design database ([`crate::core::db::Db`]),
 //! forms the semantic and executable IR layers, and emits one C file
-//! (`model.c`). Compiled together with `llg_rt.c`, `llg_random.c`, and libaco, the model is a
-//! standalone simulator executable:
+//! (`model.c`). Compiled together with `llg_rt.c`, `llg_co.c`, and
+//! `llg_random.c`, the model is a standalone simulator executable:
 //!
 //! - every packed scalar signal becomes a global `sv4_t G_<instance path>_<name>`
 //!   (path dots become underscores), using its variable or net defaults; procedural scalar
@@ -22,18 +22,17 @@
 //!   64 packed bits, `sv4_from_limbs` beyond — see [`emit_const`]) whose values
 //!   come from the database, resolved through `core::elab::Resolver`; the
 //!   parameter object's own value is stale for overridden parameters);
-//! - every process becomes a coroutine function `p_<path>_<n>` (including
-//!   processes inside generate scopes, named by their gen-scope path):
-//!   `initial` runs once then calls `llg_proc_done`; ordinary `always` loops
-//!   `for (;;) { <body> }` with a runtime budget for zero-time back-edges;
+//! - every process becomes a stackless coroutine function `p_<path>_<n>`
+//!   (including processes inside generate scopes, named by their gen-scope
+//!   path): `initial` returns `LLG_CO_DONE`; ordinary `always` loops check the
+//!   runtime budget on zero-time back-edges;
 //! - every `fork … join` statement becomes a fork group: each branch is its
 //!   own coroutine function (`p_<path>_fork_<n>_b<k>`) spawned with
 //!   `llg_fork` and joined per `join_kind` (join / join_any / join_none);
-//!   `wait fork;` and `disable fork;` lower to `llg_wait_fork()` /
-//!   `llg_disable_fork()`;
+//!   suspending joins and waits lower to one-shot `llg_arm_*` operations;
 //! - every continuous assignment becomes a comb process that evaluates at
 //!   spawn and re-evaluates when any signal its RHS reads changes
-//!   (`llg_wait_any` on the RHS's read set — Verilator-style semantics);
+//!   (a stackless wait arm over the RHS read set — Verilator-style semantics);
 //! - every structural builtin gate (`and`/`or`/`nand`/`nor`/`xor`/`xnor`,
 //!   `buf`/`not`, `bufif0/1`, `notif0/1`, `pullup`/`pulldown`) becomes ONE
 //!   comb process shaped exactly like a continuous assignment: evaluate at

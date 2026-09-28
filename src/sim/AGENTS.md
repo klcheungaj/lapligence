@@ -63,21 +63,18 @@ operand width. Preserve typed index trees, elaborated indexed-part extents,
 wide intermediate indices and member-specific two-state conversion. Emit static
 extents, not the width expression's integer storage size.
 
-Derive `LLG_MODEL_STACK_VALUES` with checked arithmetic:
-`(max_function_frame * 256 + max_process_frame) * 8`, retaining the historical
-minimum. Count typed expression storage across sequential statements and lexical
-arms: compilers/sanitizers may retain return-by-value temporaries for the entire
-C activation. Fail emission on overflow. Pass headroom at startup through
-`llg_rt_init_with_args_precision_and_stack`, not the compiled runtime ABI.
-Values allocate by their own widths; never restore model-maximum arrays.
-`LLG_MODEL_VALUE_ABI` must match `LLG_VALUE_ABI_VERSION`.
+Coroutine storage is explicit POD frame data. Count typed expression storage and
+embedded callee slots in `FrameLayout`; sibling blocks overlay and recursive or
+oversized callees use the chain arena. There is no generated coroutine-stack
+estimate or `LLG_MODEL_STACK_VALUES`. Values allocate by their own widths; never
+restore model-maximum arrays. `LLG_MODEL_VALUE_ABI` must match
+`LLG_VALUE_ABI_VERSION`, and generated models declare process ABI 2.
 
-`write_sim_sources` embeds flat value, random, scheduler, container, waveform and
-libaco sources plus self-tests into `<out-dir>/sim/<design>/` (driver default
-`build`). Private fragments
-assemble in facade order. Runtime/libaco archives belong only to generated C,
-never Rust binaries; source-only output remains self-contained. Keep original
-runtime/waveform ownership self-tests active. Property vectors mirror
+`write_sim_sources` embeds flat value, random, coroutine, scheduler, container and
+waveform sources plus self-tests into `<out-dir>/sim/<design>/` (driver default
+`build`). Private fragments assemble in facade order. Runtime archives belong only
+to generated C, never Rust binaries; source-only output remains self-contained.
+Keep original runtime/waveform ownership self-tests active. Property vectors mirror
 `core::elab::Value`; regenerate with:
 
 ```sh
@@ -94,6 +91,10 @@ CMake is the only model builder: C11, Release by default, executable under
 cmake --build --config Release
 ```
 
+On POSIX, runtime startup warns when `RLIMIT_STACK` is below the named 8 MiB
+host-stack estimate for scheduler entry, one polled segment and the 256-call
+recursion guard. Generated MSVC projects reserve the same default with `/STACK`.
+
 `CmakeBuildOpts.generator`/`--generator` overrides `CMAKE_GENERATOR`, then host
 default. `launcher`/`--launcher` forwards `CMAKE_C_COMPILER_LAUNCHER` without inventing
 a default. Repeatable `dpi_libraries`/`--dpi-lib` accepts validated explicit link
@@ -103,8 +104,9 @@ writes sources/CMake without building. `CmakeBuildOpts` `cmake`/`cc`/`cflags`
 `LLG_CFLAGS`; explicit flags replace, not append to, `LLG_CFLAGS`. Reject double quotes in flags;
 missing-CMake errors include installation guidance. Probe availability once.
 
-Cache by ownership ABI, runtime content, toolchain, flags, generator, launcher,
-platform and waveform support. Root: `runtime_cache_dir` (`--runtime-cache`) >
+Cache by ownership ABI, runtime content, compiler-reported target, toolchain,
+flags, generator, launcher, platform and waveform support. Root:
+`runtime_cache_dir` (`--runtime-cache`) >
 `LLG_RUNTIME_CACHE_DIR` > library default `<cwd>/build/llg-runtime-cache` (the
 driver passes `<out-dir>/llg-runtime-cache`); relative paths resolve from the CWD.
 Never bake build-machine paths (`CARGO_MANIFEST_DIR`) into runtime defaults;

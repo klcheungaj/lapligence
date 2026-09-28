@@ -1,6 +1,6 @@
 //! Phase-0 semantic oracles for the stackless-coroutine migration.
 //!
-//! These fixtures run unchanged on the current stackful backend. The shared
+//! These fixtures run unchanged on the current stackless backend. The shared
 //! harness invokes every positive fixture through the public CLI with and
 //! without optimizer passes.
 

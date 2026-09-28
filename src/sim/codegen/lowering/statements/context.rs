@@ -44,10 +44,9 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
         format!("_{tag}{}", self.label_seq)
     }
 
-    /// Ordinary functions cannot suspend, but a task body emitted as a typed
-    /// C call runs inside the caller's libaco coroutine and may yield. Inline
-    /// task expansion is still allowed for the event/cancellation paths that
-    /// need caller-owned activation rebinding.
+    /// Ordinary functions cannot suspend. A timing task becomes a stackless
+    /// callee, while event/cancellation paths that need caller-owned activation
+    /// rebinding remain inline expansions in the caller's frame.
     pub(super) fn timing_forbidden(&self) -> bool {
         self.inline.is_none() && self.func.as_ref().is_some_and(|function| !function.is_task)
     }

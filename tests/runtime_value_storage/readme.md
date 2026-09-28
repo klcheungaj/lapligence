@@ -13,8 +13,8 @@ cmake --build target/storage-tests --config Debug
 ctest --test-dir target/storage-tests --build-config Debug --output-on-failure
 ```
 
-Full coverage needs a C11 compiler, CMake, threads and zlib. Scheduler/VPI/fiber
-probes use libaco on supported Unix x86 hosts; other hosts record exclusions.
+Full coverage needs a C11 compiler, CMake, threads and zlib. Scheduler/VPI/process
+probes use portable `llg_co` frames on every C11 host.
 Use a native compiler environment on Windows and supply zlib's location if needed.
 For value/storage/container-only checks:
 
@@ -35,9 +35,8 @@ cmake --build target/storage-asan --config Debug
 ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1 ctest --test-dir target/storage-asan --build-config Debug --output-on-failure
 ```
 
-The component sanitizer lane excludes actual coroutine stack switching. Scheduler
-capture/commit/cancel probes without stack switches and separate native fiber tests
-do not establish sanitizer integration for shared stacks. Counts depend on enabled
+The component sanitizer lane includes process suspension, cancellation, anchored
+and arena calls because `llg_co` has no alternate native stack. Counts depend on enabled
 capabilities; check the exact inventory rather than assuming a fixed count.
 
 ## Coverage
@@ -51,17 +50,18 @@ capabilities; check the exact inventory rather than assuming a fixed count.
 | `container_ownership_probe.c` | Recursive copies, alias-safe replacement, queue shifts/pops/pinned detached refs, normalized associative keys/defaults and teardown. |
 | `port_net_collapse_probe.c` | All seven runtime kinds at 1/65/129 bits, strengths/defaults/release, delayed alias/array publication and zero owners; no frontend policy or stack switching. |
 | `scheduler_ownership_probe.c` | Captured/masked NBA, scopes/frames, inertial/force state, sequence locals/endpoints, sampling, mailbox cleanup, wide formatting, plusargs and exact time scaling. |
-| `coroutine_ownership_probe.c` | 1,000 actual yields and completion/cancel unwind, repeated 50 times; native fiber lane only. |
-| `coroutine_chunk_cache_probe.c` | Stackless arena chunk reuse, byte-cap enforcement, cumulative counters and teardown release; generated code does not use the library yet. |
+| `coroutine_ownership_probe.c` | 1,000 actual yields and completion/cancel unwind, repeated 50 times. |
+| `coroutine_chunk_cache_probe.c` | Stackless arena chunk reuse, byte-cap enforcement, cumulative counters and teardown release. |
 | `vpi_ownership_probe.c` | 129-bit X/Z puts/gets, 65,537-bit text scratch, result replacement, call cleanup and ten reinitializations. |
 | `waveform_snapshot_probe.c` | Ring wrap/move clearing, mutation-after-capture, VCD/FST values, wide views, ignored/error events and pending close/reinit. |
 | `scope_index_probe.c`, `callback_finish_probe.c` | Growth/tombstones/out-of-order releases, retained cells, finish during evaluators, shared per-field contexts and force/qualifier cleanup. |
-| `event_array_probe.c` | Mixed declared directions, negative/out-of-range/X selectors and inert invalid waits; select-only mode sanitizer-safe, waits native-fiber. |
+| `event_array_probe.c` | Mixed declared directions, negative/out-of-range/X selectors and inert invalid waits. |
 | `nextest_control_probe.c` | Native cancellation, staged outputs, lexical activation exits, inertial/strobe/force callbacks and repeated starts. |
-| `generated_scopes_probe.c`, `generated_coroutine_probe.c` | Handwritten output shapes: lexical cells, retained NBA/clocking transfers, masks, recursion, yielding calls, finish/cancel and stop/resume/close; coroutine mode native-only. |
-| `native_ownership_probe.c` | Root string cleanup and independent copies; 15 input/callback modes repeated eight times, including scans/plusargs/containers and writer cancellation. Callback mode native-fiber. |
-| `native_boundaries_probe.c` | Sanitizer-safe ref scope/relocation/removal; nine mailbox/stream modes repeated eight times with reentrant delivery, peek, cancellation and termination in native fibers. |
-| `review_lifetimes_probe.c` | Sanitizer-safe native indexing, detached refs/tombstones/zero payloads and wide indices; native-only stable real/shortreal mailbox targets and publication cancellation. Defensive API effects are not legal read-only HDL callback claims. |
+| `generated_scopes_probe.c`, `generated_coroutine_probe.c` | Handwritten output shapes: lexical cells, retained NBA/clocking transfers, masks, recursion, yielding calls, finish/cancel and stop/resume/close. |
+| `stackless_runtime_probe.c` | Deep polled/anchored/arena cancellation, CALL/READY scheduling boundaries, exact/deferred stop, final finish, budget exit kinds, semaphore/mailbox cancellation, and T28 arena/cache counters. |
+| `native_ownership_probe.c` | Root string cleanup and independent copies; 15 input/callback modes repeated eight times, including scans/plusargs/containers and writer cancellation through stackless frames. |
+| `native_boundaries_probe.c` | Ref scope/relocation/removal; nine mailbox/stream modes repeated eight times with reentrant delivery, peek, cancellation and returning termination. |
+| `review_lifetimes_probe.c` | Native indexing, detached refs/tombstones/zero payloads and wide indices; stable real/shortreal mailbox targets and publication cancellation. Defensive API effects are not legal read-only HDL callback claims. |
 | `packed_selection_probe.c`, `packed_selection_scheduler_probe.c` | Independent per-bit oracle for 7,056 two-step chains plus third refinement, aliasing/X/wide indices, limb endpoints, NBA masks and synchronous scanner targets; scheduler cases do not switch stacks. |
 | `packed_formal_probe.c` | 4,096 private-input mutations without caller changes, immediate ref publication, two-state member conversion and neighboring-field preservation; sanitizer-safe. |
 | `fixed_array_reduction_probe.c` | Five folds, first-element X/Z seeding, signed/widened maps, nested values/declared indices and 65/129-bit owners; 200,000 separate eight-bit cells without flattening and exact cleanup. |
@@ -147,8 +147,9 @@ scheduler/coroutine coverage blocks full-host acceptance; generated HDL is nativ
 not implicitly sanitized. Exit 0 means requested checks passed, 1 failed, 2 blocked.
 
 `--without-waveforms`/`--without-scheduler` explicitly select component-only coverage.
-Windows MSVC CI configures values/containers only; macOS records actual architecture-
-dependent coverage. Neither configuration nor Linux results certify those platforms.
+Windows MSVC CI builds and runs a generated model, while macOS records actual
+architecture-dependent coverage. Those configured lanes still require native-host
+validation before they certify their platforms; Linux results do not substitute for it.
 The flat checker verifies fragment order and strict facade C11 compilation, accepts
 GCC/Clang and cl/clang-cl with optional `--without-scheduler`, requires the current
 ABI to compile and the stale ABI to fail. Linux execution does not validate MSVC.

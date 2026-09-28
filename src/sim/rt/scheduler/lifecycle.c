@@ -1,18 +1,6 @@
 
 // ── Public scheduler API ──────────────────────────────────────────────────────
 
-static void llg_last_word(void) {
-    fprintf(stderr, "llg: fatal: coroutine returned without aco_exit "
-                    "(codegen bug)\n");
-    abort();
-}
-
-static void llg_proc_entry(void) {
-    llg_proc_t* self = (llg_proc_t*)aco_get_arg();
-    self->fn(self);
-    llg_last_word(); // never reached when the body called llg_proc_done
-}
-
 static void free_group_storage(llg_fork_group_t* grp) {
     while (grp) {
         llg_fork_group_t* next_g = grp->next_g;
@@ -295,9 +283,6 @@ void llg_rt_cleanup(void) {
         handle = next;
     }
     g.process_handles = NULL;
-    if (g.share_stack) aco_share_stack_destroy(g.share_stack);
-    if (g.main_co) aco_destroy(g.main_co);
-    aco_gtls_co = NULL;
     if (!llg_file_defer_cleanup) llg_file_cleanup();
     if (llg_event_generation == UINT64_MAX) {
         // A process cannot execute enough complete runtime lifetimes to wrap
@@ -316,11 +301,11 @@ void llg_rt_cleanup(void) {
     llg_rt_co_cache_release();
 }
 
-void llg_rt_init_with_args_precision_and_stack(int argc, char** argv,
-                                               uint64_t precision_fs,
-                                               size_t stack_values) {
+void llg_rt_init_with_args_and_precision(int argc, char** argv,
+                                         uint64_t precision_fs) {
     llg_clear_final_timeformat();
     llg_rt_cleanup();
+    llg_warn_host_stack_limit();
     llg_last_failure = 0;
     llg_last_config_error = 0;
     memset(llg_severity_counts, 0, sizeof(llg_severity_counts));
@@ -337,14 +322,6 @@ void llg_rt_init_with_args_precision_and_stack(int argc, char** argv,
         g.config_error = 1;
         return;
     }
-    if (stack_values == 0) {
-        fprintf(stderr, "llg: runtime coroutine stack value count must be non-zero\n");
-        llg_last_failure = 1;
-        llg_last_config_error = 1;
-        g.config_error = 1;
-        return;
-    }
-    llg_stack_values = stack_values;
     llg_timeformat_defaults(precision_fs);
     if (!configure_limits() || !configure_stop_policy() || !configure_output_files()) {
         llg_last_failure = 1;
@@ -355,23 +332,11 @@ void llg_rt_init_with_args_precision_and_stack(int argc, char** argv,
     llg_configured_zero_loop_limit = g.zero_loop_limit;
     llg_configured_process_step_limit = g.process_step_limit;
     llg_configured_stop_policy = g.stop_policy;
+    g.initialized = 1;
     g.current_region = LLG_REGION_PREPONED;
     llg_rng_state_seed(&g.rng_root, LLG_RNG_DEFAULT_SEED);
     g.argc = argc > 0 ? argc : 0;
     g.argv = g.argc > 0 ? argv : NULL;
-    aco_thread_init(llg_last_word);
-    g.main_co = aco_create(NULL, NULL, 0, NULL, NULL);
-    g.share_stack = aco_share_stack_new(llg_coroutine_stack_size());
-}
-
-void llg_rt_init_with_args_and_precision(int argc, char** argv,
-                                         uint64_t precision_fs) {
-    llg_rt_init_with_args_precision_and_stack(
-        argc, argv, precision_fs, LLG_DEFAULT_STACK_VALUES);
-}
-
-void llg_rt_init_with_stack(size_t stack_values) {
-    llg_rt_init_with_args_precision_and_stack(0, NULL, 1, stack_values);
 }
 
 void llg_rt_init_with_args(int argc, char** argv) {

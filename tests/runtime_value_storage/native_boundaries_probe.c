@@ -1,6 +1,7 @@
 /* Runtime-only checks. These do not invoke the Rust emitter. */
 #include "llg_rt.c"
 #include "probe.h"
+#include "probe_co.h"
 
 static sv4_t watched = SV4_EMPTY;
 static sv4_t payload = SV4_EMPTY;
@@ -44,46 +45,62 @@ static void evaluator(sv4_t* out, void* context) {
         if (mode < 4) {
             CHECK(llg_mailbox_num(mailbox) == (mode % 2 ? 1u : 0u));
             /* Reentrant insertion sees the already committed consume/peek. */
-            llg_mailbox_put_value(mailbox, llg_mailbox_value_packed(payload, 129, 0, 0));
+            CHECK(llg_mailbox_try_put_value(
+                mailbox, llg_mailbox_value_packed(payload, 129, 0, 0)));
             CHECK(llg_mailbox_num(mailbox) == (mode % 2 ? 2u : 1u));
             llg_rt_finish();
+            if (llg_rt_exiting()) return;
         }
         if (mode == 4) {
-            llg_process_kill(receiver_handle);
+            llg_process_kill(llg_current(), receiver_handle);
             /* The publisher pins this descriptor even after its owner dies. */
             CHECK(value_scope_index_find(destination) != NULL);
             CHECK(sv4_to_u64(*destination) == 7);
         } else {
             llg_rt_finish();
+            if (llg_rt_exiting()) return;
         }
     }
     sv4_copy(out, destination);
 }
-static void observer(llg_proc_t* self) {
+static llg_co_arm_t arm_observer(llg_proc_t* self) {
     sv4_t* reads[] = {destination};
     llg_expr_event_spec_t event = {0};
     event.eval = evaluator; event.reads = reads; event.n_reads = 1;
     event.kind = LLG_EV_ANY;
-    llg_wait_expressions(&event, 1);
-    CHECK(mode == 4);
-    llg_proc_done(self);
+    return llg_arm_expressions(self, &event, 1);
 }
-static void receiver(llg_proc_t* self) {
+LLG_PROBE_SIMPLE_PROCESS(observer, 1) {
+    LLG_PROBE_SIMPLE_BEGIN(1);
+    LLG_PROBE_AWAIT(1, arm_observer(self));
+    CHECK(mode == 4);
+    LLG_PROBE_DONE();
+}
+LLG_PROBE_SIMPLE_PROCESS(receiver, 1) {
+    LLG_PROBE_SIMPLE_BEGIN(1);
     if (mode == 4) {
         destination = llg_value_scope_values(llg_value_scope_begin(1));
         sv4_replace(destination, sv4_zero(129, 0));
-        llg_process_assign(&receiver_handle, llg_process_self());
+        llg_process_assign(&receiver_handle, llg_process_self(self));
     }
-    llg_mailbox_get_value(mailbox, llg_mailbox_target_packed(destination, 129, 0, 0), mode % 2 == 1);
+    LLG_PROBE_AWAIT(
+        1, llg_arm_mailbox_get_value(
+               self, mailbox,
+               llg_mailbox_target_packed(destination, 129, 0, 0),
+               mode % 2 == 1));
     CHECK(0); /* finish or kill must prevent this continuation. */
-    llg_proc_done(self);
+    LLG_PROBE_DONE();
 }
-static void publisher(llg_proc_t* self) {
-    llg_wait_time(1);
+LLG_PROBE_SIMPLE_PROCESS(publisher, 2) {
+    LLG_PROBE_SIMPLE_BEGIN(2);
+    LLG_PROBE_AWAIT(1, llg_arm_time(self, 1));
     if (mode < 2) {
         (void)llg_mailbox_try_get_value(mailbox, llg_mailbox_target_packed(destination, 129, 0, 0), mode % 2 == 1);
     } else if (mode < 5) {
-        llg_mailbox_put_value(mailbox, llg_mailbox_value_packed(payload, 129, 0, 0));
+        LLG_PROBE_AWAIT(
+            2, llg_arm_mailbox_put_value(
+                   self, mailbox,
+                   llg_mailbox_value_packed(payload, 129, 0, 0)));
     } else {
         sv4_t* selectors = llg_value_scope_values(llg_value_scope_begin(2));
         sv4_replace(&selectors[0], sv4_zero(32, 0));
@@ -92,8 +109,9 @@ static void publisher(llg_proc_t* self) {
         if (mode % 2) llg_dyn_unstream_assign(&dynamic_array, payload, 1, 0, kind, selectors[0], selectors[1]);
         else llg_queue_unstream_assign(&queue, payload, 1, 0, kind, selectors[0], selectors[1]);
     }
+    LLG_CO_EXIT_CHECK(ch);
     CHECK(mode == 4);
-    llg_proc_done(self);
+    LLG_PROBE_DONE();
 }
 static void native_callbacks(void) {
     for (mode = 0; mode < 9; ++mode) {
@@ -110,10 +128,13 @@ static void native_callbacks(void) {
             dynamic_array.notify = llg_dependency_notify;
             queue.contents_dependency = &watched;
             queue.notify = llg_dependency_notify;
-            if (mode < 2) llg_mailbox_put_value(mailbox, llg_mailbox_value_packed(payload, 129, 0, 0));
-            if (mode >= 2 && mode <= 4) llg_spawn(&llg_libaco_desc, receiver, "mailbox receiver");
-            llg_spawn(&llg_libaco_desc, observer, "publication observer");
-            llg_spawn(&llg_libaco_desc, publisher, "mailbox/stream publisher");
+            if (mode < 2)
+                CHECK(llg_mailbox_try_put_value(
+                    mailbox,
+                    llg_mailbox_value_packed(payload, 129, 0, 0)));
+            if (mode >= 2 && mode <= 4) llg_spawn(&receiver_desc, "mailbox receiver");
+            llg_spawn(&observer_desc, "publication observer");
+            llg_spawn(&publisher_desc, "mailbox/stream publisher");
             llg_rt_run();
             CHECK(evaluations == 2);
             llg_rt_cleanup();

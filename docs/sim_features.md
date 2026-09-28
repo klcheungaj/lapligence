@@ -35,6 +35,10 @@ Windows/macOS execution. See the [test guide](../tests/readme.md) for test
 contracts and the [source/test map](#source-and-regression-evidence) below for
 implementation entry points.
 
+The current stackless runtime has no sanitizer-specific stack-switch path; its
+configured generated-model lanes use ordinary ASan/UBSan flags. Configuration
+alone is not fresh execution evidence or native-platform qualification.
+
 References: **V** = IEEE 1364-2001; **SV** = IEEE 1800-2009. Revision tags retain
 **[1995]**, **[2001]**, **[1364-2005]**, **[SV-2005]** and **[SV-2009]**.
 

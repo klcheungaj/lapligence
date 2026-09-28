@@ -1,8 +1,8 @@
 # Verilog/SystemVerilog simulator
 
 The simulator lowers owned frontend data into a validated execution model, emits
-C11 and builds it with CMake. Generated models link their own runtime and libaco;
-these are not Rust runtime dependencies.
+C11 and builds it with CMake. Generated models link their own stackless runtime;
+it is not a Rust runtime dependency.
 
 | Component | Responsibility |
 | --- | --- |

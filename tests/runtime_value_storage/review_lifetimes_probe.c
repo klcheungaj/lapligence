@@ -1,6 +1,7 @@
 /* Runtime-only regressions for the post-batch-5 source review. */
 #include "llg_rt.c"
 #include "probe.h"
+#include "probe_co.h"
 
 static unsigned destroyed;
 static void destroy_real(void* payload) {
@@ -75,46 +76,70 @@ static void real_evaluator(double* out, void* context) {
     ++evaluations;
     if (evaluations == 2 && mode == 2) {
         /* Defensive runtime-API cancellation case, not an HDL callback claim. */
-        llg_process_kill(receiver_handle);
+        llg_process_kill(llg_current(), receiver_handle);
         CHECK(destroyed == 0);
         CHECK(value_scope_index_find(destination) != NULL);
         CHECK(*destination == sent);
     } else if (evaluations == 2 && mode == 3) {
         llg_rt_finish();
+        if (llg_rt_exiting()) return;
     }
     *out = *destination;
 }
 
-static void receiver(llg_proc_t* self) {
-    /* This is the new emitted storage pattern, not a call to the Rust emitter. */
-    llg_value_scope_t* owner = llg_value_scope_begin_object(sizeof(double), destroy_real);
+typedef struct {
+    llg_co_frame_t co;
+    double* local;
+} review_receiver_frame_t;
+LLG_CO_ROOT_FRAME_OK(review_receiver_frame_t);
+
+static double* receiver_setup(llg_proc_t* self) {
+    llg_value_scope_t* owner =
+        llg_value_scope_begin_object(sizeof(double), destroy_real);
     double* local = (double*)llg_value_scope_object(owner);
     *local = 0.0;
     destination = local;
-    llg_process_assign(&receiver_handle, llg_process_self());
-    llg_mailbox_get_value(mailbox, llg_mailbox_target_real(local, mode == 1), 0);
-    CHECK(mode < 2);
-    observed = *local;
-    ++resumed;
-    llg_proc_done(self);
+    llg_process_assign(&receiver_handle, llg_process_self(self));
+    return local;
 }
 
-static void observer(llg_proc_t* self) {
+LLG_PROBE_PROCESS(receiver, review_receiver_frame_t, 1) {
+    LLG_PROBE_BEGIN(review_receiver_frame_t, 1);
+    /* This is the new emitted storage pattern, not a call to the Rust emitter. */
+    F->local = receiver_setup(self);
+    LLG_PROBE_AWAIT(
+        1, llg_arm_mailbox_get_value(
+               self, mailbox, llg_mailbox_target_real(F->local, mode == 1), 0));
+    CHECK(mode < 2);
+    observed = *F->local;
+    ++resumed;
+    LLG_PROBE_DONE();
+}
+
+static llg_co_arm_t arm_observer(llg_proc_t* self) {
     llg_wait_dependency_t dependency = {0};
     dependency.real = destination;
     llg_expr_event_spec_t event = {0};
     event.real = 1; event.real_eval = real_evaluator; event.kind = LLG_EV_ANY;
     event.dependencies = &dependency; event.n_dependencies = 1;
-    llg_wait_expressions(&event, 1);
-    CHECK(mode == 2);
-    llg_proc_done(self);
+    return llg_arm_expressions(self, &event, 1);
 }
 
-static void writer(llg_proc_t* self) {
-    llg_wait_time(1);
-    llg_mailbox_put_value(mailbox, llg_mailbox_value_real(sent, mode == 1));
+LLG_PROBE_SIMPLE_PROCESS(observer, 1) {
+    LLG_PROBE_SIMPLE_BEGIN(1);
+    LLG_PROBE_AWAIT(1, arm_observer(self));
+    CHECK(mode == 2);
+    LLG_PROBE_DONE();
+}
+
+LLG_PROBE_SIMPLE_PROCESS(writer, 2) {
+    LLG_PROBE_SIMPLE_BEGIN(2);
+    LLG_PROBE_AWAIT(1, llg_arm_time(self, 1));
+    LLG_PROBE_AWAIT(
+        2, llg_arm_mailbox_put_value(
+               self, mailbox, llg_mailbox_value_real(sent, mode == 1)));
     CHECK(mode != 3);
-    llg_proc_done(self);
+    LLG_PROBE_DONE();
 }
 
 static void real_coroutines(void) {
@@ -126,9 +151,9 @@ static void real_coroutines(void) {
             sv4_t zero = sv4_zero(32, 0);
             mailbox = llg_mailbox_new(zero, LLG_MAILBOX_UNTYPED, 0, 0, 0, 0);
             sv4_destroy(&zero);
-            llg_spawn(&llg_libaco_desc, receiver, "review real receiver");
-            if (mode >= 2) llg_spawn(&llg_libaco_desc, observer, "review real observer");
-            llg_spawn(&llg_libaco_desc, writer, "review real writer");
+            llg_spawn(&receiver_desc, "review real receiver");
+            if (mode >= 2) llg_spawn(&observer_desc, "review real observer");
+            llg_spawn(&writer_desc, "review real writer");
             llg_rt_run();
             if (mode < 2) {
                 CHECK(resumed == 1);

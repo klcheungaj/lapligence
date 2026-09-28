@@ -1,5 +1,5 @@
 
-// One child of `grp` finished (llg_proc_done).  Decrement the live count,
+// One child of `grp` finished. Decrement the live count,
 // wake a join/wait_fork waiter whose condition is now met, and move the group
 // to the zombie list once the last child is done.
 static void llg_fork_group_child_done(llg_fork_group_t* grp) {
@@ -95,19 +95,21 @@ llg_fork_group_t* llg_fork_group_new_target(int join_kind,
 }
 
 static llg_proc_t* llg_fork_impl(const llg_co_desc_t* desc,
-                                 void (*fn)(llg_proc_t*), const char* name,
-                                 llg_fork_group_t* grp, llg_frame_t* frame) {
-    if (!desc || !fn || !grp || !region_can_mutate("fork scheduling")) return NULL;
-    size_t frame_offset = llg_proc_co_frame_offset();
-    if (desc->frame_size > SIZE_MAX - frame_offset) llg_rt_co_oom(desc->frame_size);
+                                 const char* name, llg_fork_group_t* grp,
+                                 llg_frame_t* frame) {
+    if (!desc || !desc->fn || !grp || !region_can_mutate("fork scheduling"))
+        return NULL;
+    if (desc->frame_size < sizeof(llg_co_frame_t) ||
+        desc->frame_size > SIZE_MAX - sizeof(llg_proc_t))
+        llg_rt_co_oom(desc->frame_size);
     llg_proc_t* p = (llg_proc_t*)llg_checked_calloc(
-        1, frame_offset + desc->frame_size, "forked process and coroutine root frame");
+        1, sizeof(*p) + desc->frame_size,
+        "forked process and coroutine root frame");
 #ifdef LLG_CO_DEBUG
-    memset((char*)p + frame_offset, 0xA5, desc->frame_size);
+    memset(LLG_CO_ROOT(&p->chain), 0xA5, desc->frame_size);
 #endif
     p->name = name;
-    p->fn = fn;
-    p->co_desc = desc;
+    llg_co_start(&p->chain, desc, p);
     p->grp = grp;
     p->frame = frame;
     p->handle = process_handle_new(p);
@@ -119,10 +121,6 @@ static llg_proc_t* llg_fork_impl(const llg_co_desc_t* desc,
     p->is_assertion_action = grp->parent->is_assertion_action;
     p->program_live = 0;
     p->budget_time = g.now;
-    // aco_create from inside a coroutine is safe (mallocs/zeroes an aco_t and
-    // sets registers only; no global state).  Children yield to g.main_co, the
-    // scheduler, so aco_resume in llg_rt_run regains control.
-    p->co = aco_create(g.main_co, g.share_stack, 256u << 10, llg_proc_entry, p);
     grp->remaining++;
     llg_fork_child_t** pp = &grp->children;
     while (*pp) pp = &(*pp)->next;
@@ -136,19 +134,21 @@ static llg_proc_t* llg_fork_impl(const llg_co_desc_t* desc,
     return p;
 }
 
-llg_proc_t* llg_fork(const llg_co_desc_t* desc, void (*fn)(llg_proc_t*),
-                     const char* name, llg_fork_group_t* grp) {
-    return llg_fork_impl(desc, fn, name, grp, NULL);
+llg_proc_t* llg_fork(const llg_co_desc_t* desc, const char* name,
+                     llg_fork_group_t* grp) {
+    return llg_fork_impl(desc, name, grp, NULL);
 }
 
 llg_proc_t* llg_fork_with_frame(const llg_co_desc_t* desc,
-                                void (*fn)(llg_proc_t*), const char* name,
-                                llg_fork_group_t* grp, llg_frame_t* frame) {
-    return llg_fork_impl(desc, fn, name, grp, frame);
+                                const char* name, llg_fork_group_t* grp,
+                                llg_frame_t* frame) {
+    return llg_fork_impl(desc, name, grp, frame);
 }
 
-void llg_join(llg_fork_group_t* grp) {
-    if (!grp || !region_can_mutate("fork wait scheduling")) return;
+llg_co_arm_t llg_arm_join(llg_proc_t* self, llg_fork_group_t* grp) {
+    llg_runtime_service_enter(self, "join");
+    if (!grp || !region_can_mutate("fork wait scheduling"))
+        return LLG_CO_ARM_READY;
     if (grp->remaining == 0) {
         // Empty fork groups never receive a child-done callback, so finalize
         // them here before join or wait_fork can observe a permanently live
@@ -159,50 +159,54 @@ void llg_join(llg_fork_group_t* grp) {
         grp->terminal = 1;
         grp->next_g = g.zombie_groups;
         g.zombie_groups = grp;
-        return;
+        return LLG_CO_ARM_READY;
     }
-    if (grp->join_kind == LLG_JOIN_NONE) return;
-    if (grp->join_kind == LLG_JOIN_ANY && grp->resumed) return; // already met
-    llg_proc_t* p = llg_current();
-    if (!p || !region_can_mutate("fork wait scheduling")) return;
-    llg_wait_t* w = &p->wait;
+    if (grp->join_kind == LLG_JOIN_NONE) return LLG_CO_ARM_READY;
+    if (grp->join_kind == LLG_JOIN_ANY && grp->resumed)
+        return LLG_CO_ARM_READY;
+    if (!self) return LLG_CO_ARM_READY;
+    llg_wait_t* w = &self->wait;
     w->kind = W_FORK;
     wait_rare_allocate(w, "fork wait payload")->fork.group = grp;
-    w->resume_region = region_is_reactive(p->region)
+    w->resume_region = region_is_reactive(self->region)
                            ? LLG_REGION_REACTIVE
                            : LLG_REGION_ACTIVE;
     register_wait();
-    aco_yield();
+    start_pending_fork_children(self);
+    return LLG_CO_ARM_SUSPEND;
 }
 
-void llg_wait_fork(void) {
-    llg_proc_t* p = llg_current();
-    if (!p || p->fork_groups == NULL || !region_can_mutate("fork wait scheduling")) return;
-    llg_wait_t* w = &p->wait;
+llg_co_arm_t llg_arm_wait_fork(llg_proc_t* self) {
+    llg_runtime_service_enter(self, "wait fork");
+    if (!self || self->fork_groups == NULL ||
+        !region_can_mutate("fork wait scheduling"))
+        return LLG_CO_ARM_READY;
+    llg_wait_t* w = &self->wait;
     w->kind = W_FORK_ALL;
-    wait_rare_allocate(w, "wait-fork payload")->fork_all.parent = p;
-    w->resume_region = region_is_reactive(p->region)
+    wait_rare_allocate(w, "wait-fork payload")->fork_all.parent = self;
+    w->resume_region = region_is_reactive(self->region)
                            ? LLG_REGION_REACTIVE
                            : LLG_REGION_ACTIVE;
     register_wait();
-    aco_yield();
+    start_pending_fork_children(self);
+    return LLG_CO_ARM_SUSPEND;
 }
 
-void llg_disable_fork(void) {
+void llg_disable_fork(llg_proc_t* self) {
+    llg_runtime_service_enter(self, "disable fork");
     if (!region_can_mutate("fork scheduling")) return;
-    llg_proc_t* current = llg_current();
-    if (!current) return;
-    llg_kill_proc_groups(current);
+    if (!self) return;
+    llg_kill_proc_groups(self);
     service_program_completions();
     semaphore_service_cancelled_waiters();
     reap_retired_procs();
 }
 
-void llg_program_exit(void) {
-    llg_proc_t* current = llg_current();
-    if (!current || !current->program) return;
+void llg_program_exit(llg_proc_t* self) {
+    llg_runtime_service_enter(self, "program exit");
+    if (!self || !self->program) return;
     if (!region_can_mutate("program exit")) return;
-    llg_program_t* origin = current->program;
+    llg_program_t* origin = self->program;
     // Mark closed before cancellation; recursive unlinking only adjusts counts.
     origin->closed = 1;
     for (;;) {
@@ -221,10 +225,8 @@ void llg_program_exit(void) {
     service_program_completions();
     semaphore_service_cancelled_waiters();
     reap_retired_procs();
-    // Ancestor cancellation may already have retired current. Its stack is
-    // still alive, but none of its activation storage may be accessed again.
-    aco_exit();
-    abort();
+    // Cancellation already detached all process-owned resources.
+    self->chain.exiting = LLG_EXIT_ABANDON;
 }
 
 static int activation_has_disabled_ancestor(llg_activation_t* activation) {
@@ -264,9 +266,10 @@ static void llg_kill_named_group(llg_fork_group_t* grp) {
     }
 }
 
-void llg_disable_target(uint32_t declaration, uint32_t instance) {
+void llg_disable_target(llg_proc_t* self, uint32_t declaration,
+                        uint32_t instance) {
+    llg_runtime_service_enter(self, "disable");
     if (!region_can_mutate("named activation scheduling")) return;
-    llg_proc_t* current = llg_current();
     int matched = 0;
     for (llg_activation_t* activation = g.activations; activation;
          activation = activation->all_next) {
@@ -315,12 +318,7 @@ void llg_disable_target(uint32_t declaration, uint32_t instance) {
     }
     semaphore_service_cancelled_waiters();
     reap_retired_procs();
-    if (current && current->killed) {
-        // Group accounting was already completed by cancellation. Do not call
-        // llg_proc_done, which would decrement the group a second time.
-        aco_exit();
-        abort();
-    }
+    if (self && self->killed) self->chain.exiting = LLG_EXIT_ABANDON;
 }
 
 // Free completed/killed fork groups: their child procs that were not already

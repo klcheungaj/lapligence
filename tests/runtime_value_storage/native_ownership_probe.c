@@ -2,6 +2,7 @@
  * This is a C runtime probe, not evidence that the Rust emitter was executed. */
 #include "llg_rt.c"
 #include "probe.h"
+#include "probe_co.h"
 
 static unsigned strings_destroyed;
 static unsigned handles_destroyed;
@@ -59,26 +60,38 @@ static void root_scopes(void) {
 static void evaluator(sv4_t* result, void* context) {
     (void)context;
     ++evaluations;
-    if (evaluations == 2) llg_rt_finish();
+    if (evaluations == 2) {
+        llg_rt_finish();
+        if (llg_rt_exiting()) return;
+    }
     sv4_copy(result, &watched);
 }
-static void waiter(llg_proc_t* self) {
+static llg_co_arm_t arm_waiter(llg_proc_t* self) {
     sv4_t* reads[] = {&watched};
     llg_expr_event_spec_t spec = {0};
     spec.eval = evaluator;
     spec.reads = reads;
     spec.n_reads = 1;
     spec.kind = LLG_EV_ANY;
-    llg_wait_expressions(&spec, 1);
-    llg_proc_done(self);
+    return llg_arm_expressions(self, &spec, 1);
 }
-static void writer(llg_proc_t* self) {
+LLG_PROBE_SIMPLE_PROCESS(waiter, 1) {
+    LLG_PROBE_SIMPLE_BEGIN(1);
+    LLG_PROBE_AWAIT(1, arm_waiter(self));
+    LLG_PROBE_DONE();
+}
+static void writer_setup(llg_proc_t* self) {
     (void)new_string("held across yield and termination");
     llg_value_scope_t* handle_scope = llg_value_scope_begin_object(
         sizeof(llg_process_handle_t*), handle_drop);
     llg_process_handle_t** handle = (llg_process_handle_t**)llg_value_scope_object(handle_scope);
-    llg_process_assign(handle, llg_process_self());
-    llg_wait_time(1);
+    llg_process_assign(handle, llg_process_self(self));
+}
+
+LLG_PROBE_SIMPLE_PROCESS(writer, 1) {
+    LLG_PROBE_SIMPLE_BEGIN(1);
+    writer_setup(self);
+    LLG_PROBE_AWAIT(1, llg_arm_time(self, 1));
     llg_ref_t target = { .base = &watched, .width = 129, .kind = LLG_REF_WHOLE };
     if (mode == 0) {
         llg_ref_write(&target, payload);
@@ -117,9 +130,10 @@ static void writer(llg_proc_t* self) {
     } else {
         llg_queue_value_push_front(&value_queue, payload);
     }
+    LLG_CO_EXIT_CHECK(ch);
     /* Every operation above notifies the waiter and terminates this coroutine. */
     CHECK(0);
-    llg_proc_done(self);
+    LLG_PROBE_DONE();
 }
 static void nonlocal_scopes(void) {
     FILE* file = fopen("native-input.tmp", "wb");
@@ -151,8 +165,8 @@ static void nonlocal_scopes(void) {
             output_string = (llg_string_t){0};
             output_string.notify = llg_dependency_changed;
             output_string.dependency = &watched;
-            llg_spawn(&llg_libaco_desc, waiter, "native-owner-waiter");
-            llg_spawn(&llg_libaco_desc, writer, "native-owner-writer");
+            llg_spawn(&waiter_desc, "native-owner-waiter");
+            llg_spawn(&writer_desc, "native-owner-writer");
             llg_rt_run();
             CHECK(evaluations == 2);
             llg_rt_cleanup();

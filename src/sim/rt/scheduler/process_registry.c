@@ -3,7 +3,7 @@
 // context: `llg_rt_cleanup` memsets the context, and registration happens
 // around the `llg_rt_run()` call in generated `main()`.
 typedef struct {
-    void (*fn)(llg_proc_t*);
+    void (*fn)(void);
     const char* name;
 } llg_final_registration_t;
 static llg_final_registration_t* llg_finals;
@@ -92,9 +92,10 @@ static void unregister_proc(llg_proc_t* p) {
     }
 }
 
-static llg_proc_t* llg_current(void) {
-    return aco_gtls_co && aco_gtls_co != g.main_co
-               ? (llg_proc_t*)aco_get_arg() : NULL;
+llg_proc_t* llg_current(void) { return g.current; }
+
+static llg_co_chain_t* llg_rt_current_chain(void) {
+    return g.current ? &g.current->chain : NULL;
 }
 
 // Do not recurse into cancellation while a tree is being unlinked. The

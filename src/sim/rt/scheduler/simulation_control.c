@@ -44,7 +44,9 @@ static void report_finish(int verbosity, const char* location) {
     }
 }
 
-_Noreturn void llg_rt_finish_with_level(int verbosity, const char* location) {
+void llg_rt_finish_with_level(int verbosity, const char* location) {
+    llg_proc_t* current = llg_current();
+    llg_runtime_service_enter(current, "$finish");
     if (verbosity < 0 || verbosity > 2) {
         fprintf(stderr, "llg runtime fatal: invalid $finish verbosity %d\n", verbosity);
         abort();
@@ -52,15 +54,20 @@ _Noreturn void llg_rt_finish_with_level(int verbosity, const char* location) {
     run_deferred_assertions_now();
     report_finish(verbosity, location);
     g.finish = 1;
-    llg_proc_done(llg_current());
+    if (current) current->chain.exiting = LLG_EXIT_COMPLETE;
 }
 
-_Noreturn void llg_rt_finish(void) {
+void llg_rt_finish(void) {
     llg_rt_finish_with_level(0, NULL);
 }
 
 void llg_rt_request_finish(void) {
     g.finish = 1;
+    if (g.current) g.current->chain.exiting = LLG_EXIT_COMPLETE;
+}
+
+int llg_rt_exiting(void) {
+    return g.current && g.current->chain.exiting != LLG_EXIT_NONE;
 }
 
 void llg_rt_mark_failed(void) {
@@ -80,7 +87,11 @@ static void report_stop(int verbosity, const char* location) {
 }
 
 static int resume_stopped_process(void) {
-    if (!g.suspended || !g.stop_proc) return 0;
+    if (!g.suspended) return 0;
+    if (!g.stop_proc) {
+        g.suspended = 0;
+        return 1;
+    }
     llg_proc_t* process = g.stop_proc;
     if (process->killed || process->completed) {
         fprintf(stderr, "llg runtime fatal: stopped process is no longer resumable\n");
@@ -97,30 +108,41 @@ static int resume_stopped_process(void) {
     return 1;
 }
 
-void llg_rt_stop_with_level(int verbosity, const char* location) {
+llg_co_arm_t llg_arm_stop(llg_proc_t* self, int verbosity,
+                          const char* location) {
+    llg_runtime_service_enter(self, "$stop");
     if (verbosity < 0 || verbosity > 2) {
         fprintf(stderr, "llg runtime fatal: invalid $stop verbosity %d\n", verbosity);
         abort();
     }
-    llg_proc_t* process = llg_current();
-    if (!g.running || !process || g.suspended || g.stop_proc) {
+    if (!g.running || !g.process_turn_active || !self || self != g.current ||
+        g.suspended || g.stop_proc) {
         fprintf(stderr, "llg runtime fatal: $stop requires a running simulation process\n");
         llg_last_failure = 1;
         g.finish = 1;
-        return;
+        if (self) self->chain.exiting = LLG_EXIT_COMPLETE;
+        return LLG_CO_ARM_EXIT;
     }
     report_stop(verbosity, location);
-    g.stop_proc = process;
-    g.stop_region = process->region;
+    g.stop_proc = self;
+    g.stop_region = self->region;
     g.suspended = 1;
-    // The process remains live and its stack/frame/queued NBA state remains
-    // owned by the scheduler. Returning from this yield resumes immediately
-    // at the statement following `$stop`.
-    aco_yield();
+    start_pending_fork_children(self);
+    return LLG_CO_ARM_SUSPEND;
 }
 
-void llg_rt_stop(void) {
-    llg_rt_stop_with_level(0, NULL);
+void llg_rt_request_stop(int verbosity, const char* location) {
+    if (verbosity < 0 || verbosity > 2) {
+        fprintf(stderr, "llg runtime fatal: invalid $stop verbosity %d\n", verbosity);
+        abort();
+    }
+    report_stop(verbosity, location);
+    if (!g.running || !g.process_turn_active || !g.current) {
+        fprintf(stderr,
+                "llg: warning: deferred $stop outside a process turn ignored\n");
+        return;
+    }
+    g.deferred_stop = 1;
 }
 
 int llg_rt_set_stop_policy(int policy) {
@@ -133,7 +155,7 @@ int llg_rt_set_stop_policy(int policy) {
 }
 
 int llg_rt_stop_policy(void) {
-    return g.main_co ? g.stop_policy : llg_configured_stop_policy;
+    return g.initialized ? g.stop_policy : llg_configured_stop_policy;
 }
 
 int llg_rt_is_suspended(void) { return g.suspended != 0; }

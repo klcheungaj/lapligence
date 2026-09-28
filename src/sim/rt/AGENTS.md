@@ -21,7 +21,7 @@ unwound on completion/cancellation. No cleanup attributes, VLAs, alloca or C++
 destructors. Scope indexes use exact pointer equality, never ordering; retain
 lexical cells only as long as queued/ref users require them.
 
-Keep `llg_value` scheduler/libaco/waveform-independent, parity with `core::elab`,
+Keep `llg_value` scheduler/coroutine/waveform-independent, parity with `core::elab`,
 X/Z distinction, actual-width arithmetic/conversions and partial-select X fill.
 Array-conditional helpers borrow inputs and return independent owners with
 immediate-element defaults. Strength resolution retains both X endpoints, strict
@@ -52,14 +52,13 @@ borrowed. Alias reads never publish or mutate resolved storage.
 ## Scheduler, process and event invariants
 
 `llg_co` is packaged in the runtime archive and self-contained source exports.
-Generated coroutine storage already uses its frame, descriptor, anchor and arena
-types, while libaco still executes the functions until the stackless control-flow
-phase. Keep the library free of globals and TLS.
+Generated processes execute through `llg_co` frames, descriptors, anchors and
+arenas. Keep `llg_co` free of globals and TLS.
 Frames are POD; callers own embedded callee frames and the prefixes of anchored
 callees. Cancellation drains runtime-owned scopes and releases arenas without
 resuming coroutine code. No C local may remain live across a resume point. Place
-Part-A root frames immediately after their `llg_proc_t` record at 8-byte
-alignment; the later stackless chain places them at `LLG_CO_ROOT(ch)`. Place
+root frames immediately after their `llg_proc_t` record at `LLG_CO_ROOT(ch)`,
+without forced padding or alignment. Place
 anchored frames at `LLG_CO_ANCHOR_FRAME(anchor)` and preserve the corresponding
 alignment assertions.
 
@@ -85,12 +84,14 @@ Active coroutines are FIFO. Each initial/always/link/continuous process owns a
 coroutine; ordinary forks use `llg_fork`, captured forks `llg_fork_with_frame`.
 Every spawn/fork call supplies an immutable `llg_co_desc_t`. The runtime
 co-allocates and initializes its root frame after the process record and owns one
-arena until that record is reclaimed, including kill/`aco_exit` paths.
+arena until that record is reclaimed, including kill and teardown paths.
 Creators release frame references after spawn; children release on completion,
 cancellation and teardown. Joined children may borrow live parent cells; cancel
 children before releasing parent storage. Completed parents remain alive for
 detached descendants. Process handles retain terminal identity separately from
-coroutine storage. Never return without `llg_proc_done`/`aco_exit`.
+coroutine storage. Normal process completion returns `LLG_CO_DONE`; terminating
+services set `chain.exiting` and the generated continuation returns
+`LLG_CO_EXIT` after unwinding its lexical scopes.
 
 Program processes launch Reactive with program-instance origin. Count initial
 procedures separately from fork descendants: last-initial completion cancels that
@@ -221,15 +222,19 @@ scheduler or export private shared state to avoid assembly rules.
 
 Preserve source APIs: `value_sources`, `random_sources`, `rng_sources`,
 `coroutine_sources`, `runtime_sources`, `string_sources`, `container_sources`,
-`libaco_sources`, `selftest_source`, `waveform_sources`,
+`selftest_source`, `selftest_support_source`, `waveform_sources` and
 `waveform_selftest_source`. Value/random/RNG/llg_co are independent;
-runtime/string/container require values, container not scheduler.
-Self-contained generation includes libaco and `aco_assert_override.h`; cached
-archives use the ownership ABI, while model-specific stack headroom is passed at
-startup through `llg_rt_init_with_args_precision_and_stack`.
+runtime/string/container require values, container not scheduler. Models
+initialize through `llg_rt_init_with_args_and_precision` and define
+`LLG_MODEL_PROCESS_ABI`.
+
+Keep the generated 256-call recursion guard. POSIX startup warns below the named
+8 MiB host-stack estimate; generated MSVC model targets reserve that default with
+`/STACK`. Stackless sanitizer runs use ordinary ASan/UBSan flags without a
+stack-switch exception.
 
 Use [runtime tests](../../../tests/runtime_value_storage/readme.md) for component,
 ABI, allocation-failure and waveform checks, and
 [repository validation](../../../tests/AGENTS.md) for integration. Preserve native
-Windows/libaco and real stack-switch sanitizer limitations; a configured platform
-or component-only pass is not generated-simulator validation.
+Windows qualification and generated-model integration remain separate gates; the
+stackless process and cancellation probes run under ASan/UBSan.

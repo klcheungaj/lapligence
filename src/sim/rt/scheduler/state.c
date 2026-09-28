@@ -206,9 +206,7 @@ typedef struct llg_concurrent_assertion {
     llg_concurrent_assertion_predicate_fn antecedent;
     llg_concurrent_assertion_predicate_fn consequent;
     llg_concurrent_assertion_predicate_fn abort_condition;
-    llg_concurrent_assertion_action_fn pass_action;
     const llg_co_desc_t* pass_desc;
-    llg_concurrent_assertion_action_fn fail_action;
     const llg_co_desc_t* fail_desc;
     void* data;
     int kind;
@@ -330,8 +328,10 @@ typedef struct llg_q_queue {
 } llg_q_queue_t;
 
 typedef struct {
-    aco_t* main_co;
-    aco_share_stack_t* share_stack;
+    int initialized;
+    int process_turn_active;
+    int deferred_stop;
+    llg_proc_t* current;
     llg_proc_queue_t process_queues[LLG_REGION_COUNT];
     llg_nba_queue_t nba_queues[LLG_REGION_COUNT];
     llg_nba_bucket_t* delayed_nba_buckets;
