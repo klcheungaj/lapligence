@@ -7,6 +7,13 @@ mod fixed_array_reductions;
 mod sequential_predicates;
 use crate::sim::execution::ExecutionModel;
 
+#[test]
+fn identifier_use_count_ignores_string_contents() {
+    let counts = identifier_counts("int local = 0; use(local); \"local\"");
+    assert_eq!(counts.get("local"), Some(&2));
+    assert_eq!(counts.get("use"), Some(&1));
+}
+
 mod group1_repairs;
 mod inside_values;
 mod native_boundaries;

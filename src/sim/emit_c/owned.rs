@@ -513,8 +513,9 @@ impl<'a, 'm> Frame<'a, 'm> {
             };
             let declaration_index = self.declarations.len();
             let target = self.defer_declaration(ty, name, false);
-            self.line(format!("{target} = {init};"));
-            self.line(format!("__llg_local_use_{declaration_index}__;"));
+            self.line(format!(
+                "{target} = {init}; /*__llg_local_use_{declaration_index}__*/"
+            ));
             name.to_owned()
         } else {
             self.line(format!("{} = {init};", declaration(ty, name)));
@@ -921,14 +922,16 @@ impl<'a, 'm> Frame<'a, 'm> {
     }
 
     fn resolve_local_uses(&self, code: &str) -> Result<String, String> {
-        const PREFIX: &str = "__llg_local_use_";
+        const PREFIX: &str = "/*__llg_local_use_";
+        const SUFFIX: &str = "__*/";
+        let uses = identifier_counts(code);
         let mut output = String::with_capacity(code.len());
         let mut rest = code;
         while let Some(start) = rest.find(PREFIX) {
             output.push_str(&rest[..start]);
             let suffix = &rest[start + PREFIX.len()..];
             let end = suffix
-                .find("__")
+                .find(SUFFIX)
                 .ok_or_else(|| "unterminated deferred coroutine local use".to_owned())?;
             let index = suffix[..end]
                 .parse::<usize>()
@@ -937,16 +940,54 @@ impl<'a, 'm> Frame<'a, 'm> {
                 .declarations
                 .get(index)
                 .ok_or_else(|| format!("unknown deferred coroutine local use {index}"))?;
-            if self.layout.field_access(&record.name).is_none() {
-                output.push_str("(void)sizeof(");
+            if self.layout.field_access(&record.name).is_none()
+                && uses.get(record.name.as_str()).copied().unwrap_or(0) <= 1
+            {
+                output.push_str("\n    (void)sizeof(");
                 output.push_str(&record.name);
-                output.push(')');
+                output.push_str(");");
             }
-            rest = &suffix[end + 2..];
+            rest = &suffix[end + SUFFIX.len()..];
         }
         output.push_str(rest);
         Ok(output)
     }
+}
+
+fn identifier_counts(text: &str) -> HashMap<&str, usize> {
+    let bytes = text.as_bytes();
+    let mut counts = HashMap::new();
+    let mut index = 0;
+    let mut quoted = None;
+    let mut escaped = false;
+    while index < bytes.len() {
+        if let Some(quote) = quoted {
+            let byte = bytes[index];
+            index += 1;
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == quote {
+                quoted = None;
+            }
+        } else if matches!(bytes[index], b'\'' | b'"') {
+            quoted = Some(bytes[index]);
+            index += 1;
+        } else if bytes[index] == b'_' || bytes[index].is_ascii_alphabetic() {
+            let start = index;
+            index += 1;
+            while index < bytes.len()
+                && (bytes[index] == b'_' || bytes[index].is_ascii_alphanumeric())
+            {
+                index += 1;
+            }
+            *counts.entry(&text[start..index]).or_insert(0) += 1;
+        } else {
+            index += 1;
+        }
+    }
+    counts
 }
 
 fn is_structural_block_open(segment: &str) -> bool {
