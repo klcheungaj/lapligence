@@ -119,7 +119,6 @@ fn coroutine_library_is_strict_c11_on_gcc_and_clang() {
                 "-Wall",
                 "-Wno-unused-function",
                 "-Isrc/sim/rt",
-                "-Ivendor/libaco",
                 "-c",
                 "src/sim/rt/llg_rt.c",
                 "-o",

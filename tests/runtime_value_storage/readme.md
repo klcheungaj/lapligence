@@ -13,8 +13,8 @@ cmake --build target/storage-tests --config Debug
 ctest --test-dir target/storage-tests --build-config Debug --output-on-failure
 ```
 
-Full coverage needs a C11 compiler, CMake, threads and zlib. Scheduler/VPI/fiber
-process probes use portable `llg_co` frames on every C11 host; libaco is not linked.
+Full coverage needs a C11 compiler, CMake, threads and zlib. Scheduler/VPI/process
+probes use portable `llg_co` frames on every C11 host.
 Use a native compiler environment on Windows and supply zlib's location if needed.
 For value/storage/container-only checks:
 
