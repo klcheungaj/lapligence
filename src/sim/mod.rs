@@ -39,6 +39,7 @@ pub(crate) fn write_sim_sources(
     let (value_h, value_c) = rt::value_sources();
     let (random_h, random_c) = rt::random_sources();
     let (rng_h, rng_c) = rt::rng_sources();
+    let (coroutine_h, coroutine_c) = rt::coroutine_sources();
     let (vpi_h, vpi_c) = rt::vpi_sources();
     let vpi_bridge_h = rt::vpi_bridge_header();
     let (container_h, container_c) = rt::container_sources();
@@ -53,6 +54,8 @@ pub(crate) fn write_sim_sources(
         ("llg_random.c", random_c),
         ("llg_rng.h", rng_h),
         ("llg_rng.c", rng_c),
+        ("llg_co.h", coroutine_h),
+        ("llg_co.c", coroutine_c),
         ("vpi_user.h", vpi_h),
         ("llg_vpi.h", vpi_bridge_h),
         ("llg_vpi.c", vpi_c),

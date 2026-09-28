@@ -51,6 +51,22 @@ borrowed. Alias reads never publish or mutate resolved storage.
 
 ## Scheduler, process and event invariants
 
+`llg_co` is packaged in the runtime archive and self-contained source exports but
+is not yet used by generated code. Keep the library free of globals and TLS.
+Frames are POD; callers own embedded callee frames and the prefixes of anchored
+callees. Cancellation drains runtime-owned scopes and releases arenas without
+resuming coroutine code. No C local may remain live across a resume point. Place
+root frames at `LLG_CO_ROOT(ch)` and anchored frames at
+`LLG_CO_ANCHOR_FRAME(anchor)`, preserving the corresponding alignment assertions.
+
+`llg_rt.h` defines the exported OOM and bad-state hooks before including
+`llg_co.h`; `llg_co.c` alone receives the matching `LLG_CO_HOST_ALLOC` compile
+definition because it includes the library header directly. The runtime owns one
+non-TLS chunk cache for the simulation thread, bounded by the named
+`LLG_CO_CHUNK_CACHE_MAX_BYTES` tunable, exposes cumulative allocation/reuse/free
+and byte counters, and releases all cached chunks at cleanup. MT-1 gives each
+worker its own cache; do not move mutable cache state into `llg_co`.
+
 Use typed queues for all IEEE regions and PLI control points: Preponed, Active,
 Inactive, Pre-NBA/NBA/Post-NBA, Pre-Observed/Observed/Post-Observed,
 Reactive/Re-Inactive/Pre-Re-NBA/Re-NBA/Post-Re-NBA, Pre-Postponed/Postponed.
@@ -192,9 +208,10 @@ Compile facade translation units only; synchronize private fragment order with
 scheduler or export private shared state to avoid assembly rules.
 
 Preserve source APIs: `value_sources`, `random_sources`, `rng_sources`,
-`runtime_sources`, `string_sources`, `container_sources`, `libaco_sources`,
-`selftest_source`, `waveform_sources`, `waveform_selftest_source`. Value/random/RNG
-are independent; runtime/string/container require values, container not scheduler.
+`coroutine_sources`, `runtime_sources`, `string_sources`, `container_sources`,
+`libaco_sources`, `selftest_source`, `waveform_sources`,
+`waveform_selftest_source`. Value/random/RNG/llg_co are independent;
+runtime/string/container require values, container not scheduler.
 Self-contained generation includes libaco and `aco_assert_override.h`; cached
 archives use the ownership ABI, while model-specific stack headroom is passed at
 startup through `llg_rt_init_with_args_precision_and_stack`.
