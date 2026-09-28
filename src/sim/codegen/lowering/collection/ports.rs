@@ -354,7 +354,7 @@ impl<'a> Codegen<'a> {
     }
 
     pub(super) fn remap_structural_lhs(&self, lhs: IrLhs, source: NodeId) -> IrLhs {
-        let remap = |index: usize| {
+        let mut remap = |index: usize| {
             self.model
                 .signals
                 .get(index)
@@ -362,51 +362,7 @@ impl<'a> Codegen<'a> {
                 .and_then(|group| self.structural_driver_signal(source, group))
                 .unwrap_or(index)
         };
-        match lhs {
-            IrLhs::PackedSelect {
-                target,
-                steps,
-                signed,
-                two_state,
-            } => IrLhs::PackedSelect {
-                target: Box::new(self.remap_structural_lhs(*target, source)),
-                steps,
-                signed,
-                two_state,
-            },
-            IrLhs::Whole(index) => IrLhs::Whole(remap(index)),
-            IrLhs::Bit(index, expression, two_state) => {
-                IrLhs::Bit(remap(index), expression, two_state)
-            }
-            IrLhs::Part(index, left, right, two_state) => {
-                IrLhs::Part(remap(index), left, right, two_state)
-            }
-            IrLhs::IdxPart(index, base, width, selected_width, negative, two_state) => {
-                IrLhs::IdxPart(
-                    remap(index),
-                    base,
-                    width,
-                    selected_width,
-                    negative,
-                    two_state,
-                )
-            }
-            IrLhs::Stream {
-                parts,
-                width,
-                slice,
-                direction,
-            } => IrLhs::Stream {
-                parts: parts
-                    .into_iter()
-                    .map(|(part, part_width)| (self.remap_structural_lhs(part, source), part_width))
-                    .collect(),
-                width,
-                slice,
-                direction,
-            },
-            other => other,
-        }
+        Self::remap_structural_lhs_with(lhs, &mut remap)
     }
 
     pub(super) fn structural_group_for_lhs(&self, lhs: &IrLhs) -> Option<usize> {
@@ -431,13 +387,43 @@ impl<'a> Codegen<'a> {
         }
     }
 
+    pub(super) fn structural_groups_for_lhs(&self, lhs: &IrLhs) -> Vec<usize> {
+        fn append(model: &IrModel, lhs: &IrLhs, groups: &mut Vec<usize>) {
+            match lhs {
+                IrLhs::PackedSelect { target, .. } | IrLhs::TaggedSelect { target, .. } => {
+                    append(model, target, groups);
+                }
+                IrLhs::Whole(index)
+                | IrLhs::Bit(index, ..)
+                | IrLhs::Part(index, ..)
+                | IrLhs::IdxPart(index, ..) => {
+                    if let Some(group) = model.signals[*index].net_driver.map(|(group, _)| group) {
+                        if !groups.contains(&group) {
+                            groups.push(group);
+                        }
+                    }
+                }
+                IrLhs::Stream { parts, .. } => {
+                    for (part, _) in parts {
+                        append(model, part, groups);
+                    }
+                }
+                IrLhs::WholeRef { .. } | IrLhs::Ref { .. } | IrLhs::ArrayElem { .. } => {}
+            }
+        }
+
+        let mut groups = Vec::new();
+        append(&self.model, lhs, &mut groups);
+        groups
+    }
+
     pub(super) fn remap_structural_lhs_for_terminal(
         &self,
         lhs: IrLhs,
         source: NodeId,
         terminal: usize,
     ) -> IrLhs {
-        let remap = |index: usize| {
+        let mut remap = |index: usize| {
             self.model
                 .signals
                 .get(index)
@@ -447,6 +433,31 @@ impl<'a> Codegen<'a> {
                 })
                 .unwrap_or(index)
         };
+        Self::remap_structural_lhs_with(lhs, &mut remap)
+    }
+
+    pub(super) fn remap_structural_lhs_for_terminals(
+        &self,
+        lhs: IrLhs,
+        source: NodeId,
+        terminals: &HashMap<usize, usize>,
+    ) -> IrLhs {
+        let mut remap = |index: usize| {
+            self.model
+                .signals
+                .get(index)
+                .and_then(|signal| signal.net_driver.map(|(group, _)| group))
+                .and_then(|group| {
+                    terminals.get(&group).and_then(|terminal| {
+                        self.structural_driver_signal_for_terminal(source, group, *terminal)
+                    })
+                })
+                .unwrap_or(index)
+        };
+        Self::remap_structural_lhs_with(lhs, &mut remap)
+    }
+
+    fn remap_structural_lhs_with(lhs: IrLhs, remap: &mut dyn FnMut(usize) -> usize) -> IrLhs {
         match lhs {
             IrLhs::PackedSelect {
                 target,
@@ -454,7 +465,7 @@ impl<'a> Codegen<'a> {
                 signed,
                 two_state,
             } => IrLhs::PackedSelect {
-                target: Box::new(self.remap_structural_lhs_for_terminal(*target, source, terminal)),
+                target: Box::new(Self::remap_structural_lhs_with(*target, remap)),
                 steps,
                 signed,
                 two_state,
@@ -485,10 +496,7 @@ impl<'a> Codegen<'a> {
                 parts: parts
                     .into_iter()
                     .map(|(part, part_width)| {
-                        (
-                            self.remap_structural_lhs_for_terminal(part, source, terminal),
-                            part_width,
-                        )
+                        (Self::remap_structural_lhs_with(part, remap), part_width)
                     })
                     .collect(),
                 width,
@@ -512,6 +520,20 @@ impl<'a> Codegen<'a> {
     ) -> Option<usize> {
         let mut mapped =
             |group| self.structural_driver_signal_for_terminal(source, group, terminal);
+        self.unmapped_structural_group_for(lhs, &mut mapped)
+    }
+
+    pub(super) fn unmapped_structural_group_for_terminals(
+        &self,
+        lhs: &IrLhs,
+        source: NodeId,
+        terminals: &HashMap<usize, usize>,
+    ) -> Option<usize> {
+        let mut mapped = |group| {
+            terminals.get(&group).and_then(|terminal| {
+                self.structural_driver_signal_for_terminal(source, group, *terminal)
+            })
+        };
         self.unmapped_structural_group_for(lhs, &mut mapped)
     }
 
