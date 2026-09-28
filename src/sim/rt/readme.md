@@ -38,8 +38,9 @@ address-order rules.
 
 `mod.rs` returns header/flat-source pairs through `value_sources`,
 `random_sources`, `rng_sources`, `coroutine_sources`, `runtime_sources`,
-`string_sources` and `container_sources`; libaco, waveform and self-test accessors
-provide their related files. Facades include ordered private fragments; emitted
+`string_sources` and `container_sources`; waveform and self-test accessors provide
+their related files. The legacy `libaco_sources` accessor remains only until the
+Phase 6 packaging cleanup; the runtime does not call it. Facades include ordered private fragments; emitted
 sources flatten the same order. `llg_co.c` is an independent translation unit, not
 a scheduler fragment.
 
@@ -50,9 +51,10 @@ the exported counter snapshot records system allocations, cache hits, system
 frees, current cached bytes and the peak. Runtime cleanup frees every retained
 chunk. Under the future MT-1 design, each worker will own an equivalent cache.
 
-`generate_model_sources` writes a self-contained CMake tree, including libaco and
-`aco_assert_override.h`. Normal builds may reuse a compatible runtime archive.
-Model-specific stack headroom is passed at startup, not encoded in the archive ABI.
+`generate_model_sources` temporarily writes libaco and `aco_assert_override.h`
+beside the self-contained CMake tree for Phase 6 compatibility. ABI 2 models use
+`llg_co`, define `LLG_MODEL_PROCESS_ABI`, and initialize through
+`llg_rt_init_with_args_and_precision`; there is no process-stack sizing input.
 Waveforms additionally need zlib and CMake Threads support.
 
 ## Validation and limits
@@ -62,6 +64,7 @@ allocation accounting, failure cleanup, values, queues, callbacks and waveform
 transfers. [Repository tests](../../../tests/readme.md#dynamic-ownership-validation)
 separately exercise real emission and public HDL. Component-only results, handwritten
 output-shape probes and configured platforms do not establish full model acceptance.
-Real coroutine sanitizer and native Windows/libaco limits remain separate gates.
+Stackless coroutine probes run under ASan/UBSan. Native Windows and complete
+generated-model qualification remain separate gates.
 Use [feature status](../../../docs/sim_features.md), not this component map, for
 supported language contexts and outstanding qualification.
