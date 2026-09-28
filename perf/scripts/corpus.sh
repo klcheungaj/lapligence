@@ -83,7 +83,7 @@ add_config many-registers-20k many_processes.sv many_processes_registers_config 
 add_config many-masked-20k many_processes.sv many_processes_masked_config \
     'LLG_CORPUS_N=20000 LLG_CORPUS_EDGES=20' standard
 add_config tasks-default testbench_tasks.sv testbench_tasks \
-    'LLG_CORPUS_N=128 LLG_CORPUS_ITERS=2000' standard
+    'LLG_CORPUS_N=128 LLG_CORPUS_ITERS=100' standard
 add_config zero-delay-default zero_delay_churn.sv zero_delay_churn \
     'LLG_CORPUS_N=10000 LLG_CORPUS_ROUNDS=200' standard
 add_config wide-values-default wide_values.sv wide_values \

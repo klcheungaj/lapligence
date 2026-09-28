@@ -3,7 +3,7 @@
 `endif
 
 `ifndef LLG_CORPUS_ITERS
-`define LLG_CORPUS_ITERS 2000
+`define LLG_CORPUS_ITERS 100
 `endif
 
 module testbench_tasks #(
