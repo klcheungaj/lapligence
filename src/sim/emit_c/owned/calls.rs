@@ -22,15 +22,15 @@ impl Frame<'_, '_> {
         let mut arena_storage = None;
         let child = match slot.mechanism {
             crate::sim::execution::CallMechanism::Polled { .. } => {
-                format!("F->calls.{}", slot.member)
+                format!("F->{}", slot.path)
             }
             crate::sim::execution::CallMechanism::Anchored => {
                 self.line(format!(
-                    "F->calls.{}.an.desc = &{}_desc;",
-                    slot.member, function.c_name
+                    "F->{}.an.desc = &{}_desc;",
+                    slot.path, function.c_name
                 ));
-                self.line(format!("F->calls.{}.an.parent = NULL;", slot.member));
-                format!("F->calls.{}.f", slot.member)
+                self.line(format!("F->{}.an.parent = NULL;", slot.path));
+                format!("F->{}.f", slot.path)
             }
             crate::sim::execution::CallMechanism::Arena => {
                 let storage = self.declare(
@@ -61,6 +61,7 @@ impl Frame<'_, '_> {
         }
         self.line(format!("{child}.arena = F->arena;"));
         self.line(format!("{}(&{child});", function.c_name));
+        self.resume_probe = true;
         if let Some(storage) = arena_storage {
             self.line(format!("llg_co_arena_pop(F->arena, {storage});"));
         }

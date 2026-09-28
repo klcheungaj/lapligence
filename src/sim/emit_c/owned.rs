@@ -125,6 +125,10 @@ pub(super) struct Frame<'a, 'm> {
     construction_stack: Vec<usize>,
     layout: FrameLayout,
     declaration_error: Option<String>,
+    brace_kinds: Vec<bool>,
+    in_block_comment: bool,
+    structural_error: Option<String>,
+    resume_probe: bool,
     pending_calls: VecDeque<PendingCall>,
     frame_upper_bounds: BTreeMap<usize, usize>,
     coroutine_functions: BTreeSet<usize>,
@@ -207,23 +211,152 @@ impl<'a, 'm> Frame<'a, 'm> {
             construction_stack: Vec::new(),
             layout,
             declaration_error: None,
+            brace_kinds: Vec::new(),
+            in_block_comment: false,
+            structural_error: None,
+            resume_probe: false,
             pending_calls: VecDeque::new(),
             frame_upper_bounds: BTreeMap::new(),
             coroutine_functions: BTreeSet::new(),
         }
     }
     fn line(&mut self, text: impl AsRef<str>) {
+        let text = text.as_ref();
+        if self.resume_probe {
+            self.mark_continuation_fields(text);
+            if has_statement_boundary(text) {
+                self.resume_probe = false;
+            }
+        }
+        if self.layout.storage() == FrameStorage::CoFrame {
+            self.track_frame_blocks(text);
+        }
         let text = if self.layout.storage() == FrameStorage::CoFrame {
-            self.rewrite_frame_accesses(text.as_ref())
+            self.rewrite_frame_accesses(text)
         } else {
-            text.as_ref().to_owned()
+            text.to_owned()
         };
         self.code.push_str("    ");
         self.code.push_str(&text);
         self.code.push('\n');
+        if is_runtime_suspension(&text) {
+            self.resume_probe = true;
+        }
     }
+
+    fn mark_continuation_fields(&mut self, text: &str) {
+        let bytes = text.as_bytes();
+        let mut index = 0;
+        let mut quoted = None;
+        let mut escaped = false;
+        while index < bytes.len() {
+            if let Some(quote) = quoted {
+                let byte = bytes[index];
+                index += 1;
+                if escaped {
+                    escaped = false;
+                } else if byte == b'\\' {
+                    escaped = true;
+                } else if byte == quote {
+                    quoted = None;
+                }
+            } else if matches!(bytes[index], b'\'' | b'"') {
+                quoted = Some(bytes[index]);
+                index += 1;
+            } else if bytes[index] == b'_' || bytes[index].is_ascii_alphabetic() {
+                let start = index;
+                index += 1;
+                while index < bytes.len()
+                    && (bytes[index] == b'_' || bytes[index].is_ascii_alphanumeric())
+                {
+                    index += 1;
+                }
+                self.layout.mark_hot(&text[start..index]);
+            } else {
+                index += 1;
+            }
+        }
+    }
+
+    /// Mirror the structural braces in emitted C. Aggregate initializer and
+    /// compound-literal braces are balanced too, but do not create frame
+    /// blocks. This single text path makes a missing block event an error
+    /// rather than silently producing a layout that differs from the C body.
+    fn track_frame_blocks(&mut self, text: &str) {
+        let bytes = text.as_bytes();
+        let mut index = 0;
+        let mut segment_start = 0;
+        let mut paren_depth = 0usize;
+        let mut quoted = None;
+        let mut escaped = false;
+        while index < bytes.len() {
+            if self.in_block_comment {
+                if bytes[index..].starts_with(b"*/") {
+                    self.in_block_comment = false;
+                    index += 2;
+                } else {
+                    index += 1;
+                }
+                continue;
+            }
+            if let Some(quote) = quoted {
+                let byte = bytes[index];
+                index += 1;
+                if escaped {
+                    escaped = false;
+                } else if byte == b'\\' {
+                    escaped = true;
+                } else if byte == quote {
+                    quoted = None;
+                }
+                continue;
+            }
+            if bytes[index..].starts_with(b"//") {
+                break;
+            }
+            if bytes[index..].starts_with(b"/*") {
+                self.in_block_comment = true;
+                index += 2;
+                continue;
+            }
+            match bytes[index] {
+                b'\'' | b'"' => quoted = Some(bytes[index]),
+                b'(' | b'[' => paren_depth += 1,
+                b')' | b']' => paren_depth = paren_depth.saturating_sub(1),
+                b';' if paren_depth == 0 => segment_start = index + 1,
+                b'{' => {
+                    let inside_initializer = self.brace_kinds.last() == Some(&false);
+                    let segment = text[segment_start..index].trim();
+                    let structural = !inside_initializer && is_structural_block_open(segment);
+                    self.brace_kinds.push(structural);
+                    if structural {
+                        self.layout.begin_block();
+                    }
+                    segment_start = index + 1;
+                }
+                b'}' => {
+                    match self.brace_kinds.pop() {
+                        Some(true) => {
+                            if let Err(error) = self.layout.end_block() {
+                                self.structural_error.get_or_insert(error);
+                            }
+                        }
+                        Some(false) => {}
+                        None => {
+                            self.structural_error.get_or_insert_with(|| {
+                                "generated coroutine body closed an unmatched C brace".to_owned()
+                            });
+                        }
+                    }
+                    segment_start = index + 1;
+                }
+                _ => {}
+            }
+            index += 1;
+        }
+    }
+
     fn rewrite_frame_accesses(&self, text: &str) -> String {
-        let names = self.layout.field_names().collect::<BTreeSet<_>>();
         let bytes = text.as_bytes();
         let mut out = String::with_capacity(text.len() + 16);
         let mut index = 0;
@@ -256,10 +389,12 @@ impl<'a, 'm> Frame<'a, 'm> {
                 }
                 let ident = &text[start..index];
                 let member_access = start > 0 && matches!(bytes[start - 1], b'.' | b'>');
-                if names.contains(ident) && !member_access {
+                if let Some(access) = self.layout.field_access(ident).filter(|_| !member_access) {
                     out.push_str("F->");
+                    out.push_str(access);
+                } else {
+                    out.push_str(ident);
                 }
-                out.push_str(ident);
             } else {
                 let ch = text[index..]
                     .chars()
@@ -278,7 +413,10 @@ impl<'a, 'm> Frame<'a, 'm> {
     }
     fn access(&self, name: &str) -> String {
         if self.layout.storage() == FrameStorage::CoFrame {
-            format!("F->{name}")
+            self.layout
+                .field_access(name)
+                .map(|access| format!("F->{access}"))
+                .unwrap_or_else(|| format!("F->{name}"))
         } else {
             name.to_owned()
         }
@@ -643,7 +781,7 @@ impl<'a, 'm> Frame<'a, 'm> {
     pub(super) fn body(&self) -> &str {
         &self.code
     }
-    pub(super) fn into_layout(mut self) -> Result<FrameLayout, String> {
+    pub(super) fn into_coframe(mut self) -> Result<(String, FrameLayout), String> {
         // Emission can fold an expression which still has a conservative call
         // site in the pre-emission execution analysis. Preserve storage and
         // descriptor offsets for those unreachable sites even though no call
@@ -675,12 +813,79 @@ impl<'a, 'm> Frame<'a, 'm> {
             self.layout
                 .add_call(call.resume, &callee_type, call.mechanism, upper_bound)?;
         }
-        if let Some(error) = self.declaration_error {
+        if !self.brace_kinds.is_empty() {
+            self.structural_error.get_or_insert_with(|| {
+                format!(
+                    "generated coroutine body has {} unclosed C brace(s)",
+                    self.brace_kinds.len()
+                )
+            });
+        }
+        self.layout.finish_blocks()?;
+        if let Some(error) = self.declaration_error.or(self.structural_error) {
             Err(error)
         } else {
-            Ok(self.layout)
+            for (original, flattened) in self.layout.finalize_paths()? {
+                self.code = self
+                    .code
+                    .replace(&format!("F->{original}"), &format!("F->{flattened}"));
+            }
+            Ok((self.code, self.layout))
         }
     }
+}
+
+fn is_structural_block_open(segment: &str) -> bool {
+    if segment.is_empty() {
+        return true;
+    }
+    let segment = segment.trim_start_matches('}').trim_start();
+    ["if", "else", "for", "while", "switch", "do"]
+        .into_iter()
+        .any(|keyword| {
+            segment == keyword
+                || segment
+                    .strip_prefix(keyword)
+                    .is_some_and(|rest| rest.starts_with([' ', '(']))
+        })
+}
+
+fn has_statement_boundary(text: &str) -> bool {
+    let mut quoted = None;
+    let mut escaped = false;
+    for byte in text.bytes() {
+        if let Some(quote) = quoted {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == quote {
+                quoted = None;
+            }
+        } else if matches!(byte, b'\'' | b'"') {
+            quoted = Some(byte);
+        } else if byte == b';' {
+            return true;
+        }
+    }
+    false
+}
+
+/// Runtime calls corresponding to Phase 2 resume sites. Direct coroutine
+/// calls arm the same probe explicitly at their emission site.
+fn is_runtime_suspension(text: &str) -> bool {
+    [
+        "llg_wait_",
+        "llg_join(",
+        "llg_process_suspend(",
+        "llg_process_await(",
+        "llg_semaphore_get(",
+        "llg_mailbox_get_value(",
+        "llg_mailbox_put_value(",
+        "llg_rt_stop_with_level(",
+    ]
+    .into_iter()
+    .any(|needle| text.contains(needle))
 }
 
 #[cfg(test)]

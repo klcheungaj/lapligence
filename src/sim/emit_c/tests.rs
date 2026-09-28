@@ -422,9 +422,9 @@ fn output_temporary_uses_its_declared_formal_after_c_argument_reordering() {
     let rendered = render_expression_model(model, expression);
     let process = &rendered[rendered.find("static void p_owner_test(").unwrap()..];
     assert!(
-        process.lines().any(
-            |line| line.contains("sv4_replace(F->_llg_local_") && line.contains("sv4_x(16, 1)")
-        ),
+        process.lines().any(|line| line.contains("sv4_replace(F->")
+            && line.contains("_llg_local_")
+            && line.contains("sv4_x(16, 1)")),
         "{process}"
     );
     assert!(process.contains("mixed("));
@@ -490,11 +490,21 @@ fn captured_fork_emits_owned_frame_lifecycle() {
 
     let rendered = render(&model).unwrap();
     assert!(rendered.contains("llg_frame_new(1ULL)"));
-    assert!(rendered.contains("llg_frame_capture_value(F->_llg_capture_frame_"));
+    assert!(rendered
+        .lines()
+        .any(|line| line.contains("llg_frame_capture_value(F->")
+            && line.contains("_llg_capture_frame_")));
     assert!(rendered.contains("llg_fork_with_frame(&p_capture_branch_desc, p_capture_branch"));
     assert!(rendered.contains("llg_frame_read_value(llg_proc_frame(self), 0u)"));
-    assert!(rendered.contains("llg_frame_release(F->_llg_capture_frame_"));
-    assert!(rendered.contains("sv4_replace(F->_llg_local_"));
+    assert!(
+        rendered
+            .lines()
+            .any(|line| line.contains("llg_frame_release(F->")
+                && line.contains("_llg_capture_frame_"))
+    );
+    assert!(rendered
+        .lines()
+        .any(|line| line.contains("sv4_replace(F->") && line.contains("_llg_local_")));
 }
 
 #[test]
@@ -563,22 +573,34 @@ fn evaluated_event_emits_owned_context_and_contextual_callback() {
     assert!(rendered.contains("llg_frame_read_value((const llg_frame_t*)context, 0u)"));
     assert!(rendered.contains("sv4_move(&out[0], &_llg_t["));
     assert!(rendered.contains("llg_frame_new(1ULL)"));
-    assert!(rendered.contains(".eval_context = F->_llg_event_frame_"));
+    assert!(rendered
+        .lines()
+        .any(|line| line.contains(".eval_context = F->") && line.contains("_llg_event_frame_")));
     assert_eq!(rendered.matches("llg_frame_new(1ULL)").count(), 1);
     assert_eq!(
         rendered
-            .matches("llg_frame_retain(F->_llg_event_frame_")
+            .lines()
+            .filter(|line| {
+                line.contains("llg_frame_retain(F->") && line.contains("_llg_event_frame_")
+            })
             .count(),
         2
     );
     assert_eq!(
         rendered
-            .matches("llg_frame_release(F->_llg_event_frame_")
+            .lines()
+            .filter(|line| {
+                line.contains("llg_frame_release(F->") && line.contains("_llg_event_frame_")
+            })
             .count(),
         1
     );
-    assert!(rendered.contains(".condition_context = F->_llg_event_frame_"));
-    assert!(rendered.contains("llg_wait_expressions(F->_llg_events_"));
+    assert!(rendered.lines().any(
+        |line| line.contains(".condition_context = F->") && line.contains("_llg_event_frame_")
+    ));
+    assert!(rendered
+        .lines()
+        .any(|line| line.contains("llg_wait_expressions(F->") && line.contains("_llg_events_")));
     assert!(!rendered.contains("out[0] ="));
 }
 

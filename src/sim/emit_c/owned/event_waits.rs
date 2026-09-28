@@ -146,7 +146,11 @@ impl Frame<'_, '_> {
                     }
                     if let Some(context) = context_for(model, eval) {
                         let name = &names[&context.frame()];
-                        fields.push(format!(".eval_context = {}", self.access(name)));
+                        // The context field is declared after all source
+                        // expressions have been prepared. Keep its bare name
+                        // here so the declaration-time frame-path rewrite can
+                        // resolve the block that owns it.
+                        fields.push(format!(".eval_context = {name}"));
                         retained.push(name.clone());
                     }
                 }
@@ -161,7 +165,7 @@ impl Frame<'_, '_> {
                 fields.push(format!(".condition = {condition}"));
                 if let Some(context) = context_for(model, condition) {
                     let name = &names[&context.frame()];
-                    fields.push(format!(".condition_context = {}", self.access(name)));
+                    fields.push(format!(".condition_context = {name}"));
                     retained.push(name.clone());
                 }
             }

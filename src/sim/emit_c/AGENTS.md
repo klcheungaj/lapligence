@@ -13,16 +13,31 @@ Finals retain their C-stack ABI. Route all
 typed procedure storage through `Frame::declare` (or its array/loop wrappers):
 `CStack` emits the declaration in place, while `CoFrame` registers a unique field
 and emits only its initialization at that point. Arguments are frame fields too.
-The flat field list is deliberately behind `FrameLayout`; add block overlays there
-without changing declaration call sites.
+`Frame::line` structurally tracks every C body brace and rejects an unbalanced
+body. `FrameLayout` records that exact tree, then flattens every chain with only
+one storage-bearing child into one struct level. Only two or more storage-bearing
+sibling blocks create deterministic `uN.bK` overlays; empty blocks emit nothing.
+Parent storage remains live and typed declarations still bind to the active raw
+block before finalized paths rewrite the generated body. Do not emit a
+coroutine-body structural brace outside that path or retain an overlaid field
+access after its block closes.
 
-Emit coroutine frame types callee-first. Polled callees occupy ordinary members
-of `union calls`, anchored callees use `LLG_CO_ANCHORED(T)`, and recursive or
-oversized callees use the owning process arena. Compute conservative LP64 upper
-bounds with every embedded call charged its 16-byte anchor prefix; the named
+Emit coroutine frame types callee-first. Each storage-bearing block's polled
+callees occupy ordinary members of its deterministic `union callsN`, anchored
+callees use `LLG_CO_ANCHORED(T)`,
+and recursive or oversized callees use the owning process arena. Descriptor
+offsets use the complete nested member path. Compute conservative LP64 upper
+bounds with every embedded call charged its 16-byte anchor prefix and sibling
+blocks contributing their maximum rather than their sum; the named
 `ExecutionAnalysisOptions::embed_limit` tunable defaults to 16 KiB and forces
 larger callees onto the arena. Descriptors use `fn = NULL` until stackless entry
 signatures land, but their numbered site tables and frame offsets are final.
+
+Within each struct level, fields observed by the first generated continuation
+statement after a Phase-2 suspension are emitted first, preserving declaration
+order within hot and ordinary groups. The continuation probe ends at the next C
+statement boundary, including the cancellation check after a wait. This is a
+deterministic cache-line heuristic, not a liveness proof.
 
 `Value` carries code, width/sign/fill metadata and an owning descriptor slot.
 Emit ordered setup, calls and cleanup, not nested allocating C expressions.
