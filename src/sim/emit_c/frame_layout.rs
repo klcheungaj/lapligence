@@ -1,6 +1,6 @@
 //! Explicit storage layouts for generated coroutine functions.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::sim::execution::CallMechanism;
 
@@ -20,27 +20,41 @@ struct Field {
     name: String,
     size: usize,
     align: usize,
+    hot: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct CallSlot {
     pub(super) resume: u32,
     pub(super) member: String,
+    /// Member path relative to the frame object, suitable for `offsetof`.
+    pub(super) path: String,
     pub(super) callee_type: String,
     pub(super) mechanism: CallMechanism,
     pub(super) callee_upper_bound: usize,
 }
 
+#[derive(Clone, Debug, Default)]
+struct Block {
+    parent: Option<usize>,
+    fields: Vec<Field>,
+    calls: Vec<usize>,
+    children: Vec<usize>,
+}
+
 /// Builder for one generated function's stack or explicit coroutine storage.
 ///
-/// Part B can replace the flat `fields` list with a lexical block tree without
-/// changing declaration call sites: all names and accesses already flow through
-/// [`FrameLayout::declare`].
+/// Coroutine storage follows the emitted C block tree. Parent storage remains
+/// live while a child executes, while sibling child structs are members of a
+/// union and therefore share storage. All declarations and call slots bind to
+/// the current block through this builder.
 #[derive(Clone, Debug)]
 pub(super) struct FrameLayout {
     storage: FrameStorage,
-    fields: Vec<Field>,
+    blocks: Vec<Block>,
+    current: usize,
     names: BTreeSet<String>,
+    accesses: BTreeMap<String, String>,
     calls: Vec<CallSlot>,
 }
 
@@ -48,14 +62,49 @@ impl FrameLayout {
     pub(super) fn new(storage: FrameStorage) -> Self {
         Self {
             storage,
-            fields: Vec::new(),
+            blocks: vec![Block::default()],
+            current: 0,
             names: BTreeSet::new(),
+            accesses: BTreeMap::new(),
             calls: Vec::new(),
         }
     }
 
     pub(super) fn storage(&self) -> FrameStorage {
         self.storage
+    }
+
+    pub(super) fn begin_block(&mut self) {
+        if self.storage == FrameStorage::CStack {
+            return;
+        }
+        let child = self.blocks.len();
+        self.blocks.push(Block {
+            parent: Some(self.current),
+            ..Block::default()
+        });
+        self.blocks[self.current].children.push(child);
+        self.current = child;
+    }
+
+    pub(super) fn end_block(&mut self) -> Result<(), String> {
+        if self.storage == FrameStorage::CStack {
+            return Ok(());
+        }
+        self.current = self.blocks[self.current]
+            .parent
+            .ok_or_else(|| "coroutine frame block tree closed past its root".to_owned())?;
+        Ok(())
+    }
+
+    pub(super) fn finish_blocks(&self) -> Result<(), String> {
+        if self.storage == FrameStorage::CoFrame && self.current != 0 {
+            return Err(format!(
+                "coroutine frame block tree has {} unclosed block(s)",
+                self.block_depth(self.current)
+            ));
+        }
+        Ok(())
     }
 
     /// Register one typed declaration and return the expression used to access it.
@@ -67,13 +116,29 @@ impl FrameLayout {
             return Err(format!("duplicate coroutine frame field `{name}`"));
         }
         let (size, align) = lp64_layout(ty)?;
-        self.fields.push(Field {
+        let path = self.path_to(self.current, name);
+        self.accesses.insert(name.to_owned(), path.clone());
+        self.blocks[self.current].fields.push(Field {
             ty: ty.to_owned(),
             name: name.to_owned(),
             size,
             align,
+            hot: false,
         });
-        Ok(format!("F->{name}"))
+        Ok(format!("F->{path}"))
+    }
+
+    pub(super) fn field_access(&self, name: &str) -> Option<&str> {
+        self.accesses.get(name).map(String::as_str)
+    }
+
+    pub(super) fn mark_hot(&mut self, name: &str) {
+        for block in &mut self.blocks {
+            if let Some(field) = block.fields.iter_mut().find(|field| field.name == name) {
+                field.hot = true;
+                return;
+            }
+        }
     }
 
     pub(super) fn add_call(
@@ -89,17 +154,21 @@ impl FrameLayout {
             CallMechanism::Arena => "arena",
         };
         let member = format!("{prefix}{}", self.calls.len());
-        if mechanism != CallMechanism::Arena && !self.names.insert(format!("calls.{member}")) {
-            return Err(format!("duplicate coroutine call frame member `{member}`"));
+        let path = self.path_to(self.current, &format!("calls.{member}"));
+        if mechanism != CallMechanism::Arena && !self.names.insert(path.clone()) {
+            return Err(format!("duplicate coroutine call frame member `{path}`"));
         }
         let slot = CallSlot {
             resume,
             member,
+            path,
             callee_type: callee_type.to_owned(),
             mechanism,
             callee_upper_bound,
         };
+        let index = self.calls.len();
         self.calls.push(slot.clone());
+        self.blocks[self.current].calls.push(index);
         Ok(slot)
     }
 
@@ -107,19 +176,127 @@ impl FrameLayout {
         &self.calls
     }
 
-    pub(super) fn field_names(&self) -> impl Iterator<Item = &str> {
-        self.fields.iter().map(|field| field.name.as_str())
-    }
-
-    /// Conservative LP64 size used for D19. Every call is counted as anchored,
-    /// independently of the mechanism selected by the first analysis pass.
+    /// Conservative LP64 size used for D19. Every embedded call is counted as
+    /// anchored, independently of the mechanism selected by the first pass.
+    /// Sibling C blocks contribute their maximum rather than their sum.
     pub(super) fn upper_bound(&self) -> Result<usize, String> {
         if self.storage == FrameStorage::CStack {
             return Ok(0);
         }
-        let mut size = 8usize;
-        let mut max_align = 4usize;
-        for field in &self.fields {
+        let (size, align) = self.block_layout(0, 8, 4)?;
+        align_up(size, align)
+    }
+
+    pub(super) fn render_typedef(&self, frame_type: &str) -> Result<String, String> {
+        if self.storage != FrameStorage::CoFrame {
+            return Ok(String::new());
+        }
+        self.finish_blocks()?;
+        let mut out = String::from("typedef struct {\n    llg_co_frame_t co;\n");
+        self.render_block_contents(0, 1, &mut out);
+        out.push_str(&format!("}} {frame_type};\n"));
+        Ok(out)
+    }
+
+    fn path_to(&self, block: usize, suffix: &str) -> String {
+        let mut ancestors = Vec::new();
+        let mut cursor = block;
+        while let Some(parent) = self.blocks[cursor].parent {
+            ancestors.push((parent, cursor));
+            cursor = parent;
+        }
+        ancestors.reverse();
+        let mut path = String::new();
+        for (parent, child) in ancestors {
+            path.push_str(&format!("u{parent}.b{child}."));
+        }
+        path.push_str(suffix);
+        path
+    }
+
+    fn block_depth(&self, mut block: usize) -> usize {
+        let mut depth = 0;
+        while let Some(parent) = self.blocks[block].parent {
+            depth += 1;
+            block = parent;
+        }
+        depth
+    }
+
+    fn ordered_fields(&self, block: usize) -> impl Iterator<Item = &Field> {
+        [true, false].into_iter().flat_map(move |hot| {
+            self.blocks[block]
+                .fields
+                .iter()
+                .filter(move |field| field.hot == hot)
+        })
+    }
+
+    fn embedded_calls(&self, block: usize) -> impl Iterator<Item = &CallSlot> {
+        self.blocks[block]
+            .calls
+            .iter()
+            .map(|index| &self.calls[*index])
+            .filter(|call| call.mechanism != CallMechanism::Arena)
+    }
+
+    fn has_storage(&self, block: usize) -> bool {
+        !self.blocks[block].fields.is_empty()
+            || self.embedded_calls(block).next().is_some()
+            || self.blocks[block]
+                .children
+                .iter()
+                .any(|child| self.has_storage(*child))
+    }
+
+    fn render_block_contents(&self, block: usize, indent: usize, out: &mut String) {
+        let pad = "    ".repeat(indent);
+        for field in self.ordered_fields(block) {
+            out.push_str(&pad);
+            out.push_str(&declaration(&field.ty, &field.name));
+            out.push_str(";\n");
+        }
+        let embedded = self.embedded_calls(block).collect::<Vec<_>>();
+        if !embedded.is_empty() {
+            out.push_str(&format!("{pad}union {{\n"));
+            for call in embedded {
+                match call.mechanism {
+                    CallMechanism::Polled { .. } => {
+                        out.push_str(&format!("{pad}    {} {};\n", call.callee_type, call.member))
+                    }
+                    CallMechanism::Anchored => out.push_str(&format!(
+                        "{pad}    LLG_CO_ANCHORED({}) {};\n",
+                        call.callee_type, call.member
+                    )),
+                    CallMechanism::Arena => unreachable!(),
+                }
+            }
+            out.push_str(&format!("{pad}}} calls;\n"));
+        }
+        let children = self.blocks[block]
+            .children
+            .iter()
+            .copied()
+            .filter(|child| self.has_storage(*child))
+            .collect::<Vec<_>>();
+        if !children.is_empty() {
+            out.push_str(&format!("{pad}union {{\n"));
+            for child in children {
+                out.push_str(&format!("{pad}    struct {{\n"));
+                self.render_block_contents(child, indent + 2, out);
+                out.push_str(&format!("{pad}    }} b{child};\n"));
+            }
+            out.push_str(&format!("{pad}}} u{block};\n"));
+        }
+    }
+
+    fn block_layout(
+        &self,
+        block: usize,
+        mut size: usize,
+        mut max_align: usize,
+    ) -> Result<(usize, usize), String> {
+        for field in self.ordered_fields(block) {
             size = align_up(size, field.align)?;
             size = size
                 .checked_add(field.size)
@@ -127,9 +304,7 @@ impl FrameLayout {
             max_align = max_align.max(field.align);
         }
         if let Some(call_size) = self
-            .calls
-            .iter()
-            .filter(|call| call.mechanism != CallMechanism::Arena)
+            .embedded_calls(block)
             .map(|call| call.callee_upper_bound.saturating_add(16))
             .max()
         {
@@ -139,42 +314,25 @@ impl FrameLayout {
                 .ok_or_else(|| "coroutine frame size overflowed".to_owned())?;
             max_align = max_align.max(16);
         }
-        align_up(size, max_align)
-    }
 
-    pub(super) fn render_typedef(&self, frame_type: &str) -> Result<String, String> {
-        if self.storage != FrameStorage::CoFrame {
-            return Ok(String::new());
-        }
-        let mut out = String::from("typedef struct {\n    llg_co_frame_t co;\n");
-        for field in &self.fields {
-            out.push_str("    ");
-            out.push_str(&declaration(&field.ty, &field.name));
-            out.push_str(";\n");
-        }
-        let embedded = self
-            .calls
-            .iter()
-            .filter(|call| call.mechanism != CallMechanism::Arena)
-            .collect::<Vec<_>>();
-        if !embedded.is_empty() {
-            out.push_str("    union {\n");
-            for call in embedded {
-                match call.mechanism {
-                    CallMechanism::Polled { .. } => {
-                        out.push_str(&format!("        {} {};\n", call.callee_type, call.member))
-                    }
-                    CallMechanism::Anchored => out.push_str(&format!(
-                        "        LLG_CO_ANCHORED({}) {};\n",
-                        call.callee_type, call.member
-                    )),
-                    CallMechanism::Arena => unreachable!(),
-                }
+        let mut child_size = 0;
+        let mut child_align = 1;
+        for child in self.blocks[block].children.iter().copied() {
+            if !self.has_storage(child) {
+                continue;
             }
-            out.push_str("    } calls;\n");
+            let (candidate_size, candidate_align) = self.block_layout(child, 0, 1)?;
+            child_size = child_size.max(align_up(candidate_size, candidate_align)?);
+            child_align = child_align.max(candidate_align);
         }
-        out.push_str(&format!("}} {frame_type};\n"));
-        Ok(out)
+        if child_size != 0 {
+            size = align_up(size, child_align)?;
+            size = size
+                .checked_add(child_size)
+                .ok_or_else(|| "coroutine frame size overflowed".to_owned())?;
+            max_align = max_align.max(child_align);
+        }
+        Ok((align_up(size, max_align)?, max_align))
     }
 }
 
@@ -257,21 +415,63 @@ mod tests {
     }
 
     #[test]
-    fn call_union_uses_selected_mechanisms() {
+    fn sibling_blocks_overlay_fields_and_call_slots() {
         let mut layout = FrameLayout::new(FrameStorage::CoFrame);
+        layout.begin_block();
+        assert_eq!(layout.declare("uint64_t", "left").unwrap(), "F->u0.b1.left");
         layout
             .add_call(1, "small_frame_t", CallMechanism::Polled { depth: 1 }, 64)
             .unwrap();
+        layout.end_block().unwrap();
+        layout.begin_block();
+        assert_eq!(layout.declare("sv4_t", "right").unwrap(), "F->u0.b2.right");
         layout
             .add_call(2, "deep_frame_t", CallMechanism::Anchored, 80)
             .unwrap();
-        layout
-            .add_call(3, "recursive_frame_t", CallMechanism::Arena, 96)
-            .unwrap();
+        layout.end_block().unwrap();
         let rendered = layout.render_typedef("caller_frame_t").unwrap();
+        assert!(rendered.contains("union {\n        struct {\n            uint64_t left;"));
         assert!(rendered.contains("small_frame_t c0;"));
         assert!(rendered.contains("LLG_CO_ANCHORED(deep_frame_t) a1;"));
-        assert!(!rendered.contains("recursive_frame_t arena2"));
+        assert!(rendered.contains("} b1;"));
+        assert!(rendered.contains("} b2;"));
+        assert_eq!(layout.upper_bound().unwrap(), 144);
+    }
+
+    #[test]
+    fn nested_blocks_add_to_live_parent_storage() {
+        let mut layout = FrameLayout::new(FrameStorage::CoFrame);
+        layout.declare("uint64_t", "root").unwrap();
+        layout.begin_block();
+        layout.declare("sv4_t", "child").unwrap();
+        layout.end_block().unwrap();
+        assert_eq!(layout.upper_bound().unwrap(), 48);
+    }
+
+    #[test]
+    fn hot_fields_are_first_and_stable() {
+        let mut layout = FrameLayout::new(FrameStorage::CoFrame);
+        layout.declare("int", "cold0").unwrap();
+        layout.declare("int", "hot0").unwrap();
+        layout.declare("int", "cold1").unwrap();
+        layout.declare("int", "hot1").unwrap();
+        layout.mark_hot("hot0");
+        layout.mark_hot("hot1");
+        let first = layout.render_typedef("f_t").unwrap();
+        let second = layout.render_typedef("f_t").unwrap();
+        assert_eq!(first, second);
+        assert!(first.find("int hot0;").unwrap() < first.find("int hot1;").unwrap());
+        assert!(first.find("int hot1;").unwrap() < first.find("int cold0;").unwrap());
+        assert!(first.find("int cold0;").unwrap() < first.find("int cold1;").unwrap());
+    }
+
+    #[test]
+    fn unbalanced_block_tree_is_an_error() {
+        let mut layout = FrameLayout::new(FrameStorage::CoFrame);
+        layout.begin_block();
+        assert!(layout.render_typedef("f_t").is_err());
+        layout.end_block().unwrap();
+        assert!(layout.end_block().is_err());
     }
 
     #[test]

@@ -51,9 +51,10 @@ fn coroutine_model_emits_root_arguments_polled_frames_and_descriptors() {
     assert!(c.contains("llg_co_frame_t co;"), "{c}");
     assert!(c.contains("sv4_t a0;\n    int depth;"), "{c}");
     assert!(c.contains("fn_tb_leaf_frame_t c0;"), "{c}");
-    assert!(c.contains("fn_tb_leaf(&F->calls.c0);"), "{c}");
+    assert!(c.contains("fn_tb_leaf(&F->u"), "{c}");
+    assert!(c.contains(".calls.c0);"), "{c}");
     assert!(
-        c.contains("&fn_tb_leaf_desc, offsetof(fn_tb_middle_frame_t, calls.c0)"),
+        c.contains("&fn_tb_leaf_desc, offsetof(fn_tb_middle_frame_t, u"),
         "{c}"
     );
     assert!(c.contains("LLG_CO_ROOT_FRAME_OK(p_tb_proc_"), "{c}");
@@ -76,7 +77,8 @@ fn poll_depth_one_emits_an_anchored_direct_libaco_call() {
     );
 
     assert!(c.contains("LLG_CO_ANCHORED(fn_tb_leaf_frame_t) a0;"), "{c}");
-    assert!(c.contains("fn_tb_leaf(&F->calls.a0.f);"), "{c}");
+    assert!(c.contains("fn_tb_leaf(&F->u"), "{c}");
+    assert!(c.contains(".calls.a0.f);"), "{c}");
     assert!(
         !c.contains("&fn_tb_leaf_desc, offsetof(fn_tb_middle_frame_t"),
         "{c}"
@@ -103,7 +105,8 @@ endmodule
 
     assert!(c.contains("void* _llg_arena_call_"), "{c}");
     assert!(c.contains("llg_co_arena_push(F->arena"), "{c}");
-    assert!(c.contains("LLG_CO_ANCHOR_FRAME(F->_llg_arena_call_"), "{c}");
+    assert!(c.contains("LLG_CO_ANCHOR_FRAME(F->u"), "{c}");
+    assert!(c.contains("._llg_arena_call_"), "{c}");
     assert!(c.contains("llg_co_arena_pop(F->arena"), "{c}");
     assert!(c.contains("if (F->depth >= 256)"), "{c}");
 }

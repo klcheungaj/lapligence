@@ -305,7 +305,7 @@ fn render_coroutine_metadata(
                 Some(call),
             ) => (
                 format!("&{}_desc", model.funcs[*callee].c_name),
-                format!("offsetof({}, calls.{})", artifact.frame_type, call.member),
+                format!("offsetof({}, {})", artifact.frame_type, call.path),
             ),
             _ => ("NULL".to_owned(), "0".to_owned()),
         };
