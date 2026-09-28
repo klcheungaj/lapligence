@@ -51,13 +51,17 @@ borrowed. Alias reads never publish or mutate resolved storage.
 
 ## Scheduler, process and event invariants
 
-`llg_co` is packaged in the runtime archive and self-contained source exports but
-is not yet used by generated code. Keep the library free of globals and TLS.
+`llg_co` is packaged in the runtime archive and self-contained source exports.
+Generated coroutine storage already uses its frame, descriptor, anchor and arena
+types, while libaco still executes the functions until the stackless control-flow
+phase. Keep the library free of globals and TLS.
 Frames are POD; callers own embedded callee frames and the prefixes of anchored
 callees. Cancellation drains runtime-owned scopes and releases arenas without
 resuming coroutine code. No C local may remain live across a resume point. Place
-root frames at `LLG_CO_ROOT(ch)` and anchored frames at
-`LLG_CO_ANCHOR_FRAME(anchor)`, preserving the corresponding alignment assertions.
+Part-A root frames immediately after their `llg_proc_t` record at 8-byte
+alignment; the later stackless chain places them at `LLG_CO_ROOT(ch)`. Place
+anchored frames at `LLG_CO_ANCHOR_FRAME(anchor)` and preserve the corresponding
+alignment assertions.
 
 `llg_rt.h` defines the exported OOM and bad-state hooks before including
 `llg_co.h`; `llg_co.c` alone receives the matching `LLG_CO_HOST_ALLOC` compile
@@ -79,6 +83,9 @@ illegal writes or read-only scheduling fail controllably.
 
 Active coroutines are FIFO. Each initial/always/link/continuous process owns a
 coroutine; ordinary forks use `llg_fork`, captured forks `llg_fork_with_frame`.
+Every spawn/fork call supplies an immutable `llg_co_desc_t`. The runtime
+co-allocates and initializes its root frame after the process record and owns one
+arena until that record is reclaimed, including kill/`aco_exit` paths.
 Creators release frame references after spawn; children release on completion,
 cancellation and teardown. Joined children may borrow live parent cells; cancel
 children before releasing parent storage. Completed parents remain alive for

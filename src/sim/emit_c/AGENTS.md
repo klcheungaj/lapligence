@@ -7,6 +7,23 @@ no frontend/DB/FFI/VPI dependencies or reparsing opaque C fragments.
 
 ## Evaluation and scopes
 
+Every function that may suspend, every non-final process and every fork branch
+uses an explicit POD coroutine frame even while execution remains on libaco.
+Finals retain their C-stack ABI. Route all
+typed procedure storage through `Frame::declare` (or its array/loop wrappers):
+`CStack` emits the declaration in place, while `CoFrame` registers a unique field
+and emits only its initialization at that point. Arguments are frame fields too.
+The flat field list is deliberately behind `FrameLayout`; add block overlays there
+without changing declaration call sites.
+
+Emit coroutine frame types callee-first. Polled callees occupy ordinary members
+of `union calls`, anchored callees use `LLG_CO_ANCHORED(T)`, and recursive or
+oversized callees use the owning process arena. Compute conservative LP64 upper
+bounds with every embedded call charged its 16-byte anchor prefix; the named
+`ExecutionAnalysisOptions::embed_limit` tunable defaults to 16 KiB and forces
+larger callees onto the arena. Descriptors use `fn = NULL` until stackless entry
+signatures land, but their numbered site tables and frame offsets are final.
+
 `Value` carries code, width/sign/fill metadata and an owning descriptor slot.
 Emit ordered setup, calls and cleanup, not nested allocating C expressions.
 Non-addressable real results are scalar temporaries; addressable real locals use
