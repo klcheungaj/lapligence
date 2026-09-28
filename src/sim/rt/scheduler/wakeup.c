@@ -4,6 +4,10 @@ static int expression_qualifies(const llg_expr_event_spec_t* spec) {
     llg_value_scope_t* scope = llg_value_scope_begin(1);
     sv4_t* result = llg_value_scope_values(scope);
     spec->condition(result, spec->condition_context);
+    if (llg_rt_exiting()) {
+        llg_value_scope_end(scope);
+        return 0;
+    }
     int qualifies = sv4_to_bool(*result);
     llg_value_scope_end(scope);
     return qualifies;

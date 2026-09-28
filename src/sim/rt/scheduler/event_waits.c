@@ -386,6 +386,7 @@ llg_co_arm_t llg_arm_expressions(llg_proc_t* self,
         } else {
             abort();
         }
+        if (self->chain.exiting) break;
     }
     if (self->chain.exiting) {
         event_unlink(w);
