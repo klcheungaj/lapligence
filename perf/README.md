@@ -44,10 +44,12 @@ the generated model's Release optimization (`-O3`) and add the project's
 warning flags. Use `--cflags '-O2 -Wall -Wno-unused-function'` for the separate
 warning-clean build check required at `-O2`.
 
-The corpus parameters are named tunables, not product thresholds. The standard
-sizes are intended to take roughly seconds to tens of seconds on the Phase 0
-machine. Shared-machine results need at least three repetitions, medians, an
-`uptime` record, and a later quiet-machine A/B run before they support a gate.
+The corpus parameters are named tunables, not product thresholds. The task,
+zero-delay, and wide-value standard sizes target seconds to tens of seconds on
+the Phase 0 machine. The mandatory many-process shapes can take minutes on the
+libaco baseline because they deliberately expose its process and NBA scaling.
+Shared-machine results need at least three repetitions, medians, an `uptime`
+record, and a later quiet-machine A/B run before they support a gate.
 
 ## SIGPROF sampling
 
