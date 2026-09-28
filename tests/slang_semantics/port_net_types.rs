@@ -133,14 +133,19 @@ fn port_net_type_delay_selection_drops_dominated_delays_including_zero() {
         assert_eq!(
             groups
                 .iter()
-                .filter(|line| line.contains(", 1, NULL, "))
+                .filter(|line| { line.contains(".propagation_enabled = 1, .propagation = NULL") })
                 .count(),
             2
         );
         assert_eq!(
             groups
                 .iter()
-                .filter(|line| line.contains(", 0, NULL, 0, 0, 0, "))
+                .filter(|line| {
+                    line.contains(".propagation_enabled = 0, .propagation = NULL")
+                        && line.contains(".propagation_rise = 0")
+                        && line.contains(".propagation_fall = 0")
+                        && line.contains(".propagation_turn_off = 0")
+                })
                 .count(),
             2
         );

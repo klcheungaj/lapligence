@@ -18,7 +18,7 @@ def main() -> int:
     parser.add_argument("--compiler", action="append", required=True,
                         help="C compiler executable (GCC, Clang, cl, or clang-cl); repeat as needed")
     parser.add_argument("--without-scheduler", action="store_true",
-                        help="Compile value/container only on hosts without native libaco support")
+                        help="Compile only scheduler-independent value/container sources")
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[2]
     runtime = root / "src" / "sim" / "rt"
@@ -27,7 +27,6 @@ def main() -> int:
         output = Path(directory)
         for header in runtime.glob("*.h"):
             shutil.copy2(header, output / header.name)
-        shutil.copy2(root / "vendor" / "libaco" / "aco.h", output / "aco.h")
         for name, function in (("llg_rt.c", "runtime_sources"),
                                ("llg_value.c", "value_sources"),
                                ("llg_container.c", "container_sources")):
@@ -63,7 +62,7 @@ def main() -> int:
             run(command("stale_abi.c"), expect_success=False, cwd=output)
             print(f"{compiler}: accepted ABI 4 and rejected stale ABI 3")
         if args.without_scheduler:
-            print("EXCLUDED: scheduler compilation (native libaco support not requested)")
+            print("EXCLUDED: scheduler compilation explicitly disabled")
     print("Runtime/ABI probes only; no Rust compilation or generated-HDL execution.")
     return 0
 

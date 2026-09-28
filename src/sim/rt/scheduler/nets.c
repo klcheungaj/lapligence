@@ -1,7 +1,181 @@
 
 // ── Collapsed inout nets ──────────────────────────────────────────────────────
 
-static sv4_t llg_net_compute(const llg_net_t* net) {
+static uint32_t llg_net_index_priority(int index) {
+    uint32_t value = (uint32_t)index + UINT32_C(0x9e3779b9);
+    value ^= value >> 16;
+    value *= UINT32_C(0x7feb352d);
+    value ^= value >> 15;
+    value *= UINT32_C(0x846ca68b);
+    value ^= value >> 16;
+    return value;
+}
+
+static uint32_t llg_net_index_max(const llg_net_t* net, int index) {
+    return index < 0 ? 0 : net->driver_index[index].max_high;
+}
+
+static void llg_net_index_recompute(llg_net_t* net, int index) {
+    llg_net_driver_index_t* node = &net->driver_index[index];
+    node->max_high = node->high;
+    uint32_t left = llg_net_index_max(net, node->left);
+    uint32_t right = llg_net_index_max(net, node->right);
+    if (left > node->max_high) node->max_high = left;
+    if (right > node->max_high) node->max_high = right;
+}
+
+static int llg_net_index_before(const llg_net_t* net, int left, int right) {
+    const llg_net_driver_index_t* a = &net->driver_index[left];
+    const llg_net_driver_index_t* b = &net->driver_index[right];
+    return a->low < b->low || (a->low == b->low && left < right);
+}
+
+static int llg_net_index_rotate_left(llg_net_t* net, int root) {
+    int next = net->driver_index[root].right;
+    net->driver_index[root].right = net->driver_index[next].left;
+    net->driver_index[next].left = root;
+    llg_net_index_recompute(net, root);
+    llg_net_index_recompute(net, next);
+    return next;
+}
+
+static int llg_net_index_rotate_right(llg_net_t* net, int root) {
+    int next = net->driver_index[root].left;
+    net->driver_index[root].left = net->driver_index[next].right;
+    net->driver_index[next].right = root;
+    llg_net_index_recompute(net, root);
+    llg_net_index_recompute(net, next);
+    return next;
+}
+
+static int llg_net_index_insert_at(llg_net_t* net, int root, int index) {
+    if (root < 0) return index;
+    if (llg_net_index_before(net, index, root)) {
+        net->driver_index[root].left =
+            llg_net_index_insert_at(net, net->driver_index[root].left, index);
+        if (net->driver_index[net->driver_index[root].left].priority <
+            net->driver_index[root].priority)
+            root = llg_net_index_rotate_right(net, root);
+    } else {
+        net->driver_index[root].right =
+            llg_net_index_insert_at(net, net->driver_index[root].right, index);
+        if (net->driver_index[net->driver_index[root].right].priority <
+            net->driver_index[root].priority)
+            root = llg_net_index_rotate_left(net, root);
+    }
+    llg_net_index_recompute(net, root);
+    return root;
+}
+
+static int llg_net_index_merge(llg_net_t* net, int left, int right) {
+    if (left < 0) return right;
+    if (right < 0) return left;
+    if (net->driver_index[left].priority < net->driver_index[right].priority) {
+        net->driver_index[left].right =
+            llg_net_index_merge(net, net->driver_index[left].right, right);
+        llg_net_index_recompute(net, left);
+        return left;
+    }
+    net->driver_index[right].left =
+        llg_net_index_merge(net, left, net->driver_index[right].left);
+    llg_net_index_recompute(net, right);
+    return right;
+}
+
+static int llg_net_index_remove_at(llg_net_t* net, int root, int index) {
+    if (root < 0) return -1;
+    if (root == index)
+        return llg_net_index_merge(net, net->driver_index[root].left,
+                                   net->driver_index[root].right);
+    if (llg_net_index_before(net, index, root))
+        net->driver_index[root].left =
+            llg_net_index_remove_at(net, net->driver_index[root].left, index);
+    else
+        net->driver_index[root].right =
+            llg_net_index_remove_at(net, net->driver_index[root].right, index);
+    llg_net_index_recompute(net, root);
+    return root;
+}
+
+static int llg_net_has_index(const llg_net_t* net) {
+    return net->driver_index && net->overlap_scratch && net->n_drivers > 0;
+}
+
+void llg_net_index_reset(llg_net_t* net) {
+    if (!net || !net->driver_index) return;
+    net->index_root = -1;
+    for (int index = 0; index < net->n_drivers; index++) {
+        llg_net_driver_index_t* node = &net->driver_index[index];
+        node->low = 0;
+        node->high = 0;
+        node->max_high = 0;
+        node->priority = llg_net_index_priority(index);
+        node->left = -1;
+        node->right = -1;
+        node->active = 0;
+    }
+}
+
+static void llg_net_index_remove(llg_net_t* net, int index) {
+    llg_net_driver_index_t* node = &net->driver_index[index];
+    if (!node->active) return;
+    net->index_root = llg_net_index_remove_at(net, net->index_root, index);
+    node->left = -1;
+    node->right = -1;
+    node->active = 0;
+}
+
+static void llg_net_index_insert(llg_net_t* net, int index,
+                                 uint32_t low, uint32_t high) {
+    llg_net_driver_index_t* node = &net->driver_index[index];
+    node->low = low;
+    node->high = high;
+    node->max_high = high;
+    node->left = -1;
+    node->right = -1;
+    node->active = 1;
+    net->index_root = llg_net_index_insert_at(net, net->index_root, index);
+}
+
+static void llg_net_index_collect(const llg_net_t* net, int root,
+                                  uint32_t low, uint32_t high, int* count) {
+    if (root < 0) return;
+    const llg_net_driver_index_t* node = &net->driver_index[root];
+    if (node->left >= 0 &&
+        net->driver_index[node->left].max_high >= low)
+        llg_net_index_collect(net, node->left, low, high, count);
+    if (node->low <= high && node->high >= low)
+        net->overlap_scratch[(*count)++] = root;
+    if (node->low <= high)
+        llg_net_index_collect(net, node->right, low, high, count);
+}
+
+static int llg_net_all_z(const sv4_t* value) {
+    int limbs = (int)((value->width + 63u) / 64u);
+    for (int limb = 0; limb < limbs; limb++) {
+        uint32_t remaining = value->width - (uint32_t)limb * 64u;
+        uint64_t mask = remaining >= 64u
+            ? UINT64_MAX : (UINT64_C(1) << remaining) - UINT64_C(1);
+        if ((value->bits[limb] & mask) || (value->x[limb] & mask) ||
+            (value->z[limb] & mask) != mask)
+            return 0;
+    }
+    return 1;
+}
+
+static sv4_t llg_net_compute_range(llg_net_t* net, uint32_t low,
+                                   uint32_t width) {
+    int count = 0;
+    llg_net_index_collect(net, net->index_root, low, low + width - 1u, &count);
+    return sv4_resolve_strengths_range(
+        (const sv4_t* const*)net->drivers, net->strength0, net->strength1,
+        net->overlap_scratch, count, net->width, low, width,
+        net->is_signed, net->resolution);
+}
+
+static sv4_t llg_net_compute(llg_net_t* net) {
+    if (llg_net_has_index(net))
+        return llg_net_compute_range(net, 0, net->width);
     return sv4_resolve_strengths(
         (const sv4_t* const*)net->drivers, net->strength0, net->strength1,
         net->n_drivers, net->width, net->is_signed, net->resolution);
@@ -48,6 +222,20 @@ static void llg_net_publish(llg_net_t* net, sv4_t resolved) {
     }
 }
 
+static void llg_net_publish_range(llg_net_t* net, uint32_t low,
+                                  sv4_t resolved) {
+    if (sig_write_range(&net->resolved, low, resolved))
+        llg_net_alias_refresh_all(net);
+}
+
+static void llg_net_publish_ranges(llg_net_t* net,
+                                   uint32_t first_low, sv4_t first,
+                                   uint32_t second_low, sv4_t second) {
+    if (sig_write_ranges(&net->resolved, first_low, first,
+                         second_low, second, 1))
+        llg_net_alias_refresh_all(net);
+}
+
 void llg_net_resolve(llg_net_t* net) {
     if (!net || !region_can_mutate("net resolution")) return;
     if (llg_is_forced(&net->resolved)) {
@@ -70,9 +258,171 @@ void llg_net_write(llg_net_t* net, int idx, sv4_t value) {
         sv4_destroy(&replacement);
         return;
     }
+    uint32_t old_low = 0;
+    uint32_t old_high = 0;
+    int old_active = 0;
+    if (llg_net_has_index(net)) {
+        llg_net_driver_index_t* node = &net->driver_index[idx];
+        old_low = node->low;
+        old_high = node->high;
+        old_active = node->active;
+        llg_net_index_remove(net, idx);
+    }
     sv4_move(slot, &replacement);
-    // Driver slots keep changing underneath a force; release must observe them.
-    llg_net_resolve(net);
+    int new_active = !llg_net_all_z(slot);
+    if (llg_net_has_index(net) && new_active)
+        llg_net_index_insert(net, idx, 0, net->width - 1u);
+    // A selected force may cover only part of the net. Recompute through the
+    // force path so unforced bits still publish underlying driver changes.
+    if (llg_is_forced(&net->resolved)) {
+        llg_net_resolve(net);
+        return;
+    }
+    if (!llg_net_has_index(net) || net->propagation_enabled) {
+        llg_net_resolve(net);
+        return;
+    }
+    uint32_t low = old_active ? old_low : 0;
+    uint32_t high = old_active ? old_high : net->width - 1u;
+    if (!old_active && !new_active) return;
+    if (new_active) {
+        if (!old_active || low > 0) low = 0;
+        if (!old_active || high < net->width - 1u) high = net->width - 1u;
+    }
+    llg_value_scope_t* scope = llg_value_scope_begin(1);
+    sv4_t* owned = llg_value_scope_values(scope);
+    sv4_replace(owned, llg_net_compute_range(net, low, high - low + 1u));
+    llg_net_publish_range(net, low, owned[0]);
+    llg_value_scope_end(scope);
+}
+
+static int llg_net_range_same(const sv4_t* target, uint32_t offset,
+                              const sv4_t* value) {
+    for (uint32_t bit = 0; bit < value->width; bit++) {
+        uint32_t target_bit = offset + bit;
+        uint64_t target_mask = UINT64_C(1) << (target_bit % 64u);
+        uint64_t value_mask = UINT64_C(1) << (bit % 64u);
+        uint32_t target_limb = target_bit / 64u;
+        uint32_t value_limb = bit / 64u;
+        if (!!(target->bits[target_limb] & target_mask) !=
+                !!(value->bits[value_limb] & value_mask) ||
+            !!(target->x[target_limb] & target_mask) !=
+                !!(value->x[value_limb] & value_mask) ||
+            !!(target->z[target_limb] & target_mask) !=
+                !!(value->z[value_limb] & value_mask))
+            return 0;
+    }
+    return 1;
+}
+
+static void llg_net_range_fill_z(sv4_t* target, uint32_t offset,
+                                 uint32_t width) {
+    for (uint32_t bit = 0; bit < width; bit++) {
+        uint32_t target_bit = offset + bit;
+        uint64_t mask = UINT64_C(1) << (target_bit % 64u);
+        uint32_t limb = target_bit / 64u;
+        target->bits[limb] &= ~mask;
+        target->x[limb] &= ~mask;
+        target->z[limb] |= mask;
+    }
+}
+
+static void llg_net_range_copy(sv4_t* target, uint32_t offset,
+                               const sv4_t* value) {
+    for (uint32_t bit = 0; bit < value->width; bit++) {
+        uint32_t target_bit = offset + bit;
+        uint64_t target_mask = UINT64_C(1) << (target_bit % 64u);
+        uint64_t value_mask = UINT64_C(1) << (bit % 64u);
+        uint32_t target_limb = target_bit / 64u;
+        uint32_t value_limb = bit / 64u;
+        target->bits[target_limb] =
+            (target->bits[target_limb] & ~target_mask) |
+            ((value->bits[value_limb] & value_mask) ? target_mask : 0);
+        target->x[target_limb] =
+            (target->x[target_limb] & ~target_mask) |
+            ((value->x[value_limb] & value_mask) ? target_mask : 0);
+        target->z[target_limb] =
+            (target->z[target_limb] & ~target_mask) |
+            ((value->z[value_limb] & value_mask) ? target_mask : 0);
+    }
+}
+
+static void llg_net_write_slice(llg_net_t* net, int idx, sv4_t selected,
+                                uint32_t new_low) {
+    sv4_t* slot = net->drivers[idx];
+    uint32_t old_low = 0;
+    uint32_t old_high = net->width - 1u;
+    int old_active = 1;
+    if (llg_net_has_index(net)) {
+        llg_net_driver_index_t* node = &net->driver_index[idx];
+        old_low = node->low;
+        old_high = node->high;
+        old_active = node->active;
+    }
+    int new_active = selected.width && !llg_net_all_z(&selected);
+    uint32_t new_high = new_active ? new_low + selected.width - 1u : new_low;
+    if (old_active == new_active &&
+        (!new_active || (old_low == new_low && old_high == new_high &&
+                         llg_net_range_same(slot, new_low, &selected)))) {
+        return;
+    }
+    if (llg_net_has_index(net)) llg_net_index_remove(net, idx);
+    if (llg_net_has_index(net)) {
+        if (old_active) llg_net_range_fill_z(slot, old_low, old_high - old_low + 1u);
+    } else {
+        llg_net_range_fill_z(slot, 0, net->width);
+        old_low = 0;
+        old_high = net->width - 1u;
+    }
+    if (new_active) {
+        llg_net_range_copy(slot, new_low, &selected);
+        if (llg_net_has_index(net)) llg_net_index_insert(net, idx, new_low, new_high);
+    }
+    if (llg_is_forced(&net->resolved)) {
+        llg_net_resolve(net);
+        return;
+    }
+    if (!llg_net_has_index(net) || net->propagation_enabled) {
+        llg_net_resolve(net);
+        return;
+    }
+    if (!old_active && !new_active) return;
+    if (old_active && new_active &&
+        (old_high + 1u < new_low || new_high + 1u < old_low)) {
+        llg_value_scope_t* scope = llg_value_scope_begin(2);
+        sv4_t* owned = llg_value_scope_values(scope);
+        sv4_replace(&owned[0], llg_net_compute_range(
+            net, old_low, old_high - old_low + 1u));
+        sv4_replace(&owned[1], llg_net_compute_range(
+            net, new_low, new_high - new_low + 1u));
+        llg_net_publish_ranges(net, old_low, owned[0], new_low, owned[1]);
+        llg_value_scope_end(scope);
+        return;
+    }
+    uint32_t low = old_active ? old_low : new_low;
+    uint32_t high = old_active ? old_high : new_high;
+    if (new_active) {
+        if (!old_active || new_low < low) low = new_low;
+        if (!old_active || new_high > high) high = new_high;
+    }
+    llg_value_scope_t* scope = llg_value_scope_begin(1);
+    sv4_t* owned = llg_value_scope_values(scope);
+    sv4_replace(owned, llg_net_compute_range(net, low, high - low + 1u));
+    llg_net_publish_range(net, low, owned[0]);
+    llg_value_scope_end(scope);
+}
+
+void llg_net_write_selected(llg_net_t* net, int idx, sv4_t value,
+                            sv4_select_plan_t plan, int reverse) {
+    if (!net || !region_can_mutate("net write")) return;
+    if (idx < 0 || idx >= net->n_drivers || !net->drivers[idx] ||
+        plan.storage_width != net->width) {
+        fputs("llg: fatal: invalid selected net driver\n", stderr);
+        abort();
+    }
+    sv4_t selected = sv4_select_plan_slice(value, &plan, reverse);
+    llg_net_write_slice(net, idx, selected, plan.storage_lsb);
+    sv4_destroy(&selected);
 }
 
 /* Grow one net's alias list to hold at least one more entry. The old table
@@ -415,9 +765,31 @@ static void commit_inertial(llg_region_t region) {
         inertial_merge(&merged, &value, &mask);
         sv4_move(&value, &merged);
     }
-    sv4_copy(&driver->current, &value);
-    if (driver->net) llg_net_write(driver->net, driver->slot, value);
-    else llg_ba(driver->target, value);
+    uint32_t range_offset = 0;
+    uint32_t range_width = 0;
+    int selected_net = driver->net && has_mask &&
+        nba_mask_contiguous(driver->net->width, value, mask,
+                            &range_offset, &range_width);
+    if (selected_net) {
+        sv4_t selected = range_width
+            ? sv4_part_select(value, range_offset + range_width - 1u,
+                              range_offset)
+            : (sv4_t)SV4_EMPTY;
+        sv4_t current = sv4_fill(3, driver->net->width,
+                                 driver->net->is_signed);
+        if (range_width)
+            llg_net_range_copy(&current, range_offset, &selected);
+        sv4_copy(&driver->current, &current);
+        sv4_destroy(&current);
+        llg_net_write_slice(driver->net, driver->slot, selected, range_offset);
+        sv4_destroy(&selected);
+    } else if (driver->net) {
+        sv4_copy(&driver->current, &value);
+        llg_net_write(driver->net, driver->slot, value);
+    } else {
+        sv4_copy(&driver->current, &value);
+        llg_ba(driver->target, value);
+    }
     if (publication_net) llg_net_alias_refresh_all(publication_net);
     sv4_destroy(&mask);
     sv4_destroy(&value);

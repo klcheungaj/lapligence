@@ -297,8 +297,8 @@ pub(in super::super) fn render_assign(
             return Ok(format!("llg_net_write(&{net}, {slot}, {value});"));
         }
     }
-    // Each selected continuous-assignment site owns one driver. Rebuild its
-    // value from Z so a moving index releases the previously selected bits.
+    // Each selected continuous-assignment site owns one driver. The runtime
+    // records its active interval so a moving index releases the old bits.
     if let IrLhs::Bit(idx, ..) | IrLhs::Part(idx, ..) | IrLhs::IdxPart(idx, ..) = lh {
         let sig = ctx.model.signal(*idx);
         if let Some((gidx, slot)) = sig.net_driver {
@@ -318,33 +318,46 @@ pub(in super::super) fn render_assign(
                     selected_two_state || sig.ty.two_state(),
                 )
             };
-            let update = match lh {
+            let (value, plan, reverse) = match lh {
                 IrLhs::Bit(_, index, _) => {
                     let index = render_expr_impl(ctx, index)?.code;
                     let value = resize("1");
-                    format!("sv4_bit_select_set(&_t, sv4_to_index({index}), {value});")
+                    (
+                        value,
+                        format!(
+                            "sv4_select_plan_bit({}, sv4_to_index({index}))",
+                            sig.ty.width()
+                        ),
+                        false,
+                    )
                 }
                 IrLhs::Part(_, left, right, _) => {
                     let width = (i128::from(*left) - i128::from(*right)).unsigned_abs() + 1;
                     let value = resize(&width.to_string());
-                    format!("sv4_part_select_set(&_t, {left}, {right}, {value});")
+                    (
+                        value,
+                        format!("sv4_select_plan_part({}, {left}, {right})", sig.ty.width()),
+                        left < right,
+                    )
                 }
                 IrLhs::IdxPart(_, base, _, selected_width, neg, _) => {
                     let base = render_expr_impl(ctx, base)?.code;
                     let value = resize(&selected_width.to_string());
-                    format!(
-                        "sv4_idx_part_select_set_value(&_t, {base}, \
-                         {selected_width}, {}, {value});",
-                        *neg as u8
+                    (
+                        value,
+                        format!(
+                            "sv4_select_plan_indexed({}, {base}, {selected_width}, {})",
+                            sig.ty.width(),
+                            *neg as u8
+                        ),
+                        false,
                     )
                 }
                 _ => unreachable!("only selected net targets enter this branch"),
             };
             return Ok(format!(
-                "{{ sv4_t _t = sv4_fill(3, {}, {}); {update} \
-                 llg_net_write(&{net}, {slot}, _t); }}",
-                sig.ty.width(),
-                sig.ty.signed() as u8
+                "llg_net_write_selected(&{net}, {slot}, {value}, {plan}, {});",
+                reverse as u8
             ));
         }
     }

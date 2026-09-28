@@ -6,10 +6,10 @@ mixed/mismatched inputs fail, including edits outside diff hunks.
 
 ## Content and filesystem validation
 
-Each directory has complete clean/applied `files.sha256` digests and a required
-retired-target manifest. Slang's authenticated retired set includes the old
-`SVInt.cpp` target; libaco's is explicitly empty. Missing, unexpectedly empty,
-extra or mismatched manifest content fails with or without Git.
+Each patch directory has complete clean/applied `files.sha256` digests and a
+required retired-target manifest. Slang's authenticated retired set includes the
+old `SVInt.cpp` target. Missing, unexpectedly empty, extra or mismatched manifest
+content fails with or without Git.
 
 Digests use canonical LF. `.gitattributes` tracks patches/manifests as LF;
 rendering preserves vendor CRLF where present. Authenticate the rendered applied
@@ -27,8 +27,8 @@ With usable Git metadata, require canonical vendor `rev-parse --show-toplevel`,
 pinned HEAD, no out-of-set tracked changes and no untracked source/build inputs.
 No-Git/copied archives, including those inside unrelated checkouts, use exact
 manifests without Git or safe.directory setup. Slang lists sources explicitly;
-runtime embeds only libaco `aco.h`, `aco.c`, `acosw.S`; generated products stay
-outside vendors. These fixed inputs bound archive admission.
+generated products stay outside vendors. These fixed inputs bound archive
+admission.
 
 ## Slang
 
@@ -41,13 +41,6 @@ outside vendors. These fixed inputs bound archive admission.
 | `slang/slang-ref-port-binding.patch` | Packed module-ref lvalue binding; subroutine refs retain separate rules. |
 | `slang/slang-package-wildcard-export.patch` | Lazy finite wildcard re-exports, with ambiguous names diagnosed. |
 | `slang/slang-conditional-z-merge.patch` | Selected packed conditional policy: definite true selects one arm despite other X/Z predicate bits; unpacked constants retain matching immediate members and default mismatches by member type, not initializer. Nested members default whole. Local edition policy, not an upstream erratum. |
-
-## libaco
-
-- Base: `d00631a9e143a8711c0a6e7b603a72b1e379b661`
-- Source: `c45ffec47b9629247f5bb272947b711036e7fd8e`
-- `libaco/libaco-asan-shared-stack.patch`: shared-stack ASan shadow preservation
-  and Linux `MAP_NORESERVE` mappings.
 
 ## Updating patches
 

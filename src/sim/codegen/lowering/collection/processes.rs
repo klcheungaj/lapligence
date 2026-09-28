@@ -424,7 +424,16 @@ impl<'a> Codegen<'a> {
             }
             // Remap even without a registered site so a resolved target that
             // site discovery missed fails closed instead of bypassing its net.
-            self.remap_pattern_continuous_targets(&mut pattern_body, ca, &mut 0)?;
+            let mut captures = 0;
+            // Pattern leaves are separate electrical contributions. Sharing
+            // one slot would make a later selected leaf erase an earlier one.
+            let mut terminals = HashMap::new();
+            self.remap_pattern_continuous_targets(
+                &mut pattern_body,
+                ca,
+                &mut captures,
+                &mut terminals,
+            )?;
             let fn_name = self.new_fn_name(path, "ca");
             let sigs = self.collect_read_signals(path, rhs)?;
             let shape = if sigs.is_empty() {
@@ -455,7 +464,7 @@ impl<'a> Codegen<'a> {
                     self.node(ca).col,
                 ));
             }
-            lh = self.remap_structural_lhs(lh, ca);
+            lh = self.remap_continuous_targets(lh, ca)?;
         }
         let rhs_ir = self.lower_expr(path, rhs)?;
         let rhs_ir = apply_lhs_assignment_context(&self.model, &lh, rhs_ir);
@@ -545,15 +554,16 @@ impl<'a> Codegen<'a> {
     }
 
     fn remap_pattern_continuous_targets(
-        &self,
+        &mut self,
         statement: &mut IrStmt,
         source: NodeId,
         captures: &mut usize,
+        terminals: &mut HashMap<usize, usize>,
     ) -> Result<(), String> {
         match statement {
             IrStmt::Block(statements) => {
                 for statement in statements {
-                    self.remap_pattern_continuous_targets(statement, source, captures)?;
+                    self.remap_pattern_continuous_targets(statement, source, captures, terminals)?;
                 }
                 Ok(())
             }
@@ -586,8 +596,23 @@ impl<'a> Codegen<'a> {
                     init: Some(Box::new(rhs.clone())),
                     two_state: false,
                 }];
+                let mut groups = bindings
+                    .iter()
+                    .map(|(binding, _)| binding.group())
+                    .collect::<Vec<_>>();
+                groups.sort_unstable();
+                groups.dedup();
+                let mut alias_terminals = HashMap::new();
+                for group in groups {
+                    let terminal = *terminals.entry(group).or_default();
+                    terminals.insert(group, terminal + 1);
+                    self.ensure_structural_driver_terminal(source, group, terminal)?;
+                    alias_terminals.insert(group, terminal);
+                }
                 for (driver, value) in
-                    self.alias_driver_assignments(source, &bindings, &value, |_| 0)?
+                    self.alias_driver_assignments(source, &bindings, &value, |group| {
+                        alias_terminals[&group]
+                    })?
                 {
                     block.push(IrStmt::Assign {
                         lhs: IrLhs::Whole(driver),
@@ -607,7 +632,17 @@ impl<'a> Codegen<'a> {
                         self.node(source).col,
                     ));
                 }
-                if let Some(group) = self.unmapped_structural_group(lhs, source) {
+                let groups = self.structural_groups_for_lhs(lhs);
+                let mut selected_terminals = HashMap::new();
+                for group in groups {
+                    let terminal = *terminals.entry(group).or_default();
+                    terminals.insert(group, terminal + 1);
+                    self.ensure_structural_driver_terminal(source, group, terminal)?;
+                    selected_terminals.insert(group, terminal);
+                }
+                if let Some(group) =
+                    self.unmapped_structural_group_for_terminals(lhs, source, &selected_terminals)
+                {
                     return Err(format!(
                         "continuous assignment `{}` has no structural driver mapping for resolved net group {} at {}:{}:{}",
                         self.display_name(source),
@@ -617,7 +652,11 @@ impl<'a> Codegen<'a> {
                         self.node(source).col,
                     ));
                 }
-                *lhs = self.remap_structural_lhs(lhs.clone(), source);
+                *lhs = self.remap_structural_lhs_for_terminals(
+                    lhs.clone(),
+                    source,
+                    &selected_terminals,
+                );
                 Ok(())
             }
             _ => Err(
@@ -625,6 +664,68 @@ impl<'a> Codegen<'a> {
                     .to_string(),
             ),
         }
+    }
+
+    fn remap_continuous_targets(&mut self, lhs: IrLhs, source: NodeId) -> Result<IrLhs, String> {
+        let IrLhs::Stream {
+            parts,
+            width,
+            slice,
+            direction,
+        } = lhs
+        else {
+            return Ok(self.remap_structural_lhs(lhs, source));
+        };
+
+        // Each concatenation part is an independent net lvalue. Give parts
+        // that land in one resolved group independent contribution slots.
+        let mut next_terminal = HashMap::new();
+        let mut remapped = Vec::with_capacity(parts.len());
+        for (part, part_width) in parts {
+            let mut terminals = HashMap::new();
+            for group in self.structural_groups_for_lhs(&part) {
+                let terminal = *next_terminal.entry(group).or_default();
+                next_terminal.insert(group, terminal + 1);
+                self.ensure_structural_driver_terminal(source, group, terminal)?;
+                terminals.insert(group, terminal);
+            }
+            remapped.push((
+                self.remap_structural_lhs_for_terminals(part, source, &terminals),
+                part_width,
+            ));
+        }
+        Ok(IrLhs::Stream {
+            parts: remapped,
+            width,
+            slice,
+            direction,
+        })
+    }
+
+    fn ensure_structural_driver_terminal(
+        &mut self,
+        source: NodeId,
+        group: usize,
+        terminal: usize,
+    ) -> Result<(), String> {
+        if terminal == 0 {
+            return Ok(());
+        }
+        let primary = self
+            .structural_driver_signal(source, group)
+            .ok_or_else(|| format!("structural driver has no primary slot for group {group}"))?;
+        let slot = self.model.signals[primary]
+            .net_driver
+            .map(|(_, slot)| slot)
+            .ok_or_else(|| format!("structural driver signal has no slot for group {group}"))?;
+        let strengths = *self.model.net_groups[group]
+            .driver_strengths
+            .get(slot)
+            .ok_or_else(|| {
+                format!("structural driver slot {slot} is missing from group {group}")
+            })?;
+        self.add_structural_driver_for_terminal(group, source, strengths, terminal)?;
+        Ok(())
     }
 
     /// Whether a lowered target selects or streams part of a signal whose

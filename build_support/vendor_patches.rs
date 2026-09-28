@@ -22,14 +22,12 @@ use std::os::windows::fs::MetadataExt;
 use cap_std::fs::OpenOptionsExt as CapOpenOptionsExt;
 
 const SLANG_BASE_REVISION: &str = "7ddf4059f79eff508dd486eb42fd650cdf320d52";
-const LIBACO_BASE_REVISION: &str = "d00631a9e143a8711c0a6e7b603a72b1e379b661";
 const FILE_MANIFEST: &str = "files.sha256";
 const RETIRED_MANIFEST: &str = "retired-files.sha256";
 const SLANG_RETIRED_ENTRIES: &[(&str, &str)] = &[(
     "source/numeric/SVInt.cpp",
     "54af15a814a7982fd5e07d0e15af8c27a52bd17069cf1abb6c54452a4a398cfb",
 )];
-const LIBACO_RETIRED_ENTRIES: &[(&str, &str)] = &[];
 static TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug)]
@@ -172,30 +170,23 @@ struct RetiredManifest {
     entries: BTreeMap<PathBuf, [u8; 32]>,
 }
 
-/// Emit Cargo dependencies for repository-owned patches and the embedded
-/// libaco sources. Directory dependencies cover additions/removals; individual
-/// patch files make the relevant inputs explicit in Cargo diagnostics.
+/// Emit Cargo dependencies for repository-owned patches. Directory dependencies
+/// cover additions/removals; individual patch files make the relevant inputs
+/// explicit in Cargo diagnostics.
 pub fn emit_rerun_if_changed(manifest_dir: &Path) {
-    for relative in ["patches/slang", "patches/libaco", "vendor/libaco"] {
-        println!(
-            "cargo:rerun-if-changed={}",
-            manifest_dir.join(relative).display()
-        );
+    let directory = manifest_dir.join("patches/slang");
+    println!("cargo:rerun-if-changed={}", directory.display());
+    for metadata in [FILE_MANIFEST, RETIRED_MANIFEST] {
+        let path = directory.join(metadata);
+        println!("cargo:rerun-if-changed={}", path.display());
     }
-    for relative in ["patches/slang", "patches/libaco"] {
-        let directory = manifest_dir.join(relative);
-        for metadata in [FILE_MANIFEST, RETIRED_MANIFEST] {
-            let path = directory.join(metadata);
+    let Ok(entries) = fs::read_dir(&directory) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|extension| extension.to_str()) == Some("patch") {
             println!("cargo:rerun-if-changed={}", path.display());
-        }
-        let Ok(entries) = fs::read_dir(&directory) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|extension| extension.to_str()) == Some("patch") {
-                println!("cargo:rerun-if-changed={}", path.display());
-            }
         }
     }
 }
@@ -209,13 +200,6 @@ pub fn apply_all(manifest_dir: &Path) -> Result<(), PatchError> {
         &manifest_dir.join("vendor/slang"),
         &manifest_dir.join("patches/slang"),
         Some(SLANG_BASE_REVISION),
-    )?;
-    apply_directory_with_base(
-        "libaco",
-        manifest_dir,
-        &manifest_dir.join("vendor/libaco"),
-        &manifest_dir.join("patches/libaco"),
-        Some(LIBACO_BASE_REVISION),
     )?;
     Ok(())
 }
@@ -323,7 +307,6 @@ fn apply_directory_with_base(
 fn expected_retired_entries(label: &str) -> Option<&'static [(&'static str, &'static str)]> {
     match label {
         "Slang" => Some(SLANG_RETIRED_ENTRIES),
-        "libaco" => Some(LIBACO_RETIRED_ENTRIES),
         _ => None,
     }
 }
@@ -2768,31 +2751,6 @@ mod tests {
         );
         apply_directory("test", &repository, &patches).expect("CRLF applied state is accepted");
 
-        fs::remove_dir_all(root).expect("remove temporary patch tree");
-    }
-
-    #[test]
-    fn crlf_policy_covers_libaco_manifest_without_git() {
-        let label = "libaco";
-        let root = temporary_tree();
-        let repository = root.join("repo");
-        let patches = root.join("patches");
-        fs::create_dir_all(&repository).expect("create repository");
-        fs::write(repository.join("alpha.txt"), "one\r\nold\r\n").expect("write CRLF source");
-        fs::write(patches.join("alpha.patch"), PATCH).expect("write LF patch");
-        write_manifest(&patches, "alpha.txt", "one\nold\n", "one\nnew\n");
-        fs::write(
-            patches.join(RETIRED_MANIFEST),
-            "# path base-content-sha256\n",
-        )
-        .expect("write empty libaco retired manifest");
-
-        apply_directory(label, &repository, &patches)
-            .expect("known vendor CRLF patch applies without Git");
-        assert_eq!(
-            fs::read(repository.join("alpha.txt")).unwrap(),
-            b"one\r\nnew\r\n"
-        );
         fs::remove_dir_all(root).expect("remove temporary patch tree");
     }
 

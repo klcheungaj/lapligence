@@ -120,7 +120,8 @@ static void sampled_domain_clock_signal_changed(sv4_t* signal, sv4_t old,
     if (!signal) return;
     for (llg_sampled_domain_t* domain = g.sampled_domains; domain;
          domain = domain->next) {
-        if (domain->clock != signal || !ev_matches(old, value, domain->edge))
+        if (domain->clock != signal ||
+            !ev_matches_changed(old, value, domain->edge))
             continue;
         if (domain->gate) {
             sv4_t gate = domain->gate(domain->data);

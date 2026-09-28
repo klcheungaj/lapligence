@@ -21,7 +21,7 @@ unwound on completion/cancellation. No cleanup attributes, VLAs, alloca or C++
 destructors. Scope indexes use exact pointer equality, never ordering; retain
 lexical cells only as long as queued/ref users require them.
 
-Keep `llg_value` scheduler/libaco/waveform-independent, parity with `core::elab`,
+Keep `llg_value` scheduler/coroutine/waveform-independent, parity with `core::elab`,
 X/Z distinction, actual-width arithmetic/conversions and partial-select X fill.
 Array-conditional helpers borrow inputs and return independent owners with
 immediate-element defaults. Strength resolution retains both X endpoints, strict
@@ -53,8 +53,7 @@ borrowed. Alias reads never publish or mutate resolved storage.
 
 `llg_co` is packaged in the runtime archive and self-contained source exports.
 Generated processes execute through `llg_co` frames, descriptors, anchors and
-arenas. The runtime must not call libaco; its vendored build inputs remain only
-until the separate packaging-removal phase. Keep `llg_co` free of globals and TLS.
+arenas. Keep `llg_co` free of globals and TLS.
 Frames are POD; callers own embedded callee frames and the prefixes of anchored
 callees. Cancellation drains runtime-owned scopes and releases arenas without
 resuming coroutine code. No C local may remain live across a resume point. Place
@@ -104,9 +103,12 @@ advance time without a process waiter. Masked writes merge into current storage.
 Inertial sites own pending Active events: changed pending values cancel, unchanged
 values retain deadlines, return-to-current cancels without replacement. Reset
 model handles before freeing driver storage; reinitialization discards pending
-events. Zero-delay drivers drain Active. Resolve/publish only actual net changes;
-selected sites reconstruct Z-based contributions. Pending delayed drivers start X,
-not driverless Z. Fixed-array delayed sites retain per-element identity.
+events. Zero-delay drivers drain Active. Generated nets provide exact-size
+driver interval nodes and overlap scratch storage. Selected writes replace their
+previous interval, release it to Z when a selector moves, and resolve/publish only
+the union of old and new ranges against overlapping drivers. Keep full-net waiter
+identity and notification behavior. Pending delayed drivers start X, not driverless
+Z. Fixed-array delayed sites retain per-element identity.
 
 Waiters own snapshots/dependency lists. Packed edges use LSB, including 0→X/Z and
 X/Z→1 posedges (negedge mirrored); real changes compare IEEE bits, including signed
@@ -220,13 +222,16 @@ scheduler or export private shared state to avoid assembly rules.
 
 Preserve source APIs: `value_sources`, `random_sources`, `rng_sources`,
 `coroutine_sources`, `runtime_sources`, `string_sources`, `container_sources`,
-`libaco_sources`, `selftest_source`, `selftest_support_source`, `waveform_sources`,
+`selftest_source`, `selftest_support_source`, `waveform_sources` and
 `waveform_selftest_source`. Value/random/RNG/llg_co are independent;
-runtime/string/container require values, container not scheduler.
-Self-contained generation temporarily still packages libaco and
-`aco_assert_override.h` for Phase 6 compatibility, but neither generated ABI 2
-models nor the runtime call it. Models initialize through
-`llg_rt_init_with_args_and_precision` and define `LLG_MODEL_PROCESS_ABI`.
+runtime/string/container require values, container not scheduler. Models
+initialize through `llg_rt_init_with_args_and_precision` and define
+`LLG_MODEL_PROCESS_ABI`.
+
+Keep the generated 256-call recursion guard. POSIX startup warns below the named
+8 MiB host-stack estimate; generated MSVC model targets reserve that default with
+`/STACK`. Stackless sanitizer runs use ordinary ASan/UBSan flags without a
+stack-switch exception.
 
 Use [runtime tests](../../../tests/runtime_value_storage/readme.md) for component,
 ABI, allocation-failure and waveform checks, and

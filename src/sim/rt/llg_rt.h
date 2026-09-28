@@ -59,6 +59,13 @@
 #define LLG_PROCESS_STEP_LIMIT LLG_ZERO_LOOP_LIMIT
 #endif
 
+// Estimated host stack for the scheduler, one polled coroutine segment, and
+// the generated 256-call recursion guard. POSIX hosts warn when RLIMIT_STACK
+// is lower; generated MSVC projects reserve the same amount with /STACK.
+#ifndef LLG_HOST_STACK_ESTIMATE_BYTES
+#define LLG_HOST_STACK_ESTIMATE_BYTES (8u * 1024u * 1024u)
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -175,13 +182,29 @@ typedef struct {
 // The struct is a valid file-scope static initializer: driver cells are
 // separate `sv4_t` globals whose addresses the codegen wires into `drivers`.
 // `drivers`, `strength0` and `strength1` point at exact elaborated-size
-// read-only tables emitted with the model, so no fixed driver ceiling exists.
-// The alias list is grown on demand; `alias_capacity` tracks its allocation.
+// read-only tables emitted with the model. `driver_index` and
+// `overlap_scratch` point at exact-size mutable arrays, so range queries do not
+// allocate and no fixed driver ceiling exists. The alias list is grown on
+// demand; `alias_capacity` tracks its allocation.
 
 typedef struct llg_inertial llg_inertial_t;
 typedef struct llg_net llg_net_t;
+typedef struct llg_net_driver_index llg_net_driver_index_t;
 typedef struct llg_net_alias_part llg_net_alias_part_t;
 typedef struct llg_net_alias llg_net_alias_t;
+
+// One intrusive interval-tree node per driver. Generated models provide an
+// exact-size mutable array; no node is allocated while a contribution moves.
+// Inactive drivers are electrically all-Z and are absent from the tree.
+struct llg_net_driver_index {
+    uint32_t low;
+    uint32_t high;
+    uint32_t max_high;
+    uint32_t priority;
+    int left;
+    int right;
+    uint8_t active;
+};
 
 struct llg_net {
     sv4_t resolved;                       /* what readers/waiters see */
@@ -192,6 +215,9 @@ struct llg_net {
     sv4_t* const* drivers;                /* per-driver contribution cells */
     const uint8_t* strength0;             /* per-driver source drive levels */
     const uint8_t* strength1;
+    llg_net_driver_index_t* driver_index; /* exact-size interval-tree nodes */
+    int* overlap_scratch;                 /* exact-size query output */
+    int index_root;
     int8_t propagation_enabled;
     llg_inertial_t* propagation;
     uint64_t propagation_rise;
@@ -222,6 +248,12 @@ struct llg_net_alias {
 
 void llg_net_resolve(llg_net_t* net); /* strength-aware resolution, per limb */
 void llg_net_write(llg_net_t* net, int idx, sv4_t value);
+// Selected writes replace the driver's previous range, so a moving selector
+// releases its old contribution to Z. `value` has plan.width bits; reverse is
+// true for ascending ordinary part-selects.
+void llg_net_write_selected(llg_net_t* net, int idx, sv4_t value,
+                            sv4_select_plan_t plan, int reverse);
+void llg_net_index_reset(llg_net_t* net);
 void llg_net_alias_bind(llg_net_alias_t* alias);
 void llg_net_alias_clear(llg_net_t* net); /* release a model net's alias list */
 sv4_t llg_net_alias_read(llg_net_alias_t* alias);

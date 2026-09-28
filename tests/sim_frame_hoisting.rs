@@ -302,7 +302,6 @@ fn generated_coroutines_pass_gcc_jump_initialization_check() {
             "-",
         ])
         .arg(format!("-I{}", root.join("src/sim/rt").display()))
-        .arg(format!("-I{}", root.join("vendor/libaco").display()))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -508,7 +507,6 @@ fn assert_strict_c11(model: &str) {
             "-",
         ])
         .arg(format!("-I{}", root.join("src/sim/rt").display()))
-        .arg(format!("-I{}", root.join("vendor/libaco").display()))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

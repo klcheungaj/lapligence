@@ -26,6 +26,10 @@ separate per-process cancellation link. Future assignments live in time-ordered
 buckets and are independent of the issuing process until their slot is promoted.
 Selected nonblocking assignments retain an offset and narrow four-state slice;
 the full mask representation remains only for non-contiguous fallback writes.
+Resolved nets keep one generated interval-tree node per driver plus an exact-size
+query scratch array. Immediate selected-driver updates resolve only the union of
+their old and new intervals using overlapping drivers; publication still targets
+the canonical full net, so waiter semantics do not depend on the optimization.
 The process record embeds only time, named-event and expression-list wait
 payloads. Rare wait kinds own one zeroed out-of-line payload that wake,
 cancellation and teardown release through the same cleanup path.
@@ -39,10 +43,9 @@ address-order rules.
 `mod.rs` returns header/flat-source pairs through `value_sources`,
 `random_sources`, `rng_sources`, `coroutine_sources`, `runtime_sources`,
 `string_sources` and `container_sources`; waveform and self-test accessors provide
-their related files. The legacy `libaco_sources` accessor remains only until the
-Phase 6 packaging cleanup; the runtime does not call it. Facades include ordered private fragments; emitted
-sources flatten the same order. `llg_co.c` is an independent translation unit, not
-a scheduler fragment.
+their related files. Facades include ordered private fragments; emitted sources
+flatten the same order. `llg_co.c` is an independent translation unit, not a
+scheduler fragment.
 
 `llg_co` owns no global or thread-local state. The runtime supplies its allocation
 hooks and owns one simulation-thread chunk cache, capped by
@@ -51,11 +54,15 @@ the exported counter snapshot records system allocations, cache hits, system
 frees, current cached bytes and the peak. Runtime cleanup frees every retained
 chunk. Under the future MT-1 design, each worker will own an equivalent cache.
 
-`generate_model_sources` temporarily writes libaco and `aco_assert_override.h`
-beside the self-contained CMake tree for Phase 6 compatibility. ABI 2 models use
-`llg_co`, define `LLG_MODEL_PROCESS_ABI`, and initialize through
+`generate_model_sources` writes a self-contained CMake tree with `llg_co`. ABI 2
+models define `LLG_MODEL_PROCESS_ABI` and initialize through
 `llg_rt_init_with_args_and_precision`; there is no process-stack sizing input.
 Waveforms additionally need zlib and CMake Threads support.
+
+The generated 256-call recursion guard remains the plain-function bound. On
+POSIX, startup warns when `RLIMIT_STACK` is below the named 8 MiB estimate for
+the scheduler, one polled segment and that guard. Generated MSVC projects reserve
+the same default with `/STACK`.
 
 ## Validation and limits
 
@@ -64,7 +71,9 @@ allocation accounting, failure cleanup, values, queues, callbacks and waveform
 transfers. [Repository tests](../../../tests/readme.md#dynamic-ownership-validation)
 separately exercise real emission and public HDL. Component-only results, handwritten
 output-shape probes and configured platforms do not establish full model acceptance.
-Stackless coroutine probes run under ASan/UBSan. Native Windows and complete
-generated-model qualification remain separate gates.
+Stackless coroutine probes run under ASan/UBSan without stack-switch exceptions.
+Windows x64/ARM64 generated-model build/run lanes are configured in CI but remain
+unvalidated until native results are recorded. Complete platform qualification
+remains a separate gate.
 Use [feature status](../../../docs/sim_features.md), not this component map, for
 supported language contexts and outstanding qualification.
