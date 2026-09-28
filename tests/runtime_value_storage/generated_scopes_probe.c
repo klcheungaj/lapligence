@@ -71,7 +71,7 @@ static void check_process_cancellation_and_reinit(void) {
         llg_rt_init();
         g.current_region = LLG_REGION_ACTIVE;
         sv4_t value = sv4_from_u64(33, 65, 0);
-        llg_proc_t* process = llg_spawn(never_run, "scoped delayed target");
+        llg_proc_t* process = llg_spawn(&llg_libaco_desc, never_run, "scoped delayed target");
         aco_gtls_co = process->co;
         llg_value_scope_t* outer = llg_value_scope_begin(1);
         sv4_replace(llg_value_scope_values(outer), sv4_zero(65537, 0));

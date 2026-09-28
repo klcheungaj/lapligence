@@ -959,9 +959,9 @@ static void test_real_dependencies(void) {
     real_dependency_value = 0.0;
     real_dependency_wakes = 0;
     real_expression_wakes = 0;
-    llg_spawn(real_dependency_waiter, "real-dependency-waiter");
-    llg_spawn(real_expression_waiter, "real-expression-waiter");
-    llg_spawn(real_dependency_writer, "real-dependency-writer");
+    llg_spawn(&llg_libaco_desc, real_dependency_waiter, "real-dependency-waiter");
+    llg_spawn(&llg_libaco_desc, real_expression_waiter, "real-expression-waiter");
+    llg_spawn(&llg_libaco_desc, real_dependency_writer, "real-dependency-writer");
     llg_rt_run();
     CHECK(real_dependency_wakes == 3);
     CHECK(real_expression_wakes == 3);
@@ -1029,7 +1029,7 @@ static void test_event_triggered_lifecycle(void) {
     memset(&lifecycle_event_object, 0, sizeof(lifecycle_event_object));
     lifecycle_event.object = &lifecycle_event_object;
     lifecycle_triggered_inside_run = 0;
-    llg_spawn(lifecycle_trigger_proc, "event-lifecycle");
+    llg_spawn(&llg_libaco_desc, lifecycle_trigger_proc, "event-lifecycle");
     llg_rt_run();
     CHECK(lifecycle_triggered_inside_run);
     CHECK(!llg_event_triggered(&lifecycle_event));
@@ -1042,9 +1042,9 @@ static void test_event_triggered_lifecycle(void) {
 static void test_scheduler(void) {
     // ping-pong
     llg_rt_init();
-    llg_spawn(proc_ping, "ping");
-    llg_spawn(proc_pong, "pong");
-    llg_spawn(proc_kick, "kick");
+    llg_spawn(&llg_libaco_desc, proc_ping, "ping");
+    llg_spawn(&llg_libaco_desc, proc_pong, "pong");
+    llg_spawn(&llg_libaco_desc, proc_kick, "kick");
     llg_rt_run();
     ping_done = 1;
     CHECK(n_a > 0 && n_b > 0);
@@ -1054,8 +1054,8 @@ static void test_scheduler(void) {
     // delay ordering
     llg_rt_init();
     order_n = 0;
-    llg_spawn(proc_delay_a, "da");
-    llg_spawn(proc_delay_b, "db");
+    llg_spawn(&llg_libaco_desc, proc_delay_a, "da");
+    llg_spawn(&llg_libaco_desc, proc_delay_b, "db");
     llg_rt_run();
     CHECK(order_n == 4);
     if (order_n == 4) {
@@ -1068,8 +1068,8 @@ static void test_scheduler(void) {
     llg_rt_init();
     nba_read_old_ok = 0;
     nba_level_ok = 0;
-    llg_spawn(proc_nba_write, "nw");
-    llg_spawn(proc_nba_read, "nr");
+    llg_spawn(&llg_libaco_desc, proc_nba_write, "nw");
+    llg_spawn(&llg_libaco_desc, proc_nba_read, "nr");
     llg_rt_run();
     CHECK(nba_read_old_ok);
     CHECK(nba_level_ok);
@@ -1100,8 +1100,8 @@ static void fj1_child_b(llg_proc_t* self) {
 
 static void fj1_parent(llg_proc_t* self) {
     llg_fork_group_t* grp = llg_fork_group_new(LLG_JOIN);
-    llg_fork(fj1_child_a, "fj1a", grp);
-    llg_fork(fj1_child_b, "fj1b", grp);
+    llg_fork(&llg_libaco_desc, fj1_child_a, "fj1a", grp);
+    llg_fork(&llg_libaco_desc, fj1_child_b, "fj1b", grp);
     llg_join(grp); // resumes at t=10, only after both children finished
     fj1_log[fj1_log_n++] = llg_time();
     fj1_ok = u(fj1_sig_a) == 1 && u(fj1_sig_b) == 1;
@@ -1128,8 +1128,8 @@ static void fj2_child_b(llg_proc_t* self) {
 
 static void fj2_parent(llg_proc_t* self) {
     llg_fork_group_t* grp = llg_fork_group_new(LLG_JOIN_ANY);
-    llg_fork(fj2_child_a, "fj2a", grp);
-    llg_fork(fj2_child_b, "fj2b", grp);
+    llg_fork(&llg_libaco_desc, fj2_child_a, "fj2a", grp);
+    llg_fork(&llg_libaco_desc, fj2_child_b, "fj2b", grp);
     llg_join(grp); // wakes at t=5 on the first completion
     int first_ok = u(fj2_sig_a) == 1 && u(fj2_sig_b) == 0;
     llg_wait_fork(); // blocks until the whole group completes (t=10)
@@ -1157,8 +1157,8 @@ static void fj3_child_b(llg_proc_t* self) {
 
 static void fj3_parent(llg_proc_t* self) {
     llg_fork_group_t* grp = llg_fork_group_new(LLG_JOIN_NONE);
-    llg_fork(fj3_child_a, "fj3a", grp);
-    llg_fork(fj3_child_b, "fj3b", grp);
+    llg_fork(&llg_libaco_desc, fj3_child_a, "fj3a", grp);
+    llg_fork(&llg_libaco_desc, fj3_child_b, "fj3b", grp);
     uint64_t t0 = llg_time();
     llg_join(grp); // returns immediately, no yield
     fj3_immediate_ok = (llg_time() == t0) && u(fj3_sig_a) == 0 && u(fj3_sig_b) == 0;
@@ -1186,8 +1186,8 @@ static void fj4_child_b(llg_proc_t* self) {
 
 static void fj4_parent(llg_proc_t* self) {
     llg_fork_group_t* grp = llg_fork_group_new(LLG_JOIN_NONE);
-    llg_fork(fj4_child_a, "fj4a", grp);
-    llg_fork(fj4_child_b, "fj4b", grp);
+    llg_fork(&llg_libaco_desc, fj4_child_a, "fj4a", grp);
+    llg_fork(&llg_libaco_desc, fj4_child_b, "fj4b", grp);
     llg_join(grp);      // immediate (join_none)
     llg_wait_fork();    // must block until the slowest child (t=10)
     fj4_ok = (llg_time() == 10) && u(fj4_sig_a) == 1 && u(fj4_sig_b) == 1;
@@ -1209,7 +1209,7 @@ static void fj5_child(llg_proc_t* self) {
 
 static void fj5_parent(llg_proc_t* self) {
     llg_fork_group_t* grp = llg_fork_group_new(LLG_JOIN_NONE);
-    llg_fork(fj5_child, "fj5", grp);
+    llg_fork(&llg_libaco_desc, fj5_child, "fj5", grp);
     llg_wait_time(5);   // let the child register its #100 wait
     llg_disable_fork(); // kill the child
     llg_wait_time(5);   // t=10: well past the child's #100 wakeup would have been
@@ -1233,7 +1233,7 @@ static void fj6_child(llg_proc_t* self) {
 
 static void fj6_parent(llg_proc_t* self) {
     llg_fork_group_t* grp = llg_fork_group_new(LLG_JOIN_NONE);
-    llg_fork(fj6_child, "fj6", grp);
+    llg_fork(&llg_libaco_desc, fj6_child, "fj6", grp);
     llg_wait_edge(&fj6_go, 1); // t=0: child recorded its NBA and signaled us
     llg_disable_fork();        // kill it before the NBA region commits
     llg_wait_time(5);
@@ -1254,14 +1254,14 @@ static void fj7_grandchild(llg_proc_t* self) {
 
 static void fj7_child(llg_proc_t* self) {
     llg_fork_group_t* grp = llg_fork_group_new(LLG_JOIN_NONE);
-    llg_fork(fj7_grandchild, "fj7g", grp);
+    llg_fork(&llg_libaco_desc, fj7_grandchild, "fj7g", grp);
     llg_join(grp);
     llg_proc_done(self);
 }
 
 static void fj7_parent(llg_proc_t* self) {
     llg_fork_group_t* grp = llg_fork_group_new(LLG_JOIN);
-    llg_fork(fj7_child, "fj7c", grp);
+    llg_fork(&llg_libaco_desc, fj7_child, "fj7c", grp);
     llg_join(grp);
     llg_wait_time(1);
     int parent_retained = llg_rt_process_count() == 3;
@@ -1286,7 +1286,7 @@ static void fj8_parent(llg_proc_t* self) {
     const int total = LLG_MAX_PROCS + 64;
     for (int i = 0; i < total; i++) {
         llg_fork_group_t* grp = llg_fork_group_new(LLG_JOIN);
-        llg_fork(fj8_child, "fj8c", grp);
+        llg_fork(&llg_libaco_desc, fj8_child, "fj8c", grp);
         llg_join(grp);
     }
     fj8_ok = fj8_count == total;
@@ -1313,7 +1313,7 @@ static void test_fork_join(void) {
     llg_rt_init();
     fj1_log_n = 0;
     fj1_ok = 0;
-    llg_spawn(fj1_parent, "fj1p");
+    llg_spawn(&llg_libaco_desc, fj1_parent, "fj1p");
     llg_rt_run();
     CHECK(fj1_ok);
     if (fj1_log_n == 3) {
@@ -1325,7 +1325,7 @@ static void test_fork_join(void) {
     // (2) join_any
     llg_rt_init();
     fj2_ok = 0;
-    llg_spawn(fj2_parent, "fj2p");
+    llg_spawn(&llg_libaco_desc, fj2_parent, "fj2p");
     llg_rt_run();
     CHECK(fj2_ok);
 
@@ -1333,7 +1333,7 @@ static void test_fork_join(void) {
     llg_rt_init();
     fj3_immediate_ok = 0;
     fj3_done_ok = 0;
-    llg_spawn(fj3_parent, "fj3p");
+    llg_spawn(&llg_libaco_desc, fj3_parent, "fj3p");
     llg_rt_run();
     CHECK(fj3_immediate_ok);
     CHECK(fj3_done_ok);
@@ -1341,21 +1341,21 @@ static void test_fork_join(void) {
     // (4) wait_fork after join_none
     llg_rt_init();
     fj4_ok = 0;
-    llg_spawn(fj4_parent, "fj4p");
+    llg_spawn(&llg_libaco_desc, fj4_parent, "fj4p");
     llg_rt_run();
     CHECK(fj4_ok);
 
     // (5) disable_fork
     llg_rt_init();
     fj5_ok = 0;
-    llg_spawn(fj5_parent, "fj5p");
+    llg_spawn(&llg_libaco_desc, fj5_parent, "fj5p");
     llg_rt_run();
     CHECK(fj5_ok);
 
     // (6) killed child's pending NBA is not committed
     llg_rt_init();
     fj6_ok = 0;
-    llg_spawn(fj6_parent, "fj6p");
+    llg_spawn(&llg_libaco_desc, fj6_parent, "fj6p");
     llg_rt_run();
     CHECK(fj6_ok);
 
@@ -1363,7 +1363,7 @@ static void test_fork_join(void) {
     llg_rt_init();
     fj7_descendant_done = 0;
     fj7_ok = 0;
-    llg_spawn(fj7_parent, "fj7p");
+    llg_spawn(&llg_libaco_desc, fj7_parent, "fj7p");
     llg_rt_run();
     CHECK(fj7_ok);
 
@@ -1371,14 +1371,14 @@ static void test_fork_join(void) {
     llg_rt_init();
     fj8_count = 0;
     fj8_ok = 0;
-    llg_spawn(fj8_parent, "fj8p");
+    llg_spawn(&llg_libaco_desc, fj8_parent, "fj8p");
     llg_rt_run();
     CHECK(fj8_ok);
 
     // (9) an empty join_none group does not block a following wait_fork
     llg_rt_init();
     fj9_ok = 0;
-    llg_spawn(fj9_parent, "fj9p");
+    llg_spawn(&llg_libaco_desc, fj9_parent, "fj9p");
     llg_rt_run();
     CHECK(fj9_ok);
 
@@ -1579,7 +1579,7 @@ static void test_force_nba_dropped(void) {
     llg_rt_init();
     sv4_replace(&f_nba_sig, SV4_C(0, 8));
     f_nba_ok = 0;
-    llg_spawn(f_nba_writer, "fnba");
+    llg_spawn(&llg_libaco_desc, f_nba_writer, "fnba");
     llg_rt_run();
     CHECK(f_nba_ok);
 }
@@ -1609,8 +1609,8 @@ static void test_force_wakes_waiters(void) {
     sv4_replace(&f_wait_sig, SV4_C(0, 8));
     f_wait_woken = 0;
     f_wait_seen = 0;
-    llg_spawn(f_wait_consumer, "fwc");
-    llg_spawn(f_wait_producer, "fwp");
+    llg_spawn(&llg_libaco_desc, f_wait_consumer, "fwc");
+    llg_spawn(&llg_libaco_desc, f_wait_producer, "fwp");
     llg_rt_run();
     CHECK(f_wait_woken);
     CHECK(f_wait_seen == 0xaa);
@@ -1644,8 +1644,8 @@ static void test_inertial_lifetime(void) {
     for (int run = 0; run < 2; run++) {
         llg_rt_init();
         sv4_replace(&inertial_target, sv4_x(1, 0));
-        llg_spawn(inertial_producer, "inertial-producer");
-        llg_spawn(inertial_observer, "inertial-observer");
+        llg_spawn(&llg_libaco_desc, inertial_producer, "inertial-producer");
+        llg_spawn(&llg_libaco_desc, inertial_observer, "inertial-observer");
         llg_rt_run();
         CHECK(inertial_handle == NULL);
     }
@@ -1660,7 +1660,7 @@ static void test_inertial_lifetime(void) {
 
 static int run_time_overflow_probe(void) {
     llg_rt_init();
-    llg_spawn(time_overflow_proc, "time-overflow");
+    llg_spawn(&llg_libaco_desc, time_overflow_proc, "time-overflow");
     llg_rt_run();
     return 2; // the second wait must abort before the scheduler returns
 }
@@ -1673,7 +1673,7 @@ static void scaled_time_overflow_proc(llg_proc_t* self) {
 
 static int run_scaled_time_overflow_probe(void) {
     llg_rt_init();
-    llg_spawn(scaled_time_overflow_proc, "scaled-time-overflow");
+    llg_spawn(&llg_libaco_desc, scaled_time_overflow_proc, "scaled-time-overflow");
     llg_rt_run();
     return 2; // llg_time_scaled must abort before the scheduler returns
 }
@@ -1697,14 +1697,14 @@ static void budget_infinite_proc(llg_proc_t* self) {
 static int run_budget_finite_probe(void) {
     llg_rt_init();
     budget_finite_count = 0;
-    llg_spawn(budget_finite_proc, "budget-finite");
+    llg_spawn(&llg_libaco_desc, budget_finite_proc, "budget-finite");
     llg_rt_run();
     return !llg_rt_failed() && budget_finite_count == 4 ? 0 : 1;
 }
 
 static int run_budget_infinite_probe(void) {
     llg_rt_init();
-    llg_spawn(budget_infinite_proc, "budget-infinite");
+    llg_spawn(&llg_libaco_desc, budget_infinite_proc, "budget-infinite");
     llg_rt_run();
     return llg_rt_failed() ? 0 : 1;
 }
@@ -1735,7 +1735,7 @@ static int run_stop_resume_probe(void) {
     stop_resume_future_seen = 0;
     CHECK(llg_schedule_region_callback_after(
               LLG_REGION_ACTIVE, stop_resume_future, NULL, 2) == 1);
-    llg_spawn(stop_resume_proc, "stop-resume");
+    llg_spawn(&llg_libaco_desc, stop_resume_proc, "stop-resume");
     llg_rt_run();
     CHECK(llg_rt_is_suspended());
     CHECK(stop_resume_stage == 1);
@@ -1767,7 +1767,7 @@ static void time_scaled_rounding_proc(llg_proc_t* self) {
 
 static void test_time_scaled_rounding(void) {
     llg_rt_init();
-    llg_spawn(time_scaled_rounding_proc, "time-scaled-rounding");
+    llg_spawn(&llg_libaco_desc, time_scaled_rounding_proc, "time-scaled-rounding");
     llg_rt_run();
 }
 
@@ -1814,7 +1814,7 @@ static void activation_cancel_parent(llg_proc_t* self) {
     llg_frame_t* frame = llg_frame_new(1);
     llg_frame_alias_value(frame, 0, &activation_cancel_target);
     llg_fork_group_t* group = llg_fork_group_new(LLG_JOIN_NONE);
-    llg_fork_with_frame(activation_cancel_child, "activation-cancel-child", group, frame);
+    llg_fork_with_frame(&llg_libaco_desc, activation_cancel_child, "activation-cancel-child", group, frame);
     llg_frame_release(frame);
     llg_disable_fork();
     llg_rt_request_finish();
@@ -1824,7 +1824,7 @@ static void activation_cancel_parent(llg_proc_t* self) {
 static void test_activation_frame_cancellation(void) {
     llg_rt_init();
     sv4_replace(&activation_cancel_target, SV4_C(0, 1));
-    llg_spawn(activation_cancel_parent, "activation-cancel-parent");
+    llg_spawn(&llg_libaco_desc, activation_cancel_parent, "activation-cancel-parent");
     llg_rt_run();
     CHECK(sv4_same(activation_cancel_target, test_temp(SV4_C(0, 1))));
     CHECK(!llg_rt_failed());
@@ -1978,7 +1978,7 @@ static int run_region_probe(void) {
     llg_rt_init();
     sv4_replace(&region_resume_signal, SV4_C(0, 1));
     region_resume_seen = 0;
-    llg_spawn(region_resume_proc, "explicit-region-resume");
+    llg_spawn(&llg_libaco_desc, region_resume_proc, "explicit-region-resume");
     llg_rt_run();
     CHECK(region_resume_seen == 1);
     CHECK(!llg_rt_failed());
@@ -2010,7 +2010,7 @@ static int run_region_probe(void) {
     llg_rt_init();
     sv4_replace(&region_sample_signal, SV4_C(0, 1));
     region_pre_postponed_reentry_seen = 0;
-    llg_spawn(region_pre_postponed_waiter, "pre-postponed-waiter");
+    llg_spawn(&llg_libaco_desc, region_pre_postponed_waiter, "pre-postponed-waiter");
     CHECK(llg_schedule_region_callback(
               LLG_REGION_PRE_POSTPONED, region_pre_postponed_write_callback, NULL) == 1);
     CHECK(llg_schedule_region_callback(

@@ -8,6 +8,65 @@ pub(super) enum CallValue {
 }
 
 impl Frame<'_, '_> {
+    fn coroutine_call(
+        &mut self,
+        function_index: usize,
+        function: &IrFunc,
+        parameters: &[String],
+    ) -> Result<(), String> {
+        if function.ret.is_some() || function.ret_string || function.ret_chandle {
+            return Err("a suspendable subprogram cannot return a value".to_owned());
+        }
+        let frame_type = format!("{}_frame_t", function.c_name);
+        let slot = self.take_call_slot(function_index, &frame_type)?;
+        let mut arena_storage = None;
+        let child = match slot.mechanism {
+            crate::sim::execution::CallMechanism::Polled { .. } => {
+                format!("F->calls.{}", slot.member)
+            }
+            crate::sim::execution::CallMechanism::Anchored => {
+                self.line(format!(
+                    "F->calls.{}.an.desc = &{}_desc;",
+                    slot.member, function.c_name
+                ));
+                self.line(format!("F->calls.{}.an.parent = NULL;", slot.member));
+                format!("F->calls.{}.f", slot.member)
+            }
+            crate::sim::execution::CallMechanism::Arena => {
+                let storage = self.declare(
+                    "void*",
+                    "arena_call",
+                    format!(
+                        "llg_co_arena_push(F->arena, sizeof(llg_co_anchor_t) + sizeof({frame_type}))"
+                    ),
+                );
+                self.line(format!(
+                    "if (!{storage}) llg_rt_co_oom(sizeof(llg_co_anchor_t) + sizeof({frame_type}));"
+                ));
+                self.line(format!(
+                    "((llg_co_anchor_t*){storage})->desc = &{}_desc;",
+                    function.c_name
+                ));
+                self.line(format!("((llg_co_anchor_t*){storage})->parent = NULL;"));
+                arena_storage = Some(storage.clone());
+                format!("(*({frame_type}*)LLG_CO_ANCHOR_FRAME({storage}))")
+            }
+        };
+        let fields = super::super::model::owned_func_param_fields(function);
+        if fields.len() != parameters.len() {
+            return Err("coroutine call argument layout mismatch".to_owned());
+        }
+        for ((_, name), value) in fields.iter().zip(parameters) {
+            self.line(format!("{child}.{name} = {value};"));
+        }
+        self.line(format!("{child}.arena = F->arena;"));
+        self.line(format!("{}(&{child});", function.c_name));
+        if let Some(storage) = arena_storage {
+            self.line(format!("llg_co_arena_pop(F->arena, {storage});"));
+        }
+        Ok(())
+    }
+
     #[cfg_attr(not(test), allow(dead_code))] // test-only entry point for owned-call boundary tests
     pub(super) fn call_values(
         &mut self,
@@ -47,10 +106,11 @@ impl Frame<'_, '_> {
         } else {
             None
         };
-        let marker = self.name("call_mark");
-        self.line(format!(
-            "llg_value_scope_t* {marker} = llg_value_scope_mark();"
-        ));
+        let marker = self.declare(
+            "llg_value_scope_t*",
+            "call_mark",
+            "llg_value_scope_mark()".to_owned(),
+        );
         self.bindings.push(HashMap::new());
         self.native_bindings.push(HashMap::new());
         let mut parameters = Vec::new();
@@ -246,19 +306,25 @@ impl Frame<'_, '_> {
             }
         }
         parameters.push(depth.code().to_owned());
-        let invocation = format!("{callee}({})", parameters.join(", "));
-        let result = if let Some(value) = native_result {
-            self.line(format!("{} = {invocation};", value.code()));
-            Some(CallValue::Native(value))
-        } else if let Some(ty) = function.ret {
-            Some(CallValue::Numeric(self.value(
-                invocation,
-                ty.width(),
-                ty.signed(),
-            )))
-        } else {
-            self.line(format!("{invocation};"));
+        let result = if self.coroutine_functions.contains(&f) {
+            self.coroutine_call(f, &function, &parameters)?;
             None
+        } else {
+            let invocation = format!("{callee}({})", parameters.join(", "));
+            let result = if let Some(value) = native_result {
+                self.line(format!("{} = {invocation};", value.code()));
+                Some(CallValue::Native(value))
+            } else if let Some(ty) = function.ret {
+                Some(CallValue::Numeric(self.value(
+                    invocation,
+                    ty.width(),
+                    ty.signed(),
+                )))
+            } else {
+                self.line(format!("{invocation};"));
+                None
+            };
+            result
         };
         self.cancellation_check()?;
         for value in owners {

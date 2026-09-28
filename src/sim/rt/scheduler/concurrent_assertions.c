@@ -5,7 +5,8 @@ static void assertion_action(llg_concurrent_assertion_t* assertion,
     const char* name = assertion->label && assertion->label[0]
                            ? assertion->label
                            : "concurrent assertion action";
-    llg_proc_t* proc = llg_spawn_in_region(action, name, LLG_REGION_REACTIVE);
+    llg_proc_t* proc = llg_spawn_in_region(&llg_libaco_desc, action, name,
+                                           LLG_REGION_REACTIVE);
     if (proc) {
         proc->is_assertion_action = 1;
         proc->action_assertion = assertion->identity;

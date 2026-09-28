@@ -23,8 +23,7 @@ impl Frame<'_, '_> {
         if args.is_empty() {
             return Ok("NULL".to_owned());
         }
-        let array = self.name("format_args");
-        self.line(format!("llg_fmt_arg_t {array}[{}] = {{0}};", args.len()));
+        let array = self.declare_array("llg_fmt_arg_t", "format_args", args.len());
         // Every user expression has finished. Transfer at the final consuming
         // boundary; no call which can yield runs with a partial output array.
         for (index, (arg, value)) in args.iter().zip(values).enumerate() {

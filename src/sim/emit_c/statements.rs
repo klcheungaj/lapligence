@@ -907,7 +907,7 @@ fn render_stmt_scoped(
             }
             for (name, label) in branches {
                 out.push_str(&format!(
-                    "    llg_fork({name}, {}, grp);\n",
+                    "    llg_fork(&{name}_desc, {name}, {}, grp);\n",
                     c_string_literal(label)
                 ));
             }
@@ -947,7 +947,8 @@ fn render_stmt_scoped(
                     out.push_str(&format_frame_capture(&frame, capture.storage(), &initial)?);
                 }
                 out.push_str(&format!(
-                    "    llg_fork_with_frame({}, {}, grp, {frame});\n",
+                    "    llg_fork_with_frame(&{}_desc, {}, {}, grp, {frame});\n",
+                    branch.c_name(),
                     branch.c_name(),
                     c_string_literal(branch.label())
                 ));

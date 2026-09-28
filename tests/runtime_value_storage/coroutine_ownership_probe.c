@@ -42,13 +42,13 @@ static void cancellation_process(llg_proc_t* self) {
 
 int main(void) {
     llg_rt_init();
-    llg_spawn(normal_process, "normal scoped values");
+    llg_spawn(&llg_libaco_desc, normal_process, "normal scoped values");
     llg_rt_run();
     CHECK(progress == 1000 && value_test_live() == 0);
     for (unsigned i = 0; i < 50; ++i) {
         llg_rt_init();
-        victim = llg_spawn(canceled_process, "canceled scoped values");
-        llg_spawn(cancellation_process, "cancel suspended owner");
+        victim = llg_spawn(&llg_libaco_desc, canceled_process, "canceled scoped values");
+        llg_spawn(&llg_libaco_desc, cancellation_process, "cancel suspended owner");
         llg_rt_run();
         CHECK(value_test_live() == 0 && value_test_bytes() == 0);
     }

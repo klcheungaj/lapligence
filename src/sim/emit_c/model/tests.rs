@@ -217,7 +217,7 @@ fn waveform_model_emits_controls_hierarchy_and_final_time_close() {
     assert!(c.contains("llg_wave_file(\"trace\\\\\\\"name.vcd\", llg_time());"));
     assert!(c.contains("llg_wave_dumpvars_select(llg_time(), 0u"));
     assert!(c.contains("const char* _llg_wave_names_"));
-    assert!(c.contains("[] = { \"top\\037g[0]\\037value\" };"));
+    assert!(c.contains("(const char*[]){ \"top\\037g[0]\\037value\" }"));
     assert!(c.contains("llg_wave_on(llg_time());"));
     assert!(c.contains("llg_wave_off(llg_time());"));
     assert!(c.contains("llg_wave_dumpall(llg_time());"));

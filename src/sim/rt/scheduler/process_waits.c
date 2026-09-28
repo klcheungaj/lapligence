@@ -1,13 +1,26 @@
 
-static llg_proc_t* spawn_in_region(void (*fn)(llg_proc_t*), const char* name,
+const llg_co_desc_t llg_libaco_desc = {
+    NULL, "<hand-written libaco process>", sizeof(llg_co_frame_t), NULL, 0, 0
+};
+
+static llg_proc_t* spawn_in_region(const llg_co_desc_t* desc,
+                                   void (*fn)(llg_proc_t*), const char* name,
                                    llg_region_t region, llg_program_t* program,
                                    int is_initial) {
-    if (g.config_error || !fn || !region_valid(region)) return NULL;
+    if (g.config_error || !desc || !fn || !region_valid(region)) return NULL;
     if (!callback_region_allowed(region, 0)) return NULL;
+    size_t frame_offset = llg_proc_co_frame_offset();
+    if (desc->frame_size > SIZE_MAX - frame_offset) {
+        llg_rt_co_oom(desc->frame_size);
+    }
     llg_proc_t* p = (llg_proc_t*)llg_checked_calloc(
-        1, sizeof(llg_proc_t), "process");
+        1, frame_offset + desc->frame_size, "process and coroutine root frame");
+#ifdef LLG_CO_DEBUG
+    memset((char*)p + frame_offset, 0xA5, desc->frame_size);
+#endif
     p->name = name;
     p->fn = fn;
+    p->co_desc = desc;
     p->program = is_initial ? program : NULL;
     p->program_live = program && is_initial;
     if (p->program_live) {
@@ -30,12 +43,14 @@ static llg_proc_t* spawn_in_region(void (*fn)(llg_proc_t*), const char* name,
     return p;
 }
 
-llg_proc_t* llg_spawn_in_region(void (*fn)(llg_proc_t*), const char* name,
+llg_proc_t* llg_spawn_in_region(const llg_co_desc_t* desc,
+                                void (*fn)(llg_proc_t*), const char* name,
                                 llg_region_t region) {
-    return spawn_in_region(fn, name, region, NULL, 0);
+    return spawn_in_region(desc, fn, name, region, NULL, 0);
 }
 
-llg_proc_t* llg_spawn_program_in_region(void (*fn)(llg_proc_t*),
+llg_proc_t* llg_spawn_program_in_region(const llg_co_desc_t* desc,
+                                         void (*fn)(llg_proc_t*),
                                          const char* name,
                                          llg_region_t region,
                                          uint64_t instance, int is_initial) {
@@ -60,15 +75,24 @@ llg_proc_t* llg_spawn_program_in_region(void (*fn)(llg_proc_t*),
         g.finish = 1;
         return NULL;
     }
-    return spawn_in_region(fn, name, region, program, is_initial);
+    return spawn_in_region(desc, fn, name, region, program, is_initial);
 }
 
-llg_proc_t* llg_spawn(void (*fn)(llg_proc_t*), const char* name) {
-    return llg_spawn_in_region(fn, name, LLG_REGION_ACTIVE);
+llg_proc_t* llg_spawn(const llg_co_desc_t* desc, void (*fn)(llg_proc_t*),
+                      const char* name) {
+    return llg_spawn_in_region(desc, fn, name, LLG_REGION_ACTIVE);
 }
 
 llg_frame_t* llg_proc_frame(llg_proc_t* self) {
     return self ? self->frame : NULL;
+}
+
+void* llg_proc_co_frame(llg_proc_t* self) {
+    return self ? (char*)self + llg_proc_co_frame_offset() : NULL;
+}
+
+llg_co_arena_t* llg_proc_co_arena(llg_proc_t* self) {
+    return self ? &self->co_arena : NULL;
 }
 
 _Noreturn void llg_proc_done(llg_proc_t* self) {

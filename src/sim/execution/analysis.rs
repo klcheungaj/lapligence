@@ -35,18 +35,23 @@ use super::{effects_for_statements, ExecutionEffect, ExecutionProcess, Execution
 
 /// Default crossover for direct polling, matching `LLG_CO_POLL_DEPTH_MAX`.
 pub const DEFAULT_POLL_DEPTH_MAX: usize = 3;
+/// Default largest statically embedded callee frame.
+pub const DEFAULT_EMBED_LIMIT: usize = 16 * 1024;
 
 /// Tunables that affect stackless-coroutine analysis without changing IR.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ExecutionAnalysisOptions {
     /// Largest number of directly polled call levels below an anchor.
     pub poll_depth_max: usize,
+    /// Largest callee frame upper bound embedded in a caller.
+    pub embed_limit: usize,
 }
 
 impl Default for ExecutionAnalysisOptions {
     fn default() -> Self {
         Self {
             poll_depth_max: DEFAULT_POLL_DEPTH_MAX,
+            embed_limit: DEFAULT_EMBED_LIMIT,
         }
     }
 }
@@ -926,7 +931,14 @@ mod tests {
             },
         )
         .unwrap();
-        ExecutionModel::lower_with_options(ir, ExecutionAnalysisOptions { poll_depth_max }).unwrap()
+        ExecutionModel::lower_with_options(
+            ir,
+            ExecutionAnalysisOptions {
+                poll_depth_max,
+                ..ExecutionAnalysisOptions::default()
+            },
+        )
+        .unwrap()
     }
 
     fn chain_model(functions: usize, root_calls: Vec<usize>) -> ExecutionModel {

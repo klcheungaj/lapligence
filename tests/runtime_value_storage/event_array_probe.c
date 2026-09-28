@@ -74,9 +74,9 @@ int main(int argc, char** argv) {
         llg_value_scope_end(scope);
         if (!select_only) {
             valid_wakes = invalid_wakes = 0;
-            llg_spawn(valid_waiter, "valid-array-wait");
-            llg_spawn(invalid_waiter, "invalid-array-wait");
-            llg_spawn(trigger_process, "array-trigger");
+            llg_spawn(&llg_libaco_desc, valid_waiter, "valid-array-wait");
+            llg_spawn(&llg_libaco_desc, invalid_waiter, "invalid-array-wait");
+            llg_spawn(&llg_libaco_desc, trigger_process, "array-trigger");
             llg_rt_run();
             CHECK(valid_wakes == 1 && invalid_wakes == 0);
         }

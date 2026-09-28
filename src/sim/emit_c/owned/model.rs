@@ -1,7 +1,11 @@
 //! Ownership-safe procedures and model lifetime boundaries.
 use super::native::{NativeBinding, NativeKind};
 use super::*;
-use crate::sim::execution::{ExecutionModel, ExecutionProcess, ExecutionTerminator, TriggerPlan};
+use crate::sim::execution::{
+    CoroutineId, ExecutionAnalysis, ExecutionModel, ExecutionProcess, ExecutionTerminator,
+    TriggerPlan,
+};
+use std::collections::BTreeMap;
 
 mod callbacks;
 mod initialization;
@@ -67,9 +71,44 @@ pub(in crate::sim::emit_c) fn function(
     ctx: &RCtx<'_>,
     function: &IrFunc,
 ) -> Result<String, String> {
+    render_function(ctx, function, Frame::new(ctx), false).map(|(source, _)| source)
+}
+
+pub(in crate::sim::emit_c) fn coroutine_function(
+    ctx: &RCtx<'_>,
+    function: &IrFunc,
+    function_index: usize,
+    analysis: &ExecutionAnalysis,
+    frame_upper_bounds: &BTreeMap<usize, usize>,
+) -> Result<(String, super::super::frame_layout::FrameLayout), String> {
+    let mut frame = Frame::new_coframe(
+        ctx,
+        analysis,
+        CoroutineId::Function(function_index),
+        frame_upper_bounds,
+    )?;
+    for (ty, name) in super::super::model::owned_func_param_fields(function) {
+        frame.frame_field(&ty, &name)?;
+    }
+    let (source, layout) = render_function(ctx, function, frame, true)?;
+    Ok((
+        source,
+        layout.ok_or_else(|| "coroutine function has no frame layout".to_owned())?,
+    ))
+}
+
+fn render_function(
+    ctx: &RCtx<'_>,
+    function: &IrFunc,
+    mut frame: Frame<'_, '_>,
+    coroutine: bool,
+) -> Result<(String, Option<super::super::frame_layout::FrameLayout>), String> {
     check_function(function)?;
     if function.dpi.is_some() {
-        return super::super::model::owned_dpi_thunk(function);
+        if coroutine {
+            return Err("a DPI subprogram cannot be a coroutine".to_owned());
+        }
+        return Ok((super::super::model::owned_dpi_thunk(function)?, None));
     }
     let return_type = if function.ret_string {
         "llg_string_t"
@@ -82,7 +121,6 @@ pub(in crate::sim::emit_c) fn function(
             _ => "sv4_t",
         }
     };
-    let mut frame = Frame::new(ctx);
     frame.cancellation_return = true;
     if function.receiver_class.is_some() {
         frame.line("(void)llg_class_require(_this, \"method call\");");
@@ -257,8 +295,44 @@ pub(in crate::sim::emit_c) fn function(
     } else {
         "return;".to_owned()
     };
-    Ok(format!("static {return_type} {}({}) {{\n    if (depth >= 256) {{ fprintf(stderr, \"llg: recursion limit exceeded\\n\"); {guard} }}\n{}{}\n}}\n",
-        function.c_name, super::super::model::owned_func_params(function), frame.prologue(), frame.body()))
+    let signature = if coroutine {
+        format!("{}_frame_t* F", function.c_name)
+    } else {
+        super::super::model::owned_func_params(function)
+    };
+    let prologue = frame.prologue();
+    let body = frame.body().to_owned();
+    let macro_epilogue = frame.macro_epilogue();
+    let depth = if coroutine { "F->depth" } else { "depth" };
+    let source = format!("static {return_type} {}({signature}) {{\n    if ({depth} >= 256) {{ fprintf(stderr, \"llg: recursion limit exceeded\\n\"); {guard} }}\n{prologue}{body}\n}}\n{macro_epilogue}",
+        function.c_name);
+    let layout = if coroutine {
+        Some(frame.into_layout()?)
+    } else {
+        None
+    };
+    Ok((source, layout))
+}
+
+pub(in crate::sim::emit_c) fn coroutine_process(
+    ctx: &RCtx<'_>,
+    process: &IrProcess,
+    process_index: usize,
+    execution: &ExecutionProcess,
+    analysis: &ExecutionAnalysis,
+    frame_upper_bounds: &BTreeMap<usize, usize>,
+) -> Result<(String, super::super::frame_layout::FrameLayout), String> {
+    let frame = Frame::new_coframe(
+        ctx,
+        analysis,
+        CoroutineId::Process(process_index),
+        frame_upper_bounds,
+    )?;
+    let (source, layout) = render_process(ctx, process, execution, frame, true)?;
+    Ok((
+        source,
+        layout.ok_or_else(|| "coroutine process has no frame layout".to_owned())?,
+    ))
 }
 
 pub(in crate::sim::emit_c) fn process(
@@ -266,7 +340,16 @@ pub(in crate::sim::emit_c) fn process(
     process: &IrProcess,
     execution: &ExecutionProcess,
 ) -> Result<String, String> {
-    let mut frame = Frame::new(ctx);
+    render_process(ctx, process, execution, Frame::new(ctx), false).map(|(source, _)| source)
+}
+
+fn render_process(
+    _ctx: &RCtx<'_>,
+    process: &IrProcess,
+    execution: &ExecutionProcess,
+    mut frame: Frame<'_, '_>,
+    coroutine: bool,
+) -> Result<(String, Option<super::super::frame_layout::FrameLayout>), String> {
     let label = |block| format!("_llg_exec_{}_b{block}", execution.semantic_process);
     frame.line(format!("goto {};", label(execution.entry)));
     for (index, block) in execution.blocks.iter().enumerate() {
@@ -303,12 +386,27 @@ pub(in crate::sim::emit_c) fn process(
     frame.line("llg_value_scopes_end_since(_llg_frame_base);");
     frame.line("llg_proc_done(self);");
     frame.line("return;");
-    Ok(format!(
-        "static void {}(llg_proc_t* self) {{\n{}{}\n}}\n",
+    let prologue = frame.prologue();
+    let body = frame.body().to_owned();
+    let macro_epilogue = frame.macro_epilogue();
+    let frame_pointer = if coroutine {
+        format!(
+            "    {}_frame_t* F = ({}_frame_t*)llg_proc_co_frame(self);\n    F->arena = llg_proc_co_arena(self);\n",
+            process.c_name, process.c_name
+        )
+    } else {
+        String::new()
+    };
+    let source = format!(
+        "static void {}(llg_proc_t* self) {{\n{frame_pointer}{prologue}{body}\n}}\n{macro_epilogue}",
         process.c_name,
-        frame.prologue(),
-        frame.body()
-    ))
+    );
+    let layout = if coroutine {
+        Some(frame.into_layout()?)
+    } else {
+        None
+    };
+    Ok((source, layout))
 }
 
 pub(in crate::sim::emit_c) fn pre_function(
@@ -316,4 +414,14 @@ pub(in crate::sim::emit_c) fn pre_function(
     pre: &IrPreFn,
 ) -> Result<String, String> {
     callbacks::render(ctx, pre)
+}
+
+pub(in crate::sim::emit_c) fn coroutine_branch(
+    ctx: &RCtx<'_>,
+    pre: &IrPreFn,
+    owner: CoroutineId,
+    analysis: &ExecutionAnalysis,
+    frame_upper_bounds: &BTreeMap<usize, usize>,
+) -> Result<(String, super::super::frame_layout::FrameLayout), String> {
+    callbacks::coroutine_branch(ctx, pre, owner, analysis, frame_upper_bounds)
 }

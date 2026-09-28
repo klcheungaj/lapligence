@@ -151,8 +151,7 @@ static void reap_retired_procs(void) {
             continue;
         }
         *slot = proc->next_retired;
-        aco_destroy(proc->co);
-        free(proc);
+        free_proc_record(proc);
     }
 }
 

@@ -187,12 +187,12 @@ impl Frame<'_, '_> {
         let read_ptr = if read_values.is_empty() {
             "NULL".to_owned()
         } else {
-            let name = self.name("force_reads");
-            self.line(format!(
-                "llg_force_read_t {name}[] = {{ {} }};",
-                read_values.join(", ")
-            ));
-            name
+            self.declare_array_init(
+                "llg_force_read_t",
+                "force_reads",
+                read_values.len(),
+                &read_values.join(", "),
+            )
         };
         if let IrLhs::Whole(index) = lhs {
             let signal = self.ctx.model.signal(*index);
@@ -214,11 +214,12 @@ impl Frame<'_, '_> {
         if parts.is_empty() {
             return Err("force target has no packed parts".to_owned());
         }
-        let name = self.name("force_parts");
-        self.line(format!(
-            "llg_force_part_t {name}[] = {{ {} }};",
-            parts.join(", ")
-        ));
+        let name = self.declare_array_init(
+            "llg_force_part_t",
+            "force_parts",
+            parts.len(),
+            &parts.join(", "),
+        );
         let (slice, reverse) = match lhs {
             IrLhs::Stream {
                 slice, direction, ..

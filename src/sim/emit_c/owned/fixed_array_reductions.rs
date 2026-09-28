@@ -13,12 +13,12 @@ impl Frame<'_, '_> {
             IrFixedArrayReductionSource::Array(_) => None,
         };
         let result = self.reserve(expr.width, expr.signed);
-        let ordinal = self.name("reduction_ordinal");
+        let (ordinal, ordinal_declaration) = self.loop_variable("uint64_t", "reduction_ordinal");
         let count = reduction
             .element_count()
             .ok_or_else(|| "fixed-array reduction element count overflows".to_owned())?;
         self.line(format!(
-            "for (uint64_t {ordinal} = 0; {ordinal} < {count}ULL; ++{ordinal}) {{"
+            "for ({ordinal_declaration} = 0; {ordinal} < {count}ULL; ++{ordinal}) {{"
         ));
         let item = match (&reduction.source, &source) {
             (IrFixedArrayReductionSource::Array(array), None) => {

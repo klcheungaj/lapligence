@@ -115,7 +115,7 @@ static void probe(llg_proc_t* self) {
 
 int main(void) {
     llg_rt_init();
-    llg_spawn(probe, "stochastic queue probe");
+    llg_spawn(&llg_libaco_desc, probe, "stochastic queue probe");
     llg_rt_run();
     return failed;
 }

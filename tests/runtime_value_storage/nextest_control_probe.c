@@ -143,9 +143,9 @@ int main(void) {
     for (unsigned cycle = 0; cycle < 8; ++cycle) {
         llg_rt_init();
         sv4_replace(&result, sv4_from_u64(7, 65, 0));
-        llg_spawn(caller, "cancelled output");
-        llg_spawn(canceller, "cancel");
-        llg_spawn(escaped_activation, "activation jump");
+        llg_spawn(&llg_libaco_desc, caller, "cancelled output");
+        llg_spawn(&llg_libaco_desc, canceller, "cancel");
+        llg_spawn(&llg_libaco_desc, escaped_activation, "activation jump");
         llg_rt_run();
         CHECK(unexpected_copyout == 0);
         CHECK(g.activations == NULL && all_value_scopes == NULL);
@@ -155,7 +155,7 @@ int main(void) {
 
         llg_rt_init();
         sv4_replace(&result, sv4_from_u64(7, 65, 0));
-        llg_spawn(runtime_tasks, "numeric runtime tasks");
+        llg_spawn(&llg_libaco_desc, runtime_tasks, "numeric runtime tasks");
         llg_rt_run();
         CHECK(g.activations == NULL && all_value_scopes == NULL);
         llg_rt_cleanup();

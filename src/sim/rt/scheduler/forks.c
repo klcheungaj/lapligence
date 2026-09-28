@@ -92,13 +92,20 @@ llg_fork_group_t* llg_fork_group_new_target(int join_kind,
     return llg_fork_group_new_impl(join_kind, 1, declaration, instance);
 }
 
-static llg_proc_t* llg_fork_impl(void (*fn)(llg_proc_t*), const char* name,
+static llg_proc_t* llg_fork_impl(const llg_co_desc_t* desc,
+                                 void (*fn)(llg_proc_t*), const char* name,
                                  llg_fork_group_t* grp, llg_frame_t* frame) {
-    if (!fn || !grp || !region_can_mutate("fork scheduling")) return NULL;
+    if (!desc || !fn || !grp || !region_can_mutate("fork scheduling")) return NULL;
+    size_t frame_offset = llg_proc_co_frame_offset();
+    if (desc->frame_size > SIZE_MAX - frame_offset) llg_rt_co_oom(desc->frame_size);
     llg_proc_t* p = (llg_proc_t*)llg_checked_calloc(
-        1, sizeof(llg_proc_t), "forked process");
+        1, frame_offset + desc->frame_size, "forked process and coroutine root frame");
+#ifdef LLG_CO_DEBUG
+    memset((char*)p + frame_offset, 0xA5, desc->frame_size);
+#endif
     p->name = name;
     p->fn = fn;
+    p->co_desc = desc;
     p->grp = grp;
     p->frame = frame;
     p->handle = process_handle_new(p);
@@ -127,13 +134,15 @@ static llg_proc_t* llg_fork_impl(void (*fn)(llg_proc_t*), const char* name,
     return p;
 }
 
-llg_proc_t* llg_fork(void (*fn)(llg_proc_t*), const char* name, llg_fork_group_t* grp) {
-    return llg_fork_impl(fn, name, grp, NULL);
+llg_proc_t* llg_fork(const llg_co_desc_t* desc, void (*fn)(llg_proc_t*),
+                     const char* name, llg_fork_group_t* grp) {
+    return llg_fork_impl(desc, fn, name, grp, NULL);
 }
 
-llg_proc_t* llg_fork_with_frame(void (*fn)(llg_proc_t*), const char* name,
+llg_proc_t* llg_fork_with_frame(const llg_co_desc_t* desc,
+                                void (*fn)(llg_proc_t*), const char* name,
                                 llg_fork_group_t* grp, llg_frame_t* frame) {
-    return llg_fork_impl(fn, name, grp, frame);
+    return llg_fork_impl(desc, fn, name, grp, frame);
 }
 
 void llg_join(llg_fork_group_t* grp) {
@@ -331,9 +340,8 @@ static void process_zombie_groups(void) {
                 deferred = 1;
                 continue;
             }
-            aco_destroy(c->proc->co);
             unregister_proc(c->proc);
-            free(c->proc);
+            free_proc_record(c->proc);
             c->proc = NULL;
         }
         if (deferred) {

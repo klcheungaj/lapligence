@@ -178,7 +178,8 @@ if(LLG_STORAGE_TEST_SCHEDULER)
   if(UNIX AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|i.86")
     set(LLG_TEST_HAS_SCHEDULER true)
     enable_language(ASM)
-    add_library(owner_probe_aco STATIC "${LLG_ROOT}/vendor/libaco/aco.c" "${LLG_ROOT}/vendor/libaco/acosw.S")
+    add_library(owner_probe_aco STATIC "${LLG_ROOT}/vendor/libaco/aco.c"
+      "${LLG_ROOT}/vendor/libaco/acosw.S" "${LLG_RT}/llg_co.c")
     target_include_directories(owner_probe_aco PUBLIC "${LLG_ROOT}/vendor/libaco")
     add_executable(coroutine_chunk_cache_probe coroutine_chunk_cache_probe.c
       "${LLG_RT}/llg_rt.c" "${LLG_RT}/llg_co.c")

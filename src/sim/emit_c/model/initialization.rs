@@ -442,19 +442,19 @@ pub(super) fn render_main(execution: &ExecutionModel) -> Result<String, String> 
             let is_initial =
                 semantic_process.is_some_and(|process| process.kind() == IrProcessKind::Initial);
             out.push_str(&format!(
-                "    llg_spawn_program_in_region({fname}, {}, {}, {instance}ULL, {});\n",
+                "    llg_spawn_program_in_region(&{fname}_desc, {fname}, {}, {}, {instance}ULL, {});\n",
                 c_string_literal(&runtime_name),
                 region.runtime_symbol(),
                 u8::from(is_initial)
             ));
         } else if region == ScheduleRegion::Active {
             out.push_str(&format!(
-                "    llg_spawn({fname}, {});\n",
+                "    llg_spawn(&{fname}_desc, {fname}, {});\n",
                 c_string_literal(&runtime_name)
             ));
         } else {
             out.push_str(&format!(
-                "    llg_spawn_in_region({fname}, {}, {});\n",
+                "    llg_spawn_in_region(&{fname}_desc, {fname}, {}, {});\n",
                 c_string_literal(&runtime_name),
                 region.runtime_symbol()
             ));

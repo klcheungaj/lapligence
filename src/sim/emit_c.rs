@@ -6,6 +6,7 @@ mod containers;
 mod context;
 mod error;
 mod expressions;
+mod frame_layout;
 mod model;
 mod names;
 mod objects;

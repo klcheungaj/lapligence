@@ -391,7 +391,7 @@ impl Frame<'_, '_> {
                         return Err("inside container requires packed elements".to_owned());
                     };
                     let matched = self.value("sv4_from_u64(0, 1, 0)".to_owned(), 1, false);
-                    let index = self.name("inside_index");
+                    let (index, index_declaration) = self.loop_variable("size_t", "inside_index");
                     let (size, get, ordinal) = match container.kind {
                         IrContainerKind::Dynamic => ("llg_dyn_size", "llg_dyn_get", false),
                         IrContainerKind::Queue { .. } => ("llg_queue_size", "llg_queue_get", false),
@@ -400,7 +400,7 @@ impl Frame<'_, '_> {
                         }
                     };
                     self.line(format!(
-                        "for (size_t {index} = 0; {index} < {size}(&{}) && !{}; ++{index}) {{",
+                        "for ({index_declaration} = 0; {index} < {size}(&{}) && !{}; ++{index}) {{",
                         container.c_name,
                         matched.truth()
                     ));

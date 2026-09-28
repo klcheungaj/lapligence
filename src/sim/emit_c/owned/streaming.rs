@@ -316,9 +316,10 @@ impl Frame<'_, '_> {
                         self.line("llg_rt_mark_failed();");
                         self.line("}");
                         let array_index = array;
-                        let offset = self.name("fs_offset");
+                        let (offset, offset_declaration) =
+                            self.loop_variable("size_t", "fs_offset");
                         self.line(format!(
-                            "for (size_t {offset} = 0; {offset} < {count}; ++{offset}) {{"
+                            "for ({offset_declaration} = 0; {offset} < {count}; ++{offset}) {{"
                         ));
                         // This is an owning packed value, not a C scalar. Keep it
                         // in the frame's registered temporary slots so cancellation

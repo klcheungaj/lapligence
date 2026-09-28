@@ -41,13 +41,15 @@ pub fn rng_sources() -> (&'static str, &'static str) {
 }
 
 /// Stackless coroutine frame, chain, anchor, and arena support.  The library
-/// is currently packaged with generated models but is not yet used by them.
+/// supplies generated frame storage and process arenas while libaco still
+/// provides control flow.
 pub fn coroutine_sources() -> (&'static str, &'static str) {
     (include_str!("llg_co.h"), include_str!("llg_co.c"))
 }
 
 /// (header, implementation) of the event scheduler and runtime facade.
-/// Compile together with [`value_sources`] and [`libaco_sources`].
+/// Compile together with [`value_sources`], [`coroutine_sources`] and
+/// [`libaco_sources`].
 pub fn runtime_sources() -> (&'static str, &'static str) {
     (
         include_str!("llg_rt.h"),

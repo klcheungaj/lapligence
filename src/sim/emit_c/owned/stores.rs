@@ -44,8 +44,7 @@ impl<'a, 'm> Frame<'a, 'm> {
         // even forming an out-of-bounds C pointer is avoided below.
         for (expr, (left, right)) in indices.iter().zip(&array.dims) {
             let value = self.expression(expr)?;
-            let number = self.name("index");
-            self.line(format!("int64_t {number} = 0;"));
+            let number = self.declare("int64_t", "index", "0".to_owned());
             let valid = self.scalar(
                 "int",
                 format!(

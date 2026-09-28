@@ -100,13 +100,13 @@ impl Frame<'_, '_> {
         &mut self,
         name: &str,
         values: Vec<(StorageRef, CapturedValue)>,
-    ) {
+    ) -> String {
         let count = values
             .iter()
             .map(|(storage, _)| u64::from(storage.slot()) + 1)
             .max()
             .unwrap_or(0);
-        self.line(format!("llg_frame_t* {name} = llg_frame_new({count}ULL);"));
+        let access = self.declare_named("llg_frame_t*", name, format!("llg_frame_new({count}ULL)"));
         for (storage, value) in values {
             match value {
                 CapturedValue::Borrowed(address) => {
@@ -116,12 +116,12 @@ impl Frame<'_, '_> {
                         "value"
                     };
                     self.line(format!(
-                        "llg_frame_alias_{operation}({name}, {}u, {address});",
+                        "llg_frame_alias_{operation}({access}, {}u, {address});",
                         storage.slot()
                     ));
                 }
                 CapturedValue::Handle(handle) => self.line(format!(
-                    "llg_frame_capture_opaque({name}, {}u, {handle});",
+                    "llg_frame_capture_opaque({access}, {}u, {handle});",
                     storage.slot()
                 )),
                 CapturedValue::Numeric(value) => {
@@ -131,7 +131,7 @@ impl Frame<'_, '_> {
                         "value"
                     };
                     self.line(format!(
-                        "llg_frame_capture_{operation}({name}, {}u, {});",
+                        "llg_frame_capture_{operation}({access}, {}u, {});",
                         storage.slot(),
                         value.code
                     ));
@@ -139,6 +139,7 @@ impl Frame<'_, '_> {
                 }
             }
         }
+        access
     }
 
     pub(super) fn bind_capture(
@@ -150,16 +151,19 @@ impl Frame<'_, '_> {
     ) -> Result<(), String> {
         check_capture(storage)?;
         if storage.ownership() == StorageOwnership::Borrowed {
-            let pointer = self.name("capture_alias");
             let (ty, operation) = if storage.kind() == StorageKind::Real {
                 ("double", "real")
             } else {
                 ("sv4_t", "value")
             };
-            self.line(format!(
-                "{ty}* {pointer} = llg_frame_{operation}_address({source}, {}u);",
-                storage.slot()
-            ));
+            let pointer = self.declare(
+                &format!("{ty}*"),
+                "capture_alias",
+                format!(
+                    "llg_frame_{operation}_address({source}, {}u)",
+                    storage.slot()
+                ),
+            );
             self.bindings
                 .last_mut()
                 .expect("frame always has a binding scope")
@@ -244,9 +248,10 @@ impl Frame<'_, '_> {
         let group = self.fork_group(kind, target);
         for (branch, values) in branches.iter().zip(prepared) {
             let frame = self.name("capture_frame");
-            self.publish_captures(&frame, values);
+            let frame = self.publish_captures(&frame, values);
             self.line(format!(
-                "llg_fork_with_frame({}, {}, {group}, {frame});",
+                "llg_fork_with_frame(&{}_desc, {}, {}, {group}, {frame});",
+                branch.c_name(),
                 branch.c_name(),
                 c_string_literal(branch.label())
             ));

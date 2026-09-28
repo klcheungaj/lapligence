@@ -126,9 +126,9 @@ static void real_coroutines(void) {
             sv4_t zero = sv4_zero(32, 0);
             mailbox = llg_mailbox_new(zero, LLG_MAILBOX_UNTYPED, 0, 0, 0, 0);
             sv4_destroy(&zero);
-            llg_spawn(receiver, "review real receiver");
-            if (mode >= 2) llg_spawn(observer, "review real observer");
-            llg_spawn(writer, "review real writer");
+            llg_spawn(&llg_libaco_desc, receiver, "review real receiver");
+            if (mode >= 2) llg_spawn(&llg_libaco_desc, observer, "review real observer");
+            llg_spawn(&llg_libaco_desc, writer, "review real writer");
             llg_rt_run();
             if (mode < 2) {
                 CHECK(resumed == 1);

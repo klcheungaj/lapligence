@@ -72,8 +72,8 @@ static void finish_process(llg_proc_t* self) {
 int main(void) {
     for (unsigned cycle = 0; cycle < 40; ++cycle) {
         llg_rt_init();
-        llg_spawn(delayed_producer, "return with delayed local target");
-        llg_spawn(delayed_observer, "observe retained cell");
+        llg_spawn(&llg_libaco_desc, delayed_producer, "return with delayed local target");
+        llg_spawn(&llg_libaco_desc, delayed_observer, "observe retained cell");
         llg_rt_run();
         CHECK(all_value_scopes == NULL && value_test_live() == 0);
     }
@@ -81,7 +81,7 @@ int main(void) {
     CHECK(llg_rt_set_stop_policy(LLG_STOP_POLICY_EXIT));
     for (unsigned cycle = 0; cycle < 20; ++cycle) {
         llg_rt_init();
-        llg_spawn(stop_resume_process, "stop after yielding call");
+        llg_spawn(&llg_libaco_desc, stop_resume_process, "stop after yielding call");
         llg_rt_run();
         CHECK(llg_rt_is_suspended());
         CHECK(value_test_live() == 1 && all_value_scopes != NULL);
@@ -94,7 +94,7 @@ int main(void) {
     /* Closing an intentionally suspended model cancels its owners, rather
      * than expecting its C function to resume and reach cleanup statements. */
     llg_rt_init();
-    llg_spawn(stop_resume_process, "close suspended owner");
+    llg_spawn(&llg_libaco_desc, stop_resume_process, "close suspended owner");
     llg_rt_run();
     CHECK(llg_rt_is_suspended() && value_test_live() == 1);
     llg_rt_cleanup();
@@ -102,7 +102,7 @@ int main(void) {
     CHECK(all_value_scopes == NULL && value_test_live() == 0);
     CHECK(llg_rt_set_stop_policy(LLG_STOP_POLICY_RESUME));
     llg_rt_init();
-    llg_spawn(finish_process, "nonreturning finish");
+    llg_spawn(&llg_libaco_desc, finish_process, "nonreturning finish");
     llg_rt_run();
     CHECK(all_value_scopes == NULL && value_test_live() == 0);
     CHECK(value_test_bytes() == 0);
