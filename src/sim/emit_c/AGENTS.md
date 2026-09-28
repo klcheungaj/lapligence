@@ -14,13 +14,17 @@ typed procedure storage through `Frame::declare` (or its array/loop wrappers):
 `CStack` emits the declaration in place, while `CoFrame` registers a unique field
 and emits only its initialization at that point. Arguments are frame fields too.
 `Frame::line` structurally tracks every C body brace and rejects an unbalanced
-body. `FrameLayout` mirrors those blocks as deterministic `uN.bK` paths: parent
-storage remains live, sibling child structs overlay, and typed declarations bind
-to the active block. Do not emit a coroutine-body structural brace outside that
-path or retain a nested field access after its block closes.
+body. `FrameLayout` records that exact tree, then flattens every chain with only
+one storage-bearing child into one struct level. Only two or more storage-bearing
+sibling blocks create deterministic `uN.bK` overlays; empty blocks emit nothing.
+Parent storage remains live and typed declarations still bind to the active raw
+block before finalized paths rewrite the generated body. Do not emit a
+coroutine-body structural brace outside that path or retain an overlaid field
+access after its block closes.
 
-Emit coroutine frame types callee-first. Each block's polled callees occupy
-ordinary members of its `union calls`, anchored callees use `LLG_CO_ANCHORED(T)`,
+Emit coroutine frame types callee-first. Each storage-bearing block's polled
+callees occupy ordinary members of its deterministic `union callsN`, anchored
+callees use `LLG_CO_ANCHORED(T)`,
 and recursive or oversized callees use the owning process arena. Descriptor
 offsets use the complete nested member path. Compute conservative LP64 upper
 bounds with every embedded call charged its 16-byte anchor prefix and sibling

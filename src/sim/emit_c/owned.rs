@@ -781,7 +781,7 @@ impl<'a, 'm> Frame<'a, 'm> {
     pub(super) fn body(&self) -> &str {
         &self.code
     }
-    pub(super) fn into_layout(mut self) -> Result<FrameLayout, String> {
+    pub(super) fn into_coframe(mut self) -> Result<(String, FrameLayout), String> {
         // Emission can fold an expression which still has a conservative call
         // site in the pre-emission execution analysis. Preserve storage and
         // descriptor offsets for those unreachable sites even though no call
@@ -825,7 +825,12 @@ impl<'a, 'm> Frame<'a, 'm> {
         if let Some(error) = self.declaration_error.or(self.structural_error) {
             Err(error)
         } else {
-            Ok(self.layout)
+            for (original, flattened) in self.layout.finalize_paths()? {
+                self.code = self
+                    .code
+                    .replace(&format!("F->{original}"), &format!("F->{flattened}"));
+            }
+            Ok((self.code, self.layout))
         }
     }
 }

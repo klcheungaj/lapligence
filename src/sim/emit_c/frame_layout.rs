@@ -56,6 +56,7 @@ pub(super) struct FrameLayout {
     names: BTreeSet<String>,
     accesses: BTreeMap<String, String>,
     calls: Vec<CallSlot>,
+    paths_finalized: bool,
 }
 
 impl FrameLayout {
@@ -67,6 +68,7 @@ impl FrameLayout {
             names: BTreeSet::new(),
             accesses: BTreeMap::new(),
             calls: Vec::new(),
+            paths_finalized: false,
         }
     }
 
@@ -176,6 +178,44 @@ impl FrameLayout {
         &self.calls
     }
 
+    /// Finalize member paths after the complete sibling set is known.
+    ///
+    /// Emission initially uses the uncompressed structural path so declarations
+    /// can be referenced immediately. This returns the changed paths for the
+    /// function body rewrite and publishes the same flattened paths to metadata.
+    pub(super) fn finalize_paths(&mut self) -> Result<Vec<(String, String)>, String> {
+        self.finish_blocks()?;
+        if self.paths_finalized {
+            return Ok(Vec::new());
+        }
+        let mut field_paths = BTreeMap::new();
+        let mut call_paths = BTreeMap::new();
+        self.assign_flat_paths(0, "", &mut field_paths, &mut call_paths);
+
+        let mut changed = Vec::new();
+        for (name, path) in &mut self.accesses {
+            let flattened = field_paths
+                .remove(name)
+                .ok_or_else(|| format!("missing flattened path for frame field `{name}`"))?;
+            if *path != flattened {
+                changed.push((path.clone(), flattened.clone()));
+                *path = flattened;
+            }
+        }
+        for (index, call) in self.calls.iter_mut().enumerate() {
+            let flattened = call_paths
+                .remove(&index)
+                .ok_or_else(|| format!("missing flattened path for call slot {index}"))?;
+            if call.path != flattened {
+                changed.push((call.path.clone(), flattened.clone()));
+                call.path = flattened;
+            }
+        }
+        changed.sort_by(|(left, _), (right, _)| right.len().cmp(&left.len()));
+        self.paths_finalized = true;
+        Ok(changed)
+    }
+
     /// Conservative LP64 size used for D19. Every embedded call is counted as
     /// anchored, independently of the mechanism selected by the first pass.
     /// Sibling C blocks contribute their maximum rather than their sum.
@@ -183,7 +223,7 @@ impl FrameLayout {
         if self.storage == FrameStorage::CStack {
             return Ok(0);
         }
-        let (size, align) = self.block_layout(0, 8, 4)?;
+        let (size, align) = self.flat_block_layout(0, 8, 4)?;
         align_up(size, align)
     }
 
@@ -193,7 +233,7 @@ impl FrameLayout {
         }
         self.finish_blocks()?;
         let mut out = String::from("typedef struct {\n    llg_co_frame_t co;\n");
-        self.render_block_contents(0, 1, &mut out);
+        self.render_flat_contents(0, 1, &mut out);
         out.push_str(&format!("}} {frame_type};\n"));
         Ok(out)
     }
@@ -223,15 +263,6 @@ impl FrameLayout {
         depth
     }
 
-    fn ordered_fields(&self, block: usize) -> impl Iterator<Item = &Field> {
-        [true, false].into_iter().flat_map(move |hot| {
-            self.blocks[block]
-                .fields
-                .iter()
-                .filter(move |field| field.hot == hot)
-        })
-    }
-
     fn embedded_calls(&self, block: usize) -> impl Iterator<Item = &CallSlot> {
         self.blocks[block]
             .calls
@@ -249,88 +280,157 @@ impl FrameLayout {
                 .any(|child| self.has_storage(*child))
     }
 
-    fn render_block_contents(&self, block: usize, indent: usize, out: &mut String) {
-        let pad = "    ".repeat(indent);
-        for field in self.ordered_fields(block) {
-            out.push_str(&pad);
-            out.push_str(&declaration(&field.ty, &field.name));
-            out.push_str(";\n");
-        }
-        let embedded = self.embedded_calls(block).collect::<Vec<_>>();
-        if !embedded.is_empty() {
-            out.push_str(&format!("{pad}union {{\n"));
-            for call in embedded {
-                match call.mechanism {
-                    CallMechanism::Polled { .. } => {
-                        out.push_str(&format!("{pad}    {} {};\n", call.callee_type, call.member))
-                    }
-                    CallMechanism::Anchored => out.push_str(&format!(
-                        "{pad}    LLG_CO_ANCHORED({}) {};\n",
-                        call.callee_type, call.member
-                    )),
-                    CallMechanism::Arena => unreachable!(),
-                }
-            }
-            out.push_str(&format!("{pad}}} calls;\n"));
-        }
-        let children = self.blocks[block]
+    fn storage_children(&self, block: usize) -> Vec<usize> {
+        self.blocks[block]
             .children
             .iter()
             .copied()
             .filter(|child| self.has_storage(*child))
-            .collect::<Vec<_>>();
+            .collect()
+    }
+
+    /// Return blocks merged into one struct level and the final block whose
+    /// children either end the level or require a sibling overlay.
+    fn flat_chain(&self, block: usize) -> Vec<usize> {
+        let mut chain = vec![block];
+        loop {
+            let current = *chain.last().expect("flat block chain is nonempty");
+            let children = self.storage_children(current);
+            if children.len() != 1 {
+                return chain;
+            }
+            chain.push(children[0]);
+        }
+    }
+
+    fn assign_flat_paths(
+        &self,
+        block: usize,
+        prefix: &str,
+        fields: &mut BTreeMap<String, String>,
+        calls: &mut BTreeMap<usize, String>,
+    ) {
+        let chain = self.flat_chain(block);
+        for &item in &chain {
+            for field in &self.blocks[item].fields {
+                fields.insert(field.name.clone(), format!("{prefix}{}", field.name));
+            }
+            for &call in &self.blocks[item].calls {
+                calls.insert(
+                    call,
+                    format!("{prefix}calls{item}.{}", self.calls[call].member),
+                );
+            }
+        }
+        let terminal = *chain.last().expect("flat block chain is nonempty");
+        let children = self.storage_children(terminal);
+        debug_assert!(children.len() != 1);
+        for child in children {
+            self.assign_flat_paths(
+                child,
+                &format!("{prefix}u{terminal}.b{child}."),
+                fields,
+                calls,
+            );
+        }
+    }
+
+    fn render_flat_contents(&self, block: usize, indent: usize, out: &mut String) {
+        let pad = "    ".repeat(indent);
+        let chain = self.flat_chain(block);
+        for hot in [true, false] {
+            for field in chain
+                .iter()
+                .flat_map(|item| self.blocks[*item].fields.iter())
+                .filter(|field| field.hot == hot)
+            {
+                out.push_str(&pad);
+                out.push_str(&declaration(&field.ty, &field.name));
+                out.push_str(";\n");
+            }
+        }
+        for &item in &chain {
+            let embedded = self.embedded_calls(item).collect::<Vec<_>>();
+            if !embedded.is_empty() {
+                out.push_str(&format!("{pad}union {{\n"));
+                for call in embedded {
+                    match call.mechanism {
+                        CallMechanism::Polled { .. } => out
+                            .push_str(&format!("{pad}    {} {};\n", call.callee_type, call.member)),
+                        CallMechanism::Anchored => out.push_str(&format!(
+                            "{pad}    LLG_CO_ANCHORED({}) {};\n",
+                            call.callee_type, call.member
+                        )),
+                        CallMechanism::Arena => unreachable!(),
+                    }
+                }
+                out.push_str(&format!("{pad}}} calls{item};\n"));
+            }
+        }
+        let terminal = *chain.last().expect("flat block chain is nonempty");
+        let children = self.storage_children(terminal);
+        debug_assert!(children.len() != 1);
         if !children.is_empty() {
             out.push_str(&format!("{pad}union {{\n"));
             for child in children {
                 out.push_str(&format!("{pad}    struct {{\n"));
-                self.render_block_contents(child, indent + 2, out);
+                self.render_flat_contents(child, indent + 2, out);
                 out.push_str(&format!("{pad}    }} b{child};\n"));
             }
-            out.push_str(&format!("{pad}}} u{block};\n"));
+            out.push_str(&format!("{pad}}} u{terminal};\n"));
         }
     }
 
-    fn block_layout(
+    fn flat_block_layout(
         &self,
         block: usize,
         mut size: usize,
         mut max_align: usize,
     ) -> Result<(usize, usize), String> {
-        for field in self.ordered_fields(block) {
-            size = align_up(size, field.align)?;
-            size = size
-                .checked_add(field.size)
-                .ok_or_else(|| "coroutine frame size overflowed".to_owned())?;
-            max_align = max_align.max(field.align);
+        let chain = self.flat_chain(block);
+        for hot in [true, false] {
+            for field in chain
+                .iter()
+                .flat_map(|item| self.blocks[*item].fields.iter())
+                .filter(|field| field.hot == hot)
+            {
+                size = align_up(size, field.align)?;
+                size = size
+                    .checked_add(field.size)
+                    .ok_or_else(|| "coroutine frame size overflowed".to_owned())?;
+                max_align = max_align.max(field.align);
+            }
         }
-        if let Some(call_size) = self
-            .embedded_calls(block)
-            .map(|call| call.callee_upper_bound.saturating_add(16))
-            .max()
-        {
-            size = align_up(size, 16)?;
-            size = size
-                .checked_add(call_size)
-                .ok_or_else(|| "coroutine frame size overflowed".to_owned())?;
-            max_align = max_align.max(16);
+        for &item in &chain {
+            if let Some(call_size) = self
+                .embedded_calls(item)
+                .map(|call| call.callee_upper_bound.saturating_add(16))
+                .max()
+            {
+                size = align_up(size, 16)?;
+                size = size
+                    .checked_add(call_size)
+                    .ok_or_else(|| "coroutine frame size overflowed".to_owned())?;
+                max_align = max_align.max(16);
+            }
         }
 
-        let mut child_size = 0;
-        let mut child_align = 1;
-        for child in self.blocks[block].children.iter().copied() {
-            if !self.has_storage(child) {
-                continue;
+        let terminal = *chain.last().expect("flat block chain is nonempty");
+        let children = self.storage_children(terminal);
+        debug_assert!(children.len() != 1);
+        if !children.is_empty() {
+            let mut union_size = 0;
+            let mut union_align = 1;
+            for child in children {
+                let (candidate_size, candidate_align) = self.flat_block_layout(child, 0, 1)?;
+                union_size = union_size.max(align_up(candidate_size, candidate_align)?);
+                union_align = union_align.max(candidate_align);
             }
-            let (candidate_size, candidate_align) = self.block_layout(child, 0, 1)?;
-            child_size = child_size.max(align_up(candidate_size, candidate_align)?);
-            child_align = child_align.max(candidate_align);
-        }
-        if child_size != 0 {
-            size = align_up(size, child_align)?;
+            size = align_up(size, union_align)?;
             size = size
-                .checked_add(child_size)
+                .checked_add(union_size)
                 .ok_or_else(|| "coroutine frame size overflowed".to_owned())?;
-            max_align = max_align.max(child_align);
+            max_align = max_align.max(union_align);
         }
         Ok((align_up(size, max_align)?, max_align))
     }
@@ -429,12 +529,17 @@ mod tests {
             .add_call(2, "deep_frame_t", CallMechanism::Anchored, 80)
             .unwrap();
         layout.end_block().unwrap();
+        layout.finalize_paths().unwrap();
         let rendered = layout.render_typedef("caller_frame_t").unwrap();
         assert!(rendered.contains("union {\n        struct {\n            uint64_t left;"));
         assert!(rendered.contains("small_frame_t c0;"));
         assert!(rendered.contains("LLG_CO_ANCHORED(deep_frame_t) a1;"));
+        assert!(rendered.contains("} calls1;"));
+        assert!(rendered.contains("} calls2;"));
         assert!(rendered.contains("} b1;"));
         assert!(rendered.contains("} b2;"));
+        assert_eq!(layout.field_access("left"), Some("u0.b1.left"));
+        assert_eq!(layout.field_access("right"), Some("u0.b2.right"));
         assert_eq!(layout.upper_bound().unwrap(), 144);
     }
 
@@ -445,7 +550,30 @@ mod tests {
         layout.begin_block();
         layout.declare("sv4_t", "child").unwrap();
         layout.end_block().unwrap();
+        layout.finalize_paths().unwrap();
+        let rendered = layout.render_typedef("f_t").unwrap();
+        assert!(!rendered.contains("union {"), "{rendered}");
+        assert_eq!(layout.field_access("child"), Some("child"));
         assert_eq!(layout.upper_bound().unwrap(), 48);
+    }
+
+    #[test]
+    fn single_child_block_chain_has_constant_definition_depth() {
+        const DEPTH: usize = 128;
+        let mut layout = FrameLayout::new(FrameStorage::CoFrame);
+        for _ in 0..DEPTH {
+            layout.begin_block();
+        }
+        layout.declare("uint64_t", "leaf").unwrap();
+        for _ in 0..DEPTH {
+            layout.end_block().unwrap();
+        }
+        layout.finalize_paths().unwrap();
+        let rendered = layout.render_typedef("deep_frame_t").unwrap();
+        let definition_depth =
+            rendered.matches("struct {").count() + rendered.matches("union {").count();
+        assert_eq!(definition_depth, 1, "{rendered}");
+        assert_eq!(layout.field_access("leaf"), Some("leaf"));
     }
 
     #[test]
@@ -453,10 +581,13 @@ mod tests {
         let mut layout = FrameLayout::new(FrameStorage::CoFrame);
         layout.declare("int", "cold0").unwrap();
         layout.declare("int", "hot0").unwrap();
+        layout.begin_block();
         layout.declare("int", "cold1").unwrap();
         layout.declare("int", "hot1").unwrap();
+        layout.end_block().unwrap();
         layout.mark_hot("hot0");
         layout.mark_hot("hot1");
+        layout.finalize_paths().unwrap();
         let first = layout.render_typedef("f_t").unwrap();
         let second = layout.render_typedef("f_t").unwrap();
         assert_eq!(first, second);

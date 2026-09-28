@@ -301,16 +301,16 @@ fn render_function(
         super::super::model::owned_func_params(function)
     };
     let prologue = frame.prologue();
-    let body = frame.body().to_owned();
     let macro_epilogue = frame.macro_epilogue();
+    let (body, layout) = if coroutine {
+        let (body, layout) = frame.into_coframe()?;
+        (body, Some(layout))
+    } else {
+        (frame.body().to_owned(), None)
+    };
     let depth = if coroutine { "F->depth" } else { "depth" };
     let source = format!("static {return_type} {}({signature}) {{\n    if ({depth} >= 256) {{ fprintf(stderr, \"llg: recursion limit exceeded\\n\"); {guard} }}\n{prologue}{body}\n}}\n{macro_epilogue}",
         function.c_name);
-    let layout = if coroutine {
-        Some(frame.into_layout()?)
-    } else {
-        None
-    };
     Ok((source, layout))
 }
 
@@ -387,8 +387,13 @@ fn render_process(
     frame.line("llg_proc_done(self);");
     frame.line("return;");
     let prologue = frame.prologue();
-    let body = frame.body().to_owned();
     let macro_epilogue = frame.macro_epilogue();
+    let (body, layout) = if coroutine {
+        let (body, layout) = frame.into_coframe()?;
+        (body, Some(layout))
+    } else {
+        (frame.body().to_owned(), None)
+    };
     let frame_pointer = if coroutine {
         format!(
             "    {}_frame_t* F = ({}_frame_t*)llg_proc_co_frame(self);\n    F->arena = llg_proc_co_arena(self);\n",
@@ -401,11 +406,6 @@ fn render_process(
         "static void {}(llg_proc_t* self) {{\n{frame_pointer}{prologue}{body}\n}}\n{macro_epilogue}",
         process.c_name,
     );
-    let layout = if coroutine {
-        Some(frame.into_layout()?)
-    } else {
-        None
-    };
     Ok((source, layout))
 }
 

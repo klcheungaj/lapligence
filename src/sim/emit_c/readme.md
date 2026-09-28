@@ -13,10 +13,12 @@ ownership cannot be represented.
 Suspendable functions, processes and fork branches already use explicit
 `llg_co_frame_t`-headed POD frames while libaco still provides execution. The
 layout builder owns typed fields, per-block call-site unions, descriptors and
-LP64 frame upper bounds. It mirrors the generated C block tree with nested
-`union { struct { ... } bK; ... } uN` members, so sibling blocks share storage
-while their common parents remain live. Nested member paths also drive descriptor
-offsets and the emitted-C scope lint. Fields read at the first post-suspension
+LP64 frame upper bounds. It records the generated C block tree exactly, merges
+single storage-bearing child chains into their parent struct, drops empty blocks,
+and emits `union { struct { ... } bK; ... } uN` only for storage-bearing siblings.
+Sibling blocks therefore share storage without making ordinary nested scopes add
+declarator depth. Finalized member paths also drive descriptor offsets and the
+emitted-C scope lint. Fields read at the first post-suspension
 statement boundary are packed first at each level with stable declaration-order
 ties. Polled/anchored callees are caller-owned; recursion and callees over the
 configurable embed limit use the process arena. Plain functions and finals retain
