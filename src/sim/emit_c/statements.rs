@@ -1,6 +1,6 @@
 //! Procedural statements, event waits, and coroutine helper rendering.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use super::constants::{c_string_literal, fs_to_timescale_str, round_shortreal};
 use super::context::RCtx;

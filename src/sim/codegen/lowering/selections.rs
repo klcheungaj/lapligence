@@ -95,10 +95,9 @@ impl<'a> Codegen<'a> {
             else {
                 continue;
             };
-            if let Some(target) = self
-                .sig_globals
-                .iter()
-                .find_map(|(target, candidate)| (candidate.ir == info.ir).then_some(*target))
+            if let Some(target) = sorted_node_ids(&self.sig_globals)
+                .into_iter()
+                .find(|target| self.sig_globals[target].ir == info.ir)
             {
                 return Some((target, base_index));
             }
@@ -525,11 +524,13 @@ impl<'a> Codegen<'a> {
                             scope.push('.');
                             scope.push_str(&parts[..base_index].join("."));
                         }
-                        found = self.unpacked_aggregates.keys().find_map(|target| {
-                            (self.node(*target).name == parts[base_index]
-                                && self.instance_path_of(*target) == scope)
-                                .then_some((*target, base_index))
-                        });
+                        found = sorted_node_ids(&self.unpacked_aggregates)
+                            .into_iter()
+                            .find_map(|target| {
+                                (self.node(target).name == parts[base_index]
+                                    && self.instance_path_of(target) == scope)
+                                    .then_some((target, base_index))
+                            });
                         if found.is_some() {
                             break;
                         }
@@ -551,7 +552,7 @@ impl<'a> Codegen<'a> {
     fn unpacked_array_base_path(&self, array: NodeId) -> Option<(NodeId, Vec<AggregatePathPart>)> {
         let name = self.node(array).name.as_str();
         let mut found = None;
-        for target in self.unpacked_aggregates.keys().copied() {
+        for target in sorted_node_ids(&self.unpacked_aggregates) {
             let layout = self.db.aggregate_layout(target)?;
             let Some(path) = aggregate_array_member_path(layout, name, &[]) else {
                 continue;
@@ -941,9 +942,9 @@ impl<'a> Codegen<'a> {
                 .or_else(|| {
                     self.hier_path_signal(base)
                         .and_then(|info| {
-                            self.sig_globals.iter().find_map(|(target, candidate)| {
-                                (candidate.ir == info.ir).then_some(*target)
-                            })
+                            sorted_node_ids(&self.sig_globals)
+                                .into_iter()
+                                .find(|target| self.sig_globals[target].ir == info.ir)
                         })
                         .and_then(|target| self.packed_ranges_for_base(target))
                 }),
@@ -1020,15 +1021,18 @@ impl<'a> Codegen<'a> {
     pub(super) fn source_size_cast_width(&self, expression: &str) -> Option<u32> {
         let token = expression.trim();
         let value = token.replace('_', "").parse::<u128>().ok().or_else(|| {
-            self.param_vals.iter().find_map(|(node, value)| {
-                if self.node(*node).name != token {
-                    return None;
-                }
-                let Val::Bits(value) = value else {
-                    return None;
-                };
-                (!value.is_unknown()).then(|| value.to_u128()).flatten()
-            })
+            sorted_node_ids(&self.param_vals)
+                .into_iter()
+                .find_map(|node| {
+                    if self.node(node).name != token {
+                        return None;
+                    }
+                    let value = &self.param_vals[&node];
+                    let Val::Bits(value) = value else {
+                        return None;
+                    };
+                    (!value.is_unknown()).then(|| value.to_u128()).flatten()
+                })
         })?;
         u32::try_from(value).ok().filter(|width| *width != 0)
     }

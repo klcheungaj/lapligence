@@ -139,6 +139,9 @@ impl<'a> Codegen<'a> {
         }
         let mut declaration_initializers = HashMap::new();
         self.collect_subroutine_decl_initializers(body, &mut declaration_initializers);
+        let local_ids = sorted_node_ids(&locals);
+        let chandle_local_ids = sorted_node_ids(&chandle_locals);
+        let process_local_ids = sorted_node_ids(&process_locals);
 
         // Function-name return variable → `_ret` local.
         let ret_ctx = match (ret, ret_var) {
@@ -176,20 +179,21 @@ impl<'a> Codegen<'a> {
         // accesses and legal hierarchical continuous assignments share the
         // same typed storage. Automatic locals and native-object locals keep
         // their existing activation/subprogram storage.
-        for (local, (_, width, signed, two_state, shortreal)) in &locals {
-            if self.db.variable_lifetime(*local) != VariableLifetime::Static {
+        for local in local_ids.iter().copied() {
+            let (_, width, signed, two_state, shortreal) = &locals[&local];
+            if self.db.variable_lifetime(local) != VariableLifetime::Static {
                 continue;
             }
-            let (NodeKind::Var { ty } | NodeKind::Array { ty }) = self.kind(*local) else {
+            let (NodeKind::Var { ty } | NodeKind::Array { ty }) = self.kind(local) else {
                 continue;
             };
             if ty.kind == "string" || is_handle_kind(&ty.kind) || ty.kind == "event" {
                 continue;
             }
-            if let Some(info) = self.static_task_locals.get(&(inst, *local)).cloned() {
-                self.sig_globals.insert(*local, info.clone());
-                persistent.insert(*local, info.clone());
-                static_local_signals.insert(*local, info);
+            if let Some(info) = self.static_task_locals.get(&(inst, local)).cloned() {
+                self.sig_globals.insert(local, info.clone());
+                persistent.insert(local, info.clone());
+                static_local_signals.insert(local, info);
                 continue;
             }
             let real = is_real_kind(&ty.kind);
@@ -204,7 +208,7 @@ impl<'a> Codegen<'a> {
                 ir: self.model.signals.len(),
             };
             self.model.signals.push(IrSignal {
-                fixed_default: self.fixed_default_literal(*local),
+                fixed_default: self.fixed_default_literal(local),
                 c_name: info.global.clone(),
                 hdl_name: None,
                 ty: if real {
@@ -224,9 +228,9 @@ impl<'a> Codegen<'a> {
                 omit: false,
             });
             self.signals.push(info.clone());
-            self.sig_globals.insert(*local, info.clone());
-            persistent.insert(*local, info.clone());
-            static_local_signals.insert(*local, info);
+            self.sig_globals.insert(local, info.clone());
+            persistent.insert(local, info.clone());
+            static_local_signals.insert(local, info);
         }
         // A statically allocated numeric function result normally uses the
         // emitter's persistent `_ret` cell. If hierarchy exposes that result
@@ -290,12 +294,11 @@ impl<'a> Codegen<'a> {
         } else {
             None
         };
-        for (local, name) in &chandle_locals {
-            if self.db.variable_lifetime(*local) == VariableLifetime::Static {
-                let object = if let Some(object) = self
-                    .static_task_chandle_locals
-                    .get(&(inst, *local))
-                    .copied()
+        for local in chandle_local_ids.iter().copied() {
+            let name = &chandle_locals[&local];
+            if self.db.variable_lifetime(local) == VariableLifetime::Static {
+                let object = if let Some(object) =
+                    self.static_task_chandle_locals.get(&(inst, local)).copied()
                 {
                     object
                 } else {
@@ -306,7 +309,7 @@ impl<'a> Codegen<'a> {
                         initial: None,
                     });
                     self.static_task_chandle_locals
-                        .insert((inst, *local), object);
+                        .insert((inst, local), object);
                     object
                 };
                 // Mailboxes use the same native pointer storage as other
@@ -314,35 +317,37 @@ impl<'a> Codegen<'a> {
                 // a runtime mailbox before the first function call.  Queue
                 // it with the other model-time mailbox initializers instead
                 // of silently dropping it with ordinary static handles.
-                if self.is_mailbox_expr(path, *local) {
-                    if let Some(initializer) = self.db.var_initializer(*local) {
+                if self.is_mailbox_expr(path, local) {
+                    if let Some(initializer) = self.db.var_initializer(local) {
                         self.mailbox_object_initializers.push((
-                            *local,
+                            local,
                             object,
                             initializer,
                             path.to_owned(),
                         ));
                     }
                 }
-                chandle_read.insert(*local, IrChandleExpr::Read(object));
-                chandle_write.insert(*local, ChandleTarget::Object(object));
+                chandle_read.insert(local, IrChandleExpr::Read(object));
+                chandle_write.insert(local, ChandleTarget::Object(object));
             } else {
-                chandle_read.insert(*local, IrChandleExpr::LocalRead(name.clone()));
-                chandle_write.insert(*local, ChandleTarget::Local(name.clone()));
+                chandle_read.insert(local, IrChandleExpr::LocalRead(name.clone()));
+                chandle_write.insert(local, ChandleTarget::Local(name.clone()));
             }
         }
-        for (local, name) in &process_locals {
+        for local in process_local_ids {
+            let name = &process_locals[&local];
             process_read.insert(
-                *local,
+                local,
                 crate::sim::ir::IrProcessExpr::LocalRead(name.clone()),
             );
-            process_write.insert(*local, ProcessTarget::Local(name.clone()));
+            process_write.insert(local, ProcessTarget::Local(name.clone()));
         }
-        for (local, (name, ..)) in &locals {
-            if matches!(self.kind(*local), NodeKind::Var { ty } if ty.kind == "string") {
-                string_read.insert(*local, IrStringExpr::LocalRead(name.clone()));
-                string_write.insert(*local, name.clone());
-                string_addr.insert(*local, name.clone());
+        for local in local_ids.iter().copied() {
+            let (name, ..) = &locals[&local];
+            if matches!(self.kind(local), NodeKind::Var { ty } if ty.kind == "string") {
+                string_read.insert(local, IrStringExpr::LocalRead(name.clone()));
+                string_write.insert(local, name.clone());
+                string_addr.insert(local, name.clone());
             }
         }
         for (idx, (io, is_out)) in formals.iter().enumerate() {
@@ -718,27 +723,28 @@ impl<'a> Codegen<'a> {
         // frame, not inside the function body, so a call they contain starts
         // at process recursion depth zero rather than this body's depth.
         self.depth_arg = "0".to_string();
-        for (local, (c_name, width, signed, two_state, shortreal)) in &locals {
-            if self.db.variable_lifetime(*local) != VariableLifetime::Static {
+        for local in local_ids.iter().copied() {
+            let (c_name, width, signed, two_state, shortreal) = &locals[&local];
+            if self.db.variable_lifetime(local) != VariableLifetime::Static {
                 continue;
             }
-            if self.static_task_locals.contains_key(&(inst, *local)) {
+            if self.static_task_locals.contains_key(&(inst, local)) {
                 continue;
             }
             let initializer = self
                 .db
-                .var_initializer(*local)
-                .or_else(|| self.db.array_meta(*local).and_then(|array| array.init))
-                .or_else(|| declaration_initializers.get(local).copied());
+                .var_initializer(local)
+                .or_else(|| self.db.array_meta(local).and_then(|array| array.init))
+                .or_else(|| declaration_initializers.get(&local).copied());
             let Some(initializer) = initializer else {
                 continue;
             };
             let initialization = self
                 .lower_declaration_initializer(
                     path,
-                    *local,
+                    local,
                     initializer,
-                    static_local_signals.get(local).map_or_else(
+                    static_local_signals.get(&local).map_or_else(
                         || IrInitTarget::StaticLocal {
                             function: meta_ir,
                             name: c_name.clone(),
@@ -753,7 +759,7 @@ impl<'a> Codegen<'a> {
                 .map_err(|cause| {
                     format!(
                         "static subprogram initializer for `{}` cannot be lowered: {cause}",
-                        self.node(*local).name
+                        self.node(local).name
                     )
                 })?;
             declaration_initializations.push(initialization);
@@ -766,28 +772,26 @@ impl<'a> Codegen<'a> {
         self.depth_arg = "0".to_string();
 
         let ir_locals = {
-            let mut names = locals.into_iter().collect::<Vec<_>>();
-            names.sort_by_key(|(id, _)| id.0);
             let mut emitted = HashSet::new();
-            names
+            local_ids
                 .into_iter()
-                .filter(|(local, _)| self.db.variable_lifetime(*local) == VariableLifetime::Static)
-                .filter(|(local, _)| !static_local_signals.contains_key(local))
-                .filter(|(_, (c_name, ..))| emitted.insert(c_name.clone()))
-                .map(|(local, (c_name, width, signed, two_state, shortreal))| {
-                    Ok(crate::sim::ir::IrLocal {
+                .filter(|local| self.db.variable_lifetime(*local) == VariableLifetime::Static)
+                .filter(|local| !static_local_signals.contains_key(local))
+                .filter_map(|local| {
+                    let (c_name, width, signed, two_state, shortreal) = &locals[&local];
+                    emitted.insert(c_name.clone()).then(|| crate::sim::ir::IrLocal {
                         fixed_default: self.fixed_default_literal(local),
-                        c_name,
-                        width,
-                        signed,
-                        two_state,
-                        real: width == 0,
-                        shortreal,
+                        c_name: c_name.clone(),
+                        width: *width,
+                        signed: *signed,
+                        two_state: *two_state,
+                        real: *width == 0,
+                        shortreal: *shortreal,
                         string: matches!(self.kind(local), NodeKind::Var { ty } if ty.kind == "string"),
                         initial: None,
                     })
                 })
-                .collect::<Result<Vec<_>, String>>()?
+                .collect::<Vec<_>>()
         };
         // Static local signals are persistent observable state. Keep such a
         // function out of private evaluator callbacks even though its

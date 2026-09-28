@@ -79,9 +79,9 @@ impl<'a> Codegen<'a> {
             NodeKind::Expr(ExprKind::HierPath { .. }) => self
                 .hier_path_signal(expression)
                 .and_then(|info| {
-                    self.sig_globals.iter().find_map(|(target, candidate)| {
-                        (candidate.ir == info.ir).then_some(*target)
-                    })
+                    sorted_node_ids(&self.sig_globals)
+                        .into_iter()
+                        .find(|target| self.sig_globals[target].ir == info.ir)
                 })
                 .ok_or_else(|| self.alias_error(alias, "has an unresolved hierarchical net")),
             NodeKind::Expr(ExprKind::Cast { operand, .. }) => self.alias_base_net(alias, *operand),
@@ -93,9 +93,9 @@ impl<'a> Codegen<'a> {
     }
 
     fn alias_signal_target(&self, info: &SignalInfo) -> Option<NodeId> {
-        self.sig_globals
-            .iter()
-            .find_map(|(target, candidate)| (candidate.ir == info.ir).then_some(*target))
+        sorted_node_ids(&self.sig_globals)
+            .into_iter()
+            .find(|target| self.sig_globals[target].ir == info.ir)
     }
 
     fn alias_signal_bits(
@@ -157,10 +157,9 @@ impl<'a> Codegen<'a> {
         let ((array, element), bits) = self
             .array_net_selection(expression)?
             .ok_or_else(|| self.alias_error(alias, "has an unsupported net-array projection"))?;
-        let owner = self
-            .array_globals
-            .iter()
-            .find_map(|(owner, info)| (info.ir == array).then_some(*owner))
+        let owner = sorted_node_ids(&self.array_globals)
+            .into_iter()
+            .find(|owner| self.array_globals[owner].ir == array)
             .ok_or_else(|| {
                 self.alias_error(alias, "has a net-array projection without an owner")
             })?;
@@ -953,14 +952,15 @@ impl<'a> Codegen<'a> {
         let mut inout_ports: Vec<NodeId> = Vec::new();
         let mut array_ports = HashSet::new();
         let mut array_endpoints: HashMap<(usize, u64), Vec<Option<AliasBit>>> = HashMap::new();
-        for (node, info) in &self.array_globals {
+        for node in sorted_node_ids(&self.array_globals) {
+            let info = &self.array_globals[&node];
             // Every fixed net-array cell needs a canonical alias view.  The
             // view is also the per-element driver boundary for ordinary
             // `wire`/`tri` arrays; inout-connected cells may replace one or
             // more bits with the already-collapsed peer groups below.
             if self
                 .db
-                .array_meta(*node)
+                .array_meta(node)
                 .and_then(|meta| meta.net_type())
                 .and_then(Self::ir_net_kind)
                 .is_some()
@@ -1017,19 +1017,18 @@ impl<'a> Codegen<'a> {
         // Every bit of an alias-participating net gets an explicit mapping:
         // aliased bits use their shared root, while the remaining bits use a
         // singleton network so ordinary net drivers still resolve electrically.
-        for net in &alias_nets {
-            let width = match self.kind(*net) {
+        for net in sorted_node_set(&alias_nets) {
+            let width = match self.kind(net) {
                 NodeKind::Net { ty, .. } => self
-                    .signal_of(*net)
+                    .signal_of(net)
                     .map_or(ty.width.unwrap_or(1), |signal| signal.width),
                 _ => {
-                    return Err(
-                        self.alias_error(*nodes.first().unwrap_or(net), "does not reference a net")
-                    )
+                    return Err(self
+                        .alias_error(*nodes.first().unwrap_or(&net), "does not reference a net"))
                 }
             };
             for bit in 0..width {
-                let bit = AliasBit::Net { net: *net, bit };
+                let bit = AliasBit::Net { net, bit };
                 alias_bits.insert(bit);
                 alias_find(&mut alias_parent, bit);
             }
@@ -1049,10 +1048,9 @@ impl<'a> Codegen<'a> {
                 {
                     if let Some((endpoint, actual_bits)) = self.array_net_selection(*actual)? {
                         let width = self.model.arrays[endpoint.0].elem_width;
-                        let owner = self
-                            .array_globals
-                            .iter()
-                            .find_map(|(owner, info)| (info.ir == endpoint.0).then_some(*owner))
+                        let owner = sorted_node_ids(&self.array_globals)
+                            .into_iter()
+                            .find(|owner| self.array_globals[owner].ir == endpoint.0)
                             .ok_or("array inout endpoint has no owned array")?;
                         let formal_bits = self.alias_expression_bits(*id, *l)?;
                         if actual_bits.len() != formal_bits.len() {
@@ -1183,11 +1181,16 @@ impl<'a> Codegen<'a> {
         // Port traversal order must not split a whole-net connection from a
         // selected or explicitly aliased endpoint discovered later.
         let mut whole_components: HashMap<NodeId, Vec<NodeId>> = HashMap::new();
-        for member in parent.keys().copied().collect::<Vec<_>>() {
+        for member in sorted_node_ids(&parent) {
             let root = find(&mut parent, member);
             whole_components.entry(root).or_default().push(member);
         }
-        for component in whole_components.values() {
+        let mut whole_components = whole_components.into_values().collect::<Vec<_>>();
+        for component in &mut whole_components {
+            component.sort_by_key(|member| member.index());
+        }
+        whole_components.sort_by_key(|component| component[0].index());
+        for component in &whole_components {
             if !component.iter().any(|member| alias_nets.contains(member)) {
                 continue;
             }
@@ -1212,13 +1215,13 @@ impl<'a> Codegen<'a> {
                 }
             }
         }
-        for member in &alias_nets {
+        for member in sorted_node_set(&alias_nets) {
             let width = self
-                .signal_of(*member)
+                .signal_of(member)
                 .ok_or("alias member has no packed storage")?
                 .width;
             for bit in 0..width {
-                let bit = AliasBit::Net { net: *member, bit };
+                let bit = AliasBit::Net { net: member, bit };
                 alias_bits.insert(bit);
                 alias_find(&mut alias_parent, bit);
             }
@@ -1227,6 +1230,8 @@ impl<'a> Codegen<'a> {
         let type_plan = self.build_port_net_type_plan(&nodes, &alias_nets, &alias_bits)?;
 
         let mut alias_buckets: HashMap<AliasBit, Vec<AliasBit>> = HashMap::new();
+        let mut alias_bits = alias_bits.into_iter().collect::<Vec<_>>();
+        alias_bits.sort_by_key(|bit| bit.sort_key());
         for bit in alias_bits {
             let root = alias_find(&mut alias_parent, bit);
             alias_buckets.entry(root).or_default().push(bit);
@@ -1384,7 +1389,7 @@ impl<'a> Codegen<'a> {
             }
         }
         let mut buckets: HashMap<NodeId, Vec<NodeId>> = HashMap::new();
-        for m in members {
+        for m in sorted_node_set(&members) {
             let r = find(&mut parent, m);
             buckets.entry(r).or_default().push(m);
         }
@@ -2221,10 +2226,10 @@ impl<'a> Codegen<'a> {
             }),
             NodeKind::Expr(ExprKind::HierPath { .. }) => {
                 let signal = self.hier_path_signal(node)?;
-                member_set.iter().find_map(|member| {
-                    self.signal_of(*member)
+                sorted_node_set(member_set).into_iter().find_map(|member| {
+                    self.signal_of(member)
                         .filter(|candidate| candidate.ir == signal.ir)
-                        .map(|_| *member)
+                        .map(|_| member)
                 })
             }
             NodeKind::Expr(

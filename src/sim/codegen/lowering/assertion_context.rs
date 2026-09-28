@@ -140,15 +140,15 @@ impl<'a> Codegen<'a> {
             .copied()
             .or_else(|| {
                 let target_node = self.node(target);
-                bindings.iter().find_map(|(formal, actual)| {
-                    let formal_node = self.node(*formal);
+                sorted_node_ids(bindings).into_iter().find_map(|formal| {
+                    let formal_node = self.node(formal);
                     (formal_node.name == target_node.name
                         && formal_node.file == target_node.file
                         && formal_node.line == target_node.line
                         && formal_node.col == target_node.col
                         && formal_node.end_line == target_node.end_line
                         && formal_node.end_col == target_node.end_col)
-                        .then_some(*actual)
+                        .then_some(bindings[&formal])
                 })
             })
     }

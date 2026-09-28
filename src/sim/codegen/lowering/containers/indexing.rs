@@ -188,10 +188,11 @@ impl<'a> Codegen<'a> {
                 signal.two_state,
             ));
         }
-        if let Some(signal) = self
-            .scope_sig_names
-            .values()
-            .find_map(|names| names.get(source_name))
+        let mut scopes = self.scope_sig_names.keys().collect::<Vec<_>>();
+        scopes.sort_unstable();
+        if let Some(signal) = scopes
+            .into_iter()
+            .find_map(|scope| self.scope_sig_names[scope].get(source_name))
         {
             return Ok((
                 format!("&{}", signal.global),

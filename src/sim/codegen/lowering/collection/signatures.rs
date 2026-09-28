@@ -190,7 +190,7 @@ impl<'a> Codegen<'a> {
                         &mut local_seq,
                         "",
                     )?;
-                    for (local, _) in chandle_locals {
+                    for local in sorted_node_ids(&chandle_locals) {
                         match self.db.variable_lifetime(local) {
                             VariableLifetime::Automatic => continue,
                             VariableLifetime::Static => {}
@@ -210,7 +210,8 @@ impl<'a> Codegen<'a> {
                         self.static_task_chandle_locals
                             .insert((inst, local), object);
                     }
-                    for (local, (_, width, signed, two_state, shortreal)) in locals {
+                    for local in sorted_node_ids(&locals) {
+                        let (_, width, signed, two_state, shortreal) = locals[&local];
                         match self.db.variable_lifetime(local) {
                             VariableLifetime::Automatic => continue,
                             VariableLifetime::Static => {}

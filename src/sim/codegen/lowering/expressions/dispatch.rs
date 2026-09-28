@@ -1834,14 +1834,15 @@ impl<'a> Codegen<'a> {
         if !name.is_empty() {
             // io_decls are not indexed, so formals resolve by name.
             if let Some(f) = &self.func {
-                for (io, ir) in &f.arg_ir {
-                    if self.node(*io).name == name {
-                        return Ok(ir.clone());
+                for io in sorted_node_ids(&f.arg_ir) {
+                    if self.node(io).name == name {
+                        return Ok(f.arg_ir[&io].clone());
                     }
                 }
-                for (node, (cname, w, s, _, _shortreal)) in &f.locals {
-                    if self.node(*node).name == name {
-                        if let Some(storage) = f.persistent.get(node) {
+                for node in sorted_node_ids(&f.locals) {
+                    let (cname, w, s, _, _shortreal) = &f.locals[&node];
+                    if self.node(node).name == name {
+                        if let Some(storage) = f.persistent.get(&node) {
                             return self.signal_read_expr(storage);
                         }
                         return Ok(IrExpr::new(
