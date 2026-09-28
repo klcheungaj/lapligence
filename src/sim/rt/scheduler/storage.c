@@ -126,6 +126,7 @@ typedef struct {
     llg_event_object_t** sequence;
     int n_order;
     int next;
+    int* result;
 } llg_wait_order_payload_t;
 
 typedef struct {
@@ -184,9 +185,6 @@ typedef struct llg_wait {
         llg_wait_expression_payload_t expression;
         llg_wait_rare_t* rare;
     } payload;
-    // wait_order publishes its result before releasing the rare payload and
-    // the resumed process reads it after wakeup.
-    int order_result_value;
 } llg_wait_t;
 
 struct llg_semaphore_wait {
@@ -333,60 +331,74 @@ static llg_value_scope_t* root_value_scopes;
 static llg_value_scope_t* all_value_scopes;
 
 struct llg_proc {
-    llg_value_scope_t* value_scopes;
-    aco_t* co;
-    const char* name;
-    void (*fn)(llg_proc_t*);
     llg_nba_t* nba_head;
     llg_nba_t* nba_tail;
-    llg_wait_t wait;
-    llg_proc_t* next_region;
-    llg_region_t region;
     llg_region_t wait_resume_region;
     int has_wait_resume_region;
     int completed;
     int killed;
     int suspended;
     int wake_pending;
-    int queued;
-    int status;
     llg_process_handle_t* handle;
     llg_process_local_ref_t* process_locals;
     llg_proc_t* next_retired;
     llg_fork_group_t* fork_groups; // live groups spawned by this proc
     llg_fork_group_t* grp;         // group this proc belongs to (NULL top-level)
     llg_frame_t* frame;            // retained activation storage, when captured
-    llg_activation_t* activation_top; // innermost named block/task scope
     llg_ref_scope_t* reference_top; // retained call-argument cells
     llg_rng_state_t rng;           // process-local random stream
     llg_program_t* program;         // runtime-owned originating program instance
     int program_live;              // counted initial, never a fork descendant
-    uint64_t budget_steps;         // loop back-edges at `budget_time`
-    uint64_t budget_time;          // time step for the process budget
     uint64_t assertion_owner;      // stable per-run identity for deferred reports
     uint64_t action_assertion;     // assertion whose Reactive action spawned us
     int is_assertion_action;
-    const llg_co_desc_t* co_desc; // root-frame layout for the adjacent allocation
-    llg_co_arena_t co_arena;      // dynamic callee frames; released with this record
+    // Resume-hot fields are packed next to the chain and appended root frame.
+    llg_value_scope_t* value_scopes;
+    llg_activation_t* activation_top;
+    const char* name;
+    llg_proc_t* next_region;
+    llg_region_t region;
+    int queued;
+    int status;
+    uint64_t budget_steps;
+    uint64_t budget_time;
+    llg_wait_t wait;
+    llg_co_chain_t chain; // last: LLG_CO_ROOT(&chain) follows the record
 };
-
-static size_t llg_proc_co_frame_offset(void) {
-    return (sizeof(llg_proc_t) + 7u) & ~(size_t)7u;
-}
 
 static void free_proc_record(llg_proc_t* proc) {
     if (!proc) return;
-    llg_co_arena_release(&proc->co_arena);
-    if (proc->co) aco_destroy(proc->co);
+    llg_co_arena_release(&proc->chain.arena);
     free(proc);
 }
 
 #if UINTPTR_MAX == UINT64_MAX
-_Static_assert(sizeof(llg_wait_t) == 112,
+_Static_assert(sizeof(llg_wait_t) == 104,
                "64-bit wait record size changed; update the measured layout contract");
-_Static_assert(sizeof(llg_proc_t) == 368,
-               "64-bit process record size changed; do not reorder Phase 4 fields here");
+_Static_assert(offsetof(llg_proc_t, chain) + sizeof(llg_co_chain_t) -
+                       offsetof(llg_proc_t, value_scopes) ==
+                   216,
+               "64-bit resume-hot process block size changed");
+_Static_assert(offsetof(llg_proc_t, chain) + sizeof(llg_co_chain_t) ==
+                   sizeof(llg_proc_t),
+               "coroutine chain must remain the process record's last member");
+_Static_assert(sizeof(llg_proc_t) == 376,
+               "64-bit process record size changed; update the layout contract");
 #endif
+
+static void llg_runtime_service_enter(const llg_proc_t* self,
+                                      const char* service) {
+#ifdef LLG_CO_DEBUG
+    if (self && self->chain.exiting) {
+        fprintf(stderr, "llg: runtime service %s called on an exiting process\n",
+                service ? service : "<unknown>");
+        abort();
+    }
+#else
+    (void)self;
+    (void)service;
+#endif
+}
 
 static int region_can_mutate(const char* action);
 static llg_nba_t* new_nba(uint64_t ticks);
@@ -399,6 +411,7 @@ static void deferred_trigger_source_change(sv4_t* sig, double* real);
 static void deferred_trigger_event(llg_event_object_t* ev);
 static void process_local_release_all(llg_proc_t* proc);
 static void start_pending_fork_children(llg_proc_t* parent);
+static void proc_complete(llg_proc_t* self);
 static void event_triggered_unlink(llg_wait_t* w);
 static void mailbox_unlink_wait(llg_wait_t* w);
 static void mailbox_value_destroy(llg_mailbox_value_t* value);
@@ -417,7 +430,7 @@ static void llg_kill_proc_tree_internal(llg_proc_t* p, int notify_parent);
 static void llg_fork_group_child_done(llg_fork_group_t* grp);
 static void flush_deferred_assertions(void);
 static void run_deferred_assertions_now(void);
-static llg_proc_t* llg_current(void);
+llg_proc_t* llg_current(void);
 
 static llg_frame_slot_t* frame_slot(llg_frame_t* frame, size_t slot) {
     if (!frame || slot >= frame->nslots) {

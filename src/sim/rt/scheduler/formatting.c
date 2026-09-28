@@ -200,6 +200,15 @@ static size_t llg_format_time_integer(sv4_t value, uint64_t source_unit_fs,
     sv4_to_dec_string(value, decimal, decimal_cap);
     size_t decimal_len = strlen(decimal);
     size_t len = 0;
+    int source_exponent;
+    int display_exponent;
+    int metadata_exponent;
+    int negative;
+    const char* digits;
+    size_t digits_len;
+    int scale;
+    size_t scaled_len;
+    int precision;
     if (decimal_len == 0) goto cleanup;
     if (decimal[0] == 'x') {
         llg_append_text(raw, cap, &len, decimal, decimal_len);
@@ -207,18 +216,16 @@ static size_t llg_format_time_integer(sv4_t value, uint64_t source_unit_fs,
                         g.time_format.suffix.len);
         goto cleanup;
     }
-    int source_exponent;
-    int display_exponent;
     if (!llg_time_format_exponents(&source_exponent, &display_exponent)) {
         source_exponent = display_exponent = 0;
     }
-    int metadata_exponent = llg_time_unit_exponent(source_unit_fs);
+    metadata_exponent = llg_time_unit_exponent(source_unit_fs);
     if (metadata_exponent != INT_MIN) source_exponent = metadata_exponent;
-    int negative = decimal[0] == '-';
-    const char* digits = decimal + (negative ? 1 : 0);
-    size_t digits_len = decimal_len - (negative ? 1u : 0u);
-    int scale = source_exponent - display_exponent + g.time_format.precision;
-    size_t scaled_len = 0;
+    negative = decimal[0] == '-';
+    digits = decimal + (negative ? 1 : 0);
+    digits_len = decimal_len - (negative ? 1u : 0u);
+    scale = source_exponent - display_exponent + g.time_format.precision;
+    scaled_len = 0;
     if (scale >= 0) {
         // Multiplying zero by a power of ten must not manufacture trailing
         // zero digits; keeping its canonical representation also preserves
@@ -248,7 +255,7 @@ static size_t llg_format_time_integer(sv4_t value, uint64_t source_unit_fs,
         int round_up = drop <= digits_len && digits[digits_len - drop] >= '5';
         if (round_up) (void)llg_decimal_increment(scaled, &scaled_len, scaled_cap);
     }
-    int precision = g.time_format.precision;
+    precision = g.time_format.precision;
     if (negative) llg_append(raw, cap, &len, '-');
     if (scaled_len > (size_t)precision) {
         size_t integer_len = scaled_len - (size_t)precision;

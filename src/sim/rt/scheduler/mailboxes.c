@@ -291,7 +291,7 @@ static void mailbox_type_error(void) {
     llg_last_failure = 1;
     g.finish = 1;
     llg_proc_t* current = llg_current();
-    if (current) llg_proc_done(current);
+    if (current) current->chain.exiting = LLG_EXIT_COMPLETE;
 }
 
 static void mailbox_remove_and_wake(llg_wait_t* wait) {
@@ -397,32 +397,37 @@ uint64_t llg_mailbox_num(const llg_mailbox_t* mailbox) {
     return mailbox ? mailbox->length : 0;
 }
 
-void llg_mailbox_put_value(llg_mailbox_t* mailbox, llg_mailbox_value_t value) {
+llg_co_arm_t llg_arm_mailbox_put_value(llg_proc_t* self,
+                                       llg_mailbox_t* mailbox,
+                                       llg_mailbox_value_t value) {
+    llg_runtime_service_enter(self, "mailbox::put");
     mailbox = mailbox_require(mailbox, "put");
     if (!mailbox) {
         mailbox_value_destroy(&value);
-        return;
+        if (self) self->chain.exiting = LLG_EXIT_COMPLETE;
+        return LLG_CO_ARM_EXIT;
     }
     if (!mailbox_message_kind_matches(mailbox, &value)) {
         fprintf(stderr, "llg: mailbox put value does not match its type\n");
         llg_last_failure = 1;
         g.finish = 1;
         mailbox_value_destroy(&value);
-        return;
+        if (self) self->chain.exiting = LLG_EXIT_COMPLETE;
+        return LLG_CO_ARM_EXIT;
     }
     if (mailbox->bound == 0 || mailbox->length < mailbox->bound) {
         mailbox_message_append(mailbox, value);
         mailbox_service_waiters(mailbox);
-        return;
+        return self && self->chain.exiting ? LLG_CO_ARM_EXIT
+                                           : LLG_CO_ARM_READY;
     }
-    llg_proc_t* proc = llg_current();
-    if (!proc || !region_can_mutate("mailbox put wait")) {
+    if (!self || !region_can_mutate("mailbox put wait")) {
         mailbox_value_destroy(&value);
-        return;
+        return LLG_CO_ARM_READY;
     }
-    llg_wait_t* wait = &proc->wait;
+    llg_wait_t* wait = &self->wait;
     wait->kind = W_MAILBOX_PUT;
-    wait->resume_region = region_is_reactive(proc->region)
+    wait->resume_region = region_is_reactive(self->region)
                               ? LLG_REGION_REACTIVE
                               : LLG_REGION_ACTIVE;
     llg_wait_mailbox_put_payload_t* payload =
@@ -431,7 +436,8 @@ void llg_mailbox_put_value(llg_mailbox_t* mailbox, llg_mailbox_value_t value) {
     payload->value = value;
     register_wait();
     mailbox_append_wait(mailbox, wait, 1);
-    aco_yield();
+    start_pending_fork_children(self);
+    return LLG_CO_ARM_SUSPEND;
 }
 
 int llg_mailbox_try_put_value(llg_mailbox_t* mailbox,
@@ -467,13 +473,15 @@ static int mailbox_take_value(llg_mailbox_t* mailbox,
     return 1;
 }
 
-static void llg_mailbox_wait_get(llg_mailbox_t* mailbox,
-                                 llg_mailbox_target_t target, int peek) {
-    llg_proc_t* proc = llg_current();
-    if (!proc || !region_can_mutate("mailbox get wait")) return;
-    llg_wait_t* wait = &proc->wait;
+static llg_co_arm_t llg_mailbox_wait_get(llg_proc_t* self,
+                                         llg_mailbox_t* mailbox,
+                                         llg_mailbox_target_t target,
+                                         int peek) {
+    if (!self || !region_can_mutate("mailbox get wait"))
+        return LLG_CO_ARM_READY;
+    llg_wait_t* wait = &self->wait;
     wait->kind = W_MAILBOX_GET;
-    wait->resume_region = region_is_reactive(proc->region)
+    wait->resume_region = region_is_reactive(self->region)
                               ? LLG_REGION_REACTIVE
                               : LLG_REGION_ACTIVE;
     llg_wait_mailbox_get_payload_t* payload =
@@ -483,20 +491,29 @@ static void llg_mailbox_wait_get(llg_mailbox_t* mailbox,
     payload->peek = peek;
     register_wait();
     mailbox_append_wait(mailbox, wait, 0);
-    aco_yield();
+    start_pending_fork_children(self);
+    return LLG_CO_ARM_SUSPEND;
 }
 
-void llg_mailbox_get_value(llg_mailbox_t* mailbox, llg_mailbox_target_t target,
-                           int peek) {
+llg_co_arm_t llg_arm_mailbox_get_value(llg_proc_t* self,
+                                       llg_mailbox_t* mailbox,
+                                       llg_mailbox_target_t target, int peek) {
+    llg_runtime_service_enter(self, "mailbox::get");
     mailbox = mailbox_require(mailbox, "get");
-    if (!mailbox) return;
+    if (!mailbox) {
+        if (self) self->chain.exiting = LLG_EXIT_COMPLETE;
+        return LLG_CO_ARM_EXIT;
+    }
     int result = mailbox_take_value(mailbox, target, peek);
     if (result < 0) {
         mailbox_type_error();
-        return;
+        if (self) self->chain.exiting = LLG_EXIT_COMPLETE;
+        return LLG_CO_ARM_EXIT;
     }
-    if (result > 0) return;
-    llg_mailbox_wait_get(mailbox, target, peek);
+    if (result > 0)
+        return self && self->chain.exiting ? LLG_CO_ARM_EXIT
+                                           : LLG_CO_ARM_READY;
+    return llg_mailbox_wait_get(self, mailbox, target, peek);
 }
 
 int llg_mailbox_try_get_value(llg_mailbox_t* mailbox,

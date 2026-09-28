@@ -55,7 +55,27 @@ static int run_region_queue(llg_region_t region) {
         } else {
             g.last_process_name = process->name;
             process->region = region;
-            aco_resume(process->co);
+            g.current = process;
+            g.process_turn_active = 1;
+            llg_co_status_t status = llg_co_run(&process->chain);
+            g.process_turn_active = 0;
+            g.current = NULL;
+            if (status == LLG_CO_DONE) {
+                proc_complete(process);
+            } else if (status == LLG_CO_EXIT &&
+                       process->chain.exiting == LLG_EXIT_COMPLETE) {
+                proc_complete(process);
+            } else if (status == LLG_CO_CALLED) {
+                fprintf(stderr,
+                        "llg runtime fatal: coroutine anchor escaped llg_co_run\n");
+                abort();
+            }
+            if (g.deferred_stop) {
+                g.deferred_stop = 0;
+                g.stop_proc = NULL;
+                g.stop_region = region;
+                g.suspended = 1;
+            }
             reap_retired_procs();
         }
         if (g.suspended) {
@@ -270,7 +290,7 @@ static int run_postponed_set(void) {
 
 // ── final blocks (see llg_rt.h) ─────────────────────────────────────────────
 
-void llg_spawn_final(void (*fn)(llg_proc_t*), const char* name) {
+void llg_spawn_final(void (*fn)(void), const char* name) {
     if (llg_n_finals == INT_MAX) {
         fprintf(stderr, "llg runtime fatal: final block registry size overflow\n");
         abort();
@@ -302,37 +322,36 @@ void llg_rt_run_finals(void) {
     g.finish = 0;
     g.running = 0;
     g.current_region = LLG_REGION_POSTPONED;
-    // Rebuild a minimal coroutine context: the scheduler-exit teardown in
-    // llg_rt_run released the previous one.
-    aco_thread_init(llg_last_word);
-    g.main_co = aco_create(NULL, NULL, 0, NULL, NULL);
-    g.share_stack = aco_share_stack_new(llg_coroutine_stack_size());
     llg_restore_final_timeformat();
     g.now = llg_final_time;
     g.zero_loop_limit = llg_configured_zero_loop_limit;
     g.process_step_limit = llg_configured_process_step_limit;
     g.stop_policy = llg_configured_stop_policy;
+    g.initialized = 1;
     llg_in_finals = 1;
     for (int i = 0; i < llg_n_finals; i++) {
-        llg_proc_t* p = (llg_proc_t*)llg_checked_calloc(
-            1, sizeof(llg_proc_t), "final process");
-        p->name = llg_finals[i].name;
-        p->fn = llg_finals[i].fn;
-        p->handle = process_handle_new(p);
-        p->status = LLG_PROCESS_RUNNING;
-        p->budget_time = g.now;
-        p->region = LLG_REGION_POSTPONED;
-        p->co = aco_create(g.main_co, g.share_stack, 1u << 20, llg_proc_entry, p);
-        register_proc(p);
-        enqueue_region(p, LLG_REGION_POSTPONED);
-        run_region_queue(LLG_REGION_POSTPONED);
-        if (p->wait.kind != W_NONE) {
+        llg_proc_t process;
+        memset(&process, 0, sizeof(process));
+        process.name = llg_finals[i].name;
+        process.handle = process_handle_new(&process);
+        process.status = LLG_PROCESS_RUNNING;
+        process.budget_time = g.now;
+        process.region = LLG_REGION_POSTPONED;
+        process.chain.owner = &process;
+        register_proc(&process);
+        g.current = &process;
+        llg_finals[i].fn();
+        g.current = NULL;
+        if (process.wait.kind != W_NONE) {
             fprintf(stderr,
                     "llg: fatal: final block `%s` suspended on a wait "
                     "(timing controls are rejected by codegen)\n",
-                    p->name ? p->name : "final");
+                    process.name ? process.name : "final");
             abort();
         }
+        proc_complete(&process);
+        unregister_proc(&process);
+        llg_co_arena_release(&process.chain.arena);
         // Finals permit function statements only. Codegen rejects NBAs,
         // deferred output tasks, waits, and forks, so no scheduler region is
         // run between these sequential zero-time calls.
@@ -411,7 +430,7 @@ void llg_rt_run(void) {
     }
     if (g.suspended) {
         // EXIT-policy suspension is deliberately resumable. Keep all
-        // scheduler queues, coroutine stacks, activations and output state in
+        // scheduler queues, coroutine frames, activations and output state in
         // place; an embedding can call llg_rt_resume() and llg_rt_run().
         g.running = 0;
         return;

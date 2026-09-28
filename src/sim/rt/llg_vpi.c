@@ -1552,7 +1552,7 @@ PLI_INT32 vpi_control(PLI_INT32 operation, ...) {
             llg_rt_request_finish();
             return 1;
         case vpiStop:
-            llg_rt_stop();
+            llg_rt_request_stop(0, NULL);
             return 1;
         default:
             vpi_set_error(vpiRun, vpiError, "LLG_VPI_UNSUPPORTED", "unsupported vpi_control operation");

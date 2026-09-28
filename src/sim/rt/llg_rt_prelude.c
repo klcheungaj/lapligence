@@ -1,13 +1,12 @@
 // llg_rt.c — implementation of the llg simulation runtime (see llg_rt.h).
 //
-// Compiled together with vendor/libaco (aco.c + acosw.S) and the generated
-// model.c by the host C compiler; never linked into the Rust binaries.
+// Compiled together with llg_co.c and the generated model by the host C
+// compiler; never linked into the Rust binaries.
 
 #define _GNU_SOURCE
 
 #include "llg_rt.h"
 #include "llg_container.h"
-#include "aco.h"
 #ifdef LLG_WAVEFORM
 #include "llg_wave.h"
 #endif
@@ -20,9 +19,6 @@
 #include <limits.h>
 #include <ctype.h>
 #include <errno.h>
-
-// Generated budgets include function frames through the recursion guard.
-#define LLG_DEFAULT_STACK_VALUES 256u
 
 // Formatting precision is a request limit, not a storage capacity.
 // Scratch allocations are sized for each value and requested conversion.
@@ -56,13 +52,31 @@ _Noreturn void llg_rt_co_oom(size_t bytes) {
     llg_fatal_allocation("coroutine frame", 1, bytes);
 }
 
+static llg_co_chain_t* llg_rt_current_chain(void);
+
+static void llg_rt_co_trace_frame(void* user, const llg_co_desc_t* desc,
+                                  const llg_co_frame_t* frame,
+                                  unsigned depth) {
+    FILE* output = (FILE*)user;
+    const char* location = NULL;
+    if (desc && desc->sites && frame && frame->state < desc->n_sites)
+        location = desc->sites[frame->state].loc;
+    fprintf(output, "  #%u %s", depth,
+            desc && desc->name ? desc->name : "<unknown HDL frame>");
+    if (location && location[0] != '\0') fprintf(output, " at %s", location);
+    fputc('\n', output);
+}
+
 _Noreturn void llg_rt_co_bad_state(const llg_co_frame_t* co, const char* fn) {
     fprintf(stderr,
             "llg: fatal: invalid coroutine state in %s: frame=%p state=%lu\n",
             fn ? fn : "<unknown>", (const void*)co,
             co ? (unsigned long)co->state : 0ul);
-    // Phase 4 can append the descriptor backtrace and HDL-path mapping once
-    // processes own llg_co chains; the base diagnostic stays usable now.
+    llg_co_chain_t* chain = llg_rt_current_chain();
+    if (chain) {
+        fputs("llg: coroutine HDL backtrace:\n", stderr);
+        (void)llg_co_backtrace(chain, llg_rt_co_trace_frame, stderr);
+    }
     abort();
 }
 
@@ -161,8 +175,6 @@ static void* llg_checked_calloc(size_t count, size_t size, const char* what) {
     return ptr;
 }
 
-static size_t llg_stack_values = LLG_DEFAULT_STACK_VALUES;
-
 static void llg_fmt_args_destroy(llg_fmt_arg_t* args, int n);
 static size_t llg_format_time_integer(sv4_t value, uint64_t source_unit_fs,
                                       char* raw, size_t cap);
@@ -188,13 +200,6 @@ static const char* llg_parse_legacy_spec(const char* p, int* has_width,
         while (*p >= '0' && *p <= '9') p++;
     }
     return p;
-}
-
-static size_t llg_coroutine_stack_size(void) {
-    const size_t base = 4u << 20;
-    if (llg_stack_values > (SIZE_MAX - base) / sizeof(sv4_t))
-        llg_fatal_allocation("coroutine stack", llg_stack_values, sizeof(sv4_t));
-    return base + llg_stack_values * sizeof(sv4_t);
 }
 
 static int llg_sv4_nlimbs(uint32_t width) {

@@ -94,7 +94,10 @@ fn sim_rt_selftest() {
     let dir = sim_harness::TempDir::new("runtime-selftest").expect("create temp dir");
     let exe = sim::build::build_model_cmake(
         dir.path(),
-        &[("llg_rt_selftest.c", sim::rt::selftest_source())],
+        &[
+            ("llg_rt_selftest.c", sim::rt::selftest_source()),
+            ("selftest_co.h", sim::rt::selftest_support_source()),
+        ],
     )
     .expect("selftest should compile");
     sim_harness::run_executable(&exe).expect("selftest should run");

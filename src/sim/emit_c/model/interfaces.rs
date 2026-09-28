@@ -24,7 +24,8 @@ pub(super) fn render_virtual_interface_runtime(model: &IrModel, out: &mut String
              uint32_t member_count;\n\
              sv4_t *members[LLG_VIF_MAX_MEMBERS];\n\
          }} llg_vif_env_t;\n\n\
-         static _Noreturn void llg_vif_fail(const char *site) {{\n\
+         static sv4_t llg_vif_invalid = SV4_EMPTY;\n\n\
+         static void llg_vif_fail(const char *site) {{\n\
              fprintf(stderr, \"llg: virtual interface access failed: %s\\n\", site);\n\
              llg_rt_mark_failed();\n\
              llg_rt_fatal_typed(0, \"virtual interface access failed\", NULL, 0, \"\", site);\n\
@@ -33,11 +34,13 @@ pub(super) fn render_virtual_interface_runtime(model: &IrModel, out: &mut String
                                       uint32_t slot, const char *site) {{\n\
              if (!raw) {{\n\
                  llg_vif_fail(site);\n\
+                 return &llg_vif_invalid;\n\
              }}\n\
              llg_vif_env_t *env = (llg_vif_env_t *)raw;\n\
              if (env->interface_id != interface_id || slot >= env->member_count ||\n\
                  slot >= LLG_VIF_MAX_MEMBERS || !env->members[slot]) {{\n\
                  llg_vif_fail(site);\n\
+                 return &llg_vif_invalid;\n\
              }}\n\
              return env->members[slot];\n\
          }}\n\n\
@@ -165,16 +168,26 @@ pub(super) fn render_virtual_interface_call_bodies(model: &IrModel, out: &mut St
             };
             let ret_type = function_return_type(function);
             let call_args = function_call_args(function);
+            let failure_return = if ret_type == "void" {
+                "return;".to_owned()
+            } else if function.ret_string {
+                "return llg_string_bytes(\"\", 0);".to_owned()
+            } else if function.ret_chandle {
+                "return NULL;".to_owned()
+            } else {
+                format!("return {};", function.ret_x())
+            };
             out.push_str(&format!(
                 "static {ret_type} {}(void *_vif, {}) {{\n",
                 virtual_interface_call_name(interface_id, method_id),
                 func_params(function),
             ));
             out.push_str(&format!(
-                "    if (!_vif) {{ llg_vif_fail(\"virtual interface method\"); }}\n\
+                "    if (!_vif) {{ llg_vif_fail(\"virtual interface method\"); {failure_return} }}\n\
                      llg_vif_env_t *env = (llg_vif_env_t *)_vif;\n\
                      if (env->interface_id != {interface_id}) {{\n\
                          llg_vif_fail(\"virtual interface method type\");\n\
+                         {failure_return}\n\
                      }}\n\
                      switch (env->instance_id) {{\n"
             ));
@@ -203,15 +216,7 @@ pub(super) fn render_virtual_interface_call_bodies(model: &IrModel, out: &mut St
             out.push_str(
                 "        default:\n            llg_vif_fail(\"virtual interface instance\");\n",
             );
-            if ret_type == "void" {
-                out.push_str("            return;\n");
-            } else if function.ret_string {
-                out.push_str("            return llg_string_bytes(\"\", 0);\n");
-            } else if function.ret_chandle {
-                out.push_str("            return NULL;\n");
-            } else {
-                out.push_str(&format!("            return {};\n", function.ret_x()));
-            }
+            out.push_str(&format!("            {failure_return}\n"));
             out.push_str("    }\n}\n\n");
         }
     }

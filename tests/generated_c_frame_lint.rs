@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 
 use llg::core::compile::{self, CompileOpts};
 use llg::core::db::Db;
@@ -8,6 +9,73 @@ use llg::sim;
 mod generated_c_lint;
 
 const SHARDS: usize = 6;
+
+fn compiler_available(compiler: &str) -> bool {
+    Command::new(compiler)
+        .arg("--version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+fn syntax_check(compiler: &str, model: &str, fixture: &Path, mode: &str) {
+    use std::io::Write;
+
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut command = Command::new(compiler);
+    command.args([
+        "-x",
+        "c",
+        "-std=c11",
+        "-O2",
+        "-Wall",
+        "-Wno-unused-function",
+    ]);
+    if compiler == "gcc" {
+        command.arg("-Werror=jump-misses-init");
+    }
+    let mut child = command
+        .args(["-fsyntax-only", "-"])
+        .arg(format!("-I{}", root.join("src/sim/rt").display()))
+        .arg(format!(
+            "-I{}",
+            root.join("vendor/slang/external/ieee1800").display()
+        ))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap_or_else(|error| {
+            panic!(
+                "start {compiler} for {} ({mode}): {error}",
+                fixture.display()
+            )
+        });
+    child
+        .stdin
+        .as_mut()
+        .expect("compiler stdin")
+        .write_all(model.as_bytes())
+        .unwrap_or_else(|error| {
+            panic!(
+                "write {} ({mode}) to {compiler}: {error}",
+                fixture.display()
+            )
+        });
+    let output = child.wait_with_output().unwrap_or_else(|error| {
+        panic!(
+            "wait for {compiler} on {} ({mode}): {error}",
+            fixture.display()
+        )
+    });
+    assert!(
+        output.status.success() && output.stderr.is_empty(),
+        "{} ({mode}) failed or warned in {compiler} syntax check:\n{}",
+        fixture.display(),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
 
 fn fixture_paths(root: &Path) -> Vec<PathBuf> {
     fn visit(path: &Path, paths: &mut Vec<PathBuf>) {
@@ -35,6 +103,10 @@ fn fixture_paths(root: &Path) -> Vec<PathBuf> {
 
 fn lint_fixture_shard(shard: usize) {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sim");
+    let compilers = ["gcc", "clang"]
+        .into_iter()
+        .filter(|compiler| compiler_available(compiler))
+        .collect::<Vec<_>>();
     let mut generated = 0usize;
     for (index, path) in fixture_paths(&root).into_iter().enumerate() {
         if index % SHARDS != shard {
@@ -66,6 +138,9 @@ fn lint_fixture_shard(shard: usize) {
                     path.display(),
                     errors.join("\n")
                 );
+            }
+            for compiler in &compilers {
+                syntax_check(compiler, &model.model_c, &path, mode);
             }
         }
     }

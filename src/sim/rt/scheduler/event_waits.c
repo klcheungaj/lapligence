@@ -64,7 +64,7 @@ static void event_trigger_object_unchecked(llg_event_object_t* ev) {
         if (w->kind == W_EVENT_ORDER) {
             int result = event_order_match(w, ev);
             if (result != 0) {
-                w->order_result_value = result;
+                *w->payload.rare->order.result = result;
                 wake_proc(wake[i]);
             } else {
                 event_list_add(ev, wake[i]);
@@ -153,18 +153,19 @@ llg_event_t* llg_event_array_select(llg_event_t* const* elements,
     return linear < total ? elements[linear] : NULL;
 }
 
-void llg_wait_event(llg_event_t* ev) {
+llg_co_arm_t llg_arm_event(llg_proc_t* self, llg_event_t* ev) {
     const llg_event_t* list[1] = {ev};
-    llg_wait_events(list, 1);
+    return llg_arm_events(self, list, 1);
 }
 
-void llg_wait_events(const llg_event_t* const* evs, int n) {
-    if (n <= 0) return;
-    llg_proc_t* p = llg_current();
-    if (!p || !region_can_mutate("wait scheduling")) return;
-    llg_wait_t* w = &p->wait;
+llg_co_arm_t llg_arm_events(llg_proc_t* self,
+                            const llg_event_t* const* evs, int n) {
+    llg_runtime_service_enter(self, "event wait");
+    if (n <= 0 || !self || !region_can_mutate("wait scheduling"))
+        return LLG_CO_ARM_READY;
+    llg_wait_t* w = &self->wait;
     w->kind = W_EVENT;
-    w->resume_region = region_is_reactive(p->region)
+    w->resume_region = region_is_reactive(self->region)
                            ? LLG_REGION_REACTIVE
                            : LLG_REGION_ACTIVE;
     w->payload.event.n_evs = n;
@@ -172,31 +173,34 @@ void llg_wait_events(const llg_event_t* const* evs, int n) {
         (size_t)n, sizeof(llg_event_object_t*), "named-event wait list");
     for (int i = 0; i < n; i++) {
         w->payload.event.evs[i] = evs[i] ? evs[i]->object : NULL;
-        event_list_add(w->payload.event.evs[i], p);
+        event_list_add(w->payload.event.evs[i], self);
     }
     register_wait();
-    aco_yield();
+    return LLG_CO_ARM_SUSPEND;
 }
 
-void llg_wait_event_triggered(const llg_event_t* ev) {
-    llg_proc_t* p = llg_current();
-    if (!p || !region_can_mutate("wait scheduling")) return;
-    if (llg_event_triggered(ev)) return;
-    llg_wait_t* w = &p->wait;
+llg_co_arm_t llg_arm_event_triggered(llg_proc_t* self,
+                                     const llg_event_t* ev) {
+    llg_runtime_service_enter(self, "event triggered wait");
+    if (!self || !region_can_mutate("wait scheduling") ||
+        llg_event_triggered(ev))
+        return LLG_CO_ARM_READY;
+    llg_wait_t* w = &self->wait;
     w->kind = W_EVENT_TRIGGERED;
-    w->resume_region = region_is_reactive(p->region)
+    w->resume_region = region_is_reactive(self->region)
                            ? LLG_REGION_REACTIVE
                            : LLG_REGION_ACTIVE;
     w->payload.event.triggered_ev = ev ? ev->object : NULL;
-    event_triggered_list_add(w->payload.event.triggered_ev, p);
+    event_triggered_list_add(w->payload.event.triggered_ev, self);
     register_wait();
-    aco_yield();
+    return LLG_CO_ARM_SUSPEND;
 }
 
-void llg_wait_assertion(uint64_t identity) {
-    llg_proc_t* p = llg_current();
-    if (!p || !region_can_mutate("expect scheduling")) return;
-    llg_wait_t* w = &p->wait;
+llg_co_arm_t llg_arm_assertion(llg_proc_t* self, uint64_t identity) {
+    llg_runtime_service_enter(self, "assertion wait");
+    if (!self || !region_can_mutate("expect scheduling"))
+        return LLG_CO_ARM_READY;
+    llg_wait_t* w = &self->wait;
     w->kind = W_ASSERTION;
     // An assertion result is observed before Reactive actions, so resume the
     // procedural expect continuation in Reactive after its action callback
@@ -204,24 +208,26 @@ void llg_wait_assertion(uint64_t identity) {
     w->resume_region = LLG_REGION_REACTIVE;
     wait_rare_allocate(w, "assertion wait payload")->assertion.identity = identity;
     register_wait();
-    aco_yield();
+    return LLG_CO_ARM_SUSPEND;
 }
 
-void llg_wait_order(const llg_event_t* const* evs, int n, int* result) {
-    if (n <= 0 || !result) return;
-    llg_proc_t* p = llg_current();
-    if (!p || !region_can_mutate("wait scheduling")) return;
-    llg_wait_t* w = &p->wait;
+llg_co_arm_t llg_arm_order(llg_proc_t* self,
+                           const llg_event_t* const* evs, int n,
+                           int* result) {
+    llg_runtime_service_enter(self, "wait_order");
+    if (n <= 0 || !result || !self || !region_can_mutate("wait scheduling"))
+        return LLG_CO_ARM_READY;
+    llg_wait_t* w = &self->wait;
     w->kind = W_EVENT_ORDER;
-    w->resume_region = region_is_reactive(p->region)
+    w->resume_region = region_is_reactive(self->region)
                            ? LLG_REGION_REACTIVE
                            : LLG_REGION_ACTIVE;
     llg_wait_order_payload_t* order =
         &wait_rare_allocate(w, "wait_order payload")->order;
     order->n_order = n;
     order->next = 0;
-    w->order_result_value = 0;
     *result = 0;
+    order->result = result;
     order->sequence = (llg_event_object_t**)llg_checked_malloc(
         (size_t)n, sizeof(llg_event_object_t*), "wait_order sequence");
     order->evs = (llg_event_object_t**)llg_checked_malloc(
@@ -240,19 +246,19 @@ void llg_wait_order(const llg_event_t* const* evs, int n, int* result) {
         }
         if (!seen) {
             order->evs[order->n_evs++] = object;
-            event_list_add(object, p);
+            event_list_add(object, self);
         }
     }
     register_wait();
-    aco_yield();
-    *result = w->order_result_value;
-    w->order_result_value = 0;
+    return LLG_CO_ARM_SUSPEND;
 }
 
-void llg_wait_mixed(llg_wait_src_t* srcs, int n) {
-    llg_proc_t* p = llg_current();
-    if (!p || n < 0 || !region_can_mutate("wait scheduling")) return;
-    llg_wait_t* w = &p->wait;
+llg_co_arm_t llg_arm_mixed(llg_proc_t* self,
+                           const llg_wait_src_t* srcs, int n) {
+    llg_runtime_service_enter(self, "mixed wait");
+    if (!self || n < 0 || !region_can_mutate("wait scheduling"))
+        return LLG_CO_ARM_READY;
+    llg_wait_t* w = &self->wait;
     int nsig = 0;
     int nev = 0;
     for (int i = 0; i < n; i++) {
@@ -260,7 +266,7 @@ void llg_wait_mixed(llg_wait_src_t* srcs, int n) {
         else nev++;
     }
     w->kind = W_MIXED;
-    w->resume_region = region_is_reactive(p->region)
+    w->resume_region = region_is_reactive(self->region)
                            ? LLG_REGION_REACTIVE
                            : LLG_REGION_ACTIVE;
     llg_wait_mixed_payload_t* mixed =
@@ -283,41 +289,37 @@ void llg_wait_mixed(llg_wait_src_t* srcs, int n) {
             si++;
         } else {
             mixed->evs[ei] = srcs[i].ev ? srcs[i].ev->object : NULL;
-            event_list_add(mixed->evs[ei], p);
+            event_list_add(mixed->evs[ei], self);
             ei++;
         }
     }
     register_wait();
-    aco_yield();
+    return LLG_CO_ARM_SUSPEND;
 }
 
-void llg_wait_clocking_cycles(llg_wait_src_t* srcs, int n, sv4_t count) {
-    if (!srcs || n <= 0 || !llg_current() || !region_can_mutate("clocking cycle wait")) return;
-    llg_value_scope_t* scope = llg_value_scope_begin(2);
-    sv4_t* values = llg_value_scope_values(scope);
-    sv4_replace(&values[0], sv4_repeat_count(count));
-    sv4_replace(&values[1], sv4_from_u64(1, values[0].width, 0));
-    if (!sv4_to_bool(values[0])) {
-        if (!clocking_event_current(srcs, n)) llg_wait_mixed(srcs, n);
-    } else {
-        while (sv4_to_bool(values[0])) {
-            llg_wait_mixed(srcs, n);
-            sv4_replace(&values[0], sv4_sub(values[0], values[1]));
-        }
-    }
-    llg_value_scope_end(scope);
+llg_co_arm_t llg_arm_clocking_cycle(llg_proc_t* self,
+                                    const llg_wait_src_t* srcs, int n,
+                                    int accept_current) {
+    llg_runtime_service_enter(self, "clocking cycle wait");
+    if (!srcs || n <= 0 || !self ||
+        !region_can_mutate("clocking cycle wait"))
+        return LLG_CO_ARM_READY;
+    if (accept_current && clocking_event_current(srcs, n))
+        return LLG_CO_ARM_READY;
+    return llg_arm_mixed(self, srcs, n);
 }
 
-void llg_wait_expressions(const llg_expr_event_spec_t* specs, int n) {
+llg_co_arm_t llg_arm_expressions(llg_proc_t* self,
+                                 const llg_expr_event_spec_t* specs, int n) {
     if (n < 0) abort();
-    llg_proc_t* p = llg_current();
-    if (!p || !region_can_mutate("wait scheduling")) {
+    llg_runtime_service_enter(self, "expression wait");
+    if (!self || !region_can_mutate("wait scheduling")) {
         release_expression_contexts(specs, n);
-        return;
+        return LLG_CO_ARM_READY;
     }
-    llg_wait_t* w = &p->wait;
+    llg_wait_t* w = &self->wait;
     w->kind = W_EXPR;
-    w->resume_region = region_is_reactive(p->region)
+    w->resume_region = region_is_reactive(self->region)
                            ? LLG_REGION_REACTIVE
                            : LLG_REGION_ACTIVE;
     llg_wait_expression_payload_t* expression = &w->payload.expression;
@@ -369,7 +371,7 @@ void llg_wait_expressions(const llg_expr_event_spec_t* specs, int n) {
                 if (expression->evs[j] == object) seen = 1;
             if (!seen) {
                 expression->evs[expression->n_evs++] = object;
-                event_list_add(object, p);
+                event_list_add(object, self);
             }
         } else if (specs[i].real || specs[i].real_eval || specs[i].real_sig) {
             if (specs[i].real_eval)
@@ -384,9 +386,15 @@ void llg_wait_expressions(const llg_expr_event_spec_t* specs, int n) {
         } else {
             abort();
         }
+        if (self->chain.exiting) break;
+    }
+    if (self->chain.exiting) {
+        event_unlink(w);
+        wait_payload_release(w);
+        return LLG_CO_ARM_EXIT;
     }
     register_wait();
-    aco_yield();
+    return LLG_CO_ARM_SUSPEND;
 }
 
 uint64_t llg_repeat_count(sv4_t value) {

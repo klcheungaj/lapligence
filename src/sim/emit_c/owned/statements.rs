@@ -42,15 +42,20 @@ impl Frame<'_, '_> {
         Ok(())
     }
     fn budget(&mut self) {
-        self.line(format!(
-            "llg_budget_point({});",
+        let call = format!(
+            "llg_budget_point({})",
             c_string_literal(
                 self.ctx
                     .func
                     .map(|f| f.c_name.as_str())
                     .unwrap_or(self.ctx.model.design_name())
             )
-        ));
+        );
+        if self.layout.storage() == FrameStorage::CoFrame {
+            self.line(format!("if (LLG_CO_UNLIKELY({call})) return LLG_CO_EXIT;"));
+        } else {
+            self.line(format!("if (LLG_CO_UNLIKELY({call})) goto _llg_return;"));
+        }
     }
     pub(super) fn condition(&mut self, expr: &IrExpr) -> Result<String, String> {
         let value = self.expression(expr)?;
@@ -340,14 +345,19 @@ impl Frame<'_, '_> {
             }
             IrStmt::Delay { ticks } => {
                 let ticks = self.delay(ticks)?;
-                self.line(format!("llg_wait_time({ticks});"));
+                self.await_arm(
+                    SuspensionOperation::Delay,
+                    format!("llg_arm_time(self, {ticks})"),
+                )?;
             }
-            IrStmt::WaitAny { sens } => self.wait_any(sens, None)?,
+            IrStmt::WaitAny { sens } => {
+                self.wait_any(sens, None, SuspensionOperation::EventWait)?
+            }
             IrStmt::WaitCond { cond, sens, body } => {
                 self.line("for (;;) {");
                 let condition = self.condition(cond)?;
                 self.line(format!("if ({condition}) break;"));
-                self.wait_any(sens, None)?;
+                self.wait_any(sens, None, SuspensionOperation::ConditionWait)?;
                 self.line("}");
                 self.block(body)?;
             }
@@ -387,12 +397,29 @@ impl Frame<'_, '_> {
                     return Err("clocking cycle count must be integral".to_owned());
                 }
                 let sources = self.clocking_sources(specs)?;
-                self.line(format!(
-                    "llg_wait_clocking_cycles({sources}, {}, {});",
-                    specs.len(),
-                    count.code
-                ));
+                let remaining =
+                    self.scalar("uint64_t", format!("llg_repeat_count({})", count.code));
                 self.discard(count);
+                self.line(format!("if ({remaining} == 0) {{"));
+                self.await_arm(
+                    SuspensionOperation::ClockingCycle,
+                    format!(
+                        "llg_arm_clocking_cycle(self, {sources}, {}, 1)",
+                        specs.len()
+                    ),
+                )?;
+                self.line("} else {");
+                self.line(format!("while ({remaining} != 0) {{"));
+                self.await_arm(
+                    SuspensionOperation::ClockingCycle,
+                    format!(
+                        "llg_arm_clocking_cycle(self, {sources}, {}, 0)",
+                        specs.len()
+                    ),
+                )?;
+                self.line(format!("--{remaining};"));
+                self.line("}");
+                self.line("}");
             }
             IrStmt::NonblockingEventTriggerWhen { ev, specs, repeat } => {
                 let target = self.event_address(ev)?;
@@ -454,10 +481,13 @@ impl Frame<'_, '_> {
                     )
                 };
                 let success_flag = self.scalar("int", "0".to_owned());
-                self.line(format!(
-                    "llg_wait_order({list}, {}, &{success_flag});",
-                    events.len()
-                ));
+                self.await_arm(
+                    SuspensionOperation::WaitOrder,
+                    format!(
+                        "llg_arm_order(self, {list}, {}, &{success_flag})",
+                        events.len()
+                    ),
+                )?;
                 self.cancellation_check()?;
                 self.line(format!("if ({success_flag} > 0)"));
                 self.block(success)?;
@@ -488,7 +518,10 @@ impl Frame<'_, '_> {
             }
             IrStmt::WaitEventTriggered { event, body } => {
                 let event = self.event_address(event)?;
-                self.line(format!("llg_wait_event_triggered({event});"));
+                self.await_arm(
+                    SuspensionOperation::EventTriggeredWait,
+                    format!("llg_arm_event_triggered(self, {event})"),
+                )?;
                 self.cancellation_check()?;
                 self.block(body)?;
             }
@@ -505,11 +538,16 @@ impl Frame<'_, '_> {
                 let group = self.fork_group(kind, *target);
                 for (function, label) in branches {
                     self.line(format!(
-                        "llg_fork(&{function}_desc, {function}, {}, {group});",
+                        "llg_fork(&{function}_desc, {}, {group});",
                         c_string_literal(label)
                     ));
                 }
-                self.line(format!("llg_join({group});"));
+                if !branches.is_empty() && *join_kind != IrJoinKind::None {
+                    self.await_arm(
+                        SuspensionOperation::ForkJoin,
+                        format!("llg_arm_join(self, {group})"),
+                    )?;
+                }
             }
             IrStmt::CapturedFork {
                 join_kind,
@@ -522,12 +560,14 @@ impl Frame<'_, '_> {
                 self.activation_scope(*target, exit, body)?
             }
             IrStmt::DisableTarget { target } => self.line(format!(
-                "llg_disable_target({}u, {}u);",
+                "llg_disable_target(self, {}u, {}u);",
                 target.declaration(),
                 target.instance()
             )),
-            IrStmt::WaitFork => self.line("llg_wait_fork();"),
-            IrStmt::DisableFork => self.line("llg_disable_fork();"),
+            IrStmt::WaitFork => {
+                self.await_arm(SuspensionOperation::WaitFork, "llg_arm_wait_fork(self)")?
+            }
+            IrStmt::DisableFork => self.line("llg_disable_fork(self);"),
             IrStmt::Display {
                 fmt, args, newline, ..
             } => {
@@ -568,7 +608,10 @@ impl Frame<'_, '_> {
                 ));
                 self.leave_activations(None);
                 self.line("goto _llg_return; }");
-                self.line(format!("llg_wait_assertion({identity}ULL);"));
+                self.await_arm(
+                    SuspensionOperation::Expect,
+                    format!("llg_arm_assertion(self, {identity}ULL)"),
+                )?;
             }
             IrStmt::DeferredImmediateAssertion { .. } => self.deferred_assertion(statement)?,
             IrStmt::ImmediateAssertion {
@@ -745,11 +788,36 @@ impl Frame<'_, '_> {
             IrStmt::StopControl {
                 verbosity,
                 location,
-            } => self.line(format!(
-                "llg_rt_stop_with_level({verbosity}, {});",
-                c_string_literal(location)
-            )),
-            IrStmt::ProgramExit => self.line("llg_program_exit();"),
+            } => {
+                let function_stop = self.ctx.func.is_some_and(|function| !function.is_task());
+                if function_stop {
+                    self.line(format!(
+                        "llg_rt_request_stop({verbosity}, {});",
+                        c_string_literal(location)
+                    ));
+                } else {
+                    self.await_arm(
+                        SuspensionOperation::Stop,
+                        format!(
+                            "llg_arm_stop(self, {verbosity}, {})",
+                            c_string_literal(location)
+                        ),
+                    )?;
+                }
+            }
+            IrStmt::ProgramExit => self.line("llg_program_exit(self);"),
+        }
+        if crate::sim::execution::effects_for_statements(
+            self.ctx.model,
+            std::slice::from_ref(statement),
+        )
+        .contains(&crate::sim::execution::ExecutionEffect::Terminate)
+        {
+            if self.layout.storage() == FrameStorage::CoFrame {
+                self.line("LLG_CO_EXIT_CHECK(ch);");
+            } else {
+                self.line("if (LLG_CO_UNLIKELY(llg_rt_exiting())) goto _llg_return;");
+            }
         }
         self.cancellation_check()
     }

@@ -1,4 +1,6 @@
-//! Reference descriptors borrow variables and retain movable queue cells.
+//! Reference descriptors borrow stable variables and retain movable queue
+//! cells. Descriptor graphs live in registered scopes, never in C stack
+//! storage that a stackless suspension would invalidate.
 use super::stores::Selection;
 use super::*;
 
@@ -168,8 +170,10 @@ impl Frame<'_, '_> {
                 "llg_ref_view_t*",
                 format!("(llg_ref_view_t*)llg_value_scope_object({allocation})"),
             );
+            // Const-ref is enforced by the generated formal contract; the
+            // shared runtime view representation also serves writable refs.
             self.line(format!(
-                "*{view} = (llg_ref_view_t){{ .parent = {parent}, .plan = {plan}, .tag_check_count = {check_count}, .tag_checks = {checks}, .location = {} }};",
+                "*{view} = (llg_ref_view_t){{ .parent = (llg_ref_t*){parent}, .plan = {plan}, .tag_check_count = {check_count}, .tag_checks = {checks}, .location = {} }};",
                 c_string_literal(location)
             ));
             let allocation = self.scalar(
@@ -214,7 +218,7 @@ impl Frame<'_, '_> {
                 format!("(llg_ref_view_t*)llg_value_scope_object({allocation})"),
             );
             self.line(format!(
-                "*{view} = (llg_ref_view_t){{ .parent = {parent}, .plan = {plan}, .tag_check_count = 0, .tag_checks = NULL, .location = NULL }};"
+                "*{view} = (llg_ref_view_t){{ .parent = (llg_ref_t*){parent}, .plan = {plan}, .tag_check_count = 0, .tag_checks = NULL, .location = NULL }};"
             ));
             let allocation = self.scalar(
                 "llg_value_scope_t*",

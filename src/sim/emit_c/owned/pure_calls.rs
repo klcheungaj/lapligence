@@ -464,6 +464,7 @@ impl Frame<'_, '_> {
         outcome?;
         // Every `return` jumps here, before the frame is unwound. Falling off
         // the end of the body reaches the same point.
+        self.line(format!("if (0) goto {label};"));
         self.line(format!("{label}: ;"));
         let binding = self
             .lookup("_ret")

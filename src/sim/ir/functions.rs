@@ -190,6 +190,9 @@ pub struct IrFunc {
     /// Automatic subprograms use fresh C locals per call; static subprograms
     /// retain their return/local storage across calls.
     pub(in crate::sim) automatic: bool,
+    /// `true` for a task and `false` for a function, including a void
+    /// function. Return storage alone cannot distinguish those two cases.
+    pub(in crate::sim) is_task: bool,
     /// Distinguishes a chandle-returning function from a void function/task.
     pub(in crate::sim) ret_chandle: bool,
     /// Automatic function returning an owned SystemVerilog string.
@@ -234,6 +237,7 @@ impl IrFunc {
         pre_fns: Vec<IrPreFn>,
         body: Vec<IrStmt>,
     ) -> Self {
+        let is_task = ret.is_none();
         Self {
             origin: crate::sim::semantic::Origin::Synthetic {
                 reason: "constructed function".to_owned(),
@@ -241,6 +245,7 @@ impl IrFunc {
             c_name,
             inline_expanded: false,
             automatic: true,
+            is_task,
             return_default: None,
             return_signal: None,
             ret_chandle: false,
@@ -291,6 +296,9 @@ impl IrFunc {
     }
     pub fn is_automatic(&self) -> bool {
         self.automatic
+    }
+    pub fn is_task(&self) -> bool {
+        self.is_task
     }
     pub fn ret(&self) -> Option<IrType> {
         self.ret

@@ -175,7 +175,7 @@ endmodule
 
 /// (c) Mixed or-list `@(a or ev)` wakes on EITHER source, as ONE atomic wait:
 /// the trigger cannot be lost between two separate sub-waits.  The generated
-/// C must contain EXACTLY ONE `llg_wait_mixed` call per `@(a or ev)`
+/// C must contain EXACTLY ONE `llg_arm_mixed` call per `@(a or ev)`
 /// statement (this design has two, plus exactly one trigger call) — a
 /// presence-only check could not catch a lowering that splits one site into
 /// several sequential sub-waits.
@@ -224,14 +224,11 @@ endmodule
     assert_eq!(
         model
             .lines()
-            .filter(
-                |line| line.trim_start().starts_with("llg_wait_expressions(")
-                    && line.trim_end().ends_with(", 2);")
-            )
+            .filter(|line| line.contains("llg_arm_mixed(") && line.trim_end().ends_with(", 2));"))
             .count(),
         2,
         "each of the two @(a or ev) statements must lower to EXACTLY ONE \
-         atomic llg_wait_expressions call (never a split into sub-waits)"
+         atomic llg_arm_mixed call (never a split into sub-waits)"
     );
     assert_eq!(
         model.matches("llg_event_trigger(&E_tb_ev);").count(),
@@ -770,7 +767,7 @@ endmodule
     let (stdout, _warnings, model) =
         run_sim(sv, "tb", "event-triggered").expect("triggered event simulation should run");
     assert_eq!(stdout, "triggered checks=3\n");
-    assert!(model.contains("llg_wait_event_triggered"));
+    assert!(model.contains("llg_arm_event_triggered("));
     assert!(model.contains("llg_nba_event"));
 }
 
@@ -820,7 +817,7 @@ endmodule
         stdout,
         "first success at 2000\nsecond failure at 3000\ncounts: 1 1\n"
     );
-    assert!(model.contains("llg_wait_order"));
+    assert!(model.contains("llg_arm_order("));
 }
 
 #[test]

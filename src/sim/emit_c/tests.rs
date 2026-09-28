@@ -78,7 +78,7 @@ fn executable_sensitivity_blocks_drive_process_emission() {
 
     assert_eq!(rendered.matches("llg_rt_finish();").count(), 1);
     let loop_start = rendered.find("_llg_exec_0_b0: ;").unwrap();
-    let wait = rendered.find("llg_wait_any").unwrap();
+    let wait = rendered.find("llg_arm_any").unwrap();
     let finish = rendered.find("llg_rt_finish();").unwrap();
     assert!(loop_start < finish && finish < wait);
 }
@@ -107,7 +107,8 @@ fn executable_loop_blocks_have_cooperative_budget_points() {
 
     let rendered = render(&model).unwrap();
 
-    assert!(rendered.contains("llg_budget_point(\"top.loop\");"));
+    assert!(rendered
+        .contains("if (LLG_CO_UNLIKELY(llg_budget_point(\"top.loop\"))) return LLG_CO_EXIT;"));
 }
 
 #[test]
@@ -420,7 +421,9 @@ fn output_temporary_uses_its_declared_formal_after_c_argument_reordering() {
         .unwrap(),
     );
     let rendered = render_expression_model(model, expression);
-    let process = &rendered[rendered.find("static void p_owner_test(").unwrap()..];
+    let process = &rendered[rendered
+        .find("static llg_co_status_t p_owner_test(")
+        .unwrap()..];
     assert!(
         process.lines().any(|line| line.contains("sv4_replace(F->")
             && line.contains("_llg_local_")
@@ -494,8 +497,11 @@ fn captured_fork_emits_owned_frame_lifecycle() {
         .lines()
         .any(|line| line.contains("llg_frame_capture_value(F->")
             && line.contains("_llg_capture_frame_")));
-    assert!(rendered.contains("llg_fork_with_frame(&p_capture_branch_desc, p_capture_branch"));
-    assert!(rendered.contains("llg_frame_read_value(llg_proc_frame(self), 0u)"));
+    assert!(rendered.contains("llg_fork_with_frame(&p_capture_branch_desc,"));
+    assert!(!rendered.contains("llg_fork_with_frame(&p_capture_branch_desc, p_capture_branch"));
+    assert!(
+        rendered.contains("llg_frame_read_value(llg_proc_frame(LLG_CO_OWNER(ch, llg_proc_t)), 0u)")
+    );
     assert!(
         rendered
             .lines()
@@ -600,7 +606,7 @@ fn evaluated_event_emits_owned_context_and_contextual_callback() {
     ));
     assert!(rendered
         .lines()
-        .any(|line| line.contains("llg_wait_expressions(F->") && line.contains("_llg_events_")));
+        .any(|line| line.contains("llg_arm_expressions(") && line.contains("_llg_events_")));
     assert!(!rendered.contains("out[0] ="));
 }
 

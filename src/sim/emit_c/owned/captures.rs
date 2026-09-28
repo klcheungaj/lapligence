@@ -240,7 +240,8 @@ impl Frame<'_, '_> {
                 )?,
             );
         }
-        let kind = match kind {
+        let join_kind = kind;
+        let kind = match join_kind {
             IrJoinKind::Join => "LLG_JOIN",
             IrJoinKind::Any => "LLG_JOIN_ANY",
             IrJoinKind::None => "LLG_JOIN_NONE",
@@ -250,14 +251,18 @@ impl Frame<'_, '_> {
             let frame = self.name("capture_frame");
             let frame = self.publish_captures(&frame, values);
             self.line(format!(
-                "llg_fork_with_frame(&{}_desc, {}, {}, {group}, {frame});",
-                branch.c_name(),
+                "llg_fork_with_frame(&{}_desc, {}, {group}, {frame});",
                 branch.c_name(),
                 c_string_literal(branch.label())
             ));
             self.line(format!("llg_frame_release({frame});"));
         }
-        self.line(format!("llg_join({group});"));
+        if !branches.is_empty() && join_kind != IrJoinKind::None {
+            self.await_arm(
+                SuspensionOperation::ForkJoin,
+                format!("llg_arm_join(self, {group})"),
+            )?;
+        }
         Ok(())
     }
 }

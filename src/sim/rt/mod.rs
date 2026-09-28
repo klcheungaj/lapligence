@@ -193,6 +193,11 @@ pub fn selftest_source() -> &'static str {
     include_str!("llg_rt_selftest.c")
 }
 
+/// Explicit-frame helper included by [`selftest_source`].
+pub fn selftest_support_source() -> &'static str {
+    include_str!("selftest_co.h")
+}
+
 /// Fenced pre-migration waveform fixture; active tests are in runtime_value_storage.
 pub fn waveform_selftest_source() -> &'static str {
     include_str!("llg_wave_selftest.c")

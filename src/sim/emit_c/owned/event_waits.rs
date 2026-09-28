@@ -44,6 +44,9 @@ fn helper_names(source: &IrWaitSrc) -> Vec<&str> {
 impl Frame<'_, '_> {
     fn wait_event_address(&mut self, event: &IrEventRef) -> Result<String, String> {
         let address = self.event_address(event)?;
+        if matches!(event, IrEventRef::Static(_)) {
+            return Ok(address);
+        }
         // A null handle (also an invalid/X array index) is an inert source,
         // not an expression descriptor with a missing evaluator. The runtime
         // snapshots the object before suspension; this handle only borrows it.
@@ -55,9 +58,123 @@ impl Frame<'_, '_> {
     }
 
     pub(super) fn wait_events(&mut self, specs: &[(IrWaitSrc, IrEdge)]) -> Result<(), String> {
+        if specs.is_empty() {
+            return self.await_arm(SuspensionOperation::EventWait, "llg_arm_time(self, 0ULL)");
+        }
+        if specs.len() == 1 {
+            match &specs[0] {
+                (IrWaitSrc::Sig(name), edge) => {
+                    let signal = self.resolve_lookup(name)?.address;
+                    let arm = match edge {
+                        IrEdge::Any => format!("llg_arm_any(self, (sv4_t*[]){{ {signal} }}, 1)"),
+                        IrEdge::Posedge => format!("llg_arm_edge(self, {signal}, 1)"),
+                        IrEdge::Negedge => format!("llg_arm_edge(self, {signal}, 0)"),
+                    };
+                    return self.await_arm(SuspensionOperation::EventWait, arm);
+                }
+                (IrWaitSrc::Event(event), _) => {
+                    let event = self.event_address(event)?;
+                    return self.await_arm(
+                        SuspensionOperation::EventWait,
+                        format!("llg_arm_event(self, {event})"),
+                    );
+                }
+                _ => {}
+            }
+        }
+        if specs
+            .iter()
+            .all(|(source, _)| matches!(source, IrWaitSrc::Sig(_)))
+        {
+            let entries = specs
+                .iter()
+                .map(|(source, edge)| {
+                    let IrWaitSrc::Sig(name) = source else {
+                        unreachable!("all sources were checked as signals")
+                    };
+                    let signal = self.resolve_lookup(name)?.address;
+                    let edge = match edge {
+                        IrEdge::Any => "LLG_EV_ANY",
+                        IrEdge::Posedge => "LLG_EV_POSEDGE",
+                        IrEdge::Negedge => "LLG_EV_NEGEDGE",
+                    };
+                    Ok(format!("{{ .sig = {signal}, .kind = {edge} }}"))
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            let array = self.declare_array_init(
+                "llg_event_spec_t",
+                "event_specs",
+                entries.len(),
+                &entries.join(", "),
+            );
+            return self.await_arm(
+                SuspensionOperation::EventWait,
+                format!("llg_arm_any_events(self, {array}, {})", entries.len()),
+            );
+        }
+        if specs
+            .iter()
+            .all(|(source, _)| matches!(source, IrWaitSrc::Event(_)))
+        {
+            let events = specs
+                .iter()
+                .map(|(source, _)| {
+                    let IrWaitSrc::Event(event) = source else {
+                        unreachable!("all sources were checked as events")
+                    };
+                    self.event_address(event)
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let array = self.declare_array_init(
+                "const llg_event_t*",
+                "events",
+                events.len(),
+                &events.join(", "),
+            );
+            return self.await_arm(
+                SuspensionOperation::EventWait,
+                format!("llg_arm_events(self, {array}, {})", events.len()),
+            );
+        }
+        if specs
+            .iter()
+            .all(|(source, _)| matches!(source, IrWaitSrc::Sig(_) | IrWaitSrc::Event(_)))
+        {
+            let mut entries = Vec::with_capacity(specs.len());
+            for (source, edge) in specs {
+                let edge = match edge {
+                    IrEdge::Any => "LLG_EV_ANY",
+                    IrEdge::Posedge => "LLG_EV_POSEDGE",
+                    IrEdge::Negedge => "LLG_EV_NEGEDGE",
+                };
+                entries.push(match source {
+                    IrWaitSrc::Sig(name) => format!(
+                        "{{ .sig = {}, .kind = {edge}, .ev = NULL }}",
+                        self.resolve_lookup(name)?.address
+                    ),
+                    IrWaitSrc::Event(event) => format!(
+                        "{{ .sig = NULL, .kind = {edge}, .ev = {} }}",
+                        self.event_address(event)?
+                    ),
+                    _ => unreachable!("simple mixed sources were checked"),
+                });
+            }
+            let array = self.declare_array_init(
+                "llg_wait_src_t",
+                "wait_sources",
+                entries.len(),
+                &entries.join(", "),
+            );
+            return self.await_arm(
+                SuspensionOperation::EventWait,
+                format!("llg_arm_mixed(self, {array}, {})", entries.len()),
+            );
+        }
         let array = self.event_specs(specs)?;
-        self.line(format!("llg_wait_expressions({array}, {});", specs.len()));
-        Ok(())
+        self.await_arm(
+            SuspensionOperation::EventWait,
+            format!("llg_arm_expressions(self, {array}, {})", specs.len()),
+        )
     }
 
     // All user expressions must finish before this returns. The caller must

@@ -486,6 +486,7 @@ fn lp64_layout(ty: &str) -> Result<(usize, usize), String> {
         "llg_string_t" => (32, 8),
         "sv4_select_plan_t" => (20, 4),
         "llg_event_t" => (8, 8),
+        "llg_event_spec_t" => (16, 8),
         "llg_fmt_arg_t" => (48, 8),
         "llg_wait_dependency_t" => (32, 8),
         "llg_expr_event_spec_t" => (104, 8),
@@ -504,6 +505,11 @@ fn lp64_layout(ty: &str) -> Result<(usize, usize), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn event_spec_layout_matches_the_lp64_runtime_contract() {
+        assert_eq!(lp64_layout("llg_event_spec_t").unwrap(), (16, 8));
+    }
 
     #[test]
     fn coframe_starts_with_header_and_rejects_duplicate_fields() {

@@ -32,6 +32,14 @@ fn render_source_with_execution_options(
     .model_c
 }
 
+fn render_fixture(relative: &str) -> String {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let path = root.join("tests/fixtures/sim").join(relative);
+    let source = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+    render_source_with_execution_options(relative, &source, ExecutionAnalysisOptions::default())
+}
+
 const FRAME_CALL_SOURCE: &str = r#"
 module tb;
     task automatic leaf(input integer n);
@@ -55,12 +63,8 @@ fn coroutine_model_emits_root_arguments_polled_frames_and_descriptors() {
     assert!(c.contains("llg_co_frame_t co;"), "{c}");
     assert!(c.contains("sv4_t a0;\n    int depth;"), "{c}");
     assert!(c.contains("fn_tb_leaf_frame_t c0;"), "{c}");
-    assert!(
-        c.lines().any(|line| line.contains("fn_tb_leaf(&F->")
-            && line.contains("calls")
-            && line.contains(".c0);")),
-        "{c}"
-    );
+    assert!(c.contains("LLG_CO_CALL(co, ch,"), "{c}");
+    assert!(c.contains("fn_tb_leaf, &F->"), "{c}");
     assert!(
         c.contains("&fn_tb_leaf_desc, offsetof(fn_tb_middle_frame_t, "),
         "{c}"
@@ -68,13 +72,13 @@ fn coroutine_model_emits_root_arguments_polled_frames_and_descriptors() {
     assert!(c.contains("LLG_CO_ROOT_FRAME_OK(p_tb_proc_"), "{c}");
     assert!(c.contains("LLG_CO_ANCHORED_OK(fn_tb_leaf_frame_t)"), "{c}");
     assert!(
-        c.contains("static const llg_co_desc_t fn_tb_leaf_desc = { NULL"),
+        c.contains("static const llg_co_desc_t fn_tb_leaf_desc = { fn_tb_leaf"),
         "{c}"
     );
 }
 
 #[test]
-fn poll_depth_one_emits_an_anchored_direct_libaco_call() {
+fn poll_depth_one_emits_an_anchored_stackless_call() {
     let c = render_source_with_execution_options(
         "anchored_frame.sv",
         FRAME_CALL_SOURCE,
@@ -85,12 +89,8 @@ fn poll_depth_one_emits_an_anchored_direct_libaco_call() {
     );
 
     assert!(c.contains("LLG_CO_ANCHORED(fn_tb_leaf_frame_t) a0;"), "{c}");
-    assert!(
-        c.lines().any(|line| line.contains("fn_tb_leaf(&F->")
-            && line.contains("calls")
-            && line.contains(".a0.f);")),
-        "{c}"
-    );
+    assert!(c.contains("LLG_CO_CALL_ANCHOR(co, ch,"), "{c}");
+    assert!(c.contains("&fn_tb_leaf_desc, &F->"), "{c}");
     assert!(
         !c.contains("&fn_tb_leaf_desc, offsetof(fn_tb_middle_frame_t"),
         "{c}"
@@ -115,11 +115,14 @@ endmodule
         ExecutionAnalysisOptions::default(),
     );
 
-    assert!(c.contains("void* _llg_arena_call_"), "{c}");
-    assert!(c.contains("llg_co_arena_push(F->arena"), "{c}");
+    assert!(c.contains("llg_co_anchor_t* _llg_arena_call_"), "{c}");
+    assert!(
+        c.contains("LLG_CO_ARENA_ENTER(ch, &fn_tb_recurse_desc"),
+        "{c}"
+    );
     assert!(c.contains("LLG_CO_ANCHOR_FRAME(F->"), "{c}");
-    assert!(c.contains("_llg_arena_call_"), "{c}");
-    assert!(c.contains("llg_co_arena_pop(F->arena"), "{c}");
+    assert!(c.contains("LLG_CO_CALL_ARENA(co, ch,"), "{c}");
+    assert!(!c.contains("F->arena"), "{c}");
     assert!(c.contains("if (F->depth >= 256)"), "{c}");
 }
 
@@ -162,10 +165,7 @@ endmodule
     );
 
     assert!(!c.contains("p_tb_proc_0_frame_t"), "{c}");
-    assert!(
-        c.contains("static void p_tb_proc_0(llg_proc_t* self)"),
-        "{c}"
-    );
+    assert!(c.contains("static void p_tb_proc_0(void)"), "{c}");
     assert!(c.contains("llg_spawn_final(p_tb_proc_0"), "{c}");
 }
 
@@ -207,7 +207,7 @@ fn frames_above_the_embed_limit_are_forced_to_the_arena() {
         },
     );
 
-    assert!(c.contains("llg_co_arena_push(F->arena"), "{c}");
+    assert!(c.contains("LLG_CO_ARENA_ENTER(ch, &fn_tb_leaf_desc"), "{c}");
     assert!(!c.contains("fn_tb_leaf_frame_t c0;"), "{c}");
     assert!(
         !c.contains("LLG_CO_ANCHORED(fn_tb_leaf_frame_t) a0;"),
@@ -268,6 +268,159 @@ fn generated_coroutines_pass_gcc_jump_initialization_check() {
         "generated coroutine model failed -Werror=jump-misses-init:\n{}",
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+#[test]
+fn suspension_sites_emit_the_reviewed_one_shot_arms() {
+    let mut emitted = render_source_with_execution_options(
+        "basic_arms.sv",
+        r#"
+module tb;
+    logic a, b, c;
+    event first, second;
+    initial begin
+        #1;
+        @(posedge a);
+        @(a);
+        @(a or b);
+        @(first);
+        @(first or second);
+        @(a or first);
+    end
+    always @(a or b) b = a;
+    assign c = a & b;
+endmodule
+"#,
+        ExecutionAnalysisOptions::default(),
+    );
+    for fixture in [
+        "coroutine_semantics/event_waits.sv",
+        "partial_features/clocking_h14_zero.sv",
+        "function/timed_task_fork_joins.sv",
+        "process_control/control.sv",
+        "semaphore/suspend.sv",
+        "mailboxes/blocking.sv",
+        "concurrent_assertions/expect.sv",
+        "partial_features/stop_resume.sv",
+    ] {
+        emitted.push_str(&render_fixture(fixture));
+    }
+
+    for arm in [
+        "llg_arm_time(",
+        "llg_arm_any(",
+        "llg_arm_any_dependencies(",
+        "llg_arm_any_events(",
+        "llg_arm_edge(",
+        "llg_arm_event(",
+        "llg_arm_events(",
+        "llg_arm_event_triggered(",
+        "llg_arm_assertion(",
+        "llg_arm_order(",
+        "llg_arm_mixed(",
+        "llg_arm_clocking_cycle(",
+        "llg_arm_join(",
+        "llg_arm_wait_fork(",
+        "llg_arm_process_suspend(",
+        "llg_arm_process_await(",
+        "llg_arm_semaphore_get(",
+        "llg_arm_mailbox_put_value(",
+        "llg_arm_mailbox_get_value(",
+        "llg_arm_stop(",
+    ] {
+        assert!(emitted.contains(arm), "missing generated arm {arm}");
+    }
+    assert_eq!(
+        emitted.matches("LLG_CO_AWAIT(co, ch,").count(),
+        emitted.matches("llg_arm_").count(),
+        "every emitted arm must have exactly one numbered await"
+    );
+}
+
+#[test]
+fn coroutine_and_plain_termination_checks_use_their_abi_forms() {
+    let c = render_source_with_execution_options(
+        "termination_checks.sv",
+        r#"
+module tb;
+    function automatic integer plain_finish(input integer value);
+        if (value) $finish;
+        plain_finish = value;
+    endfunction
+    task automatic timed_finish;
+        #1;
+        $finish;
+    endtask
+    initial begin
+        integer value = plain_finish(0);
+        timed_finish();
+    end
+endmodule
+"#,
+        ExecutionAnalysisOptions::default(),
+    );
+
+    let plain = &c[c
+        .find("static sv4_t fn_tb_plain_finish(sv4_t a0, int depth) {")
+        .unwrap()..];
+    let plain = &plain[..plain.find("\n}\n").unwrap()];
+    assert!(plain.contains("llg_rt_finish_with_level("), "{plain}");
+    assert!(
+        plain.contains("llg_rt_exiting())) goto _llg_return;"),
+        "{plain}"
+    );
+
+    let timed = &c[c
+        .find("static llg_co_status_t fn_tb_timed_finish(llg_co_frame_t* co, llg_co_chain_t* ch) {")
+        .unwrap()..];
+    let timed = &timed[..timed.find("\n}\n").unwrap()];
+    assert!(timed.contains("LLG_CO_EXIT_CHECK(ch);"), "{timed}");
+    assert!(timed.contains("return LLG_CO_DONE;"), "{timed}");
+}
+
+#[test]
+fn loop_budget_points_propagate_exit_in_both_function_shapes() {
+    let c = render_source_with_execution_options(
+        "budget_checks.sv",
+        r#"
+module tb;
+    function automatic integer plain_loop(input integer limit);
+        integer i;
+        plain_loop = 0;
+        for (i = 0; i < limit; i++) plain_loop += i;
+    endfunction
+    task automatic timed_loop(input integer limit);
+        integer i;
+        for (i = 0; i < limit; i++) #1;
+    endtask
+    initial begin
+        integer value = plain_loop(2);
+        timed_loop(value);
+    end
+endmodule
+"#,
+        ExecutionAnalysisOptions::default(),
+    );
+
+    let plain = &c[c
+        .find("static sv4_t fn_tb_plain_loop(sv4_t a0, int depth) {")
+        .unwrap()..];
+    let plain = &plain[..plain.find("\n}\n").unwrap()];
+    assert!(
+        plain.contains("llg_budget_point(\"fn_tb_plain_loop\")"),
+        "{plain}"
+    );
+    assert!(plain.contains("goto _llg_return;"), "{plain}");
+
+    let timed = &c[c
+        .find("static llg_co_status_t fn_tb_timed_loop(llg_co_frame_t* co, llg_co_chain_t* ch) {")
+        .unwrap()..];
+    let timed = &timed[..timed.find("\n}\n").unwrap()];
+    assert!(
+        timed.contains("llg_budget_point(\"fn_tb_timed_loop\")"),
+        "{timed}"
+    );
+    assert!(timed.contains("return LLG_CO_EXIT;"), "{timed}");
 }
 
 fn deep_overlay_source(depth: usize) -> String {

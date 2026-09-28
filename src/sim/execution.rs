@@ -549,7 +549,7 @@ fn effects_for_blocks(ir: &IrModel, blocks: &[ExecutionBlock]) -> Vec<ExecutionE
     effects
 }
 
-fn effects_for_statements(ir: &IrModel, statements: &[IrStmt]) -> Vec<ExecutionEffect> {
+pub(crate) fn effects_for_statements(ir: &IrModel, statements: &[IrStmt]) -> Vec<ExecutionEffect> {
     let mut effects = Vec::new();
     collect_effects(ir, statements, &mut effects, &mut HashSet::new());
     effects.sort();
@@ -2489,15 +2489,7 @@ mod tests {
                 BTreeSet::from([1, 2, 3, 4, 5])
             );
             let rendered = crate::sim::emit_c::render(&model).unwrap();
-            let yielding_calls = [
-                "llg_wait_time(",
-                "llg_wait_any(",
-                "llg_wait_fork(",
-                "llg_rt_stop_with_level(",
-            ]
-            .into_iter()
-            .map(|needle| rendered.matches(needle).count())
-            .sum::<usize>();
+            let yielding_calls = rendered.matches("LLG_CO_AWAIT(co, ch,").count();
             assert_eq!(yielding_calls, sites.len());
             analyses.push(model.analysis().clone());
         }
@@ -2637,7 +2629,9 @@ mod tests {
 
         let c = crate::sim::emit_c::render(&model).unwrap();
         let entry = c.find("_llg_exec_0_b0: ;").unwrap();
-        let wait = c.find("llg_wait_time(3ULL);").unwrap();
+        let wait = c
+            .find("llg_arm_time(LLG_CO_OWNER(ch, llg_proc_t), 3ULL)")
+            .unwrap();
         let resume = wait + c[wait..].find("goto _llg_exec_0_b1;").unwrap();
         let resumed_block = c.find("_llg_exec_0_b1: ;").unwrap();
         let finish = c.find("llg_rt_finish();").unwrap();

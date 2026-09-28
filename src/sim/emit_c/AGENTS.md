@@ -8,8 +8,8 @@ no frontend/DB/FFI/VPI dependencies or reparsing opaque C fragments.
 ## Evaluation and scopes
 
 Every function that may suspend, every non-final process and every fork branch
-uses an explicit POD coroutine frame even while execution remains on libaco.
-Finals retain their C-stack ABI. Route all
+uses an explicit POD coroutine frame and the `llg_co_fn` entry ABI. Finals
+remain plain `void fn(void)` calls. Route all
 typed procedure storage through `Frame::declare` (or its array/loop wrappers):
 `CStack` emits the declaration in place, while `CoFrame` registers a unique field
 and emits only its initialization at that point. Arguments are frame fields too.
@@ -25,13 +25,14 @@ access after its block closes.
 Emit coroutine frame types callee-first. Each storage-bearing block's polled
 callees occupy ordinary members of its deterministic `union callsN`, anchored
 callees use `LLG_CO_ANCHORED(T)`,
-and recursive or oversized callees use the owning process arena. Descriptor
+and recursive or oversized callees use `ch->arena`. Descriptor
 offsets use the complete nested member path. Compute conservative LP64 upper
 bounds with every embedded call charged its 16-byte anchor prefix and sibling
 blocks contributing their maximum rather than their sum; the named
 `ExecutionAnalysisOptions::embed_limit` tunable defaults to 16 KiB and forces
-larger callees onto the arena. Descriptors use `fn = NULL` until stackless entry
-signatures land, but their numbered site tables and frame offsets are final.
+larger callees onto the arena. Descriptors contain the real entry function;
+numbered site tables and dispatch cases must remain one-to-one with every
+emitted await or suspendable call.
 
 Within each struct level, fields observed by the first generated continuation
 statement after a Phase-2 suspension are emitted first, preserving declaration
@@ -42,7 +43,8 @@ deterministic cache-line heuristic, not a liveness proof.
 `Value` carries code, width/sign/fill metadata and an owning descriptor slot.
 Emit ordered setup, calls and cleanup, not nested allocating C expressions.
 Non-addressable real results are scalar temporaries; addressable real locals use
-registered heap-backed doubles, never a suspended coroutine's shared C stack.
+registered heap-backed doubles, never a C stack address that is invalid after
+a stackless return.
 Packed locals have separate lexical cells from expression temporaries.
 No compiler cleanup attributes, statement expressions, VLAs, alloca, C++
 destructors or simulation-lifetime temporary arena.
@@ -95,7 +97,7 @@ Do not emit detached predicates or bypass eligibility through wrappers.
 - Runtime memory-view selectors are evaluated once into registered owners; validate
   physical view/strides before writes. Fixed folds seed from the first mapped
   value, release per-iteration owners, and bound slots by expression complexity,
-  not element count. Include those slots in stack sizing.
+  not element count. Include those slots in the explicit frame layout.
 - Tagged access checks register expected-tag/equality values, release them before
   the C branch and preserve source diagnostics. Retag signed native projections
   in both valid and invalid cases. For `inside` array leaves, change the runtime
@@ -151,7 +153,9 @@ functions. Tear down runtime queues and VPI observers before model storage.
 without cleaning up that live context. Reject double start, allow repeated
 start/close, and preserve `LLG_MODEL_NO_MAIN` for host-controlled entry. The process-global runtime
 supports one model, not concurrent/thread-safe instances. Keep ABI 4/cache markers
-aligned and stale generated C rejected.
+aligned and stale generated C rejected. Emit `LLG_MODEL_PROCESS_ABI 2`, pass
+only immutable descriptors to spawn/fork sites, and initialize through
+`llg_rt_init_with_args_and_precision`; coroutine stack sizing is not model data.
 
 Maintain exact scope/reference checks, array-index disposal, inert invalid handles
 and source-size preflight regressions. Preserve these distinct validation layers:

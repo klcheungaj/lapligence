@@ -162,9 +162,8 @@ endmodule
     assert_eq!(stdout, "go set at 3000\ndata=2a at 3000\n");
 }
 
-/// (d) Wait in a task: the task is wait-bearing, so it must be inlined at its
-/// call site (the wait loop appears inside the caller's coroutine) and must
-/// NOT get a standalone C function.
+/// (d) Wait in a task: an ordinary wait-bearing task is a native coroutine
+/// called from its caller's coroutine.
 #[test]
 fn sim_wait_task_uses_native_coroutine_call() {
     if !llg::sim::build::cmake_available() {
@@ -193,8 +192,8 @@ endmodule
 "#;
 
     // Hand-simulation:
-    //   t=0  the caller's initial inlines wait_for: the wait loop on go runs
-    //        inside the caller's coroutine and suspends (go=0).
+    //   t=0  the caller's initial calls wait_for, whose coroutine suspends on
+    //        the wait loop while go=0.
     //   t=2  producer: go 0->1, prints "go set at 2".  The caller wakes,
     //        breaks out of the inlined wait loop and prints
     //        "task wait done at 2".
@@ -207,7 +206,7 @@ endmodule
     let (stdout, _warnings, model) = run_sim(sv, "tb", "taskwait").expect("simulation should run");
     assert_eq!(stdout, "go set at 2000\ntask wait done at 2000\n");
     assert!(
-        model.contains("sv4_clone(&G_tb_go)") && model.contains("llg_wait_any_dependencies("),
+        model.contains("sv4_clone(&G_tb_go)") && model.contains("llg_arm_any_dependencies("),
         "owned condition read and coroutine wait must both be emitted"
     );
     assert!(

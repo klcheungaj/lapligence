@@ -108,8 +108,10 @@ impl EmitCtx<'_, '_> {
         if can_be_disabled && self.cg.task_has_wait(ft, callee_inst) {
             // Timed cancellation must unwind the callee before caller-side
             // copy-out. Delay-free calls use their native activation scope,
-            // including recursive calls. Keep the timed path inline until task returns
-            // carry an explicit cancellation result in the C ABI. The
+            // including recursive calls. Keep this timed path inline until
+            // stackless task returns carry an explicit cancellation result.
+            // Inline storage is hoisted into the caller frame, so no C stack
+            // address escapes across a suspension. The
             // declaration-level target check covers callers that disable a
             // task externally rather than from inside the task body.
             self.lower_task_inline(ft, callee_inst, h, &formals, &bound, call_receiver.class)

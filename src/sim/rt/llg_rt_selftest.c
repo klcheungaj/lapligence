@@ -2,9 +2,10 @@
 // (vectors mirrored from src/core/elab.rs unit tests) plus scheduler behavior
 // (delay ordering, NBA visibility, ping-pong via signal events).
 //
-// Build: gcc -std=c11 -O2 llg_rt_selftest.c llg_rt.c aco.c acosw.S -o selftest
+// Build: gcc -std=c11 -O2 llg_rt_selftest.c llg_rt.c llg_co.c -o selftest
 
 #include "llg_rt.h"
+#include "selftest_co.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -875,33 +876,33 @@ static sv4_t s_a = SV4_EMPTY, s_b = SV4_EMPTY; // ping-pong signals
 static int n_a, n_b;
 static int ping_done;
 
-static void proc_ping(llg_proc_t* self) {
+LLG_SELFTEST_PROCESS(proc_ping, 1) {
+    LLG_SELFTEST_BEGIN(1);
     for (;;) {
-        sv4_t* sg[] = { &s_b }; llg_wait_any(sg, 1);
+        LLG_SELFTEST_AWAIT(1, llg_arm_any(self, (sv4_t*[]){&s_b}, 1));
         n_a++;
         llg_ba(&s_a, test_temp(sv4_bitneg(s_a)));
         if (n_a >= 50) {
-            llg_rt_finish();
-            llg_proc_done(self);
-            return;
+            LLG_SELFTEST_FINISH();
         }
     }
 }
 
-static void proc_pong(llg_proc_t* self) {
-    (void)self;
+LLG_SELFTEST_PROCESS(proc_pong, 1) {
+    LLG_SELFTEST_BEGIN(1);
     for (;;) {
-        sv4_t* sg[] = { &s_a }; llg_wait_any(sg, 1);
+        LLG_SELFTEST_AWAIT(1, llg_arm_any(self, (sv4_t*[]){&s_a}, 1));
         n_b++;
         llg_ba(&s_b, test_temp(sv4_bitneg(s_b)));
     }
 }
 
-static void proc_kick(llg_proc_t* self) {
+LLG_SELFTEST_PROCESS(proc_kick, 0) {
+    LLG_SELFTEST_BEGIN(0);
     llg_ba(&s_a, test_temp(SV4_C(0, 1)));
     llg_ba(&s_b, test_temp(SV4_C(0, 1)));
     llg_ba(&s_a, test_temp(SV4_C(1, 1)));
-    llg_proc_done(self);
+    LLG_SELFTEST_DONE();
 }
 
 static double real_dependency_value;
@@ -913,45 +914,54 @@ static void real_expression_eval(double* out, void* context) {
     *out = real_dependency_value + 1.0;
 }
 
-static void real_dependency_waiter(llg_proc_t* self) {
-    for (int i = 0; i < 3; i++) {
-        llg_wait_dependency_t dependency = { .real = &real_dependency_value };
-        llg_wait_any_dependencies(&dependency, 1);
+LLG_SELFTEST_PROCESS(real_dependency_waiter, 1) {
+    LLG_SELFTEST_BEGIN(1);
+    for (F->index = 0; F->index < 3; F->index++) {
+        LLG_SELFTEST_AWAIT(
+            1, llg_arm_any_dependencies(
+                   self,
+                   (llg_wait_dependency_t[]){{.real = &real_dependency_value}},
+                   1));
         real_dependency_wakes++;
     }
-    llg_proc_done(self);
+    LLG_SELFTEST_DONE();
 }
 
-static void real_expression_waiter(llg_proc_t* self) {
-    llg_wait_dependency_t dependency = { .real = &real_dependency_value };
-    llg_expr_event_spec_t expression = {
-        .real_eval = real_expression_eval,
-        .kind = LLG_EV_ANY,
-        .dependencies = &dependency,
-        .n_dependencies = 1,
-        .real = 1,
-    };
-    for (int i = 0; i < 3; i++) {
-        llg_wait_expressions(&expression, 1);
+LLG_SELFTEST_PROCESS(real_expression_waiter, 1) {
+    LLG_SELFTEST_BEGIN(1);
+    for (F->index = 0; F->index < 3; F->index++) {
+        LLG_SELFTEST_AWAIT(
+            1, llg_arm_expressions(
+                   self,
+                   (llg_expr_event_spec_t[]){{
+                       .real_eval = real_expression_eval,
+                       .kind = LLG_EV_ANY,
+                       .dependencies = (llg_wait_dependency_t[]){
+                           {.real = &real_dependency_value}},
+                       .n_dependencies = 1,
+                       .real = 1,
+                   }},
+                   1));
         real_expression_wakes++;
     }
-    llg_proc_done(self);
+    LLG_SELFTEST_DONE();
 }
 
-static void real_dependency_writer(llg_proc_t* self) {
-    llg_wait_time(1);
+LLG_SELFTEST_PROCESS(real_dependency_writer, 6) {
+    LLG_SELFTEST_BEGIN(6);
+    LLG_SELFTEST_AWAIT(1, llg_arm_time(self, 1));
     llg_ba_d(&real_dependency_value, 0.0);
-    llg_wait_time(1);
+    LLG_SELFTEST_AWAIT(2, llg_arm_time(self, 1));
     llg_ba_d(&real_dependency_value, 1.0);
-    llg_wait_time(1);
+    LLG_SELFTEST_AWAIT(3, llg_arm_time(self, 1));
     llg_ba_d(&real_dependency_value, 1.0);
-    llg_wait_time(1);
+    LLG_SELFTEST_AWAIT(4, llg_arm_time(self, 1));
     llg_ba_d(&real_dependency_value, -0.0);
-    llg_wait_time(1);
+    LLG_SELFTEST_AWAIT(5, llg_arm_time(self, 1));
     llg_ba_d(&real_dependency_value, real_from_bits(0x7ff8000000000000ULL));
-    llg_wait_time(1);
+    LLG_SELFTEST_AWAIT(6, llg_arm_time(self, 1));
     llg_ba_d(&real_dependency_value, real_from_bits(0x7ff8000000000000ULL));
-    llg_proc_done(self);
+    LLG_SELFTEST_DONE();
 }
 
 static void test_real_dependencies(void) {
@@ -959,9 +969,9 @@ static void test_real_dependencies(void) {
     real_dependency_value = 0.0;
     real_dependency_wakes = 0;
     real_expression_wakes = 0;
-    llg_spawn(&llg_libaco_desc, real_dependency_waiter, "real-dependency-waiter");
-    llg_spawn(&llg_libaco_desc, real_expression_waiter, "real-expression-waiter");
-    llg_spawn(&llg_libaco_desc, real_dependency_writer, "real-dependency-writer");
+    llg_spawn(&real_dependency_waiter_desc, "real-dependency-waiter");
+    llg_spawn(&real_expression_waiter_desc, "real-expression-waiter");
+    llg_spawn(&real_dependency_writer_desc, "real-dependency-writer");
     llg_rt_run();
     CHECK(real_dependency_wakes == 3);
     CHECK(real_expression_wakes == 3);
@@ -972,20 +982,22 @@ static uint64_t order_log[8];
 static int order_n;
 static int delay_ok;
 
-static void proc_delay_a(llg_proc_t* self) {
-    llg_wait_time(10);
+LLG_SELFTEST_PROCESS(proc_delay_a, 2) {
+    LLG_SELFTEST_BEGIN(2);
+    LLG_SELFTEST_AWAIT(1, llg_arm_time(self, 10));
     order_log[order_n++] = llg_time();
-    llg_wait_time(5);
+    LLG_SELFTEST_AWAIT(2, llg_arm_time(self, 5));
     order_log[order_n++] = llg_time();
-    llg_proc_done(self);
+    LLG_SELFTEST_DONE();
 }
 
-static void proc_delay_b(llg_proc_t* self) {
-    llg_wait_time(5);
+LLG_SELFTEST_PROCESS(proc_delay_b, 2) {
+    LLG_SELFTEST_BEGIN(2);
+    LLG_SELFTEST_AWAIT(1, llg_arm_time(self, 5));
     order_log[order_n++] = llg_time();
-    llg_wait_time(10);
+    LLG_SELFTEST_AWAIT(2, llg_arm_time(self, 10));
     order_log[order_n++] = llg_time();
-    llg_proc_done(self);
+    LLG_SELFTEST_DONE();
 }
 
 // NBA visibility: writer does `a = 1` (blocking) then `b <= 1` (NBA) at t=1.
@@ -995,30 +1007,32 @@ static sv4_t n_sig_a = SV4_EMPTY, n_sig_b = SV4_EMPTY;
 static int nba_read_old_ok;
 static int nba_level_ok;
 
-static void proc_nba_write(llg_proc_t* self) {
-    llg_wait_time(1);
+LLG_SELFTEST_PROCESS(proc_nba_write, 2) {
+    LLG_SELFTEST_BEGIN(2);
+    LLG_SELFTEST_AWAIT(1, llg_arm_time(self, 1));
     llg_ba(&n_sig_a, test_temp(SV4_C(1, 1)));
     llg_nba(&n_sig_b, test_temp(SV4_C(1, 1)));
-    llg_wait_time(1);
+    LLG_SELFTEST_AWAIT(2, llg_arm_time(self, 1));
     nba_level_ok = nba_level_ok && u(n_sig_b) == 1; // committed by now
-    llg_rt_finish();
-    llg_proc_done(self);
+    LLG_SELFTEST_FINISH();
 }
 
-static void proc_nba_read(llg_proc_t* self) {
-    llg_wait_edge(&n_sig_a, 1);
+LLG_SELFTEST_PROCESS(proc_nba_read, 2) {
+    LLG_SELFTEST_BEGIN(2);
+    LLG_SELFTEST_AWAIT(1, llg_arm_edge(self, &n_sig_a, 1));
     // NBA region for t=1 has NOT run yet: b must still hold its old value 0.
     nba_read_old_ok = u(n_sig_b) == 0;
-    llg_wait_level(&n_sig_b, test_temp(SV4_C(1, 1)));
+    LLG_SELFTEST_AWAIT(
+        2, llg_arm_level(self, &n_sig_b, test_temp(SV4_C(1, 1))));
     nba_level_ok = u(n_sig_b) == 1;
-    llg_proc_done(self);
+    LLG_SELFTEST_DONE();
 }
 
-static void lifecycle_trigger_proc(llg_proc_t* self) {
+LLG_SELFTEST_PROCESS(lifecycle_trigger_proc, 0) {
+    LLG_SELFTEST_BEGIN(0);
     llg_event_trigger(&lifecycle_event);
     lifecycle_triggered_inside_run = llg_event_triggered(&lifecycle_event);
-    llg_rt_finish();
-    llg_proc_done(self);
+    LLG_SELFTEST_FINISH();
 }
 
 static void test_event_triggered_lifecycle(void) {
@@ -1029,7 +1043,7 @@ static void test_event_triggered_lifecycle(void) {
     memset(&lifecycle_event_object, 0, sizeof(lifecycle_event_object));
     lifecycle_event.object = &lifecycle_event_object;
     lifecycle_triggered_inside_run = 0;
-    llg_spawn(&llg_libaco_desc, lifecycle_trigger_proc, "event-lifecycle");
+    llg_spawn(&lifecycle_trigger_proc_desc, "event-lifecycle");
     llg_rt_run();
     CHECK(lifecycle_triggered_inside_run);
     CHECK(!llg_event_triggered(&lifecycle_event));
@@ -1042,9 +1056,9 @@ static void test_event_triggered_lifecycle(void) {
 static void test_scheduler(void) {
     // ping-pong
     llg_rt_init();
-    llg_spawn(&llg_libaco_desc, proc_ping, "ping");
-    llg_spawn(&llg_libaco_desc, proc_pong, "pong");
-    llg_spawn(&llg_libaco_desc, proc_kick, "kick");
+    llg_spawn(&proc_ping_desc, "ping");
+    llg_spawn(&proc_pong_desc, "pong");
+    llg_spawn(&proc_kick_desc, "kick");
     llg_rt_run();
     ping_done = 1;
     CHECK(n_a > 0 && n_b > 0);
@@ -1054,8 +1068,8 @@ static void test_scheduler(void) {
     // delay ordering
     llg_rt_init();
     order_n = 0;
-    llg_spawn(&llg_libaco_desc, proc_delay_a, "da");
-    llg_spawn(&llg_libaco_desc, proc_delay_b, "db");
+    llg_spawn(&proc_delay_a_desc, "da");
+    llg_spawn(&proc_delay_b_desc, "db");
     llg_rt_run();
     CHECK(order_n == 4);
     if (order_n == 4) {
@@ -1068,8 +1082,8 @@ static void test_scheduler(void) {
     llg_rt_init();
     nba_read_old_ok = 0;
     nba_level_ok = 0;
-    llg_spawn(&llg_libaco_desc, proc_nba_write, "nw");
-    llg_spawn(&llg_libaco_desc, proc_nba_read, "nr");
+    llg_spawn(&proc_nba_write_desc, "nw");
+    llg_spawn(&proc_nba_read_desc, "nr");
     llg_rt_run();
     CHECK(nba_read_old_ok);
     CHECK(nba_level_ok);
@@ -1084,29 +1098,31 @@ static uint64_t fj1_log[8];
 static int fj1_log_n;
 static int fj1_ok;
 
-static void fj1_child_a(llg_proc_t* self) {
-    llg_wait_time(5);
+LLG_SELFTEST_PROCESS(fj1_child_a, 1) {
+    LLG_SELFTEST_BEGIN(1);
+    LLG_SELFTEST_AWAIT(1, llg_arm_time(self, 5));
     llg_ba(&fj1_sig_a, test_temp(SV4_C(1, 1)));
     fj1_log[fj1_log_n++] = llg_time();
-    llg_proc_done(self);
+    LLG_SELFTEST_DONE();
 }
 
-static void fj1_child_b(llg_proc_t* self) {
-    llg_wait_time(10);
+LLG_SELFTEST_PROCESS(fj1_child_b, 1) {
+    LLG_SELFTEST_BEGIN(1);
+    LLG_SELFTEST_AWAIT(1, llg_arm_time(self, 10));
     llg_ba(&fj1_sig_b, test_temp(SV4_C(1, 1)));
     fj1_log[fj1_log_n++] = llg_time();
-    llg_proc_done(self);
+    LLG_SELFTEST_DONE();
 }
 
-static void fj1_parent(llg_proc_t* self) {
-    llg_fork_group_t* grp = llg_fork_group_new(LLG_JOIN);
-    llg_fork(&llg_libaco_desc, fj1_child_a, "fj1a", grp);
-    llg_fork(&llg_libaco_desc, fj1_child_b, "fj1b", grp);
-    llg_join(grp); // resumes at t=10, only after both children finished
+LLG_SELFTEST_PROCESS(fj1_parent, 1) {
+    LLG_SELFTEST_BEGIN(1);
+    F->group = llg_fork_group_new(LLG_JOIN);
+    llg_fork(&fj1_child_a_desc, "fj1a", F->group);
+    llg_fork(&fj1_child_b_desc, "fj1b", F->group);
+    LLG_SELFTEST_AWAIT(1, llg_arm_join(self, F->group));
     fj1_log[fj1_log_n++] = llg_time();
     fj1_ok = u(fj1_sig_a) == 1 && u(fj1_sig_b) == 1;
-    llg_rt_finish();
-    llg_proc_done(self);
+    LLG_SELFTEST_FINISH();
 }
 
 // (2) join_any: the parent resumes on the FIRST completion; the other child
@@ -1114,28 +1130,30 @@ static void fj1_parent(llg_proc_t* self) {
 static sv4_t fj2_sig_a = SV4_EMPTY, fj2_sig_b = SV4_EMPTY;
 static int fj2_ok;
 
-static void fj2_child_a(llg_proc_t* self) {
-    llg_wait_time(5);
+LLG_SELFTEST_PROCESS(fj2_child_a, 1) {
+    LLG_SELFTEST_BEGIN(1);
+    LLG_SELFTEST_AWAIT(1, llg_arm_time(self, 5));
     llg_ba(&fj2_sig_a, test_temp(SV4_C(1, 1)));
-    llg_proc_done(self);
+    LLG_SELFTEST_DONE();
 }
 
-static void fj2_child_b(llg_proc_t* self) {
-    llg_wait_time(10);
+LLG_SELFTEST_PROCESS(fj2_child_b, 1) {
+    LLG_SELFTEST_BEGIN(1);
+    LLG_SELFTEST_AWAIT(1, llg_arm_time(self, 10));
     llg_ba(&fj2_sig_b, test_temp(SV4_C(1, 1)));
-    llg_proc_done(self);
+    LLG_SELFTEST_DONE();
 }
 
-static void fj2_parent(llg_proc_t* self) {
-    llg_fork_group_t* grp = llg_fork_group_new(LLG_JOIN_ANY);
-    llg_fork(&llg_libaco_desc, fj2_child_a, "fj2a", grp);
-    llg_fork(&llg_libaco_desc, fj2_child_b, "fj2b", grp);
-    llg_join(grp); // wakes at t=5 on the first completion
-    int first_ok = u(fj2_sig_a) == 1 && u(fj2_sig_b) == 0;
-    llg_wait_fork(); // blocks until the whole group completes (t=10)
-    fj2_ok = first_ok && u(fj2_sig_a) == 1 && u(fj2_sig_b) == 1;
-    llg_rt_finish();
-    llg_proc_done(self);
+LLG_SELFTEST_PROCESS(fj2_parent, 2) {
+    LLG_SELFTEST_BEGIN(2);
+    F->group = llg_fork_group_new(LLG_JOIN_ANY);
+    llg_fork(&fj2_child_a_desc, "fj2a", F->group);
+    llg_fork(&fj2_child_b_desc, "fj2b", F->group);
+    LLG_SELFTEST_AWAIT(1, llg_arm_join(self, F->group));
+    F->flag = u(fj2_sig_a) == 1 && u(fj2_sig_b) == 0;
+    LLG_SELFTEST_AWAIT(2, llg_arm_wait_fork(self));
+    fj2_ok = F->flag && u(fj2_sig_a) == 1 && u(fj2_sig_b) == 1;
+    LLG_SELFTEST_FINISH();
 }
 
 // (3) join_none: llg_join returns immediately (children still pending) and
@@ -1143,56 +1161,61 @@ static void fj2_parent(llg_proc_t* self) {
 static sv4_t fj3_sig_a = SV4_EMPTY, fj3_sig_b = SV4_EMPTY;
 static int fj3_immediate_ok, fj3_done_ok;
 
-static void fj3_child_a(llg_proc_t* self) {
-    llg_wait_time(5);
+LLG_SELFTEST_PROCESS(fj3_child_a, 1) {
+    LLG_SELFTEST_BEGIN(1);
+    LLG_SELFTEST_AWAIT(1, llg_arm_time(self, 5));
     llg_ba(&fj3_sig_a, test_temp(SV4_C(1, 1)));
-    llg_proc_done(self);
+    LLG_SELFTEST_DONE();
 }
 
-static void fj3_child_b(llg_proc_t* self) {
-    llg_wait_time(10);
+LLG_SELFTEST_PROCESS(fj3_child_b, 1) {
+    LLG_SELFTEST_BEGIN(1);
+    LLG_SELFTEST_AWAIT(1, llg_arm_time(self, 10));
     llg_ba(&fj3_sig_b, test_temp(SV4_C(1, 1)));
-    llg_proc_done(self);
+    LLG_SELFTEST_DONE();
 }
 
-static void fj3_parent(llg_proc_t* self) {
-    llg_fork_group_t* grp = llg_fork_group_new(LLG_JOIN_NONE);
-    llg_fork(&llg_libaco_desc, fj3_child_a, "fj3a", grp);
-    llg_fork(&llg_libaco_desc, fj3_child_b, "fj3b", grp);
-    uint64_t t0 = llg_time();
-    llg_join(grp); // returns immediately, no yield
-    fj3_immediate_ok = (llg_time() == t0) && u(fj3_sig_a) == 0 && u(fj3_sig_b) == 0;
-    llg_wait_time(15); // children finish on their own
+LLG_SELFTEST_PROCESS(fj3_parent, 2) {
+    LLG_SELFTEST_BEGIN(2);
+    F->group = llg_fork_group_new(LLG_JOIN_NONE);
+    llg_fork(&fj3_child_a_desc, "fj3a", F->group);
+    llg_fork(&fj3_child_b_desc, "fj3b", F->group);
+    F->time = llg_time();
+    LLG_SELFTEST_AWAIT(1, llg_arm_join(self, F->group));
+    fj3_immediate_ok = (llg_time() == F->time) && u(fj3_sig_a) == 0 &&
+                       u(fj3_sig_b) == 0;
+    LLG_SELFTEST_AWAIT(2, llg_arm_time(self, 15));
     fj3_done_ok = u(fj3_sig_a) == 1 && u(fj3_sig_b) == 1;
-    llg_rt_finish();
-    llg_proc_done(self);
+    LLG_SELFTEST_FINISH();
 }
 
 // (4) wait_fork after join_none: blocks until the group completes.
 static sv4_t fj4_sig_a = SV4_EMPTY, fj4_sig_b = SV4_EMPTY;
 static int fj4_ok;
 
-static void fj4_child_a(llg_proc_t* self) {
-    llg_wait_time(5);
+LLG_SELFTEST_PROCESS(fj4_child_a, 1) {
+    LLG_SELFTEST_BEGIN(1);
+    LLG_SELFTEST_AWAIT(1, llg_arm_time(self, 5));
     llg_ba(&fj4_sig_a, test_temp(SV4_C(1, 1)));
-    llg_proc_done(self);
+    LLG_SELFTEST_DONE();
 }
 
-static void fj4_child_b(llg_proc_t* self) {
-    llg_wait_time(10);
+LLG_SELFTEST_PROCESS(fj4_child_b, 1) {
+    LLG_SELFTEST_BEGIN(1);
+    LLG_SELFTEST_AWAIT(1, llg_arm_time(self, 10));
     llg_ba(&fj4_sig_b, test_temp(SV4_C(1, 1)));
-    llg_proc_done(self);
+    LLG_SELFTEST_DONE();
 }
 
-static void fj4_parent(llg_proc_t* self) {
-    llg_fork_group_t* grp = llg_fork_group_new(LLG_JOIN_NONE);
-    llg_fork(&llg_libaco_desc, fj4_child_a, "fj4a", grp);
-    llg_fork(&llg_libaco_desc, fj4_child_b, "fj4b", grp);
-    llg_join(grp);      // immediate (join_none)
-    llg_wait_fork();    // must block until the slowest child (t=10)
+LLG_SELFTEST_PROCESS(fj4_parent, 2) {
+    LLG_SELFTEST_BEGIN(2);
+    F->group = llg_fork_group_new(LLG_JOIN_NONE);
+    llg_fork(&fj4_child_a_desc, "fj4a", F->group);
+    llg_fork(&fj4_child_b_desc, "fj4b", F->group);
+    LLG_SELFTEST_AWAIT(1, llg_arm_join(self, F->group));
+    LLG_SELFTEST_AWAIT(2, llg_arm_wait_fork(self));
     fj4_ok = (llg_time() == 10) && u(fj4_sig_a) == 1 && u(fj4_sig_b) == 1;
-    llg_rt_finish();
-    llg_proc_done(self);
+    LLG_SELFTEST_FINISH();
 }
 
 // (5) disable_fork: a child waiting on a long delay is killed; its signal
@@ -1201,20 +1224,22 @@ static void fj4_parent(llg_proc_t* self) {
 static sv4_t fj5_sig = SV4_EMPTY;
 static int fj5_ok;
 
-static void fj5_child(llg_proc_t* self) {
-    llg_wait_time(100);
+LLG_SELFTEST_PROCESS(fj5_child, 1) {
+    LLG_SELFTEST_BEGIN(1);
+    LLG_SELFTEST_AWAIT(1, llg_arm_time(self, 100));
     llg_ba(&fj5_sig, test_temp(SV4_C(1, 1)));
-    llg_proc_done(self);
+    LLG_SELFTEST_DONE();
 }
 
-static void fj5_parent(llg_proc_t* self) {
-    llg_fork_group_t* grp = llg_fork_group_new(LLG_JOIN_NONE);
-    llg_fork(&llg_libaco_desc, fj5_child, "fj5", grp);
-    llg_wait_time(5);   // let the child register its #100 wait
-    llg_disable_fork(); // kill the child
-    llg_wait_time(5);   // t=10: well past the child's #100 wakeup would have been
+LLG_SELFTEST_PROCESS(fj5_parent, 2) {
+    LLG_SELFTEST_BEGIN(2);
+    F->group = llg_fork_group_new(LLG_JOIN_NONE);
+    llg_fork(&fj5_child_desc, "fj5", F->group);
+    LLG_SELFTEST_AWAIT(1, llg_arm_time(self, 5));
+    llg_disable_fork(self);
+    LLG_SELFTEST_AWAIT(2, llg_arm_time(self, 5));
     fj5_ok = u(fj5_sig) == 0;
-    llg_proc_done(self); // no finish: sim must end because nothing is left
+    LLG_SELFTEST_DONE();
 }
 
 // (6) a killed child's pending NBA is NOT committed: the child records a
@@ -1223,89 +1248,92 @@ static void fj5_parent(llg_proc_t* self) {
 static sv4_t fj6_go = SV4_EMPTY, fj6_sig = SV4_EMPTY;
 static int fj6_ok;
 
-static void fj6_child(llg_proc_t* self) {
+LLG_SELFTEST_PROCESS(fj6_child, 1) {
+    LLG_SELFTEST_BEGIN(1);
     llg_nba(&fj6_sig, test_temp(SV4_C(1, 1))); // pending non-blocking assignment
     llg_ba(&fj6_go, test_temp(SV4_C(1, 1)));   // wake the parent before being killed
-    llg_wait_time(100);
+    LLG_SELFTEST_AWAIT(1, llg_arm_time(self, 100));
     llg_ba(&fj6_sig, test_temp(SV4_C(1, 1)));  // never reached
-    llg_proc_done(self);
+    LLG_SELFTEST_DONE();
 }
 
-static void fj6_parent(llg_proc_t* self) {
-    llg_fork_group_t* grp = llg_fork_group_new(LLG_JOIN_NONE);
-    llg_fork(&llg_libaco_desc, fj6_child, "fj6", grp);
-    llg_wait_edge(&fj6_go, 1); // t=0: child recorded its NBA and signaled us
-    llg_disable_fork();        // kill it before the NBA region commits
-    llg_wait_time(5);
+LLG_SELFTEST_PROCESS(fj6_parent, 2) {
+    LLG_SELFTEST_BEGIN(2);
+    F->group = llg_fork_group_new(LLG_JOIN_NONE);
+    llg_fork(&fj6_child_desc, "fj6", F->group);
+    LLG_SELFTEST_AWAIT(1, llg_arm_edge(self, &fj6_go, 1));
+    llg_disable_fork(self);
+    LLG_SELFTEST_AWAIT(2, llg_arm_time(self, 5));
     fj6_ok = u(fj6_sig) == 0;   // the pending NBA must never be committed
-    llg_rt_finish();
-    llg_proc_done(self);
+    LLG_SELFTEST_FINISH();
 }
 
 // (7) nested join_none: a completed child stays alive while its detached
 // descendant still uses the child as its fork-group parent.
 static int fj7_descendant_done, fj7_ok;
 
-static void fj7_grandchild(llg_proc_t* self) {
-    llg_wait_time(2);
+LLG_SELFTEST_PROCESS(fj7_grandchild, 1) {
+    LLG_SELFTEST_BEGIN(1);
+    LLG_SELFTEST_AWAIT(1, llg_arm_time(self, 2));
     fj7_descendant_done = 1;
-    llg_proc_done(self);
+    LLG_SELFTEST_DONE();
 }
 
-static void fj7_child(llg_proc_t* self) {
-    llg_fork_group_t* grp = llg_fork_group_new(LLG_JOIN_NONE);
-    llg_fork(&llg_libaco_desc, fj7_grandchild, "fj7g", grp);
-    llg_join(grp);
-    llg_proc_done(self);
+LLG_SELFTEST_PROCESS(fj7_child, 1) {
+    LLG_SELFTEST_BEGIN(1);
+    F->group = llg_fork_group_new(LLG_JOIN_NONE);
+    llg_fork(&fj7_grandchild_desc, "fj7g", F->group);
+    LLG_SELFTEST_AWAIT(1, llg_arm_join(self, F->group));
+    LLG_SELFTEST_DONE();
 }
 
-static void fj7_parent(llg_proc_t* self) {
-    llg_fork_group_t* grp = llg_fork_group_new(LLG_JOIN);
-    llg_fork(&llg_libaco_desc, fj7_child, "fj7c", grp);
-    llg_join(grp);
-    llg_wait_time(1);
-    int parent_retained = llg_rt_process_count() == 3;
-    llg_wait_time(2);
-    fj7_ok = parent_retained && fj7_descendant_done &&
+LLG_SELFTEST_PROCESS(fj7_parent, 3) {
+    LLG_SELFTEST_BEGIN(3);
+    F->group = llg_fork_group_new(LLG_JOIN);
+    llg_fork(&fj7_child_desc, "fj7c", F->group);
+    LLG_SELFTEST_AWAIT(1, llg_arm_join(self, F->group));
+    LLG_SELFTEST_AWAIT(2, llg_arm_time(self, 1));
+    F->flag = llg_rt_process_count() == 3;
+    LLG_SELFTEST_AWAIT(3, llg_arm_time(self, 2));
+    fj7_ok = F->flag && fj7_descendant_done &&
              llg_rt_process_count() == 1 && llg_time() == 3;
-    llg_rt_finish();
-    llg_proc_done(self);
+    LLG_SELFTEST_FINISH();
 }
 
 // (8) completed fork slots are reusable across more than the process-table
 // capacity when only one child is live at a time.
 static int fj8_count, fj8_ok;
 
-static void fj8_child(llg_proc_t* self) {
-    llg_wait_time(1);
+LLG_SELFTEST_PROCESS(fj8_child, 1) {
+    LLG_SELFTEST_BEGIN(1);
+    LLG_SELFTEST_AWAIT(1, llg_arm_time(self, 1));
     fj8_count++;
-    llg_proc_done(self);
+    LLG_SELFTEST_DONE();
 }
 
-static void fj8_parent(llg_proc_t* self) {
-    const int total = LLG_MAX_PROCS + 64;
-    for (int i = 0; i < total; i++) {
-        llg_fork_group_t* grp = llg_fork_group_new(LLG_JOIN);
-        llg_fork(&llg_libaco_desc, fj8_child, "fj8c", grp);
-        llg_join(grp);
+LLG_SELFTEST_PROCESS(fj8_parent, 1) {
+    LLG_SELFTEST_BEGIN(1);
+    for (F->index = 0; F->index < LLG_MAX_PROCS + 64; F->index++) {
+        F->group = llg_fork_group_new(LLG_JOIN);
+        llg_fork(&fj8_child_desc, "fj8c", F->group);
+        LLG_SELFTEST_AWAIT(1, llg_arm_join(self, F->group));
     }
-    fj8_ok = fj8_count == total;
-    llg_rt_finish();
-    llg_proc_done(self);
+    fj8_ok = fj8_count == LLG_MAX_PROCS + 64;
+    LLG_SELFTEST_FINISH();
 }
 
 // (9) an empty fork group is finalized even though no child can issue the
 // completion callback; a following wait_fork therefore returns immediately.
 static int fj9_ok;
 
-static void fj9_parent(llg_proc_t* self) {
-    llg_fork_group_t* grp = llg_fork_group_new(LLG_JOIN_NONE);
-    llg_join(grp);
-    uint64_t before = llg_time();
-    llg_wait_fork();
-    fj9_ok = llg_time() == before && llg_rt_process_count() == 1;
-    llg_rt_finish();
-    llg_proc_done(self);
+LLG_SELFTEST_PROCESS(fj9_parent, 2) {
+    LLG_SELFTEST_BEGIN(2);
+    F->group = llg_fork_group_new(LLG_JOIN_NONE);
+    LLG_SELFTEST_AWAIT(1, llg_arm_join(self, F->group));
+    F->time = llg_time();
+    LLG_SELFTEST_AWAIT(2, llg_arm_wait_fork(self));
+    fj9_ok = llg_time() == F->time && llg_rt_process_count() == 1;
+    LLG_SELFTEST_FINISH();
 }
 
 static void test_fork_join(void) {
@@ -1313,7 +1341,7 @@ static void test_fork_join(void) {
     llg_rt_init();
     fj1_log_n = 0;
     fj1_ok = 0;
-    llg_spawn(&llg_libaco_desc, fj1_parent, "fj1p");
+    llg_spawn(&fj1_parent_desc, "fj1p");
     llg_rt_run();
     CHECK(fj1_ok);
     if (fj1_log_n == 3) {
@@ -1325,7 +1353,7 @@ static void test_fork_join(void) {
     // (2) join_any
     llg_rt_init();
     fj2_ok = 0;
-    llg_spawn(&llg_libaco_desc, fj2_parent, "fj2p");
+    llg_spawn(&fj2_parent_desc, "fj2p");
     llg_rt_run();
     CHECK(fj2_ok);
 
@@ -1333,7 +1361,7 @@ static void test_fork_join(void) {
     llg_rt_init();
     fj3_immediate_ok = 0;
     fj3_done_ok = 0;
-    llg_spawn(&llg_libaco_desc, fj3_parent, "fj3p");
+    llg_spawn(&fj3_parent_desc, "fj3p");
     llg_rt_run();
     CHECK(fj3_immediate_ok);
     CHECK(fj3_done_ok);
@@ -1341,21 +1369,21 @@ static void test_fork_join(void) {
     // (4) wait_fork after join_none
     llg_rt_init();
     fj4_ok = 0;
-    llg_spawn(&llg_libaco_desc, fj4_parent, "fj4p");
+    llg_spawn(&fj4_parent_desc, "fj4p");
     llg_rt_run();
     CHECK(fj4_ok);
 
     // (5) disable_fork
     llg_rt_init();
     fj5_ok = 0;
-    llg_spawn(&llg_libaco_desc, fj5_parent, "fj5p");
+    llg_spawn(&fj5_parent_desc, "fj5p");
     llg_rt_run();
     CHECK(fj5_ok);
 
     // (6) killed child's pending NBA is not committed
     llg_rt_init();
     fj6_ok = 0;
-    llg_spawn(&llg_libaco_desc, fj6_parent, "fj6p");
+    llg_spawn(&fj6_parent_desc, "fj6p");
     llg_rt_run();
     CHECK(fj6_ok);
 
@@ -1363,7 +1391,7 @@ static void test_fork_join(void) {
     llg_rt_init();
     fj7_descendant_done = 0;
     fj7_ok = 0;
-    llg_spawn(&llg_libaco_desc, fj7_parent, "fj7p");
+    llg_spawn(&fj7_parent_desc, "fj7p");
     llg_rt_run();
     CHECK(fj7_ok);
 
@@ -1371,14 +1399,14 @@ static void test_fork_join(void) {
     llg_rt_init();
     fj8_count = 0;
     fj8_ok = 0;
-    llg_spawn(&llg_libaco_desc, fj8_parent, "fj8p");
+    llg_spawn(&fj8_parent_desc, "fj8p");
     llg_rt_run();
     CHECK(fj8_ok);
 
     // (9) an empty join_none group does not block a following wait_fork
     llg_rt_init();
     fj9_ok = 0;
-    llg_spawn(&llg_libaco_desc, fj9_parent, "fj9p");
+    llg_spawn(&fj9_parent_desc, "fj9p");
     llg_rt_run();
     CHECK(fj9_ok);
 
@@ -1566,20 +1594,21 @@ static void test_force_release(void) {
 static sv4_t f_nba_sig = SV4_EMPTY;
 static int f_nba_ok;
 
-static void f_nba_writer(llg_proc_t* self) {
+LLG_SELFTEST_PROCESS(f_nba_writer, 1) {
+    LLG_SELFTEST_BEGIN(1);
     llg_force(&f_nba_sig, test_temp(SV4_C(0xff, 8)));
     llg_nba(&f_nba_sig, test_temp(SV4_C(0x5a, 8)));
-    llg_wait_time(1); // the NBA region commits before t=1
+    // The NBA region commits before t=1.
+    LLG_SELFTEST_AWAIT(1, llg_arm_time(self, 1));
     f_nba_ok = u(f_nba_sig) == 0xff;
-    llg_rt_finish();
-    llg_proc_done(self);
+    LLG_SELFTEST_FINISH();
 }
 
 static void test_force_nba_dropped(void) {
     llg_rt_init();
     sv4_replace(&f_nba_sig, SV4_C(0, 8));
     f_nba_ok = 0;
-    llg_spawn(&llg_libaco_desc, f_nba_writer, "fnba");
+    llg_spawn(&f_nba_writer_desc, "fnba");
     llg_rt_run();
     CHECK(f_nba_ok);
 }
@@ -1589,19 +1618,20 @@ static sv4_t f_wait_sig = SV4_EMPTY;
 static int f_wait_woken;
 static uint64_t f_wait_seen;
 
-static void f_wait_consumer(llg_proc_t* self) {
-    sv4_t* sg[] = { &f_wait_sig };
-    llg_wait_any(sg, 1);
+LLG_SELFTEST_PROCESS(f_wait_consumer, 1) {
+    LLG_SELFTEST_BEGIN(1);
+    LLG_SELFTEST_AWAIT(1, llg_arm_any(self, (sv4_t*[]){&f_wait_sig}, 1));
     f_wait_woken = 1;
     f_wait_seen = u(f_wait_sig);
-    llg_rt_finish();
-    llg_proc_done(self);
+    LLG_SELFTEST_FINISH();
 }
 
-static void f_wait_producer(llg_proc_t* self) {
-    llg_wait_time(1); // let the consumer register its wait first
+LLG_SELFTEST_PROCESS(f_wait_producer, 1) {
+    LLG_SELFTEST_BEGIN(1);
+    // Let the consumer register its wait first.
+    LLG_SELFTEST_AWAIT(1, llg_arm_time(self, 1));
     llg_force(&f_wait_sig, test_temp(SV4_C(0xaa, 8)));
-    llg_proc_done(self);
+    LLG_SELFTEST_DONE();
 }
 
 static void test_force_wakes_waiters(void) {
@@ -1609,8 +1639,8 @@ static void test_force_wakes_waiters(void) {
     sv4_replace(&f_wait_sig, SV4_C(0, 8));
     f_wait_woken = 0;
     f_wait_seen = 0;
-    llg_spawn(&llg_libaco_desc, f_wait_consumer, "fwc");
-    llg_spawn(&llg_libaco_desc, f_wait_producer, "fwp");
+    llg_spawn(&f_wait_consumer_desc, "fwc");
+    llg_spawn(&f_wait_producer_desc, "fwp");
     llg_rt_run();
     CHECK(f_wait_woken);
     CHECK(f_wait_seen == 0xaa);
@@ -1619,33 +1649,35 @@ static void test_force_wakes_waiters(void) {
 // Boundary probe run by a separate Rust subprocess test: the first delay
 // reaches the largest scheduler timestamp and the second must terminate with
 // the runtime's explicit overflow diagnostic instead of wrapping to zero.
-static void time_overflow_proc(llg_proc_t* self) {
-    llg_wait_time(UINT64_MAX);
-    llg_wait_time(1);
-    llg_proc_done(self);
+LLG_SELFTEST_PROCESS(time_overflow_proc, 2) {
+    LLG_SELFTEST_BEGIN(2);
+    LLG_SELFTEST_AWAIT(1, llg_arm_time(self, UINT64_MAX));
+    LLG_SELFTEST_AWAIT(2, llg_arm_time(self, 1));
+    LLG_SELFTEST_DONE();
 }
 
 static llg_inertial_t* inertial_handle;
 static sv4_t inertial_target = SV4_EMPTY;
 
-static void inertial_producer(llg_proc_t* self) {
+LLG_SELFTEST_PROCESS(inertial_producer, 0) {
+    LLG_SELFTEST_BEGIN(0);
     llg_inertial_assign(&inertial_handle, &inertial_target, test_temp(SV4_C(1, 1)), 2, 2, 2);
-    llg_proc_done(self);
+    LLG_SELFTEST_DONE();
 }
 
-static void inertial_observer(llg_proc_t* self) {
-    llg_wait_time(3);
+LLG_SELFTEST_PROCESS(inertial_observer, 1) {
+    LLG_SELFTEST_BEGIN(1);
+    LLG_SELFTEST_AWAIT(1, llg_arm_time(self, 3));
     CHECK(sv4_same(inertial_target, test_temp(SV4_C(1, 1))));
-    llg_rt_finish();
-    llg_proc_done(self);
+    LLG_SELFTEST_FINISH();
 }
 
 static void test_inertial_lifetime(void) {
     for (int run = 0; run < 2; run++) {
         llg_rt_init();
         sv4_replace(&inertial_target, sv4_x(1, 0));
-        llg_spawn(&llg_libaco_desc, inertial_producer, "inertial-producer");
-        llg_spawn(&llg_libaco_desc, inertial_observer, "inertial-observer");
+        llg_spawn(&inertial_producer_desc, "inertial-producer");
+        llg_spawn(&inertial_observer_desc, "inertial-observer");
         llg_rt_run();
         CHECK(inertial_handle == NULL);
     }
@@ -1660,51 +1692,54 @@ static void test_inertial_lifetime(void) {
 
 static int run_time_overflow_probe(void) {
     llg_rt_init();
-    llg_spawn(&llg_libaco_desc, time_overflow_proc, "time-overflow");
+    llg_spawn(&time_overflow_proc_desc, "time-overflow");
     llg_rt_run();
     return 2; // the second wait must abort before the scheduler returns
 }
 
-static void scaled_time_overflow_proc(llg_proc_t* self) {
-    llg_wait_time(UINT64_MAX);
+LLG_SELFTEST_PROCESS(scaled_time_overflow_proc, 1) {
+    LLG_SELFTEST_BEGIN(1);
+    LLG_SELFTEST_AWAIT(1, llg_arm_time(self, UINT64_MAX));
     (void)llg_time_scaled(2, 1);
-    llg_proc_done(self);
+    LLG_SELFTEST_DONE();
 }
 
 static int run_scaled_time_overflow_probe(void) {
     llg_rt_init();
-    llg_spawn(&llg_libaco_desc, scaled_time_overflow_proc, "scaled-time-overflow");
+    llg_spawn(&scaled_time_overflow_proc_desc, "scaled-time-overflow");
     llg_rt_run();
     return 2; // llg_time_scaled must abort before the scheduler returns
 }
 
 static int budget_finite_count;
 
-static void budget_finite_proc(llg_proc_t* self) {
-    for (int i = 0; i < 4; i++) {
-        llg_budget_point("selftest.sv:1:1");
+LLG_SELFTEST_PROCESS(budget_finite_proc, 0) {
+    LLG_SELFTEST_BEGIN(0);
+    for (F->index = 0; F->index < 4; F->index++) {
+        if (llg_budget_point("selftest.sv:1:1")) return LLG_CO_EXIT;
         budget_finite_count++;
     }
-    llg_rt_finish();
-    llg_proc_done(self);
+    LLG_SELFTEST_FINISH();
 }
 
-static void budget_infinite_proc(llg_proc_t* self) {
-    (void)self;
-    for (;;) llg_budget_point("selftest.sv:2:1");
+LLG_SELFTEST_PROCESS(budget_infinite_proc, 0) {
+    LLG_SELFTEST_BEGIN(0);
+    for (;;) {
+        if (llg_budget_point("selftest.sv:2:1")) return LLG_CO_EXIT;
+    }
 }
 
 static int run_budget_finite_probe(void) {
     llg_rt_init();
     budget_finite_count = 0;
-    llg_spawn(&llg_libaco_desc, budget_finite_proc, "budget-finite");
+    llg_spawn(&budget_finite_proc_desc, "budget-finite");
     llg_rt_run();
     return !llg_rt_failed() && budget_finite_count == 4 ? 0 : 1;
 }
 
 static int run_budget_infinite_probe(void) {
     llg_rt_init();
-    llg_spawn(&llg_libaco_desc, budget_infinite_proc, "budget-infinite");
+    llg_spawn(&budget_infinite_proc_desc, "budget-infinite");
     llg_rt_run();
     return llg_rt_failed() ? 0 : 1;
 }
@@ -1717,15 +1752,17 @@ static void stop_resume_future(void* data) {
     stop_resume_future_seen = 1;
 }
 
-static void stop_resume_proc(llg_proc_t* self) {
+LLG_SELFTEST_PROCESS(stop_resume_proc, 2) {
+    LLG_SELFTEST_BEGIN(2);
     stop_resume_stage = 1;
-    llg_rt_stop_with_level(0, NULL);
+    LLG_SELFTEST_AWAIT(1, llg_arm_stop(self, 0, NULL));
     stop_resume_stage = 2;
-    llg_wait_time(3);
+    LLG_SELFTEST_AWAIT(2, llg_arm_time(self, 3));
     CHECK(stop_resume_future_seen);
     stop_resume_stage = 3;
     llg_rt_request_finish();
-    llg_proc_done(self);
+    LLG_CO_EXIT_CHECK(ch);
+    LLG_SELFTEST_DONE();
 }
 
 static int run_stop_resume_probe(void) {
@@ -1735,7 +1772,7 @@ static int run_stop_resume_probe(void) {
     stop_resume_future_seen = 0;
     CHECK(llg_schedule_region_callback_after(
               LLG_REGION_ACTIVE, stop_resume_future, NULL, 2) == 1);
-    llg_spawn(&llg_libaco_desc, stop_resume_proc, "stop-resume");
+    llg_spawn(&stop_resume_proc_desc, "stop-resume");
     llg_rt_run();
     CHECK(llg_rt_is_suspended());
     CHECK(stop_resume_stage == 1);
@@ -1753,21 +1790,21 @@ static int run_stop_resume_probe(void) {
     return failures == 0 ? 0 : 1;
 }
 
-static void time_scaled_rounding_proc(llg_proc_t* self) {
+LLG_SELFTEST_PROCESS(time_scaled_rounding_proc, 3) {
+    LLG_SELFTEST_BEGIN(3);
     CHECK(llg_time_scaled(1, 10) == 0);
-    llg_wait_time(14);
+    LLG_SELFTEST_AWAIT(1, llg_arm_time(self, 14));
     CHECK(llg_time_scaled(1, 10) == 1);
-    llg_wait_time(1);
+    LLG_SELFTEST_AWAIT(2, llg_arm_time(self, 1));
     CHECK(llg_time_scaled(1, 10) == 2);
-    llg_wait_time(1);
+    LLG_SELFTEST_AWAIT(3, llg_arm_time(self, 1));
     CHECK(llg_time_scaled(1, 10) == 2);
-    llg_rt_finish();
-    llg_proc_done(self);
+    LLG_SELFTEST_FINISH();
 }
 
 static void test_time_scaled_rounding(void) {
     llg_rt_init();
-    llg_spawn(&llg_libaco_desc, time_scaled_rounding_proc, "time-scaled-rounding");
+    llg_spawn(&time_scaled_rounding_proc_desc, "time-scaled-rounding");
     llg_rt_run();
 }
 
@@ -1804,27 +1841,30 @@ static void test_activation_frames(void) {
 
 static sv4_t activation_cancel_target = SV4_EMPTY;
 
-static void activation_cancel_child(llg_proc_t* self) {
-    llg_wait_time(100);
+LLG_SELFTEST_PROCESS(activation_cancel_child, 1) {
+    LLG_SELFTEST_BEGIN(1);
+    LLG_SELFTEST_AWAIT(1, llg_arm_time(self, 100));
     llg_frame_write_value(llg_proc_frame(self), 0, test_temp(SV4_C(1, 1)));
-    llg_proc_done(self);
+    LLG_SELFTEST_DONE();
 }
 
-static void activation_cancel_parent(llg_proc_t* self) {
+LLG_SELFTEST_PROCESS(activation_cancel_parent, 0) {
+    LLG_SELFTEST_BEGIN(0);
     llg_frame_t* frame = llg_frame_new(1);
     llg_frame_alias_value(frame, 0, &activation_cancel_target);
     llg_fork_group_t* group = llg_fork_group_new(LLG_JOIN_NONE);
-    llg_fork_with_frame(&llg_libaco_desc, activation_cancel_child, "activation-cancel-child", group, frame);
+    llg_fork_with_frame(&activation_cancel_child_desc, "activation-cancel-child", group, frame);
     llg_frame_release(frame);
-    llg_disable_fork();
+    llg_disable_fork(self);
     llg_rt_request_finish();
-    llg_proc_done(self);
+    LLG_CO_EXIT_CHECK(ch);
+    LLG_SELFTEST_DONE();
 }
 
 static void test_activation_frame_cancellation(void) {
     llg_rt_init();
     sv4_replace(&activation_cancel_target, SV4_C(0, 1));
-    llg_spawn(&llg_libaco_desc, activation_cancel_parent, "activation-cancel-parent");
+    llg_spawn(&activation_cancel_parent_desc, "activation-cancel-parent");
     llg_rt_run();
     CHECK(sv4_same(activation_cancel_target, test_temp(SV4_C(0, 1))));
     CHECK(!llg_rt_failed());
@@ -1878,11 +1918,14 @@ static void region_pre_postponed_write_callback(void* data) {
     llg_ba(&region_sample_signal, test_temp(SV4_C(1, 1)));
 }
 
-static void region_pre_postponed_waiter(llg_proc_t* self) {
-    llg_wait_level(&region_sample_signal, test_temp(SV4_C(1, 1)));
+LLG_SELFTEST_PROCESS(region_pre_postponed_waiter, 1) {
+    LLG_SELFTEST_BEGIN(1);
+    LLG_SELFTEST_AWAIT(
+        1, llg_arm_level(self, &region_sample_signal,
+                         test_temp(SV4_C(1, 1))));
     CHECK(llg_current_region() == LLG_REGION_ACTIVE);
     region_pre_postponed_reentry_seen = 1;
-    llg_proc_done(self);
+    LLG_SELFTEST_DONE();
 }
 
 static void region_reactive_followup(void* data) {
@@ -1933,15 +1976,18 @@ static void region_resume_write(void* data) {
     llg_ba(&region_resume_signal, test_temp(SV4_C(1, 1)));
 }
 
-static void region_resume_proc(llg_proc_t* self) {
+LLG_SELFTEST_PROCESS(region_resume_proc, 1) {
+    LLG_SELFTEST_BEGIN(1);
     CHECK(llg_schedule_region_callback(
               LLG_REGION_ACTIVE, region_resume_write, NULL) == 1);
     llg_wait_resume_in_region(LLG_REGION_REACTIVE);
-    llg_wait_any((sv4_t*[]){&region_resume_signal}, 1);
+    LLG_SELFTEST_AWAIT(
+        1, llg_arm_any(self, (sv4_t*[]){&region_resume_signal}, 1));
     CHECK(llg_current_region() == LLG_REGION_REACTIVE);
     region_resume_seen++;
     llg_rt_request_finish();
-    llg_proc_done(self);
+    LLG_CO_EXIT_CHECK(ch);
+    LLG_SELFTEST_DONE();
 }
 
 static void region_timed_callback(void* data) {
@@ -1978,7 +2024,7 @@ static int run_region_probe(void) {
     llg_rt_init();
     sv4_replace(&region_resume_signal, SV4_C(0, 1));
     region_resume_seen = 0;
-    llg_spawn(&llg_libaco_desc, region_resume_proc, "explicit-region-resume");
+    llg_spawn(&region_resume_proc_desc, "explicit-region-resume");
     llg_rt_run();
     CHECK(region_resume_seen == 1);
     CHECK(!llg_rt_failed());
@@ -2010,7 +2056,7 @@ static int run_region_probe(void) {
     llg_rt_init();
     sv4_replace(&region_sample_signal, SV4_C(0, 1));
     region_pre_postponed_reentry_seen = 0;
-    llg_spawn(&llg_libaco_desc, region_pre_postponed_waiter, "pre-postponed-waiter");
+    llg_spawn(&region_pre_postponed_waiter_desc, "pre-postponed-waiter");
     CHECK(llg_schedule_region_callback(
               LLG_REGION_PRE_POSTPONED, region_pre_postponed_write_callback, NULL) == 1);
     CHECK(llg_schedule_region_callback(

@@ -83,8 +83,13 @@ jobs:
       - name: cargo clippy (-D warnings)
         run: cargo clippy --locked --all-targets --all-features -- -D warnings
 
+      - name: Generated C coroutine-frame and jump-initialization gate
+        run: cargo nextest run --locked --all-features --test generated_c_frame_lint
+
       - name: cargo nextest
-        run: cargo nextest run --locked --all-features
+        run: >-
+          cargo nextest run --locked --all-features
+          -E 'not binary(generated_c_frame_lint)'
 
       - name: cargo test (doc tests)
         run: cargo test --locked --doc --all-features

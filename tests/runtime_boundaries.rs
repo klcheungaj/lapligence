@@ -18,7 +18,10 @@ fn scheduler_time_overflow_fails_with_a_diagnostic() {
         sim_harness::TempDir::new("runtime-boundary").expect("create runtime boundary directory");
     let executable = sim::build::build_model_cmake(
         dir.path(),
-        &[("llg_rt_selftest.c", sim::rt::selftest_source())],
+        &[
+            ("llg_rt_selftest.c", sim::rt::selftest_source()),
+            ("selftest_co.h", sim::rt::selftest_support_source()),
+        ],
     )
     .expect("runtime boundary probe should compile");
 
@@ -64,7 +67,10 @@ fn process_budget_probes_cover_exact_limit_and_invalid_configuration() {
         .expect("create process-budget directory");
     let executable = sim::build::build_model_cmake(
         dir.path(),
-        &[("llg_rt_selftest.c", sim::rt::selftest_source())],
+        &[
+            ("llg_rt_selftest.c", sim::rt::selftest_source()),
+            ("selftest_co.h", sim::rt::selftest_support_source()),
+        ],
     )
     .expect("process-budget probe should compile");
 
@@ -148,7 +154,10 @@ fn stop_resume_hook_preserves_the_live_scheduler_until_explicit_resume() {
         sim_harness::TempDir::new("runtime-stop-resume").expect("create stop-resume directory");
     let executable = sim::build::build_model_cmake(
         dir.path(),
-        &[("llg_rt_selftest.c", sim::rt::selftest_source())],
+        &[
+            ("llg_rt_selftest.c", sim::rt::selftest_source()),
+            ("selftest_co.h", sim::rt::selftest_support_source()),
+        ],
     )
     .expect("stop-resume probe should compile");
 
