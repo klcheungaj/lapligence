@@ -18,7 +18,10 @@ fn region_callbacks_trace_fixed_point_and_read_only_boundaries() {
         sim_harness::TempDir::new("runtime-regions").expect("create runtime region directory");
     let executable = sim::build::build_model_cmake(
         dir.path(),
-        &[("llg_rt_selftest.c", sim::rt::selftest_source())],
+        &[
+            ("llg_rt_selftest.c", sim::rt::selftest_source()),
+            ("selftest_co.h", sim::rt::selftest_support_source()),
+        ],
     )
     .expect("region probe should compile");
 
