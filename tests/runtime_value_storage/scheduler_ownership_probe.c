@@ -94,8 +94,10 @@ static void check_nba_fifo_and_cancellation(void) {
     sv4_t one = sv4_from_u64(1, 8, 0);
     sv4_t two = sv4_from_u64(2, 8, 0);
     sv4_t three = sv4_from_u64(3, 8, 0);
-    llg_proc_t* first = llg_spawn(never_run, "first NBA owner");
-    llg_proc_t* second = llg_spawn(never_run, "second NBA owner");
+    llg_proc_t* first =
+        llg_spawn(&llg_libaco_desc, never_run, "first NBA owner");
+    llg_proc_t* second =
+        llg_spawn(&llg_libaco_desc, never_run, "second NBA owner");
 
     aco_gtls_co = first->co;
     llg_nba_after(&target, one, 0);
