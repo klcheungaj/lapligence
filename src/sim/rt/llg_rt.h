@@ -468,10 +468,14 @@ void llg_rt_finish_with_level(int verbosity, const char* location);
 // COMPLETE/ABANDON exit. This out-of-line query is for plain generated
 // functions; coroutine code reads its chain with LLG_CO_EXIT_CHECK.
 int llg_rt_exiting(void);
-// Callback-safe legacy stop request used by VPI. It never suspends beneath a
-// foreign C frame. A stop requested by a running foreign callback is rejected
-// as a controlled simulation failure; generated `$stop` uses llg_arm_stop.
-void llg_rt_stop(void);
+// Deferred stop for generated functions and vpi_control(vpiStop). Reports the
+// stop now and, when called during a scheduler process turn, records a request
+// that the scheduler observes immediately after llg_co_run returns and before
+// any other process, region, or callback work. No continuation is requeued.
+// Outside a scheduler process turn (including finals and idle embeddings), the
+// reported request is ignored with a warning. Coroutine-body `$stop` uses
+// llg_arm_stop so it can preserve its exact continuation.
+void llg_rt_request_stop(int verbosity, const char* location);
 
 enum {
     LLG_STOP_POLICY_RESUME = 0,
@@ -484,12 +488,13 @@ enum {
 // success. `LLG_STOP_POLICY_RESUME` is the default.
 int llg_rt_set_stop_policy(int policy);
 int llg_rt_stop_policy(void);
-// True after a stop with the EXIT policy yielded a process. The scheduler
-// context remains live until `llg_rt_resume` or `llg_rt_cleanup` is called.
+// True after a stop with the EXIT policy suspended scheduling. An arm stop
+// also retains a process continuation; a deferred stop has no continuation.
+// Scheduler state remains live until `llg_rt_resume` or cleanup.
 int llg_rt_is_suspended(void);
-// Resume the process suspended by `$stop`, queueing its continuation at the
-// same simulation time. Returns one when a suspension was resumed and zero
-// when no resumable stop is pending.
+// Continue after a stopped scheduler. An arm stop queues its continuation at
+// the same simulation time; a deferred stop simply resumes scheduler work.
+// Returns one when a stop was resumed and zero when none is pending.
 int llg_rt_resume(void);
 uint64_t llg_time(void);              // current tick count
 // Current time rounded to the nearest local unit; exact half units round up.
@@ -1142,8 +1147,8 @@ llg_co_arm_t llg_arm_process_await(llg_proc_t* self,
 llg_co_arm_t llg_arm_semaphore_get(llg_proc_t* self,
                                    llg_semaphore_t* semaphore,
                                    sv4_t key_count);
-// Generated `$stop` only. SUSPEND preserves the chain and queues; invalid
-// use sets COMPLETE and returns EXIT. The legacy llg_rt_stop is callback-safe.
+// Coroutine-body `$stop` only. SUSPEND preserves the exact chain continuation
+// and queues. Functions and VPI use the non-suspending deferred request.
 llg_co_arm_t llg_arm_stop(llg_proc_t* self, int verbosity,
                           const char* location);
 

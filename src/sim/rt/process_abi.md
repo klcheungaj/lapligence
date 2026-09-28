@@ -101,7 +101,8 @@ Entries not listed here keep their signatures and direct-call behavior.
 | `llg_semaphore_get` | `llg_arm_semaphore_get(self, ...)` |
 | blocking `llg_mailbox_put_value` | `llg_arm_mailbox_put_value(self, ...)` |
 | blocking `llg_mailbox_get_value` / peek | `llg_arm_mailbox_get_value(self, ..., peek)` |
-| `llg_rt_stop_with_level` | `llg_arm_stop(self, verbosity, location)`; `llg_rt_stop` remains a non-suspending VPI-facing service |
+| coroutine-body `llg_rt_stop_with_level` | `llg_arm_stop(self, verbosity, location)` at its exact lexical continuation |
+| function-body `$stop` / `vpi_control(vpiStop)` | `llg_rt_request_stop(verbosity, location)`; the request is observed after the current process turn |
 | `llg_process_self()` | `llg_process_self(self)` |
 | `llg_process_kill(handle)` / `llg_process_resume(handle)` | `llg_process_kill(self, handle)` / `llg_process_resume(self, handle)` |
 | `llg_disable_fork()` | `llg_disable_fork(self)` |
@@ -165,7 +166,7 @@ The per-arm outcomes are:
 | `llg_arm_semaphore_get` (`llg_semaphore_get`) | keys granted immediately or invalid/no-op | FIFO head receives its keys before wake | none |
 | `llg_arm_mailbox_put_value` (`llg_mailbox_put_value`) | value transferred/queued immediately; the arm consumes it | bounded FIFO owns the value until it is accepted or cancelled | type/null failure sets COMPLETE |
 | `llg_arm_mailbox_get_value` (`llg_mailbox_get_value`) | get/peek delivered immediately | runtime retains the target and writes it before wake | blocking type/null failure sets COMPLETE without consuming or assigning |
-| `llg_arm_stop` (`llg_rt_stop_with_level`) | none for a valid generated call | continuation and queues remain live until stop resume | invalid stop context sets controlled failure and COMPLETE |
+| `llg_arm_stop` (coroutine-body `llg_rt_stop_with_level`) | none | continuation and queues remain live until stop resume | none |
 
 The inventory's private `llg_mailbox_wait_get` yield is folded into
 `llg_arm_mailbox_get_value`; it is not a second generated ABI entry.
@@ -285,6 +286,25 @@ label after every Terminate operation and terminating call:
 llg_rt_finish();
 if (LLG_CO_UNLIKELY(llg_rt_exiting())) goto _llg_return;
 ```
+
+`$stop` is not a Terminate operation. In a coroutine body (including fork
+branches, timing-task bodies, and inline-expanded timing tasks), it uses the
+ordinary `llg_arm_stop` await shown above. In a function body it cannot retain
+an exact continuation and instead emits:
+
+```c
+llg_rt_request_stop(F->verbosity, F->location);
+```
+
+`vpi_control(vpiStop)` makes the same deferred request with level zero. The
+runtime reports it exactly like `$stop`, records it while the scheduler is in
+a process turn, and lets the current native/coroutine turn return normally.
+Immediately after `llg_co_run` returns, before any other process, region, or
+callback work, the scheduler applies the configured stop policy. A deferred
+stop has no continuation to requeue: automatic resume continues scheduling,
+while exit policy returns from the run until `llg_rt_resume` is called.
+Requests outside a scheduler process turn, including finals and calls while
+the runtime is idle, are reported and then ignored with a warning.
 
 Loop back-edges check the cooperative budget. Coroutine and plain-function
 forms are respectively:
