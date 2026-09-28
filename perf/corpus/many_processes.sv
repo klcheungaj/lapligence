@@ -16,7 +16,7 @@ module many_processes_register_leaf #(
     output logic q,
     output wire  d
 );
-    assign d = ID[0] ^ q;
+    assign d = ID[0];
 
     initial q = ID[0];
     always @(posedge clk)
@@ -64,7 +64,7 @@ module many_processes_masked #(
 
     genvar i;
     for (i = 0; i < N; i = i + 1) begin : workers
-        assign d[i] = i[0] ^ q[i];
+        assign d[i] = i[0];
         always @(posedge clk)
             q[i] <= d[i];
     end
