@@ -221,8 +221,11 @@ static llg_value_scope_t* mailbox_snapshot(llg_mailbox_t* mailbox, int peek) {
 }
 
 static void mailbox_unlink_wait(llg_wait_t* wait) {
-    if (!wait || !wait->mailbox) return;
-    llg_mailbox_t* mailbox = wait->mailbox;
+    if (!wait || !wait->payload.rare) return;
+    llg_mailbox_t* mailbox = wait->kind == W_MAILBOX_PUT
+                                 ? wait->payload.rare->mailbox_put.mailbox
+                                 : wait->payload.rare->mailbox_get.mailbox;
+    if (!mailbox) return;
     llg_wait_t** head = wait->kind == W_MAILBOX_PUT
                             ? &mailbox->put_head
                             : &mailbox->get_head;
@@ -232,32 +235,54 @@ static void mailbox_unlink_wait(llg_wait_t* wait) {
     llg_wait_t** cursor = head;
     while (*cursor) {
         if (*cursor == wait) {
-            *cursor = wait->mailbox_next;
+            *cursor = wait->kind == W_MAILBOX_PUT
+                          ? wait->payload.rare->mailbox_put.next
+                          : wait->payload.rare->mailbox_get.next;
             if (*tail == wait) *tail = NULL;
             if (!*head) {
                 *tail = NULL;
             } else if (!*tail) {
                 llg_wait_t* last = *head;
-                while (last->mailbox_next) last = last->mailbox_next;
+                if (wait->kind == W_MAILBOX_PUT) {
+                    while (last->payload.rare->mailbox_put.next)
+                        last = last->payload.rare->mailbox_put.next;
+                } else {
+                    while (last->payload.rare->mailbox_get.next)
+                        last = last->payload.rare->mailbox_get.next;
+                }
                 *tail = last;
             }
-            wait->mailbox_next = NULL;
+            if (wait->kind == W_MAILBOX_PUT)
+                wait->payload.rare->mailbox_put.next = NULL;
+            else
+                wait->payload.rare->mailbox_get.next = NULL;
             return;
         }
-        cursor = &(*cursor)->mailbox_next;
+        cursor = wait->kind == W_MAILBOX_PUT
+                     ? &(*cursor)->payload.rare->mailbox_put.next
+                     : &(*cursor)->payload.rare->mailbox_get.next;
     }
-    wait->mailbox_next = NULL;
+    if (wait->kind == W_MAILBOX_PUT)
+        wait->payload.rare->mailbox_put.next = NULL;
+    else
+        wait->payload.rare->mailbox_get.next = NULL;
 }
 
 static void mailbox_append_wait(llg_mailbox_t* mailbox, llg_wait_t* wait,
                                  int put) {
     llg_wait_t** head = put ? &mailbox->put_head : &mailbox->get_head;
     llg_wait_t** tail = put ? &mailbox->put_tail : &mailbox->get_tail;
-    wait->mailbox_next = NULL;
-    if (*tail)
-        (*tail)->mailbox_next = wait;
-    else
+    llg_wait_t** next = put ? &wait->payload.rare->mailbox_put.next
+                            : &wait->payload.rare->mailbox_get.next;
+    *next = NULL;
+    if (*tail) {
+        if (put)
+            (*tail)->payload.rare->mailbox_put.next = wait;
+        else
+            (*tail)->payload.rare->mailbox_get.next = wait;
+    } else {
         *head = wait;
+    }
     *tail = wait;
 }
 
@@ -272,7 +297,10 @@ static void mailbox_type_error(void) {
 static void mailbox_remove_and_wake(llg_wait_t* wait) {
     if (!wait) return;
     mailbox_unlink_wait(wait);
-    wait->mailbox = NULL;
+    if (wait->kind == W_MAILBOX_PUT)
+        wait->payload.rare->mailbox_put.mailbox = NULL;
+    else
+        wait->payload.rare->mailbox_get.mailbox = NULL;
     wake_proc(wait->proc);
 }
 
@@ -282,13 +310,15 @@ static void mailbox_service_waiters(llg_mailbox_t* mailbox) {
     while (mailbox && !g.finish) {
         if (mailbox->head && mailbox->get_head) {
             llg_wait_t* get = mailbox->get_head;
+            llg_wait_mailbox_get_payload_t* payload =
+                &get->payload.rare->mailbox_get;
             llg_mailbox_message_t* message = mailbox->head;
-            if (!mailbox_target_matches(&message->value, &get->mailbox_target)) {
+            if (!mailbox_target_matches(&message->value, &payload->target)) {
                 mailbox_type_error();
                 return;
             }
-            llg_mailbox_target_t target = get->mailbox_target;
-            llg_value_scope_t* owner = mailbox_snapshot(mailbox, get->mailbox_peek);
+            llg_mailbox_target_t target = payload->target;
+            llg_value_scope_t* owner = mailbox_snapshot(mailbox, payload->peek);
             /* wake_proc queues, but never runs, the continuation. Copy the
              * destination before wakeup clears the wait record. */
             mailbox_remove_and_wake(get);
@@ -299,8 +329,9 @@ static void mailbox_service_waiters(llg_mailbox_t* mailbox) {
         if (mailbox->put_head &&
             (mailbox->bound == 0 || mailbox->length < mailbox->bound)) {
             llg_wait_t* put = mailbox->put_head;
-            llg_mailbox_value_t value = put->mailbox_value;
-            memset(&put->mailbox_value, 0, sizeof(put->mailbox_value));
+            llg_mailbox_value_t* stored = &put->payload.rare->mailbox_put.value;
+            llg_mailbox_value_t value = *stored;
+            memset(stored, 0, sizeof(*stored));
             mailbox_message_append(mailbox, value);
             mailbox_remove_and_wake(put);
             continue;
@@ -394,8 +425,10 @@ void llg_mailbox_put_value(llg_mailbox_t* mailbox, llg_mailbox_value_t value) {
     wait->resume_region = region_is_reactive(proc->region)
                               ? LLG_REGION_REACTIVE
                               : LLG_REGION_ACTIVE;
-    wait->mailbox = mailbox;
-    wait->mailbox_value = value;
+    llg_wait_mailbox_put_payload_t* payload =
+        &wait_rare_allocate(wait, "mailbox put wait payload")->mailbox_put;
+    payload->mailbox = mailbox;
+    payload->value = value;
     register_wait();
     mailbox_append_wait(mailbox, wait, 1);
     aco_yield();
@@ -443,9 +476,11 @@ static void llg_mailbox_wait_get(llg_mailbox_t* mailbox,
     wait->resume_region = region_is_reactive(proc->region)
                               ? LLG_REGION_REACTIVE
                               : LLG_REGION_ACTIVE;
-    wait->mailbox = mailbox;
-    wait->mailbox_target = target;
-    wait->mailbox_peek = peek;
+    llg_wait_mailbox_get_payload_t* payload =
+        &wait_rare_allocate(wait, "mailbox get wait payload")->mailbox_get;
+    payload->mailbox = mailbox;
+    payload->target = target;
+    payload->peek = peek;
     register_wait();
     mailbox_append_wait(mailbox, wait, 0);
     aco_yield();

@@ -25,6 +25,9 @@ separate per-process cancellation link. Future assignments live in time-ordered
 buckets and are independent of the issuing process until their slot is promoted.
 Selected nonblocking assignments retain an offset and narrow four-state slice;
 the full mask representation remains only for non-contiguous fallback writes.
+The process record embeds only time, named-event and expression-list wait
+payloads. Rare wait kinds own one zeroed out-of-line payload that wake,
+cancellation and teardown release through the same cleanup path.
 Stop/resume retains a live context; close releases observers/queues before model
 storage. Runtime ticks are integer design-precision units; lowering supplies
 per-module scaling. Memory text loading and binary reads keep their distinct

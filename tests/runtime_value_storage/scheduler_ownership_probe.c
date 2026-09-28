@@ -59,11 +59,11 @@ static void check_nba_and_scopes(void) {
     llg_nba_masked(&target, source, mask, 0);
     CHECK(proc->nba_head != NULL && g.delayed_nba_buckets == NULL);
     proc->wait.kind = W_EVENTS;
-    proc->wait.n = 2;
-    proc->wait.last = llg_checked_calloc(2, sizeof(sv4_t), "test wait snapshots");
-    sv4_copy(&proc->wait.last[0], &source);
-    sv4_copy(&proc->wait.last[1], &target);
-    sv4_copy(&proc->wait.level_val, &source);
+    proc->wait.payload.expression.n = 2;
+    proc->wait.payload.expression.last =
+        llg_checked_calloc(2, sizeof(sv4_t), "test wait snapshots");
+    sv4_copy(&proc->wait.payload.expression.last[0], &source);
+    sv4_copy(&proc->wait.payload.expression.last[1], &target);
     proc->wait.next = g.waiters;
     g.waiters = &proc->wait;
     ++g.wait_count;

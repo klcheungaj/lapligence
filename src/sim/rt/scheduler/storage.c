@@ -95,6 +95,82 @@ struct llg_inertial {
 
 typedef struct llg_semaphore_wait llg_semaphore_wait_t;
 
+typedef struct {
+    llg_expr_event_spec_t* expressions;
+    llg_event_spec_t* specs;
+    llg_wait_dependency_t* dependencies;
+    sv4_t* last;
+    double* real_last;
+    int n;
+    llg_event_object_t** evs;
+    int n_evs;
+} llg_wait_expression_payload_t;
+
+typedef struct {
+    llg_event_object_t** evs;
+    int n_evs;
+    llg_event_object_t* triggered_ev;
+} llg_wait_event_payload_t;
+
+typedef struct {
+    llg_event_spec_t* specs;
+    sv4_t* last;
+    int n;
+    llg_event_object_t** evs;
+    int n_evs;
+} llg_wait_mixed_payload_t;
+
+typedef struct {
+    llg_event_object_t** evs;
+    int n_evs;
+    llg_event_object_t** sequence;
+    int n_order;
+    int next;
+} llg_wait_order_payload_t;
+
+typedef struct {
+    sv4_t* sig;
+    sv4_t value;
+} llg_wait_level_payload_t;
+
+typedef struct { llg_fork_group_t* group; } llg_wait_fork_payload_t;
+typedef struct { llg_proc_t* parent; } llg_wait_fork_all_payload_t;
+typedef struct { llg_process_handle_t* target; } llg_wait_process_payload_t;
+
+typedef struct {
+    llg_semaphore_t* semaphore;
+    llg_semaphore_wait_t* waiter;
+    uint64_t keys;
+} llg_wait_semaphore_payload_t;
+
+typedef struct {
+    struct llg_wait* next;
+    llg_mailbox_t* mailbox;
+    llg_mailbox_target_t target;
+    int peek;
+} llg_wait_mailbox_get_payload_t;
+
+typedef struct {
+    struct llg_wait* next;
+    llg_mailbox_t* mailbox;
+    llg_mailbox_value_t value;
+} llg_wait_mailbox_put_payload_t;
+
+typedef struct { uint64_t identity; } llg_wait_assertion_payload_t;
+
+typedef union {
+    llg_wait_mixed_payload_t mixed;
+    llg_wait_order_payload_t order;
+    llg_wait_level_payload_t level;
+    llg_wait_fork_payload_t fork;
+    llg_wait_fork_all_payload_t fork_all;
+    llg_wait_process_payload_t process;
+    llg_wait_semaphore_payload_t semaphore;
+    llg_wait_mailbox_get_payload_t mailbox_get;
+    llg_wait_mailbox_put_payload_t mailbox_put;
+    llg_wait_assertion_payload_t assertion;
+} llg_wait_rare_t;
+
 typedef struct llg_wait {
     struct llg_wait* next;         // all active waits (signal + timed + zero-delay)
     struct llg_wait* time_next;    // sorted timed list
@@ -102,34 +178,15 @@ typedef struct llg_wait {
     llg_proc_t* proc;
     llg_wait_kind_t kind;
     llg_region_t resume_region;
-    uint64_t time;                // W_TIME
-    llg_expr_event_spec_t* expressions;
-    llg_event_spec_t* specs;     // W_EVENTS: copied array; W_MIXED: signal half
-    llg_wait_dependency_t* dependencies; // W_DEPS: copied typed dependencies
-    sv4_t* last;                  // W_EVENTS/W_MIXED: last-seen values
-    double* real_last;            // W_EXPR: last-seen real expression values
-    int n;                        // W_EVENTS/W_MIXED (signal entry count)
-    llg_event_object_t** evs;    // W_EVENT/W_MIXED: resolved object list
-    int n_evs;                    // W_EVENT/W_MIXED
-    llg_event_object_t* triggered_ev; // W_EVENT_TRIGGERED registration
-    llg_event_object_t** order_sequence; // W_EVENT_ORDER expected objects
-    int n_order;
-    int order_next;
+    union {
+        uint64_t time;
+        llg_wait_event_payload_t event;
+        llg_wait_expression_payload_t expression;
+        llg_wait_rare_t* rare;
+    } payload;
+    // wait_order publishes its result before releasing the rare payload and
+    // the resumed process reads it after wakeup.
     int order_result_value;
-    uint64_t assertion_identity; // W_ASSERTION
-    sv4_t* sig;                   // W_LEVEL
-    sv4_t level_val;              // W_LEVEL
-    llg_fork_group_t* grp;       // W_FORK: group being joined
-    llg_proc_t* parent;          // W_FORK_ALL: the waiting proc itself
-    llg_process_handle_t* process_target; // W_PROCESS: retained await target
-    llg_semaphore_t* semaphore;  // W_SEMAPHORE: owning semaphore
-    llg_semaphore_wait_t* semaphore_waiter; // W_SEMAPHORE: FIFO node
-    uint64_t semaphore_keys;     // W_SEMAPHORE: requested key count
-    struct llg_wait* mailbox_next; // W_MAILBOX_*: mailbox waiter list
-    llg_mailbox_t* mailbox;      // W_MAILBOX_*: owning mailbox
-    llg_mailbox_target_t mailbox_target; // W_MAILBOX_GET
-    int mailbox_peek;            // W_MAILBOX_GET: leave the message queued
-    llg_mailbox_value_t mailbox_value;   // W_MAILBOX_PUT
 } llg_wait_t;
 
 struct llg_semaphore_wait {
@@ -310,6 +367,13 @@ struct llg_proc {
     uint64_t action_assertion;     // assertion whose Reactive action spawned us
     int is_assertion_action;
 };
+
+#if UINTPTR_MAX == UINT64_MAX
+_Static_assert(sizeof(llg_wait_t) == 112,
+               "64-bit wait record size changed; update the measured layout contract");
+_Static_assert(sizeof(llg_proc_t) == 352,
+               "64-bit process record size changed; do not reorder Phase 4 fields here");
+#endif
 
 static int region_can_mutate(const char* action);
 static llg_nba_t* new_nba(uint64_t ticks);

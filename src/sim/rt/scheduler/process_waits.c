@@ -109,7 +109,7 @@ void llg_wait_time(uint64_t ticks) {
                 (unsigned long long)g.now, (unsigned long long)ticks);
         abort();
     }
-    w->time = g.now + ticks;
+    w->payload.time = g.now + ticks;
     if (ticks == 0) {
         // `#0` yields into the INACTIVE region of the current time step
         // (LRM §4.4.2): it runs after the active region drains and before
@@ -158,15 +158,16 @@ void llg_wait_any(sv4_t** sigs, int n) {
     llg_wait_t* w = &p->wait;
     w->kind = W_EVENTS;
     w->resume_region = take_wait_resume_region(p);
-    w->n = n;
-    w->specs = (llg_event_spec_t*)llg_checked_malloc(
+    llg_wait_expression_payload_t* payload = &w->payload.expression;
+    payload->n = n;
+    payload->specs = (llg_event_spec_t*)llg_checked_malloc(
         (size_t)n, sizeof(llg_event_spec_t), "event wait specifications");
-    w->last = (sv4_t*)llg_checked_calloc(
+    payload->last = (sv4_t*)llg_checked_calloc(
         (size_t)n, sizeof(sv4_t), "event wait snapshots");
     for (int i = 0; i < n; i++) {
-        w->specs[i].sig = sigs[i];
-        w->specs[i].kind = LLG_EV_ANY;
-        w->last[i] = sv4_clone(sigs[i]);
+        payload->specs[i].sig = sigs[i];
+        payload->specs[i].kind = LLG_EV_ANY;
+        payload->last[i] = sv4_clone(sigs[i]);
     }
     register_wait();
     aco_yield();
@@ -178,23 +179,27 @@ void llg_wait_any_dependencies(const llg_wait_dependency_t* deps, int n) {
     llg_wait_t* w = &p->wait;
     w->kind = W_DEPS;
     w->resume_region = take_wait_resume_region(p);
-    w->n = n;
-    w->dependencies = (llg_wait_dependency_t*)llg_checked_malloc(
+    llg_wait_expression_payload_t* payload = &w->payload.expression;
+    payload->n = n;
+    payload->dependencies = (llg_wait_dependency_t*)llg_checked_malloc(
         (size_t)n, sizeof(llg_wait_dependency_t), "typed event dependencies");
-    w->last = (sv4_t*)llg_checked_calloc((size_t)n, sizeof(sv4_t), "packed-prefix wait snapshots");
+    payload->last = (sv4_t*)llg_checked_calloc(
+        (size_t)n, sizeof(sv4_t), "packed-prefix wait snapshots");
     for (int i = 0; i < n; i++) {
         if ((deps[i].sig == NULL) == (deps[i].real == NULL)) {
             fprintf(stderr, "llg: typed wait dependency must name one storage kind\n");
             abort();
         }
-        w->dependencies[i] = deps[i];
+        payload->dependencies[i] = deps[i];
         if (deps[i].width) {
             sv4_t* value = deps[i].value ? deps[i].value : deps[i].sig;
             if (!value || deps[i].real || deps[i].lsb >= value->width ||
                 deps[i].width > value->width - deps[i].lsb) {
                 fprintf(stderr, "llg: invalid packed-prefix wait dependency\n"); abort();
             }
-            w->last[i] = sv4_part_select(*value, (int64_t)deps[i].lsb + deps[i].width - 1, deps[i].lsb);
+            payload->last[i] = sv4_part_select(
+                *value, (int64_t)deps[i].lsb + deps[i].width - 1,
+                deps[i].lsb);
         }
     }
     register_wait();
@@ -209,15 +214,16 @@ void llg_wait_any_events(llg_event_spec_t* specs, int n) {
     w->resume_region = region_is_reactive(p->region)
                            ? LLG_REGION_REACTIVE
                            : LLG_REGION_ACTIVE;
-    w->n = n;
-    w->specs = (llg_event_spec_t*)llg_checked_malloc(
+    llg_wait_expression_payload_t* payload = &w->payload.expression;
+    payload->n = n;
+    payload->specs = (llg_event_spec_t*)llg_checked_malloc(
         (size_t)n, sizeof(llg_event_spec_t), "edge wait specifications");
-    w->last = (sv4_t*)llg_checked_calloc(
+    payload->last = (sv4_t*)llg_checked_calloc(
         (size_t)n, sizeof(sv4_t), "edge wait snapshots");
     for (int i = 0; i < n; i++) {
-        w->specs[i].sig = specs[i].sig;
-        w->specs[i].kind = specs[i].kind;
-        w->last[i] = sv4_clone(specs[i].sig);
+        payload->specs[i].sig = specs[i].sig;
+        payload->specs[i].kind = specs[i].kind;
+        payload->last[i] = sv4_clone(specs[i].sig);
     }
     register_wait();
     aco_yield();
@@ -238,8 +244,10 @@ void llg_wait_level(sv4_t* sig, sv4_t value) {
     w->resume_region = region_is_reactive(p->region)
                            ? LLG_REGION_REACTIVE
                            : LLG_REGION_ACTIVE;
-    w->sig = sig;
-    sv4_copy(&w->level_val, &value);
+    llg_wait_level_payload_t* payload =
+        &wait_rare_allocate(w, "level wait payload")->level;
+    payload->sig = sig;
+    sv4_copy(&payload->value, &value);
     register_wait();
     aco_yield();
 }

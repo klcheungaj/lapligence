@@ -254,15 +254,16 @@ static int expression_dependency_changed(const llg_expr_event_spec_t* spec,
 
 static int expression_update(llg_wait_t* wait, int index, sv4_t* sig,
                              double* real) {
-    llg_expr_event_spec_t* spec = &wait->expressions[index];
+    llg_wait_expression_payload_t* payload = &wait->payload.expression;
+    llg_expr_event_spec_t* spec = &payload->expressions[index];
     if (spec->event || !expression_dependency_changed(spec, sig, real)) return 0;
     if (spec->real || spec->real_eval || spec->real_sig) {
         double value;
         if (spec->real_eval) spec->real_eval(&value, spec->eval_context);
         else if (spec->real_sig) value = *spec->real_sig;
         else return 0;
-        int matched = real_ev_matches(wait->real_last[index], value, spec->kind);
-        wait->real_last[index] = value;
+        int matched = real_ev_matches(payload->real_last[index], value, spec->kind);
+        payload->real_last[index] = value;
         return matched && expression_qualifies(spec);
     }
     if (!spec->eval && !spec->sig) return 0;
@@ -270,8 +271,8 @@ static int expression_update(llg_wait_t* wait, int index, sv4_t* sig,
     sv4_t* value = llg_value_scope_values(scope);
     if (spec->eval) spec->eval(value, spec->eval_context);
     else sv4_copy(value, spec->sig);
-    int matched = ev_matches(wait->last[index], *value, spec->kind);
-    sv4_move(&wait->last[index], value);
+    int matched = ev_matches(payload->last[index], *value, spec->kind);
+    sv4_move(&payload->last[index], value);
     llg_value_scope_end(scope);
     return matched && expression_qualifies(spec);
 }
@@ -447,31 +448,46 @@ static void sig_write(sv4_t* target, sv4_t value) {
     while (w) {
         llg_wait_t* next = w->next;
         int wake = 0;
-        if (w->kind == W_EVENTS || w->kind == W_MIXED) {
-            for (int i = 0; i < w->n; i++) {
-                if (w->specs[i].sig == target) {
-                    if (ev_matches(w->last[i], *target, w->specs[i].kind)) wake = 1;
-                    sv4_copy(&w->last[i], target);
+        if (w->kind == W_EVENTS) {
+            llg_wait_expression_payload_t* payload = &w->payload.expression;
+            for (int i = 0; i < payload->n; i++) {
+                if (payload->specs[i].sig == target) {
+                    if (ev_matches(payload->last[i], *target,
+                                   payload->specs[i].kind))
+                        wake = 1;
+                    sv4_copy(&payload->last[i], target);
+                }
+            }
+        } else if (w->kind == W_MIXED && w->payload.rare) {
+            llg_wait_mixed_payload_t* payload = &w->payload.rare->mixed;
+            for (int i = 0; i < payload->n; i++) {
+                if (payload->specs[i].sig == target) {
+                    if (ev_matches(payload->last[i], *target,
+                                   payload->specs[i].kind))
+                        wake = 1;
+                    sv4_copy(&payload->last[i], target);
                 }
             }
         } else if (w->kind == W_DEPS) {
-            for (int i = 0; i < w->n; i++) {
-                const llg_wait_dependency_t* dependency = &w->dependencies[i];
+            llg_wait_expression_payload_t* payload = &w->payload.expression;
+            for (int i = 0; i < payload->n; i++) {
+                const llg_wait_dependency_t* dependency = &payload->dependencies[i];
                 if (dependency->sig == target) {
                     if (dependency->width) {
                         sv4_t value = sv4_part_select(dependency->value ? *dependency->value : *target,
                             (int64_t)dependency->lsb + dependency->width - 1, dependency->lsb);
-                        if (!sv4_same(w->last[i], value)) wake = 1;
-                        sv4_move(&w->last[i], &value);
+                        if (!sv4_same(payload->last[i], value)) wake = 1;
+                        sv4_move(&payload->last[i], &value);
                     } else wake = 1;
                 }
             }
         } else if (w->kind == W_EXPR) {
-            for (int i = 0; i < w->n; i++) {
+            for (int i = 0; i < w->payload.expression.n; i++) {
                 if (expression_update(w, i, target, NULL)) wake = 1;
             }
         } else if (w->kind == W_LEVEL) {
-            if (w->sig == target && sv4_same(*target, w->level_val)) wake = 1;
+            llg_wait_level_payload_t* level = &w->payload.rare->level;
+            if (level->sig == target && sv4_same(*target, level->value)) wake = 1;
         }
         if (wake) wake_proc(w->proc);
         w = next;
@@ -513,14 +529,15 @@ static void real_write(double* target, double value) {
         llg_wait_t* next = w->next;
         int wake = 0;
         if (w->kind == W_DEPS) {
-            for (int i = 0; i < w->n; i++) {
-                if (w->dependencies[i].real == target) {
+            llg_wait_expression_payload_t* payload = &w->payload.expression;
+            for (int i = 0; i < payload->n; i++) {
+                if (payload->dependencies[i].real == target) {
                     wake = 1;
                     break;
                 }
             }
         } else if (w->kind == W_EXPR) {
-            for (int i = 0; i < w->n; i++) {
+            for (int i = 0; i < w->payload.expression.n; i++) {
                 if (expression_update(w, i, NULL, target)) wake = 1;
             }
         }

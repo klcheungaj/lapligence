@@ -36,18 +36,7 @@ static void free_proc_storage(llg_proc_t* p) {
     semaphore_waiter_unlink(&p->wait);
     if (p->wait.kind == W_MAILBOX_GET || p->wait.kind == W_MAILBOX_PUT)
         mailbox_unlink_wait(&p->wait);
-    mailbox_value_destroy(&p->wait.mailbox_value);
-    free_expression_wait(&p->wait);
-    free(p->wait.specs);
-    free(p->wait.dependencies);
-    sv4_destroy_array(p->wait.last, p->wait.last ? (size_t)p->wait.n : 0);
-    sv4_destroy(&p->wait.level_val);
-    free(p->wait.last);
-    free(p->wait.real_last);
-    free(p->wait.evs);
-    free(p->wait.order_sequence);
-    llg_process_release(p->wait.process_target);
-    p->wait.process_target = NULL;
+    wait_payload_release(&p->wait);
     value_scopes_unwind(p);
     activation_unwind_proc(p);
     llg_frame_release(p->frame);

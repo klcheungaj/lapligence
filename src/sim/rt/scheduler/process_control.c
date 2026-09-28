@@ -16,7 +16,8 @@ static void process_handle_terminal(llg_proc_t* proc, int status) {
     llg_wait_t* wait = g.waiters;
     while (wait) {
         llg_wait_t* next = wait->next;
-        if (wait->kind == W_PROCESS && wait->process_target == handle)
+        if (wait->kind == W_PROCESS && wait->payload.rare &&
+            wait->payload.rare->process.target == handle)
             wake_proc(wait->proc);
         wait = next;
     }
@@ -54,7 +55,7 @@ static void llg_kill_proc(llg_proc_t* p, int notify_parent) {
         if (w->kind == W_ASSERTION) {
             for (llg_concurrent_assertion_t* assertion = g.assertions; assertion;
                  assertion = assertion->next) {
-                if (assertion->identity == w->assertion_identity &&
+                if (assertion->identity == w->payload.rare->assertion.identity &&
                     assertion->kind == LLG_ASSERTION_EXPECT)
                     assertion->expect_active = 0;
             }
@@ -72,39 +73,9 @@ static void llg_kill_proc(llg_proc_t* p, int notify_parent) {
         if (w->kind == W_SEMAPHORE) semaphore_waiter_unlink(w);
         if (w->kind == W_MAILBOX_GET || w->kind == W_MAILBOX_PUT)
             mailbox_unlink_wait(w);
-        free_expression_wait(w);
-        free(w->specs);
-        free(w->dependencies);
-        sv4_destroy_array(w->last, w->last ? (size_t)w->n : 0);
-        sv4_destroy(&w->level_val);
-        free(w->last);
-        free(w->real_last);
-        free(w->evs);
-        free(w->order_sequence);
-        mailbox_value_destroy(&w->mailbox_value);
-        llg_process_handle_t* process_target = w->process_target;
-        w->specs = NULL;
-        w->dependencies = NULL;
-        w->last = NULL;
-        w->real_last = NULL;
-        w->evs = NULL;
-        w->order_sequence = NULL;
-        w->n = 0;
-        w->n_evs = 0;
-        w->triggered_ev = NULL;
-        w->process_target = NULL;
-        w->mailbox = NULL;
-        w->mailbox_next = NULL;
-        w->mailbox_peek = 0;
-        memset(&w->mailbox_target, 0, sizeof(w->mailbox_target));
-        w->n_order = 0;
-        w->order_next = 0;
+        wait_payload_release(w);
         w->order_result_value = 0;
-        w->assertion_identity = 0;
-        w->semaphore_keys = 0;
-        w->kind = W_NONE;
         g.wait_count--;
-        if (process_target) llg_process_release(process_target);
     }
     remove_region_entry(p);
 
@@ -323,7 +294,7 @@ void llg_process_await(llg_process_handle_t* handle) {
     wait->resume_region = region_is_reactive(current->region)
                               ? LLG_REGION_REACTIVE
                               : LLG_REGION_ACTIVE;
-    wait->process_target = handle;
+    wait_rare_allocate(wait, "process await payload")->process.target = handle;
     llg_process_retain(handle);
     register_wait();
     aco_yield();
@@ -390,9 +361,11 @@ void llg_semaphore_get(llg_semaphore_t* semaphore, sv4_t key_count) {
     wait->resume_region = region_is_reactive(current->region)
                               ? LLG_REGION_REACTIVE
                               : LLG_REGION_ACTIVE;
-    wait->semaphore = semaphore;
-    wait->semaphore_waiter = node;
-    wait->semaphore_keys = keys;
+    llg_wait_semaphore_payload_t* payload =
+        &wait_rare_allocate(wait, "semaphore wait payload")->semaphore;
+    payload->semaphore = semaphore;
+    payload->waiter = node;
+    payload->keys = keys;
     process_status_set(current, LLG_PROCESS_WAITING);
     register_wait();
     aco_yield();
