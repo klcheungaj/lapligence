@@ -126,6 +126,10 @@ fn generated_sources_keep_value_runtime_as_a_separate_translation_unit() {
     );
     assert!(cmake.contains("project(llg_sim_model C)"));
     assert!(!cmake.contains("project(llg_sim_model C ASM)"));
+    assert!(cmake.contains("set(LLG_HOST_STACK_ESTIMATE_BYTES 8388608 CACHE STRING"));
+    assert!(
+        cmake.contains("target_link_options(sim PRIVATE /STACK:${LLG_HOST_STACK_ESTIMATE_BYTES})")
+    );
     assert!(cmake.contains(
         "set_source_files_properties(llg_co.c PROPERTIES COMPILE_DEFINITIONS LLG_CO_HOST_ALLOC=1)"
     ));

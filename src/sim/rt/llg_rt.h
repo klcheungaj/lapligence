@@ -59,6 +59,13 @@
 #define LLG_PROCESS_STEP_LIMIT LLG_ZERO_LOOP_LIMIT
 #endif
 
+// Estimated host stack for the scheduler, one polled coroutine segment, and
+// the generated 256-call recursion guard. POSIX hosts warn when RLIMIT_STACK
+// is lower; generated MSVC projects reserve the same amount with /STACK.
+#ifndef LLG_HOST_STACK_ESTIMATE_BYTES
+#define LLG_HOST_STACK_ESTIMATE_BYTES (8u * 1024u * 1024u)
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
