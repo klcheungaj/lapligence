@@ -56,28 +56,50 @@ pub(super) fn render_signal_decls(model: &IrModel, out: &mut String) {
         // Exact elaborated-size driver and strength tables. The generated
         // `llg_net_t` points at them instead of embedding a fixed array, so
         // there is no artificial per-net driver ceiling.
-        let (drivers_ptr, strength0_ptr, strength1_ptr) = if g.n_drivers == 0 {
-            ("NULL".to_owned(), "NULL".to_owned(), "NULL".to_owned())
-        } else {
-            out.push_str(&format!(
-                "static sv4_t* const {}__drivers[] = {{ {} }};\n\
+        let (drivers_ptr, strength0_ptr, strength1_ptr, index_ptr, scratch_ptr) =
+            if g.n_drivers == 0 {
+                (
+                    "NULL".to_owned(),
+                    "NULL".to_owned(),
+                    "NULL".to_owned(),
+                    "NULL".to_owned(),
+                    "NULL".to_owned(),
+                )
+            } else {
+                out.push_str(&format!(
+                    "static sv4_t* const {}__drivers[] = {{ {} }};\n\
                  static const uint8_t {}__strength0[] = {{ {} }};\n\
-                 static const uint8_t {}__strength1[] = {{ {} }};\n",
-                g.c_name,
-                driver_ptrs.join(", "),
-                g.c_name,
-                strength0,
-                g.c_name,
-                strength1,
-            ));
-            (
-                format!("{}__drivers", g.c_name),
-                format!("{}__strength0", g.c_name),
-                format!("{}__strength1", g.c_name),
-            )
-        };
+                 static const uint8_t {}__strength1[] = {{ {} }};\n\
+                 static llg_net_driver_index_t {}__driver_index[{}];\n\
+                 static int {}__overlap_scratch[{}];\n",
+                    g.c_name,
+                    driver_ptrs.join(", "),
+                    g.c_name,
+                    strength0,
+                    g.c_name,
+                    strength1,
+                    g.c_name,
+                    g.n_drivers,
+                    g.c_name,
+                    g.n_drivers,
+                ));
+                (
+                    format!("{}__drivers", g.c_name),
+                    format!("{}__strength0", g.c_name),
+                    format!("{}__strength1", g.c_name),
+                    format!("{}__driver_index", g.c_name),
+                    format!("{}__overlap_scratch", g.c_name),
+                )
+            };
         out.push_str(&format!(
-            "static llg_net_t {} = {{ {resolved_init}, {}, {}, {}, {}, {drivers_ptr}, {strength0_ptr}, {strength1_ptr}, {}, NULL, {}, {}, {}, 0, 0, NULL }};\n",
+            "static llg_net_t {} = {{ .resolved = {resolved_init}, .width = {}, \
+             .is_signed = {}, .resolution = {}, .n_drivers = {}, \
+             .drivers = {drivers_ptr}, .strength0 = {strength0_ptr}, \
+             .strength1 = {strength1_ptr}, .driver_index = {index_ptr}, \
+             .overlap_scratch = {scratch_ptr}, .index_root = -1, \
+             .propagation_enabled = {}, .propagation = NULL, \
+             .propagation_rise = {}, .propagation_fall = {}, \
+             .propagation_turn_off = {}, .aliases = NULL }};\n",
             g.c_name,
             g.width,
             g.signed as u8,

@@ -724,18 +724,23 @@ impl<'a, 'm> Frame<'a, 'm> {
                     )
                 });
             } else {
-                let updated = self.value(
-                    format!("sv4_clone({})", binding.address),
-                    binding.width,
-                    binding.signed,
-                );
-                self.set_selected(selection, &updated.code, &value.code);
-                self.line(if let Some((name, slot)) = &target.net {
-                    format!("llg_net_write(&{name}, {slot}, {});", updated.code)
+                if let Some((name, slot)) = &target.net {
+                    let (plan, reverse) = self.selection_plan(selection, binding.width);
+                    self.line(format!(
+                        "llg_net_write_selected(&{name}, {slot}, {}, {plan}, {});",
+                        value.code,
+                        u8::from(reverse)
+                    ));
                 } else {
-                    format!("llg_ba({}, {});", binding.address, updated.code)
-                });
-                self.discard(updated);
+                    let updated = self.value(
+                        format!("sv4_clone({})", binding.address),
+                        binding.width,
+                        binding.signed,
+                    );
+                    self.set_selected(selection, &updated.code, &value.code);
+                    self.line(format!("llg_ba({}, {});", binding.address, updated.code));
+                    self.discard(updated);
+                }
             }
         } else {
             self.line(match (&target.net, nba) {

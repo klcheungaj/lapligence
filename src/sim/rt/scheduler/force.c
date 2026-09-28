@@ -1,5 +1,5 @@
 
-static sv4_t llg_net_compute(const llg_net_t* net);
+static sv4_t llg_net_compute(llg_net_t* net);
 static void force_recompute_target(sv4_t* target, llg_net_t* net);
 static void llg_net_alias_refresh_all(llg_net_t* net);
 static void inertial_unlink_pending(llg_inertial_t* driver);

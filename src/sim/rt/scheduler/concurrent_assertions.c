@@ -183,7 +183,7 @@ static void assertion_clock_signal_changed(sv4_t* signal, sv4_t old,
             continue;
         if (assertion->disable && sv4_to_bool(*assertion->disable)) continue;
         if (assertion->clock == signal &&
-            ev_matches(old, value, assertion->edge)) {
+            ev_matches_changed(old, value, assertion->edge)) {
             if (assertion->consequent_sequence)
                 assertion_clock_event_append(assertion, signal, assertion->edge,
                                              order);

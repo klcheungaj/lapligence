@@ -356,6 +356,12 @@ fn ordinary_wire_selected_continuous_drivers_resolve_with_optimizer_parity() {
         ] {
             let model = sim::codegen::generate_from_db_with_opts(&db, &options)
                 .map_err(|error| format!("{variant} lowering: {error}"))?;
+            assert!(
+                model.model_c.contains("__driver_index[2]")
+                    && model.model_c.contains("__overlap_scratch[2]")
+                    && model.model_c.matches("llg_net_write_selected(").count() >= 2,
+                "{variant} must emit exact-size interval storage and selected writes"
+            );
             let executable = sim::build::build_model_cmake(
                 &dir.join(variant),
                 &[("model.c", model.model_c.as_str())],

@@ -449,6 +449,196 @@ sv4_t sv4_resolve_strengths(const sv4_t* const* drivers,
     return r;
 }
 
+static uint64_t sv4_extract_limb(const uint64_t* plane, uint32_t width,
+                                 uint32_t offset) {
+    if (!plane || offset >= width) return 0;
+    uint32_t limb = offset / 64u;
+    uint32_t shift = offset % 64u;
+    uint64_t result = plane[limb] >> shift;
+    if (shift && limb + 1u < (uint32_t)sv4_nlimbs(width))
+        result |= plane[limb + 1u] << (64u - shift);
+    uint32_t available = width - offset;
+    if (available < 64u) result &= LLG_MASK(available);
+    return result;
+}
+
+sv4_t sv4_resolve_strengths_range(const sv4_t* const* drivers,
+                                  const uint8_t* strength0,
+                                  const uint8_t* strength1,
+                                  const int* indices, int n_indices,
+                                  uint32_t source_width,
+                                  uint32_t range_offset,
+                                  uint32_t range_width,
+                                  int8_t is_signed, int mode) {
+    sv4_require_width(source_width, "net");
+    sv4_require_width(range_width, "net resolution range");
+    if ((!indices && n_indices) || n_indices < 0 ||
+        range_offset > source_width ||
+        range_width > source_width - range_offset) {
+        fputs("llg runtime fatal: invalid net resolution range\n", stderr);
+        abort();
+    }
+    sv4_t r = sv4_zero(range_width, is_signed);
+    r.width = range_width;
+    r.is_signed = is_signed;
+    int nl = sv4_nlimbs(range_width);
+    for (int i = 0; i < nl; i++) {
+        uint64_t m = sv4_limb_mask(range_width, i);
+        uint32_t source_offset = range_offset + (uint32_t)i * 64u;
+        if (!strength0 || !strength1) {
+            if (mode == LLG_RESOLVE_SUPPLY0 || mode == LLG_RESOLVE_SUPPLY1) {
+                r.bits[i] = mode == LLG_RESOLVE_SUPPLY1 ? m : 0;
+                continue;
+            }
+            uint64_t any0 = 0;
+            uint64_t any1 = 0;
+            uint64_t anyx = 0;
+            for (int selected = 0; selected < n_indices; selected++) {
+                int d = indices[selected];
+                if (d < 0) {
+                    fputs("llg runtime fatal: invalid net driver index\n", stderr);
+                    abort();
+                }
+                const sv4_t* v = drivers[d];
+                if (!v) continue;
+                uint64_t valid = source_offset >= v->width
+                    ? 0 : sv4_limb_mask(v->width - source_offset, 0);
+                uint64_t bits = sv4_extract_limb(v->bits, v->width, source_offset) & m;
+                uint64_t x = sv4_extract_limb(v->x, v->width, source_offset) & m;
+                uint64_t z = (sv4_extract_limb(v->z, v->width, source_offset) |
+                              ~valid) & m;
+                any0 |= (~bits) & ~(x | z) & m;
+                any1 |= bits & ~(x | z) & m;
+                anyx |= x;
+            }
+            uint64_t driven = any0 | any1 | anyx;
+            uint64_t known1;
+            uint64_t unknown;
+            if (mode == LLG_RESOLVE_WAND) {
+                known1 = any1 & ~anyx & ~any0;
+                unknown = anyx & ~any0;
+            } else if (mode == LLG_RESOLVE_WOR) {
+                known1 = any1;
+                unknown = anyx & ~any1;
+            } else {
+                unknown = anyx | (any0 & any1);
+                known1 = any1 & ~unknown;
+            }
+            r.bits[i] = known1 & m;
+            r.x[i] = unknown & m;
+            r.z[i] = ~driven & m;
+            if (mode == LLG_RESOLVE_TRI0 || mode == LLG_RESOLVE_TRI1) {
+                if (mode == LLG_RESOLVE_TRI1) r.bits[i] |= r.z[i];
+                r.z[i] = 0;
+            }
+            continue;
+        }
+
+        uint64_t known0[8] = {0};
+        uint64_t known1[8] = {0};
+        uint64_t possible0[8] = {0};
+        uint64_t possible1[8] = {0};
+        int default_strength = -1;
+        int default_value = -1;
+        if (mode == LLG_RESOLVE_TRI0) {
+            default_strength = LLG_STRENGTH_PULL;
+            default_value = 0;
+        } else if (mode == LLG_RESOLVE_TRI1) {
+            default_strength = LLG_STRENGTH_PULL;
+            default_value = 1;
+        } else if (mode == LLG_RESOLVE_SUPPLY0) {
+            default_strength = LLG_STRENGTH_SUPPLY;
+            default_value = 0;
+        } else if (mode == LLG_RESOLVE_SUPPLY1) {
+            default_strength = LLG_STRENGTH_SUPPLY;
+            default_value = 1;
+        }
+        if (default_strength >= 0) {
+            if (default_value == 0) {
+                known0[default_strength] |= m;
+                possible0[default_strength] |= m;
+            } else {
+                known1[default_strength] |= m;
+                possible1[default_strength] |= m;
+            }
+        }
+        for (int selected = 0; selected < n_indices; selected++) {
+            int d = indices[selected];
+            if (d < 0) {
+                fputs("llg runtime fatal: invalid net driver index\n", stderr);
+                abort();
+            }
+            const sv4_t* v = drivers[d];
+            if (!v) continue;
+            uint8_t s0 = strength0[d];
+            uint8_t s1 = strength1[d];
+            if (s0 > LLG_STRENGTH_SUPPLY || s1 > LLG_STRENGTH_SUPPLY) {
+                fputs("llg runtime fatal: invalid net drive strength\n", stderr);
+                abort();
+            }
+            uint64_t valid = source_offset >= v->width
+                ? 0 : sv4_limb_mask(v->width - source_offset, 0);
+            uint64_t bits = sv4_extract_limb(v->bits, v->width, source_offset) & m;
+            uint64_t x = sv4_extract_limb(v->x, v->width, source_offset) & m;
+            uint64_t z = (sv4_extract_limb(v->z, v->width, source_offset) |
+                          ~valid) & m;
+            uint64_t k0 = (~bits) & ~(x | z) & m;
+            uint64_t k1 = bits & ~(x | z) & m;
+            if (s0 != LLG_STRENGTH_HIGHZ) {
+                known0[s0] |= k0;
+                possible0[s0] |= k0 | x;
+            }
+            if (s1 != LLG_STRENGTH_HIGHZ) {
+                known1[s1] |= k1;
+                possible1[s1] |= k1 | x;
+            }
+        }
+        uint64_t out1 = 0;
+        uint64_t outx = 0;
+        uint64_t outz = 0;
+        for (uint64_t bit = UINT64_C(1); bit != 0; bit <<= 1) {
+            if (!(m & bit)) continue;
+            int best_k0 = -1;
+            int best_k1 = -1;
+            int best_p0 = -1;
+            int best_p1 = -1;
+            for (int strength = LLG_STRENGTH_SUPPLY;
+                 strength > LLG_STRENGTH_HIGHZ; strength--) {
+                if (best_k0 < 0 && (known0[strength] & bit)) best_k0 = strength;
+                if (best_k1 < 0 && (known1[strength] & bit)) best_k1 = strength;
+                if (best_p0 < 0 && (possible0[strength] & bit)) best_p0 = strength;
+                if (best_p1 < 0 && (possible1[strength] & bit)) best_p1 = strength;
+            }
+            if (best_p0 < 0 && best_p1 < 0) {
+                outz |= bit;
+            } else if (mode == LLG_RESOLVE_WAND) {
+                if (!(best_k0 > best_p1 ||
+                      (best_k0 >= 0 && best_k0 == best_p1))) {
+                    if (best_k1 > best_p0) out1 |= bit;
+                    else outx |= bit;
+                }
+            } else if (mode == LLG_RESOLVE_WOR) {
+                if (best_k1 > best_p0 ||
+                    (best_k1 >= 0 && best_k1 == best_p0)) {
+                    out1 |= bit;
+                } else if (!(best_k0 > best_p1)) {
+                    outx |= bit;
+                }
+            } else if (best_k0 > best_p1) {
+                /* Known zero needs no bit in the cleared result. */
+            } else if (best_k1 > best_p0) {
+                out1 |= bit;
+            } else {
+                outx |= bit;
+            }
+        }
+        r.bits[i] = out1 & m;
+        r.x[i] = outx & m;
+        r.z[i] = outz & m;
+    }
+    return r;
+}
+
 // Bit `i` counted from the LSB; out-of-range -> 2 (X), X -> 2, Z -> 3,
 // else 0/1.
 static int sv4_lsb_bit(sv4_t v, int i) {

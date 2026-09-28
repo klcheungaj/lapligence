@@ -103,9 +103,12 @@ advance time without a process waiter. Masked writes merge into current storage.
 Inertial sites own pending Active events: changed pending values cancel, unchanged
 values retain deadlines, return-to-current cancels without replacement. Reset
 model handles before freeing driver storage; reinitialization discards pending
-events. Zero-delay drivers drain Active. Resolve/publish only actual net changes;
-selected sites reconstruct Z-based contributions. Pending delayed drivers start X,
-not driverless Z. Fixed-array delayed sites retain per-element identity.
+events. Zero-delay drivers drain Active. Generated nets provide exact-size
+driver interval nodes and overlap scratch storage. Selected writes replace their
+previous interval, release it to Z when a selector moves, and resolve/publish only
+the union of old and new ranges against overlapping drivers. Keep full-net waiter
+identity and notification behavior. Pending delayed drivers start X, not driverless
+Z. Fixed-array delayed sites retain per-element identity.
 
 Waiters own snapshots/dependency lists. Packed edges use LSB, including 0→X/Z and
 X/Z→1 posedges (negedge mirrored); real changes compare IEEE bits, including signed
