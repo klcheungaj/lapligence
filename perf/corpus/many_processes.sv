@@ -6,38 +6,24 @@
 `define LLG_CORPUS_EDGES 20
 `endif
 
-// One independently allocated register and one continuous assignment per
-// generated instance. The packed output exists only to make the final state
-// observable with a deterministic summary.
-module many_processes_register_leaf #(
-    parameter integer ID = 0
-) (
-    input  logic clk,
-    output logic q,
-    output wire  d
-);
-    assign d = ID[0];
-
-    initial q = ID[0];
-    always @(posedge clk)
-        q <= d;
-endmodule
-
 module many_processes_registers #(
     parameter integer N = `LLG_CORPUS_N,
     parameter integer EDGES = `LLG_CORPUS_EDGES
 );
     logic clk = 0;
-    wire [N-1:0] q;
-    wire [N-1:0] d;
+    wire [N-1:0] q_view;
+    wire [N-1:0] d_view;
 
     genvar i;
     for (i = 0; i < N; i = i + 1) begin : workers
-        many_processes_register_leaf #(.ID(i)) worker(
-            .clk(clk),
-            .q(q[i]),
-            .d(d[i])
-        );
+        logic q;
+        wire d;
+
+        assign d = i[0];
+        assign q_view[i] = q;
+        assign d_view[i] = d;
+        always @(posedge clk)
+            q <= d;
     end
 
     initial begin
@@ -47,7 +33,8 @@ module many_processes_registers #(
         end
         #1;
         $display("many_processes variant=registers n=%0d edges=%0d ones=%0d d_ones=%0d first=%b last=%b",
-                 N, EDGES, $countones(q), $countones(d), q[0], q[N-1]);
+                 N, EDGES, $countones(q_view), $countones(d_view),
+                 q_view[0], q_view[N-1]);
         $finish(0);
     end
 endmodule
