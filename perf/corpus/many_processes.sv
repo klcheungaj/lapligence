@@ -18,10 +18,9 @@ module many_processes_registers #(
 
     genvar i;
     for (i = 0; i < N; i = i + 1) begin : workers
-        logic q;
-
         assign d[i] = i[0];
         always @(posedge clk) begin
+            static logic q;
             q <= d[i];
             if (edge_index == EDGES - 1) begin
                 ones = ones + (q === 1'b1);
