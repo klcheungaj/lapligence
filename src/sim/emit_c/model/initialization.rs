@@ -295,6 +295,14 @@ pub(super) fn render_main(execution: &ExecutionModel) -> Result<String, String> 
             .unwrap_or_else(|| "NULL".to_owned());
         let pass_action = assertion.pass_action().unwrap_or("NULL");
         let fail_action = assertion.fail_action().unwrap_or("NULL");
+        let pass_desc = assertion
+            .pass_action()
+            .map(|action| format!("&{action}_desc"))
+            .unwrap_or_else(|| "NULL".to_owned());
+        let fail_desc = assertion
+            .fail_action()
+            .map(|action| format!("&{action}_desc"))
+            .unwrap_or_else(|| "NULL".to_owned());
         let kind = match assertion.kind() {
             IrConcurrentAssertionKind::Assert => "LLG_ASSERTION_ASSERT",
             IrConcurrentAssertionKind::Assume => "LLG_ASSERTION_ASSUME",
@@ -314,7 +322,7 @@ pub(super) fn render_main(execution: &ExecutionModel) -> Result<String, String> 
             let consequent = format!("&{}", assertion_sequence_name(index, "consequent"));
             if assertion.abort_condition().is_some() {
                 out.push_str(&format!(
-                    "    if (!llg_assertion_register_sequence_control(&{}, {}, {}, {}, {}, {}, {}, {}, NULL, {}, {}, {}, {}, {}ULL, {}, {}, {})) return 1;\n",
+                    "    if (!llg_assertion_register_sequence_control(&{}, {}, {}, {}, {}, {}, {}, {}, {}, {}, NULL, {}, {}, {}, {}, {}ULL, {}, {}, {})) return 1;\n",
                     clock,
                     edge,
                     disable,
@@ -322,7 +330,9 @@ pub(super) fn render_main(execution: &ExecutionModel) -> Result<String, String> 
                     consequent,
                     abort_condition,
                     pass_action,
+                    pass_desc,
                     fail_action,
+                    fail_desc,
                     kind,
                     assertion.overlapped() as u8,
                     assertion.abort_reject() as u8,
@@ -334,14 +344,16 @@ pub(super) fn render_main(execution: &ExecutionModel) -> Result<String, String> 
                 ));
             } else {
                 out.push_str(&format!(
-                    "    if (!llg_assertion_register_sequence(&{}, {}, {}, {}, {}, {}, {}, NULL, {}, {}, {}ULL, {}, {}, {})) return 1;\n",
+                    "    if (!llg_assertion_register_sequence(&{}, {}, {}, {}, {}, {}, {}, {}, {}, NULL, {}, {}, {}ULL, {}, {}, {})) return 1;\n",
                     clock,
                     edge,
                     disable,
                     antecedent,
                     consequent,
                     pass_action,
+                    pass_desc,
                     fail_action,
+                    fail_desc,
                     kind,
                     assertion.overlapped() as u8,
                     assertion.identity(),
@@ -357,7 +369,7 @@ pub(super) fn render_main(execution: &ExecutionModel) -> Result<String, String> 
             let consequent = assertion_predicate_name(index, "consequent");
             if assertion.abort_condition().is_some() {
                 out.push_str(&format!(
-                    "    if (!llg_assertion_register_control(&{}, {}, {}, {}, {}, {}, {}, {}, NULL, {}, {}, {}, {}, {}ULL, {}, {}, {})) return 1;\n",
+                    "    if (!llg_assertion_register_control(&{}, {}, {}, {}, {}, {}, {}, {}, {}, {}, NULL, {}, {}, {}, {}, {}ULL, {}, {}, {})) return 1;\n",
                     clock,
                     edge,
                     disable,
@@ -365,7 +377,9 @@ pub(super) fn render_main(execution: &ExecutionModel) -> Result<String, String> 
                     consequent,
                     abort_condition,
                     pass_action,
+                    pass_desc,
                     fail_action,
+                    fail_desc,
                     kind,
                     assertion.overlapped() as u8,
                     assertion.abort_reject() as u8,
@@ -377,14 +391,16 @@ pub(super) fn render_main(execution: &ExecutionModel) -> Result<String, String> 
                 ));
             } else {
                 out.push_str(&format!(
-                    "    if (!llg_assertion_register(&{}, {}, {}, {}, {}, {}, {}, NULL, {}, {}, {}ULL, {}, {}, {})) return 1;\n",
+                    "    if (!llg_assertion_register(&{}, {}, {}, {}, {}, {}, {}, {}, {}, NULL, {}, {}, {}ULL, {}, {}, {})) return 1;\n",
                     clock,
                     edge,
                     disable,
                     antecedent,
                     consequent,
                     pass_action,
+                    pass_desc,
                     fail_action,
+                    fail_desc,
                     kind,
                     assertion.overlapped() as u8,
                     assertion.identity(),
@@ -442,19 +458,19 @@ pub(super) fn render_main(execution: &ExecutionModel) -> Result<String, String> 
             let is_initial =
                 semantic_process.is_some_and(|process| process.kind() == IrProcessKind::Initial);
             out.push_str(&format!(
-                "    llg_spawn_program_in_region({fname}, {}, {}, {instance}ULL, {});\n",
+                "    llg_spawn_program_in_region(&{fname}_desc, {fname}, {}, {}, {instance}ULL, {});\n",
                 c_string_literal(&runtime_name),
                 region.runtime_symbol(),
                 u8::from(is_initial)
             ));
         } else if region == ScheduleRegion::Active {
             out.push_str(&format!(
-                "    llg_spawn({fname}, {});\n",
+                "    llg_spawn(&{fname}_desc, {fname}, {});\n",
                 c_string_literal(&runtime_name)
             ));
         } else {
             out.push_str(&format!(
-                "    llg_spawn_in_region({fname}, {}, {});\n",
+                "    llg_spawn_in_region(&{fname}_desc, {fname}, {}, {});\n",
                 c_string_literal(&runtime_name),
                 region.runtime_symbol()
             ));

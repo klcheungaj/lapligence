@@ -320,6 +320,7 @@ impl<'a> Codegen<'a> {
                 // renderers resolve through it).
                 let ir = self.model.funcs.len();
                 self.model.funcs.push(crate::sim::ir::IrFunc {
+                    origin: self.origin(*c),
                     return_default: self.fixed_default_literal(*c),
                     return_signal: None,
                     c_name,

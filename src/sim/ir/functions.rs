@@ -178,6 +178,7 @@ impl IrLocal {
 /// recursion-depth guard.
 #[derive(Clone, Debug, PartialEq)]
 pub struct IrFunc {
+    pub(in crate::sim) origin: crate::sim::semantic::Origin,
     pub(in crate::sim) return_default: Option<IrConst>,
     /// Optional model signal that owns a statically allocated numeric result
     /// when the result is also targeted by a continuous assignment.
@@ -234,6 +235,9 @@ impl IrFunc {
         body: Vec<IrStmt>,
     ) -> Self {
         Self {
+            origin: crate::sim::semantic::Origin::Synthetic {
+                reason: "constructed function".to_owned(),
+            },
             c_name,
             inline_expanded: false,
             automatic: true,
@@ -252,6 +256,10 @@ impl IrFunc {
             pre_fns,
             body,
         }
+    }
+
+    pub fn origin(&self) -> &crate::sim::semantic::Origin {
+        &self.origin
     }
 
     /// The all-X return initializer used by the recursion guard

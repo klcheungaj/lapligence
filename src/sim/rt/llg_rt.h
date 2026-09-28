@@ -84,6 +84,10 @@ typedef struct {
 // simulation thread; callers must not race this accessor with simulation.
 void llg_rt_co_cache_get_stats(llg_rt_co_cache_stats_t* stats);
 
+/* Temporary Part-A descriptor for hand-written libaco process functions that
+ * do not use generated frame storage. Generated code passes a typed descriptor. */
+extern const llg_co_desc_t llg_libaco_desc;
+
 // Typed display values. The runtime owns string members after a display call
 // or while a deferred monitor/strobe snapshot is live.
 enum {
@@ -565,6 +569,9 @@ void llg_wait_assertion(uint64_t identity);
 // attempt queues and never evaluates a property against live NBA state.
 typedef int (*llg_concurrent_assertion_predicate_fn)(void* data);
 typedef void (*llg_concurrent_assertion_action_fn)(llg_proc_t* self);
+/* Each present action is spawned as a Reactive process, so its descriptor must
+ * describe the generated root frame. Descriptor and action are both NULL when
+ * that action arm is absent. */
 
 // A sequence graph is an owned, finite NFA whose transition delays are
 // measured in sampled clock edges.  The graph itself is emitted as static C
@@ -630,7 +637,9 @@ int llg_assertion_register(
     llg_concurrent_assertion_predicate_fn antecedent,
     llg_concurrent_assertion_predicate_fn consequent,
     llg_concurrent_assertion_action_fn pass_action,
-    llg_concurrent_assertion_action_fn fail_action, void* data, int kind,
+    const llg_co_desc_t* pass_desc,
+    llg_concurrent_assertion_action_fn fail_action,
+    const llg_co_desc_t* fail_desc, void* data, int kind,
     int overlapped, uint64_t identity, const char* label, const char* location,
     const char* scope);
 /* Extended concurrent-assertion registration with bounded accept_on /
@@ -644,7 +653,9 @@ int llg_assertion_register_control(
     llg_concurrent_assertion_predicate_fn consequent,
     llg_concurrent_assertion_predicate_fn abort_condition,
     llg_concurrent_assertion_action_fn pass_action,
-    llg_concurrent_assertion_action_fn fail_action, void* data, int kind,
+    const llg_co_desc_t* pass_desc,
+    llg_concurrent_assertion_action_fn fail_action,
+    const llg_co_desc_t* fail_desc, void* data, int kind,
     int overlapped, int abort_reject, int abort_sync, uint64_t identity,
     const char* label, const char* location, const char* scope);
 // Queue one deferred immediate-assertion result. The condition result and
@@ -664,7 +675,9 @@ int llg_assertion_register_sequence(
     const llg_sequence_graph_t* antecedent,
     const llg_sequence_graph_t* consequent,
     llg_concurrent_assertion_action_fn pass_action,
-    llg_concurrent_assertion_action_fn fail_action, void* data, int kind,
+    const llg_co_desc_t* pass_desc,
+    llg_concurrent_assertion_action_fn fail_action,
+    const llg_co_desc_t* fail_desc, void* data, int kind,
     int overlapped, uint64_t identity, const char* label, const char* location,
     const char* scope);
 int llg_assertion_register_sequence_control(
@@ -673,7 +686,9 @@ int llg_assertion_register_sequence_control(
     const llg_sequence_graph_t* consequent,
     llg_concurrent_assertion_predicate_fn abort_condition,
     llg_concurrent_assertion_action_fn pass_action,
-    llg_concurrent_assertion_action_fn fail_action, void* data, int kind,
+    const llg_co_desc_t* pass_desc,
+    llg_concurrent_assertion_action_fn fail_action,
+    const llg_co_desc_t* fail_desc, void* data, int kind,
     int overlapped, int abort_reject, int abort_sync, uint64_t identity,
     const char* label, const char* location, const char* scope);
 
@@ -870,23 +885,33 @@ void llg_file_strobe_typed(uint32_t descriptor, const char* fmt, int n,
 // the next settled observation point even when values are unchanged.
 void llg_monitor_set(int on);
 
-// Spawn one process; `fn` must never return without calling `llg_proc_done`.
-llg_proc_t* llg_spawn(void (*fn)(llg_proc_t*), const char* name);
+// Spawn one process; `desc` describes the POD root frame co-allocated after the
+// process record and `fn` must never return without calling `llg_proc_done`.
+// The storage is zero-filled normally and deliberately poisoned under
+// LLG_CO_DEBUG. Generated functions initialize fields at their declaration sites.
+llg_proc_t* llg_spawn(const llg_co_desc_t* desc, void (*fn)(llg_proc_t*),
+                      const char* name);
 // Spawn a non-program process directly into an explicit execution region.
 // This remains the runtime hook for assertion/VPI lowering; ordinary HDL
 // processes use llg_spawn (ACTIVE), while programs use the typed entry below.
-llg_proc_t* llg_spawn_in_region(void (*fn)(llg_proc_t*), const char* name,
+llg_proc_t* llg_spawn_in_region(const llg_co_desc_t* desc,
+                                void (*fn)(llg_proc_t*), const char* name,
                                 llg_region_t region);
 // Spawn in Reactive with a stable elaborated program-instance identity.
 // Only initial procedures count toward natural completion; fork descendants
 // inherit the origin but never extend the lifetime of their program.
-llg_proc_t* llg_spawn_program_in_region(void (*fn)(llg_proc_t*),
+llg_proc_t* llg_spawn_program_in_region(const llg_co_desc_t* desc,
+                                         void (*fn)(llg_proc_t*),
                                         const char* name,
                                         llg_region_t region,
                                         uint64_t instance, int is_initial);
 // Return the activation frame retained by a process, or NULL for ordinary
 // static-storage processes. The returned pointer is borrowed from `self`.
 llg_frame_t* llg_proc_frame(llg_proc_t* self);
+/* Root coroutine frames are POD storage co-allocated after the process record.
+ * Value scopes remain the sole owners of packed/native payloads. */
+void* llg_proc_co_frame(llg_proc_t* self);
+llg_co_arena_t* llg_proc_co_arena(llg_proc_t* self);
 // Terminate the current process (wraps aco_exit; never returns).
 _Noreturn void llg_proc_done(llg_proc_t* self);
 // Terminate the originating program's initials and descendants. Calls from
@@ -968,8 +993,8 @@ void llg_rt_run_finals(void);
 // `llg_fork_group_t` tracks the children of one `fork` statement:
 //
 //     llg_fork_group_t* g = llg_fork_group_new(LLG_JOIN);
-//     llg_fork(child_a, "a", g);
-//     llg_fork(child_b, "b", g);
+//     llg_fork(&child_a_desc, child_a, "a", g);
+//     llg_fork(&child_b_desc, child_b, "b", g);
 //     llg_join(g);   // suspend until the group completes
 //
 // `join_none` children are created in source order but become eligible only
@@ -999,12 +1024,15 @@ llg_fork_group_t* llg_fork_group_new(int join_kind);
 llg_fork_group_t* llg_fork_group_new_target(int join_kind,
                                             uint32_t declaration,
                                             uint32_t instance);
-// Spawn `fn` as a child of `grp`; `fn` must end with `llg_proc_done`.
-llg_proc_t* llg_fork(void (*fn)(llg_proc_t*), const char* name, llg_fork_group_t* grp);
+// Spawn `fn` as a child of `grp`; `desc` describes its co-allocated POD root
+// frame and `fn` must end with `llg_proc_done`.
+llg_proc_t* llg_fork(const llg_co_desc_t* desc, void (*fn)(llg_proc_t*),
+                     const char* name, llg_fork_group_t* grp);
 // Spawn a child with one retained reference to `frame`. The child releases
 // that reference on completion or cancellation; the caller retains ownership
 // of its own reference and may release it after this call.
-llg_proc_t* llg_fork_with_frame(void (*fn)(llg_proc_t*), const char* name,
+llg_proc_t* llg_fork_with_frame(const llg_co_desc_t* desc,
+                                void (*fn)(llg_proc_t*), const char* name,
                                 llg_fork_group_t* grp, llg_frame_t* frame);
 // Create and manage typed activation storage. Slots hold copied values by
 // default. Frame-to-frame aliases retain their source frame. Joined fork

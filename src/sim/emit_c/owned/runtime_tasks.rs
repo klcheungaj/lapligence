@@ -58,8 +58,7 @@ impl Frame<'_, '_> {
         } else {
             let origin = self.scalar("uint64_t", format!("{}ULL", view.origin));
             for (index, (selector, value)) in selector_values.iter().enumerate() {
-                let selected = self.name("memory_selector_index");
-                self.line(format!("int64_t {selected} = 0;"));
+                let selected = self.declare("int64_t", "memory_selector_index", "0".to_owned());
                 let (left, right) = (selector.left, selector.right);
                 let minimum = left.min(right);
                 let maximum = left.max(right);
@@ -68,8 +67,11 @@ impl Frame<'_, '_> {
                 } else {
                     format!("(uint64_t)({selected} - (int64_t){left})")
                 };
+                let offset_name = self.name(&format!("memory_offset_{index}"));
+                let (offset_access, offset_declaration) =
+                    self.declaration_target_named("uint64_t", &offset_name);
                 self.line(format!(
-                    "if ({origin} != UINT64_MAX) {{ if (!sv4_to_index_i64({}, &{selected}) || {selected} < {minimum} || {selected} > {maximum}) {{ {origin} = UINT64_MAX; }} else {{ uint64_t _llg_memory_offset_{index} = {offset}; if (_llg_memory_offset_{index} > (UINT64_MAX - {origin}) / {}ULL) {{ {origin} = UINT64_MAX; }} else {{ {origin} += _llg_memory_offset_{index} * {}ULL; }} }} }}",
+                    "if ({origin} != UINT64_MAX) {{ if (!sv4_to_index_i64({}, &{selected}) || {selected} < {minimum} || {selected} > {maximum}) {{ {origin} = UINT64_MAX; }} else {{ {offset_declaration} = {offset}; if ({offset_access} > (UINT64_MAX - {origin}) / {}ULL) {{ {origin} = UINT64_MAX; }} else {{ {origin} += {offset_access} * {}ULL; }} }} }}",
                     value.code,
                     selector.stride,
                     selector.stride
@@ -110,14 +112,15 @@ impl Frame<'_, '_> {
             .as_ref()
             .filter(|values| !values.is_empty())
             .map(|values| {
-                let name = self.name("memory_enum_values");
                 let entry_count = values.len();
                 let rendered_values = values.iter().map(emit_const).collect::<Vec<_>>().join(", ");
                 self.line("{");
-                self.line(format!(
-                    "sv4_t {name}[{entry_count}] = {{ {rendered_values} }};"
-                ));
-                name
+                self.declare_array_init(
+                    "sv4_t",
+                    "memory_enum_values",
+                    entry_count,
+                    &rendered_values,
+                )
             });
         let enum_pointer = enum_name.as_deref().unwrap_or("NULL");
         let enum_count = enum_values
@@ -258,12 +261,12 @@ impl Frame<'_, '_> {
             let pointer = if pointers.is_empty() {
                 "NULL".to_owned()
             } else {
-                let name = self.name("monitor_reads");
-                self.line(format!(
-                    "llg_display_read_t {name}[] = {{ {} }};",
-                    pointers.join(", ")
-                ));
-                name
+                self.declare_array_init(
+                    "llg_display_read_t",
+                    "monitor_reads",
+                    pointers.len(),
+                    &pointers.join(", "),
+                )
             };
             self.line(format!("{prefix}monitor_with_typed_reads({descriptor}{fmt}, {n_args}, {eval}, {scope}, {pointer}, {});", reads.len()));
         }

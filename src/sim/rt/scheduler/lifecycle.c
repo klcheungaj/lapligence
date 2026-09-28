@@ -43,8 +43,7 @@ static void free_proc_storage(llg_proc_t* p) {
     p->frame = NULL;
     process_local_release_all(p);
     process_handle_shutdown(p);
-    if (p->co) aco_destroy(p->co);
-    free(p);
+    free_proc_record(p);
 }
 
 static void clocking_copy_observed(void* data);

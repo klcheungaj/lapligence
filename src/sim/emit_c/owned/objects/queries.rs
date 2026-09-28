@@ -41,8 +41,7 @@ impl Frame<'_, '_> {
         }
         let selector = if let Some(index) = &query.dimension {
             let value = self.expression(index)?;
-            let index = self.name("query_dimension");
-            self.line(format!("int64_t {index} = 0;"));
+            let index = self.declare("int64_t", "query_dimension", "0".to_owned());
             self.line(format!(
                 "if (!sv4_to_index_i64({}, &{index})) {index} = 0;",
                 value.code

@@ -54,16 +54,20 @@ pub(in crate::sim::emit_c) fn helpers(out: &mut String) {
 
 impl Frame<'_, '_> {
     pub(super) fn native_reserve(&mut self, kind: NativeKind) -> NativeValue {
-        let scope = self.name("native_scope");
-        let pointer = self.name("native");
         let ty = kind.c_type();
-        self.line(format!(
-            "llg_value_scope_t* {scope} = llg_value_scope_begin_object(sizeof({ty}), {});",
-            kind.destructor()
-        ));
-        self.line(format!(
-            "{ty}* {pointer} = ({ty}*)llg_value_scope_object({scope});"
-        ));
+        let scope = self.declare(
+            "llg_value_scope_t*",
+            "native_scope",
+            format!(
+                "llg_value_scope_begin_object(sizeof({ty}), {})",
+                kind.destructor()
+            ),
+        );
+        let pointer = self.declare(
+            &format!("{ty}*"),
+            "native",
+            format!("({ty}*)llg_value_scope_object({scope})"),
+        );
         NativeValue {
             address: pointer,
             scope,

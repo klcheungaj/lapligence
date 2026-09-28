@@ -5,46 +5,56 @@ use super::*;
 /// The C parameter list of a lowered function: outputs first (`o{formal
 /// idx}`), then inputs (`a{formal idx}`), then the recursion depth.
 pub(super) fn func_params(f: &IrFunc) -> String {
+    func_param_fields(f)
+        .into_iter()
+        .map(|(ty, name)| format!("{ty} {name}"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+pub(super) fn func_param_fields(f: &IrFunc) -> Vec<(String, String)> {
     let mut params = Vec::new();
     if f.receiver_class.is_some() {
-        params.push("void *_this".to_string());
+        params.push(("void *".to_owned(), "_this".to_owned()));
     }
     for (idx, form) in f.formals.iter().enumerate() {
         if form.is_ref() {
             if form.string {
                 let qualifier = if form.is_const_ref() { "const " } else { "" };
-                params.push(format!("{qualifier}llg_string_t* r{idx}"));
+                params.push((format!("{qualifier}llg_string_t*"), format!("r{idx}")));
             } else if form.chandle {
                 let ty = if form.is_const_ref() {
                     "void * const*"
                 } else {
                     "void **"
                 };
-                params.push(format!("{ty} r{idx}"));
+                params.push((ty.to_owned(), format!("r{idx}")));
             } else {
                 let qualifier = if form.is_const_ref() { "const " } else { "" };
-                params.push(format!("{qualifier}llg_ref_t* r{idx}"));
+                params.push((format!("{qualifier}llg_ref_t*"), format!("r{idx}")));
             }
         } else if form.is_out {
-            params.push(format!(
-                "{}* o{idx}",
-                if form.string {
-                    "llg_string_t"
-                } else if form.chandle {
-                    "void *"
-                } else if form.real {
-                    "double"
-                } else {
-                    "sv4_t"
-                }
+            params.push((
+                format!(
+                    "{}*",
+                    if form.string {
+                        "llg_string_t"
+                    } else if form.chandle {
+                        "void *"
+                    } else if form.real {
+                        "double"
+                    } else {
+                        "sv4_t"
+                    }
+                ),
+                format!("o{idx}"),
             ));
         }
     }
     for (idx, form) in f.formals.iter().enumerate() {
         if !form.is_address() {
-            params.push(format!(
-                "{} a{idx}",
-                if form.string {
+            params.push((
+                (if form.string {
                     "llg_string_t"
                 } else if form.chandle {
                     "void *"
@@ -52,12 +62,14 @@ pub(super) fn func_params(f: &IrFunc) -> String {
                     "double"
                 } else {
                     "sv4_t"
-                }
+                })
+                .to_owned(),
+                format!("a{idx}"),
             ));
         }
     }
-    params.push("int depth".to_string());
-    params.join(", ")
+    params.push(("int".to_owned(), "depth".to_owned()));
+    params
 }
 
 pub(super) fn func_prototype(f: &IrFunc) -> Result<String, String> {

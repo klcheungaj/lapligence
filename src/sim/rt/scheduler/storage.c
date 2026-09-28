@@ -366,12 +366,25 @@ struct llg_proc {
     uint64_t assertion_owner;      // stable per-run identity for deferred reports
     uint64_t action_assertion;     // assertion whose Reactive action spawned us
     int is_assertion_action;
+    const llg_co_desc_t* co_desc; // root-frame layout for the adjacent allocation
+    llg_co_arena_t co_arena;      // dynamic callee frames; released with this record
 };
+
+static size_t llg_proc_co_frame_offset(void) {
+    return (sizeof(llg_proc_t) + 7u) & ~(size_t)7u;
+}
+
+static void free_proc_record(llg_proc_t* proc) {
+    if (!proc) return;
+    llg_co_arena_release(&proc->co_arena);
+    if (proc->co) aco_destroy(proc->co);
+    free(proc);
+}
 
 #if UINTPTR_MAX == UINT64_MAX
 _Static_assert(sizeof(llg_wait_t) == 112,
                "64-bit wait record size changed; update the measured layout contract");
-_Static_assert(sizeof(llg_proc_t) == 352,
+_Static_assert(sizeof(llg_proc_t) == 368,
                "64-bit process record size changed; do not reorder Phase 4 fields here");
 #endif
 

@@ -9,7 +9,7 @@ mod analysis;
 pub use analysis::{
     CallMechanism, CoroutineId, ExecutionAnalysis, ExecutionAnalysisError,
     ExecutionAnalysisOptions, OperationPath, OperationPathElement, SuspensionOperation,
-    SuspensionSite, DEFAULT_POLL_DEPTH_MAX,
+    SuspensionSite, DEFAULT_EMBED_LIMIT, DEFAULT_POLL_DEPTH_MAX,
 };
 
 use std::collections::{BTreeSet, HashSet};

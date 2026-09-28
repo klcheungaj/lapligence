@@ -111,9 +111,9 @@ static void native_callbacks(void) {
             queue.contents_dependency = &watched;
             queue.notify = llg_dependency_notify;
             if (mode < 2) llg_mailbox_put_value(mailbox, llg_mailbox_value_packed(payload, 129, 0, 0));
-            if (mode >= 2 && mode <= 4) llg_spawn(receiver, "mailbox receiver");
-            llg_spawn(observer, "publication observer");
-            llg_spawn(publisher, "mailbox/stream publisher");
+            if (mode >= 2 && mode <= 4) llg_spawn(&llg_libaco_desc, receiver, "mailbox receiver");
+            llg_spawn(&llg_libaco_desc, observer, "publication observer");
+            llg_spawn(&llg_libaco_desc, publisher, "mailbox/stream publisher");
             llg_rt_run();
             CHECK(evaluations == 2);
             llg_rt_cleanup();

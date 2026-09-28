@@ -151,8 +151,8 @@ static void nonlocal_scopes(void) {
             output_string = (llg_string_t){0};
             output_string.notify = llg_dependency_changed;
             output_string.dependency = &watched;
-            llg_spawn(waiter, "native-owner-waiter");
-            llg_spawn(writer, "native-owner-writer");
+            llg_spawn(&llg_libaco_desc, waiter, "native-owner-waiter");
+            llg_spawn(&llg_libaco_desc, writer, "native-owner-writer");
             llg_rt_run();
             CHECK(evaluations == 2);
             llg_rt_cleanup();

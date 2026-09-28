@@ -63,11 +63,12 @@ impl Frame<'_, '_> {
                 }
             });
         }
-        let name = self.name("clocking_sources");
-        self.line(format!(
-            "llg_wait_src_t {name}[] = {{ {} }};",
-            entries.join(", ")
-        ));
+        let name = self.declare_array_init(
+            "llg_wait_src_t",
+            "clocking_sources",
+            entries.len(),
+            &entries.join(", "),
+        );
         Ok(name)
     }
 

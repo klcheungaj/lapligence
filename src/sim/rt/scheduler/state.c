@@ -207,7 +207,9 @@ typedef struct llg_concurrent_assertion {
     llg_concurrent_assertion_predicate_fn consequent;
     llg_concurrent_assertion_predicate_fn abort_condition;
     llg_concurrent_assertion_action_fn pass_action;
+    const llg_co_desc_t* pass_desc;
     llg_concurrent_assertion_action_fn fail_action;
+    const llg_co_desc_t* fail_desc;
     void* data;
     int kind;
     int overlapped;

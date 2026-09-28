@@ -47,9 +47,12 @@ impl Frame<'_, '_> {
             Some(Selection::Part(left, right)) => format!(".kind = LLG_REF_PART, .left = {left}LL, .right = {right}LL"),
             Some(Selection::Indexed(base, width, negative)) => format!(".kind = LLG_REF_INDEXED, .index = sv4_to_index({}), .indexed_width = {width}, .indexed_negative = {}", base.code, u8::from(*negative)),
         };
-        let reference = self.name("input_reference");
-        self.line(format!("llg_ref_t {reference} = {{ .base = ({} ? {} : NULL), .width = {width}, .is_signed = {}, .two_state = {}, {selection} }};",
-            target.valid, target.binding.address, u8::from(signed), u8::from(two_state)));
+        let reference = self.declare(
+            "llg_ref_t",
+            "input_reference",
+            format!("{{ .base = ({} ? {} : NULL), .width = {width}, .is_signed = {}, .two_state = {}, {selection} }}",
+                target.valid, target.binding.address, u8::from(signed), u8::from(two_state)),
+        );
         Ok((format!("&{reference}"), target))
     }
 
@@ -94,12 +97,12 @@ impl Frame<'_, '_> {
         let array = if entries.is_empty() {
             "NULL".to_owned()
         } else {
-            let array = self.name("input_targets");
-            self.line(format!(
-                "const llg_file_input_target_t {array}[] = {{ {} }};",
-                entries.join(", ")
-            ));
-            array
+            self.declare_array_init(
+                "llg_file_input_target_t",
+                "input_targets",
+                entries.len(),
+                &entries.join(", "),
+            )
         };
         Ok((array, owners))
     }

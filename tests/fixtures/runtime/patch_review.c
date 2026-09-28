@@ -106,7 +106,7 @@ static void self_disabling_child(llg_proc_t* self) {
 }
 static void nested_child(llg_proc_t* self) {
     llg_fork_group_t* group = llg_fork_group_new(LLG_JOIN);
-    llg_fork(self_disabling_child, "nested disabling child", group);
+    llg_fork(&llg_libaco_desc, self_disabling_child, "nested disabling child", group);
     llg_join(group);
     assert(!"disabled ancestor returned");
     llg_proc_done(self);
@@ -114,7 +114,7 @@ static void nested_child(llg_proc_t* self) {
 static int nested;
 static void fork_parent(llg_proc_t* self) {
     llg_fork_group_t* group = llg_fork_group_new_target(LLG_JOIN, 1, 1);
-    llg_fork(nested ? nested_child : self_disabling_child, "disabling child", group);
+    llg_fork(&llg_libaco_desc, nested ? nested_child : self_disabling_child, "disabling child", group);
     llg_join(group);
     observed++;
     llg_proc_done(self);
@@ -164,7 +164,7 @@ static void monitor_reenable(llg_proc_t* self) {
 }
 static void event_alias_readonly(void* data) { (void)data; llg_event_assign_null(&event_handle); }
 static void illegal_early_spawn(llg_proc_t* self) {
-    llg_spawn_in_region(wait_event, "invalid preponed", LLG_REGION_PREPONED);
+    llg_spawn_in_region(&llg_libaco_desc, wait_event, "invalid preponed", LLG_REGION_PREPONED);
     llg_proc_done(self);
 }
 static void callback_nba(void* data) { (void)data; llg_nba(&a, v(1)); }
@@ -186,20 +186,20 @@ int main(int argc, char** argv) {
     assert(argc == 2);
     init();
     const char* name = argv[1];
-    if (!strcmp(name, "forced_real_nba")) llg_spawn(forced_real_nba, name);
-    else if (!strcmp(name, "force_overlap")) llg_spawn(force_overlap, name);
-    else if (!strcmp(name, "force_partial_release")) llg_spawn(force_partial_release, name);
-    else if (!strcmp(name, "force_concat_release")) llg_spawn(force_concat_release, name);
-    else if (!strcmp(name, "force_slot_reuse")) llg_spawn(force_slot_reuse, name);
+    if (!strcmp(name, "forced_real_nba")) llg_spawn(&llg_libaco_desc, forced_real_nba, name);
+    else if (!strcmp(name, "force_overlap")) llg_spawn(&llg_libaco_desc, force_overlap, name);
+    else if (!strcmp(name, "force_partial_release")) llg_spawn(&llg_libaco_desc, force_partial_release, name);
+    else if (!strcmp(name, "force_concat_release")) llg_spawn(&llg_libaco_desc, force_concat_release, name);
+    else if (!strcmp(name, "force_slot_reuse")) llg_spawn(&llg_libaco_desc, force_slot_reuse, name);
     else if (!strcmp(name, "event_cleanup")) {
-        llg_spawn(wait_event, name);
-        llg_spawn(finish_later, "finish");
+        llg_spawn(&llg_libaco_desc, wait_event, name);
+        llg_spawn(&llg_libaco_desc, finish_later, "finish");
     } else if (!strcmp(name, "fork_self_disable") || !strcmp(name, "fork_ancestor_disable")) {
         nested = !strcmp(name, "fork_ancestor_disable");
-        llg_spawn(fork_parent, name);
+        llg_spawn(&llg_libaco_desc, fork_parent, name);
     } else if (!strcmp(name, "reactive_fixed_point")) {
-        llg_spawn_in_region(assert_before_design, name, LLG_REGION_REACTIVE);
-        llg_spawn_in_region(reactive_writer, "reactive writer", LLG_REGION_REACTIVE);
+        llg_spawn_in_region(&llg_libaco_desc, assert_before_design, name, LLG_REGION_REACTIVE);
+        llg_spawn_in_region(&llg_libaco_desc, reactive_writer, "reactive writer", LLG_REGION_REACTIVE);
     } else if (!strcmp(name, "pre_nba_reentry")) {
         llg_schedule_region_callback(LLG_REGION_PRE_NBA, pre_nba_callback, NULL);
         llg_schedule_region_callback(LLG_REGION_NBA, nba_value_observer, NULL);
@@ -207,12 +207,12 @@ int main(int argc, char** argv) {
         llg_sampled_register(&a);
         llg_schedule_region_callback(LLG_REGION_PRE_POSTPONED, before_postponed, NULL);
     } else if (!strcmp(name, "finish_pending")) {
-        llg_spawn(nba_then_done, "NBA producer");
-        llg_spawn(finish_now, "finish");
-    } else if (!strcmp(name, "monitor_reenable")) llg_spawn(monitor_reenable, name);
+        llg_spawn(&llg_libaco_desc, nba_then_done, "NBA producer");
+        llg_spawn(&llg_libaco_desc, finish_now, "finish");
+    } else if (!strcmp(name, "monitor_reenable")) llg_spawn(&llg_libaco_desc, monitor_reenable, name);
     else if (!strcmp(name, "event_readonly"))
         llg_schedule_region_callback(LLG_REGION_OBSERVED, event_alias_readonly, NULL);
-    else if (!strcmp(name, "early_spawn")) llg_spawn(illegal_early_spawn, name);
+    else if (!strcmp(name, "early_spawn")) llg_spawn(&llg_libaco_desc, illegal_early_spawn, name);
     else if (!strcmp(name, "callback_nba"))
         llg_schedule_region_callback(LLG_REGION_ACTIVE, callback_nba, NULL);
     else { fprintf(stderr, "unknown case: %s\n", name); return 2; }

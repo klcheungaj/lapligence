@@ -105,14 +105,14 @@ pub(in crate::sim::emit_c) fn main(execution: &ExecutionModel) -> Result<String,
         if let Some(instance) = semantic.and_then(|item| item.program) {
             let initial = semantic.is_some_and(|item| item.kind() == IrProcessKind::Initial);
             out.push_str(&format!(
-                "    llg_spawn_program_in_region({name}, {}, {}, {instance}ULL, {});\n",
+                "    llg_spawn_program_in_region(&{name}_desc, {name}, {}, {}, {instance}ULL, {});\n",
                 c_string_literal(label),
                 region.runtime_symbol(),
                 u8::from(initial)
             ));
         } else {
             out.push_str(&format!(
-                "    llg_spawn_in_region({name}, {}, {});\n",
+                "    llg_spawn_in_region(&{name}_desc, {name}, {}, {});\n",
                 c_string_literal(label),
                 region.runtime_symbol()
             ));

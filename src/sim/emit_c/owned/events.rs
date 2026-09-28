@@ -45,15 +45,13 @@ impl Frame<'_, '_> {
                 for index in indices {
                     values.push(self.expression(index)?);
                 }
-                let args = self.name("event_indices");
-                self.line(format!(
-                    "const sv4_t {args}[] = {{ {} }}; /* borrowed descriptors */",
-                    values
-                        .iter()
-                        .map(|value| value.code.as_str())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ));
+                let entries = values
+                    .iter()
+                    .map(|value| value.code.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let args =
+                    self.declare_array_init("sv4_t", "event_indices", values.len(), &entries);
                 let address = self.scalar("llg_event_t*", format!(
                     "llg_event_array_select({name}__elements, {count}ULL, {name}__left, {name}__right, {args}, {})",
                     values.len()));
@@ -153,11 +151,12 @@ impl Frame<'_, '_> {
                 .iter()
                 .map(|item| self.dependency(item))
                 .collect::<Result<Vec<_>, _>>()?;
-            let array = self.name("dependencies");
-            self.line(format!(
-                "llg_wait_dependency_t {array}[] = {{ {} }};",
-                values.join(", ")
-            ));
+            let array = self.declare_array_init(
+                "llg_wait_dependency_t",
+                "dependencies",
+                values.len(),
+                &values.join(", "),
+            );
             self.line(format!(
                 "llg_wait_any_dependencies({array}, {});",
                 sens.len()

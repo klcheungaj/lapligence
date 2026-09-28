@@ -7,8 +7,10 @@
 
 use super::constants::{c_string_literal, emit_const, round_shortreal};
 use super::context::RCtx;
+use super::frame_layout::{declaration, FrameLayout, FrameStorage};
+use crate::sim::execution::{CallMechanism, CoroutineId, ExecutionAnalysis, SuspensionOperation};
 use crate::sim::ir::*;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 
 mod activations;
 mod assertion_tasks;
@@ -91,6 +93,13 @@ struct Activation {
     lexical_depth: usize,
 }
 
+#[derive(Clone, Copy)]
+struct PendingCall {
+    resume: u32,
+    callee: Option<usize>,
+    mechanism: CallMechanism,
+}
+
 pub(super) struct Frame<'a, 'm> {
     ctx: &'a RCtx<'m>,
     code: String,
@@ -114,6 +123,11 @@ pub(super) struct Frame<'a, 'm> {
     cancellation_return: bool,
     access_stack: Vec<String>,
     construction_stack: Vec<usize>,
+    layout: FrameLayout,
+    declaration_error: Option<String>,
+    pending_calls: VecDeque<PendingCall>,
+    frame_upper_bounds: BTreeMap<usize, usize>,
+    coroutine_functions: BTreeSet<usize>,
 }
 
 fn pending(feature: &str) -> String {
@@ -122,6 +136,52 @@ fn pending(feature: &str) -> String {
 
 impl<'a, 'm> Frame<'a, 'm> {
     pub(super) fn new(ctx: &'a RCtx<'m>) -> Self {
+        Self::with_storage(ctx, FrameStorage::CStack)
+    }
+
+    pub(super) fn new_coframe(
+        ctx: &'a RCtx<'m>,
+        analysis: &ExecutionAnalysis,
+        owner: CoroutineId,
+        frame_upper_bounds: &BTreeMap<usize, usize>,
+    ) -> Result<Self, String> {
+        let mut frame = Self::with_storage(ctx, FrameStorage::CoFrame);
+        frame.frame_upper_bounds = frame_upper_bounds.clone();
+        frame.coroutine_functions = (0..ctx.model.funcs.len())
+            .filter(|function| analysis.is_coroutine_function(*function))
+            .collect();
+        let mut calls = analysis
+            .sites(owner)
+            .into_iter()
+            .flat_map(|sites| sites.values())
+            .filter_map(|site| match site.operation() {
+                SuspensionOperation::Call { callee } => Some(PendingCall {
+                    resume: site.resume(),
+                    callee: *callee,
+                    mechanism: site.mechanism()?,
+                }),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        calls.sort_by_key(|call| call.resume);
+        frame.pending_calls = calls.into();
+        Ok(frame)
+    }
+
+    fn with_storage(ctx: &'a RCtx<'m>, storage: FrameStorage) -> Self {
+        let mut layout = FrameLayout::new(storage);
+        if storage == FrameStorage::CoFrame {
+            for (ty, name) in [
+                ("llg_co_arena_t*", "arena"),
+                ("llg_value_scope_t*", "_llg_frame_base"),
+                ("llg_value_scope_t*", "_llg_temp_scope"),
+                ("sv4_t*", "_llg_t"),
+            ] {
+                layout
+                    .declare(ty, name)
+                    .expect("fixed coroutine fields are unique and have known layouts");
+            }
+        }
         Self {
             ctx,
             code: String::new(),
@@ -145,22 +205,210 @@ impl<'a, 'm> Frame<'a, 'm> {
             cancellation_return: false,
             access_stack: Vec::new(),
             construction_stack: Vec::new(),
+            layout,
+            declaration_error: None,
+            pending_calls: VecDeque::new(),
+            frame_upper_bounds: BTreeMap::new(),
+            coroutine_functions: BTreeSet::new(),
         }
     }
     fn line(&mut self, text: impl AsRef<str>) {
+        let text = if self.layout.storage() == FrameStorage::CoFrame {
+            self.rewrite_frame_accesses(text.as_ref())
+        } else {
+            text.as_ref().to_owned()
+        };
         self.code.push_str("    ");
-        self.code.push_str(text.as_ref());
+        self.code.push_str(&text);
         self.code.push('\n');
+    }
+    fn rewrite_frame_accesses(&self, text: &str) -> String {
+        let names = self.layout.field_names().collect::<BTreeSet<_>>();
+        let bytes = text.as_bytes();
+        let mut out = String::with_capacity(text.len() + 16);
+        let mut index = 0;
+        let mut quoted = None;
+        let mut escaped = false;
+        while index < bytes.len() {
+            let start = index;
+            if let Some(quote) = quoted {
+                let ch = text[index..].chars().next().unwrap_or('\0');
+                out.push(ch);
+                index += ch.len_utf8();
+                if escaped {
+                    escaped = false;
+                } else if ch == '\\' {
+                    escaped = true;
+                } else if ch == quote {
+                    quoted = None;
+                }
+            } else if matches!(bytes[index], b'\'' | b'"') {
+                let quote = bytes[index] as char;
+                out.push(quote);
+                index += 1;
+                quoted = Some(quote);
+            } else if bytes[index] == b'_' || bytes[index].is_ascii_alphabetic() {
+                index += 1;
+                while index < bytes.len()
+                    && (bytes[index] == b'_' || bytes[index].is_ascii_alphanumeric())
+                {
+                    index += 1;
+                }
+                let ident = &text[start..index];
+                let member_access = start > 0 && matches!(bytes[start - 1], b'.' | b'>');
+                if names.contains(ident) && !member_access {
+                    out.push_str("F->");
+                }
+                out.push_str(ident);
+            } else {
+                let ch = text[index..]
+                    .chars()
+                    .next()
+                    .expect("index remains within the generated text");
+                out.push(ch);
+                index += ch.len_utf8();
+            }
+        }
+        out
     }
     fn name(&mut self, purpose: &str) -> String {
         let result = format!("_llg_{purpose}_{}", self.next_name);
         self.next_name += 1;
         result
     }
+    fn access(&self, name: &str) -> String {
+        if self.layout.storage() == FrameStorage::CoFrame {
+            format!("F->{name}")
+        } else {
+            name.to_owned()
+        }
+    }
+    fn frame_field(&mut self, ty: &str, name: &str) -> Result<String, String> {
+        self.layout.declare(ty, name)
+    }
+    fn take_call_slot(
+        &mut self,
+        callee: usize,
+        callee_type: &str,
+    ) -> Result<super::frame_layout::CallSlot, String> {
+        let plan = self
+            .pending_calls
+            .pop_front()
+            .ok_or_else(|| format!("missing coroutine call-site analysis for callee {callee}"))?;
+        if plan.callee.is_some_and(|expected| expected != callee) {
+            return Err(format!(
+                "coroutine call-site analysis expected callee {:?}, emitted {callee}",
+                plan.callee
+            ));
+        }
+        let upper_bound = if plan.mechanism == CallMechanism::Arena {
+            0
+        } else {
+            self.frame_upper_bounds
+                .get(&callee)
+                .copied()
+                .ok_or_else(|| format!("missing frame upper bound for coroutine callee {callee}"))?
+        };
+        self.layout
+            .add_call(plan.resume, callee_type, plan.mechanism, upper_bound)
+    }
+    fn declare_named(&mut self, ty: &str, name: &str, init: String) -> String {
+        let access = match self.layout.declare(ty, name) {
+            Ok(access) => access,
+            Err(error) => {
+                self.declaration_error.get_or_insert(error);
+                name.to_owned()
+            }
+        };
+        if self.layout.storage() == FrameStorage::CoFrame {
+            let init = if init.trim_start().starts_with('{') {
+                format!("({ty}){init}")
+            } else {
+                init
+            };
+            self.line(format!("{access} = {init};"));
+        } else {
+            self.line(format!("{} = {init};", declaration(ty, name)));
+        }
+        access
+    }
+    fn declare(&mut self, ty: &str, purpose: &str, init: String) -> String {
+        let name = self.name(purpose);
+        self.declare_named(ty, &name, init)
+    }
+    fn loop_variable(&mut self, ty: &str, purpose: &str) -> (String, String) {
+        let name = self.name(purpose);
+        if self.layout.storage() == FrameStorage::CoFrame {
+            let access = match self.layout.declare(ty, &name) {
+                Ok(access) => access,
+                Err(error) => {
+                    self.declaration_error.get_or_insert(error);
+                    name
+                }
+            };
+            (access.clone(), access)
+        } else {
+            (name.clone(), declaration(ty, &name))
+        }
+    }
+    fn declaration_target_named(&mut self, ty: &str, name: &str) -> (String, String) {
+        if self.layout.storage() == FrameStorage::CoFrame {
+            let access = match self.layout.declare(ty, name) {
+                Ok(access) => access,
+                Err(error) => {
+                    self.declaration_error.get_or_insert(error);
+                    name.to_owned()
+                }
+            };
+            (access.clone(), access)
+        } else {
+            (name.to_owned(), declaration(ty, name))
+        }
+    }
+    fn declare_array(&mut self, ty: &str, purpose: &str, count: usize) -> String {
+        let name = self.name(purpose);
+        let array_ty = format!("{ty}[{count}]");
+        let access = match self.layout.declare(&array_ty, &name) {
+            Ok(access) => access,
+            Err(error) => {
+                self.declaration_error.get_or_insert(error);
+                name.clone()
+            }
+        };
+        if self.layout.storage() == FrameStorage::CoFrame {
+            self.line(format!("memset({access}, 0, sizeof({access}));"));
+        } else {
+            self.line(format!("{ty} {name}[{count}] = {{0}};"));
+        }
+        access
+    }
+    fn declare_array_init(
+        &mut self,
+        ty: &str,
+        purpose: &str,
+        count: usize,
+        entries: &str,
+    ) -> String {
+        let name = self.name(purpose);
+        let array_ty = format!("{ty}[{count}]");
+        let access = match self.layout.declare(&array_ty, &name) {
+            Ok(access) => access,
+            Err(error) => {
+                self.declaration_error.get_or_insert(error);
+                name.clone()
+            }
+        };
+        if self.layout.storage() == FrameStorage::CoFrame {
+            self.line(format!(
+                "memcpy({access}, ({ty}[]){{ {entries} }}, sizeof({access}));"
+            ));
+        } else {
+            self.line(format!("{ty} {name}[{count}] = {{ {entries} }};"));
+        }
+        access
+    }
     fn scalar(&mut self, ty: &str, code: String) -> String {
-        let name = self.name("scalar");
-        self.line(format!("{ty} {name} = {code};"));
-        name
+        self.declare(ty, "scalar", code)
     }
     fn reserve(&mut self, width: u32, signed: bool) -> Value {
         let slot = if let Some(index) = self.slots.iter().position(|used| !used) {
@@ -337,16 +585,19 @@ impl<'a, 'm> Frame<'a, 'm> {
                 "llg_value_scope_t*",
                 "llg_value_scope_begin_object(sizeof(double), NULL)".to_owned(),
             );
-            self.line(format!(
-                "double* {pointer} = (double*)llg_value_scope_object({owner});"
-            ));
+            let pointer = self.declare_named(
+                "double*",
+                &pointer,
+                format!("(double*)llg_value_scope_object({owner})"),
+            );
             self.line(format!("*{pointer} = 0.0;"));
             pointer
         } else {
-            self.line(format!(
-                "sv4_t* {pointer} = llg_value_scope_values(llg_value_scope_begin(1));"
-            ));
-            pointer
+            self.declare_named(
+                "sv4_t*",
+                &pointer,
+                "llg_value_scope_values(llg_value_scope_begin(1))".to_owned(),
+            )
         };
         let binding = Binding {
             address: address.clone(),
@@ -380,10 +631,55 @@ impl<'a, 'm> Frame<'a, 'm> {
         Ok(())
     }
     pub(super) fn prologue(&self) -> String {
-        format!("    llg_value_scope_t* _llg_frame_base = llg_value_scope_mark();\n    llg_value_scope_t* _llg_temp_scope = llg_value_scope_begin({});\n    sv4_t* _llg_t = llg_value_scope_values(_llg_temp_scope);\n    (void)_llg_t;\n", self.slots.len())
+        if self.layout.storage() == FrameStorage::CoFrame {
+            format!("    F->_llg_frame_base = llg_value_scope_mark();\n    F->_llg_temp_scope = llg_value_scope_begin({});\n    F->_llg_t = llg_value_scope_values(F->_llg_temp_scope);\n    (void)F->_llg_t;\n", self.slots.len())
+        } else {
+            format!("    llg_value_scope_t* _llg_frame_base = llg_value_scope_mark();\n    llg_value_scope_t* _llg_temp_scope = llg_value_scope_begin({});\n    sv4_t* _llg_t = llg_value_scope_values(_llg_temp_scope);\n    (void)_llg_t;\n", self.slots.len())
+        }
+    }
+    pub(super) fn macro_epilogue(&self) -> &'static str {
+        ""
     }
     pub(super) fn body(&self) -> &str {
         &self.code
+    }
+    pub(super) fn into_layout(mut self) -> Result<FrameLayout, String> {
+        // Emission can fold an expression which still has a conservative call
+        // site in the pre-emission execution analysis. Preserve storage and
+        // descriptor offsets for those unreachable sites even though no call
+        // expression consumed their slots.
+        while let Some(call) = self.pending_calls.pop_front() {
+            let (callee_type, upper_bound) = match call.callee {
+                Some(callee) => {
+                    let callee_type = format!("{}_frame_t", self.ctx.model.func(callee).c_name);
+                    let upper_bound = if call.mechanism == CallMechanism::Arena {
+                        0
+                    } else {
+                        self.frame_upper_bounds
+                            .get(&callee)
+                            .copied()
+                            .ok_or_else(|| {
+                                format!("missing frame upper bound for coroutine callee {callee}")
+                            })?
+                    };
+                    (callee_type, upper_bound)
+                }
+                None if call.mechanism == CallMechanism::Arena => ("void".to_owned(), 0),
+                None => {
+                    return Err(format!(
+                        "embedded coroutine call-site analysis entry {} has no callee",
+                        call.resume
+                    ));
+                }
+            };
+            self.layout
+                .add_call(call.resume, &callee_type, call.mechanism, upper_bound)?;
+        }
+        if let Some(error) = self.declaration_error {
+            Err(error)
+        } else {
+            Ok(self.layout)
+        }
     }
 }
 

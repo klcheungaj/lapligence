@@ -47,8 +47,7 @@ impl Frame<'_, '_> {
         // A null handle (also an invalid/X array index) is an inert source,
         // not an expression descriptor with a missing evaluator. The runtime
         // snapshots the object before suspension; this handle only borrows it.
-        let empty = self.name("null_event");
-        self.line(format!("llg_event_t {empty} = {{ NULL }};"));
+        let empty = self.declare("llg_event_t", "null_event", "{ NULL }".to_owned());
         Ok(self.scalar(
             "llg_event_t*",
             format!("({address}) ? ({address}) : &{empty}"),
@@ -134,11 +133,12 @@ impl Frame<'_, '_> {
                             .iter()
                             .map(|item| self.dependency(item))
                             .collect::<Result<Vec<_>, _>>()?;
-                        let name = self.name("event_dependencies");
-                        self.line(format!(
-                            "llg_wait_dependency_t {name}[] = {{ {} }};",
-                            dependencies.join(", ")
-                        ));
+                        let name = self.declare_array_init(
+                            "llg_wait_dependency_t",
+                            "event_dependencies",
+                            dependencies.len(),
+                            &dependencies.join(", "),
+                        );
                         fields.push(format!(
                             ".dependencies = {name}, .n_dependencies = {}",
                             reads.len()
@@ -146,7 +146,7 @@ impl Frame<'_, '_> {
                     }
                     if let Some(context) = context_for(model, eval) {
                         let name = &names[&context.frame()];
-                        fields.push(format!(".eval_context = {name}"));
+                        fields.push(format!(".eval_context = {}", self.access(name)));
                         retained.push(name.clone());
                     }
                 }
@@ -161,7 +161,7 @@ impl Frame<'_, '_> {
                 fields.push(format!(".condition = {condition}"));
                 if let Some(context) = context_for(model, condition) {
                     let name = &names[&context.frame()];
-                    fields.push(format!(".condition_context = {name}"));
+                    fields.push(format!(".condition_context = {}", self.access(name)));
                     retained.push(name.clone());
                 }
             }
@@ -173,15 +173,19 @@ impl Frame<'_, '_> {
             self.publish_captures(&names[&context.frame()], values);
         }
         for name in retained {
-            self.line(format!("llg_frame_retain({name});"));
+            self.line(format!("llg_frame_retain({});", self.access(&name)));
         }
-        let array = self.name("events");
-        self.line(format!(
-            "llg_expr_event_spec_t {array}[] = {{ {} }};",
-            entries.join(", ")
-        ));
+        let array = self.declare_array_init(
+            "llg_expr_event_spec_t",
+            "events",
+            entries.len(),
+            &entries.join(", "),
+        );
         for context in &contexts {
-            self.line(format!("llg_frame_release({});", names[&context.frame()]));
+            self.line(format!(
+                "llg_frame_release({});",
+                self.access(&names[&context.frame()])
+            ));
         }
         Ok(array)
     }

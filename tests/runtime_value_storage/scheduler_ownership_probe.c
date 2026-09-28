@@ -49,7 +49,7 @@ static void check_nba_and_scopes(void) {
         CHECK(target.bits[0] == 99);
         CHECK(value_test_live() == baseline);
     }
-    llg_proc_t* proc = llg_spawn(never_run, "cancel-owner");
+    llg_proc_t* proc = llg_spawn(&llg_libaco_desc, never_run, "cancel-owner");
     // Supply current-process identity without switching the C stack.
     aco_gtls_co = proc->co;
     llg_value_scope_t* scope = llg_value_scope_begin(2);
@@ -94,8 +94,10 @@ static void check_nba_fifo_and_cancellation(void) {
     sv4_t one = sv4_from_u64(1, 8, 0);
     sv4_t two = sv4_from_u64(2, 8, 0);
     sv4_t three = sv4_from_u64(3, 8, 0);
-    llg_proc_t* first = llg_spawn(never_run, "first NBA owner");
-    llg_proc_t* second = llg_spawn(never_run, "second NBA owner");
+    llg_proc_t* first =
+        llg_spawn(&llg_libaco_desc, never_run, "first NBA owner");
+    llg_proc_t* second =
+        llg_spawn(&llg_libaco_desc, never_run, "second NBA owner");
 
     aco_gtls_co = first->co;
     llg_nba_after(&target, one, 0);

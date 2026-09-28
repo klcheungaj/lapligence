@@ -25,32 +25,24 @@ impl Frame<'_, '_> {
         let array = if values.is_empty() {
             "NULL".to_owned()
         } else {
-            let name = self.name("assertion_args");
+            let entries = values
+                .iter()
+                .map(|v| v.code.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
             // This is a borrowed descriptor view. The registered slots remain
             // sole owners until the control operation returns or exits.
-            self.line(format!(
-                "sv4_t {name}[] = {{ {} }};",
-                values
-                    .iter()
-                    .map(|v| v.code.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ));
-            name
+            self.declare_array_init("sv4_t", "assertion_args", values.len(), &entries)
         };
         let scopes_ptr = if scopes.is_empty() {
             "NULL".to_owned()
         } else {
-            let name = self.name("assertion_scopes");
-            self.line(format!(
-                "const char* const {name}[] = {{ {} }};",
-                scopes
-                    .iter()
-                    .map(|s| c_string_literal(s))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ));
-            name
+            let entries = scopes
+                .iter()
+                .map(|s| c_string_literal(s))
+                .collect::<Vec<_>>()
+                .join(", ");
+            self.declare_array_init("const char*", "assertion_scopes", scopes.len(), &entries)
         };
         self.line(format!(
             "(void)llg_assertion_control({kind}, {array}, {}, {scopes_ptr}, {});",
@@ -101,7 +93,7 @@ impl Frame<'_, '_> {
                     action.captures().iter().map(|c| (c.storage(), c.initial())),
                 )?;
                 let frame = self.name("deferred_frame");
-                self.publish_captures(&frame, values);
+                let frame = self.publish_captures(&frame, values);
                 (action.c_name(), frame)
             } else {
                 ("NULL", "NULL".to_owned())

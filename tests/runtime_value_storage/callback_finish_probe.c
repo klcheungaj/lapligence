@@ -75,10 +75,10 @@ int main(void) {
             sv4_replace(&signal_value, sv4_zero(129, 0));
             sv4_replace(&next_value, sv4_from_u64(1, 129, 0));
             if (finish_mode == 3) {
-                llg_spawn(forcing_process, "force-callback-finish");
+                llg_spawn(&llg_libaco_desc, forcing_process, "force-callback-finish");
             } else {
-                llg_spawn(waiting_process, "event-waiter");
-                llg_spawn(writing_process, "event-writer");
+                llg_spawn(&llg_libaco_desc, waiting_process, "event-waiter");
+                llg_spawn(&llg_libaco_desc, writing_process, "event-writer");
             }
             llg_rt_run();
             CHECK(finish_mode == 3 || evaluations == (finish_mode == 4 ? 1u : 2u));

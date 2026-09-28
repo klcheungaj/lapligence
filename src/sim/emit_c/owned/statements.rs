@@ -4,10 +4,11 @@ use super::*;
 impl Frame<'_, '_> {
     pub(super) fn begin_block(&mut self, body: &[IrStmt]) {
         self.line("{");
-        let marker = self.name("mark");
-        self.line(format!(
-            "llg_value_scope_t* {marker} = llg_value_scope_mark();"
-        ));
+        let marker = self.declare(
+            "llg_value_scope_t*",
+            "mark",
+            "llg_value_scope_mark()".to_owned(),
+        );
         self.marks.push(marker);
         self.bindings.push(HashMap::new());
         self.event_bindings.push(HashMap::new());
@@ -159,10 +160,11 @@ impl Frame<'_, '_> {
                 // may be rebound while the inline task is suspended.
                 let address = self.event_address(source)?;
                 let pointer = self.scalar("llg_event_t*", address);
-                let local = self.name("event_capture");
-                self.line(format!(
-                    "llg_event_t {local} = {{ {pointer} ? {pointer}->object : NULL }};"
-                ));
+                let local = self.declare(
+                    "llg_event_t",
+                    "event_capture",
+                    format!("{{ {pointer} ? {pointer}->object : NULL }}"),
+                );
                 self.event_bindings
                     .last_mut()
                     .expect("event scope")
@@ -395,10 +397,11 @@ impl Frame<'_, '_> {
             IrStmt::NonblockingEventTriggerWhen { ev, specs, repeat } => {
                 let target = self.event_address(ev)?;
                 let target = self.scalar("llg_event_t*", target);
-                let handle = self.name("event_target");
-                self.line(format!(
-                    "llg_event_t {handle} = {{ ({target}) ? ({target})->object : NULL }};"
-                ));
+                let handle = self.declare(
+                    "llg_event_t",
+                    "event_target",
+                    format!("{{ ({target}) ? ({target})->object : NULL }}"),
+                );
                 let count = self.event_repeat(repeat.as_ref())?;
                 let sources = self.event_specs(specs)?;
                 self.line(format!(
@@ -422,7 +425,7 @@ impl Frame<'_, '_> {
                 // in registered slots until they, too, have finished.
                 let sources = self.event_specs(specs)?;
                 let frame = self.name("event_action");
-                self.publish_captures(&frame, captures);
+                let frame = self.publish_captures(&frame, captures);
                 self.line(format!(
                     "llg_nba_event_assign_when({sources}, {}, {count}, {action}, {frame});",
                     specs.len()
@@ -443,12 +446,12 @@ impl Frame<'_, '_> {
                 let list = if addresses.is_empty() {
                     "NULL".to_owned()
                 } else {
-                    let list = self.name("ordered_events");
-                    self.line(format!(
-                        "const llg_event_t* {list}[] = {{ {} }};",
-                        addresses.join(", ")
-                    ));
-                    list
+                    self.declare_array_init(
+                        "const llg_event_t*",
+                        "ordered_events",
+                        addresses.len(),
+                        &addresses.join(", "),
+                    )
                 };
                 let success_flag = self.scalar("int", "0".to_owned());
                 self.line(format!(
@@ -502,7 +505,7 @@ impl Frame<'_, '_> {
                 let group = self.fork_group(kind, *target);
                 for (function, label) in branches {
                     self.line(format!(
-                        "llg_fork({function}, {}, {group});",
+                        "llg_fork(&{function}_desc, {function}, {}, {group});",
                         c_string_literal(label)
                     ));
                 }
@@ -703,8 +706,12 @@ impl Frame<'_, '_> {
                                 .map(|name| c_string_literal(name))
                                 .collect::<Vec<_>>()
                                 .join(", ");
-                            let array = self.name("wave_names");
-                            self.line(format!("const char* {array}[] = {{ {names} }};"));
+                            let array = self.declare_array_init(
+                                "const char*",
+                                "wave_names",
+                                selection.names().len(),
+                                &names,
+                            );
                             self.line(format!(
                                 "llg_wave_dumpvars_select(llg_time(), {}u, {array}, {}u);",
                                 selection.depth(),

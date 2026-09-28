@@ -7,10 +7,14 @@ use super::context::RCtx;
 use super::expressions::{coerce_two_state, packed_default};
 use super::statements::{render_stmt_impl as render_stmt, wait_any_text_in_region};
 use super::EmitError;
-use crate::sim::execution::{ExecutionModel, ExecutionTerminator, ScheduleRegion, TriggerPlan};
+use crate::sim::execution::{
+    CallMechanism, CoroutineId, ExecutionAnalysis, ExecutionModel, ExecutionTerminator,
+    ScheduleRegion, SuspensionOperation, TriggerPlan,
+};
 use crate::sim::ir::{
     IrConcurrentAssertionKind, IrFunc, IrModel, IrProcessKind, IrSequence, IrType, IrVpiObjectKind,
 };
+use std::collections::{BTreeMap, BTreeSet};
 
 mod interfaces;
 use interfaces::{
@@ -41,6 +45,9 @@ const LLG_MAX_FUNC_DEPTH: u32 = 256;
 pub(super) fn owned_func_params(function: &IrFunc) -> String {
     func_params(function)
 }
+pub(super) fn owned_func_param_fields(function: &IrFunc) -> Vec<(String, String)> {
+    functions::func_param_fields(function)
+}
 pub(super) fn owned_dpi_thunk(function: &IrFunc) -> Result<String, String> {
     render_dpi_thunk(function)
 }
@@ -63,11 +70,277 @@ pub fn render(execution: &ExecutionModel) -> Result<String, EmitError> {
         )));
     }
     super::owned::model::check_model(execution.ir()).map_err(EmitError::new)?;
-    render_model(execution).map_err(EmitError::new)
+    let mut execution = execution.clone();
+    let (_, upper_bounds) = render_coroutine_functions(&execution).map_err(EmitError::new)?;
+    let forced = upper_bounds
+        .iter()
+        .filter_map(|(function, size)| {
+            super::frame_layout::requires_arena(*size, execution.analysis().options().embed_limit)
+                .then_some(*function)
+        })
+        .collect::<BTreeSet<_>>();
+    execution
+        .reanalyze_with_forced_arena_callees(&forced)
+        .map_err(EmitError::InvalidIr)?;
+    render_model(&execution).map_err(EmitError::new)
+}
+
+struct CoroutineArtifact {
+    source: String,
+    layout: super::frame_layout::FrameLayout,
+    frame_type: String,
+    desc_name: String,
+    display_name: String,
+    location: String,
+    owner: CoroutineId,
+    root: bool,
+}
+
+type CoroutineArtifacts = BTreeMap<usize, CoroutineArtifact>;
+type CoroutineUpperBounds = BTreeMap<usize, usize>;
+
+fn origin_location(origin: &crate::sim::semantic::Origin) -> String {
+    match origin {
+        crate::sim::semantic::Origin::Source {
+            path, line, column, ..
+        } => format!("{path}:{line}:{column}"),
+        crate::sim::semantic::Origin::Synthetic { reason } => format!("<synthetic: {reason}>"),
+    }
+}
+
+fn render_coroutine_functions(
+    execution: &ExecutionModel,
+) -> Result<(CoroutineArtifacts, CoroutineUpperBounds), String> {
+    let model = execution.ir();
+    let mut artifacts = BTreeMap::new();
+    let mut upper_bounds = BTreeMap::new();
+    for &index in execution.analysis().callee_first_functions() {
+        let function = &model.funcs[index];
+        let ctx = RCtx {
+            model,
+            func: Some(function),
+            sampled: false,
+            activation_label: None,
+        };
+        let (source, layout) = super::owned::model::coroutine_function(
+            &ctx,
+            function,
+            index,
+            execution.analysis(),
+            &upper_bounds,
+        )?;
+        let upper_bound = layout.upper_bound()?;
+        upper_bounds.insert(index, upper_bound);
+        artifacts.insert(
+            index,
+            CoroutineArtifact {
+                source,
+                layout,
+                frame_type: format!("{}_frame_t", function.c_name),
+                desc_name: format!("{}_desc", function.c_name),
+                display_name: function.c_name.clone(),
+                location: origin_location(function.origin()),
+                owner: CoroutineId::Function(index),
+                root: false,
+            },
+        );
+    }
+    Ok((artifacts, upper_bounds))
+}
+
+fn render_coroutine_processes(
+    execution: &ExecutionModel,
+    upper_bounds: &BTreeMap<usize, usize>,
+) -> Result<Vec<Option<CoroutineArtifact>>, String> {
+    let model = execution.ir();
+    let ctx = RCtx {
+        model,
+        func: None,
+        sampled: false,
+        activation_label: None,
+    };
+    execution
+        .processes()
+        .iter()
+        .enumerate()
+        .map(|(index, executable)| {
+            let process = &model.processes[executable.semantic_process];
+            if process.kind() == IrProcessKind::Final {
+                return Ok(None);
+            }
+            let (source, layout) = super::owned::model::coroutine_process(
+                &ctx,
+                process,
+                index,
+                executable,
+                execution.analysis(),
+                upper_bounds,
+            )?;
+            Ok(Some(CoroutineArtifact {
+                source,
+                layout,
+                frame_type: format!("{}_frame_t", process.c_name),
+                desc_name: format!("{}_desc", process.c_name),
+                display_name: process.label().to_owned(),
+                location: origin_location(process.origin()),
+                owner: CoroutineId::Process(index),
+                root: true,
+            }))
+        })
+        .collect()
+}
+
+fn render_coroutine_branches(
+    execution: &ExecutionModel,
+    upper_bounds: &BTreeMap<usize, usize>,
+) -> Result<BTreeMap<CoroutineId, CoroutineArtifact>, String> {
+    fn pre_name(pre: &crate::sim::ir::IrPreFn) -> &str {
+        match pre {
+            crate::sim::ir::IrPreFn::Branch { c_name, .. }
+            | crate::sim::ir::IrPreFn::CapturedBranch { c_name, .. }
+            | crate::sim::ir::IrPreFn::MonEval { c_name, .. }
+            | crate::sim::ir::IrPreFn::EventAssign { c_name, .. }
+            | crate::sim::ir::IrPreFn::DisplayEval { c_name, .. }
+            | crate::sim::ir::IrPreFn::RealEval { c_name, .. }
+            | crate::sim::ir::IrPreFn::DeferredAssertion { c_name, .. }
+            | crate::sim::ir::IrPreFn::ForceEval { c_name, .. } => c_name,
+        }
+    }
+    let model = execution.ir();
+    let ctx = RCtx {
+        model,
+        func: None,
+        sampled: false,
+        activation_label: None,
+    };
+    let mut artifacts = BTreeMap::new();
+    for (function, definition) in model.funcs.iter().enumerate() {
+        for (helper, pre) in definition.pre_fns.iter().enumerate() {
+            let owner = CoroutineId::FunctionBranch { function, helper };
+            if !execution.analysis().is_coroutine(owner) {
+                continue;
+            }
+            let (source, layout) = super::owned::model::coroutine_branch(
+                &ctx,
+                pre,
+                owner,
+                execution.analysis(),
+                upper_bounds,
+            )?;
+            let name = pre_name(pre);
+            artifacts.insert(
+                owner,
+                CoroutineArtifact {
+                    source,
+                    layout,
+                    frame_type: format!("{name}_frame_t"),
+                    desc_name: format!("{name}_desc"),
+                    display_name: name.to_owned(),
+                    location: origin_location(definition.origin()),
+                    owner,
+                    root: true,
+                },
+            );
+        }
+    }
+    for (process, definition) in model.processes.iter().enumerate() {
+        for (helper, pre) in definition.pre_fns.iter().enumerate() {
+            let owner = CoroutineId::ProcessBranch { process, helper };
+            if !execution.analysis().is_coroutine(owner) {
+                continue;
+            }
+            let (source, layout) = super::owned::model::coroutine_branch(
+                &ctx,
+                pre,
+                owner,
+                execution.analysis(),
+                upper_bounds,
+            )?;
+            let name = pre_name(pre);
+            artifacts.insert(
+                owner,
+                CoroutineArtifact {
+                    source,
+                    layout,
+                    frame_type: format!("{name}_frame_t"),
+                    desc_name: format!("{name}_desc"),
+                    display_name: name.to_owned(),
+                    location: origin_location(definition.origin()),
+                    owner,
+                    root: true,
+                },
+            );
+        }
+    }
+    Ok(artifacts)
+}
+
+fn render_coroutine_metadata(
+    artifact: &CoroutineArtifact,
+    analysis: &ExecutionAnalysis,
+    model: &IrModel,
+) -> Result<String, String> {
+    let sites = analysis
+        .sites(artifact.owner)
+        .ok_or_else(|| format!("missing coroutine sites for {:?}", artifact.owner))?;
+    let mut ordered = sites.values().collect::<Vec<_>>();
+    ordered.sort_by_key(|site| site.resume());
+    let mut out = format!(
+        "static const llg_co_site_t {}_sites[{}] = {{\n    {{0}},\n",
+        artifact.desc_name,
+        ordered.len() + 1
+    );
+    for site in ordered {
+        let call = artifact
+            .layout
+            .calls()
+            .iter()
+            .find(|call| call.resume == site.resume());
+        let (callee, offset) = match (site.operation(), site.mechanism(), call) {
+            (
+                SuspensionOperation::Call {
+                    callee: Some(callee),
+                },
+                Some(CallMechanism::Polled { .. }),
+                Some(call),
+            ) => (
+                format!("&{}_desc", model.funcs[*callee].c_name),
+                format!("offsetof({}, calls.{})", artifact.frame_type, call.member),
+            ),
+            _ => ("NULL".to_owned(), "0".to_owned()),
+        };
+        out.push_str(&format!(
+            "    {{ {callee}, {offset}, 0, {} }},\n",
+            c_string_literal(&artifact.location)
+        ));
+    }
+    out.push_str("};\n");
+    out.push_str("/* Part A keeps libaco entry points; Phase 5 installs llg_co_fn. */\n");
+    out.push_str(&format!(
+        "static const llg_co_desc_t {} = {{ NULL, {}, sizeof({}), {}_sites, {}, 0 }};\n",
+        artifact.desc_name,
+        c_string_literal(&artifact.display_name),
+        artifact.frame_type,
+        artifact.desc_name,
+        sites.len() + 1
+    ));
+    out.push_str(&format!(
+        "{}({});\n",
+        if artifact.root {
+            "LLG_CO_ROOT_FRAME_OK"
+        } else {
+            "LLG_CO_ANCHORED_OK"
+        },
+        artifact.frame_type
+    ));
+    Ok(out)
 }
 
 fn render_model(execution: &ExecutionModel) -> Result<String, String> {
     let model = execution.ir();
+    let (coroutine_functions, frame_upper_bounds) = render_coroutine_functions(execution)?;
+    let coroutine_processes = render_coroutine_processes(execution, &frame_upper_bounds)?;
+    let coroutine_branches = render_coroutine_branches(execution, &frame_upper_bounds)?;
     let mut out = format!(
         "// llg-generated C11 model for design `{}`\n",
         model.design_name
@@ -98,9 +371,44 @@ fn render_model(execution: &ExecutionModel) -> Result<String, String> {
         out.push_str("#include \"llg_wave.h\"\n");
     }
     out.push_str(
-        "\n#include <stdio.h>\n#include <stdlib.h>\n#include <math.h>\n#include <string.h>\n\n\
-         /* signals start all-X; driven by processes and link processes */\n",
+        "\n#include <stdio.h>\n#include <stdlib.h>\n#include <math.h>\n#include <string.h>\n\n",
     );
+    for artifact in coroutine_functions
+        .values()
+        .chain(coroutine_branches.values())
+        .chain(coroutine_processes.iter().filter_map(Option::as_ref))
+    {
+        out.push_str(&format!(
+            "static const llg_co_desc_t {};\n",
+            artifact.desc_name
+        ));
+    }
+    for &index in execution.analysis().callee_first_functions() {
+        let artifact = &coroutine_functions[&index];
+        out.push_str(&artifact.layout.render_typedef(&artifact.frame_type)?);
+        out.push_str(&render_coroutine_metadata(
+            artifact,
+            execution.analysis(),
+            model,
+        )?);
+    }
+    for artifact in coroutine_processes.iter().filter_map(Option::as_ref) {
+        out.push_str(&artifact.layout.render_typedef(&artifact.frame_type)?);
+        out.push_str(&render_coroutine_metadata(
+            artifact,
+            execution.analysis(),
+            model,
+        )?);
+    }
+    for artifact in coroutine_branches.values() {
+        out.push_str(&artifact.layout.render_typedef(&artifact.frame_type)?);
+        out.push_str(&render_coroutine_metadata(
+            artifact,
+            execution.analysis(),
+            model,
+        )?);
+    }
+    out.push_str("/* signals start all-X; driven by processes and link processes */\n");
     if model.containers.iter().any(|container| {
         matches!(
             container.kind,
@@ -213,11 +521,18 @@ fn render_model(execution: &ExecutionModel) -> Result<String, String> {
     if model.funcs.iter().any(|func| func.dpi_import().is_some()) {
         out.push_str(dpi_helpers());
     }
-    for f in &model.funcs {
+    for (index, f) in model.funcs.iter().enumerate() {
         if super::owned::model::inline_event_template(f) {
             continue;
         }
-        out.push_str(&func_prototype(f)?);
+        if execution.analysis().is_coroutine_function(index) {
+            out.push_str(&format!(
+                "static void {}({}_frame_t* F);\n",
+                f.c_name, f.c_name
+            ));
+        } else {
+            out.push_str(&func_prototype(f)?);
+        }
     }
     render_virtual_dispatch_prototypes(model, &mut out);
     render_virtual_interface_call_prototypes(model, &mut out);
@@ -228,7 +543,7 @@ fn render_model(execution: &ExecutionModel) -> Result<String, String> {
         sampled: false,
         activation_label: None,
     };
-    for f in &model.funcs {
+    for (index, f) in model.funcs.iter().enumerate() {
         if super::owned::model::inline_event_template(f) {
             continue;
         }
@@ -238,21 +553,45 @@ fn render_model(execution: &ExecutionModel) -> Result<String, String> {
             sampled: false,
             activation_label: None,
         };
-        for pre in &f.pre_fns {
-            out.push_str(&super::owned::model::pre_function(&ctx, pre)?);
+        for (helper, pre) in f.pre_fns.iter().enumerate() {
+            let owner = CoroutineId::FunctionBranch {
+                function: index,
+                helper,
+            };
+            if let Some(artifact) = coroutine_branches.get(&owner) {
+                out.push_str(&artifact.source);
+            } else {
+                out.push_str(&super::owned::model::pre_function(&ctx, pre)?);
+            }
         }
-        out.push_str(&super::owned::model::function(&fctx, f)?);
+        if let Some(artifact) = coroutine_functions.get(&index) {
+            out.push_str(&artifact.source);
+        } else {
+            out.push_str(&super::owned::model::function(&fctx, f)?);
+        }
     }
     render_virtual_interface_call_bodies(model, &mut out);
     // Three passes lower comb drivers, links, then always/initial processes,
     // so every comb process, link, and process runs at t=0 in that order;
     // push order equals spawn order.
-    for executable in execution.processes() {
+    for (index, executable) in execution.processes().iter().enumerate() {
         let p = &model.processes[executable.semantic_process];
-        for pre in &p.pre_fns {
-            out.push_str(&super::owned::model::pre_function(&ctx, pre)?);
+        for (helper, pre) in p.pre_fns.iter().enumerate() {
+            let owner = CoroutineId::ProcessBranch {
+                process: executable.semantic_process,
+                helper,
+            };
+            if let Some(artifact) = coroutine_branches.get(&owner) {
+                out.push_str(&artifact.source);
+            } else {
+                out.push_str(&super::owned::model::pre_function(&ctx, pre)?);
+            }
         }
-        out.push_str(&super::owned::model::process(&ctx, p, executable)?);
+        if let Some(artifact) = &coroutine_processes[index] {
+            out.push_str(&artifact.source);
+        } else {
+            out.push_str(&super::owned::model::process(&ctx, p, executable)?);
+        }
     }
     out.push_str(&super::owned::assertions::callbacks(model)?);
     out.push_str(&super::owned::assertions::registrations(model)?);

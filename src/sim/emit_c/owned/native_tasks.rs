@@ -74,7 +74,6 @@ impl Frame<'_, '_> {
         let array = if owners.is_empty() {
             "NULL".to_owned()
         } else {
-            let array = self.name("vpi_args");
             let entries = owners.iter().map(|value| {
                 if value.width == 0 {
                     // The unused packed field owns nothing; never allocate an
@@ -84,11 +83,12 @@ impl Frame<'_, '_> {
                     format!("{{ .kind = LLG_FMT_PACKED, .width = {}, .is_signed = {}, .is_real = 0, .packed = {}, .real = 0.0 }}", value.width, u8::from(value.signed), value.code)
                 }
             }).collect::<Vec<_>>();
-            self.line(format!(
-                "llg_vpi_arg_t {array}[] = {{ {} }}; /* borrowed argument snapshots */",
-                entries.join(", ")
-            ));
-            array
+            self.declare_array_init(
+                "llg_vpi_arg_t",
+                "vpi_args",
+                entries.len(),
+                &entries.join(", "),
+            )
         };
         let arguments = format!(
             "{site}ULL, {}, {array}, {}",
