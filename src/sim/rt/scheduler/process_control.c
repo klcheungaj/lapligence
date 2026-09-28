@@ -2,7 +2,6 @@
 // ── fork/join (coroutine children) ────────────────────────────────────────────
 
 static void llg_kill_proc_tree(llg_proc_t* p); // mutual recursion below
-static void llg_proc_entry(void);               // defined in the public API section
 
 static void process_handle_terminal(llg_proc_t* proc, int status) {
     llg_process_handle_t* handle = proc ? proc->handle : NULL;
@@ -74,7 +73,6 @@ static void llg_kill_proc(llg_proc_t* p, int notify_parent) {
         if (w->kind == W_MAILBOX_GET || w->kind == W_MAILBOX_PUT)
             mailbox_unlink_wait(w);
         wait_payload_release(w);
-        w->order_result_value = 0;
         g.wait_count--;
     }
     remove_region_entry(p);
@@ -103,9 +101,9 @@ static void llg_kill_proc(llg_proc_t* p, int notify_parent) {
     g.retired_procs = p;
 }
 
-// The active coroutine's stack/register state must survive until aco_exit
-// returns control to the scheduler. Other cancelled processes can be reclaimed
-// after cancellation traversal, including within a long-running caller.
+// The active coroutine's frames must survive until llg_co_run returns to the
+// scheduler. Other cancelled processes can be reclaimed after cancellation
+// traversal, including within a long-running caller.
 static void reap_retired_procs(void) {
     llg_proc_t* current = llg_current();
     llg_proc_t** slot = &g.retired_procs;
@@ -155,9 +153,9 @@ static void llg_kill_proc_tree_internal(llg_proc_t* p, int notify_parent) {
     llg_kill_proc(p, notify_parent);
 }
 
-llg_process_handle_t* llg_process_self(void) {
-    llg_proc_t* proc = llg_current();
-    return proc ? proc->handle : NULL;
+llg_process_handle_t* llg_process_self(llg_proc_t* self) {
+    llg_runtime_service_enter(self, "process::self");
+    return self ? self->handle : NULL;
 }
 
 int llg_process_status(const llg_process_handle_t* handle) {
@@ -234,41 +232,44 @@ void llg_process_assign(llg_process_handle_t** target,
     if (local) local->value = source;
 }
 
-void llg_process_kill(llg_process_handle_t* handle) {
+void llg_process_kill(llg_proc_t* self, llg_process_handle_t* handle) {
+    llg_runtime_service_enter(self, "process::kill");
     if (!handle || !handle->proc || !region_can_mutate("process control")) return;
     llg_proc_t* target = handle->proc;
-    llg_proc_t* current = llg_current();
     llg_kill_proc_tree(target);
     service_program_completions();
     semaphore_service_cancelled_waiters();
     reap_retired_procs();
-    if (current && current->killed) {
-        // Killing an ancestor also kills the caller and releases its activation.
-        // Never return to generated code; only the scheduler can reap this stack.
-        aco_exit();
-        abort();
-    }
-    if (g.finish && current) llg_proc_done(current);
+    if (self && self->killed)
+        self->chain.exiting = LLG_EXIT_ABANDON;
+    else if (g.finish && self)
+        self->chain.exiting = LLG_EXIT_COMPLETE;
 }
 
-void llg_process_suspend(llg_process_handle_t* handle) {
-    if (!handle || !handle->proc || !region_can_mutate("process suspension")) return;
+llg_co_arm_t llg_arm_process_suspend(llg_proc_t* self,
+                                     llg_process_handle_t* handle) {
+    llg_runtime_service_enter(self, "process::suspend");
+    if (!handle || !handle->proc || !region_can_mutate("process suspension"))
+        return LLG_CO_ARM_READY;
     llg_proc_t* target = handle->proc;
-    if (target->suspended || target->killed || target->completed) return;
+    if (target->suspended || target->killed || target->completed)
+        return LLG_CO_ARM_READY;
     target->suspended = 1;
     target->wake_pending = 0;
     remove_region_entry(target);
     process_status_set(target, LLG_PROCESS_SUSPENDED);
-    if (target == llg_current()) {
+    if (target == self) {
         // Suspending is a blocking control for join_none eligibility, but the
         // wait itself is represented by the stable handle state rather than a
         // second scheduler waiter.
         start_pending_fork_children(target);
-        aco_yield();
+        return LLG_CO_ARM_SUSPEND;
     }
+    return LLG_CO_ARM_READY;
 }
 
-void llg_process_resume(llg_process_handle_t* handle) {
+void llg_process_resume(llg_proc_t* self, llg_process_handle_t* handle) {
+    llg_runtime_service_enter(self, "process::resume");
     if (!handle || !handle->proc || !region_can_mutate("process resumption")) return;
     llg_proc_t* target = handle->proc;
     if (!target->suspended || target->killed || target->completed) return;
@@ -284,19 +285,23 @@ void llg_process_resume(llg_process_handle_t* handle) {
     enqueue_region(target, target->region);
 }
 
-void llg_process_await(llg_process_handle_t* handle) {
-    llg_proc_t* current = llg_current();
-    if (!current || !region_can_mutate("process await scheduling")) return;
-    if (!handle || !handle->proc || handle->proc == current) return;
-    llg_wait_t* wait = &current->wait;
+llg_co_arm_t llg_arm_process_await(llg_proc_t* self,
+                                   llg_process_handle_t* handle) {
+    llg_runtime_service_enter(self, "process::await");
+    if (!self || !region_can_mutate("process await scheduling"))
+        return LLG_CO_ARM_READY;
+    if (!handle || !handle->proc || handle->proc == self)
+        return LLG_CO_ARM_READY;
+    llg_wait_t* wait = &self->wait;
     wait->kind = W_PROCESS;
-    wait->resume_region = region_is_reactive(current->region)
+    wait->resume_region = region_is_reactive(self->region)
                               ? LLG_REGION_REACTIVE
                               : LLG_REGION_ACTIVE;
     wait_rare_allocate(wait, "process await payload")->process.target = handle;
     llg_process_retain(handle);
     register_wait();
-    aco_yield();
+    start_pending_fork_children(self);
+    return LLG_CO_ARM_SUSPEND;
 }
 
 llg_semaphore_t* llg_semaphore_new(sv4_t key_count) {
@@ -326,29 +331,32 @@ void llg_semaphore_put(llg_semaphore_t* semaphore, sv4_t key_count) {
     semaphore_wake_available(semaphore);
 }
 
-void llg_semaphore_get(llg_semaphore_t* semaphore, sv4_t key_count) {
+llg_co_arm_t llg_arm_semaphore_get(llg_proc_t* self,
+                                   llg_semaphore_t* semaphore,
+                                   sv4_t key_count) {
+    llg_runtime_service_enter(self, "semaphore::get");
     if (!region_can_mutate("semaphore get") ||
         !semaphore_valid(semaphore, "get"))
-        return;
-    llg_proc_t* current = llg_current();
-    if (!current) {
+        return LLG_CO_ARM_READY;
+    if (!self) {
         fprintf(stderr, "llg: semaphore get requested outside a simulation process\n");
         llg_last_failure = 1;
         g.finish = 1;
-        return;
+        return LLG_CO_ARM_READY;
     }
     uint64_t keys = 0;
-    if (!semaphore_key_count(key_count, &keys) || keys == 0) return;
+    if (!semaphore_key_count(key_count, &keys) || keys == 0)
+        return LLG_CO_ARM_READY;
     if (!semaphore->wait_head && semaphore->available >= keys) {
         semaphore->available -= keys;
-        return;
+        return LLG_CO_ARM_READY;
     }
 
-    llg_wait_t* wait = &current->wait;
+    llg_wait_t* wait = &self->wait;
     llg_semaphore_wait_t* node = (llg_semaphore_wait_t*)llg_checked_calloc(
         1, sizeof(*node), "semaphore waiter");
     node->owner = semaphore;
-    node->proc = current;
+    node->proc = self;
     node->keys = keys;
     if (semaphore->wait_tail) {
         semaphore->wait_tail->next = node;
@@ -357,7 +365,7 @@ void llg_semaphore_get(llg_semaphore_t* semaphore, sv4_t key_count) {
     }
     semaphore->wait_tail = node;
     wait->kind = W_SEMAPHORE;
-    wait->resume_region = region_is_reactive(current->region)
+    wait->resume_region = region_is_reactive(self->region)
                               ? LLG_REGION_REACTIVE
                               : LLG_REGION_ACTIVE;
     llg_wait_semaphore_payload_t* payload =
@@ -365,9 +373,10 @@ void llg_semaphore_get(llg_semaphore_t* semaphore, sv4_t key_count) {
     payload->semaphore = semaphore;
     payload->waiter = node;
     payload->keys = keys;
-    process_status_set(current, LLG_PROCESS_WAITING);
+    process_status_set(self, LLG_PROCESS_WAITING);
     register_wait();
-    aco_yield();
+    start_pending_fork_children(self);
+    return LLG_CO_ARM_SUSPEND;
 }
 
 int llg_semaphore_try_get(llg_semaphore_t* semaphore, sv4_t key_count) {

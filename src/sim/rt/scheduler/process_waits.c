@@ -1,26 +1,20 @@
 
-const llg_co_desc_t llg_libaco_desc = {
-    NULL, "<hand-written libaco process>", sizeof(llg_co_frame_t), NULL, 0, 0
-};
-
 static llg_proc_t* spawn_in_region(const llg_co_desc_t* desc,
-                                   void (*fn)(llg_proc_t*), const char* name,
-                                   llg_region_t region, llg_program_t* program,
-                                   int is_initial) {
-    if (g.config_error || !desc || !fn || !region_valid(region)) return NULL;
+                                   const char* name, llg_region_t region,
+                                   llg_program_t* program, int is_initial) {
+    if (g.config_error || !desc || !desc->fn || !region_valid(region)) return NULL;
     if (!callback_region_allowed(region, 0)) return NULL;
-    size_t frame_offset = llg_proc_co_frame_offset();
-    if (desc->frame_size > SIZE_MAX - frame_offset) {
+    if (desc->frame_size < sizeof(llg_co_frame_t) ||
+        desc->frame_size > SIZE_MAX - sizeof(llg_proc_t)) {
         llg_rt_co_oom(desc->frame_size);
     }
     llg_proc_t* p = (llg_proc_t*)llg_checked_calloc(
-        1, frame_offset + desc->frame_size, "process and coroutine root frame");
+        1, sizeof(*p) + desc->frame_size, "process and coroutine root frame");
 #ifdef LLG_CO_DEBUG
-    memset((char*)p + frame_offset, 0xA5, desc->frame_size);
+    memset(LLG_CO_ROOT(&p->chain), 0xA5, desc->frame_size);
 #endif
     p->name = name;
-    p->fn = fn;
-    p->co_desc = desc;
+    llg_co_start(&p->chain, desc, p);
     p->program = is_initial ? program : NULL;
     p->program_live = program && is_initial;
     if (p->program_live) {
@@ -37,20 +31,17 @@ static llg_proc_t* spawn_in_region(const llg_co_desc_t* desc,
     llg_rng_state_child(&g.rng_root, &p->rng);
     p->budget_time = g.now;
     p->region = region;
-    p->co = aco_create(g.main_co, g.share_stack, 1u << 20, llg_proc_entry, p);
     register_proc(p);
     enqueue_region(p, region);
     return p;
 }
 
 llg_proc_t* llg_spawn_in_region(const llg_co_desc_t* desc,
-                                void (*fn)(llg_proc_t*), const char* name,
-                                llg_region_t region) {
-    return spawn_in_region(desc, fn, name, region, NULL, 0);
+                                const char* name, llg_region_t region) {
+    return spawn_in_region(desc, name, region, NULL, 0);
 }
 
 llg_proc_t* llg_spawn_program_in_region(const llg_co_desc_t* desc,
-                                         void (*fn)(llg_proc_t*),
                                          const char* name,
                                          llg_region_t region,
                                          uint64_t instance, int is_initial) {
@@ -75,31 +66,19 @@ llg_proc_t* llg_spawn_program_in_region(const llg_co_desc_t* desc,
         g.finish = 1;
         return NULL;
     }
-    return spawn_in_region(desc, fn, name, region, program, is_initial);
+    return spawn_in_region(desc, name, region, program, is_initial);
 }
 
-llg_proc_t* llg_spawn(const llg_co_desc_t* desc, void (*fn)(llg_proc_t*),
-                      const char* name) {
-    return llg_spawn_in_region(desc, fn, name, LLG_REGION_ACTIVE);
+llg_proc_t* llg_spawn(const llg_co_desc_t* desc, const char* name) {
+    return llg_spawn_in_region(desc, name, LLG_REGION_ACTIVE);
 }
 
 llg_frame_t* llg_proc_frame(llg_proc_t* self) {
     return self ? self->frame : NULL;
 }
 
-void* llg_proc_co_frame(llg_proc_t* self) {
-    return self ? (char*)self + llg_proc_co_frame_offset() : NULL;
-}
-
-llg_co_arena_t* llg_proc_co_arena(llg_proc_t* self) {
-    return self ? &self->co_arena : NULL;
-}
-
-_Noreturn void llg_proc_done(llg_proc_t* self) {
-    if (!self || self != llg_current()) {
-        fprintf(stderr, "llg: process completion outside the current coroutine\n");
-        abort();
-    }
+static void proc_complete(llg_proc_t* self) {
+    if (!self || self->completed || self->killed) return;
     // Natural process termination is the other join_none eligibility
     // boundary.  Release children before unwinding the creator's activation
     // and frame; their copied captures remain retained by the child process.
@@ -116,15 +95,15 @@ _Noreturn void llg_proc_done(llg_proc_t* self) {
     release_program_process(self);
     service_program_completions();
     semaphore_service_cancelled_waiters();
-    aco_exit(); // never returns
 }
 
-void llg_wait_time(uint64_t ticks) {
-    llg_proc_t* p = llg_current();
-    if (!p || !region_can_mutate("wait scheduling")) return;
-    llg_wait_t* w = &p->wait;
+llg_co_arm_t llg_arm_time(llg_proc_t* self, uint64_t ticks) {
+    llg_runtime_service_enter(self, "delay");
+    if (!self || !region_can_mutate("wait scheduling"))
+        return LLG_CO_ARM_READY;
+    llg_wait_t* w = &self->wait;
     w->kind = W_TIME;
-    w->resume_region = region_is_reactive(p->region)
+    w->resume_region = region_is_reactive(self->region)
                            ? LLG_REGION_REACTIVE
                            : LLG_REGION_ACTIVE;
     if (ticks > UINT64_MAX - g.now) {
@@ -138,7 +117,7 @@ void llg_wait_time(uint64_t ticks) {
         // `#0` yields into the INACTIVE region of the current time step
         // (LRM §4.4.2): it runs after the active region drains and before
         // the NBA region commits.
-        w->resume_region = region_is_reactive(p->region)
+        w->resume_region = region_is_reactive(self->region)
                                ? LLG_REGION_RE_INACTIVE
                                : LLG_REGION_INACTIVE;
         insert_zero_wait(w, w->resume_region);
@@ -146,7 +125,7 @@ void llg_wait_time(uint64_t ticks) {
         insert_timed(w);
     }
     register_wait();
-    aco_yield();
+    return LLG_CO_ARM_SUSPEND;
 }
 
 static llg_region_t take_wait_resume_region(llg_proc_t* p) {
@@ -176,12 +155,13 @@ void llg_wait_resume_in_region(llg_region_t region) {
     p->has_wait_resume_region = 1;
 }
 
-void llg_wait_any(sv4_t** sigs, int n) {
-    llg_proc_t* p = llg_current();
-    if (!p || n < 0 || !region_can_mutate("wait scheduling")) return;
-    llg_wait_t* w = &p->wait;
+llg_co_arm_t llg_arm_any(llg_proc_t* self, sv4_t** sigs, int n) {
+    llg_runtime_service_enter(self, "signal wait");
+    if (!self || n < 0 || !region_can_mutate("wait scheduling"))
+        return LLG_CO_ARM_READY;
+    llg_wait_t* w = &self->wait;
     w->kind = W_EVENTS;
-    w->resume_region = take_wait_resume_region(p);
+    w->resume_region = take_wait_resume_region(self);
     llg_wait_expression_payload_t* payload = &w->payload.expression;
     payload->n = n;
     payload->specs = (llg_event_spec_t*)llg_checked_malloc(
@@ -194,15 +174,18 @@ void llg_wait_any(sv4_t** sigs, int n) {
         payload->last[i] = sv4_clone(sigs[i]);
     }
     register_wait();
-    aco_yield();
+    return LLG_CO_ARM_SUSPEND;
 }
 
-void llg_wait_any_dependencies(const llg_wait_dependency_t* deps, int n) {
-    llg_proc_t* p = llg_current();
-    if (!p || n < 0 || !region_can_mutate("wait scheduling")) return;
-    llg_wait_t* w = &p->wait;
+llg_co_arm_t llg_arm_any_dependencies(llg_proc_t* self,
+                                      const llg_wait_dependency_t* deps,
+                                      int n) {
+    llg_runtime_service_enter(self, "dependency wait");
+    if (!self || n < 0 || !region_can_mutate("wait scheduling"))
+        return LLG_CO_ARM_READY;
+    llg_wait_t* w = &self->wait;
     w->kind = W_DEPS;
-    w->resume_region = take_wait_resume_region(p);
+    w->resume_region = take_wait_resume_region(self);
     llg_wait_expression_payload_t* payload = &w->payload.expression;
     payload->n = n;
     payload->dependencies = (llg_wait_dependency_t*)llg_checked_malloc(
@@ -227,15 +210,17 @@ void llg_wait_any_dependencies(const llg_wait_dependency_t* deps, int n) {
         }
     }
     register_wait();
-    aco_yield();
+    return LLG_CO_ARM_SUSPEND;
 }
 
-void llg_wait_any_events(llg_event_spec_t* specs, int n) {
-    llg_proc_t* p = llg_current();
-    if (!p || n < 0 || !region_can_mutate("wait scheduling")) return;
-    llg_wait_t* w = &p->wait;
+llg_co_arm_t llg_arm_any_events(llg_proc_t* self,
+                                const llg_event_spec_t* specs, int n) {
+    llg_runtime_service_enter(self, "edge wait");
+    if (!self || n < 0 || !region_can_mutate("wait scheduling"))
+        return LLG_CO_ARM_READY;
+    llg_wait_t* w = &self->wait;
     w->kind = W_EVENTS;
-    w->resume_region = region_is_reactive(p->region)
+    w->resume_region = region_is_reactive(self->region)
                            ? LLG_REGION_REACTIVE
                            : LLG_REGION_ACTIVE;
     llg_wait_expression_payload_t* payload = &w->payload.expression;
@@ -250,22 +235,23 @@ void llg_wait_any_events(llg_event_spec_t* specs, int n) {
         payload->last[i] = sv4_clone(specs[i].sig);
     }
     register_wait();
-    aco_yield();
+    return LLG_CO_ARM_SUSPEND;
 }
 
-void llg_wait_edge(sv4_t* sig, int posedge) {
+llg_co_arm_t llg_arm_edge(llg_proc_t* self, sv4_t* sig, int posedge) {
     llg_event_spec_t spec;
     spec.sig = sig;
     spec.kind = posedge ? LLG_EV_POSEDGE : LLG_EV_NEGEDGE;
-    llg_wait_any_events(&spec, 1);
+    return llg_arm_any_events(self, &spec, 1);
 }
 
-void llg_wait_level(sv4_t* sig, sv4_t value) {
-    llg_proc_t* p = llg_current();
-    if (!p || !region_can_mutate("wait scheduling")) return;
-    llg_wait_t* w = &p->wait;
+llg_co_arm_t llg_arm_level(llg_proc_t* self, sv4_t* sig, sv4_t value) {
+    llg_runtime_service_enter(self, "level wait");
+    if (!self || !region_can_mutate("wait scheduling"))
+        return LLG_CO_ARM_READY;
+    llg_wait_t* w = &self->wait;
     w->kind = W_LEVEL;
-    w->resume_region = region_is_reactive(p->region)
+    w->resume_region = region_is_reactive(self->region)
                            ? LLG_REGION_REACTIVE
                            : LLG_REGION_ACTIVE;
     llg_wait_level_payload_t* payload =
@@ -273,7 +259,7 @@ void llg_wait_level(sv4_t* sig, sv4_t value) {
     payload->sig = sig;
     sv4_copy(&payload->value, &value);
     register_wait();
-    aco_yield();
+    return LLG_CO_ARM_SUSPEND;
 }
 
 // ── Named events (see llg_rt.h) ──────────────────────────────────────────────

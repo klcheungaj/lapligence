@@ -42,9 +42,9 @@ void llg_rt_severity_typed(int severity, const char* fmt, llg_fmt_arg_t* args,
     llg_fmt_args_destroy(args, n);
 }
 
-_Noreturn void llg_rt_fatal_typed(int finish_number, const char* fmt,
-                                  llg_fmt_arg_t* args, int n,
-                                  const char* scope, const char* location) {
+void llg_rt_fatal_typed(int finish_number, const char* fmt,
+                        llg_fmt_arg_t* args, int n,
+                        const char* scope, const char* location) {
     if (finish_number < 0 || finish_number > 2) {
         fprintf(stderr, "llg runtime fatal: invalid $fatal finish number %d\n",
                 finish_number);
@@ -402,8 +402,10 @@ int llg_assertion_control(int kind, const sv4_t* args, int n_args,
         service_program_completions();
         semaphore_service_cancelled_waiters();
         reap_retired_procs();
-        if (current && current->killed) { aco_exit(); abort(); }
-        if (current && g.finish) llg_proc_done(current);
+        if (current && current->killed)
+            current->chain.exiting = LLG_EXIT_ABANDON;
+        else if (current && g.finish)
+            current->chain.exiting = LLG_EXIT_COMPLETE;
     }
     return 1;
 }
