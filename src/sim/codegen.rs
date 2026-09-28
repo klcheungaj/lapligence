@@ -9,4 +9,7 @@ mod lowering;
 mod timescale;
 
 pub use error::CodegenError;
-pub use lowering::{generate, generate_from_db_with_opts, generate_with_opts, GeneratedModel};
+pub use lowering::{
+    generate, generate_from_db_with_codegen_options, generate_from_db_with_opts,
+    generate_with_codegen_options, generate_with_opts, CodegenOptions, GeneratedModel,
+};

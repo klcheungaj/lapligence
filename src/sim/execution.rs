@@ -4,6 +4,14 @@
 //! wrapper control is explicit in blocks and terminators; the C backend does
 //! not infer scheduling from source process kinds.
 
+mod analysis;
+
+pub use analysis::{
+    CallMechanism, CoroutineId, ExecutionAnalysis, ExecutionAnalysisError,
+    ExecutionAnalysisOptions, OperationPath, OperationPathElement, SuspensionOperation,
+    SuspensionSite, DEFAULT_POLL_DEPTH_MAX,
+};
+
 use std::collections::HashSet;
 
 use crate::sim::ir::{
@@ -105,6 +113,7 @@ pub enum ExecutionEffect {
     ImmediateStore,
     EnqueueUpdate(ScheduleRegion),
     Suspend,
+    Terminate,
     Trigger,
     Spawn,
     RuntimeService,
@@ -147,15 +156,30 @@ pub struct ExecutionProcess {
 pub struct ExecutionModel {
     ir: IrModel,
     processes: Vec<ExecutionProcess>,
+    analysis: ExecutionAnalysis,
 }
 
 impl ExecutionModel {
     /// Move typed process operations out of semantic lowering storage and
     /// form explicit entry/resume blocks.
-    pub fn lower(mut ir: IrModel) -> Result<Self, IrValidationError> {
+    pub fn lower(ir: IrModel) -> Result<Self, IrValidationError> {
+        Self::lower_with_options(ir, ExecutionAnalysisOptions::default())
+    }
+
+    /// Lower with explicit stackless-coroutine analysis tunables.
+    pub fn lower_with_options(
+        mut ir: IrModel,
+        options: ExecutionAnalysisOptions,
+    ) -> Result<Self, IrValidationError> {
         ir.validate()?;
         let processes = build_processes(&mut ir);
-        let model = Self { ir, processes };
+        let analysis = ExecutionAnalysis::analyze(&ir, &processes, options)
+            .map_err(analysis_validation_error)?;
+        let model = Self {
+            ir,
+            processes,
+            analysis,
+        };
         model.validate()?;
         Ok(model)
     }
@@ -166,6 +190,10 @@ impl ExecutionModel {
 
     pub fn processes(&self) -> &[ExecutionProcess] {
         &self.processes
+    }
+
+    pub fn analysis(&self) -> &ExecutionAnalysis {
+        &self.analysis
     }
 
     pub fn packed_capacity(&self) -> Result<u128, IrValidationError> {
@@ -193,6 +221,8 @@ impl ExecutionModel {
         for process in &mut self.processes {
             process.effects = effects_for_blocks(ir, &process.blocks);
         }
+        self.analysis = ExecutionAnalysis::analyze(ir, &self.processes, self.analysis.options())
+            .map_err(analysis_validation_error)?;
         self.validate()
     }
 
@@ -315,8 +345,21 @@ impl ExecutionModel {
                 ));
             }
         }
+        let analysis =
+            ExecutionAnalysis::analyze(&self.ir, &self.processes, self.analysis.options())
+                .map_err(analysis_validation_error)?;
+        if self.analysis != analysis {
+            return Err(IrValidationError::new(
+                "execution.analysis",
+                "coroutine analysis does not match executable operations",
+            ));
+        }
         Ok(())
     }
+}
+
+fn analysis_validation_error(error: ExecutionAnalysisError) -> IrValidationError {
+    IrValidationError::new("execution.analysis", error.to_string())
 }
 
 fn collect_control_labels<'a>(
@@ -462,10 +505,18 @@ fn build_processes(ir: &mut IrModel) -> Vec<ExecutionProcess> {
 fn effects_for_blocks(ir: &IrModel, blocks: &[ExecutionBlock]) -> Vec<ExecutionEffect> {
     let mut effects = Vec::new();
     let mut visited_calls = HashSet::new();
-    for block in blocks {
+    for (block_index, block) in blocks.iter().enumerate() {
         collect_effects(ir, &block.operations, &mut effects, &mut visited_calls);
         if matches!(&block.terminator, ExecutionTerminator::Suspend { .. }) {
             effects.push(ExecutionEffect::Suspend);
+        }
+        if matches!(
+            &block.terminator,
+            ExecutionTerminator::Jump { target }
+                | ExecutionTerminator::Suspend { resume: target, .. }
+                if *target <= block_index
+        ) {
+            effects.push(ExecutionEffect::Terminate);
         }
     }
     effects.sort();
@@ -583,18 +634,31 @@ fn collect_effects(
                 }
             }
             IrStmt::DisableFork | IrStmt::DisableTarget { .. } | IrStmt::ActivationScope { .. } => {
-                effects.push(ExecutionEffect::RuntimeService)
+                effects.push(ExecutionEffect::RuntimeService);
+                if matches!(statement, IrStmt::DisableTarget { .. }) {
+                    effects.push(ExecutionEffect::Terminate);
+                }
             }
-            IrStmt::System(_) | IrStmt::VpiCall { .. } => {
-                effects.push(ExecutionEffect::RuntimeService)
+            IrStmt::System(_) => effects.push(ExecutionEffect::RuntimeService),
+            IrStmt::VpiCall { .. } => {
+                effects.push(ExecutionEffect::RuntimeService);
+                effects.push(ExecutionEffect::Terminate);
             }
-            IrStmt::AssertionControl { .. } => effects.push(ExecutionEffect::RuntimeService),
+            IrStmt::AssertionControl { kind, .. } => {
+                effects.push(ExecutionEffect::RuntimeService);
+                if matches!(
+                    kind,
+                    crate::sim::ir::IrAssertionControlKind::Kill
+                        | crate::sim::ir::IrAssertionControlKind::Control
+                ) {
+                    effects.push(ExecutionEffect::Terminate);
+                }
+            }
             IrStmt::Memory { .. } | IrStmt::RandomSeed { .. } | IrStmt::RandomStateSet { .. } => {
                 effects.push(ExecutionEffect::RuntimeService)
             }
             IrStmt::Display { .. }
             | IrStmt::DisplayTyped { .. }
-            | IrStmt::Severity { .. }
             | IrStmt::ImmediateAssertion { .. }
             | IrStmt::DeferredImmediateAssertion { .. }
             | IrStmt::MonitorSet { .. }
@@ -607,11 +671,18 @@ fn collect_effects(
             | IrStmt::WaveDumpAll
             | IrStmt::WaveFlush
             | IrStmt::WaveLimit(_)
-            | IrStmt::Finish
-            | IrStmt::FinishControl { .. }
-            | IrStmt::ProgramExit
             | IrStmt::PrintTimescale { .. }
             | IrStmt::TimeFormat { .. } => effects.push(ExecutionEffect::RuntimeService),
+            IrStmt::Severity { level, .. } => {
+                effects.push(ExecutionEffect::RuntimeService);
+                if level.is_fatal() {
+                    effects.push(ExecutionEffect::Terminate);
+                }
+            }
+            IrStmt::Finish | IrStmt::FinishControl { .. } | IrStmt::ProgramExit => {
+                effects.push(ExecutionEffect::RuntimeService);
+                effects.push(ExecutionEffect::Terminate);
+            }
             IrStmt::StopControl { .. } => {
                 effects.push(ExecutionEffect::RuntimeService);
                 effects.push(ExecutionEffect::Suspend);
@@ -638,8 +709,18 @@ fn collect_effects(
                 if let Some(virtual_call) = &call.virtual_call {
                     collect_chandle_effects(ir, &virtual_call.receiver, effects, visited_calls);
                 }
-                collect_callee_effects(ir, call.function_index(), effects, visited_calls);
+                collect_callee_effects(
+                    ir,
+                    call.function_index(),
+                    call.virtual_dispatch || call.virtual_call.is_some(),
+                    effects,
+                    visited_calls,
+                );
             }
+            IrStmt::While { .. }
+            | IrStmt::Repeat { .. }
+            | IrStmt::For { .. }
+            | IrStmt::Forever { .. } => effects.push(ExecutionEffect::Terminate),
             _ => {}
         }
         collect_statement_expression_effects(ir, statement, effects, visited_calls);
@@ -689,14 +770,27 @@ fn collect_effects(
 fn collect_callee_effects(
     ir: &IrModel,
     function: usize,
+    conservative: bool,
     effects: &mut Vec<ExecutionEffect>,
     visited_calls: &mut HashSet<usize>,
 ) {
+    if conservative {
+        effects.push(ExecutionEffect::Suspend);
+        effects.push(ExecutionEffect::Terminate);
+    }
     if !visited_calls.insert(function) {
         return;
     }
     if let Some(function) = ir.funcs.get(function) {
+        // Imported native code cannot suspend beneath its foreign frame, but
+        // it can synchronously request finish or kill through the runtime.
+        if function.dpi_import().is_some() {
+            effects.push(ExecutionEffect::Terminate);
+        }
         collect_effects(ir, &function.body, effects, visited_calls);
+    } else {
+        effects.push(ExecutionEffect::Suspend);
+        effects.push(ExecutionEffect::Terminate);
     }
 }
 
@@ -1170,7 +1264,13 @@ fn collect_expression_effects(
             }) {
                 effects.push(ExecutionEffect::ImmediateStore);
             }
-            collect_callee_effects(ir, call.function_index(), effects, visited_calls);
+            collect_callee_effects(
+                ir,
+                call.function_index(),
+                call.virtual_dispatch || call.virtual_call.is_some(),
+                effects,
+                visited_calls,
+            );
             if let Some(receiver) = &call.receiver {
                 collect_chandle_effects(ir, receiver, effects, visited_calls);
             }
@@ -1321,6 +1421,7 @@ fn collect_expression_effects(
             IrSysFunc::VpiCall { args, .. } => {
                 effects.push(ExecutionEffect::RuntimeService);
                 effects.push(ExecutionEffect::ImmediateStore);
+                effects.push(ExecutionEffect::Terminate);
                 for arg in args {
                     collect_expression_effects(ir, arg, effects, visited_calls);
                 }
@@ -1538,6 +1639,7 @@ fn collect_object_statement_effects(
             collect_mailbox_value_effects(ir, value, effects, visited_calls);
             if !*try_put {
                 effects.push(ExecutionEffect::Suspend);
+                effects.push(ExecutionEffect::Terminate);
             }
         }
         IrObjectStmt::MailboxTryPut(_, mailbox, value)
@@ -1552,11 +1654,16 @@ fn collect_object_statement_effects(
             // is empty; peek only changes whether the delivered message is
             // removed after the wait succeeds.
             effects.push(ExecutionEffect::Suspend);
+            effects.push(ExecutionEffect::Terminate);
         }
         IrObjectStmt::MailboxTryGet(_, mailbox, _, _)
         | IrObjectStmt::MailboxTryGetLocal(_, mailbox, _, _) => {
             collect_chandle_effects(ir, mailbox, effects, visited_calls);
         }
+        IrObjectStmt::ProcessControl {
+            op: crate::sim::ir::IrProcessControl::Kill,
+            ..
+        } => effects.push(ExecutionEffect::Terminate),
         IrObjectStmt::ProcessDeclareLocal(_, _)
         | IrObjectStmt::ProcessAssign(_, _)
         | IrObjectStmt::ProcessAssignLocal(_, _)
@@ -1685,13 +1792,14 @@ fn collect_string_effects(
             function,
             args,
             receiver,
+            virtual_dispatch,
             ..
         } => {
             if let Some(receiver) = receiver {
                 collect_chandle_effects(ir, receiver, effects, visited_calls);
             }
             effects.push(ExecutionEffect::RuntimeService);
-            collect_callee_effects(ir, *function, effects, visited_calls);
+            collect_callee_effects(ir, *function, *virtual_dispatch, effects, visited_calls);
             for argument in args {
                 collect_expression_effects(ir, argument, effects, visited_calls);
             }
@@ -1700,13 +1808,14 @@ fn collect_string_effects(
             function,
             args,
             receiver,
+            virtual_dispatch,
             ..
         } => {
             if let Some(receiver) = receiver {
                 collect_chandle_effects(ir, receiver, effects, visited_calls);
             }
             effects.push(ExecutionEffect::RuntimeService);
-            collect_callee_effects(ir, *function, effects, visited_calls);
+            collect_callee_effects(ir, *function, *virtual_dispatch, effects, visited_calls);
             for argument in args {
                 collect_argument_effects(ir, argument, effects, visited_calls);
             }
@@ -1812,13 +1921,14 @@ fn collect_chandle_effects(
             function,
             args,
             receiver,
+            virtual_dispatch,
             ..
         } => {
             if let Some(receiver) = receiver {
                 collect_chandle_effects(ir, receiver, effects, visited_calls);
             }
             effects.push(ExecutionEffect::RuntimeService);
-            collect_callee_effects(ir, *function, effects, visited_calls);
+            collect_callee_effects(ir, *function, *virtual_dispatch, effects, visited_calls);
             for argument in args {
                 collect_argument_effects(ir, argument, effects, visited_calls);
             }
@@ -1881,6 +1991,8 @@ fn collect_lhs_expression_effects(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use super::*;
     use crate::sim::ir::{IrDependency, IrModelParts, IrProcess, IrSignal, IrType};
 
@@ -2000,6 +2112,12 @@ mod tests {
                 region: ScheduleRegion::Active,
             }
         );
+        let sites = model.analysis().sites(CoroutineId::Process(0)).unwrap();
+        assert_eq!(sites.len(), 1);
+        assert!(matches!(
+            sites.values().next().unwrap().operation(),
+            SuspensionOperation::ProcessTrigger
+        ));
     }
 
     #[test]
@@ -2116,6 +2234,249 @@ mod tests {
                 ExecutionEffect::RuntimeService,
             ]
         );
+    }
+
+    #[test]
+    fn termination_effects_cover_runtime_exit_inventory() {
+        use crate::sim::ir::{
+            IrActivationTarget, IrAssertionControlKind, IrChandleExpr, IrConst, IrExpr, IrExprKind,
+            IrMailboxTarget, IrMailboxValue, IrProcessControl, IrProcessExpr, IrSeverityLevel,
+        };
+
+        let value = IrExpr::new(
+            IrExprKind::Const(IrConst::packed(vec![1], vec![], vec![], 1, false, None).unwrap()),
+            1,
+            false,
+            None,
+        );
+        let mailbox_value = IrMailboxValue::Packed {
+            value: value.clone(),
+            two_state: false,
+        };
+        let mailbox_target = IrMailboxTarget::Packed {
+            addr: "target".into(),
+            width: 1,
+            signed: false,
+            two_state: false,
+        };
+        let cases = vec![
+            IrStmt::Finish,
+            IrStmt::FinishControl {
+                verbosity: 0,
+                location: "test.sv:1".into(),
+            },
+            IrStmt::ProgramExit,
+            IrStmt::Severity {
+                level: IrSeverityLevel::Fatal,
+                fmt: String::new(),
+                args: vec![],
+                scope: "top".into(),
+                location: "test.sv:1".into(),
+                fatal_finish_number: Some(0),
+                runtime_failure: false,
+            },
+            IrStmt::Object(IrObjectStmt::ProcessControl {
+                op: IrProcessControl::Kill,
+                target: IrProcessExpr::SelfHandle,
+            }),
+            IrStmt::DisableTarget {
+                target: IrActivationTarget::new(1, 1),
+            },
+            IrStmt::AssertionControl {
+                kind: IrAssertionControlKind::Kill,
+                args: vec![],
+                scopes: vec![],
+            },
+            IrStmt::AssertionControl {
+                kind: IrAssertionControlKind::Control,
+                args: vec![value.clone()],
+                scopes: vec![],
+            },
+            IrStmt::Object(IrObjectStmt::MailboxPut(
+                0,
+                IrChandleExpr::Null,
+                mailbox_value.clone(),
+                false,
+            )),
+            IrStmt::Object(IrObjectStmt::MailboxPutLocal(
+                "mailbox".into(),
+                IrChandleExpr::Null,
+                mailbox_value,
+                false,
+            )),
+            IrStmt::Object(IrObjectStmt::MailboxGet(
+                0,
+                IrChandleExpr::Null,
+                mailbox_target.clone(),
+                false,
+            )),
+            IrStmt::Object(IrObjectStmt::MailboxGetLocal(
+                "mailbox".into(),
+                IrChandleExpr::Null,
+                mailbox_target,
+                true,
+            )),
+            IrStmt::VpiCall {
+                site: 0,
+                name: "$opaque".into(),
+                args: vec![],
+            },
+            IrStmt::While {
+                cond: value.clone(),
+                body: vec![],
+            },
+            IrStmt::Repeat {
+                count: value.clone(),
+                body: vec![],
+            },
+            IrStmt::For {
+                init: vec![],
+                cond: value,
+                incr: vec![],
+                body: vec![],
+            },
+            IrStmt::Forever { body: vec![] },
+        ];
+        let ir = IrModel::new("effects".into(), 1).unwrap();
+        for statement in cases {
+            assert!(effects_for_statements(&ir, &[statement]).contains(&ExecutionEffect::Terminate));
+        }
+    }
+
+    #[test]
+    fn suspend_and_terminate_propagate_through_statement_and_expression_calls() {
+        use crate::sim::ir::{IrCall, IrCallExpr, IrDepth, IrDpiImport, IrFunc};
+
+        let mut ir = IrModel::new("calls".into(), 1).unwrap();
+        ir.funcs.push(IrFunc::new(
+            "callee".into(),
+            Some(IrType::packed(1, false).unwrap()),
+            vec![],
+            vec![],
+            vec![],
+            vec![
+                IrStmt::Delay {
+                    ticks: crate::sim::ir::IrDelay::Constant(1),
+                },
+                IrStmt::Finish,
+            ],
+        ));
+        let statement = IrStmt::Call(IrCall::new(0, vec![], IrDepth::PROC, vec![], vec![]));
+        let statement_effects = effects_for_statements(&ir, &[statement]);
+        assert!(statement_effects.contains(&ExecutionEffect::Suspend));
+        assert!(statement_effects.contains(&ExecutionEffect::Terminate));
+
+        let expression = IrExpr::new(
+            IrExprKind::CallFn(Box::new(IrCallExpr::new(0, vec![], IrDepth::PROC, false))),
+            1,
+            false,
+            None,
+        );
+        let mut expression_effects = Vec::new();
+        collect_expression_effects(
+            &ir,
+            &expression,
+            &mut expression_effects,
+            &mut HashSet::new(),
+        );
+        assert!(expression_effects.contains(&ExecutionEffect::Suspend));
+        assert!(expression_effects.contains(&ExecutionEffect::Terminate));
+
+        let unknown = IrStmt::Call(IrCall::new(
+            usize::MAX,
+            vec![],
+            IrDepth::PROC,
+            vec![],
+            vec![],
+        ));
+        let unknown_effects = effects_for_statements(&ir, &[unknown]);
+        assert!(unknown_effects.contains(&ExecutionEffect::Suspend));
+        assert!(unknown_effects.contains(&ExecutionEffect::Terminate));
+
+        let mut indirect = IrCall::new(0, vec![], IrDepth::PROC, vec![], vec![]);
+        indirect.virtual_dispatch = true;
+        let indirect_effects = effects_for_statements(&ir, &[IrStmt::Call(indirect)]);
+        assert!(indirect_effects.contains(&ExecutionEffect::Suspend));
+        assert!(indirect_effects.contains(&ExecutionEffect::Terminate));
+
+        let mut dpi = IrFunc::new("dpi".into(), None, vec![], vec![], vec![], vec![]);
+        dpi.dpi = Some(IrDpiImport {
+            c_name: "dpi".into(),
+            context: true,
+            pure: false,
+        });
+        ir.funcs.push(dpi);
+        let dpi_effects = effects_for_statements(
+            &ir,
+            &[IrStmt::Call(IrCall::new(
+                1,
+                vec![],
+                IrDepth::PROC,
+                vec![],
+                vec![],
+            ))],
+        );
+        assert!(!dpi_effects.contains(&ExecutionEffect::Suspend));
+        assert!(dpi_effects.contains(&ExecutionEffect::Terminate));
+    }
+
+    #[test]
+    fn resume_numbering_matches_emitted_yield_calls_in_both_optimizer_modes() {
+        use crate::sim::opt::{self, OptConfig};
+
+        let false_condition = IrExpr::new(
+            IrExprKind::Const(
+                crate::sim::ir::IrConst::packed(vec![0], vec![], vec![], 1, false, None).unwrap(),
+            ),
+            1,
+            false,
+            None,
+        );
+        let base = execution(
+            IrShape::RunOnce,
+            vec![
+                IrStmt::Delay {
+                    ticks: crate::sim::ir::IrDelay::Constant(1),
+                },
+                IrStmt::WaitAny { sens: vec![] },
+                IrStmt::WaitCond {
+                    cond: false_condition,
+                    sens: vec![],
+                    body: vec![],
+                },
+                IrStmt::WaitFork,
+                IrStmt::StopControl {
+                    verbosity: 0,
+                    location: "test.sv:1".into(),
+                },
+            ],
+        );
+        let mut analyses = Vec::new();
+        for config in [OptConfig::none(), OptConfig::default()] {
+            let mut model = base.clone();
+            opt::run(&mut model, &config).unwrap();
+            let sites = model.analysis().sites(CoroutineId::Process(0)).unwrap();
+            assert_eq!(
+                sites
+                    .values()
+                    .map(SuspensionSite::resume)
+                    .collect::<BTreeSet<_>>(),
+                BTreeSet::from([1, 2, 3, 4, 5])
+            );
+            let rendered = crate::sim::emit_c::render(&model).unwrap();
+            let yielding_calls = [
+                "llg_wait_time(",
+                "llg_wait_any(",
+                "llg_wait_fork(",
+                "llg_rt_stop_with_level(",
+            ]
+            .into_iter()
+            .map(|needle| rendered.matches(needle).count())
+            .sum::<usize>();
+            assert_eq!(yielding_calls, sites.len());
+            analyses.push(model.analysis().clone());
+        }
+        assert_eq!(analyses[0], analyses[1]);
     }
 
     #[test]
@@ -2238,6 +2599,16 @@ mod tests {
             terminator: ExecutionTerminator::Complete,
         });
         model.refresh_effects().unwrap();
+
+        assert_eq!(
+            model
+                .analysis()
+                .sites(CoroutineId::Process(0))
+                .unwrap()
+                .len(),
+            1,
+            "a body-controlled terminator resumes an operation-owned site"
+        );
 
         let c = crate::sim::emit_c::render(&model).unwrap();
         let entry = c.find("_llg_exec_0_b0: ;").unwrap();
@@ -2374,7 +2745,11 @@ mod tests {
         );
         assert_eq!(
             process.effects,
-            vec![ExecutionEffect::Suspend, ExecutionEffect::RuntimeService]
+            vec![
+                ExecutionEffect::Suspend,
+                ExecutionEffect::Terminate,
+                ExecutionEffect::RuntimeService,
+            ]
         );
     }
 
