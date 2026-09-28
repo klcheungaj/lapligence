@@ -1,12 +1,12 @@
 
 static void assertion_action(llg_concurrent_assertion_t* assertion,
-                             llg_concurrent_assertion_action_fn action) {
+                             llg_concurrent_assertion_action_fn action,
+                             const llg_co_desc_t* desc) {
     if (!action || g.finish) return;
     const char* name = assertion->label && assertion->label[0]
                            ? assertion->label
                            : "concurrent assertion action";
-    llg_proc_t* proc = llg_spawn_in_region(&llg_libaco_desc, action, name,
-                                           LLG_REGION_REACTIVE);
+    llg_proc_t* proc = llg_spawn_in_region(desc, action, name, LLG_REGION_REACTIVE);
     if (proc) {
         proc->is_assertion_action = 1;
         proc->action_assertion = assertion->identity;
@@ -40,15 +40,18 @@ static void assertion_result(llg_concurrent_assertion_t* assertion, int success,
             llg_assertion_cover(assertion->identity, assertion->label,
                                 assertion->location);
         if (assertion->kind != LLG_ASSERTION_COVER || !vacuous)
-            assertion_action(assertion, assertion->pass_action);
+            assertion_action(assertion, assertion->pass_action,
+                             assertion->pass_desc);
     } else {
         if (assertion->kind == LLG_ASSERTION_COVER) {
-            assertion_action(assertion, assertion->fail_action);
+            assertion_action(assertion, assertion->fail_action,
+                             assertion->fail_desc);
         } else {
             assertion_record_failure(assertion->kind);
             if (assertion->fail_action) {
                 // Even an explicit null else is a generated action function.
-                assertion_action(assertion, assertion->fail_action);
+                assertion_action(assertion, assertion->fail_action,
+                                 assertion->fail_desc);
             } else {
                 (void)llg_schedule_region_callback(
                     LLG_REGION_REACTIVE, assertion_default_failure_action,
@@ -409,7 +412,9 @@ int llg_assertion_register_control(
     llg_concurrent_assertion_predicate_fn consequent,
     llg_concurrent_assertion_predicate_fn abort_condition,
     llg_concurrent_assertion_action_fn pass_action,
-    llg_concurrent_assertion_action_fn fail_action, void* data, int kind,
+    const llg_co_desc_t* pass_desc,
+    llg_concurrent_assertion_action_fn fail_action,
+    const llg_co_desc_t* fail_desc, void* data, int kind,
     int overlapped, int abort_reject, int abort_sync, uint64_t identity,
     const char* label, const char* location, const char* scope) {
     if (!g.main_co || g.running || g.config_error || !clock || !consequent ||
@@ -418,7 +423,8 @@ int llg_assertion_register_control(
         (overlapped != 0 && overlapped != 1) ||
         (abort_reject != 0 && abort_reject != 1) ||
         (abort_sync != 0 && abort_sync != 1) ||
-        ((abort_reject || abort_sync) && !abort_condition)) {
+        ((abort_reject || abort_sync) && !abort_condition) ||
+        (!!pass_action != !!pass_desc) || (!!fail_action != !!fail_desc)) {
         fprintf(stderr, "llg: invalid concurrent assertion registration\n");
         llg_last_failure = 1;
         g.finish = 1;
@@ -434,7 +440,9 @@ int llg_assertion_register_control(
     assertion->consequent = consequent;
     assertion->abort_condition = abort_condition;
     assertion->pass_action = pass_action;
+    assertion->pass_desc = pass_desc;
     assertion->fail_action = fail_action;
+    assertion->fail_desc = fail_desc;
     assertion->data = data;
     assertion->kind = kind;
     assertion->overlapped = overlapped;
@@ -460,13 +468,15 @@ int llg_assertion_register(
     llg_concurrent_assertion_predicate_fn antecedent,
     llg_concurrent_assertion_predicate_fn consequent,
     llg_concurrent_assertion_action_fn pass_action,
-    llg_concurrent_assertion_action_fn fail_action, void* data, int kind,
+    const llg_co_desc_t* pass_desc,
+    llg_concurrent_assertion_action_fn fail_action,
+    const llg_co_desc_t* fail_desc, void* data, int kind,
     int overlapped, uint64_t identity, const char* label, const char* location,
     const char* scope) {
     return llg_assertion_register_control(
         clock, edge, disable, antecedent, consequent, NULL, pass_action,
-        fail_action, data, kind, overlapped, 0, 0, identity, label, location,
-        scope);
+        pass_desc, fail_action, fail_desc, data, kind, overlapped, 0, 0,
+        identity, label, location, scope);
 }
 
 void llg_deferred_assertion_scoped(int kind, int passed, uint64_t identity,
@@ -594,7 +604,9 @@ int llg_assertion_register_sequence_control(
     const llg_sequence_graph_t* consequent,
     llg_concurrent_assertion_predicate_fn abort_condition,
     llg_concurrent_assertion_action_fn pass_action,
-    llg_concurrent_assertion_action_fn fail_action, void* data, int kind,
+    const llg_co_desc_t* pass_desc,
+    llg_concurrent_assertion_action_fn fail_action,
+    const llg_co_desc_t* fail_desc, void* data, int kind,
     int overlapped, int abort_reject, int abort_sync, uint64_t identity,
     const char* label, const char* location, const char* scope) {
     if (!g.main_co || g.running || g.config_error || !clock ||
@@ -605,7 +617,8 @@ int llg_assertion_register_sequence_control(
         (overlapped != 0 && overlapped != 1) ||
         (abort_reject != 0 && abort_reject != 1) ||
         (abort_sync != 0 && abort_sync != 1) ||
-        ((abort_reject || abort_sync) && !abort_condition)) {
+        ((abort_reject || abort_sync) && !abort_condition) ||
+        (!!pass_action != !!pass_desc) || (!!fail_action != !!fail_desc)) {
         fprintf(stderr, "llg: invalid concurrent sequence assertion registration\n");
         llg_last_failure = 1;
         g.finish = 1;
@@ -618,7 +631,9 @@ int llg_assertion_register_sequence_control(
     assertion->edge = edge;
     assertion->disable = disable;
     assertion->pass_action = pass_action;
+    assertion->pass_desc = pass_desc;
     assertion->fail_action = fail_action;
+    assertion->fail_desc = fail_desc;
     assertion->abort_condition = abort_condition;
     assertion->data = data;
     assertion->kind = kind;
@@ -646,11 +661,13 @@ int llg_assertion_register_sequence(
     const llg_sequence_graph_t* antecedent,
     const llg_sequence_graph_t* consequent,
     llg_concurrent_assertion_action_fn pass_action,
-    llg_concurrent_assertion_action_fn fail_action, void* data, int kind,
+    const llg_co_desc_t* pass_desc,
+    llg_concurrent_assertion_action_fn fail_action,
+    const llg_co_desc_t* fail_desc, void* data, int kind,
     int overlapped, uint64_t identity, const char* label, const char* location,
     const char* scope) {
     return llg_assertion_register_sequence_control(
         clock, edge, disable, antecedent, consequent, NULL, pass_action,
-        fail_action, data, kind, overlapped, 0, 0, identity, label, location,
-        scope);
+        pass_desc, fail_action, fail_desc, data, kind, overlapped, 0, 0,
+        identity, label, location, scope);
 }

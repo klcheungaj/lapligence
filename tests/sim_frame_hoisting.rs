@@ -155,6 +155,33 @@ endmodule
 }
 
 #[test]
+fn concurrent_assertion_actions_register_their_root_descriptors() {
+    let c = render_source_with_execution_options(
+        "assertion_action_frame.sv",
+        r#"
+module tb;
+    logic clk;
+    always #1 clk = ~clk;
+    initial begin
+        clk = 1'b0;
+        #2 $finish;
+    end
+    check: assert property (@(posedge clk) 1'b1)
+        $display("PASS");
+endmodule
+"#,
+        ExecutionAnalysisOptions::default(),
+    );
+
+    let registration = c
+        .lines()
+        .find(|line| line.contains("llg_assertion_register("))
+        .expect("concurrent assertion registration");
+    assert!(registration.contains("_desc"), "{registration}");
+    assert!(!registration.contains("llg_libaco_desc"), "{registration}");
+}
+
+#[test]
 fn frames_above_the_embed_limit_are_forced_to_the_arena() {
     let c = render_source_with_execution_options(
         "oversized_frame.sv",
