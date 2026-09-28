@@ -18,6 +18,8 @@ natural or `$exit` completion accounting.
 | `Suspend(BodyControlled)` | Enter the resume block after a waiting operation yields and returns. |
 | `ImmediateStore` | Blocking variable/net-contribution update. |
 | `EnqueueUpdate(NonblockingAssign)` | Capture a payload for its later NBA commit. |
+| `Suspend` | The operation or a transitively called subroutine can yield. |
+| `Terminate` | The operation or a transitively called subroutine can end the current process. |
 | `Trigger` | Wake registered named-event waiters. |
 | `Spawn` | Create dynamic fork-process ancestry. |
 | `RuntimeService` | Observable services such as display, waveform control, or termination. |
@@ -26,10 +28,28 @@ Optimizers update every execution-owned block, recompute effects, and validate
 summaries. Resume and entry blocks may differ; bodies are never reconstructed
 from the emptied staging table.
 
+`execution/analysis.rs` derives the stackless coroutine set and suspendable call
+graph after each effect refresh. Processes and fork branches are depth-zero
+anchors. Static call-site depth uses the maximum incoming path; sites deeper
+than `poll_depth_max` (default 3) anchor and restart the callee at depth zero.
+Suspendable recursion is supported: calls within one strongly connected
+component use `LLG_CO_CALL_ARENA`, reset depth, and never embed another SCC
+member's frame. Depth and deterministic emission orders run over the SCC
+condensation DAG; functions within an SCC use ascending function-index order,
+and only their descriptors require forward declarations. Phase 3 can force all
+incoming static calls to selected oversized callees onto the arena, which
+reruns depth analysis with those edges as anchors. The analysis numbers each
+function's suspension sites dense `1..N` in emission order. Keys combine the
+owning process/function (or fork branch) with a structural operation path, so
+optimizer and hash iteration order cannot affect site identity. Inline-expanded
+task statements remain in their host and therefore consume the host's resume
+numbers; existing inline-recursion rejection remains unchanged.
+
 `ExecutionModel::validate` checks reachable targets, typed references, unique
 signal triggers backed by emitted packed storage (including bounded constant
 array elements), block-local labels, body-controlled wait ownership, resume
-regions, and packed capacity. Emission follows terminators using reserved C
+regions, packed capacity, effect summaries, and the coroutine side table.
+Emission follows terminators using reserved C
 labels and independent declaration scopes. Stack sizing covers every block.
 
 Structured waits remain inside operations, not separate blocks. Block-local

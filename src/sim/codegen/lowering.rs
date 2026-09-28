@@ -342,6 +342,15 @@ pub struct GeneratedModel {
     pub warnings: Vec<String>,
 }
 
+/// End-to-end simulator generation options.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CodegenOptions {
+    /// Optimization passes applied before C emission.
+    pub optimization: crate::sim::opt::OptConfig,
+    /// Stackless-coroutine analysis tunables.
+    pub execution: crate::sim::execution::ExecutionAnalysisOptions,
+}
+
 /// Lower an owned Slang semantic database with default optimizations.
 pub fn generate(db: &Db) -> Result<GeneratedModel, CodegenError> {
     generate_with_opts(db, &crate::sim::opt::OptConfig::default())
@@ -355,6 +364,15 @@ pub fn generate_with_opts(
     generate_from_db_with_opts(db, cfg)
 }
 
+/// Lower an owned database with explicit optimization and execution-analysis
+/// options. The stackless analysis is not consumed by C emission in Phase 2.
+pub fn generate_with_codegen_options(
+    db: &Db,
+    options: &CodegenOptions,
+) -> Result<GeneratedModel, CodegenError> {
+    generate_from_db_with_codegen_options(db, options)
+}
+
 /// Lower an already-owned database with an explicit optimization
 /// configuration.
 ///
@@ -365,12 +383,26 @@ pub fn generate_from_db_with_opts(
     db: &Db,
     cfg: &crate::sim::opt::OptConfig,
 ) -> Result<GeneratedModel, CodegenError> {
-    generate_from_db_with_opts_impl(db, cfg).map_err(CodegenError::new)
+    generate_from_db_with_codegen_options(
+        db,
+        &CodegenOptions {
+            optimization: *cfg,
+            ..CodegenOptions::default()
+        },
+    )
 }
 
-fn generate_from_db_with_opts_impl(
+/// Lower an already-owned database with all generation tunables.
+pub fn generate_from_db_with_codegen_options(
     db: &Db,
-    cfg: &crate::sim::opt::OptConfig,
+    options: &CodegenOptions,
+) -> Result<GeneratedModel, CodegenError> {
+    generate_from_db_with_codegen_options_impl(db, options).map_err(CodegenError::new)
+}
+
+fn generate_from_db_with_codegen_options_impl(
+    db: &Db,
+    options: &CodegenOptions,
 ) -> Result<GeneratedModel, String> {
     let semantic = crate::sim::semantic::SemanticModel::from_db(db);
     if let Err(issues) = semantic.validate_simulation() {
@@ -476,8 +508,10 @@ fn generate_from_db_with_opts_impl(
     model.final_spawns = final_names;
     model.validate().map_err(|error| error.to_string())?;
     let mut execution =
-        crate::sim::execution::ExecutionModel::lower(model).map_err(|error| error.to_string())?;
-    crate::sim::opt::run(&mut execution, cfg).map_err(|error| error.to_string())?;
+        crate::sim::execution::ExecutionModel::lower_with_options(model, options.execution)
+            .map_err(|error| error.to_string())?;
+    crate::sim::opt::run(&mut execution, &options.optimization)
+        .map_err(|error| error.to_string())?;
     execution.validate().map_err(|error| error.to_string())?;
     let model_c = crate::sim::emit_c::render(&execution)?;
     Ok(GeneratedModel {

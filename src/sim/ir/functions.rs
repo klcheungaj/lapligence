@@ -183,6 +183,9 @@ pub struct IrFunc {
     /// when the result is also targeted by a continuous assignment.
     pub(in crate::sim) return_signal: Option<usize>,
     pub(in crate::sim) c_name: String,
+    /// The retained definition is a lowering template whose body is expanded
+    /// into each caller. It is not an independently callable execution frame.
+    pub(in crate::sim) inline_expanded: bool,
     /// Automatic subprograms use fresh C locals per call; static subprograms
     /// retain their return/local storage across calls.
     pub(in crate::sim) automatic: bool,
@@ -232,6 +235,7 @@ impl IrFunc {
     ) -> Self {
         Self {
             c_name,
+            inline_expanded: false,
             automatic: true,
             return_default: None,
             return_signal: None,
@@ -272,6 +276,10 @@ impl IrFunc {
 
     pub fn c_name(&self) -> &str {
         &self.c_name
+    }
+    /// Whether calls expand this definition into their owning execution body.
+    pub fn is_inline_expanded(&self) -> bool {
+        self.inline_expanded
     }
     pub fn is_automatic(&self) -> bool {
         self.automatic
