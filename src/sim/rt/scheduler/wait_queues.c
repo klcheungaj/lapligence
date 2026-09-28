@@ -41,6 +41,14 @@ static void remove_timed_entry(llg_wait_t* w) {
     }
 }
 
+static llg_wait_rare_t* wait_rare_allocate(llg_wait_t* wait,
+                                           const char* description) {
+    llg_wait_rare_t* payload = (llg_wait_rare_t*)llg_checked_calloc(
+        1, sizeof(*payload), description);
+    wait->payload.rare = payload;
+    return payload;
+}
+
 static void insert_zero_wait(llg_wait_t* w, llg_region_t region) {
     if (!region_valid(region)) {
         fprintf(stderr, "llg: invalid execution region %d for zero-delay wait\n", (int)region);
@@ -140,9 +148,12 @@ static int semaphore_valid(llg_semaphore_t* semaphore, const char* action) {
 // is used by process cancellation and teardown before the process storage is
 // reclaimed, so a killed waiter can never consume a later put.
 static void semaphore_waiter_unlink(llg_wait_t* wait) {
-    if (!wait || !wait->semaphore_waiter) return;
-    llg_semaphore_wait_t* node = wait->semaphore_waiter;
-    llg_semaphore_t* semaphore = wait->semaphore ? wait->semaphore : node->owner;
+    if (!wait || wait->kind != W_SEMAPHORE || !wait->payload.rare ||
+        !wait->payload.rare->semaphore.waiter)
+        return;
+    llg_wait_semaphore_payload_t* payload = &wait->payload.rare->semaphore;
+    llg_semaphore_wait_t* node = payload->waiter;
+    llg_semaphore_t* semaphore = payload->semaphore ? payload->semaphore : node->owner;
     if (semaphore) {
         llg_semaphore_wait_t** slot = &semaphore->wait_head;
         while (*slot && *slot != node) slot = &(*slot)->next;
@@ -158,9 +169,9 @@ static void semaphore_waiter_unlink(llg_wait_t* wait) {
         }
     }
     free(node);
-    wait->semaphore = NULL;
-    wait->semaphore_waiter = NULL;
-    wait->semaphore_keys = 0;
+    payload->semaphore = NULL;
+    payload->waiter = NULL;
+    payload->keys = 0;
 }
 
 // Service only the head request.  A later smaller request cannot bypass a
@@ -175,15 +186,15 @@ static void semaphore_wake_available(llg_semaphore_t* semaphore) {
         llg_proc_t* proc = node->proc;
         llg_wait_t* wait = proc ? &proc->wait : NULL;
         if (!proc || !wait || wait->kind != W_SEMAPHORE ||
-            wait->semaphore_waiter != node) {
+            !wait->payload.rare || wait->payload.rare->semaphore.waiter != node) {
             free(node);
             continue;
         }
         semaphore->available -= node->keys;
         free(node);
-        wait->semaphore = NULL;
-        wait->semaphore_waiter = NULL;
-        wait->semaphore_keys = 0;
+        wait->payload.rare->semaphore.semaphore = NULL;
+        wait->payload.rare->semaphore.waiter = NULL;
+        wait->payload.rare->semaphore.keys = 0;
         wake_proc(proc);
     }
 }
@@ -207,21 +218,97 @@ static void event_unlink(llg_wait_t* w);
 
 static void insert_timed(llg_wait_t* w) {
     llg_wait_t** pp = &g.timed_head;
-    while (*pp && (*pp)->time <= w->time) pp = &(*pp)->time_next;
+    while (*pp && (*pp)->payload.time <= w->payload.time)
+        pp = &(*pp)->time_next;
     w->time_next = *pp;
     *pp = w;
 }
 
 static void free_expression_wait(llg_wait_t* w) {
-    if (!w->expressions) return;
-    for (int i = 0; i < w->n; i++) {
-        llg_frame_release((llg_frame_t*)w->expressions[i].eval_context);
-        llg_frame_release((llg_frame_t*)w->expressions[i].condition_context);
-        free(w->expressions[i].reads);
-        free(w->expressions[i].dependencies);
+    llg_wait_expression_payload_t* payload = &w->payload.expression;
+    if (!payload->expressions) return;
+    for (int i = 0; i < payload->n; i++) {
+        llg_frame_release((llg_frame_t*)payload->expressions[i].eval_context);
+        llg_frame_release((llg_frame_t*)payload->expressions[i].condition_context);
+        free(payload->expressions[i].reads);
+        free(payload->expressions[i].dependencies);
     }
-    free(w->expressions);
-    w->expressions = NULL;
+    free(payload->expressions);
+    payload->expressions = NULL;
+}
+
+static void wait_payload_release(llg_wait_t* wait) {
+    if (!wait) return;
+    llg_process_handle_t* process_target = NULL;
+    switch (wait->kind) {
+        case W_EVENTS:
+            free(wait->payload.expression.specs);
+            sv4_destroy_array(wait->payload.expression.last,
+                              wait->payload.expression.last
+                                  ? (size_t)wait->payload.expression.n
+                                  : 0);
+            free(wait->payload.expression.last);
+            break;
+        case W_DEPS:
+            free(wait->payload.expression.dependencies);
+            sv4_destroy_array(wait->payload.expression.last,
+                              wait->payload.expression.last
+                                  ? (size_t)wait->payload.expression.n
+                                  : 0);
+            free(wait->payload.expression.last);
+            break;
+        case W_EXPR:
+            free_expression_wait(wait);
+            sv4_destroy_array(wait->payload.expression.last,
+                              wait->payload.expression.last
+                                  ? (size_t)wait->payload.expression.n
+                                  : 0);
+            free(wait->payload.expression.last);
+            free(wait->payload.expression.real_last);
+            free(wait->payload.expression.evs);
+            break;
+        case W_EVENT:
+            free(wait->payload.event.evs);
+            break;
+        case W_MIXED:
+            if (wait->payload.rare) {
+                llg_wait_mixed_payload_t* mixed = &wait->payload.rare->mixed;
+                free(mixed->specs);
+                sv4_destroy_array(mixed->last,
+                                  mixed->last ? (size_t)mixed->n : 0);
+                free(mixed->last);
+                free(mixed->evs);
+            }
+            break;
+        case W_EVENT_ORDER:
+            if (wait->payload.rare) {
+                free(wait->payload.rare->order.evs);
+                free(wait->payload.rare->order.sequence);
+            }
+            break;
+        case W_LEVEL:
+            if (wait->payload.rare)
+                sv4_destroy(&wait->payload.rare->level.value);
+            break;
+        case W_PROCESS:
+            if (wait->payload.rare)
+                process_target = wait->payload.rare->process.target;
+            break;
+        case W_MAILBOX_PUT:
+            if (wait->payload.rare)
+                mailbox_value_destroy(&wait->payload.rare->mailbox_put.value);
+            break;
+        default:
+            break;
+    }
+    if (wait->kind != W_TIME && wait->kind != W_EVENTS &&
+        wait->kind != W_DEPS && wait->kind != W_EXPR &&
+        wait->kind != W_EVENT && wait->kind != W_EVENT_TRIGGERED &&
+        wait->kind != W_NONE)
+        free(wait->payload.rare);
+    memset(&wait->payload, 0, sizeof(wait->payload));
+    wait->kind = W_NONE;
+    if (process_target) llg_process_release(process_target);
 }
 
 static void release_expression_contexts(const llg_expr_event_spec_t* specs, int n) {

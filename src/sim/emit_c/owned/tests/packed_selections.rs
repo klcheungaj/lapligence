@@ -34,7 +34,7 @@ fn lhs() -> IrLhs {
 }
 
 #[test]
-fn packed_selection_owners_are_released_and_nba_captures_the_same_mask() {
+fn packed_selection_owners_are_released_and_nba_captures_a_narrow_range() {
     let model = model();
     let ctx = RCtx {
         model: &model,
@@ -53,14 +53,11 @@ fn packed_selection_owners_are_released_and_nba_captures_the_same_mask() {
     assert!(frame.slots.iter().all(|used| !used));
     let source = frame.body();
     assert_eq!(source.matches("sv4_select_plan_step(").count(), 2);
-    assert_eq!(source.matches("sv4_select_plan_set(").count(), 2);
-    assert!(source.contains("llg_nba_masked("));
+    assert_eq!(source.matches("sv4_select_plan_set(").count(), 0);
+    assert!(source.contains("llg_nba_selected_after("));
     assert!(
         source.rfind("sv4_select_plan_step(").unwrap()
-            < source.find("sv4_select_plan_set(").unwrap()
-    );
-    assert!(
-        source.rfind("sv4_select_plan_set(").unwrap() < source.find("llg_nba_masked(").unwrap()
+            < source.find("llg_nba_selected_after(").unwrap()
     );
     assert!(!source.contains("({{"));
 }

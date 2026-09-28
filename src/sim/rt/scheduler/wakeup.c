@@ -26,38 +26,8 @@ static void wake_proc(llg_proc_t* p) {
     if (w->kind == W_SEMAPHORE) semaphore_waiter_unlink(w);
     if (w->kind == W_MAILBOX_GET || w->kind == W_MAILBOX_PUT)
         mailbox_unlink_wait(w);
-    free_expression_wait(w);
-    free(w->specs);
-    free(w->dependencies);
-    sv4_destroy_array(w->last, w->last ? (size_t)w->n : 0);
-        sv4_destroy(&w->level_val);
-        free(w->last);
-    free(w->real_last);
-    free(w->evs);
-    free(w->order_sequence);
-    mailbox_value_destroy(&w->mailbox_value);
-    llg_process_handle_t* process_target = w->process_target;
-    w->specs = NULL;
-    w->dependencies = NULL;
-    w->last = NULL;
-    w->real_last = NULL;
-    w->evs = NULL;
-    w->order_sequence = NULL;
-    w->n = 0;
-    w->n_evs = 0;
-    w->triggered_ev = NULL;
-    w->process_target = NULL;
-    w->mailbox = NULL;
-    w->mailbox_next = NULL;
-    w->mailbox_peek = 0;
-    memset(&w->mailbox_target, 0, sizeof(w->mailbox_target));
-    w->n_order = 0;
-    w->order_next = 0;
-    w->assertion_identity = 0;
-    w->semaphore_keys = 0;
-    w->kind = W_NONE;
+    wait_payload_release(w);
     g.wait_count--;
-    if (process_target) llg_process_release(process_target);
     if (p->suspended) {
         // A suspended waiter keeps its condition registered until it fires;
         // once it fires, retain only a pending wake so resume cannot enqueue
@@ -74,7 +44,8 @@ static void wake_assertion_waiter(uint64_t identity) {
     llg_wait_t* wait = g.waiters;
     while (wait) {
         llg_wait_t* next = wait->next;
-        if (wait->kind == W_ASSERTION && wait->assertion_identity == identity)
+        if (wait->kind == W_ASSERTION && wait->payload.rare &&
+            wait->payload.rare->assertion.identity == identity)
             wake_proc(wait->proc);
         wait = next;
     }

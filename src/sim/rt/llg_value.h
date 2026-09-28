@@ -79,10 +79,21 @@ typedef struct {
 } sv4_select_plan_t;
 
 sv4_select_plan_t sv4_select_plan_init(uint32_t storage_width);
+// Single-stage plans used when a selected write must retain its coordinates.
+// Invalid or wholly out-of-range selectors produce an empty valid interval.
+sv4_select_plan_t sv4_select_plan_bit(uint32_t storage_width, uint64_t index);
+sv4_select_plan_t sv4_select_plan_part(uint32_t storage_width,
+                                       int64_t left, int64_t right);
+sv4_select_plan_t sv4_select_plan_indexed(uint32_t storage_width, sv4_t base,
+                                          uint32_t width, int negative);
 // All bases are borrowed. Unknown or unrepresentable bases select no bits.
 void sv4_select_plan_step(sv4_select_plan_t* plan, sv4_t base, uint32_t width);
 // Read returns an independent unsigned owner, with X at missing positions.
 sv4_t sv4_select_plan_read(sv4_t source, const sv4_select_plan_t* plan);
+// Return only the plan's valid contiguous interval. Reverse maps ascending
+// declared part-selects into increasing storage-bit order.
+sv4_t sv4_select_plan_slice(sv4_t source, const sv4_select_plan_t* plan,
+                            int reverse);
 // Set borrows source; supports aliasing and changes only the valid interval.
 void sv4_select_plan_set(sv4_t* destination, const sv4_select_plan_t* plan, sv4_t source);
 

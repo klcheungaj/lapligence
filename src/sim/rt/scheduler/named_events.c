@@ -74,8 +74,23 @@ static void event_triggered_list_add(llg_event_object_t* ev, llg_proc_t* p) {
 // on — the process may be woken through any ONE of them (or through the
 // signal half of a mixed list), and must not stay registered on the others.
 static void event_unlink(llg_wait_t* w) {
-    for (int i = 0; i < w->n_evs; i++) {
-        llg_event_object_t* ev = w->evs[i];
+    llg_event_object_t** events = NULL;
+    int count = 0;
+    if (w->kind == W_EVENT) {
+        events = w->payload.event.evs;
+        count = w->payload.event.n_evs;
+    } else if (w->kind == W_EXPR) {
+        events = w->payload.expression.evs;
+        count = w->payload.expression.n_evs;
+    } else if (w->kind == W_MIXED && w->payload.rare) {
+        events = w->payload.rare->mixed.evs;
+        count = w->payload.rare->mixed.n_evs;
+    } else if (w->kind == W_EVENT_ORDER && w->payload.rare) {
+        events = w->payload.rare->order.evs;
+        count = w->payload.rare->order.n_evs;
+    }
+    for (int i = 0; i < count; i++) {
+        llg_event_object_t* ev = events[i];
         if (!ev) continue;
         for (int k = 0; k < ev->n_waiters; k++) {
             if (ev->waiters[k] == w->proc) {
@@ -88,7 +103,8 @@ static void event_unlink(llg_wait_t* w) {
 }
 
 static void event_triggered_unlink(llg_wait_t* w) {
-    llg_event_object_t* ev = w->triggered_ev;
+    if (!w || w->kind != W_EVENT_TRIGGERED) return;
+    llg_event_object_t* ev = w->payload.event.triggered_ev;
     if (!ev) return;
     for (int i = 0; i < ev->n_triggered_waiters; i++) {
         if (ev->triggered_waiters[i] == w->proc) {
