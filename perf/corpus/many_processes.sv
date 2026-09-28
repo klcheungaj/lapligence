@@ -11,19 +11,17 @@ module many_processes_registers #(
     parameter integer EDGES = `LLG_CORPUS_EDGES
 );
     logic clk = 0;
-    wire [N-1:0] q_view;
-    wire [N-1:0] d_view;
+    logic q [N-1:0];
+    wire d [N-1:0];
+    integer ones;
+    integer d_ones;
+    integer index;
 
     genvar i;
     for (i = 0; i < N; i = i + 1) begin : workers
-        logic q;
-        wire d;
-
-        assign d = i[0];
-        assign q_view[i] = q;
-        assign d_view[i] = d;
+        assign d[i] = i[0];
         always @(posedge clk)
-            q <= d;
+            q[i] <= d[i];
     end
 
     initial begin
@@ -32,9 +30,14 @@ module many_processes_registers #(
             #1 clk = 0;
         end
         #1;
+        ones = 0;
+        d_ones = 0;
+        for (index = 0; index < N; index = index + 1) begin
+            ones = ones + (q[index] === 1'b1);
+            d_ones = d_ones + (d[index] === 1'b1);
+        end
         $display("many_processes variant=registers n=%0d edges=%0d ones=%0d d_ones=%0d first=%b last=%b",
-                 N, EDGES, $countones(q_view), $countones(d_view),
-                 q_view[0], q_view[N-1]);
+                 N, EDGES, ones, d_ones, q[0], q[N-1]);
         $finish(0);
     end
 endmodule
