@@ -7,9 +7,9 @@ impl<'a> Codegen<'a> {
 
     /// Emit a `static` prototype for every function/task in the instance
     /// tree, so bodies may call each other regardless of declaration order.
-    /// Timing-capable tasks use the same typed C-call ABI as delay-free tasks.
-    /// Their `llg_wait_*` operations suspend the caller's libaco coroutine, so
-    /// each recursive C activation remains resumable without source unrolling.
+    /// Timing-capable tasks are identified here; the execution analysis later
+    /// gives them an explicit frame and stackless call ABI. Recursive timing
+    /// calls use arena frames and remain resumable without source unrolling.
     pub(in super::super) fn emit_func_prototypes(&mut self, inst: NodeId) -> Result<(), String> {
         let class_methods;
         let children = if self.class_nodes.contains_key(&inst) {
@@ -390,8 +390,8 @@ impl<'a> Codegen<'a> {
     }
 
     /// Emit the C function body for every function/task in the instance tree.
-    /// Emit every function/task body. Timing-capable tasks are ordinary C
-    /// calls whose waits suspend the current libaco coroutine.
+    /// Emit every function/task body. Timing-capable tasks become stackless
+    /// callees whose caller-owned frames preserve state across waits.
     pub(in super::super) fn emit_func_bodies(&mut self, inst: NodeId) -> Result<(), String> {
         // Every prototype in the design (tops, packages and compilation
         // units) has a model entry by now, so scalar declaration initializers

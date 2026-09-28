@@ -375,8 +375,8 @@ fn event_array_indices_are_owned_and_invalid_handles_are_inert() {
         activation_label: None,
     };
     let mut frame = Frame::new(&ctx);
-    frame
-        .wait_events(&[(
+    let specs = frame
+        .event_specs(&[(
             IrWaitSrc::Event(IrEventRef::Array {
                 array: 2,
                 indices: vec![number(1, 32)],
@@ -384,13 +384,14 @@ fn event_array_indices_are_owned_and_invalid_handles_are_inert() {
             IrEdge::Any,
         )])
         .unwrap();
+    frame.line(format!("llg_arm_expressions(NULL, {specs}, 1);"));
     assert!(frame.slots.iter().all(|used| !used));
     let body = frame.body();
     let select = body
         .find("llg_event_array_select(event_table__elements")
         .unwrap();
     let destroy = body[select..].find("sv4_destroy(").unwrap() + select;
-    let wait = body.find("llg_wait_expressions(").unwrap();
+    let wait = body.find("llg_arm_expressions(").unwrap();
     assert!(select < destroy && destroy < wait);
     assert!(body.contains("llg_event_t _llg_null_event_"));
     assert!(body.contains("{ NULL }"));

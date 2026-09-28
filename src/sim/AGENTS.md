@@ -63,14 +63,12 @@ operand width. Preserve typed index trees, elaborated indexed-part extents,
 wide intermediate indices and member-specific two-state conversion. Emit static
 extents, not the width expression's integer storage size.
 
-Derive `LLG_MODEL_STACK_VALUES` with checked arithmetic:
-`(max_function_frame * 256 + max_process_frame) * 8`, retaining the historical
-minimum. Count typed expression storage across sequential statements and lexical
-arms: compilers/sanitizers may retain return-by-value temporaries for the entire
-C activation. Fail emission on overflow. Pass headroom at startup through
-`llg_rt_init_with_args_precision_and_stack`, not the compiled runtime ABI.
-Values allocate by their own widths; never restore model-maximum arrays.
-`LLG_MODEL_VALUE_ABI` must match `LLG_VALUE_ABI_VERSION`.
+Coroutine storage is explicit POD frame data. Count typed expression storage and
+embedded callee slots in `FrameLayout`; sibling blocks overlay and recursive or
+oversized callees use the chain arena. There is no generated coroutine-stack
+estimate or `LLG_MODEL_STACK_VALUES`. Values allocate by their own widths; never
+restore model-maximum arrays. `LLG_MODEL_VALUE_ABI` must match
+`LLG_VALUE_ABI_VERSION`, and generated models declare process ABI 2.
 
 `write_sim_sources` embeds flat value, random, scheduler, container, waveform and
 libaco sources plus self-tests into `<out-dir>/sim/<design>/` (driver default
