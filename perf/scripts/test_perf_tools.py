@@ -3,6 +3,7 @@ import struct
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -31,6 +32,15 @@ class ProfileParserTests(unittest.TestCase):
             path.write_bytes(header + record[:-1])
             with self.assertRaisesRegex(ValueError, "partial sample"):
                 profile.read_samples(path)
+
+    def test_symbolizes_unique_addresses_in_one_batch(self):
+        completed = mock.Mock(stdout="first\nfirst.c:1\nsecond\nsecond.c:2\n")
+        with mock.patch.object(
+            profile, "locate", side_effect=lambda address, _: ("/fake/model", address)
+        ), mock.patch.object(profile.subprocess, "run", return_value=completed) as run:
+            result = profile.symbolize([[1, 2], [2]], [], "addr2line")
+        self.assertEqual(result, [["first", "second"], ["second"]])
+        run.assert_called_once()
 
 
 class RssClassifierTests(unittest.TestCase):

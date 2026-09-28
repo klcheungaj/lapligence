@@ -2,6 +2,7 @@
 
 import argparse
 import collections
+import functools
 import struct
 import subprocess
 from pathlib import Path
@@ -47,6 +48,7 @@ def read_maps(path):
     return mappings
 
 
+@functools.lru_cache(maxsize=None)
 def elf_type(path):
     try:
         with open(path, "rb") as stream:
@@ -68,27 +70,48 @@ def locate(address, mappings):
 
 
 def symbolize(samples, mappings, addr2line):
-    cache = {}
+    keys = {locate(address, mappings) for sample in samples for address in sample}
+    cache = {
+        key: f"0x{key[1]:x}"
+        for key in keys
+        if key[0] is None
+    }
+    by_object = collections.defaultdict(list)
+    for pathname, object_address in keys:
+        if pathname is not None:
+            by_object[pathname].append(object_address)
+
+    for pathname, addresses in by_object.items():
+        addresses.sort()
+        for start in range(0, len(addresses), 1024):
+            batch = addresses[start : start + 1024]
+            completed = subprocess.run(
+                [
+                    addr2line,
+                    "-f",
+                    "-C",
+                    "-e",
+                    pathname,
+                    *(f"0x{address:x}" for address in batch),
+                ],
+                check=False,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+            )
+            lines = completed.stdout.splitlines()
+            for index, address in enumerate(batch):
+                line_index = index * 2
+                function = lines[line_index] if line_index < len(lines) else "??"
+                if function == "??":
+                    function = Path(pathname).name
+                cache[(pathname, address)] = function
+
     result = []
     for sample in samples:
         stack = []
         for address in sample:
             key = locate(address, mappings)
-            if key not in cache:
-                pathname, object_address = key
-                if pathname is None:
-                    cache[key] = f"0x{address:x}"
-                else:
-                    completed = subprocess.run(
-                        [addr2line, "-f", "-C", "-e", pathname, f"0x{object_address:x}"],
-                        check=False,
-                        text=True,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.DEVNULL,
-                    )
-                    lines = completed.stdout.splitlines()
-                    function = lines[0] if lines and lines[0] != "??" else Path(pathname).name
-                    cache[key] = function
             stack.append(cache[key])
         result.append(stack)
     return result
