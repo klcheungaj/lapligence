@@ -30,11 +30,115 @@
 
 // ── Fatal boundary checks ────────────────────────────────────────────────────
 
-static void llg_fatal_allocation(const char* what, size_t count, size_t size) {
+static _Noreturn void llg_fatal_allocation(const char* what, size_t count,
+                                           size_t size) {
     fprintf(stderr,
             "llg: fatal: cannot allocate %zu element(s) of %zu byte(s) for %s\n",
             count, size, what);
     abort();
+}
+
+typedef struct llg_rt_co_cached_chunk {
+    struct llg_rt_co_cached_chunk* next;
+    size_t bytes;
+} llg_rt_co_cached_chunk_t;
+
+static struct {
+    llg_rt_co_cached_chunk_t* heads[sizeof(size_t) * CHAR_BIT];
+    llg_rt_co_cache_stats_t stats;
+} llg_rt_co_chunk_cache;
+
+static void llg_rt_co_count(size_t* counter) {
+    if (*counter != SIZE_MAX) (*counter)++;
+}
+
+_Noreturn void llg_rt_co_oom(size_t bytes) {
+    llg_fatal_allocation("coroutine frame", 1, bytes);
+}
+
+_Noreturn void llg_rt_co_bad_state(const llg_co_frame_t* co, const char* fn) {
+    fprintf(stderr,
+            "llg: fatal: invalid coroutine state in %s: frame=%p state=%lu\n",
+            fn ? fn : "<unknown>", (const void*)co,
+            co ? (unsigned long)co->state : 0ul);
+    // Phase 4 can append the descriptor backtrace and HDL-path mapping once
+    // processes own llg_co chains; the base diagnostic stays usable now.
+    abort();
+}
+
+static size_t llg_rt_co_size_class(size_t bytes) {
+    size_t size_class = 0;
+    while (bytes >>= 1) size_class++;
+    return size_class;
+}
+
+void* llg_co_host_chunk_alloc(size_t bytes) {
+    const size_t size_class = llg_rt_co_size_class(bytes);
+    llg_rt_co_cached_chunk_t* previous = NULL;
+    llg_rt_co_cached_chunk_t* chunk =
+        llg_rt_co_chunk_cache.heads[size_class];
+    while (chunk && chunk->bytes != bytes) {
+        previous = chunk;
+        chunk = chunk->next;
+    }
+    if (chunk) {
+        if (previous)
+            previous->next = chunk->next;
+        else
+            llg_rt_co_chunk_cache.heads[size_class] = chunk->next;
+        llg_rt_co_chunk_cache.stats.cached_bytes -= bytes;
+        llg_rt_co_count(&llg_rt_co_chunk_cache.stats.cache_hits);
+        return chunk;
+    }
+
+    void* allocation = malloc(bytes);
+    if (!allocation) llg_rt_co_oom(bytes);
+    llg_rt_co_count(&llg_rt_co_chunk_cache.stats.system_allocations);
+    return allocation;
+}
+
+void llg_co_host_chunk_free(void* allocation, size_t bytes) {
+    const size_t cap = (size_t)LLG_CO_CHUNK_CACHE_MAX_BYTES;
+    if (bytes >= sizeof(llg_rt_co_cached_chunk_t) &&
+        llg_rt_co_chunk_cache.stats.cached_bytes <= cap &&
+        bytes <= cap - llg_rt_co_chunk_cache.stats.cached_bytes) {
+        const size_t size_class = llg_rt_co_size_class(bytes);
+        llg_rt_co_cached_chunk_t* chunk = (llg_rt_co_cached_chunk_t*)allocation;
+        chunk->bytes = bytes;
+        chunk->next = llg_rt_co_chunk_cache.heads[size_class];
+        llg_rt_co_chunk_cache.heads[size_class] = chunk;
+        llg_rt_co_chunk_cache.stats.cached_bytes += bytes;
+        if (llg_rt_co_chunk_cache.stats.peak_cached_bytes <
+            llg_rt_co_chunk_cache.stats.cached_bytes)
+            llg_rt_co_chunk_cache.stats.peak_cached_bytes =
+                llg_rt_co_chunk_cache.stats.cached_bytes;
+        return;
+    }
+    free(allocation);
+    llg_rt_co_count(&llg_rt_co_chunk_cache.stats.system_frees);
+}
+
+void llg_rt_co_cache_get_stats(llg_rt_co_cache_stats_t* stats) {
+    if (stats) *stats = llg_rt_co_chunk_cache.stats;
+}
+
+static void llg_rt_co_cache_release(void) {
+    size_t size_class;
+    for (size_class = 0;
+         size_class < sizeof(llg_rt_co_chunk_cache.heads) /
+                          sizeof(llg_rt_co_chunk_cache.heads[0]);
+         size_class++) {
+        llg_rt_co_cached_chunk_t* chunk =
+            llg_rt_co_chunk_cache.heads[size_class];
+        while (chunk) {
+            llg_rt_co_cached_chunk_t* next = chunk->next;
+            free(chunk);
+            llg_rt_co_count(&llg_rt_co_chunk_cache.stats.system_frees);
+            chunk = next;
+        }
+        llg_rt_co_chunk_cache.heads[size_class] = NULL;
+    }
+    llg_rt_co_chunk_cache.stats.cached_bytes = 0;
 }
 
 static void* llg_checked_malloc(size_t count, size_t size, const char* what) {

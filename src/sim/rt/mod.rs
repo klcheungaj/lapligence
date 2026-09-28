@@ -5,6 +5,8 @@
 //! scheduler-independent legacy probabilistic functions (`llg_random.h` /
 //! `llg_random.c`), [`rng_sources`] the
 //! scheduler-independent random-stream service (`llg_rng.h` / `llg_rng.c`),
+//! [`coroutine_sources`] the stackless coroutine library (`llg_co.h` /
+//! `llg_co.c`),
 //! [`vpi_sources`] the bounded public VPI declarations and plugin bridge
 //! (`vpi_user.h` / `llg_vpi.c`),
 //! [`container_sources`] and [`string_sources`] the dynamically sized value
@@ -36,6 +38,12 @@ pub fn vpi_bridge_header() -> &'static str {
 /// PCG stream, hierarchy derivation, unbiased ranges, and state serialization.
 pub fn rng_sources() -> (&'static str, &'static str) {
     (include_str!("llg_rng.h"), include_str!("llg_rng.c"))
+}
+
+/// Stackless coroutine frame, chain, anchor, and arena support.  The library
+/// is currently packaged with generated models but is not yet used by them.
+pub fn coroutine_sources() -> (&'static str, &'static str) {
+    (include_str!("llg_co.h"), include_str!("llg_co.c"))
 }
 
 /// (header, implementation) of the event scheduler and runtime facade.

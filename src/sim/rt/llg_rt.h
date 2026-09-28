@@ -52,6 +52,38 @@
 extern "C" {
 #endif
 
+// Keep the library and every model translation unit on the host-allocation
+// declaration contract. CMake supplies the same definition when compiling
+// llg_co.c, which includes llg_co.h directly.
+#ifndef LLG_CO_HOST_ALLOC
+#define LLG_CO_HOST_ALLOC 1
+#endif
+struct llg_co_frame;
+_Noreturn void llg_rt_co_oom(size_t bytes);
+_Noreturn void llg_rt_co_bad_state(const struct llg_co_frame* co,
+                                   const char* fn);
+#define LLG_CO_OOM(bytes) llg_rt_co_oom(bytes)
+#define LLG_CO_BAD_STATE(co, fn) llg_rt_co_bad_state((co), (fn))
+#include "llg_co.h"
+
+// Total retained coroutine-arena chunk bytes for the simulation thread.
+// MT-1 will give each worker an independent cache with this cap.
+#ifndef LLG_CO_CHUNK_CACHE_MAX_BYTES
+#define LLG_CO_CHUNK_CACHE_MAX_BYTES (1024u * 1024u)
+#endif
+
+typedef struct {
+    size_t system_allocations;
+    size_t cache_hits;
+    size_t system_frees;
+    size_t cached_bytes;
+    size_t peak_cached_bytes;
+} llg_rt_co_cache_stats_t;
+
+// Snapshot cumulative chunk-cache counters. The cache is owned by the
+// simulation thread; callers must not race this accessor with simulation.
+void llg_rt_co_cache_get_stats(llg_rt_co_cache_stats_t* stats);
+
 // Typed display values. The runtime owns string members after a display call
 // or while a deferred monitor/strobe snapshot is live.
 enum {

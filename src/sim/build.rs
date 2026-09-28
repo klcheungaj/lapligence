@@ -68,6 +68,7 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 include_directories(${CMAKE_SOURCE_DIR})
+set_source_files_properties(llg_co.c PROPERTIES COMPILE_DEFINITIONS LLG_CO_HOST_ALLOC=1)
 if(LLG_RUNTIME_LIBRARY)
   add_library(llg_runtime STATIC IMPORTED)
   set_target_properties(llg_runtime PROPERTIES IMPORTED_LOCATION "${LLG_RUNTIME_LIBRARY}")
@@ -95,6 +96,7 @@ set(CMAKE_C_EXTENSIONS OFF)
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
+set_source_files_properties(llg_co.c PROPERTIES COMPILE_DEFINITIONS LLG_CO_HOST_ALLOC=1)
 add_library(llg_runtime STATIC {RUNTIME_SOURCES})
 target_include_directories(llg_runtime PRIVATE ${CMAKE_SOURCE_DIR})
 {WAVE_DEFINITION}
@@ -371,7 +373,7 @@ pub fn generate_model_sources_with_opts(
 
 /// File names [`super::write_sim_sources`] always writes (must mirror its
 /// fixed list there) plus this module's own `CMakeLists.txt`.
-const FIXED_SOURCE_NAMES: [&str; 21] = [
+const FIXED_SOURCE_NAMES: [&str; 23] = [
     "llg_rt.h",
     "llg_rt.c",
     "llg_value.h",
@@ -380,6 +382,8 @@ const FIXED_SOURCE_NAMES: [&str; 21] = [
     "llg_random.c",
     "llg_rng.h",
     "llg_rng.c",
+    "llg_co.h",
+    "llg_co.c",
     "vpi_user.h",
     "llg_vpi.h",
     "llg_vpi.c",
@@ -474,6 +478,7 @@ fn write_cmakelists(
     sources.extend([
         "llg_value.c",
         "llg_rng.c",
+        "llg_co.c",
         "llg_rt.c",
         "llg_random.c",
         "llg_vpi.c",
@@ -709,6 +714,7 @@ fn runtime_source_names(waveform: bool) -> Vec<&'static str> {
     let mut sources = vec![
         "llg_value.c",
         "llg_rng.c",
+        "llg_co.c",
         "llg_rt.c",
         "llg_random.c",
         "llg_vpi.c",
@@ -769,6 +775,8 @@ fn runtime_cache_key(
         super::rt::random_sources().1,
         super::rt::rng_sources().0,
         super::rt::rng_sources().1,
+        super::rt::coroutine_sources().0,
+        super::rt::coroutine_sources().1,
         super::rt::vpi_sources().0,
         super::rt::vpi_sources().1,
         super::rt::vpi_bridge_header(),

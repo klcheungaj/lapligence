@@ -334,6 +334,7 @@ void llg_rt_cleanup(void) {
         free(llg_dependency_bindings);
         llg_dependency_bindings = next;
     }
+    llg_rt_co_cache_release();
 }
 
 void llg_rt_init_with_args_precision_and_stack(int argc, char** argv,
