@@ -81,6 +81,9 @@ fn generated_sources_keep_value_runtime_as_a_separate_translation_unit() {
     let extra = [("model.c", STUB_MODEL_C)];
     sim::build::generate_model_sources(dir.path(), &extra).expect("generate model sources");
     std::fs::write(dir.path().join("stale.c"), "stale").expect("write stale source");
+    for stale in ["aco.h", "aco.c", "acosw.S", "aco_assert_override.h"] {
+        std::fs::write(dir.path().join(stale), "stale").expect("write stale coroutine source");
+    }
     sim::build::generate_model_sources(dir.path(), &extra).expect("regenerate model sources");
 
     let (header, source) = sim::rt::value_sources();
@@ -111,10 +114,18 @@ fn generated_sources_keep_value_runtime_as_a_separate_translation_unit() {
         coroutine_source
     );
     assert!(!dir.path().join("stale.c").exists());
+    for stale in ["aco.h", "aco.c", "acosw.S", "aco_assert_override.h"] {
+        assert!(
+            !dir.path().join(stale).exists(),
+            "regeneration retained stale {stale}"
+        );
+    }
     let cmake = std::fs::read_to_string(dir.path().join("CMakeLists.txt")).unwrap();
-    assert!(cmake.contains(
-        "model.c llg_value.c llg_rng.c llg_co.c llg_rt.c llg_random.c llg_vpi.c aco.c acosw.S"
-    ));
+    assert!(
+        cmake.contains("model.c llg_value.c llg_rng.c llg_co.c llg_rt.c llg_random.c llg_vpi.c")
+    );
+    assert!(cmake.contains("project(llg_sim_model C)"));
+    assert!(!cmake.contains("project(llg_sim_model C ASM)"));
     assert!(cmake.contains(
         "set_source_files_properties(llg_co.c PROPERTIES COMPILE_DEFINITIONS LLG_CO_HOST_ALLOC=1)"
     ));
@@ -123,6 +134,101 @@ fn generated_sources_keep_value_runtime_as_a_separate_translation_unit() {
     let (runtime_header, runtime_source) = sim::rt::runtime_sources();
     assert!(runtime_header.contains("#include \"llg_value.h\""));
     assert!(!runtime_source.contains("#include \"llg_value.c\""));
+}
+
+#[test]
+fn mixed_process_and_coroutine_abis_fail_to_build_or_link() {
+    let _guard = TEST_LOCK.lock().unwrap();
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let dir = fresh_dir("mixed-abi");
+    let stale_model = r#"#define LLG_MODEL_VALUE_ABI 4
+#define LLG_MODEL_PROCESS_ABI 1
+#include "llg_rt.h"
+int main(void) { return 0; }
+"#;
+    let error = sim::build::build_model_cmake(dir.path(), &[("model.c", stale_model)])
+        .expect_err("a stale generated-model process ABI must not compile");
+    assert!(matches!(&error, sim::build::BuildError::Compile { .. }));
+    assert!(
+        error.contains("generated model process ABI does not match llg_rt.h"),
+        "unexpected stale-model failure: {error}"
+    );
+
+    let compiler = std::env::var("LLG_CC")
+        .or_else(|_| std::env::var("CC"))
+        .unwrap_or_else(|_| "cc".to_owned());
+    let available = Command::new(&compiler)
+        .arg("--version")
+        .output()
+        .is_ok_and(|output| output.status.success());
+    if !available {
+        eprintln!("SKIP: C compiler `{compiler}` not available for mixed-link ABI probe");
+        return;
+    }
+
+    let link_dir = dir.path().join("link");
+    let stale_dir = link_dir.join("stale");
+    std::fs::create_dir_all(&stale_dir).expect("create stale runtime directory");
+    let (header, implementation) = sim::rt::coroutine_sources();
+    std::fs::write(link_dir.join("llg_co.h"), header).expect("write current coroutine header");
+    std::fs::write(
+        stale_dir.join("llg_co.h"),
+        header.replace(
+            "#define LLG_CO_ABI_VERSION 1",
+            "#define LLG_CO_ABI_VERSION 0",
+        ),
+    )
+    .expect("write stale coroutine header");
+    std::fs::write(stale_dir.join("llg_co.c"), implementation)
+        .expect("write stale coroutine runtime");
+    std::fs::write(
+        link_dir.join("model.c"),
+        "#include \"llg_co.h\"\nint main(void) { llg_co_arena_t arena = {0}; llg_co_arena_release(&arena); return 0; }\n",
+    )
+    .expect("write current coroutine model");
+
+    let stale_object = link_dir.join("stale.o");
+    let model_object = link_dir.join("model.o");
+    for (directory, source, output) in [
+        (&stale_dir, "llg_co.c", &stale_object),
+        (&link_dir, "model.c", &model_object),
+    ] {
+        let result = Command::new(&compiler)
+            .current_dir(directory)
+            .args(["-std=c11", "-I.", "-c", source, "-o"])
+            .arg(output)
+            .output()
+            .expect("run C compiler for mixed-link ABI probe");
+        assert!(
+            result.status.success(),
+            "compile {source} failed:\n{}\n{}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr)
+        );
+    }
+    let executable = link_dir.join(format!("mixed-abi{}", std::env::consts::EXE_SUFFIX));
+    let link = Command::new(&compiler)
+        .args([model_object.as_os_str(), stale_object.as_os_str()])
+        .arg("-o")
+        .arg(&executable)
+        .output()
+        .expect("link mixed coroutine ABI probe");
+    assert!(
+        !link.status.success(),
+        "a model requesting _abi1 unexpectedly linked to an _abi0 runtime"
+    );
+    let diagnostic = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&link.stdout),
+        String::from_utf8_lossy(&link.stderr)
+    );
+    assert!(
+        diagnostic.contains("llg_co_arena_release_abi1"),
+        "mixed-link failure did not name the versioned symbol: {diagnostic}"
+    );
 }
 
 /// Whether the host cmake lists `generator` as an available `-G` backend
