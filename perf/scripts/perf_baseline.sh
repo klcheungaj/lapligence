@@ -135,10 +135,21 @@ cc_wrapper() {
     fi
 
     local real_cc=${PERF_BASELINE_CC:-${CC:-cc}}
+    local output_name=${output##*/}
+    local cc_record="$PERF_METRICS_DIR/cc.$$.${RANDOM}.tsv"
+
+    # CMake invokes the configured compiler for probes and object files as
+    # well as for the final model executable. Measure all invocations, but
+    # only replace the final `sim` link output with the run-measuring wrapper.
+    if [[ $output_name != sim && $output_name != sim.exe ]]; then
+        measure_child --label cc --record "$cc_record" -- "$real_cc" "${compiler_args[@]}"
+        return $?
+    fi
+
     local real_output="${output}.real"
     compiler_args[output_index]=$real_output
 
-    if measure_child --label cc --record "$PERF_METRICS_DIR/cc.tsv" -- "$real_cc" "${compiler_args[@]}"; then
+    if measure_child --label cc --record "$cc_record" -- "$real_cc" "${compiler_args[@]}"; then
         :
     else
         return $?
@@ -147,6 +158,8 @@ cc_wrapper() {
         printf 'perf_baseline: compiler did not create executable %s\n' "$real_output" >&2
         return 1
     fi
+    local real_output_abs
+    real_output_abs=$(cd -- "$(dirname -- "$real_output")" && pwd -P)/$(basename -- "$real_output")
 
     local run_record="$PERF_METRICS_DIR/run.tsv"
     {
@@ -156,7 +169,7 @@ cc_wrapper() {
         printf ' --run-wrapper --record '
         quote_sh "$run_record"
         printf ' -- '
-        quote_sh "$real_output"
+        quote_sh "$real_output_abs"
         printf ' "\$@"\n'
     } >"$output"
     chmod +x -- "$output"
@@ -398,14 +411,25 @@ for design in "${design_paths[@]}"; do
             sed -n '1,120p' "$stderr_log" >&2 || true
             exit 1
         fi
-        if [[ ! -s $metrics_dir/cc.tsv || ! -s $metrics_dir/run.tsv ]]; then
+        shopt -s nullglob
+        cc_records=("$metrics_dir"/cc.*.tsv)
+        shopt -u nullglob
+        if ((${#cc_records[@]} == 0)) || [[ ! -s $metrics_dir/run.tsv ]]; then
             printf 'perf_baseline: missing cc/run measurement for %s run %d\n' "$design_name" "$run" >&2
             sed -n '1,120p' "$stderr_log" >&2 || true
             exit 1
         fi
 
         IFS=$'\t' read -r total_label total_status total_wall total_rss <"$metrics_dir/total.tsv"
-        IFS=$'\t' read -r cc_label cc_status cc_wall cc_rss <"$metrics_dir/cc.tsv"
+        cc_status=0
+        cc_wall=0
+        cc_rss=0
+        for cc_record in "${cc_records[@]}"; do
+            IFS=$'\t' read -r cc_label one_cc_status one_cc_wall one_cc_rss <"$cc_record"
+            cc_wall=$((cc_wall + one_cc_wall))
+            ((one_cc_rss > cc_rss)) && cc_rss=$one_cc_rss
+            ((one_cc_status != 0)) && cc_status=$one_cc_status
+        done
         IFS=$'\t' read -r run_label run_status run_wall run_rss <"$metrics_dir/run.tsv"
         frontend_wall=$((total_wall - cc_wall - run_wall))
         if ((frontend_wall < 0)); then
