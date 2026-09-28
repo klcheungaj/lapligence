@@ -53,6 +53,58 @@ endmodule
 "#;
 
 #[test]
+fn resume_free_process_uses_a_header_only_frame_and_c_locals() {
+    let c = render_source_with_execution_options(
+        "resume_free_frame.sv",
+        r#"
+module tb;
+    initial begin
+        automatic integer left = 20;
+        automatic integer right = 22;
+        $display("%0d", left + right);
+    end
+endmodule
+"#,
+        ExecutionAnalysisOptions::default(),
+    );
+
+    assert!(
+        c.contains("typedef struct {\n    llg_co_frame_t co;\n} p_tb_proc_0_frame_t;"),
+        "{c}"
+    );
+    assert!(!c.contains("F->_llg_"), "{c}");
+    assert!(
+        c.contains("llg_value_scope_t* _llg_frame_base = llg_value_scope_mark();"),
+        "{c}"
+    );
+    assert!(c.matches("sv4_t* _llg_local_").count() >= 2, "{c}");
+}
+
+#[test]
+fn resume_free_nested_scope_uses_locals_beside_a_live_frame_field() {
+    let c = render_source_with_execution_options(
+        "narrow_nested_scope.sv",
+        r#"
+module tb;
+    initial begin
+        automatic integer across_wait = 1;
+        begin
+            automatic integer leaf = 2;
+            across_wait = leaf;
+        end
+        #1;
+        $display("%0d", across_wait);
+    end
+endmodule
+"#,
+        ExecutionAnalysisOptions::default(),
+    );
+
+    assert!(c.matches("sv4_t* _llg_local_").count() >= 2, "{c}");
+    assert!(c.contains("F->_llg_local_"), "{c}");
+}
+
+#[test]
 fn coroutine_model_emits_root_arguments_polled_frames_and_descriptors() {
     let c = render_source_with_execution_options(
         "frame_calls.sv",

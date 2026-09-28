@@ -16,6 +16,13 @@ layout builder owns typed fields, per-block call-site unions, descriptors and
 LP64 frame upper bounds. It records the generated C block tree exactly, merges
 single storage-bearing child chains into their parent struct, drops empty blocks,
 and emits `union { struct { ... } bK; ... } uN` only for storage-bearing siblings.
+Declarations in a block with no resume point in that block or any descendant stay
+as ordinary C locals; a process with no resume points consequently has a
+header-only frame. Resume-bearing scopes alone participate in overlays, upper
+bounds and descriptor offsets. Dispatch labels target only those scopes, while
+cancellation and structured-control gotos leave scopes, so no dispatch can skip a
+narrowed local's initialization; strict GCC jump-initialization checks enforce the
+same constraint on generated C.
 Sibling blocks therefore share storage without making ordinary nested scopes add
 declarator depth. Finalized member paths also drive descriptor offsets and the
 emitted-C scope lint. Fields read at the first post-suspension

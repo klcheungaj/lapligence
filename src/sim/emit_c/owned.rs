@@ -100,6 +100,13 @@ struct PendingSite {
     mechanism: Option<CallMechanism>,
 }
 
+#[derive(Clone, Debug)]
+struct DeferredDeclaration {
+    ty: String,
+    name: String,
+    standalone: bool,
+}
+
 pub(super) struct Frame<'a, 'm> {
     ctx: &'a RCtx<'m>,
     code: String,
@@ -124,6 +131,7 @@ pub(super) struct Frame<'a, 'm> {
     access_stack: Vec<String>,
     construction_stack: Vec<usize>,
     layout: FrameLayout,
+    declarations: Vec<DeferredDeclaration>,
     declaration_error: Option<String>,
     brace_kinds: Vec<bool>,
     in_block_comment: bool,
@@ -168,22 +176,19 @@ impl<'a, 'm> Frame<'a, 'm> {
         sites.sort_by_key(|site| site.resume);
         frame.resume_numbers = sites.iter().map(|site| site.resume).collect();
         frame.pending_sites = sites.into();
-        Ok(frame)
-    }
-
-    fn with_storage(ctx: &'a RCtx<'m>, storage: FrameStorage) -> Self {
-        let mut layout = FrameLayout::new(storage);
-        if storage == FrameStorage::CoFrame {
+        if !frame.resume_numbers.is_empty() {
             for (ty, name) in [
                 ("llg_value_scope_t*", "_llg_frame_base"),
                 ("llg_value_scope_t*", "_llg_temp_scope"),
                 ("sv4_t*", "_llg_t"),
             ] {
-                layout
-                    .declare(ty, name)
-                    .expect("fixed coroutine fields are unique and have known layouts");
+                frame.layout.declare(ty, name)?;
             }
         }
+        Ok(frame)
+    }
+
+    fn with_storage(ctx: &'a RCtx<'m>, storage: FrameStorage) -> Self {
         Self {
             ctx,
             code: String::new(),
@@ -207,7 +212,8 @@ impl<'a, 'm> Frame<'a, 'm> {
             cancellation_return: false,
             access_stack: Vec::new(),
             construction_stack: Vec::new(),
-            layout,
+            layout: FrameLayout::new(storage),
+            declarations: Vec::new(),
             declaration_error: None,
             brace_kinds: Vec::new(),
             in_block_comment: false,
@@ -230,11 +236,11 @@ impl<'a, 'm> Frame<'a, 'm> {
         if self.layout.storage() == FrameStorage::CoFrame {
             self.track_frame_blocks(text);
         }
-        let text = self.rewrite_frame_accesses(text);
         self.code.push_str("    ");
-        self.code.push_str(&text);
+        self.code.push_str(text);
         self.code.push('\n');
-        if is_runtime_suspension(&text) {
+        if is_runtime_suspension(text) {
+            self.layout.mark_resume();
             self.resume_probe = true;
         }
     }
@@ -415,14 +421,7 @@ impl<'a, 'm> Frame<'a, 'm> {
         result
     }
     fn access(&self, name: &str) -> String {
-        if self.layout.storage() == FrameStorage::CoFrame {
-            self.layout
-                .field_access(name)
-                .map(|access| format!("F->{access}"))
-                .unwrap_or_else(|| format!("F->{name}"))
-        } else {
-            name.to_owned()
-        }
+        name.to_owned()
     }
     fn frame_field(&mut self, ty: &str, name: &str) -> Result<String, String> {
         self.layout.declare(ty, name)
@@ -496,7 +495,7 @@ impl<'a, 'm> Frame<'a, 'm> {
         dispatch
     }
     fn declare_named(&mut self, ty: &str, name: &str, init: String) -> String {
-        let access = match self.layout.declare(ty, name) {
+        let registered = match self.layout.declare(ty, name) {
             Ok(access) => access,
             Err(error) => {
                 self.declaration_error.get_or_insert(error);
@@ -509,11 +508,13 @@ impl<'a, 'm> Frame<'a, 'm> {
             } else {
                 init
             };
-            self.line(format!("{access} = {init};"));
+            let target = self.defer_declaration(ty, name, false);
+            self.line(format!("{target} = {init};"));
+            name.to_owned()
         } else {
             self.line(format!("{} = {init};", declaration(ty, name)));
+            registered
         }
-        access
     }
     fn declare(&mut self, ty: &str, purpose: &str, init: String) -> String {
         let name = self.name(purpose);
@@ -522,28 +523,28 @@ impl<'a, 'm> Frame<'a, 'm> {
     fn loop_variable(&mut self, ty: &str, purpose: &str) -> (String, String) {
         let name = self.name(purpose);
         if self.layout.storage() == FrameStorage::CoFrame {
-            let access = match self.layout.declare(ty, &name) {
-                Ok(access) => access,
+            match self.layout.declare(ty, &name) {
+                Ok(_) => {}
                 Err(error) => {
                     self.declaration_error.get_or_insert(error);
-                    name
                 }
-            };
-            (access.clone(), access)
+            }
+            let target = self.defer_declaration(ty, &name, false);
+            (name, target)
         } else {
             (name.clone(), declaration(ty, &name))
         }
     }
     fn declaration_target_named(&mut self, ty: &str, name: &str) -> (String, String) {
         if self.layout.storage() == FrameStorage::CoFrame {
-            let access = match self.layout.declare(ty, name) {
-                Ok(access) => access,
+            match self.layout.declare(ty, name) {
+                Ok(_) => {}
                 Err(error) => {
                     self.declaration_error.get_or_insert(error);
-                    name.to_owned()
                 }
-            };
-            (access.clone(), access)
+            }
+            let target = self.defer_declaration(ty, name, false);
+            (name.to_owned(), target)
         } else {
             (name.to_owned(), declaration(ty, name))
         }
@@ -551,7 +552,7 @@ impl<'a, 'm> Frame<'a, 'm> {
     fn declare_array(&mut self, ty: &str, purpose: &str, count: usize) -> String {
         let name = self.name(purpose);
         let array_ty = format!("{ty}[{count}]");
-        let access = match self.layout.declare(&array_ty, &name) {
+        let registered = match self.layout.declare(&array_ty, &name) {
             Ok(access) => access,
             Err(error) => {
                 self.declaration_error.get_or_insert(error);
@@ -559,11 +560,14 @@ impl<'a, 'm> Frame<'a, 'm> {
             }
         };
         if self.layout.storage() == FrameStorage::CoFrame {
-            self.line(format!("memset({access}, 0, sizeof({access}));"));
+            let declaration = self.defer_declaration(&array_ty, &name, true);
+            self.line(format!("{declaration};"));
+            self.line(format!("memset({name}, 0, sizeof({name}));"));
+            name
         } else {
             self.line(format!("{ty} {name}[{count}] = {{0}};"));
+            registered
         }
-        access
     }
     fn declare_array_init(
         &mut self,
@@ -574,7 +578,7 @@ impl<'a, 'm> Frame<'a, 'm> {
     ) -> String {
         let name = self.name(purpose);
         let array_ty = format!("{ty}[{count}]");
-        let access = match self.layout.declare(&array_ty, &name) {
+        let registered = match self.layout.declare(&array_ty, &name) {
             Ok(access) => access,
             Err(error) => {
                 self.declaration_error.get_or_insert(error);
@@ -582,13 +586,26 @@ impl<'a, 'm> Frame<'a, 'm> {
             }
         };
         if self.layout.storage() == FrameStorage::CoFrame {
+            let declaration = self.defer_declaration(&array_ty, &name, true);
+            self.line(format!("{declaration};"));
             self.line(format!(
-                "memcpy({access}, ({ty}[]){{ {entries} }}, sizeof({access}));"
+                "memcpy({name}, ({ty}[]){{ {entries} }}, sizeof({name}));"
             ));
+            name
         } else {
             self.line(format!("{ty} {name}[{count}] = {{ {entries} }};"));
+            registered
         }
-        access
+    }
+
+    fn defer_declaration(&mut self, ty: &str, name: &str, standalone: bool) -> String {
+        let index = self.declarations.len();
+        self.declarations.push(DeferredDeclaration {
+            ty: ty.to_owned(),
+            name: name.to_owned(),
+            standalone,
+        });
+        format!("__llg_declaration_{index}__")
     }
     fn scalar(&mut self, ty: &str, code: String) -> String {
         self.declare(ty, "scalar", code)
@@ -815,10 +832,10 @@ impl<'a, 'm> Frame<'a, 'm> {
         Ok(())
     }
     pub(super) fn prologue(&self) -> String {
-        if self.layout.storage() == FrameStorage::CoFrame {
+        if self.layout.storage() == FrameStorage::CoFrame && !self.resume_numbers.is_empty() {
             format!("    F->_llg_frame_base = llg_value_scope_mark();\n    F->_llg_temp_scope = llg_value_scope_begin({});\n    F->_llg_t = llg_value_scope_values(F->_llg_temp_scope);\n    (void)F->_llg_t;\n", self.slots.len())
         } else {
-            format!("    llg_value_scope_t* _llg_frame_base = llg_value_scope_mark();\n    llg_value_scope_t* _llg_temp_scope = llg_value_scope_begin({});\n    sv4_t* _llg_t = llg_value_scope_values(_llg_temp_scope);\n    (void)_llg_t;\n", self.slots.len())
+            format!("{}    llg_value_scope_t* _llg_frame_base = llg_value_scope_mark();\n    llg_value_scope_t* _llg_temp_scope = llg_value_scope_begin({});\n    sv4_t* _llg_t = llg_value_scope_values(_llg_temp_scope);\n    (void)_llg_t;\n", if self.layout.storage() == FrameStorage::CoFrame { "    (void)F;\n    (void)ch;\n" } else { "" }, self.slots.len())
         }
     }
     pub(super) fn macro_epilogue(&self) -> &'static str {
@@ -847,7 +864,11 @@ impl<'a, 'm> Frame<'a, 'm> {
             });
         }
         self.layout.finish_blocks()?;
-        if let Some(error) = self.declaration_error.or(self.structural_error) {
+        if let Some(error) = self
+            .declaration_error
+            .take()
+            .or(self.structural_error.take())
+        {
             Err(error)
         } else {
             for (original, flattened) in self.layout.finalize_paths()? {
@@ -855,8 +876,42 @@ impl<'a, 'm> Frame<'a, 'm> {
                     .code
                     .replace(&format!("F->{original}"), &format!("F->{flattened}"));
             }
+            self.code = self.resolve_declarations()?;
+            let rewritten = self.rewrite_frame_accesses(&self.code);
+            self.code = rewritten;
             Ok((self.code, self.layout))
         }
+    }
+
+    fn resolve_declarations(&self) -> Result<String, String> {
+        const PREFIX: &str = "__llg_declaration_";
+        let mut output = String::with_capacity(self.code.len());
+        let mut rest = self.code.as_str();
+        while let Some(start) = rest.find(PREFIX) {
+            output.push_str(&rest[..start]);
+            let suffix = &rest[start + PREFIX.len()..];
+            let end = suffix
+                .find("__")
+                .ok_or_else(|| "unterminated deferred coroutine declaration".to_owned())?;
+            let index = suffix[..end]
+                .parse::<usize>()
+                .map_err(|_| "invalid deferred coroutine declaration".to_owned())?;
+            let record = self
+                .declarations
+                .get(index)
+                .ok_or_else(|| format!("unknown deferred coroutine declaration {index}"))?;
+            if let Some(access) = self.layout.field_access(&record.name) {
+                if !record.standalone {
+                    output.push_str("F->");
+                    output.push_str(access);
+                }
+            } else {
+                output.push_str(&declaration(&record.ty, &record.name));
+            }
+            rest = &suffix[end + 2..];
+        }
+        output.push_str(rest);
+        Ok(output)
     }
 }
 
