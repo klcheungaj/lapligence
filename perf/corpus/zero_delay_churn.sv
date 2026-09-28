@@ -15,18 +15,25 @@ module zero_delay_churn #(
     logic [N-1:0] observed = '0;
     integer completed = 0;
 
-    genvar i;
-    for (i = 0; i < N; i = i + 1) begin : observers
-        if ((i & 1) == 0) begin : ping_side
-            always begin
-                @ping;
-                #0 observed[i] = ~observed[i];
-            end
-        end else begin : pong_side
-            always begin
-                @pong;
-                #0 observed[i] = ~observed[i];
-            end
+    initial begin : spawn_observers
+        integer i;
+        for (i = 0; i < N; i = i + 1) begin
+            automatic integer id = i;
+            fork
+                begin
+                    if ((id & 1) == 0) begin
+                        forever begin
+                            @ping;
+                            #0 observed[id] = ~observed[id];
+                        end
+                    end else begin
+                        forever begin
+                            @pong;
+                            #0 observed[id] = ~observed[id];
+                        end
+                    end
+                end
+            join_none
         end
     end
 
