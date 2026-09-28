@@ -23,11 +23,6 @@ static void apply_nba(llg_nba_t* next) {
             target = next->net_target->drivers[next->net_slot];
         } else if (llg_is_forced(target) || pca_active(target)) return;
         if (!target) return;
-        if (next->net_target && next->has_range) {
-            llg_net_write_slice(next->net_target, next->net_slot,
-                                next->value, next->range_offset);
-            return;
-        }
         sv4_t value = (next->has_mask || next->has_range)
                           ? sv4_clone(target)
                           : sv4_clone(&next->value);
