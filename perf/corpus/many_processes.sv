@@ -11,6 +11,7 @@ module many_processes_registers #(
     parameter integer EDGES = `LLG_CORPUS_EDGES
 );
     logic clk = 0;
+    wire [N-1:0] d;
     integer ones = 0;
     integer d_ones = 0;
     integer edge_index;
@@ -18,14 +19,13 @@ module many_processes_registers #(
     genvar i;
     for (i = 0; i < N; i = i + 1) begin : workers
         logic q;
-        wire d;
 
-        assign d = i[0];
+        assign d[i] = i[0];
         always @(posedge clk) begin
-            q <= d;
+            q <= d[i];
             if (edge_index == EDGES - 1) begin
                 ones = ones + (q === 1'b1);
-                d_ones = d_ones + (d === 1'b1);
+                d_ones = d_ones + (d[i] === 1'b1);
             end
         end
     end
