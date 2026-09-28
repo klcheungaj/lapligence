@@ -464,7 +464,7 @@ impl<'a> Codegen<'a> {
                     self.node(ca).col,
                 ));
             }
-            lh = self.remap_structural_lhs(lh, ca);
+            lh = self.remap_continuous_targets(lh, ca)?;
         }
         let rhs_ir = self.lower_expr(path, rhs)?;
         let rhs_ir = apply_lhs_assignment_context(&self.model, &lh, rhs_ir);
@@ -606,7 +606,7 @@ impl<'a> Codegen<'a> {
                 for group in groups {
                     let terminal = *terminals.entry(group).or_default();
                     terminals.insert(group, terminal + 1);
-                    self.ensure_pattern_driver_terminal(source, group, terminal)?;
+                    self.ensure_structural_driver_terminal(source, group, terminal)?;
                     alias_terminals.insert(group, terminal);
                 }
                 for (driver, value) in
@@ -637,7 +637,7 @@ impl<'a> Codegen<'a> {
                 for group in groups {
                     let terminal = *terminals.entry(group).or_default();
                     terminals.insert(group, terminal + 1);
-                    self.ensure_pattern_driver_terminal(source, group, terminal)?;
+                    self.ensure_structural_driver_terminal(source, group, terminal)?;
                     selected_terminals.insert(group, terminal);
                 }
                 if let Some(group) =
@@ -666,7 +666,43 @@ impl<'a> Codegen<'a> {
         }
     }
 
-    fn ensure_pattern_driver_terminal(
+    fn remap_continuous_targets(&mut self, lhs: IrLhs, source: NodeId) -> Result<IrLhs, String> {
+        let IrLhs::Stream {
+            parts,
+            width,
+            slice,
+            direction,
+        } = lhs
+        else {
+            return Ok(self.remap_structural_lhs(lhs, source));
+        };
+
+        // Each concatenation part is an independent net lvalue. Give parts
+        // that land in one resolved group independent contribution slots.
+        let mut next_terminal = HashMap::new();
+        let mut remapped = Vec::with_capacity(parts.len());
+        for (part, part_width) in parts {
+            let mut terminals = HashMap::new();
+            for group in self.structural_groups_for_lhs(&part) {
+                let terminal = *next_terminal.entry(group).or_default();
+                next_terminal.insert(group, terminal + 1);
+                self.ensure_structural_driver_terminal(source, group, terminal)?;
+                terminals.insert(group, terminal);
+            }
+            remapped.push((
+                self.remap_structural_lhs_for_terminals(part, source, &terminals),
+                part_width,
+            ));
+        }
+        Ok(IrLhs::Stream {
+            parts: remapped,
+            width,
+            slice,
+            direction,
+        })
+    }
+
+    fn ensure_structural_driver_terminal(
         &mut self,
         source: NodeId,
         group: usize,
