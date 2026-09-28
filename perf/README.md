@@ -18,9 +18,10 @@ perf/scripts/corpus.sh \
   --output-dir /path/to/results
 ```
 
-The standard set includes the named design §13.1 shapes
-`many-registers-20k` and `many-masked-20k` (20,000 processes, 20 clock
-edges), plus the task, zero-delay, and wide-value workloads. Use
+The standard set includes the named design §13.1 shape
+`many-masked-20k` (20,000 processes, 20 clock edges), the minimum 10,000-process
+independent-register shape `many-registers-10k`, and the task, zero-delay, and
+wide-value workloads. The larger `many-registers-20k` remains selectable. Use
 `--list-configs` to inspect the catalog, repeat `--config NAME` for a subset,
 or use `--many-size N` by itself to select both many-process variants at any
 exact size from 10,000 through 1,000,000. Sizes are passed with `llg --define`;

@@ -76,8 +76,10 @@ add_config zero-delay-smoke zero_delay_churn.sv zero_delay_churn \
 add_config wide-values-smoke wide_values.sv wide_values \
     'LLG_CORPUS_N=16 LLG_CORPUS_WIDTH=256 LLG_CORPUS_ROUNDS=2' smoke
 
+add_config many-registers-10k many_processes.sv many_processes_registers_config \
+    'LLG_CORPUS_N=10000 LLG_CORPUS_EDGES=20' standard
 add_config many-registers-20k many_processes.sv many_processes_registers_config \
-    'LLG_CORPUS_N=20000 LLG_CORPUS_EDGES=20' standard
+    'LLG_CORPUS_N=20000 LLG_CORPUS_EDGES=20' large
 add_config many-masked-20k many_processes.sv many_processes_masked_config \
     'LLG_CORPUS_N=20000 LLG_CORPUS_EDGES=20' standard
 add_config tasks-default testbench_tasks.sv testbench_tasks \
