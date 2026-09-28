@@ -3,7 +3,7 @@
 `endif
 
 `ifndef LLG_CORPUS_ROUNDS
-`define LLG_CORPUS_ROUNDS 200
+`define LLG_CORPUS_ROUNDS 40
 `endif
 
 module zero_delay_churn #(
