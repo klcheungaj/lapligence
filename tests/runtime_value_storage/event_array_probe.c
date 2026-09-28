@@ -2,6 +2,7 @@
  * the selected handle is stable, and a null selection is an inert wait source. */
 #include "llg_rt.c"
 #include "probe.h"
+#include "probe_co.h"
 
 static llg_event_object_t objects[4];
 static llg_event_t handles[4];
@@ -20,7 +21,7 @@ static llg_event_t* select_event(const sv4_t* indices) {
     return llg_event_array_select(elements, 4, left, right, indices, 2);
 }
 
-static void valid_waiter(llg_proc_t* self) {
+static llg_co_arm_t arm_valid_waiter(llg_proc_t* self) {
     llg_value_scope_t* scope = llg_value_scope_begin(2);
     sv4_t* indices = llg_value_scope_values(scope);
     select_indices(indices, 1, 1);
@@ -28,12 +29,17 @@ static void valid_waiter(llg_proc_t* self) {
     llg_value_scope_end(scope);  /* no index payload is retained by the wait */
     llg_event_t empty = {NULL};
     llg_expr_event_spec_t spec = {.kind = LLG_EV_ANY, .event = address ? address : &empty};
-    llg_wait_expressions(&spec, 1);
-    ++valid_wakes;
-    llg_proc_done(self);
+    return llg_arm_expressions(self, &spec, 1);
 }
 
-static void invalid_waiter(llg_proc_t* self) {
+LLG_PROBE_SIMPLE_PROCESS(valid_waiter, 1) {
+    LLG_PROBE_SIMPLE_BEGIN(1);
+    LLG_PROBE_AWAIT(1, arm_valid_waiter(self));
+    ++valid_wakes;
+    LLG_PROBE_DONE();
+}
+
+static llg_co_arm_t arm_invalid_waiter(llg_proc_t* self) {
     llg_value_scope_t* scope = llg_value_scope_begin(2);
     sv4_t* indices = llg_value_scope_values(scope);
     sv4_replace(&indices[0], sv4_x(32, 1));
@@ -43,17 +49,23 @@ static void invalid_waiter(llg_proc_t* self) {
     CHECK(address == NULL);
     llg_event_t empty = {NULL};
     llg_expr_event_spec_t spec = {.kind = LLG_EV_ANY, .event = address ? address : &empty};
-    llg_wait_expressions(&spec, 1);
-    ++invalid_wakes;
-    llg_proc_done(self);
+    return llg_arm_expressions(self, &spec, 1);
 }
 
-static void trigger_process(llg_proc_t* self) {
-    (void)self;
-    llg_wait_time(1);
+LLG_PROBE_SIMPLE_PROCESS(invalid_waiter, 1) {
+    LLG_PROBE_SIMPLE_BEGIN(1);
+    LLG_PROBE_AWAIT(1, arm_invalid_waiter(self));
+    ++invalid_wakes;
+    LLG_PROBE_DONE();
+}
+
+LLG_PROBE_SIMPLE_PROCESS(trigger_process, 2) {
+    LLG_PROBE_SIMPLE_BEGIN(2);
+    LLG_PROBE_AWAIT(1, llg_arm_time(self, 1));
     llg_event_trigger(&handles[3]);
-    llg_wait_time(1);
+    LLG_PROBE_AWAIT(2, llg_arm_time(self, 1));
     llg_rt_finish();
+    LLG_PROBE_EXIT();
 }
 
 int main(int argc, char** argv) {
@@ -74,9 +86,9 @@ int main(int argc, char** argv) {
         llg_value_scope_end(scope);
         if (!select_only) {
             valid_wakes = invalid_wakes = 0;
-            llg_spawn(&llg_libaco_desc, valid_waiter, "valid-array-wait");
-            llg_spawn(&llg_libaco_desc, invalid_waiter, "invalid-array-wait");
-            llg_spawn(&llg_libaco_desc, trigger_process, "array-trigger");
+            llg_spawn(&valid_waiter_desc, "valid-array-wait");
+            llg_spawn(&invalid_waiter_desc, "invalid-array-wait");
+            llg_spawn(&trigger_process_desc, "array-trigger");
             llg_rt_run();
             CHECK(valid_wakes == 1 && invalid_wakes == 0);
         }

@@ -2,8 +2,12 @@
  * This is a hand-authored output-shape probe, not Rust-emitter integration. */
 #include "llg_rt.c"
 #include "probe.h"
+#include "probe_co.h"
 
-static void never_run(llg_proc_t* self) { (void)self; abort(); }
+LLG_PROBE_SIMPLE_PROCESS(never_run, 0) {
+    LLG_PROBE_SIMPLE_BEGIN(0);
+    abort();
+}
 
 static void check_detached_cells(void) {
     llg_rt_init();
@@ -71,8 +75,8 @@ static void check_process_cancellation_and_reinit(void) {
         llg_rt_init();
         g.current_region = LLG_REGION_ACTIVE;
         sv4_t value = sv4_from_u64(33, 65, 0);
-        llg_proc_t* process = llg_spawn(&llg_libaco_desc, never_run, "scoped delayed target");
-        aco_gtls_co = process->co;
+        llg_proc_t* process = llg_spawn(&never_run_desc, "scoped delayed target");
+        g.current = process;
         llg_value_scope_t* outer = llg_value_scope_begin(1);
         sv4_replace(llg_value_scope_values(outer), sv4_zero(65537, 0));
         llg_value_scope_t* marker = llg_value_scope_mark();
@@ -83,7 +87,7 @@ static void check_process_cancellation_and_reinit(void) {
         llg_value_scopes_end_since(marker);
         CHECK(inner->references == 1 && !inner->active);
         CHECK(process->value_scopes == outer);
-        aco_gtls_co = g.main_co;
+        g.current = NULL;
         llg_kill_proc_tree(process);
         reap_retired_procs();
         llg_rt_cleanup();
