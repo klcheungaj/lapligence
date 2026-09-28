@@ -643,12 +643,37 @@ impl<'a, 'm> Frame<'a, 'm> {
     pub(super) fn body(&self) -> &str {
         &self.code
     }
-    pub(super) fn into_layout(self) -> Result<FrameLayout, String> {
-        if let Some(call) = self.pending_calls.front() {
-            return Err(format!(
-                "coroutine call-site analysis entry {} was not emitted",
-                call.resume
-            ));
+    pub(super) fn into_layout(mut self) -> Result<FrameLayout, String> {
+        // Emission can fold an expression which still has a conservative call
+        // site in the pre-emission execution analysis. Preserve storage and
+        // descriptor offsets for those unreachable sites even though no call
+        // expression consumed their slots.
+        while let Some(call) = self.pending_calls.pop_front() {
+            let (callee_type, upper_bound) = match call.callee {
+                Some(callee) => {
+                    let callee_type = format!("{}_frame_t", self.ctx.model.func(callee).c_name);
+                    let upper_bound = if call.mechanism == CallMechanism::Arena {
+                        0
+                    } else {
+                        self.frame_upper_bounds
+                            .get(&callee)
+                            .copied()
+                            .ok_or_else(|| {
+                                format!("missing frame upper bound for coroutine callee {callee}")
+                            })?
+                    };
+                    (callee_type, upper_bound)
+                }
+                None if call.mechanism == CallMechanism::Arena => ("void".to_owned(), 0),
+                None => {
+                    return Err(format!(
+                        "embedded coroutine call-site analysis entry {} has no callee",
+                        call.resume
+                    ));
+                }
+            };
+            self.layout
+                .add_call(call.resume, &callee_type, call.mechanism, upper_bound)?;
         }
         if let Some(error) = self.declaration_error {
             Err(error)

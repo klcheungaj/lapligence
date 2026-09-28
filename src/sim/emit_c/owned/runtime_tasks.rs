@@ -67,7 +67,7 @@ impl Frame<'_, '_> {
                 } else {
                     format!("(uint64_t)({selected} - (int64_t){left})")
                 };
-                let offset_name = format!("_llg_memory_offset_{index}");
+                let offset_name = self.name(&format!("memory_offset_{index}"));
                 let (offset_access, offset_declaration) =
                     self.declaration_target_named("uint64_t", &offset_name);
                 self.line(format!(

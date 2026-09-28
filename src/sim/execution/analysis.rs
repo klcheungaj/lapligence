@@ -193,7 +193,17 @@ impl ExecutionAnalysis {
         let function_effects = ir
             .funcs
             .iter()
-            .map(|function| effects_for_statements(ir, &function.body))
+            .map(|function| {
+                let mut effects = effects_for_statements(ir, &function.body);
+                // Dynamic dispatch is conservatively suspendable for tasks,
+                // but a value-returning SystemVerilog function cannot suspend.
+                // Keep the general effect walk conservative without turning a
+                // virtual function and each of its callers into coroutines.
+                if function.ret.is_some() || function.ret_string || function.ret_chandle {
+                    effects.retain(|effect| *effect != ExecutionEffect::Suspend);
+                }
+                effects
+            })
             .collect::<Vec<_>>();
         let coroutine_functions = ir
             .funcs
