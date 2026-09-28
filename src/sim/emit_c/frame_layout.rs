@@ -211,7 +211,7 @@ impl FrameLayout {
                 call.path = flattened;
             }
         }
-        changed.sort_by(|(left, _), (right, _)| right.len().cmp(&left.len()));
+        changed.sort_by_key(|(original, _)| std::cmp::Reverse(original.len()));
         self.paths_finalized = true;
         Ok(changed)
     }
