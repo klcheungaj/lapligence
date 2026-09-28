@@ -2,6 +2,7 @@
 #ifdef NDEBUG
 #undef NDEBUG
 #endif
+#define LLG_MODEL_PROCESS_ABI 2
 #include "llg_rt.h"
 #include <assert.h>
 #include <stdio.h>
@@ -42,6 +43,7 @@ LLG_CO_ROOT_FRAME_OK(probe_frame_t);
 #define PROBE_DONE() return LLG_CO_DONE
 
 static sv4_t a, b, source;
+static sv4_t zero4, zero8, one8, five8, twenty_five8;
 static double real_target;
 static llg_net_t net;
 static sv4_t* net_drivers[1];
@@ -84,7 +86,7 @@ PROBE_PROCESS(force_overlap, 0) {
     llg_force_expr_parts(&whole, 1, 0, 0, eval_ff, NULL, 0);
     llg_force_expr_parts(&low, 1, 0, 0, eval_zero, NULL, 0);
     assert(u(net.resolved) == 240);
-    llg_net_write(&net, 0, v(0x25));
+    llg_net_write(&net, 0, twenty_five8);
     llg_release_parts(&low, 1, 0, 0);
     assert(u(net.resolved) == 245);
     llg_release_parts(&whole, 1, 0, 0);
@@ -98,7 +100,7 @@ PROBE_PROCESS(force_partial_release, 0) {
     llg_force_expr_parts(&whole, 1, 0, 0, eval_ff, NULL, 0);
     llg_release_parts(&low, 1, 0, 0);
     assert(u(net.resolved) == 240);
-    llg_net_write(&net, 0, v(5));
+    llg_net_write(&net, 0, five8);
     assert(u(net.resolved) == 245);
     llg_release_parts(&whole, 1, 0, 0);
     assert(u(net.resolved) == 5);
@@ -106,14 +108,15 @@ PROBE_PROCESS(force_partial_release, 0) {
 }
 PROBE_PROCESS(force_concat_release, 0) {
     PROBE_BEGIN_0();
-    a = b = sv4_from_u64(0, 4, 0);
+    sv4_replace(&a, sv4_from_u64(0, 4, 0));
+    sv4_replace(&b, sv4_from_u64(0, 4, 0));
     llg_force_part_t parts[2] = {part(&a, NULL, 3, 0), part(&b, NULL, 3, 0)};
     parts[0].value_lsb = 4;
     llg_force_expr_parts(parts, 2, 0, 0, eval_ff, NULL, 0);
     llg_force_part_t single = part(&a, NULL, 3, 0);
     llg_release_parts(&single, 1, 0, 0);
-    llg_ba(&a, sv4_from_u64(0, 4, 0));
-    llg_ba(&b, sv4_from_u64(0, 4, 0));
+    llg_ba(&a, zero4);
+    llg_ba(&b, zero4);
     assert(u(a) == 0 && u(b) == 15);
     PROBE_DONE();
 }
@@ -173,11 +176,11 @@ PROBE_PROCESS(assert_before_design, 1) {
     observed++;
     PROBE_DONE();
 }
-static void active_update(void* data) { (void)data; llg_ba(&a, v(1)); }
+static void active_update(void* data) { (void)data; llg_ba(&a, one8); }
 PROBE_PROCESS(reactive_writer, 0) {
     PROBE_BEGIN_0();
     llg_schedule_region_callback(LLG_REGION_ACTIVE, active_update, NULL);
-    llg_nba(&b, v(1));
+    llg_nba(&b, one8);
     PROBE_DONE();
 }
 static void nba_value_observer(void* data) {
@@ -191,19 +194,20 @@ static void pre_nba_callback(void* data) {
 }
 static void sample_observer(void* data) {
     (void)data;
-    sv4_t sample;
+    sv4_t sample = SV4_EMPTY;
     assert(llg_sampled_copy(&a, &sample));
     assert(u(sample) == 0);
+    sv4_destroy(&sample);
     observed++;
 }
 static void before_postponed(void* data) {
     (void)data;
-    llg_ba(&a, v(1));
+    llg_ba(&a, one8);
     llg_schedule_region_callback(LLG_REGION_ACTIVE, sample_observer, NULL);
 }
 PROBE_PROCESS(nba_then_done, 0) {
     PROBE_BEGIN_0();
-    llg_nba(&a, v(1));
+    llg_nba(&a, one8);
     PROBE_DONE();
 }
 PROBE_PROCESS(finish_now, 0) {
@@ -211,7 +215,10 @@ PROBE_PROCESS(finish_now, 0) {
     llg_rt_finish();
     return LLG_CO_EXIT;
 }
-static void monitor_eval(sv4_t* out, void* context) { (void)context; out[0] = a; }
+static void monitor_eval(sv4_t* out, void* context) {
+    (void)context;
+    sv4_copy(&out[0], &a);
+}
 PROBE_PROCESS(monitor_reenable, 2) {
     PROBE_BEGIN_2();
     llg_monitor_with_reads("value=%0d", 1, monitor_eval, (sv4_t*[]){&a}, 1);
@@ -226,15 +233,22 @@ PROBE_PROCESS(illegal_early_spawn, 0) {
     llg_spawn_in_region(&wait_event_desc, "invalid preponed", LLG_REGION_PREPONED);
     PROBE_DONE();
 }
-static void callback_nba(void* data) { (void)data; llg_nba(&a, v(1)); }
+static void callback_nba(void* data) { (void)data; llg_nba(&a, one8); }
 static void init(void) {
     llg_rt_init();
-    a = b = source = v(0);
+    zero4 = sv4_from_u64(0, 4, 0);
+    zero8 = v(0);
+    one8 = v(1);
+    five8 = v(5);
+    twenty_five8 = v(0x25);
+    a = sv4_clone(&zero8);
+    b = sv4_clone(&zero8);
+    source = sv4_clone(&zero8);
     real_target = 0;
     observed = 0;
     memset(&net, 0, sizeof(net));
     net.width = 8;
-    net.resolved = v(0);
+    net.resolved = sv4_clone(&zero8);
     net.n_drivers = 1;
     net_drivers[0] = &source;
     net.drivers = net_drivers;
@@ -289,5 +303,16 @@ int main(int argc, char** argv) {
     if (!strcmp(name, "fork_self_disable") || !strcmp(name, "fork_ancestor_disable") ||
         !strcmp(name, "reactive_fixed_point") || !strcmp(name, "pre_nba_reentry") ||
         !strcmp(name, "preponed_once")) assert(observed == 1);
+    llg_event_object_reset(&event_object);
+    llg_rt_cleanup();
+    sv4_destroy(&a);
+    sv4_destroy(&b);
+    sv4_destroy(&source);
+    sv4_destroy(&net.resolved);
+    sv4_destroy(&zero4);
+    sv4_destroy(&zero8);
+    sv4_destroy(&one8);
+    sv4_destroy(&five8);
+    sv4_destroy(&twenty_five8);
     return 0;
 }

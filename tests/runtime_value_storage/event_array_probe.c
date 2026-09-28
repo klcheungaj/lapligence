@@ -92,6 +92,7 @@ int main(int argc, char** argv) {
             llg_rt_run();
             CHECK(valid_wakes == 1 && invalid_wakes == 0);
         }
+        for (size_t i = 0; i < 4; ++i) llg_event_object_reset(&objects[i]);
         llg_rt_cleanup();
         CHECK(value_test_live() == 0 && value_test_bytes() == 0);
     }

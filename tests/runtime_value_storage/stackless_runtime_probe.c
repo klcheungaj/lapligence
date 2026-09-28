@@ -234,21 +234,21 @@ static void check_budget_abort(void) {
 
 static llg_semaphore_t* semaphore;
 static llg_process_handle_t* semaphore_head_handle;
+static sv4_t semaphore_zero = SV4_EMPTY;
+static sv4_t semaphore_one = SV4_EMPTY;
 static int semaphore_head_resumed;
 static int semaphore_tail_resumed;
 
 LLG_PROBE_SIMPLE_PROCESS(semaphore_head, 1) {
     LLG_PROBE_SIMPLE_BEGIN(1);
-    LLG_PROBE_AWAIT(
-        1, llg_arm_semaphore_get(self, semaphore, sv4_from_u64(1, 32, 0)));
+    LLG_PROBE_AWAIT(1, llg_arm_semaphore_get(self, semaphore, semaphore_one));
     semaphore_head_resumed++;
     LLG_PROBE_DONE();
 }
 
 LLG_PROBE_SIMPLE_PROCESS(semaphore_tail, 1) {
     LLG_PROBE_SIMPLE_BEGIN(1);
-    LLG_PROBE_AWAIT(
-        1, llg_arm_semaphore_get(self, semaphore, sv4_from_u64(1, 32, 0)));
+    LLG_PROBE_AWAIT(1, llg_arm_semaphore_get(self, semaphore, semaphore_one));
     semaphore_tail_resumed++;
     LLG_PROBE_DONE();
 }
@@ -257,13 +257,15 @@ LLG_PROBE_SIMPLE_PROCESS(semaphore_killer, 1) {
     LLG_PROBE_SIMPLE_BEGIN(1);
     LLG_PROBE_AWAIT(1, llg_arm_time(self, 1));
     llg_process_kill(self, semaphore_head_handle);
-    llg_semaphore_put(semaphore, sv4_from_u64(1, 32, 0));
+    llg_semaphore_put(semaphore, semaphore_one);
     LLG_PROBE_DONE();
 }
 
 static void check_semaphore_head_cancellation(void) {
     llg_rt_init();
-    semaphore = llg_semaphore_new(sv4_from_u64(0, 32, 0));
+    semaphore_zero = sv4_from_u64(0, 32, 0);
+    semaphore_one = sv4_from_u64(1, 32, 0);
+    semaphore = llg_semaphore_new(semaphore_zero);
     semaphore_head_resumed = 0;
     semaphore_tail_resumed = 0;
     llg_proc_t* head = llg_spawn(&semaphore_head_desc, "semaphore head");
@@ -278,6 +280,8 @@ static void check_semaphore_head_cancellation(void) {
     llg_process_release(semaphore_head_handle);
     semaphore_head_handle = NULL;
     llg_rt_cleanup();
+    sv4_destroy(&semaphore_zero);
+    sv4_destroy(&semaphore_one);
 }
 
 static llg_mailbox_t* mismatch_mailbox;

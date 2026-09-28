@@ -273,6 +273,18 @@ if(LLG_STORAGE_TEST_SCHEDULER)
     strict_c(stackless_runtime_probe)
     add_test(NAME stackless_runtime_boundaries COMMAND stackless_runtime_probe)
     set_tests_properties(stackless_runtime_boundaries PROPERTIES TIMEOUT 60)
+    add_executable(patch_review_probe
+      "${LLG_ROOT}/tests/fixtures/runtime/patch_review.c" "${LLG_RT}/llg_rt.c")
+    target_link_libraries(patch_review_probe PRIVATE owner_probe_co owner_probe_container)
+    strict_c(patch_review_probe)
+    foreach(mode IN ITEMS forced_real_nba force_overlap force_partial_release
+                          force_concat_release force_slot_reuse event_cleanup
+                          fork_self_disable fork_ancestor_disable reactive_fixed_point
+                          pre_nba_reentry preponed_once finish_pending monitor_reenable
+                          event_readonly early_spawn callback_nba)
+      add_test(NAME patch_review_${mode} COMMAND patch_review_probe ${mode})
+      set_tests_properties(patch_review_${mode} PROPERTIES TIMEOUT 60)
+    endforeach()
     # Compile the same fixtures used by the Rust integration suite, not copies
     # of their behavior. Packed counters cover both normal and early probe exits.
     add_executable(runtime_selftest "${LLG_RT}/llg_rt_selftest.c" "${LLG_RT}/llg_rt.c")
