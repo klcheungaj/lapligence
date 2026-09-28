@@ -44,7 +44,7 @@ typedef struct llg_rt_co_cached_chunk {
 } llg_rt_co_cached_chunk_t;
 
 static struct {
-    llg_rt_co_cached_chunk_t* head;
+    llg_rt_co_cached_chunk_t* heads[sizeof(size_t) * CHAR_BIT];
     llg_rt_co_cache_stats_t stats;
 } llg_rt_co_chunk_cache;
 
@@ -66,9 +66,17 @@ _Noreturn void llg_rt_co_bad_state(const llg_co_frame_t* co, const char* fn) {
     abort();
 }
 
+static size_t llg_rt_co_size_class(size_t bytes) {
+    size_t size_class = 0;
+    while (bytes >>= 1) size_class++;
+    return size_class;
+}
+
 void* llg_co_host_chunk_alloc(size_t bytes) {
+    const size_t size_class = llg_rt_co_size_class(bytes);
     llg_rt_co_cached_chunk_t* previous = NULL;
-    llg_rt_co_cached_chunk_t* chunk = llg_rt_co_chunk_cache.head;
+    llg_rt_co_cached_chunk_t* chunk =
+        llg_rt_co_chunk_cache.heads[size_class];
     while (chunk && chunk->bytes != bytes) {
         previous = chunk;
         chunk = chunk->next;
@@ -77,7 +85,7 @@ void* llg_co_host_chunk_alloc(size_t bytes) {
         if (previous)
             previous->next = chunk->next;
         else
-            llg_rt_co_chunk_cache.head = chunk->next;
+            llg_rt_co_chunk_cache.heads[size_class] = chunk->next;
         llg_rt_co_chunk_cache.stats.cached_bytes -= bytes;
         llg_rt_co_count(&llg_rt_co_chunk_cache.stats.cache_hits);
         return chunk;
@@ -94,10 +102,11 @@ void llg_co_host_chunk_free(void* allocation, size_t bytes) {
     if (bytes >= sizeof(llg_rt_co_cached_chunk_t) &&
         llg_rt_co_chunk_cache.stats.cached_bytes <= cap &&
         bytes <= cap - llg_rt_co_chunk_cache.stats.cached_bytes) {
+        const size_t size_class = llg_rt_co_size_class(bytes);
         llg_rt_co_cached_chunk_t* chunk = (llg_rt_co_cached_chunk_t*)allocation;
         chunk->bytes = bytes;
-        chunk->next = llg_rt_co_chunk_cache.head;
-        llg_rt_co_chunk_cache.head = chunk;
+        chunk->next = llg_rt_co_chunk_cache.heads[size_class];
+        llg_rt_co_chunk_cache.heads[size_class] = chunk;
         llg_rt_co_chunk_cache.stats.cached_bytes += bytes;
         if (llg_rt_co_chunk_cache.stats.peak_cached_bytes <
             llg_rt_co_chunk_cache.stats.cached_bytes)
@@ -114,14 +123,21 @@ void llg_rt_co_cache_get_stats(llg_rt_co_cache_stats_t* stats) {
 }
 
 static void llg_rt_co_cache_release(void) {
-    llg_rt_co_cached_chunk_t* chunk = llg_rt_co_chunk_cache.head;
-    while (chunk) {
-        llg_rt_co_cached_chunk_t* next = chunk->next;
-        free(chunk);
-        llg_rt_co_count(&llg_rt_co_chunk_cache.stats.system_frees);
-        chunk = next;
+    size_t size_class;
+    for (size_class = 0;
+         size_class < sizeof(llg_rt_co_chunk_cache.heads) /
+                          sizeof(llg_rt_co_chunk_cache.heads[0]);
+         size_class++) {
+        llg_rt_co_cached_chunk_t* chunk =
+            llg_rt_co_chunk_cache.heads[size_class];
+        while (chunk) {
+            llg_rt_co_cached_chunk_t* next = chunk->next;
+            free(chunk);
+            llg_rt_co_count(&llg_rt_co_chunk_cache.stats.system_frees);
+            chunk = next;
+        }
+        llg_rt_co_chunk_cache.heads[size_class] = NULL;
     }
-    llg_rt_co_chunk_cache.head = NULL;
     llg_rt_co_chunk_cache.stats.cached_bytes = 0;
 }
 

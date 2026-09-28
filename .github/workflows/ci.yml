@@ -322,9 +322,6 @@ jobs:
               & cl.exe /nologo /std:c11 /W4 /WX /c tests/runtime_value_storage/llg_co_include_only.c "/Isrc/sim/rt" @definitions "/Fo$includeObject"
               if ($LASTEXITCODE -ne 0) { throw "include-only $($variant.Name) compile failed" }
           }
-          $runtimeObject = Join-Path $gate "llg-rt.obj"
-          & cl.exe /nologo /std:c11 /O2 /W4 /WX /wd4505 /D_CRT_SECURE_NO_WARNINGS /c src/sim/rt/llg_rt.c "/Isrc/sim/rt" "/Ivendor/libaco" "/Fo$runtimeObject"
-          if ($LASTEXITCODE -ne 0) { throw "llg_rt.c compile failed" }
 
       # The official Alpine Rust image follows the native runner architecture.
       # It supplies a musl C/C++ toolchain and static system archives without

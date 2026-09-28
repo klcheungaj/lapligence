@@ -63,9 +63,11 @@ root frames at `LLG_CO_ROOT(ch)` and anchored frames at
 `llg_co.h`; `llg_co.c` alone receives the matching `LLG_CO_HOST_ALLOC` compile
 definition because it includes the library header directly. The runtime owns one
 non-TLS chunk cache for the simulation thread, bounded by the named
-`LLG_CO_CHUNK_CACHE_MAX_BYTES` tunable, exposes cumulative allocation/reuse/free
-and byte counters, and releases all cached chunks at cleanup. MT-1 gives each
-worker its own cache; do not move mutable cache state into `llg_co`.
+`LLG_CO_CHUNK_CACHE_MAX_BYTES` tunable. Segregated free lists make geometric
+arena reuse a constant-time head lookup while retaining exact-size matching.
+The cache exposes cumulative allocation/reuse/free and byte counters and releases
+all cached chunks at cleanup. MT-1 gives each worker its own cache; do not move
+mutable cache state into `llg_co`.
 
 Use typed queues for all IEEE regions and PLI control points: Preponed, Active,
 Inactive, Pre-NBA/NBA/Post-NBA, Pre-Observed/Observed/Post-Observed,
