@@ -26,9 +26,9 @@ impl Codegen<'_> {
     }
 
     fn array_net_owner(&self, array: usize) -> Result<NodeId, String> {
-        self.array_globals
-            .iter()
-            .find_map(|(owner, info)| (info.ir == array).then_some(*owner))
+        sorted_node_ids(&self.array_globals)
+            .into_iter()
+            .find(|owner| self.array_globals[owner].ir == array)
             .ok_or_else(|| "port-connected net array has no owned declaration".into())
     }
 
@@ -107,16 +107,18 @@ impl Codegen<'_> {
         let mut plan = NetCollapsePlan::default();
         // Include unconnected bits of a partially collapsed vector as singleton
         // declarations. They must keep their own type/default and delay.
-        for owner in bit_nets {
+        for owner in sorted_node_set(bit_nets) {
             let width = self
-                .signal_of(*owner)
+                .signal_of(owner)
                 .ok_or("port-collapse bit endpoint has no packed storage")?
                 .width;
-            let kind = self.collapse_net_type(*owner)?;
+            let kind = self.collapse_net_type(owner)?;
             for bit in 0..width {
-                plan.insert(NetPoint::Bit(AliasBit::Net { net: *owner, bit }), kind)?;
+                plan.insert(NetPoint::Bit(AliasBit::Net { net: owner, bit }), kind)?;
             }
         }
+        let mut alias_bits = alias_bits.iter().copied().collect::<Vec<_>>();
+        alias_bits.sort_by_key(|bit| bit.sort_key());
         for bit in alias_bits {
             plan.insert(bit.point(), self.collapse_net_type(bit.owner())?)?;
         }

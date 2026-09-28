@@ -266,6 +266,18 @@ use crate::sim::ir::{
     StorageOwnership, StorageRef, LLG_MAX_NET_DRIVERS,
 };
 
+fn sorted_node_ids<T>(map: &HashMap<NodeId, T>) -> Vec<NodeId> {
+    let mut nodes = map.keys().copied().collect::<Vec<_>>();
+    nodes.sort_by_key(|node| node.index());
+    nodes
+}
+
+fn sorted_node_set(nodes: &HashSet<NodeId>) -> Vec<NodeId> {
+    let mut nodes = nodes.iter().copied().collect::<Vec<_>>();
+    nodes.sort_by_key(|node| node.index());
+    nodes
+}
+
 mod assertion_context;
 mod clocking_context;
 mod delays;

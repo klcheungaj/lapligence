@@ -753,33 +753,35 @@ impl<'a> Codegen<'a> {
                 });
             }
         }
-        for (io, addr) in &f.arg_write {
-            if self.node(*io).name == name {
-                if let Some(info) = f.persistent.get(io) {
+        for io in sorted_node_ids(&f.arg_write) {
+            let addr = &f.arg_write[&io];
+            if self.node(io).name == name {
+                if let Some(info) = f.persistent.get(&io) {
                     return Some(Lhs::Whole(info.clone()));
                 }
-                if let Some(am) = f.arg_read.get(io) {
+                if let Some(am) = f.arg_read.get(&io) {
                     return Some(Lhs::WholeRef {
                         addr: addr.clone(),
                         width: am.width,
                         signed: am.signed,
                         two_state: am.two_state,
                         shortreal: matches!(
-                            self.kind(*io),
+                            self.kind(io),
                             NodeKind::FuncArg { ty, .. } if ty.kind == "shortreal"
                         ),
                     });
                 }
             }
         }
-        for (io, lhs) in &f.arg_lhs {
-            if self.node(*io).name == name {
-                return Some(lhs.clone());
+        for io in sorted_node_ids(&f.arg_lhs) {
+            if self.node(io).name == name {
+                return Some(f.arg_lhs[&io].clone());
             }
         }
-        for (nid, (cname, w, s, two_state, shortreal)) in &f.locals {
-            if self.node(*nid).name == name {
-                if let Some(storage) = f.persistent.get(nid) {
+        for nid in sorted_node_ids(&f.locals) {
+            let (cname, w, s, two_state, shortreal) = &f.locals[&nid];
+            if self.node(nid).name == name {
+                if let Some(storage) = f.persistent.get(&nid) {
                     return Some(Lhs::Whole(storage.clone()));
                 }
                 return Some(Lhs::WholeRef {

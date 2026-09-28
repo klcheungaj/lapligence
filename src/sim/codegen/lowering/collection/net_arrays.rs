@@ -323,10 +323,9 @@ impl Codegen<'_> {
         let mut endpoints = endpoints.into_iter().collect::<Vec<_>>();
         endpoints.sort_by_key(|(key, _)| *key);
         for ((array, element), peers) in endpoints {
-            let owner = self
-                .array_globals
-                .iter()
-                .find_map(|(owner, info)| (info.ir == array).then_some(*owner))
+            let owner = sorted_node_ids(&self.array_globals)
+                .into_iter()
+                .find(|owner| self.array_globals[owner].ir == array)
                 .ok_or("net-array owner is missing")?;
             let kind = self
                 .db

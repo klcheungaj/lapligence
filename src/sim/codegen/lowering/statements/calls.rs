@@ -960,11 +960,12 @@ impl EmitCtx<'_, '_> {
             }
         }
 
-        let persistent_locals = locals
+        let mut persistent_locals = locals
             .keys()
             .copied()
             .filter(|local| self.cg.db.variable_lifetime(*local) == VariableLifetime::Static)
             .collect::<Vec<_>>();
+        persistent_locals.sort_by_key(|local| local.index());
         for local in persistent_locals {
             if matches!(self.cg.kind(local), NodeKind::Var { ty } if ty.kind == "string") {
                 let object = self
@@ -1001,11 +1002,12 @@ impl EmitCtx<'_, '_> {
             );
             locals.remove(&local);
         }
-        let persistent_chandle_locals = chandle_locals
+        let mut persistent_chandle_locals = chandle_locals
             .keys()
             .copied()
             .filter(|local| self.cg.db.variable_lifetime(*local) == VariableLifetime::Static)
             .collect::<Vec<_>>();
+        persistent_chandle_locals.sort_by_key(|local| local.index());
         for local in persistent_chandle_locals {
             let object = if let Some(object) = self
                 .cg

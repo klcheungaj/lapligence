@@ -122,14 +122,12 @@ impl<'a> Codegen<'a> {
             );
             return Ok(true);
         }
-        if let Some(aggregate) = self
-            .unpacked_aggregates
-            .iter()
-            .find(|(existing, _)| {
-                self.node(**existing).name == object_name
-                    && self.instance_path_of(**existing) == path
+        if let Some(aggregate) = sorted_node_ids(&self.unpacked_aggregates)
+            .into_iter()
+            .find(|existing| {
+                self.node(*existing).name == object_name && self.instance_path_of(*existing) == path
             })
-            .map(|(_, aggregate)| aggregate.clone())
+            .map(|existing| self.unpacked_aggregates[&existing].clone())
         {
             // Slang can expose the same ref-port aggregate declaration through
             // more than one child node.  The instance path plus declaration

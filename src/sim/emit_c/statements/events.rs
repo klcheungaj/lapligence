@@ -341,7 +341,7 @@ pub(super) fn wait_events_text(
         )
     }) {
         let mut text = String::from("    {\n");
-        let mut contexts = HashMap::new();
+        let mut contexts: Vec<&crate::sim::ir::IrEventContext> = Vec::new();
         for (source, _) in specs {
             let helpers = match source {
                 IrWaitSrc::Evaluated {
@@ -359,11 +359,16 @@ pub(super) fn wait_events_text(
             };
             for helper in helpers.into_iter().flatten() {
                 if let Some(context) = event_context_for(ctx, helper) {
-                    contexts.entry(context.frame()).or_insert(context);
+                    if !contexts
+                        .iter()
+                        .any(|existing| existing.frame() == context.frame())
+                    {
+                        contexts.push(context);
+                    }
                 }
             }
         }
-        for context in contexts.values() {
+        for context in contexts {
             let frame = event_frame_name(context.frame());
             text.push_str(&format!(
                 "        llg_frame_t* {frame} = llg_frame_new({}u);\n",

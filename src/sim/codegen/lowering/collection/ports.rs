@@ -159,7 +159,8 @@ impl<'a> Codegen<'a> {
             ));
         }
 
-        let signal_bindings = self.reference_signals.keys().copied().collect::<Vec<_>>();
+        let mut signal_bindings = self.reference_signals.keys().copied().collect::<Vec<_>>();
+        signal_bindings.sort_unstable();
         for child in signal_bindings {
             let target = self.reference_lhs(IrLhs::Whole(child))?;
             self.reference_signals.insert(child, target.clone());
@@ -169,12 +170,14 @@ impl<'a> Codegen<'a> {
                 self.model.signals[child].c_name = canonical.c_name;
             }
         }
-        let array_bindings = self.reference_arrays.keys().copied().collect::<Vec<_>>();
+        let mut array_bindings = self.reference_arrays.keys().copied().collect::<Vec<_>>();
+        array_bindings.sort_unstable();
         for child in array_bindings {
             let target = self.reference_array(child);
             self.reference_arrays.insert(child, target);
         }
-        let object_bindings = self.reference_objects.keys().copied().collect::<Vec<_>>();
+        let mut object_bindings = self.reference_objects.keys().copied().collect::<Vec<_>>();
+        object_bindings.sort_unstable();
         for child in object_bindings {
             let target = self.reference_object(child);
             self.reference_objects.insert(child, target);
