@@ -37,7 +37,7 @@ static void check_nba_and_scopes(void) {
     for (unsigned i = 0; i < 1000; ++i) {
         source.bits[0] = 42;
         llg_nba_after(&target, source, 0);
-        CHECK(g.delayed_nbas->value.bits != source.bits);
+        CHECK(g.nba_queues[LLG_REGION_NBA].head->value.bits != source.bits);
         source.bits[0] = 99;
         commit_nbas(LLG_REGION_NBA);
         CHECK(target.bits[0] == 42);
@@ -57,7 +57,7 @@ static void check_nba_and_scopes(void) {
     sv4_replace(&values[0], sv4_clone(&source));
     sv4_replace(&values[1], sv4_zero(65537, 0));
     llg_nba_masked(&target, source, mask, 0);
-    CHECK(proc->nba_head != NULL && g.delayed_nbas == NULL);
+    CHECK(proc->nba_head != NULL && g.delayed_nba_buckets == NULL);
     proc->wait.kind = W_EVENTS;
     proc->wait.n = 2;
     proc->wait.last = llg_checked_calloc(2, sizeof(sv4_t), "test wait snapshots");
@@ -84,6 +84,46 @@ static void check_nba_and_scopes(void) {
     sv4_destroy(&source);
     sv4_destroy(&target);
     sv4_destroy(&mask);
+    CHECK(value_test_live() == 0);
+}
+
+static void check_nba_fifo_and_cancellation(void) {
+    llg_rt_init();
+    g.current_region = LLG_REGION_ACTIVE;
+    sv4_t target = sv4_zero(8, 0);
+    sv4_t one = sv4_from_u64(1, 8, 0);
+    sv4_t two = sv4_from_u64(2, 8, 0);
+    sv4_t three = sv4_from_u64(3, 8, 0);
+    llg_proc_t* first = llg_spawn(never_run, "first NBA owner");
+    llg_proc_t* second = llg_spawn(never_run, "second NBA owner");
+
+    aco_gtls_co = first->co;
+    llg_nba_after(&target, one, 0);
+    aco_gtls_co = second->co;
+    llg_nba_after(&target, two, 0);
+    aco_gtls_co = first->co;
+    llg_nba_after(&target, three, 0);
+    llg_nba_after(&target, three, 1);
+    aco_gtls_co = g.main_co;
+
+    // Cancelling one issuer removes only its current-slot entries. The
+    // future write retains its independent payload and destination.
+    llg_kill_proc(first, 0);
+    reap_retired_procs();
+    CHECK(g.nba_queues[LLG_REGION_NBA].head == second->nba_head);
+    commit_nbas(LLG_REGION_NBA);
+    CHECK(target.bits[0] == 2 && second->nba_head == NULL);
+    ++g.now;
+    commit_nbas(LLG_REGION_NBA);
+    CHECK(target.bits[0] == 3);
+
+    llg_kill_proc(second, 0);
+    reap_retired_procs();
+    sv4_destroy(&target);
+    sv4_destroy(&one);
+    sv4_destroy(&two);
+    sv4_destroy(&three);
+    llg_rt_cleanup();
     CHECK(value_test_live() == 0);
 }
 
@@ -339,6 +379,7 @@ int main(void) {
     check_file_messages();
     check_time_and_io();
     check_nba_and_scopes();
+    check_nba_fifo_and_cancellation();
     check_frames();
     check_inertial_and_force();
     check_sequence_snapshots();

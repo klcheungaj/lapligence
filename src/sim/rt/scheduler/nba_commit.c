@@ -1,13 +1,7 @@
 
 static int nba_due(llg_region_t region) {
-    for (int i = 0; i < g.n_procs; i++) {
-        llg_proc_t* p = g.all_procs[i];
-        for (llg_nba_t* n = p ? p->nba_head : NULL; n; n = n->next)
-            if (n->time == g.now && n->region == region) return 1;
-    }
-    for (llg_nba_t* n = g.delayed_nbas; n; n = n->next)
-        if (n->time == g.now && n->region == region) return 1;
-    return 0;
+    promote_delayed_nbas();
+    return g.nba_queues[region].head != NULL;
 }
 
 static void apply_nba(llg_nba_t* next) {
@@ -49,41 +43,12 @@ static void apply_nba(llg_nba_t* next) {
 }
 
 static void commit_nbas(llg_region_t region) {
-    for (;;) {
-        llg_nba_t* next = NULL;
-        llg_nba_t** next_slot = NULL;
-        llg_proc_t* owner = NULL;
-        for (llg_nba_t** delayed_slot = &g.delayed_nbas; *delayed_slot;
-             delayed_slot = &(*delayed_slot)->next) {
-            llg_nba_t* n = *delayed_slot;
-            if (n->time != g.now || n->region != region) continue;
-            if (!next || n->sequence < next->sequence) {
-                next = n;
-                next_slot = delayed_slot;
-                owner = NULL;
-            }
-        }
-        for (int i = 0; i < g.n_procs; i++) {
-            llg_proc_t* p = g.all_procs[i];
-            if (!p) continue;
-            for (llg_nba_t** slot = &p->nba_head; *slot;
-                 slot = &(*slot)->next) {
-                llg_nba_t* n = *slot;
-                if (n->time != g.now || n->region != region) continue;
-                if (!next || n->sequence < next->sequence) {
-                    next = n;
-                    next_slot = slot;
-                    owner = p;
-                }
-            }
-        }
-        if (!next) break;
-        *next_slot = next->next;
-        if (owner && owner->nba_tail == next) {
-            owner->nba_tail = NULL;
-            for (llg_nba_t* n = owner->nba_head; n; n = n->next)
-                owner->nba_tail = n;
-        }
+    promote_delayed_nbas();
+    llg_nba_queue_t* queue = &g.nba_queues[region];
+    while (queue->head) {
+        llg_nba_t* next = queue->head;
+        nba_queue_remove(queue, next);
+        nba_owner_remove(next);
         apply_nba(next);
         nba_destroy(next);
     }

@@ -47,13 +47,7 @@ static void llg_kill_proc(llg_proc_t* p, int notify_parent) {
     release_program_process(p);
     p->suspended = 0;
     p->wake_pending = 0;
-    llg_nba_t* n = p->nba_head;
-    while (n) {
-        llg_nba_t* nx = n->next;
-        nba_destroy(n);
-        n = nx;
-    }
-    p->nba_head = p->nba_tail = NULL;
+    cancel_proc_nbas(p);
 
     llg_wait_t* w = &p->wait;
     if (w->kind != W_NONE) {

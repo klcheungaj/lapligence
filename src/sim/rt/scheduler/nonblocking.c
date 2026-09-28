@@ -23,7 +23,6 @@ static llg_nba_t* new_nba_in_region(uint64_t ticks, llg_region_t region) {
     n->sequence = g.nba_sequence++;
     n->region = region;
     n->owner = owner;
-    n->next = NULL;
     return n;
 }
 
@@ -37,18 +36,123 @@ static llg_nba_t* new_clocking_nba(uint64_t ticks) {
     return new_nba_in_region(ticks, LLG_REGION_RE_NBA);
 }
 
+static void nba_queue_append(llg_nba_queue_t* queue, llg_nba_t* n) {
+    n->queue_next = NULL;
+    n->queue_prev = queue->tail;
+    if (queue->tail) queue->tail->queue_next = n;
+    else queue->head = n;
+    queue->tail = n;
+}
+
+static void nba_queue_remove(llg_nba_queue_t* queue, llg_nba_t* n) {
+    if (n->queue_prev) n->queue_prev->queue_next = n->queue_next;
+    else queue->head = n->queue_next;
+    if (n->queue_next) n->queue_next->queue_prev = n->queue_prev;
+    else queue->tail = n->queue_prev;
+    n->queue_next = NULL;
+    n->queue_prev = NULL;
+}
+
+static void nba_owner_append(llg_proc_t* owner, llg_nba_t* n) {
+    n->owner_next = NULL;
+    n->owner_prev = owner->nba_tail;
+    if (owner->nba_tail) owner->nba_tail->owner_next = n;
+    else owner->nba_head = n;
+    owner->nba_tail = n;
+}
+
+static void nba_owner_remove(llg_nba_t* n) {
+    llg_proc_t* owner = n->owner;
+    if (!owner) return;
+    if (n->owner_prev) n->owner_prev->owner_next = n->owner_next;
+    else owner->nba_head = n->owner_next;
+    if (n->owner_next) n->owner_next->owner_prev = n->owner_prev;
+    else owner->nba_tail = n->owner_prev;
+    n->owner_next = NULL;
+    n->owner_prev = NULL;
+    n->owner = NULL;
+}
+
+static llg_nba_bucket_t* delayed_nba_bucket(uint64_t time) {
+    llg_nba_bucket_t** slot = &g.delayed_nba_buckets;
+    while (*slot && (*slot)->time < time) slot = &(*slot)->next;
+    if (*slot && (*slot)->time == time) return *slot;
+    llg_nba_bucket_t* bucket = (llg_nba_bucket_t*)llg_checked_calloc(
+        1, sizeof(*bucket), "delayed nonblocking assignment bucket");
+    bucket->time = time;
+    bucket->next = *slot;
+    *slot = bucket;
+    return bucket;
+}
+
 static void enqueue_nba(llg_nba_t* n) {
     if (!n) return;
-    if (n->time == g.now && n->owner) {
-        llg_proc_t* p = n->owner;
-        if (p->nba_tail) p->nba_tail->next = n;
-        else p->nba_head = n;
-        p->nba_tail = n;
+    if (n->time == g.now) {
+        nba_queue_append(&g.nba_queues[n->region], n);
+        if (n->owner) nba_owner_append(n->owner, n);
     } else {
-        llg_nba_t** slot = &g.delayed_nbas;
-        while (*slot && (*slot)->time <= n->time) slot = &(*slot)->next;
-        n->next = *slot;
-        *slot = n;
+        llg_nba_bucket_t* bucket = delayed_nba_bucket(n->time);
+        nba_queue_append(&bucket->queues[n->region], n);
+        // Future NBAs retain their destinations and values independently of
+        // the issuing process. They intentionally do not join its cancellable
+        // current-slot list.
+        n->owner = NULL;
+    }
+}
+
+static void promote_delayed_nbas(void) {
+    while (g.delayed_nba_buckets && g.delayed_nba_buckets->time == g.now) {
+        llg_nba_bucket_t* bucket = g.delayed_nba_buckets;
+        g.delayed_nba_buckets = bucket->next;
+        for (int region = 0; region < LLG_REGION_COUNT; ++region) {
+            llg_nba_queue_t* due = &bucket->queues[region];
+            llg_nba_queue_t* current = &g.nba_queues[region];
+            if (!due->head) continue;
+            // Everything in a future bucket was issued before work could run
+            // at that time, so it precedes any current-slot entry.
+            if (current->head) {
+                due->tail->queue_next = current->head;
+                current->head->queue_prev = due->tail;
+                current->head = due->head;
+            } else {
+                *current = *due;
+            }
+        }
+        free(bucket);
+    }
+}
+
+static void cancel_proc_nbas(llg_proc_t* proc) {
+    while (proc && proc->nba_head) {
+        llg_nba_t* n = proc->nba_head;
+        nba_queue_remove(&g.nba_queues[n->region], n);
+        nba_owner_remove(n);
+        nba_destroy(n);
+    }
+}
+
+static void free_all_nbas(void) {
+    for (int region = 0; region < LLG_REGION_COUNT; ++region) {
+        llg_nba_queue_t* queue = &g.nba_queues[region];
+        while (queue->head) {
+            llg_nba_t* n = queue->head;
+            nba_queue_remove(queue, n);
+            nba_owner_remove(n);
+            nba_destroy(n);
+        }
+    }
+    while (g.delayed_nba_buckets) {
+        llg_nba_bucket_t* bucket = g.delayed_nba_buckets;
+        g.delayed_nba_buckets = bucket->next;
+        for (int region = 0; region < LLG_REGION_COUNT; ++region) {
+            llg_nba_queue_t* queue = &bucket->queues[region];
+            while (queue->head) {
+                llg_nba_t* n = queue->head;
+                nba_queue_remove(queue, n);
+                nba_destroy(n);
+            }
+        }
+        free(bucket);
     }
 }
 

@@ -30,12 +30,7 @@ static void free_group_storage(llg_fork_group_t* grp) {
 }
 
 static void free_proc_storage(llg_proc_t* p) {
-    llg_nba_t* n = p->nba_head;
-    while (n) {
-        llg_nba_t* next = n->next;
-        nba_destroy(n);
-        n = next;
-    }
+    cancel_proc_nbas(p);
     event_unlink(&p->wait);
     event_triggered_unlink(&p->wait);
     semaphore_waiter_unlink(&p->wait);
@@ -218,11 +213,7 @@ void llg_rt_cleanup(void) {
         sv4_destroy(&driver->mask);
         free(driver);
     }
-    while (g.delayed_nbas) {
-        llg_nba_t* next = g.delayed_nbas->next;
-        nba_destroy(g.delayed_nbas);
-        g.delayed_nbas = next;
-    }
+    free_all_nbas();
     free_deferred_triggers();
     free_deferred_assertions();
     free_assertion_rules();

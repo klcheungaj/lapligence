@@ -25,7 +25,10 @@ static void value_scope_release(llg_value_scope_t* scope);
 static llg_value_scope_t* value_scope_retain_target(const void* target);
 
 typedef struct llg_nba {
-    struct llg_nba* next;
+    struct llg_nba* queue_next;
+    struct llg_nba* queue_prev;
+    struct llg_nba* owner_next;
+    struct llg_nba* owner_prev;
     sv4_t* target;
     llg_value_scope_t* target_scope;
     llg_net_t* net_target;
@@ -46,6 +49,17 @@ typedef struct llg_nba {
     llg_string_t* string_target;
     llg_string_t string_value;
 } llg_nba_t;
+
+typedef struct {
+    llg_nba_t* head;
+    llg_nba_t* tail;
+} llg_nba_queue_t;
+
+typedef struct llg_nba_bucket {
+    struct llg_nba_bucket* next;
+    uint64_t time;
+    llg_nba_queue_t queues[LLG_REGION_COUNT];
+} llg_nba_bucket_t;
 
 static void nba_destroy(llg_nba_t* nba) {
     if (!nba) return;
@@ -298,6 +312,9 @@ static int region_can_mutate(const char* action);
 static llg_nba_t* new_nba(uint64_t ticks);
 static llg_nba_t* new_clocking_nba(uint64_t ticks);
 static void enqueue_nba(llg_nba_t* n);
+static void cancel_proc_nbas(llg_proc_t* proc);
+static void free_all_nbas(void);
+static void promote_delayed_nbas(void);
 static void deferred_trigger_source_change(sv4_t* sig, double* real);
 static void deferred_trigger_event(llg_event_object_t* ev);
 static void process_local_release_all(llg_proc_t* proc);
