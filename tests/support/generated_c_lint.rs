@@ -1,6 +1,8 @@
 //! Structural checks for explicit coroutine storage in generated C.
 #![allow(dead_code)]
 
+use std::collections::{BTreeSet, HashMap};
+
 /// Check address-taking and overlaid-block access in every coroutine function.
 pub(crate) fn lint_generated_coroutine_c(source: &str) -> Result<(), Vec<String>> {
     let mut errors = Vec::new();
@@ -17,7 +19,8 @@ pub(crate) fn lint_generated_coroutine_c(source: &str) -> Result<(), Vec<String>
 fn coroutine_bodies(source: &str) -> Vec<(String, &str)> {
     let mut bodies = Vec::new();
     let mut search = 0;
-    while let Some(relative) = source[search..].find("static void ") {
+    const PREFIX: &str = "static llg_co_status_t ";
+    while let Some(relative) = source[search..].find(PREFIX) {
         let start = search + relative;
         let Some(open_relative) = source[start..].find('{') else {
             break;
@@ -32,8 +35,10 @@ fn coroutine_bodies(source: &str) -> Vec<(String, &str)> {
         };
         let signature = &source[start..open];
         let body = &source[open + 1..close];
-        if signature.contains("_frame_t* F") || body.contains("llg_proc_co_frame(self)") {
-            let name_start = start + "static void ".len();
+        if signature.contains("llg_co_frame_t* co, llg_co_chain_t* ch")
+            && body.contains("_frame_t* F = (")
+        {
+            let name_start = start + PREFIX.len();
             let name_end = source[name_start..open]
                 .find('(')
                 .map(|offset| name_start + offset)
@@ -103,6 +108,7 @@ fn matching_brace(source: &str, open: usize) -> Option<usize> {
 }
 
 fn lint_coroutine_body(name: &str, body: &str, errors: &mut Vec<String>) {
+    let facts = body_facts(body);
     let bytes = body.as_bytes();
     let mut index = 0;
     let mut line = 1usize;
@@ -110,7 +116,7 @@ fn lint_coroutine_body(name: &str, body: &str, errors: &mut Vec<String>) {
     let mut escaped = false;
     let mut block_comment = false;
     let mut brace_kinds = Vec::new();
-    let mut active_blocks = Vec::new();
+    let mut active_blocks = vec![0usize];
     let mut next_block = 1usize;
     let mut segment_start = 0usize;
     let mut paren_depth = 0usize;
@@ -214,7 +220,9 @@ fn lint_coroutine_body(name: &str, body: &str, errors: &mut Vec<String>) {
                 && is_unary_address(body, index) =>
             {
                 if let Err(reason) = allowed_address_operand(body, index + 1) {
-                    errors.push(format!("{name}:{line}: {reason}"));
+                    if !address_of_narrowed_local(body, index, index + 1, &facts) {
+                        errors.push(format!("{name}:{line}: {reason}"));
+                    }
                 }
                 index += 1;
             }
@@ -227,6 +235,167 @@ fn lint_coroutine_body(name: &str, body: &str, errors: &mut Vec<String>) {
             brace_kinds.len()
         ));
     }
+}
+
+struct BodyFacts {
+    resume_blocks: BTreeSet<usize>,
+    first_identifiers: HashMap<String, (usize, usize)>,
+}
+
+fn body_facts(body: &str) -> BodyFacts {
+    let bytes = body.as_bytes();
+    let mut resume_blocks = BTreeSet::new();
+    let mut first_identifiers = HashMap::new();
+    let mut brace_kinds = Vec::new();
+    let mut active_blocks = vec![0usize];
+    let mut next_block = 1usize;
+    let mut segment_start = 0usize;
+    let mut paren_depth = 0usize;
+    let mut index = 0usize;
+    let mut quoted = None;
+    let mut escaped = false;
+    let mut block_comment = false;
+
+    while index < bytes.len() {
+        if block_comment {
+            if bytes[index..].starts_with(b"*/") {
+                block_comment = false;
+                index += 2;
+            } else {
+                index += 1;
+            }
+            continue;
+        }
+        if let Some(quote) = quoted {
+            let byte = bytes[index];
+            index += 1;
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == quote {
+                quoted = None;
+            }
+            continue;
+        }
+        if bytes[index..].starts_with(b"//") {
+            index = body[index..]
+                .find('\n')
+                .map(|offset| index + offset)
+                .unwrap_or(bytes.len());
+            continue;
+        }
+        if bytes[index..].starts_with(b"/*") {
+            block_comment = true;
+            index += 2;
+            continue;
+        }
+        if is_resume_macro(&body[index..]) {
+            resume_blocks.extend(active_blocks.iter().copied());
+        }
+        match bytes[index] {
+            b'\'' | b'"' => {
+                quoted = Some(bytes[index]);
+                index += 1;
+            }
+            b'(' | b'[' => {
+                paren_depth += 1;
+                index += 1;
+            }
+            b')' | b']' => {
+                paren_depth = paren_depth.saturating_sub(1);
+                index += 1;
+            }
+            b';' if paren_depth == 0 => {
+                segment_start = index + 1;
+                index += 1;
+            }
+            b'{' => {
+                let inside_initializer = brace_kinds.last() == Some(&false);
+                let segment = body[segment_start..index].trim();
+                let external_recursion_guard = segment.starts_with("if (F->depth >= 256)");
+                let structural = !inside_initializer
+                    && !external_recursion_guard
+                    && is_structural_block_open(segment);
+                brace_kinds.push(structural);
+                if structural {
+                    active_blocks.push(next_block);
+                    next_block += 1;
+                }
+                segment_start = index + 1;
+                index += 1;
+            }
+            b'}' => {
+                if brace_kinds.pop() == Some(true) {
+                    active_blocks.pop();
+                }
+                segment_start = index + 1;
+                index += 1;
+            }
+            byte if byte == b'_' || byte.is_ascii_alphabetic() => {
+                let start = index;
+                index += 1;
+                while index < bytes.len()
+                    && (bytes[index] == b'_' || bytes[index].is_ascii_alphanumeric())
+                {
+                    index += 1;
+                }
+                first_identifiers
+                    .entry(body[start..index].to_owned())
+                    .or_insert((start, *active_blocks.last().unwrap_or(&0)));
+            }
+            _ => index += 1,
+        }
+    }
+    BodyFacts {
+        resume_blocks,
+        first_identifiers,
+    }
+}
+
+fn is_resume_macro(rest: &str) -> bool {
+    [
+        "LLG_CO_AWAIT(",
+        "LLG_CO_SUSPEND(",
+        "LLG_CO_CALL(",
+        "LLG_CO_CALL_ANCHOR(",
+        "LLG_CO_CALL_ARENA(",
+    ]
+    .into_iter()
+    .any(|prefix| rest.starts_with(prefix))
+}
+
+fn address_of_narrowed_local(
+    body: &str,
+    address: usize,
+    operand_start: usize,
+    facts: &BodyFacts,
+) -> bool {
+    let operand = body[operand_start..].trim_start();
+    let operand = operand
+        .trim_start_matches(|ch: char| ch.is_ascii_whitespace() || matches!(ch, '(' | '*' | '&'));
+    let ident_len = operand
+        .bytes()
+        .take_while(|byte| *byte == b'_' || byte.is_ascii_alphanumeric())
+        .count();
+    if ident_len == 0 {
+        return false;
+    }
+    let ident = &operand[..ident_len];
+    let Some(&(declaration, block)) = facts.first_identifiers.get(ident) else {
+        return false;
+    };
+    declaration < address
+        && looks_like_local_declaration(body, declaration)
+        && !facts.resume_blocks.contains(&block)
+}
+
+fn looks_like_local_declaration(body: &str, identifier: usize) -> bool {
+    body[..identifier]
+        .bytes()
+        .rev()
+        .find(|byte| !byte.is_ascii_whitespace())
+        .is_some_and(|byte| byte == b'*' || byte == b'_' || byte.is_ascii_alphanumeric())
 }
 
 fn is_unary_address(body: &str, index: usize) -> bool {
@@ -353,7 +522,8 @@ mod tests {
     #[test]
     fn accepts_nested_frame_access_and_documented_address_forms() {
         let c = r#"
-static void fn_ok(fn_ok_frame_t* F) {
+static llg_co_status_t fn_ok(llg_co_frame_t* co, llg_co_chain_t* ch) {
+    fn_ok_frame_t* F = (fn_ok_frame_t*)co;
     {
         F->u0.b1.value = 1;
         runtime(&F->u0.b1.value, &(item_t){ 0 }, &G_signal, &fn_ok_desc,
@@ -368,7 +538,8 @@ static void fn_ok(fn_ok_frame_t* F) {
     #[test]
     fn rejects_lookalikes_of_generated_static_names() {
         let c = r#"
-static void fn_bad(fn_bad_frame_t* F) {
+static llg_co_status_t fn_bad(llg_co_frame_t* co, llg_co_chain_t* ch) {
+    fn_bad_frame_t* F = (fn_bad_frame_t*)co;
     runtime(&_lslocal, &_ls2_bad, &_llg_array_cell_left_0,
             &_llg_inertial_value, &_llg_ret_state, &G_, &llg_);
 }
@@ -378,11 +549,25 @@ static void fn_bad(fn_bad_frame_t* F) {
     }
 
     #[test]
-    fn rejects_address_of_c_local() {
+    fn accepts_address_of_local_in_resume_free_scope() {
         let c = r#"
-static void fn_bad(fn_bad_frame_t* F) {
+static llg_co_status_t fn_ok(llg_co_frame_t* co, llg_co_chain_t* ch) {
+    fn_ok_frame_t* F = (fn_ok_frame_t*)co;
+    int* local = 0;
+    runtime(&(*local));
+}
+"#;
+        assert_eq!(lint_generated_coroutine_c(c), Ok(()));
+    }
+
+    #[test]
+    fn rejects_address_of_c_local_in_scope_with_resume() {
+        let c = r#"
+static llg_co_status_t fn_bad(llg_co_frame_t* co, llg_co_chain_t* ch) {
+    fn_bad_frame_t* F = (fn_bad_frame_t*)co;
     int local = 0;
     runtime(&local);
+    LLG_CO_AWAIT(co, ch, 1, arm());
 }
 "#;
         let errors = lint_generated_coroutine_c(c).unwrap_err();
@@ -392,7 +577,8 @@ static void fn_bad(fn_bad_frame_t* F) {
     #[test]
     fn rejects_access_after_overlay_block_closes() {
         let c = r#"
-static void fn_bad(fn_bad_frame_t* F) {
+static llg_co_status_t fn_bad(llg_co_frame_t* co, llg_co_chain_t* ch) {
+    fn_bad_frame_t* F = (fn_bad_frame_t*)co;
     { F->u0.b1.value = 1; }
     consume(F->u0.b1.value);
 }

@@ -21,6 +21,7 @@ struct Field {
     size: usize,
     align: usize,
     hot: bool,
+    always_frame: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -40,6 +41,7 @@ struct Block {
     fields: Vec<Field>,
     calls: Vec<usize>,
     children: Vec<usize>,
+    contains_resume: bool,
 }
 
 /// Builder for one generated function's stack or explicit coroutine storage.
@@ -109,8 +111,41 @@ impl FrameLayout {
         Ok(())
     }
 
+    /// Record a resume point in the active C block and every enclosing scope.
+    /// A declaration is frame-resident exactly when its declaring scope is
+    /// marked by this propagation.
+    pub(super) fn mark_resume(&mut self) {
+        if self.storage == FrameStorage::CStack {
+            return;
+        }
+        let mut block = Some(self.current);
+        while let Some(index) = block {
+            if self.blocks[index].contains_resume {
+                break;
+            }
+            self.blocks[index].contains_resume = true;
+            block = self.blocks[index].parent;
+        }
+    }
+
     /// Register one typed declaration and return the expression used to access it.
     pub(super) fn declare(&mut self, ty: &str, name: &str) -> Result<String, String> {
+        self.register_field(ty, name, false)
+    }
+
+    /// Register entry storage supplied by the caller. Unlike a declaration,
+    /// arguments must remain addressable through the ABI frame even when the
+    /// selected coroutine body itself has no resume point.
+    pub(super) fn declare_required(&mut self, ty: &str, name: &str) -> Result<String, String> {
+        self.register_field(ty, name, true)
+    }
+
+    fn register_field(
+        &mut self,
+        ty: &str,
+        name: &str,
+        always_frame: bool,
+    ) -> Result<String, String> {
         if self.storage == FrameStorage::CStack {
             return Ok(name.to_owned());
         }
@@ -118,16 +153,18 @@ impl FrameLayout {
             return Err(format!("duplicate coroutine frame field `{name}`"));
         }
         let (size, align) = lp64_layout(ty)?;
-        let path = self.path_to(self.current, name);
-        self.accesses.insert(name.to_owned(), path.clone());
+        // The final path depends on whether sibling blocks retain any frame
+        // storage. Defer constructing it until the whole block tree is known.
+        self.accesses.insert(name.to_owned(), name.to_owned());
         self.blocks[self.current].fields.push(Field {
             ty: ty.to_owned(),
             name: name.to_owned(),
             size,
             align,
             hot: false,
+            always_frame,
         });
-        Ok(format!("F->{path}"))
+        Ok(format!("F->{name}"))
     }
 
     pub(super) fn field_access(&self, name: &str) -> Option<&str> {
@@ -171,6 +208,7 @@ impl FrameLayout {
         let index = self.calls.len();
         self.calls.push(slot.clone());
         self.blocks[self.current].calls.push(index);
+        self.mark_resume();
         Ok(slot)
     }
 
@@ -188,18 +226,18 @@ impl FrameLayout {
         if self.paths_finalized {
             return Ok(Vec::new());
         }
+        let storage = self.storage_map();
         let mut field_paths = BTreeMap::new();
         let mut call_paths = BTreeMap::new();
-        self.assign_flat_paths(0, "", &mut field_paths, &mut call_paths);
+        self.assign_flat_paths(0, "", &storage, &mut field_paths, &mut call_paths);
 
         let mut changed = Vec::new();
-        for (name, path) in &mut self.accesses {
-            let flattened = field_paths
-                .remove(name)
-                .ok_or_else(|| format!("missing flattened path for frame field `{name}`"))?;
-            if *path != flattened {
-                changed.push((path.clone(), flattened.clone()));
-                *path = flattened;
+        let names = self.accesses.keys().cloned().collect::<Vec<_>>();
+        for name in names {
+            if let Some(flattened) = field_paths.remove(&name) {
+                self.accesses.insert(name, flattened);
+            } else {
+                self.accesses.remove(&name);
             }
         }
         for (index, call) in self.calls.iter_mut().enumerate() {
@@ -223,7 +261,8 @@ impl FrameLayout {
         if self.storage == FrameStorage::CStack {
             return Ok(0);
         }
-        let (size, align) = self.flat_block_layout(0, 8, 4)?;
+        let storage = self.storage_map();
+        let (size, align) = self.flat_block_layout(0, 8, 4, &storage)?;
         align_up(size, align)
     }
 
@@ -232,8 +271,9 @@ impl FrameLayout {
             return Ok(String::new());
         }
         self.finish_blocks()?;
+        let storage = self.storage_map();
         let mut out = String::from("typedef struct {\n    llg_co_frame_t co;\n");
-        self.render_flat_contents(0, 1, &mut out);
+        self.render_flat_contents(0, 1, &storage, &mut out);
         out.push_str(&format!("}} {frame_type};\n"));
         Ok(out)
     }
@@ -271,31 +311,47 @@ impl FrameLayout {
             .filter(|call| call.mechanism != CallMechanism::Arena)
     }
 
-    fn has_storage(&self, block: usize) -> bool {
-        !self.blocks[block].fields.is_empty()
-            || self.embedded_calls(block).next().is_some()
-            || self.blocks[block]
-                .children
-                .iter()
-                .any(|child| self.has_storage(*child))
+    fn storage_map(&self) -> Vec<bool> {
+        let mut storage = self
+            .blocks
+            .iter()
+            .map(|block| {
+                block
+                    .fields
+                    .iter()
+                    .any(|field| block.contains_resume || field.always_frame)
+                    || block
+                        .calls
+                        .iter()
+                        .any(|call| self.calls[*call].mechanism != CallMechanism::Arena)
+            })
+            .collect::<Vec<_>>();
+        for child in (1..self.blocks.len()).rev() {
+            if storage[child] {
+                if let Some(parent) = self.blocks[child].parent {
+                    storage[parent] = true;
+                }
+            }
+        }
+        storage
     }
 
-    fn storage_children(&self, block: usize) -> Vec<usize> {
+    fn storage_children(&self, block: usize, storage: &[bool]) -> Vec<usize> {
         self.blocks[block]
             .children
             .iter()
             .copied()
-            .filter(|child| self.has_storage(*child))
+            .filter(|child| storage[*child])
             .collect()
     }
 
     /// Return blocks merged into one struct level and the final block whose
     /// children either end the level or require a sibling overlay.
-    fn flat_chain(&self, block: usize) -> Vec<usize> {
+    fn flat_chain(&self, block: usize, storage: &[bool]) -> Vec<usize> {
         let mut chain = vec![block];
         loop {
             let current = *chain.last().expect("flat block chain is nonempty");
-            let children = self.storage_children(current);
+            let children = self.storage_children(current, storage);
             if children.len() != 1 {
                 return chain;
             }
@@ -307,13 +363,16 @@ impl FrameLayout {
         &self,
         block: usize,
         prefix: &str,
+        storage: &[bool],
         fields: &mut BTreeMap<String, String>,
         calls: &mut BTreeMap<usize, String>,
     ) {
-        let chain = self.flat_chain(block);
+        let chain = self.flat_chain(block, storage);
         for &item in &chain {
             for field in &self.blocks[item].fields {
-                fields.insert(field.name.clone(), format!("{prefix}{}", field.name));
+                if self.blocks[item].contains_resume || field.always_frame {
+                    fields.insert(field.name.clone(), format!("{prefix}{}", field.name));
+                }
             }
             for &call in &self.blocks[item].calls {
                 calls.insert(
@@ -323,25 +382,37 @@ impl FrameLayout {
             }
         }
         let terminal = *chain.last().expect("flat block chain is nonempty");
-        let children = self.storage_children(terminal);
+        let children = self.storage_children(terminal, storage);
         debug_assert!(children.len() != 1);
         for child in children {
             self.assign_flat_paths(
                 child,
                 &format!("{prefix}u{terminal}.b{child}."),
+                storage,
                 fields,
                 calls,
             );
         }
     }
 
-    fn render_flat_contents(&self, block: usize, indent: usize, out: &mut String) {
+    fn render_flat_contents(
+        &self,
+        block: usize,
+        indent: usize,
+        storage: &[bool],
+        out: &mut String,
+    ) {
         let pad = "    ".repeat(indent);
-        let chain = self.flat_chain(block);
+        let chain = self.flat_chain(block, storage);
         for hot in [true, false] {
             for field in chain
                 .iter()
-                .flat_map(|item| self.blocks[*item].fields.iter())
+                .flat_map(|item| {
+                    self.blocks[*item]
+                        .fields
+                        .iter()
+                        .filter(|field| self.blocks[*item].contains_resume || field.always_frame)
+                })
                 .filter(|field| field.hot == hot)
             {
                 out.push_str(&pad);
@@ -368,13 +439,13 @@ impl FrameLayout {
             }
         }
         let terminal = *chain.last().expect("flat block chain is nonempty");
-        let children = self.storage_children(terminal);
+        let children = self.storage_children(terminal, storage);
         debug_assert!(children.len() != 1);
         if !children.is_empty() {
             out.push_str(&format!("{pad}union {{\n"));
             for child in children {
                 out.push_str(&format!("{pad}    struct {{\n"));
-                self.render_flat_contents(child, indent + 2, out);
+                self.render_flat_contents(child, indent + 2, storage, out);
                 out.push_str(&format!("{pad}    }} b{child};\n"));
             }
             out.push_str(&format!("{pad}}} u{terminal};\n"));
@@ -386,12 +457,18 @@ impl FrameLayout {
         block: usize,
         mut size: usize,
         mut max_align: usize,
+        storage: &[bool],
     ) -> Result<(usize, usize), String> {
-        let chain = self.flat_chain(block);
+        let chain = self.flat_chain(block, storage);
         for hot in [true, false] {
             for field in chain
                 .iter()
-                .flat_map(|item| self.blocks[*item].fields.iter())
+                .flat_map(|item| {
+                    self.blocks[*item]
+                        .fields
+                        .iter()
+                        .filter(|field| self.blocks[*item].contains_resume || field.always_frame)
+                })
                 .filter(|field| field.hot == hot)
             {
                 size = align_up(size, field.align)?;
@@ -416,13 +493,14 @@ impl FrameLayout {
         }
 
         let terminal = *chain.last().expect("flat block chain is nonempty");
-        let children = self.storage_children(terminal);
+        let children = self.storage_children(terminal, storage);
         debug_assert!(children.len() != 1);
         if !children.is_empty() {
             let mut union_size = 0;
             let mut union_align = 1;
             for child in children {
-                let (candidate_size, candidate_align) = self.flat_block_layout(child, 0, 1)?;
+                let (candidate_size, candidate_align) =
+                    self.flat_block_layout(child, 0, 1, storage)?;
                 union_size = union_size.max(align_up(candidate_size, candidate_align)?);
                 union_align = union_align.max(candidate_align);
             }
@@ -516,21 +594,73 @@ mod tests {
         let mut layout = FrameLayout::new(FrameStorage::CoFrame);
         assert_eq!(layout.declare("uint64_t", "ticks").unwrap(), "F->ticks");
         assert!(layout.declare("int", "ticks").is_err());
+        layout.mark_resume();
         let rendered = layout.render_typedef("p_frame_t").unwrap();
         assert!(rendered.starts_with("typedef struct {\n    llg_co_frame_t co;\n"));
+    }
+
+    #[test]
+    fn resume_free_scope_keeps_declarations_off_the_frame() {
+        let mut layout = FrameLayout::new(FrameStorage::CoFrame);
+        layout.declare("uint64_t", "root_local").unwrap();
+        layout.begin_block();
+        layout.declare("sv4_t", "child_local").unwrap();
+        layout.end_block().unwrap();
+        layout.finalize_paths().unwrap();
+
+        assert_eq!(
+            layout.render_typedef("leaf_frame_t").unwrap(),
+            "typedef struct {\n    llg_co_frame_t co;\n} leaf_frame_t;\n"
+        );
+        assert_eq!(layout.field_access("root_local"), None);
+        assert_eq!(layout.field_access("child_local"), None);
+        assert_eq!(layout.upper_bound().unwrap(), 8);
+    }
+
+    #[test]
+    fn only_the_sibling_scope_with_a_resume_is_frame_resident() {
+        let mut layout = FrameLayout::new(FrameStorage::CoFrame);
+        layout.declare("uint64_t", "root").unwrap();
+        layout.begin_block();
+        layout.declare("sv4_t", "leaf_local").unwrap();
+        layout.end_block().unwrap();
+        layout.begin_block();
+        layout.declare("sv4_t", "resumed").unwrap();
+        layout.mark_resume();
+        layout.end_block().unwrap();
+        layout.finalize_paths().unwrap();
+
+        assert_eq!(layout.field_access("root"), Some("root"));
+        assert_eq!(layout.field_access("leaf_local"), None);
+        assert_eq!(layout.field_access("resumed"), Some("resumed"));
+        assert_eq!(layout.upper_bound().unwrap(), 48);
+    }
+
+    #[test]
+    fn caller_supplied_arguments_remain_in_a_resume_free_callee_frame() {
+        let mut layout = FrameLayout::new(FrameStorage::CoFrame);
+        layout.declare_required("sv4_t", "a0").unwrap();
+        layout.declare_required("int", "depth").unwrap();
+        layout.declare("uint64_t", "local").unwrap();
+        layout.finalize_paths().unwrap();
+
+        assert_eq!(layout.field_access("a0"), Some("a0"));
+        assert_eq!(layout.field_access("depth"), Some("depth"));
+        assert_eq!(layout.field_access("local"), None);
+        assert_eq!(layout.upper_bound().unwrap(), 48);
     }
 
     #[test]
     fn sibling_blocks_overlay_fields_and_call_slots() {
         let mut layout = FrameLayout::new(FrameStorage::CoFrame);
         layout.begin_block();
-        assert_eq!(layout.declare("uint64_t", "left").unwrap(), "F->u0.b1.left");
+        assert_eq!(layout.declare("uint64_t", "left").unwrap(), "F->left");
         layout
             .add_call(1, "small_frame_t", CallMechanism::Polled { depth: 1 }, 64)
             .unwrap();
         layout.end_block().unwrap();
         layout.begin_block();
-        assert_eq!(layout.declare("sv4_t", "right").unwrap(), "F->u0.b2.right");
+        assert_eq!(layout.declare("sv4_t", "right").unwrap(), "F->right");
         layout
             .add_call(2, "deep_frame_t", CallMechanism::Anchored, 80)
             .unwrap();
@@ -555,6 +685,7 @@ mod tests {
         layout.declare("uint64_t", "root").unwrap();
         layout.begin_block();
         layout.declare("sv4_t", "child").unwrap();
+        layout.mark_resume();
         layout.end_block().unwrap();
         layout.finalize_paths().unwrap();
         let rendered = layout.render_typedef("f_t").unwrap();
@@ -571,6 +702,7 @@ mod tests {
             layout.begin_block();
         }
         layout.declare("uint64_t", "leaf").unwrap();
+        layout.mark_resume();
         for _ in 0..DEPTH {
             layout.end_block().unwrap();
         }
@@ -590,6 +722,7 @@ mod tests {
         layout.begin_block();
         layout.declare("int", "cold1").unwrap();
         layout.declare("int", "hot1").unwrap();
+        layout.mark_resume();
         layout.end_block().unwrap();
         layout.mark_hot("hot0");
         layout.mark_hot("hot1");

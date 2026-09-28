@@ -11,8 +11,13 @@ Every function that may suspend, every non-final process and every fork branch
 uses an explicit POD coroutine frame and the `llg_co_fn` entry ABI. Finals
 remain plain `void fn(void)` calls. Route all
 typed procedure storage through `Frame::declare` (or its array/loop wrappers):
-`CStack` emits the declaration in place, while `CoFrame` registers a unique field
-and emits only its initialization at that point. Arguments are frame fields too.
+`CStack` emits the declaration in place, while `CoFrame` first registers a unique
+candidate and decides its storage after seeing the complete block tree. A
+candidate whose declaring block and descendants have no resume point remains an
+ordinary C local; otherwise it is a frame field initialized at the original
+declaration point. Coroutine arguments are frame fields. A zero-resume process
+therefore has only the `llg_co_frame_t` header and keeps its value scope, marks,
+temporaries and procedure storage on the C stack.
 `Frame::line` structurally tracks every C body brace and rejects an unbalanced
 body. `FrameLayout` records that exact tree, then flattens every chain with only
 one storage-bearing child into one struct level. Only two or more storage-bearing
@@ -21,6 +26,14 @@ Parent storage remains live and typed declarations still bind to the active raw
 block before finalized paths rewrite the generated body. Do not emit a
 coroutine-body structural brace outside that path or retain an overlaid field
 access after its block closes.
+
+Scope narrowing is safe because resume dispatch labels occur only in blocks
+marked as containing their suspension site: dispatch never jumps into a narrowed
+block or past a narrowed declaration's initialization. Cancellation, loop-control
+and named-block gotos only leave lexical blocks. Keep GCC
+`-Werror=jump-misses-init` as an independent check. The generated-C escape lint
+may accept the address of a local declared in a resume-free block, but must reject
+an address of C-stack storage whose declaring block contains a resume point.
 
 Emit coroutine frame types callee-first. Each storage-bearing block's polled
 callees occupy ordinary members of its deterministic `union callsN`, anchored

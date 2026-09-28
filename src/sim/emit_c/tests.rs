@@ -298,7 +298,7 @@ fn selected_net_driver_preserves_member_state_conversion() {
     let fill = rendered.find("sv4_fill(2, 4, 0)").unwrap();
     let conversion = rendered.find("sv4_to_two_state(").unwrap();
     let write = rendered
-        .find("llg_net_write_selected(&net, 0, F->_llg_t[")
+        .find("llg_net_write_selected(&net, 0, _llg_t[")
         .unwrap();
     let plan = rendered.find("sv4_select_plan_part(8, 7LL, 4LL)").unwrap();
     assert!(fill < conversion && conversion < write && write < plan);
@@ -428,9 +428,9 @@ fn output_temporary_uses_its_declared_formal_after_c_argument_reordering() {
         .find("static llg_co_status_t p_owner_test(")
         .unwrap()..];
     assert!(
-        process.lines().any(|line| line.contains("sv4_replace(F->")
-            && line.contains("_llg_local_")
-            && line.contains("sv4_x(16, 1)")),
+        process
+            .lines()
+            .any(|line| line.contains("sv4_replace(_llg_local_") && line.contains("sv4_x(16, 1)")),
         "{process}"
     );
     assert!(process.contains("mixed("));
@@ -496,24 +496,21 @@ fn captured_fork_emits_owned_frame_lifecycle() {
 
     let rendered = render(&model).unwrap();
     assert!(rendered.contains("llg_frame_new(1ULL)"));
-    assert!(rendered
-        .lines()
-        .any(|line| line.contains("llg_frame_capture_value(F->")
-            && line.contains("_llg_capture_frame_")));
+    assert!(rendered.lines().any(|line| line
+        .contains("llg_frame_capture_value(_llg_capture_frame_")
+        && line.contains("_llg_capture_frame_")));
     assert!(rendered.contains("llg_fork_with_frame(&p_capture_branch_desc,"));
     assert!(!rendered.contains("llg_fork_with_frame(&p_capture_branch_desc, p_capture_branch"));
     assert!(
         rendered.contains("llg_frame_read_value(llg_proc_frame(LLG_CO_OWNER(ch, llg_proc_t)), 0u)")
     );
-    assert!(
-        rendered
-            .lines()
-            .any(|line| line.contains("llg_frame_release(F->")
-                && line.contains("_llg_capture_frame_"))
-    );
+    assert!(rendered.lines().any(
+        |line| line.contains("llg_frame_release(_llg_capture_frame_")
+            && line.contains("_llg_capture_frame_")
+    ));
     assert!(rendered
         .lines()
-        .any(|line| line.contains("sv4_replace(F->") && line.contains("_llg_local_")));
+        .any(|line| line.contains("sv4_replace(_llg_local_")));
 }
 
 #[test]
