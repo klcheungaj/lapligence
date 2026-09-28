@@ -234,15 +234,20 @@ impl Frame<'_, '_> {
             SemaphorePut(receiver, keys) | SemaphoreGet(receiver, keys) => {
                 let receiver = self.chandle(receiver)?;
                 let keys = self.expression(keys)?;
-                let function = if matches!(statement, SemaphorePut(..)) {
-                    "llg_semaphore_put"
+                if matches!(statement, SemaphorePut(..)) {
+                    self.line(format!(
+                        "llg_semaphore_put((llg_semaphore_t*){receiver}, {});",
+                        keys.code
+                    ));
                 } else {
-                    "llg_semaphore_get"
-                };
-                self.line(format!(
-                    "{function}((llg_semaphore_t*){receiver}, {});",
-                    keys.code
-                ));
+                    self.await_arm(
+                        SuspensionOperation::SemaphoreGet,
+                        format!(
+                            "llg_arm_semaphore_get(self, (llg_semaphore_t*){receiver}, {})",
+                            keys.code
+                        ),
+                    )?;
+                }
                 self.discard(keys);
             }
             MailboxAssign(index, value) => {
@@ -270,15 +275,20 @@ impl Frame<'_, '_> {
             | MailboxTryGetLocal(_, mailbox, target, peek) => {
                 let mailbox = self.chandle(mailbox)?;
                 let target = self.mailbox_destination(target)?;
-                let function = if matches!(statement, MailboxTryGet(..) | MailboxTryGetLocal(..)) {
-                    "llg_mailbox_try_get_value"
+                if matches!(statement, MailboxTryGet(..) | MailboxTryGetLocal(..)) {
+                    self.line(format!(
+                        "(void)llg_mailbox_try_get_value((llg_mailbox_t*){mailbox}, {target}, {});",
+                        u8::from(*peek)
+                    ));
                 } else {
-                    "llg_mailbox_get_value"
-                };
-                self.line(format!(
-                    "(void){function}((llg_mailbox_t*){mailbox}, {target}, {});",
-                    u8::from(*peek)
-                ));
+                    self.await_arm(
+                        SuspensionOperation::MailboxGet,
+                        format!(
+                            "llg_arm_mailbox_get_value(self, (llg_mailbox_t*){mailbox}, {target}, {})",
+                            u8::from(*peek)
+                        ),
+                    )?;
+                }
             }
             _ => return Err(pending("object statement ownership contract")),
         }
@@ -293,15 +303,20 @@ impl Frame<'_, '_> {
     ) -> Result<(), String> {
         let mailbox = self.chandle(mailbox)?;
         let message = self.mailbox_message(value)?;
-        let function = if attempt {
-            "llg_mailbox_try_put_value"
+        if attempt {
+            self.line(format!(
+                "(void)llg_mailbox_try_put_value((llg_mailbox_t*){mailbox}, {});",
+                message.code
+            ));
         } else {
-            "llg_mailbox_put_value"
-        };
-        self.line(format!(
-            "(void){function}((llg_mailbox_t*){mailbox}, {});",
-            message.code
-        ));
+            self.await_arm(
+                SuspensionOperation::MailboxPut,
+                format!(
+                    "llg_arm_mailbox_put_value(self, (llg_mailbox_t*){mailbox}, {})",
+                    message.code
+                ),
+            )?;
+        }
         self.release_message_operands(message);
         Ok(())
     }

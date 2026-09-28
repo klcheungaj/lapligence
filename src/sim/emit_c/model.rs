@@ -315,10 +315,14 @@ fn render_coroutine_metadata(
         ));
     }
     out.push_str("};\n");
-    out.push_str("/* Part A keeps libaco entry points; Phase 5 installs llg_co_fn. */\n");
+    let entry = artifact
+        .desc_name
+        .strip_suffix("_desc")
+        .ok_or_else(|| format!("invalid coroutine descriptor name {}", artifact.desc_name))?;
     out.push_str(&format!(
-        "static const llg_co_desc_t {} = {{ NULL, {}, sizeof({}), {}_sites, {}, 0 }};\n",
+        "static const llg_co_desc_t {} = {{ {}, {}, sizeof({}), {}_sites, {}, 0 }};\n",
         artifact.desc_name,
+        entry,
         c_string_literal(&artifact.display_name),
         artifact.frame_type,
         artifact.desc_name,
@@ -349,14 +353,12 @@ fn render_model(execution: &ExecutionModel) -> Result<String, String> {
         "#define LLG_MODEL_VALUE_ABI {}\n",
         super::VALUE_ABI_VERSION
     ));
-    out.push_str(&format!(
-        "#define LLG_MODEL_STACK_VALUES {}\n",
-        super::stack::execution_stack_value_slots(execution)?
-    ));
+    out.push_str("#define LLG_MODEL_PROCESS_ABI 2\n");
     if model.waveform {
         out.push_str("#define LLG_WAVEFORM 1\n");
     }
     out.push_str("#include \"llg_rt.h\"\n");
+    out.push_str("#if LLG_MODEL_PROCESS_ABI != LLG_PROCESS_ABI_VERSION\n#error \"generated model process ABI does not match llg_rt.h\"\n#endif\n");
     out.push_str("#include \"llg_random.h\"\n");
     out.push_str("#include \"llg_vpi.h\"\n");
     out.push_str("_Static_assert(LLG_MODEL_VALUE_ABI == LLG_VALUE_ABI_VERSION, \"regenerate model: incompatible value ownership ABI\");\n");
@@ -378,6 +380,13 @@ fn render_model(execution: &ExecutionModel) -> Result<String, String> {
         .chain(coroutine_branches.values())
         .chain(coroutine_processes.iter().filter_map(Option::as_ref))
     {
+        let entry = artifact
+            .desc_name
+            .strip_suffix("_desc")
+            .ok_or_else(|| format!("invalid coroutine descriptor name {}", artifact.desc_name))?;
+        out.push_str(&format!(
+            "static llg_co_status_t {entry}(llg_co_frame_t* co, llg_co_chain_t* ch);\n"
+        ));
         out.push_str(&format!(
             "static const llg_co_desc_t {};\n",
             artifact.desc_name
@@ -508,9 +517,8 @@ fn render_model(execution: &ExecutionModel) -> Result<String, String> {
     if model.waveform {
         out.push_str(
             "static uint64_t llg_wave_final_time;\n\
-             static void llg_wave_capture_final_time(llg_proc_t* self) {\n\
+             static void llg_wave_capture_final_time(void) {\n\
              \x20   llg_wave_final_time = llg_time();\n\
-             \x20   llg_proc_done(self);\n\
              \x20   return;\n\
              }\n\n",
         );
@@ -526,10 +534,7 @@ fn render_model(execution: &ExecutionModel) -> Result<String, String> {
             continue;
         }
         if execution.analysis().is_coroutine_function(index) {
-            out.push_str(&format!(
-                "static void {}({}_frame_t* F);\n",
-                f.c_name, f.c_name
-            ));
+            continue;
         } else {
             out.push_str(&func_prototype(f)?);
         }

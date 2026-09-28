@@ -13,7 +13,7 @@ pub(super) fn render_main(execution: &ExecutionModel) -> Result<String, String> 
         activation_label: None,
     };
     let mut out = format!(
-        "int main(int argc, char** argv) {{\n    llg_rt_init_with_args_precision_and_stack(argc, argv, {}ULL, LLG_MODEL_STACK_VALUES);\n    if (llg_rt_failed()) {{\n        llg_rt_cleanup();\n        return 1;\n    }}\n",
+        "int main(int argc, char** argv) {{\n    llg_rt_init_with_args_and_precision(argc, argv, {}ULL);\n    if (llg_rt_failed()) {{\n        llg_rt_cleanup();\n        return 1;\n    }}\n",
         model.precision_fs
     );
     for (index, signal) in model.signals.iter().enumerate() {
@@ -458,19 +458,19 @@ pub(super) fn render_main(execution: &ExecutionModel) -> Result<String, String> 
             let is_initial =
                 semantic_process.is_some_and(|process| process.kind() == IrProcessKind::Initial);
             out.push_str(&format!(
-                "    llg_spawn_program_in_region(&{fname}_desc, {fname}, {}, {}, {instance}ULL, {});\n",
+                "    llg_spawn_program_in_region(&{fname}_desc, {}, {}, {instance}ULL, {});\n",
                 c_string_literal(&runtime_name),
                 region.runtime_symbol(),
                 u8::from(is_initial)
             ));
         } else if region == ScheduleRegion::Active {
             out.push_str(&format!(
-                "    llg_spawn(&{fname}_desc, {fname}, {});\n",
+                "    llg_spawn(&{fname}_desc, {});\n",
                 c_string_literal(&runtime_name)
             ));
         } else {
             out.push_str(&format!(
-                "    llg_spawn_in_region(&{fname}_desc, {fname}, {}, {});\n",
+                "    llg_spawn_in_region(&{fname}_desc, {}, {});\n",
                 c_string_literal(&runtime_name),
                 region.runtime_symbol()
             ));

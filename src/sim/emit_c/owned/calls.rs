@@ -1,4 +1,6 @@
-//! Calls keep argument owners registered across possible coroutine suspension.
+//! Suspendable calls exchange arguments through caller-owned callee frames;
+//! registered scopes remain responsible for payload cleanup and copy-out.
+
 use super::native::{NativeKind, NativeValue};
 use super::*;
 
@@ -25,29 +27,14 @@ impl Frame<'_, '_> {
                 format!("F->{}", slot.path)
             }
             crate::sim::execution::CallMechanism::Anchored => {
-                self.line(format!(
-                    "F->{}.an.desc = &{}_desc;",
-                    slot.path, function.c_name
-                ));
-                self.line(format!("F->{}.an.parent = NULL;", slot.path));
                 format!("F->{}.f", slot.path)
             }
             crate::sim::execution::CallMechanism::Arena => {
-                let storage = self.declare(
-                    "void*",
-                    "arena_call",
-                    format!(
-                        "llg_co_arena_push(F->arena, sizeof(llg_co_anchor_t) + sizeof({frame_type}))"
-                    ),
-                );
+                let storage = self.declare("llg_co_anchor_t*", "arena_call", "NULL".to_owned());
                 self.line(format!(
-                    "if (!{storage}) llg_rt_co_oom(sizeof(llg_co_anchor_t) + sizeof({frame_type}));"
-                ));
-                self.line(format!(
-                    "((llg_co_anchor_t*){storage})->desc = &{}_desc;",
+                    "LLG_CO_ARENA_ENTER(ch, &{}_desc, {storage});",
                     function.c_name
                 ));
-                self.line(format!("((llg_co_anchor_t*){storage})->parent = NULL;"));
                 arena_storage = Some(storage.clone());
                 format!("(*({frame_type}*)LLG_CO_ANCHOR_FRAME({storage}))")
             }
@@ -59,11 +46,23 @@ impl Frame<'_, '_> {
         for ((_, name), value) in fields.iter().zip(parameters) {
             self.line(format!("{child}.{name} = {value};"));
         }
-        self.line(format!("{child}.arena = F->arena;"));
-        self.line(format!("{}(&{child});", function.c_name));
-        self.resume_probe = true;
-        if let Some(storage) = arena_storage {
-            self.line(format!("llg_co_arena_pop(F->arena, {storage});"));
+        match slot.mechanism {
+            crate::sim::execution::CallMechanism::Polled { .. } => self.line(format!(
+                "LLG_CO_CALL(co, ch, {}, {}, &{child}.co);",
+                slot.resume, function.c_name
+            )),
+            crate::sim::execution::CallMechanism::Anchored => self.line(format!(
+                "LLG_CO_CALL_ANCHOR(co, ch, {}, &{}_desc, &F->{}.an);",
+                slot.resume, function.c_name, slot.path
+            )),
+            crate::sim::execution::CallMechanism::Arena => {
+                let storage = arena_storage
+                    .ok_or_else(|| "arena coroutine call lost its anchor slot".to_owned())?;
+                self.line(format!(
+                    "LLG_CO_CALL_ARENA(co, ch, {}, &{}_desc, {storage});",
+                    slot.resume, function.c_name
+                ));
+            }
         }
         Ok(())
     }

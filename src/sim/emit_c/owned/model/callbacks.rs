@@ -58,9 +58,13 @@ fn render_with_frame(
             frame.line("goto _llg_return;");
             frame.line("_llg_return: ;");
             frame.line("llg_value_scopes_end_since(_llg_frame_base);");
-            frame.line("llg_proc_done(self);");
-            frame.line("return;");
+            if coroutine {
+                frame.line("return LLG_CO_DONE;");
+            } else {
+                frame.line("return;");
+            }
             let prologue = frame.prologue();
+            let dispatch = frame.dispatch();
             let macro_epilogue = frame.macro_epilogue();
             let (body, layout) = if coroutine {
                 let (body, layout) = frame.into_coframe()?;
@@ -69,14 +73,18 @@ fn render_with_frame(
                 (frame.body().to_owned(), None)
             };
             let frame_pointer = if coroutine {
-                format!(
-                    "    {c_name}_frame_t* F = ({c_name}_frame_t*)llg_proc_co_frame(self);\n    F->arena = llg_proc_co_arena(self);\n"
-                )
+                format!("    {c_name}_frame_t* F = ({c_name}_frame_t*)co;\n{dispatch}")
             } else {
                 String::new()
             };
             let source = format!(
-                "static void {c_name}(llg_proc_t* self) {{\n{frame_pointer}{prologue}{body}\n}}\n{macro_epilogue}"
+                "static {} {c_name}({}) {{\n{frame_pointer}{prologue}{body}\n}}\n{macro_epilogue}",
+                if coroutine { "llg_co_status_t" } else { "void" },
+                if coroutine {
+                    "llg_co_frame_t* co, llg_co_chain_t* ch"
+                } else {
+                    "llg_proc_t* self"
+                }
             );
             Ok((source, layout))
         }
@@ -96,6 +104,8 @@ fn render_with_frame(
                 frame.line(format!("sv4_move(out, &{});", value.code));
             }
             frame.discard(value);
+            frame.line("if (0) goto _llg_return;");
+            frame.line("_llg_return: ;");
             frame.line("llg_value_scopes_end_since(_llg_frame_base);");
             let ty = if *real { "double" } else { "sv4_t" };
             Ok((
@@ -121,6 +131,8 @@ fn render_with_frame(
                 frame.line(format!("out[{index}] = {values}[{index}];"));
                 frame.line(format!("{values}[{index}] = (llg_fmt_arg_t){{0}};"));
             }
+            frame.line("if (0) goto _llg_return;");
+            frame.line("_llg_return: ;");
             frame.line("llg_value_scopes_end_since(_llg_frame_base);");
             Ok((
                 format!(
@@ -158,6 +170,8 @@ fn render_with_frame(
                 frame.line(format!("sv4_move(&out[{index}], &{});", value.code));
                 frame.discard(value);
             }
+            frame.line("if (0) goto _llg_return;");
+            frame.line("_llg_return: ;");
             frame.line("llg_value_scopes_end_since(_llg_frame_base);");
             let item_params = if *item {
                 "sv4_t __llg_method_item, sv4_t __llg_method_index, "
@@ -184,6 +198,8 @@ fn render_with_frame(
             let value = frame.expression(value)?;
             frame.line(format!("*out = {};", value.real()));
             frame.discard(value);
+            frame.line("if (0) goto _llg_return;");
+            frame.line("_llg_return: ;");
             frame.line("llg_value_scopes_end_since(_llg_frame_base);");
             Ok((
                 format!(
@@ -238,6 +254,8 @@ fn render_with_frame(
                 frame.store(&target, value, true, "0")?;
                 frame.release_target(target);
             }
+            frame.line("if (0) goto _llg_return;");
+            frame.line("_llg_return: ;");
             frame.line("llg_value_scopes_end_since(_llg_frame_base);");
             Ok((
                 format!(

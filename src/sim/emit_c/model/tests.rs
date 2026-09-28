@@ -92,9 +92,9 @@ fn non_waveform_model_has_no_waveform_integration() {
     assert!(!c.contains("#define LLG_WAVEFORM 1"));
     assert!(!c.contains("llg_wave.h"));
     assert!(!c.contains("llg_wave_model_init"));
-    assert!(c.contains(
-        "llg_rt_init_with_args_precision_and_stack(argc, argv, 1ULL, LLG_MODEL_STACK_VALUES)"
-    ));
+    assert!(c.contains("llg_rt_init_with_args_and_precision(argc, argv, 1ULL)"));
+    assert!(c.contains("#define LLG_MODEL_PROCESS_ABI 2"));
+    assert!(!c.contains("LLG_MODEL_STACK_VALUES"));
     assert!(c.contains("int llg_model_start(int argc, char** argv)"));
     assert!(c.contains("int llg_model_advance(void)"));
     assert!(c.contains("int llg_model_close(void)"));

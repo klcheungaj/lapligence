@@ -134,7 +134,7 @@ impl Frame<'_, '_> {
     fn process_value(&mut self, expression: &IrProcessExpr) -> Result<NativeValue, String> {
         let source = match expression {
             IrProcessExpr::Null => "NULL".to_owned(),
-            IrProcessExpr::SelfHandle => "llg_process_self()".to_owned(),
+            IrProcessExpr::SelfHandle => "llg_process_self(self)".to_owned(),
             IrProcessExpr::Read(index) => self.ctx.model.objects[*index].c_name.clone(),
             IrProcessExpr::LocalRead(name) => format!(
                 "*({})",
@@ -329,17 +329,26 @@ impl Frame<'_, '_> {
             }
             ProcessControl { op, target } => {
                 let target = self.process_value(target)?;
-                let function = match op {
-                    IrProcessControl::Kill => "llg_process_kill",
-                    IrProcessControl::Suspend => "llg_process_suspend",
-                    IrProcessControl::Resume => "llg_process_resume",
-                };
-                self.line(format!("{function}({});", target.code()));
+                match op {
+                    IrProcessControl::Kill => {
+                        self.line(format!("llg_process_kill(self, {});", target.code()))
+                    }
+                    IrProcessControl::Suspend => self.await_arm(
+                        SuspensionOperation::ProcessSuspend,
+                        format!("llg_arm_process_suspend(self, {})", target.code()),
+                    )?,
+                    IrProcessControl::Resume => {
+                        self.line(format!("llg_process_resume(self, {});", target.code()))
+                    }
+                }
                 self.native_discard(target);
             }
             ProcessAwait(target) => {
                 let target = self.process_value(target)?;
-                self.line(format!("llg_process_await({});", target.code()));
+                self.await_arm(
+                    SuspensionOperation::ProcessAwait,
+                    format!("llg_arm_process_await(self, {})", target.code()),
+                )?;
                 self.native_discard(target);
             }
             _ => return self.mailbox_statement(statement),

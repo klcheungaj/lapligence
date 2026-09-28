@@ -10,8 +10,8 @@ model remains live until resumed or closed; the process-global runtime supports
 one model at a time. Legacy string-only fragment APIs remain fail-closed when
 ownership cannot be represented.
 
-Suspendable functions, processes and fork branches already use explicit
-`llg_co_frame_t`-headed POD frames while libaco still provides execution. The
+Suspendable functions, processes and fork branches use explicit
+`llg_co_frame_t`-headed POD frames and `llg_co_fn` entry points. The
 layout builder owns typed fields, per-block call-site unions, descriptors and
 LP64 frame upper bounds. It records the generated C block tree exactly, merges
 single storage-bearing child chains into their parent struct, drops empty blocks,
@@ -21,8 +21,9 @@ declarator depth. Finalized member paths also drive descriptor offsets and the
 emitted-C scope lint. Fields read at the first post-suspension
 statement boundary are packed first at each level with stable declaration-order
 ties. Polled/anchored callees are caller-owned; recursion and callees over the
-configurable embed limit use the process arena. Plain functions and finals retain
-their C-stack ABI.
+configurable embed limit use the chain arena. Plain functions retain their typed
+C ABI and finals remain plain `void` calls. Every suspension is an exact numbered
+`LLG_CO_AWAIT` or `LLG_CO_CALL*` site, and descriptors carry the real entry.
 
 See [owned-emitter components](owned/readme.md), [runtime](../rt/readme.md),
 [feature status](../../../docs/sim_features.md) and

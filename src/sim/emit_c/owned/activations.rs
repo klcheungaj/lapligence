@@ -25,6 +25,10 @@ impl Frame<'_, '_> {
             lexical_depth: self.labels.len() - 1,
         });
         self.block(body)?;
+        // Some lowered named blocks cannot be cancelled themselves, but keep
+        // the common cleanup label shape. A dead reference is standard C and
+        // prevents warning-clean builds from diagnosing that label as unused.
+        self.line(format!("if (0) goto {exit};"));
         self.line(format!("{exit}: ;"));
         self.activations.pop();
         self.line(format!("llg_activation_exit({handle});"));

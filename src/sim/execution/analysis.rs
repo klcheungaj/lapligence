@@ -196,10 +196,11 @@ impl ExecutionAnalysis {
             .map(|function| {
                 let mut effects = effects_for_statements(ir, &function.body);
                 // Dynamic dispatch is conservatively suspendable for tasks,
-                // but a value-returning SystemVerilog function cannot suspend.
-                // Keep the general effect walk conservative without turning a
-                // virtual function and each of its callers into coroutines.
-                if function.ret.is_some() || function.ret_string || function.ret_chandle {
+                // but a SystemVerilog function (including a void function)
+                // cannot suspend. `$stop` there is a deferred scheduler
+                // request, so it must not turn the function or its callers
+                // into coroutines.
+                if !function.is_task {
                     effects.retain(|effect| *effect != ExecutionEffect::Suspend);
                 }
                 effects
@@ -488,7 +489,15 @@ fn scan_statements(
 ) {
     for (index, statement) in statements.iter().enumerate() {
         let path = parent.child(OperationPathElement::Statement(index));
-        if let Some((operation, call)) = suspension_operation(statement, function_effects) {
+        if matches!(statement, IrStmt::ClockingCycleWait { .. }) {
+            for branch in [OperationPathElement::Then, OperationPathElement::Else] {
+                sites.push(SiteDraft {
+                    path: path.child(branch),
+                    operation: SuspensionOperation::ClockingCycle,
+                    call: None,
+                });
+            }
+        } else if let Some((operation, call)) = suspension_operation(statement, function_effects) {
             sites.push(SiteDraft {
                 path: path.clone(),
                 operation,
@@ -607,7 +616,7 @@ fn suspension_operation(
         IrStmt::WaitCond { .. } => SuspensionOperation::ConditionWait,
         IrStmt::WaitEventTriggered { .. } => SuspensionOperation::EventTriggeredWait,
         IrStmt::WaitOrder { .. } => SuspensionOperation::WaitOrder,
-        IrStmt::ClockingCycleWait { .. } => SuspensionOperation::ClockingCycle,
+        IrStmt::ClockingCycleWait { .. } => return None,
         IrStmt::Fork {
             join_kind,
             branches,
@@ -1019,6 +1028,45 @@ mod tests {
         )
     }
 
+    #[test]
+    fn stop_does_not_make_a_void_function_a_coroutine() {
+        let stop = IrStmt::StopControl {
+            verbosity: 1,
+            location: "stop_fn.sv:3".into(),
+        };
+        let mut function = IrFunc::new("stop_fn".into(), None, vec![], vec![], vec![], vec![stop]);
+        function.is_task = false;
+        let process = IrProcess::new(
+            "p0".into(),
+            "top.p".into(),
+            IrShape::RunOnce,
+            vec![],
+            vec![statement_call(0, IrDepth::PROC)],
+        );
+        let ir = IrModel::from_parts(
+            "stop_fn".into(),
+            1,
+            IrModelParts {
+                funcs: vec![function],
+                processes: vec![process],
+                spawns: vec!["p0".into()],
+                ..IrModelParts::default()
+            },
+        )
+        .unwrap();
+        let execution = ExecutionModel::lower(ir).unwrap();
+
+        assert!(!execution.analysis().is_coroutine_function(0));
+        assert!(execution
+            .analysis()
+            .sites(CoroutineId::Process(0))
+            .unwrap()
+            .is_empty());
+        let rendered = crate::sim::emit_c::render(&execution).unwrap();
+        assert!(rendered.contains("llg_rt_request_stop(1, \"stop_fn.sv:3\");"));
+        assert!(!rendered.contains("llg_rt_stop_with_level(1, \"stop_fn.sv:3\");"));
+    }
+
     fn call(callee: usize) -> SiteDraft {
         SiteDraft {
             path: OperationPath::default(),
@@ -1110,7 +1158,7 @@ mod tests {
     }
 
     #[test]
-    fn every_suspending_statement_kind_has_one_site() {
+    fn every_suspending_statement_kind_is_numbered() {
         let mailbox_value = IrMailboxValue::Packed {
             value: one(),
             two_state: false,
@@ -1140,10 +1188,6 @@ mod tests {
                 events: vec![crate::sim::ir::IrEventRef::Null],
                 success: vec![],
                 failure: vec![],
-            },
-            IrStmt::ClockingCycleWait {
-                count: one(),
-                specs: vec![],
             },
             IrStmt::Fork {
                 join_kind: IrJoinKind::Join,
@@ -1202,6 +1246,27 @@ mod tests {
         for statement in cases {
             assert!(suspension_operation(&statement, &function_effects).is_some());
         }
+
+        let clocking = IrStmt::ClockingCycleWait {
+            count: one(),
+            specs: vec![],
+        };
+        assert!(suspension_operation(&clocking, &function_effects).is_none());
+        let mut sites = Vec::new();
+        scan_statements(
+            std::slice::from_ref(&clocking),
+            &OperationPath::default(),
+            &function_effects,
+            &mut sites,
+        );
+        assert_eq!(
+            sites.len(),
+            2,
+            "##0 and positive counts have distinct awaits"
+        );
+        assert!(sites
+            .iter()
+            .all(|site| site.operation == SuspensionOperation::ClockingCycle));
 
         assert!(suspension_operation(
             &IrStmt::Fork {
