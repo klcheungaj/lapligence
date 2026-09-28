@@ -38,6 +38,14 @@ static void process_handle_shutdown(llg_proc_t* proc) {
     llg_process_release(handle);
 }
 
+static void release_killed_proc_resources(llg_proc_t* proc) {
+    value_scopes_unwind(proc);
+    activation_unwind_proc(proc);
+    llg_frame_release(proc->frame);
+    proc->frame = NULL;
+    process_local_release_all(proc);
+}
+
 // Unlink a suspended or queued proc from every scheduler queue, free its
 // pending NBA list, and retire its storage. A named disable may cancel the
 // executing coroutine; its destruction is deferred until the scheduler resumes.
@@ -88,11 +96,11 @@ static void llg_kill_proc(llg_proc_t* p, int notify_parent) {
         }
         p->grp = NULL;
     }
-    value_scopes_unwind(p);
-    activation_unwind_proc(p);
-    llg_frame_release(p->frame);
-    p->frame = NULL;
-    process_local_release_all(p);
+    // A process may kill itself indirectly by killing an ancestor or its
+    // program origin. Keep its live owners intact until generated code has
+    // returned through the active C call chain; the scheduler reaps them at
+    // the first safe boundary below.
+    if (p != llg_current()) release_killed_proc_resources(p);
     process_handle_terminal(p, LLG_PROCESS_KILLED);
     if (notify_parent && parent_group && !parent_group->terminal)
         llg_fork_group_child_done(parent_group);
@@ -114,6 +122,7 @@ static void reap_retired_procs(void) {
             continue;
         }
         *slot = proc->next_retired;
+        release_killed_proc_resources(proc);
         free_proc_record(proc);
     }
 }
