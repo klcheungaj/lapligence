@@ -4,14 +4,26 @@
 //! A statically known call site in a function at depth `d` has candidate depth
 //! `d + 1`. The site is polled when that candidate is at most
 //! [`ExecutionAnalysisOptions::poll_depth_max`]. Otherwise it is anchored and
-//! contributes depth zero to its callee. A function's depth is the maximum of
-//! every incoming contribution. The acyclic suspendable call graph is visited
-//! caller-first, so a shared function is analyzed once at its worst-case depth.
+//! contributes depth zero to its callee. Calls within one strongly connected
+//! component use [`CallMechanism::Arena`] and also contribute depth zero. A
+//! function's depth is the maximum of every incoming contribution and zero.
+//! The SCC condensation DAG is visited caller-first, so a shared function is
+//! analyzed once at its worst-case depth.
 //!
 //! For example, with a limit of three, calls at depths one through three are
 //! polled, the next call is anchored, and the pattern repeats below that new
 //! anchor. If another root reaches the same caller at depth two, the caller's
 //! sites use depth two even if a shallower path was encountered first.
+//!
+//! SCC members never embed each other's frames: their internal edges use the
+//! chain arena. Phase 3 therefore needs only descriptor forward declarations
+//! between members of an SCC; frame definitions follow the deterministic
+//! callee-first SCC order, with ascending function indices inside each SCC.
+//! Phase 3 also computes frame-size upper bounds callee-first, assuming every
+//! one of a function's call sites is anchored and adds its 16-byte prefix. It
+//! then calls [`ExecutionAnalysis::analyze_with`] with callees whose upper bound exceeds
+//! `LLG_CO_EMBED_LIMIT`; every incoming static call to those callees becomes an
+//! arena call and depths are recomputed with those edges as anchors.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
@@ -111,8 +123,12 @@ pub enum SuspensionOperation {
 /// How a suspendable call site enters its callee.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CallMechanism {
-    Polled { depth: usize },
+    Polled {
+        depth: usize,
+    },
     Anchored,
+    /// Dynamic call through `LLG_CO_CALL_ARENA`.
+    Arena,
 }
 
 /// Analysis attached to one numbered suspension site.
@@ -141,9 +157,9 @@ impl SuspensionSite {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ExecutionAnalysis {
     options: ExecutionAnalysisOptions,
+    forced_arena_callees: BTreeSet<usize>,
     coroutine_functions: BTreeSet<usize>,
     callee_first: Vec<usize>,
-    suspendable_cycle: Option<Vec<usize>>,
     function_depths: Vec<Option<usize>>,
     sites: BTreeMap<CoroutineId, BTreeMap<OperationPath, SuspensionSite>>,
 }
@@ -154,6 +170,20 @@ impl ExecutionAnalysis {
         ir: &IrModel,
         processes: &[ExecutionProcess],
         options: ExecutionAnalysisOptions,
+    ) -> Result<Self, ExecutionAnalysisError> {
+        Self::analyze_with(ir, processes, options, &BTreeSet::new())
+    }
+
+    /// Analyze with callees whose incoming static calls must use the arena.
+    ///
+    /// Phase 3 uses this after computing frame-size upper bounds callee-first.
+    /// A forced callee makes every incoming static call an arena anchor, so the
+    /// complete depth solution is recomputed rather than patched in place.
+    pub fn analyze_with(
+        ir: &IrModel,
+        processes: &[ExecutionProcess],
+        options: ExecutionAnalysisOptions,
+        forced_arena_callees: &BTreeSet<usize>,
     ) -> Result<Self, ExecutionAnalysisError> {
         let function_effects = ir
             .funcs
@@ -227,18 +257,14 @@ impl ExecutionAnalysis {
         }
 
         let graph = suspendable_graph(&coroutine_functions, &drafts);
-        let (caller_first, callee_first, suspendable_cycle) =
-            match caller_first_order(&coroutine_functions, &graph) {
-                Ok(caller_first) => (
-                    caller_first,
-                    callee_first_order(&coroutine_functions, &graph),
-                    None,
-                ),
-                Err(ExecutionAnalysisError::SuspendableCallCycle { functions }) => {
-                    (Vec::new(), Vec::new(), Some(functions))
-                }
-                Err(error) => return Err(error),
-            };
+        let components = strongly_connected_components(&coroutine_functions, &graph);
+        let component_of = component_membership(ir.funcs.len(), &components);
+        let condensation = condensation_graph(&components, &component_of, &graph);
+        let caller_first = component_order(&condensation, false);
+        let callee_first = component_order(&condensation, true)
+            .into_iter()
+            .flat_map(|component| components[component].iter().copied())
+            .collect();
         let mut function_depths = vec![None; ir.funcs.len()];
         for function in &coroutine_functions {
             function_depths[*function] = Some(0);
@@ -246,18 +272,31 @@ impl ExecutionAnalysis {
 
         for (owner, owner_sites) in &drafts {
             if !matches!(owner, CoroutineId::Function(_)) {
-                propagate_depths(0, owner_sites, options.poll_depth_max, &mut function_depths)?;
-            }
-        }
-        for function in &caller_first {
-            let depth = function_depths[*function].unwrap_or(0);
-            if let Some(owner_sites) = drafts.get(&CoroutineId::Function(*function)) {
                 propagate_depths(
-                    depth,
+                    None,
+                    0,
                     owner_sites,
                     options.poll_depth_max,
+                    &component_of,
+                    forced_arena_callees,
                     &mut function_depths,
                 )?;
+            }
+        }
+        for component in caller_first {
+            for function in &components[component] {
+                let depth = function_depths[*function].unwrap_or(0);
+                if let Some(owner_sites) = drafts.get(&CoroutineId::Function(*function)) {
+                    propagate_depths(
+                        Some(*function),
+                        depth,
+                        owner_sites,
+                        options.poll_depth_max,
+                        &component_of,
+                        forced_arena_callees,
+                        &mut function_depths,
+                    )?;
+                }
             }
         }
 
@@ -274,7 +313,19 @@ impl ExecutionAnalysis {
                 let mechanism = draft
                     .call
                     .as_ref()
-                    .map(|call| call_mechanism(owner_depth, call, options.poll_depth_max))
+                    .map(|call| {
+                        call_mechanism(
+                            match owner {
+                                CoroutineId::Function(function) => Some(function),
+                                _ => None,
+                            },
+                            owner_depth,
+                            call,
+                            options.poll_depth_max,
+                            &component_of,
+                            forced_arena_callees,
+                        )
+                    })
                     .transpose()?;
                 if numbered
                     .insert(
@@ -298,9 +349,9 @@ impl ExecutionAnalysis {
 
         Ok(Self {
             options,
+            forced_arena_callees: forced_arena_callees.clone(),
             coroutine_functions,
             callee_first,
-            suspendable_cycle,
             function_depths,
             sites,
         })
@@ -308,6 +359,11 @@ impl ExecutionAnalysis {
 
     pub fn options(&self) -> ExecutionAnalysisOptions {
         self.options
+    }
+
+    /// Callees whose incoming static sites are forced onto the chain arena.
+    pub fn forced_arena_callees(&self) -> &BTreeSet<usize> {
+        &self.forced_arena_callees
     }
 
     /// Whether an owner needs a coroutine frame, including empty roots.
@@ -324,23 +380,9 @@ impl ExecutionAnalysis {
         self.coroutine_functions.contains(&function)
     }
 
-    /// Return the deterministic emission order, or reject a suspendable cycle.
-    ///
-    /// The current libaco emitter does not consume this order. The stackless
-    /// emitter must call this method before emitting any coroutine functions.
-    pub fn callee_first_functions(&self) -> Result<&[usize], ExecutionAnalysisError> {
-        self.validate_suspendable_call_graph()?;
-        Ok(&self.callee_first)
-    }
-
-    /// Reject a cycle before stackless emission without changing Phase 2 C.
-    pub fn validate_suspendable_call_graph(&self) -> Result<(), ExecutionAnalysisError> {
-        if let Some(functions) = &self.suspendable_cycle {
-            return Err(ExecutionAnalysisError::SuspendableCallCycle {
-                functions: functions.clone(),
-            });
-        }
-        Ok(())
+    /// Return deterministic callee-first SCC emission order.
+    pub fn callee_first_functions(&self) -> &[usize] {
+        &self.callee_first
     }
 
     pub fn function_depth(&self, function: usize) -> Option<usize> {
@@ -356,12 +398,9 @@ impl ExecutionAnalysis {
     }
 }
 
-/// A malformed suspendable graph or side table, reported without panicking.
+/// A malformed coroutine analysis or side table, reported without panicking.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ExecutionAnalysisError {
-    SuspendableCallCycle {
-        functions: Vec<usize>,
-    },
     PollDepthOverflow,
     TooManySuspensionSites(CoroutineId),
     DuplicateOperationPath {
@@ -373,10 +412,6 @@ pub enum ExecutionAnalysisError {
 impl fmt::Display for ExecutionAnalysisError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::SuspendableCallCycle { functions } => write!(
-                f,
-                "suspendable call graph contains a cycle through function indices {functions:?}"
-            ),
             Self::PollDepthOverflow => f.write_str("stackless coroutine poll depth overflowed"),
             Self::TooManySuspensionSites(owner) => {
                 write!(
@@ -633,87 +668,149 @@ fn suspendable_graph(
                 .callee
                 .filter(|callee| coroutine_functions.contains(callee))
             {
-                graph
-                    .get_mut(function)
-                    .expect("graph node exists")
-                    .insert(callee);
+                if let Some(callees) = graph.get_mut(function) {
+                    callees.insert(callee);
+                }
             }
         }
     }
     graph
 }
 
-fn caller_first_order(
+fn strongly_connected_components(
     functions: &BTreeSet<usize>,
     graph: &BTreeMap<usize, BTreeSet<usize>>,
-) -> Result<Vec<usize>, ExecutionAnalysisError> {
-    let mut indegree = functions
-        .iter()
-        .map(|function| (*function, 0usize))
-        .collect::<BTreeMap<_, _>>();
-    for callees in graph.values() {
-        for callee in callees {
-            *indegree.get_mut(callee).expect("callee graph node exists") += 1;
+) -> Vec<Vec<usize>> {
+    let mut visited = BTreeSet::new();
+    let mut finish_order = Vec::with_capacity(functions.len());
+    for root in functions {
+        if visited.contains(root) {
+            continue;
         }
-    }
-    let mut ready = indegree
-        .iter()
-        .filter_map(|(function, degree)| (*degree == 0).then_some(*function))
-        .collect::<BTreeSet<_>>();
-    let mut order = Vec::with_capacity(functions.len());
-    while let Some(function) = ready.pop_first() {
-        order.push(function);
-        for callee in &graph[&function] {
-            let degree = indegree.get_mut(callee).expect("callee graph node exists");
-            *degree -= 1;
-            if *degree == 0 {
-                ready.insert(*callee);
+        let mut stack = vec![(*root, false)];
+        while let Some((function, expanded)) = stack.pop() {
+            if expanded {
+                finish_order.push(function);
+                continue;
+            }
+            if !visited.insert(function) {
+                continue;
+            }
+            stack.push((function, true));
+            if let Some(callees) = graph.get(&function) {
+                for callee in callees.iter().rev() {
+                    if !visited.contains(callee) {
+                        stack.push((*callee, false));
+                    }
+                }
             }
         }
     }
-    if order.len() != functions.len() {
-        let functions = indegree
-            .into_iter()
-            .filter_map(|(function, degree)| (degree != 0).then_some(function))
-            .collect();
-        return Err(ExecutionAnalysisError::SuspendableCallCycle { functions });
-    }
-    Ok(order)
-}
 
-fn callee_first_order(
-    functions: &BTreeSet<usize>,
-    graph: &BTreeMap<usize, BTreeSet<usize>>,
-) -> Vec<usize> {
-    let mut callers = functions
+    let mut reverse = functions
         .iter()
         .map(|function| (*function, BTreeSet::new()))
         .collect::<BTreeMap<_, _>>();
-    let mut outdegree = functions
-        .iter()
-        .map(|function| (*function, 0usize))
-        .collect::<BTreeMap<_, _>>();
     for (caller, callees) in graph {
-        outdegree.insert(*caller, callees.len());
         for callee in callees {
-            callers
-                .get_mut(callee)
-                .expect("callee graph node exists")
-                .insert(*caller);
+            if let Some(callers) = reverse.get_mut(callee) {
+                callers.insert(*caller);
+            }
         }
     }
-    let mut ready = outdegree
+
+    visited.clear();
+    let mut components = Vec::new();
+    for root in finish_order.into_iter().rev() {
+        if !visited.insert(root) {
+            continue;
+        }
+        let mut members = Vec::new();
+        let mut stack = vec![root];
+        while let Some(function) = stack.pop() {
+            members.push(function);
+            if let Some(callers) = reverse.get(&function) {
+                for caller in callers.iter().rev() {
+                    if visited.insert(*caller) {
+                        stack.push(*caller);
+                    }
+                }
+            }
+        }
+        members.sort_unstable();
+        components.push(members);
+    }
+    components.sort_by_key(|members| members.first().copied());
+    components
+}
+
+fn component_membership(function_count: usize, components: &[Vec<usize>]) -> Vec<Option<usize>> {
+    let mut component_of = vec![None; function_count];
+    for (component, members) in components.iter().enumerate() {
+        for function in members {
+            if let Some(slot) = component_of.get_mut(*function) {
+                *slot = Some(component);
+            }
+        }
+    }
+    component_of
+}
+
+fn condensation_graph(
+    components: &[Vec<usize>],
+    component_of: &[Option<usize>],
+    graph: &BTreeMap<usize, BTreeSet<usize>>,
+) -> Vec<BTreeSet<usize>> {
+    let mut condensation = vec![BTreeSet::new(); components.len()];
+    for (caller, callees) in graph {
+        let Some(caller_component) = component_of.get(*caller).copied().flatten() else {
+            continue;
+        };
+        for callee in callees {
+            let Some(callee_component) = component_of.get(*callee).copied().flatten() else {
+                continue;
+            };
+            if caller_component != callee_component {
+                condensation[caller_component].insert(callee_component);
+            }
+        }
+    }
+    condensation
+}
+
+fn component_order(graph: &[BTreeSet<usize>], callee_first: bool) -> Vec<usize> {
+    let mut callers = vec![BTreeSet::new(); graph.len()];
+    let mut degrees = vec![0usize; graph.len()];
+    for (caller, callees) in graph.iter().enumerate() {
+        if callee_first {
+            degrees[caller] = callees.len();
+        }
+        for callee in callees {
+            callers[*callee].insert(caller);
+            if !callee_first {
+                degrees[*callee] += 1;
+            }
+        }
+    }
+    let mut ready = degrees
         .iter()
-        .filter_map(|(function, degree)| (*degree == 0).then_some(*function))
+        .enumerate()
+        .filter_map(|(component, degree)| (*degree == 0).then_some(component))
         .collect::<BTreeSet<_>>();
-    let mut order = Vec::with_capacity(functions.len());
-    while let Some(function) = ready.pop_first() {
-        order.push(function);
-        for caller in &callers[&function] {
-            let degree = outdegree.get_mut(caller).expect("caller graph node exists");
-            *degree -= 1;
-            if *degree == 0 {
-                ready.insert(*caller);
+    let mut order = Vec::with_capacity(graph.len());
+    while let Some(component) = ready.pop_first() {
+        order.push(component);
+        let next = if callee_first {
+            &callers[component]
+        } else {
+            &graph[component]
+        };
+        for adjacent in next {
+            if let Some(degree) = degrees.get_mut(*adjacent) {
+                *degree = degree.saturating_sub(1);
+                if *degree == 0 {
+                    ready.insert(*adjacent);
+                }
             }
         }
     }
@@ -721,22 +818,29 @@ fn callee_first_order(
 }
 
 fn propagate_depths(
+    caller: Option<usize>,
     caller_depth: usize,
     sites: &[SiteDraft],
     poll_depth_max: usize,
+    component_of: &[Option<usize>],
+    forced_arena_callees: &BTreeSet<usize>,
     depths: &mut [Option<usize>],
 ) -> Result<(), ExecutionAnalysisError> {
     for call in sites.iter().filter_map(|site| site.call.as_ref()) {
-        if call.indirect {
-            continue;
-        }
         let Some(callee) = call.callee.filter(|callee| *callee < depths.len()) else {
             continue;
         };
-        let mechanism = call_mechanism(caller_depth, call, poll_depth_max)?;
+        let mechanism = call_mechanism(
+            caller,
+            caller_depth,
+            call,
+            poll_depth_max,
+            component_of,
+            forced_arena_callees,
+        )?;
         let contribution = match mechanism {
             CallMechanism::Polled { depth } => depth,
-            CallMechanism::Anchored => 0,
+            CallMechanism::Anchored | CallMechanism::Arena => 0,
         };
         let current = depths[callee].unwrap_or(0);
         depths[callee] = Some(current.max(contribution));
@@ -745,12 +849,25 @@ fn propagate_depths(
 }
 
 fn call_mechanism(
+    caller: Option<usize>,
     caller_depth: usize,
     call: &DirectCall,
     poll_depth_max: usize,
+    component_of: &[Option<usize>],
+    forced_arena_callees: &BTreeSet<usize>,
 ) -> Result<CallMechanism, ExecutionAnalysisError> {
-    if call.indirect || call.callee.is_none() {
-        return Ok(CallMechanism::Anchored);
+    if call.indirect {
+        return Ok(CallMechanism::Arena);
+    }
+    let Some(callee) = call.callee else {
+        return Ok(CallMechanism::Arena);
+    };
+    let caller_component = caller.and_then(|caller| component_of.get(caller).copied().flatten());
+    let callee_component = component_of.get(callee).copied().flatten();
+    if forced_arena_callees.contains(&callee)
+        || caller_component.is_some() && caller_component == callee_component
+    {
+        return Ok(CallMechanism::Arena);
     }
     let depth = caller_depth
         .checked_add(1)
@@ -816,6 +933,61 @@ mod tests {
         chain_model_with_limit(functions, root_calls, DEFAULT_POLL_DEPTH_MAX)
     }
 
+    fn graph_model(function_calls: &[Vec<usize>], root_calls: Vec<usize>) -> ExecutionModel {
+        let funcs = function_calls
+            .iter()
+            .enumerate()
+            .map(|(index, callees)| {
+                let mut body = callees
+                    .iter()
+                    .map(|callee| statement_call(*callee, IrDepth::FUNC))
+                    .collect::<Vec<_>>();
+                body.push(IrStmt::Delay {
+                    ticks: IrDelay::Constant(1),
+                });
+                IrFunc::new(format!("f{index}"), None, vec![], vec![], vec![], body)
+            })
+            .collect();
+        let body = root_calls
+            .into_iter()
+            .map(|callee| statement_call(callee, IrDepth::PROC))
+            .collect();
+        let process = IrProcess::new("p0".into(), "top.p".into(), IrShape::RunOnce, vec![], body);
+        let ir = IrModel::from_parts(
+            "graph".into(),
+            1,
+            IrModelParts {
+                funcs,
+                processes: vec![process],
+                spawns: vec!["p0".into()],
+                ..IrModelParts::default()
+            },
+        )
+        .unwrap();
+        ExecutionModel::lower(ir).unwrap()
+    }
+
+    fn function_call_mechanism(
+        analysis: &ExecutionAnalysis,
+        caller: usize,
+        callee: usize,
+    ) -> CallMechanism {
+        analysis
+            .sites(CoroutineId::Function(caller))
+            .unwrap()
+            .values()
+            .find(|site| {
+                matches!(
+                    site.operation(),
+                    SuspensionOperation::Call {
+                        callee: Some(found)
+                    } if *found == callee
+                )
+            })
+            .and_then(SuspensionSite::mechanism)
+            .unwrap()
+    }
+
     fn one() -> IrExpr {
         IrExpr::new(
             IrExprKind::Const(IrConst::packed(vec![1], vec![], vec![], 1, false, None).unwrap()),
@@ -844,21 +1016,32 @@ mod tests {
             callee: Some(0),
             indirect: false,
         };
+        let components = [Some(0)];
+        let forced = BTreeSet::new();
         assert_eq!(
-            call_mechanism(0, &direct, 0).unwrap(),
+            call_mechanism(None, 0, &direct, 0, &components, &forced).unwrap(),
             CallMechanism::Anchored
         );
         assert_eq!(
-            call_mechanism(0, &direct, 1).unwrap(),
+            call_mechanism(None, 0, &direct, 1, &components, &forced).unwrap(),
             CallMechanism::Polled { depth: 1 }
         );
         assert_eq!(
-            call_mechanism(2, &direct, 3).unwrap(),
+            call_mechanism(None, 2, &direct, 3, &components, &forced).unwrap(),
             CallMechanism::Polled { depth: 3 }
         );
         assert_eq!(
-            call_mechanism(3, &direct, 3).unwrap(),
+            call_mechanism(None, 3, &direct, 3, &components, &forced).unwrap(),
             CallMechanism::Anchored
+        );
+
+        let dynamic = DirectCall {
+            callee: None,
+            indirect: true,
+        };
+        assert_eq!(
+            call_mechanism(None, 0, &dynamic, 3, &components, &forced).unwrap(),
+            CallMechanism::Arena
         );
     }
 
@@ -1025,13 +1208,24 @@ mod tests {
     #[test]
     fn depths_use_maximum_incoming_path_and_repeat_anchors() {
         let mut depths = vec![Some(0); 8];
-        propagate_depths(0, &[call(0)], 3, &mut depths).unwrap();
-        propagate_depths(2, &[call(0)], 3, &mut depths).unwrap();
+        let components = (0..8).map(Some).collect::<Vec<_>>();
+        let forced = BTreeSet::new();
+        propagate_depths(None, 0, &[call(0)], 3, &components, &forced, &mut depths).unwrap();
+        propagate_depths(None, 2, &[call(0)], 3, &components, &forced, &mut depths).unwrap();
         assert_eq!(depths[0], Some(3));
 
         for caller in 0..7 {
             let caller_depth = depths[caller].unwrap();
-            propagate_depths(caller_depth, &[call(caller + 1)], 3, &mut depths).unwrap();
+            propagate_depths(
+                Some(caller),
+                caller_depth,
+                &[call(caller + 1)],
+                3,
+                &components,
+                &forced,
+                &mut depths,
+            )
+            .unwrap();
         }
         assert_eq!(
             depths,
@@ -1049,14 +1243,30 @@ mod tests {
     }
 
     #[test]
-    fn cycle_detection_returns_a_typed_error() {
-        let functions = BTreeSet::from([0, 1]);
-        let graph = BTreeMap::from([(0, BTreeSet::from([1])), (1, BTreeSet::from([0]))]);
+    fn self_recursive_call_uses_arena() {
+        let model = graph_model(&[vec![0]], vec![0]);
+        assert_eq!(model.analysis().callee_first_functions(), &[0]);
+        assert_eq!(model.analysis().function_depth(0), Some(1));
         assert_eq!(
-            caller_first_order(&functions, &graph),
-            Err(ExecutionAnalysisError::SuspendableCallCycle {
-                functions: vec![0, 1]
-            })
+            function_call_mechanism(model.analysis(), 0, 0),
+            CallMechanism::Arena
+        );
+    }
+
+    #[test]
+    fn mutually_recursive_calls_use_arena_and_stable_member_order() {
+        let model = graph_model(&[vec![1], vec![0]], vec![0]);
+        let analysis = model.analysis();
+        assert_eq!(analysis.callee_first_functions(), &[0, 1]);
+        assert_eq!(analysis.function_depth(0), Some(1));
+        assert_eq!(analysis.function_depth(1), Some(0));
+        assert_eq!(
+            function_call_mechanism(analysis, 0, 1),
+            CallMechanism::Arena
+        );
+        assert_eq!(
+            function_call_mechanism(analysis, 1, 0),
+            CallMechanism::Arena
         );
     }
 
@@ -1066,7 +1276,7 @@ mod tests {
         let analysis = model.analysis();
         assert!(analysis.is_coroutine_function(0));
         assert!(analysis.is_coroutine_function(1));
-        assert_eq!(analysis.callee_first_functions().unwrap(), &[1, 0]);
+        assert_eq!(analysis.callee_first_functions(), &[1, 0]);
         assert_eq!(analysis.function_depth(0), Some(1));
         assert_eq!(analysis.function_depth(1), Some(2));
 
@@ -1122,50 +1332,57 @@ mod tests {
     }
 
     #[test]
-    fn validated_cycle_is_reported_before_emission() {
-        let functions = vec![
-            IrFunc::new(
-                "f0".into(),
-                None,
-                vec![],
-                vec![],
-                vec![],
-                vec![
-                    IrStmt::Delay {
-                        ticks: IrDelay::Constant(1),
-                    },
-                    statement_call(1, IrDepth::FUNC),
-                ],
-            ),
-            IrFunc::new(
-                "f1".into(),
-                None,
-                vec![],
-                vec![],
-                vec![],
-                vec![
-                    IrStmt::Delay {
-                        ticks: IrDelay::Constant(1),
-                    },
-                    statement_call(0, IrDepth::FUNC),
-                ],
-            ),
-        ];
-        let ir = IrModel::from_parts(
-            "cycle".into(),
-            1,
-            IrModelParts {
-                funcs: functions,
-                ..IrModelParts::default()
-            },
-        )
-        .unwrap();
-        let analysis =
-            ExecutionAnalysis::analyze(&ir, &[], ExecutionAnalysisOptions::default()).unwrap();
-        assert!(matches!(
-            analysis.validate_suspendable_call_graph(),
-            Err(ExecutionAnalysisError::SuspendableCallCycle { .. })
-        ));
+    fn scc_depths_and_outgoing_calls_use_member_depths() {
+        let model = graph_model(
+            &[vec![1], vec![2], vec![3, 4], vec![2, 5], vec![], vec![]],
+            vec![0],
+        );
+        let analysis = model.analysis();
+        assert_eq!(analysis.callee_first_functions(), &[4, 5, 2, 3, 1, 0]);
+        assert_eq!(
+            (0..6)
+                .map(|function| analysis.function_depth(function).unwrap())
+                .collect::<Vec<_>>(),
+            vec![1, 2, 3, 0, 0, 1]
+        );
+        assert_eq!(
+            function_call_mechanism(analysis, 2, 3),
+            CallMechanism::Arena
+        );
+        assert_eq!(
+            function_call_mechanism(analysis, 3, 2),
+            CallMechanism::Arena
+        );
+        assert_eq!(
+            function_call_mechanism(analysis, 2, 4),
+            CallMechanism::Anchored
+        );
+        assert_eq!(
+            function_call_mechanism(analysis, 3, 5),
+            CallMechanism::Polled { depth: 1 }
+        );
+    }
+
+    #[test]
+    fn forced_arena_callee_resets_depth_and_is_preserved_by_validation() {
+        let mut model = chain_model(3, vec![0]);
+        model
+            .reanalyze_with_forced_arena_callees(&BTreeSet::from([1]))
+            .unwrap();
+        let analysis = model.analysis();
+        assert_eq!(analysis.forced_arena_callees(), &BTreeSet::from([1]));
+        assert_eq!(analysis.function_depth(0), Some(1));
+        assert_eq!(analysis.function_depth(1), Some(0));
+        assert_eq!(analysis.function_depth(2), Some(1));
+        assert_eq!(
+            function_call_mechanism(analysis, 0, 1),
+            CallMechanism::Arena
+        );
+        assert_eq!(
+            function_call_mechanism(analysis, 1, 2),
+            CallMechanism::Polled { depth: 1 }
+        );
+        model.validate().unwrap();
     }
 
     #[test]
@@ -1233,7 +1450,7 @@ mod tests {
     }
 
     #[test]
-    fn callee_first_order_uses_function_index_as_tie_break() {
+    fn condensation_orders_use_function_index_as_tie_break() {
         let functions = BTreeSet::from([0, 1, 2, 3]);
         let graph = BTreeMap::from([
             (0, BTreeSet::from([2])),
@@ -1241,6 +1458,11 @@ mod tests {
             (2, BTreeSet::new()),
             (3, BTreeSet::new()),
         ]);
-        assert_eq!(callee_first_order(&functions, &graph), vec![2, 0, 1, 3]);
+        let components = strongly_connected_components(&functions, &graph);
+        let component_of = component_membership(4, &components);
+        let condensation = condensation_graph(&components, &component_of, &graph);
+        assert_eq!(components, vec![vec![0], vec![1], vec![2], vec![3]]);
+        assert_eq!(component_order(&condensation, false), vec![0, 1, 2, 3]);
+        assert_eq!(component_order(&condensation, true), vec![2, 0, 1, 3]);
     }
 }

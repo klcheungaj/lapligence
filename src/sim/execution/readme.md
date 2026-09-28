@@ -32,12 +32,18 @@ from the emptied staging table.
 graph after each effect refresh. Processes and fork branches are depth-zero
 anchors. Static call-site depth uses the maximum incoming path; sites deeper
 than `poll_depth_max` (default 3) anchor and restart the callee at depth zero.
-The analysis records cycles for a typed error before stackless emission,
-provides a deterministic callee-first function order for acyclic graphs, and numbers each function's suspension sites
-dense `1..N` in emission order. Keys combine the owning process/function (or
-fork branch) with a structural operation path, so optimizer and hash iteration
-order cannot affect site identity. Inline-expanded task statements remain in
-their host and therefore consume the host's resume numbers.
+Suspendable recursion is supported: calls within one strongly connected
+component use `LLG_CO_CALL_ARENA`, reset depth, and never embed another SCC
+member's frame. Depth and deterministic emission orders run over the SCC
+condensation DAG; functions within an SCC use ascending function-index order,
+and only their descriptors require forward declarations. Phase 3 can force all
+incoming static calls to selected oversized callees onto the arena, which
+reruns depth analysis with those edges as anchors. The analysis numbers each
+function's suspension sites dense `1..N` in emission order. Keys combine the
+owning process/function (or fork branch) with a structural operation path, so
+optimizer and hash iteration order cannot affect site identity. Inline-expanded
+task statements remain in their host and therefore consume the host's resume
+numbers; existing inline-recursion rejection remains unchanged.
 
 `ExecutionModel::validate` checks reachable targets, typed references, unique
 signal triggers backed by emitted packed storage (including bounded constant

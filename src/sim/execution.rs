@@ -12,7 +12,7 @@ pub use analysis::{
     SuspensionSite, DEFAULT_POLL_DEPTH_MAX,
 };
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 
 use crate::sim::ir::{
     IrArrayQueryTarget, IrCallArg, IrChandleExpr, IrContainerExpr, IrDependency, IrDisplayArg,
@@ -196,6 +196,21 @@ impl ExecutionModel {
         &self.analysis
     }
 
+    /// Recompute coroutine mechanisms after frame sizing selects arena callees.
+    pub fn reanalyze_with_forced_arena_callees(
+        &mut self,
+        forced_arena_callees: &BTreeSet<usize>,
+    ) -> Result<(), IrValidationError> {
+        self.analysis = ExecutionAnalysis::analyze_with(
+            &self.ir,
+            &self.processes,
+            self.analysis.options(),
+            forced_arena_callees,
+        )
+        .map_err(analysis_validation_error)?;
+        self.validate()
+    }
+
     pub fn packed_capacity(&self) -> Result<u128, IrValidationError> {
         let mut capacity = self.ir.packed_capacity()?;
         for process in &self.processes {
@@ -221,8 +236,14 @@ impl ExecutionModel {
         for process in &mut self.processes {
             process.effects = effects_for_blocks(ir, &process.blocks);
         }
-        self.analysis = ExecutionAnalysis::analyze(ir, &self.processes, self.analysis.options())
-            .map_err(analysis_validation_error)?;
+        let forced_arena_callees = self.analysis.forced_arena_callees().clone();
+        self.analysis = ExecutionAnalysis::analyze_with(
+            ir,
+            &self.processes,
+            self.analysis.options(),
+            &forced_arena_callees,
+        )
+        .map_err(analysis_validation_error)?;
         self.validate()
     }
 
@@ -345,9 +366,13 @@ impl ExecutionModel {
                 ));
             }
         }
-        let analysis =
-            ExecutionAnalysis::analyze(&self.ir, &self.processes, self.analysis.options())
-                .map_err(analysis_validation_error)?;
+        let analysis = ExecutionAnalysis::analyze_with(
+            &self.ir,
+            &self.processes,
+            self.analysis.options(),
+            self.analysis.forced_arena_callees(),
+        )
+        .map_err(analysis_validation_error)?;
         if self.analysis != analysis {
             return Err(IrValidationError::new(
                 "execution.analysis",
