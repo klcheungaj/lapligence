@@ -325,7 +325,7 @@ impl EmitCtx<'_, '_> {
             });
             let (en, site) = existing.unwrap_or_else(|| {
                 let site = self.cg.pca_seq;
-                let en = self.cg.new_pca_enable(&self.path);
+                let en = self.cg.new_pca_enable();
                 (en, site)
             });
             for (sig_idx, _) in targets {
@@ -475,7 +475,7 @@ impl EmitCtx<'_, '_> {
             }
             None => {
                 let site = self.cg.pca_seq;
-                let en = self.cg.new_pca_enable(&self.path);
+                let en = self.cg.new_pca_enable();
                 for (sig, _) in &targets {
                     self.cg.pca_sites.insert(
                         (h, *sig),

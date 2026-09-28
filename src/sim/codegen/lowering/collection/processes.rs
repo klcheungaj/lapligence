@@ -827,18 +827,20 @@ impl<'a> Codegen<'a> {
     }
 
     /// Allocate the 1-bit enable signal of one procedural continuous
-    /// assignment site (`G_<path>_pca$<n>_en`).  Enables are ordinary IR
+    /// assignment site (`llg_pca_en_<n>`).  Enables are ordinary IR
     /// signals on purpose: the optimizer's read/write collectors, branch
     /// pruning and folding see them exactly like user storage (a guard's
     /// `If(en)` condition is never constant, and an enabled signal is both
-    /// read and written so `unused_storage` always keeps it).  The `$`
-    /// separator cannot appear in an ident()-sanitized user name (`ident`
-    /// maps it to `_`), so a synthesized enable never collides with a user
-    /// variable's global — a collision would silently merge their storage.
-    pub(in super::super) fn new_pca_enable(&mut self, path: &str) -> usize {
+    /// read and written so `unused_storage` always keeps it).  User-derived
+    /// globals always start with a `G_`/`D_`/`E_`/`S_`/`O_` family prefix,
+    /// while `llg_` names are reserved for generator and runtime internals, so
+    /// a synthesized enable never collides with a user variable's global — a
+    /// collision would silently merge their storage. The site sequence number
+    /// alone makes enables distinct; the name stays a standard C identifier.
+    pub(in super::super) fn new_pca_enable(&mut self) -> usize {
         let n = self.pca_seq;
         self.pca_seq += 1;
-        let c_name = format!("G_{}_pca${}_en", ident(path), n);
+        let c_name = format!("llg_pca_en_{n}");
         let ir = self.model.signals.len();
         self.model.signals.push(IrSignal {
             fixed_default: None,

@@ -856,7 +856,7 @@ struct ArrayElemLhs {
 /// enable guard's storage plus the runtime site identity and which statement
 /// node materialized the guard process.
 struct PcaSite {
-    /// Enable-signal IR index (`G_<path>_pca$<n>_en`, starts X = disabled).
+    /// Enable-signal IR index (`llg_pca_en_<n>`, starts X = disabled).
     en: usize,
     /// Runtime identity of this syntactic assignment site. Distinct sites
     /// targeting one variable replace one another at execution time.
@@ -1133,9 +1133,9 @@ struct Codegen<'a> {
     /// runtime identity regardless of process/source order or instance.
     pca_sites: HashMap<(NodeId, usize), PcaSite>,
     /// PCA site sequence, used for unique enable-global names
-    /// (`G_<path>_pca$<n>_en`; the `$` can never occur in an
-    /// ident()-sanitized user name, so synthesized enables cannot collide
-    /// with a user variable's global).
+    /// (`llg_pca_en_<n>`; the reserved `llg_` family never holds a
+    /// user-derived global, so synthesized enables cannot collide with a user
+    /// variable's global).
     pca_seq: usize,
     /// Whole-net continuous assignment node -> synthetic signal index carrying
     /// that wired net driver's distinct runtime slot.

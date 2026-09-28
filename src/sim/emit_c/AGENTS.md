@@ -35,7 +35,11 @@ and named-block gotos only leave lexical blocks. Keep GCC
 may accept the address of a local declared in a resume-free block, but must reject
 an address of C-stack storage whose declaring block contains a resume point.
 
-Emit coroutine frame types callee-first. Each storage-bearing block's polled
+Emit coroutine frame types callee-first, one typedef per distinct layout:
+frames that render identically once embedded callee types are replaced by their
+own layout group (every instance of one process or task) share one
+`llg_shared_frame_<k>_t`, while a layout used once keeps `<fn>_frame_t`; bodies,
+descriptors and layout assertions all name the shared type. Each storage-bearing block's polled
 callees occupy ordinary members of its deterministic `union callsN`, anchored
 callees use `LLG_CO_ANCHORED(T)`,
 and recursive or oversized callees use `ch->arena`. Descriptor
@@ -169,6 +173,13 @@ supports one model, not concurrent/thread-safe instances. Keep ABI 4/cache marke
 aligned and stale generated C rejected. Emit `LLG_MODEL_PROCESS_ABI 2`, pass
 only immutable descriptors to spawn/fork sites, and initialize through
 `llg_rt_init_with_args_and_precision`; coroutine stack sizing is not model data.
+Default and teardown calls for plain static storage use one file-scope pointer
+table and loop per value representation, flushed at the storage section's
+original position. Runs of consecutive constant startup calls (spawns, finals,
+waveform registrations) use argument tables and loops in their original order;
+registrations still fail startup. Generated identifiers are standard C (never
+`$`, checked by the all-fixture lint); synthesized procedural-assign enables use
+reserved `llg_pca_en_<n>` names.
 
 Maintain exact scope/reference checks, array-index disposal, inert invalid handles
 and source-size preflight regressions. Preserve these distinct validation layers:
