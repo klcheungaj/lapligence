@@ -284,10 +284,11 @@ fn overlay_blocks(access: &str) -> Vec<usize> {
 ///   symbols, descriptors and `llg_` catalogs),
 /// - compound literals passed directly inside generated runtime calls.
 ///
-/// `_llg_array_cell_` and `_lsN_` are macro-internal lvalue selectors whose
-/// declarations and uses are contained by one `do { ... } while (0)` expansion;
-/// `_llg_inertial_` and `_llg_ret_` are function-static state rather than stack
-/// storage.
+/// `_llg_array_cell_<array>_<element>` and `_ls<instance>_<node>` are generated
+/// global lvalue selectors. `_llg_inertial_<site>` and `_llg_ret_<index>` are
+/// function-static state; `_llg_inertial_index` is a macro-internal temporary
+/// contained by one `do { ... } while (0)` expansion. Numeric components must
+/// match the generator exactly; lookalike prefixes are not accepted.
 fn allowed_address_operand(body: &str, operand_start: usize) -> Result<(), String> {
     let rest = body[operand_start..].trim_start();
     let operand = rest
@@ -303,20 +304,14 @@ fn allowed_address_operand(body: &str, operand_start: usize) -> Result<(), Strin
         .take_while(|byte| *byte == b'_' || byte.is_ascii_alphanumeric())
         .count();
     let ident = &operand[..ident_end];
-    if ident.starts_with("G_")
-        || ident.starts_with("S_")
-        || ident.starts_with("O_")
-        || ident.starts_with("D_")
-        || ident.starts_with("E_")
-        || ident.starts_with("g_")
-        || ident.starts_with("llg_")
-        || ident.starts_with("fn_")
-        || ident.starts_with("p_")
-        || ident.starts_with("_llg_array_cell_")
-        || ident.starts_with("_llg_inertial_")
-        || ident.starts_with("_llg_ret_")
-        || ident.starts_with("_ls")
-        || ident.ends_with("_desc")
+    if ["G_", "S_", "O_", "D_", "E_", "g_", "llg_", "fn_", "p_"]
+        .into_iter()
+        .any(|prefix| has_generated_payload(ident, prefix))
+        || numbered_identifier(ident, "_llg_array_cell_", 2)
+        || numbered_identifier(ident, "_llg_inertial_", 1)
+        || ident == "_llg_inertial_index"
+        || numbered_identifier(ident, "_llg_ret_", 1)
+        || numbered_identifier(ident, "_ls", 2)
     {
         return Ok(());
     }
@@ -324,6 +319,24 @@ fn allowed_address_operand(body: &str, operand_start: usize) -> Result<(), Strin
         "address operand `{}` is not explicit coroutine-frame storage",
         rest.lines().next().unwrap_or(rest).trim()
     ))
+}
+
+fn has_generated_payload(ident: &str, prefix: &str) -> bool {
+    ident
+        .strip_prefix(prefix)
+        .is_some_and(|payload| !payload.is_empty())
+}
+
+fn numbered_identifier(ident: &str, prefix: &str, components: usize) -> bool {
+    let Some(suffix) = ident.strip_prefix(prefix) else {
+        return false;
+    };
+    let mut parts = suffix.split('_');
+    (0..components).all(|_| {
+        parts
+            .next()
+            .is_some_and(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
+    }) && parts.next().is_none()
 }
 
 fn looks_like_compound_literal(rest: &str) -> bool {
@@ -343,11 +356,25 @@ mod tests {
 static void fn_ok(fn_ok_frame_t* F) {
     {
         F->u0.b1.value = 1;
-        runtime(&F->u0.b1.value, &(item_t){ 0 }, &G_signal, &fn_ok_desc);
+        runtime(&F->u0.b1.value, &(item_t){ 0 }, &G_signal, &fn_ok_desc,
+                &_ls2_26, &_llg_array_cell_1_2, &_llg_inertial_index,
+                &_llg_inertial_5, &_llg_ret_4);
     }
 }
 "#;
         assert_eq!(lint_generated_coroutine_c(c), Ok(()));
+    }
+
+    #[test]
+    fn rejects_lookalikes_of_generated_static_names() {
+        let c = r#"
+static void fn_bad(fn_bad_frame_t* F) {
+    runtime(&_lslocal, &_ls2_bad, &_llg_array_cell_left_0,
+            &_llg_inertial_value, &_llg_ret_state, &G_, &llg_);
+}
+"#;
+        let errors = lint_generated_coroutine_c(c).unwrap_err();
+        assert_eq!(errors.len(), 7, "{errors:?}");
     }
 
     #[test]
