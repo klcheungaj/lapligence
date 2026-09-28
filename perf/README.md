@@ -47,7 +47,8 @@ warning-clean build check required at `-O2`.
 The corpus parameters are named tunables, not product thresholds. The task,
 zero-delay, and wide-value standard sizes target seconds to tens of seconds on
 the Phase 0 machine. The mandatory many-process shapes can take minutes on the
-libaco baseline because they deliberately expose its process and NBA scaling.
+archived Phase 0 libaco baseline because they deliberately expose its process
+and NBA scaling.
 Shared-machine results need at least three repetitions, medians, an `uptime`
 record, and a later quiet-machine A/B run before they support a gate.
 
@@ -67,10 +68,12 @@ perf/scripts/profile_symbolize.py /tmp/model.raw
 unwinder before installing `SIGPROF`, writes fixed-size raw records with `write`,
 and saves `/proc/self/maps` beside the raw file. `profile_symbolize.py` uses
 those mappings plus `addr2line` to produce an inclusive flat TSV and folded
-stacks. `backtrace()` can stop at a libaco stack boundary, so short stacks are
-valid samples rather than errors; profiles may under-attribute callers above a
-coroutine switch. This Linux/glibc tool avoids `perf`, but it is statistical and
-`backtrace()` is not a substitute for platform unwind qualification.
+stacks. When profiling the archived Phase 0 baseline, `backtrace()` can stop at
+a libaco stack boundary, so short stacks are valid samples rather than errors;
+profiles may under-attribute callers above a coroutine switch. Current stackless
+models have no such boundary. This Linux/glibc tool avoids `perf`, but it is
+statistical and `backtrace()` is not a substitute for platform unwind
+qualification.
 
 ## RSS attribution
 
@@ -81,15 +84,17 @@ perf/scripts/rss_attribution.py --output /tmp/rss.tsv -- /path/to/generated/sim
 ```
 
 The tool polls `VmRSS` and retains the `/proc/<pid>/smaps` snapshot nearest its
-sampled peak. Classification is heuristic because malloc does not label libaco
-allocations: `[heap]` is heap; executable or file-backed read-only mappings are
-binary/text; large sparse private anonymous mappings and sparse mappings near
-256 KiB or 1 MiB are libaco save stacks; a 3–64 MiB private anonymous mapping is
-the shared-stack candidate; remaining anonymous writable mappings are heap.
-Allocator coalescing helps identify thousands of save stacks as one large sparse
-mapping, but unrelated sparse arenas can be false positives and value allocations
-can be counted as heap/shared stack. The report retains mapping-level details so
-ambiguous classifications can be reviewed rather than treated as exact accounting.
+sampled peak. It retains the Phase 0 categories so archived baseline measurements
+remain comparable. Classification is heuristic because malloc does not label
+libaco allocations: `[heap]` is heap; executable or file-backed read-only mappings
+are binary/text; large sparse private anonymous mappings and sparse mappings near
+256 KiB or 1 MiB are classified as historical libaco save stacks; a 3–64 MiB
+private anonymous mapping is the historical shared-stack candidate; remaining
+anonymous writable mappings are heap. Allocator coalescing helps identify
+thousands of save stacks as one large sparse mapping, but unrelated sparse arenas
+can be false positives and value allocations can be counted as heap/shared stack.
+The report retains mapping-level details so ambiguous classifications can be
+reviewed rather than treated as exact accounting.
 
 Tool logic has a dependency-free regression test:
 

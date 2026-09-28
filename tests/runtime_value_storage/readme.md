@@ -59,7 +59,7 @@ capabilities; check the exact inventory rather than assuming a fixed count.
 | `nextest_control_probe.c` | Native cancellation, staged outputs, lexical activation exits, inertial/strobe/force callbacks and repeated starts. |
 | `generated_scopes_probe.c`, `generated_coroutine_probe.c` | Handwritten output shapes: lexical cells, retained NBA/clocking transfers, masks, recursion, yielding calls, finish/cancel and stop/resume/close. |
 | `stackless_runtime_probe.c` | Deep polled/anchored/arena cancellation, CALL/READY scheduling boundaries, exact/deferred stop, final finish, budget exit kinds, semaphore/mailbox cancellation, and T28 arena/cache counters. |
-| `native_ownership_probe.c` | Root string cleanup and independent copies; 15 input/callback modes repeated eight times, including scans/plusargs/containers and writer cancellation. Callback mode native-fiber. |
+| `native_ownership_probe.c` | Root string cleanup and independent copies; 15 input/callback modes repeated eight times, including scans/plusargs/containers and writer cancellation through stackless frames. |
 | `native_boundaries_probe.c` | Ref scope/relocation/removal; nine mailbox/stream modes repeated eight times with reentrant delivery, peek, cancellation and returning termination. |
 | `review_lifetimes_probe.c` | Native indexing, detached refs/tombstones/zero payloads and wide indices; stable real/shortreal mailbox targets and publication cancellation. Defensive API effects are not legal read-only HDL callback claims. |
 | `packed_selection_probe.c`, `packed_selection_scheduler_probe.c` | Independent per-bit oracle for 7,056 two-step chains plus third refinement, aliasing/X/wide indices, limb endpoints, NBA masks and synchronous scanner targets; scheduler cases do not switch stacks. |
@@ -147,8 +147,9 @@ scheduler/coroutine coverage blocks full-host acceptance; generated HDL is nativ
 not implicitly sanitized. Exit 0 means requested checks passed, 1 failed, 2 blocked.
 
 `--without-waveforms`/`--without-scheduler` explicitly select component-only coverage.
-Windows MSVC CI configures values/containers only; macOS records actual architecture-
-dependent coverage. Neither configuration nor Linux results certify those platforms.
+Windows MSVC CI builds and runs a generated model, while macOS records actual
+architecture-dependent coverage. Those configured lanes still require native-host
+validation before they certify their platforms; Linux results do not substitute for it.
 The flat checker verifies fragment order and strict facade C11 compilation, accepts
 GCC/Clang and cl/clang-cl with optional `--without-scheduler`, requires the current
 ABI to compile and the stale ABI to fail. Linux execution does not validate MSVC.

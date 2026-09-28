@@ -39,8 +39,8 @@ targets:
 | --- | --- | --- | --- |
 | Linux x86_64 | `x86_64-unknown-linux-musl` | Release target; validation pending | Musl validation pending |
 | Linux arm64 | `aarch64-unknown-linux-musl` | Release target | Not yet supported |
-| Windows x86_64 | `x86_64-pc-windows-msvc` | Release target | Not yet supported |
-| Windows arm64 | `aarch64-pc-windows-msvc` | Release target | Not yet supported |
+| Windows x86_64 | `x86_64-pc-windows-msvc` | Release target | CI build/run configured; native validation pending |
+| Windows arm64 | `aarch64-pc-windows-msvc` | Release target | CI build/run configured; native validation pending |
 | macOS arm64 | `aarch64-apple-darwin` | Release target | Not yet supported |
 
 These are configured targets, not equivalent validation claims. Recorded native
@@ -57,9 +57,10 @@ files; Linux and macOS packages are `.tar.gz` files. Each includes `llg`,
 `llg_ls` (with `.exe` on Windows), `readme.md`, and `LICENSE`. SHA-256 checksum
 files accompany the packages.
 
-The generated simulator uses a bundled coroutine runtime that is currently
-x86/Unix-only. On arm64 and Windows, `llg` can still lint, elaborate, and emit
-C with `--gen-only`, but it cannot build and run that emitted model yet.
+The generated simulator uses a bundled pure-C11 stackless coroutine runtime.
+The release workflow configures generated-model build/run checks for MSVC x64
+and ARM64; those lanes remain unvalidated until native results are recorded.
+Other table entries likewise remain configuration, not support claims.
 
 ## Build prerequisites
 
@@ -75,8 +76,8 @@ All platforms require:
 - zlib development files for waveform-enabled generated models.
 
 `Cargo.lock` pins the Rust dependency graph. Use Cargo's `--locked` option for
-reproducible builds and tests; the root commit's gitlinks pin `vendor/slang`
-and `vendor/libaco`. The serialized U05 baseline and per-patch workflow is
+reproducible builds and tests; the root commit's gitlink pins `vendor/slang`.
+The serialized U05 baseline and per-patch workflow is
 documented in [`tests/readme.md`](tests/readme.md).
 
 ### Linux

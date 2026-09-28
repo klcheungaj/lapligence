@@ -152,10 +152,10 @@ be the only reason a runtime-local owner is abandoned without cleanup.
 ## Addressable real locals and exact native destination pins
 
 Addressable automatic real variables use individual registered `double` payloads.
-A pointer to a plain C stack local is not a persistent mailbox destination on
-libaco's shared stack: another coroutine's write can be overwritten when the
-receiving coroutine's saved stack is restored. Real arithmetic temporaries that
-are not retained by another activation may remain C scalars.
+A pointer to a plain C stack local is not a persistent mailbox destination: a
+stackless coroutine returns to the scheduler at suspension, so that local no
+longer exists. Real arithmetic temporaries that are not retained by another
+activation may remain C scalars.
 
 The private exact-address index includes both packed descriptors and native
 payload base addresses. It does not index interior native fields or retain every

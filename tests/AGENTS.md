@@ -32,8 +32,8 @@ including proof that checked compilation withholds blocking-error snapshots.
   replace them. `runtime_value_storage/validate.py --full` requires Rust, real
   emitted-model tests, CLI acceptance and repository tests. Missing prerequisites
   are blocked, not passed; reject zero/missing/duplicate/disabled tests and stale
-  products. Non-fiber sanitizer components and native stack-switch tests are
-  separate gates.
+  products. Component sanitizer probes and generated-model sanitizer execution
+  are separate gates.
 - `slang_frontend`, `slang_semantics` and `model_tests` independently exercise
   safe capture, typed relationships, complete delays, declaration-owned ranges,
   source topology and copy-before-destroy; downstream tests use validated DB/IR
@@ -41,7 +41,7 @@ including proof that checked compilation withholds blocking-error snapshots.
   source checks and fragment-order checks are architecture checks, not execution.
 - `property_elab` mirrors identical Rust value vectors in the C self-test;
   retain independent arithmetic/real conversion/net-resolution probes.
-  `runtime_values` compiles values without scheduler/libaco; random tests cover
+  `runtime_values` compiles values without scheduler/coroutine runtime; random tests cover
   Annex N and process-stream rules, including explicit seeds/ranges at -O0/-O2.
 - Preserve `sim_cmake` missing-CMake graceful skips and its source-generation,
   generator, configure-error and stale-source checks. Native DPI shared-library

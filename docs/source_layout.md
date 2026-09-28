@@ -66,9 +66,9 @@ filenames, not a copy of the fragment directories. Keep the facade include
 order and embedded list synchronized; [`rt/tests.rs`](../src/sim/rt/tests.rs)
 checks that relationship without compiling C.
 
-The value, string, random, VPI and waveform sources retain their separate
-translation-unit contracts. Vendored frontend, coroutine and GTKWave sources
-are not reorganized by this layout.
+The value, string, random, VPI, coroutine and waveform sources retain their
+separate translation-unit contracts. Vendored frontend and GTKWave sources are
+not reorganized by this layout.
 
 ## Test organization
 
