@@ -276,6 +276,9 @@ typedef struct llg_clocking_drive {
     sv4_t value;
     sv4_t mask;
     int has_mask;
+    uint32_t range_offset;
+    uint32_t range_width;
+    int has_range;
     int is_real;
     double real_value;
     uint64_t ticks;
@@ -330,7 +333,8 @@ typedef struct {
     aco_t* main_co;
     aco_share_stack_t* share_stack;
     llg_proc_queue_t process_queues[LLG_REGION_COUNT];
-    llg_nba_t* delayed_nbas;
+    llg_nba_queue_t nba_queues[LLG_REGION_COUNT];
+    llg_nba_bucket_t* delayed_nba_buckets;
     llg_inertial_t* inertial_drivers;
     llg_inertial_t* inertial_pending;
     uint64_t nba_sequence;

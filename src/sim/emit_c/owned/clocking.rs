@@ -101,39 +101,21 @@ impl Frame<'_, '_> {
                 target.binding.address, value.code
             ));
         } else if let Some(selection) = &target.selection {
-            // Unselected bits are not an issue-time read. The mask merges into
-            // the destination at commit, preserving overlapping NBA order.
-            let updated = self.value(
-                format!("sv4_zero({}, 0)", target.binding.width),
-                target.binding.width,
-                false,
-            );
-            let mask = self.value(
-                format!("sv4_zero({}, 0)", target.binding.width),
-                target.binding.width,
-                false,
-            );
-            let ones = self.value(
-                format!("sv4_fill(1, {}, 0)", target.width),
-                target.width,
-                false,
-            );
-            self.set_selected(selection, &updated.code, &value.code);
-            self.set_selected(selection, &mask.code, &ones.code);
+            let (plan, reverse) = self.selection_plan(selection, target.binding.width);
             self.line(if let Some((net, slot)) = &target.net {
                 format!(
-                    "llg_clocking_nba_net_sync_masked_after(&{net}, {slot}, {}, {}, {tail});",
-                    updated.code, mask.code
+                    "llg_clocking_nba_net_sync_selected_after(&{net}, {slot}, {}, {plan}, {}, {tail});",
+                    value.code,
+                    u8::from(reverse)
                 )
             } else {
                 format!(
-                    "llg_clocking_nba_sync_masked_after({}, {}, {}, {tail});",
-                    target.binding.address, updated.code, mask.code
+                    "llg_clocking_nba_sync_selected_after({}, {}, {plan}, {}, {tail});",
+                    target.binding.address,
+                    value.code,
+                    u8::from(reverse)
                 )
             });
-            self.discard(ones);
-            self.discard(mask);
-            self.discard(updated);
         } else {
             self.line(if let Some((net, slot)) = &target.net {
                 format!(

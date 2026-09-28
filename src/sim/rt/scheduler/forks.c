@@ -15,7 +15,8 @@ static void llg_fork_group_child_done(llg_fork_group_t* grp) {
             wake = 1;
         }
     }
-    if (wake && parent->wait.kind == W_FORK && parent->wait.grp == grp) {
+    if (wake && parent->wait.kind == W_FORK && parent->wait.payload.rare &&
+        parent->wait.payload.rare->fork.group == grp) {
         wake_proc(parent);
     }
     if (grp->remaining == 0) {
@@ -33,7 +34,8 @@ static void llg_fork_group_child_done(llg_fork_group_t* grp) {
         llg_wait_t* w = g.waiters;
         while (w) {
             llg_wait_t* next = w->next;
-            if (w->kind == W_FORK_ALL && w->parent->fork_groups == NULL) {
+            if (w->kind == W_FORK_ALL && w->payload.rare &&
+                w->payload.rare->fork_all.parent->fork_groups == NULL) {
                 wake_proc(w->proc);
             }
             w = next;
@@ -165,7 +167,7 @@ void llg_join(llg_fork_group_t* grp) {
     if (!p || !region_can_mutate("fork wait scheduling")) return;
     llg_wait_t* w = &p->wait;
     w->kind = W_FORK;
-    w->grp = grp;
+    wait_rare_allocate(w, "fork wait payload")->fork.group = grp;
     w->resume_region = region_is_reactive(p->region)
                            ? LLG_REGION_REACTIVE
                            : LLG_REGION_ACTIVE;
@@ -178,7 +180,7 @@ void llg_wait_fork(void) {
     if (!p || p->fork_groups == NULL || !region_can_mutate("fork wait scheduling")) return;
     llg_wait_t* w = &p->wait;
     w->kind = W_FORK_ALL;
-    w->parent = p;
+    wait_rare_allocate(w, "wait-fork payload")->fork_all.parent = p;
     w->resume_region = region_is_reactive(p->region)
                            ? LLG_REGION_REACTIVE
                            : LLG_REGION_ACTIVE;
@@ -253,7 +255,8 @@ static void llg_kill_named_group(llg_fork_group_t* grp) {
     grp->next_g = g.zombie_groups;
     g.zombie_groups = grp;
 
-    if (parent->wait.kind == W_FORK && parent->wait.grp == grp) {
+    if (parent->wait.kind == W_FORK && parent->wait.payload.rare &&
+        parent->wait.payload.rare->fork.group == grp) {
         wake_proc(parent);
     }
     if (parent->wait.kind == W_FORK_ALL && parent->fork_groups == NULL) {

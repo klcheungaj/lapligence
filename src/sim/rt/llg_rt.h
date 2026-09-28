@@ -1290,6 +1290,9 @@ void llg_nba_after(sv4_t* target, sv4_t value, uint64_t ticks);
 void llg_nba_net_after(llg_net_t* net, int slot, sv4_t value, uint64_t ticks);
 void llg_nba_net_masked_after(llg_net_t* net, int slot, sv4_t value,
                               sv4_t mask, uint64_t ticks);
+void llg_nba_net_selected_after(llg_net_t* net, int slot, sv4_t value,
+                                sv4_select_plan_t plan, int reverse,
+                                uint64_t ticks);
 // Synchronous drives use the target clocking event. If the event has not
 // occurred in the current time slot, the runtime retains the captured value
 // until the next matching event before applying the output skew.
@@ -1303,7 +1306,13 @@ void llg_clocking_nba_d_sync_after(double* target, double value, uint64_t ticks,
                                    const llg_wait_src_t* specs, int n_specs);
 void llg_string_nba_after(llg_string_t* target, llg_string_t value,
                           uint64_t ticks);
-// Merge only known-one mask positions into the target at commit time.
+// Selected writes retain only the plan's valid contiguous slice. Ascending
+// declared part-selects set reverse so queued bits remain in storage order.
+void llg_nba_selected_after(sv4_t* target, sv4_t value,
+                            sv4_select_plan_t plan, int reverse,
+                            uint64_t ticks);
+// Merge only known-one mask positions into the target at commit time. This is
+// the general fallback; contiguous masks are narrowed internally.
 void llg_nba_masked(sv4_t* target, sv4_t value, sv4_t mask, uint64_t ticks);
 void llg_clocking_nba_sync_masked_after(
     sv4_t* target, sv4_t value, sv4_t mask, uint64_t ticks,
@@ -1311,6 +1320,12 @@ void llg_clocking_nba_sync_masked_after(
 void llg_clocking_nba_net_sync_masked_after(
     llg_net_t* net, int slot, sv4_t value, sv4_t mask, uint64_t ticks,
     const llg_wait_src_t* specs, int n_specs);
+void llg_clocking_nba_sync_selected_after(
+    sv4_t* target, sv4_t value, sv4_select_plan_t plan, int reverse,
+    uint64_t ticks, const llg_wait_src_t* specs, int n_specs);
+void llg_clocking_nba_net_sync_selected_after(
+    llg_net_t* net, int slot, sv4_t value, sv4_select_plan_t plan, int reverse,
+    uint64_t ticks, const llg_wait_src_t* specs, int n_specs);
 void llg_ba(sv4_t* target, sv4_t value);
 // Commit a write through a canonical `ref` descriptor immediately. Selected
 // aliases update the original storage once, preserving normal wakeups and

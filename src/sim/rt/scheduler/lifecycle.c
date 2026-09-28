@@ -30,29 +30,13 @@ static void free_group_storage(llg_fork_group_t* grp) {
 }
 
 static void free_proc_storage(llg_proc_t* p) {
-    llg_nba_t* n = p->nba_head;
-    while (n) {
-        llg_nba_t* next = n->next;
-        nba_destroy(n);
-        n = next;
-    }
+    cancel_proc_nbas(p);
     event_unlink(&p->wait);
     event_triggered_unlink(&p->wait);
     semaphore_waiter_unlink(&p->wait);
     if (p->wait.kind == W_MAILBOX_GET || p->wait.kind == W_MAILBOX_PUT)
         mailbox_unlink_wait(&p->wait);
-    mailbox_value_destroy(&p->wait.mailbox_value);
-    free_expression_wait(&p->wait);
-    free(p->wait.specs);
-    free(p->wait.dependencies);
-    sv4_destroy_array(p->wait.last, p->wait.last ? (size_t)p->wait.n : 0);
-    sv4_destroy(&p->wait.level_val);
-    free(p->wait.last);
-    free(p->wait.real_last);
-    free(p->wait.evs);
-    free(p->wait.order_sequence);
-    llg_process_release(p->wait.process_target);
-    p->wait.process_target = NULL;
+    wait_payload_release(&p->wait);
     value_scopes_unwind(p);
     activation_unwind_proc(p);
     llg_frame_release(p->frame);
@@ -217,11 +201,7 @@ void llg_rt_cleanup(void) {
         sv4_destroy(&driver->mask);
         free(driver);
     }
-    while (g.delayed_nbas) {
-        llg_nba_t* next = g.delayed_nbas->next;
-        nba_destroy(g.delayed_nbas);
-        g.delayed_nbas = next;
-    }
+    free_all_nbas();
     free_deferred_triggers();
     free_deferred_assertions();
     free_assertion_rules();

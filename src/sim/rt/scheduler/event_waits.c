@@ -4,15 +4,17 @@
 // Repeated occurrences of already-consumed events are ignored, while an
 // event that is still ahead in the sequence is an ordering violation.
 static int event_order_match(llg_wait_t* w, llg_event_object_t* ev) {
-    if (!w->order_sequence || w->order_next < 0 ||
-        w->order_next >= w->n_order)
+    llg_wait_order_payload_t* order =
+        w->payload.rare ? &w->payload.rare->order : NULL;
+    if (!order || !order->sequence || order->next < 0 ||
+        order->next >= order->n_order)
         return -1;
-    if (w->order_sequence[w->order_next] == ev) {
-        w->order_next++;
-        return w->order_next == w->n_order ? 1 : 0;
+    if (order->sequence[order->next] == ev) {
+        order->next++;
+        return order->next == order->n_order ? 1 : 0;
     }
-    for (int i = 0; i < w->order_next; i++) {
-        if (w->order_sequence[i] == ev) return 0;
+    for (int i = 0; i < order->next; i++) {
+        if (order->sequence[i] == ev) return 0;
     }
     return -1;
 }
@@ -71,9 +73,10 @@ static void event_trigger_object_unchecked(llg_event_object_t* ev) {
         }
         int matched = w->kind != W_EXPR;
         if (!matched) {
-            for (int j = 0; j < w->n; j++) {
-                if (w->expressions[j].event_object == ev &&
-                    expression_qualifies(&w->expressions[j]))
+            llg_wait_expression_payload_t* expression = &w->payload.expression;
+            for (int j = 0; j < expression->n; j++) {
+                if (expression->expressions[j].event_object == ev &&
+                    expression_qualifies(&expression->expressions[j]))
                     matched = 1;
             }
         }
@@ -164,12 +167,12 @@ void llg_wait_events(const llg_event_t* const* evs, int n) {
     w->resume_region = region_is_reactive(p->region)
                            ? LLG_REGION_REACTIVE
                            : LLG_REGION_ACTIVE;
-    w->n_evs = n;
-    w->evs = (llg_event_object_t**)llg_checked_malloc(
+    w->payload.event.n_evs = n;
+    w->payload.event.evs = (llg_event_object_t**)llg_checked_malloc(
         (size_t)n, sizeof(llg_event_object_t*), "named-event wait list");
     for (int i = 0; i < n; i++) {
-        w->evs[i] = evs[i] ? evs[i]->object : NULL;
-        event_list_add(w->evs[i], p);
+        w->payload.event.evs[i] = evs[i] ? evs[i]->object : NULL;
+        event_list_add(w->payload.event.evs[i], p);
     }
     register_wait();
     aco_yield();
@@ -184,8 +187,8 @@ void llg_wait_event_triggered(const llg_event_t* ev) {
     w->resume_region = region_is_reactive(p->region)
                            ? LLG_REGION_REACTIVE
                            : LLG_REGION_ACTIVE;
-    w->triggered_ev = ev ? ev->object : NULL;
-    event_triggered_list_add(w->triggered_ev, p);
+    w->payload.event.triggered_ev = ev ? ev->object : NULL;
+    event_triggered_list_add(w->payload.event.triggered_ev, p);
     register_wait();
     aco_yield();
 }
@@ -199,7 +202,7 @@ void llg_wait_assertion(uint64_t identity) {
     // procedural expect continuation in Reactive after its action callback
     // has been queued.
     w->resume_region = LLG_REGION_REACTIVE;
-    w->assertion_identity = identity;
+    wait_rare_allocate(w, "assertion wait payload")->assertion.identity = identity;
     register_wait();
     aco_yield();
 }
@@ -213,28 +216,30 @@ void llg_wait_order(const llg_event_t* const* evs, int n, int* result) {
     w->resume_region = region_is_reactive(p->region)
                            ? LLG_REGION_REACTIVE
                            : LLG_REGION_ACTIVE;
-    w->n_order = n;
-    w->order_next = 0;
+    llg_wait_order_payload_t* order =
+        &wait_rare_allocate(w, "wait_order payload")->order;
+    order->n_order = n;
+    order->next = 0;
     w->order_result_value = 0;
     *result = 0;
-    w->order_sequence = (llg_event_object_t**)llg_checked_malloc(
+    order->sequence = (llg_event_object_t**)llg_checked_malloc(
         (size_t)n, sizeof(llg_event_object_t*), "wait_order sequence");
-    w->evs = (llg_event_object_t**)llg_checked_malloc(
+    order->evs = (llg_event_object_t**)llg_checked_malloc(
         (size_t)n, sizeof(llg_event_object_t*), "wait_order event list");
-    w->n_evs = 0;
+    order->n_evs = 0;
     for (int i = 0; i < n; i++) {
         llg_event_object_t* object = evs[i] ? evs[i]->object : NULL;
-        w->order_sequence[i] = object;
+        order->sequence[i] = object;
         if (!object) continue;
         int seen = 0;
-        for (int j = 0; j < w->n_evs; j++) {
-            if (w->evs[j] == object) {
+        for (int j = 0; j < order->n_evs; j++) {
+            if (order->evs[j] == object) {
                 seen = 1;
                 break;
             }
         }
         if (!seen) {
-            w->evs[w->n_evs++] = object;
+            order->evs[order->n_evs++] = object;
             event_list_add(object, p);
         }
     }
@@ -258,25 +263,27 @@ void llg_wait_mixed(llg_wait_src_t* srcs, int n) {
     w->resume_region = region_is_reactive(p->region)
                            ? LLG_REGION_REACTIVE
                            : LLG_REGION_ACTIVE;
-    w->n = nsig;
-    w->specs = nsig ? (llg_event_spec_t*)llg_checked_malloc(
+    llg_wait_mixed_payload_t* mixed =
+        &wait_rare_allocate(w, "mixed wait payload")->mixed;
+    mixed->n = nsig;
+    mixed->specs = nsig ? (llg_event_spec_t*)llg_checked_malloc(
         (size_t)nsig, sizeof(llg_event_spec_t), "mixed wait specifications") : NULL;
-    w->last = nsig ? (sv4_t*)llg_checked_calloc(
+    mixed->last = nsig ? (sv4_t*)llg_checked_calloc(
         (size_t)nsig, sizeof(sv4_t), "mixed wait snapshots") : NULL;
-    w->n_evs = nev;
-    w->evs = nev ? (llg_event_object_t**)llg_checked_malloc(
+    mixed->n_evs = nev;
+    mixed->evs = nev ? (llg_event_object_t**)llg_checked_malloc(
         (size_t)nev, sizeof(llg_event_object_t*), "mixed named-event wait list") : NULL;
     int si = 0;
     int ei = 0;
     for (int i = 0; i < n; i++) {
         if (srcs[i].sig) {
-            w->specs[si].sig = srcs[i].sig;
-            w->specs[si].kind = srcs[i].kind;
-            w->last[si] = sv4_clone(srcs[i].sig);
+            mixed->specs[si].sig = srcs[i].sig;
+            mixed->specs[si].kind = srcs[i].kind;
+            mixed->last[si] = sv4_clone(srcs[i].sig);
             si++;
         } else {
-            w->evs[ei] = srcs[i].ev ? srcs[i].ev->object : NULL;
-            event_list_add(w->evs[ei], p);
+            mixed->evs[ei] = srcs[i].ev ? srcs[i].ev->object : NULL;
+            event_list_add(mixed->evs[ei], p);
             ei++;
         }
     }
@@ -313,29 +320,33 @@ void llg_wait_expressions(const llg_expr_event_spec_t* specs, int n) {
     w->resume_region = region_is_reactive(p->region)
                            ? LLG_REGION_REACTIVE
                            : LLG_REGION_ACTIVE;
-    w->n = n;
-    w->n_evs = 0;
-    w->expressions = (llg_expr_event_spec_t*)llg_checked_calloc(
+    llg_wait_expression_payload_t* expression = &w->payload.expression;
+    expression->n = n;
+    expression->n_evs = 0;
+    expression->expressions = (llg_expr_event_spec_t*)llg_checked_calloc(
         (size_t)n, sizeof(llg_expr_event_spec_t), "expression event descriptors");
-    w->last = (sv4_t*)llg_checked_calloc((size_t)n, sizeof(sv4_t), "expression event snapshots");
-    w->real_last = (double*)llg_checked_malloc(
+    expression->last = (sv4_t*)llg_checked_calloc(
+        (size_t)n, sizeof(sv4_t), "expression event snapshots");
+    expression->real_last = (double*)llg_checked_malloc(
         (size_t)n, sizeof(double), "real expression event snapshots");
-    w->evs = (llg_event_object_t**)llg_checked_malloc((size_t)n, sizeof(llg_event_object_t*), "expression named events");
+    expression->evs = (llg_event_object_t**)llg_checked_malloc(
+        (size_t)n, sizeof(llg_event_object_t*), "expression named events");
     for (int i = 0; i < n; i++) {
         if (specs[i].n_reads < 0 || specs[i].n_dependencies < 0) abort();
-        w->expressions[i] = specs[i];
-        w->expressions[i].event_object = specs[i].event ? specs[i].event->object : NULL;
-        w->expressions[i].reads = NULL;
-        w->expressions[i].dependencies = NULL;
+        expression->expressions[i] = specs[i];
+        expression->expressions[i].event_object = specs[i].event ? specs[i].event->object : NULL;
+        expression->expressions[i].reads = NULL;
+        expression->expressions[i].dependencies = NULL;
         if (specs[i].n_reads) {
             if (!specs[i].reads) abort();
-            w->expressions[i].reads = (sv4_t**)llg_checked_malloc(
+            expression->expressions[i].reads = (sv4_t**)llg_checked_malloc(
                 (size_t)specs[i].n_reads, sizeof(sv4_t*), "expression dependencies");
-            memcpy(w->expressions[i].reads, specs[i].reads, (size_t)specs[i].n_reads * sizeof(sv4_t*));
+            memcpy(expression->expressions[i].reads, specs[i].reads,
+                   (size_t)specs[i].n_reads * sizeof(sv4_t*));
         }
         if (specs[i].n_dependencies) {
             if (!specs[i].dependencies) abort();
-            w->expressions[i].dependencies = (llg_wait_dependency_t*)llg_checked_malloc(
+            expression->expressions[i].dependencies = (llg_wait_dependency_t*)llg_checked_malloc(
                 (size_t)specs[i].n_dependencies, sizeof(llg_wait_dependency_t),
                 "typed expression dependencies");
             for (int j = 0; j < specs[i].n_dependencies; j++) {
@@ -343,7 +354,7 @@ void llg_wait_expressions(const llg_expr_event_spec_t* specs, int n) {
                     (specs[i].dependencies[j].real == NULL))
                     abort();
             }
-            memcpy(w->expressions[i].dependencies, specs[i].dependencies,
+            memcpy(expression->expressions[i].dependencies, specs[i].dependencies,
                    (size_t)specs[i].n_dependencies * sizeof(llg_wait_dependency_t));
         }
     }
@@ -354,20 +365,22 @@ void llg_wait_expressions(const llg_expr_event_spec_t* specs, int n) {
         if (specs[i].event) {
             llg_event_object_t* object = specs[i].event->object;
             int seen = 0;
-            for (int j = 0; j < w->n_evs; j++) if (w->evs[j] == object) seen = 1;
+            for (int j = 0; j < expression->n_evs; j++)
+                if (expression->evs[j] == object) seen = 1;
             if (!seen) {
-                w->evs[w->n_evs++] = object;
+                expression->evs[expression->n_evs++] = object;
                 event_list_add(object, p);
             }
         } else if (specs[i].real || specs[i].real_eval || specs[i].real_sig) {
             if (specs[i].real_eval)
-                specs[i].real_eval(&w->real_last[i], specs[i].eval_context);
-            else if (specs[i].real_sig) w->real_last[i] = *specs[i].real_sig;
+                specs[i].real_eval(&expression->real_last[i], specs[i].eval_context);
+            else if (specs[i].real_sig)
+                expression->real_last[i] = *specs[i].real_sig;
             else abort();
         } else if (specs[i].eval) {
-            specs[i].eval(&w->last[i], specs[i].eval_context);
+            specs[i].eval(&expression->last[i], specs[i].eval_context);
         } else if (specs[i].sig) {
-            w->last[i] = sv4_clone(specs[i].sig);
+            expression->last[i] = sv4_clone(specs[i].sig);
         } else {
             abort();
         }

@@ -56,7 +56,7 @@ static void check_clocking_handoff(void) {
     CHECK(owner->references == 1);
     /* Handoff retains the detached owner before freeing the clocking record. */
     llg_ba(&clock, one);
-    CHECK(g.clocking_drives == NULL && g.delayed_nbas != NULL);
+    CHECK(g.clocking_drives == NULL && g.delayed_nba_buckets != NULL);
     CHECK(owner->references == 1 && !owner->active);
     ++g.now;
     commit_nbas(LLG_REGION_RE_NBA);

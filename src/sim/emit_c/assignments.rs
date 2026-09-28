@@ -272,45 +272,58 @@ fn selected_store(
     net: Option<(&str, usize)>,
     clocking: bool,
 ) -> String {
-    let (index, width, update_value, update_mask) = match selected {
+    let (index, width, plan, reverse) = match selected {
         Select::Bit(index) => (
-            format!("sv4_t _index={index};"), 1,
-            "sv4_bit_select_set(&_value, sv4_to_index(_index), _rhs);".to_owned(),
-            "sv4_bit_select_set(&_mask, sv4_to_index(_index), sv4_fill(1, 1, 0));".to_owned(),
+            format!("sv4_t _index={index};"),
+            1,
+            format!("sv4_select_plan_bit({storage_width}, sv4_to_index(_index))"),
+            false,
         ),
         Select::Part(left, right) => {
             let width = left.abs_diff(right) as u32 + 1;
-            (String::new(), width,
-             format!("sv4_part_select_set(&_value, {left}, {right}, _rhs);"),
-             format!("sv4_part_select_set(&_mask, {left}, {right}, sv4_fill(1, {width}, 0));"))
+            (
+                String::new(),
+                width,
+                format!("sv4_select_plan_part({storage_width}, {left}LL, {right}LL)"),
+                left < right,
+            )
         }
         Select::Indexed(index, width, negative) => (
-            format!("sv4_t _index={index};"), width,
-            format!("sv4_idx_part_select_set_value(&_value, _index, {width}, {}, _rhs);", negative as u8),
-            format!("sv4_idx_part_select_set_value(&_mask, _index, {width}, {}, sv4_fill(1, {width}, 0));", negative as u8),
+            format!("sv4_t _index={index};"),
+            width,
+            format!(
+                "sv4_select_plan_indexed({storage_width}, _index, {width}, {})",
+                negative as u8
+            ),
+            false,
         ),
     };
     let call = net.map_or_else(
         || {
             if clocking {
                 format!(
-                    "llg_clocking_nba_sync_masked_after({target}, _value, _mask, {ticks}, _clocking_drive_sources, _clocking_drive_source_count)"
+                    "llg_clocking_nba_sync_selected_after({target}, _rhs, {plan}, {}, {ticks}, _clocking_drive_sources, _clocking_drive_source_count)",
+                    reverse as u8
                 )
             } else {
-                format!("llg_nba_masked({target}, _value, _mask, {ticks})")
+                format!(
+                    "llg_nba_selected_after({target}, _rhs, {plan}, {}, {ticks})",
+                    reverse as u8
+                )
             }
         },
         |(net, slot)| {
             if clocking {
                 format!(
-                    "llg_clocking_nba_net_sync_masked_after(&{net}, {slot}, _value, _mask, {ticks}, _clocking_drive_sources, _clocking_drive_source_count)"
+                    "llg_clocking_nba_net_sync_selected_after(&{net}, {slot}, _rhs, {plan}, {}, {ticks}, _clocking_drive_sources, _clocking_drive_source_count)",
+                    reverse as u8
                 )
             } else {
                 unreachable!("ordinary nonblocking assignments cannot target net drivers")
             }
         },
     );
-    format!("{{ sv4_t _rhs=sv4_cast({value}, {width}, 0); {index} sv4_t _value=sv4_fill(0, {storage_width}, 0); sv4_t _mask=_value; {update_value} {update_mask} {call}; }}")
+    format!("{{ sv4_t _rhs=sv4_cast({value}, {width}, 0); {index} {call}; }}")
 }
 
 pub(super) fn render_nba(

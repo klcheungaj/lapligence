@@ -178,6 +178,10 @@ invalid prefixes cannot become valid again through later offsets. Unknown or
 unrepresentable bases produce an empty valid interval. Width/shape mismatches
 remain controlled fatal runtime errors.
 
+Single-stage bit, part and indexed helpers build the same descriptor for queued
+writes. `sv4_select_plan_slice` copies only its valid interval, optionally
+reversing an ascending declared part-select into increasing storage-bit order.
+
 `sv4_select_plan_read` borrows the whole source and returns an independent unsigned
 packed owner with X in invalid positions. `sv4_select_plan_set` borrows both the
 plan and RHS; it snapshots an aliased RHS before modifying the destination and

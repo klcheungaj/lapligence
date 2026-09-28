@@ -37,7 +37,7 @@ static void check_nba_and_scopes(void) {
     for (unsigned i = 0; i < 1000; ++i) {
         source.bits[0] = 42;
         llg_nba_after(&target, source, 0);
-        CHECK(g.delayed_nbas->value.bits != source.bits);
+        CHECK(g.nba_queues[LLG_REGION_NBA].head->value.bits != source.bits);
         source.bits[0] = 99;
         commit_nbas(LLG_REGION_NBA);
         CHECK(target.bits[0] == 42);
@@ -57,13 +57,13 @@ static void check_nba_and_scopes(void) {
     sv4_replace(&values[0], sv4_clone(&source));
     sv4_replace(&values[1], sv4_zero(65537, 0));
     llg_nba_masked(&target, source, mask, 0);
-    CHECK(proc->nba_head != NULL && g.delayed_nbas == NULL);
+    CHECK(proc->nba_head != NULL && g.delayed_nba_buckets == NULL);
     proc->wait.kind = W_EVENTS;
-    proc->wait.n = 2;
-    proc->wait.last = llg_checked_calloc(2, sizeof(sv4_t), "test wait snapshots");
-    sv4_copy(&proc->wait.last[0], &source);
-    sv4_copy(&proc->wait.last[1], &target);
-    sv4_copy(&proc->wait.level_val, &source);
+    proc->wait.payload.expression.n = 2;
+    proc->wait.payload.expression.last =
+        llg_checked_calloc(2, sizeof(sv4_t), "test wait snapshots");
+    sv4_copy(&proc->wait.payload.expression.last[0], &source);
+    sv4_copy(&proc->wait.payload.expression.last[1], &target);
     proc->wait.next = g.waiters;
     g.waiters = &proc->wait;
     ++g.wait_count;
@@ -84,6 +84,87 @@ static void check_nba_and_scopes(void) {
     sv4_destroy(&source);
     sv4_destroy(&target);
     sv4_destroy(&mask);
+    CHECK(value_test_live() == 0);
+}
+
+static void check_nba_fifo_and_cancellation(void) {
+    llg_rt_init();
+    g.current_region = LLG_REGION_ACTIVE;
+    sv4_t target = sv4_zero(8, 0);
+    sv4_t one = sv4_from_u64(1, 8, 0);
+    sv4_t two = sv4_from_u64(2, 8, 0);
+    sv4_t three = sv4_from_u64(3, 8, 0);
+    llg_proc_t* first = llg_spawn(never_run, "first NBA owner");
+    llg_proc_t* second = llg_spawn(never_run, "second NBA owner");
+
+    aco_gtls_co = first->co;
+    llg_nba_after(&target, one, 0);
+    aco_gtls_co = second->co;
+    llg_nba_after(&target, two, 0);
+    aco_gtls_co = first->co;
+    llg_nba_after(&target, three, 0);
+    llg_nba_after(&target, three, 1);
+    aco_gtls_co = g.main_co;
+
+    // Cancelling one issuer removes only its current-slot entries. The
+    // future write retains its independent payload and destination.
+    llg_kill_proc(first, 0);
+    reap_retired_procs();
+    CHECK(g.nba_queues[LLG_REGION_NBA].head == second->nba_head);
+    commit_nbas(LLG_REGION_NBA);
+    CHECK(target.bits[0] == 2 && second->nba_head == NULL);
+    ++g.now;
+    commit_nbas(LLG_REGION_NBA);
+    CHECK(target.bits[0] == 3);
+
+    llg_kill_proc(second, 0);
+    reap_retired_procs();
+    sv4_destroy(&target);
+    sv4_destroy(&one);
+    sv4_destroy(&two);
+    sv4_destroy(&three);
+    llg_rt_cleanup();
+    CHECK(value_test_live() == 0);
+}
+
+static void check_narrow_selected_nbas(void) {
+    llg_rt_init();
+    g.current_region = LLG_REGION_ACTIVE;
+    sv4_t target = sv4_from_u64(0xa55a, 16, 0);
+    sv4_t expected = sv4_clone(&target);
+    sv4_t source = sv4_from_masks(0x9, 0x2, 0x4, 4, 0);
+    sv4_select_plan_t plan = sv4_select_plan_part(target.width, 2, 5);
+    sv4_part_select_set(&expected, 2, 5, source);
+
+    llg_nba_selected_after(&target, source, plan, 1, 0);
+    llg_nba_t* queued = g.nba_queues[LLG_REGION_NBA].head;
+    CHECK(queued && queued->has_range && !queued->has_mask);
+    CHECK(queued->range_offset == 2 && queued->range_width == 4);
+    CHECK(queued->value.width == 4);
+    commit_nbas(LLG_REGION_NBA);
+    CHECK(sv4_same(target, expected));
+
+    sv4_t mask = sv4_from_u64(5, 16, 0);
+    llg_nba_masked(&target, target, mask, 0);
+    queued = g.nba_queues[LLG_REGION_NBA].head;
+    CHECK(queued && queued->has_mask && !queued->has_range);
+    commit_nbas(LLG_REGION_NBA);
+
+    plan = sv4_select_plan_bit(target.width, UINT64_MAX);
+    sv4_t invalid_source = sv4_zero(1, 0);
+    llg_nba_selected_after(&target, invalid_source, plan, 0, 1);
+    CHECK(g.delayed_nba_buckets &&
+          g.delayed_nba_buckets->queues[LLG_REGION_NBA].head->range_width == 0);
+    ++g.now;
+    commit_nbas(LLG_REGION_NBA);
+    CHECK(sv4_same(target, expected));
+
+    sv4_destroy(&invalid_source);
+    sv4_destroy(&mask);
+    sv4_destroy(&source);
+    sv4_destroy(&expected);
+    sv4_destroy(&target);
+    llg_rt_cleanup();
     CHECK(value_test_live() == 0);
 }
 
@@ -339,6 +420,8 @@ int main(void) {
     check_file_messages();
     check_time_and_io();
     check_nba_and_scopes();
+    check_nba_fifo_and_cancellation();
+    check_narrow_selected_nbas();
     check_frames();
     check_inertial_and_force();
     check_sequence_snapshots();
