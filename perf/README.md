@@ -38,7 +38,10 @@ under a unique directory below `--scratch-dir` (or `${TMPDIR:-/tmp}`), while TSV
 logs, toolchain metadata, and output hashes go under `--output-dir`. Use
 `--keep-scratch` when the generated executable is needed for profiling. CMake
 build time is intentionally a cold, self-contained generated-project build; use
-the same method for both sides of an A/B comparison.
+the same method for both sides of an A/B comparison. The default C flags match
+the generated model's Release optimization (`-O3`) and add the project's
+warning flags. Use `--cflags '-O2 -Wall -Wno-unused-function'` for the separate
+warning-clean build check required at `-O2`.
 
 The corpus parameters are named tunables, not product thresholds. The standard
 sizes are intended to take roughly seconds to tens of seconds on the Phase 0

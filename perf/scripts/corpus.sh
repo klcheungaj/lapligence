@@ -38,7 +38,7 @@ Options:
   --mode MODE          default, no-opt, or both (default: default)
   --cc PATH            C compiler for generated models (default: $CC or cc)
   --cmake PATH         CMake executable (default: cmake)
-  --cflags FLAGS       Generated-C flags (default: -O2 -Wall -Wno-unused-function)
+  --cflags FLAGS       Generated-C flags (default: -O3 -Wall -Wno-unused-function)
   --keep-scratch       Retain generated models and print their location
   --list-configs       List named configurations and exit
   -h, --help           Show this help
@@ -104,7 +104,7 @@ size_set=standard
 mode=default
 cc=${CC:-cc}
 cmake_program=${LLG_CMAKE:-cmake}
-cflags='-O2 -Wall -Wno-unused-function'
+cflags='-O3 -Wall -Wno-unused-function'
 keep_scratch=0
 many_size=
 declare -a requested_configs=()
