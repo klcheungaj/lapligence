@@ -20,9 +20,29 @@
 #include <ctype.h>
 #include <errno.h>
 
+#if defined(__unix__) || defined(__APPLE__)
+#include <sys/resource.h>
+#endif
+
 // Formatting precision is a request limit, not a storage capacity.
 // Scratch allocations are sized for each value and requested conversion.
 #define LLG_TIMEFORMAT_MAX_PRECISION (2u * LLG_SUPPORTED_WIDTH_LIMIT + 128u)
+
+static void llg_warn_host_stack_limit(void) {
+#if defined(__unix__) || defined(__APPLE__)
+    struct rlimit limit;
+    const rlim_t estimate = (rlim_t)LLG_HOST_STACK_ESTIMATE_BYTES;
+    if (getrlimit(RLIMIT_STACK, &limit) == 0 &&
+        limit.rlim_cur != RLIM_INFINITY && limit.rlim_cur < estimate) {
+        fprintf(stderr,
+                "llg: warning: host stack limit is %llu bytes; at least %llu "
+                "bytes is estimated for the scheduler, one polled coroutine "
+                "segment, and the 256-call recursion guard\n",
+                (unsigned long long)limit.rlim_cur,
+                (unsigned long long)estimate);
+    }
+#endif
+}
 
 // ── Fatal boundary checks ────────────────────────────────────────────────────
 

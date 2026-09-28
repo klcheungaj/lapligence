@@ -114,12 +114,11 @@ jobs:
       CARGO_PROFILE_DEV_DEBUG: "0"
       CARGO_PROFILE_DEV_STRIP: debuginfo
       CARGO_INCREMENTAL: "0"
-      # sim::build forwards these flags to every generated-model C source,
-      # including value/string/container/random runtimes, llg_rt.c, aco.c, and the final link. ACO_USE_ASAN enables
-      # libaco's no_sanitize_address annotations on its stack-copy routines.
+      # sim::build forwards these flags to every generated-model C source and
+      # the final link. Stackless coroutine frames need no sanitizer exception.
       LLG_CC: gcc
       LLG_CFLAGS: >-
-        -DACO_USE_ASAN -fsanitize=address,undefined
+        -fsanitize=address,undefined
         -fno-omit-frame-pointer -fno-sanitize-recover=all
       ASAN_OPTIONS: detect_leaks=1:strict_string_checks=1:log_path=/tmp/llg-asan-ci-model
       UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
@@ -268,7 +267,7 @@ jobs:
         with:
           arch: ${{ matrix.msvc_arch }}
 
-      - name: Compile llg_co with GCC, Clang, or AppleClang
+      - name: Phase 1 llg_co compile gate with GCC, Clang, or AppleClang
         if: matrix.platform != 'windows'
         shell: bash
         run: |
@@ -302,11 +301,11 @@ jobs:
                 -o "$gate_dir/$compiler-$variant-include.o"
             done
             "$compiler" -std=c11 -O2 -Wall -Wno-unused-function \
-              -Isrc/sim/rt -Ivendor/libaco -c src/sim/rt/llg_rt.c \
+              -Isrc/sim/rt -c src/sim/rt/llg_rt.c \
               -o "$gate_dir/$compiler-runtime.o"
           done
 
-      - name: Compile llg_co with MSVC C11
+      - name: Phase 1 llg_co compile gate with MSVC C11
         if: matrix.platform == 'windows'
         shell: pwsh
         run: |
@@ -367,6 +366,29 @@ jobs:
       - name: Build release executables
         if: matrix.platform != 'linux'
         run: cargo build --locked --release --bin llg_ls --bin llg --target ${{ matrix.target }}
+
+      - name: Build and run generated model with MSVC
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP "llg-msvc-generated-model"
+          $llg = "target/${{ matrix.target }}/release/llg.exe"
+          & $llg --top tb --gen-only --out-dir $root tests/fixtures/sim/dynamic_ownership/numeric_loop.sv
+          if ($LASTEXITCODE -ne 0) { throw "llg generated-model export failed" }
+          $project = Join-Path $root "sim/tb"
+          $build = Join-Path $project "build"
+          & cmake -S $project -B $build -G Ninja -DCMAKE_C_COMPILER=cl.exe -DCMAKE_BUILD_TYPE=Release
+          if ($LASTEXITCODE -ne 0) { throw "MSVC generated-model configure failed" }
+          & cmake --build $build --config Release
+          if ($LASTEXITCODE -ne 0) { throw "MSVC generated-model build failed" }
+          $sim = Join-Path $build "bin/sim.exe"
+          if (-not (Test-Path -LiteralPath $sim)) {
+              $sim = Join-Path $build "bin/Release/sim.exe"
+          }
+          if (-not (Test-Path -LiteralPath $sim)) { throw "generated simulator was not found" }
+          $modelOutput = (& $sim | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0) { throw "generated simulator failed with $LASTEXITCODE" }
+          if ($modelOutput -ne "1007") { throw "unexpected generated-model output: $modelOutput" }
 
       - name: Verify Linux architecture and fully static linkage
         if: matrix.platform == 'linux'

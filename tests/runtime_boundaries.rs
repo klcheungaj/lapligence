@@ -180,3 +180,44 @@ fn stop_resume_hook_preserves_the_live_scheduler_until_explicit_resume() {
         "unexpected probe diagnostics: {output:?}"
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn low_posix_stack_limit_warns_before_simulation() {
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let dir =
+        sim_harness::TempDir::new("runtime-stack-limit").expect("create stack-limit directory");
+    let executable = sim::build::build_model_cmake(
+        dir.path(),
+        &[
+            ("llg_rt_selftest.c", sim::rt::selftest_source()),
+            ("selftest_co.h", sim::rt::selftest_support_source()),
+        ],
+    )
+    .expect("stack-limit probe should compile");
+
+    let output = sim_harness::run_command(
+        Command::new("sh")
+            .args([
+                "-c",
+                "ulimit -s 1024; exec \"$1\" --stop-resume-probe",
+                "llg-stack-limit-probe",
+            ])
+            .arg(&executable),
+        Duration::from_secs(10),
+    )
+    .expect("stack-limit probe should start");
+    assert!(
+        output.status.success(),
+        "stack-limit probe failed: {output:?}"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("host stack limit is 1048576 bytes")
+            && stderr.contains("256-call recursion guard"),
+        "missing low-stack warning: {stderr}"
+    );
+}

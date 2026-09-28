@@ -19,7 +19,8 @@ and compile-time check:
 
 The runtime header performs the same conditional check. Out-of-line `llg_co`
 symbols retain their `..._abi1` link names, independently rejecting a stale
-runtime archive.
+runtime archive. Self-contained model exports contain `llg_co` and the runtime;
+there is no compatibility coroutine source set.
 
 A process, fork branch, assertion action, and every other suspendable generated
 function has this entry type:
@@ -370,7 +371,10 @@ Generated startup uses only:
 llg_rt_init_with_args_and_precision(argc, argv, LLG_MODEL_PRECISION_FS);
 ```
 
-There is no stack-values macro or stack-sized init entry.
+There is no stack-values macro or stack-sized init entry. Native stack policy is
+host-level: POSIX startup warns below the 8 MiB estimate and generated MSVC
+targets reserve that default, while the 256-call guard remains in generated
+plain functions.
 
 ## Ownership and scheduling invariants
 

@@ -287,7 +287,7 @@ Omitting it preserves existing settings and defaults; `/build` is never assumed.
 | --- | --- |
 | Generated model sources, CMake trees, objects and simulators | `PATH/lapligence/worktrees/<worktree-hash>/run.<unique>/tests/` |
 | Temporary files from tests/tools honoring Unix `TMPDIR` | The same run's `tmp/` |
-| Compatible simulation runtime/libaco archives | Shared `PATH/lapligence/runtime-cache/` |
+| Compatible simulation runtime archives | Shared `PATH/lapligence/runtime-cache/` |
 | Cargo targets and intermediate build artifacts | Each worktree's `target/` on its existing filesystem |
 | Native Slang CMake build | Each worktree's existing `target/slang/` |
 | Cargo downloads and optional compiler caches | Existing persistent locations |
@@ -372,16 +372,15 @@ cargo run --locked --bin llg -- --no-opt --top tb tests/fixtures/sim/type_confor
 
 ```sh
 LLG_CC=gcc \
-LLG_CFLAGS='-DACO_USE_ASAN -fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all' \
+LLG_CFLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all' \
 ASAN_OPTIONS='detect_leaks=1:strict_string_checks=1:log_path=/tmp/llg-asan-model' \
 UBSAN_OPTIONS='print_stacktrace=1:halt_on_error=1' \
 cargo nextest run --locked --test sim_partial_features --test sim_type_conformance --test sim_procedural_assign --test runtime_values --test runtime_random
 ```
 
-Inspect every `/tmp/llg-asan-model.*` file for errors. Generated coroutine models
-may emit the `__asan_handle_no_return` stack-switch warning; file routing preserves
-exact program-stderr assertions without hiding sanitizer reports. Real stack-switch
-acceptance is distinct from sanitizer-safe components.
+Inspect every `/tmp/llg-asan-model.*` file for errors. Stackless coroutine frames
+need no stack-switch suppression; file routing preserves exact program-stderr
+assertions without hiding sanitizer reports.
 
 For SYN-039, use those same sanitizer/compiler settings with the worktree
 runner and the following filters:
@@ -389,7 +388,7 @@ runner and the following filters:
 ```sh
 export CARGO_BUILD_JOBS=10
 LLG_CC=gcc \
-LLG_CFLAGS='-DACO_USE_ASAN -fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all' \
+LLG_CFLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all' \
 ASAN_OPTIONS='detect_leaks=1:strict_string_checks=1:log_path=/tmp/llg-asan-syn039-model' \
 UBSAN_OPTIONS='print_stacktrace=1:halt_on_error=1' \
 scripts/run-tests.sh --test-work-dir /build --test-threads 10 \

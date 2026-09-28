@@ -11,8 +11,7 @@
 //! (`vpi_user.h` / `llg_vpi.c`),
 //! [`container_sources`] and [`string_sources`] the dynamically sized value
 //! stores, [`runtime_sources`] the event scheduler (`llg_rt.h` / `llg_rt.c`),
-//! [`libaco_sources`] the vendored coroutine
-//! library (`aco.h` / `aco.c` / `acosw.S`), [`waveform_sources`] the optional
+//! [`waveform_sources`] the optional
 //! asynchronous VCD/FST writer and vendored libfst sources, and
 //! [`selftest_source`] the runtime's C self-test.  The driver and integration
 //! tests write these into a build directory and build them together with the
@@ -40,16 +39,13 @@ pub fn rng_sources() -> (&'static str, &'static str) {
     (include_str!("llg_rng.h"), include_str!("llg_rng.c"))
 }
 
-/// Stackless coroutine frame, chain, anchor, and arena support.  The library
-/// supplies generated frame storage and process arenas while libaco still
-/// provides control flow.
+/// Stackless coroutine frame, chain, anchor, and arena support.
 pub fn coroutine_sources() -> (&'static str, &'static str) {
     (include_str!("llg_co.h"), include_str!("llg_co.c"))
 }
 
 /// (header, implementation) of the event scheduler and runtime facade.
-/// Compile together with [`value_sources`], [`coroutine_sources`] and
-/// [`libaco_sources`].
+/// Compile together with [`value_sources`] and [`coroutine_sources`].
 pub fn runtime_sources() -> (&'static str, &'static str) {
     (
         include_str!("llg_rt.h"),
@@ -142,15 +138,6 @@ pub fn container_sources() -> (&'static str, &'static str) {
 /// Scheduler-independent owned SystemVerilog string values and operations.
 pub fn string_sources() -> (&'static str, &'static str) {
     (include_str!("llg_string.h"), include_str!("llg_string.c"))
-}
-
-/// (aco.h, aco.c, acosw.S) from vendor/libaco.
-pub fn libaco_sources() -> (&'static str, &'static str, &'static str) {
-    (
-        include_str!("../../../vendor/libaco/aco.h"),
-        include_str!("../../../vendor/libaco/aco.c"),
-        include_str!("../../../vendor/libaco/acosw.S"),
-    )
 }
 
 /// Optional waveform runtime and the official GTKWave libfst writer snapshot.

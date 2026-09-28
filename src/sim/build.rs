@@ -27,8 +27,9 @@
 //! Normal builds compile the runtime into a cache (see
 //! [`CmakeBuildOpts::runtime_cache_dir`]) and
 //! link each generated model against the cached static archive. The cache key
-//! covers the packed-value ABI, sources, toolchain, flags, generator, launcher,
-//! platform, and waveform support. `--gen-only` output remains self-contained.
+//! covers the packed-value ABI, sources, compiler-reported target, toolchain,
+//! flags, generator, launcher, platform, and waveform support. `--gen-only`
+//! output remains self-contained.
 //!
 //! Environment variables (each is a fallback for the matching
 //! [`CmakeBuildOpts`] field, which wins when set):
@@ -56,10 +57,9 @@ use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 /// The generated project file. Cached builds compile only the model sources;
-/// self-contained `--gen-only` output retains the runtime and libaco sources.
-/// ASM is enabled because libaco's context switch lives in `acosw.S`.
+/// self-contained `--gen-only` output retains the runtime sources.
 const CMAKELISTS_TEMPLATE: &str = r#"cmake_minimum_required(VERSION 3.16)
-project(llg_sim_model C ASM)
+project(llg_sim_model C)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
@@ -78,7 +78,11 @@ else()
   add_executable(sim {ALL_SOURCES})
 endif()
 set_target_properties(sim PROPERTIES ENABLE_EXPORTS ON)
-if(NOT MSVC)
+if(MSVC)
+  set(LLG_HOST_STACK_ESTIMATE_BYTES 8388608 CACHE STRING
+      "Host stack reserved for scheduler, one polled coroutine segment, and recursion guard")
+  target_link_options(sim PRIVATE /STACK:${LLG_HOST_STACK_ESTIMATE_BYTES})
+else()
   target_link_libraries(sim PRIVATE m)
   if(UNIX AND NOT APPLE)
     target_link_libraries(sim PRIVATE dl)
@@ -89,7 +93,7 @@ endif()
 "#;
 
 const RUNTIME_CMAKELISTS_TEMPLATE: &str = r#"cmake_minimum_required(VERSION 3.16)
-project(llg_sim_runtime C ASM)
+project(llg_sim_runtime C)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
@@ -246,8 +250,8 @@ impl Error for BuildError {
 }
 
 /// Build the simulation model in `out_dir` with CMake (default options) and
-/// return the path of the resulting executable.  Sources are written exactly
-/// like [`generate_model_sources`] does (runtime + libaco + `extra`).
+/// return the path of the resulting executable. Sources are written exactly
+/// like [`generate_model_sources`] does (runtime + `extra`).
 pub fn build_model_cmake(out_dir: &Path, extra: &[(&str, &str)]) -> Result<PathBuf, BuildError> {
     build_model_cmake_with_opts(out_dir, extra, &CmakeBuildOpts::default())
 }
@@ -336,7 +340,7 @@ pub fn build_model_cmake_with_opts(
     find_sim_exe(&build_dir.join("bin"))
 }
 
-/// Write the runtime + libaco sources plus `extra` (the generated `model.c`)
+/// Write the runtime sources plus `extra` (the generated `model.c`)
 /// and the generated `CMakeLists.txt` into `out_dir` — everything
 /// [`build_model_cmake_with_opts`] needs except actually invoking cmake.
 /// Used by `llg --gen-only`.
@@ -370,7 +374,7 @@ pub fn generate_model_sources_with_opts(
 
 /// File names [`super::write_sim_sources`] always writes (must mirror its
 /// fixed list there) plus this module's own `CMakeLists.txt`.
-const FIXED_SOURCE_NAMES: [&str; 23] = [
+const FIXED_SOURCE_NAMES: [&str; 19] = [
     "llg_rt.h",
     "llg_rt.c",
     "llg_value.h",
@@ -388,10 +392,6 @@ const FIXED_SOURCE_NAMES: [&str; 23] = [
     "llg_container.c",
     "llg_string.h",
     "llg_string.c",
-    "aco.h",
-    "aco.c",
-    "acosw.S",
-    "aco_assert_override.h",
     "svdpi.h",
     "CMakeLists.txt",
 ];
@@ -457,7 +457,7 @@ fn remove_dir_all_quiet(dir: &Path) {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/// Emit `CMakeLists.txt` for the source set `extra` (+ runtime + libaco).
+/// Emit `CMakeLists.txt` for the source set `extra` plus the runtime.
 fn write_cmakelists(
     out_dir: &Path,
     extra: &[(&str, &str)],
@@ -467,7 +467,7 @@ fn write_cmakelists(
     let mut sources: Vec<&str> = extra
         .iter()
         .map(|(name, _)| *name)
-        .filter(|name| name.ends_with(".c") || name.ends_with(".S"))
+        .filter(|name| name.ends_with(".c"))
         .collect();
     sources.extend([
         "llg_value.c",
@@ -476,8 +476,6 @@ fn write_cmakelists(
         "llg_rt.c",
         "llg_random.c",
         "llg_vpi.c",
-        "aco.c",
-        "acosw.S",
         "llg_container.c",
         "llg_string.c",
     ]);
@@ -487,7 +485,7 @@ fn write_cmakelists(
     let model_sources: Vec<&str> = extra
         .iter()
         .map(|(name, _)| *name)
-        .filter(|name| name.ends_with(".c") || name.ends_with(".S"))
+        .filter(|name| name.ends_with(".c"))
         .collect();
     let cmakelists = CMAKELISTS_TEMPLATE
         .replace("{MODEL_SOURCES}", &model_sources.join(" "))
@@ -572,9 +570,8 @@ fn dpi_link_setup(opts: &CmakeBuildOpts) -> Result<String, BuildError> {
 
 /// Build or reuse the immutable runtime archive for one value-layout ABI.
 ///
-/// Packed widths do not affect the dynamic value layout or the cache key.
-/// Stack headroom is deliberately absent: generated
-/// model code passes that value to `llg_rt_init_with_stack` at runtime.
+/// Packed widths and host-stack headroom do not affect the dynamic value
+/// layout or the cache key.
 fn prepare_runtime_cache(
     waveform: bool,
     cc: &str,
@@ -712,8 +709,6 @@ fn runtime_source_names(waveform: bool) -> Vec<&'static str> {
         "llg_rt.c",
         "llg_random.c",
         "llg_vpi.c",
-        "aco.c",
-        "acosw.S",
         "llg_container.c",
         "llg_string.c",
     ];
@@ -755,8 +750,21 @@ fn runtime_cache_key(
     cmake_prog: &str,
     opts: &CmakeBuildOpts,
 ) -> String {
-    let mut hash = 0xcbf29ce484222325u64;
     let compiler = compiler_identity(cc);
+    let target = compiler_target(cc);
+    runtime_cache_key_with_compiler(waveform, cc, flags, cmake_prog, opts, &compiler, &target)
+}
+
+fn runtime_cache_key_with_compiler(
+    waveform: bool,
+    cc: &str,
+    flags: &str,
+    cmake_prog: &str,
+    opts: &CmakeBuildOpts,
+    compiler: &str,
+    target: &str,
+) -> String {
+    let mut hash = 0xcbf29ce484222325u64;
     let generator = generator_for(opts).unwrap_or_default();
     for text in [
         RUNTIME_CMAKELISTS_TEMPLATE,
@@ -778,15 +786,12 @@ fn runtime_cache_key(
         super::rt::container_sources().1,
         super::rt::string_sources().0,
         super::rt::string_sources().1,
-        super::rt::libaco_sources().0,
-        super::rt::libaco_sources().1,
-        super::rt::libaco_sources().2,
-        include_str!("../../vendor/libaco/aco_assert_override.h"),
         include_str!("../../vendor/slang/external/ieee1800/svdpi.h"),
         cc,
         flags,
         cmake_prog,
-        &compiler,
+        compiler,
+        target,
         &generator,
         opts.launcher.as_deref().unwrap_or(""),
         std::env::consts::OS,
@@ -814,14 +819,66 @@ fn runtime_cache_key(
 
 fn compiler_identity(cc: &str) -> String {
     let mut identity = cc.to_owned();
-    for argument in ["--version", "-dumpmachine"] {
+    for argument in ["--version", "/Bv"] {
         if let Ok(output) = Command::new(cc).arg(argument).output() {
             identity.push('\n');
             identity.push_str(&String::from_utf8_lossy(&output.stdout));
             identity.push_str(&String::from_utf8_lossy(&output.stderr));
+            if output.status.success() {
+                break;
+            }
         }
     }
     identity
+}
+
+fn compiler_target(cc: &str) -> String {
+    if let Ok(output) = Command::new(cc).arg("-dumpmachine").output() {
+        if output.status.success() {
+            let target = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+            if !target.is_empty() {
+                return target;
+            }
+        }
+    }
+    for argument in ["--version", "/Bv"] {
+        if let Ok(output) = Command::new(cc).arg(argument).output() {
+            let text = format!(
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            if let Some(target) = compiler_target_from_output(&text) {
+                return target;
+            }
+        }
+    }
+    format!(
+        "unreported-{}-{}",
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    )
+}
+
+fn compiler_target_from_output(output: &str) -> Option<String> {
+    for line in output.lines() {
+        let line = line.trim();
+        if let Some(target) = line.strip_prefix("Target:") {
+            let target = target.trim();
+            if !target.is_empty() {
+                return Some(target.to_owned());
+            }
+        }
+        if line.contains("Microsoft") {
+            if let Some((_, architecture)) = line.rsplit_once(" for ") {
+                let architecture = architecture.trim();
+                if !architecture.is_empty() && !architecture.contains(' ') {
+                    return Some(format!("msvc-{architecture}"));
+                }
+            }
+        }
+    }
+    None
 }
 
 fn find_runtime_library(build_dir: &Path) -> Option<PathBuf> {
@@ -1116,6 +1173,41 @@ mod tests {
         assert_ne!(
             base,
             runtime_cache_key(false, "cc", "-O2", "cmake", &launched)
+        );
+        assert_ne!(
+            runtime_cache_key_with_compiler(
+                false,
+                "cc",
+                "-O2",
+                "cmake",
+                &defaults,
+                "same compiler",
+                "x86_64-pc-linux-gnu",
+            ),
+            runtime_cache_key_with_compiler(
+                false,
+                "cc",
+                "-O2",
+                "cmake",
+                &defaults,
+                "same compiler",
+                "aarch64-pc-linux-gnu",
+            ),
+            "compiler-reported targets must select distinct runtime archives"
+        );
+    }
+
+    #[test]
+    fn compiler_target_parses_clang_and_msvc_reports() {
+        assert_eq!(
+            compiler_target_from_output("clang version 19\nTarget: aarch64-apple-darwin\n"),
+            Some("aarch64-apple-darwin".to_owned())
+        );
+        assert_eq!(
+            compiler_target_from_output(
+                "Microsoft (R) C/C++ Optimizing Compiler Version 19.44 for ARM64\n"
+            ),
+            Some("msvc-ARM64".to_owned())
         );
     }
 

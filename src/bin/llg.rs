@@ -29,7 +29,7 @@
 //!
 //! Model build (CMake is the only supported model builder):
 //!
-//! - After C emission the driver writes the model plus runtime/libaco sources
+//! - After C emission the driver writes the model plus stackless runtime sources
 //!   into `<out-dir>/sim/<design>` (`--out-dir`, default `build`) and
 //!   automatically configures + builds them with CMake
 //!   (`sim::build::build_model_cmake_with_opts`). Each tool option wins over
@@ -48,7 +48,7 @@
 //!
 //! Flow: compile + elaborate with Slang (via `core::compile`), lower the
 //! owned semantic database to C11 (`sim::codegen::generate`), write the model plus the
-//! runtime and libaco into `<out-dir>/sim/<design>`, build through CMake
+//! runtime into `<out-dir>/sim/<design>`, build through CMake
 //! (unless `--gen-only`), and run the resulting simulator (stdout inherits;
 //! the exit code is the simulator's).
 

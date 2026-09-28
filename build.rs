@@ -28,7 +28,6 @@ fn emit_rerun_if_changed() {
     for path in [
         "Cargo.lock",
         "patches/slang",
-        "patches/libaco",
         "src/wrapper/mimalloc_shim.c",
         "src/wrapper/slang/CMakeLists.txt",
         "src/wrapper/slang_c_api.cpp",
@@ -39,7 +38,6 @@ fn emit_rerun_if_changed() {
         "vendor/slang/include",
         "vendor/slang/scripts",
         "vendor/slang/source",
-        "vendor/libaco",
     ] {
         println!("cargo:rerun-if-changed={path}");
     }

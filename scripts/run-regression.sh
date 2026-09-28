@@ -182,7 +182,7 @@ record_git_state() {
     fi
 
     local path expected actual dirty
-    for path in vendor/libaco vendor/slang; do
+    for path in vendor/slang; do
         expected=$(git ls-tree HEAD -- "$path" | awk '{print $3}')
         [[ $expected =~ ^[0-9a-f]{40}$ ]] || die "HEAD has no gitlink for $path"
         actual=$(git -C "$path" rev-parse HEAD)
@@ -269,7 +269,7 @@ run_phase optimizer-differential \
 run_phase generated-runtime-sanitizers \
     env \
     LLG_CC=gcc \
-    LLG_CFLAGS='-DACO_USE_ASAN -fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all' \
+    LLG_CFLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all' \
     ASAN_OPTIONS='detect_leaks=1:strict_string_checks=1:log_path=/tmp/llg-asan-regression-model' \
     UBSAN_OPTIONS='print_stacktrace=1:halt_on_error=1' \
     cargo test --locked --jobs 2 --all-features \
@@ -295,7 +295,7 @@ run_phase generated-runtime-sanitizers \
 run_phase generated-tagged-guard-sanitizers \
     env \
     LLG_CC=gcc \
-    LLG_CFLAGS='-DACO_USE_ASAN -fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all' \
+    LLG_CFLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all' \
     ASAN_OPTIONS='detect_leaks=1:strict_string_checks=1:log_path=/tmp/llg-asan-regression-model' \
     UBSAN_OPTIONS='print_stacktrace=1:halt_on_error=1' \
     cargo test --locked --jobs 2 --all-features --lib \

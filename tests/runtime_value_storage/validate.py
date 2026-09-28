@@ -69,8 +69,8 @@ def component(runner: Runner, args, label: str, compiler: str, configuration: st
     runner.note(label + "-coverage", "passed", f"verified {len(tests)} required tests",
                 tests=tests, capabilities=capabilities)
     for capability, reason in (("waveforms", "waveforms explicitly disabled"),
-                               ("scheduler", "no native libaco scheduler tests on this configuration"),
-                               ("coroutines", "real stack-switch tests not covered by this configuration")):
+                               ("scheduler", "scheduler tests explicitly disabled"),
+                               ("coroutines", "coroutine tests not covered by this configuration")):
         if not capabilities[capability]:
             runner.note(label + "-" + capability, "excluded", reason)
     runner.run(label + "-ctest", [args.ctest, "--test-dir", str(build), "--build-config", configuration,

@@ -72,7 +72,7 @@ fn value_runtime_compiles_and_runs_without_scheduler() {
         .unwrap_or_else(|error| panic!("run C compiler `{compiler}`: {error}"));
     assert!(
         compiled.status.success(),
-        "standalone value runtime must compile without scheduler/libaco:\n{}",
+        "standalone value runtime must compile without the scheduler:\n{}",
         String::from_utf8_lossy(&compiled.stderr)
     );
 

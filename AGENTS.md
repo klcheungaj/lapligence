@@ -3,7 +3,7 @@
 Lapligence (`llg`) shares a Rust core and vendored Slang v11.0 between:
 
 - Simulator: source → Slang parse/compile/elaborate → owned `core::db` →
-  semantic/execution IR → optimization → C11 → CMake-built runtime/libaco model.
+  semantic/execution IR → optimization → C11 → CMake-built stackless runtime model.
 - LSP: the same frontend → owned analysis → tower-lsp stdio diagnostics, tokens,
   hover, definition, symbols, completion, references, rename/prepareRename and
   read-only module explorer.
@@ -42,8 +42,8 @@ rather than duplicate. Use the [source map](docs/source_layout.md) to find domai
 - Keep tower-lsp/tokio/dashmap in `llg_ls`, behind default-on `lsp` and the bin's
   `required-features = ["lsp"]`. `cargo build --lib --no-default-features` must
   work without them. Bins import `llg::core`, `llg::ffi` and `llg::sim`; no
-  `#[path]` includes. Embed libaco only in generated-model runtime archives,
-  never Rust binaries.
+  `#[path]` includes. The C11 runtime, including `llg_co`, is packaged only with
+  generated models, never linked into Rust binaries.
 
 ## Build and references
 
@@ -58,10 +58,10 @@ worktree/run, shares the runtime cache, and keeps Cargo/Slang builds on disk.
 Do not share mutable Cargo/CMake build trees or delete another active run's
 scratch. Follow [test storage and cleanup](tests/readme.md#parallel-worktrees).
 
-The portable Rust patch preparer applies tracked `patches/slang/` and
-`patches/libaco/` before consuming native sources. Keep documented upstream-base
-vendor gitlinks; no project-specific submodule commits. Accept clean or fully
-applied trees; reject partial/mismatched trees with actionable diagnostics.
+The portable Rust patch preparer applies tracked `patches/slang/` before consuming
+native sources. Keep the documented upstream-base vendor gitlink; no
+project-specific submodule commits. Accept clean or fully applied trees; reject
+partial/mismatched trees with actionable diagnostics.
 Wrapper edits rebuild the shim; Slang/CMake/patch edits may rebuild the frontend.
 
 `llg_ls` and `helloworld` use mimalloc as Rust global allocator. On musl Linux,
@@ -73,7 +73,7 @@ The release matrix targets static-musl Linux x86_64/arm64, MSVC Windows
 x86_64/arm64 and macOS arm64, with linkage audits. Configuration is not validated
 support; keep platform evidence and generated-model limits in local
 `persistence/platforms.md`. [Tests](tests/AGENTS.md) owns CI/release commands.
-`vendor/libaco` documents coroutine/shared/save stacks; LRMs are in
+The stackless coroutine library is in `src/sim/rt/llg_co.h/.c`; LRMs are in
 `docs/specification/`. Local `persistence/ROADMAP.md` records remaining work.
 
 ## Working conventions
