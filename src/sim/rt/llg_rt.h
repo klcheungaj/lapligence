@@ -1,10 +1,12 @@
 // llg_rt.h — event scheduler for the llg Verilog simulator's generated C11
 // models. Four-state values are provided by llg_value.h.
 
-// Processes are libaco coroutines; each generated process function is spawned
-// via `llg_spawn` and suspends inside the `llg_wait_*` calls. The scheduler
-// (`llg_rt_run`) keeps a separate queue for every IEEE 1800-2017 §4 execution
-// region. Region queues are drained to a fixed point in the Figure 4-1 order;
+// Processes are stackless llg_co coroutines. Each generated process descriptor
+// names an explicit POD root frame and an llg_co function; blocking runtime
+// services arm a wait and return READY, SUSPEND, or EXIT to generated code.
+// The scheduler (`llg_rt_run`) keeps a separate queue for every
+// IEEE 1800-2017 §4 execution region. Region queues are drained to a fixed
+// point in the Figure 4-1 order;
 // reactive work may enqueue design work and starts another design iteration
 // before the postponed output point. Legacy Verilog scheduling remains the
 // Active/Inactive/NBA subset of this state machine.
@@ -21,17 +23,26 @@
 // Time is measured in integer ticks; 1 tick == the design precision (the
 // finest `timescale` precision across the design).  The runtime itself is
 // timescale-agnostic: the codegen scales every `#N` delay and `$time` read per
-// the calling module's `timescale` unit before calling `llg_wait_time` /
+// the calling module's `timescale` unit before calling `llg_arm_time` /
 // `llg_time`. Typed `%t` arguments retain that owning unit and are converted
 // through the design-wide `$timeformat` state. `$finish` reports its validated level through
-// `llg_rt_finish_with_level`, sets a flag, and exits the current coroutine;
-// no coroutine is resumed after a finish. `$stop` reports through
-// `llg_rt_stop_with_level`, yields the current coroutine, and preserves every
-// queue, activation frame, output stream, and simulation tick until the stop
-// policy resumes it.
+// `llg_rt_finish_with_level`, sets the current chain's exit kind, and returns;
+// no coroutine is resumed after a finish. Generated `$stop` uses
+// `llg_arm_stop`, which preserves every queue, activation frame, output
+// stream, and simulation tick until the stop policy resumes it.
 
 #ifndef LLG_RT_H
 #define LLG_RT_H
+
+// Generated model.c defines LLG_MODEL_PROCESS_ABI before including this file.
+// Keep this check in every model translation unit so a stale generated model
+// fails at compile time; llg_co's versioned symbols independently reject a
+// stale runtime archive at link time.
+#define LLG_PROCESS_ABI_VERSION 2
+#if defined(LLG_MODEL_PROCESS_ABI) && \
+    LLG_MODEL_PROCESS_ABI != LLG_PROCESS_ABI_VERSION
+#error "generated model process ABI does not match llg_rt.h"
+#endif
 
 #include <stddef.h>
 #include <stdint.h>
@@ -60,11 +71,30 @@ extern "C" {
 #endif
 struct llg_co_frame;
 _Noreturn void llg_rt_co_oom(size_t bytes);
+// Reports `co` and `fn`, then walks the current process's descriptor chain
+// with llg_co_backtrace when a process resume is active. Never returns.
 _Noreturn void llg_rt_co_bad_state(const struct llg_co_frame* co,
                                    const char* fn);
 #define LLG_CO_OOM(bytes) llg_rt_co_oom(bytes)
 #define LLG_CO_BAD_STATE(co, fn) llg_rt_co_bad_state((co), (fn))
 #include "llg_co.h"
+
+// Public generated-process entry type. The descriptor's `fn` is the sole
+// entry pointer passed to spawn/fork services.
+typedef llg_co_status_t (*llg_process_fn_t)(llg_co_frame_t* co,
+                                            llg_co_chain_t* ch);
+
+enum {
+    LLG_EXIT_NONE = 0,
+    LLG_EXIT_COMPLETE = 1, // run normal process-completion bookkeeping
+    LLG_EXIT_ABANDON = 2,  // cancellation bookkeeping has already run
+};
+// Services set `chain.exiting` only for nonlocal process termination:
+// finish/fatal, blocking-mailbox type failure, process/assertion-control kill,
+// disable reaching self, program exit, budget abort, and terminating VPI
+// calls. COMPLETE is used for finish/fatal/mailbox failures and for kill paths
+// that request program completion; cancellation, disable, program exit and
+// budget exhaustion use ABANDON. Services return normally after bookkeeping.
 
 // Total retained coroutine-arena chunk bytes for the simulation thread.
 // MT-1 will give each worker an independent cache with this cap.
@@ -83,10 +113,6 @@ typedef struct {
 // Snapshot cumulative chunk-cache counters. The cache is owned by the
 // simulation thread; callers must not race this accessor with simulation.
 void llg_rt_co_cache_get_stats(llg_rt_co_cache_stats_t* stats);
-
-/* Temporary Part-A descriptor for hand-written libaco process functions that
- * do not use generated frame storage. Generated code passes a typed descriptor. */
-extern const llg_co_desc_t llg_libaco_desc;
 
 // Typed display values. The runtime owns string members after a display call
 // or while a deferred monitor/strobe snapshot is live.
@@ -316,11 +342,19 @@ llg_mailbox_target_t llg_mailbox_target_handle(void** target);
 llg_mailbox_t* llg_mailbox_new(sv4_t bound, int kind, uint32_t width,
                                int is_signed, int two_state, int shortreal);
 uint64_t llg_mailbox_num(const llg_mailbox_t* mailbox);
-void llg_mailbox_put_value(llg_mailbox_t* mailbox, llg_mailbox_value_t value);
+// Blocking put/get are one-shot arms. READY means the transfer completed
+// synchronously; SUSPEND means the runtime owns the queued value or retained
+// destination until wake/cancellation; EXIT means a blocking type/null error
+// requested LLG_EXIT_COMPLETE. A suspended target address must name a frame
+// field or another registered stable cell.
+llg_co_arm_t llg_arm_mailbox_put_value(llg_proc_t* self,
+                                       llg_mailbox_t* mailbox,
+                                       llg_mailbox_value_t value);
 int llg_mailbox_try_put_value(llg_mailbox_t* mailbox,
                               llg_mailbox_value_t value);
-void llg_mailbox_get_value(llg_mailbox_t* mailbox, llg_mailbox_target_t target,
-                           int peek);
+llg_co_arm_t llg_arm_mailbox_get_value(llg_proc_t* self,
+                                       llg_mailbox_t* mailbox,
+                                       llg_mailbox_target_t target, int peek);
 int llg_mailbox_try_get_value(llg_mailbox_t* mailbox,
                               llg_mailbox_target_t target, int peek);
 
@@ -397,15 +431,6 @@ void llg_rt_init_with_precision(uint64_t precision_fs);
 // precision. The runtime borrows `argv` for the duration of the simulation.
 void llg_rt_init_with_args_and_precision(int argc, char** argv,
                                          uint64_t precision_fs);
-// Initialize with model-specific coroutine stack headroom. The value counts
-// fixed-size sv4_t descriptor slots and is kept out of the runtime's compiled ABI so
-// one runtime archive can serve models with different frame requirements.
-void llg_rt_init_with_stack(size_t stack_values);
-// Combine command-line arguments, scheduler precision, and model-specific
-// coroutine stack headroom for generated models.
-void llg_rt_init_with_args_precision_and_stack(int argc, char** argv,
-                                               uint64_t precision_fs,
-                                               size_t stack_values);
 // Release all runtime-owned scheduler, coroutine, fork-group, monitor and
 // strobe allocations. Call only when no runtime coroutine is executing; init
 // and run invoke it automatically. Repeated calls are safe.
@@ -426,22 +451,27 @@ llg_region_t llg_current_region(void);
 const char* llg_region_name(llg_region_t region);
 // True for sampling/observation/output regions while the scheduler is running.
 int llg_region_is_read_only(void);
-// Request scheduler termination from a non-coroutine callback. Unlike
-// llg_rt_finish, this returns to the callback and is safe outside a process.
+// Request scheduler termination from a native callback and return through the
+// foreign frame. When a process is current (for example during VPI calltf),
+// also set its chain to LLG_EXIT_COMPLETE; the generated native-call boundary
+// performs the Terminate check after the callback returns.
 void llg_rt_request_finish(void);
 // Mark a simulator-generated failure before terminating through a severity task.
 void llg_rt_mark_failed(void);
-// Terminate the current simulation process and mark the scheduler for exit;
-// neither entry point returns to generated HDL. The legacy entry point is a
-// quiet level-0 finish without source metadata.
-_Noreturn void llg_rt_finish(void);
-_Noreturn void llg_rt_finish_with_level(int verbosity, const char* location);
-// `$stop` diagnostics use the same validated 0/1/2 verbosity levels as
-// `$finish`, but suspension is resumable and does not enter the final phase.
-// The call returns after the issuing coroutine is resumed. The legacy entry
-// point is a quiet level-0 stop without source metadata.
+// Request normal completion of the current process and scheduler. These
+// services set chain.exiting=LLG_EXIT_COMPLETE and return. Coroutine callers
+// must immediately use LLG_CO_EXIT_CHECK; plain functions must immediately
+// test llg_rt_exiting() and branch to their unwind return label.
+void llg_rt_finish(void);
+void llg_rt_finish_with_level(int verbosity, const char* location);
+// True only while the current process or transient final record has a pending
+// COMPLETE/ABANDON exit. This out-of-line query is for plain generated
+// functions; coroutine code reads its chain with LLG_CO_EXIT_CHECK.
+int llg_rt_exiting(void);
+// Callback-safe legacy stop request used by VPI. It never suspends beneath a
+// foreign C frame. A stop requested by a running foreign callback is rejected
+// as a controlled simulation failure; generated `$stop` uses llg_arm_stop.
 void llg_rt_stop(void);
-void llg_rt_stop_with_level(int verbosity, const char* location);
 
 enum {
     LLG_STOP_POLICY_RESUME = 0,
@@ -546,9 +576,11 @@ llg_string_t llg_string_format_typed(llg_string_t format, llg_fmt_arg_t* args,
 // consumed exactly once, including destruction of owned packed values and strings.
 void llg_rt_severity_typed(int severity, const char* fmt, llg_fmt_arg_t* args,
                            int n, const char* scope, const char* location);
-_Noreturn void llg_rt_fatal_typed(int finish_number, const char* fmt,
-                                  llg_fmt_arg_t* args, int n,
-                                  const char* scope, const char* location);
+// Formats and consumes `args`, requests LLG_EXIT_COMPLETE, and returns. The
+// caller must perform the same immediate exit check as after llg_rt_finish.
+void llg_rt_fatal_typed(int finish_number, const char* fmt,
+                        llg_fmt_arg_t* args, int n,
+                        const char* scope, const char* location);
 // Counts reset at llg_rt_init and remain available through final-block
 // execution. Invalid levels return zero.
 uint64_t llg_rt_severity_count(int severity);
@@ -559,19 +591,19 @@ void llg_assertion_failure(int kind, uint64_t identity, const char* label,
 void llg_assertion_cover(uint64_t identity, const char* label, const char* location);
 uint64_t llg_assertion_count(int kind);
 uint64_t llg_assertion_vacuous_count(void);
+// KILL may cancel the current assertion-action process. In that case it sets
+// ABANDON, or COMPLETE when program-completion bookkeeping requests finish,
+// before returning; generated callers perform an immediate Terminate check.
 int llg_assertion_control(int kind, const sv4_t* args, int n_args,
                           const char* const* scopes, int n_scopes);
 int llg_assertion_expect_start(uint64_t identity);
-void llg_wait_assertion(uint64_t identity);
 
 // Concurrent assertion callbacks are generated as side-effect-free sampled
 // predicates and Reactive-region action processes. The runtime owns the
 // attempt queues and never evaluates a property against live NBA state.
 typedef int (*llg_concurrent_assertion_predicate_fn)(void* data);
-typedef void (*llg_concurrent_assertion_action_fn)(llg_proc_t* self);
-/* Each present action is spawned as a Reactive process, so its descriptor must
- * describe the generated root frame. Descriptor and action are both NULL when
- * that action arm is absent. */
+/* Each present action is spawned as a Reactive process through its descriptor.
+ * A descriptor is NULL when that action arm is absent. */
 
 // A sequence graph is an owned, finite NFA whose transition delays are
 // measured in sampled clock edges.  The graph itself is emitted as static C
@@ -636,9 +668,7 @@ int llg_assertion_register(
     sv4_t* clock, int edge, sv4_t* disable,
     llg_concurrent_assertion_predicate_fn antecedent,
     llg_concurrent_assertion_predicate_fn consequent,
-    llg_concurrent_assertion_action_fn pass_action,
     const llg_co_desc_t* pass_desc,
-    llg_concurrent_assertion_action_fn fail_action,
     const llg_co_desc_t* fail_desc, void* data, int kind,
     int overlapped, uint64_t identity, const char* label, const char* location,
     const char* scope);
@@ -652,9 +682,7 @@ int llg_assertion_register_control(
     llg_concurrent_assertion_predicate_fn antecedent,
     llg_concurrent_assertion_predicate_fn consequent,
     llg_concurrent_assertion_predicate_fn abort_condition,
-    llg_concurrent_assertion_action_fn pass_action,
     const llg_co_desc_t* pass_desc,
-    llg_concurrent_assertion_action_fn fail_action,
     const llg_co_desc_t* fail_desc, void* data, int kind,
     int overlapped, int abort_reject, int abort_sync, uint64_t identity,
     const char* label, const char* location, const char* scope);
@@ -674,9 +702,7 @@ int llg_assertion_register_sequence(
     sv4_t* clock, int edge, sv4_t* disable,
     const llg_sequence_graph_t* antecedent,
     const llg_sequence_graph_t* consequent,
-    llg_concurrent_assertion_action_fn pass_action,
     const llg_co_desc_t* pass_desc,
-    llg_concurrent_assertion_action_fn fail_action,
     const llg_co_desc_t* fail_desc, void* data, int kind,
     int overlapped, uint64_t identity, const char* label, const char* location,
     const char* scope);
@@ -685,9 +711,7 @@ int llg_assertion_register_sequence_control(
     const llg_sequence_graph_t* antecedent,
     const llg_sequence_graph_t* consequent,
     llg_concurrent_assertion_predicate_fn abort_condition,
-    llg_concurrent_assertion_action_fn pass_action,
     const llg_co_desc_t* pass_desc,
-    llg_concurrent_assertion_action_fn fail_action,
     const llg_co_desc_t* fail_desc, void* data, int kind,
     int overlapped, int abort_reject, int abort_sync, uint64_t identity,
     const char* label, const char* location, const char* scope);
@@ -885,38 +909,40 @@ void llg_file_strobe_typed(uint32_t descriptor, const char* fmt, int n,
 // the next settled observation point even when values are unchanged.
 void llg_monitor_set(int on);
 
-// Spawn one process; `desc` describes the POD root frame co-allocated after the
-// process record and `fn` must never return without calling `llg_proc_done`.
-// The storage is zero-filled normally and deliberately poisoned under
-// LLG_CO_DEBUG. Generated functions initialize fields at their declaration sites.
-llg_proc_t* llg_spawn(const llg_co_desc_t* desc, void (*fn)(llg_proc_t*),
-                      const char* name);
+// Spawn one process. `desc` and its `fn` remain immutable for the process
+// lifetime. The runtime co-allocates desc->frame_size bytes immediately after
+// the process's chain, initializes the chain, and owns the process/root frame
+// until safe reclamation. Generated code initializes frame payload fields at
+// their declaration sites; frames themselves are POD and own no cleanup. A
+// process function obtains `self` with LLG_CO_OWNER(ch, llg_proc_t); the
+// runtime addresses the root as LLG_CO_ROOT(&p->chain). Arena/recursive/large
+// callees use `ch->arena` through LLG_CO_ARENA_ENTER/LLG_CO_CALL_ARENA.
+llg_proc_t* llg_spawn(const llg_co_desc_t* desc, const char* name);
 // Spawn a non-program process directly into an explicit execution region.
-// This remains the runtime hook for assertion/VPI lowering; ordinary HDL
-// processes use llg_spawn (ACTIVE), while programs use the typed entry below.
+// Ordinary initial/always, continuous and link processes use this or
+// llg_spawn (ACTIVE). Concurrent-assertion actions also enter through this
+// service in Reactive; there is no separate function-pointer spawn ABI.
 llg_proc_t* llg_spawn_in_region(const llg_co_desc_t* desc,
-                                void (*fn)(llg_proc_t*), const char* name,
-                                llg_region_t region);
+                                const char* name, llg_region_t region);
 // Spawn in Reactive with a stable elaborated program-instance identity.
 // Only initial procedures count toward natural completion; fork descendants
 // inherit the origin but never extend the lifetime of their program.
 llg_proc_t* llg_spawn_program_in_region(const llg_co_desc_t* desc,
-                                         void (*fn)(llg_proc_t*),
-                                        const char* name,
-                                        llg_region_t region,
-                                        uint64_t instance, int is_initial);
+                                         const char* name, llg_region_t region,
+                                         uint64_t instance, int is_initial);
+// Current process while the scheduler is inside one llg_co_run call or a
+// plain final call; NULL during initialization, scheduler bookkeeping, and
+// callbacks without a process. The scheduler sets and clears this around
+// every resume and installs a transient process record around each final.
+llg_proc_t* llg_current(void);
 // Return the activation frame retained by a process, or NULL for ordinary
 // static-storage processes. The returned pointer is borrowed from `self`.
 llg_frame_t* llg_proc_frame(llg_proc_t* self);
-/* Root coroutine frames are POD storage co-allocated after the process record.
- * Value scopes remain the sole owners of packed/native payloads. */
-void* llg_proc_co_frame(llg_proc_t* self);
-llg_co_arena_t* llg_proc_co_arena(llg_proc_t* self);
-// Terminate the current process (wraps aco_exit; never returns).
-_Noreturn void llg_proc_done(llg_proc_t* self);
 // Terminate the originating program's initials and descendants. Calls from
-// a non-program origin are ignored and return normally (IEEE 1800 24.7).
-void llg_program_exit(void);
+// a non-program origin are ignored. When `self` belongs to a program this
+// performs cancellation bookkeeping, sets self->chain.exiting to
+// LLG_EXIT_ABANDON, and returns for immediate generated-code propagation.
+void llg_program_exit(llg_proc_t* self);
 
 // ── Fine-grain process handles (IEEE 1800-2009 §9.7) ─────────────────────────
 //
@@ -924,7 +950,7 @@ void llg_program_exit(void);
 // remains queryable after the process has completed or been killed, until all
 // HDL references and outstanding await registrations release it. `self` is a
 // borrowed handle; assignment/capture operations retain the value explicitly.
-llg_process_handle_t* llg_process_self(void);
+llg_process_handle_t* llg_process_self(llg_proc_t* self);
 int llg_process_status(const llg_process_handle_t* handle);
 void llg_process_retain(llg_process_handle_t* handle);
 void llg_process_release(llg_process_handle_t* handle);
@@ -934,10 +960,11 @@ void llg_process_assign(llg_process_handle_t** target,
 // runtime retains the slot's value until the owning process is completed or
 // killed, even when the C block that declared the slot has already unwound.
 void llg_process_local_register(llg_process_handle_t** slot);
-void llg_process_kill(llg_process_handle_t* handle);
-void llg_process_suspend(llg_process_handle_t* handle);
-void llg_process_resume(llg_process_handle_t* handle);
-void llg_process_await(llg_process_handle_t* handle);
+// Kill/resume are nonblocking process-control services. Kill sets
+// self->chain.exiting to ABANDON when cancellation reaches `self`, or COMPLETE
+// when program completion requests finish. Generated code checks immediately.
+void llg_process_kill(llg_proc_t* self, llg_process_handle_t* handle);
+void llg_process_resume(llg_proc_t* self, llg_process_handle_t* handle);
 
 // ── Semaphores (IEEE 1800-2009 §15.3) ─────────────────────────────────────────
 //
@@ -946,13 +973,13 @@ void llg_process_await(llg_process_handle_t* handle);
 // four-state value so invalid/unknown counts are diagnosed at the boundary.
 llg_semaphore_t* llg_semaphore_new(sv4_t key_count);
 void llg_semaphore_put(llg_semaphore_t* semaphore, sv4_t key_count);
-void llg_semaphore_get(llg_semaphore_t* semaphore, sv4_t key_count);
 int llg_semaphore_try_get(llg_semaphore_t* semaphore, sv4_t key_count);
 
-// Cooperative generated-loop interruption point.  It returns while the
-// current process remains within its zero-time budget; on exhaustion it emits
-// a source-bearing diagnostic and exits that coroutine without returning.
-void llg_budget_point(const char* location);
+// Cooperative generated-loop interruption point. Zero means the loop may
+// continue. Nonzero means the process budget was exhausted: the diagnostic
+// and failure bookkeeping are complete and chain.exiting is ABANDON. A
+// coroutine returns EXIT; a plain function branches to its unwind label.
+int llg_budget_point(const char* location);
 // Report a SystemVerilog unique/unique0/priority branch check. `check` is
 // 1=unique, 2=unique0, 3=priority; `matched` counts matching case groups (or
 // is zero/one for a conditional); `has_default` suppresses no-match reports.
@@ -976,9 +1003,10 @@ void llg_unique_priority_check(int check, int matched, int has_default,
 // remaining final procedures, as required by LRM §10.7.
 // `$time` inside finals reports the time of the last scheduler event.
 
-// Register one final-block process (no coroutine is created here). The registry
-// is checked-growable; registrations are not capped by a fixed table size.
-void llg_spawn_final(void (*fn)(llg_proc_t*), const char* name);
+// Register one final-block function (no coroutine or frame is created here).
+// Finals are plain `void fn(void)` calls run with a transient current record.
+// Timing, fork and suspendable calls are forbidden in finals.
+void llg_spawn_final(void (*fn)(void), const char* name);
 // Run every registered final process sequentially and then release the
 // runtime (the finals phase owns teardown).  A no-op when nothing was
 // registered.  Repeated init/run cycles reset the registration list.
@@ -986,20 +1014,19 @@ void llg_rt_run_finals(void);
 
 // ── fork/join ─────────────────────────────────────────────────────────────────
 //
-// Processes can spawn children with `llg_fork`; a child is a full coroutine
-// on the shared scheduler stack with its own 256 KB save stack (grown on
-// demand by libaco) and must end with `llg_proc_done` like any other process.
-// Children are only ever resumed by the scheduler — never inline.  A
+// Processes spawn children with `llg_fork`; each child owns a chain and a POD
+// root frame co-allocated with its process record. Children are resumed only
+// by the scheduler, never inline. A
 // `llg_fork_group_t` tracks the children of one `fork` statement:
 //
 //     llg_fork_group_t* g = llg_fork_group_new(LLG_JOIN);
-//     llg_fork(&child_a_desc, child_a, "a", g);
-//     llg_fork(&child_b_desc, child_b, "b", g);
-//     llg_join(g);   // suspend until the group completes
+//     llg_fork(&child_a_desc, "a", g);
+//     llg_fork(&child_b_desc, "b", g);
+//     LLG_CO_AWAIT(co, ch, n, llg_arm_join(self, g));
 //
 // `join_none` children are created in source order but become eligible only
-// when their parent first suspends or terminates. `llg_wait_fork` suspends until
-// every live group of the current process is done (useful after join_none /
+// when their parent first suspends or terminates. `llg_arm_wait_fork` suspends
+// until every live group of the current process is done (useful after join_none /
 // join_any, whose groups outlive the parent's wait). `llg_disable_fork` kills
 // all descendants of the current process, including children still pending
 // their first execution; killed children's immediate NBA lists are discarded.
@@ -1024,16 +1051,16 @@ llg_fork_group_t* llg_fork_group_new(int join_kind);
 llg_fork_group_t* llg_fork_group_new_target(int join_kind,
                                             uint32_t declaration,
                                             uint32_t instance);
-// Spawn `fn` as a child of `grp`; `desc` describes its co-allocated POD root
-// frame and `fn` must end with `llg_proc_done`.
-llg_proc_t* llg_fork(const llg_co_desc_t* desc, void (*fn)(llg_proc_t*),
-                     const char* name, llg_fork_group_t* grp);
+// Spawn desc->fn as a child of `grp`; the runtime borrows the immutable
+// descriptor and name and owns the process/root-frame allocation.
+llg_proc_t* llg_fork(const llg_co_desc_t* desc, const char* name,
+                     llg_fork_group_t* grp);
 // Spawn a child with one retained reference to `frame`. The child releases
 // that reference on completion or cancellation; the caller retains ownership
 // of its own reference and may release it after this call.
 llg_proc_t* llg_fork_with_frame(const llg_co_desc_t* desc,
-                                void (*fn)(llg_proc_t*), const char* name,
-                                llg_fork_group_t* grp, llg_frame_t* frame);
+                                const char* name, llg_fork_group_t* grp,
+                                llg_frame_t* frame);
 // Create and manage typed activation storage. Slots hold copied values by
 // default. Frame-to-frame aliases retain their source frame. Joined fork
 // aliases borrow a registered numeric cell in the suspended parent activation;
@@ -1065,12 +1092,8 @@ void llg_frame_write_value(llg_frame_t* frame, size_t slot, sv4_t value);
 double llg_frame_read_real(const llg_frame_t* frame, size_t slot);
 void* llg_frame_read_opaque(const llg_frame_t* frame, size_t slot);
 void llg_frame_write_real(llg_frame_t* frame, size_t slot, double value);
-// Suspend until `grp` completes according to its join kind.
-void llg_join(llg_fork_group_t* grp);
-// Suspend until every live group of the current process has completed.
-void llg_wait_fork(void);
 // Kill every descendant of the current process (immediate NBA lists are discarded).
-void llg_disable_fork(void);
+void llg_disable_fork(llg_proc_t* self);
 
 // Named block/task activation registry. Declaration and instance identities
 // come from the owned semantic database; textual names never reach this ABI.
@@ -1078,23 +1101,51 @@ llg_activation_t* llg_activation_enter(uint32_t declaration,
                                        uint32_t instance);
 void llg_activation_exit(llg_activation_t* activation);
 int llg_activation_cancelled(void);
-void llg_disable_target(uint32_t declaration, uint32_t instance);
+// Disabling an activation that reaches `self` completes cancellation
+// bookkeeping, sets LLG_EXIT_ABANDON, and returns for immediate propagation.
+void llg_disable_target(llg_proc_t* self, uint32_t declaration,
+                        uint32_t instance);
 
-void llg_wait_time(uint64_t ticks);   // #delay; 0 yields into the inactive region of the same time step
+// ── Coroutine arms ───────────────────────────────────────────────────────────
+//
+// Arms validate and either satisfy or register exactly one blocking request;
+// they never resume or visit the scheduler. READY continues in the same turn.
+// SUSPEND means the waiter is fully registered and join_none children have
+// been released. EXIT means `self->chain.exiting` is already set. Every arm in
+// this ABI is one-shot and is emitted with LLG_CO_AWAIT, not AWAIT_RETRY.
+
+// #delay; zero schedules Inactive/Re-Inactive in the same time step.
+llg_co_arm_t llg_arm_time(llg_proc_t* self, uint64_t ticks);
 // Set the explicit region used by the next signal/dependency wait. Generated
 // sensitivity terminators use this to migrate a coroutine across region sets.
 void llg_wait_resume_in_region(llg_region_t region);
-// Suspend until the requested transition of `sig`.
-void llg_wait_edge(sv4_t* sig, int posedge);
-// Suspend until any of `sigs` differs from its value at wait time.
-void llg_wait_any(sv4_t** sigs, int n);
-// Suspend until any packed or real dependency changes. Each entry has exactly
-// one of `sig`/`real` set.
-void llg_wait_any_dependencies(const llg_wait_dependency_t* deps, int n);
-// Suspend until any event spec fires (or-list of @(posedge a or b ...)).
-void llg_wait_any_events(llg_event_spec_t* specs, int n);
-// Suspend until `sig` equals `value` (unknown never matches).
-void llg_wait_level(sv4_t* sig, sv4_t value);
+// Signal/dependency arms copy their descriptor arrays before SUSPEND.
+llg_co_arm_t llg_arm_edge(llg_proc_t* self, sv4_t* sig, int posedge);
+llg_co_arm_t llg_arm_any(llg_proc_t* self, sv4_t** sigs, int n);
+llg_co_arm_t llg_arm_any_dependencies(llg_proc_t* self,
+                                      const llg_wait_dependency_t* deps,
+                                      int n);
+llg_co_arm_t llg_arm_any_events(llg_proc_t* self,
+                                const llg_event_spec_t* specs, int n);
+llg_co_arm_t llg_arm_level(llg_proc_t* self, sv4_t* sig, sv4_t value);
+
+// Synchronization and process-control arms deliver before wake and therefore
+// are one-shot. Suspending process/mailbox destinations must be frame fields
+// or registered stable storage. Suspending self releases pending join_none
+// children; suspending another process returns READY in the caller.
+llg_co_arm_t llg_arm_join(llg_proc_t* self, llg_fork_group_t* grp);
+llg_co_arm_t llg_arm_wait_fork(llg_proc_t* self);
+llg_co_arm_t llg_arm_process_suspend(llg_proc_t* self,
+                                     llg_process_handle_t* handle);
+llg_co_arm_t llg_arm_process_await(llg_proc_t* self,
+                                   llg_process_handle_t* handle);
+llg_co_arm_t llg_arm_semaphore_get(llg_proc_t* self,
+                                   llg_semaphore_t* semaphore,
+                                   sv4_t key_count);
+// Generated `$stop` only. SUSPEND preserves the chain and queues; invalid
+// use sets COMPLETE and returns EXIT. The legacy llg_rt_stop is callback-safe.
+llg_co_arm_t llg_arm_stop(llg_proc_t* self, int verbosity,
+                          const char* location);
 
 // ── Named events ──────────────────────────────────────────────────────────────
 //
@@ -1165,17 +1216,19 @@ void llg_nba_event(llg_event_t* ev);
 // Queue a nonblocking event trigger after `ticks`; zero stays in the current
 // time slot's NBA region, while a positive delay enters the timed NBA queue.
 void llg_nba_event_after(llg_event_t* ev, uint64_t ticks);
-// Suspend until `ev` is triggered.
-void llg_wait_event(llg_event_t* ev);
-// Suspend until any of `evs` is triggered (one atomic registration).
-void llg_wait_events(const llg_event_t* const* evs, int n);
-// Suspend until the event's persistent same-time-slot triggered state is set.
-// If it is already set in the current slot, this returns immediately.
-void llg_wait_event_triggered(const llg_event_t* ev);
-// Suspend until the listed event objects trigger in order. Repeated events
-// already consumed are ignored; a future event arriving early fails the
-// monitor and stores a negative result in `result`.
-void llg_wait_order(const llg_event_t* const* evs, int n, int* result);
+// Named-event arms copy the event list before SUSPEND. Triggered returns READY
+// if the event is already set in this slot. `result` for wait_order must point
+// at a frame field; the runtime writes 1 (success) or -1 (out of order) before
+// waking, and leaves zero while pending.
+llg_co_arm_t llg_arm_event(llg_proc_t* self, llg_event_t* ev);
+llg_co_arm_t llg_arm_events(llg_proc_t* self,
+                            const llg_event_t* const* evs, int n);
+llg_co_arm_t llg_arm_event_triggered(llg_proc_t* self,
+                                     const llg_event_t* ev);
+llg_co_arm_t llg_arm_assertion(llg_proc_t* self, uint64_t identity);
+llg_co_arm_t llg_arm_order(llg_proc_t* self,
+                           const llg_event_t* const* evs, int n,
+                           int* result);
 
 // One source of a mixed signal/event or-list (`@(posedge a or ev)`): exactly
 // one of `sig`/`ev` is set.  Exactly one such wait covers ALL entries, so a
@@ -1187,14 +1240,18 @@ typedef struct {
 } llg_wait_src_t;
 
 // Atomic mixed wait until any signal entry matches its edge kind or any event
-// entry is triggered.
-void llg_wait_mixed(llg_wait_src_t* srcs, int n);
+// entry is triggered. The runtime copies `srcs` before SUSPEND.
+llg_co_arm_t llg_arm_mixed(llg_proc_t* self,
+                           const llg_wait_src_t* srcs, int n);
 
-// Suspend for a cycle count over simple clocking signal/named-event sources.
-// `##0` returns immediately if one source already fired in this time slot;
-// otherwise it waits for the next matching event. Positive counts always
-// wait for that many future events.
-void llg_wait_clocking_cycles(llg_wait_src_t* srcs, int n, sv4_t count);
+// One clocking-cycle arm. When `accept_current` is nonzero it returns READY if
+// a source already fired in this slot (the ##0 rule); otherwise it registers
+// the same one-shot wait as llg_arm_mixed. Generated code keeps a uint64_t
+// remaining-cycle field, emits one LLG_CO_AWAIT per loop iteration, and
+// decrements after each wake. No runtime retry arm retains the count.
+llg_co_arm_t llg_arm_clocking_cycle(llg_proc_t* self,
+                                    const llg_wait_src_t* srcs, int n,
+                                    int accept_current);
 
 // Evaluators and dependencies refer to model storage. The runtime copies
 // every descriptor and dependency array before suspending the caller.
@@ -1221,7 +1278,8 @@ typedef struct {
     void* eval_context;
     void* condition_context;
 } llg_expr_event_spec_t;
-void llg_wait_expressions(const llg_expr_event_spec_t* specs, int n);
+llg_co_arm_t llg_arm_expressions(llg_proc_t* self,
+                                 const llg_expr_event_spec_t* specs, int n);
 // Register a nonblocking trigger whose source control is evaluated at issue
 // time. The copied descriptors remain live until one source matches; the
 // target event is then submitted to the ordinary NBA queue. `repeat` is zero
