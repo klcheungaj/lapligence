@@ -326,6 +326,7 @@ impl<'a> Codegen<'a> {
                     c_name,
                     inline_expanded,
                     automatic,
+                    is_task: is_task_f,
                     ret_chandle: matches!(
                         self.kind(*c),
                         NodeKind::FuncTask {

@@ -431,6 +431,10 @@ void llg_rt_init_with_precision(uint64_t precision_fs);
 // precision. The runtime borrows `argv` for the duration of the simulation.
 void llg_rt_init_with_args_and_precision(int argc, char** argv,
                                          uint64_t precision_fs);
+// Request a scheduler stop after the current process turn returns. Generated
+// functions and VPI vpiStop use this deferred form because they cannot suspend
+// a stackless coroutine at their own call depth.
+void llg_rt_request_stop(int verbosity, const char* location);
 // Release all runtime-owned scheduler, coroutine, fork-group, monitor and
 // strobe allocations. Call only when no runtime coroutine is executing; init
 // and run invoke it automatically. Repeated calls are safe.

@@ -745,10 +745,18 @@ impl Frame<'_, '_> {
             IrStmt::StopControl {
                 verbosity,
                 location,
-            } => self.line(format!(
-                "llg_rt_stop_with_level({verbosity}, {});",
-                c_string_literal(location)
-            )),
+            } => {
+                let function_stop = self.ctx.func.is_some_and(|function| !function.is_task());
+                self.line(format!(
+                    "{}({verbosity}, {});",
+                    if function_stop {
+                        "llg_rt_request_stop"
+                    } else {
+                        "llg_rt_stop_with_level"
+                    },
+                    c_string_literal(location)
+                ));
+            }
             IrStmt::ProgramExit => self.line("llg_program_exit();"),
         }
         self.cancellation_check()

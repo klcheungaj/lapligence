@@ -196,10 +196,11 @@ impl ExecutionAnalysis {
             .map(|function| {
                 let mut effects = effects_for_statements(ir, &function.body);
                 // Dynamic dispatch is conservatively suspendable for tasks,
-                // but a value-returning SystemVerilog function cannot suspend.
-                // Keep the general effect walk conservative without turning a
-                // virtual function and each of its callers into coroutines.
-                if function.ret.is_some() || function.ret_string || function.ret_chandle {
+                // but a SystemVerilog function (including a void function)
+                // cannot suspend. `$stop` there is a deferred scheduler
+                // request, so it must not turn the function or its callers
+                // into coroutines.
+                if !function.is_task {
                     effects.retain(|effect| *effect != ExecutionEffect::Suspend);
                 }
                 effects
@@ -1017,6 +1018,45 @@ mod tests {
             false,
             None,
         )
+    }
+
+    #[test]
+    fn stop_does_not_make_a_void_function_a_coroutine() {
+        let stop = IrStmt::StopControl {
+            verbosity: 1,
+            location: "stop_fn.sv:3".into(),
+        };
+        let mut function = IrFunc::new("stop_fn".into(), None, vec![], vec![], vec![], vec![stop]);
+        function.is_task = false;
+        let process = IrProcess::new(
+            "p0".into(),
+            "top.p".into(),
+            IrShape::RunOnce,
+            vec![],
+            vec![statement_call(0, IrDepth::PROC)],
+        );
+        let ir = IrModel::from_parts(
+            "stop_fn".into(),
+            1,
+            IrModelParts {
+                funcs: vec![function],
+                processes: vec![process],
+                spawns: vec!["p0".into()],
+                ..IrModelParts::default()
+            },
+        )
+        .unwrap();
+        let execution = ExecutionModel::lower(ir).unwrap();
+
+        assert!(!execution.analysis().is_coroutine_function(0));
+        assert!(execution
+            .analysis()
+            .sites(CoroutineId::Process(0))
+            .unwrap()
+            .is_empty());
+        let rendered = crate::sim::emit_c::render(&execution).unwrap();
+        assert!(rendered.contains("llg_rt_request_stop(1, \"stop_fn.sv:3\");"));
+        assert!(!rendered.contains("llg_rt_stop_with_level(1, \"stop_fn.sv:3\");"));
     }
 
     fn call(callee: usize) -> SiteDraft {
