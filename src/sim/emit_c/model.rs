@@ -530,7 +530,7 @@ fn render_model(execution: &ExecutionModel) -> Result<String, String> {
         out.push_str(dpi_helpers());
     }
     for (index, f) in model.funcs.iter().enumerate() {
-        if f.is_inline_expanded() {
+        if super::owned::model::inline_template(f) {
             continue;
         }
         if execution.analysis().is_coroutine_function(index) {
@@ -549,7 +549,7 @@ fn render_model(execution: &ExecutionModel) -> Result<String, String> {
         activation_label: None,
     };
     for (index, f) in model.funcs.iter().enumerate() {
-        if f.is_inline_expanded() {
+        if super::owned::model::inline_template(f) {
             continue;
         }
         let fctx = RCtx {

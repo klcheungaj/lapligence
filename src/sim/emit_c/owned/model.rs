@@ -19,6 +19,10 @@ pub(in crate::sim::emit_c) fn inline_event_template(function: &IrFunc) -> bool {
     function.formals.iter().any(|formal| formal.event)
 }
 
+pub(in crate::sim::emit_c) fn inline_template(function: &IrFunc) -> bool {
+    function.is_inline_expanded() || inline_event_template(function)
+}
+
 pub(in crate::sim::emit_c) fn check_function(function: &IrFunc) -> Result<(), String> {
     if function.formals.iter().any(|formal| formal.event) {
         return Err(pending("native-object and ref formal/local owners"));
@@ -28,7 +32,7 @@ pub(in crate::sim::emit_c) fn check_function(function: &IrFunc) -> Result<(), St
 
 pub(in crate::sim::emit_c) fn check_model(model: &IrModel) -> Result<(), String> {
     for function in &model.funcs {
-        if !inline_event_template(function) {
+        if !inline_template(function) {
             check_function(function)?;
         }
     }
