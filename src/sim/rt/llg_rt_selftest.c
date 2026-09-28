@@ -1388,6 +1388,62 @@ static void test_fork_join(void) {
 // ── Collapsed inout-net tests ─────────────────────────────────────────────────
 
 static void test_llg_net(void) {
+    // A range result is exactly the corresponding slice of full resolution,
+    // including unaligned limbs, selected driver indices and strength rules.
+    {
+        const uint64_t d0_bits[] = {
+            UINT64_C(0x0123456789abcdef), UINT64_C(0xfedcba9876543210), 2
+        };
+        const uint64_t d0_x[] = { UINT64_C(0x00000000f0000000), 0, 0 };
+        const uint64_t d0_z[] = { UINT64_C(0x0000f00000000000), 0, 0 };
+        const uint64_t d1_bits[] = {
+            UINT64_C(0xaaaaaaaaaaaaaaaa), UINT64_C(0x5555555555555555), 1
+        };
+        const uint64_t d1_x[] = { 0, UINT64_C(0x00000000000000f0), 0 };
+        const uint64_t d1_z[] = { 0, UINT64_C(0x00000000000f0000), 0 };
+        const uint64_t d2_bits[] = {
+            UINT64_C(0x0f0f0f0f0f0f0f0f), UINT64_C(0xf0f0f0f0f0f0f0f0), 3
+        };
+        const uint64_t zero[] = { 0, 0, 0 };
+        sv4_t d0 = sv4_from_limbs(d0_bits, d0_x, d0_z, 130, 0);
+        sv4_t d1 = sv4_from_limbs(d1_bits, d1_x, d1_z, 130, 0);
+        sv4_t d2 = sv4_from_limbs(d2_bits, zero, zero, 130, 0);
+        const sv4_t* all[] = { &d0, &d1, &d2 };
+        const sv4_t* subset[] = { &d0, &d2 };
+        const uint8_t strength0[] = {
+            LLG_STRENGTH_WEAK, LLG_STRENGTH_PULL, LLG_STRENGTH_STRONG
+        };
+        const uint8_t strength1[] = {
+            LLG_STRENGTH_STRONG, LLG_STRENGTH_WEAK, LLG_STRENGTH_PULL
+        };
+        const uint8_t subset0[] = {
+            LLG_STRENGTH_WEAK, LLG_STRENGTH_STRONG
+        };
+        const uint8_t subset1[] = {
+            LLG_STRENGTH_STRONG, LLG_STRENGTH_PULL
+        };
+        const int indices[] = { 0, 2 };
+        const int modes[] = {
+            LLG_RESOLVE_WIRE, LLG_RESOLVE_WAND, LLG_RESOLVE_WOR,
+            LLG_RESOLVE_TRI0, LLG_RESOLVE_TRI1,
+            LLG_RESOLVE_SUPPLY0, LLG_RESOLVE_SUPPLY1
+        };
+        for (size_t mode = 0; mode < sizeof(modes) / sizeof(modes[0]); ++mode) {
+            sv4_t full = sv4_resolve_strengths(
+                subset, subset0, subset1, 2, 130, 0, modes[mode]);
+            sv4_t expected = sv4_part_select(full, 128, 61);
+            sv4_t range = sv4_resolve_strengths_range(
+                all, strength0, strength1, indices, 2, 130, 61, 68, 0,
+                modes[mode]);
+            CHECK(sv4_same(range, expected));
+            sv4_destroy(&range);
+            sv4_destroy(&expected);
+            sv4_destroy(&full);
+        }
+        sv4_destroy(&d2);
+        sv4_destroy(&d1);
+        sv4_destroy(&d0);
+    }
     // Resolution vectors (LRM wire/tri, equal strengths, 1-bit):
     //   z+z -> z, z+0 -> 0, z+1 -> 1, 0+1 -> x, x+0 -> x, equal -> same,
     //   all-z -> z.
@@ -1499,6 +1555,75 @@ static void test_llg_net(void) {
         llg_net_resolve(&net);
         CHECK(sv4_same(net.resolved, test_temp(SV4_X(8))));
         sv4_destroy(&net.resolved);
+        sv4_destroy(&d1);
+        sv4_destroy(&d0);
+    }
+    // Indexed writes keep one interval per driver. Moving a selected driver
+    // releases its old range, overlap resolution considers only intersecting
+    // drivers, and an all-Z update removes the interval entirely.
+    {
+        sv4_t d0 = sv4_fill(3, 257, 0);
+        sv4_t d1 = sv4_fill(3, 257, 0);
+        sv4_t d2 = sv4_fill(3, 257, 0);
+        sv4_t* const drivers[] = { &d0, &d1, &d2 };
+        const uint8_t strength0[] = {
+            LLG_STRENGTH_WEAK, LLG_STRENGTH_STRONG, LLG_STRENGTH_PULL
+        };
+        const uint8_t strength1[] = {
+            LLG_STRENGTH_WEAK, LLG_STRENGTH_STRONG, LLG_STRENGTH_PULL
+        };
+        llg_net_driver_index_t index[3];
+        int scratch[3];
+        llg_net_t net = { .resolved = SV4_EMPTY, .width = 257,
+                          .resolution = LLG_RESOLVE_WIRE, .n_drivers = 3,
+                          .drivers = drivers, .strength0 = strength0,
+                          .strength1 = strength1, .driver_index = index,
+                          .overlap_scratch = scratch, .index_root = -1 };
+        sv4_replace(&net.resolved, sv4_fill(3, net.width, 0));
+        llg_net_index_reset(&net);
+
+        llg_net_write_selected(
+            &net, 0, test_temp(SV4_C(0xf, 4)),
+            sv4_select_plan_part(net.width, 7, 4), 0);
+        llg_net_write_selected(
+            &net, 1, test_temp(SV4_C(0, 1)),
+            sv4_select_plan_bit(net.width, 5), 0);
+        CHECK(sv4_same(test_temp(sv4_part_select(net.resolved, 7, 4)),
+                       test_temp(SV4_C(0xd, 4))));
+
+        // Move the weak four-bit driver across limb boundaries. The strong
+        // bit remains at its own site and every released old bit returns to Z.
+        llg_net_write_selected(
+            &net, 0, test_temp(SV4_C(0xa, 4)),
+            sv4_select_plan_indexed(
+                net.width, test_temp(SV4_C(63, 32)), 4, 0), 0);
+        CHECK(sv4_same(test_temp(sv4_bit_select(net.resolved, 4)),
+                       test_temp(SV4_Z(1))));
+        CHECK(sv4_same(test_temp(sv4_bit_select(net.resolved, 5)),
+                       test_temp(SV4_C(0, 1))));
+        CHECK(sv4_same(test_temp(sv4_part_select(net.resolved, 66, 63)),
+                       test_temp(SV4_C(0xa, 4))));
+
+        // A distant third driver exercises a wide net without expanding the
+        // affected range to the full 257-bit value.
+        llg_net_write_selected(
+            &net, 2, test_temp(SV4_C(1, 1)),
+            sv4_select_plan_bit(net.width, 256), 0);
+        CHECK(sv4_same(test_temp(sv4_bit_select(net.resolved, 256)),
+                       test_temp(SV4_C(1, 1))));
+        CHECK(sv4_same(test_temp(sv4_bit_select(net.resolved, 200)),
+                       test_temp(SV4_Z(1))));
+
+        llg_net_write_selected(
+            &net, 0, test_temp(SV4_Z(4)),
+            sv4_select_plan_indexed(
+                net.width, test_temp(SV4_C(63, 32)), 4, 0), 0);
+        CHECK(sv4_same(test_temp(sv4_part_select(net.resolved, 66, 63)),
+                       test_temp(SV4_Z(4))));
+        CHECK(!index[0].active && index[1].active && index[2].active);
+
+        sv4_destroy(&net.resolved);
+        sv4_destroy(&d2);
         sv4_destroy(&d1);
         sv4_destroy(&d0);
     }
