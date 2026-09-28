@@ -101,10 +101,23 @@ fn generated_sources_keep_value_runtime_as_a_separate_translation_unit() {
         std::fs::read_to_string(dir.path().join("llg_rng.c")).unwrap(),
         rng_source
     );
+    let (coroutine_header, coroutine_source) = sim::rt::coroutine_sources();
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("llg_co.h")).unwrap(),
+        coroutine_header
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("llg_co.c")).unwrap(),
+        coroutine_source
+    );
     assert!(!dir.path().join("stale.c").exists());
     let cmake = std::fs::read_to_string(dir.path().join("CMakeLists.txt")).unwrap();
-    assert!(cmake
-        .contains("model.c llg_value.c llg_rng.c llg_rt.c llg_random.c llg_vpi.c aco.c acosw.S"));
+    assert!(cmake.contains(
+        "model.c llg_value.c llg_rng.c llg_co.c llg_rt.c llg_random.c llg_vpi.c aco.c acosw.S"
+    ));
+    assert!(cmake.contains(
+        "set_source_files_properties(llg_co.c PROPERTIES COMPILE_DEFINITIONS LLG_CO_HOST_ALLOC=1)"
+    ));
     assert!(cmake.contains("if(LLG_RUNTIME_LIBRARY)"));
     assert!(!cmake.contains("target_compile_definitions(sim PRIVATE LLG_MODEL_STACK_VALUES"));
     let (runtime_header, runtime_source) = sim::rt::runtime_sources();
@@ -164,6 +177,70 @@ fn end_to_end_cmake() {
 
     let stdout = result.expect("cmake-built simulation should run");
     assert_eq!(stdout, EXPECTED_STDOUT);
+}
+
+/// A source-only export must compile without injecting the cached runtime
+/// archive, so every packaged runtime translation unit is exercised.
+#[test]
+fn generated_sources_build_as_a_self_contained_cmake_project() {
+    let _guard = TEST_LOCK.lock().unwrap();
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let dir = fresh_dir("self-contained");
+    let gen = compile_counter(dir.path()).expect("compile counter");
+    let project = dir.path().join("project");
+    sim::build::generate_model_sources(&project, &[("model.c", gen.model_c.as_str())])
+        .expect("generate self-contained model sources");
+
+    let cmake = std::env::var("LLG_CMAKE").unwrap_or_else(|_| "cmake".to_owned());
+    let build = project.join("build");
+    let mut configure = Command::new(&cmake);
+    configure
+        .args(["-S"])
+        .arg(&project)
+        .args(["-B"])
+        .arg(&build)
+        .arg("-DCMAKE_BUILD_TYPE=Release");
+    let output = sim_harness::run_command(&mut configure, Duration::from_secs(60))
+        .expect("configure self-contained model");
+    assert!(
+        output.status.success(),
+        "self-contained configure failed:\n{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let mut compile = Command::new(&cmake);
+    compile
+        .arg("--build")
+        .arg(&build)
+        .args(["--config", "Release"]);
+    let output = sim_harness::run_command(&mut compile, Duration::from_secs(120))
+        .expect("build self-contained model");
+    assert!(
+        output.status.success(),
+        "self-contained build failed:\n{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let executable_name = format!("sim{}", std::env::consts::EXE_SUFFIX);
+    let candidates = [
+        build.join("bin").join(&executable_name),
+        build.join("bin/Release").join(&executable_name),
+    ];
+    let executable = candidates
+        .iter()
+        .find(|candidate| candidate.is_file())
+        .unwrap_or_else(|| {
+            panic!(
+                "self-contained simulator not found under {}",
+                build.display()
+            )
+        });
+    assert_eq!(run_sim(executable).unwrap(), EXPECTED_STDOUT);
 }
 
 /// Library level with an explicit generator backend:

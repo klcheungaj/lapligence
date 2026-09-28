@@ -263,6 +263,69 @@ jobs:
         with:
           arch: ${{ matrix.msvc_arch }}
 
+      - name: Compile llg_co with GCC, Clang, or AppleClang
+        if: matrix.platform != 'windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          gate_dir=$(mktemp -d)
+          trap 'rm -rf "$gate_dir"' EXIT
+          if [[ "${{ matrix.platform }}" == macos ]]; then
+            compilers=(clang)
+          else
+            compilers=(gcc clang)
+          fi
+          for compiler in "${compilers[@]}"; do
+            command -v "$compiler"
+            jump_flag=()
+            if [[ "$compiler" == gcc ]]; then
+              jump_flag=(-Werror=jump-misses-init)
+            fi
+            for variant in plain debug host debug-host; do
+              definitions=()
+              case "$variant" in
+                debug) definitions=(-DLLG_CO_DEBUG) ;;
+                host) definitions=(-DLLG_CO_HOST_ALLOC) ;;
+                debug-host) definitions=(-DLLG_CO_DEBUG -DLLG_CO_HOST_ALLOC) ;;
+              esac
+              "$compiler" -std=c11 -Wall -Wextra -Wpedantic -Werror -Wunused-function \
+                "${jump_flag[@]}" "${definitions[@]}" -Isrc/sim/rt -c \
+                src/sim/rt/llg_co.c -o "$gate_dir/$compiler-$variant-library.o"
+              "$compiler" -std=c11 -Wall -Wextra -Wpedantic -Werror -Wunused-function \
+                "${jump_flag[@]}" "${definitions[@]}" -Isrc/sim/rt -c \
+                tests/runtime_value_storage/llg_co_include_only.c \
+                -o "$gate_dir/$compiler-$variant-include.o"
+            done
+            "$compiler" -std=c11 -O2 -Wall -Wno-unused-function \
+              -Isrc/sim/rt -Ivendor/libaco -c src/sim/rt/llg_rt.c \
+              -o "$gate_dir/$compiler-runtime.o"
+          done
+
+      - name: Compile llg_co with MSVC C11
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          $gate = Join-Path $env:RUNNER_TEMP "llg-co-gate"
+          New-Item -ItemType Directory -Force -Path $gate | Out-Null
+          $variants = @(
+              @{ Name = "plain"; Definitions = @() },
+              @{ Name = "debug"; Definitions = @("/DLLG_CO_DEBUG") },
+              @{ Name = "host"; Definitions = @("/DLLG_CO_HOST_ALLOC") },
+              @{ Name = "debug-host"; Definitions = @("/DLLG_CO_DEBUG", "/DLLG_CO_HOST_ALLOC") }
+          )
+          foreach ($variant in $variants) {
+              $definitions = @($variant.Definitions)
+              $libraryObject = Join-Path $gate "$($variant.Name)-library.obj"
+              $includeObject = Join-Path $gate "$($variant.Name)-include.obj"
+              & cl.exe /nologo /std:c11 /W4 /WX /c src/sim/rt/llg_co.c "/Isrc/sim/rt" @definitions "/Fo$libraryObject"
+              if ($LASTEXITCODE -ne 0) { throw "llg_co.c $($variant.Name) compile failed" }
+              & cl.exe /nologo /std:c11 /W4 /WX /c tests/runtime_value_storage/llg_co_include_only.c "/Isrc/sim/rt" @definitions "/Fo$includeObject"
+              if ($LASTEXITCODE -ne 0) { throw "include-only $($variant.Name) compile failed" }
+          }
+          $runtimeObject = Join-Path $gate "llg-rt.obj"
+          & cl.exe /nologo /std:c11 /O2 /W4 /WX /wd4505 /D_CRT_SECURE_NO_WARNINGS /c src/sim/rt/llg_rt.c "/Isrc/sim/rt" "/Ivendor/libaco" "/Fo$runtimeObject"
+          if ($LASTEXITCODE -ne 0) { throw "llg_rt.c compile failed" }
+
       # The official Alpine Rust image follows the native runner architecture.
       # It supplies a musl C/C++ toolchain and static system archives without
       # QEMU or a separately downloaded cross compiler.

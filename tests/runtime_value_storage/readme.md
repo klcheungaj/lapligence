@@ -52,6 +52,7 @@ capabilities; check the exact inventory rather than assuming a fixed count.
 | `port_net_collapse_probe.c` | All seven runtime kinds at 1/65/129 bits, strengths/defaults/release, delayed alias/array publication and zero owners; no frontend policy or stack switching. |
 | `scheduler_ownership_probe.c` | Captured/masked NBA, scopes/frames, inertial/force state, sequence locals/endpoints, sampling, mailbox cleanup, wide formatting, plusargs and exact time scaling. |
 | `coroutine_ownership_probe.c` | 1,000 actual yields and completion/cancel unwind, repeated 50 times; native fiber lane only. |
+| `coroutine_chunk_cache_probe.c` | Stackless arena chunk reuse, byte-cap enforcement, cumulative counters and teardown release; generated code does not use the library yet. |
 | `vpi_ownership_probe.c` | 129-bit X/Z puts/gets, 65,537-bit text scratch, result replacement, call cleanup and ten reinitializations. |
 | `waveform_snapshot_probe.c` | Ring wrap/move clearing, mutation-after-capture, VCD/FST values, wide views, ignored/error events and pending close/reinit. |
 | `scope_index_probe.c`, `callback_finish_probe.c` | Growth/tombstones/out-of-order releases, retained cells, finish during evaluators, shared per-field contexts and force/qualifier cleanup. |
