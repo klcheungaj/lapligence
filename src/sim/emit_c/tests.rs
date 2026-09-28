@@ -298,7 +298,7 @@ fn selected_net_driver_preserves_member_state_conversion() {
     let fill = rendered.find("sv4_fill(2, 4, 0)").unwrap();
     let conversion = rendered.find("sv4_to_two_state(").unwrap();
     let update = rendered.find("sv4_part_select_set(").unwrap();
-    let write = rendered.find("llg_net_write(&net, 0, F->_llg_t[").unwrap();
+    let write = rendered.find("llg_net_write(&net, 0, _llg_t[").unwrap();
     assert!(fill < conversion && conversion < update && update < write);
     assert!(!rendered.contains("sv4_to_two_state(sv4_"));
 }
@@ -425,8 +425,7 @@ fn output_temporary_uses_its_declared_formal_after_c_argument_reordering() {
         .find("static llg_co_status_t p_owner_test(")
         .unwrap()..];
     assert!(
-        process.lines().any(|line| line.contains("sv4_replace(F->")
-            && line.contains("_llg_local_")
+        process.lines().any(|line| line.contains("sv4_replace(_llg_local_")
             && line.contains("sv4_x(16, 1)")),
         "{process}"
     );
@@ -495,7 +494,7 @@ fn captured_fork_emits_owned_frame_lifecycle() {
     assert!(rendered.contains("llg_frame_new(1ULL)"));
     assert!(rendered
         .lines()
-        .any(|line| line.contains("llg_frame_capture_value(F->")
+        .any(|line| line.contains("llg_frame_capture_value(_llg_capture_frame_")
             && line.contains("_llg_capture_frame_")));
     assert!(rendered.contains("llg_fork_with_frame(&p_capture_branch_desc,"));
     assert!(!rendered.contains("llg_fork_with_frame(&p_capture_branch_desc, p_capture_branch"));
@@ -505,12 +504,12 @@ fn captured_fork_emits_owned_frame_lifecycle() {
     assert!(
         rendered
             .lines()
-            .any(|line| line.contains("llg_frame_release(F->")
+            .any(|line| line.contains("llg_frame_release(_llg_capture_frame_")
                 && line.contains("_llg_capture_frame_"))
     );
     assert!(rendered
         .lines()
-        .any(|line| line.contains("sv4_replace(F->") && line.contains("_llg_local_")));
+        .any(|line| line.contains("sv4_replace(_llg_local_")));
 }
 
 #[test]
