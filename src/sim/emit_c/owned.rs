@@ -15,6 +15,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 mod activations;
 mod assertion_tasks;
 pub(super) mod assertions;
+mod cached_fields;
 mod calls;
 mod captures;
 mod clocking;
@@ -103,6 +104,15 @@ struct PendingSite {
     mechanism: Option<CallMechanism>,
 }
 
+/// A finished coroutine function body with its frame layout.
+pub(super) struct CoroutineBody {
+    pub(super) body: String,
+    pub(super) layout: FrameLayout,
+    /// Uninitialized C locals mirroring frame fields (see `cached_fields`),
+    /// declared before the resume dispatch.
+    pub(super) cached_locals: String,
+}
+
 #[derive(Clone, Debug)]
 struct DeferredDeclaration {
     ty: String,
@@ -151,6 +161,7 @@ pub(super) struct Frame<'a, 'm> {
     resume_numbers: Vec<u32>,
     frame_upper_bounds: BTreeMap<usize, usize>,
     coroutine_functions: BTreeSet<usize>,
+    cached_fields: cached_fields::CachedFields,
 }
 
 fn pending(feature: &str) -> String {
@@ -194,6 +205,13 @@ impl<'a, 'm> Frame<'a, 'm> {
             ] {
                 frame.layout.declare(ty, name)?;
             }
+            // `_llg_temp_scope` is only ever written, so it has nothing to cache.
+            for (ty, name) in [
+                ("llg_value_scope_t*", "_llg_frame_base"),
+                ("sv4_t*", "_llg_t"),
+            ] {
+                frame.cached_fields.register(ty, name, true);
+            }
         }
         Ok(frame)
     }
@@ -235,6 +253,7 @@ impl<'a, 'm> Frame<'a, 'm> {
             resume_numbers: Vec::new(),
             frame_upper_bounds: BTreeMap::new(),
             coroutine_functions: BTreeSet::new(),
+            cached_fields: cached_fields::CachedFields::default(),
         }
     }
     fn line(&mut self, text: impl AsRef<str>) {
@@ -258,6 +277,13 @@ impl<'a, 'm> Frame<'a, 'm> {
             self.layout.mark_resume();
             self.resume_probe = true;
             self.cancellation_points += 1;
+            if self.layout.storage() == FrameStorage::CoFrame {
+                // A resume lands inside the suspension macro with every cached
+                // local indeterminate; the frame holds the only surviving copy.
+                if let Some(reload) = self.cached_fields.reload_placeholder() {
+                    self.code.push_str(&reload);
+                }
+            }
         }
     }
 
@@ -348,12 +374,14 @@ impl<'a, 'm> Frame<'a, 'm> {
                     self.brace_kinds.push(structural);
                     if structural {
                         self.layout.begin_block();
+                        self.cached_fields.open_block();
                     }
                     segment_start = index + 1;
                 }
                 b'}' => {
                     match self.brace_kinds.pop() {
                         Some(true) => {
+                            self.cached_fields.close_block();
                             if let Err(error) = self.layout.end_block() {
                                 self.structural_error.get_or_insert(error);
                             }
@@ -412,8 +440,10 @@ impl<'a, 'm> Frame<'a, 'm> {
                     } else {
                         "llg_current()"
                     });
-                } else if let Some(access) =
-                    self.layout.field_access(ident).filter(|_| !member_access)
+                } else if let Some(access) = self
+                    .layout
+                    .field_access(ident)
+                    .filter(|_| !member_access && !self.cached_fields.is_cached(ident))
                 {
                     out.push_str("F->");
                     out.push_str(access);
@@ -511,8 +541,21 @@ impl<'a, 'm> Frame<'a, 'm> {
         dispatch
     }
     fn declare_named(&mut self, ty: &str, name: &str, init: String) -> String {
+        self.declare_named_with(ty, name, init, false)
+    }
+    /// Like `declare_named`, for a pointer that is assigned only here and read
+    /// afterwards: a frame-resident field is then mirrored by a C local.
+    fn declare_named_cached(&mut self, ty: &str, name: &str, init: String) -> String {
+        self.declare_named_with(ty, name, init, true)
+    }
+    fn declare_named_with(&mut self, ty: &str, name: &str, init: String, cache: bool) -> String {
         let registered = match self.layout.declare(ty, name) {
-            Ok(access) => access,
+            Ok(access) => {
+                if cache && self.layout.storage() == FrameStorage::CoFrame {
+                    self.cached_fields.register(ty, name, false);
+                }
+                access
+            }
             Err(error) => {
                 self.declaration_error.get_or_insert(error);
                 name.to_owned()
@@ -805,7 +848,7 @@ impl<'a, 'm> Frame<'a, 'm> {
                 "llg_value_scope_t*",
                 "llg_value_scope_begin_object(sizeof(double), NULL)".to_owned(),
             );
-            let pointer = self.declare_named(
+            let pointer = self.declare_named_cached(
                 "double*",
                 &pointer,
                 format!("(double*)llg_value_scope_object({owner})"),
@@ -813,7 +856,7 @@ impl<'a, 'm> Frame<'a, 'm> {
             self.line(format!("*{pointer} = 0.0;"));
             pointer
         } else {
-            self.declare_named(
+            self.declare_named_cached(
                 "sv4_t*",
                 &pointer,
                 "llg_value_scope_values(llg_value_scope_begin(1))".to_owned(),
@@ -863,7 +906,7 @@ impl<'a, 'm> Frame<'a, 'm> {
     pub(super) fn body(&self) -> &str {
         &self.code
     }
-    pub(super) fn into_coframe(mut self) -> Result<(String, FrameLayout), String> {
+    pub(super) fn into_coframe(mut self) -> Result<CoroutineBody, String> {
         // Emission can fold an expression which still has a conservative call
         // site in the pre-emission execution analysis. Preserve storage and
         // descriptor offsets for those unreachable sites even though no call
@@ -895,11 +938,23 @@ impl<'a, 'm> Frame<'a, 'm> {
                     .code
                     .replace(&format!("F->{original}"), &format!("F->{flattened}"));
             }
+            let layout = &self.layout;
+            self.cached_fields
+                .decide(&self.code, |name| layout.field_access(name).is_some());
             let declarations = self.resolve_declarations()?;
-            self.code = self.resolve_local_uses(&declarations)?;
+            let resolved = self.resolve_local_uses(&declarations)?;
+            self.code = self
+                .cached_fields
+                .expand_reloads(&resolved, |name| self.layout.field_access(name))?;
             let rewritten = self.rewrite_frame_accesses(&self.code);
-            self.code = rewritten;
-            Ok((self.code, self.layout))
+            let loads = self
+                .cached_fields
+                .prologue_loads(|name| self.layout.field_access(name));
+            Ok(CoroutineBody {
+                body: format!("{loads}{rewritten}"),
+                cached_locals: self.cached_fields.locals(),
+                layout: self.layout,
+            })
         }
     }
 
@@ -922,6 +977,10 @@ impl<'a, 'm> Frame<'a, 'm> {
                 .ok_or_else(|| format!("unknown deferred coroutine declaration {index}"))?;
             if let Some(access) = self.layout.field_access(&record.name) {
                 if !record.standalone {
+                    if self.cached_fields.is_cached(&record.name) {
+                        output.push_str(&record.name);
+                        output.push_str(" = ");
+                    }
                     output.push_str("F->");
                     output.push_str(access);
                 }

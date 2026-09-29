@@ -284,6 +284,9 @@ void llg_inertial_selected_net(llg_inertial_t** handle, llg_net_t* net,
 // as soon as their values die, not only during runtime teardown.
 typedef struct llg_value_scope llg_value_scope_t;
 llg_value_scope_t* llg_value_scope_begin(size_t count);
+// The array is allocated once by `llg_value_scope_begin` and neither moves nor
+// is replaced until the scope ends; generated coroutines rely on this to keep
+// the pointer in a C local reloaded from the frame after each resume.
 sv4_t* llg_value_scope_values(llg_value_scope_t* scope);
 void llg_value_scope_end(llg_value_scope_t* scope);
 // Zeroed native storage shares lexical/nonlocal cleanup with packed scopes.

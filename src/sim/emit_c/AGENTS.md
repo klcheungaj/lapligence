@@ -57,6 +57,23 @@ order within hot and ordinary groups. The continuation probe ends at the next C
 statement boundary, including the cancellation check after a wait. This is a
 deterministic cache-line heuristic, not a liveness proof.
 
+Frame fields that are assigned once and only read afterwards (`_llg_t`,
+`_llg_frame_base` and the `_llg_local_N` cell pointers; `_llg_temp_scope` is
+write-only) are mirrored by C locals of the same name (`owned/cached_fields.rs`,
+design §13.2 rule 2), because every `F->` load is possibly aliased for GCC. The
+local is declared without an initializer before `LLG_CO_DISPATCH_BEGIN`, assigned
+together with the field (`x = F->x = init;`, or right after the prologue) and
+reloaded from the frame on the line after every suspension macro, for the cached
+fields whose C scope is open there: a resume jumps into the macro with every local
+indeterminate. Stability rests on the runtime never moving a value scope's array
+and on the prologue being skipped by the dispatch. Emission still checks the final
+text: a candidate with any other write, address-of or member access, one that
+narrowing turned into a C local, and one read no more often than it is reloaded
+(`CACHE_MIN_READS_PER_RELOAD`) stays a frame field. Keep reload placeholders out of
+`Frame::line`, which would make them the continuation probe's first statement. Add
+a new cached kind only after proving it is assigned only at its declaration. The
+frame lint rejects a cached local read after a suspension without a reload.
+
 Cancellation checks (`llg_activation_cancelled()`) follow only cancellation
 points: resume points, `disable`, calls whose callee may disable (the Phase-2
 `Disable` effect) or dispatch dynamically, and the exit of a named block that
