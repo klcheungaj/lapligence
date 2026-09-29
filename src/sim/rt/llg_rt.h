@@ -1144,6 +1144,9 @@ void llg_activation_exit(llg_activation_t* activation);
 int llg_activation_cancelled(void);
 // Disabling an activation that reaches `self` completes cancellation
 // bookkeeping, sets LLG_EXIT_ABANDON, and returns for immediate propagation.
+// This is the only setter of an activation's `disabled` flag: generated code
+// checks llg_activation_cancelled() only after resume points and after
+// operations that may reach this call.
 void llg_disable_target(llg_proc_t* self, uint32_t declaration,
                         uint32_t instance);
 

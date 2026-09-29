@@ -91,6 +91,9 @@ struct Activation {
     exit: String,
     handle: String,
     lexical_depth: usize,
+    /// A cancellation check branches to `exit`; the enclosing construct must
+    /// check again because an outer activation may be the cancelled one.
+    checked: bool,
 }
 
 #[derive(Clone)]
@@ -128,6 +131,13 @@ pub(super) struct Frame<'a, 'm> {
     sequence_addresses: HashMap<String, Binding>,
     activations: Vec<Activation>,
     cancellation_return: bool,
+    /// Count of emitted cancellation points: resume points, `disable` and
+    /// calls that may disable. A cancellation check is emitted only when this
+    /// changed since the start of the construct it follows (design §13.2
+    /// rule 1): between such points no activation of a running process can
+    /// become cancelled.
+    cancellation_points: usize,
+    may_disable: HashMap<usize, bool>,
     access_stack: Vec<String>,
     construction_stack: Vec<usize>,
     layout: FrameLayout,
@@ -210,6 +220,8 @@ impl<'a, 'm> Frame<'a, 'm> {
             sequence_addresses: HashMap::new(),
             activations: Vec::new(),
             cancellation_return: false,
+            cancellation_points: 0,
+            may_disable: HashMap::new(),
             access_stack: Vec::new(),
             construction_stack: Vec::new(),
             layout: FrameLayout::new(storage),
@@ -245,6 +257,7 @@ impl<'a, 'm> Frame<'a, 'm> {
         if is_runtime_suspension(text) {
             self.layout.mark_resume();
             self.resume_probe = true;
+            self.cancellation_points += 1;
         }
     }
 

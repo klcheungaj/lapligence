@@ -133,6 +133,9 @@ fn generated_sources_keep_value_runtime_as_a_separate_translation_unit() {
     assert!(cmake.contains(
         "set_source_files_properties(llg_co.c PROPERTIES COMPILE_DEFINITIONS LLG_CO_HOST_ALLOC=1)"
     ));
+    assert!(cmake.contains(
+        "set_source_files_properties(model.c PROPERTIES COMPILE_OPTIONS -Wno-misleading-indentation)"
+    ));
     assert!(cmake.contains("if(LLG_RUNTIME_LIBRARY)"));
     assert!(!cmake.contains("target_compile_definitions(sim PRIVATE LLG_MODEL_STACK_VALUES"));
     let (runtime_header, runtime_source) = sim::rt::runtime_sources();

@@ -117,6 +117,11 @@ pub enum ExecutionEffect {
     Trigger,
     Spawn,
     RuntimeService,
+    /// May disable a named activation synchronously (`disable` of a block or
+    /// task, directly or in a callee). Together with resume points these are
+    /// the only places where an active process's activations can become
+    /// cancelled, so cancellation checks are emitted only after them.
+    Disable,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -662,6 +667,7 @@ fn collect_effects(
                 effects.push(ExecutionEffect::RuntimeService);
                 if matches!(statement, IrStmt::DisableTarget { .. }) {
                     effects.push(ExecutionEffect::Terminate);
+                    effects.push(ExecutionEffect::Disable);
                 }
             }
             IrStmt::System(_) => effects.push(ExecutionEffect::RuntimeService),
@@ -802,6 +808,7 @@ fn collect_callee_effects(
     if conservative {
         effects.push(ExecutionEffect::Suspend);
         effects.push(ExecutionEffect::Terminate);
+        effects.push(ExecutionEffect::Disable);
     }
     if !visited_calls.insert(function) {
         return;
@@ -816,6 +823,7 @@ fn collect_callee_effects(
     } else {
         effects.push(ExecutionEffect::Suspend);
         effects.push(ExecutionEffect::Terminate);
+        effects.push(ExecutionEffect::Disable);
     }
 }
 

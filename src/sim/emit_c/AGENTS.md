@@ -57,6 +57,16 @@ order within hot and ordinary groups. The continuation probe ends at the next C
 statement boundary, including the cancellation check after a wait. This is a
 deterministic cache-line heuristic, not a liveness proof.
 
+Cancellation checks (`llg_activation_cancelled()`) follow only cancellation
+points: resume points, `disable`, calls whose callee may disable (the Phase-2
+`Disable` effect) or dispatch dynamically, and the exit of a named block that
+was left through a check. Only `llg_disable_target` sets an activation's
+`disabled` flag, so nothing else can cancel a running process. A check straight
+after a call, an await or a leaf statement covers its points; compound
+statements re-check at their end while any point inside is uncovered, so a
+point in one branch is never checked only in another. Copy-out and later
+operands after a cancelled call stay skipped.
+
 `Value` carries code, width/sign/fill metadata and an owning descriptor slot.
 Emit ordered setup, calls and cleanup, not nested allocating C expressions.
 Non-addressable real results are scalar temporaries; addressable real locals use

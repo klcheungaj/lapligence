@@ -215,7 +215,8 @@ boundary. Preserve GTKWave provenance and official-reader self-tests.
 
 ## Source assembly and validation
 
-C11 model builds use `-O2 -Wall -Wno-unused-function` and stay warning-clean.
+C11 model builds use `-O2 -Wall -Wno-unused-function` and stay warning-clean;
+generated model sources add `-Wno-misleading-indentation` (see the sim guide).
 Compile facade translation units only; synchronize private fragment order with
 `include_str!`/`concat!` flat embedding. Never include value implementation in the
 scheduler or export private shared state to avoid assembly rules.

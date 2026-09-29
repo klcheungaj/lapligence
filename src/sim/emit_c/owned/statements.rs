@@ -92,6 +92,7 @@ impl Frame<'_, '_> {
     }
 
     pub(super) fn statement(&mut self, statement: &IrStmt) -> Result<(), String> {
+        let cancellation_mark = self.cancellation_mark();
         match statement {
             IrStmt::Nop => self.line(";"),
             IrStmt::Container(operation) => self.container_statement(operation)?,
@@ -226,7 +227,7 @@ impl Frame<'_, '_> {
             } => {
                 if !check.is_none() {
                     self.qualified_if(cond, then_, els.as_deref(), check)?;
-                    self.cancellation_check()?;
+                    self.cancellation_check_since(cancellation_mark)?;
                     return Ok(());
                 }
                 let condition = self.condition(cond)?;
@@ -302,7 +303,7 @@ impl Frame<'_, '_> {
             } => {
                 if !check.is_none() {
                     self.qualified_case(sel, *kind, items, check)?;
-                    self.cancellation_check()?;
+                    self.cancellation_check_since(cancellation_mark)?;
                     return Ok(());
                 }
                 let selector = self.expression(sel)?;
@@ -481,6 +482,7 @@ impl Frame<'_, '_> {
                     )
                 };
                 let success_flag = self.scalar("int", "0".to_owned());
+                let await_mark = self.cancellation_mark();
                 self.await_arm(
                     SuspensionOperation::WaitOrder,
                     format!(
@@ -488,7 +490,7 @@ impl Frame<'_, '_> {
                         events.len()
                     ),
                 )?;
-                self.cancellation_check()?;
+                self.cancellation_check_covering(await_mark)?;
                 self.line(format!("if ({success_flag} > 0)"));
                 self.block(success)?;
                 self.line(format!("else if ({success_flag} < 0)"));
@@ -518,11 +520,12 @@ impl Frame<'_, '_> {
             }
             IrStmt::WaitEventTriggered { event, body } => {
                 let event = self.event_address(event)?;
+                let await_mark = self.cancellation_mark();
                 self.await_arm(
                     SuspensionOperation::EventTriggeredWait,
                     format!("llg_arm_event_triggered(self, {event})"),
                 )?;
-                self.cancellation_check()?;
+                self.cancellation_check_covering(await_mark)?;
                 self.block(body)?;
             }
             IrStmt::Fork {
@@ -559,11 +562,14 @@ impl Frame<'_, '_> {
             IrStmt::ActivationScope { target, exit, body } => {
                 self.activation_scope(*target, exit, body)?
             }
-            IrStmt::DisableTarget { target } => self.line(format!(
-                "llg_disable_target(self, {}u, {}u);",
-                target.declaration(),
-                target.instance()
-            )),
+            IrStmt::DisableTarget { target } => {
+                self.line(format!(
+                    "llg_disable_target(self, {}u, {}u);",
+                    target.declaration(),
+                    target.instance()
+                ));
+                self.cancellation_point();
+            }
             IrStmt::WaitFork => {
                 self.await_arm(SuspensionOperation::WaitFork, "llg_arm_wait_fork(self)")?
             }
@@ -819,6 +825,34 @@ impl Frame<'_, '_> {
                 self.line("if (LLG_CO_UNLIKELY(llg_rt_exiting())) goto _llg_return;");
             }
         }
-        self.cancellation_check()
+        if straight_line_statement(statement) {
+            self.cancellation_check_covering(cancellation_mark)
+        } else {
+            self.cancellation_check_since(cancellation_mark)
+        }
     }
+}
+
+/// Statements that can hold a cancellation point but no nested statements
+/// (fork branches are separate coroutines):
+/// no `break`, `continue` or `return` can leave them before their final
+/// cancellation check, so that check covers their points for every
+/// enclosing construct. Compound statements keep their points visible.
+fn straight_line_statement(statement: &IrStmt) -> bool {
+    matches!(
+        statement,
+        IrStmt::Delay { .. }
+            | IrStmt::ClockingCycleWait { .. }
+            | IrStmt::WaitEvents { .. }
+            | IrStmt::WaitAny { .. }
+            | IrStmt::WaitFork
+            | IrStmt::Fork { .. }
+            | IrStmt::CapturedFork { .. }
+            | IrStmt::Expect { .. }
+            | IrStmt::DisableTarget { .. }
+            | IrStmt::Assign { .. }
+            | IrStmt::Call(_)
+            | IrStmt::Object(_)
+            | IrStmt::StopControl { .. }
+    )
 }

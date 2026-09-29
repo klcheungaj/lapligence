@@ -65,6 +65,17 @@ fn timed_output_and_inout_copy_back_once_and_skip_cancelled_calls() {
 }
 
 #[test]
+fn cancellation_is_observed_after_resume_points_disable_and_disabling_calls() {
+    sim_cli::run_case(
+        "coroutine_semantics",
+        "cancellation_points",
+        "PASS cancellation_points steps=1 outer=1 branch=1 copied=5 caller=1\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
 fn join_none_children_wait_for_a_real_blocking_boundary() {
     sim_cli::run_case(
         "coroutine_semantics",

@@ -139,6 +139,7 @@ impl Frame<'_, '_> {
         region: Option<ScheduleRegion>,
         operation: SuspensionOperation,
     ) -> Result<(), String> {
+        let cancellation_mark = self.cancellation_mark();
         if let Some(region) = region {
             self.line(format!(
                 "llg_wait_resume_in_region({});",
@@ -163,6 +164,6 @@ impl Frame<'_, '_> {
                 format!("llg_arm_any_dependencies(self, {array}, {})", sens.len()),
             )?;
         }
-        self.cancellation_check()
+        self.cancellation_check_covering(cancellation_mark)
     }
 }

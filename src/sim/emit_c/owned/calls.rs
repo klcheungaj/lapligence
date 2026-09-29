@@ -306,7 +306,9 @@ impl Frame<'_, '_> {
             }
         }
         parameters.push(depth.code().to_owned());
-        let result = if self.coroutine_functions.contains(&f) {
+        let call_mark = self.cancellation_mark();
+        let coroutine = self.coroutine_functions.contains(&f);
+        let result = if coroutine {
             self.coroutine_call(f, &function, &parameters)?;
             None
         } else {
@@ -326,24 +328,31 @@ impl Frame<'_, '_> {
             };
             result
         };
-        self.cancellation_check()?;
+        // A coroutine call is a resume point, recorded by `line`. A plain
+        // callee, or any override behind dynamic dispatch, may disable an
+        // activation of this process; copy-out must then be skipped.
+        let dynamic = virtual_dispatch || virtual_call.is_some();
+        if !coroutine && (dynamic || self.callee_may_disable(f)) {
+            self.cancellation_point();
+        }
+        self.cancellation_check_covering(call_mark)?;
         for value in owners {
             self.discard(value);
         }
         for (target, storage) in copyouts {
+            let mark = self.cancellation_mark();
             let value = self.read_binding(&storage);
             for (target, piece) in self.prepare_captured_assignment(target, value)? {
                 self.store(&target, piece, false, "0")?;
                 self.release_target(target);
             }
-            self.cancellation_check()?;
+            self.cancellation_check_since(mark)?;
         }
         for (target, storage) in string_copyouts {
             self.line(format!(
                 "llg_string_move({}, llg_string_clone({}));",
                 target.address, storage.address
             ));
-            self.cancellation_check()?;
         }
         for value in native_owners {
             self.native_discard(value);
@@ -442,6 +451,7 @@ impl Frame<'_, '_> {
             }
         }
         for (target, name, width, signed) in captured {
+            let mark = self.cancellation_mark();
             let binding = self
                 .lookup(name)
                 .ok_or_else(|| format!("unknown copyout {name}"))?;
@@ -451,7 +461,7 @@ impl Frame<'_, '_> {
                 self.store(&target, piece, false, "0")?;
                 self.release_target(target);
             }
-            self.cancellation_check()?;
+            self.cancellation_check_since(mark)?;
         }
         self.end_block();
         Ok(())

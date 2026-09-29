@@ -159,6 +159,7 @@ impl Frame<'_, '_> {
         query: &IrObjectQuery,
         expression: &IrExpr,
     ) -> Result<Value, String> {
+        let cancellation_mark = self.cancellation_mark();
         use IrObjectQuery::*;
         if self.read_only_callback && !matches!(query, MailboxEq(..) | MailboxNum(..)) {
             return Err(pending("synchronization mutation in read-only callbacks"));
@@ -221,11 +222,12 @@ impl Frame<'_, '_> {
             expression.width,
             expression.signed,
         );
-        self.cancellation_check()?;
+        self.cancellation_check_covering(cancellation_mark)?;
         Ok(result)
     }
 
     pub(super) fn mailbox_statement(&mut self, statement: &IrObjectStmt) -> Result<(), String> {
+        let cancellation_mark = self.cancellation_mark();
         use IrObjectStmt::*;
         if self.read_only_callback {
             return Err(pending("synchronization statements in read-only callbacks"));
@@ -292,7 +294,7 @@ impl Frame<'_, '_> {
             }
             _ => return Err(pending("object statement ownership contract")),
         }
-        self.cancellation_check()
+        self.cancellation_check_covering(cancellation_mark)
     }
 
     fn mailbox_put(

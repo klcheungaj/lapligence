@@ -78,7 +78,7 @@ else()
   add_executable(sim {ALL_SOURCES})
 endif()
 set_target_properties(sim PROPERTIES ENABLE_EXPORTS ON)
-if(MSVC)
+{MODEL_SOURCE_OPTIONS}if(MSVC)
   set(LLG_HOST_STACK_ESTIMATE_BYTES 8388608 CACHE STRING
       "Host stack reserved for scheduler, one polled coroutine segment, and recursion guard")
   target_link_options(sim PRIVATE /STACK:${LLG_HOST_STACK_ESTIMATE_BYTES})
@@ -90,6 +90,15 @@ else()
 endif()
 {WAVE_SETUP}
 {DPI_LINK}
+"#;
+
+/// Per-source options for generated model translation units. GCC's
+/// `-Wmisleading-indentation` costs time quadratic in file size (13.6 of 70.9 s
+/// on a 10.8 MB model) and only reports source layout, which carries no meaning
+/// in emitter output, so generated sources skip it; runtime sources keep it.
+const MODEL_SOURCE_OPTIONS: &str = r#"if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+  set_source_files_properties({MODEL_SOURCES} PROPERTIES COMPILE_OPTIONS -Wno-misleading-indentation)
+endif()
 "#;
 
 const RUNTIME_CMAKELISTS_TEMPLATE: &str = r#"cmake_minimum_required(VERSION 3.16)
@@ -487,7 +496,13 @@ fn write_cmakelists(
         .map(|(name, _)| *name)
         .filter(|name| name.ends_with(".c"))
         .collect();
+    let model_source_options = if model_sources.is_empty() {
+        String::new()
+    } else {
+        MODEL_SOURCE_OPTIONS.replace("{MODEL_SOURCES}", &model_sources.join(" "))
+    };
     let cmakelists = CMAKELISTS_TEMPLATE
+        .replace("{MODEL_SOURCE_OPTIONS}", &model_source_options)
         .replace("{MODEL_SOURCES}", &model_sources.join(" "))
         .replace("{ALL_SOURCES}", &sources.join(" "))
         .replace("{WAVE_SETUP}", if waveform { WAVE_CMAKE } else { "" })

@@ -104,6 +104,7 @@ impl Frame<'_, '_> {
         direction: IrStreamDirection,
         targets: &[IrStreamTarget],
     ) -> Result<(), String> {
+        let cancellation_mark = self.cancellation_mark();
         enum Write {
             Packed(Target, Value),
             Container {
@@ -379,7 +380,7 @@ impl Frame<'_, '_> {
                         self.discard(segment);
                     }
                 }
-                self.cancellation_check()?;
+                self.cancellation_check_covering(cancellation_mark)?;
             }
         }
         self.discard(value);
