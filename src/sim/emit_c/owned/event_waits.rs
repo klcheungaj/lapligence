@@ -101,7 +101,7 @@ impl Frame<'_, '_> {
                     Ok(format!("{{ .sig = {signal}, .kind = {edge} }}"))
                 })
                 .collect::<Result<Vec<_>, String>>()?;
-            let array = self.declare_array_init(
+            let array = self.arm_array(
                 "llg_event_spec_t",
                 "event_specs",
                 entries.len(),
@@ -125,7 +125,7 @@ impl Frame<'_, '_> {
                     self.event_address(event)
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            let array = self.declare_array_init(
+            let array = self.arm_array(
                 "const llg_event_t*",
                 "events",
                 events.len(),
@@ -159,7 +159,7 @@ impl Frame<'_, '_> {
                     _ => unreachable!("simple mixed sources were checked"),
                 });
             }
-            let array = self.declare_array_init(
+            let array = self.arm_array(
                 "llg_wait_src_t",
                 "wait_sources",
                 entries.len(),
@@ -170,7 +170,7 @@ impl Frame<'_, '_> {
                 format!("llg_arm_mixed(self, {array}, {})", entries.len()),
             );
         }
-        let array = self.event_specs(specs)?;
+        let array = self.event_specs(specs, true)?;
         self.await_arm(
             SuspensionOperation::EventWait,
             format!("llg_arm_expressions(self, {array}, {})", specs.len()),
@@ -179,7 +179,14 @@ impl Frame<'_, '_> {
 
     // All user expressions must finish before this returns. The caller must
     // immediately pass these owned context references to a runtime consumer.
-    pub(super) fn event_specs(&mut self, specs: &[(IrWaitSrc, IrEdge)]) -> Result<String, String> {
+    // `arm` marks a consumer that copies the descriptors and their dependency
+    // lists during the call (`llg_arm_expressions`), so both may be compound
+    // literals in the call expression; otherwise they stay declared storage.
+    pub(super) fn event_specs(
+        &mut self,
+        specs: &[(IrWaitSrc, IrEdge)],
+        arm: bool,
+    ) -> Result<String, String> {
         if specs.is_empty() {
             return Ok("NULL".to_owned());
         }
@@ -250,12 +257,21 @@ impl Frame<'_, '_> {
                             .iter()
                             .map(|item| self.dependency(item))
                             .collect::<Result<Vec<_>, _>>()?;
-                        let name = self.declare_array_init(
-                            "llg_wait_dependency_t",
-                            "event_dependencies",
-                            dependencies.len(),
-                            &dependencies.join(", "),
-                        );
+                        let name = if arm {
+                            self.arm_array(
+                                "llg_wait_dependency_t",
+                                "event_dependencies",
+                                dependencies.len(),
+                                &dependencies.join(", "),
+                            )
+                        } else {
+                            self.declare_array_init(
+                                "llg_wait_dependency_t",
+                                "event_dependencies",
+                                dependencies.len(),
+                                &dependencies.join(", "),
+                            )
+                        };
                         fields.push(format!(
                             ".dependencies = {name}, .n_dependencies = {}",
                             reads.len()
@@ -296,12 +312,12 @@ impl Frame<'_, '_> {
         for name in retained {
             self.line(format!("llg_frame_retain({});", self.access(&name)));
         }
-        let array = self.declare_array_init(
-            "llg_expr_event_spec_t",
-            "events",
-            entries.len(),
-            &entries.join(", "),
-        );
+        let entries = entries.join(", ");
+        let array = if arm {
+            self.arm_array("llg_expr_event_spec_t", "events", specs.len(), &entries)
+        } else {
+            self.declare_array_init("llg_expr_event_spec_t", "events", specs.len(), &entries)
+        };
         for context in &contexts {
             self.line(format!(
                 "llg_frame_release({});",

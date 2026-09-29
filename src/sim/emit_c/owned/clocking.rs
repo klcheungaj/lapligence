@@ -29,6 +29,16 @@ impl Frame<'_, '_> {
         &mut self,
         specs: &[(IrWaitSrc, IrEdge)],
     ) -> Result<String, String> {
+        let entries = self.clocking_source_entries(specs)?;
+        Ok(self.declare_array_init("llg_wait_src_t", "clocking_sources", specs.len(), &entries))
+    }
+
+    /// Initializer list of a clocking source array. Operands are evaluated
+    /// here, so the text may be repeated at several arm sites.
+    pub(super) fn clocking_source_entries(
+        &mut self,
+        specs: &[(IrWaitSrc, IrEdge)],
+    ) -> Result<String, String> {
         if specs.is_empty() {
             return Err("clocking operation requires an associated event".to_owned());
         }
@@ -63,13 +73,7 @@ impl Frame<'_, '_> {
                 }
             });
         }
-        let name = self.declare_array_init(
-            "llg_wait_src_t",
-            "clocking_sources",
-            entries.len(),
-            &entries.join(", "),
-        );
-        Ok(name)
+        Ok(entries.join(", "))
     }
 
     pub(super) fn clocking_drive(

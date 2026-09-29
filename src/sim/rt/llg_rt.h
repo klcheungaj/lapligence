@@ -1166,7 +1166,11 @@ llg_co_arm_t llg_arm_time(llg_proc_t* self, uint64_t ticks);
 // Set the explicit region used by the next signal/dependency wait. Generated
 // sensitivity terminators use this to migrate a coroutine across region sets.
 void llg_wait_resume_in_region(llg_region_t region);
-// Signal/dependency arms copy their descriptor arrays before SUSPEND.
+// Signal/dependency arms copy their descriptor arrays before SUSPEND. Copy
+// contract: llg_arm_any copies `sigs`, llg_arm_any_dependencies copies `deps`
+// and llg_arm_any_events copies `specs`; none keeps a pointer into them, so
+// generated coroutines pass each as a compound literal in the arm call and the
+// array need not outlive it. Keep that true when changing these arms.
 llg_co_arm_t llg_arm_edge(llg_proc_t* self, sv4_t* sig, int posedge);
 llg_co_arm_t llg_arm_any(llg_proc_t* self, sv4_t** sigs, int n);
 llg_co_arm_t llg_arm_any_dependencies(llg_proc_t* self,
@@ -1266,7 +1270,10 @@ void llg_nba_event_after(llg_event_t* ev, uint64_t ticks);
 // Named-event arms copy the event list before SUSPEND. Triggered returns READY
 // if the event is already set in this slot. `result` for wait_order must point
 // at a frame field; the runtime writes 1 (success) or -1 (out of order) before
-// waking, and leaves zero while pending.
+// waking, and leaves zero while pending. Copy contract: llg_arm_events copies
+// `evs` and llg_arm_order copies `evs` (it keeps only the resolved event
+// objects, never the array or the handles), so generated coroutines pass the
+// list as a compound literal; `result` is kept and must stay a frame field.
 llg_co_arm_t llg_arm_event(llg_proc_t* self, llg_event_t* ev);
 llg_co_arm_t llg_arm_events(llg_proc_t* self,
                             const llg_event_t* const* evs, int n);
@@ -1287,7 +1294,9 @@ typedef struct {
 } llg_wait_src_t;
 
 // Atomic mixed wait until any signal entry matches its edge kind or any event
-// entry is triggered. The runtime copies `srcs` before SUSPEND.
+// entry is triggered. The runtime copies `srcs` before SUSPEND and does not
+// keep it or any pointer into it (the signals and event objects it names are
+// model storage), so `srcs` need not outlive the call.
 llg_co_arm_t llg_arm_mixed(llg_proc_t* self,
                            const llg_wait_src_t* srcs, int n);
 
@@ -1295,13 +1304,20 @@ llg_co_arm_t llg_arm_mixed(llg_proc_t* self,
 // a source already fired in this slot (the ##0 rule); otherwise it registers
 // the same one-shot wait as llg_arm_mixed. Generated code keeps a uint64_t
 // remaining-cycle field, emits one LLG_CO_AWAIT per loop iteration, and
-// decrements after each wake. No runtime retry arm retains the count.
+// decrements after each wake. No runtime retry arm retains the count. `srcs`
+// is copied (via llg_arm_mixed) and need not outlive the call, so generated
+// code passes it as a compound literal at each arm site.
 llg_co_arm_t llg_arm_clocking_cycle(llg_proc_t* self,
                                     const llg_wait_src_t* srcs, int n,
                                     int accept_current);
 
 // Evaluators and dependencies refer to model storage. The runtime copies
-// every descriptor and dependency array before suspending the caller.
+// every descriptor and dependency array before suspending the caller, so
+// llg_arm_expressions copies `specs` and each `dependencies` array and keeps
+// no pointer into them; generated coroutines pass both as compound literals.
+// `event` and `eval_context` name model/frame storage, not the arrays. The
+// nonblocking registrations below copy the arrays too, but generated code
+// still declares those arrays (they are not arms).
 // Callbacks must not suspend or mutate scheduler-observed storage. When a
 // generated descriptor supplies eval_context or condition_context, it passes
 // ownership of one initial llg_frame_t reference to the expression wait; the

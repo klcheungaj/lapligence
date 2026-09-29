@@ -397,26 +397,24 @@ impl Frame<'_, '_> {
                 if count.width == 0 {
                     return Err("clocking cycle count must be integral".to_owned());
                 }
-                let sources = self.clocking_sources(specs)?;
+                let sources = self.clocking_source_entries(specs)?;
                 let remaining =
                     self.scalar("uint64_t", format!("llg_repeat_count({})", count.code));
                 self.discard(count);
                 self.line(format!("if ({remaining} == 0) {{"));
+                let array =
+                    self.arm_array("llg_wait_src_t", "clocking_sources", specs.len(), &sources);
                 self.await_arm(
                     SuspensionOperation::ClockingCycle,
-                    format!(
-                        "llg_arm_clocking_cycle(self, {sources}, {}, 1)",
-                        specs.len()
-                    ),
+                    format!("llg_arm_clocking_cycle(self, {array}, {}, 1)", specs.len()),
                 )?;
                 self.line("} else {");
                 self.line(format!("while ({remaining} != 0) {{"));
+                let array =
+                    self.arm_array("llg_wait_src_t", "clocking_sources", specs.len(), &sources);
                 self.await_arm(
                     SuspensionOperation::ClockingCycle,
-                    format!(
-                        "llg_arm_clocking_cycle(self, {sources}, {}, 0)",
-                        specs.len()
-                    ),
+                    format!("llg_arm_clocking_cycle(self, {array}, {}, 0)", specs.len()),
                 )?;
                 self.line(format!("--{remaining};"));
                 self.line("}");
@@ -431,7 +429,7 @@ impl Frame<'_, '_> {
                     format!("{{ ({target}) ? ({target})->object : NULL }}"),
                 );
                 let count = self.event_repeat(repeat.as_ref())?;
-                let sources = self.event_specs(specs)?;
+                let sources = self.event_specs(specs, false)?;
                 self.line(format!(
                     "llg_nba_event_when({sources}, {}, &{handle}, {count});",
                     specs.len()
@@ -451,7 +449,7 @@ impl Frame<'_, '_> {
                 let count = self.event_repeat(repeat.as_ref())?;
                 // Context expressions can exit nonlocally. Keep action values
                 // in registered slots until they, too, have finished.
-                let sources = self.event_specs(specs)?;
+                let sources = self.event_specs(specs, false)?;
                 let frame = self.name("event_action");
                 let frame = self.publish_captures(&frame, captures);
                 self.line(format!(
@@ -474,7 +472,7 @@ impl Frame<'_, '_> {
                 let list = if addresses.is_empty() {
                     "NULL".to_owned()
                 } else {
-                    self.declare_array_init(
+                    self.arm_array(
                         "const llg_event_t*",
                         "ordered_events",
                         addresses.len(),

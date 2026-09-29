@@ -153,7 +153,7 @@ impl Frame<'_, '_> {
                 .iter()
                 .map(|item| self.dependency(item))
                 .collect::<Result<Vec<_>, _>>()?;
-            let array = self.declare_array_init(
+            let array = self.arm_array(
                 "llg_wait_dependency_t",
                 "dependencies",
                 values.len(),
