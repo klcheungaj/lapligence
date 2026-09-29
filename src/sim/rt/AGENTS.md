@@ -62,6 +62,15 @@ without forced padding or alignment. Place
 anchored frames at `LLG_CO_ANCHOR_FRAME(anchor)` and preserve the corresponding
 alignment assertions.
 
+Every `llg_arm_*` that takes a specification array (signal, dependency, event,
+wait-source or expression-descriptor list, including nested dependency arrays)
+copies it before returning and keeps no pointer into it: generated coroutines
+pass those arrays as compound literals in the arm call
+([emitter](../emit_c/AGENTS.md)). The declaration in `llg_rt.h` states the copy
+contract; an arm that must retain an array or an output address (the
+`wait_order` result) must say so there and the emitter must then keep it in a
+frame field or registered cell.
+
 `llg_rt.h` defines the exported OOM and bad-state hooks before including
 `llg_co.h`; `llg_co.c` alone receives the matching `LLG_CO_HOST_ALLOC` compile
 definition because it includes the library header directly. The runtime owns one

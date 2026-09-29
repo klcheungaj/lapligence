@@ -617,6 +617,19 @@ impl<'a, 'm> Frame<'a, 'm> {
         }
     }
 
+    /// Array argument of a runtime arm that copies it before returning (see
+    /// the copy contract on each arm in `llg_rt.h`). A coroutine passes it as
+    /// a compound literal, which lives for the enclosing block and therefore
+    /// covers the arm call, so it needs neither a frame field nor a `memcpy`.
+    /// `count` must be nonzero.
+    fn arm_array(&mut self, ty: &str, purpose: &str, count: usize, entries: &str) -> String {
+        if self.layout.storage() == FrameStorage::CoFrame {
+            format!("({ty}[]){{ {entries} }}")
+        } else {
+            self.declare_array_init(ty, purpose, count, entries)
+        }
+    }
+
     fn defer_declaration(&mut self, ty: &str, name: &str, standalone: bool) -> String {
         let index = self.declarations.len();
         self.declarations.push(DeferredDeclaration {

@@ -51,6 +51,19 @@ larger callees onto the arena. Descriptors contain the real entry function;
 numbered site tables and dispatch cases must remain one-to-one with every
 emitted await or suspendable call.
 
+Specification arrays passed to a runtime arm that copies them before returning
+(`llg_arm_any_dependencies`, `_any_events`, `_events`, `_order`, `_mixed`,
+`_clocking_cycle`, `_expressions` and the dependency lists inside its
+descriptors; the copy contract is documented on each declaration in
+`llg_rt.h`) are compound literals inside the `LLG_CO_AWAIT` arm expression via
+`Frame::arm_array`: no frame field, no `memcpy`. A literal's lifetime is the
+enclosing block, which covers the arm call. Route only arm arguments through
+it, and only when the runtime does not keep the array or a pointer into it;
+nonblocking registrations (`llg_nba_event_*_when`), `wait_order`'s result flag
+and event handles the runtime resolves later keep declared storage.
+Initializers are evaluated into scalars before the await, so a literal may be
+repeated at several arm sites (clocking cycles).
+
 Within each struct level, fields observed by the first generated continuation
 statement after a Phase-2 suspension are emitted first, preserving declaration
 order within hot and ordinary groups. The continuation probe ends at the next C
