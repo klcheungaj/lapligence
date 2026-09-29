@@ -14,7 +14,7 @@ use crate::sim::execution::{
 use crate::sim::ir::{
     IrConcurrentAssertionKind, IrFunc, IrModel, IrProcessKind, IrSequence, IrType, IrVpiObjectKind,
 };
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 mod interfaces;
 use interfaces::{
@@ -328,23 +328,206 @@ fn render_coroutine_metadata(
         artifact.desc_name,
         sites.len() + 1
     ));
-    out.push_str(&format!(
-        "{}({});\n",
-        if artifact.root {
-            "LLG_CO_ROOT_FRAME_OK"
-        } else {
-            "LLG_CO_ANCHORED_OK"
-        },
-        artifact.frame_type
-    ));
     Ok(out)
+}
+
+/// One frame typedef shared by every coroutine whose layout it describes.
+struct SharedFrameType {
+    name: String,
+    typedef: String,
+    root: bool,
+    anchored: bool,
+}
+
+/// Rewrite every C identifier (outside string/character literals and
+/// comments) for which `rename` returns a replacement.
+fn rewrite_identifiers(text: &str, rename: impl Fn(&str) -> Option<String>) -> String {
+    let bytes = text.as_bytes();
+    let mut out = String::with_capacity(text.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if byte == b'"' || byte == b'\'' {
+            let start = index;
+            index += 1;
+            while index < bytes.len() && bytes[index] != byte {
+                index += if bytes[index] == b'\\' { 2 } else { 1 };
+            }
+            index = (index + 1).min(bytes.len());
+            out.push_str(&text[start..index]);
+        } else if byte == b'/' && bytes.get(index + 1) == Some(&b'*') {
+            let end = text[index + 2..]
+                .find("*/")
+                .map_or(bytes.len(), |offset| index + 2 + offset + 2);
+            out.push_str(&text[index..end]);
+            index = end;
+        } else if byte == b'/' && bytes.get(index + 1) == Some(&b'/') {
+            let end = text[index..]
+                .find('\n')
+                .map_or(bytes.len(), |offset| index + offset);
+            out.push_str(&text[index..end]);
+            index = end;
+        } else if byte == b'_' || byte.is_ascii_alphabetic() {
+            let start = index;
+            while index < bytes.len()
+                && (bytes[index] == b'_' || bytes[index].is_ascii_alphanumeric())
+            {
+                index += 1;
+            }
+            let identifier = &text[start..index];
+            match rename(identifier) {
+                Some(replacement) => out.push_str(&replacement),
+                None => out.push_str(identifier),
+            }
+        } else if byte.is_ascii_digit() {
+            // Numeric literals (including suffixes such as `1ULL`) are copied
+            // whole so their suffix is never mistaken for an identifier.
+            let start = index;
+            while index < bytes.len()
+                && (bytes[index] == b'_' || bytes[index].is_ascii_alphanumeric())
+            {
+                index += 1;
+            }
+            out.push_str(&text[start..index]);
+        } else {
+            let start = index;
+            index += 1;
+            while index < bytes.len() && !bytes[index].is_ascii() {
+                index += 1;
+            }
+            out.push_str(&text[start..index]);
+        }
+    }
+    out
+}
+
+/// Emit one typedef per distinct coroutine frame layout.
+///
+/// Every instance of one process or task (generate loops, repeated module
+/// instances) has an identical frame layout, so a struct per coroutine
+/// repeated the same definition thousands of times. Frames are grouped by
+/// their rendered layout after replacing each embedded callee frame type with
+/// its own group, so grouping is exact and independent of function names.
+/// Artifacts are visited callee-first, so a callee's group always exists when
+/// a caller is grouped. A layout used by one coroutine keeps its
+/// `<fn>_frame_t` name; a shared layout is named `llg_shared_frame_<k>_t`.
+/// Each artifact's `frame_type` and source are rewritten to the shared name;
+/// the returned list holds each typedef once, in callee-first order.
+fn share_frame_types(
+    execution: &ExecutionModel,
+    functions: &mut CoroutineArtifacts,
+    processes: &mut [Option<CoroutineArtifact>],
+    branches: &mut BTreeMap<CoroutineId, CoroutineArtifact>,
+) -> Result<Vec<SharedFrameType>, String> {
+    const SELF_NAME: &str = "__llg_frame_self__";
+    const GROUP_PREFIX: &str = "__llg_frame_group_";
+    let mut by_index = functions
+        .iter_mut()
+        .map(|(index, artifact)| (*index, artifact))
+        .collect::<BTreeMap<_, _>>();
+    let mut ordered = Vec::new();
+    for index in execution.analysis().callee_first_functions() {
+        if let Some(artifact) = by_index.remove(index) {
+            ordered.push(artifact);
+        }
+    }
+    ordered.extend(by_index.into_values());
+    ordered.extend(processes.iter_mut().flatten());
+    ordered.extend(branches.values_mut());
+
+    // Group every frame by its layout text with callee frame types replaced
+    // by group tokens.
+    let mut group_of_type = HashMap::<String, usize>::new();
+    let mut group_by_key = HashMap::<String, usize>::new();
+    let mut groups = Vec::<(String, String, usize)>::new(); // key, first type, members
+    let mut member_groups = Vec::with_capacity(ordered.len());
+    for artifact in &ordered {
+        let text = artifact.layout.render_typedef(SELF_NAME)?;
+        let key = rewrite_identifiers(&text, |identifier| {
+            group_of_type
+                .get(identifier)
+                .map(|group| format!("{GROUP_PREFIX}{group}__"))
+        });
+        let group = match group_by_key.get(&key) {
+            Some(group) => *group,
+            None => {
+                groups.push((key.clone(), artifact.frame_type.clone(), 0));
+                group_by_key.insert(key, groups.len() - 1);
+                groups.len() - 1
+            }
+        };
+        groups[group].2 += 1;
+        group_of_type.insert(artifact.frame_type.clone(), group);
+        member_groups.push(group);
+    }
+
+    let mut shared = 0usize;
+    let names = groups
+        .iter()
+        .map(|(_, first_type, members)| {
+            if *members > 1 {
+                shared += 1;
+                format!("llg_shared_frame_{}_t", shared - 1)
+            } else {
+                first_type.clone()
+            }
+        })
+        .collect::<Vec<_>>();
+    let mut frame_types = groups
+        .iter()
+        .zip(&names)
+        .map(|((key, _, _), name)| {
+            let typedef = rewrite_identifiers(key, |identifier| {
+                if identifier == SELF_NAME {
+                    return Some(name.clone());
+                }
+                identifier
+                    .strip_prefix(GROUP_PREFIX)
+                    .and_then(|rest| rest.strip_suffix("__"))
+                    .and_then(|group| group.parse::<usize>().ok())
+                    .and_then(|group| names.get(group).cloned())
+            });
+            SharedFrameType {
+                name: name.clone(),
+                typedef,
+                root: false,
+                anchored: false,
+            }
+        })
+        .collect::<Vec<_>>();
+
+    let renamed = group_of_type
+        .iter()
+        .filter(|(original, group)| **original != names[**group])
+        .map(|(original, group)| (original.clone(), names[*group].clone()))
+        .collect::<HashMap<_, _>>();
+    for (artifact, group) in ordered.into_iter().zip(member_groups) {
+        if artifact.root {
+            frame_types[group].root = true;
+        } else {
+            frame_types[group].anchored = true;
+        }
+        artifact.frame_type = names[group].clone();
+        if !renamed.is_empty() {
+            artifact.source = rewrite_identifiers(&artifact.source, |identifier| {
+                renamed.get(identifier).cloned()
+            });
+        }
+    }
+    Ok(frame_types)
 }
 
 fn render_model(execution: &ExecutionModel) -> Result<String, String> {
     let model = execution.ir();
-    let (coroutine_functions, frame_upper_bounds) = render_coroutine_functions(execution)?;
-    let coroutine_processes = render_coroutine_processes(execution, &frame_upper_bounds)?;
-    let coroutine_branches = render_coroutine_branches(execution, &frame_upper_bounds)?;
+    let (mut coroutine_functions, frame_upper_bounds) = render_coroutine_functions(execution)?;
+    let mut coroutine_processes = render_coroutine_processes(execution, &frame_upper_bounds)?;
+    let mut coroutine_branches = render_coroutine_branches(execution, &frame_upper_bounds)?;
+    let frame_types = share_frame_types(
+        execution,
+        &mut coroutine_functions,
+        &mut coroutine_processes,
+        &mut coroutine_branches,
+    )?;
     let mut out = format!(
         "// llg-generated C11 model for design `{}`\n",
         model.design_name
@@ -392,9 +575,17 @@ fn render_model(execution: &ExecutionModel) -> Result<String, String> {
             artifact.desc_name
         ));
     }
+    for frame_type in &frame_types {
+        out.push_str(&frame_type.typedef);
+        if frame_type.root {
+            out.push_str(&format!("LLG_CO_ROOT_FRAME_OK({});\n", frame_type.name));
+        }
+        if frame_type.anchored {
+            out.push_str(&format!("LLG_CO_ANCHORED_OK({});\n", frame_type.name));
+        }
+    }
     for &index in execution.analysis().callee_first_functions() {
         let artifact = &coroutine_functions[&index];
-        out.push_str(&artifact.layout.render_typedef(&artifact.frame_type)?);
         out.push_str(&render_coroutine_metadata(
             artifact,
             execution.analysis(),
@@ -402,7 +593,6 @@ fn render_model(execution: &ExecutionModel) -> Result<String, String> {
         )?);
     }
     for artifact in coroutine_processes.iter().filter_map(Option::as_ref) {
-        out.push_str(&artifact.layout.render_typedef(&artifact.frame_type)?);
         out.push_str(&render_coroutine_metadata(
             artifact,
             execution.analysis(),
@@ -410,7 +600,6 @@ fn render_model(execution: &ExecutionModel) -> Result<String, String> {
         )?);
     }
     for artifact in coroutine_branches.values() {
-        out.push_str(&artifact.layout.render_typedef(&artifact.frame_type)?);
         out.push_str(&render_coroutine_metadata(
             artifact,
             execution.analysis(),

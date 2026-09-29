@@ -526,6 +526,111 @@ fn assert_strict_c11(model: &str) {
     );
 }
 
+const REPEATED_INSTANCES_SOURCE: &str = r#"
+module tb;
+    logic clk = 0;
+    logic [3:0] d = 4'b1011;
+    logic [3:0] q;
+    real r0 = 1.5;
+    real r1 = 2.5;
+    genvar i;
+    for (i = 0; i < 4; i = i + 1) begin : g
+        always @(posedge clk) q[i] <= d[i];
+    end
+    initial begin
+        #1 clk = 1;
+        #1 $display("q=%b r=%0.1f", q, r0 + r1);
+        $finish;
+    end
+endmodule
+"#;
+
+/// Every coroutine's `F` cast names a frame type that has exactly one typedef.
+fn assert_frame_casts_resolve(c: &str) {
+    for line in c.lines() {
+        if let Some((ty, _)) = line.trim().split_once("* F = (") {
+            assert_eq!(
+                c.matches(&format!("\n}} {ty};\n")).count(),
+                1,
+                "frame type `{ty}` must be defined exactly once"
+            );
+        }
+    }
+}
+
+#[test]
+fn repeated_instances_share_frames_and_table_driven_startup_runs() {
+    std::thread::Builder::new()
+        .name("repeated-instances".to_owned())
+        .spawn(run_repeated_instances)
+        .expect("spawn repeated-instance test")
+        .join()
+        .expect("repeated-instance test panicked");
+}
+
+fn run_repeated_instances() {
+    let compiled = compile_sources_checked(
+        &[OwnedSource::compilation_unit(
+            "repeated_instances.sv",
+            REPEATED_INSTANCES_SOURCE,
+        )],
+        &CompileOpts {
+            top: Some("tb".to_owned()),
+            ..Default::default()
+        },
+    )
+    .expect("repeated-instance fixture compiles");
+    let database = Db::from_slang(&compiled.snapshot).expect("repeated-instance database");
+
+    sim_harness::with_temp_cwd("repeated-instances", |directory| {
+        for (variant, options) in [
+            ("default", OptConfig::default()),
+            ("no-opt", OptConfig::none()),
+        ] {
+            let c = llg::sim::codegen::generate_from_db_with_opts(&database, &options)
+                .map_err(|error| format!("{variant} codegen: {error}"))?
+                .model_c;
+            // The four generated `always` instances share one frame typedef.
+            let typedefs = c
+                .matches("typedef struct {\n    llg_co_frame_t co;")
+                .count();
+            let descriptors = c.matches("static const llg_co_desc_t p_").count();
+            assert!(
+                typedefs < descriptors,
+                "{variant}: {typedefs} typedefs for {descriptors} coroutines\n{c}"
+            );
+            assert!(c.contains("llg_shared_frame_0_t"), "{variant}:\n{c}");
+            assert_frame_casts_resolve(&c);
+            // Plain static storage and spawns are table-driven loops.
+            assert!(
+                c.contains("static sv4_t* const llg_storage_"),
+                "{variant}:\n{c}"
+            );
+            assert!(c.contains("sv4_destroy(llg_storage_"), "{variant}:\n{c}");
+            assert!(
+                c.contains("static double* const llg_storage_"),
+                "{variant}:\n{c}"
+            );
+            assert!(
+                c.contains("llg_spawn_in_region(llg_model_startup_"),
+                "{variant}:\n{c}"
+            );
+            assert_strict_c11(&c);
+            let executable = llg::sim::build::build_model_cmake(
+                &directory.join(variant),
+                &[("model.c", c.as_str())],
+            )
+            .map_err(|error| format!("{variant} build: {error}"))?;
+            let output = sim_harness::run_executable(&executable)?;
+            if output != "q=1011 r=4.0\n" {
+                return Err(format!("{variant}: unexpected output {output:?}"));
+            }
+        }
+        Ok::<(), String>(())
+    })
+    .expect("repeated-instance fixture runs");
+}
+
 #[test]
 fn deep_single_child_blocks_compile_and_run_in_both_modes() {
     std::thread::Builder::new()

@@ -1,6 +1,124 @@
 //! Dynamic startup replaces static packed constructors. Cleanup is idempotent.
 use super::*;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+
+/// Value representation shared by every object in one storage table.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum StorageKind {
+    Packed {
+        width: u32,
+        signed: bool,
+        two_state: bool,
+    },
+    Real,
+}
+
+/// Plain, statically allocated storage objects whose default and teardown
+/// calls are emitted as one table-driven loop per value representation rather
+/// than one call per object. A block flushes at the position its objects
+/// previously occupied, so its ordering relative to the other initialization
+/// and teardown statements is unchanged; objects inside a block are
+/// independent, so their relative order does not matter.
+#[derive(Default)]
+struct StorageBlock {
+    groups: Vec<(StorageKind, Vec<String>)>,
+    index: HashMap<StorageKind, usize>,
+}
+
+impl StorageBlock {
+    fn push(&mut self, name: &str, width: u32, signed: bool, two_state: bool) {
+        let kind = if width == 0 {
+            StorageKind::Real
+        } else {
+            StorageKind::Packed {
+                width,
+                signed,
+                two_state,
+            }
+        };
+        let groups = &mut self.groups;
+        let slot = *self.index.entry(kind).or_insert_with(|| {
+            groups.push((kind, Vec::new()));
+            groups.len() - 1
+        });
+        self.groups[slot].1.push(name.to_owned());
+    }
+
+    fn flush(&mut self, tables: &mut StorageTables, init: &mut String, destroy: &mut String) {
+        for (kind, names) in std::mem::take(&mut self.groups) {
+            let default = match kind {
+                StorageKind::Packed {
+                    width,
+                    signed,
+                    two_state,
+                } => super::super::super::expressions::packed_default(width, signed, two_state),
+                StorageKind::Real => String::new(),
+            };
+            if names.len() < 2 {
+                for name in &names {
+                    match kind {
+                        StorageKind::Packed { .. } => {
+                            init.push_str(&format!("    sv4_replace(&{name}, {default});\n"));
+                            destroy.push_str(&format!("    sv4_destroy(&{name});\n"));
+                        }
+                        StorageKind::Real => init.push_str(&format!("    {name} = 0.0;\n")),
+                    }
+                }
+                continue;
+            }
+            let element = match kind {
+                StorageKind::Packed { .. } => "sv4_t",
+                StorageKind::Real => "double",
+            };
+            let table = tables.pointer_table(element, &names);
+            let each = format!(
+                "for (size_t _llg_n = 0; _llg_n < sizeof({table}) / sizeof({table}[0]); ++_llg_n)"
+            );
+            match kind {
+                StorageKind::Packed { .. } => {
+                    init.push_str(&format!(
+                        "    {each}\n        sv4_replace({table}[_llg_n], {default});\n"
+                    ));
+                    destroy.push_str(&format!(
+                        "    {each}\n        sv4_destroy({table}[_llg_n]);\n"
+                    ));
+                }
+                StorageKind::Real => {
+                    init.push_str(&format!("    {each}\n        *{table}[_llg_n] = 0.0;\n"));
+                }
+            }
+        }
+        self.index.clear();
+    }
+}
+
+/// File-scope pointer tables referenced by the storage lifecycle loops.
+#[derive(Default)]
+struct StorageTables {
+    source: String,
+    count: usize,
+}
+
+impl StorageTables {
+    fn pointer_table(&mut self, element: &str, names: &[String]) -> String {
+        let table = format!("llg_storage_{}", self.count);
+        self.count += 1;
+        self.source.push_str(&format!(
+            "static {element}* const {table}[{}] = {{\n",
+            names.len()
+        ));
+        for chunk in names.chunks(8) {
+            let entries = chunk
+                .iter()
+                .map(|name| format!("&{name}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            self.source.push_str(&format!("    {entries},\n"));
+        }
+        self.source.push_str("};\n");
+        table
+    }
+}
 
 pub(in crate::sim::emit_c) fn storage_lifecycle(
     model: &IrModel,
@@ -8,6 +126,9 @@ pub(in crate::sim::emit_c) fn storage_lifecycle(
 ) -> Result<(), String> {
     let mut initialize = String::new();
     let mut destroy = String::new();
+    let mut tables = StorageTables::default();
+    let mut block = StorageBlock::default();
+    let mut fixed_defaults = String::new();
     let mut emitted = HashSet::new();
     for signal in &model.signals {
         if signal.net_driver.is_some()
@@ -17,22 +138,22 @@ pub(in crate::sim::emit_c) fn storage_lifecycle(
         {
             continue;
         }
-        defaults(
-            &mut initialize,
-            &mut destroy,
+        block.push(
             &signal.c_name,
             signal.ty.width(),
             signal.ty.signed(),
             signal.ty.two_state(),
         );
         if let Some(value) = &signal.fixed_default {
-            initialize.push_str(&format!(
+            fixed_defaults.push_str(&format!(
                 "    sv4_replace(&{}, {});\n",
                 signal.c_name,
                 emit_const(value)
             ));
         }
     }
+    block.flush(&mut tables, &mut initialize, &mut destroy);
+    initialize.push_str(&std::mem::take(&mut fixed_defaults));
     emitted.clear();
     for group in &model.net_groups {
         if !emitted.insert(group.c_name.clone()) {
@@ -88,28 +209,31 @@ pub(in crate::sim::emit_c) fn storage_lifecycle(
         }
     }
     emitted.clear();
+    // Function return slots and static locals are independent persistent
+    // objects: tabled packed/real defaults first, then string/chandle resets
+    // and explicit fixed defaults in their original order.
+    let mut native_init = String::new();
+    let mut native_destroy = String::new();
     for (index, function) in model.funcs.iter().enumerate() {
         if !function.automatic {
             if function.ret_string {
                 string_defaults(
-                    &mut initialize,
-                    &mut destroy,
+                    &mut native_init,
+                    &mut native_destroy,
                     &format!("_llg_native_ret_{index}"),
                 );
             } else if function.ret_chandle {
-                initialize.push_str(&format!("    _llg_native_ret_{index} = NULL;\n"));
+                native_init.push_str(&format!("    _llg_native_ret_{index} = NULL;\n"));
             }
             if let Some(ty) = function.ret.filter(|_| function.return_signal.is_none()) {
-                defaults(
-                    &mut initialize,
-                    &mut destroy,
+                block.push(
                     &format!("_llg_ret_{index}"),
                     ty.width(),
                     ty.signed(),
                     ty.two_state(),
                 );
                 if let Some(value) = &function.return_default {
-                    initialize.push_str(&format!(
+                    fixed_defaults.push_str(&format!(
                         "    sv4_replace(&_llg_ret_{index}, {});\n",
                         emit_const(value)
                     ));
@@ -119,18 +243,16 @@ pub(in crate::sim::emit_c) fn storage_lifecycle(
         for local in &function.locals {
             if emitted.insert(local.c_name().to_owned()) {
                 if local.string {
-                    string_defaults(&mut initialize, &mut destroy, local.c_name());
+                    string_defaults(&mut native_init, &mut native_destroy, local.c_name());
                 } else {
-                    defaults(
-                        &mut initialize,
-                        &mut destroy,
+                    block.push(
                         local.c_name(),
                         if local.real { 0 } else { local.width() },
                         local.signed(),
                         local.two_state,
                     );
                     if let Some(value) = &local.fixed_default {
-                        initialize.push_str(&format!(
+                        fixed_defaults.push_str(&format!(
                             "    sv4_replace(&{}, {});\n",
                             local.c_name(),
                             emit_const(value)
@@ -140,6 +262,10 @@ pub(in crate::sim::emit_c) fn storage_lifecycle(
             }
         }
     }
+    block.flush(&mut tables, &mut initialize, &mut destroy);
+    initialize.push_str(&native_init);
+    initialize.push_str(&std::mem::take(&mut fixed_defaults));
+    destroy.push_str(&native_destroy);
     for array in &model.arrays {
         defaults(
             &mut initialize,
@@ -263,6 +389,7 @@ pub(in crate::sim::emit_c) fn storage_lifecycle(
     if !model.classes.is_empty() {
         destroy.push_str("    llg_class_storage_destroy();\n");
     }
+    out.push_str(&tables.source);
     out.push_str(&format!("static void llg_model_storage_defaults(void) {{\n{initialize}}}\n\nstatic void llg_model_storage_destroy(void) {{\n{destroy}}}\n\n"));
     let ctx = RCtx {
         model,
@@ -455,4 +582,48 @@ fn initialization_step(frame: &mut Frame<'_, '_>, step: &IrInitStep) -> Result<(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod storage_table_tests {
+    use super::{StorageBlock, StorageTables};
+
+    #[test]
+    fn groups_of_two_or_more_become_loops_and_singletons_stay_direct() {
+        let mut block = StorageBlock::default();
+        block.push("G_a", 8, false, false);
+        block.push("G_r", 0, false, false);
+        block.push("G_b", 8, false, false);
+        block.push("G_wide", 70, true, true);
+        block.push("G_s", 0, false, false);
+        let mut tables = StorageTables::default();
+        let (mut init, mut destroy) = (String::new(), String::new());
+        block.flush(&mut tables, &mut init, &mut destroy);
+
+        assert!(tables
+            .source
+            .contains("static sv4_t* const llg_storage_0[2] = {\n    &G_a, &G_b,\n};"));
+        assert!(tables
+            .source
+            .contains("static double* const llg_storage_1[2] = {\n    &G_r, &G_s,\n};"));
+        assert!(
+            init.contains("sv4_replace(llg_storage_0[_llg_n], sv4_x(8, 0));"),
+            "{init}"
+        );
+        assert!(init.contains("*llg_storage_1[_llg_n] = 0.0;"), "{init}");
+        assert!(init.contains("sv4_replace(&G_wide, "), "{init}");
+        assert!(
+            destroy.contains("sv4_destroy(llg_storage_0[_llg_n]);"),
+            "{destroy}"
+        );
+        assert!(destroy.contains("sv4_destroy(&G_wide);"), "{destroy}");
+        assert!(
+            !destroy.contains("llg_storage_1"),
+            "reals own no payload: {destroy}"
+        );
+        // Flushing leaves the block empty for the next storage section.
+        let (mut again_init, mut again_destroy) = (String::new(), String::new());
+        block.flush(&mut tables, &mut again_init, &mut again_destroy);
+        assert!(again_init.is_empty() && again_destroy.is_empty());
+    }
 }

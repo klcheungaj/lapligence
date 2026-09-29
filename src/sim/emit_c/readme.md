@@ -31,6 +31,13 @@ ties. Polled/anchored callees are caller-owned; recursion and callees over the
 configurable embed limit use the chain arena. Plain functions retain their typed
 C ABI and finals remain plain `void` calls. Every suspension is an exact numbered
 `LLG_CO_AWAIT` or `LLG_CO_CALL*` site, and descriptors carry the real entry.
+Identical frame layouts (every instance of one process or task) share a single
+`llg_shared_frame_<k>_t` typedef instead of one struct per coroutine.
+
+Large designs stay compact at model level too: plain static storage is
+initialized and destroyed through per-representation pointer tables and loops,
+and consecutive spawns, finals and waveform registrations run from constant
+argument tables in their original order.
 
 See [owned-emitter components](owned/readme.md), [runtime](../rt/readme.md),
 [feature status](../../../docs/sim_features.md) and

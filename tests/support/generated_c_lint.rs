@@ -16,6 +16,54 @@ pub(crate) fn lint_generated_coroutine_c(source: &str) -> Result<(), Vec<String>
     }
 }
 
+/// Reject `$` anywhere outside string/character literals and comments.
+/// Standard C11 identifiers are `[A-Za-z_][A-Za-z0-9_]*`; `$` is only a
+/// compiler extension, so generated identifiers must never contain it.
+pub(crate) fn lint_standard_identifiers(source: &str) -> Result<(), Vec<String>> {
+    let bytes = source.as_bytes();
+    let mut errors = Vec::new();
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            quote @ (b'"' | b'\'') => {
+                index += 1;
+                while index < bytes.len() && bytes[index] != quote {
+                    index += if bytes[index] == b'\\' { 2 } else { 1 };
+                }
+                index += 1;
+            }
+            b'/' if bytes.get(index + 1) == Some(&b'*') => {
+                index = source[index + 2..]
+                    .find("*/")
+                    .map_or(bytes.len(), |offset| index + 2 + offset + 2);
+            }
+            b'/' if bytes.get(index + 1) == Some(&b'/') => {
+                index = source[index..]
+                    .find('\n')
+                    .map_or(bytes.len(), |offset| index + offset);
+            }
+            b'$' => {
+                let line = source[..index].matches('\n').count() + 1;
+                let start = source[..index].rfind('\n').map_or(0, |offset| offset + 1);
+                let end = source[index..]
+                    .find('\n')
+                    .map_or(source.len(), |offset| index + offset);
+                errors.push(format!(
+                    "line {line}: `$` outside a literal is not a standard C identifier character: {}",
+                    source[start..end].trim()
+                ));
+                index += 1;
+            }
+            _ => index += 1,
+        }
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors)
+    }
+}
+
 fn coroutine_bodies(source: &str) -> Vec<(String, &str)> {
     let mut bodies = Vec::new();
     let mut search = 0;
@@ -596,5 +644,19 @@ static void fn_plain(int* value) { consume(&value); }
 static void p_final(llg_proc_t* self) { int local; consume(&local); }
 "#;
         assert_eq!(lint_generated_coroutine_c(c), Ok(()));
+    }
+
+    #[test]
+    fn rejects_dollar_in_generated_identifiers() {
+        let c = "sv4_t G_tb_pca$0_en = SV4_EMPTY;\nsv4_t G_ok = SV4_EMPTY;\n";
+        let errors = lint_standard_identifiers(c).unwrap_err();
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(errors[0].starts_with("line 1:"), "{errors:?}");
+    }
+
+    #[test]
+    fn allows_dollar_in_literals_and_comments() {
+        let c = "/* $display */ // $finish\nconst char* s = \"$bits \\\" $x\"; int c = '$';\n";
+        assert_eq!(lint_standard_identifiers(c), Ok(()));
     }
 }

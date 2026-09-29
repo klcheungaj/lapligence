@@ -159,7 +159,7 @@ fn waveform_model_emits_controls_hierarchy_and_final_time_close() {
         },
         IrSignal {
             fixed_default: None,
-            c_name: "G_top_pca$0_en".to_string(),
+            c_name: "llg_pca_en_0".to_string(),
             hdl_name: None,
             ty: IrType::Packed {
                 width: 1,
@@ -224,12 +224,16 @@ fn waveform_model_emits_controls_hierarchy_and_final_time_close() {
     assert!(c.contains("llg_wave_flush(llg_time());"));
     assert!(c.contains("llg_wave_limit(sv4_to_u64("));
     assert!(c.contains("llg_wave_model_init(10ULL)"));
-    assert!(c.contains("llg_wave_register_sv4(\"top\\037g[0]\\037value\", &G_top_g_0__value, 12)"));
-    assert!(c.contains("llg_wave_register_sv4(\"top\\037alias\", &g_net_0.resolved, 1)"));
-    assert!(c.contains("llg_wave_register_real(\"top\\037r\", &D_top_r)"));
-    assert!(!c.contains("llg_wave_register_sv4(\"G_top_pca$0_en"));
-    assert!(c.contains("llg_wave_register_sv4(\"top\\037mem[3]\", &G_top_mem[0], 8)"));
-    assert!(c.contains("llg_wave_register_sv4(\"top\\037mem[2]\", &G_top_mem[1], 8)"));
+    // Registrations are direct calls or rows of a startup table, whose loop
+    // still aborts startup on failure; each keeps name, storage and width.
+    assert!(c.contains("llg_wave_register_sv4("));
+    assert!(c.contains("!= 0) goto start_failed;"));
+    assert!(c.contains("\"top\\037g[0]\\037value\", &G_top_g_0__value, 12"));
+    assert!(c.contains("\"top\\037alias\", &g_net_0.resolved, 1"));
+    assert!(c.contains("\"top\\037r\", &D_top_r"));
+    assert!(!c.contains("\"llg_pca_en_0\""));
+    assert!(c.contains("\"top\\037mem[3]\", &G_top_mem[0], 8"));
+    assert!(c.contains("\"top\\037mem[2]\", &G_top_mem[1], 8"));
     assert!(c.contains("llg_spawn_final(llg_wave_capture_final_time"));
     assert!(c.contains("llg_wave_close(llg_model_done ? llg_wave_final_time : llg_time())"));
     let wave_close = c.find("status = llg_wave_close(").unwrap();

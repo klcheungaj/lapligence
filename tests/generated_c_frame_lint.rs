@@ -139,6 +139,13 @@ fn lint_fixture_shard(shard: usize) {
                     errors.join("\n")
                 );
             }
+            if let Err(errors) = generated_c_lint::lint_standard_identifiers(&model.model_c) {
+                panic!(
+                    "{} ({mode}) emitted a non-standard C identifier:\n{}",
+                    path.display(),
+                    errors.join("\n")
+                );
+            }
             for compiler in &compilers {
                 syntax_check(compiler, &model.model_c, &path, mode);
             }
