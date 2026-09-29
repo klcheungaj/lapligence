@@ -556,6 +556,7 @@ impl<'a, 'm> Frame<'a, 'm> {
         nba: bool,
         ticks: &str,
     ) -> Result<(), String> {
+        let cancellation_mark = self.cancellation_mark();
         let binding = &target.binding;
         if nba && binding.width == 0 && binding.automatic {
             return Err(pending("queued writes to automatic real cells"));
@@ -760,7 +761,7 @@ impl<'a, 'm> Frame<'a, 'm> {
         }
         self.line("}");
         self.discard(value);
-        self.cancellation_check()
+        self.cancellation_check_covering(cancellation_mark)
     }
 
     pub(super) fn array_read(

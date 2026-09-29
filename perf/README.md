@@ -52,6 +52,40 @@ and NBA scaling.
 Shared-machine results need at least three repetitions, medians, an `uptime`
 record, and a later quiet-machine A/B run before they support a gate.
 
+## Compile-time harness
+
+`perf/scripts/compile_time.py` measures how long generated models take to
+build, for one or more `llg` binaries side by side:
+
+```sh
+perf/scripts/compile_time.py \
+  --sim-bin base=/path/to/old/llg --sim-bin new=target/release/llg \
+  --set ladder --scratch-dir /build/my-llg-compile \
+  --output-dir /path/to/results
+```
+
+For every design and binary it records `--gen-only` time and peak RSS, then
+configures the generated project with CMake (`CMAKE_C_FLAGS` as `llg` passes
+them, Release otherwise unchanged, compile commands exported) and times
+`cmake --build --parallel` (`--jobs`, default all cores). It then rebuilds each
+model translation unit (`model*.c`) alone with its exact compile command, once
+preprocessed for the expanded size and once with GCC `-ftime-report` or Clang
+`-ftime-trace` for front-end, optimization and top-pass times. Sizes cover model
+sources, objects and the executable; `--run` also runs each model once and
+hashes its stdout. `--no-phases` skips the per-TU compiles.
+
+Designs form a size ladder so super-linear growth is visible: `pca-512` through
+`pca-4100` (`perf/corpus/pca_sites.sv`, one small process per procedural
+continuous assignment site), `tasks-16/64/128` (`testbench_tasks.sv`) and
+`many-registers-10k/20k/100k`. `--set smoke` (default) selects the two
+smallest, `ladder` everything but the 100k design, `large` everything;
+`--design NAME` picks individual designs and `--list-designs` prints them.
+`results.tsv` holds one row per design, binary and repetition (`--repeat`),
+`medians.tsv` the medians, `comparison.tsv` the key columns with build time
+relative to the first binary, and `passes/` the top compiler passes per TU.
+Compare binaries on an idle host; the harness runs them alternately per design
+so both see similar load.
+
 ## SIGPROF sampling
 
 Build the preload library, run a generated simulator directly, then symbolize:

@@ -31,6 +31,7 @@ fn syntax_check(compiler: &str, model: &str, fixture: &Path, mode: &str) {
         "-O2",
         "-Wall",
         "-Wno-unused-function",
+        "-Wno-misleading-indentation",
     ]);
     if compiler == "gcc" {
         command.arg("-Werror=jump-misses-init");

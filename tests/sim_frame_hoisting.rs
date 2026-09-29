@@ -297,6 +297,7 @@ fn generated_coroutines_pass_gcc_jump_initialization_check() {
             "-O2",
             "-Wall",
             "-Wno-unused-function",
+            "-Wno-misleading-indentation",
             "-Werror=jump-misses-init",
             "-fsyntax-only",
             "-",

@@ -91,6 +91,10 @@ CMake is the only model builder: C11, Release by default, executable under
 cmake --build --config Release
 ```
 
+With GCC or Clang, generated model sources also get
+`-Wno-misleading-indentation` as a per-source CMake option; the warning's cost
+is quadratic in file size. Runtime sources keep it.
+
 On POSIX, runtime startup warns when `RLIMIT_STACK` is below the named 8 MiB
 host-stack estimate for scheduler entry, one polled segment and the 256-call
 recursion guard. Generated MSVC projects reserve the same default with `/STACK`.
