@@ -39,6 +39,7 @@ use dpi::{dpi_external_prototype, dpi_helpers, internal_return_type, render_dpi_
 mod processes;
 use processes::process_runtime_name;
 mod initialization;
+mod sharing;
 
 /// The recursion depth guard shared by emitted functions and DPI thunks.
 const LLG_MAX_FUNC_DEPTH: u32 = 256;
@@ -59,6 +60,13 @@ pub(super) fn owned_dpi_thunk(function: &IrFunc) -> Result<String, String> {
 /// the header comment the driver parses, signal/net/array storage, function
 /// prototypes and bodies, process functions, and `main()`.
 pub fn render(execution: &ExecutionModel) -> Result<String, EmitError> {
+    render_with_sharing_threshold(execution, sharing::threshold().map_err(EmitError::new)?)
+}
+
+pub(in crate::sim::emit_c) fn render_with_sharing_threshold(
+    execution: &ExecutionModel,
+    threshold: usize,
+) -> Result<String, EmitError> {
     execution.validate().map_err(EmitError::InvalidIr)?;
     let capacity = execution
         .packed_capacity()
@@ -83,7 +91,7 @@ pub fn render(execution: &ExecutionModel) -> Result<String, EmitError> {
     execution
         .reanalyze_with_forced_arena_callees(&forced)
         .map_err(EmitError::InvalidIr)?;
-    render_model(&execution).map_err(EmitError::new)
+    render_model(&execution, threshold).map_err(EmitError::new)
 }
 
 struct CoroutineArtifact {
@@ -95,6 +103,7 @@ struct CoroutineArtifact {
     location: String,
     owner: CoroutineId,
     root: bool,
+    shared_entry: Option<String>,
 }
 
 type CoroutineArtifacts = BTreeMap<usize, CoroutineArtifact>;
@@ -143,6 +152,7 @@ fn render_coroutine_functions(
                 location: origin_location(function.origin()),
                 owner: CoroutineId::Function(index),
                 root: false,
+                shared_entry: None,
             },
         );
     }
@@ -186,6 +196,7 @@ fn render_coroutine_processes(
                 location: origin_location(process.origin()),
                 owner: CoroutineId::Process(index),
                 root: true,
+                shared_entry: None,
             }))
         })
         .collect()
@@ -240,6 +251,7 @@ fn render_coroutine_branches(
                     location: origin_location(definition.origin()),
                     owner,
                     root: true,
+                    shared_entry: None,
                 },
             );
         }
@@ -269,6 +281,7 @@ fn render_coroutine_branches(
                     location: origin_location(definition.origin()),
                     owner,
                     root: true,
+                    shared_entry: None,
                 },
             );
         }
@@ -323,7 +336,7 @@ fn render_coroutine_metadata(
     out.push_str(&format!(
         "static const llg_co_desc_t {} = {{ {}, {}, sizeof({}), {}_sites, {}, 0 }};\n",
         artifact.desc_name,
-        entry,
+        artifact.shared_entry.as_deref().unwrap_or(entry),
         c_string_literal(&artifact.display_name),
         artifact.frame_type,
         artifact.desc_name,
@@ -456,7 +469,7 @@ fn share_frame_types(
     Ok(frame_types)
 }
 
-fn render_model(execution: &ExecutionModel) -> Result<String, String> {
+fn render_model(execution: &ExecutionModel, threshold: usize) -> Result<String, String> {
     let model = execution.ir();
     let (mut coroutine_functions, frame_upper_bounds) = render_coroutine_functions(execution)?;
     let mut coroutine_processes = render_coroutine_processes(execution, &frame_upper_bounds)?;
@@ -466,6 +479,28 @@ fn render_model(execution: &ExecutionModel) -> Result<String, String> {
         &mut coroutine_functions,
         &mut coroutine_processes,
         &mut coroutine_branches,
+    )?;
+    let mut plain_functions = BTreeMap::new();
+    for (index, function) in model.funcs.iter().enumerate() {
+        if !super::owned::model::inline_template(function)
+            && !coroutine_functions.contains_key(&index)
+        {
+            let ctx = RCtx {
+                model,
+                func: Some(function),
+                sampled: false,
+                activation_label: None,
+            };
+            plain_functions.insert(index, super::owned::model::function(&ctx, function)?);
+        }
+    }
+    let sharing = sharing::share(
+        execution,
+        &mut coroutine_functions,
+        &mut coroutine_processes,
+        &mut coroutine_branches,
+        &mut plain_functions,
+        threshold,
     )?;
     let mut out = format!(
         "// llg-generated C11 model for design `{}`\n",
@@ -497,6 +532,10 @@ fn render_model(execution: &ExecutionModel) -> Result<String, String> {
     out.push_str(
         "\n#include <stdio.h>\n#include <stdlib.h>\n#include <math.h>\n#include <string.h>\n\n",
     );
+    if !sharing.bodies.is_empty() {
+        out.push_str("#if defined(__GNUC__) && !defined(__clang__)\n#define LLG_MODEL_SHARED __attribute__((noipa))\n#elif defined(__clang__)\n#define LLG_MODEL_SHARED __attribute__((noinline))\n#elif defined(_MSC_VER)\n#define LLG_MODEL_SHARED __declspec(noinline)\n#else\n#define LLG_MODEL_SHARED\n#endif\n");
+    }
+    let mut entries = BTreeSet::new();
     for artifact in coroutine_functions
         .values()
         .chain(coroutine_branches.values())
@@ -506,9 +545,11 @@ fn render_model(execution: &ExecutionModel) -> Result<String, String> {
             .desc_name
             .strip_suffix("_desc")
             .ok_or_else(|| format!("invalid coroutine descriptor name {}", artifact.desc_name))?;
-        out.push_str(&format!(
-            "static llg_co_status_t {entry}(llg_co_frame_t* co, llg_co_chain_t* ch);\n"
-        ));
+        if artifact.shared_entry.is_none() && entries.insert(entry) {
+            out.push_str(&format!(
+                "static llg_co_status_t {entry}(llg_co_frame_t* co, llg_co_chain_t* ch);\n"
+            ));
+        }
         out.push_str(&format!(
             "static const llg_co_desc_t {};\n",
             artifact.desc_name
@@ -523,23 +564,25 @@ fn render_model(execution: &ExecutionModel) -> Result<String, String> {
             out.push_str(&format!("LLG_CO_ANCHORED_OK({});\n", frame_type.name));
         }
     }
+    // Shared root frames are declared with the records below, after model storage.
+    let mut coroutine_metadata = String::new();
     for &index in execution.analysis().callee_first_functions() {
         let artifact = &coroutine_functions[&index];
-        out.push_str(&render_coroutine_metadata(
+        coroutine_metadata.push_str(&render_coroutine_metadata(
             artifact,
             execution.analysis(),
             model,
         )?);
     }
     for artifact in coroutine_processes.iter().filter_map(Option::as_ref) {
-        out.push_str(&render_coroutine_metadata(
+        coroutine_metadata.push_str(&render_coroutine_metadata(
             artifact,
             execution.analysis(),
             model,
         )?);
     }
     for artifact in coroutine_branches.values() {
-        out.push_str(&render_coroutine_metadata(
+        coroutine_metadata.push_str(&render_coroutine_metadata(
             artifact,
             execution.analysis(),
             model,
@@ -667,6 +710,9 @@ fn render_model(execution: &ExecutionModel) -> Result<String, String> {
             out.push_str(&func_prototype(f)?);
         }
     }
+    out.push_str(&sharing.declarations);
+    out.push_str(&sharing.prototypes);
+    out.push_str(&coroutine_metadata);
     render_virtual_dispatch_prototypes(model, &mut out);
     render_virtual_interface_call_prototypes(model, &mut out);
     render_virtual_dispatch_bodies(model, &mut out);
@@ -680,12 +726,6 @@ fn render_model(execution: &ExecutionModel) -> Result<String, String> {
         if super::owned::model::inline_template(f) {
             continue;
         }
-        let fctx = RCtx {
-            model,
-            func: Some(f),
-            sampled: false,
-            activation_label: None,
-        };
         for (helper, pre) in f.pre_fns.iter().enumerate() {
             let owner = CoroutineId::FunctionBranch {
                 function: index,
@@ -700,7 +740,7 @@ fn render_model(execution: &ExecutionModel) -> Result<String, String> {
         if let Some(artifact) = coroutine_functions.get(&index) {
             out.push_str(&artifact.source);
         } else {
-            out.push_str(&super::owned::model::function(&fctx, f)?);
+            out.push_str(&plain_functions[&index]);
         }
     }
     render_virtual_interface_call_bodies(model, &mut out);
@@ -726,10 +766,11 @@ fn render_model(execution: &ExecutionModel) -> Result<String, String> {
             out.push_str(&super::owned::model::process(&ctx, p, executable)?);
         }
     }
+    out.push_str(&sharing.bodies);
     out.push_str(&super::owned::assertions::callbacks(model)?);
     out.push_str(&super::owned::assertions::registrations(model)?);
     super::owned::model::storage_lifecycle(model, &mut out)?;
-    out.push_str(&super::owned::model::main(execution)?);
+    out.push_str(&super::owned::model::main(execution, &sharing.spawns)?);
     let external = model
         .funcs
         .iter()

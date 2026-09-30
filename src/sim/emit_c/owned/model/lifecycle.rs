@@ -10,6 +10,8 @@ enum StartupKind {
     WaveReal,
     Spawn,
     ProgramSpawn,
+    InstanceSpawn,
+    InstanceProgramSpawn,
     Final,
 }
 
@@ -20,6 +22,8 @@ impl StartupKind {
             Self::WaveReal => "llg_wave_register_real",
             Self::Spawn => "llg_spawn_in_region",
             Self::ProgramSpawn => "llg_spawn_program_in_region",
+            Self::InstanceSpawn => "llg_spawn_instance_in_region",
+            Self::InstanceProgramSpawn => "llg_spawn_program_instance_in_region",
             Self::Final => "llg_spawn_final",
         }
     }
@@ -45,6 +49,22 @@ impl StartupKind {
                 ("uint64_t instance", "instance"),
                 ("int initial", "initial"),
             ],
+            Self::InstanceSpawn => &[
+                ("const llg_co_desc_t* desc", "desc"),
+                ("const char* name", "name"),
+                ("llg_region_t region", "region"),
+                ("const void* record", "record"),
+                ("size_t record_offset", "record_offset"),
+            ],
+            Self::InstanceProgramSpawn => &[
+                ("const llg_co_desc_t* desc", "desc"),
+                ("const char* name", "name"),
+                ("llg_region_t region", "region"),
+                ("uint64_t instance", "instance"),
+                ("int initial", "initial"),
+                ("const void* record", "record"),
+                ("size_t record_offset", "record_offset"),
+            ],
             Self::Final => &[("void (*fn)(void)", "fn"), ("const char* name", "name")],
         }
     }
@@ -55,6 +75,8 @@ impl StartupKind {
             Self::WaveReal => "llg_model_wave_real_args_t",
             Self::Spawn => "llg_model_spawn_args_t",
             Self::ProgramSpawn => "llg_model_program_spawn_args_t",
+            Self::InstanceSpawn => "llg_model_instance_spawn_args_t",
+            Self::InstanceProgramSpawn => "llg_model_program_instance_spawn_args_t",
             Self::Final => "llg_model_final_args_t",
         }
     }
@@ -150,7 +172,10 @@ impl StartupTables {
     }
 }
 
-pub(in crate::sim::emit_c) fn main(execution: &ExecutionModel) -> Result<String, String> {
+pub(in crate::sim::emit_c) fn main(
+    execution: &ExecutionModel,
+    sharing: &HashMap<String, (String, String)>,
+) -> Result<String, String> {
     let model = execution.ir();
     let mut tables = StartupTables::default();
     let mut out = String::from(
@@ -283,6 +308,16 @@ pub(in crate::sim::emit_c) fn main(execution: &ExecutionModel) -> Result<String,
                     region.runtime_symbol().to_owned(),
                 ],
             });
+        }
+    }
+    for (call, name) in spawns.iter_mut().zip(&model.spawns) {
+        if let Some((record, offset)) = sharing.get(name) {
+            call.kind = if call.kind == StartupKind::ProgramSpawn {
+                StartupKind::InstanceProgramSpawn
+            } else {
+                StartupKind::InstanceSpawn
+            };
+            call.args.extend([record.clone(), offset.clone()]);
         }
     }
     let mut semantic_by_name = HashMap::new();
