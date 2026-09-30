@@ -310,12 +310,16 @@ impl<'a> Codegen<'a> {
                     self.func_names.get(c).cloned().ok_or_else(|| {
                         format!("function `{}` has no C name", self.node(*c).name)
                     })?;
-                let inline_expanded = is_task_f
-                    && dpi.is_none()
-                    && (formals_ir.iter().any(|formal| formal.event)
-                        || self.task_requires_event_inline(*c, inst)
-                        || ((self.task_has_disable(*c, inst) || self.task_is_disable_target(*c))
-                            && has_wait));
+                // Only a by-value input event formal is a typed parameter; a
+                // class method's event formals stay with the receiver-aware
+                // expansion.
+                let inline_expanded = dpi.is_none()
+                    && ((is_task_f && self.subroutine_requires_inline(*c, inst))
+                        || formals_ir
+                            .iter()
+                            .any(|formal| formal.event && formal.is_address())
+                        || (self.class_nodes.contains_key(&inst)
+                            && formals_ir.iter().any(|formal| formal.event)));
                 // Register the model entry (call-site lowering and the C
                 // renderers resolve through it).
                 let ir = self.model.funcs.len();
@@ -411,7 +415,7 @@ impl<'a> Codegen<'a> {
                 && self.db.dpi_import(*c).is_none()
             {
                 if matches!(self.kind(*c), NodeKind::FuncTask { is_task: true, .. })
-                    && self.task_requires_event_inline(*c, inst)
+                    && self.subroutine_requires_inline(*c, inst)
                 {
                     // Calls take the inline path; do not build a detached
                     // evaluator containing an unbound FormalRead.

@@ -37,8 +37,9 @@ pub struct IrFormal {
     pub(in crate::sim) shortreal: bool,
     /// Non-integral native pointer formal; width/signedness are unused.
     pub(in crate::sim) chandle: bool,
-    /// Named-event formal. Event handles are resolved by inline call lowering,
-    /// not represented as packed values in the C ABI.
+    /// Named-event formal. An input is a by-value `llg_event_t` naming the
+    /// caller's event object (`IrCallArg::EventVal`, `IrEventRef::Formal`); an
+    /// output, inout or ref event formal is resolved by inline call lowering.
     pub(in crate::sim) event: bool,
     /// Native arbitrary-byte string formal. String formals use
     /// `llg_string_t` values/pointers rather than packed storage.

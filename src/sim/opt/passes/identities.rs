@@ -160,6 +160,7 @@ fn ident_children(e: &mut IrExpr) {
                     | IrCallArg::StringOutAddr(_)
                     | IrCallArg::StringRefAddr { .. }
                     | IrCallArg::ChandleVal(_)
+                    | IrCallArg::EventVal(_)
                     | IrCallArg::ChandleAddr(_)
                     | IrCallArg::ChandleRefAddr(_) => {}
                     IrCallArg::RefAddr { read, lhs, .. } => {

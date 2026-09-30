@@ -13,18 +13,19 @@ mod lifecycle;
 pub(in crate::sim::emit_c) use initialization::storage_lifecycle;
 pub(in crate::sim::emit_c) use lifecycle::main;
 
-/// Named-event formals are expanded by typed inline lowering. Their retained
-/// definitions are templates, not procedures using the numeric C ABI.
-pub(in crate::sim::emit_c) fn inline_event_template(function: &IrFunc) -> bool {
-    function.formals.iter().any(|formal| formal.event)
-}
-
+/// A retained definition that lowering expands into each caller. Only
+/// by-value input event formals have a typed C parameter (`llg_event_t`);
+/// output, inout and ref event formals stay inline-only.
 pub(in crate::sim::emit_c) fn inline_template(function: &IrFunc) -> bool {
-    function.is_inline_expanded() || inline_event_template(function)
+    function.is_inline_expanded()
 }
 
 pub(in crate::sim::emit_c) fn check_function(function: &IrFunc) -> Result<(), String> {
-    if function.formals.iter().any(|formal| formal.event) {
+    if function
+        .formals
+        .iter()
+        .any(|formal| formal.event && formal.is_address())
+    {
         return Err(pending("native-object and ref formal/local owners"));
     }
     Ok(())
@@ -39,7 +40,7 @@ pub(in crate::sim::emit_c) fn check_model(model: &IrModel) -> Result<(), String>
     for interface in &model.virtual_interfaces {
         for method in &interface.methods {
             let function = model.func(method.function);
-            if inline_event_template(function) {
+            if function.formals.iter().any(|formal| formal.event) {
                 return Err(pending("event-formal virtual-interface dispatch"));
             }
         }
@@ -210,6 +211,20 @@ fn render_function(
             continue;
         }
         let name = format!("a{index}");
+        if formal.event {
+            // A private handle copy: assigning the formal rebinds only this
+            // activation, exactly like a by-value input.
+            let handle = frame.declare("llg_event_t", "event_formal", name);
+            frame
+                .event_bindings
+                .first_mut()
+                .expect("event scope")
+                .insert(
+                    super::events::event_formal_binding(index),
+                    format!("&{handle}"),
+                );
+            continue;
+        }
         if formal.string || formal.chandle {
             let kind = if formal.string {
                 NativeKind::String

@@ -79,6 +79,13 @@ resolved defaults/delayed driver X contributions retain their separate phases.
 A time-zero process write must win over initialization. Static locals initialize
 once in hidden model storage; automatic locals initialize per lexical entry,
 including inherited lifetimes and loop/block scopes.
+Subroutine calls use the typed `IrFunc`, timed or disabling included; a call is
+expanded (`lower_task_inline`) only where `CallShape` says the caller's environment
+is needed: output/inout/ref event formals, event controls reading by-value formals
+or locals, and class/virtual-interface event calls. A `ref` formal read by an event
+control binds a whole-signal actual statically: each distinct actual signal gets one
+cloned task (`task_specialization`, lowered after all call sites), otherwise the
+call expands. Keep those cases in that one predicate and record new ones there.
 Fixed aggregate projections of static function locals use that persistent signal
 as their read/write owner, including tagged-member guards; activation locals do
 not name the persistent cell.

@@ -137,7 +137,10 @@ impl Validator<'_> {
             IrValidationError::new(path, format!("function index {function} is out of bounds"))
         })?;
         if (!allow_object_return && (callee.ret_chandle || callee.ret_string))
-            || callee.formals.iter().any(|formal| formal.event)
+            || callee
+                .formals
+                .iter()
+                .any(|formal| formal.event && formal.is_address())
         {
             return self.fail(path, "non-integral subprogram requires its typed call path");
         }
@@ -161,6 +164,9 @@ impl Validator<'_> {
             match arg {
                 IrCallArg::Val(_) if formal.is_address() => {
                     return self.fail(arg_path, "address formal requires an address argument");
+                }
+                IrCallArg::Val(_) if formal.event => {
+                    return self.fail(arg_path, "event formal requires an event argument");
                 }
                 IrCallArg::Val(expr) => {
                     if formal.chandle {
@@ -208,6 +214,12 @@ impl Validator<'_> {
                     } else {
                         return self.fail(arg_path, "typed chandle value requires an input formal");
                     }
+                }
+                IrCallArg::EventVal(event) => {
+                    if !formal.event || formal.is_address() {
+                        return self.fail(arg_path, "event value requires an input event formal");
+                    }
+                    self.validate_event_ref(event, formals, &arg_path)?;
                 }
                 IrCallArg::ChandleAddr(addr) => {
                     if !formal.chandle || !formal.is_out || formal.is_ref() {

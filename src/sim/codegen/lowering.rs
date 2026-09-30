@@ -480,6 +480,9 @@ fn generate_from_db_with_codegen_options_impl(
         cg.emit_pass(*top, Pass::Procs)?;
     }
     cg.emit_clocking_processes()?;
+    // Every call site that requests a task specialization has been lowered;
+    // their bodies may register initializers flushed below.
+    cg.emit_task_specializations()?;
     cg.emit_array_initializers()?;
     cg.emit_container_initializers()?;
     cg.emit_class_object_initializers()?;
@@ -952,6 +955,11 @@ struct Codegen<'a> {
     /// Persistent storage for locals of static delay-bearing tasks. Those
     /// tasks are inlined, so their storage must live outside each call site.
     static_task_locals: HashMap<(NodeId, NodeId), SignalInfo>,
+    /// Task specializations keyed by (task, owning instance, actual signal per
+    /// static `ref` formal); the value is the model function index.
+    task_specializations: HashMap<(NodeId, NodeId, Vec<usize>), usize>,
+    /// Specializations whose bodies are lowered after all call sites exist.
+    pending_specializations: Vec<PendingSpecialization>,
     /// Persistent native string storage for static delay-bearing task locals.
     static_string_task_locals: HashMap<(NodeId, NodeId), usize>,
     /// Persistent native-pointer storage for static chandle locals in
@@ -1259,6 +1267,8 @@ impl<'a> Codegen<'a> {
             static_string_formals: HashMap::new(),
             static_chandle_formals: HashMap::new(),
             static_task_locals: HashMap::new(),
+            task_specializations: HashMap::new(),
+            pending_specializations: Vec::new(),
             static_string_task_locals: HashMap::new(),
             static_task_chandle_locals: HashMap::new(),
             signals: Vec::new(),
@@ -1871,6 +1881,26 @@ struct FuncMeta {
     ret_chandle: bool,
     ret_string: bool,
     formals: Vec<(NodeId, bool)>,
+}
+
+/// A `ref` formal bound at lowering to a whole module signal, so an event
+/// control in the callee reads the actual's dependencies directly.
+#[derive(Clone)]
+struct StaticRef {
+    formal: NodeId,
+    lhs: IrLhs,
+    read: IrExpr,
+    dependencies: Vec<IrDependency>,
+    const_ref: bool,
+}
+
+/// A task specialization awaiting body lowering. `ir` indexes the model
+/// entry cloned from the task's template definition.
+struct PendingSpecialization {
+    ir: usize,
+    task: NodeId,
+    inst: NodeId,
+    statics: Vec<StaticRef>,
 }
 
 /// How to read a formal argument (or local) in the lowered IR: width and

@@ -102,3 +102,96 @@ fn composite_helper_targets_are_all_private_or_rejected_at_source() {
         else { assert!(result.unwrap_err().contains("writes external or persistent storage")); }
     }
 }
+
+#[test]
+fn only_subroutine_scoped_event_reads_and_non_input_event_formals_force_expansion() {
+    let source = r#"
+module tb;
+    event ev;
+    logic clk;
+    logic [3:0] sig;
+    task automatic module_edge(); @(posedge clk); endtask
+    task automatic module_expression(); @(posedge (clk & sig[0])); endtask
+    task automatic input_event(input event e); @(e); endtask
+    task automatic input_event_or(input event e); @(e or posedge clk); endtask
+    task automatic delay_disable(); #1; disable delay_disable; endtask
+    task automatic calls_typed(); input_event(ev); module_edge(); endtask
+    task automatic output_event(output event e); e = ev; endtask
+    task automatic formal_expression(input logic [3:0] v); @(posedge (clk & v[0])); endtask
+    task automatic ref_edge(ref logic r); @(posedge r); endtask
+    task automatic local_expression(); automatic logic l = 0; @(posedge (l | clk)); endtask
+    task automatic calls_expanded(); formal_expression(4'd1); endtask
+    task automatic forwards_ref(ref logic r); ref_edge(r); endtask
+    task automatic forwards_local(); automatic logic l = 0; ref_edge(l); endtask
+    task automatic forwards_module(); ref_edge(clk); endtask
+    initial begin end
+endmodule
+"#;
+    let database = {
+        let output = crate::core::compile::compile_sources_checked(
+            &[crate::core::compile::OwnedSource::compilation_unit(
+                "expansion.sv",
+                source,
+            )],
+            &crate::core::compile::CompileOpts {
+                top: Some("tb".to_owned()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        Db::from_slang(&output.snapshot).unwrap()
+    };
+    let semantic = crate::sim::semantic::SemanticModel::from_db(&database);
+    let mut cg = Codegen::new(&semantic);
+    let tops = cg.collect_design().unwrap();
+    let top = tops[0];
+    for (name, expanded) in [
+        ("module_edge", false),
+        ("module_expression", false),
+        ("input_event", false),
+        ("input_event_or", false),
+        ("delay_disable", false),
+        ("calls_typed", false),
+        ("output_event", true),
+        ("formal_expression", true),
+        ("ref_edge", true),
+        ("local_expression", true),
+        ("calls_expanded", true),
+        ("forwards_ref", true),
+        ("forwards_local", true),
+        ("forwards_module", false),
+    ] {
+        let task = database
+            .node_ids()
+            .find(|node| {
+                matches!(cg.kind(*node), NodeKind::FuncTask { .. }) && cg.node(*node).name == name
+            })
+            .unwrap_or_else(|| panic!("task `{name}` is missing"));
+        assert_eq!(
+            cg.subroutine_requires_inline(task, top),
+            expanded,
+            "task `{name}`"
+        );
+    }
+    // A `ref` formal read by an event control is bound by a specialization,
+    // not expanded, when it (or a task it is forwarded to) has a whole-signal
+    // actual; a caller local forces the expansion.
+    for (name, inline_only, static_refs) in [
+        ("ref_edge", false, vec![0]),
+        ("forwards_ref", false, vec![0]),
+        ("forwards_module", false, vec![]),
+        ("forwards_local", true, vec![]),
+        ("formal_expression", true, vec![]),
+        ("input_event", false, vec![]),
+    ] {
+        let task = database
+            .node_ids()
+            .find(|node| {
+                matches!(cg.kind(*node), NodeKind::FuncTask { .. }) && cg.node(*node).name == name
+            })
+            .unwrap();
+        let shape = cg.call_shape(task, top);
+        assert_eq!(shape.inline_only, inline_only, "task `{name}`");
+        assert_eq!(shape.static_refs, static_refs, "task `{name}`");
+    }
+}
