@@ -324,6 +324,7 @@ impl<'a> Codegen<'a> {
                     return_default: self.fixed_default_literal(*c),
                     return_signal: None,
                     c_name,
+                    diagnostic_name: self.func_labels.get(c).cloned(),
                     inline_expanded,
                     automatic,
                     is_task: is_task_f,

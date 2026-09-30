@@ -123,7 +123,7 @@ impl Codegen<'_> {
         let name = self.node(node).name.clone();
         let index = self.model.objects.len();
         self.model.objects.push(IrObject {
-            c_name: format!("O_{}_{}", ident(path), ident(&name)),
+            c_name: self.c_name("O", path, &[&name]),
             ty,
             initial: None,
         });

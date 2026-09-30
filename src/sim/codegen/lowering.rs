@@ -248,8 +248,8 @@ use crate::core::model::TypeInfo;
 use crate::core::value::ValueData;
 use crate::ffi::slang::LanguageEdition;
 use crate::sim::emit_c::{
-    escaped_char, event_global_name, global_name, ident, real_global_name, render_expr, strip_lib,
-    RCtx, LLG_MAX_WIDTH,
+    display_ident, escaped_char, event_global_name, function_ident, global_name, ident, path_ident,
+    real_global_name, render_expr, scoped_name, strip_lib, RCtx, LLG_MAX_WIDTH,
 };
 use crate::sim::ir::{
     FrameId, IrAssocKey, IrAssocTraversal, IrBinOp, IrBitQuery, IrCall, IrCallArg, IrCallExpr,
@@ -1109,6 +1109,11 @@ struct Codegen<'a> {
     gen_scope_paths: HashMap<NodeId, String>,
     /// FuncTask arena node → emitted C function name.
     func_names: HashMap<NodeId, String>,
+    func_labels: HashMap<NodeId, String>,
+    /// Raw source components, separate from historical display-path spelling.
+    c_paths: HashMap<String, Vec<String>>,
+    instance_paths: HashMap<NodeId, String>,
+    display_paths: HashMap<String, String>,
     /// Current function/task body context while emitting one (`None` in
     /// process and continuous-assignment contexts).  Expression and LHS
     /// resolution consult it to map formals, locals and the return variable;
@@ -1309,6 +1314,10 @@ impl<'a> Codegen<'a> {
             scope_sig_names: HashMap::new(),
             gen_scope_paths: HashMap::new(),
             func_names: HashMap::new(),
+            func_labels: HashMap::new(),
+            c_paths: HashMap::new(),
+            instance_paths: HashMap::new(),
+            display_paths: HashMap::new(),
             func: None,
             depth_arg: "0".to_string(),
             inst: NodeId(0),
@@ -1361,6 +1370,9 @@ impl<'a> Codegen<'a> {
     /// Instance path used for global names: `"top.u0"` for child instances,
     /// the (library-prefix-stripped) name for top instances.
     fn instance_path_of(&self, id: NodeId) -> String {
+        if let Some(path) = self.instance_paths.get(&id) {
+            return path.clone();
+        }
         let path = self.db.instance_path(id);
         if path.is_empty() {
             if self.is_runtime_environment(id) {

@@ -313,7 +313,7 @@ impl EmitCtx<'_, '_> {
         Ok(IrStringExpr::Format {
             format: Box::new(IrStringExpr::Literal(format.into_bytes())),
             args: values,
-            scope: self.path.clone(),
+            scope: self.cg.display_path(&self.path).to_owned(),
         })
     }
 
@@ -343,7 +343,7 @@ impl EmitCtx<'_, '_> {
         Ok(IrStringExpr::Format {
             format: Box::new(format),
             args: values,
-            scope: self.path.clone(),
+            scope: self.cg.display_path(&self.path).to_owned(),
         })
     }
 

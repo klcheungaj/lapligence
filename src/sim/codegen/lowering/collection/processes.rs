@@ -444,7 +444,7 @@ impl<'a> Codegen<'a> {
             let origin = self.origin(ca);
             self.model.processes.push(IrProcess::new_with_origin(
                 fn_name,
-                format!("{path}.assign"),
+                format!("{}.assign", self.display_path(path)),
                 shape,
                 Vec::new(),
                 vec![pattern_body],
@@ -544,7 +544,7 @@ impl<'a> Codegen<'a> {
         let origin = self.origin(ca);
         self.model.processes.push(IrProcess::new_with_origin(
             fn_name,
-            format!("{path}.assign"),
+            format!("{}.assign", self.display_path(path)),
             shape,
             Vec::new(),
             body,
@@ -862,7 +862,7 @@ impl<'a> Codegen<'a> {
     pub(in super::super) fn new_fn_name(&mut self, path: &str, kind: &str) -> String {
         let n = self.proc_seq;
         self.proc_seq += 1;
-        format!("p_{}_{}_{}", ident(path), kind, n)
+        format!("p_{}_{}_{}", self.c_path_ident(path), kind, n)
     }
 
     pub(in super::super) fn new_frame_id(&mut self) -> Result<FrameId, String> {
@@ -1697,7 +1697,7 @@ impl<'a> Codegen<'a> {
         let origin = self.origin(proc);
         let mut process = IrProcess::new_with_kind_and_writes(
             fn_name.clone(),
-            format!("{path}.{kind_label}"),
+            format!("{}.{kind_label}", self.display_path(path)),
             ir_kind,
             shape,
             writes,

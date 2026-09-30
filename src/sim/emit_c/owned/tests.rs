@@ -5,6 +5,7 @@ mod arm_arrays;
 mod array_conditionals;
 mod cached_frame_fields;
 mod cancellation_points;
+mod compact_names;
 mod conditional_records;
 mod fixed_array_reductions;
 mod sequential_predicates;

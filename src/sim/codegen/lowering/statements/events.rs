@@ -34,7 +34,7 @@ impl EmitCtx<'_, '_> {
                     .events
                     .push(crate::sim::ir::IrEvent::new(format!(
                         "E_{}_at_star_empty_{event}",
-                        ident(&self.path)
+                        self.cg.c_path_ident(&self.path)
                     )));
                 IrStmt::WaitEvents {
                     specs: vec![(IrWaitSrc::Event(IrEventRef::Static(event)), IrEdge::Any)],

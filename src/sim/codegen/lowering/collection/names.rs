@@ -3,6 +3,50 @@
 use super::*;
 
 impl<'a> Codegen<'a> {
+    pub(in super::super) fn display_path<'p>(&'p self, path: &'p str) -> &'p str {
+        self.display_paths.get(path).map_or(path, String::as_str)
+    }
+
+    pub(in super::super) fn c_path_ident(&self, path: &str) -> String {
+        match self.c_paths.get(path) {
+            Some(parts) => path_ident(&parts.iter().map(String::as_str).collect::<Vec<_>>()),
+            None => ident(path),
+        }
+    }
+
+    pub(in super::super) fn c_name(&self, prefix: &str, path: &str, names: &[&str]) -> String {
+        let mut parts = match self.c_paths.get(path) {
+            Some(parts) => parts.iter().map(String::as_str).collect::<Vec<_>>(),
+            None => vec![path],
+        };
+        parts.extend_from_slice(names);
+        scoped_name(prefix, &parts)
+    }
+
+    pub(in super::super) fn global_name(&self, path: &str, name: &str) -> String {
+        if self.c_paths.contains_key(path) {
+            self.c_name("G", path, &[name])
+        } else {
+            global_name(path, name)
+        }
+    }
+
+    pub(in super::super) fn real_global_name(&self, path: &str, name: &str) -> String {
+        if self.c_paths.contains_key(path) {
+            self.c_name("D", path, &[name])
+        } else {
+            real_global_name(path, name)
+        }
+    }
+
+    pub(in super::super) fn event_global_name(&self, path: &str, name: &str) -> String {
+        if self.c_paths.contains_key(path) {
+            self.c_name("E", path, &[name])
+        } else {
+            event_global_name(path, name)
+        }
+    }
+
     /// `lib@`-stripped name of a signal, with its scope path when available
     /// (`"tb.bus"`, `"tb.u0.bus"`).
     pub(super) fn display_name(&self, id: NodeId) -> String {

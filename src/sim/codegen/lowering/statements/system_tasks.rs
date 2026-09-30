@@ -719,7 +719,7 @@ impl EmitCtx<'_, '_> {
                 level,
                 fmt,
                 args: severity_args,
-                scope: self.path.clone(),
+                scope: self.cg.display_path(&self.path).to_owned(),
                 location: self.finish_location(h),
                 fatal_finish_number,
                 runtime_failure: false,
@@ -748,7 +748,7 @@ impl EmitCtx<'_, '_> {
                     return Ok(vec![IrStmt::DisplayTyped {
                         fmt,
                         args: display_args,
-                        scope: self.path.clone(),
+                        scope: self.cg.display_path(&self.path).to_owned(),
                         newline,
                         default_radix,
                         descriptor,
@@ -827,7 +827,7 @@ impl EmitCtx<'_, '_> {
                         n_args: display_args.len(),
                         reads,
                         default_radix,
-                        scope: self.path.clone(),
+                        scope: self.cg.display_path(&self.path).to_owned(),
                         descriptor,
                     }]);
                 }

@@ -190,7 +190,7 @@ impl<'a> Codegen<'a> {
             let scope = parent
                 .map(|parent| self.instance_path_of(parent))
                 .unwrap_or_else(|| self.design_name.clone());
-            let block_name = ident(&self.node(block).name);
+            let block_name = self.node(block).name.clone();
             let event = self.new_event_info(format!("E_clocking_{}", block.index()));
             self.event_globals.insert(block, event);
             for var in self.node(block).children.iter().copied() {
@@ -222,8 +222,8 @@ impl<'a> Codegen<'a> {
                         self.node(var).name
                     ));
                 }
-                let storage_name = format!("{}_{}_sample", block_name, ident(&self.node(var).name));
-                let global = global_name(&scope, &storage_name);
+                let global =
+                    self.c_name("G", &scope, &[&block_name, &self.node(var).name, "sample"]);
                 let ir = self.model.signals.len();
                 let sample = SignalInfo {
                     global: global.clone(),

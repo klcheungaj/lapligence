@@ -62,7 +62,7 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
                 if_false,
                 label: label.clone(),
                 location: self.finish_location(h),
-                scope: self.path.clone(),
+                scope: self.cg.display_path(&self.path).to_owned(),
                 identity: h.index() as u64,
             }]);
         }

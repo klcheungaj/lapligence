@@ -11,8 +11,14 @@ impl<'a> Codegen<'a> {
             .ok_or_else(|| format!("class `{}` has no layout", self.node(class).name))?;
         for child in self.class_method_nodes(class) {
             let name = self.node(child).name.clone();
-            self.func_names
-                .insert(child, format!("fn_class_{class_index}_{}", ident(&name)));
+            self.func_names.insert(
+                child,
+                format!("fn_class_{class_index}_{}", function_ident(&name)),
+            );
+            self.func_labels.insert(
+                child,
+                format!("fn_class_{class_index}_{}", display_ident(&name)),
+            );
         }
         Ok(())
     }

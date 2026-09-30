@@ -184,6 +184,8 @@ pub struct IrFunc {
     /// when the result is also targeted by a continuous assignment.
     pub(in crate::sim) return_signal: Option<usize>,
     pub(in crate::sim) c_name: String,
+    /// Runtime diagnostic spelling, independent of the internal C symbol.
+    pub(in crate::sim) diagnostic_name: Option<String>,
     /// The retained definition is a lowering template whose body is expanded
     /// into each caller. It is not an independently callable execution frame.
     pub(in crate::sim) inline_expanded: bool,
@@ -244,6 +246,7 @@ impl IrFunc {
             },
             c_name,
             inline_expanded: false,
+            diagnostic_name: None,
             automatic: true,
             is_task,
             return_default: None,
@@ -289,6 +292,10 @@ impl IrFunc {
 
     pub fn c_name(&self) -> &str {
         &self.c_name
+    }
+    /// Stable function label for runtime diagnostics and coroutine metadata.
+    pub fn diagnostic_name(&self) -> &str {
+        self.diagnostic_name.as_deref().unwrap_or(&self.c_name)
     }
     /// Whether calls expand this definition into their owning execution body.
     pub fn is_inline_expanded(&self) -> bool {

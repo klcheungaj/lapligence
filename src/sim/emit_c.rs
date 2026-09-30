@@ -47,7 +47,8 @@ pub use model::render;
 pub use statements::{render_pre_fn, render_stmt};
 
 pub(crate) use names::{
-    escaped_char, event_global_name, global_name, ident, real_global_name, strip_lib,
+    display_ident, escaped_char, event_global_name, function_ident, global_name, ident, path_ident,
+    real_global_name, scoped_name, strip_lib,
 };
 
 /// Select the generated C entry point for one lowered call. Virtual methods
