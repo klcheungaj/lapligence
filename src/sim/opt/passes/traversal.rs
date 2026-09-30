@@ -77,6 +77,7 @@ fn walk_call_args_mut(args: &mut [IrCallArg], f: &mut impl FnMut(&mut IrExpr)) {
                 value.expressions_mut(&mut |child| walk_expr_mut(child, f))
             }
             IrCallArg::ChandleAddr(_) | IrCallArg::ChandleRefAddr(_) => {}
+            IrCallArg::EventVal(_) => {}
         }
     }
 }

@@ -56,6 +56,8 @@ pub(super) fn func_param_fields(f: &IrFunc) -> Vec<(String, String)> {
             params.push((
                 (if form.string {
                     "llg_string_t"
+                } else if form.event {
+                    "llg_event_t"
                 } else if form.chandle {
                     "void *"
                 } else if form.real {

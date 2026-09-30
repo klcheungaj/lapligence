@@ -24,6 +24,9 @@ pub enum IrEventRef {
     },
     /// A handle copied into activation-owned storage at call time.
     Captured(String),
+    /// The activation-owned handle of an input named-event formal of the
+    /// enclosing function (`IrFormal::event`, by value).
+    Formal(usize),
     Null,
 }
 

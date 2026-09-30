@@ -441,18 +441,33 @@ impl<'a> Codegen<'a> {
         self.task_has_wait_inner(ft, inst, &mut seen)
     }
 
-    /// Event-controlled tasks need caller-bound evaluator frames. Delay-only
-    /// tasks can suspend as native C calls; event callbacks cannot read their
-    /// C formals directly after returning to the scheduler.
-    pub(in super::super) fn task_requires_event_inline(&self, ft: NodeId, inst: NodeId) -> bool {
+    /// Whether calls to a subroutine must be expanded at the call site
+    /// (`lower_task_inline`) instead of calling its typed `IrFunc`.
+    ///
+    /// Two constructs still need the caller's environment:
+    /// - an output, inout or ref event formal, whose handle rebinding and
+    ///   identity are resolved against the actual at the call site (a by-value
+    ///   input event formal is an ordinary `llg_event_t` parameter);
+    /// - an event control, anywhere in the task or the tasks it calls, whose
+    ///   expression reads subroutine-scoped storage. Its evaluator runs after
+    ///   the activation suspended, so it needs the caller-bound formal
+    ///   dependencies and copied locals that only the expansion provides.
+    ///
+    /// Event controls on module signals and on input event formals are
+    /// ordinary suspension points of the typed callee.
+    pub(in super::super) fn subroutine_requires_inline(&self, ft: NodeId, inst: NodeId) -> bool {
         fn visit(cg: &Codegen<'_>, node: NodeId, inst: NodeId, seen: &mut HashSet<NodeId>) -> bool {
             if !seen.insert(node) {
                 return false;
             }
             match cg.kind(node) {
                 NodeKind::FuncTask { .. } => {
-                    if cg.func_formals(node).iter().any(|formal| {
-                        matches!(cg.kind(formal.0), NodeKind::FuncArg { ty, .. } if ty.kind == "event")
+                    if cg.func_formals(node).iter().any(|(formal, _)| {
+                        matches!(
+                            cg.kind(*formal),
+                            NodeKind::FuncArg { ty, direction, .. }
+                                if ty.kind == "event" && *direction != DbDirection::Input
+                        )
                     }) {
                         return true;
                     }
@@ -460,8 +475,15 @@ impl<'a> Codegen<'a> {
                         .func_body(node)
                         .is_some_and(|body| visit(cg, body, inst, seen));
                 }
-                NodeKind::Stmt(StmtKind::EventControl { .. }) => return true,
-                NodeKind::FuncArg { ty, .. } if ty.kind == "event" => return true,
+                NodeKind::Stmt(StmtKind::EventControl {
+                    specs,
+                    implicit,
+                    body,
+                }) => {
+                    if cg.event_control_reads_subroutine_storage(specs, *implicit, *body) {
+                        return true;
+                    }
+                }
                 NodeKind::FuncCall {
                     name,
                     is_task: true,
@@ -485,9 +507,60 @@ impl<'a> Codegen<'a> {
         visit(self, ft, inst, &mut HashSet::new())
     }
 
+    fn event_control_reads_subroutine_storage(
+        &self,
+        specs: &[EventSpec],
+        implicit: bool,
+        body: Option<NodeId>,
+    ) -> bool {
+        fn spec_reads(cg: &Codegen<'_>, spec: &EventSpec) -> bool {
+            match spec {
+                EventSpec::Qualified { event, condition } => {
+                    spec_reads(cg, event) || cg.reads_subroutine_storage(*condition)
+                }
+                EventSpec::Named(event) => cg.reads_subroutine_storage(*event),
+                EventSpec::AnyChange { sig } | EventSpec::Edge { sig, .. } => {
+                    cg.reads_subroutine_storage(*sig)
+                }
+            }
+        }
+        (implicit && body.is_some_and(|body| self.reads_subroutine_storage(body)))
+            || specs.iter().any(|spec| spec_reads(self, spec))
+    }
+
+    /// Whether an expression references a formal or local declared inside a
+    /// subroutine. Input event formals are exempt: they are typed parameters
+    /// whose handle needs no evaluator context.
+    fn reads_subroutine_storage(&self, node: NodeId) -> bool {
+        let scoped = |target: NodeId| {
+            matches!(
+                self.kind(target),
+                NodeKind::FuncArg { .. } | NodeKind::Var { .. } | NodeKind::Array { .. }
+            ) && !matches!(
+                self.kind(target),
+                NodeKind::FuncArg { ty, direction: DbDirection::Input, .. } if ty.kind == "event"
+            ) && self.enclosing_func_task(target).is_some()
+        };
+        match self.kind(node) {
+            NodeKind::Expr(ExprKind::Ref {
+                target: Some(target),
+            }) if scoped(*target) => return true,
+            NodeKind::Expr(ExprKind::HierPath { refs, .. })
+                if refs.iter().flatten().any(|target| scoped(*target)) =>
+            {
+                return true;
+            }
+            _ => {}
+        }
+        self.node(node)
+            .children
+            .iter()
+            .any(|child| self.reads_subroutine_storage(*child))
+    }
+
     /// Whether a task can cancel its activation through a named `disable`.
-    /// Such tasks are lowered inline so output/inout copy-out remains inside
-    /// the cancellation boundary instead of running after a C-call returns.
+    /// Its call sites keep the activation visible to the caller's
+    /// cancellation check, so output/inout copy-out is skipped.
     pub(in super::super) fn task_has_disable(&self, ft: NodeId, inst: NodeId) -> bool {
         let mut seen: HashSet<NodeId> = HashSet::new();
         self.task_has_disable_inner(ft, inst, &mut seen)
@@ -495,11 +568,11 @@ impl<'a> Codegen<'a> {
 
     /// Whether a task declaration is the target of an explicit `disable`.
     ///
-    /// A direct C-call has no cancellation result in its typed ABI. If an
-    /// external disable can name the task, keep the call-site expansion so
-    /// cancellation unwinds before output/inout copy-out. This is deliberately
-    /// a declaration-level check: every invocation shares the same runtime
-    /// activation identity and therefore needs the same lowering boundary.
+    /// If an external disable can name the task, its call sites wrap the call
+    /// in the declaration's activation so the cancellation outlives the
+    /// callee's own scope until copy-out is skipped. This is deliberately a
+    /// declaration-level check: every invocation shares the same runtime
+    /// activation identity.
     pub(in super::super) fn task_is_disable_target(&self, ft: NodeId) -> bool {
         self.db.node_ids().any(|node| {
             matches!(

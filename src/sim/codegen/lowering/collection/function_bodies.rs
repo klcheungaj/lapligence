@@ -173,6 +173,7 @@ impl<'a> Codegen<'a> {
         let mut string_addr = HashMap::new();
         let mut static_input_copies = Vec::new();
         let mut callback_private_formal_copies = Vec::new();
+        let mut event_args: HashMap<NodeId, IrEventRef> = HashMap::new();
 
         // A static fixed-value local has persistent storage for the whole
         // simulation. Model it as an ordinary hidden signal so function-body
@@ -352,10 +353,21 @@ impl<'a> Codegen<'a> {
         }
         for (idx, (io, is_out)) in formals.iter().enumerate() {
             if matches!(self.kind(*io), NodeKind::FuncArg { ty, .. } if ty.kind == "event") {
-                // Event formals are admitted only through inline call
-                // lowering, which substitutes the caller's object identity.
-                // The fallback C body is retained for deterministic model
-                // shape but has no packed formal storage.
+                // A by-value input event formal is the activation's own
+                // handle to the object the caller named. Other directions are
+                // inline-only: their retained C body is kept for deterministic
+                // model shape but has no formal storage.
+                if !*is_out
+                    && matches!(
+                        self.kind(*io),
+                        NodeKind::FuncArg {
+                            direction: DbDirection::Input,
+                            ..
+                        }
+                    )
+                {
+                    event_args.insert(*io, IrEventRef::Formal(idx));
+                }
                 continue;
             }
             if matches!(self.kind(*io), NodeKind::FuncArg { ty, .. } if is_handle_kind(&ty.kind)) {
@@ -640,7 +652,7 @@ impl<'a> Codegen<'a> {
             ret: ret_ctx.clone(),
             arg_read,
             arg_ir,
-            event_args: HashMap::new(),
+            event_args,
             arg_dependencies: HashMap::new(),
             arg_write,
             arg_lhs,

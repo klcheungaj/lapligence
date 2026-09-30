@@ -90,8 +90,8 @@ impl Frame<'_, '_> {
             return Err(pending("subprogram calls in declaration initialization"));
         }
         let function = self.ctx.model.func(f).clone();
-        if model::inline_event_template(&function) {
-            return Err("event-formal calls must be inlined before C emission".to_owned());
+        if model::inline_template(&function) {
+            return Err("inline-expanded calls must be expanded before C emission".to_owned());
         }
         model::check_function(&function)?;
         if self.read_only_callback {
@@ -192,6 +192,15 @@ impl Frame<'_, '_> {
                     native_owners.push(value);
                 }
                 IrCallArg::ChandleVal(expression) => parameters.push(self.chandle(expression)?),
+                IrCallArg::EventVal(event) => {
+                    // Pass the object the handle names now, not the handle's
+                    // storage, so rebinding the actual cannot move the callee.
+                    let address = self.event_address(event)?;
+                    let pointer = self.scalar("llg_event_t*", address);
+                    parameters.push(format!(
+                        "(llg_event_t){{ {pointer} ? {pointer}->object : NULL }}"
+                    ));
+                }
                 IrCallArg::StringOutAddr(address)
                 | IrCallArg::StringRefAddr { addr: address, .. } => {
                     parameters.push(self.native_address(address, NativeKind::String)?.address);

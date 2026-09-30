@@ -86,6 +86,9 @@ pub(super) fn render_call_expr(
             IrCallArg::ChandleVal(value) => {
                 call_args.push(super::super::objects::chandle(ctx, value)?);
             }
+            IrCallArg::EventVal(_) => {
+                return Err("event argument requires the ownership emitter".to_owned());
+            }
             IrCallArg::ChandleAddr(addr) | IrCallArg::ChandleRefAddr(addr) => {
                 call_args.push(addr.clone());
             }

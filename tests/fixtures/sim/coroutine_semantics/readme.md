@@ -14,6 +14,7 @@ expectation, and treats any frontend or lowering warning as a failure.
 | `nested_timing_calls.sv` | Both timed-call shapes suspend twice per level at depths one through eight, preserve locals and outputs, reuse the leaf shallow and deep, and retain a plain non-suspending call. |
 | `cancellation_points.sv` | Disabling an outer block while a nested block waits skips the loop, inner and outer tails; a `disable` in one branch leaves at once; a timing-free task that disables its caller's block skips its copy-out and the rest of the block. |
 | `copyback_once_cancel.sv` | Timed output/inout copy-back occurs once on return and not at all after cancellation. |
+| `deinlined_tasks.sv` | Event formals name the caller's event object (bound at the call), a four-level event-task chain called from three sites keeps locals and outputs, `disable` of a suspended task skips its copy-out while its callers continue, and a timed task can disable its caller's block. |
 | `stackless_join_none_real_block.sv` | A completed timing call and an already-satisfied wait are not scheduling boundaries; a detached child starts at the next real block. |
 | `deep_cancellation.sv` | Kill below three timed calls and named-block disable abandon the victim while independent work continues. |
 | `self_suspend.sv` | Self-suspend preserves the continuation until another process resumes it; self-resume while running is a no-op. |

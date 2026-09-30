@@ -1,7 +1,7 @@
 // llg-test-fixture: tests/fixtures/sim/coroutine_semantics/nested_timing_calls.sv
-// Delay-only timing tasks use the ordinary timed-call shape. Event-bearing
-// tasks use the inline-expanded shape. Calls at depths one through eight make
-// every activation suspend twice and check its automatic local after wakeup.
+// Delay-only and event-bearing timing tasks are both ordinary timed calls.
+// Calls at depths one through eight make every activation suspend twice and
+// check its automatic local after wakeup.
 module tb;
     event tick;
     integer direct_calls = 0;

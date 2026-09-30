@@ -179,9 +179,32 @@ endmodule
 }
 
 #[test]
-fn inline_event_task_storage_is_hoisted_into_its_host_frame() {
+fn inline_expanded_task_storage_is_hoisted_into_its_host_frame() {
     let c = render_source_with_execution_options(
         "inline_event_frame.sv",
+        r#"
+module tb;
+    logic level;
+    task automatic await_edge(ref logic source);
+        integer local_value;
+        @(posedge source);
+        local_value = 1;
+    endtask
+    initial await_edge(level);
+endmodule
+"#,
+        ExecutionAnalysisOptions::default(),
+    );
+
+    assert!(!c.contains("fn_tb_await_edge_frame_t"), "{c}");
+    assert!(c.contains("sv4_t* _llg_local_"), "{c}");
+    assert!(c.contains("LLG_CO_ROOT_FRAME_OK(p_tb_proc_"), "{c}");
+}
+
+#[test]
+fn input_event_formal_task_is_a_typed_callee_with_a_by_value_handle() {
+    let c = render_source_with_execution_options(
+        "event_formal_callee.sv",
         r#"
 module tb;
     event wake;
@@ -196,9 +219,10 @@ endmodule
         ExecutionAnalysisOptions::default(),
     );
 
-    assert!(!c.contains("fn_tb_await_event_frame_t"), "{c}");
-    assert!(c.contains("sv4_t* _llg_local_"), "{c}");
-    assert!(c.contains("LLG_CO_ROOT_FRAME_OK(p_tb_proc_"), "{c}");
+    assert!(c.contains("fn_tb_await_event_frame_t"), "{c}");
+    assert!(c.contains("llg_event_t a0;"), "{c}");
+    assert!(c.contains("->object : NULL }"), "{c}");
+    assert!(c.contains("LLG_CO_CALL"), "{c}");
 }
 
 #[test]

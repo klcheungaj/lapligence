@@ -166,8 +166,14 @@ Do not emit detached predicates or bypass eligibility through wrappers.
 
 String inputs are copied; reserve return ownership before argument scopes. Check
 cancellation before copy-out. Native ref descriptors borrow addresses, not string
-allocations. Inline event formals retain event identity, not numeric encoding;
-concrete interface members retain their actual member address.
+allocations. An input event formal is a by-value `llg_event_t` (frame field in a
+coroutine callee) holding the object the actual named at the call: the caller
+snapshots `{ p ? p->object : NULL }` and the callee binds a private handle copy
+(`IrEventRef::Formal`), so rebinding the actual or the formal cannot move waits.
+Output, inout and ref event formals, event controls reading subroutine storage and
+class/virtual-interface event calls stay inline-expanded templates that are never
+emitted (`subroutine_requires_inline`). Concrete interface members retain their
+actual member address.
 
 Container operations evaluate operands in order, register borrowed string keys and
 item snapshots, compute all mapped results before publishing, and destroy consumed

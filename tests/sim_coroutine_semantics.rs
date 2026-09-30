@@ -76,6 +76,17 @@ fn cancellation_is_observed_after_resume_points_disable_and_disabling_calls() {
 }
 
 #[test]
+fn event_formals_event_chains_and_disabled_tasks_behave_as_ordinary_calls() {
+    sim_cli::run_case(
+        "coroutine_semantics",
+        "deinlined_tasks",
+        "PASS deinlined_tasks first=1 second=2 chain=104/204/304 slow=31/200 fresh=1 timed=1 event=1\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
 fn join_none_children_wait_for_a_real_blocking_boundary() {
     sim_cli::run_case(
         "coroutine_semantics",

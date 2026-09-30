@@ -799,8 +799,10 @@ fn collect_call_rw(call: &crate::sim::ir::IrCall, model: &IrModel, rw: &mut Rw) 
                     read.expressions(&mut |expression| collect_expr_reads(expression, model, rw));
                 }
             }
-            IrCallArg::ChandleVal(_) | IrCallArg::ChandleAddr(_) | IrCallArg::ChandleRefAddr(_) => {
-            }
+            IrCallArg::ChandleVal(_)
+            | IrCallArg::EventVal(_)
+            | IrCallArg::ChandleAddr(_)
+            | IrCallArg::ChandleRefAddr(_) => {}
         }
     }
     // Caller-side output/inout temps live here, not in `args`: their
@@ -1242,8 +1244,10 @@ fn collect_call_rw_readonly(function: usize, args: &[IrCallArg], model: &IrModel
                     read.expressions(&mut |expression| collect_expr_reads(expression, model, rw));
                 }
             }
-            IrCallArg::ChandleVal(_) | IrCallArg::ChandleAddr(_) | IrCallArg::ChandleRefAddr(_) => {
-            }
+            IrCallArg::ChandleVal(_)
+            | IrCallArg::EventVal(_)
+            | IrCallArg::ChandleAddr(_)
+            | IrCallArg::ChandleRefAddr(_) => {}
         }
     }
 }
