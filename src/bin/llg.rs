@@ -5,7 +5,7 @@
 //! ```text
 //! llg [generate options] [build options] <file.sv>... [-- <plusargs>...]
 //! generate: --top <module[:config]>  --edition <2001|2009>  --compilation-units <separate|merged>  --include-dir <path>  --define <NAME[=VALUE]>  --define-system-task <prototype>  --libmap <file>  --libfile [<library>=]<file>  --library-order <library>[,<library>...]  --default-library <library>  --lint  --lint-json [<path>]  --lint-config <file>  --gen-only  --no-opt  --stop-policy <resume|exit>
-//! build:    --generator <backend>  --launcher <program>  --dpi-lib <path>...  --cc <program>  --cflags <flags>  --cmake <program>
+//! build:    --generator <backend>  --launcher <program>  --dpi-lib <path>...  --cc <program>  --cflags <flags>  --cmake <program>  --build-jobs <N>
 //! output:   --out-dir <dir>  --runtime-cache <dir>
 //! ```
 //!
@@ -37,6 +37,9 @@
 //!   `--cc` > `$LLG_CC` > `$CC` > `cc`; `--cflags` > `$LLG_CFLAGS`.
 //! - The runtime archive cache is `--runtime-cache` >
 //!   `$LLG_RUNTIME_CACHE_DIR` > `<out-dir>/llg-runtime-cache`.
+//! - `--build-jobs <N>` sets the `cmake --build --parallel` job count for the
+//!   runtime archive and the model: `--build-jobs` >
+//!   `$CMAKE_BUILD_PARALLEL_LEVEL` (positive integer) > available parallelism.
 //! - `--generator <backend>` selects cmake's generator backend (`-G`,
 //!   e.g. `Ninja`, `"Unix Makefiles"`); it overrides `$CMAKE_GENERATOR`.
 //! - `--launcher <program>` selects `CMAKE_C_COMPILER_LAUNCHER` (for example,
@@ -86,6 +89,7 @@ struct DriverOptions {
     cc: Option<String>,
     cflags: Option<String>,
     cmake: Option<String>,
+    build_jobs: Option<usize>,
     out_dir: PathBuf,
     runtime_cache: Option<PathBuf>,
     gen_only: bool,
@@ -133,7 +137,7 @@ fn parse_args(args: Vec<String>) -> Result<DriverOptions, i32> {
         eprintln!(
             "usage: llg [generate options] [build options] <file.sv>... [-- <plusargs>...]\n\
              generate: --top <module[:config]>  --edition <2001|2009>  --compilation-units <separate|merged>  --include-dir <path>  --define <NAME[=VALUE]>  --define-system-task <prototype>  --libmap <file>  --libfile [<library>=]<file>  --library-order <library>[,<library>...]  --default-library <library>  --lint  --lint-json [<path>]  --lint-config <file>  --gen-only  --no-opt\n\
-             build:    --generator <backend>  --launcher <program>  --dpi-lib <path>...  --cc <program>  --cflags <flags>  --cmake <program>\n\
+             build:    --generator <backend>  --launcher <program>  --dpi-lib <path>...  --cc <program>  --cflags <flags>  --cmake <program>  --build-jobs <N>\n\
              output:   --out-dir <dir>  --runtime-cache <dir>\n\
              stop:     --stop-policy <resume|exit>  # `$stop` handling (default: resume)"
         );
@@ -162,6 +166,7 @@ fn parse_args(args: Vec<String>) -> Result<DriverOptions, i32> {
     let mut cc: Option<String> = None;
     let mut cflags: Option<String> = None;
     let mut cmake: Option<String> = None;
+    let mut build_jobs: Option<usize> = None;
     let mut out_dir = PathBuf::from(DEFAULT_OUT_DIR);
     let mut runtime_cache: Option<PathBuf> = None;
     let mut gen_only = false;
@@ -212,6 +217,8 @@ Options:
       --cc <program>         C compiler for the model (default: $LLG_CC, $CC, cc)
       --cflags <flags>       Extra C compiler flags (default: $LLG_CFLAGS)
       --cmake <program>      CMake program (default: $LLG_CMAKE, cmake)
+      --build-jobs <N>       Parallel compile jobs (default: $CMAKE_BUILD_PARALLEL_LEVEL,
+                              available CPUs)
       --out-dir <dir>        Output root; the model goes to <dir>/sim/<design>
                               (default: build)
       --runtime-cache <dir>  Runtime archive cache (default: $LLG_RUNTIME_CACHE_DIR,
@@ -353,6 +360,13 @@ Options:
                     return Err(2);
                 }
             },
+            "--build-jobs" => match it.next().map(|value| value.parse::<usize>()) {
+                Some(Ok(value)) if value > 0 => build_jobs = Some(value),
+                _ => {
+                    eprintln!("llg: --build-jobs requires a positive integer");
+                    return Err(2);
+                }
+            },
             "--out-dir" => match it.next() {
                 Some(value) if !value.is_empty() => out_dir = PathBuf::from(value),
                 _ => {
@@ -432,6 +446,7 @@ Options:
         cc,
         cflags,
         cmake,
+        build_jobs,
         out_dir,
         runtime_cache,
         gen_only,
@@ -464,6 +479,7 @@ fn run(options: DriverOptions) -> i32 {
         cc,
         cflags,
         cmake,
+        build_jobs,
         out_dir: out_root,
         runtime_cache,
         gen_only,
@@ -640,6 +656,7 @@ fn run(options: DriverOptions) -> i32 {
             || cc.is_some()
             || cflags.is_some()
             || cmake.is_some()
+            || build_jobs.is_some()
             || runtime_cache.is_some()
         {
             eprintln!("llg: warning: build options ignored with --gen-only");
@@ -669,6 +686,7 @@ fn run(options: DriverOptions) -> i32 {
         cc,
         cflags,
         cmake,
+        build_jobs,
     };
     let exe = match sim::build::build_model_cmake_with_opts(&out_dir, &model, &opts) {
         Ok(e) => e,

@@ -423,6 +423,71 @@ fn explicit_launcher_build_and_run() {
     );
 }
 
+/// Both `cmake --build` invocations (runtime archive and model) must carry
+/// `--parallel <N>`. A recording wrapper stands in for the cmake program and
+/// forwards to the real one.
+#[cfg(unix)]
+#[test]
+fn model_and_runtime_builds_pass_parallel_jobs() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let _guard = TEST_LOCK.lock().unwrap();
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let dir = fresh_dir("parallel-jobs");
+    let log = dir.path().join("cmake-args.log");
+    let wrapper = dir.path().join("cmake-wrapper.sh");
+    std::fs::write(
+        &wrapper,
+        format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexec cmake \"$@\"\n",
+            log.display()
+        ),
+    )
+    .expect("write wrapper");
+    std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755))
+        .expect("mark wrapper executable");
+    let model_dir = dir.path().join("model");
+    std::fs::create_dir(&model_dir).expect("create model directory");
+    let result = sim_harness::with_cwd(dir.path(), || {
+        let generated = compile_counter(&model_dir)?;
+        let opts = sim::build::CmakeBuildOpts {
+            cmake: Some(wrapper.to_string_lossy().into_owned()),
+            runtime_cache_dir: Some(dir.path().join("runtime-cache")),
+            build_jobs: Some(3),
+            ..Default::default()
+        };
+        sim::build::build_model_cmake_with_opts(
+            &model_dir,
+            &[("model.c", generated.model_c.as_str())],
+            &opts,
+        )
+        .map_err(|error| format!("cmake build: {error}"))
+    });
+    result.expect("wrapped build should succeed");
+
+    let log = std::fs::read_to_string(&log).expect("wrapper log");
+    let builds: Vec<&str> = log
+        .lines()
+        .filter(|line| line.starts_with("--build "))
+        .collect();
+    assert_eq!(builds.len(), 2, "runtime and model builds: {log}");
+    assert!(
+        builds
+            .iter()
+            .all(|line| line.contains("--config Release --parallel 3")),
+        "{log}"
+    );
+    assert!(
+        builds
+            .iter()
+            .any(|line| line.ends_with("--target llg_runtime")),
+        "{log}"
+    );
+}
+
 /// An unsupported generator name must surface as a clear error from the
 /// cmake configure step.
 #[test]
@@ -528,7 +593,7 @@ fn driver_output_and_tool_flags_override_environment() {
     let mut command = Command::new(env!("CARGO_BIN_EXE_llg"));
     command
         .args(["--top", "tb", "--out-dir", "out/run1", "--cmake", "cmake"])
-        .args(["--cc", "cc", "--cflags", ""])
+        .args(["--cc", "cc", "--cflags", "", "--build-jobs", "2"])
         .arg("--runtime-cache")
         .arg(&cache)
         .arg("counter.sv")

@@ -17,8 +17,9 @@ Keep reusable processing in the library. Bins import `llg::core`, `llg::ffi` and
   [sim](../sim/AGENTS.md) owns compiler/flags/environment selection.
 - `--out-dir <dir>` (default `build`) places the model in `<dir>/sim/<design>`.
   `--runtime-cache` > `$LLG_RUNTIME_CACHE_DIR` > `<out-dir>/llg-runtime-cache`;
-  `--cc`, `--cflags` and `--cmake` override their environment fallbacks. Build
-  options are ignored with a warning under `--gen-only`. Never derive defaults
+  `--cc`, `--cflags` and `--cmake` override their environment fallbacks.
+  `--build-jobs <N>` (positive) > `$CMAKE_BUILD_PARALLEL_LEVEL` > available CPUs
+  sets `cmake --build --parallel`. Build options are ignored with a warning under `--gen-only`. Never derive defaults
   from compile-time paths.
 - Repeated `--dpi-lib <path>` validates explicit DPI-C libraries before CMake and
   retains them in source-only output. `--no-opt` disables normally enabled IR
