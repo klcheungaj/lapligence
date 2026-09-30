@@ -8,6 +8,16 @@
 [env]
 LLG_RUNTIME_CACHE_DIR = { value = "target/llg-runtime-cache", relative = true }
 
+# Keep Linux debug info in per-crate object files instead of copying it into
+# every linked executable. Each integration-test binary links the whole
+# library, so embedded DWARF made ~260 test binaries ~100 MB each. Debuggers
+# and backtraces still find it next to the objects. Cargo profiles cannot vary
+# by target and MSVC rejects `unpacked`; macOS already defaults to it. Cargo
+# joins these flags with the target-specific tables below; an explicit
+# RUSTFLAGS environment value replaces all of them.
+[target.'cfg(target_os = "linux")']
+rustflags = ["-C", "split-debuginfo=unpacked"]
+
 [target.x86_64-unknown-linux-musl]
 # The linker must come from a musl cross-toolchain.
 # Override it with CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER when needed.
