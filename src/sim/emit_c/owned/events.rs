@@ -2,6 +2,11 @@
 use super::*;
 use crate::sim::execution::ScheduleRegion;
 
+/// Binding name of an event formal's activation-owned handle.
+pub(super) fn event_formal_binding(index: usize) -> String {
+    format!("_event_formal_{index}")
+}
+
 impl Frame<'_, '_> {
     pub(super) fn delay(&mut self, ticks: &IrDelay) -> Result<String, String> {
         Ok(match ticks {
@@ -60,6 +65,13 @@ impl Frame<'_, '_> {
                 }
                 address
             }
+            IrEventRef::Formal(index) => self
+                .event_bindings
+                .iter()
+                .rev()
+                .find_map(|scope| scope.get(&event_formal_binding(*index)))
+                .cloned()
+                .ok_or_else(|| pending("unbound event formal handle"))?,
             IrEventRef::Captured(name) => self
                 .event_bindings
                 .iter()

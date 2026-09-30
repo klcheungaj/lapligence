@@ -196,10 +196,10 @@ fn inline_event_capture_keeps_identity_and_respects_lexical_scope() {
 }
 
 #[test]
-fn event_formal_templates_do_not_use_the_numeric_call_abi() {
+fn inline_expanded_templates_are_not_callable() {
     let mut model = numeric_model();
-    model.funcs[0].formals[0].event = true;
-    assert!(model::inline_event_template(&model.funcs[0]));
+    model.funcs[0].inline_expanded = true;
+    assert!(model::inline_template(&model.funcs[0]));
     assert!(model::check_model(&model).is_ok());
     let ctx = RCtx {
         model: &model,
@@ -213,7 +213,40 @@ fn event_formal_templates_do_not_use_the_numeric_call_abi() {
         .call_expression(&call)
         .err()
         .unwrap()
-        .contains("must be inlined"));
+        .contains("must be expanded"));
+}
+
+#[test]
+fn input_event_formals_pass_the_object_identity_by_value() {
+    let mut model = numeric_model();
+    model.funcs[0].formals[0].event = true;
+    assert!(!model::inline_template(&model.funcs[0]));
+    assert!(model::check_model(&model).is_ok());
+    model.funcs[0].formals[0].mode = IrFormalMode::Output;
+    model.funcs[0].formals[0].is_out = true;
+    assert!(model::check_model(&model).is_err());
+    model.funcs[0].formals[0].mode = IrFormalMode::Input;
+    model.funcs[0].formals[0].is_out = false;
+    let fields = crate::sim::emit_c::model::owned_func_param_fields(&model.funcs[0]);
+    assert_eq!(fields[0], ("llg_event_t".to_owned(), "a0".to_owned()));
+    let ctx = RCtx {
+        model: &model,
+        func: None,
+        sampled: false,
+        activation_label: None,
+    };
+    let mut frame = Frame::new(&ctx);
+    let call = IrCallExpr::new(
+        0,
+        vec![IrCallArg::EventVal(IrEventRef::Null)],
+        IrDepth::PROC,
+        false,
+    );
+    let value = frame.call_expression(&call).unwrap();
+    frame.discard(value);
+    assert!(frame.body().contains("llg_event_t* _llg_scalar_"));
+    assert!(frame.body().contains("->object : NULL }"));
+    assert!(!frame.body().contains("NULL->"));
 }
 
 #[test]

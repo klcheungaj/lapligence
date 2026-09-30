@@ -1179,6 +1179,7 @@ fn collect_argument_effects(
         IrCallArg::Val(value) => collect_expression_effects(ir, value, effects, visited_calls),
         IrCallArg::StringVal(value) => collect_string_effects(ir, value, effects, visited_calls),
         IrCallArg::ChandleVal(value) => collect_chandle_effects(ir, value, effects, visited_calls),
+        IrCallArg::EventVal(_) => {}
         IrCallArg::OutAddr(address)
         | IrCallArg::StringOutAddr(address)
         | IrCallArg::ChandleAddr(address)

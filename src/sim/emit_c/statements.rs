@@ -1290,6 +1290,9 @@ fn render_stmt_scoped(
                     IrCallArg::ChandleVal(value) => {
                         call_args.push(super::objects::chandle(ctx, value)?)
                     }
+                    IrCallArg::EventVal(_) => {
+                        return Err("event argument requires the ownership emitter".to_string());
+                    }
                     IrCallArg::ChandleAddr(addr) | IrCallArg::ChandleRefAddr(addr) => {
                         call_args.push(addr.clone())
                     }

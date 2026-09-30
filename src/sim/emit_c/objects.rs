@@ -307,6 +307,9 @@ pub(super) fn chandle(ctx: &RCtx<'_>, value: &IrChandleExpr) -> Result<String, S
                     IrCallArg::StringVal(_) | IrCallArg::StringOutTemp { .. } => {
                         Err("string argument is invalid in a chandle call".to_owned())
                     }
+                    IrCallArg::EventVal(_) => {
+                        Err("event argument requires the ownership emitter".to_owned())
+                    }
                 })
                 .collect::<Result<Vec<_>, String>>()?;
             if let Some(receiver) = receiver {
@@ -968,6 +971,9 @@ fn render_typed_call(
             } => storage_addr.clone().unwrap_or_else(|| format!("&{name}")),
             IrCallArg::ChandleVal(value) => super::objects::chandle(ctx, value)?,
             IrCallArg::ChandleAddr(addr) | IrCallArg::ChandleRefAddr(addr) => addr.clone(),
+            IrCallArg::EventVal(_) => {
+                return Err("event argument requires the ownership emitter".to_owned())
+            }
         };
         rendered.push(value);
         let _ = idx;

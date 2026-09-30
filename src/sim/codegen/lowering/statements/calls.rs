@@ -4,8 +4,11 @@ use super::*;
 
 impl EmitCtx<'_, '_> {
     /// Lower a `task_call` statement (or a function call used as a statement).
-    /// Delay-bearing tasks are inlined at the call site; delay-free tasks (and
-    /// functions) become IR calls with caller-side temps for output formals.
+    /// Tasks and functions become IR calls with caller-side temps for output
+    /// formals; timed callees are stackless coroutines and a call that may
+    /// disable is followed by a cancellation check that skips copy-out. Only
+    /// the constructs named by `subroutine_requires_inline` are expanded at
+    /// the call site.
     pub(super) fn lower_task_call(
         &mut self,
         h: NodeId,
@@ -93,7 +96,24 @@ impl EmitCtx<'_, '_> {
                 self.path
             ));
         }
-        if has_event_formal || (is_task && self.cg.task_requires_event_inline(ft, callee_inst)) {
+        // Remaining expansions (see `CallShape`): output, inout and ref event
+        // formals, event controls reading subroutine storage, `ref` formals
+        // read by an event control whose actual is not a whole module signal,
+        // and event formals of class-method and virtual-interface calls,
+        // whose receivers the typed event ABI does not carry.
+        let shape = self.cg.call_shape(ft, callee_inst);
+        let mut expand = shape.inline_only
+            || (has_event_formal && (call_receiver.class.is_some() || virtual_call_info.is_some()));
+        let mut specialized = None;
+        if !expand && !shape.static_refs.is_empty() {
+            match self.static_ref_actuals(&formals, &bound, &shape.static_refs)? {
+                Some(statics) => {
+                    specialized = Some(self.cg.task_specialization(ft, callee_inst, statics)?);
+                }
+                None => expand = true,
+            }
+        }
+        if expand {
             return self.lower_task_inline(
                 ft,
                 callee_inst,
@@ -105,37 +125,71 @@ impl EmitCtx<'_, '_> {
         }
         let can_be_disabled = is_task
             && (self.cg.task_has_disable(ft, callee_inst) || self.cg.task_is_disable_target(ft));
-        if can_be_disabled && self.cg.task_has_wait(ft, callee_inst) {
-            // Timed cancellation must unwind the callee before caller-side
-            // copy-out. Delay-free calls use their native activation scope,
-            // including recursive calls. Keep this timed path inline until
-            // stackless task returns carry an explicit cancellation result.
-            // Inline storage is hoisted into the caller frame, so no C stack
-            // address escapes across a suspension. The
-            // declaration-level target check covers callers that disable a
-            // task externally rather than from inside the task body.
-            self.lower_task_inline(ft, callee_inst, h, &formals, &bound, call_receiver.class)
-        } else {
-            let fidx = self
+        let fidx = match specialized {
+            Some(index) => index,
+            None => self
                 .cg
                 .func_meta
                 .get(&ft)
                 .map(|m| m.ir)
-                .ok_or_else(|| format!("task `{name}` has no C name"))?;
-            let call =
-                self.lower_call_stmts(fidx, callee_inst, h, &formals, &bound, call_receiver)?;
-            if can_be_disabled && !self.cg.class_nodes.contains_key(&callee_inst) {
-                // Keep cancellation visible after the callee retires its own
-                // activation, until caller-side output copy-out has finished.
-                Ok(IrStmt::ActivationScope {
-                    target: self.cg.activation_target(ft)?,
-                    exit: self.new_label("call_exit"),
-                    body: vec![call],
-                })
-            } else {
-                Ok(call)
-            }
+                .ok_or_else(|| format!("task `{name}` has no C name"))?,
+        };
+        let call = self.lower_call_stmts(fidx, callee_inst, h, &formals, &bound, call_receiver)?;
+        if can_be_disabled && !self.cg.class_nodes.contains_key(&callee_inst) {
+            // Keep cancellation visible after the callee retires its own
+            // activation, until caller-side output copy-out has finished.
+            Ok(IrStmt::ActivationScope {
+                target: self.cg.activation_target(ft)?,
+                exit: self.new_label("call_exit"),
+                body: vec![call],
+            })
+        } else {
+            Ok(call)
         }
+    }
+
+    /// The whole-signal actuals of the `ref` formals `needed` at one call, or
+    /// `None` when any of them cannot be bound statically (a caller local, a
+    /// select or an array element) or the call would not be accepted by the
+    /// expansion either, which then reports the precise error.
+    fn static_ref_actuals(
+        &mut self,
+        formals: &[(NodeId, bool)],
+        bound: &[BoundArg],
+        needed: &[usize],
+    ) -> Result<Option<Vec<StaticRef>>, String> {
+        let mut statics = Vec::with_capacity(needed.len());
+        for &index in needed {
+            let (formal, _) = formals[index];
+            let actual = &bound[index];
+            let const_ref = match self.cg.kind(formal) {
+                NodeKind::FuncArg {
+                    direction: DbDirection::Ref,
+                    const_ref,
+                    ..
+                } => *const_ref,
+                _ => return Ok(None),
+            };
+            let Ok(lhs @ IrLhs::Whole(_)) = self.cg.lower_lhs(&self.path, actual.expr) else {
+                return Ok(None);
+            };
+            let Some((width, signed, two_state, actual_const)) = self.cg.ref_lhs_type(&lhs) else {
+                return Ok(None);
+            };
+            if (width, signed, two_state) != (actual.width, actual.signed, actual.two_state)
+                || (actual_const && !const_ref)
+            {
+                return Ok(None);
+            }
+            statics.push(StaticRef {
+                formal,
+                read: self.cg.lower_expr(&self.path, actual.expr)?,
+                dependencies: self.cg.collect_read_signals(&self.path, actual.expr)?,
+                lhs,
+                const_ref,
+            });
+        }
+        Ok(Some(statics))
     }
 
     /// Lower a delay-free task/function statement call: caller-side temps for
@@ -343,7 +397,21 @@ impl EmitCtx<'_, '_> {
                 continue;
             }
             if !*is_out && !is_ref {
-                if bound[idx].string {
+                if bound[idx].is_event {
+                    let event = if self.cg.is_null_event_expression(bound[idx].expr) {
+                        IrEventRef::Null
+                    } else {
+                        let target = self.cg.event_target_of(bound[idx].expr).ok_or_else(|| {
+                            format!(
+                                "event actual for formal `{}` is not a named event (node kind: {:?})",
+                                self.cg.node(*io).name,
+                                self.cg.kind(bound[idx].expr)
+                            )
+                        })?;
+                        self.cg.event_ref_of(&target, &self.path)?
+                    };
+                    in_args.push(IrCallArg::EventVal(event));
+                } else if bound[idx].string {
                     in_args.push(IrCallArg::StringVal(
                         self.cg.lower_string(&self.path, bound[idx].expr)?,
                     ));
@@ -382,12 +450,25 @@ impl EmitCtx<'_, '_> {
         }
     }
 
-    /// Lower a cancellation/event-bearing task body inlined at its call site: the task's
-    /// io_decls are bound to the caller's argument expressions (writes go
-    /// straight to the bound actuals through the func-context remap), locals
-    /// get fresh names, and the body lowers under the inline context. This
-    /// path deliberately remains bounded to cases that need activation
-    /// rebinding; resumable timed calls use the typed `IrFunc` path above.
+    /// Lower a task body inlined at its call site: the task's io_decls are
+    /// bound to the caller's argument expressions (writes go straight to the
+    /// bound actuals through the func-context remap), locals get fresh names,
+    /// and the body lowers under the inline context. The remaining cases need
+    /// the caller's environment; every other call, timed or disabling
+    /// included, uses the typed `IrFunc` path.
+    ///
+    /// - Output, inout and ref event formals: the handle is rebound in the
+    ///   caller (`EventAssign` after the body) or aliases the actual.
+    /// - An event control reading subroutine-scoped storage (by-value formals,
+    ///   locals): its evaluator needs the copied activation slots that only
+    ///   the expansion provides.
+    /// - A `ref` formal read by an event control whose actual is not a whole
+    ///   module signal at this call (a caller local, a select, an array
+    ///   element): the evaluator needs the actual's dependencies
+    ///   (`arg_dependencies`), which a shared body cannot know. A whole-signal
+    ///   actual calls a specialization of the task instead.
+    /// - Event formals of class-method and virtual-interface calls, whose
+    ///   receivers the by-value event parameter does not carry.
     fn lower_task_inline(
         &mut self,
         ft: NodeId,

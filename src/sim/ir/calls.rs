@@ -15,6 +15,11 @@ pub enum IrCallArg {
     /// Input chandle formal value.  Chandles remain native opaque pointers;
     /// they are never reinterpreted as packed storage.
     ChandleVal(IrChandleExpr),
+    /// Input named-event formal. The callee receives the event object the
+    /// handle names at the call (a null handle stays null), never the
+    /// caller's handle storage, so a later rebinding of the actual cannot
+    /// move the callee's waits.
+    EventVal(IrEventRef),
     /// Output/inout chandle formal bound to a caller-owned `void **`.
     ChandleAddr(String),
     /// Chandle `ref` formal bound to a caller-owned pointer slot.

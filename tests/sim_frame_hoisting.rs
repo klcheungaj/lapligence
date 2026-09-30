@@ -179,9 +179,66 @@ endmodule
 }
 
 #[test]
-fn inline_event_task_storage_is_hoisted_into_its_host_frame() {
+fn inline_expanded_task_storage_is_hoisted_into_its_host_frame() {
     let c = render_source_with_execution_options(
         "inline_event_frame.sv",
+        r#"
+module tb;
+    logic level;
+    task automatic await_edge(input logic enable);
+        integer local_value;
+        @(posedge (level & enable));
+        local_value = 1;
+    endtask
+    initial await_edge(1'b1);
+endmodule
+"#,
+        ExecutionAnalysisOptions::default(),
+    );
+
+    assert!(!c.contains("fn_tb_await_edge_frame_t"), "{c}");
+    assert!(c.contains("sv4_t* _llg_local_"), "{c}");
+    assert!(c.contains("LLG_CO_ROOT_FRAME_OK(p_tb_proc_"), "{c}");
+}
+
+#[test]
+fn ref_formal_event_tasks_are_specialized_per_static_actual() {
+    let c = render_source_with_execution_options(
+        "ref_event_specialization.sv",
+        r#"
+module tb;
+    logic first, second;
+    task automatic await_edge(ref logic source);
+        @(posedge source);
+    endtask
+    task automatic forward(ref logic source);
+        await_edge(source);
+    endtask
+    initial begin
+        forward(first);
+        forward(first);
+        forward(second);
+    end
+endmodule
+"#,
+        ExecutionAnalysisOptions::default(),
+    );
+
+    // One clone per distinct signal, shared by every call site.
+    let definitions = |name: &str| {
+        c.lines()
+            .filter(|line| line.starts_with(&format!("static llg_co_status_t {name}__spec")))
+            .filter(|line| line.ends_with(") {"))
+            .count()
+    };
+    assert_eq!(definitions("fn_tb_await_edge"), 2, "{c}");
+    assert_eq!(definitions("fn_tb_forward"), 2, "{c}");
+}
+
+#[test]
+fn input_event_formal_task_is_a_typed_callee_with_a_by_value_handle() {
+    let c = render_source_with_execution_options(
+        "event_formal_callee.sv",
         r#"
 module tb;
     event wake;
@@ -196,9 +253,10 @@ endmodule
         ExecutionAnalysisOptions::default(),
     );
 
-    assert!(!c.contains("fn_tb_await_event_frame_t"), "{c}");
-    assert!(c.contains("sv4_t* _llg_local_"), "{c}");
-    assert!(c.contains("LLG_CO_ROOT_FRAME_OK(p_tb_proc_"), "{c}");
+    assert!(c.contains("fn_tb_await_event_frame_t"), "{c}");
+    assert!(c.contains("llg_event_t a0;"), "{c}");
+    assert!(c.contains("->object : NULL }"), "{c}");
+    assert!(c.contains("LLG_CO_CALL"), "{c}");
 }
 
 #[test]
