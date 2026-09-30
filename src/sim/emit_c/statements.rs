@@ -39,6 +39,7 @@ mod callbacks;
 pub use callbacks::render_pre_fn;
 mod force;
 use force::{render_force, render_release};
+pub(super) mod pca_batches;
 
 // ── Statement rendering ───────────────────────────────────────────────────────
 

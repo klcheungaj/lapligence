@@ -39,6 +39,7 @@ use dpi::{dpi_external_prototype, dpi_helpers, internal_return_type, render_dpi_
 mod processes;
 use processes::process_runtime_name;
 mod initialization;
+mod pca_batches;
 mod sharing;
 
 /// The recursion depth guard shared by emitted functions and DPI thunks.
@@ -104,6 +105,7 @@ struct CoroutineArtifact {
     owner: CoroutineId,
     root: bool,
     shared_entry: Option<String>,
+    pca_batches: Vec<super::statements::pca_batches::Batch>,
 }
 
 type CoroutineArtifacts = BTreeMap<usize, CoroutineArtifact>;
@@ -153,6 +155,7 @@ fn render_coroutine_functions(
                 owner: CoroutineId::Function(index),
                 root: false,
                 shared_entry: None,
+                pca_batches: Vec::new(),
             },
         );
     }
@@ -179,7 +182,7 @@ fn render_coroutine_processes(
             if process.kind() == IrProcessKind::Final {
                 return Ok(None);
             }
-            let (source, layout) = super::owned::model::coroutine_process(
+            let (source, layout, pca_batches) = super::owned::model::coroutine_process(
                 &ctx,
                 process,
                 index,
@@ -197,6 +200,7 @@ fn render_coroutine_processes(
                 owner: CoroutineId::Process(index),
                 root: true,
                 shared_entry: None,
+                pca_batches,
             }))
         })
         .collect()
@@ -252,6 +256,7 @@ fn render_coroutine_branches(
                     owner,
                     root: true,
                     shared_entry: None,
+                    pca_batches: Vec::new(),
                 },
             );
         }
@@ -282,6 +287,7 @@ fn render_coroutine_branches(
                     owner,
                     root: true,
                     shared_entry: None,
+                    pca_batches: Vec::new(),
                 },
             );
         }
@@ -494,6 +500,7 @@ fn render_model(execution: &ExecutionModel, threshold: usize) -> Result<String, 
             plain_functions.insert(index, super::owned::model::function(&ctx, function)?);
         }
     }
+    let pca_tables = pca_batches::collect(model, &mut coroutine_processes)?;
     let sharing = sharing::share(
         execution,
         &mut coroutine_functions,
@@ -501,6 +508,7 @@ fn render_model(execution: &ExecutionModel, threshold: usize) -> Result<String, 
         &mut coroutine_branches,
         &mut plain_functions,
         threshold,
+        &pca_tables.operands,
     )?;
     let mut out = format!(
         "// llg-generated C11 model for design `{}`\n",
@@ -532,7 +540,7 @@ fn render_model(execution: &ExecutionModel, threshold: usize) -> Result<String, 
     out.push_str(
         "\n#include <stdio.h>\n#include <stdlib.h>\n#include <math.h>\n#include <string.h>\n\n",
     );
-    if !sharing.bodies.is_empty() {
+    if !sharing.bodies.is_empty() || !pca_tables.operands.is_empty() {
         out.push_str("#if defined(__GNUC__) && !defined(__clang__)\n#define LLG_MODEL_SHARED __attribute__((noipa))\n#elif defined(__clang__)\n#define LLG_MODEL_SHARED __attribute__((noinline))\n#elif defined(_MSC_VER)\n#define LLG_MODEL_SHARED __declspec(noinline)\n#else\n#define LLG_MODEL_SHARED\n#endif\n");
     }
     let mut entries = BTreeSet::new();
@@ -711,6 +719,7 @@ fn render_model(execution: &ExecutionModel, threshold: usize) -> Result<String, 
             out.push_str(&func_prototype(f)?);
         }
     }
+    out.push_str(&pca_tables.declarations);
     out.push_str(&sharing.declarations);
     out.push_str(&sharing.prototypes);
     out.push_str(&coroutine_metadata);

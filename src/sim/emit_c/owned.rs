@@ -35,9 +35,11 @@ pub(super) mod native;
 mod native_access;
 mod native_tasks;
 mod objects;
+pub(super) mod pca_batches;
 mod pure_calls;
 mod qualifiers;
 mod references;
+mod repeated_values;
 mod runtime_tasks;
 mod statements;
 mod stores;
@@ -163,6 +165,8 @@ pub(super) struct Frame<'a, 'm> {
     frame_upper_bounds: BTreeMap<usize, usize>,
     coroutine_functions: BTreeSet<usize>,
     cached_fields: cached_fields::CachedFields,
+    pca_owner: Option<String>,
+    pca_batches: Vec<super::statements::pca_batches::Batch>,
 }
 
 fn pending(feature: &str) -> String {
@@ -255,6 +259,8 @@ impl<'a, 'm> Frame<'a, 'm> {
             frame_upper_bounds: BTreeMap::new(),
             coroutine_functions: BTreeSet::new(),
             cached_fields: cached_fields::CachedFields::default(),
+            pca_owner: None,
+            pca_batches: Vec::new(),
         }
     }
     fn line(&mut self, text: impl AsRef<str>) {
