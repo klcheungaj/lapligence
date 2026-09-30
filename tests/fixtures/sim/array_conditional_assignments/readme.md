@@ -18,6 +18,7 @@ are observation scaffolding, not claims that each complete module is synthesizab
 | `nested_defaults.sv` | Shared synthesized row operands, explicit outer keys and untyped one-bit defaults, with ascending/descending bounds. |
 | `typed_defaults.sv` | Explicitly typed row defaults preserve runtime `8'hdd`/`8'hee` byte values rather than applying the nested pattern to packed bits; direct packed patterns also check element sizing and signed results. |
 | `deep_defaults.sv` | Repeated expression identities in three unpacked dimensions with 65-bit all-one, X and Z values. |
+| `repeated_values.sv` | Existing per-operand increment order, wide conditional defaults and repeated array conditionals after coroutine resumes. |
 | `wrong_shape.sv` | Different unpacked ranks remain incompatible despite equal flattened bit counts. |
 | `wrong_elements.sv` | Equal array extents do not permit incompatible element types. |
 

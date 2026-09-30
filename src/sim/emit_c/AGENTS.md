@@ -131,6 +131,16 @@ dispose the raw slice when replacing it with the converted value.
 Ambiguous muxes evaluate both arms before merging (real results become zero).
 Do not emit detached predicates or bypass eligibility through wrappers.
 
+`owned/repeated_values.rs` owns concatenation append emission. Consecutive equal
+typed operands use a bounded loop at `REPEAT_VALUE_MIN_COUNT` append operations;
+the first operand still seeds the result outside the loop. Evaluate, append and
+destroy each operand inside the loop, preserving changing reads and mutations.
+The accumulator's runtime width grows each iteration; its Rust metadata records
+the final checked width. Only explicitly admitted numeric kinds whose temporary
+slots are released locally qualify. Calls and other kinds with distinct resume
+sites or lexical storage remain expanded. Declare loop storage through `Frame`
+and emit all braces through `Frame::line` so scope narrowing and C9 reloads hold.
+
 ## Storage, references and publication
 
 - Alias visible cells have independent owners, canonical dependency addresses and
