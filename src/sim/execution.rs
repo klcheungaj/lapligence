@@ -1366,7 +1366,8 @@ fn collect_expression_effects(
             collect_expression_effects(ir, a, effects, visited_calls);
             collect_expression_effects(ir, b, effects, visited_calls);
         }
-        IrExprKind::Predicate { clauses: parts }
+        IrExprKind::UdpEval { inputs: parts, .. }
+        | IrExprKind::Predicate { clauses: parts }
         | IrExprKind::Concat { parts }
         | IrExprKind::Replicate { parts, .. } => {
             for part in parts {

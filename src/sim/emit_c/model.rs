@@ -609,6 +609,7 @@ fn render_model(execution: &ExecutionModel, threshold: usize) -> Result<String, 
     }
     super::owned::native::helpers(&mut out);
     render_class_decls(model, &mut out);
+    super::owned::udp::tables(model, &mut out);
     render_signal_decls(model, &mut out);
     render_vpi_metadata(model, &mut out);
     render_vpi_compile_calls(model, &mut out);

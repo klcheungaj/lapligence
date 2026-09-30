@@ -84,6 +84,12 @@ pub enum IrExprKind {
     FixedArrayReduce(Box<IrFixedArrayReduction>),
     ObjectQuery(Box<IrObjectQuery>),
     EnumMethod(Box<IrEnumQuery>),
+    /// Evaluate a shared combinational UDP table using source-order scalar
+    /// inputs. The result is unsigned one-bit 0/1/X, without a fill marker.
+    UdpEval {
+        table: usize,
+        inputs: Vec<IrExpr>,
+    },
     /// A concrete constant.
     Const(IrConst),
     /// Read a lowered signal global (or real companion / collapsed-net

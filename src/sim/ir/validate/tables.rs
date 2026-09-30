@@ -8,6 +8,10 @@ impl Validator<'_> {
             return self.fail("precision_fs", "scheduler precision must be non-zero");
         }
 
+        for (idx, table) in self.model.udp_tables.iter().enumerate() {
+            self.validate_udp_table(table, &format!("udp_tables[{idx}]"))?;
+        }
+
         for (idx, object) in self.model.vpi_objects.iter().enumerate() {
             let path = format!("vpi_objects[{idx}]");
             if object.full_name.is_empty() || object.name.is_empty() {

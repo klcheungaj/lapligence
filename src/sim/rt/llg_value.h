@@ -243,6 +243,15 @@ sv4_t sv4_to_two_state(sv4_t v);
 // All `width` bits set to one literal bit value: bit 0, bit 1, bit 2 = X,
 // or bit 3 = Z.
 sv4_t sv4_fill(uint8_t bit, uint32_t width, int8_t is_signed);
+
+// Borrow rows and scalar inputs for this synchronous call; retain neither.
+// Each row has input_count masks (bit 0 = 0, bit 1 = 1, bit 2 = X), then
+// one output state (0/1/2=X). Masks are 1/2/4/3/7 for 0/1/x/b/?.
+// input_count is nonzero; rows has row_count * (input_count + 1) bytes.
+// Inputs have width 1. Z matches X; the first matching row wins, otherwise X.
+// The unsigned one-bit result is an independent owner. No inputs are changed.
+sv4_t sv4_udp_eval(const uint8_t* rows, size_t row_count, size_t input_count,
+                   const sv4_t* const* inputs);
 sv4_t sv4_clog2(sv4_t v);
 sv4_t sv4_countones(sv4_t v);     // signed 32-bit count of known one bits
 sv4_t sv4_onehot(sv4_t v, int allow_zero); // one-bit predicate, X/Z ignored

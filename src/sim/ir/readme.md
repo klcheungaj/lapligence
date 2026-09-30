@@ -7,6 +7,11 @@ invariants; `IrModel::validate` and detached-node validation check references,
 widths, constants, shapes, and registrations before backend indexing. Recursive
 validation covers each variant and its cross-table constraints.
 
+`UdpEval` keeps combinational primitive rows in shared `udp_tables`, with typed
+0/1/X input masks and output symbols. Validation checks definition references,
+row arity, scalar inputs and the unsigned one-bit result. Optimizer and execution
+walkers retain every input; row evaluation stays out of expression trees.
+
 ## Ownership and source organization
 
 `ExecutionModel::lower` moves staging process bodies into executable blocks.

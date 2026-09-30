@@ -122,6 +122,14 @@ the lowering proof of independence from prior calls; ordinary static calls retai
 persistent return storage. Static output temporaries retain prior values unless
 inout initialization supplies a value; automatic ones receive typed defaults.
 
+`UdpEval` references one typed model-level definition. `owned/udp.rs` emits
+one immutable row-major mask table per definition, shared by scalar and array
+instances, and one synchronous borrowed evaluator call per gate evaluation.
+Evaluate input expressions in order before building the pointer literal; release
+their owners after the call. Gate lowering keeps its existing input locals,
+selected output indices, sensitivity, strengths and inertial publication. Table
+row count affects only data size, never the executable gate body.
+
 ArrayMux uses immediate-element defaults; StructMux uses immediate-member plans.
 Evaluate each branch once and preserve its self-determined shape; an enclosing cast
 must not resize operands before the merge. Predicates evaluate only reached clauses,

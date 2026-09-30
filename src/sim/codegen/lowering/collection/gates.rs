@@ -1,6 +1,7 @@
 //! Gates.
 
 use super::*;
+use crate::sim::ir::{IrUdpInput, IrUdpOutput, IrUdpRow, IrUdpTable};
 
 impl<'a> Codegen<'a> {
     // ── Structural gate primitives ─────────────────────────────────────────
@@ -432,6 +433,7 @@ impl<'a> Codegen<'a> {
                     )
                 }
                 GateOp::Udp => udp_value(
+                    &mut self.model,
                     udp_table.as_ref().ok_or_else(|| {
                         format!("combinational UDP `{shown}` in `{path}` has no owned truth table")
                     })?,
@@ -517,71 +519,77 @@ impl<'a> Codegen<'a> {
     }
 }
 
-/// Build an owned four-state decision tree for one scalar combinational UDP.
-/// A UDP `x` input matches both runtime X and Z; `b` matches only known 0/1,
-/// while `?` matches every four-state value. The final X arm is the LRM
-/// result for an input combination with no matching table row.
-fn udp_value(table: &UdpTable, inputs: &[IrExpr]) -> Result<IrExpr, String> {
+/// Retain the definition once and evaluate its rows against captured scalar inputs.
+fn udp_value(model: &mut IrModel, table: &UdpTable, inputs: &[IrExpr]) -> Result<IrExpr, String> {
     if inputs.len() != usize::try_from(table.input_count).unwrap_or(usize::MAX) {
         return Err(format!(
             "UDP table `{}` input count does not match its instance terminals",
             table.name
         ));
     }
-    let mut value = const_x_expr(1);
-    for row in table.rows.iter().rev() {
-        if row.inputs.len() != inputs.len() {
-            return Err(format!(
-                "UDP table `{}` contains a row with the wrong input width",
-                table.name
-            ));
-        }
-        let mut condition = const_bits_expr(1, true);
-        for (symbol, input) in row.inputs.bytes().zip(inputs.iter()) {
-            let matched = match symbol {
-                b'0' => cmp_expr_ir(IrBinOp::CaseEq, input.clone(), const_bits_expr(1, false)),
-                b'1' => cmp_expr_ir(IrBinOp::CaseEq, input.clone(), const_bits_expr(1, true)),
-                b'x' => bin_expr(
-                    IrBinOp::LogOr,
-                    cmp_expr_ir(IrBinOp::CaseEq, input.clone(), const_x_expr(1)),
-                    cmp_expr_ir(IrBinOp::CaseEq, input.clone(), const_z_expr(1)),
-                ),
-                b'b' => bin_expr(
-                    IrBinOp::LogOr,
-                    cmp_expr_ir(IrBinOp::CaseEq, input.clone(), const_bits_expr(1, false)),
-                    cmp_expr_ir(IrBinOp::CaseEq, input.clone(), const_bits_expr(1, true)),
-                ),
-                b'?' => const_bits_expr(1, true),
-                other => {
-                    return Err(format!(
-                        "UDP table `{}` contains unsupported input symbol `{}`",
-                        table.name, other as char
-                    ));
-                }
-            };
-            condition = bin_expr(IrBinOp::LogAnd, condition, matched);
-        }
-        let output = match row.output {
-            b'0' => const_bits_expr(1, false),
-            b'1' => const_bits_expr(1, true),
-            b'x' => const_x_expr(1),
-            other => {
+    let rows = table
+        .rows
+        .iter()
+        .map(|row| {
+            if row.inputs.len() != inputs.len() {
                 return Err(format!(
-                    "UDP table `{}` contains unsupported output symbol `{}`",
-                    table.name, other as char
+                    "UDP table `{}` contains a row with the wrong input width",
+                    table.name
                 ));
             }
-        };
-        value = IrExpr::new(
-            IrExprKind::Mux {
-                sel: Box::new(condition),
-                a: Box::new(output),
-                b: Box::new(value),
-            },
-            1,
-            false,
-            None,
-        );
-    }
-    Ok(value)
+            let masks = row
+                .inputs
+                .bytes()
+                .map(|symbol| match symbol {
+                    b'0' => Ok(IrUdpInput::Zero),
+                    b'1' => Ok(IrUdpInput::One),
+                    b'x' => Ok(IrUdpInput::Unknown),
+                    b'b' => Ok(IrUdpInput::Binary),
+                    b'?' => Ok(IrUdpInput::Any),
+                    other => Err(format!(
+                        "UDP table `{}` contains unsupported input symbol `{}`",
+                        table.name, other as char
+                    )),
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let output = match row.output {
+                b'0' => IrUdpOutput::Zero,
+                b'1' => IrUdpOutput::One,
+                b'x' => IrUdpOutput::Unknown,
+                other => {
+                    return Err(format!(
+                        "UDP table `{}` contains unsupported output symbol `{}`",
+                        table.name, other as char
+                    ))
+                }
+            };
+            Ok(IrUdpRow {
+                inputs: masks,
+                output,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let definition = IrUdpTable {
+        name: table.name.clone(),
+        input_count: inputs.len(),
+        rows,
+    };
+    let index = model
+        .udp_tables
+        .iter()
+        .position(|candidate| *candidate == definition)
+        .unwrap_or_else(|| {
+            let index = model.udp_tables.len();
+            model.udp_tables.push(definition);
+            index
+        });
+    Ok(IrExpr::new(
+        IrExprKind::UdpEval {
+            table: index,
+            inputs: inputs.to_vec(),
+        },
+        1,
+        false,
+        None,
+    ))
 }

@@ -963,7 +963,8 @@ fn collect_children_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
             collect_expr_reads(a, model, rw);
             collect_expr_reads(b, model, rw);
         }
-        IrExprKind::Predicate { clauses: parts }
+        IrExprKind::UdpEval { inputs: parts, .. }
+        | IrExprKind::Predicate { clauses: parts }
         | IrExprKind::Concat { parts }
         | IrExprKind::Replicate { parts, .. } => {
             for p in parts {
