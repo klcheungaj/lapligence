@@ -329,6 +329,12 @@ llg_value_scopes_end_since(F->_llg_frame_base);
 return LLG_CO_DONE;
 ```
 
+Frame fields assigned once and only read afterwards (`_llg_t`, cell pointers,
+`_llg_frame_base` when read often) are mirrored by C locals declared before the
+dispatch and reloaded from the frame after each suspension macro, so the text
+above may name the local instead of `F->_llg_frame_base`. The frame copy stays
+authoritative across suspension.
+
 The scheduler maps DONE and EXIT/COMPLETE to its internal completion routine.
 EXIT/ABANDON only reaches safe reclamation.
 

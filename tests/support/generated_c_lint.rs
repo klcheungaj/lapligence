@@ -157,6 +157,7 @@ fn matching_brace(source: &str, open: usize) -> Option<usize> {
 
 fn lint_coroutine_body(name: &str, body: &str, errors: &mut Vec<String>) {
     let facts = body_facts(body);
+    lint_cached_locals(name, body, &facts.cached, errors);
     let bytes = body.as_bytes();
     let mut index = 0;
     let mut line = 1usize;
@@ -268,7 +269,9 @@ fn lint_coroutine_body(name: &str, body: &str, errors: &mut Vec<String>) {
                 && is_unary_address(body, index) =>
             {
                 if let Err(reason) = allowed_address_operand(body, index + 1) {
-                    if !address_of_narrowed_local(body, index, index + 1, &facts) {
+                    if !address_of_narrowed_local(body, index, index + 1, &facts)
+                        && !address_of_cached_element(body, index + 1, &facts.cached)
+                    {
                         errors.push(format!("{name}:{line}: {reason}"));
                     }
                 }
@@ -286,6 +289,7 @@ fn lint_coroutine_body(name: &str, body: &str, errors: &mut Vec<String>) {
 }
 
 struct BodyFacts {
+    cached: BTreeSet<String>,
     resume_blocks: BTreeSet<usize>,
     first_identifiers: HashMap<String, (usize, usize)>,
 }
@@ -396,9 +400,161 @@ fn body_facts(body: &str) -> BodyFacts {
         }
     }
     BodyFacts {
+        cached: cached_locals(body),
         resume_blocks,
         first_identifiers,
     }
+}
+
+/// Uninitialized pointer locals declared before the resume dispatch: C copies
+/// of frame fields (design §13.2 rule 2). Everything after the dispatch begins
+/// belongs to the body proper.
+fn cached_locals(body: &str) -> BTreeSet<String> {
+    let mut cached = BTreeSet::new();
+    for line in body.lines() {
+        let line = line.trim();
+        if line.starts_with("LLG_CO_DISPATCH_BEGIN(") {
+            break;
+        }
+        let Some(declaration) = line.strip_suffix(';') else {
+            continue;
+        };
+        if declaration.contains(['=', '(']) {
+            continue;
+        }
+        if let Some((ty, name)) = declaration.rsplit_once('*') {
+            let name = name.trim();
+            if ty.trim_end().len() < declaration.len()
+                && name.starts_with("_llg_")
+                && name
+                    .bytes()
+                    .all(|byte| byte == b'_' || byte.is_ascii_alphanumeric())
+            {
+                cached.insert(name.to_owned());
+            }
+        }
+    }
+    cached
+}
+
+/// `&cached[i]` addresses the pointee owned by a runtime value scope, not the
+/// C local holding the pointer.
+fn address_of_cached_element(body: &str, operand_start: usize, cached: &BTreeSet<String>) -> bool {
+    let operand =
+        body[operand_start..].trim_start_matches(|ch: char| ch.is_ascii_whitespace() || ch == '(');
+    let ident_len = operand
+        .bytes()
+        .take_while(|byte| *byte == b'_' || byte.is_ascii_alphanumeric())
+        .count();
+    cached.contains(&operand[..ident_len]) && operand[ident_len..].starts_with('[')
+}
+
+/// A cached local must be assigned with its frame field and reloaded from the
+/// frame straight after every suspension point, because a resume jumps into
+/// the middle of the suspension macro with the local indeterminate. Reading a
+/// local between a suspension macro and its reload is an error. The scan is
+/// textual: names are unique per function and a name is only read inside its
+/// own block after its declaration, so a suspension between the two is nested
+/// in that block and its reload covers the name.
+fn lint_cached_locals(name: &str, body: &str, cached: &BTreeSet<String>, errors: &mut Vec<String>) {
+    if cached.is_empty() {
+        return;
+    }
+    let Some(dispatch) = body.find("LLG_CO_DISPATCH_BEGIN(") else {
+        errors.push(format!("{name}: cached locals without a resume dispatch"));
+        return;
+    };
+    let mut assigned = BTreeSet::new();
+    let mut stale = BTreeSet::new();
+    let first_line = body[..dispatch].matches('\n').count();
+    for (offset, line) in body.lines().enumerate().skip(first_line) {
+        let line_number = offset + 1;
+        let trimmed = line.trim();
+        let mut reads = Vec::new();
+        for (ident, position) in identifiers(trimmed) {
+            if !cached.contains(ident) {
+                continue;
+            }
+            let after = trimmed[position + ident.len()..].trim_start();
+            let before = &trimmed[..position];
+            let frame_member = before.ends_with("F->") || before.trim_end().ends_with(['.', '>']);
+            if frame_member {
+                continue;
+            }
+            let dereferenced = before.trim_end().ends_with('*');
+            if !dereferenced && after.starts_with('=') && !after.starts_with("==") {
+                if !before.trim().is_empty() && !before.trim_end().ends_with(';') {
+                    errors.push(format!(
+                        "{name}:{line_number}: cached local `{ident}` assigned inside an expression"
+                    ));
+                }
+                let rest = after[1..].trim_start();
+                if !rest.starts_with("F->") {
+                    errors.push(format!(
+                        "{name}:{line_number}: cached local `{ident}` is not assigned from or with its frame field"
+                    ));
+                }
+                assigned.insert(ident.to_owned());
+                stale.remove(ident);
+            } else {
+                reads.push(ident);
+            }
+        }
+        for ident in reads {
+            if !assigned.contains(ident) {
+                errors.push(format!(
+                    "{name}:{line_number}: cached local `{ident}` is read before it is assigned"
+                ));
+            } else if stale.contains(ident) {
+                errors.push(format!(
+                    "{name}:{line_number}: cached local `{ident}` is read after a suspension point without a reload"
+                ));
+            }
+        }
+        if ["LLG_CO_AWAIT(", "LLG_CO_SUSPEND(", "LLG_CO_CALL("]
+            .into_iter()
+            .chain(["LLG_CO_CALL_ANCHOR(", "LLG_CO_CALL_ARENA("])
+            .any(|macro_name| trimmed.contains(macro_name))
+        {
+            stale.extend(assigned.iter().cloned());
+        }
+    }
+}
+
+/// Identifiers of one line with their byte offsets, outside string literals.
+fn identifiers(line: &str) -> Vec<(&str, usize)> {
+    let bytes = line.as_bytes();
+    let mut found = Vec::new();
+    let mut index = 0;
+    let mut quoted = None;
+    let mut escaped = false;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if let Some(quote) = quoted {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == quote {
+                quoted = None;
+            }
+            index += 1;
+        } else if matches!(byte, b'\'' | b'"') {
+            quoted = Some(byte);
+            index += 1;
+        } else if byte == b'_' || byte.is_ascii_alphabetic() {
+            let start = index;
+            while index < bytes.len()
+                && (bytes[index] == b'_' || bytes[index].is_ascii_alphanumeric())
+            {
+                index += 1;
+            }
+            found.push((&line[start..index], start));
+        } else {
+            index += 1;
+        }
+    }
+    found
 }
 
 fn is_resume_macro(rest: &str) -> bool {
@@ -635,6 +791,44 @@ static llg_co_status_t fn_bad(llg_co_frame_t* co, llg_co_chain_t* ch) {
         assert!(errors
             .iter()
             .any(|error| error.contains("inactive overlaid block b1")));
+    }
+
+    const CACHED_FUNCTION: &str = r#"
+static llg_co_status_t fn_c(llg_co_frame_t* co, llg_co_chain_t* ch) {
+    fn_c_frame_t* F = (fn_c_frame_t*)co;
+    sv4_t* _llg_t;
+    LLG_CO_DISPATCH_BEGIN(co)
+    LLG_CO_RESUME_CASE(1)
+    LLG_CO_DISPATCH_END(co)
+    F->_llg_t = llg_value_scope_values(F->_llg_temp_scope);
+    _llg_t = F->_llg_t;
+    sv4_move(&_llg_t[0], &_llg_t[1]);
+    LLG_CO_AWAIT(co, ch, 1, arm(&_llg_t[2]));
+RELOAD    sv4_destroy(&_llg_t[0]);
+}
+"#;
+
+    #[test]
+    fn accepts_cached_locals_reloaded_after_a_suspension() {
+        let c = CACHED_FUNCTION.replace("RELOAD", "    _llg_t = F->_llg_t;\n");
+        assert_eq!(lint_generated_coroutine_c(&c), Ok(()));
+    }
+
+    #[test]
+    fn rejects_cached_local_read_after_a_suspension_without_reload() {
+        let c = CACHED_FUNCTION.replace("RELOAD", "");
+        let errors = lint_generated_coroutine_c(&c).unwrap_err();
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(errors[0].contains("without a reload"), "{errors:?}");
+    }
+
+    #[test]
+    fn rejects_address_of_the_cached_local_itself() {
+        let c = CACHED_FUNCTION
+            .replace("RELOAD", "    _llg_t = F->_llg_t;\n")
+            .replace("sv4_destroy(&_llg_t[0])", "consume(&_llg_t)");
+        let errors = lint_generated_coroutine_c(&c).unwrap_err();
+        assert!(errors[0].contains("address operand"), "{errors:?}");
     }
 
     #[test]

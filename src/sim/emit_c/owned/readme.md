@@ -14,6 +14,7 @@ addresses. Feature guards reject unrepresented ownership paths.
 | `expressions.rs`, `control.rs`, `system.rs` | Expressions, branches and system operations. |
 | `stores.rs`, `statements.rs` | Captured lvalues/masks, writes and lexical/loop cleanup. |
 | `calls.rs`, `pure_calls.rs`, `events.rs`, `formatting.rs` | Call/result/address ownership, callback inlining, events and output. |
+| `cached_fields.rs` | C-local mirrors of resume-stable frame fields, reloaded after every suspension. |
 | `captures.rs`, `event_waits.rs`, `model/callbacks.rs` | Activation frames, wait contexts and evaluator callbacks. |
 | `model.rs`, `model/` | Storage, zero-time initialization, procedures and host lifecycle API. |
 | `assertions/`, `assertions.rs`, `assertion_tasks.rs`, `clocking.rs`, `qualifiers.rs` | Sampled/local assertion values, controls, clocking operands and branch diagnostics. |

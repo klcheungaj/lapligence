@@ -51,11 +51,41 @@ larger callees onto the arena. Descriptors contain the real entry function;
 numbered site tables and dispatch cases must remain one-to-one with every
 emitted await or suspendable call.
 
+Specification arrays passed to a runtime arm that copies them before returning
+(`llg_arm_any_dependencies`, `_any_events`, `_events`, `_order`, `_mixed`,
+`_clocking_cycle`, `_expressions` and the dependency lists inside its
+descriptors; the copy contract is documented on each declaration in
+`llg_rt.h`) are compound literals inside the `LLG_CO_AWAIT` arm expression via
+`Frame::arm_array`: no frame field, no `memcpy`. A literal's lifetime is the
+enclosing block, which covers the arm call. Route only arm arguments through
+it, and only when the runtime does not keep the array or a pointer into it;
+nonblocking registrations (`llg_nba_event_*_when`), `wait_order`'s result flag
+and event handles the runtime resolves later keep declared storage.
+Initializers are evaluated into scalars before the await, so a literal may be
+repeated at several arm sites (clocking cycles).
+
 Within each struct level, fields observed by the first generated continuation
 statement after a Phase-2 suspension are emitted first, preserving declaration
 order within hot and ordinary groups. The continuation probe ends at the next C
 statement boundary, including the cancellation check after a wait. This is a
 deterministic cache-line heuristic, not a liveness proof.
+
+Frame fields that are assigned once and only read afterwards (`_llg_t`,
+`_llg_frame_base` and the `_llg_local_N` cell pointers; `_llg_temp_scope` is
+write-only) are mirrored by C locals of the same name (`owned/cached_fields.rs`,
+design §13.2 rule 2), because every `F->` load is possibly aliased for GCC. The
+local is declared without an initializer before `LLG_CO_DISPATCH_BEGIN`, assigned
+together with the field (`x = F->x = init;`, or right after the prologue) and
+reloaded from the frame on the line after every suspension macro, for the cached
+fields whose C scope is open there: a resume jumps into the macro with every local
+indeterminate. Stability rests on the runtime never moving a value scope's array
+and on the prologue being skipped by the dispatch. Emission still checks the final
+text: a candidate with any other write, address-of or member access, one that
+narrowing turned into a C local, and one read no more often than it is reloaded
+(`CACHE_MIN_READS_PER_RELOAD`) stays a frame field. Keep reload placeholders out of
+`Frame::line`, which would make them the continuation probe's first statement. Add
+a new cached kind only after proving it is assigned only at its declaration. The
+frame lint rejects a cached local read after a suspension without a reload.
 
 Cancellation checks (`llg_activation_cancelled()`) follow only cancellation
 points: resume points, `disable`, calls whose callee may disable (the Phase-2

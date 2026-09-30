@@ -314,16 +314,16 @@ fn render_function(
     let prologue = frame.prologue();
     let dispatch = frame.dispatch();
     let macro_epilogue = frame.macro_epilogue();
-    let (body, layout) = if coroutine {
-        let (body, layout) = frame.into_coframe()?;
-        (body, Some(layout))
+    let (body, layout, cached_locals) = if coroutine {
+        let finished = frame.into_coframe()?;
+        (finished.body, Some(finished.layout), finished.cached_locals)
     } else {
-        (frame.body().to_owned(), None)
+        (frame.body().to_owned(), None, String::new())
     };
     let depth = if coroutine { "F->depth" } else { "depth" };
     let coroutine_prologue = if coroutine {
         format!(
-            "    {}_frame_t* F = ({}_frame_t*)co;\n{dispatch}",
+            "    {}_frame_t* F = ({}_frame_t*)co;\n{cached_locals}{dispatch}",
             function.c_name, function.c_name
         )
     } else {
@@ -421,15 +421,15 @@ fn render_process(
     let prologue = frame.prologue();
     let dispatch = frame.dispatch();
     let macro_epilogue = frame.macro_epilogue();
-    let (body, layout) = if coroutine {
-        let (body, layout) = frame.into_coframe()?;
-        (body, Some(layout))
+    let (body, layout, cached_locals) = if coroutine {
+        let finished = frame.into_coframe()?;
+        (finished.body, Some(finished.layout), finished.cached_locals)
     } else {
-        (frame.body().to_owned(), None)
+        (frame.body().to_owned(), None, String::new())
     };
     let frame_pointer = if coroutine {
         format!(
-            "    {}_frame_t* F = ({}_frame_t*)co;\n{dispatch}",
+            "    {}_frame_t* F = ({}_frame_t*)co;\n{cached_locals}{dispatch}",
             process.c_name, process.c_name
         )
     } else {

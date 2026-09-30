@@ -604,9 +604,16 @@ fn evaluated_event_emits_owned_context_and_contextual_callback() {
     assert!(rendered.lines().any(
         |line| line.contains(".condition_context = F->") && line.contains("_llg_event_frame_")
     ));
-    assert!(rendered
-        .lines()
-        .any(|line| line.contains("llg_arm_expressions(") && line.contains("_llg_events_")));
+    // The runtime copies the descriptors and their dependency lists, so both
+    // are compound literals in the arm call, not frame fields.
+    assert!(rendered.lines().any(|line| {
+        line.contains(
+            "llg_arm_expressions(LLG_CO_OWNER(ch, llg_proc_t), (llg_expr_event_spec_t[]){",
+        ) && line.contains(".dependencies = (llg_wait_dependency_t[]){")
+            && line.contains(".eval_context = F->")
+    }));
+    assert!(!rendered.contains("_llg_events_") && !rendered.contains("_llg_event_dependencies_"));
+    assert!(!rendered.contains("memcpy(F->"));
     assert!(!rendered.contains("out[0] ="));
 }
 

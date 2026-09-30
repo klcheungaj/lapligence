@@ -1,7 +1,9 @@
 //! Structural checks and an opt-in end-to-end C-toolchain smoke test.
 use super::*;
 
+mod arm_arrays;
 mod array_conditionals;
+mod cached_frame_fields;
 mod cancellation_points;
 mod conditional_records;
 mod fixed_array_reductions;
@@ -384,13 +386,16 @@ fn event_array_indices_are_owned_and_invalid_handles_are_inert() {
     };
     let mut frame = Frame::new(&ctx);
     let specs = frame
-        .event_specs(&[(
-            IrWaitSrc::Event(IrEventRef::Array {
-                array: 2,
-                indices: vec![number(1, 32)],
-            }),
-            IrEdge::Any,
-        )])
+        .event_specs(
+            &[(
+                IrWaitSrc::Event(IrEventRef::Array {
+                    array: 2,
+                    indices: vec![number(1, 32)],
+                }),
+                IrEdge::Any,
+            )],
+            true,
+        )
         .unwrap();
     frame.line(format!("llg_arm_expressions(NULL, {specs}, 1);"));
     assert!(frame.slots.iter().all(|used| !used));

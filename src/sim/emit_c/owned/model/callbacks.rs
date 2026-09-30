@@ -66,14 +66,16 @@ fn render_with_frame(
             let prologue = frame.prologue();
             let dispatch = frame.dispatch();
             let macro_epilogue = frame.macro_epilogue();
-            let (body, layout) = if coroutine {
-                let (body, layout) = frame.into_coframe()?;
-                (body, Some(layout))
+            let (body, layout, cached_locals) = if coroutine {
+                let finished = frame.into_coframe()?;
+                (finished.body, Some(finished.layout), finished.cached_locals)
             } else {
-                (frame.body().to_owned(), None)
+                (frame.body().to_owned(), None, String::new())
             };
             let frame_pointer = if coroutine {
-                format!("    {c_name}_frame_t* F = ({c_name}_frame_t*)co;\n{dispatch}")
+                format!(
+                    "    {c_name}_frame_t* F = ({c_name}_frame_t*)co;\n{cached_locals}{dispatch}"
+                )
             } else {
                 String::new()
             };
