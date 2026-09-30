@@ -444,7 +444,7 @@ impl<'a> Codegen<'a> {
             let origin = self.origin(ca);
             self.model.processes.push(IrProcess::new_with_origin(
                 fn_name,
-                format!("{path}.assign"),
+                format!("{}.assign", self.source_path(path)),
                 shape,
                 Vec::new(),
                 vec![pattern_body],
@@ -544,7 +544,7 @@ impl<'a> Codegen<'a> {
         let origin = self.origin(ca);
         self.model.processes.push(IrProcess::new_with_origin(
             fn_name,
-            format!("{path}.assign"),
+            format!("{}.assign", self.source_path(path)),
             shape,
             Vec::new(),
             body,
@@ -862,7 +862,7 @@ impl<'a> Codegen<'a> {
     pub(in super::super) fn new_fn_name(&mut self, path: &str, kind: &str) -> String {
         let n = self.proc_seq;
         self.proc_seq += 1;
-        format!("p_{}_{}_{}", ident(path), kind, n)
+        format!("p_{}_{}_{}", self.c_path_ident(path), kind, n)
     }
 
     pub(in super::super) fn new_frame_id(&mut self) -> Result<FrameId, String> {
@@ -957,7 +957,7 @@ impl<'a> Codegen<'a> {
             let label = self.process_kind_label(always_type);
             writers.push(ProcessWriter {
                 node: process,
-                label: format!("{path}.{label}"),
+                label: format!("{}.{label}", self.source_path(&path)),
                 writes,
             });
         }
@@ -982,7 +982,10 @@ impl<'a> Codegen<'a> {
             self.inst = inst;
             writers.push(ProcessWriter {
                 node: id,
-                label: format!("{}.continuous", self.instance_path_of(inst)),
+                label: format!(
+                    "{}.continuous",
+                    self.source_path(&self.instance_path_of(inst))
+                ),
                 writes: self.collect_process_writes(id)?,
             });
         }
@@ -1006,7 +1009,7 @@ impl<'a> Codegen<'a> {
             if !writes.is_empty() {
                 writers.push(ProcessWriter {
                     node: id,
-                    label: format!("{}.gate", self.instance_path_of(inst)),
+                    label: format!("{}.gate", self.source_path(&self.instance_path_of(inst))),
                     writes,
                 });
             }
@@ -1047,7 +1050,7 @@ impl<'a> Codegen<'a> {
             if !writes.is_empty() {
                 writers.push(ProcessWriter {
                     node: id,
-                    label: format!("{}.port", self.instance_path_of(inst)),
+                    label: format!("{}.port", self.source_path(&self.instance_path_of(inst))),
                     writes,
                 });
             }
@@ -1134,7 +1137,10 @@ impl<'a> Codegen<'a> {
                 self.add_process_lhs_write(node, &mut writes);
                 procedural_writers.push(ProcessWriter {
                     node,
-                    label: format!("{}.initializer", self.instance_path_of(inst)),
+                    label: format!(
+                        "{}.initializer",
+                        self.source_path(&self.instance_path_of(inst))
+                    ),
                     writes,
                 });
             }
@@ -1304,14 +1310,15 @@ impl<'a> Codegen<'a> {
         }
     }
 
-    pub(in super::super) fn dependency_label(&self, dependency: &IrDependency) -> String {
+    // Storage keys also order IR deterministically; source labels are diagnostic-only.
+    pub(in super::super) fn dependency_sort_key(&self, dependency: &IrDependency) -> String {
         match dependency {
             IrDependency::Scalar(name) | IrDependency::Real(name) => name.clone(),
             IrDependency::PackedRange {
                 storage,
                 lsb,
                 width,
-            } => format!("{}[{lsb} +: {width}]", self.dependency_label(storage)),
+            } => format!("{}[{lsb} +: {width}]", self.dependency_sort_key(storage)),
             IrDependency::ArrayElement { array, index } => {
                 format!("array[{array}] element {index}")
             }
@@ -1383,6 +1390,7 @@ impl<'a> Codegen<'a> {
         let mut visited = HashSet::new();
         self.scan_process_contract(stmt, &mut scan, &mut visited)?;
         let label = self.process_kind_label(Some(process_kind));
+        let path = self.source_path(path);
         if matches!(process_kind, AlwaysKind::Comb | AlwaysKind::Latch)
             && (!scan.event_controls.is_empty()
                 || !scan.blocking_timing_controls.is_empty()
@@ -1623,7 +1631,7 @@ impl<'a> Codegen<'a> {
         };
         let mut writes: Vec<IrDependency> =
             self.collect_process_writes(stmt)?.into_iter().collect();
-        writes.sort_by_key(|dependency| self.dependency_label(dependency));
+        writes.sort_by_key(|dependency| self.dependency_sort_key(dependency));
         let fn_name = self.new_fn_name(path, "proc");
         let pattern_decls = self
             .conditional_pattern_targets(stmt)
@@ -1674,8 +1682,9 @@ impl<'a> Codegen<'a> {
                     .collect_process_sensitivity(path, stmt, always_type)?;
                 if sigs.is_empty() {
                     ctx.cg.warnings.push(format!(
-                        "combinational always process in `{path}` reads no \
-                         signals; evaluating once at time 0"
+                        "combinational always process in `{}` reads no \
+                         signals; evaluating once at time 0",
+                        ctx.cg.source_path(path)
                     ));
                     IrShape::RunOnce
                 } else {
@@ -1697,7 +1706,7 @@ impl<'a> Codegen<'a> {
         let origin = self.origin(proc);
         let mut process = IrProcess::new_with_kind_and_writes(
             fn_name.clone(),
-            format!("{path}.{kind_label}"),
+            format!("{}.{kind_label}", self.source_path(path)),
             ir_kind,
             shape,
             writes,

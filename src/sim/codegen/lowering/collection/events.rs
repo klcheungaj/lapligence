@@ -16,7 +16,7 @@ impl<'a> Codegen<'a> {
             return Ok(());
         }
         let Some(metadata) = self.db.event_array_meta(declaration) else {
-            let info = self.new_event_info(event_global_name(path, &name));
+            let info = self.new_event_info(self.event_global_name(path, &name));
             self.event_globals.insert(declaration, info);
             return Ok(());
         };
@@ -45,7 +45,7 @@ impl<'a> Codegen<'a> {
             ));
         }
         for linear in 0..total {
-            let info = self.new_event_info(event_global_name(path, &format!("{name}_{linear}")));
+            let info = self.new_event_info(self.c_name("E", path, &[&name, &linear.to_string()]));
             self.event_elements.insert((declaration, linear), info);
         }
         let elements = (0..total)
@@ -60,7 +60,7 @@ impl<'a> Codegen<'a> {
             .collect::<Result<Vec<_>, _>>()?;
         let array = self.model.events.len();
         self.model.events.push(crate::sim::ir::IrEvent::new_array(
-            event_global_name(path, &name),
+            self.event_global_name(path, &name),
             dims,
             elements,
         ));

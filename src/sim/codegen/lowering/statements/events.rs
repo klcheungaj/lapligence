@@ -34,7 +34,7 @@ impl EmitCtx<'_, '_> {
                     .events
                     .push(crate::sim::ir::IrEvent::new(format!(
                         "E_{}_at_star_empty_{event}",
-                        ident(&self.path)
+                        self.cg.c_path_ident(&self.path)
                     )));
                 IrStmt::WaitEvents {
                     specs: vec![(IrWaitSrc::Event(IrEventRef::Static(event)), IrEdge::Any)],
@@ -344,7 +344,8 @@ impl EmitCtx<'_, '_> {
                         if edge != IrEdge::Any {
                             return Err(format!(
                                 "edge control on real-valued signal `{}` is not supported in `{}`",
-                                signal.global, self.path
+                                self.cg.signal_label(signal.ir),
+                                self.cg.source_path(&self.path)
                             ));
                         }
                         return Ok((IrWaitSrc::Real(signal.global.clone()), edge));
@@ -358,8 +359,9 @@ impl EmitCtx<'_, '_> {
             if info.real {
                 if edge != IrEdge::Any {
                     return Err(format!(
-                        "edge control on real-valued signal `{name}` is not supported in `{}`",
-                        self.path
+                        "edge control on real-valued signal `{}` is not supported in `{}`",
+                        self.cg.signal_label(info.ir),
+                        self.cg.source_path(&self.path)
                     ));
                 }
                 return Ok((IrWaitSrc::Real(name), edge));

@@ -304,7 +304,7 @@ pub(in crate::sim::emit_c) fn main(execution: &ExecutionModel) -> Result<String,
         let label = semantic_by_name
             .get(name.as_str())
             .map(|p| p.label())
-            .unwrap_or(name);
+            .unwrap_or("unnamed final process");
         spawns.push(StartupCall {
             kind: StartupKind::Final,
             args: vec![name.clone(), c_string_literal(label)],

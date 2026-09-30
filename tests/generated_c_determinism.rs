@@ -8,9 +8,10 @@ use std::time::Duration;
 mod sim_harness;
 
 const RUNS: usize = 3;
-const FIXTURES: [&str; 2] = [
+const FIXTURES: [&str; 3] = [
     "data_types_next/static_function_executable_assignments.sv",
     "syn021_tagged_union/struct_contexts.sv",
+    "compact_names/names.sv",
 ];
 
 fn snapshot_tree(root: &Path) -> Result<Vec<(PathBuf, Vec<u8>)>, String> {

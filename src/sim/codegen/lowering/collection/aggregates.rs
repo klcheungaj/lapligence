@@ -355,11 +355,10 @@ impl<'a> Codegen<'a> {
                 let key = aggregate_path_key(member_path);
                 let index = self.model.objects.len();
                 self.model.objects.push(crate::sim::ir::IrObject {
-                    c_name: format!(
-                        "O_{}_{}_{}",
-                        ident(path),
-                        ident(object_name),
-                        ident(&aggregate_path_suffix(member_path))
+                    c_name: self.c_name(
+                        "O",
+                        path,
+                        &[object_name, &aggregate_path_suffix(member_path)],
                     ),
                     ty: crate::sim::ir::IrObjectType::String,
                     initial: None,
@@ -477,11 +476,10 @@ impl<'a> Codegen<'a> {
                 let key = aggregate_path_key(member_path);
                 let index = self.model.objects.len();
                 self.model.objects.push(crate::sim::ir::IrObject {
-                    c_name: format!(
-                        "O_{}_{}_{}",
-                        ident(path),
-                        ident(object_name),
-                        ident(&aggregate_path_suffix(member_path))
+                    c_name: self.c_name(
+                        "O",
+                        path,
+                        &[object_name, &aggregate_path_suffix(member_path)],
                     ),
                     ty: crate::sim::ir::IrObjectType::Chandle,
                     initial: None,
@@ -519,12 +517,11 @@ impl<'a> Codegen<'a> {
                 "unpacked aggregate storage `{object_name}` in `{path}` is {width} bits wide; the runtime maximum supported width is {LLG_MAX_WIDTH}"
             ));
         }
-        let storage_name = format!("{object_name}__{member_name}");
-        let global = if width == 0 {
-            real_global_name(path, &storage_name)
-        } else {
-            global_name(path, &storage_name)
-        };
+        let global = self.c_name(
+            if width == 0 { "D" } else { "G" },
+            path,
+            &[object_name, member_name],
+        );
         let mut hdl_name = self.waveform_name(object);
         hdl_name.push('\u{1f}');
         hdl_name.push_str(member_name);
@@ -649,7 +646,7 @@ impl<'a> Codegen<'a> {
                     _ => None,
                 }
             }),
-            c_name: global_name(path, name),
+            c_name: self.global_name(path, name),
             hdl_name: self.waveform_name(node),
             elem_width,
             signed: ty.signed,
@@ -660,7 +657,7 @@ impl<'a> Codegen<'a> {
             total,
         });
         Ok(ArrayInfo {
-            global: global_name(path, name),
+            global: self.global_name(path, name),
             elem_width,
             signed: ty.signed,
             real,
@@ -741,7 +738,7 @@ impl<'a> Codegen<'a> {
             .flatten();
         let ir = self.model.containers.len();
         self.model.containers.push(IrContainer {
-            c_name: global_name(path, name),
+            c_name: self.global_name(path, name),
             element,
             kind,
             initial_size,

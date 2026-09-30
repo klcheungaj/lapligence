@@ -34,13 +34,14 @@ impl<'a> Codegen<'a> {
             );
         }
         for top in self.db.tops() {
-            let path = strip_lib(&self.node(*top).name);
-            if path.is_empty() {
+            let source_name = strip_lib(&self.node(*top).name);
+            if source_name.is_empty() {
                 return Err("top instance has no name".to_string());
             }
+            let path = display_ident(&source_name);
             if self.design_name.is_empty() {
-                self.design_name = path.clone();
-                self.model.design_name = path.clone();
+                self.design_name = source_name.clone();
+                self.model.design_name = source_name;
             }
             self.collect_instance(*top, &path)?;
             self.collect_funcs(*top, &path)?;
@@ -95,6 +96,18 @@ impl<'a> Codegen<'a> {
     }
 
     fn collect_instance(&mut self, inst: NodeId, path: &str) -> Result<(), String> {
+        let display_path = self.instance_path_of(inst);
+        self.display_paths.insert(path.to_owned(), display_path);
+        self.instance_paths.insert(inst, path.to_owned());
+        let components = if self.is_runtime_environment(inst) {
+            vec![path.to_owned()]
+        } else {
+            self.waveform_name(inst)
+                .split('\u{1f}')
+                .map(str::to_owned)
+                .collect()
+        };
+        self.c_paths.insert(path.to_owned(), components);
         let mut seen: HashSet<String> = HashSet::new();
         for c in &self.node(inst).children {
             let nid = *c;
@@ -142,9 +155,9 @@ impl<'a> Codegen<'a> {
                     let ir = self.model.signals.len();
                     let info = SignalInfo {
                         global: if is_real_kind(&ty.kind) {
-                            real_global_name(path, &name)
+                            self.real_global_name(path, &name)
                         } else {
-                            global_name(path, &name)
+                            self.global_name(path, &name)
                         },
                         width: w,
                         signed: ty.signed,
@@ -257,7 +270,7 @@ impl<'a> Codegen<'a> {
                 if cname.is_empty() {
                     return Err(format!("unnamed child instance in `{path}`"));
                 }
-                let child_path = format!("{path}.{}", ident(&cname));
+                let child_path = format!("{path}.{}", display_ident(&cname));
                 self.collect_instance(*c, &child_path)?;
             }
         }
@@ -317,7 +330,9 @@ impl<'a> Codegen<'a> {
         for c in &self.node(inst).children {
             if matches!(self.kind(*c), NodeKind::FuncTask { .. }) {
                 let fname = self.node(*c).name.clone();
-                let c_name = format!("fn_{}_{}", ident(path), ident(&fname));
+                let c_name = self.c_name("fn", path, &[&fname]);
+                self.func_labels
+                    .insert(*c, format!("{}.{fname}", self.source_path(path)));
                 self.func_names.insert(*c, c_name);
             }
         }
@@ -403,8 +418,19 @@ impl<'a> Codegen<'a> {
         let gs_path = if gs_name.is_empty() {
             format!("{path}.genblk")
         } else {
-            format!("{path}.{}", ident(&gs_name))
+            format!("{path}.{}", display_ident(&gs_name))
         };
+        let mut components = self
+            .c_paths
+            .get(path)
+            .cloned()
+            .unwrap_or_else(|| vec![path.to_owned()]);
+        components.push(if gs_name.is_empty() {
+            "genblk".to_owned()
+        } else {
+            gs_name
+        });
+        self.c_paths.insert(gs_path.clone(), components);
         self.gen_scope_paths.insert(gs, gs_path.clone());
         let mut gseen: HashSet<String> = HashSet::new();
         for c in &self.node(gs).children {
@@ -444,9 +470,9 @@ impl<'a> Codegen<'a> {
                     let ir = self.model.signals.len();
                     let info = SignalInfo {
                         global: if is_real_kind(&ty.kind) {
-                            real_global_name(&gs_path, &name)
+                            self.real_global_name(&gs_path, &name)
                         } else {
-                            global_name(&gs_path, &name)
+                            self.global_name(&gs_path, &name)
                         },
                         width: w,
                         signed: ty.signed,
@@ -542,7 +568,7 @@ impl<'a> Codegen<'a> {
         // nested gen scopes), under their full instance path.
         for c in &self.node(gs).children {
             if matches!(self.kind(*c), NodeKind::ModuleInst { .. }) {
-                let child_path = self.instance_path_of(*c);
+                let child_path = format!("{gs_path}.{}", display_ident(&self.node(*c).name));
                 self.collect_instance(*c, &child_path)?;
             }
         }

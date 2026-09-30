@@ -471,7 +471,15 @@ impl<'a> Codegen<'a> {
                     .map(|method| concrete_methods.get(&method.name).copied())
                     .collect::<Vec<_>>();
                 entries.push(IrVirtualInterfaceInstance {
-                    c_name: format!("llg_vif_env_{}", ident(&self.node(interface).full_name)),
+                    c_name: format!(
+                        "llg_vif_env_{}",
+                        path_ident(
+                            &self
+                                .waveform_name(interface)
+                                .split('\u{1f}')
+                                .collect::<Vec<_>>()
+                        )
+                    ),
                     members: member_slots,
                     methods: method_slots,
                 });

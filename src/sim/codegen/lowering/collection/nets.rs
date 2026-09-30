@@ -1607,15 +1607,26 @@ impl<'a> Codegen<'a> {
         let net = self
             .model
             .net_groups
-            .get_mut(group)
+            .get(group)
             .ok_or_else(|| format!("structural driver references missing net group {group}"))?;
         let slot = net.n_drivers;
         if slot >= LLG_MAX_NET_DRIVERS {
             return Err(format!(
                 "resolved net `{}` has more structural drivers than the runtime can represent",
-                net.c_name
+                self.model
+                    .signals
+                    .iter()
+                    .position(|signal| {
+                        signal.net_driver.is_some_and(|(owner, _)| owner == group)
+                            && signal.hdl_name.is_some()
+                    })
+                    .map_or_else(
+                        || "unnamed net storage".to_owned(),
+                        |signal| self.signal_label(signal)
+                    )
             ));
         }
+        let net = &mut self.model.net_groups[group];
         net.n_drivers += 1;
         net.driver_strengths.push(strengths);
         let c_name = net.c_name.clone();

@@ -169,8 +169,32 @@ fn plain_function_loop_exhausts_the_process_step_budget() {
         assert!(output.stdout.is_empty(), "{label}: {output:?}");
         assert_eq!(
             String::from_utf8_lossy(&output.stderr),
-            "llg: nonconvergent zero-time execution in process `fn_tb_spin` at time 0 (process step limit 8)\n",
+            "llg: nonconvergent zero-time execution in process `tb.spin` at time 0 (process step limit 8)\n",
             "{label}"
+        );
+    }
+}
+
+#[test]
+fn escaped_function_budget_message_keeps_source_name() {
+    assert!(
+        llg::sim::build::cmake_available(),
+        "CLI tests require CMake"
+    );
+    for optimized in [false, true] {
+        let output = sim_cli::invoke_with_env(
+            "coroutine_semantics",
+            "escaped_function_step_budget",
+            optimized,
+            &[],
+            &[("LLG_PROCESS_STEP_LIMIT", "8")],
+            &["LLG_ZERO_LOOP_LIMIT", "LLG_NONCONVERGENCE_LIMIT"],
+        );
+        assert_eq!(output.status.code(), Some(1), "{output:?}");
+        assert!(output.stdout.is_empty(), "{output:?}");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stderr),
+            "llg: nonconvergent zero-time execution in process `tb.spin+loop` at time 0 (process step limit 8)\n",
         );
     }
 }

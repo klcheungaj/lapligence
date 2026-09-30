@@ -5,6 +5,7 @@ use super::constants::{
 };
 use super::context::RCtx;
 use super::expressions::{coerce_two_state, packed_default};
+use super::names::{bound_identifiers, rewrite_identifiers};
 use super::statements::{render_stmt_impl as render_stmt, wait_any_text_in_region};
 use super::EmitError;
 use crate::sim::execution::{
@@ -138,7 +139,7 @@ fn render_coroutine_functions(
                 layout,
                 frame_type: format!("{}_frame_t", function.c_name),
                 desc_name: format!("{}_desc", function.c_name),
-                display_name: function.c_name.clone(),
+                display_name: function.diagnostic_name().to_owned(),
                 location: origin_location(function.origin()),
                 owner: CoroutineId::Function(index),
                 root: false,
@@ -235,7 +236,7 @@ fn render_coroutine_branches(
                     layout,
                     frame_type: format!("{name}_frame_t"),
                     desc_name: format!("{name}_desc"),
-                    display_name: name.to_owned(),
+                    display_name: format!("{}.fork", definition.diagnostic_name()),
                     location: origin_location(definition.origin()),
                     owner,
                     root: true,
@@ -264,7 +265,7 @@ fn render_coroutine_branches(
                     layout,
                     frame_type: format!("{name}_frame_t"),
                     desc_name: format!("{name}_desc"),
-                    display_name: name.to_owned(),
+                    display_name: format!("{}.fork", definition.label()),
                     location: origin_location(definition.origin()),
                     owner,
                     root: true,
@@ -337,68 +338,6 @@ struct SharedFrameType {
     typedef: String,
     root: bool,
     anchored: bool,
-}
-
-/// Rewrite every C identifier (outside string/character literals and
-/// comments) for which `rename` returns a replacement.
-fn rewrite_identifiers(text: &str, rename: impl Fn(&str) -> Option<String>) -> String {
-    let bytes = text.as_bytes();
-    let mut out = String::with_capacity(text.len());
-    let mut index = 0;
-    while index < bytes.len() {
-        let byte = bytes[index];
-        if byte == b'"' || byte == b'\'' {
-            let start = index;
-            index += 1;
-            while index < bytes.len() && bytes[index] != byte {
-                index += if bytes[index] == b'\\' { 2 } else { 1 };
-            }
-            index = (index + 1).min(bytes.len());
-            out.push_str(&text[start..index]);
-        } else if byte == b'/' && bytes.get(index + 1) == Some(&b'*') {
-            let end = text[index + 2..]
-                .find("*/")
-                .map_or(bytes.len(), |offset| index + 2 + offset + 2);
-            out.push_str(&text[index..end]);
-            index = end;
-        } else if byte == b'/' && bytes.get(index + 1) == Some(&b'/') {
-            let end = text[index..]
-                .find('\n')
-                .map_or(bytes.len(), |offset| index + offset);
-            out.push_str(&text[index..end]);
-            index = end;
-        } else if byte == b'_' || byte.is_ascii_alphabetic() {
-            let start = index;
-            while index < bytes.len()
-                && (bytes[index] == b'_' || bytes[index].is_ascii_alphanumeric())
-            {
-                index += 1;
-            }
-            let identifier = &text[start..index];
-            match rename(identifier) {
-                Some(replacement) => out.push_str(&replacement),
-                None => out.push_str(identifier),
-            }
-        } else if byte.is_ascii_digit() {
-            // Numeric literals (including suffixes such as `1ULL`) are copied
-            // whole so their suffix is never mistaken for an identifier.
-            let start = index;
-            while index < bytes.len()
-                && (bytes[index] == b'_' || bytes[index].is_ascii_alphanumeric())
-            {
-                index += 1;
-            }
-            out.push_str(&text[start..index]);
-        } else {
-            let start = index;
-            index += 1;
-            while index < bytes.len() && !bytes[index].is_ascii() {
-                index += 1;
-            }
-            out.push_str(&text[start..index]);
-        }
-    }
-    out
 }
 
 /// Emit one typedef per distinct coroutine frame layout.
@@ -791,7 +730,12 @@ fn render_model(execution: &ExecutionModel) -> Result<String, String> {
     out.push_str(&super::owned::assertions::registrations(model)?);
     super::owned::model::storage_lifecycle(model, &mut out)?;
     out.push_str(&super::owned::model::main(execution)?);
-    Ok(out)
+    let external = model
+        .funcs
+        .iter()
+        .filter_map(|function| function.dpi_import().map(|dpi| dpi.c_name()))
+        .collect::<BTreeSet<_>>();
+    Ok(bound_identifiers(out, &external))
 }
 
 #[cfg(test)]

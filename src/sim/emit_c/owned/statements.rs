@@ -47,7 +47,7 @@ impl Frame<'_, '_> {
             c_string_literal(
                 self.ctx
                     .func
-                    .map(|f| f.c_name.as_str())
+                    .map(|f| f.diagnostic_name())
                     .unwrap_or(self.ctx.model.design_name())
             )
         );
