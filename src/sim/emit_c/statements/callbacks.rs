@@ -42,6 +42,11 @@ pub(in super::super) fn render_pre_fn_impl(
                     capture.storage().slot()
                 );
                 match capture.storage().kind() {
+                    StorageKind::Event => {
+                        return Err(
+                            "event captures require whole-model ownership emission".to_owned()
+                        )
+                    }
                     StorageKind::Real => out.push_str(&format!(
                         "    double {local} = llg_frame_read_real(llg_proc_frame(self), {}u);\n",
                         capture.storage().slot()
@@ -88,7 +93,7 @@ pub(in super::super) fn render_pre_fn_impl(
                 let rendered = render_expr(ctx, e)?.code;
                 out.push_str(&format!(
                     "    out[{i}] = {};\n",
-                    event_capture_code(&rendered, context.as_ref())
+                    event_capture_code(&rendered, context.as_ref())?
                 ));
             }
             out.push_str("}\n");
@@ -109,6 +114,11 @@ pub(in super::super) fn render_pre_fn_impl(
                     capture.storage().slot()
                 );
                 match capture.storage().kind() {
+                    StorageKind::Event => {
+                        return Err(
+                            "event captures require whole-model ownership emission".to_owned()
+                        )
+                    }
                     StorageKind::Real => out.push_str(&format!(
                         "    double {local} = llg_frame_read_real(frame, {}u);\n",
                         capture.storage().slot()
@@ -146,6 +156,11 @@ pub(in super::super) fn render_pre_fn_impl(
                     capture.storage().slot()
                 );
                 match capture.storage().kind() {
+                    StorageKind::Event => {
+                        return Err(
+                            "event captures require whole-model ownership emission".to_owned()
+                        )
+                    }
                     StorageKind::Real => out.push_str(&format!(
                         "    double {local} = llg_frame_read_real(frame, {}u);\n",
                         capture.storage().slot()
@@ -203,7 +218,7 @@ pub(in super::super) fn render_pre_fn_impl(
             value,
             context,
         } => {
-            let rendered = event_capture_code(&render_expr(ctx, value)?.code, context.as_ref());
+            let rendered = event_capture_code(&render_expr(ctx, value)?.code, context.as_ref())?;
             Ok(format!(
                 "static void {c_name}(double* out, void* context) {{ (void)context; *out = {rendered}; }}\n"
             ))

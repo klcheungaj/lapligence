@@ -23,7 +23,8 @@ impl Validator<'_> {
                 }
                 IrPreFn::CapturedBranch { captures, body, .. } => {
                     for (capture_idx, capture) in captures.iter().enumerate() {
-                        self.validate_expr(
+                        self.validate_capture(
+                            capture.storage(),
                             capture.initial(),
                             formals,
                             &format!("{path}.pre_fns[{idx}].captures[{capture_idx}].initial"),
@@ -45,7 +46,8 @@ impl Validator<'_> {
                     }
                     if let Some(context) = context {
                         for (capture_idx, capture) in context.captures().iter().enumerate() {
-                            self.validate_expr(
+                            self.validate_capture(
+                                capture.storage(),
                                 capture.initial(),
                                 formals,
                                 &format!(
@@ -72,7 +74,8 @@ impl Validator<'_> {
                                 "event assignment captures must use unique slots in their frame",
                             );
                         }
-                        self.validate_expr(
+                        self.validate_capture(
+                            capture.storage(),
                             capture.initial(),
                             formals,
                             &format!("{path}.pre_fns[{idx}].captures[{capture_idx}].initial"),
@@ -97,7 +100,8 @@ impl Validator<'_> {
                                 "deferred assertion captures must use unique slots in their frame",
                             );
                         }
-                        self.validate_expr(
+                        self.validate_capture(
+                            capture.storage(),
                             capture.initial(),
                             formals,
                             &format!("{path}.pre_fns[{idx}].captures[{capture_idx}].initial"),
@@ -143,7 +147,8 @@ impl Validator<'_> {
                     )?;
                     if let Some(context) = context {
                         for (capture_idx, capture) in context.captures().iter().enumerate() {
-                            self.validate_expr(
+                            self.validate_capture(
+                                capture.storage(),
                                 capture.initial(),
                                 formals,
                                 &format!(

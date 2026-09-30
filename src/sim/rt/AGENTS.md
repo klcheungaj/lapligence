@@ -119,6 +119,10 @@ the union of old and new ranges against overlapping drivers. Keep full-net waite
 identity and notification behavior. Pending delayed drivers start X, not driverless
 Z. Fixed-array delayed sites retain per-element identity.
 
+Opaque activation slots may hold event object identities, valid until model
+teardown, or a parent coroutine's event handle address for a synchronous join.
+Cancel joined children before releasing that parent frame. Detached event
+captures own handle copies and never borrow a parent's handle address.
 Waiters own snapshots/dependency lists. Packed edges use LSB, including 0→X/Z and
 X/Z→1 posedges (negedge mirrored); real changes compare IEEE bits, including signed
 zero and changed NaN payloads. `iff` executes at trigger. Event lists register

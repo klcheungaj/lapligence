@@ -182,6 +182,8 @@ pub enum StorageKind {
     /// handle itself remains owned by the runtime object registry; frames do
     /// not retain host pointers or attempt to clone/drop the object.
     Opaque,
+    /// A named-event handle: a borrowed parent handle or copied object identity.
+    Event,
 }
 
 /// A typed reference to one slot in an activation frame.

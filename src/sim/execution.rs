@@ -1747,6 +1747,13 @@ fn collect_object_query_effects(
         IrObjectQuery::HandleCapture(handle) => {
             collect_chandle_effects(ir, handle, effects, visited_calls)
         }
+        IrObjectQuery::EventCapture(event) => {
+            if let crate::sim::ir::IrEventRef::Array { indices, .. } = event {
+                for index in indices {
+                    collect_expression_effects(ir, index, effects, visited_calls);
+                }
+            }
+        }
         IrObjectQuery::ChandleEq(a, b) => {
             collect_chandle_effects(ir, a, effects, visited_calls);
             collect_chandle_effects(ir, b, effects, visited_calls);

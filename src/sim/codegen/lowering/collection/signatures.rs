@@ -387,7 +387,10 @@ impl<'a> Codegen<'a> {
             }
         }
         for c in &self.node(inst).children {
-            if matches!(self.kind(*c), NodeKind::ModuleInst { .. }) {
+            if matches!(
+                self.kind(*c),
+                NodeKind::ModuleInst { .. } | NodeKind::GenScope | NodeKind::GenScopeArray
+            ) {
                 self.emit_func_prototypes(*c)?;
             }
         }
@@ -426,7 +429,10 @@ impl<'a> Codegen<'a> {
             }
         }
         for c in &self.node(inst).children {
-            if matches!(self.kind(*c), NodeKind::ModuleInst { .. }) {
+            if matches!(
+                self.kind(*c),
+                NodeKind::ModuleInst { .. } | NodeKind::GenScope | NodeKind::GenScopeArray
+            ) {
                 self.emit_func_bodies(*c)?;
             }
         }

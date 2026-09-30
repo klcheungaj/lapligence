@@ -7,8 +7,15 @@ impl<'a> Codegen<'a> {
     pub(in super::super) fn capture_source(&self, target: NodeId) -> Option<CaptureSource> {
         if let Some(binding) = self.capture_binding(target) {
             let info = binding.local.clone();
+            let name = Self::capture_local_name(binding.storage);
             let initial = IrExpr::new(
-                IrExprKind::LocalRead(Self::capture_local_name(binding.storage)),
+                if binding.storage.kind() == StorageKind::Event {
+                    IrExprKind::ObjectQuery(Box::new(IrObjectQuery::EventCapture(
+                        IrEventRef::Captured(name),
+                    )))
+                } else {
+                    IrExprKind::LocalRead(name)
+                },
                 info.width,
                 info.signed,
                 None,
@@ -61,6 +68,25 @@ impl<'a> Codegen<'a> {
             return None;
         }
         let function = self.func.as_ref()?;
+        if let Some(event) = function.event_args.get(&target) {
+            return Some(CaptureSource {
+                info: ProcLocalInfo {
+                    c_name: String::new(),
+                    width: 1,
+                    signed: false,
+                    two_state: true,
+                    static_signal: None,
+                },
+                initial: IrExpr::new(
+                    IrExprKind::ObjectQuery(Box::new(IrObjectQuery::EventCapture(event.clone()))),
+                    1,
+                    false,
+                    None,
+                ),
+                lifetime: StorageLifetime::Automatic,
+                kind: StorageKind::Event,
+            });
+        }
         if let Some(storage) = function.persistent.get(&target) {
             return Some(CaptureSource {
                 info: ProcLocalInfo {
