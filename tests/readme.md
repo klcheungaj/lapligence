@@ -339,7 +339,11 @@ Missing directories are created; an empty or unusable `LLG_TEST_BUILD_DIR` fails
 rather than falling back to another disk. The filesystem must permit
 execution (`noexec` prevents CMake compiler checks and simulators from running).
 
-Parallelism is unchanged. Every invocation owns a unique child directory and
+Test parallelism is unchanged. Model and runtime-archive builds run
+`cmake --build --parallel <N>`, with `N` from `$CMAKE_BUILD_PARALLEL_LEVEL` when
+set, else the host CPU count; the harness leaves it unset because the runtime
+archive is built once per cache key under a lock and a model is one translation
+unit (revisit when models are split into parts). Every invocation owns a unique child directory and
 removes that child on completion or unwind; the configured root and unrelated
 files are retained. `LLG_RUNTIME_CACHE_DIR` separately relocates the shared runtime
 archive cache, which persists across tests and runs until removed or unmounted.

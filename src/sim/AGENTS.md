@@ -88,8 +88,15 @@ CMake is the only model builder: C11, Release by default, executable under
 
 ```sh
 <cmake> -S <out_dir> -B <out_dir>/build [-G <generator>] [-DCMAKE_C_COMPILER_LAUNCHER=<launcher>] -DCMAKE_C_COMPILER=<cc|LLG_CC|$CC|cc> -DCMAKE_C_FLAGS:STRING="-O2 -Wall -Wno-unused-function [cflags|$LLG_CFLAGS]" -DLLG_RUNTIME_LIBRARY=<cache>
-cmake --build --config Release
+cmake --build <dir> --config Release --parallel <jobs> [--target llg_runtime]
 ```
+
+Both `--build` invocations (model and runtime archive) pass `--parallel`, a
+generic option since CMake 3.12 (generated projects require 3.16), so Makefile,
+Ninja and MSBuild generators build translation units concurrently. `<jobs>` is
+`CmakeBuildOpts.build_jobs`/`--build-jobs`, else a positive integer
+`$CMAKE_BUILD_PARALLEL_LEVEL`, else `available_parallelism()` (fallback 1); see
+`resolve_build_jobs`. It is not part of the runtime cache key.
 
 With GCC or Clang, generated model sources also get
 `-Wno-misleading-indentation` as a per-source CMake option; the warning's cost

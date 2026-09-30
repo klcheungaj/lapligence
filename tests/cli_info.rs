@@ -73,6 +73,7 @@ fn simulator_information_exits_without_compiling_or_installing_memory_limits() {
         "--cc <program>",
         "--cflags <flags>",
         "--cmake <program>",
+        "--build-jobs <N>",
     ] {
         assert!(
             String::from_utf8_lossy(&output.stdout).contains(option),
@@ -111,12 +112,27 @@ fn simulator_missing_option_value_is_a_usage_error() {
         ("--cc", "--cc requires a compiler program"),
         ("--cflags", "--cflags requires a flag string"),
         ("--cmake", "--cmake requires a program"),
+        ("--build-jobs", "--build-jobs requires a positive integer"),
     ] {
         let output = invoke(env!("CARGO_BIN_EXE_llg"), &[option]);
         assert_eq!(output.status.code(), Some(2), "{output:?}");
         assert!(output.stdout.is_empty(), "{output:?}");
         assert!(
             String::from_utf8_lossy(&output.stderr).contains(diagnostic),
+            "{output:?}"
+        );
+    }
+}
+
+#[test]
+fn simulator_build_jobs_rejects_non_positive_and_non_numeric_values() {
+    for value in ["0", "-1", "many", ""] {
+        let output = invoke(env!("CARGO_BIN_EXE_llg"), &["--build-jobs", value]);
+        assert_eq!(output.status.code(), Some(2), "{output:?}");
+        assert!(output.stdout.is_empty(), "{output:?}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr)
+                .contains("--build-jobs requires a positive integer"),
             "{output:?}"
         );
     }

@@ -4,7 +4,7 @@
 //! generated sources into `out_dir` (shared helper [`super::write_sim_sources`]),
 //! emits a `CMakeLists.txt`, then runs
 //! `cmake -S <out_dir> -B <out_dir>/build ... && cmake --build
-//! <out_dir>/build --config Release`.  [`generate_model_sources`] performs
+//! <out_dir>/build --config Release --parallel <N>`.  [`generate_model_sources`] performs
 //! only the first half (`llg --gen-only`).  This module owns the
 //! generated `CMakeLists.txt` and the cmake invocation.
 //!
@@ -42,6 +42,9 @@
 //!   reliably.
 //! - `LLG_CMAKE` — explicit cmake program override; default `cmake`
 //!   (also used by [`cmake_available`]).
+//! - `CMAKE_BUILD_PARALLEL_LEVEL` — positive job count for both
+//!   `cmake --build` invocations when [`CmakeBuildOpts::build_jobs`] is unset
+//!   (see [`resolve_build_jobs`]); otherwise the host's available parallelism.
 //! - `LLG_RUNTIME_CACHE_DIR` — shared static-runtime cache root; defaults to
 //!   `build/llg-runtime-cache` under the current directory. Relative values
 //!   resolve from the current directory; an empty value selects the default.
@@ -152,6 +155,62 @@ pub struct CmakeBuildOpts {
     pub cflags: Option<String>,
     /// CMake program. `None` uses `$LLG_CMAKE`, then `cmake`.
     pub cmake: Option<String>,
+    /// Parallel job count passed as `cmake --build --parallel <N>` to the
+    /// runtime archive and model builds. `None` uses
+    /// `$CMAKE_BUILD_PARALLEL_LEVEL` when it is a positive integer, then the
+    /// host's available parallelism. `Some(0)` is treated as unset.
+    pub build_jobs: Option<usize>,
+}
+
+/// Environment variable CMake itself reads for its default build parallelism;
+/// honored here so users, CI and the test harness keep control.
+pub const BUILD_PARALLEL_LEVEL_ENV: &str = "CMAKE_BUILD_PARALLEL_LEVEL";
+
+/// Job count for `cmake --build --parallel`: a positive `explicit` value, else
+/// a positive-integer `env_value` (the raw `$CMAKE_BUILD_PARALLEL_LEVEL`), else
+/// `available`, else 1. Pure so the policy is testable without touching the
+/// process environment.
+pub fn resolve_build_jobs(
+    explicit: Option<usize>,
+    env_value: Option<&str>,
+    available: Option<usize>,
+) -> usize {
+    explicit
+        .filter(|jobs| *jobs > 0)
+        .or_else(|| {
+            env_value
+                .and_then(|value| value.trim().parse::<usize>().ok())
+                .filter(|jobs| *jobs > 0)
+        })
+        .or(available)
+        .filter(|jobs| *jobs > 0)
+        .unwrap_or(1)
+}
+
+fn build_jobs_for(opts: &CmakeBuildOpts) -> usize {
+    resolve_build_jobs(
+        opts.build_jobs,
+        std::env::var(BUILD_PARALLEL_LEVEL_ENV).ok().as_deref(),
+        std::thread::available_parallelism().ok().map(usize::from),
+    )
+}
+
+/// `cmake --build <dir> --config Release --parallel <jobs> [--target <t>]`.
+/// `--parallel` is generic across generators since CMake 3.12 (Makefiles and
+/// Ninja jobs, MSBuild `/m`); the generated projects require 3.16.
+fn build_command(cmake_prog: &str, build_dir: &Path, jobs: usize, target: Option<&str>) -> Command {
+    let mut command = Command::new(cmake_prog);
+    command
+        .arg("--build")
+        .arg(build_dir)
+        .arg("--config")
+        .arg("Release")
+        .arg("--parallel")
+        .arg(jobs.to_string());
+    if let Some(target) = target {
+        command.arg("--target").arg(target);
+    }
+    command
 }
 
 /// Environment variable naming the runtime archive cache root.
@@ -280,7 +339,8 @@ pub fn build_model_cmake_with_opts(
     let build_dir = out_dir.join("build");
     let cmake_prog = resolve_cmake(opts);
     let waveform = waveform_enabled(extra);
-    let runtime_library = prepare_runtime_cache(waveform, &cc, &flags, &cmake_prog, opts)?;
+    let jobs = build_jobs_for(opts);
+    let runtime_library = prepare_runtime_cache(waveform, &cc, &flags, &cmake_prog, jobs, opts)?;
 
     // Drop an incompatible CMake build tree so configure starts clean: no
     // cache means a previous configure died midway; a generator mismatch
@@ -333,12 +393,7 @@ pub fn build_model_cmake_with_opts(
     }
 
     // Build.
-    let mut build_cmd = Command::new(&cmake_prog);
-    build_cmd
-        .arg("--build")
-        .arg(&build_dir)
-        .arg("--config")
-        .arg("Release");
+    let mut build_cmd = build_command(&cmake_prog, &build_dir, jobs, None);
     let output = build_cmd.output().map_err(launch_error)?;
     if !output.status.success() {
         return Err(BuildError::Compile {
@@ -592,6 +647,7 @@ fn prepare_runtime_cache(
     cc: &str,
     flags: &str,
     cmake_prog: &str,
+    jobs: usize,
     opts: &CmakeBuildOpts,
 ) -> Result<PathBuf, BuildError> {
     let key = runtime_cache_key(waveform, cc, flags, cmake_prog, opts);
@@ -690,14 +746,7 @@ fn prepare_runtime_cache(
         });
     }
 
-    let mut build = Command::new(cmake_prog);
-    build
-        .arg("--build")
-        .arg(&build_dir)
-        .arg("--config")
-        .arg("Release")
-        .arg("--target")
-        .arg("llg_runtime");
+    let mut build = build_command(cmake_prog, &build_dir, jobs, Some("llg_runtime"));
     let output = build.output().map_err(launch_error)?;
     if !output.status.success() {
         return Err(BuildError::Compile {
@@ -1143,6 +1192,60 @@ fn sorted_entries(dir: &Path) -> Option<Vec<PathBuf>> {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU64, Ordering};
+
+    #[test]
+    fn build_jobs_prefer_explicit_then_environment_then_host() {
+        assert_eq!(resolve_build_jobs(Some(3), Some("8"), Some(16)), 3);
+        assert_eq!(resolve_build_jobs(None, Some("8"), Some(16)), 8);
+        assert_eq!(resolve_build_jobs(None, Some(" 4 "), Some(16)), 4);
+        assert_eq!(resolve_build_jobs(None, None, Some(16)), 16);
+        assert_eq!(resolve_build_jobs(None, None, None), 1);
+        for invalid in ["", "0", "-2", "many", "1.5", "+", "99999999999999999999999"] {
+            assert_eq!(
+                resolve_build_jobs(None, Some(invalid), Some(12)),
+                12,
+                "environment value {invalid:?}"
+            );
+        }
+        assert_eq!(resolve_build_jobs(Some(0), Some("5"), Some(12)), 5);
+        assert_eq!(resolve_build_jobs(Some(0), None, Some(0)), 1);
+    }
+
+    #[test]
+    fn build_commands_pass_parallel_and_target() {
+        let args = |command: &Command| {
+            command
+                .get_args()
+                .map(|arg| arg.to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+        };
+        let model = build_command("cmake", Path::new("out/build"), 6, None);
+        assert_eq!(
+            args(&model),
+            [
+                "--build",
+                "out/build",
+                "--config",
+                "Release",
+                "--parallel",
+                "6"
+            ]
+        );
+        let runtime = build_command("cmake", Path::new("rt/build"), 6, Some("llg_runtime"));
+        assert_eq!(
+            args(&runtime),
+            [
+                "--build",
+                "rt/build",
+                "--config",
+                "Release",
+                "--parallel",
+                "6",
+                "--target",
+                "llg_runtime"
+            ]
+        );
+    }
 
     #[test]
     fn model_metadata_requires_current_ownership_abi() {
