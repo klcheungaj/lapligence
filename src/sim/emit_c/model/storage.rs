@@ -28,13 +28,10 @@ pub(super) fn render_signal_decls(model: &IrModel, out: &mut String) {
         if !groups_emitted.insert(g.c_name.as_str()) {
             continue;
         }
-        let driver_init = "SV4_EMPTY";
         let resolved_init = "SV4_EMPTY";
         let mut driver_ptrs = Vec::with_capacity(g.n_drivers);
         for slot in 0..g.n_drivers {
-            let cell = format!("{}_d{}", g.c_name, slot);
-            out.push_str(&format!("sv4_t {cell} = {driver_init};\n"));
-            driver_ptrs.push(format!("&{cell}"));
+            driver_ptrs.push(format!("&{}__cells[{slot}]", g.c_name));
         }
         let strength0 = g
             .driver_strengths
@@ -67,11 +64,14 @@ pub(super) fn render_signal_decls(model: &IrModel, out: &mut String) {
                 )
             } else {
                 out.push_str(&format!(
-                    "static sv4_t* const {}__drivers[] = {{ {} }};\n\
+                    "sv4_t {}__cells[{}] = {{0}};\n\
+                 static sv4_t* const {}__drivers[] = {{ {} }};\n\
                  static const uint8_t {}__strength0[] = {{ {} }};\n\
                  static const uint8_t {}__strength1[] = {{ {} }};\n\
                  static llg_net_driver_index_t {}__driver_index[{}];\n\
                  static int {}__overlap_scratch[{}];\n",
+                    g.c_name,
+                    g.n_drivers,
                     g.c_name,
                     driver_ptrs.join(", "),
                     g.c_name,

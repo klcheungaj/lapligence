@@ -230,7 +230,17 @@ only immutable descriptors to spawn/fork sites, and initialize through
 `llg_rt_init_with_args_and_precision`; coroutine stack sizing is not model data.
 Default and teardown calls for plain static storage use one file-scope pointer
 table and loop per value representation, flushed at the storage section's
-original position. Runs of consecutive constant startup calls (spawns, finals,
+original position. Each net's contribution cells occupy one exact-size `__cells`
+array; the unchanged driver pointer table points into it. Net defaults, driver
+reset/destruction, index reset and alias-list cleanup use a single immutable
+net/fill descriptor table and fixed-size loops, independent of net count, driver
+count, width and resolution kind. Strength/index/scratch storage remains
+exact-size; only mutable index state needs resetting. Scalar aliases copy all
+visible owners before binding; array aliases copy and bind in original array/
+element order through one pointer table. Array initialization refreshes only its
+contiguous slice of that table. Runtime queues and VPI must close before these
+loops destroy values and clear alias lists; repeated start/close rebuilds them.
+Runs of consecutive constant startup calls (spawns, finals,
 waveform registrations) use argument tables and loops in their original order;
 registrations still fail startup. Generated identifiers are standard C (never
 `$`, checked by the all-fixture lint); synthesized procedural-assign enables use

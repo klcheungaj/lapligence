@@ -204,3 +204,22 @@ fn compatible_pca_sites_share_across_distinct_source_locations() {
     assert_eq!(source.matches("LLG_CO_DISPATCH_BEGIN").count(), 1);
     assert!(source.contains("llg_pca_drive(&(*I->"));
 }
+
+#[test]
+fn shared_net_writers_keep_distinct_array_backed_contributions() {
+    let mut model = instance_model(8);
+    model
+        .net_groups
+        .push(IrNetGroup::new("g_net".to_owned(), 8, false, IrNetKind::Wire, 8).unwrap());
+    for (slot, signal) in model.signals.iter_mut().enumerate() {
+        signal.net_driver = Some((0, slot));
+    }
+    let source = render_with_sharing_threshold(&ExecutionModel::lower(model).unwrap(), 4).unwrap();
+    assert_eq!(source.matches("LLG_CO_DISPATCH_BEGIN").count(), 1);
+    assert!(source.contains("sv4_t g_net__cells[8] = {0};"));
+    assert!(source.contains("llg_net_write(&g_net, I->"), "{source}");
+    for slot in 0..8 {
+        assert!(source.contains(&format!("&g_net__cells[{slot}]")));
+        assert!(source.contains(&format!("= {{ {slot} }};")), "{source}");
+    }
+}
