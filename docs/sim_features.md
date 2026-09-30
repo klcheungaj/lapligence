@@ -818,9 +818,10 @@ Macros, includes and their edition-specific behavior are counted in §11.
   **[1995/SV-2005]**.
 - 🟨 **Hierarchical calls and special formals** — Resolved module/interface/
   package/parent callees retain their owning instance. Input event formals are typed
-  by-value event-handle parameters; output/inout/ref event formals, event
-  controls reading subroutine storage and class-method event formals use inline
-  task paths; event-formal virtual dispatch and process-handle formal ABI remain unsupported. Unresolved environments and broader
+  by-value event-handle parameters; a `ref` formal read by an event control
+  binds a whole module-signal actual per specialized task copy; output/inout/ref
+  event formals, event controls reading other subroutine storage and
+  class-method event formals use inline task paths; event-formal virtual dispatch and process-handle formal ABI remain unsupported. Unresolved environments and broader
   timing/native/aggregate combinations reject. V §12.4 **[1995]**.
 - 🟨 **Read-only helper calls** — Event, continuous, force and other read-only
   evaluators admit bounded numeric value/const-ref helpers with private locals,

@@ -87,6 +87,17 @@ fn event_formals_event_chains_and_disabled_tasks_behave_as_ordinary_calls() {
 }
 
 #[test]
+fn ref_formals_read_by_event_controls_keep_the_actuals_dependencies() {
+    sim_cli::run_case(
+        "coroutine_semantics",
+        "ref_event_tasks",
+        "PASS ref_event_tasks a=7 b=70 local=0 killed=0/1\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
 fn join_none_children_wait_for_a_real_blocking_boundary() {
     sim_cli::run_case(
         "coroutine_semantics",

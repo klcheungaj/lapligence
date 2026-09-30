@@ -185,12 +185,12 @@ fn inline_expanded_task_storage_is_hoisted_into_its_host_frame() {
         r#"
 module tb;
     logic level;
-    task automatic await_edge(ref logic source);
+    task automatic await_edge(input logic enable);
         integer local_value;
-        @(posedge source);
+        @(posedge (level & enable));
         local_value = 1;
     endtask
-    initial await_edge(level);
+    initial await_edge(1'b1);
 endmodule
 "#,
         ExecutionAnalysisOptions::default(),
@@ -199,6 +199,40 @@ endmodule
     assert!(!c.contains("fn_tb_await_edge_frame_t"), "{c}");
     assert!(c.contains("sv4_t* _llg_local_"), "{c}");
     assert!(c.contains("LLG_CO_ROOT_FRAME_OK(p_tb_proc_"), "{c}");
+}
+
+#[test]
+fn ref_formal_event_tasks_are_specialized_per_static_actual() {
+    let c = render_source_with_execution_options(
+        "ref_event_specialization.sv",
+        r#"
+module tb;
+    logic first, second;
+    task automatic await_edge(ref logic source);
+        @(posedge source);
+    endtask
+    task automatic forward(ref logic source);
+        await_edge(source);
+    endtask
+    initial begin
+        forward(first);
+        forward(first);
+        forward(second);
+    end
+endmodule
+"#,
+        ExecutionAnalysisOptions::default(),
+    );
+
+    // One clone per distinct signal, shared by every call site.
+    let definitions = |name: &str| {
+        c.lines()
+            .filter(|line| line.starts_with(&format!("static llg_co_status_t {name}__spec")))
+            .filter(|line| line.ends_with(") {"))
+            .count()
+    };
+    assert_eq!(definitions("fn_tb_await_edge"), 2, "{c}");
+    assert_eq!(definitions("fn_tb_forward"), 2, "{c}");
 }
 
 #[test]

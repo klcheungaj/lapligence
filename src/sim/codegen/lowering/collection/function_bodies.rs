@@ -13,6 +13,77 @@ impl<'a> Codegen<'a> {
         inst: NodeId,
         ft: NodeId,
     ) -> Result<(), String> {
+        self.emit_func_task_with(path, inst, ft, None)
+    }
+
+    /// Lower the bodies of the task specializations requested by call sites.
+    /// Lowering one can request more (a specialization forwards its bound
+    /// `ref` formals to other tasks), so drain until none remain.
+    pub(in super::super) fn emit_task_specializations(&mut self) -> Result<(), String> {
+        while let Some(specialization) = self.pending_specializations.pop() {
+            let path = self.instance_path_of(specialization.inst);
+            self.emit_func_task_with(
+                &path,
+                specialization.inst,
+                specialization.task,
+                Some(&specialization),
+            )?;
+        }
+        Ok(())
+    }
+
+    /// The model function for `task` with its static `ref` formals bound to
+    /// `statics`, creating it on first use. The clone keeps the template's
+    /// signature: callers still pass the reference descriptors, which the
+    /// body ignores for the bound formals.
+    pub(in super::super) fn task_specialization(
+        &mut self,
+        task: NodeId,
+        inst: NodeId,
+        statics: Vec<StaticRef>,
+    ) -> Result<usize, String> {
+        let signals = statics
+            .iter()
+            .map(|bound| match bound.lhs {
+                IrLhs::Whole(signal) => Ok(signal),
+                _ => Err("task specialization requires a whole-signal actual".to_owned()),
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        let key = (task, inst, signals);
+        if let Some(index) = self.task_specializations.get(&key) {
+            return Ok(*index);
+        }
+        let template = self
+            .func_meta
+            .get(&task)
+            .map(|meta| meta.ir)
+            .ok_or_else(|| format!("task `{}` has no model entry", self.node(task).name))?;
+        let mut function = self.model.funcs[template].clone();
+        function.c_name = format!(
+            "{}__spec{}",
+            function.c_name,
+            self.task_specializations.len()
+        );
+        function.inline_expanded = false;
+        let ir = self.model.funcs.len();
+        self.model.funcs.push(function);
+        self.task_specializations.insert(key, ir);
+        self.pending_specializations.push(PendingSpecialization {
+            ir,
+            task,
+            inst,
+            statics,
+        });
+        Ok(ir)
+    }
+
+    fn emit_func_task_with(
+        &mut self,
+        path: &str,
+        inst: NodeId,
+        ft: NodeId,
+        specialization: Option<&PendingSpecialization>,
+    ) -> Result<(), String> {
         let automatic = matches!(
             self.kind(ft),
             NodeKind::FuncTask {
@@ -29,11 +100,13 @@ impl<'a> Codegen<'a> {
             .get(&ft)
             .cloned()
             .ok_or_else(|| format!("function `{}` has no C name", self.node(ft).name))?;
-        let meta_ir = self
-            .func_meta
-            .get(&ft)
-            .map(|meta| meta.ir)
-            .ok_or_else(|| format!("function `{}` has no model entry", self.node(ft).name))?;
+        let meta_ir =
+            match specialization {
+                Some(specialization) => specialization.ir,
+                None => self.func_meta.get(&ft).map(|meta| meta.ir).ok_or_else(|| {
+                    format!("function `{}` has no model entry", self.node(ft).name)
+                })?,
+            };
         if matches!(self.kind(ft), NodeKind::FuncTask { is_pure: true, .. }) {
             // Pure virtual methods have no executable source body. Keep a
             // typed fallback so the virtual dispatcher has a linkable target
@@ -161,7 +234,8 @@ impl<'a> Codegen<'a> {
         let mut arg_write: HashMap<NodeId, String> = HashMap::new();
         let mut arg_lhs: HashMap<NodeId, Lhs> = HashMap::new();
         let mut const_refs: HashSet<NodeId> = HashSet::new();
-        let const_ref_lhs = HashMap::new();
+        let mut const_ref_lhs = HashMap::new();
+        let mut arg_dependencies: HashMap<NodeId, Vec<IrDependency>> = HashMap::new();
         let mut persistent = HashMap::new();
         let mut static_local_signals = HashMap::new();
         let mut chandle_read = HashMap::new();
@@ -608,6 +682,17 @@ impl<'a> Codegen<'a> {
                 );
             }
         }
+        // A specialization reads and writes the bound actual directly, exactly
+        // as an expansion does, and waits on its dependencies.
+        for bound in specialization.iter().flat_map(|spec| &spec.statics) {
+            arg_ir.insert(bound.formal, bound.read.clone());
+            arg_dependencies.insert(bound.formal, bound.dependencies.clone());
+            if bound.const_ref {
+                const_ref_lhs.insert(bound.formal, Lhs::Canonical(bound.lhs.clone()));
+            } else {
+                arg_lhs.insert(bound.formal, Lhs::Canonical(bound.lhs.clone()));
+            }
+        }
         if ret_chandle {
             let return_var = ret_var.ok_or_else(|| {
                 format!(
@@ -653,7 +738,7 @@ impl<'a> Codegen<'a> {
             arg_read,
             arg_ir,
             event_args,
-            arg_dependencies: HashMap::new(),
+            arg_dependencies,
             arg_write,
             arg_lhs,
             const_refs,
@@ -740,7 +825,10 @@ impl<'a> Codegen<'a> {
             if self.db.variable_lifetime(local) != VariableLifetime::Static {
                 continue;
             }
-            if self.static_task_locals.contains_key(&(inst, local)) {
+            // A specialization only exists for a task that waits, whose
+            // persistent locals are model signals initialized once with their
+            // declaration; it must not initialize them again.
+            if self.static_task_locals.contains_key(&(inst, local)) || specialization.is_some() {
                 continue;
             }
             let initializer = self

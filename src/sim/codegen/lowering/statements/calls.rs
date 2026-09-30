@@ -96,13 +96,24 @@ impl EmitCtx<'_, '_> {
                 self.path
             ));
         }
-        // Remaining expansions (see `subroutine_requires_inline`): output,
-        // inout and ref event formals, event controls reading subroutine
-        // storage, and event formals of class-method and virtual-interface
-        // calls, whose receivers the typed event ABI does not carry.
-        if self.cg.subroutine_requires_inline(ft, callee_inst)
-            || (has_event_formal && (call_receiver.class.is_some() || virtual_call_info.is_some()))
-        {
+        // Remaining expansions (see `CallShape`): output, inout and ref event
+        // formals, event controls reading subroutine storage, `ref` formals
+        // read by an event control whose actual is not a whole module signal,
+        // and event formals of class-method and virtual-interface calls,
+        // whose receivers the typed event ABI does not carry.
+        let shape = self.cg.call_shape(ft, callee_inst);
+        let mut expand = shape.inline_only
+            || (has_event_formal && (call_receiver.class.is_some() || virtual_call_info.is_some()));
+        let mut specialized = None;
+        if !expand && !shape.static_refs.is_empty() {
+            match self.static_ref_actuals(&formals, &bound, &shape.static_refs)? {
+                Some(statics) => {
+                    specialized = Some(self.cg.task_specialization(ft, callee_inst, statics)?);
+                }
+                None => expand = true,
+            }
+        }
+        if expand {
             return self.lower_task_inline(
                 ft,
                 callee_inst,
@@ -114,12 +125,15 @@ impl EmitCtx<'_, '_> {
         }
         let can_be_disabled = is_task
             && (self.cg.task_has_disable(ft, callee_inst) || self.cg.task_is_disable_target(ft));
-        let fidx = self
-            .cg
-            .func_meta
-            .get(&ft)
-            .map(|m| m.ir)
-            .ok_or_else(|| format!("task `{name}` has no C name"))?;
+        let fidx = match specialized {
+            Some(index) => index,
+            None => self
+                .cg
+                .func_meta
+                .get(&ft)
+                .map(|m| m.ir)
+                .ok_or_else(|| format!("task `{name}` has no C name"))?,
+        };
         let call = self.lower_call_stmts(fidx, callee_inst, h, &formals, &bound, call_receiver)?;
         if can_be_disabled && !self.cg.class_nodes.contains_key(&callee_inst) {
             // Keep cancellation visible after the callee retires its own
@@ -132,6 +146,50 @@ impl EmitCtx<'_, '_> {
         } else {
             Ok(call)
         }
+    }
+
+    /// The whole-signal actuals of the `ref` formals `needed` at one call, or
+    /// `None` when any of them cannot be bound statically (a caller local, a
+    /// select or an array element) or the call would not be accepted by the
+    /// expansion either, which then reports the precise error.
+    fn static_ref_actuals(
+        &mut self,
+        formals: &[(NodeId, bool)],
+        bound: &[BoundArg],
+        needed: &[usize],
+    ) -> Result<Option<Vec<StaticRef>>, String> {
+        let mut statics = Vec::with_capacity(needed.len());
+        for &index in needed {
+            let (formal, _) = formals[index];
+            let actual = &bound[index];
+            let const_ref = match self.cg.kind(formal) {
+                NodeKind::FuncArg {
+                    direction: DbDirection::Ref,
+                    const_ref,
+                    ..
+                } => *const_ref,
+                _ => return Ok(None),
+            };
+            let Ok(lhs @ IrLhs::Whole(_)) = self.cg.lower_lhs(&self.path, actual.expr) else {
+                return Ok(None);
+            };
+            let Some((width, signed, two_state, actual_const)) = self.cg.ref_lhs_type(&lhs) else {
+                return Ok(None);
+            };
+            if (width, signed, two_state) != (actual.width, actual.signed, actual.two_state)
+                || (actual_const && !const_ref)
+            {
+                return Ok(None);
+            }
+            statics.push(StaticRef {
+                formal,
+                read: self.cg.lower_expr(&self.path, actual.expr)?,
+                dependencies: self.cg.collect_read_signals(&self.path, actual.expr)?,
+                lhs,
+                const_ref,
+            });
+        }
+        Ok(Some(statics))
     }
 
     /// Lower a delay-free task/function statement call: caller-side temps for
@@ -401,9 +459,14 @@ impl EmitCtx<'_, '_> {
     ///
     /// - Output, inout and ref event formals: the handle is rebound in the
     ///   caller (`EventAssign` after the body) or aliases the actual.
-    /// - An event control reading subroutine-scoped storage (formals, ref
-    ///   formals, locals): its evaluator needs the caller-bound actual
-    ///   dependencies (`arg_dependencies`) that a detached callee lacks.
+    /// - An event control reading subroutine-scoped storage (by-value formals,
+    ///   locals): its evaluator needs the copied activation slots that only
+    ///   the expansion provides.
+    /// - A `ref` formal read by an event control whose actual is not a whole
+    ///   module signal at this call (a caller local, a select, an array
+    ///   element): the evaluator needs the actual's dependencies
+    ///   (`arg_dependencies`), which a shared body cannot know. A whole-signal
+    ///   actual calls a specialization of the task instead.
     /// - Event formals of class-method and virtual-interface calls, whose
     ///   receivers the by-value event parameter does not carry.
     fn lower_task_inline(

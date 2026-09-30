@@ -121,6 +121,9 @@ module tb;
     task automatic ref_edge(ref logic r); @(posedge r); endtask
     task automatic local_expression(); automatic logic l = 0; @(posedge (l | clk)); endtask
     task automatic calls_expanded(); formal_expression(4'd1); endtask
+    task automatic forwards_ref(ref logic r); ref_edge(r); endtask
+    task automatic forwards_local(); automatic logic l = 0; ref_edge(l); endtask
+    task automatic forwards_module(); ref_edge(clk); endtask
     initial begin end
 endmodule
 "#;
@@ -154,6 +157,9 @@ endmodule
         ("ref_edge", true),
         ("local_expression", true),
         ("calls_expanded", true),
+        ("forwards_ref", true),
+        ("forwards_local", true),
+        ("forwards_module", false),
     ] {
         let task = database
             .node_ids()
@@ -166,5 +172,26 @@ endmodule
             expanded,
             "task `{name}`"
         );
+    }
+    // A `ref` formal read by an event control is bound by a specialization,
+    // not expanded, when it (or a task it is forwarded to) has a whole-signal
+    // actual; a caller local forces the expansion.
+    for (name, inline_only, static_refs) in [
+        ("ref_edge", false, vec![0]),
+        ("forwards_ref", false, vec![0]),
+        ("forwards_module", false, vec![]),
+        ("forwards_local", true, vec![]),
+        ("formal_expression", true, vec![]),
+        ("input_event", false, vec![]),
+    ] {
+        let task = database
+            .node_ids()
+            .find(|node| {
+                matches!(cg.kind(*node), NodeKind::FuncTask { .. }) && cg.node(*node).name == name
+            })
+            .unwrap();
+        let shape = cg.call_shape(task, top);
+        assert_eq!(shape.inline_only, inline_only, "task `{name}`");
+        assert_eq!(shape.static_refs, static_refs, "task `{name}`");
     }
 }

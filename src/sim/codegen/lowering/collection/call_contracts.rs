@@ -5,6 +5,23 @@ use super::*;
 #[cfg(test)]
 mod tests;
 
+/// How calls to a subroutine reach its body.
+///
+/// A subroutine is called through its typed `IrFunc` unless an output, inout
+/// or ref event formal, or an event control reading a formal or local other
+/// than an input event formal or a `ref` formal, needs the caller's
+/// environment (`inline_only`: the call site expands the body). A `ref`
+/// formal read by an event control (directly or through a callee it is
+/// forwarded to) is `static_refs`: its evaluator's dependencies are those of
+/// the actual, which a shared body cannot know, so each distinct static
+/// actual gets its own specialization of the task.
+#[derive(Clone, Debug, Default)]
+pub(in super::super) struct CallShape {
+    pub(in super::super) inline_only: bool,
+    /// Formal indices that a specialization binds to a whole module signal.
+    pub(in super::super) static_refs: Vec<usize>,
+}
+
 impl<'a> Codegen<'a> {
     pub(in super::super) fn check_event_expression_effects(
         &self,
@@ -441,121 +458,189 @@ impl<'a> Codegen<'a> {
         self.task_has_wait_inner(ft, inst, &mut seen)
     }
 
-    /// Whether calls to a subroutine must be expanded at the call site
-    /// (`lower_task_inline`) instead of calling its typed `IrFunc`.
-    ///
-    /// Two constructs still need the caller's environment:
-    /// - an output, inout or ref event formal, whose handle rebinding and
-    ///   identity are resolved against the actual at the call site (a by-value
-    ///   input event formal is an ordinary `llg_event_t` parameter);
-    /// - an event control, anywhere in the task or the tasks it calls, whose
-    ///   expression reads subroutine-scoped storage. Its evaluator runs after
-    ///   the activation suspended, so it needs the caller-bound formal
-    ///   dependencies and copied locals that only the expansion provides.
-    ///
-    /// Event controls on module signals and on input event formals are
-    /// ordinary suspension points of the typed callee.
+    /// Whether the retained definition of a subroutine is only a template:
+    /// calls either expand it (`lower_task_inline`) or call a specialization
+    /// of it that binds its static `ref` formals (see [`CallShape`]).
     pub(in super::super) fn subroutine_requires_inline(&self, ft: NodeId, inst: NodeId) -> bool {
-        fn visit(cg: &Codegen<'_>, node: NodeId, inst: NodeId, seen: &mut HashSet<NodeId>) -> bool {
-            if !seen.insert(node) {
-                return false;
+        let shape = self.call_shape(ft, inst);
+        shape.inline_only || !shape.static_refs.is_empty()
+    }
+
+    /// How calls to a subroutine reach its body.
+    pub(in super::super) fn call_shape(&self, ft: NodeId, inst: NodeId) -> CallShape {
+        self.call_shape_of(ft, inst, &mut Vec::new())
+    }
+
+    fn call_shape_of(&self, ft: NodeId, inst: NodeId, stack: &mut Vec<NodeId>) -> CallShape {
+        let mut shape = CallShape::default();
+        // A recursive call adds nothing its outer activation does not.
+        if stack.contains(&ft) {
+            return shape;
+        }
+        let formals = self.func_formals(ft);
+        if formals.iter().any(|(formal, _)| {
+            matches!(
+                self.kind(*formal),
+                NodeKind::FuncArg { ty, direction, .. }
+                    if ty.kind == "event" && *direction != DbDirection::Input
+            )
+        }) {
+            shape.inline_only = true;
+        }
+        if let Some(body) = self.func_body(ft) {
+            stack.push(ft);
+            self.call_shape_walk(body, inst, &formals, stack, &mut shape);
+            stack.pop();
+        }
+        shape.static_refs.sort_unstable();
+        shape.static_refs.dedup();
+        shape
+    }
+
+    fn call_shape_walk(
+        &self,
+        node: NodeId,
+        inst: NodeId,
+        formals: &[(NodeId, bool)],
+        stack: &mut Vec<NodeId>,
+        shape: &mut CallShape,
+    ) {
+        match self.kind(node) {
+            NodeKind::Stmt(StmtKind::EventControl {
+                specs,
+                implicit,
+                body,
+            }) => {
+                let mut roots = Vec::new();
+                for spec in specs {
+                    self.event_spec_expressions(spec, &mut roots);
+                }
+                if *implicit {
+                    roots.extend(body);
+                }
+                for root in roots {
+                    self.note_static_reads(root, formals, shape);
+                }
             }
-            match cg.kind(node) {
-                NodeKind::FuncTask { .. } => {
-                    if cg.func_formals(node).iter().any(|(formal, _)| {
-                        matches!(
-                            cg.kind(*formal),
-                            NodeKind::FuncArg { ty, direction, .. }
-                                if ty.kind == "event" && *direction != DbDirection::Input
-                        )
-                    }) {
-                        return true;
-                    }
-                    return cg
-                        .func_body(node)
-                        .is_some_and(|body| visit(cg, body, inst, seen));
-                }
-                NodeKind::Stmt(StmtKind::EventControl {
-                    specs,
-                    implicit,
-                    body,
-                }) => {
-                    if cg.event_control_reads_subroutine_storage(specs, *implicit, *body) {
-                        return true;
-                    }
-                }
-                NodeKind::FuncCall {
-                    name,
-                    is_task: true,
-                    callee,
-                    ..
-                } => {
-                    if let Ok((function, owner)) = cg.resolve_callee_env(inst, name, true, *callee)
-                    {
-                        if visit(cg, function, owner, seen) {
-                            return true;
+            NodeKind::FuncCall {
+                name,
+                is_task: true,
+                callee,
+                ..
+            } => {
+                if let Ok((function, owner)) = self.resolve_callee_env(inst, name, true, *callee) {
+                    let inner = self.call_shape_of(function, owner, stack);
+                    shape.inline_only |= inner.inline_only;
+                    let arguments = self.call_argument_nodes(node);
+                    for index in inner.static_refs {
+                        // The callee's clone binds this actual, so it must be a
+                        // formal of this task or a module-level name.
+                        if let Some(actual) = arguments.get(index) {
+                            if !self.note_forwarded_ref(*actual, formals, shape) {
+                                shape.inline_only = true;
+                            }
                         }
                     }
                 }
-                _ => {}
             }
-            cg.node(node)
-                .children
-                .iter()
-                .any(|child| visit(cg, *child, inst, seen))
+            _ => {}
         }
-        visit(self, ft, inst, &mut HashSet::new())
+        for child in &self.node(node).children {
+            self.call_shape_walk(*child, inst, formals, stack, shape);
+        }
     }
 
-    fn event_control_reads_subroutine_storage(
-        &self,
-        specs: &[EventSpec],
-        implicit: bool,
-        body: Option<NodeId>,
-    ) -> bool {
-        fn spec_reads(cg: &Codegen<'_>, spec: &EventSpec) -> bool {
-            match spec {
-                EventSpec::Qualified { event, condition } => {
-                    spec_reads(cg, event) || cg.reads_subroutine_storage(*condition)
-                }
-                EventSpec::Named(event) => cg.reads_subroutine_storage(*event),
-                EventSpec::AnyChange { sig } | EventSpec::Edge { sig, .. } => {
-                    cg.reads_subroutine_storage(*sig)
-                }
+    /// Expression roots an event spec evaluates.
+    fn event_spec_expressions(&self, spec: &EventSpec, out: &mut Vec<NodeId>) {
+        match spec {
+            EventSpec::Qualified { event, condition } => {
+                self.event_spec_expressions(event, out);
+                out.push(*condition);
             }
+            EventSpec::Named(event) => out.push(*event),
+            EventSpec::AnyChange { sig } | EventSpec::Edge { sig, .. } => out.push(*sig),
         }
-        (implicit && body.is_some_and(|body| self.reads_subroutine_storage(body)))
-            || specs.iter().any(|spec| spec_reads(self, spec))
     }
 
-    /// Whether an expression references a formal or local declared inside a
-    /// subroutine. Input event formals are exempt: they are typed parameters
-    /// whose handle needs no evaluator context.
-    fn reads_subroutine_storage(&self, node: NodeId) -> bool {
-        let scoped = |target: NodeId| {
-            matches!(
-                self.kind(target),
-                NodeKind::FuncArg { .. } | NodeKind::Var { .. } | NodeKind::Array { .. }
-            ) && !matches!(
-                self.kind(target),
-                NodeKind::FuncArg { ty, direction: DbDirection::Input, .. } if ty.kind == "event"
-            ) && self.enclosing_func_task(target).is_some()
+    /// Classify an event control's reads of subroutine-scoped storage. A `ref`
+    /// formal of the task itself is bound statically by a specialization;
+    /// input event formals are typed parameters; any other formal or local
+    /// forces the call-site expansion, whose evaluator context captures it.
+    fn note_static_reads(&self, node: NodeId, formals: &[(NodeId, bool)], shape: &mut CallShape) {
+        let mut visit_target = |target: NodeId| {
+            if let Some(index) = formals.iter().position(|(formal, _)| *formal == target) {
+                match self.kind(target) {
+                    NodeKind::FuncArg {
+                        direction: DbDirection::Ref,
+                        ty,
+                        ..
+                    } if ty.kind != "string" && !is_handle_kind(&ty.kind) => {
+                        shape.static_refs.push(index);
+                    }
+                    NodeKind::FuncArg {
+                        direction: DbDirection::Input,
+                        ty,
+                        ..
+                    } if ty.kind == "event" => {}
+                    _ => shape.inline_only = true,
+                }
+            } else if self.is_subroutine_scoped(target) {
+                shape.inline_only = true;
+            }
         };
         match self.kind(node) {
             NodeKind::Expr(ExprKind::Ref {
                 target: Some(target),
-            }) if scoped(*target) => return true,
-            NodeKind::Expr(ExprKind::HierPath { refs, .. })
-                if refs.iter().flatten().any(|target| scoped(*target)) =>
-            {
-                return true;
+            }) => visit_target(*target),
+            NodeKind::Expr(ExprKind::HierPath { refs, .. }) => {
+                refs.iter()
+                    .flatten()
+                    .for_each(|target| visit_target(*target));
             }
             _ => {}
         }
-        self.node(node)
-            .children
-            .iter()
-            .any(|child| self.reads_subroutine_storage(*child))
+        for child in &self.node(node).children {
+            self.note_static_reads(*child, formals, shape);
+        }
+    }
+
+    /// Record a `ref` formal forwarded as the actual of a statically bound
+    /// formal. Only a whole formal or module-level name binds statically.
+    fn note_forwarded_ref(
+        &self,
+        actual: NodeId,
+        formals: &[(NodeId, bool)],
+        shape: &mut CallShape,
+    ) -> bool {
+        let NodeKind::Expr(ExprKind::Ref {
+            target: Some(target),
+        }) = self.kind(actual)
+        else {
+            return false;
+        };
+        if let Some(index) = formals.iter().position(|(formal, _)| formal == target) {
+            if matches!(
+                self.kind(*target),
+                NodeKind::FuncArg {
+                    direction: DbDirection::Ref,
+                    ..
+                }
+            ) {
+                shape.static_refs.push(index);
+                return true;
+            }
+            return false;
+        }
+        !self.is_subroutine_scoped(*target)
+    }
+
+    /// Whether a declaration lives in a subroutine activation (a formal or a
+    /// local), as opposed to module, package or compilation-unit storage.
+    fn is_subroutine_scoped(&self, target: NodeId) -> bool {
+        matches!(
+            self.kind(target),
+            NodeKind::FuncArg { .. } | NodeKind::Var { .. } | NodeKind::Array { .. }
+        ) && self.enclosing_func_task(target).is_some()
     }
 
     /// Whether a task can cancel its activation through a named `disable`.
