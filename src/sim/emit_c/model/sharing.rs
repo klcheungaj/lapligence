@@ -435,6 +435,7 @@ pub(super) fn share(
     branches: &mut BTreeMap<CoroutineId, CoroutineArtifact>,
     plain: &mut BTreeMap<usize, String>,
     min_instances: usize,
+    pca_tables: &[(String, String, String)],
 ) -> Result<Sharing, String> {
     if min_instances == usize::MAX {
         return Ok(Sharing {
@@ -445,7 +446,18 @@ pub(super) fn share(
         });
     }
     let model = execution.ir();
-    let registry = registry(model, functions, branches);
+    let mut registry = registry(model, functions, branches);
+    for (name, ty, shape) in pca_tables {
+        registry.insert(
+            name.clone(),
+            Operand {
+                declaration: format!("const {ty}* @"),
+                shape: shape.clone(),
+                value: name.clone(),
+                access: "I->@".to_owned(),
+            },
+        );
+    }
     let frame_names = functions
         .values()
         .map(|artifact| {
