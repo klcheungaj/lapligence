@@ -13,10 +13,15 @@ if [[ ${1:-} == --cmake-build ]]; then
     build_dir=$3
     compiler=$4
     cflags=$5
+    release_flags=()
+    if [[ -n $cflags ]]; then
+        release_flags=(-DCMAKE_C_FLAGS_RELEASE:STRING="-DNDEBUG")
+    fi
     "$cmake_program" -S "$source_dir" -B "$build_dir" \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_C_COMPILER="$compiler" \
-        -DCMAKE_C_FLAGS_RELEASE:STRING="$cflags -DNDEBUG"
+        -DCMAKE_C_FLAGS:STRING="$cflags" \
+        "${release_flags[@]}"
     "$cmake_program" --build "$build_dir" --config Release
     exit 0
 fi
@@ -38,7 +43,8 @@ Options:
   --mode MODE          default, no-opt, or both (default: default)
   --cc PATH            C compiler for generated models (default: $CC or cc)
   --cmake PATH         CMake executable (default: cmake)
-  --cflags FLAGS       Generated-C flags (default: -O3 -Wall -Wno-unused-function)
+  --cflags FLAGS       Extra generated-C flags; override the model level
+  --model-opt-level L  Model/runtime level: O0, O1, O2, O3 or Os (llg default)
   --keep-scratch       Retain generated models and print their location
   --list-configs       List named configurations and exit
   -h, --help           Show this help
@@ -106,7 +112,8 @@ size_set=standard
 mode=default
 cc=${CC:-cc}
 cmake_program=${LLG_CMAKE:-cmake}
-cflags='-O3 -Wall -Wno-unused-function'
+cflags=
+model_opt_level=
 keep_scratch=0
 many_size=
 declare -a requested_configs=()
@@ -124,6 +131,7 @@ while (($# > 0)); do
         --cc) (($# >= 2)) || die '--cc requires a path'; cc=$2; shift 2 ;;
         --cmake) (($# >= 2)) || die '--cmake requires a path'; cmake_program=$2; shift 2 ;;
         --cflags) (($# >= 2)) || die '--cflags requires a value'; cflags=$2; shift 2 ;;
+        --model-opt-level) (($# >= 2)) || die '--model-opt-level requires a value'; model_opt_level=$2; shift 2 ;;
         --keep-scratch) keep_scratch=1; shift ;;
         --list-configs) list_configs; exit 0 ;;
         -h|--help) usage; exit 0 ;;
@@ -137,6 +145,9 @@ done
 [[ $size_set == smoke || $size_set == standard ]] || die '--size must be smoke or standard'
 [[ $mode == default || $mode == no-opt || $mode == both ]] || \
     die '--mode must be default, no-opt, or both'
+if [[ -n $model_opt_level ]]; then
+    [[ $model_opt_level =~ ^O[0123s]$ ]] || die '--model-opt-level requires O0, O1, O2, O3 or Os'
+fi
 if [[ -n $many_size ]]; then
     [[ $many_size =~ ^[0-9]+$ ]] || die '--many-size must be an integer'
     ((many_size >= 10000 && many_size <= 1000000)) || \
@@ -204,6 +215,7 @@ printf 'config\tmode\trun\tgeneration_status\tgeneration_ms\tgeneration_rss_kib\
     printf 'cc_version\t'; "$cc" --version | head -1
     printf 'cmake\t%s\n' "$cmake_program"
     printf 'cflags\t%s\n' "$cflags"
+    printf 'model_opt_level\t%s\n' "${model_opt_level:-llg-default}"
     printf 'uname\t'; uname -a
     printf 'uptime\t'; uptime
     printf 'scratch\t%s\n' "$scratch"
@@ -234,6 +246,7 @@ for config in "${requested_configs[@]}"; do
     for optimization in "${modes[@]}"; do
         optimization_args=()
         [[ $optimization == no-opt ]] && optimization_args+=(--no-opt)
+        [[ -n $model_opt_level ]] && optimization_args+=(--model-opt-level "$model_opt_level")
         build_name="$config.$optimization.build"
         build_log_dir="$output_dir/logs/$build_name"
         case_dir="$scratch/$build_name"

@@ -76,6 +76,93 @@ fn fresh_dir(tag: &str) -> sim_harness::TempDir {
 }
 
 #[test]
+fn generated_release_has_one_explicit_optimization_level() {
+    use sim::build::{CmakeBuildOpts, ModelOptLevel};
+    let dir = fresh_dir("optimization");
+    for level in [
+        ModelOptLevel::O0,
+        ModelOptLevel::O1,
+        ModelOptLevel::O2,
+        ModelOptLevel::O3,
+        ModelOptLevel::Os,
+    ] {
+        let opts = CmakeBuildOpts {
+            model_opt_level: level,
+            ..Default::default()
+        };
+        sim::build::generate_model_sources_with_opts(
+            dir.path(),
+            &[("model.c", STUB_MODEL_C)],
+            &opts,
+        )
+        .unwrap();
+        let cmake = std::fs::read_to_string(dir.path().join("CMakeLists.txt")).unwrap();
+        assert!(cmake.contains("set(CMAKE_C_FLAGS_RELEASE \"-DNDEBUG\")"));
+        assert!(cmake.contains("set(CMAKE_C_FLAGS_RELEASE \"/DNDEBUG\")"));
+        assert_eq!(cmake.matches(level.gnu_flag()).count(), 1);
+        assert_eq!(cmake.matches(level.msvc_flag()).count(), 1);
+        if level != ModelOptLevel::O3 {
+            assert!(!cmake.contains("-O3"));
+        }
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn configured_release_preserves_flag_order_without_accumulating_levels() {
+    let _guard = TEST_LOCK.lock().unwrap();
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let dir = fresh_dir("optimization-configure");
+    let opts = sim::build::CmakeBuildOpts {
+        model_opt_level: sim::build::ModelOptLevel::O1,
+        ..Default::default()
+    };
+    sim::build::generate_model_sources_with_opts(dir.path(), &[("model.c", STUB_MODEL_C)], &opts)
+        .unwrap();
+    for extra in ["", "", "-O0"] {
+        let output = Command::new("cmake")
+            .arg("-S")
+            .arg(dir.path())
+            .arg("-B")
+            .arg(dir.path().join("build"))
+            .arg("-DCMAKE_EXPORT_COMPILE_COMMANDS=ON")
+            .arg(format!("-DCMAKE_C_FLAGS:STRING={extra}"))
+            .output()
+            .expect("configure generated project");
+        assert!(output.status.success(), "{output:?}");
+        let commands: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(dir.path().join("build/compile_commands.json")).unwrap(),
+        )
+        .unwrap();
+        for entry in commands.as_array().unwrap() {
+            let command = entry["command"].as_str().unwrap();
+            let flags: Vec<_> = command.split_whitespace().collect();
+            assert_eq!(
+                flags.iter().filter(|flag| **flag == "-O1").count(),
+                1,
+                "{command}"
+            );
+            assert!(!flags.contains(&"-O3"), "{command}");
+            assert!(flags.contains(&"-DNDEBUG"), "{command}");
+            if !extra.is_empty() {
+                let base = flags.iter().position(|flag| *flag == "-O1").unwrap();
+                let user = flags.iter().position(|flag| *flag == "-O0").unwrap();
+                assert!(base < user, "{command}");
+            } else {
+                assert_eq!(
+                    flags.iter().filter(|flag| flag.starts_with("-O")).count(),
+                    1,
+                    "{command}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn generated_sources_keep_value_runtime_as_a_separate_translation_unit() {
     let dir = fresh_dir("value-sources");
     let extra = [("model.c", STUB_MODEL_C)];
@@ -577,6 +664,8 @@ fn driver_output_and_tool_flags_override_environment() {
             "--gen-only",
             "--out-dir",
             "gen",
+            "--model-opt-level",
+            "Os",
             "counter.sv",
         ])
         .current_dir(dir.path());
@@ -589,11 +678,23 @@ fn driver_output_and_tool_flags_override_environment() {
         std::path::Path::new("gen/sim/tb")
     );
     assert!(dir.path().join("gen/sim/tb/CMakeLists.txt").is_file());
+    let generated = std::fs::read_to_string(dir.path().join("gen/sim/tb/CMakeLists.txt")).unwrap();
+    assert!(generated.contains("-Os -Wall"));
+    assert!(!generated.contains("-O3"));
 
     let mut command = Command::new(env!("CARGO_BIN_EXE_llg"));
     command
         .args(["--top", "tb", "--out-dir", "out/run1", "--cmake", "cmake"])
-        .args(["--cc", "cc", "--cflags", "", "--build-jobs", "2"])
+        .args([
+            "--cc",
+            "cc",
+            "--cflags",
+            "",
+            "--model-opt-level",
+            "O1",
+            "--build-jobs",
+            "2",
+        ])
         .arg("--runtime-cache")
         .arg(&cache)
         .arg("counter.sv")
