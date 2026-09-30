@@ -8,6 +8,7 @@ mod cancellation_points;
 mod compact_names;
 mod conditional_records;
 mod fixed_array_reductions;
+mod instance_sharing;
 mod sequential_predicates;
 use crate::sim::execution::ExecutionModel;
 

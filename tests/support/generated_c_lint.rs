@@ -67,15 +67,26 @@ pub(crate) fn lint_standard_identifiers(source: &str) -> Result<(), Vec<String>>
 fn coroutine_bodies(source: &str) -> Vec<(String, &str)> {
     let mut bodies = Vec::new();
     let mut search = 0;
-    const PREFIX: &str = "static llg_co_status_t ";
-    while let Some(relative) = source[search..].find(PREFIX) {
+    const PREFIXES: [&str; 2] = [
+        "static llg_co_status_t ",
+        "static LLG_MODEL_SHARED llg_co_status_t ",
+    ];
+    while let Some((relative, prefix)) = PREFIXES
+        .iter()
+        .filter_map(|prefix| {
+            source[search..]
+                .find(prefix)
+                .map(|relative| (relative, *prefix))
+        })
+        .min_by_key(|(relative, _)| *relative)
+    {
         let start = search + relative;
         let Some(open_relative) = source[start..].find('{') else {
             break;
         };
         let open = start + open_relative;
-        if source[start..open].contains(';') {
-            search = open + 1;
+        if let Some(semicolon) = source[start..open].find(';') {
+            search = start + semicolon + 1;
             continue;
         }
         let Some(close) = matching_brace(source, open) else {
@@ -86,7 +97,7 @@ fn coroutine_bodies(source: &str) -> Vec<(String, &str)> {
         if signature.contains("llg_co_frame_t* co, llg_co_chain_t* ch")
             && body.contains("_frame_t* F = (")
         {
-            let name_start = start + PREFIX.len();
+            let name_start = start + prefix.len();
             let name_end = source[name_start..open]
                 .find('(')
                 .map(|offset| name_start + offset)
@@ -666,6 +677,21 @@ fn allowed_address_operand(body: &str, operand_start: usize) -> Result<(), Strin
     let rest = body[operand_start..].trim_start();
     let operand = rest
         .trim_start_matches(|ch: char| ch.is_ascii_whitespace() || matches!(ch, '(' | '*' | '&'));
+    if let Some(field) = operand.strip_prefix("I->v") {
+        let digits = field.bytes().take_while(u8::is_ascii_digit).count();
+        if digits > 0
+            && body.lines().any(|line| {
+                line.trim_start().starts_with("const llg_body_record_")
+                    && line.contains("* restrict I = ")
+            })
+            && !field
+                .as_bytes()
+                .get(digits)
+                .is_some_and(|byte| byte.is_ascii_alphanumeric() || *byte == b'_')
+        {
+            return Ok(());
+        }
+    }
     if operand.starts_with("F->") {
         return Ok(());
     }
@@ -852,5 +878,24 @@ static void p_final(llg_proc_t* self) { int local; consume(&local); }
     fn allows_dollar_in_literals_and_comments() {
         let c = "/* $display */ // $finish\nconst char* s = \"$bits \\\" $x\"; int c = '$';\n";
         assert_eq!(lint_standard_identifiers(c), Ok(()));
+    }
+}
+
+#[cfg(test)]
+mod sharing_tests {
+    use super::*;
+
+    #[test]
+    fn shared_body_after_a_prototype_is_linted() {
+        let source = "static LLG_MODEL_SHARED llg_co_status_t shared(llg_co_frame_t* co, llg_co_chain_t* ch);\nstatic LLG_MODEL_SHARED llg_co_status_t shared(llg_co_frame_t* co, llg_co_chain_t* ch) {\nshared_frame_t* F = (shared_frame_t*)co;\nllg_value_scope_t* local = NULL;\nLLG_CO_AWAIT(co, ch, 1, arm(&local));\nreturn LLG_CO_DONE;\n}";
+        assert!(lint_generated_coroutine_c(source).is_err());
+    }
+
+    #[test]
+    fn instance_record_addresses_require_the_generated_record_declaration() {
+        let body = "const llg_body_record_0_t* restrict I = F->_llg_instance;\nuse(&(*I->v12));";
+        let start = body.find("&(*").unwrap() + 1;
+        assert!(allowed_address_operand(body, start).is_ok());
+        assert!(allowed_address_operand("use(&(*I->v12));", 5).is_err());
     }
 }

@@ -73,6 +73,32 @@ llg_proc_t* llg_spawn(const llg_co_desc_t* desc, const char* name) {
     return llg_spawn_in_region(desc, name, LLG_REGION_ACTIVE);
 }
 
+static llg_proc_t* initialize_instance(llg_proc_t* p,
+    const llg_co_desc_t* desc, const void* record, size_t offset) {
+    if (!p) return NULL;
+    if (!record || offset < sizeof(llg_co_frame_t) ||
+        desc->frame_size < sizeof(record) ||
+        offset > desc->frame_size - sizeof(record)) {
+        llg_rt_co_bad_state(LLG_CO_ROOT(&p->chain), "invalid root instance record offset");
+    }
+    memcpy((unsigned char*)LLG_CO_ROOT(&p->chain) + offset, &record, sizeof(record));
+    return p;
+}
+
+llg_proc_t* llg_spawn_instance_in_region(const llg_co_desc_t* desc,
+    const char* name, llg_region_t region, const void* record, size_t record_offset) {
+    return initialize_instance(llg_spawn_in_region(desc, name, region),
+                               desc, record, record_offset);
+}
+
+llg_proc_t* llg_spawn_program_instance_in_region(const llg_co_desc_t* desc,
+    const char* name, llg_region_t region, uint64_t instance, int is_initial,
+    const void* record, size_t record_offset) {
+    return initialize_instance(llg_spawn_program_in_region(desc, name, region,
+                                                          instance, is_initial),
+                               desc, record, record_offset);
+}
+
 llg_frame_t* llg_proc_frame(llg_proc_t* self) {
     return self ? self->frame : NULL;
 }

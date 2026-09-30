@@ -248,3 +248,10 @@ ABI, allocation-failure and waveform checks, and
 [repository validation](../../../tests/AGENTS.md) for integration. Preserve native
 Windows qualification and generated-model integration remain separate gates; the
 stackless process and cancellation probes run under ASan/UBSan.
+
+Shared-body startup uses `llg_spawn_instance_in_region` or its program variant.
+The record is immutable model-lifetime data. Before the scheduler can run the
+queued process, these services copy its pointer into the generated root payload
+at the supplied `offsetof`, checked against the header and descriptor frame size.
+Existing spawn services remain valid for roots without an instance-record field.
+No record ownership or cleanup transfers to the runtime.

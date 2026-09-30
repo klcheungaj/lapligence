@@ -1,0 +1,712 @@
+//! Exact sharing of owned emitted bodies; unrepresented operands stay in the key.
+use super::*;
+use crate::sim::ir::*;
+
+pub(super) const DEFAULT_SHARE_MIN_INSTANCES: usize = 4;
+const SELF: &str = "llg_body_self";
+
+pub(super) fn threshold() -> Result<usize, String> {
+    match std::env::var("LLG_SHARE_MIN_INSTANCES") {
+        Err(std::env::VarError::NotPresent) => Ok(DEFAULT_SHARE_MIN_INSTANCES),
+        Ok(value) if value == "unlimited" => Ok(usize::MAX),
+        Ok(value) => value
+            .parse::<usize>()
+            .ok()
+            .filter(|n| *n > 0)
+            .ok_or_else(|| {
+                "LLG_SHARE_MIN_INSTANCES must be a positive integer or unlimited".to_owned()
+            }),
+        Err(error) => Err(format!("LLG_SHARE_MIN_INSTANCES: {error}")),
+    }
+}
+
+#[derive(Clone)]
+struct Operand {
+    declaration: String,
+    shape: String,
+    value: String,
+    access: String,
+}
+
+impl Operand {
+    fn pointer(ty: &str, shape: String, name: &str) -> Self {
+        Self {
+            declaration: format!("{ty}* @"),
+            shape,
+            value: format!("&{name}"),
+            access: "(*I->@)".to_owned(),
+        }
+    }
+    fn scalar(ty: &str, value: String) -> Self {
+        Self {
+            declaration: format!("{ty} @"),
+            shape: ty.to_owned(),
+            value,
+            access: "I->@".to_owned(),
+        }
+    }
+}
+
+fn registry(
+    model: &IrModel,
+    functions: &CoroutineArtifacts,
+    branches: &BTreeMap<CoroutineId, CoroutineArtifact>,
+) -> HashMap<String, Operand> {
+    let mut registry = HashMap::new();
+    for signal in &model.signals {
+        if signal.net_driver.is_none()
+            && signal.alias.is_none()
+            && (!signal.omit || !signal.net_alias.is_empty())
+        {
+            registry.insert(
+                signal.c_name.clone(),
+                Operand::pointer(
+                    if signal.ty.width() == 0 {
+                        "double"
+                    } else {
+                        "sv4_t"
+                    },
+                    format!("{:?}", signal.ty),
+                    &signal.c_name,
+                ),
+            );
+        }
+    }
+    for (index, signal) in model.signals.iter().enumerate() {
+        if !signal.net_alias.is_empty() {
+            let name = format!("llg_net_alias_{index}");
+            registry.insert(
+                name.clone(),
+                Operand::pointer("llg_net_alias_t", format!("{:?}", signal.ty), &name),
+            );
+        }
+    }
+    for group in &model.net_groups {
+        registry.insert(
+            group.c_name.clone(),
+            Operand::pointer(
+                "llg_net_t",
+                format!("{}:{}:{:?}", group.width, group.n_drivers, group.kind),
+                &group.c_name,
+            ),
+        );
+        for slot in 0..group.n_drivers {
+            let name = format!("{}_d{slot}", group.c_name);
+            registry.insert(
+                name.clone(),
+                Operand::pointer("sv4_t", format!("{}:{}", group.width, group.signed), &name),
+            );
+        }
+    }
+    for event in &model.events {
+        if !event.is_array() {
+            registry.insert(
+                event.c_name.clone(),
+                Operand::pointer("llg_event_t", "event".to_owned(), &event.c_name),
+            );
+        }
+    }
+    for object in &model.objects {
+        let ty = match object.ty {
+            IrObjectType::String => "llg_string_t",
+            IrObjectType::Process => "llg_process_handle_t*",
+            _ => "void*",
+        };
+        registry.insert(
+            object.c_name.clone(),
+            Operand::pointer(ty, format!("{:?}", object.ty), &object.c_name),
+        );
+        if object.ty == IrObjectType::String {
+            let name = format!("{}_llg_dep", object.c_name);
+            registry.insert(
+                name.clone(),
+                Operand::pointer("sv4_t", "dependency".to_owned(), &name),
+            );
+        }
+    }
+    for array in &model.arrays {
+        let ty = if array.real { "double" } else { "sv4_t" };
+        let shape = format!(
+            "{}:{}:{}:{:?}:{}",
+            array.elem_width, array.signed, array.two_state, array.dims, array.shortreal
+        );
+        registry.insert(
+            array.c_name.clone(),
+            Operand {
+                declaration: format!("{ty} (*@)[{}]", array.total),
+                shape,
+                value: format!("&{}", array.c_name),
+                access: "(*I->@)".to_owned(),
+            },
+        );
+        let name = format!("{}_llg_contents_dep", array.c_name);
+        registry.insert(
+            name.clone(),
+            Operand::pointer("sv4_t", "dependency".to_owned(), &name),
+        );
+    }
+    for (index, function) in model.funcs.iter().enumerate() {
+        if super::super::owned::model::inline_template(function) {
+            continue;
+        }
+        for local in &function.locals {
+            let ty = if local.string {
+                "llg_string_t"
+            } else if local.real {
+                "double"
+            } else {
+                "sv4_t"
+            };
+            registry.insert(
+                local.c_name().to_owned(),
+                Operand::pointer(
+                    ty,
+                    format!("{}:{}", local.width, local.signed),
+                    local.c_name(),
+                ),
+            );
+        }
+        if !function.automatic {
+            if let Some(ty) = function.ret.filter(|_| function.return_signal.is_none()) {
+                let name = format!("_llg_ret_{index}");
+                registry.insert(
+                    name.clone(),
+                    Operand::pointer(
+                        if ty.width() == 0 { "double" } else { "sv4_t" },
+                        format!("{ty:?}"),
+                        &name,
+                    ),
+                );
+            }
+            if function.ret_string || function.ret_chandle {
+                let name = format!("_llg_native_ret_{index}");
+                registry.insert(
+                    name.clone(),
+                    Operand::pointer(
+                        if function.ret_string {
+                            "llg_string_t"
+                        } else {
+                            "void*"
+                        },
+                        "native return".to_owned(),
+                        &name,
+                    ),
+                );
+            }
+        }
+        let (ret, params) = if functions.contains_key(&index) {
+            (
+                "llg_co_status_t".to_owned(),
+                "llg_co_frame_t*, llg_co_chain_t*".to_owned(),
+            )
+        } else {
+            (
+                function_return_type(function).to_owned(),
+                owned_func_param_fields(function)
+                    .iter()
+                    .map(|(ty, _)| ty.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            )
+        };
+        registry.insert(
+            function.c_name.clone(),
+            Operand {
+                declaration: format!("{ret} (*@)({params})"),
+                shape: format!("{:?}:{:?}", function.ret, function.formals),
+                value: function.c_name.clone(),
+                access: "I->@".to_owned(),
+            },
+        );
+    }
+    for artifact in functions.values().chain(branches.values()) {
+        registry.insert(
+            artifact.desc_name.clone(),
+            Operand::pointer(
+                "const llg_co_desc_t",
+                artifact.frame_type.clone(),
+                &artifact.desc_name,
+            ),
+        );
+        let name = artifact.desc_name.strip_suffix("_desc").unwrap();
+        if !registry.contains_key(name) {
+            registry.insert(
+                name.to_owned(),
+                Operand {
+                    declaration: "llg_co_status_t (*@)(llg_co_frame_t*, llg_co_chain_t*)"
+                        .to_owned(),
+                    shape: artifact.frame_type.clone(),
+                    value: name.to_owned(),
+                    access: "I->@".to_owned(),
+                },
+            );
+        }
+    }
+    registry
+}
+
+struct Normalized {
+    source: String,
+    operands: Vec<Operand>,
+}
+
+fn word_end(bytes: &[u8], mut index: usize) -> usize {
+    while index < bytes.len() && (bytes[index].is_ascii_alphanumeric() || bytes[index] == b'_') {
+        index += 1;
+    }
+    index
+}
+
+fn quoted_end(bytes: &[u8], mut index: usize) -> usize {
+    let quote = bytes[index];
+    index += 1;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'\\' => index += 2,
+            byte if byte == quote => return index + 1,
+            _ => index += 1,
+        }
+    }
+    bytes.len()
+}
+
+/// These are compiler-owned operands, never arbitrary C supplied through IR.
+fn normalize(
+    source: &str,
+    name: &str,
+    generated: bool,
+    registry: &HashMap<String, Operand>,
+) -> Option<Normalized> {
+    if source
+        .lines()
+        .skip(1)
+        .any(|line| line.trim_start().starts_with("static "))
+    {
+        return None;
+    }
+    let source = source.replacen(&format!(" {name}("), &format!(" {SELF}("), 1);
+    let bytes = source.as_bytes();
+    let mut labels = HashMap::new();
+    for line in source.lines() {
+        if let Some(label) = line.trim().strip_suffix(": ;") {
+            if label
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+            {
+                let next = labels.len();
+                labels
+                    .entry(label.to_owned())
+                    .or_insert_with(|| format!("_llg_body_label_{next}"));
+            }
+        }
+    }
+    let mut out = String::with_capacity(source.len());
+    let mut operands = Vec::<Operand>::new();
+    let mut pointer_slots = HashMap::<String, usize>::new();
+    let mut index = 0;
+    let mut arguments: Vec<(String, usize)> = Vec::new();
+    let mut last_word = String::new();
+    while index < bytes.len() {
+        let start = index;
+        let mut operand = None;
+        if bytes[index..].starts_with(b"/*") {
+            index = source[index + 2..]
+                .find("*/")
+                .map_or(bytes.len(), |n| index + n + 4);
+        } else if bytes[index..].starts_with(b"//") {
+            index = source[index..]
+                .find('\n')
+                .map_or(bytes.len(), |n| index + n);
+        } else if matches!(bytes[index], b'"' | b'\'') {
+            index = quoted_end(bytes, index);
+            if bytes[start] == b'"' {
+                operand = Some(Operand::scalar(
+                    "const char*",
+                    source[start..index].to_owned(),
+                ));
+            }
+        } else if bytes[index].is_ascii_alphabetic() || bytes[index] == b'_' {
+            index = word_end(bytes, index);
+            let word = &source[start..index];
+            last_word = word.to_owned();
+            if let Some(label) = labels.get(word) {
+                out.push_str(label);
+                continue;
+            }
+            if let Some(candidate) = registry.get(word) {
+                let slot = if let Some(slot) = pointer_slots.get(word) {
+                    *slot
+                } else {
+                    let slot = operands.len();
+                    operands.push(candidate.clone());
+                    pointer_slots.insert(word.to_owned(), slot);
+                    slot
+                };
+                out.push_str(&format!("llg_body_operand_{slot}"));
+                continue;
+            }
+        } else if bytes[index].is_ascii_digit() {
+            index = word_end(bytes, index);
+            let value = &source[start..index];
+            let identity = arguments
+                .last()
+                .is_some_and(|(call, arg)| match call.as_str() {
+                    "llg_net_write"
+                    | "llg_net_write_selected"
+                    | "llg_nba_net_after"
+                    | "llg_nba_net_selected_after" => *arg == 1,
+                    "llg_activation_enter" => *arg < 2,
+                    "llg_disable_target" | "llg_fork_group_new_target" => (1..=2).contains(arg),
+                    "llg_pca_assign" | "llg_pca_assign_d" | "llg_pca_drive" | "llg_pca_drive_d" => {
+                        *arg == 2
+                    }
+                    _ => false,
+                });
+            if identity {
+                operand = Some(Operand::scalar(
+                    if value.ends_with("ULL") {
+                        "uint64_t"
+                    } else if value.ends_with('u') {
+                        "uint32_t"
+                    } else {
+                        "int"
+                    },
+                    value.to_owned(),
+                ));
+            } else if generated && value.ends_with("ULL") {
+                operand = Some(Operand::scalar("uint64_t", value.to_owned()));
+            }
+        } else {
+            index += 1;
+            match bytes[start] {
+                b'(' => {
+                    arguments.push((std::mem::take(&mut last_word), 0));
+                }
+                b')' => {
+                    arguments.pop();
+                }
+                b',' => {
+                    if let Some((_, arg)) = arguments.last_mut() {
+                        *arg += 1;
+                    }
+                }
+                byte if !byte.is_ascii_whitespace() => last_word.clear(),
+                _ => {}
+            }
+        }
+        if let Some(operand) = operand {
+            let slot = operands.len();
+            out.push_str(&format!("llg_body_operand_{slot}"));
+            operands.push(operand);
+        } else {
+            out.push_str(&source[start..index]);
+        }
+    }
+    Some(Normalized {
+        source: out,
+        operands,
+    })
+}
+
+pub(super) struct Sharing {
+    pub(super) declarations: String,
+    pub(super) bodies: String,
+    pub(super) prototypes: String,
+    pub(super) spawns: HashMap<String, (String, String)>,
+}
+
+struct Candidate {
+    owner: CoroutineId,
+    name: String,
+    normalized: Normalized,
+    key: String,
+    plain: Option<usize>,
+}
+
+pub(super) fn share(
+    execution: &ExecutionModel,
+    functions: &mut CoroutineArtifacts,
+    processes: &mut [Option<CoroutineArtifact>],
+    branches: &mut BTreeMap<CoroutineId, CoroutineArtifact>,
+    plain: &mut BTreeMap<usize, String>,
+    min_instances: usize,
+) -> Result<Sharing, String> {
+    if min_instances == usize::MAX {
+        return Ok(Sharing {
+            declarations: String::new(),
+            bodies: String::new(),
+            prototypes: String::new(),
+            spawns: HashMap::new(),
+        });
+    }
+    let model = execution.ir();
+    let registry = registry(model, functions, branches);
+    let frame_names = functions
+        .values()
+        .map(|artifact| {
+            (
+                format!(
+                    "{}_frame_t",
+                    artifact.desc_name.strip_suffix("_desc").unwrap()
+                ),
+                artifact.frame_type.clone(),
+            )
+        })
+        .collect::<HashMap<_, _>>();
+    let spawn_names = model
+        .spawn_list()
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect::<BTreeSet<_>>();
+    let mut candidates = Vec::new();
+    for artifact in functions
+        .values()
+        .chain(processes.iter().flatten())
+        .chain(branches.values())
+    {
+        let name = artifact.desc_name.strip_suffix("_desc").unwrap();
+        // Assertion-action roots are spawned outside the model startup tables.
+        if matches!(artifact.owner, CoroutineId::Process(_)) && !spawn_names.contains(name) {
+            continue;
+        }
+        let generated = artifact.display_name.contains('[');
+        if let Some(normalized) = normalize(&artifact.source, name, generated, &registry) {
+            let shape = artifact.layout.render_typedef("llg_key_frame")?;
+            let shape = rewrite_identifiers(&shape, |name| frame_names.get(name).cloned());
+            let pca = if let CoroutineId::Process(index) = artifact.owner {
+                execution.processes()[index].blocks.iter().any(|block| block.operations.iter().any(|statement| matches!(statement,
+                    IrStmt::If { then_, .. } if then_.iter().any(|statement| matches!(statement, IrStmt::PcaDrive { .. })))))
+            } else {
+                false
+            };
+            let provenance = if pca {
+                "owned PCA driver"
+            } else {
+                &artifact.location
+            };
+            let key = format!(
+                "{:?}:{provenance}:{shape}:{}",
+                std::mem::discriminant(&artifact.owner),
+                normalized.source
+            );
+            candidates.push(Candidate {
+                owner: artifact.owner,
+                name: name.to_owned(),
+                normalized,
+                key,
+                plain: None,
+            });
+        }
+    }
+    for (index, source) in plain.iter() {
+        let function = &model.funcs[*index];
+        if function.dpi.is_some() {
+            continue;
+        }
+        if let Some(normalized) = normalize(source, &function.c_name, false, &registry) {
+            let key = format!(
+                "plain:{:?}:{:?}:{:?}:{}",
+                function.origin, function.formals, function.ret, normalized.source
+            );
+            candidates.push(Candidate {
+                owner: CoroutineId::Function(*index),
+                name: function.c_name.clone(),
+                normalized,
+                key,
+                plain: Some(*index),
+            });
+        }
+    }
+    let mut groups = Vec::<Vec<Candidate>>::new();
+    let mut by_key = HashMap::new();
+    for candidate in candidates {
+        let shapes = candidate
+            .normalized
+            .operands
+            .iter()
+            .map(|operand| format!("{}:{}", operand.declaration, operand.shape))
+            .collect::<Vec<_>>()
+            .join(";");
+        let key = format!("{}:{shapes}", candidate.key);
+        let next = groups.len();
+        let group = *by_key.entry(key).or_insert_with(|| {
+            groups.push(Vec::new());
+            next
+        });
+        groups[group].push(candidate);
+    }
+    let mut result = Sharing {
+        declarations: String::new(),
+        bodies: String::new(),
+        prototypes: String::new(),
+        spawns: HashMap::new(),
+    };
+    let mut sequence = 0;
+    for group in groups
+        .into_iter()
+        .filter(|group| group.len() >= min_instances)
+    {
+        let first = &group[0];
+        let body_name = format!("llg_shared_body_{sequence}");
+        let record_type = format!("llg_body_record_{sequence}_t");
+        sequence += 1;
+        let mut varying = Vec::new();
+        let mut replacements = HashMap::new();
+        for (slot, operand) in first.normalized.operands.iter().enumerate() {
+            if group
+                .iter()
+                .all(|candidate| candidate.normalized.operands[slot].value == operand.value)
+            {
+                let expression = if operand.access.starts_with("(*") {
+                    operand
+                        .value
+                        .strip_prefix('&')
+                        .unwrap_or(&operand.value)
+                        .to_owned()
+                } else {
+                    operand.value.clone()
+                };
+                replacements.insert(format!("v{slot}"), expression);
+            } else {
+                varying.push(slot);
+            }
+        }
+        // Invariant operands retain their direct references, avoiding record loads.
+        let mut source = rewrite_identifiers(&first.normalized.source, |name| {
+            let slot = name
+                .strip_prefix("llg_body_operand_")?
+                .parse::<usize>()
+                .ok()?;
+            let field = format!("v{slot}");
+            Some(
+                replacements
+                    .get(&field)
+                    .cloned()
+                    .unwrap_or_else(|| first.normalized.operands[slot].access.replace('@', &field)),
+            )
+        });
+        result.declarations.push_str("typedef struct {\n");
+        for &slot in &varying {
+            result.declarations.push_str(&format!(
+                "    {};\n",
+                first.normalized.operands[slot]
+                    .declaration
+                    .replace('@', &format!("v{slot}"))
+            ));
+        }
+        if varying.is_empty() {
+            result.declarations.push_str("    unsigned char unused;\n");
+        }
+        result
+            .declarations
+            .push_str(&format!("}} {record_type};\n"));
+        let root = matches!(first.owner, CoroutineId::Process(_));
+        let mut shared_frame = None;
+        if root {
+            let CoroutineId::Process(index) = first.owner else {
+                unreachable!()
+            };
+            let artifact = processes[index].as_ref().unwrap();
+            let frame_name = format!("llg_body_frame_{}_t", sequence - 1);
+            let mut typedef = artifact.layout.render_typedef(&frame_name)?;
+            // Embedded callee types have already been canonicalized in the body.
+            typedef = rewrite_identifiers(&typedef, |name| frame_names.get(name).cloned());
+            typedef = typedef.replacen(
+                "    llg_co_frame_t co;\n",
+                "    llg_co_frame_t co;\n    const void* _llg_instance;\n",
+                1,
+            );
+            result.declarations.push_str(&typedef);
+            result
+                .declarations
+                .push_str(&format!("LLG_CO_ROOT_FRAME_OK({frame_name});\n"));
+            source = rewrite_identifiers(&source, |name| {
+                (name == artifact.frame_type).then(|| frame_name.clone())
+            });
+            let declaration = format!("    {frame_name}* F = ({frame_name}*)co;\n");
+            source = source.replacen(&declaration, &format!("{declaration}    const {record_type}* restrict I = F->_llg_instance;\n    (void)I;\n"), 1);
+            shared_frame = Some(frame_name);
+        } else {
+            let open = source
+                .find(" {\n")
+                .ok_or_else(|| "missing owned procedure signature".to_owned())?;
+            source.insert_str(
+                open - 1,
+                &format!(", const {record_type}* _llg_instance_arg"),
+            );
+            let open = source.find(" {\n").unwrap();
+            source.insert_str(
+                open + 3,
+                &format!(
+                    "    const {record_type}* restrict I = _llg_instance_arg;\n    (void)I;\n"
+                ),
+            );
+        }
+        source = source
+            .replacen("static ", "static LLG_MODEL_SHARED ", 1)
+            .replacen(SELF, &body_name, 1);
+        result.prototypes.push_str(
+            source
+                .split_once(" {\n")
+                .ok_or_else(|| "missing shared procedure signature".to_owned())?
+                .0,
+        );
+        result.prototypes.push_str(";\n");
+        result.bodies.push_str(&source);
+        for (member, candidate) in group.iter().enumerate() {
+            let record = format!("llg_body_instance_{}_{}", sequence - 1, member);
+            let values = varying
+                .iter()
+                .map(|slot| candidate.normalized.operands[*slot].value.as_str())
+                .collect::<Vec<_>>();
+            result.declarations.push_str(&format!(
+                "static const {record_type} {record} = {{ {} }};\n",
+                if values.is_empty() {
+                    "0".to_owned()
+                } else {
+                    values.join(", ")
+                }
+            ));
+            if let Some(index) = candidate.plain {
+                let function = &model.funcs[index];
+                let params = owned_func_param_fields(function)
+                    .iter()
+                    .map(|(_, name)| name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let ret = function_return_type(function);
+                let call = format!("{body_name}({params}, &{record})");
+                plain.insert(
+                    index,
+                    format!(
+                        "static {ret} {}({}) {{\n    {}{call};\n}}\n",
+                        candidate.name,
+                        owned_func_params(function),
+                        if ret == "void" { "" } else { "return " }
+                    ),
+                );
+            } else {
+                let artifact = match candidate.owner {
+                    CoroutineId::Function(index) => functions.get_mut(&index).unwrap(),
+                    CoroutineId::Process(index) => processes[index].as_mut().unwrap(),
+                    _ => branches.get_mut(&candidate.owner).unwrap(),
+                };
+                if let Some(frame) = &shared_frame {
+                    artifact.frame_type = frame.clone();
+                    artifact.shared_entry = Some(body_name.clone());
+                    artifact.source.clear();
+                    result.spawns.insert(
+                        candidate.name.clone(),
+                        (
+                            format!("&{record}"),
+                            format!("offsetof({frame}, _llg_instance)"),
+                        ),
+                    );
+                } else {
+                    artifact.source = format!("static llg_co_status_t {}(llg_co_frame_t* co, llg_co_chain_t* ch) {{\n    return {body_name}(co, ch, &{record});\n}}\n", candidate.name);
+                }
+            }
+        }
+    }
+    Ok(result)
+}
