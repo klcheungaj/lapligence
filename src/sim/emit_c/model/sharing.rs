@@ -90,11 +90,16 @@ fn registry(
                 &group.c_name,
             ),
         );
-        for slot in 0..group.n_drivers {
-            let name = format!("{}_d{slot}", group.c_name);
+        if group.n_drivers > 0 {
+            let name = format!("{}__cells", group.c_name);
             registry.insert(
                 name.clone(),
-                Operand::pointer("sv4_t", format!("{}:{}", group.width, group.signed), &name),
+                Operand {
+                    declaration: format!("sv4_t (*@)[{}]", group.n_drivers),
+                    shape: format!("{}:{}:{}", group.width, group.signed, group.n_drivers),
+                    value: format!("&{name}"),
+                    access: "(*I->@)".to_owned(),
+                },
             );
         }
     }

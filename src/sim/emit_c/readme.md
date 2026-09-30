@@ -35,8 +35,10 @@ Identical frame layouts (every instance of one process or task) share a single
 `llg_shared_frame_<k>_t` typedef instead of one struct per coroutine.
 
 Large designs stay compact at model level too: plain static storage is
-initialized and destroyed through per-representation pointer tables and loops,
-and consecutive spawns, finals and waveform registrations run from constant
+initialized and destroyed through per-representation pointer tables and loops.
+Net contributions use one cell array per electrical group, with descriptor loops
+for defaults, index resets, alias binding and teardown. Net resolution and per-bit
+grouping are unchanged. Consecutive spawns, finals and waveform registrations run from constant
 argument tables in their original order.
 
 See [owned-emitter components](owned/readme.md), [runtime](../rt/readme.md),

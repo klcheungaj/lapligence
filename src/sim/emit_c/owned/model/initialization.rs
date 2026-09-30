@@ -103,6 +103,11 @@ impl StorageTables {
     fn pointer_table(&mut self, element: &str, names: &[String]) -> String {
         let table = format!("llg_storage_{}", self.count);
         self.count += 1;
+        self.named_pointer_table(element, &table, names);
+        table
+    }
+
+    fn named_pointer_table(&mut self, element: &str, table: &str, names: &[String]) {
         self.source.push_str(&format!(
             "static {element}* const {table}[{}] = {{\n",
             names.len()
@@ -116,8 +121,59 @@ impl StorageTables {
             self.source.push_str(&format!("    {entries},\n"));
         }
         self.source.push_str("};\n");
-        table
     }
+}
+
+fn table_loop(table: &str) -> String {
+    format!("for (size_t _llg_n = 0; _llg_n < sizeof({table}) / sizeof({table}[0]); ++_llg_n)")
+}
+
+fn net_storage_lifecycle(
+    model: &IrModel,
+    tables: &mut StorageTables,
+    initialize: &mut String,
+    destroy: &mut String,
+) {
+    let mut emitted = HashSet::new();
+    let groups = model
+        .net_groups
+        .iter()
+        .filter(|group| emitted.insert(group.c_name.as_str()))
+        .collect::<Vec<_>>();
+    if groups.is_empty() {
+        return;
+    }
+    tables
+        .source
+        .push_str("static const struct { llg_net_t* net; uint8_t fill; } llg_net_storage[] = {\n");
+    for group in groups {
+        let fill = match group.kind {
+            IrNetKind::Tri0 | IrNetKind::Supply0 => 0,
+            IrNetKind::Tri1 | IrNetKind::Supply1 => 1,
+            _ => 3,
+        };
+        tables
+            .source
+            .push_str(&format!("    {{ &{}, {fill} }},\n", group.c_name));
+    }
+    tables.source.push_str("};\n");
+    let each = table_loop("llg_net_storage");
+    initialize.push_str(&format!(
+        "    {each} {{\n        llg_net_t* net = llg_net_storage[_llg_n].net;\n        for (int slot = 0; slot < net->n_drivers; ++slot)\n            sv4_replace(net->drivers[slot], sv4_fill(3, net->width, net->is_signed));\n        llg_net_index_reset(net);\n        sv4_replace(&net->resolved, sv4_fill(llg_net_storage[_llg_n].fill, net->width, net->is_signed));\n        net->n_aliases = 0;\n    }}\n"
+    ));
+    destroy.push_str(&format!(
+        "    {each} {{\n        llg_net_t* net = llg_net_storage[_llg_n].net;\n        for (int slot = 0; slot < net->n_drivers; ++slot)\n            sv4_destroy(net->drivers[slot]);\n        sv4_destroy(&net->resolved);\n        net->propagation = NULL;\n    }}\n"
+    ));
+}
+
+fn alias_visible_lifecycle(table: &str, initialize: &mut String, destroy: &mut String) {
+    let each = table_loop(table);
+    initialize.push_str(&format!(
+        "    {each} {{\n        llg_net_alias_t* alias = {table}[_llg_n];\n        sv4_copy(&alias->visible, alias->storage);\n    }}\n"
+    ));
+    destroy.push_str(&format!(
+        "    {each}\n        sv4_destroy(&{table}[_llg_n]->visible);\n"
+    ));
 }
 
 pub(in crate::sim::emit_c) fn storage_lifecycle(
@@ -154,59 +210,28 @@ pub(in crate::sim::emit_c) fn storage_lifecycle(
     }
     block.flush(&mut tables, &mut initialize, &mut destroy);
     initialize.push_str(&std::mem::take(&mut fixed_defaults));
-    emitted.clear();
-    for group in &model.net_groups {
-        if !emitted.insert(group.c_name.clone()) {
-            continue;
-        }
-        for slot in 0..group.n_drivers {
-            initialize.push_str(&format!(
-                "    sv4_replace(&{}_d{slot}, sv4_fill(3, {}, {}));\n",
-                group.c_name,
-                group.width,
-                u8::from(group.signed)
-            ));
-            destroy.push_str(&format!("    sv4_destroy(&{}_d{slot});\n", group.c_name));
-        }
-        initialize.push_str(&format!("    llg_net_index_reset(&{});\n", group.c_name));
-        let fill = match group.kind {
-            IrNetKind::Tri0 | IrNetKind::Supply0 => 0,
-            IrNetKind::Tri1 | IrNetKind::Supply1 => 1,
-            _ => 3,
-        };
+    net_storage_lifecycle(model, &mut tables, &mut initialize, &mut destroy);
+    let aliases = model
+        .signals
+        .iter()
+        .enumerate()
+        .filter(|(_, signal)| !signal.net_alias.is_empty())
+        .map(|(index, _)| format!("llg_net_alias_{index}"))
+        .collect::<Vec<_>>();
+    if !aliases.is_empty() {
+        let table = tables.pointer_table("llg_net_alias_t", &aliases);
+        alias_visible_lifecycle(&table, &mut initialize, &mut destroy);
+        // All visible owners exist before bindings refresh any of them.
         initialize.push_str(&format!(
-            "    sv4_replace(&{}.resolved, sv4_fill({fill}, {}, {}));\n",
-            group.c_name,
-            group.width,
-            u8::from(group.signed)
+            "    {}\n        llg_net_alias_bind({table}[_llg_n]);\n",
+            table_loop(&table)
         ));
+    }
+    if !model.net_groups.is_empty() {
         destroy.push_str(&format!(
-            "    sv4_destroy(&{}.resolved);\n    {}.propagation = NULL;\n",
-            group.c_name, group.c_name
+            "    {}\n        llg_net_alias_clear(llg_net_storage[_llg_n].net);\n",
+            table_loop("llg_net_storage")
         ));
-    }
-    for (index, signal) in model.signals.iter().enumerate() {
-        if signal.net_alias.is_empty() {
-            continue;
-        }
-        initialize.push_str(&format!(
-            "    sv4_copy(&llg_net_alias_{index}.visible, &{});\n",
-            signal.c_name
-        ));
-        destroy.push_str(&format!(
-            "    sv4_destroy(&llg_net_alias_{index}.visible);\n"
-        ));
-    }
-    for group in &model.net_groups {
-        initialize.push_str(&format!("    {}.n_aliases = 0;\n", group.c_name));
-        destroy.push_str(&format!("    llg_net_alias_clear(&{});\n", group.c_name));
-    }
-    for (index, signal) in model.signals.iter().enumerate() {
-        if !signal.net_alias.is_empty() {
-            initialize.push_str(&format!(
-                "    llg_net_alias_bind(&llg_net_alias_{index});\n"
-            ));
-        }
     }
     emitted.clear();
     // Function return slots and static locals are independent persistent
@@ -314,15 +339,29 @@ pub(in crate::sim::emit_c) fn storage_lifecycle(
         initialize.push_str(&format!("    {bind}(&{}[_i], &{}_llg_element_deps[_i]);\n    {bind}(&{}[_i], &{}_llg_contents_dep);\n    }}\n", array.c_name, array.c_name, array.c_name, array.c_name));
         destroy.push_str("    }\n");
     }
-    for (array_index, array) in model.arrays.iter().enumerate() {
-        for (index, _) in &array.net_elements {
-            let name = format!("llg_array_net_{array_index}_{index}");
-            initialize.push_str(&format!(
-                "    sv4_copy(&{name}.visible, &{}[{index}]);\n    llg_net_alias_bind(&{name});\n",
-                array.c_name
-            ));
-            destroy.push_str(&format!("    sv4_destroy(&{name}.visible);\n"));
-        }
+    let array_aliases = model
+        .arrays
+        .iter()
+        .enumerate()
+        .flat_map(|(array_index, array)| {
+            array
+                .net_elements
+                .iter()
+                .map(move |(index, _)| format!("llg_array_net_{array_index}_{index}"))
+        })
+        .collect::<Vec<_>>();
+    if !array_aliases.is_empty() {
+        let table = "llg_array_net_storage";
+        tables.named_pointer_table("llg_net_alias_t", table, &array_aliases);
+        // Preserve array order and bind each view immediately after its copy.
+        initialize.push_str(&format!(
+            "    {} {{\n        llg_net_alias_t* alias = {table}[_llg_n];\n        sv4_copy(&alias->visible, alias->storage);\n        llg_net_alias_bind(alias);\n    }}\n",
+            table_loop(table)
+        ));
+        destroy.push_str(&format!(
+            "    {}\n        sv4_destroy(&{table}[_llg_n]->visible);\n",
+            table_loop(table)
+        ));
     }
     for container in &model.containers {
         let name = &container.c_name;
@@ -496,8 +535,18 @@ fn initialization_step(frame: &mut Frame<'_, '_>, step: &IrInitStep) -> Result<(
                 frame.line(format!("sv4_replace(&{}[_i], {value});", array.c_name));
             }
             frame.line("}");
-            for (element, _) in &array.net_elements {
-                frame.line(format!("sv4_replace(&{}[{element}], llg_net_alias_read(&llg_array_net_{index}_{element}));", array.c_name));
+            if !array.net_elements.is_empty() {
+                let offset = model.arrays[..*index]
+                    .iter()
+                    .map(|array| array.net_elements.len())
+                    .sum::<usize>();
+                let end = offset + array.net_elements.len();
+                frame.line(format!(
+                    "for (size_t _llg_n = {offset}; _llg_n < {end}; ++_llg_n) {{"
+                ));
+                frame.line("llg_net_alias_t* alias = llg_array_net_storage[_llg_n];");
+                frame.line("sv4_replace(alias->storage, llg_net_alias_read(alias));");
+                frame.line("}");
             }
         }
         IrInitStep::SetScalar { sig, value } => {

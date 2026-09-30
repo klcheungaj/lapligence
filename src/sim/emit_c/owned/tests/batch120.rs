@@ -295,12 +295,13 @@ fn alias_lifecycle_initializes_visible_owners_and_resets_bindings() {
     });
     let mut source = String::new();
     model::storage_lifecycle(&model, &mut source).unwrap();
-    assert!(source.contains("sv4_copy(&llg_net_alias_0.visible, &G_value)"));
-    assert!(source.contains("sv4_destroy(&llg_net_alias_0.visible)"));
-    assert_eq!(source.matches("net.n_aliases = 0;").count(), 1);
-    assert!(source.contains("llg_net_alias_clear(&net);"));
+    assert!(source.contains("&llg_net_alias_0,"));
+    assert!(source.contains("sv4_copy(&alias->visible, alias->storage)"));
+    assert!(source.contains("sv4_destroy(&llg_storage_0[_llg_n]->visible)"));
+    assert_eq!(source.matches("net->n_aliases = 0;").count(), 1);
+    assert!(source.contains("llg_net_alias_clear(llg_net_storage[_llg_n].net);"));
     assert!(
-        source.find("net.n_aliases = 0;").unwrap() < source.find("llg_net_alias_bind(").unwrap()
+        source.find("net->n_aliases = 0;").unwrap() < source.find("llg_net_alias_bind(").unwrap()
     );
 }
 

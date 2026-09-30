@@ -126,7 +126,7 @@ impl IrNetKind {
 #[derive(Clone, Debug, PartialEq)]
 pub struct IrNetGroup {
     /// C name of the `llg_net_t` global (e.g. `g_net_0`); driver cells are
-    /// `{c_name}_d{i}`.
+    /// `{c_name}__cells[i]`.
     pub(in crate::sim) c_name: String,
     pub(in crate::sim) width: u32,
     pub(in crate::sim) signed: bool,
