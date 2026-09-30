@@ -1,6 +1,6 @@
 //! Non-integral storage and expressions, kept distinct from packed vectors.
 
-use super::{IrCallArg, IrEnumMember, IrExpr};
+use super::{IrCallArg, IrEnumMember, IrEventRef, IrExpr};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 /// Non-integral scalar storage categories, independent of the packed backend.
@@ -380,6 +380,8 @@ pub enum IrProcessControl {
 pub enum IrObjectQuery {
     /// A typed opaque activation capture. Legal only in opaque capture slots.
     HandleCapture(IrChandleExpr),
+    /// A typed event handle initializer. Legal only in event capture slots.
+    EventCapture(IrEventRef),
     StringLen(IrStringExpr),
     StringGetc(IrStringExpr, Box<IrExpr>),
     StringCompare(IrStringExpr, IrStringExpr, bool),
@@ -1067,6 +1069,7 @@ impl IrObjectQuery {
     ) -> Result<(), super::IrValidationError> {
         match self {
             Self::HandleCapture(handle) => handle.validate(model, formals, chandle_return),
+            Self::EventCapture(_) => Ok(()),
             Self::StringAtoi(_, base) if !matches!(base, 2 | 8 | 10 | 16) => Err(
                 super::IrValidationError::new("string", "invalid numeric base"),
             ),
@@ -1139,6 +1142,12 @@ impl IrObjectQuery {
     pub(in crate::sim) fn expressions(&self, visit: &mut impl FnMut(&IrExpr)) {
         match self {
             Self::HandleCapture(handle) => handle.expressions(visit),
+            Self::EventCapture(IrEventRef::Array { indices, .. }) => {
+                for index in indices {
+                    visit(index);
+                }
+            }
+            Self::EventCapture(_) => {}
             Self::StringLen(value)
             | Self::StringAtoi(value, _)
             | Self::StringAtoreal(value)
@@ -1189,6 +1198,12 @@ impl IrObjectQuery {
     pub(in crate::sim) fn expressions_mut(&mut self, visit: &mut impl FnMut(&mut IrExpr)) {
         match self {
             Self::HandleCapture(handle) => handle.expressions_mut(visit),
+            Self::EventCapture(IrEventRef::Array { indices, .. }) => {
+                for index in indices {
+                    visit(index);
+                }
+            }
+            Self::EventCapture(_) => {}
             Self::StringLen(value)
             | Self::StringAtoi(value, _)
             | Self::StringAtoreal(value)

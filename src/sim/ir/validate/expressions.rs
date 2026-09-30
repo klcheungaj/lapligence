@@ -73,6 +73,9 @@ impl Validator<'_> {
                 result?;
             }
             IrExprKind::ObjectQuery(query) => {
+                if let IrObjectQuery::EventCapture(event) = query.as_ref() {
+                    self.validate_event_ref(event, formals, path)?;
+                }
                 query.validate(
                     self.model,
                     formals,
@@ -80,9 +83,9 @@ impl Validator<'_> {
                     self.string_return.get(),
                 )?;
                 let expected = match query.as_ref() {
-                    IrObjectQuery::ChandleEq(..) | IrObjectQuery::HandleCapture(..) => {
-                        Some((1, false))
-                    }
+                    IrObjectQuery::ChandleEq(..)
+                    | IrObjectQuery::HandleCapture(..)
+                    | IrObjectQuery::EventCapture(..) => Some((1, false)),
                     IrObjectQuery::SemaphoreTryGet(..) => Some((32, true)),
                     IrObjectQuery::ProcessEq(..) => Some((1, false)),
                     IrObjectQuery::StringGetc(..) => Some((8, true)),

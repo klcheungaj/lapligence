@@ -94,8 +94,12 @@ Fixed aggregate projections of static function locals use that persistent signal
 as their read/write owner, including tagged-member guards; activation locals do
 not name the persistent cell.
 
-Collect parameters and concrete genvars with each generated path. Replay deferred
-initializer calls/child references only after storage/prototypes exist, with
+Collect parameters and concrete genvars with each generated path.
+Subroutine names, prototypes and bodies traverse both generate arrays and
+generate scopes recursively, including nested conditional/loop scopes and their
+module instances. Fork references to input event formals resolve through typed
+event captures before the enclosing task's formal bindings.
+Replay deferred initializer calls/child references only after storage/prototypes exist, with
 recursion depth reset; fail the whole replay on error. Declaration-call and member
 default initialization finish before SystemVerilog processes start, never lazily
 on first call. Reject unavailable lifetime/provenance or unrepresented native/

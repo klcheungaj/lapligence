@@ -87,9 +87,22 @@ CMake is the only model builder: C11, Release by default, executable under
 `<build>/bin/`, and `m` linkage. The configure command retains:
 
 ```sh
-<cmake> -S <out_dir> -B <out_dir>/build [-G <generator>] [-DCMAKE_C_COMPILER_LAUNCHER=<launcher>] -DCMAKE_C_COMPILER=<cc|LLG_CC|$CC|cc> -DCMAKE_C_FLAGS:STRING="-O2 -Wall -Wno-unused-function [cflags|$LLG_CFLAGS]" -DLLG_RUNTIME_LIBRARY=<cache>
+<cmake> -S <out_dir> -B <out_dir>/build [-G <generator>] [-DCMAKE_C_COMPILER_LAUNCHER=<launcher>] -DCMAKE_C_COMPILER=<cc|LLG_CC|$CC|cc> -DCMAKE_C_FLAGS:STRING="[cflags|$LLG_CFLAGS]" -DLLG_RUNTIME_LIBRARY=<cache>
 cmake --build <dir> --config Release --parallel <jobs> [--target llg_runtime]
 ```
+
+`CmakeBuildOpts.model_opt_level`/`--model-opt-level <O0|O1|O2|O3|Os>` selects
+optimization for model and runtime sources (default `DEFAULT_MODEL_OPT_LEVEL`,
+O3). Both generated projects prefix that level and warning flags to
+`CMAKE_C_FLAGS`; Release contributes only `-DNDEBUG` (`/DNDEBUG` on MSVC),
+removing CMake's implicit optimization. MSVC maps O0 to `/Od`, O1/Os to `/O1`,
+and O2/O3 to `/O2`, with `/W3` warnings. CMake detects the compiler family.
+User `--cflags` replaces `LLG_CFLAGS`; those flags follow the selected level,
+so a user optimization flag wins. Source-only projects retain the selected
+level; manual `-DCMAKE_C_FLAGS` flags have the same precedence. Reconfiguration
+shadows the cache value without accumulating default flags. Runtime cache keys
+include the level, flags and shared CMake optimization setup. Linux corpus
+measurements select the default; MSVC mapping is reasoned, not executed here.
 
 Both `--build` invocations (model and runtime archive) pass `--parallel`, a
 generic option since CMake 3.12 (generated projects require 3.16), so Makefile,

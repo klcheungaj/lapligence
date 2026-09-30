@@ -165,7 +165,14 @@ Common options:
 - `--runtime-cache <dir>`: runtime archive cache (default
   `<out-dir>/llg-runtime-cache`).
 - `--cc <program>`: C compiler for the model (default `cc`).
-- `--cflags <flags>`: extra C compiler flags.
+- `--model-opt-level <O0|O1|O2|O3|Os>`: model and runtime C optimization
+  (default O3, retained with `--gen-only`). MSVC maps O0 to `/Od`, O1/Os to
+  `/O1`, and O2/O3 to `/O2`.
+- `--cflags <flags>`: extra C compiler flags, appended after the selected
+  optimization level so user optimization flags override it. The option
+  replaces `LLG_CFLAGS`; an empty string suppresses the environment flags.
+- `--build-jobs <N>`: parallel model/runtime compile jobs (positive integer;
+  otherwise `CMAKE_BUILD_PARALLEL_LEVEL`, then available CPUs).
 - `--cmake <program>`: CMake program (default `cmake`).
 - `--generator <name>`: choose a CMake generator, such as `Ninja`.
 - `--launcher <program>`: optionally set CMake's C compiler launcher, such as
@@ -176,7 +183,9 @@ Common options:
 Relative paths resolve from the current directory. The runtime cache holds
 compiled runtime archives shared by compatible models, so only model-specific C
 is compiled per design. `--gen-only` output is self-contained and does not use
-the cache.
+the cache. Release contributes only NDEBUG; it does not add another
+optimization level. Compiler flags and the selected level identify compatible
+runtime archives.
 
 Exit status is `0` on success, `1` on compile/lint/build errors, and `2` for
 invalid command-line usage. A completed simulator's exit status is propagated.

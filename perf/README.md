@@ -39,10 +39,13 @@ under a unique directory below `--scratch-dir` (or `${TMPDIR:-/tmp}`), while TSV
 logs, toolchain metadata, and output hashes go under `--output-dir`. Use
 `--keep-scratch` when the generated executable is needed for profiling. CMake
 build time is intentionally a cold, self-contained generated-project build; use
-the same method for both sides of an A/B comparison. The default C flags match
-the generated model's Release optimization (`-O3`) and add the project's
-warning flags. Use `--cflags '-O2 -Wall -Wno-unused-function'` for the separate
-warning-clean build check required at `-O2`.
+the same method for both sides of an A/B comparison. The runner uses the
+generated project's model optimization default (O3).
+Use `--model-opt-level O1`, `O2` or `O3` to compare levels; `--cflags` supplies
+extra flags after that level and can override it. Release contributes only
+NDEBUG. For older binaries without the named option, pass the level through
+`--cflags '-O2 -Wall -Wno-unused-function'`; the runner clears CMake's Release
+optimization for them too. Use O2 for the separate warning-clean build check.
 
 The corpus parameters are named tunables, not product thresholds. The task,
 zero-delay, and wide-value standard sizes target seconds to tens of seconds on
@@ -50,7 +53,11 @@ the Phase 0 machine. The mandatory many-process shapes can take minutes on the
 archived Phase 0 libaco baseline because they deliberately expose its process
 and NBA scaling.
 Shared-machine results need at least three repetitions, medians, an `uptime`
-record, and a later quiet-machine A/B run before they support a gate.
+record. When choosing a level, retain each executable with `--keep-scratch`
+and interleave at least five simulation repetitions per level (O1/O2/O3,
+repeated) so all levels see similar host load. Report medians and spread,
+alongside cold compile time. A later quiet-machine A/B run is required before
+shared-host results support a gate.
 
 ## Compile-time harness
 
@@ -65,8 +72,8 @@ perf/scripts/compile_time.py \
 ```
 
 For every design and binary it records `--gen-only` time and peak RSS, then
-configures the generated project with CMake (`CMAKE_C_FLAGS` as `llg` passes
-them, Release otherwise unchanged, compile commands exported) and times
+configures the generated project with CMake (generated project defaults plus
+optional `--cflags`, compile commands exported) and times
 `cmake --build --parallel` (`--jobs`, default all cores). It then rebuilds each
 model translation unit (`model*.c`) alone with its exact compile command, once
 preprocessed for the expanded size and once with GCC `-ftime-report` or Clang

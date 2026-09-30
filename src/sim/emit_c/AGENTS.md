@@ -209,6 +209,13 @@ Evaluate capture values before publishing frames. Synchronous joined forks may
 alias registered parent numeric cells until every branch completes. Register all
 fields of a multi-event context before the first evaluator call: shared context
 pointers require one retain per descriptor field, not per distinct pointer.
+Fork captures of input event formals use `StorageKind::Event` and a typed
+`EventCapture` initializer. Synchronous joins borrow the parent handle through an
+opaque slot, preserving rebinding across siblings; the handle stays in the live
+parent coroutine frame until all children complete or are cancelled. Detached
+joins copy the event object into the slot and bind a private `llg_event_t` in the
+branch. Nested forks use the same ownership rule; event objects remain valid
+until model teardown.
 
 ## Model lifecycle and checks
 

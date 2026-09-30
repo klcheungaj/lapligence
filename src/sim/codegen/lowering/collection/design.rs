@@ -337,21 +337,10 @@ impl<'a> Codegen<'a> {
             }
         }
         for c in &self.node(inst).children {
-            if matches!(self.kind(*c), NodeKind::GenScopeArray) {
-                for gs in &self.node(*c).children {
-                    if matches!(self.kind(*gs), NodeKind::GenScope) {
-                        for cc in &self.node(*gs).children {
-                            if matches!(self.kind(*cc), NodeKind::ModuleInst { .. }) {
-                                let child_path = self.instance_path_of(*cc);
-                                self.collect_funcs(*cc, &child_path)?;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        for c in &self.node(inst).children {
-            if matches!(self.kind(*c), NodeKind::ModuleInst { .. }) {
+            if matches!(
+                self.kind(*c),
+                NodeKind::ModuleInst { .. } | NodeKind::GenScope | NodeKind::GenScopeArray
+            ) {
                 let child_path = self.instance_path_of(*c);
                 self.collect_funcs(*c, &child_path)?;
             }

@@ -7,6 +7,7 @@ mod cached_frame_fields;
 mod cancellation_points;
 mod compact_names;
 mod conditional_records;
+mod event_captures;
 mod fixed_array_reductions;
 mod instance_sharing;
 mod net_storage;

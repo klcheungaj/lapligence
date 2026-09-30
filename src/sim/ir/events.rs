@@ -123,7 +123,8 @@ impl IrDelay {
 }
 
 /// One value captured by a fork activation. A synchronous joined branch may
-/// borrow its enclosing automatic cell; detached branches own snapshots.
+/// borrow its enclosing automatic cell or event handle; detached branches own
+/// snapshots, including private handles to the captured event object identity.
 #[derive(Clone, Debug, PartialEq)]
 pub struct IrCapture {
     pub(super) storage: StorageRef,

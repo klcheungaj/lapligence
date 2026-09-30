@@ -241,13 +241,16 @@ pub(in super::super) fn event_ref_code(
 pub(super) fn event_capture_code(
     code: &str,
     context: Option<&crate::sim::ir::IrEventContext>,
-) -> String {
+) -> Result<String, String> {
     let Some(context) = context else {
-        return code.to_owned();
+        return Ok(code.to_owned());
     };
     let mut replaced = code.to_owned();
     for capture in context.captures() {
         let replacement = match capture.storage().kind() {
+            StorageKind::Event => {
+                return Err("event captures require whole-model ownership emission".to_owned())
+            }
             StorageKind::Real => format!(
                 "llg_frame_read_real((const llg_frame_t*)context, {}u)",
                 capture.storage().slot()
@@ -259,7 +262,7 @@ pub(super) fn event_capture_code(
         };
         replaced = replace_c_identifier(&replaced, capture.local(), &replacement);
     }
-    replaced
+    Ok(replaced)
 }
 
 pub(super) fn format_frame_capture(
@@ -268,6 +271,9 @@ pub(super) fn format_frame_capture(
     initial: &str,
 ) -> Result<String, String> {
     let call = match storage.kind() {
+        StorageKind::Event => {
+            return Err("event captures require whole-model ownership emission".to_owned())
+        }
         StorageKind::Packed => format!(
             "    llg_frame_capture_value({frame}, {}u, {initial});\n",
             storage.slot()

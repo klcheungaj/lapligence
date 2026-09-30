@@ -1,4 +1,4 @@
-//! Numeric capture snapshots. Evaluate user code before publishing raw frames.
+//! Activation captures. Evaluate user code before publishing raw frames.
 use super::native::NativeKind;
 use super::*;
 
@@ -16,7 +16,7 @@ fn check_capture(storage: StorageRef) -> Result<(), String> {
         && (storage.lifetime() != StorageLifetime::Automatic
             || storage.kind() == StorageKind::Opaque)
     {
-        return Err("borrowed fork capture requires automatic numeric storage".to_owned());
+        return Err("borrowed fork capture requires automatic numeric or event storage".to_owned());
     }
     Ok(())
 }
@@ -29,6 +29,31 @@ impl Frame<'_, '_> {
         let mut values = Vec::new();
         for (storage, initial) in captures {
             check_capture(storage)?;
+            if storage.kind() == StorageKind::Event {
+                let IrExprKind::ObjectQuery(query) = initial.kind() else {
+                    return Err("event capture requires a typed event handle".to_owned());
+                };
+                let IrObjectQuery::EventCapture(event) = query.as_ref() else {
+                    return Err("event capture requires a typed event handle".to_owned());
+                };
+                if storage.ownership() == StorageOwnership::Borrowed
+                    && !matches!(event, IrEventRef::Formal(_) | IrEventRef::Captured(_))
+                {
+                    return Err("borrowed event capture requires an automatic handle".to_owned());
+                }
+                let address = self.event_address(event)?;
+                let pointer = self.scalar("llg_event_t*", address);
+                let handle = if storage.ownership() == StorageOwnership::Borrowed {
+                    pointer
+                } else {
+                    self.scalar(
+                        "llg_event_object_t*",
+                        format!("{pointer} ? {pointer}->object : NULL"),
+                    )
+                };
+                values.push((storage, CapturedValue::Handle(handle)));
+                continue;
+            }
             if storage.ownership() == StorageOwnership::Borrowed {
                 let binding = match initial.kind() {
                     IrExprKind::LocalRead(name) => self.resolve_lookup(name)?,
@@ -150,6 +175,27 @@ impl Frame<'_, '_> {
         source: &str,
     ) -> Result<(), String> {
         check_capture(storage)?;
+        if storage.kind() == StorageKind::Event {
+            let address = if storage.ownership() == StorageOwnership::Borrowed {
+                self.declare(
+                    "llg_event_t*",
+                    "event_alias",
+                    format!("llg_frame_read_opaque({source}, {}u)", storage.slot()),
+                )
+            } else {
+                let local = self.declare(
+                    "llg_event_t",
+                    "event_capture",
+                    format!("{{ llg_frame_read_opaque({source}, {}u) }}", storage.slot()),
+                );
+                format!("&{local}")
+            };
+            self.event_bindings
+                .last_mut()
+                .expect("event scope")
+                .insert(name.to_owned(), address);
+            return Ok(());
+        }
         if storage.ownership() == StorageOwnership::Borrowed {
             let (ty, operation) = if storage.kind() == StorageKind::Real {
                 ("double", "real")
