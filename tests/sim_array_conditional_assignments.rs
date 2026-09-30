@@ -155,3 +155,15 @@ fn array_conditional_assignment_deep_defaults_preserve_shared_wide_values() {
         &["--edition", "2009"],
     );
 }
+
+#[test]
+fn array_conditional_assignment_repeated_values_preserve_effects_and_resumes() {
+    sim_cli::run_case_with_args(
+        "array_conditional_assignments",
+        "repeated_values",
+        "repeated_values passed\n",
+        "",
+        &[],
+        &["--edition", "2009"],
+    );
+}

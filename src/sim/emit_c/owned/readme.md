@@ -12,6 +12,7 @@ addresses. Feature guards reject unrepresented ownership paths.
 | --- | --- |
 | `owned.rs` | Result records, reusable slots, binding/assignment casts. |
 | `expressions.rs`, `control.rs`, `system.rs` | Expressions, branches and system operations. |
+| `repeated_values.rs` | Typed repeated concatenation appends with per-iteration evaluation and cleanup. |
 | `stores.rs`, `statements.rs` | Captured lvalues/masks, writes and lexical/loop cleanup. |
 | `calls.rs`, `pure_calls.rs`, `events.rs`, `formatting.rs` | Call/result/address ownership, callback inlining, events and output. |
 | `cached_fields.rs` | C-local mirrors of resume-stable frame fields, reloaded after every suspension. |
