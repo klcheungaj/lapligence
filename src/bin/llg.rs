@@ -5,7 +5,7 @@
 //! ```text
 //! llg [generate options] [build options] <file.sv>... [-- <plusargs>...]
 //! generate: --top <module[:config]>  --edition <2001|2009>  --compilation-units <separate|merged>  --include-dir <path>  --define <NAME[=VALUE]>  --define-system-task <prototype>  --libmap <file>  --libfile [<library>=]<file>  --library-order <library>[,<library>...]  --default-library <library>  --lint  --lint-json [<path>]  --lint-config <file>  --gen-only  --no-opt  --stop-policy <resume|exit>
-//! build:    --generator <backend>  --launcher <program>  --dpi-lib <path>...  --cc <program>  --cflags <flags>  --cmake <program>  --build-jobs <N>
+//! build:    --generator <backend>  --launcher <program>  --dpi-lib <path>...  --cc <program>  --cflags <flags>  --model-opt-level <O0|O1|O2|O3|Os>  --cmake <program>  --build-jobs <N>
 //! output:   --out-dir <dir>  --runtime-cache <dir>
 //! ```
 //!
@@ -35,6 +35,9 @@
 //!   (`sim::build::build_model_cmake_with_opts`). Each tool option wins over
 //!   its environment fallback: `--cmake` > `$LLG_CMAKE` > `cmake`;
 //!   `--cc` > `$LLG_CC` > `$CC` > `cc`; `--cflags` > `$LLG_CFLAGS`.
+//! - `--model-opt-level <O0|O1|O2|O3|Os>` selects model and runtime C
+//!   optimization. Extra flags follow it and can override it. Release adds
+//!   only NDEBUG. Source-only projects retain the selected level.
 //! - The runtime archive cache is `--runtime-cache` >
 //!   `$LLG_RUNTIME_CACHE_DIR` > `<out-dir>/llg-runtime-cache`.
 //! - `--build-jobs <N>` sets the `cmake --build --parallel` job count for the
@@ -44,7 +47,7 @@
 //!   e.g. `Ninja`, `"Unix Makefiles"`); it overrides `$CMAKE_GENERATOR`.
 //! - `--launcher <program>` selects `CMAKE_C_COMPILER_LAUNCHER` (for example,
 //!   `ccache` or `sccache`). No launcher is selected by default.
-//!   Build options are ignored with a warning when combined with `--gen-only`.
+//!   Tool invocation options are ignored with a warning under `--gen-only`.
 //! - `--gen-only` stops after emitting the model + runtime +
 //!   `CMakeLists.txt` into `<out-dir>/sim/<design>` (prints the directory,
 //!   exits 0) without configuring/building/running.
@@ -88,6 +91,7 @@ struct DriverOptions {
     launcher: Option<String>,
     cc: Option<String>,
     cflags: Option<String>,
+    model_opt_level: sim::build::ModelOptLevel,
     cmake: Option<String>,
     build_jobs: Option<usize>,
     out_dir: PathBuf,
@@ -137,7 +141,7 @@ fn parse_args(args: Vec<String>) -> Result<DriverOptions, i32> {
         eprintln!(
             "usage: llg [generate options] [build options] <file.sv>... [-- <plusargs>...]\n\
              generate: --top <module[:config]>  --edition <2001|2009>  --compilation-units <separate|merged>  --include-dir <path>  --define <NAME[=VALUE]>  --define-system-task <prototype>  --libmap <file>  --libfile [<library>=]<file>  --library-order <library>[,<library>...]  --default-library <library>  --lint  --lint-json [<path>]  --lint-config <file>  --gen-only  --no-opt\n\
-             build:    --generator <backend>  --launcher <program>  --dpi-lib <path>...  --cc <program>  --cflags <flags>  --cmake <program>  --build-jobs <N>\n\
+             build:    --generator <backend>  --launcher <program>  --dpi-lib <path>...  --cc <program>  --cflags <flags>  --model-opt-level <O0|O1|O2|O3|Os>  --cmake <program>  --build-jobs <N>\n\
              output:   --out-dir <dir>  --runtime-cache <dir>\n\
              stop:     --stop-policy <resume|exit>  # `$stop` handling (default: resume)"
         );
@@ -165,6 +169,7 @@ fn parse_args(args: Vec<String>) -> Result<DriverOptions, i32> {
     let mut launcher: Option<String> = None;
     let mut cc: Option<String> = None;
     let mut cflags: Option<String> = None;
+    let mut model_opt_level = sim::build::ModelOptLevel::default();
     let mut cmake: Option<String> = None;
     let mut build_jobs: Option<usize> = None;
     let mut out_dir = PathBuf::from(DEFAULT_OUT_DIR);
@@ -216,13 +221,20 @@ Options:
       --dpi-lib <path>       Link one explicit DPI-C library (repeatable)
       --cc <program>         C compiler for the model (default: $LLG_CC, $CC, cc)
       --cflags <flags>       Extra C compiler flags (default: $LLG_CFLAGS)
+                              Appended after the model optimization level
+      --model-opt-level <O0|O1|O2|O3|Os>
+                              Model/runtime C optimization (default: {model_opt_default})
+                              MSVC: O0=/Od, O1/Os=/O1, O2/O3=/O2
       --cmake <program>      CMake program (default: $LLG_CMAKE, cmake)
       --build-jobs <N>       Parallel compile jobs (default: $CMAKE_BUILD_PARALLEL_LEVEL,
                               available CPUs)
       --out-dir <dir>        Output root; the model goes to <dir>/sim/<design>
                               (default: build)
       --runtime-cache <dir>  Runtime archive cache (default: $LLG_RUNTIME_CACHE_DIR,
-                              <out-dir>/llg-runtime-cache)"
+                              <out-dir>/llg-runtime-cache)",
+                    model_opt_default = sim::build::DEFAULT_MODEL_OPT_LEVEL
+                        .gnu_flag()
+                        .trim_start_matches('-')
                 );
                 return Err(0);
             }
@@ -367,6 +379,14 @@ Options:
                     return Err(2);
                 }
             },
+            "--model-opt-level" => match it.next().as_deref().map(sim::build::ModelOptLevel::parse)
+            {
+                Some(Ok(value)) => model_opt_level = value,
+                _ => {
+                    eprintln!("llg: --model-opt-level requires O0, O1, O2, O3 or Os");
+                    return Err(2);
+                }
+            },
             "--out-dir" => match it.next() {
                 Some(value) if !value.is_empty() => out_dir = PathBuf::from(value),
                 _ => {
@@ -445,6 +465,7 @@ Options:
         launcher,
         cc,
         cflags,
+        model_opt_level,
         cmake,
         build_jobs,
         out_dir,
@@ -478,6 +499,7 @@ fn run(options: DriverOptions) -> i32 {
         launcher,
         cc,
         cflags,
+        model_opt_level,
         cmake,
         build_jobs,
         out_dir: out_root,
@@ -663,6 +685,7 @@ fn run(options: DriverOptions) -> i32 {
         }
         let opts = sim::build::CmakeBuildOpts {
             dpi_libraries,
+            model_opt_level,
             ..Default::default()
         };
         if let Err(e) = sim::build::generate_model_sources_with_opts(&out_dir, &model, &opts) {
@@ -685,6 +708,7 @@ fn run(options: DriverOptions) -> i32 {
         runtime_cache_dir: Some(runtime_cache_dir),
         cc,
         cflags,
+        model_opt_level,
         cmake,
         build_jobs,
     };

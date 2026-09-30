@@ -30,6 +30,10 @@
 //! covers the packed-value ABI, sources, compiler-reported target, toolchain,
 //! flags, generator, launcher, platform, and waveform support. `--gen-only`
 //! output remains self-contained.
+//! [`CmakeBuildOpts::model_opt_level`] selects optimization for both model and
+//! runtime sources. Generated projects prefix compiler-specific level and
+//! warning flags; Release adds only NDEBUG. Extra user flags follow the level
+//! and can override it. The level and the CMake setup participate in cache keys.
 //!
 //! Environment variables (each is a fallback for the matching
 //! [`CmakeBuildOpts`] field, which wins when set):
@@ -66,6 +70,7 @@ project(llg_sim_model C)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
+{OPTIMIZATION_SETUP}
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
@@ -109,6 +114,7 @@ project(llg_sim_runtime C)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
+{OPTIMIZATION_SETUP}
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
@@ -117,6 +123,82 @@ add_library(llg_runtime STATIC {RUNTIME_SOURCES})
 target_include_directories(llg_runtime PRIVATE ${CMAKE_SOURCE_DIR})
 {WAVE_DEFINITION}
 "#;
+
+// Keep the configuration free of optimization flags so user flags come last.
+// A normal variable shadows the cached user flags without accumulating prefixes
+// when the same build directory is configured again.
+const OPTIMIZATION_CMAKE_TEMPLATE: &str = r#"if(MSVC)
+  set(CMAKE_C_FLAGS_RELEASE "/DNDEBUG")
+  set(CMAKE_C_FLAGS "{MSVC_OPT_FLAG} /W3 ${CMAKE_C_FLAGS}")
+else()
+  set(CMAKE_C_FLAGS_RELEASE "-DNDEBUG")
+  set(CMAKE_C_FLAGS "{GNU_OPT_FLAG} -Wall -Wno-unused-function ${CMAKE_C_FLAGS}")
+endif()
+"#;
+
+/// Optimization levels for generated model and runtime C sources.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ModelOptLevel {
+    /// Disable optimization (`/Od` on MSVC).
+    O0,
+    /// Basic optimization (`/O1` on MSVC).
+    O1,
+    /// Optimize for speed (`/O2` on MSVC).
+    O2,
+    /// Aggressive speed optimization (`/O2` on MSVC).
+    O3,
+    /// Optimize for size (`/O1` on MSVC).
+    Os,
+}
+
+/// Default chosen by simulation time across the standard performance corpus.
+pub const DEFAULT_MODEL_OPT_LEVEL: ModelOptLevel = ModelOptLevel::O3;
+
+impl Default for ModelOptLevel {
+    fn default() -> Self {
+        DEFAULT_MODEL_OPT_LEVEL
+    }
+}
+
+impl ModelOptLevel {
+    /// Parse the level name used by `llg --model-opt-level`.
+    pub fn parse(value: &str) -> Result<Self, &'static str> {
+        match value {
+            "O0" => Ok(Self::O0),
+            "O1" => Ok(Self::O1),
+            "O2" => Ok(Self::O2),
+            "O3" => Ok(Self::O3),
+            "Os" => Ok(Self::Os),
+            _ => Err("expected O0, O1, O2, O3 or Os"),
+        }
+    }
+
+    /// GCC/Clang optimization flag. CMake selects the compiler family.
+    pub const fn gnu_flag(self) -> &'static str {
+        match self {
+            Self::O0 => "-O0",
+            Self::O1 => "-O1",
+            Self::O2 => "-O2",
+            Self::O3 => "-O3",
+            Self::Os => "-Os",
+        }
+    }
+
+    /// MSVC equivalent; O3 maps to O2 and Os maps to O1.
+    pub const fn msvc_flag(self) -> &'static str {
+        match self {
+            Self::O0 => "/Od",
+            Self::O1 | Self::Os => "/O1",
+            Self::O2 | Self::O3 => "/O2",
+        }
+    }
+}
+
+fn optimization_setup(level: ModelOptLevel) -> String {
+    OPTIMIZATION_CMAKE_TEMPLATE
+        .replace("{GNU_OPT_FLAG}", level.gnu_flag())
+        .replace("{MSVC_OPT_FLAG}", level.msvc_flag())
+}
 
 const WAVE_CMAKE: &str = r#"find_package(Threads REQUIRED)
 find_package(ZLIB REQUIRED)
@@ -153,6 +235,10 @@ pub struct CmakeBuildOpts {
     /// Extra whitespace-separated C flags. `None` uses `$LLG_CFLAGS`; an
     /// explicit value replaces it rather than appending.
     pub cflags: Option<String>,
+    /// Optimization for both model and runtime sources. User `cflags` (else
+    /// `$LLG_CFLAGS`) follow this level and can override it. Source-only
+    /// projects retain the selection. Defaults to [`DEFAULT_MODEL_OPT_LEVEL`].
+    pub model_opt_level: ModelOptLevel,
     /// CMake program. `None` uses `$LLG_CMAKE`, then `cmake`.
     pub cmake: Option<String>,
     /// Parallel job count passed as `cmake --build --parallel <N>` to the
@@ -557,6 +643,10 @@ fn write_cmakelists(
         MODEL_SOURCE_OPTIONS.replace("{MODEL_SOURCES}", &model_sources.join(" "))
     };
     let cmakelists = CMAKELISTS_TEMPLATE
+        .replace(
+            "{OPTIMIZATION_SETUP}",
+            &optimization_setup(opts.model_opt_level),
+        )
         .replace("{MODEL_SOURCE_OPTIONS}", &model_source_options)
         .replace("{MODEL_SOURCES}", &model_sources.join(" "))
         .replace("{ALL_SOURCES}", &sources.join(" "))
@@ -690,6 +780,10 @@ fn prepare_runtime_cache(
     }
     let runtime_sources = runtime_source_names(waveform).join(" ");
     let cmakelists = RUNTIME_CMAKELISTS_TEMPLATE
+        .replace(
+            "{OPTIMIZATION_SETUP}",
+            &optimization_setup(opts.model_opt_level),
+        )
         .replace("{RUNTIME_SOURCES}", &runtime_sources)
         .replace(
             "{WAVE_DEFINITION}",
@@ -832,6 +926,9 @@ fn runtime_cache_key_with_compiler(
     let generator = generator_for(opts).unwrap_or_default();
     for text in [
         RUNTIME_CMAKELISTS_TEMPLATE,
+        OPTIMIZATION_CMAKE_TEMPLATE,
+        opts.model_opt_level.gnu_flag(),
+        opts.model_opt_level.msvc_flag(),
         RUNTIME_WAVE_DEFINITION,
         super::rt::runtime_sources().0,
         super::rt::runtime_sources().1,
@@ -1080,24 +1177,26 @@ fn default_cmake() -> String {
     std::env::var("LLG_CMAKE").unwrap_or_else(|_| "cmake".to_string())
 }
 
-/// `-DCMAKE_C_FLAGS` payload: the base warning/optimization set plus every
-/// whitespace-separated token of the explicit flags, else `$LLG_CFLAGS`.
+/// `-DCMAKE_C_FLAGS` payload: explicit flags, else `$LLG_CFLAGS`. The generated
+/// project prefixes compiler-specific optimization and warnings.
 fn c_flags(opts: &CmakeBuildOpts) -> Result<String, BuildError> {
-    let mut flags = String::from("-O2 -Wall -Wno-unused-function");
-    if let Some(extra) = opts
-        .cflags
-        .clone()
-        .or_else(|| std::env::var("LLG_CFLAGS").ok())
-    {
+    resolve_c_flags(
+        opts.cflags.as_deref(),
+        std::env::var("LLG_CFLAGS").ok().as_deref(),
+    )
+}
+
+fn resolve_c_flags(explicit: Option<&str>, env_value: Option<&str>) -> Result<String, BuildError> {
+    let mut flags = Vec::new();
+    if let Some(extra) = explicit.or(env_value) {
         for flag in extra.split_whitespace() {
             if flag.contains('"') {
                 return Err(BuildError::InvalidCompilerFlag(flag.to_string()));
             }
-            flags.push(' ');
-            flags.push_str(flag);
+            flags.push(flag);
         }
     }
-    Ok(flags)
+    Ok(flags.join(" "))
 }
 
 /// Last lines of the captured tool output for error reporting: stderr when
@@ -1192,6 +1291,70 @@ fn sorted_entries(dir: &Path) -> Option<Vec<PathBuf>> {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU64, Ordering};
+
+    #[test]
+    fn model_optimization_levels_parse_and_map_to_compilers() {
+        for (name, level, gnu, msvc) in [
+            ("O0", ModelOptLevel::O0, "-O0", "/Od"),
+            ("O1", ModelOptLevel::O1, "-O1", "/O1"),
+            ("O2", ModelOptLevel::O2, "-O2", "/O2"),
+            ("O3", ModelOptLevel::O3, "-O3", "/O2"),
+            ("Os", ModelOptLevel::Os, "-Os", "/O1"),
+        ] {
+            assert_eq!(ModelOptLevel::parse(name), Ok(level));
+            assert_eq!(level.gnu_flag(), gnu);
+            assert_eq!(level.msvc_flag(), msvc);
+        }
+        for invalid in ["", "1", "-O2", "O4", "o3", "Oz"] {
+            assert!(ModelOptLevel::parse(invalid).is_err());
+        }
+        assert_eq!(
+            CmakeBuildOpts::default().model_opt_level,
+            DEFAULT_MODEL_OPT_LEVEL
+        );
+    }
+
+    #[test]
+    fn explicit_cflags_replace_environment_and_follow_the_level() {
+        assert_eq!(resolve_c_flags(None, None).unwrap(), "");
+        assert_eq!(resolve_c_flags(None, Some("-O1  -g")).unwrap(), "-O1 -g");
+        assert_eq!(resolve_c_flags(Some("-O0"), Some("-O3")).unwrap(), "-O0");
+        assert_eq!(resolve_c_flags(Some(""), Some("-O3")).unwrap(), "");
+        assert!(resolve_c_flags(None, Some("-DX=\"y\"")).is_err());
+        let setup = optimization_setup(ModelOptLevel::O2);
+        assert!(setup.contains("set(CMAKE_C_FLAGS_RELEASE \"-DNDEBUG\")"));
+        assert!(setup.contains("set(CMAKE_C_FLAGS_RELEASE \"/DNDEBUG\")"));
+        assert!(setup.contains("-O2 -Wall -Wno-unused-function ${CMAKE_C_FLAGS}"));
+        assert!(setup.contains("/O2 /W3 ${CMAKE_C_FLAGS}"));
+    }
+
+    #[test]
+    fn runtime_cache_separates_model_optimization_levels_and_user_flags() {
+        let opts = CmakeBuildOpts::default();
+        let key = |opts: &CmakeBuildOpts, flags| {
+            runtime_cache_key_with_compiler(false, "cc", flags, "cmake", opts, "cc", "target")
+        };
+        let o1 = CmakeBuildOpts {
+            model_opt_level: ModelOptLevel::O1,
+            ..opts.clone()
+        };
+        let o2 = CmakeBuildOpts {
+            model_opt_level: ModelOptLevel::O2,
+            ..opts.clone()
+        };
+        let o3 = CmakeBuildOpts {
+            model_opt_level: ModelOptLevel::O3,
+            ..opts
+        };
+        assert_ne!(key(&o1, ""), key(&o2, ""));
+        assert_ne!(key(&o2, ""), key(&o3, ""));
+        assert_ne!(key(&o3, ""), key(&o3, "-O0"));
+        let jobs = CmakeBuildOpts {
+            build_jobs: Some(2),
+            ..o3.clone()
+        };
+        assert_eq!(key(&o3, ""), key(&jobs, ""));
+    }
 
     #[test]
     fn build_jobs_prefer_explicit_then_environment_then_host() {
@@ -1386,7 +1549,7 @@ mod tests {
         assert_eq!(resolve_cc(&opts), "explicit-cc");
         assert_eq!(resolve_cmake(&opts), "explicit-cmake");
         let flags = c_flags(&opts).unwrap();
-        assert!(flags.ends_with(" -g -DX=1"), "{flags}");
+        assert_eq!(flags, "-g -DX=1");
 
         let quoted = CmakeBuildOpts {
             cflags: Some("-DX=\"y\"".to_owned()),

@@ -74,6 +74,7 @@ fn simulator_information_exits_without_compiling_or_installing_memory_limits() {
         "--cflags <flags>",
         "--cmake <program>",
         "--build-jobs <N>",
+        "--model-opt-level <O0|O1|O2|O3|Os>",
     ] {
         assert!(
             String::from_utf8_lossy(&output.stdout).contains(option),
@@ -113,6 +114,10 @@ fn simulator_missing_option_value_is_a_usage_error() {
         ("--cflags", "--cflags requires a flag string"),
         ("--cmake", "--cmake requires a program"),
         ("--build-jobs", "--build-jobs requires a positive integer"),
+        (
+            "--model-opt-level",
+            "--model-opt-level requires O0, O1, O2, O3 or Os",
+        ),
     ] {
         let output = invoke(env!("CARGO_BIN_EXE_llg"), &[option]);
         assert_eq!(output.status.code(), Some(2), "{output:?}");
@@ -121,6 +126,28 @@ fn simulator_missing_option_value_is_a_usage_error() {
             String::from_utf8_lossy(&output.stderr).contains(diagnostic),
             "{output:?}"
         );
+    }
+}
+
+#[test]
+fn simulator_model_opt_level_rejects_unknown_values() {
+    for value in ["", "0", "-O2", "O4", "o3", "Oz"] {
+        let output = invoke(env!("CARGO_BIN_EXE_llg"), &["--model-opt-level", value]);
+        assert_eq!(output.status.code(), Some(2), "{output:?}");
+        assert!(output.stdout.is_empty(), "{output:?}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr)
+                .contains("--model-opt-level requires O0, O1, O2, O3 or Os"),
+            "{output:?}"
+        );
+    }
+    for value in ["O0", "O1", "O2", "O3", "Os"] {
+        let output = invoke(
+            env!("CARGO_BIN_EXE_llg"),
+            &["--model-opt-level", value, "--help"],
+        );
+        assert!(output.status.success(), "{output:?}");
+        assert!(output.stderr.is_empty(), "{output:?}");
     }
 }
 

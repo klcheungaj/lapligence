@@ -18,7 +18,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent.parent
 CORPUS_DIR = REPO_ROOT / "perf" / "corpus"
 
-BASE_CFLAGS = "-O2 -Wall -Wno-unused-function"
+BASE_CFLAGS = ""
 SETS = ("smoke", "ladder", "large")
 FRONT_END_PHASES = ("phase setup", "phase parsing", "phase lang. deferred")
 MODEL_SOURCE_PREFIX = "model"
@@ -520,7 +520,7 @@ def parse_args(argv):
     parser.add_argument("--cc", default=os.environ.get("CC", "cc"), help="C compiler (default: $CC or cc)")
     parser.add_argument("--cmake", default=os.environ.get("LLG_CMAKE", "cmake"), help="CMake executable")
     parser.add_argument("--cflags", default=BASE_CFLAGS,
-                        help=f"CMAKE_C_FLAGS, as llg passes them (default: {BASE_CFLAGS})")
+                        help="Extra CMAKE_C_FLAGS (default: generated project flags)")
     parser.add_argument("--no-opt", action="store_true", help="generate with llg --no-opt")
     parser.add_argument("--no-phases", action="store_true",
                         help="skip the per-TU preprocess and compiler time-report compiles")

@@ -18,9 +18,12 @@ Keep reusable processing in the library. Bins import `llg::core`, `llg::ffi` and
 - `--out-dir <dir>` (default `build`) places the model in `<dir>/sim/<design>`.
   `--runtime-cache` > `$LLG_RUNTIME_CACHE_DIR` > `<out-dir>/llg-runtime-cache`;
   `--cc`, `--cflags` and `--cmake` override their environment fallbacks.
+  `--model-opt-level <O0|O1|O2|O3|Os>` selects model/runtime C optimization
+  (O3 default); later `--cflags`/`LLG_CFLAGS` can override it. Source-only
+  projects retain the level.
   `--build-jobs <N>` (positive) > `$CMAKE_BUILD_PARALLEL_LEVEL` > available CPUs
-  sets `cmake --build --parallel`. Build options are ignored with a warning under `--gen-only`. Never derive defaults
-  from compile-time paths.
+  sets `cmake --build --parallel`. Tool invocation options are ignored with a
+  warning under `--gen-only`. Never derive defaults from compile-time paths.
 - Repeated `--dpi-lib <path>` validates explicit DPI-C libraries before CMake and
   retains them in source-only output. `--no-opt` disables normally enabled IR
   passes; conformance fixtures exercise both modes.
