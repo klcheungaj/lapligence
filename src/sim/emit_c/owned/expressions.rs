@@ -422,28 +422,6 @@ impl Frame<'_, '_> {
         Ok(result)
     }
 
-    fn concat(&mut self, parts: &[IrExpr]) -> Result<Value, String> {
-        let (first, rest) = parts
-            .split_first()
-            .ok_or_else(|| "empty concatenation".to_owned())?;
-        let mut result = self.expression(first)?;
-        for part in rest {
-            let value = self.expression(part)?;
-            let width = result
-                .width
-                .checked_add(value.width)
-                .ok_or_else(|| "concatenation width overflow".to_owned())?;
-            let code = format!("sv4_concat({}, {})", result.code, value.code);
-            result = self.replace(result, code, width, false);
-            self.discard(value);
-        }
-        // Even a one-element concatenation is unsigned and self-determined.
-        self.line(format!("{}.is_signed = 0;", result.code));
-        result.signed = false;
-        result.fill = None;
-        Ok(result)
-    }
-
     fn binary(
         &mut self,
         op: IrBinOp,

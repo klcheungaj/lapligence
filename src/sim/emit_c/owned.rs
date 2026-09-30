@@ -39,6 +39,7 @@ pub(super) mod pca_batches;
 mod pure_calls;
 mod qualifiers;
 mod references;
+mod repeated_values;
 mod runtime_tasks;
 mod statements;
 mod stores;

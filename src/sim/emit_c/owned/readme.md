@@ -12,6 +12,7 @@ addresses. Feature guards reject unrepresented ownership paths.
 | --- | --- |
 | `owned.rs` | Result records, reusable slots, binding/assignment casts. |
 | `expressions.rs`, `control.rs`, `system.rs` | Expressions, branches and system operations. |
+| `repeated_values.rs` | Typed repeated concatenation appends with per-iteration evaluation and cleanup. |
 | `stores.rs`, `statements.rs` | Captured lvalues/masks, writes and lexical/loop cleanup. |
 | `pca_batches.rs` | Adjacent typed PCA assignment runs, registered helper temporaries and ordered table loops; contracts in the [emitter guide](../AGENTS.md#procedural-continuous-assignment-batches). |
 | `calls.rs`, `pure_calls.rs`, `events.rs`, `formatting.rs` | Call/result/address ownership, callback inlining, events and output. |

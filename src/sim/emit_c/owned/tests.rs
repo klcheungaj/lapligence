@@ -12,6 +12,7 @@ mod fixed_array_reductions;
 mod instance_sharing;
 mod net_storage;
 mod pca_batches;
+mod repeated_values;
 mod sequential_predicates;
 use crate::sim::execution::ExecutionModel;
 
