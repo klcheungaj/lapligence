@@ -9,6 +9,7 @@ mod compact_names;
 mod conditional_records;
 mod event_captures;
 mod fixed_array_reductions;
+mod instance_sharing;
 mod sequential_predicates;
 use crate::sim::execution::ExecutionModel;
 

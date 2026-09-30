@@ -15,7 +15,7 @@ typed procedure storage through `Frame::declare` (or its array/loop wrappers):
 candidate and decides its storage after seeing the complete block tree. A
 candidate whose declaring block and descendants have no resume point remains an
 ordinary C local; otherwise it is a frame field initialized at the original
-declaration point. Coroutine arguments are frame fields. A zero-resume process
+declaration point. Coroutine arguments are frame fields. An unshared zero-resume process
 therefore has only the `llg_co_frame_t` header and keeps its value scope, marks,
 temporaries and procedure storage on the C stack.
 `Frame::line` structurally tracks every C body brace and rejects an unbalanced
@@ -258,3 +258,34 @@ handwritten C components. Hand-authored output-shape probes do not execute this
 emitter. Use [ownership validation](../../../tests/readme.md#dynamic-ownership-validation)
 and its generated-C sanitizer configuration; do not infer feature acceptance from
 component tests.
+
+## Instance body sharing
+
+`model/sharing.rs` groups compiler-owned emitted bodies by source location,
+coroutine/ordinary ABI, exact canonical frame layout and typed operand shapes,
+then requires exact equality after normalization. PCA drivers also share across
+distinct source sites when their typed driver operations and normalized bodies
+match; each original source location remains in its descriptor. Unrepresented
+references remain in the key. Widths, resume numbers, array extents and ordinary
+parameter payloads remain structural; generate-instance ULL payloads may become
+record fields.
+Only known activation/PCA/net-contribution identities become scalar operands.
+Bodies with local static storage stay separate. Startup-external roots (assertion
+actions) stay separate because they do not receive the startup record initialization.
+
+`LLG_SHARE_MIN_INSTANCES` is a positive integer (default 4); `unlimited` disables
+sharing. Each qualifying class emits one body and static const typed records.
+Operands equal across all members stay direct constants/references. Shared root
+frames add `_llg_instance` immediately after the header; spawn tables supply its
+`offsetof` and initialize it before execution, including Reactive program roots.
+Original descriptors, sites, runtime labels and all model storage remain distinct.
+Metadata offsets use the resulting frame type. Shared callees/fork entries keep
+small ABI-preserving thunks forwarding a hidden record argument; their frame
+layout and arena/poll analysis therefore do not change. Shared bodies resist
+compiler inlining/cloning to avoid recreating the duplicated code.
+
+The immutable record pointer is reconstructed at every entry, before dispatch;
+it is not a C9 local whose initial assignment can be skipped on resume. Records
+hold model-lifetime storage/descriptor addresses, never activation locals. The
+frame lint must recognize shared-body signatures and narrowly permit addresses of
+record-referenced model storage while retaining its cached-field and overlay checks.

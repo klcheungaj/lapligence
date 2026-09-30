@@ -974,6 +974,14 @@ llg_proc_t* llg_spawn_in_region(const llg_co_desc_t* desc,
 llg_proc_t* llg_spawn_program_in_region(const llg_co_desc_t* desc,
                                          const char* name, llg_region_t region,
                                          uint64_t instance, int is_initial);
+// Shared bodies borrow an immutable model-lifetime instance record. Initialize
+// its pointer in the root payload before the queued process can run. The offset
+// is generated with offsetof and must describe one complete pointer field.
+llg_proc_t* llg_spawn_instance_in_region(const llg_co_desc_t* desc,
+    const char* name, llg_region_t region, const void* record, size_t record_offset);
+llg_proc_t* llg_spawn_program_instance_in_region(const llg_co_desc_t* desc,
+    const char* name, llg_region_t region, uint64_t instance, int is_initial,
+    const void* record, size_t record_offset);
 // Current process while the scheduler is inside one llg_co_run call or a
 // plain final call; NULL during initialization, scheduler bookkeeping, and
 // callbacks without a process. The scheduler sets and clears this around

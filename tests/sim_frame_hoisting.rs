@@ -671,7 +671,8 @@ fn run_repeated_instances() {
                 "{variant}:\n{c}"
             );
             assert!(
-                c.contains("llg_spawn_in_region(llg_model_startup_"),
+                c.contains("llg_spawn_in_region(llg_model_startup_")
+                    || c.contains("llg_spawn_instance_in_region(llg_model_startup_"),
                 "{variant}:\n{c}"
             );
             assert_strict_c11(&c);
@@ -738,4 +739,15 @@ fn run_deep_single_child_blocks() {
         Ok::<(), String>(())
     })
     .expect("deep overlay fixture runs");
+}
+
+#[test]
+fn generated_net_contribution_slots_are_instance_record_fields() {
+    let source = render_source_with_execution_options("net_slots.sv", "module tb; wire [3:0] d; for (genvar i=0; i<4; i++) begin : g assign d[i] = i[0]; end initial #1 $finish; endmodule", ExecutionAnalysisOptions::default());
+    assert!(
+        source.contains("llg_net_write_selected(&g_net_0, I->"),
+        "{source}"
+    );
+    assert_eq!(source.matches("LLG_CO_DISPATCH_BEGIN").count(), 2);
+    assert_strict_c11(&source);
 }

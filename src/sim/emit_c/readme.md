@@ -22,7 +22,7 @@ LP64 frame upper bounds. It records the generated C block tree exactly, merges
 single storage-bearing child chains into their parent struct, drops empty blocks,
 and emits `union { struct { ... } bK; ... } uN` only for storage-bearing siblings.
 Declarations in a block with no resume point in that block or any descendant stay
-as ordinary C locals; a process with no resume points consequently has a
+as ordinary C locals; an unshared process with no resume points consequently has a
 header-only frame. Resume-bearing scopes alone participate in overlays, upper
 bounds and descriptor offsets. Dispatch labels target only those scopes, while
 cancellation and structured-control gotos leave scopes, so no dispatch can skip a
@@ -47,3 +47,13 @@ argument tables in their original order.
 See [owned-emitter components](owned/readme.md), [runtime](../rt/readme.md),
 [feature status](../../../docs/sim_features.md) and
 [ownership validation](../../../tests/readme.md#dynamic-ownership-validation).
+
+Repeated compatible source processes and subroutines also share their bodies.
+Per-instance addresses, paths and runtime identities live in immutable records;
+shared roots receive the record through startup tables, while subroutine and fork
+entries forward it through a hidden argument. Descriptors and visible storage
+remain per instance. `LLG_SHARE_MIN_INSTANCES` selects the minimum class size
+(default 4); set it to `unlimited` to debug with independent bodies. Bodies with
+unrepresented differences or local static driver storage remain separate.
+The default leaves pairs and triples independent, reserving record and hidden-call
+overhead for classes with a larger reduction in repeated code.
