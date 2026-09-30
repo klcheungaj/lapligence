@@ -44,6 +44,7 @@ mod stores;
 mod streaming;
 mod strings;
 mod system;
+pub(super) mod udp;
 
 #[must_use]
 struct Value {

@@ -21,6 +21,13 @@ unwound on completion/cancellation. No cleanup attributes, VLAs, alloca or C++
 destructors. Scope indexes use exact pointer equality, never ordering; retain
 lexical cells only as long as queued/ref users require them.
 
+Combinational UDP evaluation (`sv4_udp_eval`) borrows validated immutable row
+masks and scalar input pointers only for the synchronous call, returning an
+independent unsigned one-bit owner. Normalize input Z to X, scan in source order
+and return X if no row matches. The additive API leaves value ABI 4 unchanged;
+`value_sources` embeds `value/udp.c` in facade order, so runtime-content cache
+hashing invalidates earlier archives.
+
 Keep `llg_value` scheduler/coroutine/waveform-independent, parity with `core::elab`,
 X/Z distinction, actual-width arithmetic/conversions and partial-select X fill.
 Array-conditional helpers borrow inputs and return independent owners with

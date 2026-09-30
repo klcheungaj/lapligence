@@ -1832,7 +1832,8 @@ pub(super) fn sampled_compatible(expression: &IrExpr) -> bool {
         | IrExprKind::StructMux { sel, a, b, .. } => {
             sampled_compatible(sel) && sampled_compatible(a) && sampled_compatible(b)
         }
-        IrExprKind::Predicate { clauses: parts }
+        IrExprKind::UdpEval { inputs: parts, .. }
+        | IrExprKind::Predicate { clauses: parts }
         | IrExprKind::Concat { parts }
         | IrExprKind::Replicate { parts, .. } => parts.iter().all(sampled_compatible),
         // Pattern bindings are procedural state updates and are not sampled

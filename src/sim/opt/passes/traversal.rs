@@ -116,7 +116,8 @@ fn walk_expr_mut(e: &mut IrExpr, f: &mut impl FnMut(&mut IrExpr)) {
             walk_expr_mut(a, f);
             walk_expr_mut(b, f);
         }
-        IrExprKind::Predicate { clauses: parts }
+        IrExprKind::UdpEval { inputs: parts, .. }
+        | IrExprKind::Predicate { clauses: parts }
         | IrExprKind::Concat { parts }
         | IrExprKind::Replicate { parts, .. } => {
             for p in parts {

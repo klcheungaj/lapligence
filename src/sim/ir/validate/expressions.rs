@@ -444,6 +444,9 @@ impl Validator<'_> {
                 self.validate_width(expr.width, &format!("{path}.width"))?;
                 self.validate_expr(a, formals, &format!("{path}.a"))?;
             }
+            IrExprKind::UdpEval { table, inputs } => {
+                self.validate_udp_eval(expr, *table, inputs, formals, path)?;
+            }
             IrExprKind::Predicate { clauses } => {
                 if clauses.is_empty() || expr.width != 1 || expr.signed || expr.fill.is_some() {
                     return self.fail(

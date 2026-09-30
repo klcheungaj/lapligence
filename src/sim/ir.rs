@@ -46,6 +46,8 @@ mod constants;
 pub use constants::IrConst;
 mod fixed_array_reductions;
 pub use fixed_array_reductions::{IrFixedArrayReduction, IrFixedArrayReductionSource};
+mod udp;
+pub use udp::{IrUdpInput, IrUdpOutput, IrUdpRow, IrUdpTable};
 mod expressions;
 pub use expressions::{
     IrBinOp, IrBitQuery, IrConditionalMember, IrDynamicCast, IrEnumMember, IrEnumMethod,
@@ -400,6 +402,8 @@ pub struct IrModel {
     pub(in crate::sim) class_allocations: Vec<IrClassAllocation>,
     /// Virtual-interface descriptors and their concrete instance bindings.
     pub(in crate::sim) virtual_interfaces: Vec<IrVirtualInterface>,
+    /// Combinational primitive definitions, shared across gate instances.
+    pub(in crate::sim) udp_tables: Vec<IrUdpTable>,
     pub(in crate::sim) events: Vec<IrEvent>,
     pub(in crate::sim) funcs: Vec<IrFunc>,
     /// Concurrent assertion instances, kept outside ordinary process IR.
@@ -445,6 +449,7 @@ pub struct IrModelParts {
     pub native_accesses: Vec<IrNativeAccess>,
     pub class_allocations: Vec<IrClassAllocation>,
     pub virtual_interfaces: Vec<IrVirtualInterface>,
+    pub udp_tables: Vec<IrUdpTable>,
     pub events: Vec<IrEvent>,
     pub funcs: Vec<IrFunc>,
     pub assertions: Vec<IrAssertion>,
@@ -486,6 +491,7 @@ impl IrModel {
             native_accesses: parts.native_accesses,
             class_allocations: parts.class_allocations,
             virtual_interfaces: parts.virtual_interfaces,
+            udp_tables: parts.udp_tables,
             events: parts.events,
             funcs: parts.funcs,
             assertions: parts.assertions,
@@ -512,6 +518,10 @@ impl IrModel {
     }
     pub fn signals(&self) -> &[IrSignal] {
         &self.signals
+    }
+    /// Shared combinational UDP definitions in deterministic lowering order.
+    pub fn udp_tables(&self) -> &[IrUdpTable] {
+        &self.udp_tables
     }
     pub fn net_groups(&self) -> &[IrNetGroup] {
         &self.net_groups

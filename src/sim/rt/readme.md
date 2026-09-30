@@ -77,3 +77,8 @@ unvalidated until native results are recorded. Complete platform qualification
 remains a separate gate.
 Use [feature status](../../../docs/sim_features.md), not this component map, for
 supported language contexts and outstanding qualification.
+
+`value/udp.c` evaluates typed combinational primitive row masks independently of
+the scheduler. `sv4_udp_eval` borrows inputs and table bytes for the call and
+returns an owned one-bit result, preserving Z-as-X, source-order matching and
+unmatched X. Value ABI 4 stays unchanged; source hashing changes the runtime cache.

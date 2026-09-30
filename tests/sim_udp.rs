@@ -59,8 +59,11 @@ fn db_owns_combinational_udp_rows() {
     endprimitive
     module tb;
         reg a, b;
-        wire out;
+        wire out, other;
+        wire [1:0] array_out;
         owned_udp u(out, a, b);
+        owned_udp v(other, a, b);
+        owned_udp array[1:0](array_out, a, b);
     endmodule
     "#;
     let compiled = compile::compile_sources_checked(
@@ -92,7 +95,15 @@ fn db_owns_combinational_udp_rows() {
             .collect::<Vec<_>>(),
         vec![("00", b'0'), ("01", b'1'), ("x?", b'x')]
     );
-    llg::sim::codegen::generate(&db).expect("UDP should lower after native snapshot is dropped");
+    let generated = llg::sim::codegen::generate(&db)
+        .expect("UDP should lower after native snapshot is dropped");
+    assert_eq!(
+        generated
+            .model_c
+            .matches("static const uint8_t llg_udp_table_")
+            .count(),
+        1
+    );
 }
 
 #[test]
@@ -172,6 +183,24 @@ fn edge_sensitive_udp_row_remains_rejected() {
             "partial_features",
             "udp_edge_rejected",
             "combinational UDP row contains state or edge metadata",
+            &["--edition", edition],
+        );
+    }
+}
+
+#[test]
+fn combinational_udp_overlapping_masks_and_state_matrix() {
+    const EXPECTED: &str = concat!(
+        "00 1\n01 1\n0x 1\n0z 1\n10 1\n11 1\n1x 1\n1z 1\n",
+        "x0 0\nx1 x\nxx x\nxz x\nz0 0\nz1 x\nzx x\nzz x\narray 110x\n",
+    );
+    for edition in ["2001", "2009"] {
+        sim_cli::run_case_with_args(
+            "partial_features",
+            "udp_masks",
+            EXPECTED,
+            "",
+            &[],
             &["--edition", edition],
         );
     }
