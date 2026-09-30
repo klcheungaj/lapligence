@@ -63,7 +63,7 @@ impl EmitCtx<'_, '_> {
         let mut captured_branches = Vec::with_capacity(branches.len());
         for (k, branch) in branches.iter().enumerate() {
             let fn_name = format!("{}_b{}", self.cg.new_fn_name(&self.path, "fork"), k);
-            let label = format!("{}.br{k}", self.path);
+            let label = format!("{}.br{k}", self.cg.source_path(&self.path));
             if !has_captures {
                 // Branches live in the same instance scope: same path, same
                 // owning instance; refs resolve to the instance globals.

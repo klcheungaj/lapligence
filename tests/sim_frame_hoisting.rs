@@ -517,7 +517,7 @@ endmodule
         .unwrap()..];
     let plain = &plain[..plain.find("\n}\n").unwrap()];
     assert!(
-        plain.contains("llg_budget_point(\"fn_tb_plain_loop\")"),
+        plain.contains("llg_budget_point(\"tb.plain_loop\")"),
         "{plain}"
     );
     assert!(plain.contains("goto _llg_return;"), "{plain}");
@@ -527,7 +527,7 @@ endmodule
         .unwrap()..];
     let timed = &timed[..timed.find("\n}\n").unwrap()];
     assert!(
-        timed.contains("llg_budget_point(\"fn_tb_timed_loop\")"),
+        timed.contains("llg_budget_point(\"tb.timed_loop\")"),
         "{timed}"
     );
     assert!(timed.contains("return LLG_CO_EXIT;"), "{timed}");

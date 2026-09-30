@@ -94,16 +94,45 @@ fn overlapping_repaired_lvalue_writers_are_rejected() {
     sim_cli::reject_case(
         "syn014_process_contexts",
         "pattern_writer_overlap",
-        "has multiple writers for `G_tb_second`",
+        "has multiple writers for `tb.second`",
     );
     sim_cli::reject_case(
         "syn014_process_contexts",
         "member_ff_overlap",
-        "has multiple writers for `G_tb_value__data`",
+        "has multiple writers for `tb.value.data`",
     );
     sim_cli::reject_case(
         "syn014_process_contexts",
         "pattern_continuous_overlap",
-        "has both a continuous assignment",
+        "variable storage `tb.row[0]` has both a continuous assignment",
     );
+}
+
+#[test]
+fn rejection_diagnostics_use_source_names_without_c_identifiers() {
+    for fixture in [
+        "overlapping_writers",
+        "extra_event",
+        "latch_event",
+        "pattern_writer_overlap",
+        "member_ff_overlap",
+        "pattern_continuous_overlap",
+    ] {
+        for optimized in [false, true] {
+            let output = sim_cli::invoke_with_env(
+                "syn014_process_contexts",
+                fixture,
+                optimized,
+                &[],
+                &[],
+                &[],
+            );
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert_eq!(output.status.code(), Some(1), "{fixture}: {stderr}");
+            assert!(output.stdout.is_empty(), "{fixture}: {output:?}");
+            for internal in ["G_", "D_", "cI_", "__llg_ident_"] {
+                assert!(!stderr.contains(internal), "{fixture}: {stderr}");
+            }
+        }
+    }
 }

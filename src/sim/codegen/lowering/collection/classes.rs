@@ -15,10 +15,8 @@ impl<'a> Codegen<'a> {
                 child,
                 format!("fn_class_{class_index}_{}", function_ident(&name)),
             );
-            self.func_labels.insert(
-                child,
-                format!("fn_class_{class_index}_{}", display_ident(&name)),
-            );
+            self.func_labels
+                .insert(child, format!("{}::{name}", self.node(class).name));
         }
         Ok(())
     }

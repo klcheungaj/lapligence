@@ -77,3 +77,38 @@ fn complete_model_keeps_long_foreign_dpi_names_and_diagnostic_labels() {
     assert!(identifier_spans(&source)
         .all(|span| { span.len() <= MAX_C_IDENTIFIER_LEN || source[span] == foreign }));
 }
+
+#[test]
+fn coroutine_branch_descriptors_and_unowned_functions_do_not_label_c_symbols() {
+    let mut model = numeric_model();
+    model.funcs[0].diagnostic_name = None;
+    model.funcs[0].body.insert(
+        0,
+        IrStmt::Repeat {
+            count: number(1, 32),
+            body: Vec::new(),
+        },
+    );
+    let process = &mut model.processes[0];
+    process.label = "tb.initial".to_owned();
+    let branch = "p_cI_encoded_branch".to_owned();
+    process.pre_fns.push(crate::sim::ir::IrPreFn::Branch {
+        c_name: branch.clone(),
+        body: vec![IrStmt::Delay {
+            ticks: crate::sim::ir::IrDelay::Constant(1),
+        }],
+    });
+    process.body.insert(
+        0,
+        IrStmt::Fork {
+            join_kind: crate::sim::ir::IrJoinKind::Join,
+            branches: vec![(branch.clone(), "tb.fork[0]".to_owned())],
+            target: None,
+        },
+    );
+    let execution = ExecutionModel::lower(model).unwrap();
+    let source = super::super::super::model::render(&execution).unwrap();
+    assert!(source.contains("\"tb.initial.fork\""));
+    assert!(source.contains("llg_budget_point(\"unnamed function\")"));
+    assert!(!source.contains(&format!("\"{branch}\"")));
+}

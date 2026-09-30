@@ -338,7 +338,7 @@ fn static_function_result_rejects_duplicate_continuous_drivers() {
     let expected_stderr = format!(
         "Warning: {source}:10:27 non-void function 'f' does not return a value\n\
 Warning: {source}:18:12 cannot have multiple continuous assignments to variable 'f'\n\
-llg: codegen error: semantic error: multiple continuous assignments to variable storage `_llg_ret_0` at {source}:16:12 (also written by `tb.continuous` at {source}:18:12)\n"
+llg: codegen error: semantic error: multiple continuous assignments to variable storage `tb.f.f` at {source}:16:12 (also written by `tb.continuous` at {source}:18:12)\n"
     );
     assert_exact_cli(Some("SYN038_DUPLICATE_DRIVER"), 1, "", &expected_stderr);
 }

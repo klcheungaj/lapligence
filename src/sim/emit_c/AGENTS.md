@@ -232,14 +232,17 @@ reserved `llg_pca_en_<n>` names.
 `names.rs` owns reversible `cI_` / `Z` source-name escapes and injective
 component composition. Lowering retains raw source components separately from
 display paths: never pass encoded components through `ident` again. Keep the
-historical display/diagnostic spelling, VPI and waveform metadata, design/export
+source diagnostic labels, VPI and waveform metadata, design/export
 file names and foreign DPI C symbols independent of internal symbol spelling.
 After frame sharing and all derived symbols are emitted, cap complete internal
 identifiers at `MAX_C_IDENTIFIER_LEN` (128) through a sorted per-model registry.
 Skip existing symbols when assigning short indices; preserve namespace and
 frame/descriptor suffixes. The existing emitted-C identifier rewrite passes
 skip literals/comments/numeric suffixes; this does not admit opaque IR fragments.
-Explicit foreign DPI names are exempt from the internal bound.
+Explicit foreign DPI names are exempt from the internal bound. Coroutine descriptor
+labels and loop budgets use source process/function labels; branch descriptors use
+the source owner plus `.fork`, never the helper C symbol. IR functions without source
+provenance use an unnamed-function diagnostic label.
 
 Maintain exact scope/reference checks, array-index disposal, inert invalid handles
 and source-size preflight regressions. Preserve these distinct validation layers:

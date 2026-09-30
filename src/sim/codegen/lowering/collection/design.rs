@@ -331,14 +331,8 @@ impl<'a> Codegen<'a> {
             if matches!(self.kind(*c), NodeKind::FuncTask { .. }) {
                 let fname = self.node(*c).name.clone();
                 let c_name = self.c_name("fn", path, &[&fname]);
-                self.func_labels.insert(
-                    *c,
-                    format!(
-                        "fn_{}_{}",
-                        display_ident(self.display_path(path)),
-                        display_ident(&fname)
-                    ),
-                );
+                self.func_labels
+                    .insert(*c, format!("{}.{fname}", self.source_path(path)));
                 self.func_names.insert(*c, c_name);
             }
         }

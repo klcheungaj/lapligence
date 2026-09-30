@@ -21,7 +21,7 @@ impl Codegen<'_> {
             self.inst = owner;
             let value = self.lower_chandle(&path, initializer)?;
             let c_name = format!("p_{}_class_init_{index}", self.c_path_ident(&path));
-            let label = format!("{}.class_initializer.{index}", self.display_path(&path));
+            let label = format!("{}.class_initializer.{index}", self.source_path(&path));
             processes.push(IrProcess::new_with_origin(
                 c_name,
                 label,
@@ -54,7 +54,7 @@ impl Codegen<'_> {
             self.inst = owner;
             let value = self.lower_chandle(&path, initializer)?;
             let c_name = format!("p_{}_semaphore_init_{index}", self.c_path_ident(&path));
-            let label = format!("{}.semaphore_initializer.{index}", self.display_path(&path));
+            let label = format!("{}.semaphore_initializer.{index}", self.source_path(&path));
             processes.push(IrProcess::new_with_origin(
                 c_name,
                 label,
@@ -90,7 +90,7 @@ impl Codegen<'_> {
                 self.mailbox_element_for_decl(object_node),
             )?;
             let c_name = format!("p_{}_mailbox_init_{index}", self.c_path_ident(&path));
-            let label = format!("{}.mailbox_initializer.{index}", self.display_path(&path));
+            let label = format!("{}.mailbox_initializer.{index}", self.source_path(&path));
             processes.push(IrProcess::new_with_origin(
                 c_name,
                 label,

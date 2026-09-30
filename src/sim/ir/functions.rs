@@ -294,9 +294,12 @@ impl IrFunc {
     pub fn c_name(&self) -> &str {
         &self.c_name
     }
-    /// Stable function label for runtime diagnostics and coroutine metadata.
+    /// Source function label for runtime diagnostics and coroutine metadata.
+    /// Functions without source provenance use an unnamed label, never a C symbol.
     pub fn diagnostic_name(&self) -> &str {
-        self.diagnostic_name.as_deref().unwrap_or(&self.c_name)
+        self.diagnostic_name
+            .as_deref()
+            .unwrap_or("unnamed function")
     }
     /// Whether calls expand this definition into their owning execution body.
     pub fn is_inline_expanded(&self) -> bool {

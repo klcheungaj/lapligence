@@ -10,7 +10,11 @@ inventories; do not broaden a guard because another context accepts the syntax.
 Keep raw source hierarchy components in `Codegen::c_paths`, independently of
 scope lookup keys and historical display paths. Compose C names through the
 helpers in `collection/names.rs`; encoded C fragments are never source path
-components. Function diagnostic labels remain separate from C symbols. The
+components. Storage and runtime diagnostic labels use HDL metadata or owned source
+components, including aggregate member paths and declared array bounds; never
+decode C symbols.
+Keep internal dependency sort keys separate from these display labels. Function
+diagnostic labels remain separate from C symbols. The
 [emitter guide](../emit_c/AGENTS.md) owns escaping, collision and length contracts.
 
 ## Values and selections

@@ -3,6 +3,242 @@
 use super::*;
 
 impl<'a> Codegen<'a> {
+    /// Readable hierarchy from source components, never from C symbols.
+    pub(in super::super) fn source_path(&self, path: &str) -> String {
+        self.c_paths.get(path).map_or_else(
+            || self.display_path(path).to_owned(),
+            |parts| parts.join("."),
+        )
+    }
+
+    fn storage_source_name(&self, id: NodeId) -> String {
+        let mut parts = vec![self.node(id).name.clone()];
+        let mut current = self.node(id).parent;
+        while let Some(parent) = current {
+            let node = self.node(parent);
+            if matches!(
+                node.kind,
+                NodeKind::ModuleInst { .. }
+                    | NodeKind::GenScopeArray
+                    | NodeKind::GenScope
+                    | NodeKind::FuncTask { .. }
+                    | NodeKind::ClassDef
+                    | NodeKind::Package
+            ) && !node.name.is_empty()
+            {
+                parts.push(match node.kind {
+                    NodeKind::ModuleInst { is_top: true, .. } => strip_lib(&node.name),
+                    _ => node.name.clone(),
+                });
+            }
+            current = node.parent;
+        }
+        parts.reverse();
+        parts.join(".")
+    }
+
+    fn aggregate_storage_label(
+        &self,
+        mut matches: impl FnMut(&AggregateMemberInfo) -> bool,
+    ) -> Option<String> {
+        for node in sorted_node_ids(&self.unpacked_aggregates) {
+            if let Some(leaf) = self.unpacked_aggregates[&node]
+                .leaves
+                .iter()
+                .find(|leaf| matches(leaf))
+            {
+                let mut name = self.storage_source_name(node);
+                for part in &leaf.path {
+                    match part {
+                        AggregatePathPart::Member(member) => {
+                            name.push('.');
+                            name.push_str(member);
+                        }
+                        AggregatePathPart::Index(index) => name.push_str(&format!("[{index}]")),
+                    }
+                }
+                return Some(name);
+            }
+        }
+        None
+    }
+
+    fn signal_source_node(&self, signal: usize) -> Option<NodeId> {
+        self.sig_globals
+            .iter()
+            .filter_map(|(node, info)| (info.ir == signal).then_some(*node))
+            .chain(
+                self.static_formals
+                    .iter()
+                    .chain(self.static_task_locals.iter())
+                    .filter_map(|((_, node), info)| (info.ir == signal).then_some(*node)),
+            )
+            .chain(
+                self.proc_local_instances
+                    .iter()
+                    .filter_map(|((_, node), info)| {
+                        info.static_signal
+                            .as_ref()
+                            .filter(|info| info.ir == signal)
+                            .map(|_| *node)
+                    }),
+            )
+            .min_by_key(|node| node.index())
+    }
+
+    pub(in super::super) fn signal_label(&self, signal: usize) -> String {
+        self.aggregate_storage_label(|leaf| {
+            leaf.signal.as_ref().is_some_and(|info| info.ir == signal)
+        })
+        .or_else(|| {
+            self.model
+                .signals
+                .get(signal)?
+                .hdl_name
+                .as_ref()
+                .map(|name| name.replace('\u{1f}', "."))
+        })
+        .or_else(|| {
+            self.signal_source_node(signal)
+                .map(|node| self.storage_source_name(node))
+        })
+        .unwrap_or_else(|| "unnamed signal storage".to_owned())
+    }
+
+    /// Diagnostic spelling of canonical storage, including source array bounds.
+    pub(in super::super) fn dependency_label(&self, dependency: &IrDependency) -> String {
+        match dependency {
+            IrDependency::Scalar(name) | IrDependency::Real(name) => self
+                .model
+                .signals
+                .iter()
+                .position(|signal| signal.c_name == *name)
+                .map_or_else(
+                    || "unnamed signal storage".to_owned(),
+                    |signal| self.signal_label(signal),
+                ),
+            IrDependency::PackedRange {
+                storage,
+                lsb,
+                width,
+            } => {
+                let ranges = match storage.as_ref() {
+                    IrDependency::Scalar(name) => self
+                        .model
+                        .signals
+                        .iter()
+                        .position(|signal| signal.c_name == *name)
+                        .and_then(|signal| {
+                            sorted_node_ids(&self.unpacked_aggregates)
+                                .into_iter()
+                                .find_map(|node| {
+                                    self.unpacked_aggregates[&node]
+                                        .leaves
+                                        .iter()
+                                        .find(|leaf| {
+                                            leaf.signal
+                                                .as_ref()
+                                                .is_some_and(|info| info.ir == signal)
+                                        })
+                                        .map(|leaf| leaf.member.packed_ranges.as_slice())
+                                })
+                                .or_else(|| {
+                                    self.signal_source_node(signal)
+                                        .and_then(|node| self.db.packed_dimensions(node))
+                                })
+                        }),
+                    IrDependency::ArrayElement { array, .. } => self
+                        .array_globals
+                        .iter()
+                        .filter_map(|(node, info)| (info.ir == *array).then_some(*node))
+                        .min_by_key(|node| node.index())
+                        .and_then(|node| self.db.packed_dimensions(node)),
+                    _ => None,
+                };
+                let range = ranges.and_then(|dimensions| match dimensions {
+                    [range] => Some(range),
+                    _ => None,
+                });
+                let (base, direction) = range.map_or((i128::from(*lsb), "+"), |range| {
+                    if range.left >= range.right {
+                        (range.right + i128::from(*lsb), "+")
+                    } else {
+                        (range.right - i128::from(*lsb), "-")
+                    }
+                });
+                let label = self.dependency_label(storage);
+                if ranges.is_some_and(|ranges| ranges.len() > 1) {
+                    return format!("{label} (packed bits {lsb} +: {width})");
+                }
+                if *width == 1 {
+                    format!("{label}[{base}]")
+                } else {
+                    format!("{label}[{base} {direction}: {width}]")
+                }
+            }
+            IrDependency::ArrayElement { array, index } => self
+                .model
+                .arrays
+                .get(*array)
+                .and_then(|array| array.waveform_element_name(*index))
+                .map_or_else(
+                    || "unnamed array element".to_owned(),
+                    |name| name.replace('\u{1f}', "."),
+                ),
+            IrDependency::ArrayContents(array) => self.model.arrays.get(*array).map_or_else(
+                || "unnamed array storage".to_owned(),
+                |array| array.hdl_name.replace('\u{1f}', "."),
+            ),
+            IrDependency::ContainerContents(container)
+            | IrDependency::ContainerShape(container) => {
+                let name = self
+                    .container_globals
+                    .iter()
+                    .filter_map(|(node, info)| (info.ir == *container).then_some(*node))
+                    .min_by_key(|node| node.index())
+                    .map_or_else(
+                        || "unnamed container storage".to_owned(),
+                        |node| self.storage_source_name(node),
+                    );
+                if matches!(dependency, IrDependency::ContainerShape(_)) {
+                    let method = if self
+                        .model
+                        .containers
+                        .get(*container)
+                        .is_some_and(|container| {
+                            matches!(container.kind, IrContainerKind::Associative { .. })
+                        }) {
+                        "num"
+                    } else {
+                        "size"
+                    };
+                    format!("{name}.{method}()")
+                } else {
+                    name
+                }
+            }
+            IrDependency::Object(object) => self
+                .aggregate_storage_label(|leaf| leaf.object == Some(*object))
+                .or_else(|| {
+                    self.object_globals
+                        .iter()
+                        .chain(self.class_static_objects.iter())
+                        .filter_map(|(node, index)| (*index == *object).then_some(*node))
+                        .chain(
+                            self.static_string_formals
+                                .iter()
+                                .chain(self.static_string_task_locals.iter())
+                                .filter_map(|((_, node), index)| {
+                                    (*index == *object).then_some(*node)
+                                }),
+                        )
+                        .min_by_key(|node| node.index())
+                        .map(|node| self.storage_source_name(node))
+                })
+                .unwrap_or_else(|| "unnamed object storage".to_owned()),
+        }
+    }
+
     pub(in super::super) fn display_path<'p>(&'p self, path: &'p str) -> &'p str {
         self.display_paths.get(path).map_or(path, String::as_str)
     }

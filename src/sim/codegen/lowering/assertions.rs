@@ -1793,7 +1793,7 @@ impl Codegen<'_> {
             .collect_process_writes(statement)?
             .into_iter()
             .collect();
-        writes.sort_by_key(|dependency| self.dependency_label(dependency));
+        writes.sort_by_key(|dependency| self.dependency_sort_key(dependency));
         let name = self.new_fn_name(&action_path, "assert_action");
         self.model
             .processes
