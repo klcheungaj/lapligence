@@ -87,3 +87,8 @@ rustix = { version = "1.1.4", features = ["fs"] }
 # JSON-RPC and need a JSON library on the test side.
 serde_json = "1"
 proptest = "1"
+
+# Dependencies keep file/line tables for backtraces but not full debug info,
+# which is rarely needed for third-party code and dominates build output.
+[profile.dev.package."*"]
+debug = "line-tables-only"
