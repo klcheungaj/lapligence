@@ -7,6 +7,39 @@ mod sim_cli;
 mod sim_harness;
 
 #[test]
+fn procedural_assign_batches_preserve_selections_loop_owners_and_real_force_layers() {
+    sim_cli::run_case(
+        "procedural_assign",
+        "batch_selections",
+        "CHECK: selects=9 6 c 3 bits=0101\nCHECK: real=1.25 2.50 -3.50 0.25\nCHECK: forced=0 9.00\nCHECK: released=1 4.50\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
+fn procedural_assign_batches_preserve_issue_order_casts_and_deassign() {
+    sim_cli::run_case(
+        "procedural_assign",
+        "batch_order",
+        "CHECK: ordered=12 81 12 34\nCHECK: replaced=34 34 81 12\nCHECK: casts=ff81 0012 0034 0056 two=00 81 12 34\nCHECK: settled=56 34 81 12\nCHECK: live=56 43 7e 22 casts=007e 0022 0043 0056\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
+fn procedural_assign_batches_work_in_shared_bodies_with_net_sources() {
+    sim_cli::run_case(
+        "procedural_assign",
+        "batch_shared",
+        "CHECK: shared=5a 5a 5a 5a\nCHECK: shared=5a 5a 5a 5a\nCHECK: shared=5a 5a 5a 5a\nCHECK: shared=5a 5a 5a 5a\nCHECK: freed=a5\nCHECK: freed=a5\nCHECK: freed=a5\nCHECK: freed=a5\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
 fn procedural_assign_priority_blocks_ordinary_writes() {
     sim_cli::run_case(
         "procedural_assign",

@@ -35,9 +35,7 @@ impl Frame<'_, '_> {
     }
     pub(super) fn block(&mut self, body: &[IrStmt]) -> Result<(), String> {
         self.begin_block(body);
-        for statement in body {
-            self.statement(statement)?;
-        }
+        self.statements(body)?;
         self.end_block();
         Ok(())
     }
@@ -259,9 +257,7 @@ impl Frame<'_, '_> {
                 body,
             } => {
                 self.begin_block(init);
-                for statement in init {
-                    self.statement(statement)?;
-                }
+                self.statements(init)?;
                 self.line("for (;;) {");
                 let condition = self.condition(cond)?;
                 self.line(format!("if (!{condition}) break;"));

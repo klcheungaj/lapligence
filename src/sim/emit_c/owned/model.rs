@@ -7,6 +7,17 @@ use crate::sim::execution::{
 };
 use std::collections::BTreeMap;
 
+type ProcessBody = (
+    String,
+    Option<super::super::frame_layout::FrameLayout>,
+    Vec<super::super::statements::pca_batches::Batch>,
+);
+type CoroutineProcessBody = (
+    String,
+    super::super::frame_layout::FrameLayout,
+    Vec<super::super::statements::pca_batches::Batch>,
+);
+
 mod callbacks;
 mod initialization;
 mod lifecycle;
@@ -356,17 +367,19 @@ pub(in crate::sim::emit_c) fn coroutine_process(
     execution: &ExecutionProcess,
     analysis: &ExecutionAnalysis,
     frame_upper_bounds: &BTreeMap<usize, usize>,
-) -> Result<(String, super::super::frame_layout::FrameLayout), String> {
-    let frame = Frame::new_coframe(
+) -> Result<CoroutineProcessBody, String> {
+    let mut frame = Frame::new_coframe(
         ctx,
         analysis,
         CoroutineId::Process(process_index),
         frame_upper_bounds,
     )?;
-    let (source, layout) = render_process(ctx, process, execution, frame, true)?;
+    frame.pca_owner = Some(process.c_name.clone());
+    let (source, layout, batches) = render_process(ctx, process, execution, frame, true)?;
     Ok((
         source,
         layout.ok_or_else(|| "coroutine process has no frame layout".to_owned())?,
+        batches,
     ))
 }
 
@@ -375,7 +388,7 @@ pub(in crate::sim::emit_c) fn process(
     process: &IrProcess,
     execution: &ExecutionProcess,
 ) -> Result<String, String> {
-    render_process(ctx, process, execution, Frame::new(ctx), false).map(|(source, _)| source)
+    render_process(ctx, process, execution, Frame::new(ctx), false).map(|(source, _, _)| source)
 }
 
 fn render_process(
@@ -384,15 +397,13 @@ fn render_process(
     execution: &ExecutionProcess,
     mut frame: Frame<'_, '_>,
     coroutine: bool,
-) -> Result<(String, Option<super::super::frame_layout::FrameLayout>), String> {
+) -> Result<ProcessBody, String> {
     let label = |block| format!("_llg_exec_{}_b{block}", execution.semantic_process);
     frame.line(format!("goto {};", label(execution.entry)));
     for (index, block) in execution.blocks.iter().enumerate() {
         frame.line(format!("{}: ;", label(index)));
         frame.begin_block(&block.operations);
-        for statement in &block.operations {
-            frame.statement(statement)?;
-        }
+        frame.statements(&block.operations)?;
         if let ExecutionTerminator::Suspend {
             trigger: TriggerPlan::Signals(reads),
             region,
@@ -436,6 +447,7 @@ fn render_process(
     let prologue = frame.prologue();
     let dispatch = frame.dispatch();
     let macro_epilogue = frame.macro_epilogue();
+    let batches = std::mem::take(&mut frame.pca_batches);
     let (body, layout, cached_locals) = if coroutine {
         let finished = frame.into_coframe()?;
         (finished.body, Some(finished.layout), finished.cached_locals)
@@ -460,7 +472,7 @@ fn render_process(
             "void"
         },
     );
-    Ok((source, layout))
+    Ok((source, layout, batches))
 }
 
 pub(in crate::sim::emit_c) fn pre_function(

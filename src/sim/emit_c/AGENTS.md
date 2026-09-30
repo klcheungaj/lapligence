@@ -279,6 +279,30 @@ emitter. Use [ownership validation](../../../tests/readme.md#dynamic-ownership-v
 and its generated-C sanitizer configuration; do not infer feature acceptance from
 component tests.
 
+## Procedural continuous assignment batches
+
+Process statement lists batch only adjacent `PcaAssign` operations with exactly
+equal source representation, selection/conversion IR and target type. The typed
+source whitelist permits signal/static-local reads, part selects, constant
+bit/indexed selects and numeric conversions; the execution effect summary must
+contain only `ImmediateStore`. Dynamic selectors, computed/calling sources,
+automatic cells, sampled reads and resolver-based net aliases remain unbatched.
+Every other statement, lexical boundary and execution-block boundary breaks a
+run. `PCA_BATCH_MIN_ASSIGNMENTS` is the named minimum (4); shorter runs retain
+their original emission.
+
+Each batch has a file-scope `static const` source/target/enable/binding table.
+One model-local non-inlined helper per exact typed shape uses the ordinary owned
+expression/conversion emitter and the caller's registered temporary slots. Each
+row evaluates/clones its source, applies every original selection/cast, publishes
+with its own binding and destroys its owners before the next row. Repeated
+targets and reads of earlier targets remain legal; never hoist source values.
+The loop has a separate resume-free block, and its index uses `Frame::declare`.
+Deassign, drive, force/release and callable/final bodies retain their original
+paths. Tables are typed instance-record operands, so shared processes load their
+own rows; resolved-net sources still address C14 storage normally. No runtime or
+coroutine ABI changes are involved.
+
 ## Instance body sharing
 
 `model/sharing.rs` groups compiler-owned emitted bodies by source location,
