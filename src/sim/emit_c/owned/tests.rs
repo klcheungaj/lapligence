@@ -7,6 +7,7 @@ mod cached_frame_fields;
 mod cancellation_points;
 mod compact_names;
 mod conditional_records;
+mod event_captures;
 mod fixed_array_reductions;
 mod sequential_predicates;
 use crate::sim::execution::ExecutionModel;

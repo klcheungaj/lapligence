@@ -3,6 +3,44 @@
 use super::*;
 
 impl Validator<'_> {
+    pub(super) fn validate_capture(
+        &self,
+        storage: StorageRef,
+        initial: &IrExpr,
+        formals: &[IrFormal],
+        path: &str,
+    ) -> ValidationResult {
+        let event_initial = matches!(
+            initial.kind(),
+            IrExprKind::ObjectQuery(query) if matches!(query.as_ref(), IrObjectQuery::EventCapture(_))
+        );
+        if event_initial != (storage.kind() == StorageKind::Event) {
+            return self.fail(
+                path,
+                "event capture requires event storage and a typed event initializer",
+            );
+        }
+        if storage.kind() == StorageKind::Event
+            && (storage.ownership() == StorageOwnership::Shared
+                || storage.ownership() == StorageOwnership::Borrowed
+                    && storage.lifetime() != StorageLifetime::Automatic)
+        {
+            return self.fail(
+                path,
+                "event captures require an owned snapshot or borrowed automatic handle",
+            );
+        }
+        if storage.kind() == StorageKind::Event && storage.ownership() == StorageOwnership::Borrowed
+        {
+            let valid = matches!(initial.kind(), IrExprKind::ObjectQuery(query)
+                if matches!(query.as_ref(), IrObjectQuery::EventCapture(IrEventRef::Formal(_) | IrEventRef::Captured(_))));
+            if !valid {
+                return self.fail(path, "borrowed event capture requires an automatic handle");
+            }
+        }
+        self.validate_expr(initial, formals, path)
+    }
+
     pub(super) fn validate_stmts(
         &self,
         stmts: &[IrStmt],

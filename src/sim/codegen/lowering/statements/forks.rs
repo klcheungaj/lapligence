@@ -108,17 +108,7 @@ impl EmitCtx<'_, '_> {
                         self.path
                     )
                 })?;
-                let initial = previous_captures
-                    .get(target)
-                    .map(|binding| {
-                        IrExpr::new(
-                            IrExprKind::LocalRead(Codegen::capture_local_name(binding.storage)),
-                            binding.local.width,
-                            binding.local.signed,
-                            None,
-                        )
-                    })
-                    .unwrap_or(source.initial);
+                let initial = source.initial;
                 let storage = StorageRef::for_declaration(
                     frame,
                     slot as u32,

@@ -1044,7 +1044,8 @@ impl Validator<'_> {
                             "event assignment captures must use unique slots in their frame",
                         );
                     }
-                    self.validate_expr(
+                    self.validate_capture(
+                        capture.storage(),
                         capture.initial(),
                         formals,
                         &format!("{path}.captures[{capture_idx}].initial"),
@@ -1081,7 +1082,8 @@ impl Validator<'_> {
                                 "capture storage slot is invalid or duplicated",
                             );
                         }
-                        self.validate_expr(
+                        self.validate_capture(
+                            capture.storage(),
                             capture.initial(),
                             formals,
                             &format!("{capture_path}.initial"),

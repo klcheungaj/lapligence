@@ -263,6 +263,13 @@ impl<'a> Codegen<'a> {
         target: &EventTarget,
         scope_path: &str,
     ) -> Result<IrEventRef, String> {
+        if let Some(binding) = self.capture_binding(target.declaration) {
+            if binding.storage.kind() == StorageKind::Event && target.indices.is_empty() {
+                return Ok(IrEventRef::Captured(Self::capture_local_name(
+                    binding.storage,
+                )));
+            }
+        }
         if let Some(event) = self
             .func
             .as_ref()

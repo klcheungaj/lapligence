@@ -10,6 +10,11 @@ model remains live until resumed or closed; the process-global runtime supports
 one model at a time. Legacy string-only fragment APIs remain fail-closed when
 ownership cannot be represented.
 
+Fork activation frames store input event captures in opaque slots. Joined
+branches borrow the live parent's handle, preserving sibling rebinding; detached
+branches snapshot the object identity and bind a private handle that survives the
+enclosing timing task's return.
+
 Suspendable functions, processes and fork branches use explicit
 `llg_co_frame_t`-headed POD frames and `llg_co_fn` entry points. The
 layout builder owns typed fields, per-block call-site unions, descriptors and

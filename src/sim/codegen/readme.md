@@ -19,6 +19,10 @@ lifetime, origin and edition-specific phase. Process, assertion, clocking, event
 and reference metadata remain typed through emission. Multiple optimizer variants
 can reuse one DB through `generate_from_db_with_opts`.
 
+Subroutine collection traverses generated instance scopes at every pass (names,
+signatures and bodies). Fork branches capture input event formals as event object
+identities; nested branches resolve that capture instead of a callee formal.
+
 See [lowering domains](lowering/readme.md),
 [feature status](../../../docs/sim_features.md) and
 [source layout](../../../docs/source_layout.md).

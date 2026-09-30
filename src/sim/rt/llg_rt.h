@@ -1120,6 +1120,9 @@ void llg_frame_retain(llg_frame_t* frame);
 void llg_frame_release(llg_frame_t* frame);
 void llg_frame_capture_value(llg_frame_t* frame, size_t slot, sv4_t value);
 void llg_frame_capture_real(llg_frame_t* frame, size_t slot, double value);
+// Opaque object identities (including event objects) remain valid until model
+// teardown. A joined child may instead borrow a parent coroutine's event handle
+// address; the parent must outlive the child, including cancellation cleanup.
 void llg_frame_capture_opaque(llg_frame_t* frame, size_t slot, void* value);
 void llg_frame_alias_value(llg_frame_t* frame, size_t slot, sv4_t* target);
 void llg_frame_alias_real(llg_frame_t* frame, size_t slot, double* target);

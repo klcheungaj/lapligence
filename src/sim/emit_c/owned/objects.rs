@@ -231,7 +231,7 @@ impl Frame<'_, '_> {
                 result
             }
             ArrayQuery(query) => self.array_query(query, expression)?,
-            HandleCapture(_) => {
+            HandleCapture(_) | EventCapture(_) => {
                 return Err("opaque capture cannot be used as a packed expression".to_owned())
             }
             _ => return self.mailbox_query(query, expression),
