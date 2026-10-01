@@ -116,6 +116,15 @@ cargo nextest run --locked --bin llg_ls response_budget
 
 ## CI and release gate
 
+Daily Cargo/nextest/runner tests use the optimized `test` profile, matching the
+release optimization level while retaining debug assertions and overflow checks.
+Use `cargo test --profile quick`, `cargo nextest run --cargo-profile quick` or
+`scripts/run-tests.sh --cargo-profile quick` for shorter edit-test rebuilds.
+`quick` leaves workspace code unoptimized; Cargo caches optimized dependencies.
+`quick` adds `target/quick/` beside the default `target/debug/`; budget disk for
+both. Nextest's `--profile` selects runner settings rather than Cargo profiles.
+Use the optimized default for the repository gate; see [build profiles](readme.md#cargo-build-profiles).
+
 For concurrent worktrees using tmpfs, run `scripts/run-tests.sh --test-work-dir PATH`
 from each worktree; append normal nextest selection/concurrency arguments. The
 path is explicit and must exist and permit execution. Use the same root to share

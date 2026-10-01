@@ -262,6 +262,38 @@ support; the corresponding execution tests must also pass.
   Preserve suite-specific skips: `sim_cmake` may skip absent CMake; native DPI
   shared-library tests need Unix/CMake/compiler. These are not blanket skips.
 
+### Cargo build profiles
+
+Daily `cargo test`, `cargo nextest run` and `scripts/run-tests.sh` builds use the
+`test` profile at `opt-level = 3`, matching release optimization. Debug assertions
+and overflow checks stay enabled to catch invariant and arithmetic failures.
+The simulator's in-process Rust pipeline benefits from this optimization.
+
+Use `quick` for shorter rebuilds during edit-test loops:
+
+```sh
+cargo test --locked --profile quick --test sim_counter
+cargo nextest run --locked --cargo-profile quick --test sim_counter
+scripts/run-tests.sh --test-work-dir /build --cargo-profile quick --test sim_counter
+```
+
+`quick` inherits `test` with `opt-level = 0`. Cargo's `--profile` and nextest's
+`--cargo-profile` choose the build profile; nextest's `--profile` independently
+chooses runner settings such as concurrency. Run the optimized default for
+repository validation and performance comparisons. These profiles control Rust
+compilation; generated-model optimization and CLI `--no-opt` runs keep their
+existing settings.
+
+`quick` optimizes dependencies at level 3 while leaving workspace code at level 0.
+Cargo reuses those dependencies across workspace edits; compiler caches can also
+reuse them across builds. Both profiles keep debug assertions and overflow checks
+and use line tables for file/line backtraces rather than full variable debug info.
+
+Default test artifacts use `target/debug/`; `quick` adds a second Cargo artifact
+tree at `target/quick/`, including its own dependencies and incremental state.
+Budget disk for both. The worktree runner keeps both on disk and uses the same
+isolated scratch and compatible runtime cache for either profile.
+
 ### Test build storage
 
 #### Parallel worktrees
