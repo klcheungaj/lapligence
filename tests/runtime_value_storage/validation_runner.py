@@ -40,7 +40,7 @@ def verify_inventory(inventory: dict, capabilities: dict) -> list[str]:
     for key in ("waveforms", "scheduler", "coroutines", "sanitizers"):
         if type(capabilities.get(key)) is not bool:
             raise ValueError(f"capability {key} must be an explicit boolean")
-    if capabilities["coroutines"] and (not capabilities["scheduler"] or capabilities["sanitizers"]):
+    if capabilities["coroutines"] and not capabilities["scheduler"]:
         raise ValueError("inconsistent coroutine/scheduler/sanitizer capabilities")
     expected = set(BASE_TESTS)
     if capabilities["waveforms"]:
@@ -49,6 +49,18 @@ def verify_inventory(inventory: dict, capabilities: dict) -> list[str]:
         expected.update(("coroutine_chunk_cache", "port_net_collapse_values", "port_net_collapse_publication", "vpi_ownership", "scheduler_ownership", "generated_scope_patterns", "scope_address_index", "scheduler_lists", "clocking_history_index", "runtime_value_vectors", "event_array_selection", "file_input_isolation", "file_output_isolation", "memory_image", "native_value_scopes", "native_reference_scopes", "review_native_index_and_reference_bits", "packed_selection_nba", "packed_selection_input", "packed_formal_owner_contracts"))
         if capabilities["waveforms"]:
             expected.add("waveform_original_selftest")
+        expected.update(("stackless_runtime_boundaries", "coroutine_scale_release", "coroutine_scale_debug",
+                         "coroutine_debug_fresh_poison", "coroutine_debug_cancelled_arena_reuse"))
+        expected.update(f"coroutine_mixed_mode_{debug}_{arena}"
+                        for debug in (0, 1) for arena in (0, 1))
+        expected.update(f"coroutine_debug_reject_{mode}" for mode in
+                        ("root-tag", "static-enter", "static-tag", "anchor-enter", "anchor-tag", "anchored-root-tag",
+                         "invalid-state", "poison-state", "finished", "reentrant", "exiting-service"))
+        expected.update(f"patch_review_{mode}" for mode in
+                        ("forced_real_nba", "force_overlap", "force_partial_release", "force_concat_release",
+                         "force_slot_reuse", "event_cleanup", "fork_self_disable", "fork_ancestor_disable",
+                         "reactive_fixed_point", "pre_nba_reentry", "preponed_once", "finish_pending",
+                         "monitor_reenable", "event_readonly", "early_spawn", "callback_nba"))
     if capabilities["coroutines"]:
         expected.update(("coroutine_ownership", "generated_coroutine_patterns", "callback_finish_ownership",
                          "runtime_original_selftest", "runtime_region",

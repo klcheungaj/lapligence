@@ -118,6 +118,39 @@ qualification.
 
 ## RSS attribution
 
+### Process-count qualification (Linux)
+
+`process_scale.py` uses one generated fork body and a `fork`/`join_none` loop,
+avoiding one generated C body per instance. A synchronous DPI helper saves smaps
+after all N children park on a named event. `perf_measure.c` supplies kernel
+wait4 high-water RSS and elapsed time; steady RSS is the sum of that parked snapshot's
+mapping RSS. Results include bytes/process (total RSS divided by N), attribution,
+stdout hashes, commands, build failures/timeouts and medians with ranges. These
+figures include the scheduler, groups, waits, libc and model storage.
+
+```sh
+python3 perf/scripts/process_scale.py \
+  --binary current=/path/to/current/llg \
+  --binary libaco=/path/to/llg-aco-f64c5de \
+  --sizes 100000 300000 1000000 --repeat 7 --cpu 7 --jobs 10 --clocked \
+  --output /path/to/new/evidence --work-dir /build/new-process-scale
+```
+
+Both directories must be new. The script warms each built model, then alternates
+binary order for each measured pair on the selected CPU. `--clocked` also attempts
+`many_processes.sv` registers at 100k/20 edges; it records peak RSS but has no parked
+DPI snapshot. Generation/build default to 600-second limits and each execution to
+3600 seconds; override with `--generation-timeout`, `--build-timeout` and
+`--run-timeout`. A failed warm-up removes that binary from measured repetitions
+and returns failure; missing measurements are not a passing gate. Fork-group
+append and historical registry/wait paths can make this ladder quadratic even
+though its generated spawner source stays small. Preserve evidence, then remove
+only this run's work directory.
+
+`coroutine_scale_{release,debug}` in the native CTest project separately asserts
+zero warmed system chunk allocations and zero arena chunks in parked chains;
+this does not claim zero allocations for scheduler waits or HDL values.
+
 Run a simulator under the Linux smaps sampler:
 
 ```sh

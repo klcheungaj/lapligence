@@ -24,6 +24,18 @@ class InventoryTests(unittest.TestCase):
                      "scope_address_index", "scheduler_lists", "clocking_history_index", "runtime_value_vectors", "event_array_selection",
                      "file_input_isolation", "file_output_isolation", "memory_image", "native_value_scopes", "native_reference_scopes", "review_native_index_and_reference_bits",
                      "packed_selection_nba", "packed_selection_input", "packed_formal_owner_contracts"}
+        scheduler.update({"stackless_runtime_boundaries", "coroutine_scale_release", "coroutine_scale_debug",
+                          "coroutine_debug_fresh_poison", "coroutine_debug_cancelled_arena_reuse",
+                          "coroutine_mixed_mode_0_0", "coroutine_mixed_mode_0_1",
+                          "coroutine_mixed_mode_1_0", "coroutine_mixed_mode_1_1"})
+        scheduler.update(f"coroutine_debug_reject_{mode}" for mode in
+                         ("root-tag", "static-enter", "static-tag", "anchor-enter", "anchor-tag", "anchored-root-tag",
+                          "invalid-state", "poison-state", "finished", "reentrant", "exiting-service"))
+        scheduler.update(f"patch_review_{mode}" for mode in
+                         ("forced_real_nba", "force_overlap", "force_partial_release", "force_concat_release",
+                          "force_slot_reuse", "event_cleanup", "fork_self_disable", "fork_ancestor_disable",
+                          "reactive_fixed_point", "pre_nba_reentry", "preponed_once", "finish_pending",
+                          "monitor_reenable", "event_readonly", "early_spawn", "callback_nba"))
         coroutines = {"coroutine_ownership", "generated_coroutine_patterns", "callback_finish_ownership",
                       "runtime_original_selftest", "runtime_region", "runtime_stop-resume",
                       "runtime_budget-finite", "event_array_waits", "nextest_control_ownership", "native_input_callbacks",
@@ -45,6 +57,8 @@ class InventoryTests(unittest.TestCase):
                     if has_coroutines:
                         names.update(coroutines)
                     inventory = {"tests": [{"name": name} for name in sorted(names)]}
+                    self.assertEqual(verify_inventory(inventory, caps), sorted(names))
+                    caps["sanitizers"] = True
                     self.assertEqual(verify_inventory(inventory, caps), sorted(names))
 
     def test_no_tests_is_not_a_pass(self):
@@ -77,9 +91,9 @@ class InventoryTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             verify_inventory(inventory, self.capabilities())
 
-    def test_sanitizers_do_not_claim_stack_switch_coverage(self):
+    def test_coroutines_require_scheduler(self):
         caps = self.capabilities()
-        caps.update(scheduler=True, coroutines=True, sanitizers=True)
+        caps.update(scheduler=False, coroutines=True, sanitizers=True)
         with self.assertRaises(ValueError):
             verify_inventory(self.inventory(), caps)
 

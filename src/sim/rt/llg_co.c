@@ -8,6 +8,7 @@
 #include "llg_co.h"
 
 #include <stdlib.h>
+#include <stdio.h>
 
 #ifdef LLG_CO_HOST_ALLOC
 #define LLG_CO_CHUNK_ALLOC(bytes) llg_co_host_chunk_alloc(bytes)
@@ -52,8 +53,10 @@ void llg_co_arena_release(llg_co_arena_t* arena) {
 }
 
 void llg_co_bad_state(const llg_co_frame_t* co, const char* fn) {
-    (void)co;
-    (void)fn;
+    fprintf(stderr,
+            "llg: fatal: invalid coroutine state in %s: frame=%p state=%lu\n",
+            fn ? fn : "<unknown>", (const void*)co,
+            co ? (unsigned long)co->state : 0ul);
     abort();
 }
 
