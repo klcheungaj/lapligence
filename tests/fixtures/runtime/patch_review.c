@@ -2,7 +2,7 @@
 #ifdef NDEBUG
 #undef NDEBUG
 #endif
-#define LLG_MODEL_PROCESS_ABI 2
+#define LLG_MODEL_PROCESS_ABI 3
 #include "llg_rt.h"
 #include <assert.h>
 #include <stdio.h>

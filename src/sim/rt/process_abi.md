@@ -1,16 +1,24 @@
-# Generated process ABI version 2
+# Generated process ABI version 3
 
 This document is the contract between the C emitter and the embedded scheduler.
 It describes the stackless process ABI selected by `LLG_PROCESS_ABI_VERSION ==
-2`. `llg_value` and its ownership ABI are independent of this scheduler ABI.
+3`. `llg_value` and its ownership ABI are independent of this scheduler ABI.
 
 ## Model marker and process entry
+
+ABI 3 adds the public `llg_value_scope_t` layout and intrusive packed/native
+registration for proven non-escaping cells. ABI 2 models must be regenerated;
+the process marker rejects stale model/header combinations. Runtime-content
+cache keys select rebuilt archives. Entry, scheduling and llg_co
+frame-header/call conventions are unchanged. Nodes and descriptors live in their
+caller-owned frame or outer C scope through final scope release, which precedes
+frame reclamation. See [ownership and retainer rules](AGENTS.md#frame-resident-cells).
 
 Every generated `model.c` starts its runtime includes with an explicit marker
 and compile-time check:
 
 ```c
-#define LLG_MODEL_PROCESS_ABI 2
+#define LLG_MODEL_PROCESS_ABI 3
 #include "llg_rt.h"
 #if LLG_MODEL_PROCESS_ABI != LLG_PROCESS_ABI_VERSION
 #error "generated model process ABI does not match llg_rt.h"
@@ -69,7 +77,7 @@ static const llg_co_desc_t p_top_initial_desc = {
 The table covers process-ABI runtime entries emitted on the Phase 3 branch.
 Entries not listed here keep their signatures and direct-call behavior.
 
-| Old emitted entry | ABI 2 entry or pattern |
+| Old emitted entry | ABI 3 entry or pattern |
 | --- | --- |
 | `llg_spawn(&desc, fn, name)` | `llg_spawn(&desc, name)` |
 | `llg_spawn_in_region(&desc, fn, name, region)` | `llg_spawn_in_region(&desc, name, region)`; ordinary, continuous/link, and Reactive assertion-action roots share this entry |
@@ -133,7 +141,7 @@ registered waiter:
 - `LLG_CO_ARM_EXIT`: termination bookkeeping and `chain.exiting` are already
   complete. `LLG_CO_AWAIT` returns `LLG_CO_EXIT`.
 
-All ABI 2 runtime arms are one-shot and use `LLG_CO_AWAIT`. Semaphore keys,
+All ABI 3 runtime arms are one-shot and use `LLG_CO_AWAIT`. Semaphore keys,
 mailbox values, process completion, and `wait_order` results are delivered by
 the runtime before wake, so re-arming would duplicate the operation. The
 library's `LLG_CO_AWAIT_RETRY` remains available for a future arm that cannot
@@ -413,7 +421,7 @@ plain functions.
 
 ## Removed interfaces
 
-ABI 2 removes `llg_proc_done`, `llg_proc_co_frame`, `llg_proc_co_arena`,
+ABI 2 removed `llg_proc_done`, `llg_proc_co_frame`, `llg_proc_co_arena`,
 `llg_libaco_desc`, `llg_rt_init_with_stack`,
 `llg_rt_init_with_args_precision_and_stack`, `llg_coroutine_stack_size`, the
 private `llg_stack_values`, `LLG_DEFAULT_STACK_VALUES`, generated

@@ -272,6 +272,15 @@ if(LLG_STORAGE_TEST_SCHEDULER)
     target_link_libraries(scope_index_probe PRIVATE owner_probe_co owner_probe_container)
     strict_c(scope_index_probe)
     add_test(NAME scope_address_index COMMAND scope_index_probe)
+    add_executable(frame_cells_probe frame_cells_probe.c)
+    target_link_libraries(frame_cells_probe PRIVATE owner_probe_co owner_probe_container)
+    strict_c(frame_cells_probe)
+    add_test(NAME frame_value_cells COMMAND frame_cells_probe)
+    add_test(NAME frame_value_cells_reject_escape
+      COMMAND "${CMAKE_COMMAND}" "-DPROBE=$<TARGET_FILE:frame_cells_probe>"
+        "-DMODE=escape" "-DEXPECTED=frame value cell escaped its scope"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/expect_failure.cmake")
+    set_tests_properties(frame_value_cells frame_value_cells_reject_escape PROPERTIES TIMEOUT 60)
     set_tests_properties(scope_address_index PROPERTIES TIMEOUT 60)
     add_executable(generated_scopes_probe generated_scopes_probe.c)
     target_link_libraries(generated_scopes_probe PRIVATE owner_probe_co owner_probe_container)

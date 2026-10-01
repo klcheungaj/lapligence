@@ -16,8 +16,11 @@ candidate and decides its storage after seeing the complete block tree. A
 candidate whose declaring block and descendants have no resume point remains an
 ordinary C local; otherwise it is a frame field initialized at the original
 declaration point. Coroutine arguments are frame fields. An unshared zero-resume process
-therefore has only the `llg_co_frame_t` header and keeps its value scope, marks,
-temporaries and procedure storage on the C stack.
+keeps marks, temporaries and ordinary procedure storage on the C stack.
+Intrusive nodes and cells always occupy frame fields, including zero-resume
+processes: a termination check can return before runtime scope unwind. A
+frame-less function declares its intrusive nodes/cells in the outer C scope,
+so common-return unwinding can access them after an inner block has been left.
 `Frame::line` structurally tracks every C body brace and rejects an unbalanced
 body. `FrameLayout` records that exact tree, then flattens every chain with only
 one storage-bearing child into one struct level. Only two or more storage-bearing
@@ -99,9 +102,8 @@ operands after a cancelled call stay skipped.
 
 `Value` carries code, width/sign/fill metadata and an owning descriptor slot.
 Emit ordered setup, calls and cleanup, not nested allocating C expressions.
-Non-addressable real results are scalar temporaries; addressable real locals use
-registered heap-backed doubles, never a C stack address that is invalid after
-a stackless return.
+Non-addressable real results are scalar temporaries; addressable real locals use registered stable cells selected by the escape
+proof below.
 Packed locals have separate lexical cells from expression temporaries.
 No compiler cleanup attributes, statement expressions, VLAs, alloca, C++
 destructors or simulation-lifetime temporary arena.
@@ -150,6 +152,32 @@ sites or lexical storage remain expanded. Declare loop storage through `Frame`
 and emit all braces through `Frame::line` so scope narrowing and C9 reloads hold.
 
 ## Storage, references and publication
+
+`owned/frame_cells.rs` proves local descriptor eligibility from typed IR and
+callee effects before emitting any procedure storage. A non-escaping packed,
+real or native local registers an intrusive `llg_value_scope_t` and an empty
+value cell in the coroutine frame (including zero-resume procedures and
+resume-free inner blocks), or in the outer C scope of a frame-less function. Required frame fields
+remain live through common-return unwinding; sibling overlays may reuse them
+only after all registrations in the preceding scope have ended. Initialization
+and registration still occur at the original declaration, preserving LIFO cleanup.
+
+NBA destinations, all address/ref/output call actuals and local wait dependencies
+keep heap cells. Typed binding names identify cells; never infer eligibility from
+generated C. Unknown expression/statement forms fail closed for the whole
+procedure. Context-free read-only event evaluators qualify only after scanning
+their typed reads and wait dependencies; observed cells remain heap-backed.
+Captured evaluator contexts, fork captures, clocking, sampled/assertion operations,
+force/inertial registrations, mailbox delivery, VPI, DPI and dynamic dispatch,
+monitor/strobe and deferred assertion readers are currently unproven. Spawning
+callee effects also fail closed. A new admitted form requires an explicit
+descriptor-retention argument and tests. Expression temporaries and runtime
+helper scopes keep their existing heap path.
+
+The runtime exact-pointer index includes both kinds of cell. Scope end destroys
+payloads and forgets R1 clock history before unregistering/reusing intrusive
+storage; intrusive end with an outstanding retain is a fatal contract violation.
+See the [runtime retainer inventory](../rt/AGENTS.md#frame-resident-cells).
 
 - Alias visible cells have independent owners, canonical dependency addresses and
   explicit startup/close. Alias/stochastic publication temporaries must be
@@ -243,7 +271,7 @@ functions. Tear down runtime queues and VPI observers before model storage.
 without cleaning up that live context. Reject double start, allow repeated
 start/close, and preserve `LLG_MODEL_NO_MAIN` for host-controlled entry. The process-global runtime
 supports one model, not concurrent/thread-safe instances. Keep ABI 4/cache markers
-aligned and stale generated C rejected. Emit `LLG_MODEL_PROCESS_ABI 2`, pass
+aligned and stale generated C rejected. Emit `LLG_MODEL_PROCESS_ABI 3`, pass
 only immutable descriptors to spawn/fork sites, and initialize through
 `llg_rt_init_with_args_and_precision`; coroutine stack sizing is not model data.
 Default and teardown calls for plain static storage use one file-scope pointer

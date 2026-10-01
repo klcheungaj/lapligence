@@ -131,10 +131,14 @@ static void value_scope_release(llg_value_scope_t* scope) {
         llg_clocking_forget_signal(&scope->values[i]);
     value_scope_index_remove(scope);
     sv4_destroy_array(scope->values, scope->count);
-    free(scope->values);
+    if (!scope->intrusive) free(scope->values);
     if (scope->destroy_object) scope->destroy_object(scope->object);
-    free(scope->object);
-    free(scope);
+    if (!scope->intrusive) {
+        free(scope->object);
+        free(scope);
+    } else {
+        *scope = (llg_value_scope_t){0};
+    }
 }
 
 static llg_value_scope_t* value_scope_retain_target(const void* target) {
@@ -150,12 +154,7 @@ static llg_value_scope_t* value_scope_retain_target(const void* target) {
     return scope; /* Global storage has no entry; model teardown owns it. */
 }
 
-llg_value_scope_t* llg_value_scope_begin(size_t count) {
-    llg_value_scope_t* scope = (llg_value_scope_t*)llg_checked_calloc(
-        1, sizeof(*scope), "value owner scope");
-    scope->values = count ? (sv4_t*)llg_checked_calloc(
-        count, sizeof(sv4_t), "scoped values") : NULL;
-    scope->count = count;
+static llg_value_scope_t* value_scope_register(llg_value_scope_t* scope) {
     value_scope_index_add(scope);
     scope->references = 1;
     scope->active = 1;
@@ -167,6 +166,28 @@ llg_value_scope_t* llg_value_scope_begin(size_t count) {
     if (all_value_scopes) all_value_scopes->all_prev = scope;
     all_value_scopes = scope;
     return scope;
+}
+
+llg_value_scope_t* llg_value_scope_begin(size_t count) {
+    llg_value_scope_t* scope = (llg_value_scope_t*)llg_checked_calloc(
+        1, sizeof(*scope), "value owner scope");
+    scope->values = count ? (sv4_t*)llg_checked_calloc(
+        count, sizeof(sv4_t), "scoped values") : NULL;
+    scope->count = count;
+    return value_scope_register(scope);
+}
+
+llg_value_scope_t* llg_value_scope_register(llg_value_scope_t* node,
+                                          sv4_t* values, size_t count) {
+    *node = (llg_value_scope_t){.intrusive = 1, .count = count, .values = values};
+    return value_scope_register(node);
+}
+
+llg_value_scope_t* llg_value_scope_register_object(llg_value_scope_t* node,
+    void* object, void (*destroy)(void*)) {
+    *node = (llg_value_scope_t){.intrusive = 1, .object = object,
+                                .destroy_object = destroy};
+    return value_scope_register(node);
 }
 
 llg_value_scope_t* llg_value_scope_begin_object(size_t size, void (*destroy)(void*)) {
@@ -187,6 +208,10 @@ sv4_t* llg_value_scope_values(llg_value_scope_t* scope) {
 
 void llg_value_scope_end(llg_value_scope_t* scope) {
     if (!scope) return;
+    if (scope->intrusive && scope->references != 1) {
+        fputs("llg runtime fatal: frame value cell escaped its scope\n", stderr);
+        abort();
+    }
     llg_value_scope_t** head = scope->owner ? &scope->owner->value_scopes : &root_value_scopes;
     while (*head && *head != scope) head = &(*head)->next;
     if (!scope->active || !*head) {

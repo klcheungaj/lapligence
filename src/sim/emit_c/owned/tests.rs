@@ -9,6 +9,7 @@ mod compact_names;
 mod conditional_records;
 mod event_captures;
 mod fixed_array_reductions;
+mod frame_cells;
 mod instance_sharing;
 mod net_storage;
 mod pca_batches;

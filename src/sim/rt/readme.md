@@ -4,6 +4,10 @@ Generated models compile this runtime separately from Rust. Exact-width values u
 unique ownership (ABI 4); registered scopes and retained destinations support
 suspension, cancellation and queued publication. See
 [value ownership](value/ownership.md) for the allocation contract.
+Proven non-escaping locals register caller-owned scope nodes and cells in
+coroutine frames or frame-less functions' C scopes. Escaping and unproven cells
+keep heap owners. [Retainer and lifetime rules](AGENTS.md#frame-resident-cells)
+cover exact-pointer indexing, final history removal and zero-resume exits.
 
 ## Components
 
@@ -12,7 +16,7 @@ suspension, cancellation and queued publication. See
 | `llg_value.h/.c`, `value/` | Four-state values, arithmetic, selection, resolution, formatting and numeric conversion; scheduler-independent. |
 | `llg_random.h/.c` | Verilog random/distribution functions and explicit seed updates. |
 | `llg_rng.h/.c` | Process/object random streams, independent of scheduling. |
-| `llg_co.h/.c` | Stackless coroutine frames, anchors and arena cold paths; the generated-process contract is [process ABI version 2](process_abi.md). |
+| `llg_co.h/.c` | Stackless coroutine frames, anchors and arena cold paths; the generated-process contract is [process ABI version 3](process_abi.md). |
 | `llg_string.h/.c` | Owned byte strings, conversion and change notification. |
 | `llg_container.h/.c`, `container/` | Dynamic arrays, queues, associative storage and retained element identities. |
 | `llg_rt.h/.c`, `scheduler/` | IEEE region scheduling, processes, events, assignments, synchronization, assertions, I/O and VPI. |
@@ -58,7 +62,7 @@ live source row 32 bytes, and each hash bucket 8 bytes (geometric capacity at
 identity comparisons use exact pointer equality. Handles are 40 bytes (8 added),
 activations 72 bytes (16 added); the process slot index occupies prior padding.
 The free-slot bitmap uses about 0.127 bytes per allocated registry slot plus
-at most five rounded summary words. These internal layouts keep process ABI 2;
+at most five rounded summary words. These internal layouts keep process ABI 3;
 runtime-content hashing invalidates older cached archives.
 
 Stop/resume retains a live context; close releases observers/queues before model
@@ -82,7 +86,7 @@ the exported counter snapshot records system allocations, cache hits, system
 frees, current cached bytes and the peak. Runtime cleanup frees every retained
 chunk. Under the future MT-1 design, each worker will own an equivalent cache.
 
-`generate_model_sources` writes a self-contained CMake tree with `llg_co`. ABI 2
+`generate_model_sources` writes a self-contained CMake tree with `llg_co`. ABI 3
 models define `LLG_MODEL_PROCESS_ABI` and initialize through
 `llg_rt_init_with_args_and_precision`; there is no process-stack sizing input.
 Waveforms additionally need zlib and CMake Threads support.

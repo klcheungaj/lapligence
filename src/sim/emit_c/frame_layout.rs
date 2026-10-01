@@ -561,6 +561,7 @@ fn lp64_layout(ty: &str) -> Result<(usize, usize), String> {
         "uint8_t" | "int8_t" | "char" => (1, 1),
         "double" => (8, 8),
         "sv4_t" => (32, 8),
+        "llg_value_scope_t" => (80, 8),
         "llg_string_t" => (32, 8),
         "sv4_select_plan_t" => (20, 4),
         "llg_event_t" => (8, 8),
