@@ -120,6 +120,7 @@ fn render_function(
     coroutine: bool,
 ) -> Result<(String, Option<super::super::frame_layout::FrameLayout>), String> {
     check_function(function)?;
+    frame.cell_eligibility = frame_cells::CellEligibility::analyze(ctx, &function.body);
     if function.dpi.is_some() {
         if coroutine {
             return Err("a DPI subprogram cannot be a coroutine".to_owned());
@@ -392,12 +393,25 @@ pub(in crate::sim::emit_c) fn process(
 }
 
 fn render_process(
-    _ctx: &RCtx<'_>,
+    ctx: &RCtx<'_>,
     process: &IrProcess,
     execution: &ExecutionProcess,
     mut frame: Frame<'_, '_>,
     coroutine: bool,
 ) -> Result<ProcessBody, String> {
+    frame.cell_eligibility = frame_cells::CellEligibility::analyze(
+        ctx,
+        execution.blocks.iter().flat_map(|block| &block.operations),
+    );
+    for block in &execution.blocks {
+        if let ExecutionTerminator::Suspend {
+            trigger: TriggerPlan::Signals(reads),
+            ..
+        } = &block.terminator
+        {
+            frame.cell_eligibility.exclude_dependencies(reads);
+        }
+    }
     let label = |block| format!("_llg_exec_{}_b{block}", execution.semantic_process);
     frame.line(format!("goto {};", label(execution.entry)));
     for (index, block) in execution.blocks.iter().enumerate() {

@@ -131,7 +131,7 @@ fn a_cell_pointer_is_assigned_with_its_field_and_reloaded_after_resume() {
         "{process}"
     );
     assert!(
-        process.contains("_llg_local_1 = F->_llg_local_1 = llg_value_scope_values("),
+        process.contains("_llg_local_1 = F->_llg_local_1 = &F->_llg_cell_"),
         "{process}"
     );
     let reloads = lines_after(process, "LLG_CO_AWAIT(");

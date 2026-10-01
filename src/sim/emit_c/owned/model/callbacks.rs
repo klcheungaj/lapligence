@@ -21,7 +21,7 @@ pub(super) fn coroutine_branch(
 }
 
 fn render_with_frame(
-    _ctx: &RCtx<'_>,
+    ctx: &RCtx<'_>,
     pre: &IrPreFn,
     mut frame: Frame<'_, '_>,
     coroutine: bool,
@@ -42,6 +42,7 @@ fn render_with_frame(
     }
     match pre {
         IrPreFn::Branch { c_name, body } | IrPreFn::CapturedBranch { c_name, body, .. } => {
+            frame.cell_eligibility = frame_cells::CellEligibility::analyze(ctx, body);
             if let IrPreFn::CapturedBranch { captures, .. } = pre {
                 for capture in captures {
                     let storage = capture.storage();

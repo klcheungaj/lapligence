@@ -355,18 +355,6 @@ typedef struct llg_program {
     struct llg_program* next;
 } llg_program_t;
 
-struct llg_value_scope {
-    struct llg_value_scope* next;
-    struct llg_value_scope* all_next;
-    struct llg_value_scope* all_prev;
-    size_t references;
-    int active;
-    llg_proc_t* owner;
-    size_t count;
-    sv4_t* values;
-    void* object;
-    void (*destroy_object)(void*);
-};
 static llg_value_scope_t* root_value_scopes;
 static llg_value_scope_t* all_value_scopes;
 

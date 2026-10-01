@@ -3,8 +3,8 @@
 The renderer replaces nested allocating expressions with ordered C11 statements.
 `Value` records result code, shape and ownership; registered expression scopes and
 lexical cells support cleanup on normal exit, suspension and cancellation.
-Addressable real locals use stable heap-backed payloads rather than shared-stack
-addresses. Feature guards reject unrepresented ownership paths.
+Non-escaping packed, real and native local cells use caller-owned scope nodes
+and payloads; escaping or unproven cells retain stable heap owners. Feature guards reject unrepresented ownership paths.
 
 ## Responsibility map
 

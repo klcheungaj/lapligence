@@ -535,7 +535,7 @@ fn render_model(
         "#define LLG_MODEL_VALUE_ABI {}\n",
         super::VALUE_ABI_VERSION
     ));
-    out.push_str("#define LLG_MODEL_PROCESS_ABI 2\n");
+    out.push_str("#define LLG_MODEL_PROCESS_ABI 3\n");
     if model.waveform {
         out.push_str("#define LLG_WAVEFORM 1\n");
     }

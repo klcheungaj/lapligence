@@ -9,7 +9,7 @@ mod sim_harness;
 use llg::sim;
 
 const STOCHASTIC_PROBE: &str = r#"
-#define LLG_MODEL_PROCESS_ABI 2
+#define LLG_MODEL_PROCESS_ABI 3
 #include "llg_rt.h"
 
 #include <stdio.h>

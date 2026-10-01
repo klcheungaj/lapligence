@@ -83,9 +83,13 @@ impl Frame<'_, '_> {
         self.line(format!("llg_value_scope_end({});", value.scope));
     }
     pub(super) fn native_local(&mut self, name: &str, kind: NativeKind) -> NativeBinding {
-        let value = self.native_reserve(kind);
+        let address = if self.cell_eligibility.permits(name) {
+            self.frame_cell(kind.c_type(), Some(kind.destructor()))
+        } else {
+            self.native_reserve(kind).address
+        };
         let binding = NativeBinding {
-            address: value.address,
+            address,
             kind,
             automatic: true,
         };

@@ -59,6 +59,7 @@ capabilities; check the exact inventory rather than assuming a fixed count.
 | `scheduler_lists_probe.c` | 20,000 process slots, signal subscribers, dependencies and activations; lowest-hole reuse, reverse wake order, duplicate dependencies, current/next removal during nested publication, process awaits, cancellation and retained-handle teardown. |
 | `clocking_index_probe.c` | Exact clock descriptor lookup, growth/tombstones/removal, freed/reused scopes, retained NBA lifetime, slot reset, persistent sequence ticks, four-state and multiple edges, teardown. |
 | `scope_index_probe.c`, `callback_finish_probe.c` | Growth/tombstones/out-of-order releases, retained cells, finish during evaluators, shared per-field contexts and force/qualifier cleanup. |
+| `frame_cells_probe.c` | Caller-owned packed/native registration, exact-pointer lookup/removal, nested mixed heap/frame scopes, retained heap NBA after lexical exit, cancellation, repeated reuse of a completed callee frame, zero-resume exit followed by runtime unwind, and fatal rejection of an escaped intrusive cell. |
 | `event_array_probe.c` | Mixed declared directions, negative/out-of-range/X selectors and inert invalid waits. |
 | `nextest_control_probe.c` | Native cancellation, staged outputs, lexical activation exits, inertial/strobe/force callbacks and repeated starts. |
 | `generated_scopes_probe.c`, `generated_coroutine_probe.c` | Handwritten output shapes: lexical cells, retained NBA/clocking transfers, masks, recursion, yielding calls, finish/cancel and stop/resume/close. |
