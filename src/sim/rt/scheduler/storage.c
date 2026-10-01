@@ -5,6 +5,7 @@ typedef enum {
     W_NONE,
     W_TIME,
     W_EVENTS,
+    W_EVENTS_INLINE, // one packed signal with an inline four-state snapshot
     W_EVENT, // waiting on one or more named events
     W_EVENT_TRIGGERED, // waiting on persistent same-time-slot event state
     W_EVENT_ORDER, // waiting for named events in a specified order
@@ -12,6 +13,7 @@ typedef enum {
     W_DEPS,  // typed packed/real dependency set
     W_EXPR,  // expressions and trigger-time qualifiers
     W_LEVEL,
+    W_LEVEL_INLINE,
     W_FORK,    // llg_join: waiting for a fork group
     W_FORK_ALL, // llg_wait_fork: waiting for all of the current proc's groups
     W_PROCESS, // process::await: waiting for one stable process handle
@@ -110,6 +112,7 @@ typedef struct {
     llg_event_object_t** evs;
     int n_evs;
     llg_event_object_t* triggered_ev;
+    llg_event_object_t* inline_ev;
 } llg_wait_event_payload_t;
 
 typedef struct {
@@ -187,18 +190,34 @@ struct llg_wait_source {
     llg_wait_source_t** prev_link;
 };
 
+// One limb covers scalar clocks and packed values through 64 bits. Larger
+// capacities grow every process; keep the measured 128-byte wait budget.
+#define LLG_WAIT_INLINE_LIMBS 1u
+#define LLG_WAIT_INLINE_SPECS 1u
+
+typedef struct {
+    llg_wait_subscription_t subscription;
+    llg_event_spec_t specs[LLG_WAIT_INLINE_SPECS];
+    uint32_t width;
+    int8_t is_signed;
+    uint64_t limbs[3u * LLG_WAIT_INLINE_LIMBS];
+} llg_wait_inline_payload_t;
+
 typedef struct llg_wait {
     struct llg_wait* next;         // all active waits (signal + timed + zero-delay)
     struct llg_wait** prev_link;  // O(1) global-list removal
     llg_wait_subscription_t* subscriptions;
     size_t n_subscriptions;
-    struct llg_wait* time_next;    // sorted timed list
-    struct llg_wait* region_next;  // typed zero-delay region queue
     llg_proc_t* proc;
     llg_wait_kind_t kind;
     llg_region_t resume_region;
     union {
-        uint64_t time;
+        struct {
+            uint64_t time;
+            struct llg_wait* next; // sorted timed list
+            struct llg_wait* region_next; // typed zero-delay region queue
+        } timer;
+        llg_wait_inline_payload_t single;
         llg_wait_event_payload_t event;
         llg_wait_expression_payload_t expression;
         llg_wait_rare_t* rare;
