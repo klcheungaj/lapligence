@@ -41,8 +41,55 @@ void llg_event_object_reset(llg_event_object_t* ev) {
     ev->triggered = 0;
 }
 
+// Slot arrays share the event-list allocation; a single ordinary event uses
+// the existing inline payload. Positions survive waiter-table reallocations.
+static llg_event_object_t** event_wait_list_new(int count, int** slots) {
+    if (!count) {
+        *slots = NULL;
+        return NULL;
+    }
+    llg_event_object_t** events = (llg_event_object_t**)llg_checked_malloc(
+        (size_t)count, sizeof(*events) + sizeof(**slots), "indexed event wait list");
+    *slots = (int*)(events + count);
+    for (int i = 0; i < count; i++) (*slots)[i] = -1;
+    return events;
+}
+
+static int* event_wait_slot(llg_wait_t* w, llg_event_object_t* ev, int index) {
+    llg_event_object_t** events = NULL;
+    int* slots = NULL;
+    int count = 0;
+    switch (w->kind) {
+        case W_EVENT:
+            events = w->payload.event.evs;
+            slots = w->payload.event.event_slots;
+            count = w->payload.event.n_evs;
+            break;
+        case W_EXPR:
+            events = w->payload.expression.evs;
+            slots = w->payload.expression.event_slots;
+            count = w->payload.expression.n_evs;
+            break;
+        case W_MIXED:
+            events = w->payload.rare->mixed.evs;
+            slots = w->payload.rare->mixed.event_slots;
+            count = w->payload.rare->mixed.n_evs;
+            break;
+        case W_EVENT_ORDER:
+            events = w->payload.rare->order.evs;
+            slots = w->payload.rare->order.event_slots;
+            count = w->payload.rare->order.n_evs;
+            break;
+        default:
+            return NULL;
+    }
+    for (int i = 0; i < count; i++)
+        if (events[i] == ev && slots[i] == index) return &slots[i];
+    return NULL;
+}
+
 // Register `p` on `ev`'s waiter table, growing it with checked allocation.
-static void event_list_add(llg_event_object_t* ev, llg_proc_t* p) {
+static void event_list_add(llg_event_object_t* ev, llg_proc_t* p, int* slot) {
     if (!ev) return;
     if (ev->n_waiters == INT_MAX) {
         fprintf(stderr, "llg runtime fatal: named-event waiter count overflow\n");
@@ -51,6 +98,7 @@ static void event_list_add(llg_event_object_t* ev, llg_proc_t* p) {
     event_table_reserve(&ev->waiters, &ev->waiters_capacity,
                         ev->n_waiters + 1, ev->n_waiters,
                         "named-event waiters");
+    *slot = ev->n_waiters;
     ev->waiters[ev->n_waiters++] = p;
 }
 
@@ -67,6 +115,7 @@ static void event_triggered_list_add(llg_event_object_t* ev, llg_proc_t* p) {
     event_table_reserve(&ev->triggered_waiters, &ev->triggered_waiters_capacity,
                         ev->n_triggered_waiters + 1, ev->n_triggered_waiters,
                         "named-event triggered waiters");
+    p->wait.payload.event.inline_slot = ev->n_triggered_waiters;
     ev->triggered_waiters[ev->n_triggered_waiters++] = p;
 }
 
@@ -75,30 +124,39 @@ static void event_triggered_list_add(llg_event_object_t* ev, llg_proc_t* p) {
 // signal half of a mixed list), and must not stay registered on the others.
 static void event_unlink(llg_wait_t* w) {
     llg_event_object_t** events = NULL;
+    int* slots = NULL;
     int count = 0;
     if (w->kind == W_EVENT) {
         events = w->payload.event.evs;
+        slots = w->payload.event.event_slots;
         count = w->payload.event.n_evs;
     } else if (w->kind == W_EXPR) {
         events = w->payload.expression.evs;
+        slots = w->payload.expression.event_slots;
         count = w->payload.expression.n_evs;
     } else if (w->kind == W_MIXED && w->payload.rare) {
         events = w->payload.rare->mixed.evs;
+        slots = w->payload.rare->mixed.event_slots;
         count = w->payload.rare->mixed.n_evs;
     } else if (w->kind == W_EVENT_ORDER && w->payload.rare) {
         events = w->payload.rare->order.evs;
+        slots = w->payload.rare->order.event_slots;
         count = w->payload.rare->order.n_evs;
     }
     for (int i = 0; i < count; i++) {
         llg_event_object_t* ev = events[i];
         if (!ev) continue;
-        for (int k = 0; k < ev->n_waiters; k++) {
-            if (ev->waiters[k] == w->proc) {
-                ev->waiters[k] = ev->waiters[ev->n_waiters - 1];
-                ev->n_waiters--;
-                break;
-            }
+        int index = slots[i];
+        if (index < 0) continue; // already detached into a trigger snapshot
+        int last = --ev->n_waiters;
+        if (index != last) {
+            llg_proc_t* moved = ev->waiters[last];
+            int* moved_slot = event_wait_slot(&moved->wait, ev, last);
+            if (!moved_slot) abort();
+            *moved_slot = index;
+            ev->waiters[index] = moved;
         }
+        slots[i] = -1;
     }
 }
 
@@ -106,12 +164,13 @@ static void event_triggered_unlink(llg_wait_t* w) {
     if (!w || w->kind != W_EVENT_TRIGGERED) return;
     llg_event_object_t* ev = w->payload.event.triggered_ev;
     if (!ev) return;
-    for (int i = 0; i < ev->n_triggered_waiters; i++) {
-        if (ev->triggered_waiters[i] == w->proc) {
-            ev->triggered_waiters[i] =
-                ev->triggered_waiters[ev->n_triggered_waiters - 1];
-            ev->n_triggered_waiters--;
-            break;
-        }
+    int index = w->payload.event.inline_slot;
+    if (index < 0) return;
+    int last = --ev->n_triggered_waiters;
+    if (index != last) {
+        llg_proc_t* moved = ev->triggered_waiters[last];
+        ev->triggered_waiters[index] = moved;
+        moved->wait.payload.event.inline_slot = index;
     }
+    w->payload.event.inline_slot = -1;
 }

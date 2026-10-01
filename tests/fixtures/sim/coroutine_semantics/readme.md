@@ -19,6 +19,7 @@ expectation, and treats any frontend or lowering warning as a failure.
 | `deinlined_tasks.sv` | Event formals name the caller's event object (bound at the call), a four-level event-task chain called from three sites keeps locals and outputs, `disable` of a suspended task skips its copy-out while its callers continue, and a timed task can disable its caller's block. |
 | `ref_event_tasks.sv` | A `ref` formal read by an event control keeps the actual's dependencies through a three-level forwarding chain for two module signals, a caller local never wakes it, and a disabled task never observes a later edge. |
 | `stackless_join_none_real_block.sv` | A completed timing call and an already-satisfied wait are not scheduling boundaries; a detached child starts at the next real block. |
+| `fork_group_order.sv` | 4,096 join_none groups preserve child start order, park together, finish through wait fork and cancel a second batch without resuming it. |
 | `deep_cancellation.sv` | Kill below three timed calls and named-block disable abandon the victim while independent work continues. |
 | `self_suspend.sv` | Self-suspend preserves the continuation until another process resumes it; self-resume while running is a no-op. |
 | `termination_depth.sv` | Default `$stop` resumes at task depth two; `$finish` from a plain function inside a timing task abandons callers and runs finals once. |

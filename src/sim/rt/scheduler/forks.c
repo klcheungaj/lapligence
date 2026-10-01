@@ -1,4 +1,16 @@
 
+// Detach a live group without changing the order of surviving siblings.
+static void fork_group_unlink(llg_fork_group_t* grp) {
+    llg_proc_t* parent = grp->parent;
+    if (grp->prev_g) grp->prev_g->next_g = grp->next_g;
+    else parent->fork_groups = grp->next_g;
+    if (grp->next_g) grp->next_g->prev_g = grp->prev_g;
+    else parent->fork_groups_tail = grp->prev_g;
+    if (parent->pending_fork_groups == grp)
+        parent->pending_fork_groups = grp->next_g;
+    grp->prev_g = NULL;
+}
+
 // One child of `grp` finished. Decrement the live count,
 // wake a join/wait_fork waiter whose condition is now met, and move the group
 // to the zombie list once the last child is done.
@@ -25,21 +37,12 @@ static void llg_fork_group_child_done(llg_fork_group_t* grp) {
         // list are freed by process_zombie_groups at the next safe point.
         // join_any / join_none groups stay live until the last child finishes
         // so wait_fork still works.
-        llg_fork_group_t** pp = &parent->fork_groups;
-        while (*pp && *pp != grp) pp = &(*pp)->next_g;
-        if (*pp) *pp = grp->next_g;
+        fork_group_unlink(grp);
         grp->next_g = g.zombie_groups;
         g.zombie_groups = grp;
-        // Wake any wait_fork waiter whose own groups are now all done.
-        llg_wait_t* w = g.waiters;
-        while (w) {
-            llg_wait_t* next = w->next;
-            if (w->kind == W_FORK_ALL && w->payload.rare &&
-                w->payload.rare->fork_all.parent->fork_groups == NULL) {
-                wake_proc(w->proc);
-            }
-            w = next;
-        }
+        // wait fork observes only the groups spawned by its own process.
+        if (parent->wait.kind == W_FORK_ALL && !parent->fork_groups)
+            wake_proc(parent);
     }
 }
 
@@ -65,15 +68,19 @@ static llg_fork_group_t* llg_fork_group_new_impl(int join_kind,
     // Preserve source creation order when one suspension releases multiple
     // join_none groups.  Child order within each group is already the branch
     // list order, so this gives the scheduler one deterministic sequence.
-    llg_fork_group_t** tail = &parent->fork_groups;
-    while (*tail) tail = &(*tail)->next_g;
-    *tail = grp;
+    grp->prev_g = parent->fork_groups_tail;
+    if (grp->prev_g) grp->prev_g->next_g = grp;
+    else parent->fork_groups = grp;
+    parent->fork_groups_tail = grp;
+    if (!parent->pending_fork_groups) parent->pending_fork_groups = grp;
     return grp;
 }
 
 static void start_pending_fork_children(llg_proc_t* parent) {
     if (!parent) return;
-    for (llg_fork_group_t* grp = parent->fork_groups; grp; grp = grp->next_g) {
+    llg_fork_group_t* pending = parent->pending_fork_groups;
+    parent->pending_fork_groups = NULL;
+    for (llg_fork_group_t* grp = pending; grp; grp = grp->next_g) {
         if (grp->join_kind != LLG_JOIN_NONE || grp->started) continue;
         grp->started = 1;
         for (llg_fork_child_t* child = grp->children; child; child = child->next) {
@@ -122,13 +129,14 @@ static llg_proc_t* llg_fork_impl(const llg_co_desc_t* desc,
     p->program_live = 0;
     p->budget_time = g.now;
     grp->remaining++;
-    llg_fork_child_t** pp = &grp->children;
-    while (*pp) pp = &(*pp)->next;
     llg_fork_child_t* c = (llg_fork_child_t*)llg_checked_malloc(
         1, sizeof(llg_fork_child_t), "fork child");
     c->proc = p;
     c->next = NULL;
-    *pp = c;
+    if (grp->children_tail) grp->children_tail->next = c;
+    else grp->children = c;
+    grp->children_tail = c;
+    p->fork_child = c;
     register_proc(p);
     if (grp->join_kind != LLG_JOIN_NONE) enqueue_region(p, grp->child_region);
     return p;
@@ -153,9 +161,7 @@ llg_co_arm_t llg_arm_join(llg_proc_t* self, llg_fork_group_t* grp) {
         // Empty fork groups never receive a child-done callback, so finalize
         // them here before join or wait_fork can observe a permanently live
         // group. The parent is the currently running process.
-        llg_fork_group_t** pp = &grp->parent->fork_groups;
-        while (*pp && *pp != grp) pp = &(*pp)->next_g;
-        if (*pp) *pp = grp->next_g;
+        fork_group_unlink(grp);
         grp->terminal = 1;
         grp->next_g = g.zombie_groups;
         g.zombie_groups = grp;
@@ -251,9 +257,7 @@ static void llg_kill_named_group(llg_fork_group_t* grp) {
     }
     grp->remaining = 0;
     grp->terminal = 1;
-    llg_fork_group_t** pp = &parent->fork_groups;
-    while (*pp && *pp != grp) pp = &(*pp)->next_g;
-    if (*pp == grp) *pp = grp->next_g;
+    fork_group_unlink(grp);
     grp->next_g = g.zombie_groups;
     g.zombie_groups = grp;
 

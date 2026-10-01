@@ -220,3 +220,14 @@ fn killing_and_disabling_multi_signal_waits_preserves_wait_fork() {
         &[],
     );
 }
+
+#[test]
+fn many_fork_groups_preserve_start_order_wait_and_disable() {
+    sim_cli::run_case(
+        "coroutine_semantics",
+        "fork_group_order",
+        "PASS fork_group_order started=4096 completed=4096\n",
+        "",
+        &[],
+    );
+}

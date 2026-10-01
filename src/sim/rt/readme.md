@@ -55,7 +55,7 @@ trailing-hole trimming are amortized constant time per registration/removal;
 ordinary slot removal uses the process's stored position. Cancellation traversals
 that can remove other records restart as before.
 
-On 64-bit hosts the process record is 400 bytes, including a 128-byte wait
+On 64-bit hosts the process record is 424 bytes, including a 128-byte wait
 record. Heap-path dependency memberships add 32 bytes each; a single narrow
 signal wait embeds its membership. Each live source row adds 32 bytes, and each
 hash bucket 8 bytes (geometric capacity at 75% load). Temporary key sorting uses
@@ -70,7 +70,7 @@ runtime-content hashing invalidates older cached archives.
 plane). Single packed any/edge waits and level targets through 64 bits copy their
 spec and all bits/X/Z planes into the wait payload, alongside one subscription.
 Timed queue links share that union, keeping waits at 128 bytes and processes at
-400 bytes. A single named-event wait copies its resolved object into an inline
+424 bytes. A single named-event wait copies its resolved object into an inline
 list slot. Wide, multiple, mixed, expression and dependency waits keep owned heap
 storage. Source rows and named-event tables still allocate on first use/growth;
 there is no per-wait allocation for the inline paths after that shared storage is
@@ -132,3 +132,18 @@ supported language contexts and outstanding qualification.
 the scheduler. `sv4_udp_eval` borrows inputs and table bytes for the call and
 returns an owned one-bit result, preserving Z-as-X, source-order matching and
 unmatched X. Value ABI 4 stays unchanged; source hashing changes the runtime cache.
+
+Fork groups append and unlink in constant time through a parent tail and group
+predecessor. A pending cursor visits newly created groups once at each blocking
+boundary, preserving source order. Child lists append through a tail, and each
+child process points to its owning list node for cancellation. On 64-bit hosts
+these links add 24 bytes per process and 16 bytes per group (72 → 88 bytes).
+`wait fork` completion tests only the group's parent rather than all waiters.
+Named-event registrations keep table positions and repair the moved registration
+on swap-with-last removal; trigger snapshots invalidate positions before waking.
+This preserves the existing table/wake order. Removal work depends on the moved
+waiter's event-list arity, not the event's waiter population. Single-event slots
+fit the inline payload; other lists add four bytes per reserved event entry,
+sharing the existing allocation. The 128-byte wait and 240-byte resume block
+remain unchanged. These private layouts leave process ABI 3 and llg_co ABI 1
+unchanged; runtime-content hashing rebuilds cached archives.

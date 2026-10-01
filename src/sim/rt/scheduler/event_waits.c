@@ -47,6 +47,8 @@ static void event_trigger_object_unchecked(llg_event_object_t* ev) {
     if (triggered)
         memcpy(triggered, ev->triggered_waiters,
                (size_t)n_triggered * sizeof(*triggered));
+    for (int i = 0; i < n_triggered; i++)
+        triggered[i]->wait.payload.event.inline_slot = -1;
     ev->n_triggered_waiters = 0;
     for (int i = 0; i < n_triggered; i++) wake_proc(triggered[i]);
     free(triggered);
@@ -58,6 +60,11 @@ static void event_trigger_object_unchecked(llg_event_object_t* ev) {
         : NULL;
     if (wake)
         memcpy(wake, ev->waiters, (size_t)n * sizeof(*wake));
+    for (int i = 0; i < n; i++) {
+        int* slot = event_wait_slot(&wake[i]->wait, ev, i);
+        if (!slot) abort();
+        *slot = -1;
+    }
     ev->n_waiters = 0;
     for (int i = 0; i < n; i++) {
         llg_wait_t* w = &wake[i]->wait;
@@ -67,7 +74,7 @@ static void event_trigger_object_unchecked(llg_event_object_t* ev) {
                 *w->payload.rare->order.result = result;
                 wake_proc(wake[i]);
             } else {
-                event_list_add(ev, wake[i]);
+                event_list_add(ev, wake[i], event_wait_slot(w, ev, -1));
             }
             continue;
         }
@@ -81,7 +88,7 @@ static void event_trigger_object_unchecked(llg_event_object_t* ev) {
             }
         }
         if (matched) wake_proc(wake[i]);
-        else event_list_add(ev, wake[i]);
+        else event_list_add(ev, wake[i], event_wait_slot(w, ev, -1));
     }
     free(wake);
     deferred_trigger_event(ev);
@@ -169,12 +176,16 @@ llg_co_arm_t llg_arm_events(llg_proc_t* self,
                            ? LLG_REGION_REACTIVE
                            : LLG_REGION_ACTIVE;
     w->payload.event.n_evs = n;
-    w->payload.event.evs = n == 1 ? &w->payload.event.inline_ev
-        : (llg_event_object_t**)llg_checked_malloc(
-        (size_t)n, sizeof(llg_event_object_t*), "named-event wait list");
+    if (n == 1) {
+        w->payload.event.evs = &w->payload.event.inline_ev;
+        w->payload.event.event_slots = &w->payload.event.inline_slot;
+        w->payload.event.inline_slot = -1;
+    } else {
+        w->payload.event.evs = event_wait_list_new(n, &w->payload.event.event_slots);
+    }
     for (int i = 0; i < n; i++) {
         w->payload.event.evs[i] = evs[i] ? evs[i]->object : NULL;
-        event_list_add(w->payload.event.evs[i], self);
+        event_list_add(w->payload.event.evs[i], self, &w->payload.event.event_slots[i]);
     }
     register_wait();
     return LLG_CO_ARM_SUSPEND;
@@ -192,6 +203,7 @@ llg_co_arm_t llg_arm_event_triggered(llg_proc_t* self,
                            ? LLG_REGION_REACTIVE
                            : LLG_REGION_ACTIVE;
     w->payload.event.triggered_ev = ev ? ev->object : NULL;
+    w->payload.event.inline_slot = -1;
     event_triggered_list_add(w->payload.event.triggered_ev, self);
     register_wait();
     return LLG_CO_ARM_SUSPEND;
@@ -231,8 +243,7 @@ llg_co_arm_t llg_arm_order(llg_proc_t* self,
     order->result = result;
     order->sequence = (llg_event_object_t**)llg_checked_malloc(
         (size_t)n, sizeof(llg_event_object_t*), "wait_order sequence");
-    order->evs = (llg_event_object_t**)llg_checked_malloc(
-        (size_t)n, sizeof(llg_event_object_t*), "wait_order event list");
+    order->evs = event_wait_list_new(n, &order->event_slots);
     order->n_evs = 0;
     for (int i = 0; i < n; i++) {
         llg_event_object_t* object = evs[i] ? evs[i]->object : NULL;
@@ -246,8 +257,8 @@ llg_co_arm_t llg_arm_order(llg_proc_t* self,
             }
         }
         if (!seen) {
-            order->evs[order->n_evs++] = object;
-            event_list_add(object, self);
+            order->evs[order->n_evs] = object;
+            event_list_add(object, self, &order->event_slots[order->n_evs++]);
         }
     }
     register_wait();
@@ -278,8 +289,7 @@ llg_co_arm_t llg_arm_mixed(llg_proc_t* self,
     mixed->last = nsig ? (sv4_t*)llg_checked_calloc(
         (size_t)nsig, sizeof(sv4_t), "mixed wait snapshots") : NULL;
     mixed->n_evs = nev;
-    mixed->evs = nev ? (llg_event_object_t**)llg_checked_malloc(
-        (size_t)nev, sizeof(llg_event_object_t*), "mixed named-event wait list") : NULL;
+    mixed->evs = nev ? event_wait_list_new(nev, &mixed->event_slots) : NULL;
     int si = 0;
     int ei = 0;
     for (int i = 0; i < n; i++) {
@@ -290,7 +300,7 @@ llg_co_arm_t llg_arm_mixed(llg_proc_t* self,
             si++;
         } else {
             mixed->evs[ei] = srcs[i].ev ? srcs[i].ev->object : NULL;
-            event_list_add(mixed->evs[ei], self);
+            event_list_add(mixed->evs[ei], self, &mixed->event_slots[ei]);
             ei++;
         }
     }
@@ -332,8 +342,7 @@ llg_co_arm_t llg_arm_expressions(llg_proc_t* self,
         (size_t)n, sizeof(sv4_t), "expression event snapshots");
     expression->real_last = (double*)llg_checked_malloc(
         (size_t)n, sizeof(double), "real expression event snapshots");
-    expression->evs = (llg_event_object_t**)llg_checked_malloc(
-        (size_t)n, sizeof(llg_event_object_t*), "expression named events");
+    expression->evs = event_wait_list_new(n, &expression->event_slots);
     for (int i = 0; i < n; i++) {
         if (specs[i].n_reads < 0 || specs[i].n_dependencies < 0) abort();
         expression->expressions[i] = specs[i];
@@ -371,8 +380,9 @@ llg_co_arm_t llg_arm_expressions(llg_proc_t* self,
             for (int j = 0; j < expression->n_evs; j++)
                 if (expression->evs[j] == object) seen = 1;
             if (!seen) {
-                expression->evs[expression->n_evs++] = object;
-                event_list_add(object, self);
+                expression->evs[expression->n_evs] = object;
+                event_list_add(object, self,
+                               &expression->event_slots[expression->n_evs++]);
             }
         } else if (specs[i].real || specs[i].real_eval || specs[i].real_sig) {
             if (specs[i].real_eval)

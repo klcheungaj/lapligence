@@ -50,6 +50,7 @@ def verify_inventory(inventory: dict, capabilities: dict) -> list[str]:
         if capabilities["waveforms"]:
             expected.add("waveform_original_selftest")
         expected.update(("stackless_runtime_boundaries", "coroutine_scale_release", "coroutine_scale_debug",
+                         "fork_group_scale_release", "fork_group_scale_debug",
                          "coroutine_debug_fresh_poison", "coroutine_debug_cancelled_arena_reuse"))
         expected.update(f"coroutine_mixed_mode_{debug}_{arena}"
                         for debug in (0, 1) for arena in (0, 1))
