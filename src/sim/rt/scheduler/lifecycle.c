@@ -206,6 +206,8 @@ void llg_rt_cleanup(void) {
         if (p && p->fork_groups) {
             free_group_storage(p->fork_groups);
             p->fork_groups = NULL;
+            p->fork_groups_tail = NULL;
+            p->pending_fork_groups = NULL;
         }
     }
     free_group_storage(g.zombie_groups);

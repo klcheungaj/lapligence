@@ -26,6 +26,7 @@ class InventoryTests(unittest.TestCase):
                      "file_input_isolation", "file_output_isolation", "memory_image", "native_value_scopes", "native_reference_scopes", "review_native_index_and_reference_bits",
                      "packed_selection_nba", "packed_selection_input", "packed_formal_owner_contracts"}
         scheduler.update({"stackless_runtime_boundaries", "coroutine_scale_release", "coroutine_scale_debug",
+                          "fork_group_scale_release", "fork_group_scale_debug",
                           "coroutine_debug_fresh_poison", "coroutine_debug_cancelled_arena_reuse",
                           "coroutine_mixed_mode_0_0", "coroutine_mixed_mode_0_1",
                           "coroutine_mixed_mode_1_0", "coroutine_mixed_mode_1_1"})

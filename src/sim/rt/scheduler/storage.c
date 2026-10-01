@@ -105,14 +105,17 @@ typedef struct {
     double* real_last;
     int n;
     llg_event_object_t** evs;
+    int* event_slots; // positions in named-event waiter tables
     int n_evs;
 } llg_wait_expression_payload_t;
 
 typedef struct {
     llg_event_object_t** evs;
+    int* event_slots; // positions in named-event waiter tables
     int n_evs;
     llg_event_object_t* triggered_ev;
     llg_event_object_t* inline_ev;
+    int inline_slot;
 } llg_wait_event_payload_t;
 
 typedef struct {
@@ -120,11 +123,13 @@ typedef struct {
     sv4_t* last;
     int n;
     llg_event_object_t** evs;
+    int* event_slots; // positions in named-event waiter tables
     int n_evs;
 } llg_wait_mixed_payload_t;
 
 typedef struct {
     llg_event_object_t** evs;
+    int* event_slots; // positions in named-event waiter tables
     int n_evs;
     llg_event_object_t** sequence;
     int n_order;
@@ -274,7 +279,9 @@ struct llg_fork_group {
     int started;                  // join_none children became eligible to run
     llg_proc_t* parent;          // spawning proc
     llg_fork_child_t* children;  // for disable_fork
+    llg_fork_child_t* children_tail; // source-order O(1) append
     struct llg_fork_group* next_g; // per-proc live-group list (or zombie list)
+    struct llg_fork_group* prev_g; // live-list predecessor, NULL when detached
     uint32_t target_declaration;
     uint32_t target_instance;
     int has_target;
@@ -371,7 +378,10 @@ struct llg_proc {
     llg_process_local_ref_t* process_locals;
     llg_proc_t* next_retired;
     llg_fork_group_t* fork_groups; // live groups spawned by this proc
+    llg_fork_group_t* fork_groups_tail; // source-order O(1) append
+    llg_fork_group_t* pending_fork_groups; // first group not yet checked for start
     llg_fork_group_t* grp;         // group this proc belongs to (NULL top-level)
+    llg_fork_child_t* fork_child;   // owning group node for O(1) cancellation
     llg_frame_t* frame;            // retained activation storage, when captured
     llg_ref_scope_t* reference_top; // retained call-argument cells
     llg_rng_state_t rng;           // process-local random stream
@@ -411,7 +421,7 @@ _Static_assert(offsetof(llg_proc_t, chain) + sizeof(llg_co_chain_t) -
 _Static_assert(offsetof(llg_proc_t, chain) + sizeof(llg_co_chain_t) ==
                    sizeof(llg_proc_t),
                "coroutine chain must remain the process record's last member");
-_Static_assert(sizeof(llg_proc_t) == 400,
+_Static_assert(sizeof(llg_proc_t) == 424,
                "64-bit process record size changed; update the layout contract");
 #endif
 

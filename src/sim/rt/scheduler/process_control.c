@@ -89,13 +89,8 @@ static void llg_kill_proc(llg_proc_t* p, int notify_parent) {
 
     llg_fork_group_t* parent_group = p->grp;
     if (parent_group) {
-        for (llg_fork_child_t* child = parent_group->children; child;
-             child = child->next) {
-            if (child->proc == p) {
-                child->proc = NULL;
-                break;
-            }
-        }
+        p->fork_child->proc = NULL;
+        p->fork_child = NULL;
         p->grp = NULL;
     }
     // A process may kill itself indirectly by killing an ancestor or its
@@ -147,11 +142,14 @@ static void llg_kill_proc_groups(llg_proc_t* p) {
         }
         grp->remaining = 0;
         grp->terminal = 1;
+        grp->prev_g = NULL;
         grp->next_g = g.zombie_groups;
         g.zombie_groups = grp;
         grp = next_g;
     }
     p->fork_groups = NULL;
+    p->fork_groups_tail = NULL;
+    p->pending_fork_groups = NULL;
 }
 
 // Kill `p` and all of its descendants.
