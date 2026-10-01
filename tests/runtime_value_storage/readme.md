@@ -55,6 +55,7 @@ capabilities; check the exact inventory rather than assuming a fixed count.
 | `coroutine_chunk_cache_probe.c` | Stackless arena chunk reuse, byte-cap enforcement, cumulative counters and teardown release. |
 | `vpi_ownership_probe.c` | 129-bit X/Z puts/gets, 65,537-bit text scratch, result replacement, call cleanup and ten reinitializations. |
 | `waveform_snapshot_probe.c` | Ring wrap/move clearing, mutation-after-capture, VCD/FST values, wide views, ignored/error events and pending close/reinit. |
+| `wait_inline_probe.c` | Zero per-wait allocations after source/table warmup, 64/65-bit fallback, copied specs/nested dependencies, X/Z edges and levels, live snapshot widening, re-arm across timed/signal/event/heap paths, cancellation and teardown. |
 | `scheduler_lists_probe.c` | 20,000 process slots, signal subscribers, dependencies and activations; lowest-hole reuse, reverse wake order, duplicate dependencies, current/next removal during nested publication, process awaits, cancellation and retained-handle teardown. |
 | `clocking_index_probe.c` | Exact clock descriptor lookup, growth/tombstones/removal, freed/reused scopes, retained NBA lifetime, slot reset, persistent sequence ticks, four-state and multiple edges, teardown. |
 | `scope_index_probe.c`, `callback_finish_probe.c` | Growth/tombstones/out-of-order releases, retained cells, finish during evaluators, shared per-field contexts and force/qualifier cleanup. |

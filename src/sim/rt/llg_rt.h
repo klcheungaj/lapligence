@@ -1281,6 +1281,7 @@ void llg_nba_event(llg_event_t* ev);
 // Queue a nonblocking event trigger after `ticks`; zero stays in the current
 // time slot's NBA region, while a positive delay enters the timed NBA queue.
 void llg_nba_event_after(llg_event_t* ev, uint64_t ticks);
+// A single named event uses inline copied storage; larger lists are heap-owned.
 // Named-event arms copy the event list before SUSPEND. Triggered returns READY
 // if the event is already set in this slot. `result` for wait_order must point
 // at a frame field; the runtime writes 1 (success) or -1 (out of order) before

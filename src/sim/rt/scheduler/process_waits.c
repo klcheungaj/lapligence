@@ -138,7 +138,7 @@ llg_co_arm_t llg_arm_time(llg_proc_t* self, uint64_t ticks) {
                 (unsigned long long)g.now, (unsigned long long)ticks);
         abort();
     }
-    w->payload.time = g.now + ticks;
+    w->payload.timer.time = g.now + ticks;
     if (ticks == 0) {
         // `#0` yields into the INACTIVE region of the current time step
         // (LRM §4.4.2): it runs after the active region drains and before
@@ -188,6 +188,13 @@ llg_co_arm_t llg_arm_any(llg_proc_t* self, sv4_t** sigs, int n) {
     llg_wait_t* w = &self->wait;
     w->kind = W_EVENTS;
     w->resume_region = take_wait_resume_region(self);
+    if (n == 1 && wait_inline_fits(sigs[0])) {
+        w->kind = W_EVENTS_INLINE;
+        w->payload.single.specs[0] = (llg_event_spec_t){sigs[0], LLG_EV_ANY};
+        wait_inline_copy(w, sigs[0]);
+        register_wait();
+        return LLG_CO_ARM_SUSPEND;
+    }
     llg_wait_expression_payload_t* payload = &w->payload.expression;
     payload->n = n;
     payload->specs = (llg_event_spec_t*)llg_checked_malloc(
@@ -249,6 +256,13 @@ llg_co_arm_t llg_arm_any_events(llg_proc_t* self,
     w->resume_region = region_is_reactive(self->region)
                            ? LLG_REGION_REACTIVE
                            : LLG_REGION_ACTIVE;
+    if (n == 1 && wait_inline_fits(specs[0].sig)) {
+        w->kind = W_EVENTS_INLINE;
+        w->payload.single.specs[0] = specs[0];
+        wait_inline_copy(w, specs[0].sig);
+        register_wait();
+        return LLG_CO_ARM_SUSPEND;
+    }
     llg_wait_expression_payload_t* payload = &w->payload.expression;
     payload->n = n;
     payload->specs = (llg_event_spec_t*)llg_checked_malloc(
@@ -280,6 +294,13 @@ llg_co_arm_t llg_arm_level(llg_proc_t* self, sv4_t* sig, sv4_t value) {
     w->resume_region = region_is_reactive(self->region)
                            ? LLG_REGION_REACTIVE
                            : LLG_REGION_ACTIVE;
+    if (wait_inline_fits(&value)) {
+        w->kind = W_LEVEL_INLINE;
+        w->payload.single.specs[0] = (llg_event_spec_t){sig, LLG_EV_ANY};
+        wait_inline_copy(w, &value);
+        register_wait();
+        return LLG_CO_ARM_SUSPEND;
+    }
     llg_wait_level_payload_t* payload =
         &wait_rare_allocate(w, "level wait payload")->level;
     payload->sig = sig;
