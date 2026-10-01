@@ -127,6 +127,8 @@ static void value_scope_release(llg_value_scope_t* scope) {
     if (scope->all_prev) scope->all_prev->all_next = scope->all_next;
     else all_value_scopes = scope->all_next;
     if (scope->all_next) scope->all_next->all_prev = scope->all_prev;
+    for (size_t i = 0; i < scope->count; ++i)
+        llg_clocking_forget_signal(&scope->values[i]);
     value_scope_index_remove(scope);
     sv4_destroy_array(scope->values, scope->count);
     free(scope->values);

@@ -138,6 +138,11 @@ static void free_clocking_edges(void) {
         free(g.clocking_edges);
         g.clocking_edges = next;
     }
+    free(g.clocking_index);
+    g.clocking_index = NULL;
+    g.clocking_capacity = 0;
+    g.clocking_count = 0;
+    g.clocking_used = 0;
 }
 
 static void free_clocking_drives(void) {

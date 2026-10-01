@@ -1410,6 +1410,13 @@ int llg_clocking_sample_observed(sv4_t* source, sv4_t* sample);
 int llg_clocking_sample_history(sv4_t* source, sv4_t* sample,
                                 uint64_t ticks);
 
+// Forget clocking history before freeing/reusing an externally owned packed
+// descriptor that received runtime writes. Registered packed value scopes do
+// this at final release; model storage survives until llg_rt_cleanup. This does
+// not unregister waits, sampling or assertions: their borrowed sources must
+// still outlive their consumers. NULL and already-forgotten signals are harmless.
+void llg_clocking_forget_signal(sv4_t* signal);
+
 // Assignments.  llg_nba records on the current process's list and commits in
 // the NBA region; llg_ba writes immediately and notifies waiters.
 // Packed write/enqueue inputs are borrowed. Retained values/masks are cloned;
