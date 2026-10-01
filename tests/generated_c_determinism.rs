@@ -105,6 +105,13 @@ fn generated_sources_are_repeatable_across_processes() {
                 let snapshot = snapshot_tree(&output_root.join("sim/tb"))
                     .expect("snapshot generated source tree");
                 assert!(!snapshot.is_empty(), "generated source tree is empty");
+                let (_, symbols) = snapshot
+                    .iter()
+                    .find(|(path, _)| path == Path::new("model.symbols.tsv"))
+                    .expect("generated source tree includes the symbol map");
+                if fixture == "compact_names/names.sv" {
+                    assert!(!symbols.is_empty(), "long source names must be mapped");
+                }
                 if let Some(first) = &expected {
                     assert_same_tree(first, &snapshot, fixture, mode, run);
                 } else {

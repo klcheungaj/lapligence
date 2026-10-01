@@ -671,7 +671,7 @@ fn run(options: DriverOptions) -> i32 {
     // 4. Write sources (+ CMakeLists.txt).  With --gen-only, stop here: the
     //    emitted directory is the output, nothing is configured or run.
     let out_dir = out_root.join("sim").join(gen_name(&gen));
-    let model = [("model.c", gen.model_c.as_str())];
+    let model = gen.sources();
     if gen_only {
         if generator.is_some()
             || launcher.is_some()

@@ -1,5 +1,7 @@
 use super::*;
-use crate::sim::emit_c::names::{identifier_spans, scoped_name, MAX_C_IDENTIFIER_LEN};
+use crate::sim::emit_c::names::{
+    identifier_spans, runtime_identifiers, scoped_name, MAX_C_IDENTIFIER_LEN,
+};
 
 #[test]
 fn generate_instance_model_bounds_all_internal_c_identifiers() {
@@ -31,12 +33,32 @@ fn generate_instance_model_bounds_all_internal_c_identifiers() {
         model.processes.push(process);
     }
     let execution = ExecutionModel::lower(model).unwrap();
-    let source = super::super::super::model::render(&execution).unwrap();
+    let rendered = crate::sim::emit_c::render_with_symbols(&execution).unwrap();
+    let repeated = crate::sim::emit_c::render_with_symbols(&execution).unwrap();
+    assert_eq!(rendered.symbols_tsv, repeated.symbols_tsv);
+    let source = rendered.source;
     assert_eq!(
         source,
         super::super::super::model::render(&execution).unwrap()
     );
-    assert!(identifier_spans(&source).all(|span| span.len() <= MAX_C_IDENTIFIER_LEN));
+    assert!(identifier_spans(&source).all(|span| {
+        span.len() <= MAX_C_IDENTIFIER_LEN || runtime_identifiers().contains(&source[span])
+    }));
+    let identifiers = identifier_spans(&source)
+        .map(|span| &source[span])
+        .collect::<std::collections::BTreeSet<_>>();
+    let rows = rendered
+        .symbols_tsv
+        .lines()
+        .map(|line| line.split_once('\t').unwrap())
+        .collect::<Vec<_>>();
+    assert!(rows.len() >= 32);
+    assert!(rows.windows(2).all(|rows| rows[0].0 < rows[1].0));
+    for (short, original) in rows {
+        assert!(identifiers.contains(short));
+        assert!(!identifiers.contains(original));
+        assert!(original.len() > MAX_C_IDENTIFIER_LEN);
+    }
     assert!(source.contains(&format!("pca_sites.{deep}.sites[0]")));
     assert!(source.contains(&format!("pca_sites.{deep}.sites[15].v")));
     assert!(!source.contains("__llg_ident_"));
@@ -74,8 +96,12 @@ fn complete_model_keeps_long_foreign_dpi_names_and_diagnostic_labels() {
     assert!(source.contains(&format!("extern void {foreign}(void);")));
     assert!(source.contains(&format!("{foreign}();")));
     assert!(source.contains("\"original diagnostic spelling\""));
-    assert!(identifier_spans(&source)
-        .all(|span| { span.len() <= MAX_C_IDENTIFIER_LEN || source[span] == foreign }));
+    assert!(identifier_spans(&source).all(|span| {
+        span.len() <= MAX_C_IDENTIFIER_LEN || {
+            let name = &source[span];
+            name == foreign || runtime_identifiers().contains(name)
+        }
+    }));
 }
 
 #[test]

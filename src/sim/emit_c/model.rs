@@ -5,7 +5,7 @@ use super::constants::{
 };
 use super::context::RCtx;
 use super::expressions::{coerce_two_state, packed_default};
-use super::names::{bound_identifiers, rewrite_identifiers};
+use super::names::{bound_identifiers, rewrite_identifiers, BoundedIdentifiers};
 use super::statements::{render_stmt_impl as render_stmt, wait_any_text_in_region};
 use super::EmitError;
 use crate::sim::execution::{
@@ -61,13 +61,27 @@ pub(super) fn owned_dpi_thunk(function: &IrFunc) -> Result<String, String> {
 /// the header comment the driver parses, signal/net/array storage, function
 /// prototypes and bodies, process functions, and `main()`.
 pub fn render(execution: &ExecutionModel) -> Result<String, EmitError> {
-    render_with_sharing_threshold(execution, sharing::threshold().map_err(EmitError::new)?)
+    Ok(render_with_symbols(execution)?.source)
 }
 
+pub(crate) fn render_with_symbols(
+    execution: &ExecutionModel,
+) -> Result<BoundedIdentifiers, EmitError> {
+    render_bounded(execution, sharing::threshold().map_err(EmitError::new)?)
+}
+
+#[cfg(test)]
 pub(in crate::sim::emit_c) fn render_with_sharing_threshold(
     execution: &ExecutionModel,
     threshold: usize,
 ) -> Result<String, EmitError> {
+    Ok(render_bounded(execution, threshold)?.source)
+}
+
+fn render_bounded(
+    execution: &ExecutionModel,
+    threshold: usize,
+) -> Result<BoundedIdentifiers, EmitError> {
     execution.validate().map_err(EmitError::InvalidIr)?;
     let capacity = execution
         .packed_capacity()
@@ -475,7 +489,10 @@ fn share_frame_types(
     Ok(frame_types)
 }
 
-fn render_model(execution: &ExecutionModel, threshold: usize) -> Result<String, String> {
+fn render_model(
+    execution: &ExecutionModel,
+    threshold: usize,
+) -> Result<BoundedIdentifiers, String> {
     let model = execution.ir();
     let (mut coroutine_functions, frame_upper_bounds) = render_coroutine_functions(execution)?;
     let mut coroutine_processes = render_coroutine_processes(execution, &frame_upper_bounds)?;

@@ -41,7 +41,7 @@ const ENCODED_PREFIX: &str = "cI_";
 
 /// Maximum length of a complete internal C identifier, including derived
 /// frame/descriptor suffixes. Foreign DPI symbols are outside this policy.
-pub(crate) const MAX_C_IDENTIFIER_LEN: usize = 128;
+pub(crate) const MAX_C_IDENTIFIER_LEN: usize = 32;
 
 fn simple(value: &str) -> bool {
     !value.is_empty()
@@ -227,16 +227,16 @@ pub(super) fn identifier_spans(text: &str) -> impl Iterator<Item = std::ops::Ran
 }
 
 /// Rewrite identifiers in emitted C without touching user-visible text.
-pub(super) fn rewrite_identifiers(
+pub(super) fn rewrite_identifiers<S: AsRef<str>>(
     text: &str,
-    mut rename: impl FnMut(&str) -> Option<String>,
+    mut rename: impl FnMut(&str) -> Option<S>,
 ) -> String {
     let mut out = String::with_capacity(text.len());
     let mut copied = 0;
     for span in identifier_spans(text) {
         if let Some(replacement) = rename(&text[span.clone()]) {
             out.push_str(&text[copied..span.start]);
-            out.push_str(&replacement);
+            out.push_str(replacement.as_ref());
             copied = span.end;
         }
     }
@@ -244,53 +244,124 @@ pub(super) fn rewrite_identifiers(
     out
 }
 
+pub(crate) struct BoundedIdentifiers {
+    pub source: String,
+    pub symbols_tsv: String,
+}
+
+pub(super) fn runtime_identifiers() -> &'static std::collections::BTreeSet<&'static str> {
+    static NAMES: std::sync::OnceLock<std::collections::BTreeSet<&'static str>> =
+        std::sync::OnceLock::new();
+    NAMES.get_or_init(|| {
+        [
+            include_str!("../rt/llg_rt.h"),
+            include_str!("../rt/llg_value.h"),
+            include_str!("../rt/llg_random.h"),
+            include_str!("../rt/llg_rng.h"),
+            include_str!("../rt/llg_co.h"),
+            include_str!("../rt/llg_vpi.h"),
+            include_str!("../rt/vpi_user.h"),
+            include_str!("../rt/llg_container.h"),
+            include_str!("../rt/llg_string.h"),
+            include_str!("../rt/llg_wave.h"),
+        ]
+        .into_iter()
+        .flat_map(|header| identifier_spans(header).map(move |span| &header[span]))
+        .collect()
+    })
+}
+
+fn registry_index(mut index: usize) -> String {
+    const DIGITS: &[u8] = b"0123456789abcdefghijklmnopqrstuvwxyz";
+    let mut digits = Vec::new();
+    loop {
+        digits.push(char::from(DIGITS[index % DIGITS.len()]));
+        index /= DIGITS.len();
+        if index == 0 {
+            return digits.into_iter().rev().collect();
+        }
+    }
+}
+
+fn bounded_name(name: &str, sequence: usize) -> String {
+    let prefix = [
+        "fn_", "G_", "D_", "E_", "O_", "p_", "f_", "g_", "llg_", "_llg_",
+    ]
+    .into_iter()
+    .find(|prefix| name.starts_with(prefix))
+    .unwrap_or("");
+    let suffix = ["_frame_t", "_desc"]
+        .into_iter()
+        .find(|suffix| name.ends_with(suffix))
+        .unwrap_or("");
+    let index = registry_index(sequence);
+    let stem_len = MAX_C_IDENTIFIER_LEN - prefix.len() - suffix.len() - index.len() - 2;
+    let stem = &name[prefix.len()..prefix.len() + stem_len];
+    format!("{prefix}{stem}_h{index}{suffix}")
+}
+
 /// Bound complete internal symbols using a deterministic per-model registry.
 ///
-/// A finite-length stateless hash cannot be injective on arbitrary source
-/// names. Instead sort the oversized identifiers, assign distinct indices,
-/// and skip every candidate already present anywhere in this model (including
-/// external names). This makes the finite model's substitution injective and
-/// reproducible. Run after all derived names exist; retain namespace prefixes
-/// and frame/descriptor suffixes needed by generated-C validation. Foreign
-/// C names are explicit ABI contracts and must remain byte-for-byte exact.
+/// Sort original names, assign base-36 indices and skip occupied, previously
+/// assigned and external names. Leading characters retain hierarchy context
+/// without decoding the reversible source-name encoding. Reserve header tokens
+/// too: a smaller internal cap must never rename a runtime API or macro.
+/// Run after all derived names exist; preserve namespace and frame/descriptor
+/// suffixes. The sidecar lists every substitution, sorted by shortened name.
 pub(super) fn bound_identifiers(
     source: String,
     external: &std::collections::BTreeSet<&str>,
-) -> String {
+) -> BoundedIdentifiers {
+    let runtime = runtime_identifiers();
+    let is_external = |name: &str| external.contains(name) || runtime.contains(name);
     if !identifier_spans(&source)
-        .any(|span| span.len() > MAX_C_IDENTIFIER_LEN && !external.contains(&source[span]))
+        .any(|span| span.len() > MAX_C_IDENTIFIER_LEN && !is_external(&source[span]))
     {
-        return source;
+        return BoundedIdentifiers {
+            source,
+            symbols_tsv: String::new(),
+        };
     }
     let occupied = identifier_spans(&source)
         .map(|span| &source[span])
-        .collect::<std::collections::BTreeSet<_>>();
-    let mut renamed = std::collections::BTreeMap::new();
+        .collect::<std::collections::HashSet<_>>();
+    let mut oversized = occupied
+        .iter()
+        .copied()
+        .filter(|name| name.len() > MAX_C_IDENTIFIER_LEN && !is_external(name))
+        .collect::<Vec<_>>();
+    oversized.sort_unstable();
+    let mut symbols = std::collections::BTreeMap::new();
     let mut sequence = 0usize;
-    for name in &occupied {
-        if name.len() <= MAX_C_IDENTIFIER_LEN || external.contains(name) {
-            continue;
-        }
-        let prefix = [
-            "fn_", "G_", "D_", "E_", "O_", "p_", "f_", "g_", "llg_", "_llg_",
-        ]
-        .into_iter()
-        .find(|prefix| name.starts_with(prefix))
-        .unwrap_or("");
-        let suffix = ["_frame_t", "_desc"]
-            .into_iter()
-            .find(|suffix| name.ends_with(suffix))
-            .unwrap_or("");
+    for name in oversized {
         let replacement = loop {
-            let candidate = format!("{prefix}{ENCODED_PREFIX}h{sequence}{suffix}");
+            let candidate = bounded_name(name, sequence);
             sequence += 1;
-            if !occupied.contains(candidate.as_str()) && !external.contains(candidate.as_str()) {
+            if !occupied.contains(candidate.as_str())
+                && !is_external(candidate.as_str())
+                && !symbols.contains_key(&candidate)
+            {
                 break candidate;
             }
         };
-        renamed.insert(*name, replacement);
+        symbols.insert(replacement, name);
     }
-    rewrite_identifiers(&source, |name| renamed.get(name).cloned())
+    let renamed = symbols
+        .iter()
+        .map(|(short, original)| (*original, short.as_str()))
+        .collect::<std::collections::HashMap<_, _>>();
+    let source = rewrite_identifiers(&source, |name| renamed.get(name).copied());
+    let mut symbols_tsv = String::new();
+    for (short, original) in symbols {
+        symbols_tsv.push_str(&short);
+        symbols_tsv.push('\t');
+        symbols_tsv.push_str(original);
+        symbols_tsv.push('\n');
+    }
+    BoundedIdentifiers {
+        source,
+        symbols_tsv,
+    }
 }
 
 pub(crate) fn escaped_char(character: char) -> String {
@@ -445,38 +516,127 @@ mod tests {
 
     #[test]
     fn length_fallback_is_unique_deterministic_and_preserves_literals_and_abi() {
-        let long = format!("p_{}", "scope_".repeat(MAX_C_IDENTIFIER_LEN));
+        let stem = "readable".repeat(MAX_C_IDENTIFIER_LEN);
+        let long = format!("p_{stem}");
         let other = format!("{long}_other");
         let foreign = format!("foreign_{}", "x".repeat(MAX_C_IDENTIFIER_LEN));
+        let occupied = format!("p_{}_h0", &stem[..MAX_C_IDENTIFIER_LEN - 5]);
+        let external_candidate = format!("p_{}_h1", &stem[..MAX_C_IDENTIFIER_LEN - 5]);
         let source = format!(
-            "int p_cI_h0; int {long}; int {other}; extern int {foreign}(void);\n\
+            "int {occupied}; int {long}; int {other}; extern int {foreign}(void);\n\
              use({long}, {other}, {foreign}());\n\
              char *s = \"{long}\"; /* {other} */ // {long}\n\
              char c = 'Z'; unsigned n = 123{};\n",
             "U".repeat(MAX_C_IDENTIFIER_LEN + 1)
         );
-        let external = BTreeSet::from([foreign.as_str()]);
+        let external = BTreeSet::from([foreign.as_str(), external_candidate.as_str()]);
         let bounded = bound_identifiers(source.clone(), &external);
-        assert_eq!(bounded, bound_identifiers(source, &external));
-        assert!(bounded.contains("int p_cI_h0; int p_cI_h1; int p_cI_h2;"));
-        assert!(bounded.contains("use(p_cI_h1, p_cI_h2,"));
-        assert!(bounded.contains(&format!("\"{long}\"")));
-        assert!(bounded.contains(&format!("/* {other} */ // {long}")));
-        assert!(bounded.contains(&format!("extern int {foreign}(void)")));
-        for span in identifier_spans(&bounded) {
-            let name = &bounded[span];
+        let repeated = bound_identifiers(source.clone(), &external);
+        assert_eq!(bounded.source, repeated.source);
+        assert_eq!(bounded.symbols_tsv, repeated.symbols_tsv);
+        let rows = bounded
+            .symbols_tsv
+            .lines()
+            .map(|row| row.split_once('\t').unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(
+            rows[0],
+            (
+                format!("p_{}_h2", &stem[..MAX_C_IDENTIFIER_LEN - 5]).as_str(),
+                long.as_str()
+            )
+        );
+        assert_eq!(
+            rows[1],
+            (
+                format!("p_{}_h3", &stem[..MAX_C_IDENTIFIER_LEN - 5]).as_str(),
+                other.as_str()
+            )
+        );
+        assert!(bounded.source.contains(&format!("int {occupied};")));
+        assert!(bounded.source.contains(&format!("\"{long}\"")));
+        assert!(bounded.source.contains(&format!("/* {other} */ // {long}")));
+        assert!(bounded
+            .source
+            .contains(&format!("extern int {foreign}(void)")));
+        let reverse = rows
+            .iter()
+            .map(|(short, original)| (*short, *original))
+            .collect::<std::collections::HashMap<_, _>>();
+        assert_eq!(
+            rewrite_identifiers(&bounded.source, |name| reverse
+                .get(name)
+                .map(|original| (*original).to_owned())),
+            source
+        );
+        for span in identifier_spans(&bounded.source) {
+            let name = &bounded.source[span];
             assert!(name.len() <= MAX_C_IDENTIFIER_LEN || name == foreign);
         }
     }
 
     #[test]
-    fn complete_symbol_bound_includes_derived_names_at_the_boundary() {
+    fn complete_symbol_bound_keeps_prefix_stem_and_derived_suffixes() {
+        for prefix in [
+            "fn_", "G_", "D_", "E_", "O_", "p_", "f_", "g_", "llg_", "_llg_", "",
+        ] {
+            for suffix in ["", "_desc", "_frame_t"] {
+                let name = format!(
+                    "{prefix}hierarchy_{}{suffix}",
+                    "a".repeat(MAX_C_IDENTIFIER_LEN)
+                );
+                let bounded =
+                    bound_identifiers(format!("int {name}; use({name});"), &BTreeSet::new());
+                let (short, original) = bounded.symbols_tsv.trim_end().split_once('\t').unwrap();
+                assert_eq!(original, name);
+                assert_eq!(short.len(), MAX_C_IDENTIFIER_LEN);
+                assert!(short.starts_with(&format!("{prefix}hier")));
+                assert!(short.ends_with(&format!("_h0{suffix}")));
+                assert_eq!(bounded.source, format!("int {short}; use({short});"));
+            }
+        }
         let name = format!("p_{}", "a".repeat(MAX_C_IDENTIFIER_LEN - 2));
-        let source = format!("int {name}; int {name}_desc; int {name}_frame_t;");
+        let bounded = bound_identifiers(
+            format!("int {name}; int {name}_desc; int {name}_frame_t;"),
+            &BTreeSet::new(),
+        );
+        assert!(bounded.source.contains(&format!("int {name};")));
+        assert_eq!(bounded.symbols_tsv.lines().count(), 2);
+        assert!(identifier_spans(&bounded.source).all(|span| span.len() <= MAX_C_IDENTIFIER_LEN));
+    }
+
+    #[test]
+    fn registry_indices_cross_digit_boundaries_without_collisions() {
+        let source = (0..1400)
+            .map(|index| {
+                format!(
+                    "int G_{}_{index};\n",
+                    "shared_stem".repeat(MAX_C_IDENTIFIER_LEN)
+                )
+            })
+            .collect::<String>();
         let bounded = bound_identifiers(source, &BTreeSet::new());
-        assert!(bounded.contains(&format!("int {name};")));
-        assert!(bounded.contains("p_cI_h0_desc"));
-        assert!(bounded.contains("p_cI_h1_frame_t"));
-        assert!(identifier_spans(&bounded).all(|span| span.len() <= MAX_C_IDENTIFIER_LEN));
+        let names = identifier_spans(&bounded.source)
+            .map(|span| &bounded.source[span])
+            .filter(|name| *name != "int")
+            .collect::<BTreeSet<_>>();
+        assert_eq!(names.len(), 1400);
+        assert_eq!(bounded.symbols_tsv.lines().count(), 1400);
+        assert!(names
+            .iter()
+            .all(|name| name.len() == MAX_C_IDENTIFIER_LEN && name.starts_with("G_shared_stem")));
+        assert_eq!(registry_index(35), "z");
+        assert_eq!(registry_index(36), "10");
+        assert_eq!(registry_index(1296), "100");
+    }
+
+    #[test]
+    fn runtime_header_identifiers_are_reserved() {
+        let source =
+            "llg_rt_init_with_args_and_precision(0, 0, 0); LLG_CONTAINER_METHOD_FIND_LAST_INDEX;";
+        let bounded = bound_identifiers(source.to_owned(), &BTreeSet::new());
+        assert_eq!(bounded.source, source);
+        assert!(bounded.symbols_tsv.is_empty());
     }
 }

@@ -55,6 +55,20 @@ See [owned-emitter components](owned/readme.md), [runtime](../rt/readme.md),
 [feature status](../../../docs/sim_features.md) and
 [ownership validation](../../../tests/readme.md#dynamic-ownership-validation).
 
+Complete internal C identifiers are capped at 32 by `names::MAX_C_IDENTIFIER_LEN`
+after all derived names exist. Shortened symbols keep their namespace, a leading
+readable stem, a base-36 registry index and frame/descriptor suffixes. A sorted
+per-model registry reserves occupied and external names; runtime API names and
+foreign DPI symbols retain their exact spelling. User-visible hierarchy names,
+waveforms and diagnostics remain source-derived.
+
+For debugging, `GeneratedModel::sources()` carries `model.symbols.tsv` beside
+`model.c`, including in `llg --gen-only` exports. Each row is a shortened name,
+a tab and its full original C identifier, sorted by shortened name. The file is
+empty without renames, is replaced on regeneration and is never compiled. See
+the [emitter guide](AGENTS.md#model-lifecycle-and-checks) for the full naming and
+generated-file contract.
+
 Repeated compatible source processes and subroutines also share their bodies.
 Per-instance addresses, paths and runtime identities live in immutable records;
 shared roots receive the record through startup tables, while subroutine and fork

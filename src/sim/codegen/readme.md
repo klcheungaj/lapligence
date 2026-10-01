@@ -19,6 +19,11 @@ lifetime, origin and edition-specific phase. Process, assertion, clocking, event
 and reference metadata remain typed through emission. Multiple optimizer variants
 can reuse one DB through `generate_from_db_with_opts`.
 
+`GeneratedModel::sources()` supplies the C model and its deterministic debugging
+symbol map to the builder or source export. The
+[emitter](../emit_c/AGENTS.md#model-lifecycle-and-checks) owns their naming and
+sidecar format.
+
 Subroutine collection traverses generated instance scopes at every pass (names,
 signatures and bodies). Fork branches capture input event formals as event object
 identities; nested branches resolve that capture instead of a callee formal.

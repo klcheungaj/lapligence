@@ -270,11 +270,26 @@ display paths: never pass encoded components through `ident` again. Keep the
 source diagnostic labels, VPI and waveform metadata, design/export
 file names and foreign DPI C symbols independent of internal symbol spelling.
 After frame sharing and all derived symbols are emitted, cap complete internal
-identifiers at `MAX_C_IDENTIFIER_LEN` (128) through a sorted per-model registry.
-Skip existing symbols when assigning short indices; preserve namespace and
-frame/descriptor suffixes. The existing emitted-C identifier rewrite passes
+identifiers at `MAX_C_IDENTIFIER_LEN` (32) through a sorted per-model registry.
+Sort only the identifiers needing replacement; use hash sets for occupied-name
+lookup and borrow substitutions rather than allocating per occurrence.
+A replacement keeps its namespace, as many leading original-name characters
+as fit, a `_h` plus base-36 registry index and any `_frame_t`/`_desc`
+suffix. Leading stems retain hierarchy context without decoding source escapes;
+the index makes stems with the same leading characters distinct. Reserve all
+occupied identifiers, previously assigned replacements, explicit foreign DPI
+names and identifiers from the embedded runtime headers, including header names
+absent from the model. Runtime API/macro names and foreign DPI names are exempt
+from the internal bound. The existing emitted-C identifier rewrite passes
 skip literals/comments/numeric suffixes; this does not admit opaque IR fragments.
-Explicit foreign DPI names are exempt from the internal bound. Coroutine descriptor
+`GeneratedModel::sources()` includes `model.c` and `model.symbols.tsv`. The map
+contains every renamed symbol as `short<TAB>original<NEWLINE>`, sorted by short
+name, with no header; it is empty when no renames occur. The CLI writes it for
+normal builds and `--gen-only` exports. Pass both files as builder extras: CMake
+compiles only `.c` files and the current extra-file set owns stale-output cleanup.
+Regeneration replaces the map, including with an empty map; a source set omitting
+it removes the old sidecar. Keep separate-process determinism tests on both files.
+Coroutine descriptor
 labels and loop budgets use source process/function labels; branch descriptors use
 the source owner plus `.fork`, never the helper C symbol. IR functions without source
 provenance use an unnamed-function diagnostic label.
