@@ -103,6 +103,10 @@ chunk. Under the future MT-1 design, each worker will own an equivalent cache.
 `generate_model_sources` writes a self-contained CMake tree with `llg_co`. ABI 3
 models define `LLG_MODEL_PROCESS_ABI` and initialize through
 `llg_rt_init_with_args_and_precision`; there is no process-stack sizing input.
+Debug initialization and coroutine symbols have separate `_debug` link names,
+so debug/release model/runtime mixing fails before execution. Arena acquisition
+clears stale debug liveness tags left by cancelled cached activations; embedded
+frame reuse still requires the previous activation to have ended.
 Waveforms additionally need zlib and CMake Threads support.
 
 The generated 256-call recursion guard remains the plain-function bound. On

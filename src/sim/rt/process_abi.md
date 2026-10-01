@@ -27,7 +27,12 @@ and compile-time check:
 
 The runtime header performs the same conditional check. Out-of-line `llg_co`
 symbols retain their `..._abi1` link names, independently rejecting a stale
-runtime archive. Self-contained model exports contain `llg_co` and the runtime;
+runtime archive. Under `LLG_CO_DEBUG` these names gain a `_debug` suffix,
+and all runtime initialization entry points also gain `_debug`. This rejects
+both directions of debug/release mixing at link time, including models with
+no arena calls. Layouts and release link names are unchanged; the debug
+liveness protocol must agree across translation units. Runtime-content cache
+hashing invalidates older archives. Self-contained model exports contain `llg_co` and the runtime;
 there is no compatibility coroutine source set.
 
 A process, fork branch, assertion action, and every other suspendable generated
@@ -399,6 +404,10 @@ plain functions.
   own embedded polled and anchored callee storage; `ch->arena` owns dynamic,
   recursive, and oversized callee storage. Registered value scopes remain the
   sole payload owners.
+- In debug builds, acquiring a new arena frame clears its header's old liveness
+  tag before entry. Cancellation can return a still-tagged frame's chunk to
+  the shared cache; that storage no longer represents a live activation.
+  Re-entering an existing live embedded frame still fails its liveness check.
 - Cancellation never resumes coroutine code. It unlinks waits and groups,
   drains value/reference scopes and activations, releases the chain arena, and
   defers the current record's free until `llg_co_run` returns.

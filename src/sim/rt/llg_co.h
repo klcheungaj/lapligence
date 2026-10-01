@@ -64,9 +64,15 @@ extern "C" {
 
 /* Bump on any change to a public struct layout, enum value or macro protocol.
  * Out-of-line symbols carry the version in their link name, so a model built
- * against another header version fails to link instead of misbehaving. */
+ * against another header version fails to link instead of misbehaving.
+ * Debug builds also suffix these names: identical layouts do not make the
+ * debug and release liveness protocols interchangeable. */
 #define LLG_CO_ABI_VERSION 1
+#ifdef LLG_CO_DEBUG
+#define LLG_CO_SYM_(name, v) name##_abi##v##_debug
+#else
 #define LLG_CO_SYM_(name, v) name##_abi##v
+#endif
 #define LLG_CO_SYM(name, v) LLG_CO_SYM_(name, v)
 
 #if defined(__GNUC__) || defined(__clang__)
@@ -188,10 +194,12 @@ struct llg_co_desc {
         if ((f)->flags != LLG_CO_FRAME_LIVE) LLG_CO_BAD_STATE(f, __func__); \
     } while (0)
 #define LLG_CO_DBG_DONE_(f) ((f)->flags = 0)
+#define LLG_CO_DBG_FRESH_(f) ((f)->flags = 0)
 #else
 #define LLG_CO_DBG_ENTER_(f) ((f)->flags = 0)
 #define LLG_CO_DBG_LIVE_(f) ((void)0)
 #define LLG_CO_DBG_DONE_(f) ((void)0)
+#define LLG_CO_DBG_FRESH_(f) ((void)0)
 #endif
 
 /* ── LIFO frame arena ────────────────────────────────────────────────────
@@ -324,11 +332,16 @@ LLG_CO_INLINE void llg_co_start(llg_co_chain_t* ch, const llg_co_desc_t* root,
 LLG_CO_INLINE llg_co_status_t llg_co_run(llg_co_chain_t* ch) {
     llg_co_status_t s;
 #ifdef LLG_CO_DEBUG
-    if (!ch->resume || (ch->flags & LLG_CO_CHAIN_RUNNING)) abort(); /* finished / re-entrant */
-    if (!ch->top) LLG_CO_DBG_LIVE_(LLG_CO_ROOT(ch));
+    if (!ch->resume)
+        LLG_CO_BAD_STATE(LLG_CO_ROOT(ch), "llg_co_run: finished chain");
+    if (ch->flags & LLG_CO_CHAIN_RUNNING)
+        LLG_CO_BAD_STATE(LLG_CO_ROOT(ch), "llg_co_run: reentrant chain");
     ch->flags |= LLG_CO_CHAIN_RUNNING;
 #endif
-    do s = ch->resume(LLG_CO_ROOT(ch), ch);
+    do {
+        LLG_CO_DBG_LIVE_(LLG_CO_ROOT(ch));
+        s = ch->resume(LLG_CO_ROOT(ch), ch);
+    }
     while (LLG_CO_UNLIKELY(s == LLG_CO_CALLED));
     if (LLG_CO_UNLIKELY(s == LLG_CO_DONE)) { /* only the root returns DONE */
         LLG_CO_DBG_DONE_(LLG_CO_ROOT(ch));
@@ -466,6 +479,8 @@ size_t llg_co_backtrace(const llg_co_chain_t* ch, llg_co_visit_fn visit,
         size_t llg_co_z_ = sizeof(llg_co_anchor_t) + (dsc)->frame_size;        \
         (slot) = (llg_co_anchor_t*)llg_co_arena_push(&(ch)->arena, llg_co_z_); \
         if (LLG_CO_UNLIKELY(!(slot))) LLG_CO_OOM(llg_co_z_);                   \
+        /* A cancelled activation can leave a LIVE tag in a cached chunk. */ \
+        LLG_CO_DBG_FRESH_(LLG_CO_ANCHOR_FRAME(slot));                         \
     } while (0)
 
 /* Dynamic call through the arena: anchor call, then pop once it finished. */

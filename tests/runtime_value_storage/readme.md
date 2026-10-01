@@ -53,6 +53,9 @@ capabilities; check the exact inventory rather than assuming a fixed count.
 | `scheduler_ownership_probe.c` | Captured/masked NBA, scopes/frames, inertial/force state, sequence locals/endpoints, sampling, mailbox cleanup, wide formatting, plusargs and exact time scaling. |
 | `coroutine_ownership_probe.c` | 1,000 actual yields and completion/cancel unwind, repeated 50 times. |
 | `coroutine_chunk_cache_probe.c` | Stackless arena chunk reuse, byte-cap enforcement, cumulative counters and teardown release. |
+| `coroutine_debug_probe.c` | Debug root/fork payload poisoning, root/static/anchor liveness failures (including the root while an anchor is active), invalid/poisoned dispatch state, finished/reentrant chain aborts and an exiting-process service call; a cancelled arena chunk is reused by a valid new activation. Failure cases require nonzero exit and the production diagnostic. |
+| `coroutine_mode_model.c` | Both debug/release model/runtime link mismatches, separately through startup and arena symbols; successful matched-mode execution is covered by the scale probes. |
+| `coroutine_scale_probe.c` | 8 MiB transient release, 32 simultaneous dynamic callees, eight suspend/return/park rounds in release and debug modes: 224 warmed calls reuse chunks with no new system allocations/frees, each parked chain has no arena chunks, and cleanup releases the shared cache. |
 | `vpi_ownership_probe.c` | 129-bit X/Z puts/gets, 65,537-bit text scratch, result replacement, call cleanup and ten reinitializations. |
 | `waveform_snapshot_probe.c` | Ring wrap/move clearing, mutation-after-capture, VCD/FST values, wide views, ignored/error events and pending close/reinit. |
 | `wait_inline_probe.c` | Zero per-wait allocations after source/table warmup, 64/65-bit fallback, copied specs/nested dependencies, X/Z edges and levels, live snapshot widening, re-arm across timed/signal/event/heap paths, cancellation and teardown. |
@@ -78,6 +81,16 @@ Retain capability-specific entries such as `packed_selection_map`, zero/storage/
 value rejection modes, `packed_selection_nba`, `packed_selection_input`,
 `packed_formal_owner_contracts`, both fixed-fold/predicate modes and memory_image.
 Do not silently omit tests or count native cases as accepted HDL features.
+
+Fresh-root poisoning fills payload bytes with `0xA5`; it does not itself trap
+an arbitrary uninitialized payload read. Embedded/arena payloads and dead
+overlay blocks are not poisoned. Header liveness and dispatch checks catch the
+explicit corruptions above. The standalone anchor-loop bad-state handler prints
+the function/state; the scheduler's handler additionally prints an HDL backtrace.
+Chunk counters count system allocations and cache hits, not value/wait allocations
+or arena bump operations. Empty chain arenas can coexist with retained chunks in
+the globally bounded cache. The scale probe deliberately fits that cache; a larger
+simultaneously live dynamic-call working set can exceed it and allocate again.
 
 ## Measurement and integration boundaries
 

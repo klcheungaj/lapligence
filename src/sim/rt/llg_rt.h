@@ -86,6 +86,15 @@ _Noreturn void llg_rt_co_bad_state(const struct llg_co_frame* co,
 #define LLG_CO_BAD_STATE(co, fn) llg_rt_co_bad_state((co), (fn))
 #include "llg_co.h"
 
+// Startup is mandatory even for models without arena calls. Separate debug
+// link names reject mismatched liveness protocols despite identical layouts.
+#ifdef LLG_CO_DEBUG
+#define llg_rt_init llg_rt_init_debug
+#define llg_rt_init_with_args llg_rt_init_with_args_debug
+#define llg_rt_init_with_precision llg_rt_init_with_precision_debug
+#define llg_rt_init_with_args_and_precision llg_rt_init_with_args_and_precision_debug
+#endif
+
 // Public generated-process entry type. The descriptor's `fn` is the sole
 // entry pointer passed to spawn/fork services.
 typedef llg_co_status_t (*llg_process_fn_t)(llg_co_frame_t* co,
