@@ -243,18 +243,18 @@ typedef struct {
     llg_string_t suffix;
 } llg_timeformat_state_t;
 
-// The cycle-delay zero case distinguishes an event that already occurred in
-// the current time slot from one that is still in the future. Keep only the
-// latest transition timestamp per signal and edge kind; this registry is
-// rebuilt with each runtime generation and never crosses the model boundary.
+// Exact descriptor identities, not limb-buffer addresses. Slot-local flags
+// answer late clocking queries; sequence clocks also retain cumulative ticks.
+// See dependencies.c for lifetime, reuse and late-registration constraints.
 typedef struct llg_clocking_edge {
     struct llg_clocking_edge* next;
+    struct llg_clocking_edge* prev;
     sv4_t* signal;
-    uint64_t any_time;
-    uint64_t posedge_time;
-    uint64_t negedge_time;
+    uint64_t time;
     uint64_t posedge_count;
     uint64_t negedge_count;
+    unsigned occurred;
+    int keep_ticks;
 } llg_clocking_edge_t;
 
 // A synchronous drive issued away from its clocking event retains its
@@ -355,6 +355,10 @@ typedef struct {
     llg_sampled_domain_t* sampled_domains;
     uint64_t sampled_domain_sequence;
     llg_clocking_edge_t* clocking_edges;
+    llg_clocking_edge_t** clocking_index;
+    size_t clocking_capacity;
+    size_t clocking_count;
+    size_t clocking_used;
     llg_clocking_drive_t* clocking_drives;
     llg_clocking_drive_t* clocking_drives_tail;
     uint64_t sampled_time;

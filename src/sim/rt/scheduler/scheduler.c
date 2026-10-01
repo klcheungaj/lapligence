@@ -417,6 +417,7 @@ void llg_rt_run(void) {
                 break;
             }
         } else {
+            clocking_advance_time();
             g.now = t;
             g.region_passes = 0;
         }
