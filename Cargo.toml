@@ -92,3 +92,21 @@ proptest = "1"
 # which is rarely needed for third-party code and dominates build output.
 [profile.dev.package."*"]
 debug = "line-tables-only"
+
+# Match release optimization; keep these in sync if [profile.release] sets it.
+# Test retains dev's debug assertions and overflow checks.
+[profile.test]
+opt-level = 3
+# Line tables retain backtrace locations with lower cold-build time and disk use.
+debug = "line-tables-only"
+# Keep inherited codegen units: 16 slowed edits without improving suite time.
+
+# Compile workspace code quickly during edit-test loops.
+[profile.quick]
+inherits = "test"
+opt-level = 0
+
+# Optimized dependencies improved suite and rebuild times; Cargo caches them
+# across workspace edits (compiler caches can reuse them across builds too).
+[profile.quick.package."*"]
+opt-level = 3
