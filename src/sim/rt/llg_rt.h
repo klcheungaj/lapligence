@@ -1183,6 +1183,9 @@ void llg_wait_resume_in_region(llg_region_t region);
 // generated coroutines pass each as a compound literal in the arm call and the
 // array need not outlive it. Keep that true when changing these arms.
 llg_co_arm_t llg_arm_edge(llg_proc_t* self, sv4_t* sig, int posedge);
+// Signal/real dependency wakes preserve reverse wait-registration order within
+// each resume region, whose process queue is FIFO. Duplicate addresses retain
+// all descriptor checks but create one scheduler membership per waiter/source.
 llg_co_arm_t llg_arm_any(llg_proc_t* self, sv4_t** sigs, int n);
 llg_co_arm_t llg_arm_any_dependencies(llg_proc_t* self,
                                       const llg_wait_dependency_t* deps,
@@ -1409,6 +1412,13 @@ int llg_sampled_domain_status(uint64_t identity, int kind);
 int llg_clocking_sample_observed(sv4_t* source, sv4_t* sample);
 int llg_clocking_sample_history(sv4_t* source, sv4_t* sample,
                                 uint64_t ticks);
+
+// Forget clocking history before freeing/reusing an externally owned packed
+// descriptor that received runtime writes. Registered packed value scopes do
+// this at final release; model storage survives until llg_rt_cleanup. This does
+// not unregister waits, sampling or assertions: their borrowed sources must
+// still outlive their consumers. NULL and already-forgotten signals are harmless.
+void llg_clocking_forget_signal(sv4_t* signal);
 
 // Assignments.  llg_nba records on the current process's list and commits in
 // the NBA region; llg_ba writes immediately and notifies waiters.

@@ -167,7 +167,34 @@ ref targets/delivery snapshots through reentrant publication.
 
 Clocking input samples complete before the Observed block event. Output captures
 publish Re-NBA with constant skew; off-event drives wait for the next event and
-`##N` counts events. Deferred immediate assertions keep issue-time sampled values;
+`##N` counts events. `scheduler/dependencies.c` owns exact-descriptor edge history:
+clocking synchronous drives and `##0` can query after publication, including after
+registration in the same slot. Therefore publication records even automatic
+locals without an existing waiter; subscriber absence does not prove an entry
+unusable. Generated clocking-source emission currently rejects automatic bindings,
+but native runtime callers can pass any live packed owner to the borrowed-source
+APIs. Globally filtering that storage class would change accepted runtime behavior.
+Ordinary waits use their own snapshots, input skew sampling uses
+`sampling.c`, and named-event `.triggered` uses event-object state.
+
+Slot history retains any/positive/negative occurrence independently, so a later
+opposite edge cannot erase an earlier match. Time advance drops all entries except
+registered sequence clocks, clears their occurrence flags and compacts the pointer
+index. Sequence registration marks the root and explicit transition clocks before
+execution; only those consumers need cumulative saturating directional counts for
+same-clock delays across slots. Disabled assertions may later resume, so their
+clock counts last until cleanup, independent of attempt lifetime. No count resets
+at time advance. Cross-clock replay history in the assertion itself is separate.
+Packed scope final release forgets every descriptor before freeing it; lexical
+exit alone cannot forget a cell retained by queued writes. External packed owners
+must call `llg_clocking_forget_signal` before freeing/reusing a written descriptor,
+and must separately satisfy wait/sample/assertion source lifetimes. Model storage
+survives runtime cleanup. The history list owns nodes; its hash index borrows them,
+uses exact pointer equality, and must be updated on removal/reset/teardown. This
+private layout/additive API leaves process ABI 2 and value ABI 4 unchanged;
+embedded runtime-content hashing invalidates earlier cache archives.
+
+Deferred immediate assertions keep issue-time sampled values;
 Reactive refs resolve at action time, coalesced per process. OFF prevents new
 checks but does not cancel pending actions; KILL/flush does. Drain actions before
 cleanup.

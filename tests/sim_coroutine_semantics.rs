@@ -198,3 +198,25 @@ fn escaped_function_budget_message_keeps_source_name() {
         );
     }
 }
+
+#[test]
+fn signal_wake_order_and_zero_delay_region_order_stay_stable() {
+    sim_cli::run_case(
+        "coroutine_semantics",
+        "scheduler_wake_order",
+        "order active=76543210 inactive=76543210 multi=1\nmulti final=2\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
+fn killing_and_disabling_multi_signal_waits_preserves_wait_fork() {
+    sim_cli::run_case(
+        "coroutine_semantics",
+        "scheduler_wait_cancel",
+        "cancel killed=4 escaped=0 disabled=1 survived=1 joined=1\n",
+        "",
+        &[],
+    );
+}

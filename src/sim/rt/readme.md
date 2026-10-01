@@ -33,6 +33,34 @@ the canonical full net, so waiter semantics do not depend on the optimization.
 The process record embeds only time, named-event and expression-list wait
 payloads. Rare wait kinds own one zeroed out-of-line payload that wake,
 cancellation and teardown release through the same cleanup path.
+Signal, real and process-await waiters subscribe to an address index. Each
+source owns a reverse-registration list, matching the former global wait-list
+order; waking still appends to the process region FIFO. Duplicate addresses
+create one membership while the original descriptors and snapshots remain
+intact. A stack-owned intrusive cursor makes removal of current or subsequent
+members safe during publication, including nested publication. Empty source
+rows are reclaimed immediately; the hash table retains only its peak capacity.
+Global wait membership, handle membership and both activation memberships have
+back-links for constant-time removal. Named-event table order remains governed
+by its existing registration/swap-removal contract.
+
+The process registry keeps stable slots and reuses the lowest vacant slot so
+cancellation traversal order remains unchanged. A radix-64 free-slot bitmap
+visits at most six levels for the entire int-indexed registry. Table growth and
+trailing-hole trimming are amortized constant time per registration/removal;
+ordinary slot removal uses the process's stored position. Cancellation traversals
+that can remove other records restart as before.
+
+On 64-bit hosts the process record is 400 bytes (24 bytes added), including a
+128-byte wait record. Each distinct dependency membership adds 32 bytes, each
+live source row 32 bytes, and each hash bucket 8 bytes (geometric capacity at
+75% load). Temporary key sorting uses pointer integer representations, while
+identity comparisons use exact pointer equality. Handles are 40 bytes (8 added),
+activations 72 bytes (16 added); the process slot index occupies prior padding.
+The free-slot bitmap uses about 0.127 bytes per allocated registry slot plus
+at most five rounded summary words. These internal layouts keep process ABI 2;
+runtime-content hashing invalidates older cached archives.
+
 Stop/resume retains a live context; close releases observers/queues before model
 storage. Runtime ticks are integer design-precision units; lowering supplies
 per-module scaling. Memory text loading and binary reads keep their distinct

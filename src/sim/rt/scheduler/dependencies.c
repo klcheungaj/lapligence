@@ -80,36 +80,147 @@ static int ev_matches_changed(sv4_t old, sv4_t new, int kind) {
     return kind == LLG_EV_ANY || ev_matches(old, new, kind);
 }
 
-static llg_clocking_edge_t* find_clocking_edge(sv4_t* signal) {
+/* Publication precedes callbacks and wait registration. Clocking drives and
+ * ##0 may first query a descriptor AFTER its edge, so even automatic locals
+ * must be recorded without a current subscriber. Ordinary waits use snapshots,
+ * sampled inputs use sampling.c, and named-event .triggered uses event objects;
+ * none of those reads this table. Entries with no sequence consumer die at time
+ * advance. Registered sequence clocks keep cumulative directional ticks because
+ * same-clock delays subtract ticks across slots; their occurrence flags expire.
+ * Scoped descriptors are forgotten at final owner release (not lexical exit:
+ * an NBA may still retain them). External owners must forget before freeing or
+ * reusing a descriptor. Equality is exact pointer identity, never payload or
+ * ordering of unrelated pointers. The list owns entries; the index borrows them.
+ */
+enum {
+    CLOCKING_ANY = 1u,
+    CLOCKING_POSEDGE = 2u,
+    CLOCKING_NEGEDGE = 4u,
+    CLOCKING_INDEX_INITIAL_CAPACITY = 16u
+};
+
+/* A private object supplies a portable tombstone without a fabricated pointer. */
+static llg_clocking_edge_t clocking_deleted_entry;
+
+static size_t clocking_edge_hash(const void* signal) {
+    uint64_t hash = (uint64_t)(uintptr_t)signal;
+    hash ^= hash >> 30;
+    hash *= UINT64_C(0xbf58476d1ce4e5b9);
+    hash ^= hash >> 27;
+    hash *= UINT64_C(0x94d049bb133111eb);
+    hash ^= hash >> 31;
+    return (size_t)hash;
+}
+
+static void clocking_index_rebuild(size_t capacity) {
+    llg_clocking_edge_t** index = (llg_clocking_edge_t**)llg_checked_calloc(
+        capacity, sizeof(*index), "clocking history index");
     for (llg_clocking_edge_t* edge = g.clocking_edges; edge; edge = edge->next) {
-        if (edge->signal == signal) return edge;
+        size_t slot = clocking_edge_hash(edge->signal) & (capacity - 1);
+        while (index[slot]) slot = (slot + 1) & (capacity - 1);
+        index[slot] = edge;
     }
-    return NULL;
+    free(g.clocking_index);
+    g.clocking_index = index;
+    g.clocking_capacity = capacity;
+    g.clocking_used = g.clocking_count;
+}
+
+static size_t clocking_edge_slot(sv4_t* signal) {
+    size_t slot = clocking_edge_hash(signal) & (g.clocking_capacity - 1);
+    while (g.clocking_index[slot]) {
+        llg_clocking_edge_t* edge = g.clocking_index[slot];
+        if (edge != &clocking_deleted_entry && edge->signal == signal) break;
+        slot = (slot + 1) & (g.clocking_capacity - 1);
+    }
+    return slot;
+}
+
+static llg_clocking_edge_t* find_clocking_edge(sv4_t* signal) {
+    if (!g.clocking_count || !signal) return NULL;
+    return g.clocking_index[clocking_edge_slot(signal)];
+}
+
+static llg_clocking_edge_t* clocking_edge_get(sv4_t* signal) {
+    llg_clocking_edge_t* edge = find_clocking_edge(signal);
+    if (edge) return edge;
+    size_t capacity = g.clocking_capacity ? g.clocking_capacity
+                                         : CLOCKING_INDEX_INITIAL_CAPACITY;
+    if (g.clocking_count >= capacity - capacity / 4) {
+        if (capacity > SIZE_MAX / 2)
+            llg_fatal_allocation("clocking history index", capacity, 2);
+        capacity *= 2;
+    }
+    /* Rehash tombstones before occupied slots can make a probe unbounded. */
+    if (capacity != g.clocking_capacity ||
+        g.clocking_used >= capacity - capacity / 4)
+        clocking_index_rebuild(capacity);
+    size_t slot = clocking_edge_hash(signal) & (capacity - 1);
+    while (g.clocking_index[slot] &&
+           g.clocking_index[slot] != &clocking_deleted_entry)
+        slot = (slot + 1) & (capacity - 1);
+    if (!g.clocking_index[slot]) ++g.clocking_used;
+    edge = (llg_clocking_edge_t*)llg_checked_calloc(
+        1, sizeof(*edge), "clocking event history");
+    edge->signal = signal;
+    edge->next = g.clocking_edges;
+    if (edge->next) edge->next->prev = edge;
+    g.clocking_edges = edge;
+    g.clocking_index[slot] = edge;
+    ++g.clocking_count;
+    return edge;
+}
+
+void llg_clocking_forget_signal(sv4_t* signal) {
+    if (!g.clocking_count || !signal) return;
+    size_t slot = clocking_edge_slot(signal);
+    llg_clocking_edge_t* edge = g.clocking_index[slot];
+    if (!edge) return;
+    if (edge->prev) edge->prev->next = edge->next;
+    else g.clocking_edges = edge->next;
+    if (edge->next) edge->next->prev = edge->prev;
+    g.clocking_index[slot] = &clocking_deleted_entry;
+    --g.clocking_count;
+    free(edge);
+}
+
+static void clocking_advance_time(void) {
+    llg_clocking_edge_t* edge = g.clocking_edges;
+    while (edge) {
+        llg_clocking_edge_t* next = edge->next;
+        if (edge->keep_ticks) edge->occurred = 0;
+        else llg_clocking_forget_signal(edge->signal);
+        edge = next;
+    }
+    if (!g.clocking_count) {
+        free(g.clocking_index);
+        g.clocking_index = NULL;
+        g.clocking_capacity = 0;
+        g.clocking_used = 0;
+    } else {
+        size_t capacity = CLOCKING_INDEX_INITIAL_CAPACITY;
+        while (g.clocking_count > capacity - capacity / 4) capacity *= 2;
+        /* Bound retained index storage to surviving sequence-clock identities. */
+        if (capacity != g.clocking_capacity || g.clocking_used != g.clocking_count)
+            clocking_index_rebuild(capacity);
+    }
 }
 
 static void clocking_record_edge(sv4_t* signal, sv4_t old, sv4_t value) {
     if (!signal) return;
-    llg_clocking_edge_t* edge = find_clocking_edge(signal);
-    if (!edge) {
-        edge = (llg_clocking_edge_t*)llg_checked_malloc(
-            1, sizeof(*edge), "clocking event history");
-        edge->signal = signal;
-        edge->any_time = UINT64_MAX;
-        edge->posedge_time = UINT64_MAX;
-        edge->negedge_time = UINT64_MAX;
-        edge->posedge_count = 0;
-        edge->negedge_count = 0;
-        edge->next = g.clocking_edges;
-        g.clocking_edges = edge;
-    }
-    edge->any_time = g.now;
+    llg_clocking_edge_t* edge = clocking_edge_get(signal);
+    if (edge->time != g.now) edge->occurred = 0;
+    edge->time = g.now;
+    edge->occurred |= CLOCKING_ANY;
     if (ev_matches(old, value, LLG_EV_POSEDGE)) {
-        edge->posedge_time = g.now;
-        if (edge->posedge_count != UINT64_MAX) edge->posedge_count++;
+        edge->occurred |= CLOCKING_POSEDGE;
+        if (edge->keep_ticks && edge->posedge_count != UINT64_MAX)
+            edge->posedge_count++;
     }
     if (ev_matches(old, value, LLG_EV_NEGEDGE)) {
-        edge->negedge_time = g.now;
-        if (edge->negedge_count != UINT64_MAX) edge->negedge_count++;
+        edge->occurred |= CLOCKING_NEGEDGE;
+        if (edge->keep_ticks && edge->negedge_count != UINT64_MAX)
+            edge->negedge_count++;
     }
 }
 
@@ -126,12 +237,11 @@ static int clocking_event_current(const llg_wait_src_t* srcs, int n) {
         if (srcs[i].sig) {
             llg_clocking_edge_t* edge = find_clocking_edge(srcs[i].sig);
             if (!edge) continue;
-            uint64_t time = srcs[i].kind == LLG_EV_POSEDGE
-                                ? edge->posedge_time
-                                : srcs[i].kind == LLG_EV_NEGEDGE
-                                      ? edge->negedge_time
-                                      : edge->any_time;
-            if (time == g.now) return 1;
+            unsigned occurred = srcs[i].kind == LLG_EV_POSEDGE
+                                    ? CLOCKING_POSEDGE
+                                    : srcs[i].kind == LLG_EV_NEGEDGE
+                                          ? CLOCKING_NEGEDGE : CLOCKING_ANY;
+            if (edge->time == g.now && (edge->occurred & occurred)) return 1;
         } else if (srcs[i].ev && llg_event_triggered(srcs[i].ev)) {
             return 1;
         }
@@ -461,9 +571,14 @@ static void sig_publish_changed(sv4_t* target, sv4_t old, sv4_t value,
 #ifdef LLG_WAVEFORM
     llg_wave_changed_sv4(target, &published, g.now);
 #endif
-    llg_wait_t* w = g.waiters;
-    while (w) {
-        llg_wait_t* next = w->next;
+    llg_wait_source_t* source = wait_source_find(target);
+    llg_wait_subscription_t cursor = {0};
+    if (source) {
+        cursor.source = source;
+        wait_subscription_insert(&cursor, &source->head);
+    }
+    llg_wait_t* w;
+    while (source && (w = wait_source_next(&cursor)) != NULL) {
         int wake = 0;
         if (w->kind == W_EVENTS) {
             llg_wait_expression_payload_t* payload = &w->payload.expression;
@@ -507,8 +622,8 @@ static void sig_publish_changed(sv4_t* target, sv4_t old, sv4_t value,
             if (level->sig == target && sv4_same(*target, level->value)) wake = 1;
         }
         if (wake) wake_proc(w->proc);
-        w = next;
     }
+    if (source) wait_subscription_unlink(&cursor);
     deferred_trigger_source_change(target, NULL);
     for (llg_dependency_binding_t* binding = llg_dependency_bindings;
          binding; binding = binding->next) {
@@ -651,9 +766,14 @@ static void real_write(double* target, double value) {
 #ifdef LLG_WAVEFORM
     llg_wave_changed_real(target, value, g.now);
 #endif
-    llg_wait_t* w = g.waiters;
-    while (w) {
-        llg_wait_t* next = w->next;
+    llg_wait_source_t* source = wait_source_find(target);
+    llg_wait_subscription_t cursor = {0};
+    if (source) {
+        cursor.source = source;
+        wait_subscription_insert(&cursor, &source->head);
+    }
+    llg_wait_t* w;
+    while (source && (w = wait_source_next(&cursor)) != NULL) {
         int wake = 0;
         if (w->kind == W_DEPS) {
             llg_wait_expression_payload_t* payload = &w->payload.expression;
@@ -669,8 +789,8 @@ static void real_write(double* target, double value) {
             }
         }
         if (wake) wake_proc(w->proc);
-        w = next;
     }
+    if (source) wait_subscription_unlink(&cursor);
     deferred_trigger_source_change(NULL, target);
     for (llg_dependency_binding_t* binding = llg_dependency_bindings;
          binding; binding = binding->next) {

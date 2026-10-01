@@ -19,15 +19,204 @@ static void enqueue_region(llg_proc_t* p, llg_region_t region) {
     }
 }
 
-static void remove_waiters_entry(llg_wait_t* w) {
-    llg_wait_t** pp = &g.waiters;
-    while (*pp) {
-        if (*pp == w) {
-            *pp = w->next;
-            return;
-        }
-        pp = &(*pp)->next;
+// Source rows are stable across rehash. Both hash-chain and subscriber-list
+// links have back-links, so unlink never searches either list. Empty rows are
+// reclaimed immediately; address churn cannot accumulate historical sources.
+#define LLG_WAIT_SOURCES_INITIAL 16u
+
+static size_t wait_source_hash(const void* key) {
+    uint64_t hash = (uint64_t)(uintptr_t)key;
+    hash ^= hash >> 30;
+    hash *= UINT64_C(0xbf58476d1ce4e5b9);
+    hash ^= hash >> 27;
+    hash *= UINT64_C(0x94d049bb133111eb);
+    hash ^= hash >> 31;
+    return (size_t)hash;
+}
+
+static void wait_sources_reserve(void) {
+    size_t capacity = g.wait_sources_capacity;
+    if (capacity && g.n_wait_sources < capacity - capacity / 4) return;
+    if (capacity > SIZE_MAX / 2) {
+        fputs("llg runtime fatal: wait source index capacity overflow\n", stderr);
+        abort();
     }
+    capacity = capacity ? capacity * 2 : LLG_WAIT_SOURCES_INITIAL;
+    llg_wait_source_t** table = (llg_wait_source_t**)llg_checked_calloc(
+        capacity, sizeof(*table), "wait source index");
+    for (size_t i = 0; i < g.wait_sources_capacity; i++) {
+        llg_wait_source_t* source = g.wait_sources[i];
+        while (source) {
+            llg_wait_source_t* next = source->next;
+            size_t slot = wait_source_hash(source->key) & (capacity - 1);
+            source->next = table[slot];
+            source->prev_link = &table[slot];
+            if (source->next) source->next->prev_link = &source->next;
+            table[slot] = source;
+            source = next;
+        }
+    }
+    free(g.wait_sources);
+    g.wait_sources = table;
+    g.wait_sources_capacity = capacity;
+}
+
+static llg_wait_source_t* wait_source_find(const void* key) {
+    if (!key || !g.n_wait_sources) return NULL;
+    size_t slot = wait_source_hash(key) & (g.wait_sources_capacity - 1);
+    for (llg_wait_source_t* source = g.wait_sources[slot]; source;
+         source = source->next)
+        if (source->key == key) return source;
+    return NULL;
+}
+
+static llg_wait_source_t* wait_source_get(const void* key) {
+    llg_wait_source_t* source = wait_source_find(key);
+    if (source) return source;
+    wait_sources_reserve();
+    size_t slot = wait_source_hash(key) & (g.wait_sources_capacity - 1);
+    source = (llg_wait_source_t*)llg_checked_calloc(
+        1, sizeof(*source), "wait source");
+    source->key = key;
+    source->next = g.wait_sources[slot];
+    source->prev_link = &g.wait_sources[slot];
+    if (source->next) source->next->prev_link = &source->next;
+    g.wait_sources[slot] = source;
+    g.n_wait_sources++;
+    return source;
+}
+
+static void wait_subscription_insert(llg_wait_subscription_t* node,
+                                      llg_wait_subscription_t** slot) {
+    node->next = *slot;
+    node->prev_link = slot;
+    if (node->next) node->next->prev_link = &node->next;
+    *slot = node;
+}
+
+static void wait_subscription_unlink(llg_wait_subscription_t* node) {
+    *node->prev_link = node->next;
+    if (node->next) node->next->prev_link = node->prev_link;
+    node->prev_link = NULL;
+    llg_wait_source_t* source = node->source;
+    if (!source->head) {
+        *source->prev_link = source->next;
+        if (source->next) source->next->prev_link = source->prev_link;
+        g.n_wait_sources--;
+        free(source);
+    }
+}
+
+// A stack-owned cursor is a subscriber with no waiter. Moving it past the
+// current subscriber before callbacks makes arbitrary removal (including the
+// next subscriber) safe, without snapshots or a scan of active iterators.
+// Nested publications skip other cursors; rows stay alive until cursors leave.
+static llg_wait_t* wait_source_next(llg_wait_subscription_t* cursor) {
+    llg_wait_subscription_t* node = cursor->next;
+    while (node && !node->wait) node = node->next;
+    if (!node) return NULL;
+    *cursor->prev_link = cursor->next;
+    if (cursor->next) cursor->next->prev_link = cursor->prev_link;
+    wait_subscription_insert(cursor, &node->next);
+    return node->wait;
+}
+
+typedef struct {
+    const void** keys;
+    size_t count;
+    size_t capacity;
+} llg_wait_keys_t;
+
+static void wait_key_add(llg_wait_keys_t* keys, const void* key) {
+    if (!key) return;
+    if (keys->count == keys->capacity) {
+        if (keys->capacity > SIZE_MAX / 2) {
+            fputs("llg runtime fatal: wait dependency count overflow\n", stderr);
+            abort();
+        }
+        size_t capacity = keys->capacity ? keys->capacity * 2 : 8;
+        const void** grown = (const void**)llg_checked_malloc(
+            capacity, sizeof(*grown), "wait dependency keys");
+        if (keys->count) memcpy(grown, keys->keys, keys->count * sizeof(*grown));
+        free(keys->keys);
+        keys->keys = grown;
+        keys->capacity = capacity;
+    }
+    keys->keys[keys->count++] = key;
+}
+
+static void wait_dependency_key_add(llg_wait_keys_t* keys,
+                                    const llg_wait_dependency_t* dependency) {
+    wait_key_add(keys, dependency->sig ? (const void*)dependency->sig
+                                       : (const void*)dependency->real);
+}
+
+static int wait_key_compare(const void* left, const void* right) {
+    uintptr_t a = (uintptr_t)*(const void* const*)left;
+    uintptr_t b = (uintptr_t)*(const void* const*)right;
+    return (a > b) - (a < b);
+}
+
+static void wait_subscriptions_register(llg_wait_t* wait) {
+    llg_wait_keys_t keys = {0};
+    if (wait->kind == W_EVENTS) {
+        for (int i = 0; i < wait->payload.expression.n; i++)
+            wait_key_add(&keys, wait->payload.expression.specs[i].sig);
+    } else if (wait->kind == W_DEPS) {
+        for (int i = 0; i < wait->payload.expression.n; i++)
+            wait_dependency_key_add(&keys, &wait->payload.expression.dependencies[i]);
+    } else if (wait->kind == W_MIXED) {
+        for (int i = 0; i < wait->payload.rare->mixed.n; i++)
+            wait_key_add(&keys, wait->payload.rare->mixed.specs[i].sig);
+    } else if (wait->kind == W_PROCESS) {
+        wait_key_add(&keys, wait->payload.rare->process.target);
+    } else if (wait->kind == W_LEVEL) {
+        wait_key_add(&keys, wait->payload.rare->level.sig);
+    } else if (wait->kind == W_EXPR) {
+        for (int i = 0; i < wait->payload.expression.n; i++) {
+            const llg_expr_event_spec_t* spec = &wait->payload.expression.expressions[i];
+            if (spec->event) continue;
+            wait_key_add(&keys, spec->sig);
+            wait_key_add(&keys, spec->real_sig);
+            if (spec->n_dependencies > 0) {
+                for (int j = 0; j < spec->n_dependencies; j++)
+                    wait_dependency_key_add(&keys, &spec->dependencies[j]);
+            } else {
+                for (int j = 0; j < spec->n_reads; j++)
+                    wait_key_add(&keys, spec->reads[j]);
+            }
+        }
+    }
+    if (!keys.count) return;
+    qsort(keys.keys, keys.count, sizeof(*keys.keys), wait_key_compare);
+    size_t unique = 0;
+    for (size_t i = 0; i < keys.count; i++)
+        if (!unique || keys.keys[i] != keys.keys[unique - 1])
+            keys.keys[unique++] = keys.keys[i];
+    wait->subscriptions = (llg_wait_subscription_t*)llg_checked_calloc(
+        unique, sizeof(*wait->subscriptions), "wait subscriptions");
+    wait->n_subscriptions = unique;
+    for (size_t i = 0; i < unique; i++) {
+        llg_wait_subscription_t* node = &wait->subscriptions[i];
+        node->source = wait_source_get(keys.keys[i]);
+        node->wait = wait;
+        // Head insertion matches the global list's reverse registration order.
+        wait_subscription_insert(node, &node->source->head);
+    }
+    free(keys.keys);
+}
+
+static void remove_waiters_entry(llg_wait_t* w) {
+    if (w->prev_link) {
+        *w->prev_link = w->next;
+        if (w->next) w->next->prev_link = w->prev_link;
+        w->prev_link = NULL;
+    }
+    for (size_t i = 0; i < w->n_subscriptions; i++)
+        wait_subscription_unlink(&w->subscriptions[i]);
+    free(w->subscriptions);
+    w->subscriptions = NULL;
+    w->n_subscriptions = 0;
 }
 
 static void remove_timed_entry(llg_wait_t* w) {

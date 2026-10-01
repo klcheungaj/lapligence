@@ -634,6 +634,17 @@ int llg_assertion_register_sequence_control(
     assertion->expect_active = 0;
     assertion->antecedent_sequence = antecedent;
     assertion->consequent_sequence = consequent;
+    /* Registration precedes execution. Only sequence consumers need ticks
+     * across slots, including explicit clocks in either transition graph. */
+    clocking_edge_get(clock)->keep_ticks = 1;
+    const llg_sequence_graph_t* graphs[] = {antecedent, consequent};
+    for (size_t gi = 0; gi < sizeof(graphs) / sizeof(graphs[0]); ++gi) {
+        if (!graphs[gi]) continue;
+        for (uint32_t ti = 0; ti < graphs[gi]->transition_count; ++ti) {
+            sv4_t* source = graphs[gi]->transitions[ti].clock;
+            if (source) clocking_edge_get(source)->keep_ticks = 1;
+        }
+    }
     if (g.assertion_tail)
         g.assertion_tail->next = assertion;
     else

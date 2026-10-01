@@ -125,3 +125,12 @@ fn clocking_intra_assignment_cycle_delay_captures_selectors_before_wait() {
         "llg: $finish at time 11 at tb:23:8\n",
     );
 }
+
+#[test]
+fn clocking_history_keeps_both_edges_then_expires_at_time_advance() {
+    run_case_with_stderr(
+        "clocking_history_slot",
+        "sample t=1 zero=9 prior=0\nsettled t=2 pos=1 neg=1\nsample t=3 zero=7 prior=9\nnext t=3\nfinal t=4 pos=0\n",
+        "",
+    );
+}
