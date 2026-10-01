@@ -1183,6 +1183,9 @@ void llg_wait_resume_in_region(llg_region_t region);
 // generated coroutines pass each as a compound literal in the arm call and the
 // array need not outlive it. Keep that true when changing these arms.
 llg_co_arm_t llg_arm_edge(llg_proc_t* self, sv4_t* sig, int posedge);
+// Signal/real dependency wakes preserve reverse wait-registration order within
+// each resume region, whose process queue is FIFO. Duplicate addresses retain
+// all descriptor checks but create one scheduler membership per waiter/source.
 llg_co_arm_t llg_arm_any(llg_proc_t* self, sv4_t** sigs, int n);
 llg_co_arm_t llg_arm_any_dependencies(llg_proc_t* self,
                                       const llg_wait_dependency_t* deps,

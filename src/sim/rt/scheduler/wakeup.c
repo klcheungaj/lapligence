@@ -71,7 +71,10 @@ static void register_wait(void) {
     llg_wait_t* w = &p->wait;
     w->proc = p;
     w->next = g.waiters;
+    w->prev_link = &g.waiters;
+    if (w->next) w->next->prev_link = &w->next;
     g.waiters = w;
+    wait_subscriptions_register(w);
     g.wait_count++;
     if (!p->suspended) process_status_set(p, LLG_PROCESS_WAITING);
 }

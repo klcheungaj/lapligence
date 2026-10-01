@@ -46,7 +46,7 @@ def verify_inventory(inventory: dict, capabilities: dict) -> list[str]:
     if capabilities["waveforms"]:
         expected.add("waveform_snapshot_lifecycle")
     if capabilities["scheduler"]:
-        expected.update(("coroutine_chunk_cache", "port_net_collapse_values", "port_net_collapse_publication", "vpi_ownership", "scheduler_ownership", "generated_scope_patterns", "scope_address_index", "runtime_value_vectors", "event_array_selection", "file_input_isolation", "file_output_isolation", "memory_image", "native_value_scopes", "native_reference_scopes", "review_native_index_and_reference_bits", "packed_selection_nba", "packed_selection_input", "packed_formal_owner_contracts"))
+        expected.update(("coroutine_chunk_cache", "port_net_collapse_values", "port_net_collapse_publication", "vpi_ownership", "scheduler_ownership", "generated_scope_patterns", "scope_address_index", "scheduler_lists", "runtime_value_vectors", "event_array_selection", "file_input_isolation", "file_output_isolation", "memory_image", "native_value_scopes", "native_reference_scopes", "review_native_index_and_reference_bits", "packed_selection_nba", "packed_selection_input", "packed_formal_owner_contracts"))
         if capabilities["waveforms"]:
             expected.add("waveform_original_selftest")
     if capabilities["coroutines"]:

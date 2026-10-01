@@ -461,9 +461,14 @@ static void sig_publish_changed(sv4_t* target, sv4_t old, sv4_t value,
 #ifdef LLG_WAVEFORM
     llg_wave_changed_sv4(target, &published, g.now);
 #endif
-    llg_wait_t* w = g.waiters;
-    while (w) {
-        llg_wait_t* next = w->next;
+    llg_wait_source_t* source = wait_source_find(target);
+    llg_wait_subscription_t cursor = {0};
+    if (source) {
+        cursor.source = source;
+        wait_subscription_insert(&cursor, &source->head);
+    }
+    llg_wait_t* w;
+    while (source && (w = wait_source_next(&cursor)) != NULL) {
         int wake = 0;
         if (w->kind == W_EVENTS) {
             llg_wait_expression_payload_t* payload = &w->payload.expression;
@@ -507,8 +512,8 @@ static void sig_publish_changed(sv4_t* target, sv4_t old, sv4_t value,
             if (level->sig == target && sv4_same(*target, level->value)) wake = 1;
         }
         if (wake) wake_proc(w->proc);
-        w = next;
     }
+    if (source) wait_subscription_unlink(&cursor);
     deferred_trigger_source_change(target, NULL);
     for (llg_dependency_binding_t* binding = llg_dependency_bindings;
          binding; binding = binding->next) {
@@ -651,9 +656,14 @@ static void real_write(double* target, double value) {
 #ifdef LLG_WAVEFORM
     llg_wave_changed_real(target, value, g.now);
 #endif
-    llg_wait_t* w = g.waiters;
-    while (w) {
-        llg_wait_t* next = w->next;
+    llg_wait_source_t* source = wait_source_find(target);
+    llg_wait_subscription_t cursor = {0};
+    if (source) {
+        cursor.source = source;
+        wait_subscription_insert(&cursor, &source->head);
+    }
+    llg_wait_t* w;
+    while (source && (w = wait_source_next(&cursor)) != NULL) {
         int wake = 0;
         if (w->kind == W_DEPS) {
             llg_wait_expression_payload_t* payload = &w->payload.expression;
@@ -669,8 +679,8 @@ static void real_write(double* target, double value) {
             }
         }
         if (wake) wake_proc(w->proc);
-        w = next;
     }
+    if (source) wait_subscription_unlink(&cursor);
     deferred_trigger_source_change(NULL, target);
     for (llg_dependency_binding_t* binding = llg_dependency_bindings;
          binding; binding = binding->next) {

@@ -342,6 +342,9 @@ typedef struct {
     llg_wait_queue_t zero_waits[LLG_REGION_COUNT];
     llg_wait_t* waiters;      // all active waits
     int wait_count;
+    llg_wait_source_t** wait_sources;
+    size_t wait_sources_capacity;
+    size_t n_wait_sources;
     uint64_t now;
     uint64_t design_precision_fs;
     llg_timeformat_state_t time_format;
@@ -378,6 +381,9 @@ typedef struct {
     llg_proc_t** all_procs;   // checked-growable slot table; NULL holes are free
     int n_procs;
     int all_procs_capacity;
+    // Six radix-64 levels cover the entire int-indexed registry.
+    uint64_t* proc_free_bits[6];
+    int proc_free_levels;
     size_t program_processes;       // live program initial procedures only
     llg_program_t* programs;        // stable origins, owned until runtime cleanup
     int program_completion_pending; // service after the full cancellation batch
@@ -417,18 +423,11 @@ static void process_status_set(llg_proc_t* proc, int status) {
 
 static void process_handle_unlink(llg_process_handle_t* handle) {
     if (!handle || !handle->linked) return;
-    llg_process_handle_t** slot = &g.process_handles;
-    while (*slot) {
-        if (*slot == handle) {
-            *slot = handle->next;
-            handle->next = NULL;
-            handle->linked = 0;
-            return;
-        }
-        slot = &(*slot)->next;
-    }
+    *handle->prev_link = handle->next;
+    if (handle->next) handle->next->prev_link = handle->prev_link;
     handle->linked = 0;
     handle->next = NULL;
+    handle->prev_link = NULL;
 }
 
 static llg_process_handle_t* process_handle_new(llg_proc_t* proc) {
@@ -439,6 +438,8 @@ static llg_process_handle_t* process_handle_new(llg_proc_t* proc) {
     handle->status = LLG_PROCESS_RUNNING;
     handle->linked = 1;
     handle->next = g.process_handles;
+    handle->prev_link = &g.process_handles;
+    if (handle->next) handle->next->prev_link = &handle->next;
     g.process_handles = handle;
     return handle;
 }

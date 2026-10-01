@@ -28,29 +28,21 @@ static void activation_release(llg_activation_t* activation) {
 }
 
 static void activation_unlink_all(llg_activation_t* activation) {
-    llg_activation_t** pp = &g.activations;
-    while (*pp) {
-        if (*pp == activation) {
-            *pp = activation->all_next;
-            activation->all_next = NULL;
-            return;
-        }
-        pp = &(*pp)->all_next;
-    }
+    if (!activation->all_prev_link) return;
+    *activation->all_prev_link = activation->all_next;
+    if (activation->all_next)
+        activation->all_next->all_prev_link = activation->all_prev_link;
+    activation->all_prev_link = NULL;
+    activation->all_next = NULL;
 }
 
 static void activation_unlink_process(llg_activation_t* activation) {
-    llg_proc_t* proc = activation->proc;
-    if (!proc) return;
-    llg_activation_t** pp = &proc->activation_top;
-    while (*pp) {
-        if (*pp == activation) {
-            *pp = activation->proc_next;
-            activation->proc_next = NULL;
-            return;
-        }
-        pp = &(*pp)->proc_next;
-    }
+    if (!activation->proc_prev_link) return;
+    *activation->proc_prev_link = activation->proc_next;
+    if (activation->proc_next)
+        activation->proc_next->proc_prev_link = activation->proc_prev_link;
+    activation->proc_prev_link = NULL;
+    activation->proc_next = NULL;
 }
 
 static void activation_detach(llg_activation_t* activation) {
@@ -147,8 +139,14 @@ llg_activation_t* llg_activation_enter(uint32_t declaration,
     activation->refs = 1; // process activation-stack ownership
     if (activation->parent) activation_retain(activation->parent);
     activation->proc_next = proc->activation_top;
+    activation->proc_prev_link = &proc->activation_top;
+    if (activation->proc_next)
+        activation->proc_next->proc_prev_link = &activation->proc_next;
     proc->activation_top = activation;
     activation->all_next = g.activations;
+    activation->all_prev_link = &g.activations;
+    if (activation->all_next)
+        activation->all_next->all_prev_link = &activation->all_next;
     g.activations = activation;
     return activation;
 }

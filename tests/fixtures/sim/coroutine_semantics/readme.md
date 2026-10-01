@@ -8,6 +8,8 @@ expectation, and treats any frontend or lowering warning as a failure.
 
 | Fixture | Contract |
 | --- | --- |
+| `scheduler_wake_order.sv` | Preserves llg reverse-registration signal wake order and the resulting Inactive FIFO order; a duplicated multi-signal control wakes once. |
+| `scheduler_wait_cancel.sv` | Kill and named disable remove multi-signal waits before publication, while wait fork observes killed and surviving children. |
 | `event_waits.sv` | OR event lists wake once; event aliases and `.triggered` retain identity; `wait_order` reports success and failure. |
 | `intra_assignment_delay_capture.sv` | Blocking and nonblocking intra-assignment delays capture the RHS and apply selected LHS evaluation at their specified stages. |
 | `nested_control_flow.sv` | Resume labels preserve nested branch and loop state across `for`, `while`, `repeat`, `forever`, `break`, and `continue`. |
@@ -22,6 +24,7 @@ expectation, and treats any frontend or lowering warning as a failure.
 | `termination_depth.sv` | Default `$stop` resumes at task depth two; `$finish` from a plain function inside a timing task abandons callers and runs finals once. |
 | `function_step_budget.sv` | A non-yielding loop in a plain function terminates with the exact process-budget diagnostic instead of hanging. |
 
-All expectations are specified outcomes. These fixtures contain no deliberately
-racy transcript; tests that characterize legal race sets must assert membership
-in the documented set rather than bless one scheduling order.
+The scheduler wake-order fixture deliberately pins llg's deterministic ordering
+of otherwise unordered Active processes; it is a runtime regression oracle, not
+a claim that IEEE specifies this order. Other fixtures use specified outcomes;
+tests that characterize legal race sets assert membership in the documented set.

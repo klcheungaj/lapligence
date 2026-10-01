@@ -172,8 +172,26 @@ typedef union {
     llg_wait_assertion_payload_t assertion;
 } llg_wait_rare_t;
 
+typedef struct llg_wait_source llg_wait_source_t;
+typedef struct llg_wait_subscription {
+    struct llg_wait_subscription* next;
+    struct llg_wait_subscription** prev_link;
+    llg_wait_source_t* source;
+    struct llg_wait* wait; // NULL for a publication cursor
+} llg_wait_subscription_t;
+
+struct llg_wait_source {
+    const void* key;
+    llg_wait_subscription_t* head;
+    llg_wait_source_t* next;
+    llg_wait_source_t** prev_link;
+};
+
 typedef struct llg_wait {
     struct llg_wait* next;         // all active waits (signal + timed + zero-delay)
+    struct llg_wait** prev_link;  // O(1) global-list removal
+    llg_wait_subscription_t* subscriptions;
+    size_t n_subscriptions;
     struct llg_wait* time_next;    // sorted timed list
     struct llg_wait* region_next;  // typed zero-delay region queue
     llg_proc_t* proc;
@@ -283,6 +301,8 @@ struct llg_activation {
     struct llg_activation* parent;
     struct llg_activation* proc_next;
     struct llg_activation* all_next;
+    struct llg_activation** all_prev_link;
+    struct llg_activation** proc_prev_link;
     size_t refs;
     int disabled;
     int detached;
@@ -299,6 +319,7 @@ struct llg_process_handle {
     int status;
     int linked;
     struct llg_process_handle* next;
+    struct llg_process_handle** prev_link;
 };
 
 typedef struct llg_process_local_ref {
@@ -348,6 +369,7 @@ struct llg_proc {
     llg_ref_scope_t* reference_top; // retained call-argument cells
     llg_rng_state_t rng;           // process-local random stream
     llg_program_t* program;         // runtime-owned originating program instance
+    int registry_slot;             // stable all_procs position
     int program_live;              // counted initial, never a fork descendant
     uint64_t assertion_owner;      // stable per-run identity for deferred reports
     uint64_t action_assertion;     // assertion whose Reactive action spawned us
@@ -373,16 +395,16 @@ static void free_proc_record(llg_proc_t* proc) {
 }
 
 #if UINTPTR_MAX == UINT64_MAX
-_Static_assert(sizeof(llg_wait_t) == 104,
+_Static_assert(sizeof(llg_wait_t) == 128,
                "64-bit wait record size changed; update the measured layout contract");
 _Static_assert(offsetof(llg_proc_t, chain) + sizeof(llg_co_chain_t) -
                        offsetof(llg_proc_t, value_scopes) ==
-                   216,
+                   240,
                "64-bit resume-hot process block size changed");
 _Static_assert(offsetof(llg_proc_t, chain) + sizeof(llg_co_chain_t) ==
                    sizeof(llg_proc_t),
                "coroutine chain must remain the process record's last member");
-_Static_assert(sizeof(llg_proc_t) == 376,
+_Static_assert(sizeof(llg_proc_t) == 400,
                "64-bit process record size changed; update the layout contract");
 #endif
 

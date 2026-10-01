@@ -19,6 +19,7 @@ static void free_group_storage(llg_fork_group_t* grp) {
 
 static void free_proc_storage(llg_proc_t* p) {
     cancel_proc_nbas(p);
+    remove_waiters_entry(&p->wait);
     event_unlink(&p->wait);
     event_triggered_unlink(&p->wait);
     semaphore_waiter_unlink(&p->wait);
@@ -243,6 +244,9 @@ void llg_rt_cleanup(void) {
     for (int i = 0; i < g.n_procs; i++) {
         if (g.all_procs[i]) free_proc_storage(g.all_procs[i]);
     }
+    for (int level = 0; level < g.proc_free_levels; level++)
+        free(g.proc_free_bits[level]);
+    free(g.wait_sources);
     free(g.all_procs);
     g.all_procs = NULL;
     g.all_procs_capacity = 0;
@@ -279,6 +283,7 @@ void llg_rt_cleanup(void) {
     while (handle) {
         llg_process_handle_t* next = handle->next;
         handle->linked = 0;
+        handle->prev_link = NULL;
         handle->next = NULL;
         handle = next;
     }

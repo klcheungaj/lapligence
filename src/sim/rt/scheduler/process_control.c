@@ -10,15 +10,17 @@ static void process_handle_terminal(llg_proc_t* proc, int status) {
     proc->status = status;
     handle->proc = NULL;
     handle->status = status;
-    // Awaiters are ordinary scheduler waiters. Snapshotting is unnecessary:
-    // wake_proc unlinks each matching entry from the head-linked list.
-    llg_wait_t* wait = g.waiters;
-    while (wait) {
-        llg_wait_t* next = wait->next;
-        if (wait->kind == W_PROCESS && wait->payload.rare &&
-            wait->payload.rare->process.target == handle)
+    // Process-await registrations use the same address index as signal waits.
+    // Head insertion retains the previous global-list wake order.
+    llg_wait_source_t* source = wait_source_find(handle);
+    llg_wait_subscription_t cursor = {0};
+    if (source) {
+        cursor.source = source;
+        wait_subscription_insert(&cursor, &source->head);
+        llg_wait_t* wait;
+        while ((wait = wait_source_next(&cursor)) != NULL)
             wake_proc(wait->proc);
-        wait = next;
+        wait_subscription_unlink(&cursor);
     }
     // Drop the process-owned reference after all awaiters have been woken;
     // each awaiter holds its own reference until wake/cancellation.

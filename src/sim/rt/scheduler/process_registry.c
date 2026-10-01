@@ -31,6 +31,45 @@ static int llg_registry_capacity(int current, int needed) {
     return capacity;
 }
 
+// A set bit denotes a hole below n_procs; upper levels summarize nonempty
+// words. Lowest-hole reuse preserves cancellation traversal order. At most
+// six words are visited for any int-sized registry, independent of population.
+static void proc_free_set(int slot, int available) {
+    size_t index = (size_t)slot;
+    for (int level = 0; level < g.proc_free_levels; level++) {
+        size_t word = index / 64;
+        uint64_t mask = UINT64_C(1) << (index % 64);
+        uint64_t before = g.proc_free_bits[level][word];
+        if (available) g.proc_free_bits[level][word] |= mask;
+        else g.proc_free_bits[level][word] &= ~mask;
+        uint64_t after = g.proc_free_bits[level][word];
+        if ((before != 0) == (after != 0)) break;
+        available = after != 0;
+        index = word;
+    }
+}
+
+static unsigned proc_first_bit(uint64_t bits) {
+    unsigned index = 0;
+    // Portable C11 bounded binary search; callers supply a nonzero word.
+    if (!(bits & UINT64_C(0xffffffff))) { bits >>= 32; index += 32; }
+    if (!(bits & UINT64_C(0xffff))) { bits >>= 16; index += 16; }
+    if (!(bits & UINT64_C(0xff))) { bits >>= 8; index += 8; }
+    if (!(bits & UINT64_C(0xf))) { bits >>= 4; index += 4; }
+    if (!(bits & UINT64_C(0x3))) { bits >>= 2; index += 2; }
+    if (!(bits & UINT64_C(0x1))) index++;
+    return index;
+}
+
+static int proc_first_free(void) {
+    if (!g.proc_free_levels ||
+        !g.proc_free_bits[g.proc_free_levels - 1][0]) return g.n_procs;
+    size_t index = 0;
+    for (int level = g.proc_free_levels - 1; level >= 0; level--)
+        index = index * 64 + proc_first_bit(g.proc_free_bits[level][index]);
+    return (int)index;
+}
+
 static void all_procs_reserve(int needed) {
     if (needed <= g.all_procs_capacity) return;
     int capacity = llg_registry_capacity(g.all_procs_capacity, needed);
@@ -38,9 +77,23 @@ static void all_procs_reserve(int needed) {
         (size_t)capacity, sizeof(*grown), "process registry");
     if (g.all_procs)
         memcpy(grown, g.all_procs, (size_t)g.n_procs * sizeof(*grown));
+    uint64_t* bits[6] = {0};
+    size_t count = (size_t)capacity;
+    int levels = 0;
+    do {
+        count = (count + 63) / 64;
+        bits[levels++] = (uint64_t*)llg_checked_calloc(
+            count, sizeof(uint64_t), "process free slots");
+    } while (count > 1);
+    for (int level = 0; level < g.proc_free_levels; level++)
+        free(g.proc_free_bits[level]);
+    memcpy(g.proc_free_bits, bits, sizeof(bits));
+    g.proc_free_levels = levels;
     free(g.all_procs);
     g.all_procs = grown;
     g.all_procs_capacity = capacity;
+    for (int i = 0; i < g.n_procs; i++)
+        if (!grown[i]) proc_free_set(i, 1);
 }
 
 static void finals_reserve(int needed) {
@@ -67,28 +120,29 @@ static void register_proc(llg_proc_t* p) {
         abort();
     }
     p->assertion_owner = ++g.next_process_identity;
-    for (int i = 0; i < g.n_procs; i++) {
-        if (g.all_procs[i] == NULL) {
-            g.all_procs[i] = p;
-            return;
-        }
-    }
-    if (g.n_procs == INT_MAX) {
+    int slot = proc_first_free();
+    if (slot == INT_MAX) {
         fprintf(stderr, "llg runtime fatal: process registry size overflow\n");
         abort();
     }
-    all_procs_reserve(g.n_procs + 1);
-    g.all_procs[g.n_procs++] = p;
+    all_procs_reserve(slot + 1);
+    p->registry_slot = slot;
+    g.all_procs[slot] = p;
+    if (slot == g.n_procs) g.n_procs++;
+    else proc_free_set(slot, 0);
 }
 
 static void unregister_proc(llg_proc_t* p) {
-    for (int i = 0; i < g.n_procs; i++) {
-        if (g.all_procs[i] == p) {
-            g.all_procs[i] = NULL;
-            while (g.n_procs > 0 && g.all_procs[g.n_procs - 1] == NULL)
-                g.n_procs--;
-            return;
-        }
+    if (!p || p->registry_slot < 0 || p->registry_slot >= g.n_procs ||
+        g.all_procs[p->registry_slot] != p) return;
+    int slot = p->registry_slot;
+    p->registry_slot = -1;
+    g.all_procs[slot] = NULL;
+    proc_free_set(slot, 1);
+    // Each trailing slot is trimmed once per registration: amortized O(1).
+    while (g.n_procs > 0 && !g.all_procs[g.n_procs - 1]) {
+        proc_free_set(g.n_procs - 1, 0);
+        g.n_procs--;
     }
 }
 
