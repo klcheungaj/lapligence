@@ -335,10 +335,24 @@ pub struct GeneratedModel {
     /// Complete `model.c` source: `#include "llg_rt.h"`, signal globals,
     /// process functions, and `main`.
     pub model_c: String,
+    /// Deterministic `model.symbols.tsv`: shortened C identifier, tab, original
+    /// identifier, newline; sorted by shortened name and empty without renames.
+    pub symbols_tsv: String,
     /// The design name (also embedded in the model's first comment line).
     pub design_name: String,
     /// Non-fatal diagnostics about supported lowering limitations.
     pub warnings: Vec<String>,
+}
+
+impl GeneratedModel {
+    /// Generated files for the CMake builder or a standalone source export.
+    /// The symbol map is a debugging sidecar and is never compiled.
+    pub fn sources(&self) -> [(&str, &str); 2] {
+        [
+            ("model.c", self.model_c.as_str()),
+            ("model.symbols.tsv", self.symbols_tsv.as_str()),
+        ]
+    }
 }
 
 /// End-to-end simulator generation options.
@@ -515,10 +529,11 @@ fn generate_from_db_with_codegen_options_impl(
     crate::sim::opt::run(&mut execution, &options.optimization)
         .map_err(|error| error.to_string())?;
     execution.validate().map_err(|error| error.to_string())?;
-    let model_c = crate::sim::emit_c::render(&execution)?;
+    let rendered = crate::sim::emit_c::render_with_symbols(&execution)?;
     Ok(GeneratedModel {
         design_name: cg.design_name.clone(),
-        model_c,
+        model_c: rendered.source,
+        symbols_tsv: rendered.symbols_tsv,
         warnings: cg.warnings,
     })
 }

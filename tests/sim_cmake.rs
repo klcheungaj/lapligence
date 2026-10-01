@@ -391,8 +391,12 @@ fn generated_sources_build_as_a_self_contained_cmake_project() {
     let dir = fresh_dir("self-contained");
     let gen = compile_counter(dir.path()).expect("compile counter");
     let project = dir.path().join("project");
-    sim::build::generate_model_sources(&project, &[("model.c", gen.model_c.as_str())])
+    sim::build::generate_model_sources(&project, &gen.sources())
         .expect("generate self-contained model sources");
+    assert_eq!(
+        std::fs::read_to_string(project.join("model.symbols.tsv")).unwrap(),
+        gen.symbols_tsv
+    );
 
     let cmake = std::env::var("LLG_CMAKE").unwrap_or_else(|_| "cmake".to_owned());
     let build = project.join("build");
@@ -441,6 +445,28 @@ fn generated_sources_build_as_a_self_contained_cmake_project() {
             )
         });
     assert_eq!(run_sim(executable).unwrap(), EXPECTED_STDOUT);
+}
+
+#[test]
+fn generated_symbol_maps_are_replaced_and_pruned_with_the_source_set() {
+    let dir = fresh_dir("symbol-map");
+    let sources = [
+        ("model.c", STUB_MODEL_C),
+        ("model.symbols.tsv", "short\toriginal_long_name\n"),
+    ];
+    sim::build::generate_model_sources(dir.path(), &sources).unwrap();
+    let map = dir.path().join("model.symbols.tsv");
+    assert_eq!(std::fs::read_to_string(&map).unwrap(), sources[1].1);
+    let cmake = std::fs::read_to_string(dir.path().join("CMakeLists.txt")).unwrap();
+    assert!(!cmake.contains("model.symbols.tsv"));
+    sim::build::generate_model_sources(
+        dir.path(),
+        &[("model.c", STUB_MODEL_C), ("model.symbols.tsv", "")],
+    )
+    .unwrap();
+    assert_eq!(std::fs::read_to_string(&map).unwrap(), "");
+    sim::build::generate_model_sources(dir.path(), &[("model.c", STUB_MODEL_C)]).unwrap();
+    assert!(!map.exists());
 }
 
 /// Library level with an explicit generator backend:

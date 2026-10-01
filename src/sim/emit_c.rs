@@ -44,6 +44,7 @@ pub use context::{RCtx, RenderedExpr};
 pub use error::EmitError;
 pub use expressions::render_expr;
 pub use model::render;
+pub(crate) use model::render_with_symbols;
 pub use statements::{render_pre_fn, render_stmt};
 
 pub(crate) use names::{
