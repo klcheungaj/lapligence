@@ -6,6 +6,7 @@
 #   scripts/run-tests.sh --test sim_counter       # subset; args pass through
 #   scripts/run-tests.sh --test model_tests --test elab_resolve
 #   scripts/run-tests.sh --test-work-dir /build --test sim_counter
+#   scripts/run-tests.sh --cargo-profile quick --test sim_counter
 #
 # Uses cargo-nextest: every test runs in its own process and the many
 # integration-test binaries execute concurrently (see .config/nextest.toml).
@@ -45,6 +46,9 @@ Usage: scripts/run-tests.sh [--test-work-dir PATH] [nextest run options]
                       stay in its target/. Relative paths use the caller's directory.
 
 Without --test-work-dir, existing environment settings and storage defaults apply.
+Test builds use the optimized Cargo test profile by default. Pass --cargo-profile
+quick for shorter edit-test rebuilds (artifacts in target/quick/). Nextest's
+--profile selects runner settings, independently of the Cargo build profile.
 Nextest concurrency is unchanged (8 tests by default). Use cargo nextest run --help
 for nextest help. See tests/readme.md#parallel-worktrees for layout and cleanup rules.
 EOF
