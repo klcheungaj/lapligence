@@ -580,7 +580,20 @@ static void sig_publish_changed(sv4_t* target, sv4_t old, sv4_t value,
     llg_wait_t* w;
     while (source && (w = wait_source_next(&cursor)) != NULL) {
         int wake = 0;
-        if (w->kind == W_EVENTS) {
+        if (w->kind == W_EVENTS_INLINE) {
+            llg_wait_inline_payload_t* single = &w->payload.single;
+            if (single->specs[0].sig == target) {
+                wake = ev_matches(wait_inline_value(w), *target,
+                                  single->specs[0].kind);
+                if (!wake) {
+                    if (wait_inline_fits(target)) wait_inline_copy(w, target);
+                    else wait_inline_promote(w, target);
+                }
+            }
+        } else if (w->kind == W_LEVEL_INLINE) {
+            if (w->payload.single.specs[0].sig == target &&
+                sv4_same(*target, wait_inline_value(w))) wake = 1;
+        } else if (w->kind == W_EVENTS) {
             llg_wait_expression_payload_t* payload = &w->payload.expression;
             for (int i = 0; i < payload->n; i++) {
                 if (payload->specs[i].sig == target) {

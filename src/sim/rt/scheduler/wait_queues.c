@@ -157,7 +157,56 @@ static int wait_key_compare(const void* left, const void* right) {
     return (a > b) - (a < b);
 }
 
+// This descriptor borrows the wait's planes only for synchronous comparison.
+// It must never go through an owning value operation or escape the call.
+static sv4_t wait_inline_value(llg_wait_t* wait) {
+    llg_wait_inline_payload_t* single = &wait->payload.single;
+    sv4_t value = SV4_EMPTY;
+    value.width = single->width;
+    value.is_signed = single->is_signed;
+    if (value.width) {
+        value.bits = single->limbs;
+        value.x = single->limbs + LLG_WAIT_INLINE_LIMBS;
+        value.z = single->limbs + 2u * LLG_WAIT_INLINE_LIMBS;
+    }
+    return value;
+}
+
+static int wait_inline_fits(const sv4_t* value) {
+    return value->width <= 64u * LLG_WAIT_INLINE_LIMBS;
+}
+
+static void wait_inline_copy(llg_wait_t* wait, const sv4_t* value) {
+    llg_wait_inline_payload_t* single = &wait->payload.single;
+    size_t bytes = ((size_t)value->width + 63u) / 64u * sizeof(uint64_t);
+    single->width = value->width;
+    single->is_signed = (int8_t)(value->is_signed != 0);
+    if (bytes) {
+        memcpy(single->limbs, value->bits, bytes);
+        memcpy(single->limbs + LLG_WAIT_INLINE_LIMBS, value->x, bytes);
+        memcpy(single->limbs + 2u * LLG_WAIT_INLINE_LIMBS, value->z, bytes);
+        if (value->width % 64u) {
+            size_t last = (size_t)value->width / 64u;
+            uint64_t mask = UINT64_MAX >> (64u - value->width % 64u);
+            single->limbs[last] &= mask;
+            single->limbs[LLG_WAIT_INLINE_LIMBS + last] &= mask;
+            single->limbs[2u * LLG_WAIT_INLINE_LIMBS + last] &= mask;
+        }
+    }
+}
+
 static void wait_subscriptions_register(llg_wait_t* wait) {
+    if (wait->kind == W_EVENTS_INLINE || wait->kind == W_LEVEL_INLINE) {
+        const void* key = wait->payload.single.specs[0].sig;
+        if (!key) return;
+        llg_wait_subscription_t* node = &wait->payload.single.subscription;
+        wait->subscriptions = node;
+        wait->n_subscriptions = 1;
+        node->source = wait_source_get(key);
+        node->wait = wait;
+        wait_subscription_insert(node, &node->source->head);
+        return;
+    }
     llg_wait_keys_t keys = {0};
     if (wait->kind == W_EVENTS) {
         for (int i = 0; i < wait->payload.expression.n; i++)
@@ -206,6 +255,27 @@ static void wait_subscriptions_register(llg_wait_t* wait) {
     free(keys.keys);
 }
 
+static void wait_inline_promote(llg_wait_t* wait, const sv4_t* value) {
+    llg_event_spec_t spec = wait->payload.single.specs[0];
+    llg_wait_subscription_t* old = &wait->payload.single.subscription;
+    llg_wait_subscription_t* node = (llg_wait_subscription_t*)llg_checked_malloc(
+        1, sizeof(*node), "wait subscriptions");
+    *node = *old;
+    *node->prev_link = node;
+    if (node->next) node->next->prev_link = &node->next;
+    wait->subscriptions = node;
+    memset(&wait->payload, 0, sizeof(wait->payload));
+    wait->kind = W_EVENTS;
+    llg_wait_expression_payload_t* payload = &wait->payload.expression;
+    payload->n = 1;
+    payload->specs = (llg_event_spec_t*)llg_checked_malloc(
+        1, sizeof(*payload->specs), "edge wait specifications");
+    payload->last = (sv4_t*)llg_checked_calloc(
+        1, sizeof(*payload->last), "edge wait snapshots");
+    payload->specs[0] = spec;
+    payload->last[0] = sv4_clone(value);
+}
+
 static void remove_waiters_entry(llg_wait_t* w) {
     if (w->prev_link) {
         *w->prev_link = w->next;
@@ -214,7 +284,8 @@ static void remove_waiters_entry(llg_wait_t* w) {
     }
     for (size_t i = 0; i < w->n_subscriptions; i++)
         wait_subscription_unlink(&w->subscriptions[i]);
-    free(w->subscriptions);
+    if (w->subscriptions != &w->payload.single.subscription)
+        free(w->subscriptions);
     w->subscriptions = NULL;
     w->n_subscriptions = 0;
 }
@@ -223,10 +294,10 @@ static void remove_timed_entry(llg_wait_t* w) {
     llg_wait_t** pp = &g.timed_head;
     while (*pp) {
         if (*pp == w) {
-            *pp = w->time_next;
+            *pp = w->payload.timer.next;
             return;
         }
-        pp = &(*pp)->time_next;
+        pp = &(*pp)->payload.timer.next;
     }
 }
 
@@ -246,10 +317,10 @@ static void insert_zero_wait(llg_wait_t* w, llg_region_t region) {
         return;
     }
     w->resume_region = region;
-    w->region_next = NULL;
+    w->payload.timer.region_next = NULL;
     llg_wait_queue_t* queue = &g.zero_waits[region];
     if (queue->tail) {
-        queue->tail->region_next = w;
+        queue->tail->payload.timer.region_next = w;
     } else {
         queue->head = w;
     }
@@ -262,16 +333,16 @@ static void remove_zero_wait_entry(llg_wait_t* w) {
         llg_wait_t** pp = &queue->head;
         while (*pp) {
             if (*pp == w) {
-                *pp = w->region_next;
+                *pp = w->payload.timer.region_next;
                 if (queue->tail == w) {
                     queue->tail = NULL;
-                    for (llg_wait_t* q = queue->head; q; q = q->region_next)
+                    for (llg_wait_t* q = queue->head; q; q = q->payload.timer.region_next)
                         queue->tail = q;
                 }
-                w->region_next = NULL;
+                w->payload.timer.region_next = NULL;
                 return;
             }
-            pp = &(*pp)->region_next;
+            pp = &(*pp)->payload.timer.region_next;
         }
     }
 }
@@ -407,9 +478,9 @@ static void event_unlink(llg_wait_t* w);
 
 static void insert_timed(llg_wait_t* w) {
     llg_wait_t** pp = &g.timed_head;
-    while (*pp && (*pp)->payload.time <= w->payload.time)
-        pp = &(*pp)->time_next;
-    w->time_next = *pp;
+    while (*pp && (*pp)->payload.timer.time <= w->payload.timer.time)
+        pp = &(*pp)->payload.timer.next;
+    w->payload.timer.next = *pp;
     *pp = w;
 }
 
@@ -430,6 +501,9 @@ static void wait_payload_release(llg_wait_t* wait) {
     if (!wait) return;
     llg_process_handle_t* process_target = NULL;
     switch (wait->kind) {
+        case W_EVENTS_INLINE:
+        case W_LEVEL_INLINE:
+            break;
         case W_EVENTS:
             free(wait->payload.expression.specs);
             sv4_destroy_array(wait->payload.expression.last,
@@ -457,7 +531,8 @@ static void wait_payload_release(llg_wait_t* wait) {
             free(wait->payload.expression.evs);
             break;
         case W_EVENT:
-            free(wait->payload.event.evs);
+            if (wait->payload.event.evs != &wait->payload.event.inline_ev)
+                free(wait->payload.event.evs);
             break;
         case W_MIXED:
             if (wait->payload.rare) {
@@ -493,6 +568,7 @@ static void wait_payload_release(llg_wait_t* wait) {
     if (wait->kind != W_TIME && wait->kind != W_EVENTS &&
         wait->kind != W_DEPS && wait->kind != W_EXPR &&
         wait->kind != W_EVENT && wait->kind != W_EVENT_TRIGGERED &&
+        wait->kind != W_EVENTS_INLINE && wait->kind != W_LEVEL_INLINE &&
         wait->kind != W_NONE)
         free(wait->payload.rare);
     memset(&wait->payload, 0, sizeof(wait->payload));

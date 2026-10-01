@@ -169,7 +169,8 @@ llg_co_arm_t llg_arm_events(llg_proc_t* self,
                            ? LLG_REGION_REACTIVE
                            : LLG_REGION_ACTIVE;
     w->payload.event.n_evs = n;
-    w->payload.event.evs = (llg_event_object_t**)llg_checked_malloc(
+    w->payload.event.evs = n == 1 ? &w->payload.event.inline_ev
+        : (llg_event_object_t**)llg_checked_malloc(
         (size_t)n, sizeof(llg_event_object_t*), "named-event wait list");
     for (int i = 0; i < n; i++) {
         w->payload.event.evs[i] = evs[i] ? evs[i]->object : NULL;
