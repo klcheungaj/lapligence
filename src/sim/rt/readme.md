@@ -4,6 +4,10 @@ Generated models compile this runtime separately from Rust. Exact-width values u
 unique ownership (ABI 4); registered scopes and retained destinations support
 suspension, cancellation and queued publication. See
 [value ownership](value/ownership.md) for the allocation contract.
+Proven non-escaping locals register caller-owned scope nodes and cells in
+coroutine frames or frame-less functions' C scopes. Escaping and unproven cells
+keep heap owners. [Retainer and lifetime rules](AGENTS.md#frame-resident-cells)
+cover exact-pointer indexing, final history removal and zero-resume exits.
 
 ## Components
 
@@ -12,7 +16,7 @@ suspension, cancellation and queued publication. See
 | `llg_value.h/.c`, `value/` | Four-state values, arithmetic, selection, resolution, formatting and numeric conversion; scheduler-independent. |
 | `llg_random.h/.c` | Verilog random/distribution functions and explicit seed updates. |
 | `llg_rng.h/.c` | Process/object random streams, independent of scheduling. |
-| `llg_co.h/.c` | Stackless coroutine frames, anchors and arena cold paths; the generated-process contract is [process ABI version 2](process_abi.md). |
+| `llg_co.h/.c` | Stackless coroutine frames, anchors and arena cold paths; the generated-process contract is [process ABI version 3](process_abi.md). |
 | `llg_string.h/.c` | Owned byte strings, conversion and change notification. |
 | `llg_container.h/.c`, `container/` | Dynamic arrays, queues, associative storage and retained element identities. |
 | `llg_rt.h/.c`, `scheduler/` | IEEE region scheduling, processes, events, assignments, synchronization, assertions, I/O and VPI. |
@@ -51,15 +55,29 @@ trailing-hole trimming are amortized constant time per registration/removal;
 ordinary slot removal uses the process's stored position. Cancellation traversals
 that can remove other records restart as before.
 
-On 64-bit hosts the process record is 400 bytes (24 bytes added), including a
-128-byte wait record. Each distinct dependency membership adds 32 bytes, each
-live source row 32 bytes, and each hash bucket 8 bytes (geometric capacity at
-75% load). Temporary key sorting uses pointer integer representations, while
+On 64-bit hosts the process record is 400 bytes, including a 128-byte wait
+record. Heap-path dependency memberships add 32 bytes each; a single narrow
+signal wait embeds its membership. Each live source row adds 32 bytes, and each
+hash bucket 8 bytes (geometric capacity at 75% load). Temporary key sorting uses
+pointer integer representations, while
 identity comparisons use exact pointer equality. Handles are 40 bytes (8 added),
 activations 72 bytes (16 added); the process slot index occupies prior padding.
 The free-slot bitmap uses about 0.127 bytes per allocated registry slot plus
-at most five rounded summary words. These internal layouts keep process ABI 2;
+at most five rounded summary words. These internal layouts keep process ABI 3;
 runtime-content hashing invalidates older cached archives.
+
+`LLG_WAIT_INLINE_SPECS` is one and `LLG_WAIT_INLINE_LIMBS` is one (64 bits per
+plane). Single packed any/edge waits and level targets through 64 bits copy their
+spec and all bits/X/Z planes into the wait payload, alongside one subscription.
+Timed queue links share that union, keeping waits at 128 bytes and processes at
+400 bytes. A single named-event wait copies its resolved object into an inline
+list slot. Wide, multiple, mixed, expression and dependency waits keep owned heap
+storage. Source rows and named-event tables still allocate on first use/growth;
+there is no per-wait allocation for the inline paths after that shared storage is
+available. Inline descriptors are temporary borrowed views used only in synchronous
+comparisons, never owning values. Native signal-width growth promotes a live edge
+wait to heap storage while preserving its subscription's exact list position.
+Wake, cancellation and teardown unlink subscriptions before clearing the payload.
 
 Stop/resume retains a live context; close releases observers/queues before model
 storage. Runtime ticks are integer design-precision units; lowering supplies
@@ -82,7 +100,7 @@ the exported counter snapshot records system allocations, cache hits, system
 frees, current cached bytes and the peak. Runtime cleanup frees every retained
 chunk. Under the future MT-1 design, each worker will own an equivalent cache.
 
-`generate_model_sources` writes a self-contained CMake tree with `llg_co`. ABI 2
+`generate_model_sources` writes a self-contained CMake tree with `llg_co`. ABI 3
 models define `LLG_MODEL_PROCESS_ABI` and initialize through
 `llg_rt_init_with_args_and_precision`; there is no process-stack sizing input.
 Debug initialization and coroutine symbols have separate `_debug` link names,

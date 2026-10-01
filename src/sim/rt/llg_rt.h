@@ -38,7 +38,7 @@
 // Keep this check in every model translation unit so a stale generated model
 // fails at compile time; llg_co's versioned symbols independently reject a
 // stale runtime archive at link time.
-#define LLG_PROCESS_ABI_VERSION 2
+#define LLG_PROCESS_ABI_VERSION 3
 #if defined(LLG_MODEL_PROCESS_ABI) && \
     LLG_MODEL_PROCESS_ABI != LLG_PROCESS_ABI_VERSION
 #error "generated model process ABI does not match llg_rt.h"
@@ -287,15 +287,39 @@ void llg_inertial_selected_net(llg_inertial_t** handle, llg_net_t* net,
 
 // ── Scheduler ─────────────────────────────────────────────────────────────────
 
-// Heap-backed owners scoped to a process (or the root runtime). Use these
-// for values live across suspension. Completion/cancellation drains remaining
-// scopes without touching a discarded coroutine stack. End scopes normally
+// Registered owners scoped to a process (or the root runtime). Heap cells
+// can escape lexical exit; caller-owned cells must not. Completion/cancellation
+// drains scopes before coroutine frame/arena storage is reclaimed. End scopes normally
 // as soon as their values die, not only during runtime teardown.
-typedef struct llg_value_scope llg_value_scope_t;
+typedef struct llg_proc llg_proc_t;
+// Runtime-owned links and payload ownership. Caller-owned nodes are initialized
+// by registration, never copied while active, and remain live until scope end.
+typedef struct llg_value_scope {
+    struct llg_value_scope* next;
+    struct llg_value_scope* all_next;
+    struct llg_value_scope* all_prev;
+    size_t references;
+    int active;
+    int intrusive;
+    llg_proc_t* owner;
+    size_t count;
+    sv4_t* values;
+    void* object;
+    void (*destroy_object)(void*);
+} llg_value_scope_t;
 llg_value_scope_t* llg_value_scope_begin(size_t count);
-// The array is allocated once by `llg_value_scope_begin` and neither moves nor
-// is replaced until the scope ends; generated coroutines rely on this to keep
-// the pointer in a C local reloaded from the frame after each resume.
+// Register caller-owned empty cells/node without allocating either. Their
+// addresses must outlive registration and must not escape lexical scope exit.
+// End destroys payloads and removes exact descriptor keys, but never frees the
+// node/cells. The same storage may be registered again after end/unwind.
+llg_value_scope_t* llg_value_scope_register(llg_value_scope_t* node,
+                                          sv4_t* values, size_t count);
+// As above for zero-initialized native payloads. Destructor borrows the payload.
+llg_value_scope_t* llg_value_scope_register_object(llg_value_scope_t* node,
+    void* object, void (*destroy)(void*));
+// The allocated or caller-owned array neither moves nor is replaced while
+// registered; generated coroutines rely on this to keep the pointer in a C
+// local reloaded from the frame after each resume.
 sv4_t* llg_value_scope_values(llg_value_scope_t* scope);
 void llg_value_scope_end(llg_value_scope_t* scope);
 // Zeroed native storage shares lexical/nonlocal cleanup with packed scopes.
@@ -307,7 +331,6 @@ void* llg_value_scope_object(llg_value_scope_t* scope);
 llg_value_scope_t* llg_value_scope_mark(void);
 void llg_value_scopes_end_since(llg_value_scope_t* mark);
 
-typedef struct llg_proc llg_proc_t;
 typedef struct llg_process_handle llg_process_handle_t;
 typedef struct llg_semaphore llg_semaphore_t;
 typedef struct llg_frame llg_frame_t;
@@ -1290,6 +1313,7 @@ void llg_nba_event(llg_event_t* ev);
 // Queue a nonblocking event trigger after `ticks`; zero stays in the current
 // time slot's NBA region, while a positive delay enters the timed NBA queue.
 void llg_nba_event_after(llg_event_t* ev, uint64_t ticks);
+// A single named event uses inline copied storage; larger lists are heap-owned.
 // Named-event arms copy the event list before SUSPEND. Triggered returns READY
 // if the event is already set in this slot. `result` for wait_order must point
 // at a frame field; the runtime writes 1 (success) or -1 (out of order) before

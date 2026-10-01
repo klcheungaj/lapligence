@@ -58,6 +58,46 @@ borrowed. Alias reads never publish or mutate resolved storage.
 
 ## Scheduler, process and event invariants
 
+### Frame-resident cells
+
+Process ABI 3 exposes the scope-node layout and adds caller-owned packed/native
+registration. Value ABI 4 and the independent llg_co ABI 1 are unchanged. Scope
+links are runtime-owned even when node/cell memory belongs to a frame or outer
+C scope. Do not copy a live node or register it twice. Register only empty
+packed/zero-initialized native cells, and reinitialize after end before reuse.
+Normal end, disable, kill and cleanup use the existing lexical scope chain and
+destructor order; drain it before destroying root/embedded/arena frames. Retained
+heap cells still detach until final release. Intrusive scope end requires exactly
+one lexical reference; an outstanding retain fails before unlinking the owner.
+Both paths keep the exact-pointer index and call `llg_clocking_forget_signal`
+on every packed descriptor at final release.
+Coroutine nodes/cells must reside in the frame even without resume sites:
+termination can return from the C entry before the runtime drains its owners.
+Only frame-less functions with common-return cleanup may use C-stack cells.
+
+The emitter's [typed proof](../emit_c/AGENTS.md#storage-references-and-publication)
+excludes the following retainers or supplies the indicated cleanup:
+
+| Descriptor retainer | Lifetime rule for intrusive locals |
+| --- | --- |
+| `nonblocking.c` NBA/selected/masked/future/event-controlled writes and `dependencies.c` pending clocking drives | NBA target locals remain heap-backed; clocking/event captures are unproven. |
+| `activations.c`, `reference_writes.c`, queue refs, output/inout/ref and foreign call descriptors | All address actuals remain heap-backed; reference descriptors themselves retain their existing heap scopes. |
+| `storage.c` capture slots and `forks.c` joined/detached descendants | Captured forks and spawning callee effects fail the proof. |
+| Wait snapshots, R2 subscriptions, expression/iff contexts and `wait_order` delivery | Local wait dependencies and context-free evaluator reads remain heap-backed; captured evaluator/qualifier contexts are unproven. Existing wake/cancel paths remove subscriptions before scope unwind. |
+| R1 `dependencies.c` clock history | Every final scope release forgets the exact packed descriptor before reuse; publication without a waiter is still recorded. |
+| Clocking sources, sampled histories, concurrent assertions, sequence clocks/local scopes | Clocking/sampled/assertion forms fail the proof; external owners retain their documented lifetime obligations. |
+| `nets.c` inertial handles/targets, `force.c` targets/evaluators, PCA bindings | These registrations fail the proof; model-lifetime sources keep their existing path. |
+| `mailboxes.c` delayed delivery, pinned targets and reentrant publication snapshots | Mailbox/native service operations fail the proof. |
+| VPI catalog/callback/call handles, DPI/foreign pointers and dynamic dispatch | These operations fail the proof; no frame cell is exposed through them. |
+| Monitor/strobe/output callbacks and deferred assertion reports/action frames | Deferred readers/capture graphs fail the proof; legal persistent sources remain model-owned. |
+| Synchronous write `value_target_pin` | The pin ends before the write returns. Proven locals have no waiter/foreign callback observer that could retain the target beyond scope end. |
+| Container/object/alias/net and waveform registrations | These forms fail the proof. Ordinary by-value packed/string reads clone payloads; waveform events and formatting buffers own independent snapshots. |
+
+Unknown typed operations fail closed. Native callers must separately meet the
+same retainer obligations; registration never turns a borrowed frame into a heap
+owner. The retained-destination guard catches reference-counted escapes, while
+borrowed waiter/source/callback addresses require the caller's lifetime proof.
+
 `llg_co` is packaged in the runtime archive and self-contained source exports.
 Generated processes execute through `llg_co` frames, descriptors, anchors and
 arenas. Keep `llg_co` free of globals and TLS.
@@ -191,7 +231,7 @@ must call `llg_clocking_forget_signal` before freeing/reusing a written descript
 and must separately satisfy wait/sample/assertion source lifetimes. Model storage
 survives runtime cleanup. The history list owns nodes; its hash index borrows them,
 uses exact pointer equality, and must be updated on removal/reset/teardown. This
-private layout/additive API leaves process ABI 2 and value ABI 4 unchanged;
+private layout/additive API leaves process ABI 3 and value ABI 4 unchanged;
 embedded runtime-content hashing invalidates earlier cache archives.
 
 Deferred immediate assertions keep issue-time sampled values;

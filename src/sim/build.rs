@@ -1414,7 +1414,7 @@ mod tests {
     fn model_metadata_requires_current_ownership_abi() {
         assert!(validate_model_abi(&[]).is_ok());
         let source = format!(
-            "#define LLG_MODEL_VALUE_ABI {}\n#define LLG_MODEL_PROCESS_ABI 2\n",
+            "#define LLG_MODEL_VALUE_ABI {}\n#define LLG_MODEL_PROCESS_ABI 3\n",
             super::super::emit_c::VALUE_ABI_VERSION
         );
         assert!(validate_model_abi(&[("model.c", &source)]).is_ok());

@@ -98,8 +98,8 @@ static void wake_zero_waits(llg_region_t region) {
     queue->head = NULL;
     queue->tail = NULL;
     while (wait) {
-        llg_wait_t* next = wait->region_next;
-        wait->region_next = NULL;
+        llg_wait_t* next = wait->payload.timer.region_next;
+        wait->payload.timer.region_next = NULL;
         wake_proc(wait->proc);
         wait = next;
     }
@@ -394,7 +394,7 @@ void llg_rt_run(void) {
         if (g.finish) break;
         int have_future_event = g.timed_head || g.delayed_nba_buckets ||
                                 g.inertial_pending || g.callbacks;
-        uint64_t t = g.timed_head ? g.timed_head->payload.time : UINT64_MAX;
+        uint64_t t = g.timed_head ? g.timed_head->payload.timer.time : UINT64_MAX;
         if (g.delayed_nba_buckets && g.delayed_nba_buckets->time < t)
             t = g.delayed_nba_buckets->time;
         if (g.inertial_pending && g.inertial_pending->time < t) t = g.inertial_pending->time;
@@ -422,8 +422,8 @@ void llg_rt_run(void) {
             g.region_passes = 0;
         }
         llg_wait_t* wait = g.timed_head;
-        while (wait && wait->payload.time == g.now) {
-            llg_wait_t* next = wait->time_next;
+        while (wait && wait->payload.timer.time == g.now) {
+            llg_wait_t* next = wait->payload.timer.next;
             wake_proc(wait->proc);
             wait = next;
         }

@@ -68,7 +68,7 @@ embedded callee slots in `FrameLayout`; sibling blocks overlay and recursive or
 oversized callees use the chain arena. There is no generated coroutine-stack
 estimate or `LLG_MODEL_STACK_VALUES`. Values allocate by their own widths; never
 restore model-maximum arrays. `LLG_MODEL_VALUE_ABI` must match
-`LLG_VALUE_ABI_VERSION`, and generated models declare process ABI 2.
+`LLG_VALUE_ABI_VERSION`, and generated models declare process ABI 3.
 
 `write_sim_sources` embeds flat value, random, coroutine, scheduler, container and
 waveform sources plus self-tests into `<out-dir>/sim/<design>/` (driver default

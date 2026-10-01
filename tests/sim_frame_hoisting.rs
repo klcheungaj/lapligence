@@ -53,7 +53,7 @@ endmodule
 "#;
 
 #[test]
-fn resume_free_process_uses_a_header_only_frame_and_c_locals() {
+fn resume_free_process_keeps_registered_cells_in_frame_and_other_c_locals() {
     let c = render_source_with_execution_options(
         "resume_free_frame.sv",
         r#"
@@ -68,11 +68,12 @@ endmodule
         ExecutionAnalysisOptions::default(),
     );
 
+    assert!(c.contains("llg_value_scope_t _llg_cell_scope_"), "{c}");
     assert!(
-        c.contains("typedef struct {\n    llg_co_frame_t co;\n} p_tb_proc_0_frame_t;"),
+        c.lines()
+            .any(|line| line.contains("llg_value_scope_register(") && line.contains("&F->")),
         "{c}"
     );
-    assert!(!c.contains("F->_llg_"), "{c}");
     assert!(
         c.contains("llg_value_scope_t* _llg_frame_base = llg_value_scope_mark();"),
         "{c}"
@@ -81,7 +82,7 @@ endmodule
 }
 
 #[test]
-fn resume_free_nested_scope_uses_locals_beside_a_live_frame_field() {
+fn resume_free_nested_scope_uses_c_pointer_locals_and_registered_frame_cells() {
     let c = render_source_with_execution_options(
         "narrow_nested_scope.sv",
         r#"
@@ -101,7 +102,12 @@ endmodule
     );
 
     assert!(c.matches("sv4_t* _llg_local_").count() >= 2, "{c}");
-    assert!(c.contains("F->_llg_local_"), "{c}");
+    assert!(
+        c.lines()
+            .any(|line| line.contains("_llg_local_") && line.contains("= F->")),
+        "{c}"
+    );
+    assert!(c.matches("llg_value_scope_register(").count() >= 2, "{c}");
 }
 
 #[test]

@@ -27,6 +27,7 @@ mod expressions;
 mod fixed_array_reductions;
 mod force;
 mod formatting;
+mod frame_cells;
 mod inertial;
 mod input;
 mod mailboxes;
@@ -167,6 +168,8 @@ pub(super) struct Frame<'a, 'm> {
     cached_fields: cached_fields::CachedFields,
     pca_owner: Option<String>,
     pca_batches: Vec<super::statements::pca_batches::Batch>,
+    cell_eligibility: frame_cells::CellEligibility,
+    stack_cells: String,
 }
 
 fn pending(feature: &str) -> String {
@@ -261,6 +264,8 @@ impl<'a, 'm> Frame<'a, 'm> {
             cached_fields: cached_fields::CachedFields::default(),
             pca_owner: None,
             pca_batches: Vec::new(),
+            cell_eligibility: frame_cells::CellEligibility::default(),
+            stack_cells: String::new(),
         }
     }
     fn line(&mut self, text: impl AsRef<str>) {
@@ -860,7 +865,17 @@ impl<'a, 'm> Frame<'a, 'm> {
         init: Option<&IrExpr>,
     ) -> Result<(), String> {
         let pointer = self.name("local");
-        let address = if width == 0 {
+        let address = if self.cell_eligibility.permits(name) {
+            let cell = self.frame_cell(
+                if width == 0 { "double" } else { "sv4_t" },
+                (width == 0).then_some("NULL"),
+            );
+            self.declare_named_cached(
+                if width == 0 { "double*" } else { "sv4_t*" },
+                &pointer,
+                cell,
+            )
+        } else if width == 0 {
             // Another coroutine may publish through this address while ours is
             // suspended. A native C stack address cannot survive a stackless
             // return, so the registered scope owns stable storage.
@@ -917,7 +932,7 @@ impl<'a, 'm> Frame<'a, 'm> {
         if self.layout.storage() == FrameStorage::CoFrame && !self.resume_numbers.is_empty() {
             format!("    F->_llg_frame_base = llg_value_scope_mark();\n    F->_llg_temp_scope = llg_value_scope_begin({});\n    F->_llg_t = llg_value_scope_values(F->_llg_temp_scope);\n    (void)F->_llg_t;\n", self.slots.len())
         } else {
-            format!("{}    llg_value_scope_t* _llg_frame_base = llg_value_scope_mark();\n    llg_value_scope_t* _llg_temp_scope = llg_value_scope_begin({});\n    sv4_t* _llg_t = llg_value_scope_values(_llg_temp_scope);\n    (void)_llg_t;\n", if self.layout.storage() == FrameStorage::CoFrame { "    (void)F;\n    (void)ch;\n" } else { "" }, self.slots.len())
+            format!("{}{}    llg_value_scope_t* _llg_frame_base = llg_value_scope_mark();\n    llg_value_scope_t* _llg_temp_scope = llg_value_scope_begin({});\n    sv4_t* _llg_t = llg_value_scope_values(_llg_temp_scope);\n    (void)_llg_t;\n", self.stack_cells, if self.layout.storage() == FrameStorage::CoFrame { "    (void)F;\n    (void)ch;\n" } else { "" }, self.slots.len())
         }
     }
     pub(super) fn macro_epilogue(&self) -> &'static str {
