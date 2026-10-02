@@ -109,7 +109,16 @@ run_wrapper() {
         printf 'perf_baseline: run wrapper: --record and a command are required\n' >&2
         return 2
     fi
-    measure_child --label run --record "$record" -- "$@"
+    local -a simulation_prefix=()
+    if [[ -n ${PERF_BASELINE_CPU:-} ]]; then
+        simulation_prefix=(taskset -c "$PERF_BASELINE_CPU")
+    fi
+    if [[ -n ${PERF_MEASURE_HELPER:-} ]]; then
+        "${simulation_prefix[@]}" "$PERF_MEASURE_HELPER" \
+            --label run --record "$record" -- "$@"
+        return $?
+    fi
+    measure_child --label run --record "$record" -- "${simulation_prefix[@]}" "$@"
 }
 
 cc_wrapper() {
@@ -209,6 +218,7 @@ Measure the simulator pipeline on the default performance-design suite.
 Options:
   --design PATH       Measure one design; may be repeated.
   --runs N            Repetitions per design (default: 3).
+  --cpu N             Pin simulations to this CPU; builds remain unpinned.
   --top MODULE        Pass --top MODULE to llg.
   --sim-bin PATH      Release llg binary (default: target/release/llg).
   --cc PATH           C compiler used for generated models (default: CC or cc).
@@ -236,6 +246,7 @@ fi
 
 declare -a designs=()
 runs=3
+cpu=
 top=
 sim_bin="$REPO_ROOT/target/release/llg"
 actual_cc=${LLG_BASELINE_CC:-${CC:-cc}}
@@ -254,6 +265,11 @@ while (($# > 0)); do
         --runs)
             (($# >= 2)) || die '--runs requires a positive integer'
             runs=$2
+            shift 2
+            ;;
+        --cpu)
+            (($# >= 2)) || die '--cpu requires a value'
+            cpu=$2
             shift 2
             ;;
         --top)
@@ -296,6 +312,10 @@ done
 
 if ! [[ $runs =~ ^[1-9][0-9]*$ ]]; then
     die '--runs must be a positive integer'
+fi
+if [[ -n $cpu ]]; then
+    [[ $cpu =~ ^[0-9]+$ ]] || die '--cpu must be a nonnegative integer'
+    taskset -c "$cpu" true || die '--cpu is unavailable'
 fi
 
 if ((build_sim)); then
@@ -396,6 +416,7 @@ for design in "${design_paths[@]}"; do
             export PERF_BASELINE_SCRIPT="$SCRIPT_PATH"
             export PERF_BASELINE_CC="$actual_cc"
             export PERF_BASELINE_CC_WRAPPER=1
+            export PERF_BASELINE_CPU="$cpu"
             export PERF_MEASURE_HELPER="$measure_helper"
             export PERF_METRICS_DIR="$metrics_dir"
             export LLG_CC="$SCRIPT_PATH"

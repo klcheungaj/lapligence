@@ -37,6 +37,7 @@ Options:
   --output-dir PATH    TSV and per-run logs (required)
   --scratch-dir PATH   Parent for generated models (default: $TMPDIR or /tmp)
   --runs N             Repetitions per configuration and mode (default: 3)
+  --cpu N              Pin simulations to this CPU; builds remain unpinned
   --config NAME        Select one named configuration; repeatable
   --size SET           Select smoke or standard configurations (default: standard)
   --many-size N        Add both many-process variants at an exact size, 10k..1M
@@ -108,6 +109,7 @@ sim_bin=
 output_dir=
 scratch_parent=${TMPDIR:-/tmp}
 runs=3
+cpu=
 size_set=standard
 mode=default
 cc=${CC:-cc}
@@ -124,6 +126,7 @@ while (($# > 0)); do
         --output-dir) (($# >= 2)) || die '--output-dir requires a path'; output_dir=$2; shift 2 ;;
         --scratch-dir) (($# >= 2)) || die '--scratch-dir requires a path'; scratch_parent=$2; shift 2 ;;
         --runs) (($# >= 2)) || die '--runs requires a value'; runs=$2; shift 2 ;;
+        --cpu) (($# >= 2)) || die '--cpu requires a value'; cpu=$2; shift 2 ;;
         --config) (($# >= 2)) || die '--config requires a name'; requested_configs+=("$2"); shift 2 ;;
         --size) (($# >= 2)) || die '--size requires smoke or standard'; size_set=$2; shift 2 ;;
         --many-size) (($# >= 2)) || die '--many-size requires a value'; many_size=$2; shift 2 ;;
@@ -142,6 +145,12 @@ done
 [[ -n $sim_bin ]] || die '--sim-bin is required'
 [[ -n $output_dir ]] || die '--output-dir is required'
 [[ $runs =~ ^[1-9][0-9]*$ ]] || die '--runs must be a positive integer'
+simulation_prefix=()
+if [[ -n $cpu ]]; then
+    [[ $cpu =~ ^[0-9]+$ ]] || die '--cpu must be a nonnegative integer'
+    taskset -c "$cpu" true || die '--cpu is unavailable'
+    simulation_prefix=(taskset -c "$cpu")
+fi
 [[ $size_set == smoke || $size_set == standard ]] || die '--size must be smoke or standard'
 [[ $mode == default || $mode == no-opt || $mode == both ]] || \
     die '--mode must be default, no-opt, or both'
@@ -216,6 +225,7 @@ printf 'config\tmode\trun\tgeneration_status\tgeneration_ms\tgeneration_rss_kib\
     printf 'cmake\t%s\n' "$cmake_program"
     printf 'cflags\t%s\n' "$cflags"
     printf 'model_opt_level\t%s\n' "${model_opt_level:-llg-default}"
+    printf 'simulation_cpu\t%s\n' "${cpu:-unpinned}"
     printf 'uname\t'; uname -a
     printf 'uptime\t'; uptime
     printf 'scratch\t%s\n' "$scratch"
@@ -300,6 +310,11 @@ for config in "${requested_configs[@]}"; do
             exit 1
         fi
 
+        if ! LLG_SIM_OUT_DIR="$build_log_dir" "${simulation_prefix[@]}" \
+            "$executable" >"$build_log_dir/warmup.stdout" \
+            2>"$build_log_dir/warmup.stderr"; then
+            die "warm-up failed for $build_name"
+        fi
         for ((run = 1; run <= runs; run++)); do
             case_name="$config.$optimization.run$run"
             log_dir="$output_dir/logs/$case_name"
@@ -308,7 +323,7 @@ for config in "${requested_configs[@]}"; do
             run_record="$case_dir/simulation.run$run.tsv"
             if LLG_SIM_OUT_DIR="$log_dir" \
                 "$measure_helper" --label simulation --record "$run_record" -- \
-                "$executable" >"$log_dir/simulation.stdout" \
+                "${simulation_prefix[@]}" "$executable" >"$log_dir/simulation.stdout" \
                 2>"$log_dir/simulation.stderr"; then
                 simulation_status=0
             else

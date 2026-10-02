@@ -175,3 +175,180 @@ Tool logic has a dependency-free regression test:
 ```sh
 python3 -m unittest discover -s perf/scripts -p 'test_*.py'
 ```
+
+## Coroutine tuning (Linux x86-64)
+
+The four shipping tunables have different owners:
+
+| Plan name | Implementation | Default |
+| --- | --- | ---: |
+| `LLG_CO_POLL_DEPTH_MAX` | `DEFAULT_POLL_DEPTH_MAX`, `ExecutionAnalysisOptions::poll_depth_max` in `src/sim/execution/analysis.rs` | 3 |
+| `LLG_CO_EMBED_LIMIT` | `DEFAULT_EMBED_LIMIT`, `ExecutionAnalysisOptions::embed_limit` in the same file | 16 KiB |
+| `LLG_CO_ARENA_MIN_CHUNK` | overridable macro in `src/sim/rt/llg_co.h` | 1 KiB |
+| chunk-cache cap | `LLG_CO_CHUNK_CACHE_MAX_BYTES` in `src/sim/rt/llg_rt.h` | 1 MiB |
+
+The first two plan names are conceptual names, not C preprocessor overrides.
+The Rust analysis options are public library options; the CLI does not expose
+these tuning knobs. MT dispatch threshold tuning belongs to the later MT work.
+
+`designs/coroutine_tuning.c` and `scripts/tune_coroutines.py` sweep the production
+coroutine macros, arena and runtime chunk cache without rebuilding Rust or adding
+product knobs. Synthetic direct-call frame types are generated callee-first,
+anchoring every limit+1 edges and restarting the poll budget below each anchor.
+Oversized leaf frames use the real `LLG_CO_CALL_ARENA` path. This isolates the
+mechanisms; it does not qualify Rust-emitted HDL semantics. The corpus and suite
+remain independent gates.
+
+```sh
+python3 perf/scripts/tune_coroutines.py \
+  --cpu 7 --jobs 24 --runs 7 \
+  --work-dir /build/my-coroutine-tuning \
+  --output /path/to/tuning-results
+```
+
+Both directories must be new. The build phase completes before any timed run;
+executions run alone on the selected CPU. `--smoke --runs 1` executes eight
+small configurations for harness checks. `--kind embed --value 131072` selects
+just the 128 KiB embed candidate; other kinds and their listed values work likewise. Every execution checks its checksum,
+coroutine status, LIFO payload preservation, empty retired arenas and cache cap
+with checks active under NDEBUG. Allocation/check failures terminate the run.
+The Python tool tests run with the other `perf/scripts/test_*.py` tests.
+
+The full sweep has 274 configurations and seven passes with alternating
+forward/reverse order, after one unmeasured warm-up per configuration:
+
+- Poll limits 0/1/2/3/4/6/8, logical depths 1/2/3/4/8/16, 256 or 65,536 chains,
+  and one or sixteen suspensions per completed leaf call. The large working set
+  exceeds one core's L2; it is not a guaranteed cold-DRAM benchmark.
+- Embed limits 0/4/16/64/128 KiB, payloads 256 B/4/16/64 KiB, 4,096 allocated roots,
+  with all callees active or only one root in sixteen active. Payload size plus
+  the frame header and counter determines the embedding decision. Roots touch
+  their headers; active callees initialize and retain the full payload.
+- Chunk sizes 256/512/1,024/4,096/16,384 B and cache caps
+  0/64/256/1,024/4,096/16,384 KiB, each with one or 64 concurrent arenas and
+  eight-deep tiny, mixed or large allocations. Each push writes its payload;
+  every pop checks the first/last bytes and releases the arena when empty.
+
+`results.tsv` retains each run's internal elapsed nanoseconds, operations,
+wait4 wall time and peak RSS, exact root/live chunk bytes, retained cache bytes,
+system allocations/frees and cache hits. `medians.tsv` reports median and
+min/max ns per operation and median memory/counters. An operation is one chain
+resume or one arena push/pop pair. Whole-process RSS includes startup/libc; exact
+root and chunk accounting distinguishes retention from allocator rounding.
+Native runs start fresh processes, so the first allocation round is included;
+subsequent rounds exercise warmed caches. OS process exit reclaims the bounded
+runtime cache after all arenas have been released.
+
+For pinned corpus timing, use `corpus.sh --cpu N --runs 7`: builds stay unpinned,
+each model has an unmeasured pinned warm-up, and only measured executions enter
+`results.tsv`. `perf_baseline.sh --cpu N` likewise pins the run measurement child
+while allowing model builds to use `CMAKE_BUILD_PARALLEL_LEVEL`. Its `cc` rows
+sum compiler invocations; with parallel builds that sum is not model build wall
+time. Use `compile_time.py` or the corpus build phase for the build-wall gate.
+
+To separate compiler inlining from the poll/anchor mechanism and exceed the
+shared last-level cache, repeat shortlisted poll limits with a million chains:
+
+```sh
+python3 perf/scripts/tune_coroutines.py \
+  --kind poll --value 3 --large-chains 1000000 \
+  --cflags '-fno-inline-functions -fno-inline-small-functions -fno-inline-functions-called-once' \
+  --cpu 7 --jobs 24 --runs 7 \
+  --work-dir /build/my-coroutine-poll-3 \
+  --output /path/to/poll-3-results
+```
+
+Repeat with values 4, 6 and 8 in separate new directories. These flags leave the
+header's forced-inline fast paths intact while preserving real C call costs
+between the synthetic functions. The ordinary sweep allows the compiler to
+inline direct callees, as production emission does. Both regimes matter when
+choosing a generic default; a compact inlined benchmark alone cannot establish
+the crossover for large generated task bodies.
+
+`--caller-bytes 64 --large-chains 262144` adds a 64 B caller payload ahead of
+every embedded child. This spaces resume headers across cache lines as frame
+locals do, without adding payload operations to the call loop. It complements the
+compact-header case; run the same shortlist with inlining disabled. A crossover
+measured only on adjacent headers may not hold for frames containing live values.
+### Measured tuning curves
+
+Linux x86-64 Ryzen 9 7950X/WSL2, GCC 14.2, O3, CPU 7, seven serialized
+repetitions on 2026-10-02. Times below are median [min,max] ns/operation.
+The full per-shape curves and commands are retained in ignored
+`persistence/stackless-coroutine/p7-perf/` in the main checkout.
+
+Ordinary inlinable calls, 65,536 chains, sixteen suspensions/call:
+
+| Poll limit | Depth 1 | Depth 3 | Depth 4 | Depth 8 | Depth 16 |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 0 | 5.28 [5.00,5.63] | 7.04 [6.85,7.27] | 8.05 [7.62,8.23] | 13.90 [13.07,14.38] | 29.63 [26.39,31.75] |
+| 1 | 4.10 [3.83,4.26] | 5.84 [5.38,5.95] | 6.73 [6.31,6.85] | 9.36 [8.81,9.55] | 16.95 [15.01,18.82] |
+| 2 | 4.24 [3.95,4.27] | 5.60 [5.34,5.81] | 5.98 [5.73,6.23] | 7.68 [7.44,7.87] | 13.17 [12.34,14.26] |
+| 3 | 4.15 [3.85,4.23] | 4.75 [4.48,4.89] | 5.87 [5.55,6.00] | 7.63 [7.22,7.87] | 12.96 [11.96,13.26] |
+| 4 | 4.16 [3.90,4.35] | 4.77 [4.40,5.06] | 5.03 [4.62,5.23] | 7.34 [6.83,7.59] | 10.66 [10.06,12.06] |
+| 6 | 4.12 [3.84,4.28] | 4.76 [4.39,4.97] | 5.03 [4.64,5.26] | 7.01 [6.72,7.23] | 9.82 [9.35,10.32] |
+| 8 | 4.18 [3.90,4.53] | 4.70 [4.45,5.03] | 5.00 [4.72,5.31] | 6.52 [6.16,6.69] | 9.72 [9.35,10.74] |
+
+Ordinary C-function inlining disabled, 1,000,000 chains, sixteen suspensions/call:
+
+| Poll limit | Depth 3 | Depth 4 | Depth 8 | Depth 16 |
+| ---: | ---: | ---: | ---: | ---: |
+| 3 | 25.01 [22.82,25.99] | 27.99 [23.08,34.21] | 34.67 [33.32,93.82] | 51.78 [43.86,52.29] |
+| 4 | 24.90 [24.73,25.97] | 26.42 [26.24,26.65] | 32.55 [32.16,33.08] | 45.80 [45.16,46.21] |
+| 6 | 24.81 [24.49,25.57] | 26.38 [25.84,26.98] | 32.74 [31.98,33.14] | 43.43 [43.21,44.73] |
+| 8 | 24.60 [24.50,25.51] | 26.03 [25.55,26.57] | 33.59 [33.22,33.89] | 41.77 [41.51,42.64] |
+
+Separated headers: 64 B caller payload per level, 262,144 chains, ordinary
+inlining disabled, sixteen suspensions/call:
+
+| Poll limit | Depth 3 | Depth 4 | Depth 8 | Depth 16 |
+| ---: | ---: | ---: | ---: | ---: |
+| 3 | 34.37 [33.55,35.72] | 38.86 [38.42,39.85] | 53.75 [53.15,55.50] | 83.11 [80.50,84.44] |
+| 4 | 34.50 [33.44,35.17] | 41.16 [40.62,43.23] | 82.26 [81.19,85.89] | 82.42 [80.53,83.27] |
+| 6 | 35.13 [33.57,35.52] | 41.50 [39.76,42.31] | 57.64 [56.44,59.34] | 93.60 [90.10,98.34] |
+| 8 | 34.97 [34.53,37.72] | 42.40 [40.95,43.11] | 66.78 [65.99,67.61] | 133.01 [132.21,137.82] |
+
+Embedding: 4,096 roots, one suspension/call; frame payloads omit the additional
+16 B header/counter. Sparse means only one root in sixteen calls the callee.
+
+| Embed limit KiB | 4 KiB, all active | 4 KiB, sparse | 16 KiB, all active | 64 KiB, all active | Sparse 4 KiB root bytes / peak RSS KiB |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 0 | 126.80 [114.61,131.65] | 60.44 [57.90,63.21] | 1012.07 [963.64,1084.02] | 4277.79 [4009.75,4883.55] | 262,144 / 3,072 |
+| 4 | 120.63 [112.61,131.57] | 59.88 [59.19,61.19] | 1026.16 [967.36,1113.47] | 4178.58 [4075.24,4271.04] | 262,144 / 3,072 |
+| 16 | 116.11 [104.27,125.11] | 105.41 [97.29,109.65] | 1001.74 [963.86,1063.32] | 4082.56 [3972.27,4357.91] | 17,072,128 / 18,432 |
+| 64 | 112.62 [102.99,123.47] | 103.29 [98.77,105.11] | 1016.61 [974.66,1078.23] | 4269.98 [4019.81,4509.70] | 17,072,128 / 18,432 |
+| 128 | 118.93 [113.11,143.74] | 107.73 [104.53,112.61] | 1234.56 [999.95,1783.95] | 4945.27 [4663.04,5873.39] | 17,072,128 / 18,432 |
+
+Arena/cache curves: 64 concurrent arenas, eight-deep allocation bursts. A mixed
+burst is 64/256/1,024/4,096/16,384/1,024/256/64 B; the large burst alternates
+16/64 KiB four times. Time includes payload writes/checks.
+
+| Minimum chunk B (1 MiB cap) | Tiny | Mixed | Large | Mixed live chunk bytes |
+| ---: | ---: | ---: | ---: | ---: |
+| 256 | 3.94 [3.87,5.20] | 1296.95 [1282.92,1308.40] | 28986.78 [28098.56,30583.71] | 3,534,848 |
+| 512 | 4.04 [3.95,4.11] | 1289.41 [1276.79,1296.97] | 28886.77 [27696.07,31044.34] | 3,516,416 |
+| 1024 | 3.99 [3.91,4.03] | 1528.95 [1519.33,1716.30] | 29073.24 [28028.90,30365.74] | 3,614,720 |
+| 4096 | 4.18 [4.09,4.40] | 1907.48 [1903.68,1924.70] | 29180.88 [28017.57,30864.26] | 3,940,352 |
+| 16384 | 4.23 [4.18,4.30] | 1547.77 [1534.50,1564.25] | 29316.41 [27864.15,31171.40] | 3,149,824 |
+
+| Cache cap KiB (1 KiB chunks) | Tiny | Mixed | Large | Mixed retained bytes |
+| ---: | ---: | ---: | ---: | ---: |
+| 0 | 5.86 [5.76,6.69] | 2205.56 [2185.22,2236.23] | 30621.19 [28825.66,31358.22] | 0 |
+| 64 | 4.11 [3.98,4.15] | 2123.58 [2105.04,2149.82] | 29268.61 [26319.64,31044.94] | 64,800 |
+| 256 | 4.00 [3.49,4.10] | 2035.50 [1678.24,2044.87] | 29897.59 [28361.80,31383.18] | 261,856 |
+| 1024 | 4.00 [3.92,4.23] | 1543.48 [1518.14,1576.82] | 29922.21 [27586.01,30440.66] | 1,047,584 |
+| 4096 | 4.00 [3.95,4.07] | 35.76 [34.78,37.02] | 26019.86 [24732.56,26846.04] | 3,614,720 |
+| 16384 | 3.98 [3.92,4.11] | 34.88 [34.45,35.68] | 13748.79 [13281.12,14875.39] | 3,614,720 |
+
+All four defaults are retained. Compact/inlinable frames favor larger poll
+budgets, but with separated headers limit 4 regresses depth-8 long suspension
+from 53.75 to 82.26 ns/resume (disjoint ranges); limit 6 regresses depth 16 from
+83.11 to 93.60 ns. Thus a larger poll budget is not uniformly better. Embed
+limits above 16 KiB do not improve all shapes: sparse 4 KiB callees prefer arena
+storage (about 60 rather than 105 ns/resume and 3 rather than 18 MiB RSS), while
+all-active small callees benefit from embedding. Lowering the chunk minimum
+helps the mixed burst but is not a clear win across tiny/large and single-arena
+curves. Larger cache caps accelerate sustained bursts by retaining more memory:
+4 MiB retains 3,614,720 B in the mixed burst versus 1,047,584 B at the default;
+16 MiB can retain up to 15 MiB more than the default. These are workload and
+memory-budget trade-offs, not evidence for a universally better default.
