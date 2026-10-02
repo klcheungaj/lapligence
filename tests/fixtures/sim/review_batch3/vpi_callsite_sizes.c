@@ -1,6 +1,6 @@
 /* R23: two call sites of one registration must retain separate return shapes.
  * Direct bridge input deliberately avoids frontend argument-width coercions.
- * This source was not compiled or executed during patch preparation. */
+ * Arguments and function results remain owned by this probe. */
 #include "llg_vpi.h"
 #include <stdio.h>
 #include <string.h>
@@ -36,7 +36,8 @@ static int fail(const char* text) {
     fprintf(stderr, "VPI callsite probe: %s\n", text);
     return 1;
 }
-int main(void) {
+static int run_probe(void) {
+    compile_count = size_count = run_count = 0;
     llg_rt_init();
     llg_vpi_model_object_t objects[] = {
         {.type = vpiModule, .name = "tb", .full_name = "tb",
@@ -70,8 +71,19 @@ int main(void) {
         return fail("callsite result widths/values");
     if (compile_count != 2 || size_count != 2 || run_count != 3 || llg_vpi_failed())
         return fail("callback count/state");
+    sv4_destroy(&a);
+    sv4_destroy(&b);
+    sv4_destroy(&c);
+    sv4_destroy(&arg8.packed);
+    sv4_destroy(&arg16.packed);
     llg_vpi_shutdown();
     llg_rt_cleanup();
+    return 0;
+}
+int main(int argc, char** argv) {
+    int repetitions = argc == 2 && strcmp(argv[1], "--repeat") == 0 ? 64 : 1;
+    for (int i = 0; i < repetitions; ++i)
+        if (run_probe()) return 1;
     puts("vpi callsite sizes ok");
     return 0;
 }
