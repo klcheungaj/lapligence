@@ -417,6 +417,7 @@ fn generate_from_db_with_codegen_options_impl(
     db: &Db,
     options: &CodegenOptions,
 ) -> Result<GeneratedModel, String> {
+    let semantic_stage = crate::profile::Stage::new("semantic");
     let semantic = crate::sim::semantic::SemanticModel::from_db(db);
     if let Err(issues) = semantic.validate_simulation() {
         if let Some(issue) = issues.into_iter().next() {
@@ -424,6 +425,8 @@ fn generate_from_db_with_codegen_options_impl(
         }
         return Err("simulation validation failed without an issue".to_owned());
     }
+    drop(semantic_stage);
+    let lowering_stage = crate::profile::Stage::new("lowering");
     let mut cg = Codegen::new(&semantic);
     cg.validate_program_constructs()?;
     let tops = cg.collect_design()?;
@@ -523,13 +526,20 @@ fn generate_from_db_with_codegen_options_impl(
         .collect();
     model.final_spawns = final_names;
     model.validate().map_err(|error| error.to_string())?;
+    drop(lowering_stage);
+    let execution_stage = crate::profile::Stage::new("execution");
     let mut execution =
         crate::sim::execution::ExecutionModel::lower_with_options(model, options.execution)
             .map_err(|error| error.to_string())?;
+    drop(execution_stage);
+    let optimization_stage = crate::profile::Stage::new("optimization");
     crate::sim::opt::run(&mut execution, &options.optimization)
         .map_err(|error| error.to_string())?;
     execution.validate().map_err(|error| error.to_string())?;
+    drop(optimization_stage);
+    let render_stage = crate::profile::Stage::new("render");
     let rendered = crate::sim::emit_c::render_with_symbols(&execution)?;
+    drop(render_stage);
     Ok(GeneratedModel {
         design_name: cg.design_name.clone(),
         model_c: rendered.source,

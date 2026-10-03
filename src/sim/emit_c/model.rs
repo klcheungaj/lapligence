@@ -94,6 +94,7 @@ fn render_bounded(
         )));
     }
     super::owned::model::check_model(execution.ir()).map_err(EmitError::new)?;
+    let prepare_stage = crate::profile::Stage::new("render.prepare");
     let mut execution = execution.clone();
     let (_, upper_bounds) = render_coroutine_functions(&execution).map_err(EmitError::new)?;
     let forced = upper_bounds
@@ -106,6 +107,7 @@ fn render_bounded(
     execution
         .reanalyze_with_forced_arena_callees(&forced)
         .map_err(EmitError::InvalidIr)?;
+    drop(prepare_stage);
     render_model(&execution, threshold).map_err(EmitError::new)
 }
 
@@ -499,6 +501,7 @@ fn render_model(
     threshold: usize,
 ) -> Result<BoundedIdentifiers, String> {
     let model = execution.ir();
+    let artifact_stage = crate::profile::Stage::new("render.artifacts");
     let (mut coroutine_functions, frame_upper_bounds) = render_coroutine_functions(execution)?;
     let mut coroutine_processes = render_coroutine_processes(execution, &frame_upper_bounds)?;
     let mut coroutine_branches = render_coroutine_branches(execution, &frame_upper_bounds)?;
@@ -523,6 +526,8 @@ fn render_model(
         }
     }
     let pca_tables = pca_batches::collect(model, &mut coroutine_processes)?;
+    drop(artifact_stage);
+    let sharing_stage = crate::profile::Stage::new("render.sharing");
     let sharing = sharing::share(
         execution,
         &mut coroutine_functions,
@@ -532,6 +537,8 @@ fn render_model(
         threshold,
         &pca_tables.operands,
     )?;
+    drop(sharing_stage);
+    let assemble_stage = crate::profile::Stage::new("render.assemble");
     let mut out = format!(
         "// llg-generated C11 model for design `{}`\n",
         model.design_name
@@ -808,6 +815,8 @@ fn render_model(
         .iter()
         .filter_map(|function| function.dpi_import().map(|dpi| dpi.c_name()))
         .collect::<BTreeSet<_>>();
+    drop(assemble_stage);
+    let _identifiers_stage = crate::profile::Stage::new("render.identifiers");
     Ok(bound_identifiers(out, &external))
 }
 

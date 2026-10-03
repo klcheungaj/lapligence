@@ -1595,6 +1595,7 @@ pub fn compile(request: &CompileRequest<'_>) -> Result<Snapshot, SlangError> {
 
     let mut snapshot = ptr::null_mut();
     let mut error = ptr::null_mut();
+    let native_stage = crate::profile::Stage::new("native");
     // SAFETY: all request pointers refer to live vectors or borrowed strings
     // that remain valid for this blocking call; output pointers are writable.
     let status = unsafe { llg_slang_compile(&raw_request, &mut snapshot, &mut error) };
@@ -1612,7 +1613,9 @@ pub fn compile(request: &CompileRequest<'_>) -> Result<Snapshot, SlangError> {
     if snapshot.is_null() {
         return Err(invalid_native("successful compile returned no snapshot"));
     }
+    drop(native_stage);
     let snapshot = SnapshotOwner(snapshot);
+    let decode_stage = crate::profile::Stage::new("ffi.decode");
     let mut decoded = decode_snapshot(&snapshot, &limits)?;
     if decoded.edition != request.options.edition {
         return Err(invalid_native(
@@ -1641,6 +1644,9 @@ pub fn compile(request: &CompileRequest<'_>) -> Result<Snapshot, SlangError> {
         file.text = source_text.to_owned();
     }
     drop(unexpected_error);
+    drop(decode_stage);
+    let _release_stage = crate::profile::Stage::new("ffi.release");
+    drop(snapshot);
     Ok(decoded)
 }
 
