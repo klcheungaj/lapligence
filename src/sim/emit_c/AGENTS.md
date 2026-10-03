@@ -250,7 +250,10 @@ storage; intrusive end with an outstanding retain is a fatal contract violation.
 See the [runtime retainer inventory](../rt/AGENTS.md#frame-resident-cells).
 
 - Alias visible cells have independent owners, canonical dependency addresses and
-  explicit startup/close. Alias/stochastic publication temporaries must be
+  explicit startup/close. Alias parts are run-length rows
+  (`{ net, slot, signal_lsb, group_lsb, bit_count }`) built by
+  `render_alias_parts`; the runtime refreshes and writes each run as one part
+  select. Alias/stochastic publication temporaries must be
   registered; alias reads are pure. Sequence-local writes remain private.
 - Packed formals resolve through current activation bindings, including callbacks,
   never synthetic model globals. Input mutation is private; ref writes clone/update

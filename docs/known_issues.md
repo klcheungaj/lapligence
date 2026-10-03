@@ -4,62 +4,51 @@ Open design limitations that are understood but deliberately deferred. Each
 entry states the symptom, the cause, the intended direction and how to
 reproduce it. Remove an entry when the fix lands.
 
-## Declared net views retain per-bit binding metadata
+## Declared net views retain per-bit lowering bindings
 
-**Status:** electrical groups and continuous writes are range-partitioned;
-compact declared-view metadata remains open.
+**Status:** electrical groups, continuous writes and generated declared-view
+descriptors are range-based; the lowering-side binding list is still per bit.
 
 ### Symptom
 
-Wide unpacked net arrays still emit one alias-view binding row per declared bit,
-so descriptor data grows with `N × W`. Identically connected bits now share wide
-electrical groups and word-parallel resolution; contribution writes use contiguous
-part selects and descriptor loops for remaining groups.
+Generated models now describe each declared net view with run-length
+`llg_net_alias_part_t` rows: consecutive view bits that map onto consecutive
+bits of one group driver slot share a `{ net, slot, signal_lsb, group_lsb,
+bit_count }` row, and the runtime refresh/write paths move whole part selects.
+The lowering still builds one `IrNetAliasBinding` per declared bit before the
+emitter compresses them, so compiler memory and partition work grow with
+`N × W` for wide unpacked net arrays and whole net-array inout ports.
 
-Example: [`continuous_contexts.sv`](../tests/fixtures/sim/continuation_20_23/continuous_contexts.sv)
-is 88 lines, with four `continuous_case` instances at `W` = 1, 7, 65 and 129.
-An earlier snapshot before table-driven storage and operand-traffic elision
-emitted about 7.1 MB and 96,000 lines. A separate Linux release comparison at
-base `c260a74c` and after range partitioning measured:
+Measured generated `model.c` bytes on Linux at the RTL-009 revision, with the
+per-bit row equivalent computed from the same model:
 
-| Metric | Before | After |
+| Fixture | Per-bit rows | Run-length rows |
 | --- | ---: | ---: |
-| `model.c` bytes | 5,638,045 | 1,008,174 |
-| `model.c` lines | 67,415 | 12,259 |
-| Array electrical groups | 3,838 | 76 |
-| Generation seconds | 0.366 | 0.071 |
-| Clean model build seconds | 18.089 | 3.063 |
-| Build and execution seconds | 49.994 | 3.967 |
+| [`continuous_contexts.sv`](../tests/fixtures/sim/continuation_20_23/continuous_contexts.sv) | 990,317 | 719,643 |
+| [`runtime.sv`](../tests/fixtures/sim/net_partition/runtime.sv) (16,384 bits, 128 rows) | 823,656 | 236,756 |
+| 64 × 128-bit whole net-array inout between two instances | 1,608,334 | 335,314 |
 
-Current emission combines table-driven storage lifecycle work, eligible operand
-borrows and matching-cast elision with range-partitioned groups and contribution
-loops. Per-row contribution casts remain explicit because width/sign metadata
-can differ between rows; declared-view binding metadata still grows with `N × W`.
-The `sim_review_tasks20_23` test
+Earlier range partitioning (base `c260a74c`) had reduced `continuous_contexts.sv`
+from 5,638,045 to 1,008,174 bytes and its array electrical groups from 3,838 to
+76. The `sim_review_tasks20_23` test
 `continuous_arrays_keep_values_dependencies_and_static_pattern_topology` compiles
-this fixture in both optimizer modes.
-
-Timings above are indicative, with eight build threads and a shared runtime cache.
-The 64-element, 128-bit toggling-driver
-[`runtime.sv`](../tests/fixtures/sim/net_partition/runtime.sv) witness emits 64
-array groups instead of 8,192; its model shrinks from 9,188,411 to 807,091 bytes.
+that fixture in both optimizer modes.
 
 ### Cause
 
 [`collection/net_partition.rs`](../src/sim/codegen/lowering/collection/net_partition.rs)
 combines adjacent canonical roots while member mappings, structural driver ranges,
-force/release targets and effective type/delay owners agree. Declared net views
-still use per-bit `IrNetAliasBinding` / runtime alias-part descriptors so waveform,
-VPI and array dependencies retain their original shapes. Permuted mappings and
-opaque projections conservatively retain bit groups. Short or disconnected
-contribution gathers retain ordinary emission; homogeneous captured part-select
-writes, including delayed writes, use descriptor loops.
+force/release targets and effective type/delay owners agree. It and the alias
+union-find operate on `AliasBit` values, so declared views reach the emitter as
+per-bit `IrNetAliasBinding` lists that waveform, VPI, force and array-dependency
+lowering also consume bit by bit. Permuted mappings and opaque projections
+conservatively retain bit groups.
 
 ### Intended direction
 
-Represent declared alias views with range descriptors as well, preserving exact
-bit correspondence, source names and observation/dependency behavior. This is
-separate from electrical partitioning and table-driven net storage.
+Carry range bindings through partitioning and the IR so lowering work is
+proportional to connected ranges, preserving exact bit correspondence, source
+names and observation/dependency behavior.
 
 ### Reproduce
 

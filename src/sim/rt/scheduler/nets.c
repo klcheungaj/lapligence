@@ -188,12 +188,16 @@ static void llg_net_alias_refresh(llg_net_alias_t* alias) {
     sv4_copy(&owned[0], alias->storage);
     for (uint32_t i = 0; i < alias->n_parts; i++) {
         const llg_net_alias_part_t* part = &alias->parts[i];
-        if (!part->net || part->signal_bit >= llg_sv4_width(owned[0]) ||
-            part->group_bit >= llg_sv4_width(part->net->resolved))
+        if (!part->net || part->bit_count == 0 ||
+            (uint64_t)part->signal_bit + part->bit_count > llg_sv4_width(owned[0]) ||
+            (uint64_t)part->group_bit + part->bit_count > llg_sv4_width(part->net->resolved))
             continue;
-        sv4_t bit = sv4_bit_select(part->net->resolved, part->group_bit);
-        sv4_bit_select_set(&owned[0], part->signal_bit, bit);
-        sv4_destroy(&bit);
+        sv4_t bits = sv4_part_select(part->net->resolved,
+                                     (int64_t)part->group_bit + part->bit_count - 1,
+                                     part->group_bit);
+        sv4_part_select_set(&owned[0], (int64_t)part->signal_bit + part->bit_count - 1,
+                            part->signal_bit, bits);
+        sv4_destroy(&bits);
     }
     // The visible cell is a first-class dependency/waveform target. Route
     // updates through the ordinary signal writer so waiters and waveform
@@ -463,12 +467,16 @@ void llg_net_alias_write(llg_net_alias_t* alias, sv4_t value) {
         for (uint32_t j = i; j < alias->n_parts; j++) {
             const llg_net_alias_part_t* mapped = &alias->parts[j];
             if (mapped->net != part->net || mapped->slot != part->slot ||
-                mapped->signal_bit >= llg_sv4_width(owned[0]) ||
-                mapped->group_bit >= llg_sv4_width(owned[1]))
+                mapped->bit_count == 0 ||
+                (uint64_t)mapped->signal_bit + mapped->bit_count > llg_sv4_width(owned[0]) ||
+                (uint64_t)mapped->group_bit + mapped->bit_count > llg_sv4_width(owned[1]))
                 continue;
-            sv4_t bit = sv4_bit_select(owned[0], mapped->signal_bit);
-            sv4_bit_select_set(&owned[1], mapped->group_bit, bit);
-            sv4_destroy(&bit);
+            sv4_t bits = sv4_part_select(owned[0],
+                                         (int64_t)mapped->signal_bit + mapped->bit_count - 1,
+                                         mapped->signal_bit);
+            sv4_part_select_set(&owned[1], (int64_t)mapped->group_bit + mapped->bit_count - 1,
+                                mapped->group_bit, bits);
+            sv4_destroy(&bits);
         }
         llg_net_write(part->net, part->slot, owned[1]);
         sv4_destroy(&owned[1]);

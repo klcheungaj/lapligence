@@ -291,11 +291,15 @@ struct llg_net {
     llg_net_alias_t** aliases;
 };
 
+/* One contiguous run: view bits [signal_bit, signal_bit + bit_count) map to
+ * group bits [group_bit, group_bit + bit_count) of one driver slot. Runs keep
+ * declared-view metadata proportional to connected ranges, not bits. */
 struct llg_net_alias_part {
     llg_net_t* net;
     int slot;
     uint32_t signal_bit;
     uint32_t group_bit;
+    uint32_t bit_count;
 };
 
 struct llg_net_alias {
