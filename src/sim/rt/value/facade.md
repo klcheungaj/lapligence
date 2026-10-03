@@ -145,6 +145,7 @@ holds for inline values: mutation of a result must never mutate an input.
 | `sv4_destroy`, `sv4_destroy_array` | Release owners and reset to empty; repeated destruction of an empty owner is safe. |
 | Existing selected writes | Borrow RHS; snapshot exact/overlapping selected aliases before modifying the target. |
 | Neutral setters/imports | Mutate only an initialized owner, keep width/address/sign, publish no scheduler notifications. Inputs are scalar copies or external buffers, never private payload aliases. |
+| `sv4_add_into`, `sv4_sub_into`, `sv4_mul_into` | Borrow by-value operands; replace an initialized destination with the independent arithmetic result. Exact destination/operand aliases, including both operands, are supported. Same result width/sign/X behavior as the returning operation. No scheduler publication or caller scratch. Added by EMIT-1, GMP implementation pending (V05). |
 | Explicit GMP `*_into` workspace operations | Exact destination/operand aliases are supported when documented. Scratch is caller-owned, thread-confined, separately accounted, and cannot overlap value payloads. |
 
 Plain struct assignment is permitted only as a synchronous transient borrow or
@@ -209,3 +210,14 @@ equality, or embed numeric `sizeof(sv4_t)`/frame-offset constants. Ordinary C
 frame metadata must be selected and asserted by V07. V06 migrates representation
 consumers; V05 implements operation families; V08 audits retained owner graphs.
 Keep new feature work on legacy through these APIs while those tasks proceed.
+
+### EMIT-1 arithmetic destinations
+
+The additive arithmetic destination family leaves descriptor/value ABI 4 unchanged.
+Legacy add/sub reuse a destination payload when all widths match; sign comes from
+both operands. X/Z inputs fill the result with X after inspecting both inputs.
+Multiplication reuses matching storage only for a destination independent of both
+known operands; exact aliases and mismatched widths use a fresh result before
+replacement. These storage choices are backend details, not client guarantees.
+Clients may destroy operands after the call, and must never use a consumed aliased
+borrow afterwards. The GMP implementation is pending (V05).
