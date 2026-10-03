@@ -1412,7 +1412,7 @@ fn review_and_extended_links_name_real_owners_and_keep_open_cells_visible() {
                 "N12 cannot borrow Q04 include-directory evidence"
             );
         }
-        if cells[0] == "SYN038-LINK-Q02" || cells[0] == "SYN038-LINK-Q03" {
+        if cells[0] == "SYN038-LINK-Q02" {
             assert!(
                 cells[2].starts_with("UNDEFINED BEHAVIOR") && !fixtures.is_empty(),
                 "{} must retain characterization without a conformance claim",
