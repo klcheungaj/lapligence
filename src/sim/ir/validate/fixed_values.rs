@@ -202,6 +202,23 @@ impl Validator<'_> {
                         .ok_or_else(|| IrValidationError::new(path, "fixed stream width overflow"))
                 })
             }
+            IrFixedValue::Convert { value, array } => {
+                let source = self.validate_fixed_value(value, formals, path)?;
+                let result = self
+                    .model
+                    .arrays
+                    .get(*array)
+                    .ok_or_else(|| IrValidationError::new(path, "invalid fixed cast shape"))?;
+                let width = result
+                    .total
+                    .checked_mul(u64::from(result.elem_width))
+                    .ok_or_else(|| IrValidationError::new(path, "fixed cast width overflow"))?;
+                // Fixed bit-stream casts require equal sizes (SV 6.24.3).
+                if !result.activation || !result.sparse() || width != source {
+                    return self.fail(path, "fixed cast requires an equal-size lexical shape");
+                }
+                Ok(width)
+            }
         }
     }
 }

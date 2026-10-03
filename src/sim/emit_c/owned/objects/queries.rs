@@ -296,6 +296,7 @@ impl Frame<'_, '_> {
             let source = self.chandle(source)?;
             let success = self.scalar("int", format!("llg_class_is_a({source}, {expected})"));
             self.line(format!("if ({success}) *({}) = {source};", target.address));
+            self.report_cast_failure(&success, cast);
             return Ok(self.value(format!("sv4_from_u64({success}, 1, 0)"), 1, false));
         }
         if cast.class_target.is_some() || cast.class_source.is_some() {
@@ -342,8 +343,25 @@ impl Frame<'_, '_> {
         };
         self.store(&target, copy, false, "0")?;
         self.line("}");
+        self.report_cast_failure(&success, cast);
         self.discard(source);
         self.release_target(target);
         Ok(self.value(format!("sv4_from_u64({success}, 1, 0)"), 1, false))
+    }
+
+    /// Task-form `$cast` failure is a simulator run-time error; the
+    /// destination has already been left unchanged.
+    fn report_cast_failure(&mut self, success: &str, cast: &IrDynamicCast) {
+        let Some(location) = &cast.failure_location else {
+            return;
+        };
+        let location = c_string_literal(location);
+        self.line(format!("if (!{success}) {{"));
+        self.line("llg_rt_mark_failed();");
+        self.line(format!(
+            "fprintf(stderr, \"llg: runtime error: $cast failed to assign an incompatible value at %s\\n\", {location});"
+        ));
+        self.line("fflush(stderr);");
+        self.line("}");
     }
 }

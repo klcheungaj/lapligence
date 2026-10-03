@@ -8,7 +8,17 @@ impl Codegen<'_> {
         path: &str,
         node: NodeId,
     ) -> Result<IrFixedValue, String> {
-        let node = self.p30_unwrap_cast(node);
+        let node = match self.descriptor_cast(node) {
+            DescriptorCast::Convert(cast, operand) => {
+                let value = self.lower_fixed_value(path, operand)?;
+                let array = self.fixed_activation_array(cast)?.ir;
+                return Ok(IrFixedValue::Convert {
+                    value: Box::new(value),
+                    array,
+                });
+            }
+            DescriptorCast::Storage(node) => node,
+        };
         if let NodeKind::FuncCall { name, callee, .. } = self.kind(node) {
             let (name, callee) = (name.clone(), *callee);
             let (function, _) = self.resolve_callee_env(self.inst, &name, false, callee)?;
@@ -265,6 +275,9 @@ impl Codegen<'_> {
         rhs: NodeId,
         blocking: bool,
     ) -> Result<bool, String> {
+        if self.converting_descriptor_cast(rhs) {
+            return Ok(self.descriptor_operand(rhs));
+        }
         let source = self.p30_unwrap_cast(rhs);
         if self.assignment_pattern_operands(path, source)?.is_some() {
             return Ok(false);
@@ -316,5 +329,98 @@ impl Codegen<'_> {
             false,
         )
         .lower_memory_view("fixed value", node)
+    }
+}
+
+/// How an operand reaches descriptor storage through explicit casts.
+enum DescriptorCast {
+    /// Casts that keep the cell layout and state domain are transparent.
+    Storage(NodeId),
+    /// The first cast that reshapes the bit stream or narrows its element
+    /// domain to two-state, with that cast's operand.
+    Convert(NodeId, NodeId),
+}
+
+impl Codegen<'_> {
+    fn descriptor_cast(&self, mut node: NodeId) -> DescriptorCast {
+        while let NodeKind::Expr(ExprKind::Cast { operand, .. }) = self.kind(node) {
+            let operand = *operand;
+            if self.cast_changes_descriptor(node, operand) {
+                return DescriptorCast::Convert(node, operand);
+            }
+            node = operand;
+        }
+        DescriptorCast::Storage(node)
+    }
+
+    /// A fixed-array to fixed-array cast changes descriptor cells when the
+    /// extents or cell width differ, or when a four-state source enters a
+    /// two-state element domain (SV 6.24.3); signedness is irrelevant to the
+    /// stored bit stream.
+    fn cast_changes_descriptor(&self, cast: NodeId, operand: NodeId) -> bool {
+        let (Some(target), Some(source)) =
+            (self.query_descriptor(cast), self.query_descriptor(operand))
+        else {
+            return false;
+        };
+        let (
+            TypeShape::FixedArray {
+                dimensions: target_dimensions,
+                element: target_element,
+            },
+            TypeShape::FixedArray {
+                dimensions: source_dimensions,
+                element: source_element,
+            },
+        ) = (&target.shape, &source.shape)
+        else {
+            return false;
+        };
+        let extents = |dimensions: &[(i32, i32)]| {
+            dimensions
+                .iter()
+                .map(|(left, right)| left.abs_diff(*right))
+                .collect::<Vec<_>>()
+        };
+        let width = Self::fixed_descriptor_width(target_element);
+        width.is_some()
+            && (extents(target_dimensions) != extents(source_dimensions)
+                || width != Self::fixed_descriptor_width(source_element)
+                || (target_element.two_state && !source_element.two_state))
+    }
+
+    pub(in super::super) fn converting_descriptor_cast(&self, node: NodeId) -> bool {
+        matches!(self.descriptor_cast(node), DescriptorCast::Convert(..))
+    }
+
+    /// Whether `node` lowers to an [`IrFixedValue`] over descriptor storage:
+    /// selected descriptor views, descriptor-shaped casts and conditionals of
+    /// such operands, and descriptor-returning calls.
+    pub(in super::super) fn descriptor_operand(&self, node: NodeId) -> bool {
+        let node = match self.descriptor_cast(node) {
+            DescriptorCast::Convert(_, operand) => return self.descriptor_operand(operand),
+            DescriptorCast::Storage(node) => node,
+        };
+        match self.kind(node) {
+            NodeKind::Expr(ExprKind::Operation {
+                op: Operation::Conditional,
+                operands,
+                ..
+            }) => {
+                operands.len() == 3
+                    && self.query_descriptor(node).is_some_and(|descriptor| {
+                        matches!(&descriptor.shape, TypeShape::FixedArray { element, .. }
+                            if Self::fixed_descriptor_width(element).is_some())
+                    })
+                    && self.descriptor_operand(operands[1])
+                    && self.descriptor_operand(operands[2])
+            }
+            NodeKind::FuncCall { callee, .. } => {
+                callee.is_some_and(|function| self.nonflatten_function(function))
+            }
+            _ => self
+                .p30_array_prefix_base(node)
+                .is_some_and(|(array, _)| self.model.arrays[array.ir].sparse()),
+        }
     }
 }

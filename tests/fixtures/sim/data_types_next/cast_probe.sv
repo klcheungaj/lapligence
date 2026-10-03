@@ -43,9 +43,11 @@ module tb;
             $finish;
         end
         state = RUN;
-        $cast(state, 2'bx0);
-        if (state !== RUN) begin
-            $display("FAIL cast_probe task failure changed enum");
+        // A failed task-form $cast is a run-time error (SV 6.24.2); the
+        // function form checks the same unchanged destination silently.
+        status = $cast(state, 2'bx0);
+        if (status !== 0 || state !== RUN) begin
+            $display("FAIL cast_probe failed cast changed enum");
             $finish;
         end
         state = state_t'(2'b10);

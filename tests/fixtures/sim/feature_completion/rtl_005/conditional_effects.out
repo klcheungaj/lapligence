@@ -1,0 +1,18 @@
+A 00xx 2 3
+B 0010 3 3
+C 0011 2
+D 0011 3
+E xxxx 5 xx01
+F 1001 011 7 6 0
+G xxxx 000 7 7 1
+H 0011 011 7 9
+I 1 1 x x x x 3
+J 1 2 2 6
+K 0101 001 9 xx xx
+L xxxx 000 0 xx xx
+M 0001 000 7 10 7
+N xxxx 000 0
+O xxxx 000 0
+P 0011 xx xxxx 001 4
+Q 0011 10 0101 001
+R xxxx 000 7 11 8

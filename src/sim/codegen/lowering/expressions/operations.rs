@@ -68,8 +68,16 @@ impl<'a> Codegen<'a> {
                     .and_then(Self::fixed_descriptor_width_bits)
                     .is_some_and(|width| width > u64::from(LLG_MAX_WIDTH))
             });
-            if oversized
-                && (self.array_of(operands[0]).is_none() || self.array_of(operands[1]).is_none())
+            // Casts that reshape or clear X/Z, conditionals and calls compare
+            // as descriptor values. Mid-size descriptor storage takes the same
+            // path rather than flattening every cell into one packed operand.
+            let converts = operands
+                .iter()
+                .any(|node| self.converting_descriptor_cast(*node));
+            let arrays =
+                self.array_of(operands[0]).is_some() && self.array_of(operands[1]).is_some();
+            if (!arrays || converts)
+                && (oversized || operands.iter().all(|node| self.descriptor_operand(*node)))
             {
                 return Ok(IrExpr::new(
                     IrExprKind::FixedValueCompare {
@@ -84,9 +92,11 @@ impl<'a> Codegen<'a> {
                 ));
             }
 
-            if let (Some(left), Some(right)) =
-                (self.array_of(operands[0]), self.array_of(operands[1]))
-            {
+            if let (Some(left), Some(right), false) = (
+                self.array_of(operands[0]),
+                self.array_of(operands[1]),
+                converts,
+            ) {
                 if self.model.arrays[left.ir].sparse() && self.model.arrays[right.ir].sparse() {
                     return Ok(IrExpr::new(
                         IrExprKind::FixedArrayCompare {

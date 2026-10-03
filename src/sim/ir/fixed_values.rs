@@ -19,6 +19,13 @@ pub enum IrFixedValue {
         parts: Vec<IrFixedValue>,
         slice: u32,
     },
+    /// Explicit bit-stream cast into `array`'s lexical shape (SV 6.24.3):
+    /// a reshaped extent or cell width, or a two-state element domain that
+    /// must clear X/Z before the value is compared or stored.
+    Convert {
+        value: Box<IrFixedValue>,
+        array: usize,
+    },
 }
 
 impl IrFixedValue {
@@ -42,6 +49,7 @@ impl IrFixedValue {
                     part.calls(visit);
                 }
             }
+            Self::Convert { value, .. } => value.calls(visit),
         }
     }
 
@@ -72,6 +80,7 @@ impl IrFixedValue {
                     part.expressions(visit);
                 }
             }
+            Self::Convert { value, .. } => value.expressions(visit),
         }
     }
     pub(in crate::sim) fn expressions_mut(&mut self, visit: &mut impl FnMut(&mut IrExpr)) {
@@ -101,6 +110,7 @@ impl IrFixedValue {
                     part.expressions_mut(visit);
                 }
             }
+            Self::Convert { value, .. } => value.expressions_mut(visit),
         }
     }
 }

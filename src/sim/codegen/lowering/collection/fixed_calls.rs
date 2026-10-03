@@ -51,6 +51,7 @@ impl Codegen<'_> {
             activation: true,
             net_elements: Vec::new(),
             element_default: Self::fixed_descriptor_default(element),
+            element_uninitialized: Self::fixed_element_uninitialized(element),
             c_name: name,
             hdl_name: String::new(),
             elem_width: width,

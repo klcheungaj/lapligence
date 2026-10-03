@@ -618,7 +618,10 @@ impl<'a> Codegen<'a> {
         }
     }
 
-    fn p30_array_prefix_base(&self, node: NodeId) -> Option<(&ArrayInfo, usize)> {
+    pub(in super::super) fn p30_array_prefix_base(
+        &self,
+        node: NodeId,
+    ) -> Option<(&ArrayInfo, usize)> {
         if let Some(array) = self.array_of(node) {
             return Some((array, 0));
         }

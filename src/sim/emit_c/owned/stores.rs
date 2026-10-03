@@ -847,6 +847,14 @@ impl<'a, 'm> Frame<'a, 'm> {
                 (*width, false)
             }
         };
+        let uninitialized = self
+            .ctx
+            .model
+            .array(array)
+            .element_uninitialized
+            .as_ref()
+            .filter(|_| selection.is_none())
+            .map(emit_const);
         let target = Target {
             binding,
             valid,
@@ -858,7 +866,19 @@ impl<'a, 'm> Frame<'a, 'm> {
             reference: None,
             reference_scopes: Vec::new(),
         };
-        let value = self.read_target(&target);
+        let value = match uninitialized {
+            // A whole aggregate element read through an invalid index keeps
+            // the element type's per-member state defaults (SV 7.4.6).
+            Some(default) => {
+                let element = self.select_code(&target, &format!("*({})", target.binding.address));
+                self.value(
+                    format!("({}) ? {element} : {default}", target.valid),
+                    width,
+                    signed,
+                )
+            }
+            None => self.read_target(&target),
+        };
         self.release_target(target);
         Ok(value)
     }

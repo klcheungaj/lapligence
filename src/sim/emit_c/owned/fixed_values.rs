@@ -41,6 +41,7 @@ impl Frame<'_, '_> {
             IrFixedValue::Stream { parts, .. } => {
                 self.fixed_value_storage(parts.first().ok_or("empty fixed stream")?)
             }
+            IrFixedValue::Convert { array, .. } => Ok((*array, self.ctx.model.array(*array).total)),
         }
     }
 
@@ -113,6 +114,19 @@ impl Frame<'_, '_> {
                     "llg_fixed_array_stream_segments({result}, {sources}, {}, {}, 0, {slice}u);",
                     parts.len(),
                     u8::from(self.ctx.model.array(shape).two_state)
+                ));
+                Ok(result)
+            }
+            IrFixedValue::Convert { value, array } => {
+                // The source keeps its own shape; the copy reshapes the bit
+                // stream into the cast type and clears X/Z for a two-state
+                // element domain before any consumer observes the cells.
+                let (source_shape, source_total) = self.fixed_value_storage(value)?;
+                let source = self.fixed_value(value, source_shape, source_total)?;
+                let result = self.new_fixed_array(*array)?;
+                self.line(format!(
+                    "llg_fixed_array_copy({result}, {source}, {}, 0);",
+                    u8::from(self.ctx.model.array(*array).two_state)
                 ));
                 Ok(result)
             }

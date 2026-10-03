@@ -7,6 +7,9 @@ pub(super) fn render_dynamic_cast(
     expression: &IrExpr,
     cast: &crate::sim::ir::IrDynamicCast,
 ) -> Result<RenderedExpr, String> {
+    if cast.failure_location.is_some() {
+        return Err("task-form $cast requires owned statement emission".to_owned());
+    }
     if let (Some(target), Some(source), Some(expected)) = (
         cast.class_target.as_deref(),
         cast.class_source.as_ref(),

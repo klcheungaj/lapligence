@@ -647,6 +647,14 @@ impl<'a> Codegen<'a> {
                     _ => None,
                 }
             }),
+            element_uninitialized: self.query_descriptor(node).and_then(|descriptor| {
+                match &descriptor.shape {
+                    TypeShape::FixedArray { element, .. } => {
+                        Self::fixed_element_uninitialized(element)
+                    }
+                    _ => None,
+                }
+            }),
             c_name: self.global_name(path, name),
             hdl_name: self.waveform_name(node),
             elem_width,

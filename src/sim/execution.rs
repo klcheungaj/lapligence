@@ -2191,6 +2191,9 @@ fn collect_fixed_value_effects(
             }
         }
         IrFixedValue::Array(_) => {}
+        IrFixedValue::Convert { value, .. } => {
+            collect_fixed_value_effects(ir, value, effects, visited_calls)
+        }
     }
 }
 
