@@ -10,6 +10,7 @@ pub(super) struct Tables {
 pub(super) fn collect(
     model: &IrModel,
     constants: &super::super::constants::PackedConstants,
+    backend: crate::sim::value_backend::ValueBackend,
     processes: &mut [Option<CoroutineArtifact>],
 ) -> Result<Tables, String> {
     let mut shapes = Vec::<Shape>::new();
@@ -26,8 +27,11 @@ pub(super) fn collect(
                 let index = shapes.len();
                 shapes.push(batch.shape.clone());
                 let row_type = format!("llg_pca_row_{index}_t");
-                let (body, _) =
-                    super::super::owned::pca_batches::helper_body(&batch.shape, Some(constants))?;
+                let (body, _) = super::super::owned::pca_batches::helper_body(
+                    &batch.shape,
+                    Some(constants),
+                    backend,
+                )?;
                 tables.declarations.push_str(&format!(
                     "typedef struct {{ const {}* source; {}* target; sv4_t* enable; uint64_t binding; }} {row_type};\nstatic LLG_MODEL_SHARED void llg_pca_batch_{index}(sv4_t* _llg_t, const {row_type}* row) {{\n{body}}}\n",
                     if batch.shape.source_type.width() == 0 { "double" } else { "sv4_t" },

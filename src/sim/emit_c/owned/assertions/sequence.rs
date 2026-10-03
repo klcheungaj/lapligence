@@ -4,12 +4,13 @@ use super::*;
 pub(super) fn render(
     model: &IrModel,
     constants: &super::super::super::constants::PackedConstants,
+    backend: crate::sim::value_backend::ValueBackend,
     index: usize,
     role: &str,
     sequence: &IrSequence,
 ) -> Result<String, String> {
     let ctx = RCtx {
-        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
+        value_backend: backend,
         model,
         func: None,
         sampled: true,

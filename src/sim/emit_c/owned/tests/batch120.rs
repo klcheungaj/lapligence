@@ -315,6 +315,7 @@ fn alias_lifecycle_initializes_visible_owners_and_resets_bindings() {
     model::storage_lifecycle(
         &model,
         &super::super::super::constants::PackedConstants::default(),
+        crate::sim::value_backend::ValueBackend::Legacy,
         &mut source,
     )
     .unwrap();

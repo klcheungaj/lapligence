@@ -387,7 +387,12 @@ fn batched_pca_helpers_share_the_models_wide_index_constant() {
         target_type: IrType::packed(1, false).unwrap(),
     };
     for _ in 0..2 {
-        let (body, _) = super::super::pca_batches::helper_body(&shape, Some(&constants)).unwrap();
+        let (body, _) = super::super::pca_batches::helper_body(
+            &shape,
+            Some(&constants),
+            crate::sim::value_backend::ValueBackend::Legacy,
+        )
+        .unwrap();
         assert!(!body.contains("sv4_from_limbs"));
         assert!(body.contains("llg_constant_"));
     }
