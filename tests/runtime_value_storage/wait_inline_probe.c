@@ -75,7 +75,7 @@ static void single_and_heap_paths(void) {
         CHECK(proc->wait.subscriptions == &proc->wait.payload.single.subscription);
         CHECK(proc->wait.payload.single.specs[0].sig == &narrow);
         CHECK(proc->wait.payload.single.specs[0].kind == LLG_EV_POSEDGE);
-        CHECK(sv4_same(wait_inline_value(&proc->wait), narrow));
+        CHECK(wait_inline_same(&proc->wait, narrow));
         CHECK(scheduler_allocations == allocations);
         CHECK(value_test_allocations() == value_allocations);
         ready_again(proc);
@@ -121,17 +121,18 @@ static void single_and_heap_paths(void) {
     }
     CHECK(llg_arm_edge(proc, &empty, 1) == LLG_CO_ARM_SUSPEND);
     CHECK(proc->wait.kind == W_EVENTS_INLINE);
-    CHECK(wait_inline_value(&proc->wait).width == 0);
+    CHECK(proc->wait.payload.single.width == 0);
     ready_again(proc);
     sv4_t padded = sv4_zero(5, 1);
-    padded.bits[0] = padded.x[0] = padded.z[0] = UINT64_MAX;
-    padded.is_signed = -1;
+    llg_sv4_set_word(&padded, 0, 1, 2, 4);
+    llg_sv4_set_signed(&padded, -1);
     CHECK(llg_arm_level(proc, &narrow, padded) == LLG_CO_ARM_SUSPEND);
-    sv4_t copied = wait_inline_value(&proc->wait);
-    CHECK(copied.bits[0] == 31 && copied.x[0] == 31 && copied.z[0] == 31);
-    CHECK(copied.is_signed == 1);
-    CHECK(padded.bits[0] == UINT64_MAX && padded.x[0] == UINT64_MAX &&
-          padded.z[0] == UINT64_MAX && padded.is_signed == -1);
+    const llg_wait_inline_payload_t* copied = &proc->wait.payload.single;
+    CHECK(copied->words[0].aval == 3 && copied->words[0].bval == 6);
+    CHECK(copied->is_signed == 1);
+    CHECK(llg_sv4_word(padded, 0, LLG_SV4_BITS) == 1 &&
+          llg_sv4_word(padded, 0, LLG_SV4_X) == 2 &&
+          llg_sv4_word(padded, 0, LLG_SV4_Z) == 4 && llg_sv4_signed(padded) == 1);
     ready_again(proc);
     sv4_destroy(&padded);
     CHECK(llg_arm_event(proc, NULL) == LLG_CO_ARM_SUSPEND);
@@ -163,8 +164,8 @@ static void state_edges_and_resize(void) {
     CHECK(llg_arm_edge(proc, &signal, 1) == LLG_CO_ARM_SUSPEND);
     sig_write(&signal, states[1]); // X -> Z is not a posedge
     CHECK(proc->wait.kind == W_EVENTS_INLINE);
-    sv4_t snapshot = wait_inline_value(&proc->wait);
-    CHECK(snapshot.x[0] == 0 && snapshot.z[0] == 1);
+    CHECK(proc->wait.payload.single.words[0].aval == 0 &&
+          proc->wait.payload.single.words[0].bval == 1);
     sig_write(&signal, states[2]); // Z -> 1 is a posedge
     CHECK(dequeue_region(LLG_REGION_ACTIVE) == proc);
     CHECK(llg_arm_edge(proc, &signal, 0) == LLG_CO_ARM_SUSPEND);

@@ -124,13 +124,13 @@ static void nba_capture_range(llg_nba_t* n, uint32_t target_width,
 static int nba_mask_contiguous(uint32_t target_width, sv4_t value, sv4_t mask,
                                uint32_t* offset, uint32_t* width) {
     uint32_t limit = target_width;
-    if (value.width < limit) limit = value.width;
-    if (mask.width < limit) limit = mask.width;
+    if (llg_sv4_width(value) < limit) limit = llg_sv4_width(value);
+    if (llg_sv4_width(mask) < limit) limit = llg_sv4_width(mask);
     uint32_t first = limit;
     uint32_t last = 0;
     uint32_t count = 0;
     for (uint32_t bit = 0; bit < limit; ++bit) {
-        if (!((mask.bits[bit / 64u] >> (bit % 64u)) & 1u)) continue;
+        if (!((llg_sv4_word(mask, bit / 64u, LLG_SV4_BITS) >> (bit % 64u)) & 1u)) continue;
         if (first == limit) first = bit;
         last = bit;
         ++count;
@@ -154,7 +154,7 @@ static void nba_capture_masked(llg_nba_t* n, uint32_t target_width,
         n->range_width = width;
         n->has_range = 1;
         sv4_select_plan_t plan = {
-            target_width, value.width, offset, offset, width,
+            target_width, llg_sv4_width(value), offset, offset, width,
         };
         n->value = sv4_select_plan_slice(value, &plan, 0);
         return;
@@ -246,7 +246,7 @@ void llg_nba_net_masked_after(llg_net_t* net, int slot, sv4_t value,
     if (!n) return;
     n->net_target = net;
     n->net_slot = slot;
-    nba_capture_masked(n, net->drivers[slot]->width, value, mask);
+    nba_capture_masked(n, llg_sv4_width(*net->drivers[slot]), value, mask);
     enqueue_nba(n);
 }
 
@@ -258,7 +258,7 @@ void llg_nba_net_selected_after(llg_net_t* net, int slot, sv4_t value,
     if (!n) return;
     n->net_target = net;
     n->net_slot = slot;
-    nba_capture_range(n, net->drivers[slot]->width, value, plan, reverse);
+    nba_capture_range(n, llg_sv4_width(*net->drivers[slot]), value, plan, reverse);
     enqueue_nba(n);
 }
 
@@ -346,7 +346,7 @@ void llg_clocking_nba_sync_selected_after(
     if (!target) return;
     llg_clocking_drive_t drive = {0};
     drive.target = target;
-    drive.value = nba_range_slice(target->width, value, plan, reverse,
+    drive.value = nba_range_slice(llg_sv4_width(*target), value, plan, reverse,
                                   &drive.range_offset, &drive.range_width);
     drive.has_range = 1;
     drive.ticks = ticks;
@@ -361,7 +361,7 @@ void llg_clocking_nba_net_sync_selected_after(
     llg_clocking_drive_t drive = {0};
     drive.net_target = net;
     drive.net_slot = slot;
-    drive.value = nba_range_slice(net->drivers[slot]->width, value, plan,
+    drive.value = nba_range_slice(llg_sv4_width(*net->drivers[slot]), value, plan,
                                   reverse, &drive.range_offset,
                                   &drive.range_width);
     drive.has_range = 1;
@@ -403,7 +403,7 @@ void llg_nba_masked(sv4_t* target, sv4_t value, sv4_t mask, uint64_t ticks) {
     if (!n) return;
     n->target = target;
     n->target_scope = value_scope_retain_target(target);
-    nba_capture_masked(n, target->width, value, mask);
+    nba_capture_masked(n, llg_sv4_width(*target), value, mask);
     enqueue_nba(n);
 }
 
@@ -415,7 +415,7 @@ void llg_nba_selected_after(sv4_t* target, sv4_t value,
     if (!n) return;
     n->target = target;
     n->target_scope = value_scope_retain_target(target);
-    nba_capture_range(n, target->width, value, plan, reverse);
+    nba_capture_range(n, llg_sv4_width(*target), value, plan, reverse);
     enqueue_nba(n);
 }
 

@@ -173,12 +173,10 @@ pub(super) fn dpi_external_prototype(f: &IrFunc) -> Result<String, String> {
 pub(super) fn dpi_helpers() -> &'static str {
     "\n/* Canonical DPI scalar conversions. Native pointers never escape this thunk. */\n\
 static svBit llg_dpi_bit_from_sv4(sv4_t value) {\n\
-    return (svBit)(value.bits[0] & 1u);\n\
+    return (svBit)(llg_sv4_word(value, 0, LLG_SV4_BITS) & 1u);\n\
 }\n\
 static svLogic llg_dpi_logic_from_sv4(sv4_t value) {\n\
-    if (value.x[0] & 1u) return sv_x;\n\
-    if (value.z[0] & 1u) return sv_z;\n\
-    return (svLogic)(value.bits[0] & 1u);\n\
+    return (svLogic)llg_sv4_state_to_dpi(llg_sv4_state(value, 0));\n\
 }\n\
 static sv4_t llg_dpi_sv4_from_logic(svLogic value, int8_t is_signed) {\n\
     switch (value) {\n\

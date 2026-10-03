@@ -117,9 +117,9 @@ sv4_t llg_assoc_reduce_with(const llg_assoc_t* array, int operation,
 }
 
 static int llg_key_negative(sv4_t value) {
-    return value.width && value.is_signed &&
-        ((value.bits[(value.width - 1u) / 64u] >>
-          ((value.width - 1u) % 64u)) & 1u);
+    return llg_sv4_width(value) && llg_sv4_signed(value) &&
+        ((llg_sv4_word(value, (llg_sv4_width(value) - 1u) / 64u, LLG_SV4_BITS) >>
+          ((llg_sv4_width(value) - 1u) % 64u)) & 1u);
 }
 
 static int llg_normalize_integral_key(sv4_t input, uint32_t width,
@@ -134,16 +134,16 @@ static int llg_normalize_integral_key(sv4_t input, uint32_t width,
         // Wildcard keys retain only the significant bits, not an artificial
         // model/support-limit width. Keep one sign bit for negative values.
         int negative = llg_key_negative(input);
-        uint32_t used = input.width;
+        uint32_t used = llg_sv4_width(input);
         while (used > 1u) {
             uint32_t bit = negative ? used - 2u : used - 1u;
-            int value = (int)((input.bits[bit / 64u] >> (bit % 64u)) & 1u);
+            int value = (int)((llg_sv4_word(input, bit / 64u, LLG_SV4_BITS) >> (bit % 64u)) & 1u);
             if (value != negative) break;
             --used;
         }
         if (!used) used = 1;
-        sv4_replace(output, sv4_resize(input, used, input.is_signed));
-        output->is_signed = (int8_t)negative;
+        sv4_replace(output, sv4_resize(input, used, llg_sv4_signed(input)));
+        llg_sv4_set_signed(output, (int8_t)negative);
     }
     return 1;
 }
@@ -156,10 +156,10 @@ static int llg_assoc_normalize_key(const llg_assoc_t* array, sv4_t input,
 }
 
 static uint64_t llg_key_word(sv4_t value, size_t limb, int negative) {
-    size_t count = (value.width + 63u) / 64u;
+    size_t count = (llg_sv4_width(value) + 63u) / 64u;
     if (limb >= count) return negative ? UINT64_MAX : 0;
-    uint64_t word = value.bits[limb];
-    uint32_t tail = value.width % 64u;
+    uint64_t word = llg_sv4_word(value, limb, LLG_SV4_BITS);
+    uint32_t tail = llg_sv4_width(value) % 64u;
     if (negative && limb + 1 == count && tail)
         word |= UINT64_MAX << tail;
     return word;
@@ -168,7 +168,7 @@ static uint64_t llg_key_word(sv4_t value, size_t limb, int negative) {
 static int llg_integral_compare(sv4_t a, sv4_t b) {
     int an = llg_key_negative(a), bn = llg_key_negative(b);
     if (an != bn) return an ? -1 : 1;
-    size_t count = ((a.width > b.width ? a.width : b.width) + 63u) / 64u;
+    size_t count = ((llg_sv4_width(a) > llg_sv4_width(b) ? llg_sv4_width(a) : llg_sv4_width(b)) + 63u) / 64u;
     while (count--) {
         uint64_t av = llg_key_word(a, count, an);
         uint64_t bv = llg_key_word(b, count, bn);

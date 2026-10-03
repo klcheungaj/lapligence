@@ -35,6 +35,51 @@ python3 scripts/check_sim_fixture_integrity.py --tracked
 python3 -m unittest discover -s scripts -p test_sim_fixture_integrity.py
 ```
 
+### Feature completion slices
+
+New tasks use `fixtures/sim/feature_completion/<task_slug>/` (ASCII slugs such as
+`rtl_001`) and `sim_feature_completion/<task_slug>.rs`, explicitly declared with
+`#[path = "sim_feature_completion/rtl_001.rs"] mod rtl_001;` in
+`sim_feature_completion.rs`. Keep the existing `g1_*` fixtures with their owners.
+Copy an adopted FND-002 witness from local evidence into the task directory,
+rename it to an ASCII descriptive name, retain its edition/clause citation, and
+add a reviewed independent `.out` oracle (or a specific rejection diagnostic).
+Resolve any unresolved oracle with the owning task's policy before claiming acceptance.
+Checked-in tests must work without the local evidence, plan or specification PDFs.
+
+Use direct `sim_cli::run_case*` / `reject_case*` calls inside ordinary `#[test]`
+functions, with literal fixture names and a literal or `const &str` suite path.
+Stems select `.sv`; explicit `.v` and `.sv` names are also supported. Read output
+files with `include_str!`; never generate expected values with production code.
+These helpers assert prerequisites, status, output and diagnostics in both HDL
+optimizer modes. Keep mandatory modules/tests unconditional and unignored;
+do not return early on missing tools. The checker requires every new HDL fixture
+to be referenced by a public CLI helper inside a declared test. It detects empty
+task modules/directories, missing declarations/inputs, disabled tests and untracked
+inputs (`--tracked`).
+Extend its bounded recognizers and unit tests before adopting another call shape.
+
+The [FND-003 pilot](fixtures/sim/feature_completion/fnd_003/readme.md) also uses
+`sim_cli::run_case_after_db_drop`: checked compilation, snapshot destruction,
+validated semantic/execution IR and owned whole-model emission, then Db destruction
+before CMake and execution. This is generated-model execution; the
+`component_fixture_integrity` test and existing validator/architecture probes are
+component checks and do not replace public CLI tests.
+
+Run focused acceptance with an explicit empty-selection failure:
+
+```sh
+scripts/run-tests.sh --test-work-dir /build --cargo-profile quick \
+  --test sim_feature_completion --test emit_decoupling --lib \
+  -E 'binary(sim_feature_completion) | binary(emit_decoupling) | test(sim::rt::tests::)' \
+  --test-threads 6 --no-tests fail
+```
+
+Use the assigned host thread budget. For a single later task, select its module
+with `-E 'binary(sim_feature_completion) & test(rtl_001::)'`; run the checker and
+architecture gates as well. `--no-tests fail` makes a misspelled/disabled selection
+fail rather than accept a zero-test run. No new acceptance wrapper is needed.
+
 ### Vendor patch preparation
 
 `vendor_patches.rs` checks clean/applied trees, no-Git archives (including archives
@@ -72,6 +117,13 @@ requirements above apply without repeating them for each suite.
 | Native components | `runtime_values`, `runtime_random`, `runtime_file_io`, `runtime_boundaries`, `runtime_value_storage`: direct runtime probes, independent of HDL lowering. |
 | Integrated selected profile | `sim_syn038_ledger`, pairwise suites and `sim_syn039_acceptance`; [ledger](syn038_coverage_ledger.md), [integrated fixtures](fixtures/sim/syn039_acceptance/readme.md). SYN-039 runs four runtime-stimulated compositions in both optimizer modes and preserves the sequential-UDP rejection. |
 | Compiler directives | `sim_directive_effects`, `sim_syn017_directive_effects`, `sim_edition` and `sim_syn038_ledger`; [SYN-017 matrix](fixtures/sim/syn017_directives/readme.md) covers both editions, both optimizer modes, preprocessing into execution, unit state and strict older-edition gates. |
+
+`runtime_value_facade` runs the cheap private-field/template guard in
+`scripts/check_value_facade.py`. Its explicit whitelist contains only nonpacked
+metadata receivers; value backends and vendored GTKWave are excluded. Run the
+script directly for a quick audit, or with `--self-test` to check rejection cases.
+Native layout expressions (`sizeof`/`_Alignof`) remain legal; V07 owns numeric
+emitter frame estimates and backend ABI selection.
 
 ### Selected-profile qualifications
 
@@ -533,3 +585,9 @@ Domain modules below LSP/integration facades use explicit crate paths and must n
 become accidental Cargo targets. Use domain-qualified name filters when necessary.
 Fragment/embedding-order tests do not compile runtime fragments independently;
 facade compilation and generated-model execution are separate checks.
+
+Standalone compact-backend checks and microbenchmarks, including net/strength,
+real/time, formatting/index and facade adapter probes, are opt-in CMake targets;
+see [native value probes](runtime_value_storage/readme.md#standalone-compact-value-backend).
+They cover portable and optional GMP limb kernels independently of generated
+model selection and do not replace later HDL/model integration acceptance.

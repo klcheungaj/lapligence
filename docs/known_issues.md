@@ -243,3 +243,18 @@ the baseline, including both optimizer modes for the representative fixtures.
 
 Use the command in the frontend memory entry with `LLG_CORPUS_N` set to
 5,000, 10,000, 20,000 and 40,000, and compare wall times.
+
+## Record member net aliases rejected by the frontend
+
+**Status:** open; alias grammar and frontend admission are owned by RTL-011.
+
+Slang rejects a member of a fixed record net as a non-net in an `alias` statement,
+although ordinary member continuous drivers and inout record connections work.
+For example, declare `typedef struct { logic [7:0] lane; } record_t;`,
+`wire record_t values[1:0];` and `wire [3:0] mirror;`, then use
+`alias values[0].lane[3:0] = mirror;`. Compilation reports that `lane` is not a
+net before owned capture. Audit IEEE 1800-2009 §10.11 and the net-lvalue grammar
+in §A.8.5, then apply a narrow tracked frontend patch for the legal forms; do
+not bypass checked compilation or treat frontend rejection as an illegal-type
+oracle. This admission gap prevents member alias identity tests from reaching
+the otherwise shared electrical projection path.

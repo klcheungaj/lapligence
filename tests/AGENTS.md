@@ -55,6 +55,45 @@ Suite ownership and focused commands are in [readme.md](readme.md); datatype
 fixture guides retain their local LRM/oracle contracts. Do not duplicate progress
 reports or complete feature inventories here.
 
+## Feature completion change checklist
+
+For each feature, follow the owning source guides and complete the affected steps;
+record a reason when a step or failure case does not apply.
+
+- Capture through `Db::from_slang`; copy values, relationships and source locations
+  into owned descriptors. Prove consumers survive native snapshot destruction.
+- Add typed semantic/execution operations and validate IDs, types, shapes and
+  contexts. Extend effect/dependency analysis and every optimizer traversal.
+- Emit from owned ExecutionModel data through the whole-model emitter. A legacy
+  C fragment or handwritten runtime probe alone is not feature acceptance.
+- Define runtime initialization, copy/alias ownership, suspension, cancellation
+  and destruction. Feature code uses public `sv4_*` operations and the neutral
+  `llg_sv4_*` bridge; follow [the value facade](../src/sim/rt/value/facade.md),
+  including independent packed-value owners. Do not inspect private payloads.
+- Embed new runtime fragments in `src/sim/rt/mod.rs` and the generated-model CMake
+  inputs; runtime C stays out of Rust binaries. Keep fragment-order tests,
+  `emit_decoupling` and `generated_c_frame_lint` active.
+- Add checked-in positive, nearest-illegal, boundary and composition fixtures to
+  the explicitly declared task module described in [the test guide](readme.md).
+  Use public CLI acceptance and independent clause-derived oracles; missing tools
+  block acceptance. Label parser/DB/IR/handwritten-C tests `component_*` and report
+  them separately from generated-model execution.
+
+| Failure or boundary | Required coverage when affected |
+| --- | --- |
+| Invalid IDs/shapes | Focused owned DB/IR validator tests reject malformed descriptors before emission. |
+| Allocation failure | Use the affected allocator's existing fault-injection path; verify partial initialization cleanup and unchanged destinations. If none exists, report the missing probe rather than infer success. |
+| Suspension/cancellation | Public HDL cancels at each new suspension point; verify wakeup detachment, no late publication and exactly-once cleanup. |
+| Aliasing | Public HDL covers overlapping source/destination, copied values and captured values surviving mutation. |
+| Source maps/lifetimes | Generate after snapshot destruction and build/execute after Db destruction with `sim_cli::run_case_after_db_drop`; check surviving fixture identity. Add focused source-location assertions for new descriptors. |
+| Optimizers/native builds | Public fixtures run with default and `--no-opt`; representative affected paths also run `--model-opt-level O0` and `O3`. The owned-lifetime helper runs all four combinations. |
+
+Serialize edits to shared Db/IR enums and validators, facade headers and neutral
+bridges, emitter facades, scheduler roots, `src/sim/rt/mod.rs`, Cargo/CMake/build
+files and suite declarations. Coordinate the affected hunk with its owner and the
+integration orchestrator; keep changes additive and small, and use separate
+native build trees. Feature work need not wait for the entire GMP track.
+
 ## LSP acceptance and fixtures
 
 `lsp_stdio.rs` and its domain modules launch `llg_ls` over framed standard JSON-RPC,

@@ -2,6 +2,20 @@
 
 use super::*;
 
+fn contains_unpacked_union(descriptor: &TypeDescriptor) -> bool {
+    match &descriptor.shape {
+        TypeShape::FixedArray { element, .. } => contains_unpacked_union(element),
+        TypeShape::Aggregate(layout) => {
+            layout.kind == AggregateKind::UnpackedUnion
+                || layout
+                    .members
+                    .iter()
+                    .any(|member| contains_unpacked_union(&member.descriptor))
+        }
+        _ => false,
+    }
+}
+
 impl<'a> Codegen<'a> {
     /// Walk the instance tree, collecting signals, parameters and gen-scope
     /// paths.  Returns the top module nodes.
@@ -16,6 +30,16 @@ impl<'a> Codegen<'a> {
             if net_type == Some(NetType::TriReg) {
                 return Err(format!(
                     "unsupported net type TriReg: trireg charge storage is not supported for `{}`; outside the standalone subset",
+                    self.display_name(node)
+                ));
+            }
+            if net_type.is_some()
+                && self
+                    .query_descriptor(node)
+                    .is_some_and(contains_unpacked_union)
+            {
+                return Err(format!(
+                    "unpacked union in `{}` is not a valid net type under IEEE 1800-2009 section 6.7",
                     self.display_name(node)
                 ));
             }

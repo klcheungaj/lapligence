@@ -78,6 +78,17 @@ set_tests_properties(${all_tests} PROPERTIES TIMEOUT 60)
 add_library(tracked_value STATIC tracked_value.c "${LLG_RT}/llg_string.c" "${LLG_RT}/llg_rng.c")
 target_include_directories(tracked_value PUBLIC "${LLG_RT}")
 strict_c(tracked_value)
+
+add_executable(neutral_access_probe neutral_access_probe.c)
+target_link_libraries(neutral_access_probe PRIVATE tracked_value)
+strict_c(neutral_access_probe)
+add_test(NAME neutral_value_access COMMAND neutral_access_probe)
+set_tests_properties(neutral_value_access PROPERTIES TIMEOUT 60)
+add_executable(consumer_bridge_probe consumer_bridge_probe.c)
+target_link_libraries(consumer_bridge_probe PRIVATE tracked_value)
+strict_c(consumer_bridge_probe)
+add_test(NAME consumer_value_bridge COMMAND consumer_bridge_probe)
+set_tests_properties(consumer_value_bridge PROPERTIES TIMEOUT 60)
 if(NOT MSVC)
   target_link_libraries(tracked_value PUBLIC m)
 endif()
@@ -502,3 +513,5 @@ set_tests_properties(owner_allocation_plateau PROPERTIES TIMEOUT 60)
 
 file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/ownership-capabilities.json"
   CONTENT "{\"schema\":\"llg.owner-probes/v1\",\"waveforms\":${LLG_TEST_HAS_WAVEFORMS},\"scheduler\":${LLG_TEST_HAS_SCHEDULER},\"coroutines\":${LLG_TEST_HAS_COROUTINES},\"sanitizers\":${LLG_TEST_HAS_SANITIZERS}}\n")
+
+include(compact_value.cmake)
