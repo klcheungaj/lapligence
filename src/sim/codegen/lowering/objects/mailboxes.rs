@@ -17,113 +17,24 @@ impl Codegen<'_> {
     }
 
     pub(in super::super) fn mailbox_element_for_decl(&self, node: NodeId) -> IrMailboxElement {
-        let Some(name) = self.mailbox_descriptor_name(node) else {
+        let Some(descriptor) = self.query_descriptor(node) else {
             return IrMailboxElement::Untyped;
         };
-        if let Some(element) = Self::mailbox_element_from_name(name) {
-            return element;
-        }
-        // Slang keeps a typedef/enum mailbox parameter in the rendered
-        // mailbox name but does not attach the parameter type descriptor to
-        // the mailbox class descriptor. Resolve the owned declaration by its
-        // spelling so aliases retain their packed width/state metadata.
-        let short_name = name.rsplit("::").next().unwrap_or(name);
-        self.db
-            .node_ids()
-            .find(|candidate| {
-                self.node(*candidate).name == short_name
-                    && self.query_descriptor(*candidate).is_some_and(|descriptor| {
-                        !matches!(&descriptor.shape, TypeShape::Opaque { kind } if kind == "Class")
-                    })
-            })
-            .and_then(|candidate| {
-                self.query_descriptor(candidate)
-                    .map(|descriptor| self.mailbox_element_from_descriptor(candidate, descriptor))
-            })
-            .unwrap_or(IrMailboxElement::Handle)
-    }
-
-    fn mailbox_element_from_name(name: &str) -> Option<IrMailboxElement> {
-        let name = name.trim();
-        if name.eq_ignore_ascii_case("untyped") {
-            return Some(IrMailboxElement::Untyped);
-        }
-        let lower = name.to_ascii_lowercase();
-        if lower == "string" {
-            return Some(IrMailboxElement::String);
-        }
-        if lower == "real" || lower == "shortreal" {
-            return Some(IrMailboxElement::Real {
-                shortreal: lower == "shortreal",
-            });
-        }
-        let keyword = |word: &str| {
-            lower == word
-                || lower.starts_with(&format!("{word} "))
-                || lower.starts_with(&format!("{word}["))
-        };
-        let two_state = keyword("bit")
-            || keyword("int")
-            || keyword("longint")
-            || keyword("shortint")
-            || keyword("byte");
-        let signed = keyword("int")
-            || keyword("integer")
-            || keyword("longint")
-            || keyword("shortint")
-            || keyword("byte")
-            || lower.contains(" signed");
-        let scalar_width = if keyword("longint") || keyword("time") {
-            64
-        } else if keyword("shortint") {
-            16
-        } else if keyword("byte") {
-            8
-        } else if keyword("int") || keyword("integer") {
-            32
-        } else if keyword("bit") || keyword("logic") || keyword("reg") {
-            1
-        } else {
-            0
-        };
-        let width = lower
-            .find('[')
-            .and_then(|start| {
-                lower[start + 1..]
-                    .find(']')
-                    .map(|end| (start + 1, start + 1 + end))
-            })
-            .and_then(|(start, end)| lower[start..end].split_once(':'))
-            .and_then(|(left, right)| {
-                let left = left.trim().parse::<i64>().ok()?;
-                let right = right.trim().parse::<i64>().ok()?;
-                left.checked_sub(right)
-                    .and_then(|delta| delta.unsigned_abs().checked_add(1))
-                    .and_then(|width| u32::try_from(width).ok())
-            })
-            .unwrap_or(scalar_width);
-        if width != 0 {
-            Some(IrMailboxElement::Packed {
-                width,
-                signed,
-                two_state,
-            })
-        } else {
-            None
+        // The captured element is `T` resolved in its specializing scope, so a
+        // typedef keeps its own shape wherever it is declared; the rendered
+        // parameter spelling is neither unique nor scope-qualified.
+        match self.db.mailbox_element(descriptor.id) {
+            Some(element) => Self::mailbox_element_from_descriptor(element),
+            None => IrMailboxElement::Untyped,
         }
     }
 
-    fn mailbox_element_from_descriptor(
-        &self,
-        node: NodeId,
-        descriptor: &TypeDescriptor,
-    ) -> IrMailboxElement {
+    fn mailbox_element_from_descriptor(descriptor: &TypeDescriptor) -> IrMailboxElement {
         match &descriptor.shape {
             TypeShape::PackedAtom { .. } => IrMailboxElement::Packed {
                 width: descriptor.info.width.unwrap_or_default(),
                 signed: descriptor.info.signed,
-                two_state: self.db.is_two_state_type(node)
-                    || is_two_state_kind(&descriptor.info.kind),
+                two_state: descriptor.two_state,
             },
             TypeShape::Aggregate(layout)
                 if matches!(
@@ -134,8 +45,7 @@ impl Codegen<'_> {
                 IrMailboxElement::Packed {
                     width: descriptor.info.width.unwrap_or_default(),
                     signed: descriptor.info.signed,
-                    two_state: self.db.is_two_state_type(node)
-                        || is_two_state_kind(&descriptor.info.kind),
+                    two_state: descriptor.two_state,
                 }
             }
             TypeShape::Real { shortreal } => IrMailboxElement::Real {

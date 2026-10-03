@@ -552,6 +552,8 @@ pub struct Type {
     pub is_tagged: bool,
     pub bit_width: u64,
     pub display_name: String,
+    /// Array/enum element or base type; for a `std::mailbox #(T)`
+    /// specialization, the resolved `T`.
     pub element_type_id: Option<u64>,
     pub index_type_id: Option<u64>,
     pub range_start: u64,

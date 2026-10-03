@@ -314,3 +314,5 @@ contract, rejecting unowned automatic/dynamic refs or timing/control actions.
 Mailboxes preserve typed copy/identity semantics and delegate waits/cancellation to
 runtime queues. Container kinds keep distinct storage, key conversion, notification
 and lifetime rules; another container's admitted operation is not a fallback.
+Mailbox element types come from the DB's captured `T`, never the rendered
+parameter spelling.

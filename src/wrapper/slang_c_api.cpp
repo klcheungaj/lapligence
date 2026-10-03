@@ -635,6 +635,28 @@ struct Capture {
   }
 
 
+  // A specialization of the built-in `std::mailbox #(T)` exports `T` as its
+  // element type. The type parameter is resolved in the specializing scope,
+  // so a typedef declared anywhere keeps its canonical shape; consumers must
+  // not re-resolve the rendered parameter spelling. An untyped mailbox and
+  // every other class, including a user class named `mailbox`, have none.
+  uint64_t mailboxElementType(const ClassType& classType) {
+    const GenericClassDefSymbol* generic = classType.genericClass;
+    if (!generic || generic->name != "mailbox")
+      return LLG_SLANG_INVALID_ID;
+    const Scope* parent = generic->getParentScope();
+    if (!parent || &parent->asSymbol() != &classType.getCompilation().getStdPackage())
+      return LLG_SLANG_INVALID_ID;
+    for (const Symbol* parameter : classType.genericParameters) {
+      if (parameter && parameter->kind == SymbolKind::TypeParameter &&
+          parameter->name == "T") {
+        const Type& element = parameter->as<TypeParameterSymbol>().targetType.getType();
+        return element.isUntypedType() ? LLG_SLANG_INVALID_ID : type(element);
+      }
+    }
+    return LLG_SLANG_INVALID_ID;
+  }
+
   uint64_t type(const Type& input) {
     const Type& canonical = input.getCanonicalType();
     if (auto it = typeIds.find(&canonical); it != typeIds.end())
@@ -762,6 +784,9 @@ struct Capture {
       }
       case SymbolKind::EnumType:
         elementType = type(canonical.as<EnumType>().baseType);
+        break;
+      case SymbolKind::ClassType:
+        elementType = mailboxElementType(canonical.as<ClassType>());
         break;
       case SymbolKind::PackedStructType:
         for (const FieldSymbol& field :

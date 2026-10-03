@@ -99,3 +99,21 @@ fn nested_and_automatic_mailbox_locals_have_fresh_storage() {
         &[],
     );
 }
+
+#[test]
+fn mailbox_typedef_elements_resolve_in_their_declaring_scope() {
+    sim_cli::run_case_backend_parity(
+        "mailboxes",
+        "scoped_typedefs",
+        concat!(
+            "child=1x0z\n",
+            "wide=1x 0123456789abcdeffedcba9876543210\n",
+            "unit=2a\n",
+            "pkg=zab\n",
+            "rec=9 000000000000000000000000000000001\n",
+            "enum=B 5\n",
+        ),
+        &[],
+        &[],
+    );
+}
