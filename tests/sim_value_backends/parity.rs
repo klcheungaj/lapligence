@@ -167,3 +167,72 @@ fn compact_parity_vpi_waveform() {
         &[("LLG_VPI_PLUGIN", plugin.to_str().expect("plugin path"))],
     );
 }
+
+#[test]
+fn compact_parity_arithmetic_destinations() {
+    sim_cli::run_case_backend_parity(
+        "emit_value_traffic",
+        "arithmetic",
+        &format!(
+            "nba=22\noutput=8,9\nselector=1\nxz={},zzzz\nunsigned65=08000000000000000\nsigned65=18000000000000000\nback64=8000000000000000\n",
+            "x".repeat(128)
+        ),
+        &[],
+        &[],
+    );
+    sim_cli::run_case_backend_parity(
+        "emit_value_traffic",
+        "suspension",
+        "snapshot=7,source=9\ntask=29\n",
+        &[],
+        &[],
+    );
+}
+
+#[test]
+fn compact_parity_rtl_004_keys_and_rows() {
+    for (fixture, expected) in [
+        (
+            "vector_keys",
+            include_str!("../fixtures/sim/feature_completion/rtl_004/vector_keys.out"),
+        ),
+        (
+            "record_keys",
+            include_str!("../fixtures/sim/feature_completion/rtl_004/record_keys.out"),
+        ),
+        (
+            "nested_rows",
+            include_str!("../fixtures/sim/feature_completion/rtl_004/nested_rows.out"),
+        ),
+        (
+            "net_pattern_driver",
+            include_str!("../fixtures/sim/feature_completion/rtl_004/net_pattern_driver.out"),
+        ),
+    ] {
+        sim_cli::run_case_backend_parity("feature_completion/rtl_004", fixture, expected, &[], &[]);
+    }
+}
+
+#[test]
+fn compact_parity_rtl_004_scatter_and_descriptors() {
+    for (fixture, expected) in [
+        (
+            "scatter_capture",
+            include_str!("../fixtures/sim/feature_completion/rtl_004/scatter_capture.out"),
+        ),
+        (
+            "scatter_records",
+            include_str!("../fixtures/sim/feature_completion/rtl_004/scatter_records.out"),
+        ),
+        (
+            "effect_values",
+            include_str!("../fixtures/sim/feature_completion/rtl_004/effect_values.out"),
+        ),
+        (
+            "descriptor_patterns",
+            include_str!("../fixtures/sim/feature_completion/rtl_004/descriptor_patterns.out"),
+        ),
+    ] {
+        sim_cli::run_case_backend_parity("feature_completion/rtl_004", fixture, expected, &[], &[]);
+    }
+}

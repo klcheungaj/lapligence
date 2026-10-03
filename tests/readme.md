@@ -743,5 +743,7 @@ LLG_TEST_GMP_ROOT=/path/to/gmp CARGO_BUILD_JOBS=6 CMAKE_BUILD_PARALLEL_LEVEL=6 s
 
 These tests force both backends,
 both compact kernels and both HDL optimizer modes independently of the runner's
-selection. VPI requires a Unix shared-library compiler. The matrix includes a
-16,777,216-cell array copy/NBA fixture.
+selection. VPI requires a Unix shared-library compiler. The matrix covers
+arithmetic destinations, selections, streams, nets/force, NBA capture, VPI and
+waveforms, RTL-001 through RTL-004 fixtures and a 16,777,216-cell array copy/NBA
+fixture.
