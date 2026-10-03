@@ -1,0 +1,27 @@
+add_executable(compact_${mode}_selection_probe compact_selection_probe.c)
+target_link_libraries(compact_${mode}_selection_probe PRIVATE compact_${mode} compact_legacy)
+strict_c(compact_${mode}_selection_probe)
+add_test(NAME compact_${mode}_selections COMMAND compact_${mode}_selection_probe)
+set_tests_properties(compact_${mode}_selections PROPERTIES TIMEOUT 180)
+foreach(boundary IN ITEMS concat repeat-overflow repeat-limit part-limit stream-zero
+    plan-zero plan-indexed-zero plan-step-zero plan-invalid plan-storage plan-source plan-set array-shape)
+  add_test(NAME compact_${mode}_selection_reject_${boundary} COMMAND "${CMAKE_COMMAND}"
+    "-DPROBE=$<TARGET_FILE:compact_${mode}_selection_probe>" "-DMODE=${boundary}"
+    "-DEXPECTED=compact value fatal" -P "${CMAKE_CURRENT_SOURCE_DIR}/expect_failure.cmake")
+endforeach()
+if(UNIX AND NOT APPLE)
+  add_executable(compact_${mode}_selection_allocations compact_selection_allocations.c)
+  target_link_libraries(compact_${mode}_selection_allocations PRIVATE compact_${mode})
+  target_link_options(compact_${mode}_selection_allocations PRIVATE
+    -Wl,--wrap=malloc -Wl,--wrap=calloc -Wl,--wrap=realloc)
+  strict_c(compact_${mode}_selection_allocations)
+  add_test(NAME compact_${mode}_selection_allocations COMMAND compact_${mode}_selection_allocations)
+endif()
+add_executable(compact_${mode}_selection_benchmark compact_selection_benchmark.c)
+target_link_libraries(compact_${mode}_selection_benchmark PRIVATE compact_${mode} compact_legacy)
+strict_c(compact_${mode}_selection_benchmark)
+add_test(NAME compact_${mode}_selection_benchmark_smoke COMMAND compact_${mode}_selection_benchmark --smoke)
+add_executable(compact_${mode}_selection_facade compact_selection_facade.c)
+target_link_libraries(compact_${mode}_selection_facade PRIVATE compact_${mode})
+strict_c(compact_${mode}_selection_facade)
+add_test(NAME compact_${mode}_selection_facade COMMAND compact_${mode}_selection_facade)

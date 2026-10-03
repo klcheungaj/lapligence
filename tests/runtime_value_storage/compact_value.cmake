@@ -3,7 +3,9 @@ set(LLG_GMP_ROOT "" CACHE PATH "Optional GMP installation prefix for compact ker
 if(LLG_STORAGE_TEST_COMPACT)
   find_package(Python3 REQUIRED COMPONENTS Interpreter)
   set(compact_sources "${LLG_RT}/value_gmp/storage.c" "${LLG_RT}/value_gmp/logic.c"
-      "${LLG_RT}/value_gmp/arithmetic.c" "${LLG_RT}/value_gmp/kernels.c")
+      "${LLG_RT}/value_gmp/arithmetic.c" "${LLG_RT}/value_gmp/kernels.c"
+      "${LLG_RT}/value_gmp/selections.c" "${LLG_RT}/value_gmp/references.c"
+      "${LLG_RT}/value_gmp/assembly.c")
   add_library(compact_legacy STATIC "${LLG_RT}/llg_value.c")
   target_include_directories(compact_legacy PUBLIC "${LLG_RT}")
   strict_c(compact_legacy)
@@ -35,6 +37,7 @@ if(LLG_STORAGE_TEST_COMPACT)
       target_compile_definitions(compact_${mode} PRIVATE LLG_SV4_GMP_KERNELS=0)
     endif()
     strict_c(compact_${mode})
+    include("${CMAKE_CURRENT_SOURCE_DIR}/compact_selection.cmake")
     add_executable(compact_${mode}_probe compact_probe.c)
     target_link_libraries(compact_${mode}_probe PRIVATE compact_${mode} compact_legacy)
     strict_c(compact_${mode}_probe)
