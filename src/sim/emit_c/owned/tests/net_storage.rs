@@ -278,6 +278,9 @@ fn contribution_model(count: usize, delayed: bool) -> IrModel {
 fn many_electrical_contributions_have_constant_executable_work_shape() {
     for count in [4, 41, 100] {
         let source = render(contribution_model(count, false));
+        assert!(source.contains("uint32_t cast_width; uint8_t cast_signed;"));
+        assert_eq!(source.matches("].cast_width").count(), 1);
+        assert_eq!(source.matches("].cast_signed").count(), 1);
         assert_eq!(
             source
                 .matches("static const llg_net_drive_row_t llg_net_rows_")
@@ -300,6 +303,9 @@ fn many_electrical_contributions_have_constant_executable_work_shape() {
 #[test]
 fn delayed_electrical_contributions_keep_one_inertial_handle_per_row() {
     let source = render(contribution_model(41, true));
+    assert!(source.contains("uint32_t cast_width; uint8_t cast_signed;"));
+    assert_eq!(source.matches("].cast_width").count(), 1);
+    assert_eq!(source.matches("].cast_signed").count(), 1);
     assert_eq!(source.matches("llg_inertial_net(").count(), 1);
     assert!(source.contains("[41] = {0};"));
     assert!(source.contains("2ULL, 3ULL, 4ULL"));

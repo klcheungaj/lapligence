@@ -14,7 +14,7 @@ pub(super) fn collect(
         .flatten()
         .any(|artifact| !artifact.net_batches.is_empty())
     {
-        tables.declarations.push_str("typedef struct { llg_net_t* net; int slot; int64_t left, right; uint32_t width; uint8_t is_signed; } llg_net_drive_row_t;\n");
+        tables.declarations.push_str("typedef struct { llg_net_t* net; int slot; int64_t left, right; uint32_t cast_width; uint8_t cast_signed; } llg_net_drive_row_t;\n");
     }
     for artifact in processes.iter().flatten() {
         for batch in &artifact.net_batches {
@@ -29,8 +29,8 @@ pub(super) fn collect(
                     row.slot,
                     row.left,
                     row.right,
-                    row.width,
-                    u8::from(row.signed)
+                    row.cast_width,
+                    u8::from(row.cast_signed)
                 ));
             }
             tables.declarations.push_str("};\n");

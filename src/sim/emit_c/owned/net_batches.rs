@@ -14,8 +14,8 @@ pub(in crate::sim::emit_c) struct NetRow {
     pub slot: usize,
     pub left: i64,
     pub right: i64,
-    pub width: u32,
-    pub signed: bool,
+    pub cast_width: u32,
+    pub cast_signed: bool,
 }
 
 struct Contribution<'a> {
@@ -61,8 +61,8 @@ impl Frame<'_, '_> {
                 slot,
                 left: *left,
                 right: *right,
-                width: target.ty.width(),
-                signed: target.ty.signed(),
+                cast_width: target.ty.width(),
+                cast_signed: target.ty.signed(),
             },
         })
     }
@@ -118,7 +118,10 @@ impl Frame<'_, '_> {
             false,
         );
         let converted = self.value(
-            format!("sv4_cast({}, {row}.width, {row}.is_signed)", selected.code),
+            format!(
+                "sv4_cast({}, {row}.cast_width, {row}.cast_signed)",
+                selected.code
+            ),
             1,
             false,
         );
