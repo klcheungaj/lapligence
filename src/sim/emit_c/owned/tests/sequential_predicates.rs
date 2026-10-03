@@ -36,7 +36,7 @@ fn sequential_predicate_emission_guards_every_clause_and_releases_owners() {
     frame.discard(result);
     let body = frame.body();
     assert_eq!(body.matches("if (sv4_to_bool(").count(), 3);
-    assert_eq!(body.matches("sv4_reduce_or(").count(), 3);
+    assert_eq!(body.matches("sv4_reduce_or_to(").count(), 3);
     assert_eq!(body.matches("f_increment(").count(), 1);
     let guards: Vec<_> = body
         .match_indices("if (sv4_to_bool(")
@@ -48,7 +48,7 @@ fn sequential_predicate_emission_guards_every_clause_and_releases_owners() {
         "call must stay inside its clause guard"
     );
     assert!(body.matches("sv4_move(").count() >= 3);
-    assert!(!body.contains("sv4_logand("));
+    assert!(!body.contains("sv4_logand_to("));
     assert!(!body.contains("({"));
     assert!(frame.slots.iter().all(|live| !live));
 }
@@ -74,8 +74,8 @@ fn sequential_predicate_emission_normalizes_real_truth_without_rounding() {
     frame.discard(result);
     let body = frame.body();
     assert!(body.contains("llg_real_to_bool("));
-    assert!(!body.contains("sv4_from_real("));
-    assert_eq!(body.matches("sv4_reduce_or(").count(), 1);
+    assert!(!body.contains("sv4_from_real_to("));
+    assert_eq!(body.matches("sv4_reduce_or_to(").count(), 1);
     assert!(frame.slots.iter().all(|live| !live));
 }
 

@@ -477,7 +477,7 @@ endmodule
     );
 
     let plain = &c[c
-        .find("static sv4_t fn_tb_plain_finish(sv4_t a0, int depth) {")
+        .find("static void fn_tb_plain_finish(const sv4_t* a0, int depth, sv4_t* _llg_result) {")
         .unwrap()..];
     let plain = &plain[..plain.find("\n}\n").unwrap()];
     assert!(plain.contains("llg_rt_finish_with_level("), "{plain}");
@@ -519,7 +519,7 @@ endmodule
     );
 
     let plain = &c[c
-        .find("static sv4_t fn_tb_plain_loop(sv4_t a0, int depth) {")
+        .find("static void fn_tb_plain_loop(const sv4_t* a0, int depth, sv4_t* _llg_result) {")
         .unwrap()..];
     let plain = &plain[..plain.find("\n}\n").unwrap()];
     assert!(

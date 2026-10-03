@@ -60,11 +60,11 @@ fn array_conditional_assignment_import_keeps_direct_module_rhs() {
     for options in [OptConfig::none(), OptConfig::default()] {
         let model = codegen::generate_from_db_with_opts(&database, &options)
             .expect("direct module array conditional lowers after snapshot drop");
-        assert!(model.model_c.contains("sv4_array_conditional_merge("));
+        assert!(model.model_c.contains("sv4_array_conditional_merge_to("));
         // The owned emitter replaces IR-local names with scope slots. Exact
         // snapshot / one-evaluation behavior is covered by the CLI effects,
         // overlap and NBA cases, not by spelling a lowerer-private local name.
-        assert!(model.model_c.contains("sv4_part_select("));
+        assert!(model.model_c.contains("sv4_part_select_to("));
     }
 }
 

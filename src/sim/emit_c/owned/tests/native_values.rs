@@ -141,8 +141,8 @@ fn container_read_keeps_index_owner_until_after_runtime_call() {
     let result = frame.expression(&expression).unwrap();
     frame.discard(result);
     let source = frame.body();
-    assert!(source.contains("llg_dyn_get(&G_values, _llg_t["));
-    assert!(source.find("llg_dyn_get(").unwrap() < source.find("sv4_destroy(").unwrap());
+    assert!(source.contains(", &G_values, &_llg_t["));
+    assert!(source.find("llg_dyn_get_to(").unwrap() < source.find("sv4_destroy(").unwrap());
     assert!(frame.slots.iter().all(|used| !used));
 }
 
@@ -229,7 +229,7 @@ fn enum_navigation_releases_receiver_members_step_and_result() {
     );
     let result = frame.expression(&expression).unwrap();
     frame.discard(result);
-    assert!(frame.body().contains("sv4_enum_navigate(_llg_t["));
+    assert!(frame.body().contains("sv4_enum_navigate_to(&_llg_t["));
     assert!(frame.slots.iter().all(|used| !used));
 }
 

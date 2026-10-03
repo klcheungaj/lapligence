@@ -2,8 +2,9 @@
 
 use super::*;
 
-/// The C parameter list of a lowered function: outputs first (`o{formal
-/// idx}`), then inputs (`a{formal idx}`), then the recursion depth.
+/// The C parameter list of a lowered non-coroutine function: outputs first
+/// (`o{formal idx}`), then inputs (`a{formal idx}`), the recursion depth and,
+/// for a packed result, the caller's destination `_llg_result`.
 pub(super) fn func_params(f: &IrFunc) -> String {
     func_param_fields(f)
         .into_iter()
@@ -12,7 +13,46 @@ pub(super) fn func_params(f: &IrFunc) -> String {
         .join(", ")
 }
 
+/// Whether a function returns a packed value through `_llg_result`.
+///
+/// A returned `sv4_t` travels through a caller stack temporary at every call
+/// site on all supported ABIs, so non-coroutine functions write their packed
+/// result into an initialized caller-owned destination instead, and borrow
+/// packed inputs by address (see `emit_c::destinations`).
+pub(super) fn packed_result(f: &IrFunc) -> bool {
+    !f.ret_string && !f.ret_chandle && matches!(f.ret, Some(IrType::Packed { .. }))
+}
+
+/// Typed C parameters of a non-coroutine function; see [`func_params`].
 pub(super) fn func_param_fields(f: &IrFunc) -> Vec<(String, String)> {
+    let mut params = frame_param_fields(f)
+        .into_iter()
+        .map(|(ty, name)| {
+            if ty == "sv4_t" {
+                ("const sv4_t*".to_owned(), name)
+            } else {
+                (ty, name)
+            }
+        })
+        .collect::<Vec<_>>();
+    if packed_result(f) {
+        params.push(("sv4_t*".to_owned(), "_llg_result".to_owned()));
+    }
+    params
+}
+
+/// Argument names forwarding every parameter of [`func_params`] unchanged.
+pub(super) fn func_param_names(f: &IrFunc) -> String {
+    func_param_fields(f)
+        .into_iter()
+        .map(|(_, name)| name)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Coroutine argument fields stored in the callee frame by the caller. Packed
+/// inputs are descriptor borrows copied into the callee's own owners at entry.
+pub(super) fn frame_param_fields(f: &IrFunc) -> Vec<(String, String)> {
     let mut params = Vec::new();
     if f.receiver_class.is_some() {
         params.push(("void *".to_owned(), "_this".to_owned()));
@@ -98,8 +138,6 @@ pub(super) fn func_prototype(f: &IrFunc) -> Result<String, String> {
         "void *"
     } else if matches!(f.ret, Some(IrType::Real { .. })) {
         "double"
-    } else if f.ret.is_some() {
-        "sv4_t"
     } else {
         "void"
     };

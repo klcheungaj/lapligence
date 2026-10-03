@@ -13,3 +13,4 @@
 #include "container/associative_arrays.c"
 #include "container/associative_values.c"
 #include "container/associative_value_queries.c"
+#include "container/destinations.c"

@@ -11,6 +11,7 @@ convert into legacy descriptors as a fallback.
 | `SV4_EMPTY`, `SV4_INIT`, `SV4_C`, `SV4_S`, `SV4_X`, `SV4_Z`, `LLG_MASK` | Public aliases in `backend.h`; runtime constructors remain source-compatible. Additional `SV4_LITERAL` supports static initialization at <=64 bits. |
 | Storage, constructors, resize/cast, two-state, arithmetic/logic/equality, relations, div/mod/pow/clog2 | G1 header and storage/logic/arithmetic/kernel units |
 | EMIT-1 `sv4_add_into`, `sv4_sub_into`, `sv4_mul_into` | Inline small paths in `backend.h`, matching-width reuse in `arithmetic.c`; exact aliases, X/Z fill, sign/width parity and canonical B transitions implemented. |
+| `sv4_<op>_to` destination forms (`value/destinations.h`) | Backend-neutral `value/destinations.c`, appended to the compact `llg_value.c`; compact link names are prefixed `llg_gmp_sv4_<op>_to` with public aliases. |
 | Shifts, reductions, countones/onehot, wildcard/case modes, membership, logical implication/equivalence | `backend.h`, `shifts_reductions.c`, `comparison_membership.c`; inline small paths and direct word kernels |
 | Selection functions and plans | `selection_inline.h`, `selections.c`; clipped coordinate plans, alias snapshots and word range copies |
 | Stream/unstream, concat/repeat, array conditional | `selection_inline.h`, `assembly.c`; independent unsigned owners |

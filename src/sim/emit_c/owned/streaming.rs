@@ -204,7 +204,14 @@ impl Frame<'_, '_> {
                         "llg_stream_require_bits({cursor}, {segment_width});"
                     ));
                     let piece = self.reserve(width, false);
-                    self.line(format!("if ({segment_width}) sv4_replace(&{}, sv4_part_select({}, {cursor} - 1, {cursor} - {segment_width}));", piece.code, value.code));
+                    let select = crate::sim::emit_c::destinations::assign(
+                        &format!("&{}", piece.code),
+                        &format!(
+                            "sv4_part_select({}, {cursor} - 1, {cursor} - {segment_width})",
+                            value.code
+                        ),
+                    );
+                    self.line(format!("if ({segment_width}) {select}"));
                     self.line(format!("{cursor} -= {segment_width};"));
                     let function = match container.kind {
                         IrContainerKind::Dynamic => "llg_dyn_unstream_assign",
@@ -261,10 +268,14 @@ impl Frame<'_, '_> {
                         "llg_stream_require_bits({cursor}, {segment_width});"
                     ));
                     let segment = self.reserve(crate::sim::emit_c::LLG_MAX_WIDTH, false);
-                    self.line(format!(
-                        "if ({segment_width}) sv4_replace(&{}, sv4_part_select({}, {cursor} - 1, {cursor} - {segment_width}));",
-                        segment.code, value.code
-                    ));
+                    let select = crate::sim::emit_c::destinations::assign(
+                        &format!("&{}", segment.code),
+                        &format!(
+                            "sv4_part_select({}, {cursor} - 1, {cursor} - {segment_width})",
+                            value.code
+                        ),
+                    );
+                    self.line(format!("if ({segment_width}) {select}"));
                     self.line(format!("{cursor} -= {segment_width};"));
                     writes.push(Write::FixedSelector {
                         array: array_index,

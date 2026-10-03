@@ -767,8 +767,14 @@ impl<'a, 'm> Frame<'a, 'm> {
             };
         }
         let value = self.reserve(width, signed);
-        self.line(format!("sv4_replace(&{}, {code});", value.code));
+        self.assign(&format!("&{}", value.code), &code);
         value
+    }
+    /// Replace the initialized packed owner at `destination` (an address
+    /// expression) with `producer`'s fresh result, in destination-passing
+    /// form when the producer has one (see `emit_c::destinations`).
+    fn assign(&mut self, destination: &str, producer: &str) {
+        self.line(super::destinations::assign(destination, producer));
     }
     fn discard(&mut self, value: Value) {
         if let Some(slot) = value.slot {
@@ -780,7 +786,7 @@ impl<'a, 'm> Frame<'a, 'm> {
     }
     fn replace(&mut self, mut value: Value, code: String, width: u32, signed: bool) -> Value {
         if value.slot.is_some() && width != 0 {
-            self.line(format!("sv4_replace(&{}, {code});", value.code));
+            self.assign(&format!("&{}", value.code), &code);
             value.width = width;
             value.signed = signed;
             value.fill = None;
@@ -970,10 +976,10 @@ impl<'a, 'm> Frame<'a, 'm> {
         };
         // Make the default visible to self-referential initializers.
         if width != 0 {
-            self.line(format!(
-                "sv4_replace({address}, {});",
-                super::expressions::packed_default(width, signed, two_state)
-            ));
+            self.assign(
+                &address,
+                &super::expressions::packed_default(width, signed, two_state),
+            );
         }
         self.bindings
             .last_mut()

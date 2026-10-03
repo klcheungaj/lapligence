@@ -137,11 +137,18 @@ context fill. Two-state coercion remains explicit. VPI callback results first
 normalize to their declared HDL width/sign: registration
 may choose a different runtime shape, and the call arguments specify fallbacks.
 Reuse an owned operand's descriptor for a fresh result, choosing the later owner
-when the earlier operand is borrowed. Add/sub/mul use the additive `sv4_*_into`
-contract; other operations
-install their independent return with `sv4_replace`. Runtime arithmetic may reuse
-same-width payloads; multiply must preserve aliased inputs until completion.
-No HDL destination is mutated before scheduler publication.
+when the earlier operand is borrowed. Install every packed or string result
+through `emit_c::destinations` (`Frame::assign`, `assign_string`, `move_string`):
+it renders the runtime's destination form `op_to(&dst, &a, &b, ...)`, so neither
+a returned descriptor nor a by-value operand needs a per-call-site stack
+temporary, and a generated frame does not grow with its body length
+(`tests/sim_stack_bounds.rs`). Register a new value-returning runtime call there
+together with its `_to` declaration; unregistered producers fall back to
+`sv4_replace`. Non-coroutine functions return packed results through a trailing
+`sv4_t* _llg_result` and borrow packed inputs as `const sv4_t*`. Wide constant
+limbs used by startup code live in file-scope tables, not compound literals.
+Runtime arithmetic may reuse same-width payloads; multiply must preserve aliased
+inputs until completion. No HDL destination is mutated before scheduler publication.
 
 Each model's `PackedConstants` registry deduplicates canonical packed constructors
 by width, signedness and all three planes, including expanded fills. Procedures

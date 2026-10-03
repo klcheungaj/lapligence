@@ -450,10 +450,13 @@ impl<'a, 'm> Frame<'a, 'm> {
             let width = step.selection.width;
             let selected = self.value(format!("sv4_x({width}, 0)"), width, false);
             self.line(format!("if ({valid}) {{"));
-            self.line(format!(
-                "sv4_replace(&{}, sv4_idx_part_select_value({}, {}, {width}, 0));",
-                selected.code, current.code, index.code
-            ));
+            self.assign(
+                &format!("&{}", selected.code),
+                &format!(
+                    "sv4_idx_part_select_value({}, {}, {width}, 0)",
+                    current.code, index.code
+                ),
+            );
             self.line("}");
             self.discard(current);
             current = selected;

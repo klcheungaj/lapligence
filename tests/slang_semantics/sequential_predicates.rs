@@ -75,7 +75,7 @@ fn sequential_predicate_import_keeps_all_clauses_and_role_resolved_branches() {
     assert_eq!((statements, expressions), (1, 1));
     for options in [OptConfig::none(), OptConfig::default()] {
         let model = codegen::generate_from_db_with_opts(&db, &options).unwrap();
-        assert!(model.model_c.contains("sv4_reduce_or("));
+        assert!(model.model_c.contains("sv4_reduce_or_to("));
     }
 }
 
@@ -261,7 +261,7 @@ fn syn_024_import_retains_tagged_members_and_payload_patterns() {
     for options in [OptConfig::none(), OptConfig::default()] {
         let model = codegen::generate_from_db_with_opts(&db, &options)
             .expect("tagged patterns lower from owned metadata");
-        assert!(model.model_c.contains("sv4_case_eq("));
+        assert!(model.model_c.contains("sv4_case_eq_to("));
     }
 }
 
@@ -301,7 +301,7 @@ fn syn_025_pattern_case_is_owned_and_generates_in_both_modes() {
     for options in [OptConfig::none(), OptConfig::default()] {
         let model = codegen::generate_from_db_with_opts(&db, &options)
             .expect("pattern case lowers from owned metadata");
-        assert!(model.model_c.contains("sv4_case_eq("));
+        assert!(model.model_c.contains("sv4_case_eq_to("));
     }
 }
 
@@ -333,10 +333,10 @@ fn whole_fixed_bindings_and_tag_modes_lower_after_native_teardown() {
         for options in [OptConfig::none(), OptConfig::default()] {
             let model = codegen::generate_from_db_with_opts(&db, &options)
                 .expect("whole fixed patterns and match modes lower from owned data");
-            assert!(model.model_c.contains("sv4_clone("));
+            assert!(model.model_c.contains("sv4_copy("));
             if name.starts_with("n09") {
-                assert!(model.model_c.contains("sv4_casex_eq("));
-                assert!(model.model_c.contains("sv4_casez_eq("));
+                assert!(model.model_c.contains("sv4_casex_eq_to("));
+                assert!(model.model_c.contains("sv4_casez_eq_to("));
             }
         }
     }

@@ -80,14 +80,14 @@ fn repeated_mutation_evaluates_and_publishes_each_iteration() {
     assert_eq!(small_slots, large_slots);
     assert_eq!(small.lines().count(), large.lines().count());
     let start = small.find("for (").unwrap();
-    let read = small.find("sv4_clone(").unwrap();
+    let read = small.find("sv4_copy(").unwrap();
     let write = small.find("llg_ba(").unwrap();
-    let append = small.find("sv4_concat(").unwrap();
+    let append = small.find("sv4_concat_to(").unwrap();
     assert!(start < read && read < write && write < append);
     let (expanded, _) = render_count(REPEAT_VALUE_MIN_COUNT - 1);
     assert!(!expanded.contains("for ("));
     assert_eq!(
-        expanded.matches("sv4_concat(").count(),
+        expanded.matches("sv4_concat_to(").count(),
         REPEAT_VALUE_MIN_COUNT - 1
     );
 }
@@ -119,14 +119,14 @@ fn repeated_concat_body_and_slots_are_independent_of_count() {
     let (large, large_slots) = render_count(REPEAT_VALUE_MIN_COUNT * 8);
     assert_eq!(small.matches("for (").count(), 1);
     assert_eq!(large.matches("for (").count(), 1);
-    assert_eq!(small.matches("sv4_concat(").count(), 1);
-    assert_eq!(large.matches("sv4_concat(").count(), 1);
+    assert_eq!(small.matches("sv4_concat_to(").count(), 1);
+    assert_eq!(large.matches("sv4_concat_to(").count(), 1);
     assert_eq!(small_slots, large_slots);
     assert_eq!(small.lines().count(), large.lines().count());
     assert_eq!(small_slots, 2);
     let start = small.find("for (").unwrap();
-    let read = small[start..].find("sv4_replace(&_llg_t[1]").unwrap() + start;
-    let append = small.find("sv4_concat(").unwrap();
+    let read = small[start..].find("(&_llg_t[1], ").unwrap() + start;
+    let append = small.find("sv4_concat_to(").unwrap();
     let destroy = small.find("sv4_destroy(&_llg_t[1]").unwrap();
     let end = small.find("\n    }").unwrap();
     assert!(start < read && read < append && append < destroy && destroy < end);
@@ -138,9 +138,9 @@ fn repeated_concat_below_threshold_keeps_expanded_operations() {
     let (body, slots) = render(vec![number(0xa5, 8); count + 1]);
     assert!(!body.contains("for ("));
     let mut expected =
-        String::from("    sv4_replace(&_llg_t[0], SV4_INIT(165ULL, 0ULL, 0ULL, 8, 0));\n");
+        String::from("    sv4_from_masks_to(&_llg_t[0], 165ULL, 0ULL, 0ULL, 8, 0);\n");
     for _ in 0..count {
-        expected.push_str("    sv4_replace(&_llg_t[1], SV4_INIT(165ULL, 0ULL, 0ULL, 8, 0));\n    sv4_replace(&_llg_t[0], sv4_concat(_llg_t[0], _llg_t[1]));\n    sv4_destroy(&_llg_t[1]);\n");
+        expected.push_str("    sv4_from_masks_to(&_llg_t[1], 165ULL, 0ULL, 0ULL, 8, 0);\n    sv4_concat_to(&_llg_t[0], &_llg_t[0], &_llg_t[1]);\n    sv4_destroy(&_llg_t[1]);\n");
     }
     expected.push_str("    llg_sv4_set_signed(&_llg_t[0], 0);\n    sv4_destroy(&_llg_t[0]);\n");
     assert_eq!(body, expected);
@@ -192,14 +192,14 @@ fn repeated_array_conditional_keeps_branch_evaluation_inside_loop() {
     let (large, large_slots) = render_count(REPEAT_VALUE_MIN_COUNT * 8);
     assert_eq!(small_slots, large_slots);
     assert_eq!(small.lines().count(), large.lines().count());
-    assert_eq!(small.matches("sv4_array_conditional_merge(").count(), 1);
+    assert_eq!(small.matches("sv4_array_conditional_merge_to(").count(), 1);
     let start = small.find("for (").unwrap();
     assert!(start < small.find("if (").unwrap());
-    assert!(start < small.find("sv4_array_conditional_merge(").unwrap());
+    assert!(start < small.find("sv4_array_conditional_merge_to(").unwrap());
     let (expanded, _) = render_count(REPEAT_VALUE_MIN_COUNT - 1);
     assert!(!expanded.contains("for ("));
     assert_eq!(
-        expanded.matches("sv4_array_conditional_merge(").count(),
+        expanded.matches("sv4_array_conditional_merge_to(").count(),
         REPEAT_VALUE_MIN_COUNT - 1
     );
 }

@@ -46,7 +46,7 @@ impl Frame<'_, '_> {
             ));
             self.line("#endif");
         }
-        let fields = super::super::model::owned_func_param_fields(function);
+        let fields = super::super::model::owned_frame_param_fields(function);
         if fields.len() != parameters.len() {
             return Err("coroutine call argument layout mismatch".to_owned());
         }
@@ -144,6 +144,9 @@ impl Frame<'_, '_> {
         {
             self.line("llg_ref_scope_begin_owned();");
         }
+        // Coroutine frames hold argument descriptors; plain functions borrow
+        // packed inputs by address (see `model::functions::func_param_fields`).
+        let coroutine = self.coroutine_functions.contains(&f);
         let mut owners = Vec::new();
         let mut copyouts = Vec::new();
         let mut native_owners = Vec::new();
@@ -249,7 +252,11 @@ impl Frame<'_, '_> {
                                 automatic: true,
                             },
                         );
-                    parameters.push(value.code.clone());
+                    parameters.push(if coroutine || value.width == 0 {
+                        value.code.clone()
+                    } else {
+                        format!("&{}", value.code)
+                    });
                     owners.push(value);
                 }
                 IrCallArg::StringVal(expression) => {
@@ -289,7 +296,7 @@ impl Frame<'_, '_> {
                     let storage = if let Some(address) = storage_addr {
                         let storage = self.native_address(address, NativeKind::String)?;
                         self.line(format!(
-                            "llg_string_move({}, llg_string_clone({}));",
+                            "llg_string_assign({}, {});",
                             storage.address, temporary.address
                         ));
                         storage
@@ -382,7 +389,6 @@ impl Frame<'_, '_> {
         }
         parameters.push(depth.code().to_owned());
         let call_mark = self.cancellation_mark();
-        let coroutine = self.coroutine_functions.contains(&f);
         let result = if coroutine {
             self.coroutine_call(f, &function, &parameters)?;
             None
@@ -391,6 +397,14 @@ impl Frame<'_, '_> {
             let result = if let Some(value) = native_result {
                 self.line(format!("{} = {invocation};", value.code()));
                 Some(CallValue::Native(value))
+            } else if super::super::model::owned_packed_result(&function) {
+                // The callee replaces this initialized slot through its
+                // trailing `_llg_result` destination parameter.
+                let ty = function.ret.expect("packed result has a type");
+                let value = self.reserve(ty.width(), ty.signed());
+                parameters.push(format!("&{}", value.code));
+                self.line(format!("{callee}({});", parameters.join(", ")));
+                Some(CallValue::Numeric(value))
             } else if let Some(ty) = function.ret {
                 Some(CallValue::Numeric(self.value(
                     invocation,
@@ -431,7 +445,7 @@ impl Frame<'_, '_> {
         }
         for (target, storage) in string_copyouts {
             self.line(format!(
-                "llg_string_move({}, llg_string_clone({}));",
+                "llg_string_assign({}, {});",
                 target.address, storage.address
             ));
         }

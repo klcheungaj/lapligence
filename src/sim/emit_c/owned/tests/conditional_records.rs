@@ -87,10 +87,13 @@ fn cross_limb_structure_merge_owns_each_member_and_default() {
         let value = frame.expression(&expr).unwrap();
         frame.discard(value);
         assert_eq!(
-            frame.body().matches("sv4_array_conditional_merge(").count(),
+            frame
+                .body()
+                .matches("sv4_array_conditional_merge_to(")
+                .count(),
             3
         );
-        assert!(!frame.body().contains("sv4_mux("));
+        assert!(!frame.body().contains("sv4_mux_to("));
         assert!(frame.slots.iter().all(|live| !live));
     }
 }

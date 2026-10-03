@@ -31,7 +31,7 @@ fn pure_callback_inlines_owned_formals_without_native_writes() {
     frame.discard(value);
     assert!(frame.slots.iter().all(|used| !used));
     assert!(frame.formal_overrides.is_empty());
-    assert!(frame.body().contains("sv4_add_into("));
+    assert!(frame.body().contains("sv4_add_to("));
     assert!(!frame.body().contains("f_increment("));
     assert!(!frame.body().contains("llg_ba("));
 }
@@ -109,7 +109,7 @@ fn static_formal_copies_are_private_in_read_only_callbacks() {
     let value = frame.expression(&call).unwrap();
     frame.discard(value);
     assert!(!frame.body().contains("llg_ba(&G_value"));
-    assert!(frame.body().contains("sv4_add_into("));
+    assert!(frame.body().contains("sv4_add_to("));
 }
 
 #[test]
@@ -167,7 +167,7 @@ fn streaming_prepares_all_values_before_any_publication() {
     };
     let writes = frame.prepare_assignment(&lhs, rhs).unwrap();
     assert_eq!(writes.len(), 2);
-    assert_eq!(frame.body().matches("sv4_unstream(").count(), 1);
+    assert_eq!(frame.body().matches("sv4_unstream_to(").count(), 1);
     assert!(!frame.body().contains("llg_ba("));
     for (target, value) in writes {
         frame.store(&target, value, false, "0").unwrap();
@@ -295,7 +295,7 @@ fn sampled_expression_uses_snapshot_reads_then_restores_live_reads() {
     let value = frame.expression(&read).unwrap();
     frame.discard(value);
     assert!(frame.body().contains("llg_sampled_copy(&G_value,"));
-    assert!(frame.body().contains("sv4_clone(&G_value)"));
+    assert!(find_copy(frame.body(), "&G_value").is_some());
     assert!(frame.slots.iter().all(|used| !used));
 }
 
@@ -357,9 +357,9 @@ fn qualified_case_compares_candidates_before_running_selected_body() {
     frame
         .qualified_case(&number(1, 65), IrCaseKind::Exact, &items, &check)
         .unwrap();
-    assert_eq!(frame.body().matches("sv4_case_eq(").count(), 2);
+    assert_eq!(frame.body().matches("sv4_case_eq_to(").count(), 2);
     assert!(
-        frame.body().rfind("sv4_case_eq(").unwrap()
+        frame.body().rfind("sv4_case_eq_to(").unwrap()
             < frame.body().find("llg_unique_priority_check(").unwrap()
     );
     assert!(
@@ -419,11 +419,14 @@ fn vpi_arguments_are_borrowed_from_registered_owners() {
     frame.discard(value);
     assert!(frame.body().contains("llg_vpi_arg_t _llg_vpi_args_"));
     assert_eq!(
-        frame.body().matches("llg_vpi_call_function_site(").count(),
+        frame
+            .body()
+            .matches("llg_vpi_call_function_site_to(")
+            .count(),
         1
     );
     assert!(
-        frame.body().find("llg_vpi_call_function_site(").unwrap()
+        frame.body().find("llg_vpi_call_function_site_to(").unwrap()
             < frame.body().find("sv4_destroy(").unwrap()
     );
     assert!(frame.slots.iter().all(|used| !used));

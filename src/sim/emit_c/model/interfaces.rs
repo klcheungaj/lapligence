@@ -109,39 +109,14 @@ pub(super) fn function_return_type(function: &IrFunc) -> &'static str {
         "void *"
     } else if matches!(function.ret, Some(IrType::Real { .. })) {
         "double"
-    } else if function.ret.is_some() {
-        "sv4_t"
     } else {
+        // Packed results use the `_llg_result` destination parameter.
         "void"
     }
 }
 
 fn function_call_args(function: &IrFunc) -> String {
-    let mut args = Vec::new();
-    for (index, formal) in function
-        .formals
-        .iter()
-        .enumerate()
-        .filter(|(_, formal)| formal.is_address())
-    {
-        let _ = formal;
-        args.push(if function.formals[index].is_ref() {
-            format!("r{index}")
-        } else {
-            format!("o{index}")
-        });
-    }
-    for (index, formal) in function
-        .formals
-        .iter()
-        .enumerate()
-        .filter(|(_, formal)| !formal.is_address())
-    {
-        let _ = formal;
-        args.push(format!("a{index}"));
-    }
-    args.push("depth".to_owned());
-    args.join(", ")
+    super::functions::func_param_names(function)
 }
 
 pub(super) fn render_virtual_interface_call_prototypes(model: &IrModel, out: &mut String) {
@@ -168,7 +143,12 @@ pub(super) fn render_virtual_interface_call_bodies(model: &IrModel, out: &mut St
             };
             let ret_type = function_return_type(function);
             let call_args = function_call_args(function);
-            let failure_return = if ret_type == "void" {
+            let failure_return = if packed_result(function) {
+                format!(
+                    "{} return;",
+                    super::super::destinations::assign("_llg_result", &function.ret_x())
+                )
+            } else if ret_type == "void" {
                 "return;".to_owned()
             } else if function.ret_string {
                 "return llg_string_bytes(\"\", 0);".to_owned()

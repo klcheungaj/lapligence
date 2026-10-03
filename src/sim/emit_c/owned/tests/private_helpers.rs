@@ -122,7 +122,7 @@ fn callback_composite_writes_release_owners_without_publication() {
     let value = frame.expression(&call()).unwrap();
     frame.discard(value);
     let source = frame.body();
-    assert!(source.contains("sv4_part_select("));
+    assert!(source.contains("sv4_part_select_to("));
     assert!(
         source.contains("llg_unique_priority_check("),
         "do not erase qualified diagnostics"

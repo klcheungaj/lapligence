@@ -182,13 +182,13 @@ fn fixed_stream_index_owners_use_registered_slots_and_are_destroyed() {
     let source = frame.body();
     let mut indexes = 0;
     for (position, line) in source.lines().enumerate() {
-        if !line.contains("sv4_from_i64(llg_fixed_stream_index_at(") {
+        if !line.contains("sv4_from_i64_to(") || !line.contains("llg_fixed_stream_index_at(") {
             continue;
         }
         indexes += 1;
         let owner = line
             .trim()
-            .strip_prefix("sv4_replace(&")
+            .strip_prefix("sv4_from_i64_to(&")
             .unwrap()
             .split(',')
             .next()

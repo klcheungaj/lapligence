@@ -105,7 +105,7 @@ pub(in crate::sim::emit_c) fn coroutine_function(
         CoroutineId::Function(function_index),
         frame_upper_bounds,
     )?;
-    for (ty, name) in super::super::model::owned_func_param_fields(function) {
+    for (ty, name) in super::super::model::owned_frame_param_fields(function) {
         frame.frame_field(&ty, &name)?;
     }
     let (source, layout) = render_function(ctx, function, frame, true)?;
@@ -129,6 +129,8 @@ fn render_function(
         }
         return Ok((super::super::model::owned_dpi_thunk(function)?, None));
     }
+    // Non-coroutine packed results go to the caller's `_llg_result`.
+    let packed_result = !coroutine && super::super::model::owned_packed_result(function);
     let return_type = if coroutine {
         "llg_co_status_t"
     } else if function.ret_string {
@@ -137,9 +139,8 @@ fn render_function(
         "void*"
     } else {
         match function.ret {
-            None => "void",
             Some(IrType::Real { .. }) => "double",
-            _ => "sv4_t",
+            _ => "void",
         }
     };
     frame.cancellation_return = true;
@@ -296,8 +297,11 @@ fn render_function(
                 binding.address,
                 round_shortreal(name, formal.shortreal)
             ));
-        } else {
+        } else if coroutine {
             frame.line(format!("sv4_copy({}, &{name});", binding.address));
+        } else {
+            // Plain functions borrow packed inputs by address.
+            frame.line(format!("sv4_copy({}, {name});", binding.address));
         }
     }
     frame.block(&function.body)?;
@@ -347,16 +351,15 @@ fn render_function(
                     matches!(ty, IrType::Real { shortreal: true })
                 )
             ));
+            frame.line("llg_value_scopes_end_since(_llg_frame_base);");
+            frame.line("return _llg_returned;");
         } else {
-            // A queued selected NBA may still retain this return cell. Clone
-            // instead of emptying its payload before that NBA commits.
-            frame.line(format!(
-                "sv4_t _llg_returned = sv4_clone({});",
-                binding.address
-            ));
+            // A queued selected NBA may still retain this return cell. Copy
+            // instead of moving its payload before that NBA commits.
+            frame.line(format!("sv4_copy(_llg_result, {});", binding.address));
+            frame.line("llg_value_scopes_end_since(_llg_frame_base);");
+            frame.line("return;");
         }
-        frame.line("llg_value_scopes_end_since(_llg_frame_base);");
-        frame.line("return _llg_returned;");
     } else {
         frame.line("llg_value_scopes_end_since(_llg_frame_base);");
         frame.line("return;");
@@ -367,6 +370,11 @@ fn render_function(
         "return (llg_string_t){0};".to_owned()
     } else if function.ret_chandle {
         "return NULL;".to_owned()
+    } else if packed_result {
+        format!(
+            "{} return;",
+            super::super::destinations::assign("_llg_result", &function.ret_x())
+        )
     } else if function.ret.is_some() {
         format!("return {};", function.ret_x())
     } else {

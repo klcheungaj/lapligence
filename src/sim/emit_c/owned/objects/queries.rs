@@ -147,7 +147,14 @@ impl Frame<'_, '_> {
                         Low | High => {
                             let key = self.query_integer(0, width, signed);
                             let function = if query.kind == Low { "first" } else { "last" };
-                            self.line(format!("if (!{prefix}{generic}_{function}_integral(&{name}, &{})) sv4_replace(&{}, sv4_x({width}, {}));", key.code, key.code, u8::from(signed)));
+                            let reset = crate::sim::emit_c::destinations::assign(
+                                &format!("&{}", key.code),
+                                &format!("sv4_x({width}, {})", u8::from(signed)),
+                            );
+                            self.line(format!(
+                                "if (!{prefix}{generic}_{function}_integral(&{name}, &{})) {reset}",
+                                key.code
+                            ));
                             key
                         }
                         Increment => unreachable!("handled above"),

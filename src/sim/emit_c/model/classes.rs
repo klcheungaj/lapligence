@@ -97,24 +97,7 @@ fn virtual_slots(model: &IrModel) -> Vec<(usize, usize)> {
 }
 
 fn virtual_call_args(f: &IrFunc) -> String {
-    let mut args = Vec::new();
-    if f.receiver_class.is_some() {
-        args.push("_this".to_owned());
-    }
-    for (index, formal) in f.formals.iter().enumerate() {
-        if formal.is_ref() {
-            args.push(format!("r{index}"));
-        } else if formal.is_out {
-            args.push(format!("o{index}"));
-        }
-    }
-    for (index, formal) in f.formals.iter().enumerate() {
-        if !formal.is_address() {
-            args.push(format!("a{index}"));
-        }
-    }
-    args.push("depth".to_owned());
-    args.join(", ")
+    super::functions::func_param_names(f)
 }
 
 fn virtual_impl_for_class(model: &IrModel, class: usize, slot: usize) -> Option<usize> {
@@ -172,7 +155,12 @@ pub(super) fn render_virtual_dispatch_bodies(model: &IrModel, out: &mut String) 
             }
         }
         out.push_str("    default: fprintf(stderr, \"llg: invalid class type in virtual call\\n\"); llg_rt_mark_failed(); llg_rt_fatal_typed(0, \"invalid virtual class call\", NULL, 0, \"\", \"class dispatch\");\n");
-        if ret == "void" {
+        if packed_result(f) {
+            out.push_str(&format!(
+                "    {} return;\n",
+                super::super::destinations::assign("_llg_result", &f.ret_x())
+            ));
+        } else if ret == "void" {
             out.push_str("    return;\n");
         } else if f.ret_string {
             out.push_str("    return llg_string_bytes(\"\", 0);\n");

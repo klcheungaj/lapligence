@@ -335,10 +335,10 @@ impl Frame<'_, '_> {
                     count.width,
                     false,
                 );
-                self.line(format!(
-                    "sv4_replace(&{}, sv4_sub({}, {}));",
-                    count.code, count.code, one.code
-                ));
+                self.assign(
+                    &format!("&{}", count.code),
+                    &format!("sv4_sub({}, {})", count.code, one.code),
+                );
                 self.discard(one);
                 self.line("}");
                 self.discard(count);

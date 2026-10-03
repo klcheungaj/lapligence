@@ -21,9 +21,9 @@ fn pure_operands_borrow_and_reuse_the_arithmetic_result() {
         .expression(&add(add(read(), number(3, 65), 65), read(), 65))
         .unwrap();
     frame.discard(value);
-    assert!(!frame.body().contains("sv4_clone"));
+    assert!(!frame.body().contains("sv4_copy("));
     assert!(!frame.body().contains("sv4_cast"));
-    assert_eq!(frame.body().matches("sv4_add_into").count(), 2);
+    assert_eq!(frame.body().matches("sv4_add_to(").count(), 2);
     assert_eq!(frame.slots.len(), 1);
     assert_eq!(constants.lifecycle().matches("sv4_from_limbs").count(), 1);
 }
@@ -78,7 +78,7 @@ fn same_shape_resize_operand_borrows_but_retained_expression_owns() {
     let owner = frame.expression(&resize).unwrap();
     assert!(owner.slot.is_some());
     frame.discard(owner);
-    assert!(frame.body().contains("sv4_clone"));
+    assert!(frame.body().contains("sv4_copy("));
     assert!(!frame.body().contains("sv4_resize"));
 }
 
@@ -110,8 +110,7 @@ fn calls_snapshot_earlier_operands_including_output_calls() {
     let value = frame.expression(&add(read(), call, 65)).unwrap();
     frame.discard(value);
     assert!(
-        frame.body().find("sv4_clone(&G_value)").unwrap()
-            < frame.body().find("f_increment(").unwrap()
+        find_copy(frame.body(), "&G_value").unwrap() < frame.body().find("f_increment(").unwrap()
     );
 }
 
@@ -146,8 +145,7 @@ fn selected_assignment_snapshots_rhs_before_calling_selector() {
         })
         .unwrap();
     assert!(
-        frame.body().find("sv4_clone(&G_value)").unwrap()
-            < frame.body().find("f_increment(").unwrap()
+        find_copy(frame.body(), "&G_value").unwrap() < frame.body().find("f_increment(").unwrap()
     );
 }
 
@@ -211,7 +209,7 @@ fn retained_reads_stay_in_frame_storage_across_suspension() {
     ];
     let execution = ExecutionModel::lower(model).unwrap();
     let source = super::super::super::model::render(&execution).unwrap();
-    assert!(source.contains("sv4_clone(&G_value)"));
+    assert!(find_copy(&source, "&G_value").is_some());
     assert!(source.contains("LLG_CO_AWAIT"));
     assert!(source.contains("sv4_move("));
 }
@@ -245,7 +243,7 @@ fn mutating_later_operand_snapshots_the_earlier_read() {
     let value = frame.expression(&add(read(), mutation, 65)).unwrap();
     frame.discard(value);
     assert!(
-        frame.body().find("sv4_clone(&G_value)").unwrap()
+        find_copy(frame.body(), "&G_value").unwrap()
             < frame.body().find("llg_ba(&G_value").unwrap()
     );
 }
@@ -300,7 +298,7 @@ fn suspending_call_keeps_its_input_snapshot_in_the_frame() {
     ))];
     let source =
         super::super::super::model::render(&ExecutionModel::lower(model).unwrap()).unwrap();
-    let read = source.find("sv4_clone(&G_value)").unwrap();
+    let read = find_copy(&source, "&G_value").unwrap();
     let suspend = source[read..].find("LLG_CO_CALL(").unwrap() + read;
     assert!(read < suspend);
     assert!(source.contains("sv4_t* _llg_t;"));
@@ -329,8 +327,10 @@ fn unary_borrows_and_mismatched_resize_still_converts() {
     );
     let value = frame.expression(&unary).unwrap();
     frame.discard(value);
-    assert!(frame.body().contains("sv4_bitneg(G_value)"));
-    assert!(!frame.body().contains("sv4_clone"));
+    assert!(frame
+        .body()
+        .contains("sv4_bitneg_to(&_llg_t[0], &G_value);"));
+    assert!(!frame.body().contains("sv4_copy("));
     for (width, signed) in [(64, false), (65, true)] {
         let resize = IrExpr::new(
             IrExprKind::Resize {
@@ -365,8 +365,8 @@ fn borrowed_local_materializes_using_its_registered_address() {
     let value = frame.operand(&read).unwrap();
     assert!(value.slot.is_none());
     let value = frame.own(value);
-    assert!(frame.body().contains(&format!("sv4_clone({address})")));
-    assert!(!frame.body().contains("sv4_clone(&(*"));
+    assert!(find_copy(frame.body(), &address).is_some());
+    assert!(!frame.body().contains("&(*"));
     frame.discard(value);
 }
 
@@ -418,7 +418,7 @@ fn pure_short_circuit_and_mux_selectors_borrow_without_changing_branches() {
     );
     let value = frame.expression(&logical).unwrap();
     frame.discard(value);
-    assert!(!frame.body().contains("sv4_clone"));
+    assert!(!frame.body().contains("sv4_copy("));
     assert!(frame.body().contains("} else {"));
     let mux = IrExpr::new(
         IrExprKind::Mux {
@@ -432,9 +432,9 @@ fn pure_short_circuit_and_mux_selectors_borrow_without_changing_branches() {
     );
     let value = frame.expression(&mux).unwrap();
     frame.discard(value);
-    assert!(!frame.body().contains("sv4_clone(&G_value)"));
-    assert!(frame.body().contains("sv4_mux(G_value,"));
-    assert!(!frame.body().contains("sv4_resize("));
+    assert!(find_copy(frame.body(), "&G_value").is_none());
+    assert!(frame.body().contains("sv4_mux_to(&_llg_t[0], &G_value,"));
+    assert!(!frame.body().contains("sv4_resize_to("));
 }
 
 #[test]
@@ -467,7 +467,7 @@ fn mux_arms_keep_width_and_sign_conversions_and_pool_expanded_fills() {
     );
     let value = frame.expression(&mux).unwrap();
     frame.discard(value);
-    assert_eq!(frame.body().matches("sv4_resize(").count(), 4);
+    assert_eq!(frame.body().matches("sv4_resize_to(").count(), 4);
     let fill = IrExpr::new(IrExprKind::Fill(2), 1, false, Some(2));
     let mux = IrExpr::new(
         IrExprKind::Mux {
@@ -481,7 +481,7 @@ fn mux_arms_keep_width_and_sign_conversions_and_pool_expanded_fills() {
     );
     let value = frame.expression(&mux).unwrap();
     frame.discard(value);
-    assert!(!frame.body().contains("sv4_fill("));
+    assert!(!frame.body().contains("sv4_fill_to("));
     assert!(constants.lifecycle().contains("sv4_from_limbs"));
 }
 
@@ -500,7 +500,9 @@ fn owned_one_limb_literals_construct_directly_and_wide_literals_share_storage() 
     let mut frame = Frame::new(&ctx);
     let value = frame.expression(&number(3, 64)).unwrap();
     frame.discard(value);
-    assert!(frame.body().contains("SV4_INIT(3ULL, 0ULL, 0ULL, 64, 0)"));
+    assert!(frame
+        .body()
+        .contains("sv4_from_masks_to(&_llg_t[0], 3ULL, 0ULL, 0ULL, 64, 0);"));
     assert!(constants.operands().is_empty());
     let value = frame.operand(&number(3, 64)).unwrap();
     assert!(value.slot.is_some());
@@ -511,7 +513,7 @@ fn owned_one_limb_literals_construct_directly_and_wide_literals_share_storage() 
         frame.discard(value);
     }
     assert_eq!(constants.lifecycle().matches("sv4_from_limbs").count(), 1);
-    assert_eq!(frame.body().matches("sv4_clone(").count(), 2);
+    assert_eq!(frame.body().matches("sv4_copy(").count(), 2);
 }
 
 #[test]
@@ -533,10 +535,15 @@ fn vpi_results_normalize_unproven_runtime_shapes_before_elision() {
     let value = frame.convert(value, 5, false, false, false);
     frame.discard(value);
     assert_eq!(
-        frame.body().matches("llg_vpi_call_function_site(").count(),
+        frame
+            .body()
+            .matches("llg_vpi_call_function_site_to(")
+            .count(),
         1
     );
-    assert_eq!(frame.body().matches("sv4_cast(").count(), 1);
-    assert!(frame.body().contains("sv4_cast(_llg_t[0], 5, 0)"));
+    assert_eq!(frame.body().matches("sv4_cast_to(").count(), 1);
+    assert!(frame
+        .body()
+        .contains("sv4_cast_to(&_llg_t[0], &_llg_t[0], 5, 0);"));
     assert_eq!(frame.slots.len(), 1);
 }

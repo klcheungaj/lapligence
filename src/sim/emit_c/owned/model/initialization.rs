@@ -1,5 +1,7 @@
 //! Dynamic startup replaces static packed constructors. Cleanup is idempotent.
 use super::*;
+use crate::sim::emit_c::constants::hoist_const_limbs;
+use crate::sim::emit_c::destinations::assign;
 use std::collections::{HashMap, HashSet};
 
 /// Value representation shared by every object in one storage table.
@@ -58,7 +60,10 @@ impl StorageBlock {
                 for name in &names {
                     match kind {
                         StorageKind::Packed { .. } => {
-                            init.push_str(&format!("    sv4_replace(&{name}, {default});\n"));
+                            init.push_str(&format!(
+                                "    {}\n",
+                                assign(&format!("&{name}"), &default)
+                            ));
                             destroy.push_str(&format!("    sv4_destroy(&{name});\n"));
                         }
                         StorageKind::Real => init.push_str(&format!("    {name} = 0.0;\n")),
@@ -77,7 +82,8 @@ impl StorageBlock {
             match kind {
                 StorageKind::Packed { .. } => {
                     init.push_str(&format!(
-                        "    {each}\n        sv4_replace({table}[_llg_n], {default});\n"
+                        "    {each}\n        {}\n",
+                        assign(&format!("{table}[_llg_n]"), &default)
                     ));
                     destroy.push_str(&format!(
                         "    {each}\n        sv4_destroy({table}[_llg_n]);\n"
@@ -97,9 +103,20 @@ impl StorageBlock {
 struct StorageTables {
     source: String,
     count: usize,
+    constants: usize,
 }
 
 impl StorageTables {
+    /// Statement replacing `target` (a packed lvalue) with a fixed constant,
+    /// whose multi-limb payload is read from a file-scope table rather than
+    /// from compound literals in the startup function's frame.
+    fn fixed_default(&mut self, target: &str, value: &IrConst) -> String {
+        let name = format!("llg_default_{}", self.constants);
+        self.constants += 1;
+        let constructor = hoist_const_limbs(&emit_const(value), &name, &mut self.source);
+        format!("    {}\n", assign(&format!("&{target}"), &constructor))
+    }
+
     fn pointer_table(&mut self, element: &str, names: &[String]) -> String {
         let table = format!("llg_storage_{}", self.count);
         self.count += 1;
@@ -159,7 +176,7 @@ fn net_storage_lifecycle(
     tables.source.push_str("};\n");
     let each = table_loop("llg_net_storage");
     initialize.push_str(&format!(
-        "    {each} {{\n        llg_net_t* net = llg_net_storage[_llg_n].net;\n        for (int slot = 0; slot < net->n_drivers; ++slot)\n            sv4_replace(net->drivers[slot], sv4_fill(3, net->width, net->is_signed));\n        llg_net_index_reset(net);\n        sv4_replace(&net->resolved, sv4_fill(llg_net_storage[_llg_n].fill, net->width, net->is_signed));\n        net->n_aliases = 0;\n    }}\n"
+        "    {each} {{\n        llg_net_t* net = llg_net_storage[_llg_n].net;\n        for (int slot = 0; slot < net->n_drivers; ++slot)\n            sv4_fill_to(net->drivers[slot], 3, net->width, net->is_signed);\n        llg_net_index_reset(net);\n        sv4_fill_to(&net->resolved, llg_net_storage[_llg_n].fill, net->width, net->is_signed);\n        net->n_aliases = 0;\n    }}\n"
     ));
     destroy.push_str(&format!(
         "    {each} {{\n        llg_net_t* net = llg_net_storage[_llg_n].net;\n        for (int slot = 0; slot < net->n_drivers; ++slot)\n            sv4_destroy(net->drivers[slot]);\n        sv4_destroy(&net->resolved);\n        net->propagation = NULL;\n    }}\n"
@@ -202,11 +219,7 @@ pub(in crate::sim::emit_c) fn storage_lifecycle(
             signal.ty.two_state(),
         );
         if let Some(value) = &signal.fixed_default {
-            fixed_defaults.push_str(&format!(
-                "    sv4_replace(&{}, {});\n",
-                signal.c_name,
-                emit_const(value)
-            ));
+            fixed_defaults.push_str(&tables.fixed_default(&signal.c_name, value));
         }
     }
     block.flush(&mut tables, &mut initialize, &mut destroy);
@@ -259,10 +272,8 @@ pub(in crate::sim::emit_c) fn storage_lifecycle(
                     ty.two_state(),
                 );
                 if let Some(value) = &function.return_default {
-                    fixed_defaults.push_str(&format!(
-                        "    sv4_replace(&_llg_ret_{index}, {});\n",
-                        emit_const(value)
-                    ));
+                    fixed_defaults
+                        .push_str(&tables.fixed_default(&format!("_llg_ret_{index}"), value));
                 }
             }
         }
@@ -278,11 +289,7 @@ pub(in crate::sim::emit_c) fn storage_lifecycle(
                         local.two_state,
                     );
                     if let Some(value) = &local.fixed_default {
-                        fixed_defaults.push_str(&format!(
-                            "    sv4_replace(&{}, {});\n",
-                            local.c_name(),
-                            emit_const(value)
-                        ));
+                        fixed_defaults.push_str(&tables.fixed_default(local.c_name(), value));
                     }
                 }
             }
@@ -340,11 +347,7 @@ pub(in crate::sim::emit_c) fn storage_lifecycle(
             array.two_state,
         );
         if let Some(value) = &array.element_default {
-            initialize.push_str(&format!(
-                "    sv4_replace(&{}[_i], {});\n",
-                array.c_name,
-                emit_const(value)
-            ));
+            initialize.push_str(&tables.fixed_default(&format!("{}[_i]", array.c_name), value));
         }
         defaults(
             &mut initialize,
@@ -502,8 +505,11 @@ fn defaults(
         init.push_str(&format!("    {name} = 0.0;\n"));
     } else {
         init.push_str(&format!(
-            "    sv4_replace(&{name}, {});\n",
-            super::super::super::expressions::packed_default(width, signed, two_state)
+            "    {}\n",
+            assign(
+                &format!("&{name}"),
+                &super::super::super::expressions::packed_default(width, signed, two_state)
+            )
         ));
         destroy.push_str(&format!("    sv4_destroy(&{name});\n"));
     }
@@ -564,7 +570,7 @@ fn initialization_step(frame: &mut Frame<'_, '_>, step: &IrInitStep) -> Result<(
             if array.real {
                 frame.line(format!("{}[_i] = {value};", array.c_name));
             } else {
-                frame.line(format!("sv4_replace(&{}[_i], {value});", array.c_name));
+                frame.assign(&format!("&{}[_i]", array.c_name), &value);
             }
             frame.line("}");
             if !array.net_elements.is_empty() {
@@ -688,11 +694,11 @@ mod storage_table_tests {
             .source
             .contains("static double* const llg_storage_1[2] = {\n    &G_r, &G_s,\n};"));
         assert!(
-            init.contains("sv4_replace(llg_storage_0[_llg_n], sv4_x(8, 0));"),
+            init.contains("sv4_x_to(llg_storage_0[_llg_n], 8, 0);"),
             "{init}"
         );
         assert!(init.contains("*llg_storage_1[_llg_n] = 0.0;"), "{init}");
-        assert!(init.contains("sv4_replace(&G_wide, "), "{init}");
+        assert!(init.contains("(&G_wide, "), "{init}");
         assert!(
             destroy.contains("sv4_destroy(llg_storage_0[_llg_n]);"),
             "{destroy}"

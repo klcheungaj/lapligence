@@ -54,18 +54,14 @@ fn dpi_string_snapshots_precede_copyouts_and_preserve_borrowed_inputs() {
         });
         let c = render_dpi_thunk(&function).unwrap();
         let call = c.find("foreign_alias(").unwrap();
-        let first_copyout = c
-            .find("llg_string_move(o1, llg_string_take(_dpi_s1))")
-            .unwrap();
+        let first_copyout = c.find("llg_string_move_take(o1, _dpi_s1)").unwrap();
         for idx in 1..=3 {
             let declaration = format!("*_dpi_s{idx} = (_dpi_o{idx}) ?");
             assert_eq!(c.matches(declaration.as_str()).count(), 1, "{c}");
             let snapshot = c.find(declaration.as_str()).unwrap();
             assert!(call < snapshot && snapshot < first_copyout, "{c}");
         }
-        let last_copyout = c
-            .find("llg_string_move(o3, llg_string_take(_dpi_s3))")
-            .unwrap();
+        let last_copyout = c.find("llg_string_move_take(o3, _dpi_s3)").unwrap();
         let cleanup = c.find("llg_value_scopes_end_since(_dpi_mark)").unwrap();
         assert!(last_copyout < cleanup, "{c}");
         assert!(

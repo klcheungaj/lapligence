@@ -33,7 +33,7 @@ use storage::{render_signal_decls, render_static_local_decls};
 mod vpi;
 use vpi::{render_vpi_compile_calls, render_vpi_metadata};
 mod functions;
-use functions::{block_stmts_of, func_params, func_prototype};
+use functions::{block_stmts_of, func_params, func_prototype, packed_result};
 mod dpi;
 use dpi::{dpi_external_prototype, dpi_helpers, internal_return_type, render_dpi_thunk};
 mod processes;
@@ -51,6 +51,13 @@ pub(super) fn owned_func_params(function: &IrFunc) -> String {
 }
 pub(super) fn owned_func_param_fields(function: &IrFunc) -> Vec<(String, String)> {
     functions::func_param_fields(function)
+}
+/// Coroutine argument fields; see `functions::frame_param_fields`.
+pub(super) fn owned_frame_param_fields(function: &IrFunc) -> Vec<(String, String)> {
+    functions::frame_param_fields(function)
+}
+pub(super) fn owned_packed_result(function: &IrFunc) -> bool {
+    functions::packed_result(function)
 }
 pub(super) fn owned_dpi_thunk(function: &IrFunc) -> Result<String, String> {
     render_dpi_thunk(function)

@@ -7,6 +7,11 @@ suspension, cancellation and queued publication. See
 Contiguous packed copies use masked limb transfers across value/X/Z planes;
 selection clipping and alias snapshots preserve partial-range and overlap behavior.
 Reversed packed ranges retain bit-wise traversal.
+Every value-, string- or runtime-returning operation that generated code calls
+also has a destination form `X_to(dst, ...)` (`value/destinations.h`, and blocks
+at the end of `llg_rt.h`, `llg_container.h`, `llg_string.h`, `llg_vpi.h`) taking
+packed operands by address, so generated frames hold no per-call-site
+returned-descriptor temporaries; the returning forms remain for runtime code.
 Proven non-escaping locals register caller-owned scope nodes and cells in
 coroutine frames or frame-less functions' C scopes. Escaping and unproven cells
 keep heap owners. [Retainer and lifetime rules](AGENTS.md#frame-resident-cells)

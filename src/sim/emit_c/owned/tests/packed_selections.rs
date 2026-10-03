@@ -83,7 +83,7 @@ fn packed_selection_reads_default_the_parent_before_applying_inner_bounds() {
     frame.discard(value);
     frame.release_target(target);
     let source = frame.body();
-    assert!(source.contains("sv4_select_plan_read("));
+    assert!(source.contains("sv4_select_plan_read_to("));
     assert!(source.contains("sv4_from_u64(0, 16, 0)"));
     assert!(frame.slots.iter().all(|used| !used));
 }

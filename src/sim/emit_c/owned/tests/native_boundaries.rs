@@ -245,7 +245,7 @@ fn const_ref_callback_reads_are_live_and_not_writable_calls() {
     let call = IrCallExpr::new(0, vec![arg], IrDepth::PROC, false);
     let result = frame.pure_callback_call(&call).unwrap();
     frame.discard(result);
-    assert!(frame.body().contains("sv4_clone(&G_value)"));
+    assert!(find_copy(frame.body(), "&G_value").is_some());
     assert!(!frame.body().contains("f_read("));
     assert!(!frame.body().contains("llg_ba("));
 }
@@ -282,8 +282,9 @@ fn container_inside_uses_owned_items_and_ordinal_associative_reads() {
         .inside(&number(7, 129), &[IrInsideItem::Container { container: 0 }])
         .unwrap();
     frame.discard(result);
-    assert!(frame.body().contains("llg_assoc_value_at(&G_set,"));
-    assert!(frame.body().contains("sv4_wild_eq("));
+    assert!(frame.body().contains("llg_assoc_value_at_to(&_llg_t["));
+    assert!(frame.body().contains("], &G_set, "));
+    assert!(frame.body().contains("sv4_wild_eq_to("));
     assert!(frame.slots.iter().all(|slot| !slot));
 }
 
@@ -331,7 +332,7 @@ fn mixed_stream_publishes_each_component_before_selecting_the_next() {
     let source = frame.body();
     assert!(
         source.find("llg_queue_unstream_assign(").unwrap()
-            < source.rfind("sv4_part_select(").unwrap()
+            < source.rfind("sv4_part_select_to(").unwrap()
     );
     assert!(source.contains("llg_ba("));
     assert!(frame.slots.iter().all(|slot| !slot));

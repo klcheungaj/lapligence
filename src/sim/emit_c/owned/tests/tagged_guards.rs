@@ -64,14 +64,15 @@ fn check_owners(frame: &Frame<'_, '_>) {
     assert!(frame.slots.iter().all(|used| !used));
     let source = frame.body();
     assert!(!source.contains("sv4_to_bool(sv4_case_eq("), "{source}");
-    assert_eq!(source.matches("sv4_case_eq(").count(), 2);
-    assert_eq!(source.matches("sv4_from_u64(1ULL, 1, 0)").count(), 2);
+    assert_eq!(source.matches("sv4_case_eq_to(").count(), 2);
+    assert_eq!(source.matches(", 1ULL, 1, 0);").count(), 2);
     for line in source
         .lines()
-        .filter(|line| line.contains("sv4_case_eq(") || line.contains("sv4_from_u64(1ULL, 1, 0)"))
+        .filter(|line| line.contains("sv4_case_eq_to(") || line.contains(", 1ULL, 1, 0);"))
     {
         assert!(
-            line.trim_start().starts_with("sv4_replace(&_llg_t["),
+            line.trim_start().starts_with("sv4_case_eq_to(&_llg_t[")
+                || line.trim_start().starts_with("sv4_from_u64_to(&_llg_t["),
             "{line}"
         );
     }

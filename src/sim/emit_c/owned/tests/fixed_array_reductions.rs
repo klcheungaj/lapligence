@@ -38,11 +38,11 @@ fn fixed_array_reduction_emits_each_binary_method_without_an_identity_seed() {
         constants: None,
     };
     for (operation, helper) in [
-        (IrContainerReduction::Sum, "sv4_add("),
-        (IrContainerReduction::Product, "sv4_mul("),
-        (IrContainerReduction::BitAnd, "sv4_and("),
-        (IrContainerReduction::BitOr, "sv4_or("),
-        (IrContainerReduction::BitXor, "sv4_xor("),
+        (IrContainerReduction::Sum, "sv4_add_to("),
+        (IrContainerReduction::Product, "sv4_mul_to("),
+        (IrContainerReduction::BitAnd, "sv4_and_to("),
+        (IrContainerReduction::BitOr, "sv4_or_to("),
+        (IrContainerReduction::BitXor, "sv4_xor_to("),
     ] {
         let mut frame = Frame::new(&ctx);
         let mut expr = reduction(
@@ -218,8 +218,11 @@ fn fixed_array_reduction_map_can_read_an_enclosing_formal() {
         .unwrap();
     let address = frame.lookup("a0").unwrap().address;
     let value = frame.expression(&expr).unwrap();
-    assert!(frame.body().contains(&format!("*({address})")));
-    assert!(!frame.body().contains(&format!("sv4_clone({address})")));
+    assert!(frame
+        .body()
+        .lines()
+        .any(|line| line.contains("_to(") && line.contains(&format!(" {address}"))));
+    assert!(find_copy(frame.body(), &address).is_none());
     frame.discard(value);
     assert!(frame.slots.iter().all(|live| !live));
     assert_eq!(frame.body().matches("for (uint64_t").count(), 1);

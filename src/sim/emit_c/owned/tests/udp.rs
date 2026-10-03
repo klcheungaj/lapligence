@@ -47,9 +47,9 @@ fn udp_gate_body_is_constant_size_with_many_rows() {
         frame.discard(result);
         assert!(frame.slots.iter().all(|live| !live));
         let body = frame.body();
-        assert_eq!(body.matches("sv4_udp_eval(").count(), 1);
+        assert_eq!(body.matches("sv4_udp_eval_to(").count(), 1);
         assert_eq!(body.matches("llg_udp_table_0").count(), 1);
-        assert!(!body.contains("sv4_mux("));
+        assert!(!body.contains("sv4_mux_to("));
         bodies.push(body.len());
     }
     assert_eq!(bodies[1] - bodies[0], 3);
@@ -96,7 +96,7 @@ fn udp_instances_share_one_file_scope_table() {
             .count(),
         1
     );
-    assert_eq!(source.matches("sv4_udp_eval(").count(), 8);
+    assert_eq!(source.matches("sv4_udp_eval_to(").count(), 8);
     assert!(source.len() < 200_000);
 }
 
@@ -160,6 +160,6 @@ fn udp_inputs_are_evaluated_once_in_order_even_for_wildcard_rows() {
     assert_eq!(body.matches("f_left(").count(), 1);
     assert_eq!(body.matches("f_right(").count(), 1);
     assert!(body.find("f_left(").unwrap() < body.find("f_right(").unwrap());
-    assert!(body.find("f_right(").unwrap() < body.find("sv4_udp_eval(").unwrap());
+    assert!(body.find("f_right(").unwrap() < body.find("sv4_udp_eval_to(").unwrap());
     assert!(frame.slots.iter().all(|live| !live));
 }

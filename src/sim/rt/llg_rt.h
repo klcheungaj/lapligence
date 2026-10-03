@@ -1646,6 +1646,31 @@ void llg_release_real(double* target);
 void llg_force(sv4_t* sig, sv4_t value);
 void llg_release(sv4_t* sig);
 
+/* Destination-passing forms of the packed-returning calls above, used by
+ * generated code (see value/destinations.h). `X_to(dst, ...)` replaces the
+ * initialized owner at dst with exactly the result `X(...)` would return. Packed
+ * arguments are borrowed by address; string arguments are consumed through
+ * their address and left empty, like the returning forms' by-value strings. */
+void llg_fixed_array_compare_to(sv4_t* dst, const llg_fixed_array_t* p0, const llg_fixed_array_t* p1, int p2, int p3);
+void llg_net_alias_read_to(sv4_t* dst, llg_net_alias_t* alias);
+void llg_q_full_to(sv4_t* dst, const sv4_t* q_id, sv4_t* status);
+void llg_urandom_to(sv4_t* dst);
+void llg_urandom_seed_to(sv4_t* dst, const sv4_t* seed);
+void llg_urandom_range_to(sv4_t* dst, const sv4_t* max, const sv4_t* min, int has_min);
+void llg_sequence_local_read_to(sv4_t* dst, void* attempt, uint32_t slot);
+void llg_system_to(sv4_t* dst, llg_string_t* command, int has_command);
+void llg_frame_read_value_to(sv4_t* dst, const llg_frame_t* frame, size_t slot);
+void llg_sampled_domain_past_to(sv4_t* dst, uint64_t identity, uint64_t ticks);
+void llg_rt_ref_read_to(sv4_t* dst, const llg_ref_t* ref);
+/* String destination forms: `X_to(dst, ...)` replaces the expression owner at
+ * dst (destroyed first; it must carry no change callback) with the string
+ * `X(...)` would return. Argument conventions match the packed forms above. */
+void llg_process_get_randstate_to(llg_string_t* dst);
+void llg_string_format_typed_to(llg_string_t* dst, llg_string_t* format, llg_fmt_arg_t* args, int n, const char* scope);
+/* Implemented with the container runtime; declared in both headers. */
+void llg_fixed_stream_source_to(sv4_t* dst, const sv4_t* values, int64_t declaration_left, int64_t declaration_right, uint32_t element_width, int element_two_state, int selector_kind, const sv4_t* first, const sv4_t* second);
+void llg_stream_to_fixed_to(sv4_t* dst, const sv4_t* value, uint32_t width, int is_signed);
+
 #ifdef __cplusplus
 }
 #endif

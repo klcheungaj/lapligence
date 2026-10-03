@@ -132,12 +132,14 @@ impl Frame<'_, '_> {
                 // last allocation before their consuming, non-yielding call.
                 let result = self.native_reserve(NativeKind::String);
                 let arguments = self.formatted_arguments(args, self.ctx.model.precision_fs)?;
-                self.line(format!(
-                    "{} = llg_string_format_typed({}, {arguments}, {}, {});",
-                    result.code(),
-                    format.take_string(),
-                    args.len(),
-                    c_string_literal(scope)
+                self.line(super::super::destinations::assign_string(
+                    &result.address,
+                    &format!(
+                        "llg_string_format_typed({}, {arguments}, {}, {})",
+                        format.take_string(),
+                        args.len(),
+                        c_string_literal(scope)
+                    ),
                 ));
                 self.native_discard(format);
                 result
@@ -158,10 +160,10 @@ impl Frame<'_, '_> {
                         .iter()
                         .map(|byte| format!("\\{byte:03o}"))
                         .collect::<String>();
-                    self.line(format!(
-                        "llg_string_move({}, llg_string_bytes(\"{literal}\", {}));",
-                        result.address,
-                        member.name.len()
+                    // `result` is an expression owner, not change-tracked storage.
+                    self.line(super::super::destinations::assign_string(
+                        &result.address,
+                        &format!("llg_string_bytes(\"{literal}\", {})", member.name.len()),
                     ));
                     self.line("}");
                     self.discard(cmp);
@@ -261,9 +263,9 @@ impl Frame<'_, '_> {
         expression: &IrStringExpr,
     ) -> Result<(), String> {
         let value = self.string(expression)?;
-        self.line(format!(
-            "llg_string_move({address}, {});",
-            value.take_string()
+        self.line(super::super::destinations::move_string(
+            address,
+            &value.take_string(),
         ));
         self.native_discard(value);
         Ok(())
@@ -330,10 +332,10 @@ impl Frame<'_, '_> {
                     hit
                 }
             };
-            self.line(format!(
-                "sv4_replace(&{}, sv4_from_u64({hit}, 1, 0));",
-                result.code
-            ));
+            self.assign(
+                &format!("&{}", result.code),
+                &format!("sv4_from_u64({hit}, 1, 0)"),
+            );
             self.line("}");
         }
         self.native_discard(source);
