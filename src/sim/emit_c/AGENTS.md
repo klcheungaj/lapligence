@@ -133,9 +133,12 @@ stream fan-out, sampled reads and callback outputs retain owners. Never destroy,
 move or retag a borrow. Read-only private stores materialize an owner before move.
 
 Elide packed cast/resize only when width and signedness match and there is no
-context fill. Two-state coercion remains explicit. Reuse an owned operand's
-descriptor for a fresh result, choosing the later owner when the earlier operand
-is borrowed. Add/sub/mul use the additive `sv4_*_into` contract; other operations
+context fill. Two-state coercion remains explicit. VPI callback results first
+normalize to their declared HDL width/sign: registration
+may choose a different runtime shape, and the call arguments specify fallbacks.
+Reuse an owned operand's descriptor for a fresh result, choosing the later owner
+when the earlier operand is borrowed. Add/sub/mul use the additive `sv4_*_into`
+contract; other operations
 install their independent return with `sv4_replace`. Runtime arithmetic may reuse
 same-width payloads; multiply must preserve aliased inputs until completion.
 No HDL destination is mutated before scheduler publication.

@@ -501,3 +501,29 @@ fn owned_one_limb_literals_construct_directly_and_wide_literals_share_storage() 
     assert_eq!(constants.lifecycle().matches("sv4_from_limbs").count(), 1);
     assert_eq!(frame.body().matches("sv4_clone(").count(), 2);
 }
+
+#[test]
+fn vpi_results_normalize_unproven_runtime_shapes_before_elision() {
+    let model = numeric_model();
+    let ctx = RCtx {
+        model: &model,
+        func: None,
+        sampled: false,
+        activation_label: None,
+        constants: None,
+    };
+    let mut frame = Frame::new(&ctx);
+    let value = frame
+        .vpi_call(0, "$sized", &[], Some((5, false)))
+        .unwrap()
+        .unwrap();
+    let value = frame.convert(value, 5, false, false, false);
+    frame.discard(value);
+    assert_eq!(
+        frame.body().matches("llg_vpi_call_function_site(").count(),
+        1
+    );
+    assert_eq!(frame.body().matches("sv4_cast(").count(), 1);
+    assert!(frame.body().contains("sv4_cast(_llg_t[0], 5, 0)"));
+    assert_eq!(frame.slots.len(), 1);
+}
