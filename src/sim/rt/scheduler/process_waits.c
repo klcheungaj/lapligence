@@ -11,7 +11,7 @@ static llg_proc_t* spawn_in_region(const llg_co_desc_t* desc,
     llg_proc_t* p = (llg_proc_t*)llg_checked_calloc(
         1, sizeof(*p) + desc->frame_size, "process and coroutine root frame");
 #ifdef LLG_CO_DEBUG
-    memset(LLG_CO_ROOT(&p->chain), 0xA5, desc->frame_size);
+    memset(LLG_CO_ROOT(&p->chain), LLG_CO_POISON_BYTE, desc->frame_size);
 #endif
     p->name = name;
     llg_co_start(&p->chain, desc, p);

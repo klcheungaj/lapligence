@@ -10,6 +10,7 @@ impl Frame<'_, '_> {
             "llg_value_scope_mark()".to_owned(),
         );
         self.marks.push(marker);
+        self.mark_blocks.push(self.layout.current_block());
         self.bindings.push(HashMap::new());
         self.event_bindings.push(HashMap::new());
         self.native_bindings.push(HashMap::new());
@@ -25,6 +26,7 @@ impl Frame<'_, '_> {
     }
     pub(super) fn end_block(&mut self) {
         let marker = self.marks.pop().expect("matched lexical scope");
+        self.mark_blocks.pop();
         self.line(format!("llg_value_scopes_end_since({marker});"));
         self.bindings.pop();
         self.event_bindings.pop();
@@ -84,6 +86,9 @@ impl Frame<'_, '_> {
                 "llg_value_scopes_end_since({});",
                 self.marks[target + 1]
             ));
+        }
+        for block in self.layout.exited_blocks(self.mark_blocks[target]) {
+            self.poison_block(block);
         }
         self.line(format!("goto {label};"));
         Ok(())
@@ -240,6 +245,7 @@ impl Frame<'_, '_> {
             IrStmt::While { cond, body } => {
                 self.line("for (;;) {");
                 let condition = self.condition(cond)?;
+                self.poison_loop_exit(&format!("!{condition}"));
                 self.line(format!("if (!{condition}) break;"));
                 self.budget();
                 self.block(body)?;
@@ -261,6 +267,7 @@ impl Frame<'_, '_> {
                 self.statements(init)?;
                 self.line("for (;;) {");
                 let condition = self.condition(cond)?;
+                self.poison_loop_exit(&format!("!{condition}"));
                 self.line(format!("if (!{condition}) break;"));
                 self.budget();
                 self.block(body)?;
@@ -354,6 +361,7 @@ impl Frame<'_, '_> {
             IrStmt::WaitCond { cond, sens, body } => {
                 self.line("for (;;) {");
                 let condition = self.condition(cond)?;
+                self.poison_loop_exit(&condition);
                 self.line(format!("if ({condition}) break;"));
                 self.wait_any(sens, None, SuspensionOperation::ConditionWait)?;
                 self.line("}");

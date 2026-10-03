@@ -91,6 +91,48 @@ impl FrameLayout {
         self.current = child;
     }
 
+    pub(super) fn current_block(&self) -> usize {
+        self.current
+    }
+
+    pub(super) fn exited_blocks(&self, target: usize) -> Vec<usize> {
+        let mut blocks = Vec::new();
+        let mut cursor = self.current;
+        while cursor != target {
+            blocks.push(cursor);
+            let Some(parent) = self.blocks[cursor].parent else {
+                break;
+            };
+            cursor = parent;
+        }
+        blocks
+    }
+
+    /// Only a sibling union's struct is independently poisonable. A flattened
+    /// child shares its struct with still-live enclosing fields.
+    pub(super) fn overlay_paths(&self) -> BTreeMap<usize, String> {
+        fn collect(
+            layout: &FrameLayout,
+            block: usize,
+            prefix: &str,
+            storage: &[bool],
+            paths: &mut BTreeMap<usize, String>,
+        ) {
+            let chain = layout.flat_chain(block, storage);
+            let terminal = *chain.last().expect("flat block chain is nonempty");
+            for child in layout.storage_children(terminal, storage) {
+                let path = format!("{prefix}u{terminal}.b{child}");
+                paths.insert(child, path.clone());
+                collect(layout, child, &format!("{path}."), storage, paths);
+            }
+        }
+        let mut paths = BTreeMap::new();
+        if self.storage == FrameStorage::CoFrame {
+            collect(self, 0, "", &self.storage_map(), &mut paths);
+        }
+        paths
+    }
+
     pub(super) fn end_block(&mut self) -> Result<(), String> {
         if self.storage == FrameStorage::CStack {
             return Ok(());

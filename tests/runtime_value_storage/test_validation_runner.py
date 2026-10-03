@@ -28,6 +28,7 @@ class InventoryTests(unittest.TestCase):
         scheduler.update({"stackless_runtime_boundaries", "coroutine_scale_release", "coroutine_scale_debug",
                           "fork_group_scale_release", "fork_group_scale_debug",
                           "coroutine_debug_fresh_poison", "coroutine_debug_cancelled_arena_reuse",
+                         "coroutine_poison_release", "coroutine_poison_debug",
                           "coroutine_mixed_mode_0_0", "coroutine_mixed_mode_0_1",
                           "coroutine_mixed_mode_1_0", "coroutine_mixed_mode_1_1"})
         scheduler.update(f"coroutine_debug_reject_{mode}" for mode in
