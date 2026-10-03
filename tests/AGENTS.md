@@ -185,7 +185,10 @@ alone. [ci.yml](../.github/workflows/ci.yml) defines Ubuntu gates and five-platf
 builds on master pushes, manual dispatch and published Releases (including
 prereleases), not draft saves or standalone tag pushes. Each matrix target also
 runs the full `cargo nextest run --all-features --cargo-profile release` suite
-(Linux inside the static-musl Alpine container) before packaging.
+before packaging. Linux builds executables and test binaries only in the
+static-musl Alpine container, then runs those binaries in place on Ubuntu 24.04
+and Rocky Linux 9 containers through nextest binaries/cargo metadata, with the
+checkout at `/workspace` so compile-time paths resolve.
 
 Lint/sanitizer jobs disable Rust debug info/incremental compilation and strip native
 frontend debug sections while retaining debug assertions/overflow checks. Preserve

@@ -339,7 +339,13 @@ jobs:
       # The official Alpine Rust image follows the native runner architecture.
       # It supplies a musl C/C++ toolchain and static system archives without
       # QEMU or a separately downloaded cross compiler.
-      - name: Build fully static Linux executables
+      # Linux builds only on Alpine: static musl executables plus the
+      # release-profile test binaries, which the Ubuntu and Rocky steps below
+      # run in place. The checkout stays mounted at /workspace in every
+      # container because tests embed compile-time paths
+      # (CARGO_MANIFEST_DIR, CARGO_BIN_EXE_*).
+      - name: Build static musl executables and release test binaries
+        id: musl_build
         if: matrix.platform == 'linux'
         shell: bash
         run: |
@@ -351,7 +357,7 @@ jobs:
             --env CMAKE_GENERATOR=Ninja \
             --env LLG_TARGET="${{ matrix.target }}" \
             rust:1.98.0-alpine sh -euxc '
-              apk add --no-cache build-base cmake git linux-headers ninja python3
+              apk add --no-cache build-base cmake curl git linux-headers ninja python3
               git config --global --add safe.directory /workspace
               git config --global --add safe.directory /workspace/vendor/slang
               rustup target add "$LLG_TARGET"
@@ -359,9 +365,11 @@ jobs:
               case "$LLG_TARGET" in
                 x86_64-unknown-linux-musl)
                   export CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=gcc
+                  nextest_platform=linux-musl
                   ;;
                 aarch64-unknown-linux-musl)
                   export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=gcc
+                  nextest_platform=linux-arm-musl
                   ;;
                 *)
                   echo "unsupported native Linux target: $LLG_TARGET" >&2
@@ -372,6 +380,14 @@ jobs:
               # A small test harness exposes accidental dynamic libc links
               # that larger frontend binaries can mask by pulling libc.a first.
               cargo test --locked --release --test cli_info --target "$LLG_TARGET" -- --list --format terse
+              # The static musl nextest binary also runs on the glibc hosts.
+              reuse=target/nextest-reuse
+              mkdir -p "$reuse"
+              curl -LsSf "https://get.nexte.st/latest/$nextest_platform" | tar -xzf - -C "$reuse"
+              "$reuse/cargo-nextest" nextest list --locked --all-features --cargo-profile release \
+                --target "$LLG_TARGET" --list-type binaries-only --message-format json \
+                > "$reuse/binaries.json"
+              cargo metadata --locked --all-features --format-version 1 > "$reuse/cargo-metadata.json"
             '
 
       - name: Build release executables
@@ -461,43 +477,43 @@ jobs:
 
       # The whole suite runs against each release target in the release
       # profile, reusing the release build above. Failures block packaging.
-      - name: Run full nextest suite in release mode (static musl)
-        if: matrix.platform == 'linux'
+      # Linux runs the static musl test binaries from the Alpine build on
+      # glibc distributions; neither needs a Rust toolchain. Rocky also runs
+      # when Ubuntu fails so both results are reported.
+      - name: Test release musl binaries on Ubuntu 24.04
+        if: matrix.platform == 'linux' && !cancelled() && steps.musl_build.outcome == 'success'
         shell: bash
         run: |
           docker run --rm \
             --volume "$GITHUB_WORKSPACE:/workspace" \
-            --volume "$RUNNER_TEMP/cargo-registry:/usr/local/cargo/registry" \
             --workdir /workspace \
-            --env CMAKE_GENERATOR=Ninja \
-            --env LLG_TARGET="${{ matrix.target }}" \
-            rust:1.98.0-alpine sh -euxc '
-              # Waveform-enabled generated models compile and statically link
-              # zlib, as in the repository Dockerfile.
-              apk add --no-cache build-base cmake curl git linux-headers ninja python3 \
-                zlib-dev zlib-static
-              git config --global --add safe.directory /workspace
-              git config --global --add safe.directory /workspace/vendor/slang
-              rustup target add "$LLG_TARGET"
-              export CC=gcc CXX=g++
-              case "$LLG_TARGET" in
-                x86_64-unknown-linux-musl)
-                  export CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=gcc
-                  nextest_platform=linux-musl
-                  ;;
-                aarch64-unknown-linux-musl)
-                  export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=gcc
-                  nextest_platform=linux-arm-musl
-                  ;;
-                *)
-                  echo "unsupported native Linux target: $LLG_TARGET" >&2
-                  exit 1
-                  ;;
-              esac
-              curl -LsSf "https://get.nexte.st/latest/$nextest_platform" \
-                | tar -xzf - -C /usr/local/cargo/bin
-              cargo nextest run --locked --all-features --cargo-profile release \
-                --target "$LLG_TARGET"
+            ubuntu:24.04 sh -euxc '
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update
+              apt-get install -y --no-install-recommends \
+                build-essential cmake procps python3 zlib1g-dev
+              reuse=target/nextest-reuse
+              "$reuse/cargo-nextest" nextest run \
+                --binaries-metadata "$reuse/binaries.json" \
+                --cargo-metadata "$reuse/cargo-metadata.json" \
+                --workspace-remap /workspace
+            '
+
+      - name: Test release musl binaries on Rocky Linux 9
+        if: matrix.platform == 'linux' && !cancelled() && steps.musl_build.outcome == 'success'
+        shell: bash
+        run: |
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE:/workspace" \
+            --workdir /workspace \
+            rockylinux/rockylinux:9 sh -euxc '
+              dnf install -y --setopt=install_weak_deps=False \
+                cmake gcc gcc-c++ make procps-ng python3 util-linux zlib-devel
+              reuse=target/nextest-reuse
+              "$reuse/cargo-nextest" nextest run \
+                --binaries-metadata "$reuse/binaries.json" \
+                --cargo-metadata "$reuse/cargo-metadata.json" \
+                --workspace-remap /workspace
             '
 
       - name: Run full nextest suite in release mode
