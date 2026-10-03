@@ -356,7 +356,7 @@ initialize through `llg_rt_init_with_args_and_precision` and define
 `LLG_MODEL_PROCESS_ABI`.
 
 Keep the generated 256-call recursion guard. POSIX startup warns below the named
-8 MiB host-stack estimate; generated MSVC model targets reserve that default with
+8 MiB host-stack estimate less the 64 KiB guard allowance; generated MSVC model targets reserve that default with
 `/STACK`. Stackless sanitizer runs use ordinary ASan/UBSan flags without a
 stack-switch exception.
 

@@ -122,7 +122,9 @@ is quadratic in file size. Runtime sources keep it.
 
 On POSIX, runtime startup warns when `RLIMIT_STACK` is below the named 8 MiB
 host-stack estimate for scheduler entry, one polled segment and the 256-call
-recursion guard. Generated MSVC projects reserve the same default with `/STACK`.
+recursion guard, less a 64 KiB guard allowance so default stacks reported net of
+a guard page (macOS: 8176 KiB) stay quiet. Generated MSVC projects reserve the
+same default with `/STACK`.
 
 `CmakeBuildOpts.generator`/`--generator` overrides `CMAKE_GENERATOR`, then host
 default. `launcher`/`--launcher` forwards `CMAKE_C_COMPILER_LAUNCHER` without inventing

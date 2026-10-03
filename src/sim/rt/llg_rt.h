@@ -76,9 +76,17 @@ typedef struct llg_fixed_array {
 
 // Estimated host stack for the scheduler, one polled coroutine segment, and
 // the generated 256-call recursion guard. POSIX hosts warn when RLIMIT_STACK
-// is lower; generated MSVC projects reserve the same amount with /STACK.
+// plus the guard allowance is lower; generated MSVC projects reserve the
+// estimate with /STACK.
 #ifndef LLG_HOST_STACK_ESTIMATE_BYTES
 #define LLG_HOST_STACK_ESTIMATE_BYTES (8u * 1024u * 1024u)
+#endif
+
+// Guard space some kernels carve out of their default 8 MiB main-thread
+// stack before reporting RLIMIT_STACK (macOS reports 8176 KiB). The default
+// stack is the reservation the estimate targets, so it must not warn.
+#ifndef LLG_HOST_STACK_GUARD_ALLOWANCE_BYTES
+#define LLG_HOST_STACK_GUARD_ALLOWANCE_BYTES (64u * 1024u)
 #endif
 
 #ifdef __cplusplus

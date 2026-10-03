@@ -199,25 +199,39 @@ fn low_posix_stack_limit_warns_before_simulation() {
     )
     .expect("stack-limit probe should compile");
 
-    let output = sim_harness::run_command(
-        Command::new("sh")
-            .args([
-                "-c",
-                "ulimit -s 1024; exec \"$1\" --stop-resume-probe",
-                "llg-stack-limit-probe",
-            ])
-            .arg(&executable),
-        Duration::from_secs(10),
-    )
-    .expect("stack-limit probe should start");
-    assert!(
-        output.status.success(),
-        "stack-limit probe failed: {output:?}"
-    );
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let run_with_stack_kib = |kib: u32| {
+        let kib_arg = kib.to_string();
+        let output = sim_harness::run_command(
+            Command::new("sh")
+                .args([
+                    "-c",
+                    "ulimit -s \"$1\" && exec \"$2\" --stop-resume-probe",
+                    "llg-stack-limit-probe",
+                    kib_arg.as_str(),
+                ])
+                .arg(&executable),
+            Duration::from_secs(10),
+        )
+        .expect("stack-limit probe should start");
+        assert!(
+            output.status.success(),
+            "stack-limit probe with {kib} KiB failed: {output:?}"
+        );
+        String::from_utf8_lossy(&output.stderr).into_owned()
+    };
+
+    let stderr = run_with_stack_kib(1024);
     assert!(
         stderr.contains("host stack limit is 1048576 bytes")
             && stderr.contains("256-call recursion guard"),
         "missing low-stack warning: {stderr}"
+    );
+
+    // macOS reports its default 8 MiB main-thread stack as 8176 KiB after
+    // reserving a guard page; that default must not warn.
+    let stderr = run_with_stack_kib(8176);
+    assert!(
+        !stderr.contains("host stack limit"),
+        "default macOS stack limit warned: {stderr}"
     );
 }

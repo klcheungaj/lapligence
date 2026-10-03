@@ -131,8 +131,9 @@ is found or linked and user DPI libraries may link their own.
 
 The generated 256-call recursion guard remains the plain-function bound. On
 POSIX, startup warns when `RLIMIT_STACK` is below the named 8 MiB estimate for
-the scheduler, one polled segment and that guard. Generated MSVC projects reserve
-the same default with `/STACK`.
+the scheduler, one polled segment and that guard, less a 64 KiB allowance for
+the guard page macOS subtracts from its default 8 MiB stack. Generated MSVC
+projects reserve the same default with `/STACK`.
 
 ## Validation and limits
 

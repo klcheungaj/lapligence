@@ -391,7 +391,8 @@ llg_rt_init_with_args_and_precision(argc, argv, LLG_MODEL_PRECISION_FS);
 ```
 
 There is no stack-values macro or stack-sized init entry. Native stack policy is
-host-level: POSIX startup warns below the 8 MiB estimate and generated MSVC
+host-level: POSIX startup warns below the 8 MiB estimate (less a 64 KiB guard
+allowance) and generated MSVC
 targets reserve that default, while the 256-call guard remains in generated
 plain functions.
 
