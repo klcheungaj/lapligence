@@ -204,32 +204,46 @@ fn optimization_setup(level: ModelOptLevel) -> String {
         .replace("{MSVC_OPT_FLAG}", level.msvc_flag())
 }
 
-/// Compile the bundled zlib under `zlib/` into the waveform runtime. Its
-/// symbols are prefixed (`Z_PREFIX`), and `<unistd.h>` supplies the POSIX I/O
-/// used by the `gz*` API where zlib's own configure would have enabled it.
-macro_rules! runtime_zlib_cmake {
-    () => {
-        r#"target_include_directories(llg_runtime PRIVATE ${CMAKE_SOURCE_DIR}/zlib)
-target_compile_definitions(llg_runtime PRIVATE Z_PREFIX)
-if(NOT WIN32)
-  target_compile_definitions(llg_runtime PRIVATE Z_HAVE_UNISTD_H)
-endif()"#
+/// Compile `target` against the bundled zlib under `zlib/`. Its symbols are
+/// prefixed (`Z_PREFIX`), and `<unistd.h>` supplies the POSIX I/O used by the
+/// `gz*` API where zlib's own configure would have enabled it.
+macro_rules! zlib_cmake {
+    ($target:literal) => {
+        concat!(
+            "target_include_directories(",
+            $target,
+            " PRIVATE ${CMAKE_SOURCE_DIR}/zlib)\n",
+            "target_compile_definitions(",
+            $target,
+            " PRIVATE Z_PREFIX)\n",
+            "if(NOT WIN32)\n",
+            "  target_compile_definitions(",
+            $target,
+            " PRIVATE Z_HAVE_UNISTD_H)\n",
+            "endif()"
+        )
     };
 }
 
+// Model sources such as the waveform self-test include `fstapi.h`, which
+// includes `<zlib.h>`; `sim` must see the bundled, prefixed header rather
+// than an unprefixed system copy (or none) in every runtime mode.
 const WAVE_CMAKE: &str = concat!(
     r#"find_package(Threads REQUIRED)
 target_link_libraries(sim PRIVATE Threads::Threads)
 target_compile_definitions(sim PRIVATE LLG_WAVEFORM=1 FST_CONFIG_INCLUDE=\"fst_config.h\")
+"#,
+    zlib_cmake!("sim"),
+    r#"
 if(NOT LLG_RUNTIME_LIBRARY)
 target_compile_definitions(llg_runtime PRIVATE LLG_WAVEFORM=1 FST_CONFIG_INCLUDE=\"fst_config.h\")
 "#,
-    runtime_zlib_cmake!(),
+    zlib_cmake!("llg_runtime"),
     "\nendif()"
 );
 const RUNTIME_WAVE_DEFINITION: &str = concat!(
     "target_compile_definitions(llg_runtime PRIVATE LLG_WAVEFORM=1 FST_CONFIG_INCLUDE=\\\"fst_config.h\\\")\n",
-    runtime_zlib_cmake!()
+    zlib_cmake!("llg_runtime")
 );
 
 const RUNTIME_CACHE_LOCK_TIMEOUT: Duration = Duration::from_secs(300);
@@ -1828,6 +1842,13 @@ mod tests {
                 .map_err(|e| format!("read waveform CMakeLists.txt: {e}"))?;
             if cmake.contains("find_package(ZLIB") || !dir.join("zlib/zlib.h").is_file() {
                 return Err("waveform models must build the bundled zlib".to_string());
+            }
+            // Hosts with system zlib headers would otherwise mask a missing
+            // bundled include path for model sources that include fstapi.h.
+            if !cmake.contains("target_include_directories(sim PRIVATE ${CMAKE_SOURCE_DIR}/zlib)")
+                || !cmake.contains("target_compile_definitions(sim PRIVATE Z_PREFIX)")
+            {
+                return Err("waveform model sources must use the bundled zlib header".to_string());
             }
             generate_model_sources(&dir, &[("plain.c", "int main(void) { return 0; }\n")])
                 .map_err(|error| error.to_string())?;
