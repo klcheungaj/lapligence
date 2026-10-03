@@ -578,3 +578,8 @@ Domain modules below LSP/integration facades use explicit crate paths and must n
 become accidental Cargo targets. Use domain-qualified name filters when necessary.
 Fragment/embedding-order tests do not compile runtime fragments independently;
 facade compilation and generated-model execution are separate checks.
+
+Standalone compact-backend checks and microbenchmarks are opt-in CMake targets;
+see [native value probes](runtime_value_storage/readme.md#standalone-compact-value-backend).
+They cover portable and optional GMP limb kernels independently of generated
+model selection and do not replace later HDL/model integration acceptance.
