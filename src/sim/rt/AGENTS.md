@@ -3,6 +3,8 @@
 Compile this runtime with generated models, never into Rust binaries. Read
 [pipeline](../AGENTS.md), [lowering](../codegen/AGENTS.md),
 [emitter](../emit_c/AGENTS.md) and [value ownership](value/ownership.md).
+The [value facade contract](value/facade.md) owns backend selection, neutral
+accessors, width/sign/encoding rules and the feature-agent migration boundary.
 Feature/status inventories belong in [sim_features](../../../docs/sim_features.md).
 Keep original runtime/waveform self-tests active; component tests do not replace
 Rust-emitted model, HDL, parity, sanitizer or native-platform acceptance.

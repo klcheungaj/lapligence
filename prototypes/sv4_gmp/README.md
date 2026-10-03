@@ -153,15 +153,20 @@ nor a warmed application workspace implies that GMP uses no internal allocations
 
 ## Scope of the implemented API
 
-`api_coverage.json` retains the supplied name-only ledger: 37 mapped names out
-of 110 candidates. The candidates include `sv4_t` from callback typedefs; the
-frozen header actually declares 109 `sv4_*` functions plus three `llg_*` helpers.
-The ledger omits macros and helper types. It is not a language-feature
-conformance percentage. The complete facade audit remains follow-up work.
+`api_coverage.json` audits 37 mapped operations out of the production header's
+109 `sv4_*` declarations, three `llg_*` helpers, original macros/helper types and
+the additive neutral bridge. Its generator rejects changes to original
+signatures, macros or helper types relative to the immutable golden header.
+The historical 37/110 name scan counted the callback return type `sv4_t` as a
+function; the corrected ledger records that provenance. Counts are not a
+language-feature conformance percentage. See the production
+[facade contract](../../src/sim/rt/value/facade.md) for feature-agent usage,
+encoding/ownership rules and the staged production header/ABI split.
 The common subset includes constructors, lifecycle, casts/resizing/two-state
 conversion, add/subtract/multiply/negate, bitwise operations, equality, logical
-operations and conditional merging. Additional prototype APIs provide state/word
-inspection, bit mutation, compaction, reusable output/workspace and a restricted
+operations and conditional merging. The neutral bridge provides shape, state,
+word/range mutation, X/Z tests and DPI/VPI encoding conversions on both selectors.
+Additional prototype APIs provide compaction, reusable output/workspace and a restricted
 wire resolver. See `include/gmp4.h` for exact signatures and contracts.
 
 `include/sv4_cell.h` demonstrates default-X reg/logic-like cells, default-zero
@@ -212,7 +217,8 @@ python3 "$P/tools/generate_api_coverage.py" "$P/api_coverage.json"
 python3 "$P/tools/verify_golden.py"
 ```
 
-CTest runs selected-client cells, golden integrity and verifier drift/failure checks, deterministic differential
+CTest runs selected-client cells, the shared neutral/encoding/sign/owner probe,
+the frozen public-surface audit, golden integrity and verifier drift/failure checks, deterministic differential
 checks, Python-integer expected arithmetic, ownership/boundaries, allocation
 balance and intentional failures. Expected arithmetic vectors are generated at
 build time, not stored as a giant fixture. Release checks remain active under
