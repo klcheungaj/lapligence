@@ -54,6 +54,7 @@ fn callback_expansions_rename_all_internal_labels_and_gotos() {
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     frame.read_only_callback = true;
@@ -117,6 +118,7 @@ fn real_callback_results_are_declared_in_the_callers_scope() {
             func: None,
             sampled: false,
             activation_label: None,
+            constants: None,
         };
         let mut frame = Frame::new(&ctx);
         frame.read_only_callback = true;
@@ -154,6 +156,7 @@ fn fixed_stream_index_owners_use_registered_slots_and_are_destroyed() {
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     let targets: Vec<_> = (0..2)
@@ -211,6 +214,7 @@ fn stream_checks_each_component_before_publication_using_the_actual_source_width
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     let targets = [

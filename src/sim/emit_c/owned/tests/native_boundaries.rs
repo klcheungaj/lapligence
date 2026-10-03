@@ -94,6 +94,7 @@ fn native_access_receiver_is_evaluated_once_at_the_use_site() {
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     let result = frame
@@ -126,6 +127,7 @@ fn semaphore_creation_and_queries_never_request_legacy_fragments() {
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     frame
@@ -169,6 +171,7 @@ fn reference_calls_register_descriptors_and_do_not_copy_back() {
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     let arg = IrCallArg::RefAddr {
@@ -222,6 +225,7 @@ fn const_ref_callback_reads_are_live_and_not_writable_calls() {
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     frame.read_only_callback = true;
@@ -266,6 +270,7 @@ fn container_inside_uses_owned_items_and_ordinal_associative_reads() {
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     let result = frame
@@ -297,6 +302,7 @@ fn mixed_stream_publishes_each_component_before_selecting_the_next() {
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     frame

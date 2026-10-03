@@ -17,7 +17,8 @@ every bit of an element is connected identically.
 
 Example: [`tests/fixtures/sim/continuation_20_23/continuous_contexts.sv`](../tests/fixtures/sim/continuation_20_23/continuous_contexts.sv)
 is 88 lines, with four `continuous_case` instances at `W` = 1, 7, 65 and 129.
-It generates a `model.c` of about 7.1 MB and 96,000 lines:
+A snapshot before table-driven storage and operand-traffic elision generated a
+`model.c` of about 7.1 MB and 96,000 lines:
 
 - 3,838 separate width-1 `llg_net_t` objects, each with its own driver,
   strength, index and scratch tables (387 per three-element array at
@@ -26,6 +27,10 @@ It generates a `model.c` of about 7.1 MB and 96,000 lines:
   16,500 lines each, one reset/destroy sequence per bit net;
 - continuous-assignment processes of up to about 3,600 lines, one unrolled
   block per bit (clone, bit select, cast, `llg_net_write` to that bit's net).
+
+Current emission batches storage lifecycle work and elides eligible operand
+clones and matching casts. The per-bit electrical groups and publications
+still grow with `N × W`.
 
 The test that runs it (`sim_review_tasks20_23`
 `continuous_arrays_keep_values_dependencies_and_static_pattern_topology`) is one

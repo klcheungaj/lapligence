@@ -236,6 +236,7 @@ mod tests {
             func: None,
             sampled: false,
             activation_label: None,
+            constants: None,
         };
         let values = wide_enum_values();
         let rendered = render_memory(

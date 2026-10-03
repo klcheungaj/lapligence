@@ -9,6 +9,7 @@ fn array_conditional_emits_branch_local_captures_and_default_owner() {
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     let expr = IrExpr::new(
@@ -35,7 +36,7 @@ fn array_conditional_emits_branch_local_captures_and_default_owner() {
     assert_eq!(body.matches("sv4_array_conditional_merge(").count(), 1);
     assert!(!body.contains("sv4_mux("));
     assert!(body[..branch].contains("sv4_move("));
-    assert!(body[branch..merge].matches("sv4_resize(").count() >= 2);
+    assert!(!body[branch..merge].contains("sv4_resize("));
     assert!(body[merge..].matches("sv4_destroy(").count() >= 4);
     assert!(frame.slots.iter().all(|live| !live));
     assert!(!body.contains("({"));
@@ -49,6 +50,7 @@ fn structure_conditional_emits_each_member_boundary_and_default_owner() {
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     let expr = IrExpr::new(

@@ -43,7 +43,7 @@ impl Frame<'_, '_> {
     }
 
     fn concat_append(&mut self, result: Value, part: &IrExpr) -> Result<Value, String> {
-        let value = self.expression(part)?;
+        let value = self.operand(part)?;
         let width = result
             .width
             .checked_add(value.width)

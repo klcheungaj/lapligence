@@ -281,6 +281,7 @@ fn normalize(
     name: &str,
     generated: bool,
     registry: &HashMap<String, Operand>,
+    constants: &HashMap<String, Operand>,
 ) -> Option<Normalized> {
     if source
         .lines()
@@ -338,8 +339,17 @@ fn normalize(
                 out.push_str(label);
                 continue;
             }
-            if let Some(candidate) = registry.get(word) {
-                let slot = if let Some(slot) = pointer_slots.get(word) {
+            if let Some(candidate) = registry
+                .get(word)
+                .or_else(|| generated.then(|| constants.get(word)).flatten())
+            {
+                let slot = if generated && !registry.contains_key(word) {
+                    // Immutable constant identity does not constrain sharing;
+                    // each occurrence can vary independently, like a literal.
+                    let slot = operands.len();
+                    operands.push(candidate.clone());
+                    slot
+                } else if let Some(slot) = pointer_slots.get(word) {
                     *slot
                 } else {
                     let slot = operands.len();
@@ -428,6 +438,11 @@ struct Candidate {
     plain: Option<usize>,
 }
 
+pub(super) struct AdditionalOperands<'a> {
+    pub pca_tables: &'a [(String, String, String)],
+    pub constants: &'a super::super::constants::PackedConstants,
+}
+
 pub(super) fn share(
     execution: &ExecutionModel,
     functions: &mut CoroutineArtifacts,
@@ -435,7 +450,7 @@ pub(super) fn share(
     branches: &mut BTreeMap<CoroutineId, CoroutineArtifact>,
     plain: &mut BTreeMap<usize, String>,
     min_instances: usize,
-    pca_tables: &[(String, String, String)],
+    additional: AdditionalOperands<'_>,
 ) -> Result<Sharing, String> {
     if min_instances == usize::MAX {
         return Ok(Sharing {
@@ -447,7 +462,16 @@ pub(super) fn share(
     }
     let model = execution.ir();
     let mut registry = registry(model, functions, branches);
-    for (name, ty, shape) in pca_tables {
+    let constants = additional
+        .constants
+        .operands()
+        .into_iter()
+        .map(|(name, width, signed)| {
+            let operand = Operand::pointer("const sv4_t", format!("{width}:{signed}"), &name);
+            (name, operand)
+        })
+        .collect::<HashMap<_, _>>();
+    for (name, ty, shape) in additional.pca_tables {
         registry.insert(
             name.clone(),
             Operand {
@@ -487,7 +511,9 @@ pub(super) fn share(
             continue;
         }
         let generated = artifact.display_name.contains('[');
-        if let Some(normalized) = normalize(&artifact.source, name, generated, &registry) {
+        if let Some(normalized) =
+            normalize(&artifact.source, name, generated, &registry, &constants)
+        {
             let shape = artifact.layout.render_typedef("llg_key_frame")?;
             let shape = rewrite_identifiers(&shape, |name| frame_names.get(name).cloned());
             let pca = if let CoroutineId::Process(index) = artifact.owner {
@@ -520,7 +546,8 @@ pub(super) fn share(
         if function.dpi.is_some() {
             continue;
         }
-        if let Some(normalized) = normalize(source, &function.c_name, false, &registry) {
+        if let Some(normalized) = normalize(source, &function.c_name, false, &registry, &constants)
+        {
             let key = format!(
                 "plain:{:?}:{:?}:{:?}:{}",
                 function.origin, function.formals, function.ret, normalized.source

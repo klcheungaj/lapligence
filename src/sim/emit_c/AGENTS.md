@@ -112,7 +112,9 @@ statements re-check at their end while any point inside is uncovered, so a
 point in one branch is never checked only in another. Copy-out and later
 operands after a cancelled call stay skipped.
 
-`Value` carries code, width/sign/fill metadata and an owning descriptor slot.
+`Value` carries code, width/sign/fill metadata and an optional owning descriptor slot.
+`expression` returns an owner; `operand` may return a synchronous packed borrow
+with its original registered address for later ownership materialization.
 Emit ordered setup, calls and cleanup, not nested allocating C expressions.
 Non-addressable real results are scalar temporaries; addressable real locals use registered stable cells selected by the escape
 proof below.
@@ -120,13 +122,43 @@ Packed locals have separate lexical cells from expression temporaries.
 No compiler cleanup attributes, statement expressions, VLAs, alloca, C++
 destructors or simulation-lifetime temporary arena.
 
-Borrow packed inputs, own every return, destroy consumed operands immediately and
-reuse only empty descriptor slots. Ending a local scope drops its lexical cell
+Borrow packed inputs, own every value-returning operation, and destroy consumed
+owners immediately. `owned/operands.rs` admits direct packed signal/local and
+pooled-constant borrows only at synchronous consumption sites. A binary's earlier
+operand is snapshotted when the later subtree can call, mutate, suspend or contains
+an unproven kind. Selected assignment targets keep an owned RHS while capturing
+selectors; whole signal/reference assignments may borrow through their one
+alias-safe publication call. General expression, call arguments, delayed writes,
+stream fan-out, sampled reads and callback outputs retain owners. Never destroy,
+move or retag a borrow. Read-only private stores materialize an owner before move.
+
+Elide packed cast/resize only when width and signedness match and there is no
+context fill. Two-state coercion remains explicit. Reuse an owned operand's
+descriptor for a fresh result, choosing the later owner when the earlier operand
+is borrowed. Add/sub/mul use the additive `sv4_*_into` contract; other operations
+install their independent return with `sv4_replace`. Runtime arithmetic may reuse
+same-width payloads; multiply must preserve aliased inputs until completion.
+No HDL destination is mutated before scheduler publication.
+
+Each model's `PackedConstants` registry deduplicates canonical packed constructors
+by width, signedness and all three planes, including expanded fills. Procedures
+borrow its immutable owners or clone when a retained result is required. Initialize
+constants before model defaults/initializers and destroy them after runtime queues
+and model storage at close. The legacy backend pools small constants too because
+its constructor macros allocate; the same emitted code remains valid with inline
+small values. Registration follows deterministic typed emission, never generated
+C parsing or corpus-specific rules. Ending a local scope drops its lexical cell
 reference; pending NBA/clocking records retain the descriptor until commit/discard.
 This protects identity, not shared/COW packed values. Preserve procedure-root
 arguments/results across yields. Clone returns before unwinding cells that queued
 writes may still reference. Cancellation unwinds registered scopes without
 resuming coroutines or depending on C stack unwinding.
+
+Register pooled constant width/sign facts with instance sharing. Generated
+instance bodies may load immutable constants from typed record operands, just as
+their literals previously varied per site; constant pointer identity does not
+constrain the sharing key. Preserve the existing width/sign and non-generated
+parameter-payload exclusions.
 
 Freeze output targets/indices before calls. Keep arguments/copy-out temporaries
 alive across suspension; do not admit native-real NBA targets without equivalent

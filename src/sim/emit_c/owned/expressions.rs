@@ -21,20 +21,12 @@ impl Frame<'_, '_> {
         let result = match &expr.kind {
             IrExprKind::FixedArrayReduce(reduction) => self.fixed_array_reduce(reduction, expr)?,
             IrExprKind::Const(constant) => {
-                let mut value = self.value(emit_const(constant), constant.width, constant.signed);
+                let mut value = self.constant(constant, false);
                 value.fill = constant.fill;
                 value
             }
             IrExprKind::Fill(fill) => {
-                let mut value = self.value(
-                    format!(
-                        "sv4_fill({fill}, {}, {})",
-                        expr.width,
-                        u8::from(expr.signed)
-                    ),
-                    expr.width,
-                    expr.signed,
-                );
+                let mut value = self.packed_fill(*fill, expr.width, expr.signed, false);
                 value.fill = Some(*fill);
                 value
             }
@@ -133,7 +125,7 @@ impl Frame<'_, '_> {
             }
             IrExprKind::Bin { op, a, b } => self.binary(*op, a, b, expr)?,
             IrExprKind::Un { op, a } => {
-                let value = self.expression(a)?;
+                let value = self.operand(a)?;
                 let function = match op {
                     IrUnOp::Neg => "sv4_neg",
                     IrUnOp::LogNot => "sv4_lognot",
@@ -185,8 +177,12 @@ impl Frame<'_, '_> {
                 self.replace(value, code, expr.width, expr.signed)
             }
             IrExprKind::BitSel { base, idx } => {
-                let base = self.expression(base)?;
-                let index = self.expression(idx)?;
+                let base = if operands::stable_expression(idx) {
+                    self.operand(base)?
+                } else {
+                    self.expression(base)?
+                };
+                let index = self.operand(idx)?;
                 let code = format!(
                     "sv4_bit_select({}, sv4_to_index({}))",
                     base.code, index.code
@@ -196,7 +192,7 @@ impl Frame<'_, '_> {
                 value
             }
             IrExprKind::PartSel { base, left, right } => {
-                let base = self.expression(base)?;
+                let base = self.operand(base)?;
                 let code = format!("sv4_part_select({}, {left}, {right})", base.code);
                 self.replace(base, code, expr.width, expr.signed)
             }
@@ -206,8 +202,12 @@ impl Frame<'_, '_> {
                 neg,
                 ..
             } => {
-                let base = self.expression(base)?;
-                let index = self.expression(base_idx)?;
+                let base = if operands::stable_expression(base_idx) {
+                    self.operand(base)?
+                } else {
+                    self.expression(base)?
+                };
+                let index = self.operand(base_idx)?;
                 let code = format!(
                     "sv4_idx_part_select_value({}, {}, {}, {})",
                     base.code,
@@ -225,16 +225,21 @@ impl Frame<'_, '_> {
                 elem_sel,
             } => self.array_read(*arr, indices, elem_sel, expr)?,
             IrExprKind::CastToReal { a, shortreal } => {
-                let value = self.expression(a)?;
+                let value = self.operand(a)?;
                 let code = round_shortreal(value.real(), *shortreal);
                 self.replace(value, code, 0, true)
             }
             IrExprKind::Convert { a } => {
-                let value = self.expression(a)?;
-                self.convert(value, expr.width, expr.signed, false, false)
+                let value = self.operand(a)?;
+                let value = self.convert(value, expr.width, expr.signed, false, false);
+                self.own(value)
             }
             IrExprKind::CastToPacked { a } | IrExprKind::Resize { a } => {
-                let value = self.expression(a)?;
+                let value = self.operand(a)?;
+                if value.width == expr.width && value.signed == expr.signed && value.fill.is_none()
+                {
+                    return Ok(self.own(value));
+                }
                 let function = if value.width == 0 {
                     "sv4_from_real"
                 } else {
@@ -249,12 +254,12 @@ impl Frame<'_, '_> {
                 self.replace(value, code, expr.width, expr.signed)
             }
             IrExprKind::ToTwoState { a } => {
-                let value = self.expression(a)?;
+                let value = self.operand(a)?;
                 let code = format!("sv4_to_two_state({})", value.code);
                 self.replace(value, code, expr.width, expr.signed)
             }
             IrExprKind::StreamToFixed { a } => {
-                let value = self.expression(a)?;
+                let value = self.operand(a)?;
                 let code = format!(
                     "llg_stream_to_fixed({}, {}u, {})",
                     value.code,
@@ -268,8 +273,9 @@ impl Frame<'_, '_> {
                 target_two_state,
                 ..
             } => {
-                let value = self.expression(a)?;
-                self.convert(value, expr.width, expr.signed, *target_two_state, false)
+                let value = self.operand(a)?;
+                let value = self.convert(value, expr.width, expr.signed, *target_two_state, false);
+                self.own(value)
             }
             IrExprKind::RealBin { op, a, b } => {
                 let a = self.expression(a)?;
@@ -289,7 +295,7 @@ impl Frame<'_, '_> {
                 result
             }
             IrExprKind::RealUn { a, .. } => {
-                let value = self.expression(a)?;
+                let value = self.operand(a)?;
                 let code = format!("(-{})", value.real());
                 self.replace(value, code, 0, true)
             }
@@ -433,8 +439,12 @@ impl Frame<'_, '_> {
         if matches!(op, IrBinOp::LogAnd | IrBinOp::LogOr | IrBinOp::LogImpl) {
             return self.short_circuit(op, left, right);
         }
-        let mut a = self.expression(left)?;
-        let mut b = self.expression(right)?;
+        let mut a = if operands::stable_expression(right) {
+            self.operand(left)?
+        } else {
+            self.expression(left)?
+        };
+        let mut b = self.operand(right)?;
         let compare = match op {
             IrBinOp::Eq => Some("=="),
             IrBinOp::Neq => Some("!="),
@@ -488,8 +498,42 @@ impl Frame<'_, '_> {
             };
             format!("{function}({}, {})", a.code, b.code)
         };
-        let result = self.replace(a, code, expr.width, expr.signed);
-        self.discard(b);
+        let into = match op {
+            IrBinOp::Add => Some("sv4_add_into"),
+            IrBinOp::Sub => Some("sv4_sub_into"),
+            IrBinOp::Mul => Some("sv4_mul_into"),
+            _ => None,
+        }
+        .filter(|_| a.width != 0 && b.width != 0);
+        let result = if let Some(function) = into {
+            let mut destination = if a.slot.is_some() {
+                self.reserve_reused(&a, expr.width, expr.signed)
+            } else if b.slot.is_some() {
+                self.reserve_reused(&b, expr.width, expr.signed)
+            } else {
+                self.reserve(expr.width, expr.signed)
+            };
+            self.line(format!(
+                "{function}(&{}, {}, {});",
+                destination.code, a.code, b.code
+            ));
+            destination.fill = None;
+            if destination.slot != a.slot {
+                self.discard(a);
+            }
+            if destination.slot != b.slot {
+                self.discard(b);
+            }
+            destination
+        } else if a.slot.is_none() && b.slot.is_some() {
+            let result = self.replace(b, code, expr.width, expr.signed);
+            self.discard(a);
+            result
+        } else {
+            let result = self.replace(a, code, expr.width, expr.signed);
+            self.discard(b);
+            result
+        };
         Ok(result)
     }
     pub(super) fn boolean_value(&mut self, value: Value) -> Value {

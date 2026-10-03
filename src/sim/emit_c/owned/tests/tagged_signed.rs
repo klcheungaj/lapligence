@@ -53,6 +53,7 @@ fn tagged_member_retags_after_the_invalid_access_branch() {
                 func: None,
                 sampled: false,
                 activation_label: None,
+                constants: None,
             };
             let mut frame = Frame::new(&ctx);
             let result = frame.expression(&member(signed, two_state)).unwrap();
