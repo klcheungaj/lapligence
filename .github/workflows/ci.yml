@@ -23,6 +23,10 @@ on:
 permissions:
   contents: read
 
+env:
+  # Run one nextest test per available logical CPU (.config/nextest.toml).
+  NEXTEST_PROFILE: ci
+
 jobs:
   lint:
     name: check / fmt / clippy / test (ubuntu)
@@ -103,6 +107,7 @@ jobs:
       - name: Report runner resources
         if: always()
         run: |
+          echo "logical CPUs: $(nproc)"
           df -h
           free -h
           du -sh target || true
@@ -165,6 +170,7 @@ jobs:
       - name: Report runner resources
         if: always()
         run: |
+          echo "logical CPUs: $(nproc)"
           df -h
           free -h
           du -sh target || true
@@ -488,6 +494,7 @@ jobs:
           docker run --rm \
             --volume "$GITHUB_WORKSPACE:/workspace" \
             --workdir /workspace \
+            --env NEXTEST_PROFILE \
             ubuntu:24.04 sh -euxc '
               export DEBIAN_FRONTEND=noninteractive
               apt-get update
@@ -507,6 +514,7 @@ jobs:
           docker run --rm \
             --volume "$GITHUB_WORKSPACE:/workspace" \
             --workdir /workspace \
+            --env NEXTEST_PROFILE \
             rockylinux/rockylinux:9 sh -euxc '
               dnf install -y --setopt=install_weak_deps=False \
                 clang cmake gcc gcc-c++ make procps-ng python3 util-linux
@@ -527,6 +535,7 @@ jobs:
         if: always()
         shell: bash
         run: |
+          echo "logical CPUs: $(getconf _NPROCESSORS_ONLN 2>/dev/null || echo "$NUMBER_OF_PROCESSORS")"
           df -h
           du -sh target || true
 

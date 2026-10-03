@@ -28,14 +28,20 @@ failure-output = "immediate-final"
 [profile.max-threads]
 test-threads = 32
 
+# CI runners are dedicated to one job, so run one test per logical CPU the
+# runner reports (nextest honours affinity and cgroup limits) instead of a
+# fixed count. The workflow selects it with NEXTEST_PROFILE=ci.
+[profile.ci]
+test-threads = "num-cpus"
+
 # Frontend-heavy suites (see the group below) get their own concurrency cap;
 # lighter suites (emit_decoupling, property_elab, …) run in the default
 # full-width pool.
 [test-groups]
-# The default profile's global 8-thread limit wins normally. This group adds
-# an absolute 32-process ceiling when the opt-in profile (or a CLI override)
-# raises global concurrency.
-frontend-heavy = { max-threads = 32 }
+# The profile's global limit wins normally. This group never runs more
+# frontend-heavy processes than logical CPUs, even when a CLI override raises
+# global concurrency further.
+frontend-heavy = { max-threads = "num-cpus" }
 
 # Route the heavyweight suites into the capped group.  Everything else
 # (emit_decoupling, property_elab, …) uses the default full-width pool.
