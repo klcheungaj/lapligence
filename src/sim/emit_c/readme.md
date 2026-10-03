@@ -82,8 +82,9 @@ The default leaves pairs and triples independent, reserving record and hidden-ca
 overhead for classes with a larger reduction in repeated code.
 
 Packed arithmetic borrows signal/local operands when subsequent evaluation cannot
-write or suspend, pools packed constants for each model lifetime, and skips
-matching width/sign conversions. General expression results and data retained
+write or suspend, pools wide constants for each model lifetime, and skips
+matching width/sign conversions. One-limb literals
+use the existing initializer directly. General expression results and data retained
 through selectors, calls or suspension stay owned. Arithmetic results reuse an
 owned operand slot; add/subtract can reuse its same-width payload, while aliased
 multiplication keeps an independent result. Borrowed inputs and retained results

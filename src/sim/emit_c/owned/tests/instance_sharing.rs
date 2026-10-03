@@ -151,8 +151,12 @@ fn generated_pooled_constants_vary_per_site_without_splitting_shared_bodies() {
             render_with_sharing_threshold(&ExecutionModel::lower(model).unwrap(), 4).unwrap();
         assert_eq!(source.matches("LLG_CO_DISPATCH_BEGIN").count(), 1);
         assert_eq!(source.matches("sv4_add_into(").count(), 1);
-        assert!(source.contains("const sv4_t* v"));
-        assert_eq!(source.matches("static sv4_t llg_constant_").count(), 8);
+        if width > 64 {
+            assert!(source.contains("const sv4_t* v"));
+            assert_eq!(source.matches("static sv4_t llg_constant_").count(), 8);
+        } else {
+            assert!(!source.contains("static sv4_t llg_constant_"));
+        }
     }
 }
 

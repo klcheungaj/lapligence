@@ -91,7 +91,7 @@ impl Frame<'_, '_> {
         signed: bool,
         borrow: bool,
     ) -> Value {
-        if width != 0 {
+        if width > u64::BITS {
             if let Some(pool) = self.ctx.constants {
                 let code = pool.intern(constructor, width, signed);
                 let value = Self::borrow(code, width, signed);

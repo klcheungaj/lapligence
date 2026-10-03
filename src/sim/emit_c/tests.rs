@@ -297,7 +297,7 @@ fn selected_net_driver_preserves_member_state_conversion() {
     add_test_process(&mut model, statement);
     let rendered = render(&model).unwrap();
     assert!(rendered.contains("SV4_INIT(0ULL, 15ULL, 0ULL, 4, 0)"));
-    let fill = rendered.find("sv4_clone(&llg_constant_").unwrap();
+    let fill = rendered.find("SV4_INIT(0ULL, 15ULL, 0ULL, 4, 0)").unwrap();
     let conversion = rendered.find("sv4_to_two_state(").unwrap();
     let write = rendered
         .find("llg_net_write_selected(&net, 0, _llg_t[")

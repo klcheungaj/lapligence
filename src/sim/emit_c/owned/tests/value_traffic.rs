@@ -271,7 +271,7 @@ fn fills_pool_by_payload_and_preserve_context_conversion() {
     let value = frame.operand(&fill).unwrap();
     let value = frame.convert(value, 65, true, false, false);
     assert_eq!((value.width, value.signed, value.fill), (65, true, None));
-    assert!(value.slot.is_none());
+    assert!(value.slot.is_some());
     frame.discard(value);
     assert_eq!(constants.lifecycle().matches("sv4_from_limbs").count(), 2);
 }
@@ -472,4 +472,32 @@ fn mux_arms_keep_width_and_sign_conversions_and_pool_expanded_fills() {
     frame.discard(value);
     assert!(!frame.body().contains("sv4_fill("));
     assert!(constants.lifecycle().contains("sv4_from_limbs"));
+}
+
+#[test]
+fn owned_one_limb_literals_construct_directly_and_wide_literals_share_storage() {
+    let model = numeric_model();
+    let constants = super::super::super::constants::PackedConstants::default();
+    let ctx = RCtx {
+        model: &model,
+        func: None,
+        sampled: false,
+        activation_label: None,
+        constants: Some(&constants),
+    };
+    let mut frame = Frame::new(&ctx);
+    let value = frame.expression(&number(3, 64)).unwrap();
+    frame.discard(value);
+    assert!(frame.body().contains("SV4_INIT(3ULL, 0ULL, 0ULL, 64, 0)"));
+    assert!(constants.operands().is_empty());
+    let value = frame.operand(&number(3, 64)).unwrap();
+    assert!(value.slot.is_some());
+    frame.discard(value);
+    assert!(constants.operands().is_empty());
+    for _ in 0..2 {
+        let value = frame.expression(&number(3, 65)).unwrap();
+        frame.discard(value);
+    }
+    assert_eq!(constants.lifecycle().matches("sv4_from_limbs").count(), 1);
+    assert_eq!(frame.body().matches("sv4_clone(").count(), 2);
 }

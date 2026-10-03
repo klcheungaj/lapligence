@@ -144,9 +144,9 @@ Each model's `PackedConstants` registry deduplicates canonical packed constructo
 by width, signedness and all three planes, including expanded fills. Procedures
 borrow its immutable owners or clone when a retained result is required. Initialize
 constants before model defaults/initializers and destroy them after runtime queues
-and model storage at close. The legacy backend pools small constants too because
-its constructor macros allocate; the same emitted code remains valid with inline
-small values. Registration follows deterministic typed emission, never generated
+and model storage at close. One-limb literals use the initializer directly,
+keeping them cheap with inline small values and avoiding extra startup owners.
+Registration follows deterministic typed emission, never generated
 C parsing or corpus-specific rules. Ending a local scope drops its lexical cell
 reference; pending NBA/clocking records retain the descriptor until commit/discard.
 This protects identity, not shared/COW packed values. Preserve procedure-root
