@@ -10,13 +10,13 @@ convert into legacy descriptors as a fallback.
 | `sv4_t`, ABI and exclusive width limit | `backend.h`; compact ABI 5, exact-width owners |
 | `SV4_EMPTY`, `SV4_INIT`, `SV4_C`, `SV4_S`, `SV4_X`, `SV4_Z`, `LLG_MASK` | Public aliases in `backend.h`; runtime constructors remain source-compatible. Additional `SV4_LITERAL` supports static initialization at <=64 bits. |
 | Storage, constructors, resize/cast, two-state, arithmetic/logic/equality, relations, div/mod/pow/clog2 | G1 header and storage/logic/arithmetic/kernel units |
-| Shifts, reductions, countones/onehot, wildcard/case modes, membership, logical implication/equivalence | V05/S2–S3 |
-| Selection functions and plans, stream/unstream, concat/repeat, array conditional | V05/S4–S5 |
+| Shifts, reductions, countones/onehot, wildcard/case modes, membership, logical implication/equivalence | Implemented V05/S2–S3 header fast paths, `shifts_reductions.c` and `comparison_membership.c`; unsigned full-width counts, X/Z sign fill, controlling-bit reductions, right-only wildcards and inclusive pairwise range comparisons |
+| Selection functions and plans, stream/unstream, concat/repeat, array conditional | Pending V05/S4–S5 |
 | Enum, full/range resolution, strength resolution, UDP | `net_adapters.c`; word-parallel endpoints, no per-bit resolution |
 | Real/shortreal bits, integer/real conversions, checked delay scaling | Header and `real_time.c` |
 | Formatting, decimal, low i64, exact i64/index checks | Header, `format_index.c` and decimal kernel seam |
 | `sv4_checked_width` | Header; rejects unknown/negative/over-capacity input, preserves zero sentinel |
-| `llg_sv4_word_t`, `llg_sv4_vpi_word_t`, all `llg_sv4_*` bridge functions and `LLG_SV4_BITS/X/Z` | G1 header and storage unit; copied logical words, no native/GMP views |
+| `llg_sv4_word_t`, `llg_sv4_vpi_word_t`, V01 `llg_sv4_*` bridge functions and `LLG_SV4_BITS/X/Z` | G1 header and storage unit; copied logical words, no native/GMP views. New V06 consumer primitives remain pending compact integration as recorded in the [facade contract](../value/facade.md). |
 | All seven `LLG_RESOLVE_*` and eight `LLG_STRENGTH_*` constants | Prefixed enum constants and public aliases, identical values |
 | `llg_real_to_bool` | Inline scalar helper; nonzero including NaN is true, signed zeros false |
 | `sv4_select_plan_t` | Owner-free five-field equivalent in `reference_types.h`, guarded by `LLG_GMP_SV4_SELECT_PLAN_DEFINED` for S4 integration |
@@ -38,3 +38,10 @@ text prefixes, exact real-to-integer rounding/truncation and bit reinterpretatio
 Packed-to-real additionally preserves the legacy limb rounding order; its
 mathematical oracle admits at most one double ULP for finite large integers.
 Native component evidence does not establish generated model/backend selection.
+
+The S2/S3 family probes exhaust four-state inputs through four bits, including
+unequal widths and signs, and inclusive range triples with all sign combinations.
+Independent Python state/integer vectors and live-legacy differential checks cover
+wide and maximum widths, unknown/high shift counts, canonical B removal and
+independent owners in both kernel configurations. `compact_v05a_checks` builds
+these probes alongside the G1 core checks.

@@ -31,6 +31,36 @@ static g4_t multiply(g4_t a, g4_t b) {
     out.data.wide.b = NULL;
     return out;
 }
+/* Known equal-width operands need neither normalization nor a copied left
+ * operand. Every allocated word is written before the result is published. */
+g4_t llg_gmp_sv4_binary_known_equal(const uint64_t* lhs, const uint64_t* rhs, uint32_t width,
+                                    int8_t sign, unsigned op) {
+    size_t n = ((size_t)width + 63u) / 64u;
+    uint64_t* result = (uint64_t*)malloc(n * sizeof(uint64_t));
+    if (!result)
+        llg_gmp_sv4_fail("allocation failed");
+    if (op <= 1) {
+        uint64_t carry = op == 1;
+        for (size_t i = 0; i < n; ++i) {
+            uint64_t x = lhs[i], y = op == 1 ? ~rhs[i] : rhs[i];
+            uint64_t sum = x + y, r = sum + carry;
+            carry = (sum < x) | (r < sum);
+            result[i] = r;
+        }
+    } else {
+        for (size_t i = 0; i < n; ++i)
+            result[i] = op == 3   ? lhs[i] & rhs[i]
+                        : op == 4 ? lhs[i] | rhs[i]
+                        : op == 5 ? lhs[i] ^ rhs[i]
+                                  : ~(lhs[i] ^ rhs[i]);
+    }
+    result[n - 1] &= g4_topmask(width);
+    g4_t out = LLG_GMP_SV4_EMPTY;
+    out.width = width;
+    out.is_signed = sign;
+    out.data.wide.a = result;
+    return out;
+}
 g4_t llg_gmp_sv4_binary_wide(g4_t a, g4_t b, unsigned op) {
     uint32_t w = g4_maxw(a, b);
     int8_t s = a.is_signed && b.is_signed;
