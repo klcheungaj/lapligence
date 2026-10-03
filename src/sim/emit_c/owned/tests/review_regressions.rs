@@ -20,6 +20,7 @@ fn reference_model() -> IrModel {
 fn forwarded_reference_resolution_uses_the_formal_descriptor() {
     let model = reference_model();
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: Some(&model.funcs[0]),
         sampled: false,
@@ -36,6 +37,7 @@ fn forwarded_reference_resolution_uses_the_formal_descriptor() {
 fn reference_bit_write_passes_one_captured_native_index() {
     let model = reference_model();
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: Some(&model.funcs[0]),
         sampled: false,
@@ -71,6 +73,7 @@ fn reference_bit_write_passes_one_captured_native_index() {
 fn addressable_real_local_is_heap_backed_and_lexically_owned() {
     let model = IrModel::new("review_real".to_owned(), 1).unwrap();
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
@@ -132,6 +135,7 @@ fn owned_memory_emitter_uses_enum_entry_count_for_c_array_bound() {
     )
     .expect("valid model");
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,

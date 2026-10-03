@@ -17,6 +17,8 @@ pub struct RenderedExpr {
 /// Render context: the model tables plus the enclosing C function when
 /// rendering a function body (formal reads resolve through it).
 pub struct RCtx<'m> {
+    /// Selected packed descriptor for coroutine layout estimates.
+    pub value_backend: crate::sim::value_backend::ValueBackend,
     /// Per-model immutable packed constants, registered during typed emission.
     pub constants: Option<&'m super::constants::PackedConstants>,
     pub model: &'m IrModel,

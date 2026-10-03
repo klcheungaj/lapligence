@@ -658,5 +658,31 @@ fn consuming_generation_matches_borrowing_generation_in_both_optimizer_modes() {
         assert_eq!(borrowed.symbols_tsv, consumed.symbols_tsv);
         assert_eq!(borrowed.design_name, consumed.design_name);
         assert_eq!(borrowed.warnings, consumed.warnings);
+        for kernel in [
+            llg::sim::value_backend::CompactKernel::Portable,
+            llg::sim::value_backend::CompactKernel::Gmp,
+        ] {
+            let options = llg::sim::codegen::CodegenOptions {
+                optimization: options,
+                value_config: llg::sim::value_backend::ValueConfig {
+                    backend: llg::sim::value_backend::ValueBackend::Compact,
+                    kernel,
+                },
+                ..Default::default()
+            };
+            let borrowed =
+                llg::sim::codegen::generate_from_db_with_codegen_options(&database, &options)
+                    .unwrap();
+            let consumed = llg::sim::codegen::generate_from_owned_db_with_codegen_options(
+                db::Db::from_slang(&output.snapshot).unwrap(),
+                &options,
+            )
+            .unwrap();
+            assert!(consumed.model_c.contains("#define LLG_MODEL_VALUE_ABI 5\n"));
+            assert_eq!(borrowed.model_c, consumed.model_c);
+            assert_eq!(borrowed.symbols_tsv, consumed.symbols_tsv);
+            assert_eq!(borrowed.design_name, consumed.design_name);
+            assert_eq!(borrowed.warnings, consumed.warnings);
+        }
     }
 }

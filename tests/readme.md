@@ -689,6 +689,26 @@ They cover core values and the S2/S3 shifts, reductions, case/wildcard and range
 families with portable and optional GMP limb kernels, independently of generated
 model selection and do not replace later HDL/model integration acceptance.
 
+### Experimental value backend builds
+
+`sim_value_backends` checks selected runtime archives, clean source-only builds,
+both wrong-backend and wrong-kernel links, exact C selectors, missing GMP and
+positive generated-HDL parity with independent expected outputs. Set
+`LLG_TEST_GMP_ROOT` to include the GMP lane; without it legacy and compact portable
+run, and GMP parity is reported blocked. Native `selected_*_facade` probes in
+`runtime_value_storage` exercise the common consumer bridge in all three modes.
+
+```sh
+CARGO_BUILD_JOBS=6 CMAKE_BUILD_PARALLEL_LEVEL=6 LLG_TEST_GMP_ROOT=/path/to/gmp scripts/run-tests.sh --test-work-dir /build --cargo-profile quick --test sim_value_backends --test-threads 6
+```
+
+`CodegenOptions.value_config` and `CmakeBuildOpts.value_config` must agree. Driver
+selection uses `LLG_VALUE_BACKEND` and `LLG_COMPACT_KERNELS`; default legacy/portable.
+GMP mode requires `GMP_ROOT`, with no system fallback. Compact frame checks use a
+24-byte descriptor instead of legacy's 32-byte descriptor on 64-bit hosts;
+`compact_selected_frame_lint` covers suspended values, shared instances and
+structural nets with both kernels and optimizer modes.
+
 ### Required RTL-002 capacity lane
 
 This normal suite executes 16,777,216-cell storage, a multidimensional product at
@@ -704,3 +724,26 @@ CARGO_BUILD_JOBS=6 CMAKE_BUILD_PARALLEL_LEVEL=6 scripts/run-tests.sh --test-work
 The source-size case compares 65,537 and 16,777,216 cells. Native
 `fixed_array_storage_probe.c` checks repeated descriptor copies, stable cells,
 queued snapshot cleanup and zero remaining value owners.
+
+The public CLI, shared `support/sim.rs` execution helpers, owned-DB lifetime helper,
+VPI and waveform execution harnesses honor `LLG_VALUE_BACKEND` and
+`LLG_COMPACT_KERNELS`. Direct library/component tests retain explicit or default
+configurations; this environment does not change the library's legacy defaults.
+Run the whole suite with compact portable using:
+
+```sh
+LLG_VALUE_BACKEND=compact LLG_COMPACT_KERNELS=portable CARGO_BUILD_JOBS=6 CMAKE_BUILD_PARALLEL_LEVEL=6 scripts/run-tests.sh --test-work-dir /build --cargo-profile quick --test-threads 6 --no-fail-fast
+```
+
+Run the cross-backend parity matrix alone with:
+
+```sh
+LLG_TEST_GMP_ROOT=/path/to/gmp CARGO_BUILD_JOBS=6 CMAKE_BUILD_PARALLEL_LEVEL=6 scripts/run-tests.sh --test-work-dir /build --cargo-profile quick --test sim_value_backends -E 'test(parity::compact_parity_) | test(compact_hdl_subset_matches_legacy_and_independent_outputs)' --test-threads 6
+```
+
+These tests force both backends,
+both compact kernels and both HDL optimizer modes independently of the runner's
+selection. VPI requires a Unix shared-library compiler. The matrix covers
+arithmetic destinations, selections, streams, nets/force, NBA capture, VPI and
+waveforms, RTL-001 through RTL-004 fixtures and a 16,777,216-cell array copy/NBA
+fixture.

@@ -9,6 +9,7 @@ fn pure_operands_borrow_and_reuse_the_arithmetic_result() {
     let model = numeric_model();
     let constants = super::super::super::constants::PackedConstants::default();
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
@@ -31,6 +32,7 @@ fn pure_operands_borrow_and_reuse_the_arithmetic_result() {
 fn conversions_elide_only_matching_packed_shapes() {
     let model = numeric_model();
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
@@ -53,6 +55,7 @@ fn conversions_elide_only_matching_packed_shapes() {
 fn same_shape_resize_operand_borrows_but_retained_expression_owns() {
     let model = numeric_model();
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
@@ -96,6 +99,7 @@ fn calls_snapshot_earlier_operands_including_output_calls() {
     );
     assert!(!super::super::operands::stable_expression(&call));
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
@@ -126,6 +130,7 @@ fn selected_assignment_snapshots_rhs_before_calling_selector() {
         None,
     );
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
@@ -229,6 +234,7 @@ fn mutating_later_operand_snapshots_the_earlier_read() {
     );
     assert!(!super::super::operands::stable_expression(&mutation));
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
@@ -249,6 +255,7 @@ fn fills_pool_by_payload_and_preserve_context_conversion() {
     let model = numeric_model();
     let constants = super::super::super::constants::PackedConstants::default();
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
@@ -303,6 +310,7 @@ fn suspending_call_keeps_its_input_snapshot_in_the_frame() {
 fn unary_borrows_and_mismatched_resize_still_converts() {
     let model = numeric_model();
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
@@ -343,6 +351,7 @@ fn unary_borrows_and_mismatched_resize_still_converts() {
 fn borrowed_local_materializes_using_its_registered_address() {
     let model = numeric_model();
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
@@ -389,6 +398,7 @@ fn batched_pca_helpers_share_the_models_wide_index_constant() {
 fn pure_short_circuit_and_mux_selectors_borrow_without_changing_branches() {
     let model = numeric_model();
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
@@ -432,6 +442,7 @@ fn mux_arms_keep_width_and_sign_conversions_and_pool_expanded_fills() {
     let model = numeric_model();
     let constants = super::super::super::constants::PackedConstants::default();
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
@@ -479,6 +490,7 @@ fn owned_one_limb_literals_construct_directly_and_wide_literals_share_storage() 
     let model = numeric_model();
     let constants = super::super::super::constants::PackedConstants::default();
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
@@ -506,6 +518,7 @@ fn owned_one_limb_literals_construct_directly_and_wide_literals_share_storage() 
 fn vpi_results_normalize_unproven_runtime_shapes_before_elision() {
     let model = numeric_model();
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,

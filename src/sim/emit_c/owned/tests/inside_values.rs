@@ -47,6 +47,7 @@ fn captured_inside_elements_retag_native_values_before_comparison() {
         for signed in [false, true] {
             let model = model(width);
             let ctx = RCtx {
+                value_backend: crate::sim::value_backend::ValueBackend::Legacy,
                 model: &model,
                 func: None,
                 sampled: false,

@@ -74,6 +74,7 @@ fn cross_limb_structure_merge_owns_each_member_and_default() {
     for width in [1, 7, 33, 65, 129] {
         let model = model(width);
         let ctx = RCtx {
+            value_backend: crate::sim::value_backend::ValueBackend::Legacy,
             model: &model,
             func: None,
             sampled: false,

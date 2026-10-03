@@ -37,6 +37,7 @@ pub(crate) fn run_case_after_db_drop(suite: &str, fixture: &str, expected: &str)
     );
     let source = fixture_path(suite, fixture);
     let source_text = std::fs::read_to_string(&source).expect("read checked fixture");
+    let value_config = llg::sim::value_backend::ValueConfig::from_env().expect("value selection");
     let models = sim_harness::with_frontend_temp_cwd("owned-feature", |_| {
         let compiled = compile::compile_checked(&compile::CompileOpts {
             files: vec![source.to_string_lossy().into_owned()],
@@ -65,8 +66,15 @@ pub(crate) fn run_case_after_db_drop(suite: &str, fixture: &str, expected: &str)
             } else {
                 OptConfig::none()
             };
-            let model = codegen::generate_from_db_with_opts(&database, &options)
-                .map_err(|error| format!("codegen: {error}"))?;
+            let model = codegen::generate_from_db_with_codegen_options(
+                &database,
+                &codegen::CodegenOptions {
+                    optimization: options,
+                    value_config,
+                    ..Default::default()
+                },
+            )
+            .map_err(|error| format!("codegen: {error}"))?;
             assert!(
                 model.warnings.is_empty(),
                 "unexpected warnings: {:?}",
@@ -84,6 +92,7 @@ pub(crate) fn run_case_after_db_drop(suite: &str, fixture: &str, expected: &str)
                 sim_harness::TempDir::new("owned-feature-model").expect("model directory");
             let options = build::CmakeBuildOpts {
                 model_opt_level: level,
+                value_config,
                 ..Default::default()
             };
             let executable =
@@ -267,6 +276,62 @@ fn assert_case_output(
     expected_warnings.sort_unstable();
     assert_eq!(warnings, expected_warnings, "{label}");
     assert_eq!(runtime_stderr, expected_stderr, "{label}");
+}
+
+pub(crate) fn run_case_backend_parity(
+    suite: &str,
+    fixture: &str,
+    expected: &str,
+    args: &[&str],
+    envs: &[(&str, &str)],
+) {
+    let gmp = std::env::var("LLG_TEST_GMP_ROOT").unwrap_or_default();
+    for optimized in [false, true] {
+        let mut controls = envs.to_vec();
+        controls.extend([
+            ("LLG_VALUE_BACKEND", "legacy"),
+            ("LLG_COMPACT_KERNELS", "portable"),
+        ]);
+        let legacy = invoke_with_env(suite, fixture, optimized, args, &controls, &["GMP_ROOT"]);
+        let stdout = legacy.stdout.clone();
+        let stderr = legacy.stderr.clone();
+        assert!(
+            legacy.status.success(),
+            "{suite}/{fixture}, legacy: {}",
+            String::from_utf8_lossy(&stderr)
+        );
+        assert_eq!(
+            stdout,
+            expected.as_bytes(),
+            "{suite}/{fixture}, legacy, optimized={optimized}: independent output mismatch"
+        );
+        for kernel in ["portable", "gmp"] {
+            if kernel == "gmp" && gmp.is_empty() {
+                eprintln!("BLOCKED GMP parity: set LLG_TEST_GMP_ROOT");
+                continue;
+            }
+            let mut controls = envs.to_vec();
+            controls.extend([
+                ("LLG_VALUE_BACKEND", "compact"),
+                ("LLG_COMPACT_KERNELS", kernel),
+                ("GMP_ROOT", gmp.as_str()),
+            ]);
+            let compact = invoke_with_env(suite, fixture, optimized, args, &controls, &[]);
+            let label = format!("{suite}/{fixture}, compact/{kernel}, optimized={optimized}");
+            assert!(
+                compact.status.success(),
+                "{label}: {}",
+                String::from_utf8_lossy(&compact.stderr)
+            );
+            assert_eq!(compact.stdout, stdout, "{label}: legacy stdout mismatch");
+            assert_eq!(
+                compact.stdout,
+                expected.as_bytes(),
+                "{label}: independent output mismatch"
+            );
+            assert_eq!(compact.stderr, stderr, "{label}: legacy stderr mismatch");
+        }
+    }
 }
 
 pub(crate) fn run_case(

@@ -1,0 +1,521 @@
+#ifndef LLG_LEGACY_VALUE_BACKEND_H
+#define LLG_LEGACY_VALUE_BACKEND_H
+#include <stddef.h>
+#include <stdint.h>
+#include <string.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+// ── 4-state values ────────────────────────────────────────────────────────────
+
+#define LLG_VALUE_ABI_VERSION 4u
+#define LLG_SUPPORTED_WIDTH_LIMIT (1u << 20)
+
+// A live value owns exactly one allocation, addressed by bits; x and z are
+// interior pointers. Width zero owns nothing. Width must be strictly less than
+// LLG_SUPPORTED_WIDTH_LIMIT. Every constructor and value-returning operation
+// returns an independent owner. By-value arguments are BORROWED, not consumed.
+//
+// Initialize destinations with SV4_EMPTY (or a constructor). Do not copy owners
+// with assignment/memcpy: use clone/copy/move. A plain descriptor copy is only a
+// temporary borrow and must never be destroyed or retained across replacement.
+// Destroy values at the end of their containing object's lifetime; destruction
+// resets to empty and is idempotent. No compiler cleanup extensions are used.
+typedef struct {
+    uint64_t* bits;
+    uint64_t* x;
+    uint64_t* z;
+    uint32_t width;
+    int8_t is_signed;
+} sv4_t;
+
+#define SV4_EMPTY {NULL, NULL, NULL, 0, 0}
+
+sv4_t sv4_zero(uint32_t width, int8_t is_signed);
+sv4_t sv4_clone(const sv4_t* source);
+// Initialized destination; copy is deep and supports self-copy. Move releases
+// the previous destination, transfers ownership, and empties the source.
+void sv4_copy(sv4_t* destination, const sv4_t* source);
+void sv4_move(sv4_t* destination, sv4_t* source);
+// Consume a freshly returned owner. Use move for a named source so it is reset.
+void sv4_replace(sv4_t* destination, sv4_t owned);
+// Borrowed-value shorthand for copy; useful when the source is an expression.
+void sv4_assign(sv4_t* destination, sv4_t source);
+void sv4_destroy(sv4_t* value);
+void sv4_destroy_array(sv4_t* values, size_t count);
+size_t sv4_bytes(const sv4_t* value);
+// Masked one-limb constructor, including allocation-free width zero.
+sv4_t sv4_from_masks(uint64_t bits, uint64_t x, uint64_t z,
+                     uint32_t width, int8_t is_signed);
+
+// Captured packed-select coordinates; contains no owners or storage pointer.
+// The valid interval maps result[value_lsb + i] to storage[storage_lsb + i].
+// Refinement clips to the previous interval before advancing to the next slice.
+typedef struct {
+    uint32_t storage_width;
+    uint32_t width;
+    uint32_t storage_lsb;
+    uint32_t value_lsb;
+    uint32_t count;
+} sv4_select_plan_t;
+
+sv4_select_plan_t sv4_select_plan_init(uint32_t storage_width);
+// Single-stage plans used when a selected write must retain its coordinates.
+// Invalid or wholly out-of-range selectors produce an empty valid interval.
+sv4_select_plan_t sv4_select_plan_bit(uint32_t storage_width, uint64_t index);
+sv4_select_plan_t sv4_select_plan_part(uint32_t storage_width,
+                                       int64_t left, int64_t right);
+sv4_select_plan_t sv4_select_plan_indexed(uint32_t storage_width, sv4_t base,
+                                          uint32_t width, int negative);
+// All bases are borrowed. Unknown or unrepresentable bases select no bits.
+void sv4_select_plan_step(sv4_select_plan_t* plan, sv4_t base, uint32_t width);
+// Read returns an independent unsigned owner, with X at missing positions.
+sv4_t sv4_select_plan_read(sv4_t source, const sv4_select_plan_t* plan);
+// Return only the plan's valid contiguous interval. Reverse maps ascending
+// declared part-selects into increasing storage-bit order.
+sv4_t sv4_select_plan_slice(sv4_t source, const sv4_select_plan_t* plan,
+                            int reverse);
+// Set borrows source; supports aliasing and changes only the valid interval.
+void sv4_select_plan_set(sv4_t* destination, const sv4_select_plan_t* plan, sv4_t source);
+
+typedef struct llg_queue_t llg_queue_t;
+typedef sv4_t (*llg_queue_ref_read_fn)(const llg_queue_t* queue,
+                                       uint64_t identity);
+typedef int (*llg_queue_ref_write_fn)(llg_queue_t* queue, uint64_t identity,
+                                      sv4_t value);
+
+// Canonical lvalue descriptor used by subroutine `ref` arguments.  The
+// descriptor always names the original packed storage (`base`); selected
+// aliases retain their source bounds so reads and writes remain immediate and
+// do not require copy-in/copy-out temporaries.
+typedef enum {
+    LLG_REF_WHOLE = 0,
+    LLG_REF_BIT = 1,
+    LLG_REF_PART = 2,
+    LLG_REF_INDEXED = 3,
+    LLG_REF_ARRAY = 4,
+    LLG_REF_QUEUE = 5,
+    // Synchronous file-input target; retained borrows a sv4_select_plan_t.
+    // Neither the descriptor nor its plan may escape the input call.
+    LLG_REF_PACKED_PLAN = 6,
+    LLG_REF_COMPOSITE = 7,
+    LLG_REF_VIEW = 8,
+    // A selected tagged-union member with captured receiver plans for every
+    // active-tag check. Call scopes own the view and check array.
+    LLG_REF_TAGGED_VIEW = 9,
+} llg_ref_kind_t;
+
+typedef struct {
+    sv4_t* base;
+    llg_queue_t* queue;
+    uint32_t width;
+    int8_t is_signed;
+    uint8_t two_state;
+    uint8_t kind;
+    int64_t left;
+    int64_t right;
+    uint64_t index;
+    uint32_t indexed_width;
+    uint8_t indexed_negative;
+    uint64_t array_size;
+    uint64_t queue_identity;
+    llg_queue_ref_read_fn queue_read;
+    llg_queue_ref_write_fn queue_write;
+    void* retained;
+    sv4_t (*retained_read)(const void*);
+    int (*retained_write)(void*, sv4_t);
+} llg_ref_t;
+
+/* Borrowed descriptor graphs. Generated call scopes own the graph storage;
+ * leaves retain their original variable identity across calls and suspension. */
+typedef struct {
+    size_t count;
+    llg_ref_t** parts;
+} llg_ref_composite_t;
+
+typedef struct {
+    sv4_select_plan_t receiver_plan;
+    uint32_t tag_width;
+    uint32_t member_index;
+    const char* member_name;
+} llg_ref_tag_check_t;
+
+typedef struct {
+    llg_ref_t* parent;
+    sv4_select_plan_t plan;
+    size_t tag_check_count;
+    const llg_ref_tag_check_t* tag_checks;
+    const char* location;
+} llg_ref_view_t;
+
+// Pure validation; runtime-facing reference access reports a failed check.
+int llg_ref_view_valid(const llg_ref_view_t* view, const sv4_t* parent,
+                       size_t* failed_check);
+sv4_t llg_ref_read(const llg_ref_t* ref);
+
+// Net resolution modes.  The pure resolver has no scheduler
+// dependency; llg_rt.c is responsible for publishing changes to waiters.
+enum {
+    LLG_RESOLVE_WIRE = 0,
+    LLG_RESOLVE_WAND = 1,
+    LLG_RESOLVE_WOR = 2,
+    LLG_RESOLVE_TRI0 = 3,
+    LLG_RESOLVE_TRI1 = 4,
+    LLG_RESOLVE_SUPPLY0 = 5,
+    LLG_RESOLVE_SUPPLY1 = 6,
+};
+
+// IEEE 1800-2009 Table 28-7 strength levels. Continuous assignments use
+// HIGHZ, WEAK, PULL, STRONG, or SUPPLY; the intermediate levels are retained
+// so the resolver's representation matches the standard's ordered scale.
+enum {
+    LLG_STRENGTH_HIGHZ = 0,
+    LLG_STRENGTH_SMALL = 1,
+    LLG_STRENGTH_MEDIUM = 2,
+    LLG_STRENGTH_WEAK = 3,
+    LLG_STRENGTH_LARGE = 4,
+    LLG_STRENGTH_PULL = 5,
+    LLG_STRENGTH_STRONG = 6,
+    LLG_STRENGTH_SUPPLY = 7,
+};
+
+// Compile-time bit mask for a width literal (<= 64).
+#define LLG_MASK(w) ((w) >= 64 ? ~0ULL : ((1ULL << (w)) - 1))
+
+// These are runtime constructors, NOT static initializers. Each invocation
+// creates an owner. Static model cells start SV4_EMPTY and are initialized by
+// generated startup code. Use from_limbs/fill for multi-limb literals.
+#define SV4_INIT(b, x, z, w, s) \
+    sv4_from_masks((uint64_t)(b), (uint64_t)(x), (uint64_t)(z), (w), (s))
+#define SV4_C(b, w) sv4_from_u64((uint64_t)(b), (w), 0)
+#define SV4_S(b, w) sv4_from_u64((uint64_t)(b), (w), 1)
+#define SV4_X(w) sv4_x((w), 0)
+#define SV4_Z(w) sv4_fill(3, (w), 0)
+
+// ── Value constructors / inspectors ───────────────────────────────────────────
+
+sv4_t sv4_x(uint32_t width, int8_t is_signed);
+sv4_t sv4_from_u64(uint64_t v, uint32_t width, int8_t is_signed);
+sv4_t sv4_from_i64(int64_t v, uint32_t width);
+double sv4_to_real(sv4_t v);
+sv4_t sv4_from_real(double v, uint32_t width, int8_t is_signed);
+sv4_t sv4_rtoi(double v);
+sv4_t sv4_realtobits(double v);
+// Dynamic X/Z input bits have no real representation and contribute zero.
+double sv4_bitstoreal(sv4_t v);
+sv4_t sv4_shortrealtobits(double v);
+double sv4_bitstoshortreal(sv4_t v);
+int llg_real_to_bool(double v);
+// Build from raw limb arrays (any may be NULL to zero-fill); the top partial
+// limb is masked to `width`. Widths reaching the supported limit fail rather
+// than silently truncating. Inputs are borrowed only for the duration of the call.
+sv4_t sv4_from_limbs(const uint64_t* bits, const uint64_t* x, const uint64_t* z,
+                     uint32_t width, int8_t is_signed);
+sv4_t sv4_resize(sv4_t v, uint32_t width, int8_t is_signed);
+// Value-preserving conversion (LRM 1800-2009 §6.24.1 / §10.7): widening
+// extends by the SOURCE's signedness (`v.is_signed`), narrowing truncates;
+// the result carries `is_signed`.  Unlike `sv4_resize`, whose extension
+// follows the passed flag, an unsigned source zero-extends even into a
+// signed target and a signed source sign-extends even into an unsigned one.
+sv4_t sv4_cast(sv4_t v, uint32_t width, int8_t is_signed);
+// Packed four-state to two-state conversion: X and Z bits become zero while
+// known bits, width, and signedness are preserved.
+sv4_t sv4_to_two_state(sv4_t v);
+// All `width` bits set to one literal bit value: bit 0, bit 1, bit 2 = X,
+// or bit 3 = Z.
+sv4_t sv4_fill(uint8_t bit, uint32_t width, int8_t is_signed);
+
+// Borrow rows and scalar inputs for this synchronous call; retain neither.
+// Each row has input_count masks (bit 0 = 0, bit 1 = 1, bit 2 = X), then
+// one output state (0/1/2=X). Masks are 1/2/4/3/7 for 0/1/x/b/?.
+// input_count is nonzero; rows has row_count * (input_count + 1) bytes.
+// Inputs have width 1. Z matches X; the first matching row wins, otherwise X.
+// The unsigned one-bit result is an independent owner. No inputs are changed.
+sv4_t sv4_udp_eval(const uint8_t* rows, size_t row_count, size_t input_count,
+                   const sv4_t* const* inputs);
+sv4_t sv4_clog2(sv4_t v);
+sv4_t sv4_countones(sv4_t v);     // signed 32-bit count of known one bits
+sv4_t sv4_onehot(sv4_t v, int allow_zero); // one-bit predicate, X/Z ignored
+
+int sv4_is_unknown(sv4_t v);      // any bit X or Z
+int sv4_to_bool(sv4_t v);         // != 0 with no unknown bits, else 0
+// Normalize a repeat count without truncating wide values. Unknown, Z, and
+// negative signed counts mean zero iterations; positive counts are unsigned.
+sv4_t sv4_repeat_count(sv4_t v);
+uint64_t sv4_to_u64(sv4_t v);     // low limb; meaningful only when width <= 64
+// Convert a packed index without silently discarding upper bits.  Unknown,
+// negative, and wider-than-uint64 values return UINT64_MAX (always out of
+// range for an admitted packed value).
+uint64_t sv4_to_index(sv4_t v);
+// Procedural delays: X/Z is zero; negative packed values convert to unsigned
+// 64-bit time. Real values round to local precision before scheduler scaling.
+uint64_t sv4_delay_ticks(sv4_t value, uint64_t unit_ticks);
+uint64_t sv4_real_delay_ticks(double value, uint64_t unit_ticks,
+                              uint64_t precision_ticks);
+// Exact signed host index conversion honoring the packed value's signedness.
+// Returns zero for X/Z or an out-of-range value without modifying `result`.
+int sv4_to_index_i64(sv4_t v, int64_t* result);
+// Convert a runtime-computed packed width.  Invalid, unknown, negative, or
+// over-capacity values terminate explicitly rather than truncating.
+uint32_t sv4_checked_width(sv4_t v);
+int64_t sv4_to_i64(sv4_t v);      // two's-complement interpretation of low bits
+int sv4_fits_i64(sv4_t v);        // exact signed conversion is representable
+int sv4_same(sv4_t a, sv4_t b);   // bits + x + z equal (ignores width/signed)
+// Resolve per-driver contributions at one net.  Z is absent/neutral; an
+// all-Z bit stays Z.  WAND gives 0 dominance, WOR gives 1 dominance, and
+// WIRE reports conflicting known values as X. TRI0/TRI1 apply their pull
+// only to all-Z bits. SUPPLY0/SUPPLY1 model their implicit supply source.
+sv4_t sv4_resolve(const sv4_t* const* drivers, int n_drivers,
+                  uint32_t width, int8_t is_signed, int mode);
+// Resolve direct driver contributions with one strength endpoint for each
+// logic value. An X contribution spans both endpoint ranges; therefore a
+// known value is stable only when a known driver strictly dominates every
+// possible opposite endpoint. WAND/WOR use the same ordered endpoints and
+// apply their wired tie rule. TRI0/TRI1 and SUPPLY0/SUPPLY1 add their
+// implicit pull/supply source at the corresponding strength. Strength arrays
+// contain n_drivers entries.
+sv4_t sv4_resolve_strengths(const sv4_t* const* drivers,
+                            const uint8_t* strength0,
+                            const uint8_t* strength1, int n_drivers,
+                            uint32_t width, int8_t is_signed, int mode);
+// Resolve one contiguous slice of aligned full-width contributions. `indices`
+// selects the overlapping entries from the original driver and strength
+// tables; the returned owner has `range_width` bits, with bit zero
+// corresponding to `range_offset` in the source net. This keeps the value
+// layer scheduler-independent while allowing a scheduler-side interval index.
+sv4_t sv4_resolve_strengths_range(const sv4_t* const* drivers,
+                                  const uint8_t* strength0,
+                                  const uint8_t* strength1,
+                                  const int* indices, int n_indices,
+                                  uint32_t source_width,
+                                  uint32_t range_offset,
+                                  uint32_t range_width,
+                                  int8_t is_signed, int mode);
+
+// Format one value into `buf` (NUL-terminated).  `fmt` is 'd', 'h', 'b' or 'o'.
+// %b prints all width bits: 'x' for X bits and 'z' for Z bits; %h prints
+// ceil(width/4) digits ('x' if any bit of the nibble is X, else 'z' if any is
+// Z); %o likewise in octal; %d prints 'x' when any bit is X or Z.
+void sv4_format(char fmt, sv4_t v, char* buf, size_t cap);
+// Unsigned decimal via long division across limbs; any unknown bit -> "x".
+// A signed value (`is_signed`) with the sign bit set prints '-' followed by
+// its two's-complement magnitude (`~v + 1` within the value's width).
+void sv4_to_dec_string(sv4_t v, char* buf, size_t cap);
+
+// ── Arithmetic / logic ops (IEEE 1364 semantics) ──────────────────────────────
+//
+// Result widths are self-determined exactly like src/core/elab.rs: arithmetic
+// and bitwise ops use max operand width, shifts keep the LHS width, compares /
+// reductions / logical ops yield 1 bit.  Unknown operand bits propagate: any
+// unknown bit makes arithmetic results all-X; 0 dominates AND and 1 dominates
+// OR per bit; a shift with unknown amount yields all-X.
+
+/* Borrow operands and replace initialized dst; exact operand aliases supported. */
+void sv4_add_into(sv4_t* dst, sv4_t a, sv4_t b);
+void sv4_sub_into(sv4_t* dst, sv4_t a, sv4_t b);
+void sv4_mul_into(sv4_t* dst, sv4_t a, sv4_t b);
+sv4_t sv4_add(sv4_t a, sv4_t b);
+sv4_t sv4_sub(sv4_t a, sv4_t b);
+sv4_t sv4_mul(sv4_t a, sv4_t b);
+sv4_t sv4_div(sv4_t a, sv4_t b);
+sv4_t sv4_mod(sv4_t a, sv4_t b);
+sv4_t sv4_pow(sv4_t a, sv4_t b);
+sv4_t sv4_neg(sv4_t a);              // unary minus
+sv4_t sv4_bitneg(sv4_t a);           // ~
+sv4_t sv4_lognot(sv4_t a);           // !
+sv4_t sv4_and(sv4_t a, sv4_t b);     // &
+sv4_t sv4_or(sv4_t a, sv4_t b);      // |
+sv4_t sv4_xor(sv4_t a, sv4_t b);     // ^
+sv4_t sv4_xnor(sv4_t a, sv4_t b);    // ~^
+sv4_t sv4_logand(sv4_t a, sv4_t b);  // &&
+sv4_t sv4_logor(sv4_t a, sv4_t b);   // ||
+sv4_t sv4_logimpl(sv4_t a, sv4_t b); // ->
+sv4_t sv4_logequiv(sv4_t a, sv4_t b); // <->
+sv4_t sv4_reduce_and(sv4_t a);       // &a
+sv4_t sv4_reduce_nand(sv4_t a);
+sv4_t sv4_reduce_or(sv4_t a);        // |a
+sv4_t sv4_reduce_nor(sv4_t a);
+sv4_t sv4_reduce_xor(sv4_t a);       // ^a
+sv4_t sv4_reduce_xnor(sv4_t a);
+sv4_t sv4_shl(sv4_t a, sv4_t b);     // <<
+sv4_t sv4_shr(sv4_t a, sv4_t b);     // >>
+sv4_t sv4_ashl(sv4_t a, sv4_t b);    // <<<
+sv4_t sv4_ashr(sv4_t a, sv4_t b);    // >>>
+// Logical equality: a known mismatch yields 0 even if other bits are X/Z;
+// otherwise any X/Z yields X.
+sv4_t sv4_eq(sv4_t a, sv4_t b);
+sv4_t sv4_neq(sv4_t a, sv4_t b);
+sv4_t sv4_case_eq(sv4_t a, sv4_t b); // === (never X; X/Z compared literally)
+sv4_t sv4_case_neq(sv4_t a, sv4_t b);
+// Navigate a declaration-ordered enum table. Invalid/unknown receivers
+// return default_value; duplicate values select the last matching declaration.
+sv4_t sv4_enum_navigate(sv4_t current, sv4_t step, const sv4_t* values,
+                        uint32_t count, sv4_t default_value, int direction);
+// ==?/!=?: X/Z bits in rhs are wildcards; lhs X/Z on cared bits propagate X.
+sv4_t sv4_wild_eq(sv4_t lhs, sv4_t rhs);
+sv4_t sv4_wild_neq(sv4_t lhs, sv4_t rhs);
+// casez/casex wildcard match (never X; 1-bit result), per LRM 12.5.1.  Both
+// resize the operands to max width (zero-extend) and test bits LSB-up:
+//   casez: item z/? -> don't-care; item x -> matches selector x only;
+//          item known -> matches only an equal selector bit (sel x/z -> no).
+//   casex: item x/z/? -> don't-care; item known -> matches unless the
+//          selector holds the opposite known bit (sel x/z -> match).
+sv4_t sv4_casez_eq(sv4_t sel, sv4_t item);
+sv4_t sv4_casex_eq(sv4_t sel, sv4_t item);
+sv4_t sv4_lt(sv4_t a, sv4_t b);
+sv4_t sv4_le(sv4_t a, sv4_t b);
+sv4_t sv4_gt(sv4_t a, sv4_t b);
+sv4_t sv4_ge(sv4_t a, sv4_t b);
+// Inclusive inside-range match. Unknown relational results propagate unless
+// one comparison is definitively false.
+sv4_t sv4_inside_range(sv4_t value, sv4_t low, sv4_t high);
+sv4_t sv4_mux(sv4_t sel, sv4_t a, sv4_t b);
+// Ambiguous fixed-unpacked-array conditional: compare whole immediate elements
+// using logical equality; keep known-equal elements, default all others. Inputs
+// are borrowed declaration-order payloads with equal nonzero widths divisible by
+// element_default.width. The default is the element's uninitialized payload.
+// Returns one independent unsigned owner; performs no expression evaluation.
+sv4_t sv4_array_conditional_merge(sv4_t a, sv4_t b, sv4_t element_default);
+sv4_t sv4_concat(sv4_t hi, sv4_t lo);     // hi is the MS part
+sv4_t sv4_repeat(sv4_t pat, uint64_t n);  // {n{pat}}
+// Packed streaming: right_to_left reverses slice-sized blocks; left-to-right
+// preserves stream order. The result is unsigned and has value.width bits.
+sv4_t sv4_stream(sv4_t value, uint32_t slice, int right_to_left);
+// Inverse mapping used when a packed stream is an assignment target.
+sv4_t sv4_unstream(sv4_t value, uint32_t slice, int right_to_left);
+sv4_t sv4_part_select(sv4_t v, int64_t left, int64_t right); // handles reversed ranges
+void sv4_part_select_set(sv4_t* tgt, int64_t left, int64_t right, sv4_t value);
+sv4_t sv4_bit_select(sv4_t v, uint64_t i);
+void sv4_bit_select_set(sv4_t* tgt, uint64_t i, sv4_t value);
+sv4_t sv4_idx_part_select(sv4_t v, uint64_t base, uint32_t width, int neg);
+void sv4_idx_part_select_set(sv4_t* tgt, uint64_t base, uint32_t width, int neg,
+                             sv4_t value);
+// Value-based variants preserve a signed negative base long enough to model
+// partial out-of-range overlap (out-of-range read bits are X; writes are no-op).
+sv4_t sv4_idx_part_select_value(sv4_t v, sv4_t base, uint32_t width, int neg);
+void sv4_idx_part_select_set_value(sv4_t* tgt, sv4_t base, uint32_t width,
+                                   int neg, sv4_t value);
+
+/* Representation-neutral migration bridge; see value/facade.md. Buffers are
+ * caller-owned copies, never views into payload storage. */
+typedef struct { uint64_t bits, x, z; } llg_sv4_word_t;
+typedef struct { uint64_t aval, bval; } llg_sv4_vpi_word_t;
+enum { LLG_SV4_BITS = 0, LLG_SV4_X = 1, LLG_SV4_Z = 2 };
+
+static inline uint32_t llg_sv4_width(sv4_t value) { return value.width; }
+static inline int8_t llg_sv4_signed(sv4_t value) { return value.is_signed; }
+static inline void llg_sv4_set_signed(sv4_t* value, int8_t sign) {
+    value->is_signed = (int8_t)(sign != 0);
+}
+static inline size_t llg_sv4_words(sv4_t value) {
+    return ((size_t)value.width + 63u) / 64u;
+}
+static inline uint64_t llg_sv4_word(sv4_t value, size_t word, unsigned plane) {
+    if (word >= llg_sv4_words(value)) return 0;
+    return plane == LLG_SV4_BITS ? value.bits[word] :
+           plane == LLG_SV4_X ? value.x[word] : value.z[word];
+}
+static inline unsigned llg_sv4_state(sv4_t value, uint64_t bit) {
+    if (bit >= value.width) return 2;
+    size_t word = (size_t)(bit / 64u);
+    uint64_t mask = UINT64_C(1) << (bit % 64u);
+    return value.x[word] & mask ? 2u : value.z[word] & mask ? 3u :
+           (value.bits[word] & mask) != 0;
+}
+static inline void llg_sv4_set_state(sv4_t* value, uint64_t bit, unsigned state) {
+    if (bit >= value->width) return;
+    size_t word = (size_t)(bit / 64u);
+    uint64_t mask = UINT64_C(1) << (bit % 64u);
+    value->bits[word] = (value->bits[word] & ~mask) | (state == 1 ? mask : 0);
+    value->x[word] = (value->x[word] & ~mask) | (state == 2 ? mask : 0);
+    value->z[word] = (value->z[word] & ~mask) | (state == 3 ? mask : 0);
+}
+static inline void llg_sv4_set_word(sv4_t* value, size_t word,
+                                    uint64_t bits, uint64_t x, uint64_t z) {
+    if (word >= llg_sv4_words(*value)) return;
+    uint32_t remaining = value->width - (uint32_t)(word * 64u);
+    uint64_t mask = remaining >= 64u ? UINT64_MAX :
+                    UINT64_MAX >> (64u - remaining);
+    x &= mask;
+    z &= mask & ~x;
+    value->bits[word] = bits & mask & ~(x | z);
+    value->x[word] = x;
+    value->z[word] = z;
+}
+static inline llg_sv4_vpi_word_t llg_sv4_vpi_word(sv4_t value, size_t word) {
+    uint64_t bits = llg_sv4_word(value, word, LLG_SV4_BITS);
+    uint64_t x = llg_sv4_word(value, word, LLG_SV4_X);
+    uint64_t z = llg_sv4_word(value, word, LLG_SV4_Z);
+    llg_sv4_vpi_word_t result = { bits | x, x | z };
+    return result;
+}
+static inline void llg_sv4_set_vpi_word(sv4_t* value, size_t word,
+                                        llg_sv4_vpi_word_t input) {
+    llg_sv4_set_word(value, word, input.aval & ~input.bval,
+                    input.aval & input.bval, ~input.aval & input.bval);
+}
+static inline int llg_sv4_has_x(sv4_t value) {
+    for (size_t i = 0; i < llg_sv4_words(value); ++i)
+        if (llg_sv4_word(value, i, LLG_SV4_X)) return 1;
+    return 0;
+}
+static inline int llg_sv4_has_z(sv4_t value) {
+    for (size_t i = 0; i < llg_sv4_words(value); ++i)
+        if (llg_sv4_word(value, i, LLG_SV4_Z)) return 1;
+    return 0;
+}
+static inline unsigned llg_sv4_state_to_dpi(unsigned state) {
+    return state < 2u ? state : state ^ 1u;
+}
+static inline unsigned llg_sv4_state_from_dpi(unsigned state) {
+    return state < 2u ? state : state ^ 1u;
+}
+static inline size_t llg_sv4_word_range(sv4_t value, size_t first, size_t count) {
+    size_t words = llg_sv4_words(value);
+    if (first >= words) return 0;
+    size_t available = words - first;
+    return count < available ? count : available;
+}
+static inline void llg_sv4_export_words(sv4_t value, size_t first,
+                                        llg_sv4_word_t* output, size_t count) {
+    size_t available = llg_sv4_word_range(value, first, count);
+    for (size_t i = 0; i < count; ++i) {
+        llg_sv4_word_t word = {0, 0, 0};
+        if (i < available) {
+            word.bits = llg_sv4_word(value, first + i, LLG_SV4_BITS);
+            word.x = llg_sv4_word(value, first + i, LLG_SV4_X);
+            word.z = llg_sv4_word(value, first + i, LLG_SV4_Z);
+        }
+        output[i] = word;
+    }
+}
+static inline void llg_sv4_import_words(sv4_t* value, size_t first,
+                                        const llg_sv4_word_t* input, size_t count) {
+    size_t available = llg_sv4_word_range(*value, first, count);
+    for (size_t i = 0; i < available; ++i)
+        llg_sv4_set_word(value, first + i, input[i].bits, input[i].x, input[i].z);
+}
+static inline void llg_sv4_export_vpi_words(sv4_t value, size_t first,
+                                            llg_sv4_vpi_word_t* output, size_t count) {
+    size_t available = llg_sv4_word_range(value, first, count);
+    for (size_t i = 0; i < count; ++i) {
+        llg_sv4_vpi_word_t word = {0, 0};
+        if (i < available) word = llg_sv4_vpi_word(value, first + i);
+        output[i] = word;
+    }
+}
+static inline void llg_sv4_import_vpi_words(sv4_t* value, size_t first,
+                                            const llg_sv4_vpi_word_t* input, size_t count) {
+    size_t available = llg_sv4_word_range(*value, first, count);
+    for (size_t i = 0; i < available; ++i)
+        llg_sv4_set_vpi_word(value, first + i, input[i]);
+}
+// V06 consumer primitives: no payload views or allocation.
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif

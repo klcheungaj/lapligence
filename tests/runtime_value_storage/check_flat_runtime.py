@@ -27,10 +27,14 @@ def main() -> int:
         output = Path(directory)
         for header in runtime.glob("*.h"):
             shutil.copy2(header, output / header.name)
+        shutil.copytree(runtime / "value", output / "value")
         for name, function in (("llg_rt.c", "runtime_sources"),
                                ("llg_value.c", "value_sources"),
                                ("llg_container.c", "container_sources")):
-            body = embedding.split(f"pub fn {function}()", 1)[1].split("\n}\n", 1)[0]
+            if function == "value_sources":
+                body = embedding.split("pub fn value_sources_for(", 1)[1].split("super::value_backend::ValueBackend::Compact =>", 1)[0]
+            else:
+                body = embedding.split(f"pub fn {function}()", 1)[1].split("\n}\n", 1)[0]
             fragments = re.findall(r'include_str!\("([^"\n]+\.c)"\)', body)
             facade = re.findall(r'^#include "([^"\n]+\.c)"',
                                 (runtime / name).read_text(encoding="utf-8"), re.MULTILINE)

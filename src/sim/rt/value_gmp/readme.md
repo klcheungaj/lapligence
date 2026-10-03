@@ -1,6 +1,6 @@
 # Compact packed values
 
-This standalone C11 backend reserves value ABI 5 and implements storage/ownership,
+This C11 backend uses value ABI 5 and implements storage/ownership,
 core arithmetic and initialized arithmetic destinations, bitwise/logical operators, equality/relations, integral mux,
 div/mod/pow/clog2, shifts/reductions, case modes, directional wildcard equality,
 range membership, selections/captured plans, packed reference reads,
@@ -8,7 +8,8 @@ concatenation, replication, streaming, array conditional merge,
 net/strength/UDP/enum, real/time and formatting/scalar/index adapters.
 V06 consumer primitives are implemented on native A/B words in
 `consumer_bridge.c`, with inline small scanner mutations in `consumer_inline.h`.
-Production models still use the legacy backend.
+Generated sources can select this backend experimentally; legacy remains the
+default.
 
 `backend.h` supplies inline operations for widths through 64 and a static
 `LLG_GMP_SV4_LITERAL(bits,x,z,width,sign)` initializer for those widths. Define
@@ -98,7 +99,7 @@ direct memcpy.
 `sv4_checked_width`, `llg_real_to_bool`, `llg_ref_read`/`llg_ref_view_valid`
 and source-compatible owner-free reference/selection types are implemented.
 The [facade checklist](facade_audit.md) records operations, helpers and the
-remaining V07 integration surface.
+integrated source-level surface.
 
 Consumer mutations preserve width, sign and owner identity without scratch
 values. Known writes allocate nothing. Masked/range writes inspect only selected
@@ -109,6 +110,21 @@ use native A/B export and comparison; waveform text loads each A/B word once.
 The complete standalone build target is `compact_checks`; its consumer probes
 include independent state/arithmetic oracles, differential checks and allocation
 counters.
+
+Generated builds select `LLG_VALUE_BACKEND=compact` and
+`LLG_COMPACT_KERNELS=portable|gmp`; GMP mode requires `GMP_ROOT`. Exported CMake
+projects propagate both literal definitions to every model/runtime unit and
+verify matching GMP headers/library and 64-bit nail-free compatible limbs. The
+facade selects native compact consumer and reference implementations;
+there are no pending declarations for currently emitted operations and no legacy
+fallbacks.
+
+Selected compact units are embedded in this build order: storage, logic,
+arithmetic, shifts/reductions, comparison/membership, selections, references,
+assembly, consumer bridges, kernels, net adapters, real/time and formatting/index.
+`llg_value.c` is a facade-only unit for compact; its reference implementation is
+`value_gmp/references.c`. S2–S5 and consumer helpers use portable word loops with
+either kernel selection.
 
 EMIT-1 arithmetic destinations are implemented in `backend.h` and `arithmetic.c`.
 Small results stay inline. Equal-width known add/sub reuse destination storage,

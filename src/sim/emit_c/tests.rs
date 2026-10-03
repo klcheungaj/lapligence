@@ -145,6 +145,7 @@ fn nonblocking_event_trigger_renders_nba_operation() {
 fn runtime_width_limit_is_a_backend_policy_not_an_ir_invariant() {
     let model = IrModel::new("wide".to_owned(), 1).unwrap();
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
@@ -312,6 +313,7 @@ fn selected_net_driver_preserves_member_state_conversion() {
 fn detached_fragments_reject_missing_storage_before_rendering() {
     let model = IrModel::new("empty".to_owned(), 1).unwrap();
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,

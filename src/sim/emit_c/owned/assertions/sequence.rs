@@ -9,6 +9,7 @@ pub(super) fn render(
     sequence: &IrSequence,
 ) -> Result<String, String> {
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model,
         func: None,
         sampled: true,

@@ -289,6 +289,12 @@ Checked-width timing uses valid
 known inputs; its X/Z rejection is exercised by the failure probes. No model
 selection, scheduler adoption or native non-Linux qualification is implied.
 
+`selected_legacy_facade`, `selected_portable_facade` and `selected_gmp_facade` use
+`llg_value.h` with compile-time selection to exercise the shared word/text/VPI32
+bridge and the selected descriptor size. They supplement the standalone prefixed
+backend probes. Generated-source and archive selection are checked separately by
+`sim_value_backends`, including positive generated-HDL parity.
+
 
 The S2/S3 family probes are enabled by the same compact option. Build their
 separate targets before selecting all compact CTests:
@@ -330,7 +336,7 @@ compact allocation behavior; legacy always retains three allocated planes.
 
 Build `compact_checks` using the compact configure command above. For a focused
 run use `ctest --test-dir /build/llg-compact-gcc -R '^compact_.*consumers_'
---output-on-failure --parallel 6`. Generated model selection remains V07 work.
+--output-on-failure --parallel 6`. Generated selection and HDL parity are covered by `sim_value_backends`.
 
 ### Compact arithmetic destinations (V05d)
 

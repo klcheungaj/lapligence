@@ -42,3 +42,42 @@ fn container_embedding_matches_private_facade_order() {
 fn value_embedding_matches_private_facade_order() {
     assert_eq!(value_sources().1, facade_source("llg_value.c"));
 }
+
+#[test]
+fn compact_embedding_contains_every_private_include() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/sim/rt");
+    let sources = super::value_backend_sources(crate::sim::value_backend::ValueBackend::Compact);
+    let mut exported = sources
+        .iter()
+        .map(|(name, _)| root.join(name).canonicalize().unwrap())
+        .collect::<std::collections::HashSet<_>>();
+    exported.insert(root.join("llg_value.h").canonicalize().unwrap());
+    for (name, text) in sources {
+        if !name.starts_with("value_gmp/") {
+            continue;
+        }
+        for line in text.lines() {
+            let Some(include) = line
+                .trim()
+                .strip_prefix("#include \"")
+                .and_then(|name| name.strip_suffix('"'))
+            else {
+                continue;
+            };
+            if include.ends_with("llg_value_build.h") {
+                continue;
+            }
+            let dependency = root
+                .join(name)
+                .parent()
+                .unwrap()
+                .join(include)
+                .canonicalize()
+                .unwrap();
+            assert!(
+                exported.contains(&dependency),
+                "{name} includes unexported {include}"
+            );
+        }
+    }
+}

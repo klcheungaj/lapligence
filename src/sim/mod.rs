@@ -18,6 +18,7 @@ pub mod ir;
 pub mod opt;
 pub mod rt;
 pub mod semantic;
+pub mod value_backend;
 
 use std::path::Path;
 
@@ -27,6 +28,7 @@ use std::path::Path;
 pub(crate) fn write_sim_sources(
     out_dir: &Path,
     extra: &[(&str, &str)],
+    config: value_backend::ValueConfig,
 ) -> Result<(), build::BuildError> {
     std::fs::create_dir_all(out_dir).map_err(|source| build::BuildError::Io {
         action: "create",
@@ -35,7 +37,7 @@ pub(crate) fn write_sim_sources(
     })?;
 
     let (rt_h, rt_c) = rt::runtime_sources();
-    let (value_h, value_c) = rt::value_sources();
+    let (value_h, value_c) = rt::value_sources_for(config.backend);
     let (random_h, random_c) = rt::random_sources();
     let (rng_h, rng_c) = rt::rng_sources();
     let (coroutine_h, coroutine_c) = rt::coroutine_sources();
@@ -66,10 +68,18 @@ pub(crate) fn write_sim_sources(
             include_str!("../../vendor/slang/external/ieee1800/svdpi.h"),
         ),
     ];
+    files.extend_from_slice(rt::value_backend_sources(config.backend));
     files.extend_from_slice(extra);
 
     for (name, content) in &files {
         let path = out_dir.join(name);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|source| build::BuildError::Io {
+                action: "create",
+                path: parent.to_path_buf(),
+                source,
+            })?;
+        }
         std::fs::write(&path, content).map_err(|source| build::BuildError::Io {
             action: "write",
             path,

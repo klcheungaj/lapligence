@@ -95,19 +95,106 @@ pub fn runtime_sources() -> (&'static str, &'static str) {
 }
 
 /// (header, implementation) of scheduler-independent value operations and casts.
-/// This C11 module can be compiled independently, linking only the math library.
+/// Write the legacy [`value_backend_sources`] beside these files. This C11
+/// module can be compiled independently, linking only the math library.
 pub fn value_sources() -> (&'static str, &'static str) {
-    (
-        include_str!("llg_value.h"),
-        concat!(
+    value_sources_for(super::value_backend::ValueBackend::Legacy)
+}
+
+/// Selected facade and implementation. Compact units remain separate so only
+/// kernels.c includes GMP, and private implementation names cannot collide.
+/// Write [`value_backend_sources`] beside these files and compile all units with
+/// the same backend and kernel selectors.
+pub fn value_sources_for(
+    backend: super::value_backend::ValueBackend,
+) -> (&'static str, &'static str) {
+    let source = match backend {
+        super::value_backend::ValueBackend::Legacy => concat!(
             include_str!("llg_value_prelude.c"),
             include_str!("value/storage.c"),
             include_str!("value/operations.c"),
             include_str!("value/array_conditional.c"),
             include_str!("value/selection_plan.c"),
             include_str!("value/udp.c"),
+            include_str!("value/references.c"),
         ),
-    )
+        super::value_backend::ValueBackend::Compact => "#include \"llg_value.h\"\n",
+    };
+    (include_str!("llg_value.h"), source)
+}
+
+/// Selected header dependencies and compact implementation units in build order.
+pub fn value_backend_sources(
+    backend: super::value_backend::ValueBackend,
+) -> &'static [(&'static str, &'static str)] {
+    match backend {
+        super::value_backend::ValueBackend::Legacy => &[
+            ("value/backend.h", include_str!("value/backend.h")),
+            (
+                "value/consumer_bridge.h",
+                include_str!("value/consumer_bridge.h"),
+            ),
+            ("value/bridge.h", include_str!("value/bridge.h")),
+        ],
+        super::value_backend::ValueBackend::Compact => &[
+            ("value/bridge.h", include_str!("value/bridge.h")),
+            ("value_gmp/backend.h", include_str!("value_gmp/backend.h")),
+            (
+                "value_gmp/reference_types.h",
+                include_str!("value_gmp/reference_types.h"),
+            ),
+            (
+                "value_gmp/selection_inline.h",
+                include_str!("value_gmp/selection_inline.h"),
+            ),
+            (
+                "value_gmp/consumer_inline.h",
+                include_str!("value_gmp/consumer_inline.h"),
+            ),
+            ("value_gmp/internal.h", include_str!("value_gmp/internal.h")),
+            ("value_gmp/ranges.h", include_str!("value_gmp/ranges.h")),
+            ("value_gmp/storage.c", include_str!("value_gmp/storage.c")),
+            ("value_gmp/logic.c", include_str!("value_gmp/logic.c")),
+            (
+                "value_gmp/arithmetic.c",
+                include_str!("value_gmp/arithmetic.c"),
+            ),
+            (
+                "value_gmp/shifts_reductions.c",
+                include_str!("value_gmp/shifts_reductions.c"),
+            ),
+            (
+                "value_gmp/comparison_membership.c",
+                include_str!("value_gmp/comparison_membership.c"),
+            ),
+            (
+                "value_gmp/selections.c",
+                include_str!("value_gmp/selections.c"),
+            ),
+            (
+                "value_gmp/references.c",
+                include_str!("value_gmp/references.c"),
+            ),
+            ("value_gmp/assembly.c", include_str!("value_gmp/assembly.c")),
+            (
+                "value_gmp/consumer_bridge.c",
+                include_str!("value_gmp/consumer_bridge.c"),
+            ),
+            ("value_gmp/kernels.c", include_str!("value_gmp/kernels.c")),
+            (
+                "value_gmp/net_adapters.c",
+                include_str!("value_gmp/net_adapters.c"),
+            ),
+            (
+                "value_gmp/real_time.c",
+                include_str!("value_gmp/real_time.c"),
+            ),
+            (
+                "value_gmp/format_index.c",
+                include_str!("value_gmp/format_index.c"),
+            ),
+        ],
+    }
 }
 
 /// Scheduler-independent legacy `$random` and `$dist_*` implementations.

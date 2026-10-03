@@ -258,7 +258,7 @@ impl<'a, 'm> Frame<'a, 'm> {
             may_disable: HashMap::new(),
             access_stack: Vec::new(),
             construction_stack: Vec::new(),
-            layout: FrameLayout::new(storage),
+            layout: FrameLayout::with_backend(storage, ctx.value_backend),
             declarations: Vec::new(),
             declaration_error: None,
             brace_kinds: Vec::new(),

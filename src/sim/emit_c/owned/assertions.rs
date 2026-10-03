@@ -48,6 +48,7 @@ fn predicate(
     sampled: bool,
 ) -> Result<String, String> {
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model,
         func: None,
         sampled,
@@ -80,6 +81,7 @@ fn sampled_value(
     expression: &IrExpr,
 ) -> Result<String, String> {
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model,
         func: None,
         sampled: true,

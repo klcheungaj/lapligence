@@ -7,6 +7,7 @@ pub(super) fn render_main(execution: &ExecutionModel) -> Result<String, String> 
     use crate::sim::ir::IrInitStep;
     let model = execution.ir();
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model,
         func: None,
         sampled: false,

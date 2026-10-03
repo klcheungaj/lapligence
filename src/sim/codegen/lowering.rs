@@ -362,6 +362,8 @@ pub struct CodegenOptions {
     pub optimization: crate::sim::opt::OptConfig,
     /// Stackless-coroutine analysis tunables.
     pub execution: crate::sim::execution::ExecutionAnalysisOptions,
+    /// Compile-time value descriptor and compact kernel selection.
+    pub value_config: crate::sim::value_backend::ValueConfig,
 }
 
 /// Lower an owned Slang semantic database with default optimizations.
@@ -423,9 +425,18 @@ pub fn generate_from_owned_db_with_opts(
         optimization: *cfg,
         ..CodegenOptions::default()
     };
+    generate_from_owned_db_with_codegen_options(db, &options)
+}
+
+/// Consume the database with all generation tunables, releasing its arenas
+/// before execution lowering and C rendering.
+pub fn generate_from_owned_db_with_codegen_options(
+    db: Db,
+    options: &CodegenOptions,
+) -> Result<GeneratedModel, CodegenError> {
     let lowered = lower_model(&db).map_err(CodegenError::new)?;
     drop(db);
-    finish_generation(lowered, &options).map_err(CodegenError::new)
+    finish_generation(lowered, options).map_err(CodegenError::new)
 }
 
 fn generate_from_db_with_codegen_options_impl(
@@ -584,7 +595,7 @@ fn finish_generation(
     execution.validate().map_err(|error| error.to_string())?;
     drop(optimization_stage);
     let render_stage = crate::profile::Stage::new("render");
-    let rendered = crate::sim::emit_c::render_with_symbols(&execution)?;
+    let rendered = crate::sim::emit_c::render_with_value_config(&execution, options.value_config)?;
     drop(render_stage);
     Ok(GeneratedModel {
         design_name,

@@ -9,6 +9,7 @@ fn predicate(clauses: Vec<IrExpr>) -> IrExpr {
 fn sequential_predicate_emission_guards_every_clause_and_releases_owners() {
     let model = numeric_model();
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
@@ -56,6 +57,7 @@ fn sequential_predicate_emission_guards_every_clause_and_releases_owners() {
 fn sequential_predicate_emission_normalizes_real_truth_without_rounding() {
     let model = IrModel::new("predicate_real".into(), 1).unwrap();
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
@@ -81,6 +83,7 @@ fn sequential_predicate_emission_normalizes_real_truth_without_rounding() {
 fn sequential_predicate_ambiguous_real_mux_evaluates_both_arms_and_yields_zero() {
     let model = IrModel::new("predicate_real_result".into(), 1).unwrap();
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,

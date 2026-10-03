@@ -126,6 +126,7 @@ pub(in crate::sim::emit_c) fn helper_body(
             .map_err(|error| error.to_string())?,
     );
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,

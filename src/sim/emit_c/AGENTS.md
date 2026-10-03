@@ -317,8 +317,13 @@ functions. Tear down runtime queues and VPI observers before model storage.
 `llg_model_start`/advance/close preserve suspended state; advance returns status 2
 without cleaning up that live context. Reject double start, allow repeated
 start/close, and preserve `LLG_MODEL_NO_MAIN` for host-controlled entry. The process-global runtime
-supports one model, not concurrent/thread-safe instances. Keep ABI 4/cache markers
-aligned and stale generated C rejected. Emit `LLG_MODEL_PROCESS_ABI 3`, pass
+supports one model, not concurrent/thread-safe instances. Keep selected value ABI
+4 (legacy) / 5 (compact) and cache markers aligned; reject stale generated C.
+Frame estimates use the selected descriptor: LP64 `sv4_t` is 32 / 24 bytes and
+`llg_vpi_arg_t` retains conservative bounds of 64 / 56 bytes (actual 56 / 48).
+Emit descriptor and complete-frame size guards
+on 64-bit hosts. Shared root-frame guards include the added record pointer and
+its alignment; the callee arena-selection estimate excludes that root-only field. Emit `LLG_MODEL_PROCESS_ABI 3`, pass
 only immutable descriptors to spawn/fork sites, and initialize through
 `llg_rt_init_with_args_and_precision`; coroutine stack sizing is not model data.
 Default and teardown calls for plain static storage use one file-scope pointer

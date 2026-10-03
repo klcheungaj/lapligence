@@ -256,6 +256,9 @@ pub(super) fn runtime_identifiers() -> &'static std::collections::BTreeSet<&'sta
         [
             include_str!("../rt/llg_rt.h"),
             include_str!("../rt/llg_value.h"),
+            include_str!("../rt/value/backend.h"),
+            include_str!("../rt/value/bridge.h"),
+            include_str!("../rt/value/consumer_bridge.h"),
             include_str!("../rt/llg_random.h"),
             include_str!("../rt/llg_rng.h"),
             include_str!("../rt/llg_co.h"),

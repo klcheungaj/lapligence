@@ -11,6 +11,7 @@ fn recursive_pattern_checks_use_the_selected_comparator() {
     ] {
         let model = IrModel::new("pattern_modes".to_owned(), 1).unwrap();
         let ctx = RCtx {
+            value_backend: crate::sim::value_backend::ValueBackend::Legacy,
             model: &model,
             func: None,
             sampled: false,

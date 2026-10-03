@@ -5,6 +5,7 @@ use super::*;
 fn array_conditional_emits_branch_local_captures_and_default_owner() {
     let model = IrModel::new("array_emission".to_owned(), 1).unwrap();
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
@@ -46,6 +47,7 @@ fn array_conditional_emits_branch_local_captures_and_default_owner() {
 fn structure_conditional_emits_each_member_boundary_and_default_owner() {
     let model = IrModel::new("structure_emission".to_owned(), 1).unwrap();
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,

@@ -30,6 +30,7 @@ fn item() -> IrExpr {
 fn fixed_array_reduction_emits_each_binary_method_without_an_identity_seed() {
     let model = IrModel::new("fold".into(), 1).unwrap();
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
@@ -80,6 +81,7 @@ fn fixed_array_reduction_receiver_call_is_captured_before_the_loop_once() {
         }],
     ));
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
@@ -107,6 +109,7 @@ fn fixed_array_reduction_receiver_call_is_captured_before_the_loop_once() {
 fn fixed_array_reduction_nested_maps_shadow_only_after_capturing_the_outer_item() {
     let model = IrModel::new("fold_nested".into(), 1).unwrap();
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
@@ -151,6 +154,7 @@ fn fixed_array_reduction_direct_storage_has_constant_emission_and_slot_cost() {
         .unwrap(),
     );
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
@@ -190,6 +194,7 @@ fn fixed_array_reduction_map_can_read_an_enclosing_formal() {
         vec![],
     ));
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: Some(&model.funcs[0]),
         sampled: false,

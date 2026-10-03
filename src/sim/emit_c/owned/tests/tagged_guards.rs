@@ -81,6 +81,7 @@ fn check_owners(frame: &Frame<'_, '_>) {
 fn tagged_read_guards_track_comparison_owners() {
     let model = model();
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
@@ -97,6 +98,7 @@ fn tagged_read_guards_track_comparison_owners() {
 fn tagged_write_guards_track_comparison_owners() {
     let model = model();
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,

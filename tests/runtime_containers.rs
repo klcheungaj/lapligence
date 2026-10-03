@@ -19,6 +19,7 @@ fn container_runtime_compiles_and_runs_without_scheduler() {
     }
 
     let dir = sim_harness::TempDir::new("runtime-containers").expect("create temp directory");
+    sim_harness::write_value_backend_sources(dir.path());
     let (value_header, value_implementation) = llg::sim::rt::value_sources();
     let (rng_header, rng_implementation) = llg::sim::rt::rng_sources();
     let (string_header, string_implementation) = llg::sim::rt::string_sources();
