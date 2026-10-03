@@ -74,19 +74,33 @@ typedef struct llg_fixed_array {
 #define LLG_PROCESS_STEP_LIMIT LLG_ZERO_LOOP_LIMIT
 #endif
 
-// Estimated host stack for the scheduler, one polled coroutine segment, and
-// the generated 256-call recursion guard. POSIX hosts warn when RLIMIT_STACK
-// plus the guard allowance is lower; generated MSVC projects reserve the
-// estimate with /STACK.
-#ifndef LLG_HOST_STACK_ESTIMATE_BYTES
-#define LLG_HOST_STACK_ESTIMATE_BYTES (8u * 1024u * 1024u)
+// Native host stack of a generated model: scheduler entry, one polled
+// coroutine segment, a plain-function chain as deep as the generated 256-call
+// guard allows, and the runtime helpers (formatting, wide arithmetic including
+// GMP temporaries, strings, containers, waveform writers). SystemVerilog
+// recursion runs on heap frames and does not count. The value is the measured
+// x86-64 worst case over GCC 14/Clang 19 at -O0/-O3 and both value backends:
+// 255 nested functions that each format 24 arguments. Frames still grow with
+// a statement's format-argument count, so this is a measured, not proven, bound.
+#ifndef LLG_HOST_STACK_MEASURED_BYTES
+#define LLG_HOST_STACK_MEASURED_BYTES (367u * 1024u)
 #endif
 
-// Guard space some kernels carve out of their default 8 MiB main-thread
-// stack before reporting RLIMIT_STACK (macOS reports 8176 KiB). The default
-// stack is the reservation the estimate targets, so it must not warn.
-#ifndef LLG_HOST_STACK_GUARD_ALLOWANCE_BYTES
-#define LLG_HOST_STACK_GUARD_ALLOWANCE_BYTES (64u * 1024u)
+// User DPI/VPI C code and libc run on the same stack and cannot be bounded
+// here. glibc limits each internal alloca to 64 KiB; four such frames leave
+// room for nested libc calls (printf/qsort class) below typical user code.
+#ifndef LLG_HOST_STACK_FOREIGN_HEADROOM_BYTES
+#define LLG_HOST_STACK_FOREIGN_HEADROOM_BYTES (256u * 1024u)
+#endif
+
+// POSIX hosts warn when RLIMIT_STACK is below this estimate (measured worst
+// case plus foreign headroom, rounded up to 64 KiB: 640 KiB by default);
+// generated MSVC projects reserve at least it with /STACK. Override per target
+// with -D when its frames differ.
+#ifndef LLG_HOST_STACK_ESTIMATE_BYTES
+#define LLG_HOST_STACK_ESTIMATE_BYTES                                          \
+    ((LLG_HOST_STACK_MEASURED_BYTES + LLG_HOST_STACK_FOREIGN_HEADROOM_BYTES +  \
+      0xffffu) & ~0xffffu)
 #endif
 
 #ifdef __cplusplus

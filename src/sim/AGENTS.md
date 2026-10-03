@@ -123,11 +123,13 @@ With GCC or Clang, generated model sources also get
 `-Wno-misleading-indentation` as a per-source CMake option; the warning's cost
 is quadratic in file size. Runtime sources keep it.
 
-On POSIX, runtime startup warns when `RLIMIT_STACK` is below the named 8 MiB
-host-stack estimate for scheduler entry, one polled segment and the 256-call
-recursion guard, less a 64 KiB guard allowance so default stacks reported net of
-a guard page (macOS: 8176 KiB) stay quiet. Generated MSVC projects reserve the
-same default with `/STACK`.
+On POSIX, runtime startup warns when `RLIMIT_STACK` is below the named 640 KiB
+host-stack estimate: the measured worst case (scheduler entry, one polled
+segment, a plain-function chain up to the 256-call guard and runtime helpers;
+367 KiB) plus 256 KiB of named DPI/libc headroom, rounded up to 64 KiB.
+Generated MSVC projects reserve the larger of that estimate and the 1 MiB
+Windows default with `/STACK`. Re-measure before changing either value; see
+`src/sim/rt/llg_rt.h`.
 
 `CmakeBuildOpts.generator`/`--generator` overrides `CMAKE_GENERATOR`, then host
 default. `launcher`/`--launcher` forwards `CMAKE_C_COMPILER_LAUNCHER` without inventing

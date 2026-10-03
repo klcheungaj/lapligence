@@ -355,9 +355,12 @@ runtime/string/container require values, container not scheduler. Models
 initialize through `llg_rt_init_with_args_and_precision` and define
 `LLG_MODEL_PROCESS_ABI`.
 
-Keep the generated 256-call recursion guard. POSIX startup warns below the named
-8 MiB host-stack estimate less the 64 KiB guard allowance; generated MSVC model targets reserve that default with
-`/STACK`. Stackless sanitizer runs use ordinary ASan/UBSan flags without a
+Keep the generated 256-call guard: recursion runs on heap frames, but the
+guard still bounds plain-function nesting, which the host-stack estimate
+assumes. POSIX startup warns below the named 640 KiB estimate
+(`LLG_HOST_STACK_MEASURED_BYTES` plus `LLG_HOST_STACK_FOREIGN_HEADROOM_BYTES`);
+generated MSVC model targets reserve at least 1 MiB with `/STACK`. User DPI/VPI
+C code shares the stack and is covered only by the headroom. Stackless sanitizer runs use ordinary ASan/UBSan flags without a
 stack-switch exception.
 
 Use [runtime tests](../../../tests/runtime_value_storage/readme.md) for component,
