@@ -154,7 +154,10 @@ emitter frame estimates and backend ABI selection.
   use, 2001 rejection and illegal map/const-ref cases. `sim_review_next4`
   retains selected automatic/formal receiver checks; `sim_data_types_completion`
   retains queue and dynamic-array ordering controls. All positive fixtures run
-  in both optimizer modes.
+  in both optimizer modes. `sim_container_sort` covers queue/dynamic `sort` and
+  `rsort` (stable ties, X/Z-key barriers, wide/signed keys, function keys and a
+  20000-element size) on both value backends; the native key-evaluation count and
+  element-identity checks live in the `runtime_containers` probe.
 - [SYN-016 elaboration](fixtures/sim/syn016_elaboration/readme.md),
   [SYN-017 directives](fixtures/sim/syn017_directives/readme.md),
   [SYN-018 modules](fixtures/sim/syn018_module_declarations/readme.md) and `sim_edition`

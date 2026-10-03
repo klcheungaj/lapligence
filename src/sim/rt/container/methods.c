@@ -181,6 +181,180 @@ void llg_container_seed(uint64_t seed) {
     llg_container_rng_initialized = 1;
 }
 
+// Sorting keys. Each element's key is evaluated once, then a stable bottom-up
+// merge sort orders an index permutation by those keys (no recursion, no
+// per-comparison allocation). The insertion sort this replaces never moved an
+// element whose key has an X/Z bit (its comparison is not true) and never let
+// another element cross one, so such elements are fixed barriers and each
+// maximal run of known keys between them is sorted independently.
+typedef struct {
+    const sv4_t* keys;
+    const uint64_t* fast;    // order-preserving keys when all share one <=64 bit shape
+    int descending;
+} llg_sort_ctx_t;
+
+// Word `index` of a known key extended to `width` bits (sign-extended only when
+// the comparison is signed), matching the packed relational operators.
+static uint64_t llg_sort_key_word(sv4_t key, uint32_t width, int sign_extend,
+                                  size_t index) {
+    uint32_t own = llg_sv4_width(key);
+    uint64_t word = llg_sv4_word(key, index, LLG_SV4_BITS);
+    if (sign_extend && own && own < width) {
+        size_t top = (own - 1) / 64;
+        unsigned offset = (unsigned)((own - 1) % 64);
+        if ((llg_sv4_word(key, top, LLG_SV4_BITS) >> offset) & 1u) {
+            if (index == top && offset < 63) word |= ~UINT64_C(0) << (offset + 1);
+            else if (index > top) word = ~UINT64_C(0);
+        }
+    }
+    if (width % 64 && index == (width - 1) / 64)
+        word &= (UINT64_C(1) << (width % 64)) - 1u;
+    return word;
+}
+
+static int llg_sort_key_negative(sv4_t key) {
+    uint32_t width = llg_sv4_width(key);
+    if (!llg_sv4_signed(key) || !width) return 0;
+    return (int)((llg_sv4_word(key, (width - 1) / 64, LLG_SV4_BITS) >>
+                  ((width - 1) % 64)) & 1u);
+}
+
+// Strict "a < b" for known keys; operand widths and signs follow sv4_lt.
+static int llg_sort_key_less(sv4_t a, sv4_t b) {
+    uint32_t width = llg_sv4_width(a) > llg_sv4_width(b) ? llg_sv4_width(a)
+                                                         : llg_sv4_width(b);
+    int sign_extend = llg_sv4_signed(a) && llg_sv4_signed(b);
+    for (size_t word = width ? (width - 1) / 64 + 1 : 0; word-- > 0;) {
+        uint64_t left = llg_sort_key_word(a, width, sign_extend, word);
+        uint64_t right = llg_sort_key_word(b, width, sign_extend, word);
+        if (left == right) continue;
+        if (sign_extend) {
+            int left_negative = llg_sort_key_negative(a);
+            int right_negative = llg_sort_key_negative(b);
+            if (left_negative != right_negative) return left_negative;
+        }
+        return left < right;
+    }
+    return 0;
+}
+
+// True when element `later` must be placed before `earlier`; strictness keeps
+// equal keys in their original order, for rsort as well.
+static int llg_sort_before(const llg_sort_ctx_t* ctx, size_t later,
+                           size_t earlier) {
+    if (ctx->descending) {
+        size_t swap = later;
+        later = earlier;
+        earlier = swap;
+    }
+    if (ctx->fast) return ctx->fast[later] < ctx->fast[earlier];
+    return llg_sort_key_less(ctx->keys[later], ctx->keys[earlier]);
+}
+
+// Stable bottom-up merge of order[0, count) using scratch[0, count).
+static void llg_sort_merge(const llg_sort_ctx_t* ctx, size_t* order,
+                           size_t* scratch, size_t count) {
+    size_t* source = order;
+    size_t* target = scratch;
+    for (size_t run = 1; run < count; run *= 2) {
+        for (size_t low = 0; low < count; low += 2 * run) {
+            size_t middle = low + run < count ? low + run : count;
+            size_t high = low + 2 * run < count ? low + 2 * run : count;
+            size_t left = low, right = middle, out = low;
+            while (left < middle && right < high) {
+                // The right element goes first only when strictly before.
+                if (llg_sort_before(ctx, source[right], source[left]))
+                    target[out++] = source[right++];
+                else
+                    target[out++] = source[left++];
+            }
+            while (left < middle) target[out++] = source[left++];
+            while (right < high) target[out++] = source[right++];
+        }
+        size_t* swap = source;
+        source = target;
+        target = swap;
+    }
+    if (source != order) memcpy(order, source, count * sizeof(*order));
+}
+
+// Returns whether any element moved. `item.index` is the element's position
+// before sorting (LRM 7.12.4), so keys do not depend on the sort progress.
+static int llg_method_sort(sv4_t* data, uint64_t* element_ids, size_t count,
+                           llg_container_eval_fn eval, void* context,
+                           int descending) {
+    if (count < 2) return 0;
+    size_t* order = llg_alloc_items(count, 2 * sizeof(*order));
+    size_t* scratch = order + count;
+    for (size_t i = 0; i < count; ++i) order[i] = i;
+
+    sv4_t* owned_keys = NULL;
+    if (eval) {
+        owned_keys = llg_alloc_items(count, sizeof(*owned_keys));
+        for (size_t i = 0; i < count; ++i) owned_keys[i] = (sv4_t)SV4_EMPTY;
+        for (size_t i = 0; i < count; ++i) {
+            sv4_t index = sv4_from_u64((uint64_t)i, 32, 1);
+            eval(&owned_keys[i], data[i], index, context);
+            sv4_destroy(&index);
+        }
+    }
+    const sv4_t* keys = owned_keys ? owned_keys : data;
+
+    uint32_t shape_width = llg_sv4_width(keys[0]);
+    int shape_signed = llg_sv4_signed(keys[0]) != 0;
+    int uniform = shape_width <= 64;
+    for (size_t i = 1; uniform && i < count; ++i)
+        uniform = llg_sv4_width(keys[i]) == shape_width &&
+                  (llg_sv4_signed(keys[i]) != 0) == shape_signed;
+    uint64_t* fast = NULL;
+    if (uniform) {
+        fast = llg_alloc_items(count, sizeof(*fast));
+        uint64_t flip = shape_signed && shape_width
+            ? UINT64_C(1) << (shape_width - 1) : 0;
+        for (size_t i = 0; i < count; ++i)
+            fast[i] = llg_sort_key_word(keys[i], shape_width, 0, 0) ^ flip;
+    }
+
+    llg_sort_ctx_t ctx = { keys, fast, descending };
+    size_t start = 0;
+    for (size_t i = 0; i <= count; ++i) {
+        if (i < count && !sv4_is_unknown(keys[i])) continue;
+        if (i - start > 1)
+            llg_sort_merge(&ctx, order + start, scratch, i - start);
+        start = i + 1;
+    }
+
+    int changed = 0;
+    for (size_t i = 0; i < count; ++i) {
+        if (order[i] == i) continue;
+        changed = 1;
+        sv4_t saved = SV4_EMPTY;
+        sv4_move(&saved, &data[i]);
+        uint64_t saved_id = element_ids ? element_ids[i] : 0;
+        size_t hole = i;
+        for (;;) {
+            size_t source = order[hole];
+            order[hole] = hole;
+            if (source == i) {
+                sv4_move(&data[hole], &saved);
+                if (element_ids) element_ids[hole] = saved_id;
+                break;
+            }
+            sv4_move(&data[hole], &data[source]);
+            if (element_ids) element_ids[hole] = element_ids[source];
+            hole = source;
+        }
+    }
+
+    free(fast);
+    if (owned_keys) {
+        sv4_destroy_array(owned_keys, count);
+        free(owned_keys);
+    }
+    free(order);
+    return changed;
+}
+
 static int llg_method_reorder(sv4_t* data, uint64_t* element_ids,
                               size_t count, int method,
                               llg_container_eval_fn eval, void* context) {
@@ -232,40 +406,8 @@ static int llg_method_reorder(sv4_t* data, uint64_t* element_ids,
     if (method != LLG_CONTAINER_METHOD_SORT &&
         method != LLG_CONTAINER_METHOD_RSORT)
         llg_container_fatal("invalid in-place array method");
-    int descending = method == LLG_CONTAINER_METHOD_RSORT;
-    int changed = 0;
-    for (size_t index = 1; index < count; ++index) {
-        sv4_t value = SV4_EMPTY;
-        sv4_move(&value, &data[index]);
-        uint64_t identity = element_ids ? element_ids[index] : 0;
-        size_t position = index;
-        while (position) {
-            sv4_t previous_index =
-                sv4_from_u64((uint64_t)(position - 1), 32, 1);
-            sv4_t value_index = sv4_from_u64((uint64_t)index, 32, 1);
-            sv4_t previous_key = llg_container_eval(
-                eval, data[position - 1], previous_index, context);
-            sv4_t value_key = llg_container_eval(
-                eval, value, value_index, context);
-            sv4_t comparison = descending
-                ? sv4_lt(previous_key, value_key)
-                : sv4_lt(value_key, previous_key);
-            int ordered = sv4_to_bool(comparison);
-            sv4_destroy(&comparison);
-            sv4_destroy(&value_key);
-            sv4_destroy(&previous_key);
-            sv4_destroy(&value_index);
-            sv4_destroy(&previous_index);
-            if (!ordered) break;
-            sv4_move(&data[position], &data[position - 1]);
-            if (element_ids) element_ids[position] = element_ids[position - 1];
-            position--;
-            changed = 1;
-        }
-        sv4_move(&data[position], &value);
-        if (element_ids) element_ids[position] = identity;
-    }
-    return changed;
+    return llg_method_sort(data, element_ids, count, eval, context,
+                           method == LLG_CONTAINER_METHOD_RSORT);
 }
 
 void llg_dyn_method(llg_dyn_array_t* array, int method,
