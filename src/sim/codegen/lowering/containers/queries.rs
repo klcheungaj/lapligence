@@ -92,6 +92,9 @@ impl<'a> Codegen<'a> {
         path: &str,
         node: NodeId,
     ) -> Result<Option<IrExpr>, String> {
+        if let Some(value) = self.lower_container_flattened_select(path, node)? {
+            return Ok(Some(value));
+        }
         if let Some((container, indices)) = self.container_element_path(node) {
             let element = self
                 .container_element_type(container, indices.len())

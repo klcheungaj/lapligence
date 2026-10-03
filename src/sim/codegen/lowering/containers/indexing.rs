@@ -263,16 +263,36 @@ impl<'a> Codegen<'a> {
             }
             _ => return None,
         };
+        // Only a nested-container element accepts another container index.
+        // Selects of a scalar element (`d[i][3]`, `a[k][7:0]`) are packed or
+        // string selects of that element, not deeper container accesses.
+        let nested = |container: usize, depth: usize| {
+            matches!(
+                self.container_element_type(container, depth),
+                Some(IrContainerElement::Container { .. })
+            )
+        };
         if let Some((container, mut prefix)) = self.container_element_path(base) {
+            if !nested(container, prefix.len()) {
+                return None;
+            }
             prefix.extend(indices);
             return Some((container, prefix));
         }
         if let Some((container, key)) = self.associative_integral_element(base) {
+            if !nested(container, 1) {
+                return None;
+            }
             let mut prefix = vec![key];
             prefix.extend(indices);
             return Some((container, prefix));
         }
         let container = self.container_of(base)?;
+        // The frontend flattens `d[i][b]` into one select; indices beyond the
+        // container depth select bits of a packed element.
+        if indices.len() > self.container_index_depth(container.ir) {
+            return None;
+        }
         match self.model.containers[container.ir].kind {
             IrContainerKind::Dynamic | IrContainerKind::Queue { .. } => {
                 Some((container.ir, indices))

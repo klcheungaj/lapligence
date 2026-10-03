@@ -299,7 +299,9 @@ Macros, includes and their edition-specific behavior are counted in §11.
   Dynamic/associative/queue event storage is unsupported. SV §6.17 **[SV-2005]**.
 - 🟨 **Dynamic arrays, associative arrays and queues** — Allocation, resize,
   delete, copy, bounded patterns, generic/nested leaves, associative defaults and
-  traversal, queue slices/overflow, and collected value-port copies are present.
+  traversal, queue slices/overflow, collected value-port copies and bit/part
+  selects of packed elements (written as one element read/modify/write) are
+  present.
   Contents/shape changes notify readers. General subroutine storage, non-packed
   endpoint/pop expressions, string-key index-result queues, nested scalar queries
   and broader recursive/object forms remain restricted. Methods are in §7.

@@ -19,6 +19,11 @@ impl<'a> Codegen<'a> {
         if let Some(statement) = self.lower_stream_mixed_assignment(path, lhs, rhs, blocking, op)? {
             return Ok(Some(statement));
         }
+        if let Some(statement) =
+            self.lower_container_select_assignment(path, lhs, rhs, blocking, op)?
+        {
+            return Ok(Some(statement));
+        }
         if self.p30_fixed_array_assignment_candidate(lhs) {
             return self.lower_p30_fixed_array_assignment(path, lhs, rhs, blocking, op);
         }

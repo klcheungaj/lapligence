@@ -37,6 +37,7 @@ mod net_partition;
 mod nets;
 mod packed_elements;
 pub(super) mod packed_formals;
+pub(super) use packed_elements::Select;
 mod port_net_types;
 mod ports;
 mod processes;
