@@ -54,8 +54,8 @@ module tb;
         end
         #1 $display("%0d %0d %0d %0d", bb.s, w[0], w[1], wm);
         $display("%h", yv);
-        for (int i = 0; i < 4; i++) $write("%0d%0d ", qa[i][0], qa[i][1]);
-        $display;
+        $display("%0d%0d %0d%0d %0d%0d %0d%0d", qa[0][0], qa[0][1], qa[1][0], qa[1][1],
+                 qa[2][0], qa[2][1], qa[3][0], qa[3][1]);
         base = 8'd100;
         #1 $display("%0d %0d %0d", bb.s, bb.d[0], bb.d[1]);
         $finish(0);
