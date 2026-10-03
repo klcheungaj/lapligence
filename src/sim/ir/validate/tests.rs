@@ -1407,3 +1407,64 @@ fn rejects_invalid_index_default_with_wrong_width() {
         .expect_err("an invalid-index default must match the element width");
     assert!(error.detail().contains("element default"));
 }
+
+#[test]
+fn force_dependencies_must_name_persistent_fixed_arrays() {
+    let array = |activation| IrArray {
+        activation,
+        net_elements: Vec::new(),
+        element_default: None,
+        element_uninitialized: None,
+        c_name: "cells".to_string(),
+        hdl_name: "cells".to_string(),
+        elem_width: 1,
+        signed: false,
+        two_state: false,
+        real: false,
+        shortreal: false,
+        dims: vec![(0, 3)],
+        total: 4,
+    };
+    let model_with = |activation: bool, dependency: IrDependency| {
+        let mut model = valid_model();
+        model.arrays.push(array(activation));
+        model.processes.push(IrProcess {
+            c_name: "proc".to_string(),
+            label: "top.initial".to_string(),
+            kind: IrProcessKind::Synthetic,
+            shape: IrShape::RunOnce,
+            writes: Vec::new(),
+            pre_fns: Vec::new(),
+            body: vec![IrStmt::Force {
+                lhs: IrLhs::Whole(0),
+                value: packed_const(1, 1),
+                eval: "eval".to_string(),
+                reads: Vec::new(),
+                dependencies: vec![dependency],
+            }],
+            program: None,
+            origin: crate::sim::semantic::Origin::Synthetic {
+                reason: "validation fixture".to_owned(),
+            },
+        });
+        model.spawns.push("proc".to_string());
+        model
+    };
+    model_with(false, IrDependency::ArrayContents(0))
+        .validate()
+        .expect("a persistent array marker drives the force");
+    model_with(false, IrDependency::ArrayElement { array: 0, index: 3 })
+        .validate()
+        .expect("an element marker drives the force");
+    for (activation, dependency) in [
+        (true, IrDependency::ArrayContents(0)),
+        (false, IrDependency::ArrayElement { array: 0, index: 4 }),
+        (false, IrDependency::ArrayContents(1)),
+        (false, IrDependency::Scalar("sig".to_string())),
+    ] {
+        let error = model_with(activation, dependency)
+            .validate()
+            .expect_err("force dependency must name a persistent array marker");
+        assert_eq!(error.path(), "processes[0].body[0].dependencies[0]");
+    }
+}

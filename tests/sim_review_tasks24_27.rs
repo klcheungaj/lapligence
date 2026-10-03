@@ -219,29 +219,24 @@ fn private_composite_helpers_keep_transitive_dependencies_and_event_values() {
 }
 
 #[test]
-fn helper_qualification_rejects_external_leaves_and_compound_writes() {
-    sim_cli::reject_case_with_args(
+fn helpers_with_external_leaves_and_compound_writes_are_process_evaluated() {
+    // One external leaf or a compound write makes a helper's effects visible:
+    // it is no read-only callback, but the waiting process evaluates it and
+    // publishes the write. Each fixture detects exactly one result change.
+    sim_cli::run_case_with_args(
         "continuation_24_27",
         "helper_external_concat",
-        "writes external or persistent storage",
+        "changes=1 external=34\n",
+        "",
+        &[],
         &["--edition", "2009"],
     );
-    sim_cli::reject_case_with_args(
+    sim_cli::run_case_with_args(
         "continuation_24_27",
         "helper_external_compound",
-        "writes external or persistent storage",
-        &["--edition", "2009"],
-    );
-    sim_cli::reject_case_with_args(
-        "review_bundle",
-        "n02_static_do_break_event",
-        "static function return is read or is not assigned on every path",
-        &["--edition", "2009"],
-    );
-    sim_cli::reject_case_with_args(
-        "review_bundle",
-        "n02_static_do_continue_event",
-        "static function return is read or is not assigned on every path",
+        "changes=1 accumulated=1\n",
+        "",
+        &[],
         &["--edition", "2009"],
     );
 }

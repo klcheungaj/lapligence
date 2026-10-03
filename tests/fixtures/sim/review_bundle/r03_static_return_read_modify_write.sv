@@ -1,5 +1,5 @@
-// The result is initialized on every path, but the callback still reads it
-// through the increment's read-modify-write behavior.
+// The result is initialized on every path but read by the increment, so it is
+// not a read-only callback; the waiting process evaluates it (SV 9.4.2).
 module tb;
   bit toggle;
   integer changes;

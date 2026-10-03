@@ -296,8 +296,10 @@ sv4_t sv4_resolve_strengths_range(const sv4_t* const* drivers,
 
 // Format one value into `buf` (NUL-terminated).  `fmt` is 'd', 'h', 'b' or 'o'.
 // %b prints all width bits: 'x' for X bits and 'z' for Z bits; %h prints
-// ceil(width/4) digits ('x' if any bit of the nibble is X, else 'z' if any is
-// Z); %o likewise in octal; %d prints 'x' when any bit is X or Z.
+// ceil(width/4) digits and %o ceil(width/3).  A digit whose bits are all X
+// prints 'x', all Z 'z'; a partially unknown digit prints 'X' (any X bit) or
+// 'Z'.  %d prints one character by the same rule over the whole value
+// (IEEE 1800-2009 21.2.1.4).
 void sv4_format(char fmt, sv4_t v, char* buf, size_t cap);
 // Unsigned decimal via long division across limbs; any unknown bit -> "x".
 // A signed value (`is_signed`) with the sign bit set prints '-' followed by

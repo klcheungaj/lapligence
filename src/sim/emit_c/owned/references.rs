@@ -192,6 +192,28 @@ impl Frame<'_, '_> {
             ));
             return Ok(pointer);
         }
+        // A member or packed selection of a flattened array element (for
+        // example `records[i].field`) is a view below that element. The
+        // element selectors are evaluated once, when the parent binds.
+        if let IrLhs::ArrayElem {
+            arr,
+            indices,
+            elem_sel: IrElemSel::PackedChain(steps),
+        } = lhs
+        {
+            let view = IrLhs::PackedSelect {
+                target: Box::new(IrLhs::ArrayElem {
+                    arr: *arr,
+                    indices: indices.clone(),
+                    elem_sel: IrElemSel::Whole,
+                }),
+                steps: steps.clone(),
+                signed,
+                two_state,
+            };
+            return self
+                .reference_argument_with_scopes(&view, read, width, signed, two_state, scopes);
+        }
         if let IrLhs::PackedSelect { target, steps, .. } = lhs {
             let root_width = match target.as_ref() {
                 IrLhs::Whole(index) => self.ctx.model.signals[*index].ty.width(),

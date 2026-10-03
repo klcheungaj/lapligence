@@ -4,7 +4,7 @@ use super::*;
 use crate::core::db::PackedRange;
 use crate::sim::ir::IrPackedSelect;
 
-pub(super) enum Select {
+pub(in super::super) enum Select {
     Elements(Vec<NodeId>),
     Part(NodeId, NodeId),
     Indexed(NodeId, NodeId, bool),
@@ -90,7 +90,7 @@ impl<'a> Codegen<'a> {
         }))
     }
 
-    pub(super) fn packed_selection_steps(
+    pub(in super::super) fn packed_selection_steps(
         &mut self,
         path: &str,
         base: NodeId,

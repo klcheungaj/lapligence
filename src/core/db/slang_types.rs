@@ -91,6 +91,22 @@ impl<'a> SlangTypeProjector<'a> {
             .map(Some)
     }
 
+    /// Every `std::mailbox #(T)` specialization and the descriptor of its
+    /// resolved `T`, keyed by the class type identity.
+    pub fn mailbox_elements(&self) -> Result<HashMap<TypeId, TypeDescriptor>, String> {
+        self.types
+            .values()
+            .filter(|ty| ty.kind == TypeKind::Class && ty.element_type_id.is_some())
+            .map(|ty| {
+                let element = self.element_type(ty, "mailbox")?;
+                Ok((
+                    TypeId(ty.id),
+                    self.descriptor(element, &mut HashSet::new())?,
+                ))
+            })
+            .collect()
+    }
+
     fn unpacked_element(&self, ty: &'a SlangType) -> Result<&'a SlangType, String> {
         let mut current = ty;
         let mut seen = HashSet::new();
@@ -591,6 +607,29 @@ mod tests {
             member_start: 0,
             member_count: 0,
         }
+    }
+
+    #[test]
+    fn mailbox_elements_map_only_classes_with_an_exported_element() {
+        let element = ty(0, TypeKind::Integral, 130);
+        let mut mailbox = ty(1, TypeKind::Class, 0);
+        mailbox.element_type_id = Some(0);
+        let class = ty(2, TypeKind::Class, 0);
+        let types = [element, mailbox, class];
+        let projector = SlangTypeProjector {
+            constants: &[],
+            types: types.iter().map(|ty| (ty.id, ty)).collect(),
+            ranges: &[],
+            members: &[],
+        };
+
+        let elements = projector
+            .mailbox_elements()
+            .expect("project mailbox elements");
+        assert_eq!(elements.len(), 1);
+        let descriptor = &elements[&TypeId(1)];
+        assert_eq!(descriptor.id, TypeId(0));
+        assert_eq!(descriptor.info.width, Some(130));
     }
 
     #[test]

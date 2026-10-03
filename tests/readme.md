@@ -102,6 +102,12 @@ arithmetic expectations come from the in-test limb oracle
 (`sim_feature_completion/rtl_006/oracle.rs`) at widths 1 through 129 and at the
 8,128/8,129-bit kernel threshold, in both optimizer modes on every backend.
 
+RTL-007's zero-time call and evaluator fixtures use
+`-E 'binary(sim_feature_completion) & test(rtl_007::)'`. Positive fixtures run in
+both optimizer modes on both backends (set `LLG_TEST_GMP_ROOT` for the GMP
+kernel lane); stateful event helpers assert the documented process-evaluation
+policy and check evaluation counters only as lower bounds.
+
 ### Vendor patch preparation
 
 `vendor_patches.rs` checks clean/applied trees, no-Git archives (including archives
@@ -169,6 +175,10 @@ emitter frame estimates and backend ABI selection.
   `rsort` (stable ties, X/Z-key barriers, wide/signed keys, function keys and a
   20000-element size) on both value backends; the native key-evaluation count and
   element-identity checks live in the `runtime_containers` probe.
+- `sim_unknown_digits` checks `%h/%x/%o/%d/%b` and `$sformatf` text for all-x/all-z,
+  partial-x/z and mixed x+z digits at widths 1, 4, 8, 65 and 130 (lowercase when
+  every bit of a digit is unknown, uppercase otherwise; IEEE 1800-2009
+  21.2.1.4) in both optimizer modes and on both value backends.
 - [SYN-016 elaboration](fixtures/sim/syn016_elaboration/readme.md),
   [SYN-017 directives](fixtures/sim/syn017_directives/readme.md),
   [SYN-018 modules](fixtures/sim/syn018_module_declarations/readme.md) and `sim_edition`

@@ -1,0 +1,6 @@
+static_state 0010 1000
+task_posedge 1 0011 2000
+qualified hits=1 evaluated=1
+continuous 4 6 calls=1 stamp=3
+continuous 21 40 calls=1 stamp=20
+procedural_writer stamp=7 z=40

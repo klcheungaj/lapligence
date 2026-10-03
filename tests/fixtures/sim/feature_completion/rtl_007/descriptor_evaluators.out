@@ -1,0 +1,4 @@
+continuous 3
+event 5 3000
+continuous 5
+force 13

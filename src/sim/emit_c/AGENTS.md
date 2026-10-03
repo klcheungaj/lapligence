@@ -237,7 +237,8 @@ generated C. Unknown expression/statement forms fail closed for the whole
 procedure. Context-free read-only event evaluators qualify only after scanning
 their typed reads and wait dependencies; observed cells remain heap-backed.
 Captured evaluator contexts, fork captures, clocking, sampled/assertion operations,
-force/inertial registrations, mailbox delivery, VPI, DPI and dynamic dispatch,
+force/inertial registrations (whose fixed-array sources register element or
+contents change markers), mailbox delivery, VPI, DPI and dynamic dispatch,
 monitor/strobe and deferred assertion readers are currently unproven. Spawning
 callee effects also fail closed. A new admitted form requires an explicit
 descriptor-retention argument and tests. Expression temporaries and runtime
@@ -256,7 +257,9 @@ See the [runtime retainer inventory](../rt/AGENTS.md#frame-resident-cells).
   the selected parent and publish immediately. Capture output indices once for
   copy-back; retain const/NBA lifetime rejections. Convert two-state members before
   subsequent missing-index X fill and preserve neighbors.
-- Build ref descriptors from typed LHS plans, not legacy address strings. Register
+- Build ref descriptors from typed LHS plans, not legacy address strings. A member
+  or packed chain of a flattened array element is an `LLG_REF_VIEW` over the whole
+  element, whose selectors bind once with the parent. Register
   LIFO call scopes through copy-out and cancellation. Queue references pin cell
   identities; removed cells detach from queue structure and remain independently
   writable while pinned. The queue's ref list is borrowed, not a second owner.

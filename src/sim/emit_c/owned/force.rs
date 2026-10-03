@@ -169,6 +169,7 @@ impl Frame<'_, '_> {
         lhs: &IrLhs,
         evaluator: Option<&str>,
         reads: &[usize],
+        dependencies: &[IrDependency],
     ) -> Result<(), String> {
         let mut read_values = Vec::new();
         for index in reads {
@@ -184,6 +185,28 @@ impl Frame<'_, '_> {
                 format!("{{ {pointer}, NULL, 0 }}")
             });
         }
+        // Array dependencies use the same change markers as event waits; the
+        // runtime publishes them through the ordinary signal-write path.
+        for dependency in dependencies {
+            read_values.push(match dependency {
+                IrDependency::ArrayElement { array, index } => {
+                    let array = self.ctx.model.array(*array);
+                    if array.sparse() {
+                        format!("{{ {}, NULL, 0 }}", array.cell_address(&index.to_string()))
+                    } else if array.real {
+                        format!("{{ NULL, &{}[{index}], 1 }}", array.c_name)
+                    } else {
+                        format!("{{ &{}_llg_element_deps[{index}], NULL, 0 }}", array.c_name)
+                    }
+                }
+                IrDependency::ArrayContents(array) => format!(
+                    "{{ &{}_llg_contents_dep, NULL, 0 }}",
+                    self.ctx.model.array(*array).c_name
+                ),
+                _ => return Err("force dependency has no fixed-array change marker".to_owned()),
+            });
+        }
+        let read_count = read_values.len();
         let read_ptr = if read_values.is_empty() {
             "NULL".to_owned()
         } else {
@@ -199,9 +222,8 @@ impl Frame<'_, '_> {
             if signal.ty.width() == 0 {
                 self.line(if let Some(evaluator) = evaluator {
                     format!(
-                        "llg_force_real(&{}, {evaluator}, {read_ptr}, {});",
-                        signal.c_name,
-                        reads.len()
+                        "llg_force_real(&{}, {evaluator}, {read_ptr}, {read_count});",
+                        signal.c_name
                     )
                 } else {
                     format!("llg_release_real(&{});", signal.c_name)
@@ -228,10 +250,9 @@ impl Frame<'_, '_> {
         };
         self.line(if let Some(evaluator) = evaluator {
             format!(
-                "llg_force_expr_parts({name}, {}, {slice}, {}, {evaluator}, {read_ptr}, {});",
+                "llg_force_expr_parts({name}, {}, {slice}, {}, {evaluator}, {read_ptr}, {read_count});",
                 parts.len(),
-                u8::from(reverse),
-                reads.len()
+                u8::from(reverse)
             )
         } else {
             format!(

@@ -123,8 +123,6 @@ Precollect hierarchical actual dependencies per instance.
 Variable-continuous conflict analysis follows canonical intervals and counts
 ordinary assignments/declaration initialization, not force/release/deassign;
 keep disjoint writers legal and preserve original read sensitivities separately.
-A continuous site contributes only its target: writes by functions called from
-its right-hand side are procedural (SV 6.5) and stay in sensitivity writes.
 Hierarchical structural driver identity includes owner, source and group.
 
 ## Nets and procedural drivers
@@ -225,6 +223,16 @@ loops consume their own break/continue, unmodeled flow fails closed. Private
 assignment-bearing arithmetic/stream leaves are allowed only after proving every
 target private; reject external refs, scheduler/net writes, timing, NBAs, static
 locals or unproved static returns. `EmptyArgument` wrappers do not bypass checks.
+`classify_event_expression` separates those callback rejections from legal
+zero-time helpers that only fail read-only proof (visible or persistent writes,
+unproved static results, descriptor-array formals/results): a blocking event
+control with such a helper becomes a process-evaluated loop (evaluate at arm,
+`WaitAny` on the union of read sets, re-evaluate every source, LSB edge tests,
+qualifier on detection). Named events and real values in that loop reject;
+force sources keep the callback-only contract. Callee activation arrays never
+enter dependency sets. Writes inside functions called by a continuous
+assignment are procedural writers in the SV 6.5 conflict check; only its LHS
+is the continuous driver.
 
 Fixed reductions map immediate elements rather than recursively flattening rows;
 peel one unpacked dimension at a time. Preserve named/default iterator identity,
@@ -325,3 +333,7 @@ contract, rejecting unowned automatic/dynamic refs or timing/control actions.
 Mailboxes preserve typed copy/identity semantics and delegate waits/cancellation to
 runtime queues. Container kinds keep distinct storage, key conversion, notification
 and lifetime rules; another container's admitted operation is not a fallback.
+The frontend flattens `c[i][b]` into one select: split indices at the container
+depth. A packed select of an element is one read/modify/write with indices and
+RHS captured once, written back through the whole-element store. Mailbox element
+types come from the DB's captured `T`, never the rendered parameter spelling.

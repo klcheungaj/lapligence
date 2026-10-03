@@ -1,4 +1,4 @@
-// No explicit return read, but the static result persists on an unassigned path.
+// The static result persists on an unassigned path; one change is detected.
 module tb;
   bit toggle;
   integer changes;

@@ -1060,30 +1060,45 @@ impl<'a> Codegen<'a> {
         // frontend reports this as a warning for some legal-looking forms;
         // allowing code generation would make the result depend on process
         // order, so reject overlapping sites at the owned semantic boundary.
-        // SV 6.5 restricts only the assignment's own target: writes made by
-        // functions called from its right-hand side are procedural
-        // statements, so they stay out of these conflict sets.
-        let mut continuous = Vec::new();
+        // Only the left-hand side is the continuous driver. Writes performed
+        // inside functions the right-hand side calls are procedural
+        // assignments (SV 6.5, 10.3); they conflict with continuous drivers,
+        // not with ordinary procedural writers of the same storage.
+        let mut continuous_drivers = Vec::new();
+        let mut called_writers = Vec::new();
         for writer in &writers {
-            if !matches!(self.kind(writer.node), NodeKind::ContAssign { .. })
-                || !self.continuous_target_is_variable(writer.node)
-            {
+            if !matches!(self.kind(writer.node), NodeKind::ContAssign { .. }) {
                 continue;
             }
             let Some(inst) = self.owning_inst(writer.node) else {
                 continue;
             };
             self.inst = inst;
-            let mut writes = HashSet::new();
-            if let Some(lhs) = self.node(writer.node).children.first().copied() {
-                self.add_process_lhs_write(lhs, &mut writes);
+            let mut children = self.node(writer.node).children.iter().copied();
+            let mut driven = HashSet::new();
+            if let Some(lhs) = children.next() {
+                self.add_process_lhs_write(lhs, &mut driven);
             }
-            continuous.push(ProcessWriter {
-                node: writer.node,
-                label: writer.label.clone(),
-                writes,
-            });
+            let mut called = HashSet::new();
+            for rhs in children {
+                called.extend(self.collect_continuous_conflict_writes(rhs)?);
+            }
+            if self.continuous_target_is_variable(writer.node) {
+                continuous_drivers.push(ProcessWriter {
+                    node: writer.node,
+                    label: writer.label.clone(),
+                    writes: driven,
+                });
+            }
+            if !called.is_empty() {
+                called_writers.push(ProcessWriter {
+                    node: writer.node,
+                    label: format!("{} (called function)", writer.label),
+                    writes: called,
+                });
+            }
         }
+        let continuous = continuous_drivers.iter().collect::<Vec<_>>();
         for (index, writer) in continuous.iter().enumerate() {
             for other in continuous.iter().skip(index + 1) {
                 if let Some(storage) = writer.writes.iter().find(|write| {
@@ -1105,6 +1120,7 @@ impl<'a> Codegen<'a> {
 
         let mut procedural_writers = Vec::new();
         if !continuous.is_empty() {
+            procedural_writers.extend(called_writers);
             for writer in &writers {
                 if !matches!(self.kind(writer.node), NodeKind::Process { .. }) {
                     continue;

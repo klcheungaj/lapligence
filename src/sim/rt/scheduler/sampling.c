@@ -147,9 +147,17 @@ sv4_t llg_sampled_domain_past(uint64_t identity, uint64_t ticks) {
         return sv4_x(1, 0);
     }
     if (ticks == 0) return sv4_clone(&domain->initial);
+    // $past counts time steps strictly before the evaluating one in which
+    // the clocking event occurred (IEEE 1800-2009 §16.9.3). A tick in the
+    // current time step is not one of them, but the latest tick before it is,
+    // as when procedural code evaluates $past between clock edges. Repeated
+    // edges in one time step count once.
     llg_sampled_domain_history_t* history = domain->history;
-    for (uint64_t index = 0; history && index < ticks; index++)
-        history = history->next;
+    while (history && history->time == g.now) history = history->next;
+    for (uint64_t index = 1; history && index < ticks; index++) {
+        uint64_t time = history->time;
+        while (history && history->time == time) history = history->next;
+    }
     return sv4_clone(history ? &history->value : &domain->initial);
 }
 

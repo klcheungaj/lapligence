@@ -299,7 +299,9 @@ Macros, includes and their edition-specific behavior are counted in §11.
   Dynamic/associative/queue event storage is unsupported. SV §6.17 **[SV-2005]**.
 - 🟨 **Dynamic arrays, associative arrays and queues** — Allocation, resize,
   delete, copy, bounded patterns, generic/nested leaves, associative defaults and
-  traversal, queue slices/overflow, and collected value-port copies are present.
+  traversal, queue slices/overflow, collected value-port copies and bit/part
+  selects of packed elements (written as one element read/modify/write) are
+  present.
   Contents/shape changes notify readers. General subroutine storage, non-packed
   endpoint/pop expressions, string-key index-result queues, nested scalar queries
   and broader recursive/object forms remain restricted. Methods are in §7.
@@ -558,7 +560,10 @@ Macros, includes and their edition-specific behavior are counted in §11.
   RHS dependencies and wakeups. Release restores net resolution; variables retain
   the forced value unless a procedural continuous assignment resumes. Dynamic
   selects, automatic/array targets and unsupported indirect/hierarchical/net
-  forms reject. Live evaluators have the restrictions in §9. V §9.3.2 **[1995]**.
+  forms reject. Live RHS sources include fixed-array elements and whole arrays
+  (through their change markers). Live evaluators stay read-only runtime
+  callbacks: a helper with visible writes or persistent state rejects (§9).
+  V §9.3.2 **[1995]**.
 
 ## 6. Timing controls
 
@@ -578,8 +583,12 @@ Macros, includes and their edition-specific behavior are counted in §11.
   implicit-sensitivity support. V §9.7.5 **[2001]**.
 - 🟨 **Evaluated events** — Packed/scalar-real any-change expressions, packed LSB
   edges, trigger-time `iff`, numeric activation captures and atomic mixed named-event lists are represented. Sensitivity follows operands and eligible helpers,
-  not unrelated body reads. Real edge descriptors, unsupported qualifiers/captures
-  and helper effects outside §9 reject. V §§9.7.2–9.7.4 **[1995]**.
+  not unrelated body reads. Helpers with visible writes, persistent static state
+  or descriptor-array formals are evaluated by the waiting process when the
+  control is reached and after each dependency change (§9). Real edge
+  descriptors, unsupported qualifiers/captures, real-valued or named-event
+  combinations with such helpers and helper forms outside §9 reject.
+  V §§9.7.2–9.7.4 **[1995]**.
 - 🟨 **Intra-assignment controls** — Packed/real/shortreal RHS values are captured
   immediately. Blocking assignments suspend and use update-time selectors; NBAs
   continue with issue-time destinations. Explicit event/repeated-event controls
@@ -761,8 +770,8 @@ Macros, includes and their edition-specific behavior are counted in §11.
 
 - 🟦 **Continuous drivers** — Explicit, comma-form and net-declaration
   assignments evaluate from RHS dependencies; constant RHSs run once. Writes by
-  functions called from the RHS are procedural, so only the assignment target
-  joins the SV §6.5 single-writer rule. V §6.1 **[1995]**.
+  functions called from the RHS are procedural (SV §6.5): they may share storage
+  with procedural writers but not with a continuous driver. V §6.1 **[1995]**.
 - 🟨 **Fixed-array continuous assignments** — Whole/selected fixed values,
   slices, conditionals, patterns and function returns capture one RHS per
   activation. Net arrays retain per-cell/per-bit contribution slots; static
@@ -848,7 +857,9 @@ Macros, includes and their edition-specific behavior are counted in §11.
   named arguments and defaults are represented. Defaults evaluate only when
   omitted and may read earlier captured formals without repeating side effects.
   Fixed integral array/struct/union inputs, locals, returns and output/inout
-  copy-out retain declaration order, state and lifetime. Numeric and admitted
+  copy-out retain declaration order, state and lifetime, including nested
+  forwarding, named/default aggregate arguments, early returns/local disables
+  and arrays beyond packed capacity (descriptor transport). Numeric and admitted
   native string/chandle signatures have separate paths. Static outputs retain
   formal storage; only inout copy-in overwrites it, while automatic outputs get
   typed defaults. General native/resizable aggregates remain restricted.
@@ -861,8 +872,9 @@ Macros, includes and their edition-specific behavior are counted in §11.
   Recursion is capacity-limited as stated above. V §§10.2.3, 10.3.1;
   SV §§6.21–6.22, 13.3–13.5 **[2001/SV-2005]**.
 - 🟨 **References** — `ref`/`const ref` alias matching packed variables, fixed
-  integral arrays/records/unions, admitted unpacked members/elements and retained
-  packed queue cells. Removal/reallocation preserves a queue reference's original
+  integral arrays/records/unions, admitted unpacked members/elements (including
+  members of unpacked-record array elements, with runtime indices bound once at
+  the call) and retained packed queue cells. Removal/reallocation preserves a queue reference's original
   detached cell. String/chandle references use native storage. General native/
   resizable aggregates, non-packed queue references and reference-formal NBAs
   remain restricted. Fixed packed scanner destinations retain checked selected
@@ -880,7 +892,8 @@ Macros, includes and their edition-specific behavior are counted in §11.
   or automatic formals reject. V §§9.8.2, 10.2; SV §§9.3.2, 10.4.2, 13.3.2
   **[1995/SV-2005]**.
 - 🟨 **Hierarchical calls and special formals** — Resolved module/interface/
-  package/parent callees retain their owning instance. Input event formals are typed
+  package/parent callees retain their owning instance, including fixed aggregate
+  formals/results and per-instance static state. Input event formals are typed
   by-value event-handle parameters; a `ref` formal read by an event control
   binds a whole module-signal actual per specialized task copy; output/inout/ref
   event formals, event controls reading other subroutine storage and
@@ -892,10 +905,15 @@ Macros, includes and their edition-specific behavior are counted in §11.
   concatenation/positional-pattern stores and compound mutations are allowed
   only when every destination is private. Stateless static formals use private
   callback copies; result independence must hold across normal/return/loop exits.
-  Persistent non-return state, stateful reads, visible writes, unproved control
-  transfers, native/DPI dispatch, suspension and arbitrary shared/native captures
-  reject. Unique/priority diagnostics remain active; side-effect-free source
-  alone does not establish eligibility.
+  Legal helpers that are not read-only (visible writes, persistent static state,
+  descriptor-array formals) run in the waiting process for blocking event
+  controls and in the evaluating process for continuous assignments, whose
+  called-function writes are procedural (SV 6.5); event evaluation count is the
+  owner policy of one evaluation at arm time and one per dependency change.
+  Force, monitor and other runtime-callback evaluators still reject them, as do
+  native/DPI dispatch, suspension and arbitrary shared/native captures.
+  Unique/priority diagnostics remain active; side-effect-free source alone does
+  not establish eligibility.
 - ❌ **Unsupported or illegal call forms** — Recursive task calls requiring
   inline-only event/ref environments remain rejected. Typed recursive
   delay-bearing tasks use independent SCC/arena activations; direct and mutual
@@ -918,11 +936,11 @@ Macros, includes and their edition-specific behavior are counted in §11.
   radix. V §§17.1, 17.2.1–17.2.2 **[1995/SV-2005]**.
 - 🟨 **Typed formatting** — `%d/%h/%x/%b/%o/%c/%u/%z/%v/%t`, `%f/%e/%g`, `%s`,
   `%m`, `%l`, `%%` and admitted width/precision grammar retain packed X/Z,
-  strengths, real and string values. Packed `%s` uses ASCII bytes without leading
+  strengths, real and string values. A `%h/%x/%o` digit or `%d` value with every
+  bit x/z prints `x`/`z`; a partially unknown one prints `X` (any x bit) or `Z`.
+  Packed `%s` uses ASCII bytes without leading
   zero bytes; real `%s` rejects. `%p` is limited to scalar packed/string values,
-  not aggregates. A partly unknown `%h`/`%o` digit prints lowercase `x`/`z`
-  rather than uppercase `X`/`Z` ([known issue](known_issues.md#partly-unknown-hex-and-octal-digits-print-lowercase)).
-  V §17.1.1.2; SV §21.2 **[1995/SV-2005]**.
+  not aggregates. V §17.1.1.2; SV §21.2 **[1995/SV-2005]**.
 - 🟨 **Postponed output** — Strobe observes settled values after Active/Inactive/
   NBA iteration. One active monitor coalesces same-slot changes; registration and
   re-enable queue one report. Packed, real and string changes are supported;
@@ -1225,7 +1243,8 @@ rules; graph/lowering support alone is not executable acceptance.
 
 🟨 **Sampled functions** — `$sampled/$rose/$fell/$stable/$changed/$past` and
 2009 global-clock history/status forms support packed explicit/default edge
-domains, gated/initial history, Preponed reads and LSB/X/Z edge rules. Future global
+domains, gated/initial history, Preponed reads and LSB/X/Z edge rules; `$past`
+counts only clock time steps strictly before its evaluation. Future global
 forms, complex clocks and real-valued sampling remain rejected. Future global
 functions are legal in SV2009 property/sequence contexts under §16.9.4, with
 global clocking, nonnesting and match-item restrictions and delayed assertion

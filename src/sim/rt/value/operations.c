@@ -1887,14 +1887,34 @@ static void llg_append(char* buf, size_t cap, size_t* len, char c) {
     if (*len + 1 < cap) buf[(*len)++] = c;
 }
 
+// IEEE 1800-2009 21.2.1.4: a group (or a whole %d value) whose every bit is
+// unknown prints lowercase x/z; a partially unknown one prints uppercase, with
+// X taking precedence over Z.  `nx`/`nz` count X and Z bits among `n` bits.
+static char llg_unknown_char(unsigned nx, unsigned nz, unsigned n) {
+    if (nx == n) return 'x';
+    if (nz == n) return 'z';
+    return nx ? 'X' : 'Z';
+}
+
 // Unsigned decimal via repeated long division by 10 across the limbs.  A
 // signed value (`is_signed`) with the sign bit set prints '-' followed by its
 // two's-complement magnitude (~v + 1 within the value's width).
 void sv4_to_dec_string(sv4_t v, char* buf, size_t cap) {
     if (cap == 0) return;
+    int nl = sv4_nlimbs(v.width);
     if (sv4_is_unknown(v)) {
+        int any_x = 0, all_x = 1, all_z = 1;
+        for (int i = 0; i < nl; i++) {
+            uint64_t mask = sv4_limb_mask(v.width, i);
+            uint64_t xw = v.x[i] & mask;
+            uint64_t zw = v.z[i] & mask & ~xw;
+            any_x |= xw != 0;
+            all_x &= xw == mask;
+            all_z &= zw == mask;
+        }
+        char c = all_x ? 'x' : all_z ? 'z' : any_x ? 'X' : 'Z';
         if (cap > 1) {
-            buf[0] = 'x';
+            buf[0] = c;
             buf[1] = 0;
         } else {
             buf[0] = 0;
@@ -1902,7 +1922,6 @@ void sv4_to_dec_string(sv4_t v, char* buf, size_t cap) {
         return;
     }
     int negative = 0;
-    int nl = sv4_nlimbs(v.width);
     uint64_t* tmp = sv4_scratch_alloc((size_t)(nl > 0 ? nl : 1));
     if (v.is_signed && v.width > 0 && sv4_lsb_bit(v, (int)v.width - 1) == 1) {
         negative = 1;
@@ -1961,45 +1980,27 @@ void sv4_format(char fmt, sv4_t v, char* buf, size_t cap) {
                 llg_append(buf, cap, &len, b == 2 ? 'x' : b == 3 ? 'z' : (b ? '1' : '0'));
             }
             break;
-        case 'h': {
-            int digits = ((int)v.width + 3) / 4;
+        case 'h':
+        case 'o': {
+            int group = fmt == 'h' ? 4 : 3;
+            int digits = ((int)v.width + group - 1) / group;
             for (int d = digits - 1; d >= 0; d--) {
-                int has_x = 0, has_z = 0, val = 0;
-                for (int k = 0; k < 4; k++) {
-                    int idx = d * 4 + k;
-                    int b = idx < (int)v.width ? sv4_lsb_bit(v, idx) : 0;
-                    if (b == 2) { has_x = 1; break; } // X wins over Z
-                    if (b == 3) { has_z = 1; }
+                unsigned nx = 0, nz = 0, n = 0;
+                int val = 0;
+                for (int k = 0; k < group; k++) {
+                    int idx = d * group + k;
+                    if (idx >= (int)v.width) break;
+                    int b = sv4_lsb_bit(v, idx);
+                    n++;
+                    if (b == 2) nx++;
+                    else if (b == 3) nz++;
                     else val |= b << k;
                 }
-                if (has_x) {
-                    llg_append(buf, cap, &len, 'x');
-                } else if (has_z) {
-                    llg_append(buf, cap, &len, 'z');
+                if (nx || nz) {
+                    llg_append(buf, cap, &len, llg_unknown_char(nx, nz, n));
                 } else {
                     llg_append(buf, cap, &len,
                                 val < 10 ? (char)('0' + val) : (char)('a' + val - 10));
-                }
-            }
-            break;
-        }
-        case 'o': {
-            int digits = ((int)v.width + 2) / 3;
-            for (int d = digits - 1; d >= 0; d--) {
-                int has_x = 0, has_z = 0, val = 0;
-                for (int k = 0; k < 3; k++) {
-                    int idx = d * 3 + k;
-                    int b = idx < (int)v.width ? sv4_lsb_bit(v, idx) : 0;
-                    if (b == 2) { has_x = 1; break; } // X wins over Z
-                    if (b == 3) { has_z = 1; }
-                    else val |= b << k;
-                }
-                if (has_x) {
-                    llg_append(buf, cap, &len, 'x');
-                } else if (has_z) {
-                    llg_append(buf, cap, &len, 'z');
-                } else {
-                    llg_append(buf, cap, &len, (char)('0' + val));
                 }
             }
             break;

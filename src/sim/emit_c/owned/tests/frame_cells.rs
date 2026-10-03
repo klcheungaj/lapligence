@@ -128,6 +128,7 @@ fn callbacks_captures_clocking_and_foreign_operations_fail_closed() {
             value: number(0, 65),
             eval: "eval".into(),
             reads: Vec::new(),
+            dependencies: Vec::new(),
         },
     ];
     for statement in statements {

@@ -66,7 +66,7 @@ fn run_design_with_opts(
 ///     is covered by `sim_inout_equal_drivers_no_refire`, whose monitor watches
 ///     only the bus);
 ///   - 0x0a + 0x0b conflict only in bit 0 (low nibble), so `%h` prints
-///     `0x`, not `ax`.
+///     `0X` (partially unknown digit, IEEE 1800-2009 21.2.1.4), not `ax`.
 ///
 /// Hand-simulated trace (spawn order at t=0: combs, links, procs; every
 /// signal starts all-X):
@@ -80,9 +80,10 @@ fn run_design_with_opts(
 ///   t=10 en0=1 -> u0 drives 0a -> "10 bus=0a drv=zz en0=1 en1=0".
 ///   t=20 en1=1 -> u1 drives 0a; resolved stays 0a (equal drivers), but en1
 ///        changed -> "20 bus=0a drv=zz en0=1 en1=1".
-///   t=30 d1=0b -> 0a+0b: only bit 0 conflicts -> "30 bus=0x drv=zz en0=1
+///   t=30 d1=0b -> 0a+0b: only bit 0 conflicts -> "30 bus=0X drv=zz en0=1
 ///        en1=1".
-///   t=40 d0=f0 -> f0+0b: every nibble mixed -> "40 bus=xx drv=zz en0=1
+///   t=40 d0=f0 -> f0+0b: every high bit conflicts (`x`), the low nibble
+///        conflicts in bits 3, 1 and 0 only (`X`) -> "40 bus=xX drv=zz en0=1
 ///        en1=1".
 ///   t=50 en0=0, en1=0, drv=5a -> children release (zz), parent drives 5a ->
 ///        "50 bus=5a drv=5a en0=0 en1=0".
@@ -123,8 +124,8 @@ endmodule
         "0 bus=zz drv=zz en0=0 en1=0\n\
          10000 bus=0a drv=zz en0=1 en1=0\n\
          20000 bus=0a drv=zz en0=1 en1=1\n\
-         30000 bus=0x drv=zz en0=1 en1=1\n\
-         40000 bus=xx drv=zz en0=1 en1=1\n\
+         30000 bus=0X drv=zz en0=1 en1=1\n\
+         40000 bus=xX drv=zz en0=1 en1=1\n\
          50000 bus=5a drv=5a en0=0 en1=0\n\
          60000 bus=xx drv=xx en0=0 en1=0\n"
     );
@@ -146,8 +147,8 @@ endmodule
 ///   t=10 en0=1 -> u0 drives 0a -> "bus=0a".
 ///   t=20 en1=1 -> u1 drives 0a; resolved unchanged (equal drivers) -> NO
 ///        line.
-///   t=30 d1=0b -> 0a+0b: bit 0 conflicts -> "bus=0x".
-///   t=40 d0=f0 -> f0+0b -> "bus=xx".
+///   t=30 d1=0b -> 0a+0b: bit 0 conflicts -> "bus=0X".
+///   t=40 d0=f0 -> f0+0b: bits 7:4, 3, 1 and 0 conflict -> "bus=xX".
 ///   t=50 en0=0, en1=0, drv=5a -> children release, parent drives 5a ->
 ///        "bus=5a".
 ///   t=60 drv=xx -> "bus=xx".
@@ -183,7 +184,7 @@ module tb;
 endmodule
 "#;
     let (stdout, _warnings) = run_design(sv, "norefire").expect("no-re-fire design should run");
-    assert_eq!(stdout, "bus=zz\nbus=0a\nbus=0x\nbus=xx\nbus=5a\nbus=xx\n");
+    assert_eq!(stdout, "bus=zz\nbus=0a\nbus=0X\nbus=xX\nbus=5a\nbus=xx\n");
 }
 
 /// A selected continuous driver on one side of a collapsed inout group gets

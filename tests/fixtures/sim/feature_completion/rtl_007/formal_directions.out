@@ -1,0 +1,11 @@
+rev 40 30 20 10
+swap c 03
+fill 50 51 52 53
+inout 51 52 53 54 4
+ref ee 77 6 9c 5a
+const_ref 160
+task_out 5 66 1 4
+static_result 2 8
+static_output 11 44
+auto_output xx xx
+static_task 2
