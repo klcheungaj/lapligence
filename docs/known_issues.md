@@ -72,3 +72,112 @@ llg --gen-only --top tb --edition 2009 --out-dir <dir> \
     tests/fixtures/sim/continuation_20_23/continuous_contexts.sv
 grep -c '^static llg_net_t g_array_net_' <dir>/sim/*/model.c
 ```
+
+## Wide-value concatenation and part-selects copy one bit at a time
+
+**Status:** open; deferred.
+
+### Symptom
+
+Simulation time of designs that concatenate or part-select wide packed values
+grows with the number of bits copied, not with the number of 64-bit words. In
+the `wide-values-default` configuration of
+[`perf/scripts/corpus.sh`](../perf/scripts/corpus.sh) (128 tasks on
+4,096-bit values), `sv4_lsb_bit` and `sv4_lsb_bit_set` take about 79% of the
+simulation's CPU samples.
+
+### Cause
+
+[`sv4_concat`](../src/sim/rt/value/operations.c) and the packed selection-plan
+read, slice and write paths in
+[`value/selection_plan.c`](../src/sim/rt/value/selection_plan.c) copy each bit
+with `sv4_lsb_bit` and `sv4_lsb_bit_set`. That is two calls and a limb lookup
+per bit for value, X and Z planes, where a contiguous range could move up to
+64 bits per step.
+
+### Intended direction
+
+Copy contiguous ranges with word-level shift-and-mask operations over the
+value, X and Z limbs. Keep a bit loop only for reversed slices. The
+four-state value suites and the `wide-values` corpus stdout hashes are the
+oracles; add a differential test across widths, offsets and limb boundaries.
+
+### Reproduce
+
+```sh
+perf/scripts/corpus.sh --sim-bin <llg> --size standard --mode default --runs 1 \
+    --scratch-dir <scratch> --output-dir <out>
+```
+
+Profile `wide-values-default` with the sampler described in
+[`perf/README.md`](../perf/README.md).
+
+## High frontend memory use during Slang wrapper capture and import
+
+**Status:** open; memory reduction deferred.
+
+### Symptom
+
+Large elaborated designs require substantially more frontend process memory
+than the size of their exported semantic data. In Linux x86-64 release
+measurements of `many_processes_registers_config` with two clock edges:
+
+| Register processes | Exported records and strings | Generation peak RSS |
+| --- | --- | --- |
+| 20,000 | 320,406,270 B (about 306 MiB) | about 3.28 GiB |
+| 40,000 | 640,766,270 B (about 611 MiB) | about 6.54 GiB |
+
+These are whole-process peaks across compilation, capture, owned import and
+C generation. They do not isolate the C++ wrapper's share and are not
+generated-simulator runtime memory measurements. Export size is approximately
+linear for this corpus; other design shapes can have different costs.
+
+### Cause
+
+The [C++ wrapper](../src/wrapper/slang_c_api.cpp) materializes a complete
+`LlgSlangSnapshot` while Slang's compilation is still live. Capture also uses
+identity maps, pending-edge tables and separately stored strings. For this
+corpus, each small register process contributes roughly 60 semantic nodes,
+90 edges and 12 constants: about 16 KB of charged export data. Charged bytes
+exclude container capacity, indexing overhead and Slang's own allocations.
+
+The [safe FFI decoder](../src/ffi/slang.rs) copies native snapshot data into
+owned Rust data before destroying the native owner. The
+[driver](../src/bin/llg.rs) then imports the Rust snapshot into the owned DB
+and builds semantic/execution IR. These stages have overlapping
+representations; the native compilation, native snapshot and later Rust IR
+are not all retained together. A stage-by-stage allocation profile is still
+needed to quantify each contributor.
+
+`export byte limit exceeded` originates in llg's wrapper capture budget.
+Raising that budget admits larger exports but does not reduce their memory
+cost or bound total process RSS. A large design can still exhaust its export
+budget, a record-count ceiling or available process memory.
+
+### Intended direction
+
+Profile peak allocations by stage, then reduce retained copies and export
+overhead: intern repeated constant/string payloads, evaluate compact records
+or simulator-specific capture, and investigate chunked capture/import.
+Preserve checked C ABI ownership and the single owned DB import; consumers
+must not traverse native ASTs independently. Verify exact values, source
+identity and diagnostics as well as generated-model behavior.
+
+Use `--max-export-mib` to choose the simulator export budget and
+`LLG_MEMORY_LIMIT_MB` for the optional process-wide memory guard. Budget for
+the measured frontend peak, rather than the exported byte count.
+
+### Reproduce
+
+After building the export-size fix, run:
+
+```sh
+/usr/bin/time -v llg --gen-only --max-export-mib 4096 \
+    --top many_processes_registers_config \
+    --define LLG_CORPUS_N=40000 --define LLG_CORPUS_EDGES=2 \
+    --out-dir <dir> perf/corpus/many_processes.sv
+```
+
+Read maximum resident set size from `time`; lower the process count to 20,000
+for the smaller comparison. The export budget counts captured data, not the
+bytes of generated `model.c`.

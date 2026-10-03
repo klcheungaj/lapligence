@@ -23,6 +23,8 @@ docs/*
 !docs/sim_data_semantics.md
 !config.md
 !coding_practices.md
+!docs/known_issues.md
+!docs/sim_performance_tradeoffs.md
 
 skills-lock.json
 temp
