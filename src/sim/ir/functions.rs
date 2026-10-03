@@ -20,6 +20,9 @@ pub struct IrFormal {
     pub(in crate::sim) is_out: bool,
     pub(in crate::sim) mode: IrFormalMode,
     /// Recursive fixed-value shape; its declaration-order payload uses `width` bits.
+    /// Descriptor storage for a fixed value that exceeds packed transport.
+    pub(in crate::sim) fixed_array: Option<usize>,
+    pub(in crate::sim) fixed_record: Vec<usize>,
     pub(in crate::sim) fixed_shape: Option<IrContainerElement>,
     /// Default fixed payload, preserving each unpacked leaf's state domain.
     pub(in crate::sim) fixed_default: Option<IrConst>,
@@ -85,6 +88,8 @@ impl IrFormal {
             },
             const_ref: false,
             ref_static: false,
+            fixed_array: None,
+            fixed_record: Vec::new(),
             fixed_shape: None,
             fixed_default: None,
             width,

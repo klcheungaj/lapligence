@@ -315,6 +315,7 @@ impl EmitCtx<'_, '_> {
         name: &str,
         node: NodeId,
     ) -> Result<(NodeId, Vec<NodeId>, Option<MemorySliceNodes>), String> {
+        if self.cg.array_of(node).is_some() { return Ok((node, Vec::new(), None)); }
         match self.cg.kind(node) {
             NodeKind::Array { .. } => Ok((node, Vec::new(), None)),
             NodeKind::Expr(ExprKind::Ref {
@@ -325,6 +326,12 @@ impl EmitCtx<'_, '_> {
                 } else {
                     self.memory_view_base(name, *target)
                 }
+            }
+            NodeKind::Expr(ExprKind::BitSelect { base, index }) if self.cg.query_descriptor(*base).is_some_and(|descriptor| matches!(descriptor.shape, TypeShape::FixedArray { .. })) => {
+                let (root, mut selectors, slice) = self.memory_view_base(name, *base)?;
+                if slice.is_some() { return Err("fixed slice cannot be followed by an index".into()); }
+                selectors.push(*index);
+                Ok((root, selectors, None))
             }
             NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
                 let (root, mut selectors, slice) = self.memory_view_base(name, *base)?;
@@ -1238,5 +1245,15 @@ mod pla_tests {
         for other in ["$async$and$other", "$sync$and$array$extra", "$display"] {
             assert!(!is_pla_system_task(other));
         }
+    }
+}
+
+impl Codegen<'_> {
+    pub(in super::super) fn fixed_memory_view(&mut self, path: &str, node: NodeId) -> Result<IrMemoryView, String> {
+        let function = self.func.clone();
+        let depth = self.depth_arg.clone();
+        let instance = self.inst;
+        EmitCtx::new(self, path.to_owned(), instance, &depth, function, None, false)
+            .lower_memory_view("fixed value", node)
     }
 }

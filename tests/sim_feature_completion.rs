@@ -14,6 +14,9 @@ mod rtl_001;
 #[path = "sim_feature_completion/rtl_002.rs"]
 mod rtl_002;
 
+#[path = "sim_feature_completion/rtl_002b.rs"]
+mod rtl_002b;
+
 #[path = "sim_feature_completion/rtl_003.rs"]
 mod rtl_003;
 

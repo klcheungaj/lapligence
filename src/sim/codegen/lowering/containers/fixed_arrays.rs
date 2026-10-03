@@ -1705,6 +1705,26 @@ impl<'a> Codegen<'a> {
         blocking: bool,
         op: Operation,
     ) -> Result<Option<IrStmt>, String> {
+        if op == Operation::Assignment {
+            if self.query_descriptor(lhs).is_some_and(|descriptor| matches!(&descriptor.shape, TypeShape::Aggregate(layout) if layout.kind == AggregateKind::UnpackedStruct)) {
+                if let Some(dst) = self.fixed_record_views(path, lhs)? {
+                    return Ok(Some(IrStmt::FixedRecordAssign { dst, src: Box::new(self.lower_fixed_record_value(path, rhs)?), nba: !blocking }));
+                }
+            }
+            if let Ok(dst) = self.fixed_memory_view(path, lhs) {
+                if self.model.arrays[dst.array].sparse() {
+                    let source = self.p30_unwrap_cast(rhs);
+                    let compound = !dst.selectors.is_empty() || dst.sliced || dst.total != self.model.arrays[dst.array].total
+                        || matches!(self.kind(source), NodeKind::Expr(ExprKind::Operation { op: Operation::Conditional, .. }))
+                        || (matches!(self.kind(source), NodeKind::Expr(ExprKind::Streaming { .. })) && !matches!(self.kind(source), NodeKind::Expr(ExprKind::Streaming { streams, slice_size, .. }) if streams.len() == 1 && self.array_of(streams[0].value).is_some_and(|src| src.elem_width.is_multiple_of((*slice_size).max(1) as u32) || ((*slice_size).max(1) as u32).is_multiple_of(src.elem_width))))
+                        || self.array_of(source).is_none() && !matches!(self.kind(source), NodeKind::FuncCall { .. });
+                    if compound && self.assignment_pattern_operands(path, source)?.is_none() {
+                        let src = self.lower_fixed_value(path, rhs)?;
+                        return Ok(Some(IrStmt::FixedValueAssign { dst, src: Box::new(src), nba: !blocking }));
+                    }
+                }
+            }
+        }
         if blocking && op == Operation::Assignment {
             if let Some(statement) = self.lower_nonflatten_call(path, rhs, lhs)? {
                 return Ok(Some(statement));
@@ -1792,7 +1812,7 @@ impl<'a> Codegen<'a> {
                         ..
                     }) = self.kind(*operand)
                     {
-                        if key == "default" && array.dims.len() == 1 {
+                        if key == "default" && (array.dims.len() == 1 || (self.model.arrays[array.ir].descriptor && array.dims.len() == 2)) {
                             let value = self.lower_expr(path, *value)?;
                             let value = ir_to_storage(
                                 value,

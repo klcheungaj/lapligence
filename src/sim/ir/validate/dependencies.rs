@@ -21,6 +21,7 @@ impl Validator<'_> {
             .arrays
             .get(index)
             .is_some_and(|array| array.activation)
+            && !self.function.get().is_some_and(|function| function.formals.iter().any(|formal| formal.fixed_array == Some(index)))
             && !self
                 .fixed_activations
                 .borrow()

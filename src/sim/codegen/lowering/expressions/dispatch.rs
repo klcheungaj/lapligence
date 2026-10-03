@@ -761,6 +761,10 @@ impl<'a> Codegen<'a> {
         scope_path: &str,
         h: NodeId,
     ) -> Result<IrExpr, String> {
+        if let Some(IrLhs::ArrayElem { arr, indices, elem_sel }) = self.fixed_record_scalar(scope_path, h)? {
+            let array = &self.model.arrays[arr];
+            return Ok(IrExpr::new(IrExprKind::ArrayRead { arr, indices, elem_sel }, array.elem_width, array.signed, None));
+        }
         let partial_array_select = match self.kind(h) {
             NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
                 Some((*base, indices.clone()))

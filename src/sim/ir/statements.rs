@@ -267,6 +267,9 @@ pub enum IrStmt {
     },
     /// Create lexical non-flattened fixed storage with registered cleanup.
     FixedArrayDeclare(usize),
+    /// Descriptor evaluation precedes destination capture and atomic copy publication.
+    FixedValueAssign { dst: IrMemoryView, src: Box<IrFixedValue>, nba: bool },
+    FixedRecordAssign { dst: Vec<IrMemoryView>, src: Box<IrFixedRecordValue>, nba: bool },
     /// Evaluate one default-pattern value and replace the complete array.
     FixedArrayFill {
         array: usize,

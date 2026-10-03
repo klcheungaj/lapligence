@@ -16,6 +16,7 @@ mod fixed_array_reductions;
 mod initialization;
 mod lvalues;
 mod statements;
+mod fixed_values;
 mod tables;
 mod udp;
 mod values;

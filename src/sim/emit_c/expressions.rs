@@ -75,7 +75,7 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
     super::check_capacity(u128::from(e.width)).map_err(|error| error.to_string())?;
     let w = |x: &IrExpr| render_expr_impl(ctx, x);
     let out = match &e.kind {
-        IrExprKind::FixedArrayCompare { .. } => {
+        IrExprKind::FixedValueCompare { .. } | IrExprKind::FixedArrayCompare { .. } => {
             return Err("fixed comparisons require owned whole-model emission".into())
         }
         IrExprKind::Container(operation) => RenderedExpr {

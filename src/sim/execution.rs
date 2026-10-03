@@ -575,7 +575,8 @@ fn collect_effects(
             IrStmt::InertialAssign { .. } => {
                 effects.push(ExecutionEffect::EnqueueUpdate(ScheduleRegion::Active))
             }
-            IrStmt::FixedArrayFill { nba: true, .. }
+            IrStmt::FixedValueAssign { nba: true, .. }
+            | IrStmt::FixedArrayFill { nba: true, .. }
             | IrStmt::FixedArrayCopy { nba: true, .. }
             | IrStmt::Assign { nba: true, .. }
             | IrStmt::DelayedAssign { .. }
@@ -585,7 +586,8 @@ fn collect_effects(
             IrStmt::ClockingDrive { .. } => effects.push(ExecutionEffect::EnqueueUpdate(
                 ScheduleRegion::ReNonblockingAssign,
             )),
-            IrStmt::FixedArrayDeclare(_)
+            IrStmt::FixedValueAssign { nba: false, .. }
+            | IrStmt::FixedArrayDeclare(_)
             | IrStmt::FixedArrayFill { nba: false, .. }
             | IrStmt::FixedArrayCopy { nba: false, .. }
             | IrStmt::Assign { nba: false, .. }
@@ -821,6 +823,9 @@ fn collect_callee_effects(
         return;
     }
     if let Some(function) = ir.funcs.get(function) {
+        if function.ret.is_none() && function.formals.iter().any(|formal| formal.fixed_array.is_some()) {
+            effects.push(ExecutionEffect::Suspend);
+        }
         // Imported native code cannot suspend beneath its foreign frame, but
         // it can synchronously request finish or kill through the runtime.
         if function.dpi_import().is_some() {
@@ -845,6 +850,10 @@ fn collect_statement_expression_effects(
         collect_expression_effects(ir, value, effects, visited_calls);
     }
     match statement {
+        IrStmt::FixedValueAssign { dst, src, .. } => {
+            collect_fixed_value_effects(ir, src, effects, visited_calls);
+            for selector in &dst.selectors { collect_expression_effects(ir, &selector.value, effects, visited_calls); }
+        }
         IrStmt::System(Some(command)) => {
             collect_string_effects(ir, command, effects, visited_calls);
         }
@@ -1190,7 +1199,8 @@ fn collect_argument_effects(
         IrCallArg::Val(value) => collect_expression_effects(ir, value, effects, visited_calls),
         IrCallArg::StringVal(value) => collect_string_effects(ir, value, effects, visited_calls),
         IrCallArg::ChandleVal(value) => collect_chandle_effects(ir, value, effects, visited_calls),
-        IrCallArg::EventVal(_) => {}
+        IrCallArg::FixedValue(value) => collect_fixed_value_effects(ir, value, effects, visited_calls),
+        IrCallArg::FixedArray(_) | IrCallArg::EventVal(_) => {}
         IrCallArg::OutAddr(address)
         | IrCallArg::StringOutAddr(address)
         | IrCallArg::ChandleAddr(address)
@@ -1639,6 +1649,10 @@ fn collect_expression_effects(
         },
         IrExprKind::LocalRead(name) => {
             collect_native_access_effects(ir, name, effects, visited_calls)
+        }
+        IrExprKind::FixedValueCompare { left, right, .. } => {
+            collect_fixed_value_effects(ir, left, effects, visited_calls);
+            collect_fixed_value_effects(ir, right, effects, visited_calls);
         }
         IrExprKind::FixedStream { selector, .. } => {
             collect_stream_selector_effects(ir, selector, effects, visited_calls)
@@ -2811,5 +2825,16 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("effect summary"));
+    }
+}
+
+fn collect_fixed_value_effects(ir: &IrModel, value: &crate::sim::ir::IrFixedValue, effects: &mut Vec<ExecutionEffect>, visited_calls: &mut HashSet<usize>) {
+    use crate::sim::ir::IrFixedValue;
+    value.expressions(&mut |child| collect_expression_effects(ir, child, effects, visited_calls));
+    match value {
+        IrFixedValue::Call { call, .. } => collect_callee_effects(ir, call.function_index(), false, effects, visited_calls),
+        IrFixedValue::Conditional { left, right, .. } => { collect_fixed_value_effects(ir, left, effects, visited_calls); collect_fixed_value_effects(ir, right, effects, visited_calls); }
+        IrFixedValue::Stream { parts, .. } => { for part in parts { collect_fixed_value_effects(ir, part, effects, visited_calls); } }
+        IrFixedValue::Array(_) => {}
     }
 }

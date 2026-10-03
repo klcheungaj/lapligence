@@ -770,6 +770,7 @@ impl<'a> Codegen<'a> {
                             info.ir, node.full_name
                         ));
                     };
+                    if array.hdl_name.is_empty() { continue; }
                     let full_name = array.hdl_name.clone();
                     let name = components(&full_name)
                         .last()
@@ -894,6 +895,13 @@ struct ArrayInfo {
     init: Option<Vec<IrConst>>,
     /// Index into [`Codegen::model`].arrays.
     ir: usize,
+}
+
+#[derive(Clone)]
+struct FixedRecordLeaf {
+    path: Vec<String>,
+    array: ArrayInfo,
+    scalar: bool,
 }
 
 #[derive(Clone)]
@@ -1077,7 +1085,6 @@ struct Codegen<'a> {
     model: IrModel,
     /// Model index of the function whose body is currently being emitted
     /// (`None` outside function bodies); formal reads resolve through it.
-    nonflatten_calls: Vec<NodeId>,
     cur_fn_ir: Option<usize>,
     /// FuncTask arena node → call-site resolution metadata (model index,
     /// signature).  Emitted functions only; registered by the prototype walk.
@@ -1202,6 +1209,7 @@ struct Codegen<'a> {
     arrays: Vec<ArrayInfo>,
     /// Array arena node → lowered array info.
     array_globals: HashMap<NodeId, ArrayInfo>,
+    fixed_records: HashMap<NodeId, Vec<FixedRecordLeaf>>,
     /// Dynamic arrays, queues, and associative arrays use owned runtime
     /// storage and never alias fixed unpacked-array storage.
     container_globals: HashMap<NodeId, ContainerInfo>,
@@ -1409,7 +1417,6 @@ impl<'a> Codegen<'a> {
             warnings: Vec::new(),
             model: IrModel::new(String::new(), Timescale::DEFAULT.precision_fs)
                 .expect("the default timescale has non-zero precision"),
-            nonflatten_calls: Vec::new(),
             cur_fn_ir: None,
             func_meta: HashMap::new(),
             dpi_signatures: HashMap::new(),
@@ -1455,6 +1462,7 @@ impl<'a> Codegen<'a> {
             delayed_driver_inits: Vec::new(),
             arrays: Vec::new(),
             array_globals: HashMap::new(),
+            fixed_records: HashMap::new(),
             container_globals: HashMap::new(),
             container_initializers: Vec::new(),
             container_iterator: None,
@@ -1556,6 +1564,11 @@ impl<'a> Codegen<'a> {
     fn array_of(&self, node: NodeId) -> Option<&ArrayInfo> {
         if let Some(array) = self.array_globals.get(&node) {
             return Some(array);
+        }
+        if self.query_descriptor(node).is_some_and(|descriptor| matches!(descriptor.shape, TypeShape::FixedArray { .. })) {
+            if let Some((root, members, selected)) = self.fixed_record_path(node) {
+                if selected.is_empty() { if let Some(leaf) = self.fixed_records[&root].iter().find(|leaf| leaf.path == members) { return Some(&leaf.array); } }
+            }
         }
         match self.kind(node) {
             NodeKind::Array { .. } => self.array_globals.get(&node),

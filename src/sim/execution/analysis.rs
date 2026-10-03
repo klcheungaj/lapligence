@@ -79,6 +79,7 @@ pub enum OperationPathElement {
     Success,
     Failure,
     Terminator,
+    FixedOperand(usize),
 }
 
 /// Structural location of an operation within one generated C function.
@@ -206,9 +207,10 @@ impl ExecutionAnalysis {
                 // cannot suspend. `$stop` there is a deferred scheduler
                 // request, so it must not turn the function or its callers
                 // into coroutines.
-                if !function.is_task {
+                if !function.is_task && !(function.ret.is_none() && function.formals.iter().any(|formal| formal.fixed_array.is_some())) {
                     effects.retain(|effect| *effect != ExecutionEffect::Suspend);
                 }
+                if function.ret.is_none() && function.formals.iter().any(|formal| formal.fixed_array.is_some()) { effects.push(ExecutionEffect::Suspend); }
                 effects
             })
             .collect::<Vec<_>>();
@@ -500,6 +502,17 @@ fn scan_statements(
         let path = parent.child(OperationPathElement::Statement(index));
         let origin = statement.origin().cloned();
         let statement = statement.unlocated();
+        let mut fixed_calls = Vec::new();
+        match statement {
+            IrStmt::FixedValueAssign { src, .. } => src.calls(&mut |call| fixed_calls.push(call.clone())),
+            IrStmt::Call(call) => { for argument in &call.args { if let crate::sim::ir::IrCallArg::FixedValue(value) = argument { value.calls(&mut |call| fixed_calls.push(call.clone())); } } }
+            _ => {}
+        }
+        for (index, call) in fixed_calls.iter().enumerate() {
+            if let Some((operation, direct)) = suspension_operation(&IrStmt::Call(call.clone()), function_effects) {
+                sites.push(SiteDraft { path: path.child(OperationPathElement::FixedOperand(index)), operation, call: direct, origin: origin.clone() });
+            }
+        }
         if matches!(statement, IrStmt::ClockingCycleWait { .. }) {
             for branch in [OperationPathElement::Then, OperationPathElement::Else] {
                 sites.push(SiteDraft {

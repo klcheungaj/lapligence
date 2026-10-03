@@ -118,7 +118,7 @@ impl<'a> Codegen<'a> {
         let has_ret = ret.is_some() || ret_chandle || ret_string;
         // Slang binds an assignment to the function name directly to the
         // subroutine symbol; that symbol is the return-storage identity.
-        let ret_var = has_ret.then_some(ft);
+        let ret_var = (has_ret || self.nonflatten_function(ft)).then_some(ft);
         let body = self
             .func_body(ft)
             .ok_or_else(|| format!("function `{}` without a body", self.node(ft).name))?;
@@ -426,6 +426,7 @@ impl<'a> Codegen<'a> {
             }
         }
         for (idx, (io, is_out)) in formals.iter().enumerate() {
+            if self.fixed_formal_array(*io).is_some() || self.fixed_records.contains_key(io) { continue; }
             if matches!(self.kind(*io), NodeKind::FuncArg { ty, .. } if ty.kind == "event") {
                 // A by-value input event formal is the activation's own
                 // handle to the object the caller named. Other directions are
@@ -1066,10 +1067,11 @@ impl<'a> Codegen<'a> {
             return Ok(());
         }
         if let NodeKind::Var { ty } | NodeKind::Array { ty } = self.kind(node) {
+            if self.fixed_records.contains_key(&node) { return Ok(()); }
             if self
                 .array_globals
                 .get(&node)
-                .is_some_and(|array| self.model.arrays[array.ir].activation)
+                .is_some_and(|array| self.model.arrays[array.ir].sparse())
             {
                 return Ok(());
             }

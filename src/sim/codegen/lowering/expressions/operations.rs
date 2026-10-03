@@ -63,6 +63,19 @@ impl<'a> Codegen<'a> {
             otype,
             Operation::Equal | Operation::NotEqual | Operation::CaseEqual | Operation::CaseNotEqual
         ) {
+            if self.fixed_record_path(operands[0]).is_some_and(|(root, _, _)| self.fixed_records.contains_key(&root)) && self.query_descriptor(operands[0]).is_some_and(|descriptor| matches!(descriptor.shape, TypeShape::Aggregate(_))) {
+                return Ok(IrExpr::new(IrExprKind::FixedRecordCompare { left: Box::new(self.lower_fixed_record_value(scope_path, operands[0])?), right: Box::new(self.lower_fixed_record_value(scope_path, operands[1])?), case: matches!(otype, Operation::CaseEqual | Operation::CaseNotEqual), negate: matches!(otype, Operation::NotEqual | Operation::CaseNotEqual) }, 1, false, None));
+            }
+            let oversized = operands.iter().any(|node| self.query_descriptor(*node).and_then(Self::fixed_descriptor_width_bits).is_some_and(|width| width > u64::from(LLG_MAX_WIDTH)));
+            if oversized && (self.array_of(operands[0]).is_none() || self.array_of(operands[1]).is_none()) {
+                return Ok(IrExpr::new(IrExprKind::FixedValueCompare {
+                    left: Box::new(self.lower_fixed_value(scope_path, operands[0])?),
+                    right: Box::new(self.lower_fixed_value(scope_path, operands[1])?),
+                    case: matches!(otype, Operation::CaseEqual | Operation::CaseNotEqual),
+                    negate: matches!(otype, Operation::NotEqual | Operation::CaseNotEqual),
+                }, 1, false, None));
+            }
+
             if let (Some(left), Some(right)) =
                 (self.array_of(operands[0]), self.array_of(operands[1]))
             {

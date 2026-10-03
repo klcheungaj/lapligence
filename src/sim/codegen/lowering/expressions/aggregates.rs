@@ -10,6 +10,7 @@ impl<'a> Codegen<'a> {
     /// converted to [`IrLhs`] (identical by construction during the seam
     /// transition; sub-expression codes ride along verbatim).
     pub(in super::super) fn lower_lhs(&mut self, path: &str, lhs: NodeId) -> Result<IrLhs, String> {
+        if let Some(lhs) = self.fixed_record_scalar(path, lhs)? { return Ok(lhs); }
         if let Some(target) = self.assertion_local_lhs_target(lhs) {
             let binding = self
                 .assertion_local_binding(target)?

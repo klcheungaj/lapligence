@@ -45,6 +45,7 @@ mod repeated_values;
 mod runtime_tasks;
 mod statements;
 mod stores;
+mod fixed_values;
 mod streaming;
 mod strings;
 mod system;

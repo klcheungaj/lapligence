@@ -100,24 +100,13 @@ impl Frame<'_, '_> {
             IrStmt::Located { statement, .. } => return self.statement(statement),
             IrStmt::Nop => self.line(";"),
             IrStmt::FixedArrayDeclare(index) => {
-                let array = self.ctx.model.array(*index);
-                let initial = array
-                    .element_default
-                    .as_ref()
-                    .map(emit_const)
-                    .unwrap_or_else(|| {
-                        super::super::expressions::packed_default(
-                            array.elem_width,
-                            array.signed,
-                            array.two_state,
-                        )
-                    });
-                let pointer = self.scalar("llg_fixed_array_t*", "(llg_fixed_array_t*)llg_value_scope_object(llg_value_scope_begin_object(sizeof(llg_fixed_array_t), llg_fixed_array_destroy))".to_owned());
-                self.line(format!(
-                    "llg_fixed_array_init({pointer}, {}ULL, {initial}, NULL);",
-                    array.total
-                ));
+                let pointer = self.new_fixed_array(*index)?;
                 self.fixed_arrays.insert(*index, pointer);
+            }
+            IrStmt::FixedValueAssign { dst, src, nba } => {
+                let source = self.fixed_value(src, dst.array, dst.total)?;
+                let target = self.fixed_view(dst)?;
+                self.line(format!("llg_fixed_array_copy({target}, {source}, {}, {});", u8::from(self.ctx.model.array(dst.array).two_state), u8::from(*nba)));
             }
             IrStmt::FixedArrayFill { array, value, nba } => {
                 let address = self.fixed_array_address(*array)?;

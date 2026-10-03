@@ -83,6 +83,12 @@ llg_inertial_t** llg_fixed_array_inertial(sv4_t* target, const void* site) {
     fixed_bad_state("inertial target is not a fixed cell");
 }
 
+static sv4_t fixed_read(const llg_fixed_array_t*, uint64_t);
+static void fixed_ranges_destroy(llg_fixed_range_t*);
+static llg_fixed_range_t* fixed_ranges_copy(const llg_fixed_array_t*, uint64_t, uint64_t, uint64_t, int);
+static void fixed_array_snapshot(llg_fixed_array_t*, const llg_fixed_array_t*, int);
+static void fixed_array_apply(llg_fixed_array_t*, const llg_fixed_array_t*);
+
 static llg_fixed_cell_t* fixed_find(const llg_fixed_array_t* array, uint64_t index) {
     if (!array->capacity) return NULL;
     size_t slot = fixed_hash(index) & (array->capacity - 1);
@@ -102,12 +108,21 @@ void llg_fixed_array_init(llg_fixed_array_t* array, uint64_t total,
 
 const sv4_t* llg_fixed_array_peek(const llg_fixed_array_t* array, uint64_t index) {
     if (!array || index >= array->total) fixed_bad_state("invalid fixed array index");
+    if (array->owner) {
+        if (array->origin == UINT64_MAX) return &array->initial;
+        return llg_fixed_array_peek(array->owner, array->origin + index);
+    }
     llg_fixed_cell_t* cell = fixed_find(array, index);
+    if (!cell && array->ranges) return llg_fixed_array_cell((llg_fixed_array_t*)array, index);
     return cell ? &cell->value : &array->initial;
 }
 
 sv4_t* llg_fixed_array_cell(llg_fixed_array_t* array, uint64_t index) {
     if (!array || index >= array->total) fixed_bad_state("invalid fixed array index");
+    if (array->owner) {
+        if (array->origin == UINT64_MAX) fixed_bad_state("invalid writable fixed view");
+        return llg_fixed_array_cell(array->owner, array->origin + index);
+    }
     llg_fixed_cell_t* cell = fixed_find(array, index);
     if (cell) return &cell->value;
     if (array->count >= array->capacity / 2) {
@@ -126,7 +141,7 @@ sv4_t* llg_fixed_array_cell(llg_fixed_array_t* array, uint64_t index) {
     cell = llg_checked_calloc(1, sizeof(*cell), "fixed array cell");
     cell->index = index;
     cell->array = array;
-    cell->value = sv4_clone(&array->initial);
+    cell->value = fixed_read(array, index);
     size_t slot = fixed_hash(index) & (array->capacity - 1);
     cell->bucket_next = array->buckets[slot];
     array->buckets[slot] = cell;
@@ -141,6 +156,8 @@ sv4_t* llg_fixed_array_cell(llg_fixed_array_t* array, uint64_t index) {
 }
 
 void llg_fixed_array_reset(llg_fixed_array_t* array, sv4_t initial) {
+    fixed_ranges_destroy(array->ranges);
+    array->ranges = NULL;
     for (llg_fixed_cell_t* cell = array->cells; cell; cell = cell->next)
         sv4_copy(&cell->value, &initial);
     sv4_replace(&array->initial, initial);
@@ -148,6 +165,7 @@ void llg_fixed_array_reset(llg_fixed_array_t* array, sv4_t initial) {
 
 void llg_fixed_array_destroy(void* object) {
     llg_fixed_array_t* array = object;
+    fixed_ranges_destroy(array->ranges);
     llg_fixed_cell_t* cell = array->cells;
     while (cell) {
         llg_fixed_cell_t* next = cell->next;
@@ -176,17 +194,8 @@ void llg_fixed_array_destroy(void* object) {
     *array = (llg_fixed_array_t){0};
 }
 
-static void fixed_array_apply(llg_fixed_array_t* dst, const llg_fixed_array_t* snapshot) {
-    for (llg_fixed_cell_t* cell = snapshot->cells; cell; cell = cell->next)
-        (void)llg_fixed_array_cell(dst, cell->index);
-    int default_changed = !sv4_same(dst->initial, snapshot->initial);
-    sv4_copy(&dst->initial, &snapshot->initial);
-    for (llg_fixed_cell_t* cell = dst->cells; cell; cell = cell->next)
-        llg_ba(&cell->value, *llg_fixed_array_peek(snapshot, cell->index));
-    if (default_changed) llg_dependency_changed(dst->contents);
-}
 
-void llg_fixed_array_stream_copy(llg_fixed_array_t* dst, const llg_fixed_array_t* src,
+static void fixed_array_simple_stream_copy(llg_fixed_array_t* dst, const llg_fixed_array_t* src,
                           int two_state, int nba, uint32_t slice) {
     if (!region_can_mutate("fixed array write")) return;
     llg_value_scope_t* target_pin = value_target_pin(dst);
@@ -252,6 +261,17 @@ static int fixed_compare_leaf(const sv4_t* left, const sv4_t* right, int case_eq
 sv4_t llg_fixed_array_compare(const llg_fixed_array_t* left,
                              const llg_fixed_array_t* right, int case_eq, int negate) {
     if (left->total != right->total) fixed_bad_state("fixed comparison shape mismatch");
+    if (left->owner || right->owner || left->ranges || right->ranges) {
+        int result = 1;
+        for (uint64_t index = 0; index < left->total; ++index) {
+            sv4_t a = fixed_read(left, index), b = fixed_read(right, index);
+            int state = fixed_compare_leaf(&a, &b, case_eq);
+            sv4_destroy(&a); sv4_destroy(&b);
+            if (!state) return sv4_from_u64((uint64_t)negate, 1, 0);
+            if (state > 1) result = 2;
+        }
+        return result > 1 ? sv4_x(1, 0) : sv4_from_u64((uint64_t)(result ^ !!negate), 1, 0);
+    }
     int result = 1;
     size_t represented = left->count;
     for (llg_fixed_cell_t* cell = left->cells; cell; cell = cell->next) {
@@ -284,5 +304,305 @@ void llg_fixed_array_fill(llg_fixed_array_t* dst, sv4_t value, int two_state, in
     llg_fixed_array_t* source = llg_value_scope_object(scope);
     llg_fixed_array_init(source, dst->total, sv4_clone(&value), NULL);
     llg_fixed_array_copy(dst, source, two_state, nba);
+    llg_value_scope_end(scope);
+}
+
+struct llg_fixed_range {
+    uint64_t start, count, source;
+    int two_state;
+    sv4_t value;
+    llg_fixed_image_t* image;
+    llg_fixed_range_t* next;
+};
+
+struct llg_fixed_image {
+    size_t refs, count;
+    llg_fixed_array_t* sources;
+    uint64_t bits, element_cells;
+    uint32_t slice, width;
+    int two_state, merge;
+};
+
+static void fixed_image_release(llg_fixed_image_t* image) {
+    if (!image || --image->refs) return;
+    for (size_t i = 0; i < image->count; ++i) llg_fixed_array_destroy(&image->sources[i]);
+    free(image->sources);
+    free(image);
+}
+
+static void fixed_ranges_destroy(llg_fixed_range_t* range) {
+    while (range) {
+        llg_fixed_range_t* next = range->next;
+        sv4_destroy(&range->value);
+        fixed_image_release(range->image);
+        free(range);
+        range = next;
+    }
+}
+
+static sv4_t fixed_convert(sv4_t value, uint32_t width, int sign, int two_state) {
+    sv4_t result = sv4_cast(value, width, sign);
+    if (two_state) sv4_replace(&result, sv4_to_two_state(result));
+    return result;
+}
+
+static sv4_t fixed_image_read(const llg_fixed_image_t* image, uint64_t index) {
+    if (image->merge) {
+        uint64_t first = index / image->element_cells * image->element_cells;
+        int equal = 1;
+        for (uint64_t i = 0; i < image->element_cells; ++i) {
+            sv4_t left = fixed_read(&image->sources[0], first + i);
+            sv4_t right = fixed_read(&image->sources[1], first + i);
+            int state = fixed_compare_leaf(&left, &right, 0);
+            sv4_destroy(&left); sv4_destroy(&right);
+            if (state != 1) { equal = 0; break; }
+        }
+        if (!equal) return image->two_state ? sv4_zero(image->width, 0) : sv4_x(image->width, 0);
+        return fixed_read(&image->sources[0], index);
+    }
+    sv4_t result = sv4_zero(image->width, 0);
+    sv4_t cached = SV4_EMPTY;
+    const llg_fixed_array_t* cached_source = NULL;
+    uint64_t cached_index = UINT64_MAX;
+    for (uint32_t bit = 0; bit < image->width; ++bit) {
+        uint64_t position = index * image->width + (image->width - 1 - bit);
+        if (position >= image->bits) continue;
+        if (image->slice) {
+            uint64_t first_size = image->bits % image->slice;
+            if (!first_size) first_size = image->slice;
+            position = position < first_size ? image->bits - first_size + position
+                : image->bits - first_size - ((position - first_size) / image->slice + 1) * image->slice
+                    + (position - first_size) % image->slice;
+        }
+        const llg_fixed_array_t* source = NULL;
+        uint64_t local = position;
+        uint32_t width = 0;
+        for (size_t i = 0; i < image->count; ++i) {
+            width = llg_sv4_width(image->sources[i].initial);
+            uint64_t bits = image->sources[i].total * width;
+            if (local < bits) { source = &image->sources[i]; break; }
+            local -= bits;
+        }
+        if (!source) fixed_bad_state("fixed stream source cursor overflow");
+        uint64_t cell = local / width;
+        if (cached_source != source || cached_index != cell) {
+            sv4_replace(&cached, fixed_read(source, cell));
+            cached_source = source;
+            cached_index = cell;
+        }
+        unsigned state = llg_sv4_state(cached, width - 1 - local % width);
+        llg_sv4_set_state(&result, bit, image->two_state && state > 1 ? 0 : state);
+    }
+    sv4_destroy(&cached);
+    return result;
+}
+
+static sv4_t fixed_read(const llg_fixed_array_t* array, uint64_t index) {
+    if (index >= array->total) fixed_bad_state("fixed read exceeds view");
+    if (array->owner) {
+        return array->origin == UINT64_MAX ? sv4_clone(&array->initial)
+            : fixed_read(array->owner, array->origin + index);
+    }
+    llg_fixed_cell_t* cell = fixed_find(array, index);
+    if (cell) return sv4_clone(&cell->value);
+    for (const llg_fixed_range_t* range = array->ranges; range; range = range->next) {
+        if (index < range->start || index - range->start >= range->count) continue;
+        sv4_t value = range->image ? fixed_image_read(range->image, range->source + index - range->start)
+            : sv4_clone(&range->value);
+        sv4_t converted = fixed_convert(value, llg_sv4_width(array->initial), llg_sv4_signed(array->initial), range->two_state);
+        sv4_destroy(&value);
+        return converted;
+    }
+    return sv4_clone(&array->initial);
+}
+
+static llg_fixed_range_t* fixed_range_clone(const llg_fixed_range_t* range, uint64_t start, uint64_t count, uint64_t source, int two_state) {
+    llg_fixed_range_t* result = llg_checked_calloc(1, sizeof(*result), "fixed value range");
+    result->start = start; result->count = count; result->source = source;
+    result->two_state = two_state || range->two_state;
+    result->value = sv4_clone(&range->value);
+    result->image = range->image;
+    if (result->image) {
+        if (result->image->refs == SIZE_MAX) llg_fatal_allocation("fixed image references", SIZE_MAX, 1);
+        ++result->image->refs;
+    }
+    return result;
+}
+
+static llg_fixed_range_t* fixed_ranges_copy(const llg_fixed_array_t* array, uint64_t first, uint64_t count, uint64_t target, int two_state) {
+    llg_fixed_range_t* result = NULL;
+    for (const llg_fixed_range_t* range = array->ranges; range; range = range->next) {
+        uint64_t begin = range->start > first ? range->start : first;
+        uint64_t end = range->start + range->count < first + count ? range->start + range->count : first + count;
+        if (begin >= end) continue;
+        llg_fixed_range_t* copy = fixed_range_clone(range, target + begin - first, end - begin, range->source + begin - range->start, two_state);
+        copy->next = result; result = copy;
+    }
+    return result;
+}
+
+void llg_fixed_array_view_init(llg_fixed_array_t* view, llg_fixed_array_t* owner, uint64_t origin, uint64_t total, int two_state) {
+    if (!view || !owner || !total || view->total) fixed_bad_state("invalid fixed view initialization");
+    llg_fixed_array_init(view, total, two_state ? sv4_zero(llg_sv4_width(owner->initial), llg_sv4_signed(owner->initial))
+        : sv4_x(llg_sv4_width(owner->initial), llg_sv4_signed(owner->initial)), NULL);
+    view->owner = owner->owner ? owner->owner : owner;
+    view->origin = origin == UINT64_MAX || owner->origin == UINT64_MAX || origin > owner->total || total > owner->total - origin
+        ? UINT64_MAX : origin + owner->origin;
+}
+
+static void fixed_array_snapshot(llg_fixed_array_t* result, const llg_fixed_array_t* source, int two_state) {
+    const llg_fixed_array_t* owner = source->owner ? source->owner : source;
+    uint64_t origin = source->owner ? source->origin : 0;
+    sv4_t initial = fixed_convert(origin == UINT64_MAX ? source->initial : owner->initial,
+        llg_sv4_width(source->initial), llg_sv4_signed(source->initial), two_state);
+    llg_fixed_array_init(result, source->total, initial, NULL);
+    if (origin == UINT64_MAX) return;
+    result->ranges = fixed_ranges_copy(owner, origin, source->total, 0, two_state);
+    for (llg_fixed_cell_t* cell = owner->cells; cell; cell = cell->next) {
+        if (cell->index < origin || cell->index - origin >= source->total) continue;
+        sv4_t value = fixed_convert(cell->value, llg_sv4_width(initial), llg_sv4_signed(initial), two_state);
+        sv4_move(llg_fixed_array_cell(result, cell->index - origin), &value);
+    }
+}
+
+struct fixed_publication { sv4_t* target; sv4_t old, value, replacement; };
+struct fixed_transaction { size_t count; struct fixed_publication* cells; llg_fixed_range_t* ranges; sv4_t initial; };
+
+static void fixed_transaction_destroy(void* object) {
+    struct fixed_transaction* transaction = object;
+    for (size_t i = 0; i < transaction->count; ++i) {
+        sv4_destroy(&transaction->cells[i].old);
+        sv4_destroy(&transaction->cells[i].value);
+        sv4_destroy(&transaction->cells[i].replacement);
+    }
+    free(transaction->cells);
+    fixed_ranges_destroy(transaction->ranges);
+    sv4_destroy(&transaction->initial);
+}
+
+static void fixed_array_apply(llg_fixed_array_t* destination, const llg_fixed_array_t* snapshot) {
+    llg_fixed_array_t* dst = destination->owner ? destination->owner : destination;
+    uint64_t origin = destination->owner ? destination->origin : 0;
+    if (origin == UINT64_MAX) return;
+    if (destination->total != snapshot->total) fixed_bad_state("fixed publication shape mismatch");
+    llg_value_scope_t* scope = llg_value_scope_begin_object(sizeof(struct fixed_transaction), fixed_transaction_destroy);
+    struct fixed_transaction* prepared = llg_value_scope_object(scope);
+    for (llg_fixed_cell_t* cell = snapshot->cells; cell; cell = cell->next)
+        (void)llg_fixed_array_cell(dst, origin + cell->index);
+    prepared->ranges = fixed_ranges_copy(snapshot, 0, snapshot->total, origin, 0);
+    if (origin || destination->total != dst->total) {
+        llg_fixed_range_t uniform = {0}; uniform.value = snapshot->initial;
+        llg_fixed_range_t* range = fixed_range_clone(&uniform, origin, snapshot->total, 0, 0);
+        /* Source ranges take precedence over this interval's uniform default. */
+        llg_fixed_range_t** tail = &prepared->ranges;
+        while (*tail) tail = &(*tail)->next;
+        *tail = range;
+        for (llg_fixed_range_t* old = dst->ranges; old; old = old->next) {
+            uint64_t end = old->start + old->count, limit = origin + snapshot->total;
+            uint64_t before = end < origin ? end : origin;
+            if (before > old->start) {
+                range = fixed_range_clone(old, old->start, before - old->start, old->source, 0);
+                range->next = prepared->ranges; prepared->ranges = range;
+            }
+            uint64_t after = old->start > limit ? old->start : limit;
+            if (after < end) {
+                range = fixed_range_clone(old, after, end - after, old->source + after - old->start, 0);
+                range->next = prepared->ranges; prepared->ranges = range;
+            }
+        }
+        prepared->initial = sv4_clone(&dst->initial);
+    } else prepared->initial = sv4_clone(&snapshot->initial);
+    prepared->cells = llg_checked_calloc(dst->count, sizeof(*prepared->cells), "fixed publication values");
+    for (llg_fixed_cell_t* cell = dst->cells; cell; cell = cell->next) {
+        if (cell->index < origin || cell->index - origin >= snapshot->total) continue;
+        struct fixed_publication* entry = &prepared->cells[prepared->count++];
+        entry->target = &cell->value;
+        entry->old = sv4_clone(&cell->value);
+        entry->value = fixed_read(snapshot, cell->index - origin);
+        entry->replacement = sv4_clone(&entry->value);
+    }
+    int default_changed = !sv4_same(dst->initial, prepared->initial) || dst->ranges || prepared->ranges;
+    /* Every owner and publication record is prepared before any value becomes visible. */
+    sv4_move(&dst->initial, &prepared->initial);
+    llg_fixed_range_t* old_ranges = dst->ranges;
+    dst->ranges = prepared->ranges; prepared->ranges = old_ranges;
+    for (size_t i = 0; i < prepared->count; ++i)
+        sv4_move(prepared->cells[i].target, &prepared->cells[i].replacement);
+    /* Observer callbacks run only after the complete image has been committed. */
+    for (size_t i = 0; i < prepared->count; ++i) {
+        struct fixed_publication* entry = &prepared->cells[i];
+        if (!sv4_same(entry->old, entry->value)) sig_publish_changed(entry->target, entry->old, entry->value, entry->value);
+    }
+    if (default_changed) llg_dependency_changed(dst->contents);
+    llg_value_scope_end(scope);
+}
+
+static void fixed_snapshot_publish(llg_fixed_array_t* dst, llg_fixed_array_t* snapshot, int nba) {
+    if (dst->owner && dst->origin == UINT64_MAX) return;
+    if (nba) {
+        llg_nba_t* update = new_nba(0);
+        if (update) {
+            update->fixed_target = dst;
+            update->target_scope = value_scope_retain_target(dst);
+            update->fixed_value = llg_checked_calloc(1, sizeof(*snapshot), "fixed array NBA image");
+            *update->fixed_value = *snapshot;
+            /* Snapshot cell identities are not exposed; keep their reverse-index owner accurate. */
+            for (llg_fixed_cell_t* cell = snapshot->cells; cell; cell = cell->next) cell->array = update->fixed_value;
+            *snapshot = (llg_fixed_array_t){0};
+            enqueue_nba(update);
+        }
+    } else fixed_array_apply(dst, snapshot);
+}
+
+void llg_fixed_array_stream_segments(llg_fixed_array_t* dst, const llg_fixed_array_t* const* sources, size_t count, int two_state, int nba, uint32_t slice) {
+    if (!region_can_mutate("fixed array stream")) return;
+    llg_value_scope_t* pin = value_target_pin(dst);
+    llg_value_scope_t* scope = llg_value_scope_begin_object(sizeof(llg_fixed_array_t), llg_fixed_array_destroy);
+    llg_fixed_array_t* snapshot = llg_value_scope_object(scope);
+    if (!count) fixed_bad_state("empty fixed stream");
+    if (count == 1 && !slice && dst->total == sources[0]->total && llg_sv4_width(dst->initial) == llg_sv4_width(sources[0]->initial)) {
+        fixed_array_snapshot(snapshot, sources[0], two_state);
+    } else {
+        llg_fixed_image_t* image = llg_checked_calloc(1, sizeof(*image), "fixed stream image");
+        image->refs = 1; image->count = count; image->slice = slice;
+        image->width = llg_sv4_width(dst->initial); image->two_state = two_state;
+        image->sources = llg_checked_calloc(count, sizeof(*image->sources), "fixed stream sources");
+        for (size_t i = 0; i < count; ++i) {
+            fixed_array_snapshot(&image->sources[i], sources[i], 0);
+            uint64_t width = llg_sv4_width(sources[i]->initial);
+            if (sources[i]->total > (UINT64_MAX - image->bits) / width) fixed_bad_state("fixed stream width overflow");
+            image->bits += sources[i]->total * width;
+        }
+        if (dst->total > UINT64_MAX / image->width || image->bits > dst->total * image->width) fixed_bad_state("fixed stream exceeds destination");
+        llg_fixed_array_init(snapshot, dst->total, sv4_zero(image->width, llg_sv4_signed(dst->initial)), NULL);
+        llg_fixed_range_t* range = llg_checked_calloc(1, sizeof(*range), "fixed stream range");
+        range->count = dst->total; range->image = image; snapshot->ranges = range;
+    }
+    fixed_snapshot_publish(dst, snapshot, nba);
+    llg_value_scope_end(scope);
+    if (pin) llg_value_scope_end(pin);
+}
+
+void llg_fixed_array_stream_copy(llg_fixed_array_t* dst, const llg_fixed_array_t* src, int two_state, int nba, uint32_t slice) {
+    uint32_t width = llg_sv4_width(src->initial);
+    if (!dst->owner && !src->owner && !dst->ranges && !src->ranges && dst->total == src->total
+        && llg_sv4_width(dst->initial) == width && (!slice || !(width % slice) || !(slice % width)))
+        fixed_array_simple_stream_copy(dst, src, two_state, nba, slice);
+    else { const llg_fixed_array_t* sources[] = {src}; llg_fixed_array_stream_segments(dst, sources, 1, two_state, nba, slice); }
+}
+
+void llg_fixed_array_merge(llg_fixed_array_t* dst, const llg_fixed_array_t* left, const llg_fixed_array_t* right, uint64_t element_cells, int two_state) {
+    if (!element_cells || dst->total != left->total || dst->total != right->total || dst->total % element_cells) fixed_bad_state("fixed conditional shape mismatch");
+    llg_value_scope_t* scope = llg_value_scope_begin_object(sizeof(llg_fixed_array_t), llg_fixed_array_destroy);
+    llg_fixed_array_t* snapshot = llg_value_scope_object(scope);
+    llg_fixed_image_t* image = llg_checked_calloc(1, sizeof(*image), "fixed conditional image");
+    image->refs = 1; image->count = 2; image->merge = 1; image->element_cells = element_cells;
+    image->width = llg_sv4_width(dst->initial); image->two_state = two_state;
+    image->sources = llg_checked_calloc(2, sizeof(*image->sources), "fixed conditional sources");
+    fixed_array_snapshot(&image->sources[0], left, 0); fixed_array_snapshot(&image->sources[1], right, 0);
+    llg_fixed_array_init(snapshot, dst->total, two_state ? sv4_zero(image->width, 0) : sv4_x(image->width, 0), NULL);
+    llg_fixed_range_t* range = llg_checked_calloc(1, sizeof(*range), "fixed conditional range");
+    range->count = dst->total; range->image = image; snapshot->ranges = range;
+    fixed_array_apply(dst, snapshot);
     llg_value_scope_end(scope);
 }

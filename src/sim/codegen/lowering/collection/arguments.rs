@@ -33,7 +33,9 @@ impl<'a> Codegen<'a> {
         for (idx, (io, is_out)) in formals.iter().enumerate() {
             let (w, s, two_state, real, shortreal, is_event, is_string) = match self.kind(*io) {
                 NodeKind::FuncArg { ty, .. } => {
-                    if ty.kind == "event" {
+                    if (self.fixed_formal_array(*io).is_some() || self.fixed_records.contains_key(io)) {
+                        (0, false, false, false, false, false, false)
+                    } else if ty.kind == "event" {
                         (0, false, false, false, false, true, false)
                     } else if is_handle_kind(&ty.kind) {
                         (0, false, false, false, false, false, false)

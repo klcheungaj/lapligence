@@ -213,6 +213,18 @@ impl EmitCtx<'_, '_> {
         let mut before = Vec::new();
         let mut after = Vec::new();
         for (idx, (io, is_out)) in formals.iter().enumerate() {
+            if self.cg.fixed_records.contains_key(io) {
+                let argument = IrCallArg::FixedRecord(Box::new(self.cg.lower_fixed_record_value(&self.path, bound[idx].expr)?));
+                if *is_out || matches!(self.cg.kind(*io), NodeKind::FuncArg { direction: DbDirection::Ref, .. }) { out_args.push(argument); } else { in_args.push(argument); }
+                continue;
+            }
+            if self.cg.fixed_formal_array(*io).is_some() {
+                let argument = IrCallArg::FixedValue(Box::new(self.cg.lower_fixed_value(&self.path, bound[idx].expr)?));
+                if *is_out || matches!(self.cg.kind(*io), NodeKind::FuncArg { direction: DbDirection::Ref, .. }) { out_args.push(argument); }
+                else { in_args.push(argument); }
+                continue;
+            }
+
             if matches!(
                 self.cg.kind(*io),
                 NodeKind::FuncArg { ty, .. } if is_handle_kind(&ty.kind)
@@ -383,6 +395,7 @@ impl EmitCtx<'_, '_> {
             out_args.push(IrCallArg::OutAddr(format!("&{tname}")));
         }
         for (idx, (io, is_out)) in formals.iter().enumerate() {
+            if self.cg.fixed_formal_array(*io).is_some() || self.cg.fixed_records.contains_key(io) { continue; }
             let is_ref = matches!(
                 self.cg.kind(*io),
                 NodeKind::FuncArg {
@@ -1233,6 +1246,16 @@ impl EmitCtx<'_, '_> {
     /// is a bare return.  Inside an inlined task body it jumps to the done
     /// label.
     pub(super) fn lower_return(&mut self, value: Option<NodeId>) -> Result<IrStmt, String> {
+        if let Some(result) = self.func.as_ref().and_then(|function| function.ret_node)
+            .filter(|node| self.cg.fixed_formal_array(*node).is_some() || self.cg.fixed_records.contains_key(node)) {
+            let mut statements = Vec::new();
+            if let Some(value) = value {
+                statements.push(self.cg.lower_p30_fixed_array_assignment(&self.path, result, value, true, Operation::Assignment)?
+                    .ok_or("fixed return has no descriptor assignment")?);
+            }
+            statements.push(IrStmt::Return { value: None });
+            return Ok(IrStmt::Block(statements));
+        }
         if let Some(inline) = self.inline.as_mut() {
             if let Some(result) = self
                 .func

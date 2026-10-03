@@ -7,6 +7,13 @@ impl EmitCtx<'_, '_> {
         &mut self,
         declaration: NodeId,
     ) -> Result<Vec<IrStmt>, String> {
+        if let Some(leaves) = self.cg.fixed_records.get(&declaration) {
+            let mut statements = leaves.iter().filter(|leaf| self.cg.model.arrays[leaf.array.ir].activation).map(|leaf| IrStmt::FixedArrayDeclare(leaf.array.ir)).collect::<Vec<_>>();
+            if let Some(value) = self.cg.db.var_initializer(declaration).or_else(|| self.cg.db.array_meta(declaration).and_then(|meta| meta.init)) {
+                statements.push(self.cg.lower_p30_fixed_array_assignment(&self.path, declaration, value, true, Operation::Assignment)?.ok_or("record initializer requires descriptor assignment")?);
+            }
+            return Ok(statements);
+        }
         if let Some(array) = self
             .cg
             .array_globals

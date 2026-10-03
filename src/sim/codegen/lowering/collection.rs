@@ -20,6 +20,8 @@ mod dependencies;
 mod design;
 mod events;
 mod fixed_calls;
+mod fixed_transport;
+mod fixed_records;
 mod fixed_defaults;
 mod fixed_patterns;
 mod fixed_projections;
