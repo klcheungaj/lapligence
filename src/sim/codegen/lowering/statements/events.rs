@@ -564,8 +564,17 @@ impl EmitCtx<'_, '_> {
                 .or_else(|| self.cg.static_formals.get(&(self.inst, target)))
                 .or_else(|| self.cg.static_task_locals.get(&(self.inst, target)))
         });
+        // A member of an unpacked-structure net has no signal of its own;
+        // it waits through the evaluated path like other projections.
+        let unresolved_member = matches!(
+            self.cg.kind(expression),
+            NodeKind::Expr(ExprKind::HierPath { .. })
+        ) && persistent_subroutine_signal.is_none()
+            && self.cg.resolve_signal_id(&self.path, expression).is_err()
+            && self.cg.unpacked_path_for_expr(expression).is_some();
         if simple
             && !selected_aggregate_member
+            && !unresolved_member
             && condition.is_none()
             && self.cg.nested_proc_local_ref(expression).is_none()
             && !mapped_formal

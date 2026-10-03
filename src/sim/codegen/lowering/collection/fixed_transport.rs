@@ -228,17 +228,22 @@ impl Codegen<'_> {
             views.push(view);
         }
         let snapshot = self.fixed_activation_array(rhs)?;
-        let value = self.lower_fixed_value(path, rhs)?;
         // The snapshot precedes selector capture in evaluation order: the RHS is
         // evaluated before the destination selectors (IEEE 1800-2009 §10.9).
-        let mut ordered = vec![
-            IrStmt::FixedArrayDeclare(snapshot.ir),
-            IrStmt::FixedValueAssign {
+        let mut ordered = vec![IrStmt::FixedArrayDeclare(snapshot.ir)];
+        if let Some(construct) =
+            self.lower_descriptor_pattern_into(path, rhs, &source, &snapshot)?
+        {
+            // A pattern source is built in place from once-captured items.
+            ordered.extend(construct);
+        } else {
+            let value = self.lower_fixed_value(path, rhs)?;
+            ordered.push(IrStmt::FixedValueAssign {
                 dst: self.fixed_view_at(snapshot.ir, &[]),
                 src: Box::new(value),
                 nba: false,
-            },
-        ];
+            });
+        }
         ordered.append(&mut statements);
         for (offset, view) in views.into_iter().enumerate() {
             let offset =

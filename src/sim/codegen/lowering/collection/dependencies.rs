@@ -2,6 +2,11 @@
 
 use super::*;
 
+/// Widest constant array row whose cells are recorded individually in
+/// writer-conflict analysis. Wider rows are conservatively whole-array writes
+/// so the pairwise writer check stays bounded.
+const PRECISE_ROW_WRITE_CELLS: u64 = 256;
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ProcessWriteMode {
     Sensitivity,
@@ -766,10 +771,57 @@ impl<'a> Codegen<'a> {
         indices: &[NodeId],
         writes: &mut HashSet<IrDependency>,
     ) {
+        // A constant row is its longest static prefix (SV 6.5): it writes
+        // only its own cells. Bounded rows record those cells so disjoint row
+        // writers do not conflict; wider rows stay whole-array conservative.
+        if let Some((first, count)) = self.constant_row_cells(array, indices) {
+            if count <= PRECISE_ROW_WRITE_CELLS {
+                let reference = self.reference_array(array.ir);
+                writes.extend(
+                    (first..first + count).map(|index| IrDependency::ArrayElement {
+                        array: reference,
+                        index,
+                    }),
+                );
+                return;
+            }
+        }
         let mut dependencies = Vec::new();
         let mut seen = HashSet::new();
         self.add_fixed_array_dependency(array, indices, &mut seen, &mut dependencies);
         writes.extend(dependencies);
+    }
+
+    /// Flattened `(first, count)` cells of a constant row/slab select that
+    /// names fewer indices than the array has dimensions.
+    fn constant_row_cells(&self, array: &ArrayInfo, indices: &[NodeId]) -> Option<(u64, u64)> {
+        if indices.is_empty() || indices.len() >= array.dims.len() {
+            return None;
+        }
+        let mut prefix = 0u64;
+        for ((left, right), node) in array.dims.iter().zip(indices) {
+            let value = self.eval_bound_i128(*node).ok()?;
+            let low = i128::from((*left).min(*right));
+            let high = i128::from((*left).max(*right));
+            if value < low || value > high {
+                return None;
+            }
+            let offset = if left >= right {
+                i128::from(*left) - value
+            } else {
+                value - i128::from(*left)
+            };
+            let extent = (i64::from(*left) - i64::from(*right)).unsigned_abs() + 1;
+            prefix = prefix
+                .checked_mul(extent)?
+                .checked_add(u64::try_from(offset).ok()?)?;
+        }
+        let count = array.dims[indices.len()..]
+            .iter()
+            .try_fold(1u64, |count, (left, right)| {
+                count.checked_mul((i64::from(*left) - i64::from(*right)).unsigned_abs() + 1)
+            })?;
+        Some((prefix.checked_mul(count)?, count))
     }
 
     /// Collect force-expression dependencies, including real-valued storage.

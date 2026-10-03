@@ -17,6 +17,7 @@ mod calls;
 mod captures;
 mod classes;
 mod constants;
+mod continuous_feedback;
 mod dependencies;
 mod design;
 mod events;

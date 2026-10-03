@@ -76,12 +76,12 @@ impl<'a> Codegen<'a> {
 
         let mut targets = Vec::new();
         self.p30_collect_pattern_lvalue_targets(path, pattern, &target_descriptor, &mut targets)?;
-        if kind != PatternAssignmentKind::Continuous {
-            if let Some(statement) =
-                self.lower_descriptor_pattern_scatter(path, rhs, &targets, !blocking)?
-            {
-                return Ok(Some(statement));
-            }
+        // Oversized sources scatter descriptor rows for every assignment
+        // kind; continuous scatters keep their constant row topology.
+        if let Some(statement) =
+            self.lower_descriptor_pattern_scatter(path, rhs, &targets, !blocking)?
+        {
+            return Ok(Some(statement));
         }
         let mut lowered_targets = Vec::with_capacity(targets.len());
         let mut target_widths = Vec::with_capacity(targets.len());
@@ -228,6 +228,23 @@ impl<'a> Codegen<'a> {
             parts.push(self.analyze_lhs(path, target)?);
         }
         Ok(Some(parts))
+    }
+
+    /// Return the ordered leaf target nodes of a positional assignment-pattern
+    /// lvalue, matching the order of the leaf assignments that
+    /// [`Self::lower_p30_pattern_lvalue_assignment`] emits.
+    pub(in super::super) fn positional_pattern_lvalue_targets(
+        &self,
+        path: &str,
+        lhs: NodeId,
+    ) -> Result<Vec<NodeId>, String> {
+        let pattern = self.p30_unwrap_cast(lhs);
+        let descriptor = self.query_descriptor(lhs).cloned().ok_or_else(|| {
+            format!("positional assignment-pattern lvalue in `{path}` has no owned target type")
+        })?;
+        let mut targets = Vec::new();
+        self.p30_collect_pattern_lvalue_targets(path, pattern, &descriptor, &mut targets)?;
+        Ok(targets.into_iter().map(|(target, _)| target).collect())
     }
 
     fn p30_collect_pattern_lvalue_targets(

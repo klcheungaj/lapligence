@@ -1322,6 +1322,9 @@ struct Codegen<'a> {
     /// Whole-net continuous assignment node -> synthetic signal index carrying
     /// that wired net driver's distinct runtime slot.
     wired_driver_sites: HashMap<NodeId, usize>,
+    /// Lazily built packed C storage name -> (readable signal index, true-net
+    /// alias groups) for continuous-driver self-feedback analysis.
+    feedback_storage: Option<HashMap<String, (usize, Vec<usize>)>>,
     /// Structural source owner, source node and resolved-group index ->
     /// synthetic signal carrying that source's independent contribution slot.
     /// A source can feed more than one canonical group (for example a
@@ -1514,6 +1517,7 @@ impl<'a> Codegen<'a> {
             pca_sites: HashMap::new(),
             pca_seq: 0,
             wired_driver_sites: HashMap::new(),
+            feedback_storage: None,
             structural_driver_sites: HashMap::new(),
             structural_driver_sources: HashSet::new(),
             structural_drivers: Vec::new(),
