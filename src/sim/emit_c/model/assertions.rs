@@ -16,10 +16,12 @@ fn render_assertion_predicate(
     sampled: bool,
 ) -> Result<String, String> {
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model,
         func: None,
         sampled,
         activation_label: None,
+        constants: None,
     };
     let rendered = super::super::expressions::render_expr_impl(&ctx, expression)?;
     if rendered.width == 0 {
@@ -63,10 +65,12 @@ fn render_assertion_sequence(
     sequence: &IrSequence,
 ) -> Result<String, String> {
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model,
         func: None,
         sampled: true,
         activation_label: None,
+        constants: None,
     };
     let atom_name = assertion_sequence_atom_name(index, role);
     let mut out = String::new();
@@ -240,10 +244,12 @@ pub(super) fn render_sampled_domain_callbacks(model: &IrModel) -> Result<String,
     let mut out = String::new();
     for (index, domain) in model.sampled_domains().iter().enumerate() {
         let ctx = RCtx {
+            value_backend: crate::sim::value_backend::ValueBackend::Legacy,
             model,
             func: None,
             sampled: true,
             activation_label: None,
+            constants: None,
         };
         let value = super::super::expressions::render_expr_impl(&ctx, &domain.sample)?;
         if value.width == 0 {

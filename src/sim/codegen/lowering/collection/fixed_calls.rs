@@ -39,7 +39,6 @@ impl Codegen<'_> {
         };
         self.model.arrays.push(crate::sim::ir::IrArray {
             activation: true,
-            descriptor: false,
             net_elements: Vec::new(),
             element_default: Self::fixed_descriptor_default(element),
             c_name: name,
@@ -86,7 +85,6 @@ impl Codegen<'_> {
             let lifetime = if matches!(self.kind(node), NodeKind::FuncArg { .. } | NodeKind::FuncTask { .. }) {
                 automatic
             } else { self.db.variable_lifetime(node) == VariableLifetime::Automatic };
-            if self.collect_fixed_record(&self.instance_path_of(self.inst), node, lifetime)? { continue; }
             let info = self.fixed_activation_array(node)?;
             self.model.arrays[info.ir].activation = lifetime;
             self.array_globals.insert(node, info);
@@ -101,11 +99,6 @@ impl Codegen<'_> {
         let (name, callee) = match self.kind(call) { NodeKind::FuncCall { name, callee, .. } => (name.clone(), *callee), _ => return Ok(None) };
         let (function, _) = self.resolve_callee_env(self.inst, &name, false, callee)?;
         if !self.nonflatten_function(function) { return Ok(None); }
-        if self.fixed_records.contains_key(&function) {
-            let dst = self.fixed_record_views(path, destination)?.ok_or("record return requires descriptor destination")?;
-            let src = self.lower_fixed_record_value(path, call)?;
-            return Ok(Some(IrStmt::FixedRecordAssign { dst, src: Box::new(src), nba: false }));
-        }
         let dst = self.array_of(destination).ok_or("fixed function result requires an array destination")?.ir;
         let expression = self.lower_func_call_expr(path, call, &name, callee)?;
         let IrExprKind::CallFn(mut expression) = expression.kind else { return Err("fixed call did not lower to a typed call".into()); };

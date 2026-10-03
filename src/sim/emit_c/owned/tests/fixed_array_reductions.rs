@@ -30,10 +30,12 @@ fn item() -> IrExpr {
 fn fixed_array_reduction_emits_each_binary_method_without_an_identity_seed() {
     let model = IrModel::new("fold".into(), 1).unwrap();
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     for (operation, helper) in [
         (IrContainerReduction::Sum, "sv4_add("),
@@ -79,10 +81,12 @@ fn fixed_array_reduction_receiver_call_is_captured_before_the_loop_once() {
         }],
     ));
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     let call = IrExpr::new(
@@ -105,10 +109,12 @@ fn fixed_array_reduction_receiver_call_is_captured_before_the_loop_once() {
 fn fixed_array_reduction_nested_maps_shadow_only_after_capturing_the_outer_item() {
     let model = IrModel::new("fold_nested".into(), 1).unwrap();
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let outer_item = IrExpr::new(IrExprKind::LocalRead("item".into()), 16, false, None);
     let inner = reduction(
@@ -148,10 +154,12 @@ fn fixed_array_reduction_direct_storage_has_constant_emission_and_slot_cost() {
         .unwrap(),
     );
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut expr = reduction(IrFixedArrayReductionSource::Array(0), item());
     let IrExprKind::FixedArrayReduce(plan) = &mut expr.kind else {
@@ -186,10 +194,12 @@ fn fixed_array_reduction_map_can_read_an_enclosing_formal() {
         vec![],
     ));
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: Some(&model.funcs[0]),
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mapped = add(
         IrExpr::convert_to(item(), 32, false),
@@ -208,7 +218,8 @@ fn fixed_array_reduction_map_can_read_an_enclosing_formal() {
         .unwrap();
     let address = frame.lookup("a0").unwrap().address;
     let value = frame.expression(&expr).unwrap();
-    assert!(frame.body().contains(&format!("sv4_clone({address})")));
+    assert!(frame.body().contains(&format!("*({address})")));
+    assert!(!frame.body().contains(&format!("sv4_clone({address})")));
     frame.discard(value);
     assert!(frame.slots.iter().all(|live| !live));
     assert_eq!(frame.body().matches("for (uint64_t").count(), 1);

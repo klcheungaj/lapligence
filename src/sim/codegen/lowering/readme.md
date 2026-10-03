@@ -46,3 +46,12 @@ See [lowering overview](../readme.md),
 [execution model](../../execution/readme.md),
 [feature boundaries](../../../../docs/sim_features.md) and
 [source layout](../../../../docs/source_layout.md).
+
+Descriptor-backed fixed patterns construct a lexical snapshot before publication.
+Scalar defaults and uniform replications retain sparse defaults; resolved shared
+positions become a default plus exceptions, and nonuniform replications use typed
+loops. Value captures precede all scratch writes; blocking/NBA copies reuse the
+fixed descriptor lifecycle and per-cell publication. Array-valued items requiring
+oversized selected views remain subject to the descriptor transport limits.
+Packed pattern keys use the captured immediate element type; equivalent
+non-nominal integral types match structurally while enums retain nominal identity.

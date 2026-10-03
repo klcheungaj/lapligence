@@ -519,6 +519,23 @@ void llg_gmp_sv4_export_vpi_words_wide(g4_t v, size_t first, llg_gmp_sv4_vpi_wor
 static inline g4_t llg_gmp_sv4_add(g4_t a, g4_t b) { return g4_binary(a, b, 0); }
 static inline g4_t llg_gmp_sv4_sub(g4_t a, g4_t b) { return g4_binary(a, b, 1); }
 static inline g4_t llg_gmp_sv4_mul(g4_t a, g4_t b) { return g4_binary(a, b, 2); }
+void llg_gmp_sv4_arithmetic_into_wide(g4_t* dst, g4_t a, g4_t b, unsigned op);
+/* Borrow operands; exact destination aliases are supported. */
+static inline void g4_arithmetic_into(g4_t* dst, g4_t a, g4_t b, unsigned op) {
+    if (g4_maxw(a, b) <= 64)
+        llg_gmp_sv4_replace(dst, g4_binary(a, b, op));
+    else
+        llg_gmp_sv4_arithmetic_into_wide(dst, a, b, op);
+}
+static inline void llg_gmp_sv4_add_into(g4_t* dst, g4_t a, g4_t b) {
+    g4_arithmetic_into(dst, a, b, 0);
+}
+static inline void llg_gmp_sv4_sub_into(g4_t* dst, g4_t a, g4_t b) {
+    g4_arithmetic_into(dst, a, b, 1);
+}
+static inline void llg_gmp_sv4_mul_into(g4_t* dst, g4_t a, g4_t b) {
+    g4_arithmetic_into(dst, a, b, 2);
+}
 static inline g4_t llg_gmp_sv4_and(g4_t a, g4_t b) { return g4_binary(a, b, 3); }
 static inline g4_t llg_gmp_sv4_or(g4_t a, g4_t b) { return g4_binary(a, b, 4); }
 static inline g4_t llg_gmp_sv4_xor(g4_t a, g4_t b) { return g4_binary(a, b, 5); }
@@ -960,6 +977,7 @@ static inline uint32_t llg_gmp_sv4_checked_width(g4_t value) {
 #define LLG_REF_VIEW LLG_GMP_REF_VIEW
 #define LLG_REF_TAGGED_VIEW LLG_GMP_REF_TAGGED_VIEW
 #define sv4_add llg_gmp_sv4_add
+#define sv4_add_into llg_gmp_sv4_add_into
 #define sv4_and llg_gmp_sv4_and
 #define sv4_assign llg_gmp_sv4_assign
 #define sv4_bitneg llg_gmp_sv4_bitneg
@@ -996,6 +1014,7 @@ static inline uint32_t llg_gmp_sv4_checked_width(g4_t value) {
 #define sv4_mod llg_gmp_sv4_mod
 #define sv4_move llg_gmp_sv4_move
 #define sv4_mul llg_gmp_sv4_mul
+#define sv4_mul_into llg_gmp_sv4_mul_into
 #define sv4_mux llg_gmp_sv4_mux
 #define sv4_neg llg_gmp_sv4_neg
 #define sv4_neq llg_gmp_sv4_neq
@@ -1013,6 +1032,7 @@ static inline uint32_t llg_gmp_sv4_checked_width(g4_t value) {
 #define llg_sv4_state_from_dpi llg_gmp_sv4_state_from_dpi
 #define llg_sv4_state_to_dpi llg_gmp_sv4_state_to_dpi
 #define sv4_sub llg_gmp_sv4_sub
+#define sv4_sub_into llg_gmp_sv4_sub_into
 #define sv4_to_bool llg_gmp_sv4_to_bool
 #define sv4_to_two_state llg_gmp_sv4_to_two_state
 #define sv4_to_u64 llg_gmp_sv4_to_u64

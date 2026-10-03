@@ -111,10 +111,12 @@ fn static_output_call_has_no_copy_in_but_static_inout_does() {
     let model = model();
     for inout in [false, true] {
         let ctx = RCtx {
+            value_backend: crate::sim::value_backend::ValueBackend::Legacy,
             model: &model,
             func: None,
             sampled: false,
             activation_label: None,
+            constants: None,
         };
         let mut frame = Frame::new(&ctx);
         let value = frame

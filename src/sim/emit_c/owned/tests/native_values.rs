@@ -20,10 +20,12 @@ fn native_return_slot_precedes_argument_cleanup_mark() {
     function.ret_string = true;
     model.funcs.push(function);
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     let result = frame
@@ -63,10 +65,12 @@ fn string_formals_are_copied_into_registered_callee_owners() {
     model.funcs.push(function);
     let function = &model.funcs[0];
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: Some(function),
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let source = super::super::model::function(&ctx, function).unwrap();
     assert!(source.contains("llg_string_clone(&a0)"));
@@ -97,7 +101,12 @@ fn native_model_lifecycle_uses_typed_notification_and_release() {
         initial: None,
     });
     let mut source = String::new();
-    super::super::model::storage_lifecycle(&model, &mut source).unwrap();
+    super::super::model::storage_lifecycle(
+        &model,
+        &super::super::super::constants::PackedConstants::default(),
+        &mut source,
+    )
+    .unwrap();
     assert!(source.contains("G_text.notify = llg_dependency_changed"));
     assert!(source.contains("G_text.dependency = &G_text_llg_dep"));
     assert!(source.contains("llg_string_destroy(&G_text)"));
@@ -112,10 +121,12 @@ fn container_read_keeps_index_owner_until_after_runtime_call() {
         two_state: false,
     });
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     let expression = IrExpr::new(
@@ -151,10 +162,12 @@ fn file_scan_uses_registered_source_and_typed_borrowed_target() {
     model.processes.clear();
     model.spawns.clear();
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     let input = IrFileInput::ScanString {
@@ -185,10 +198,12 @@ fn file_scan_uses_registered_source_and_typed_borrowed_target() {
 fn enum_navigation_releases_receiver_members_step_and_result() {
     let model = IrModel::new("enum_owners".to_owned(), 1).unwrap();
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     let expression = IrExpr::new(
@@ -222,10 +237,12 @@ fn enum_navigation_releases_receiver_members_step_and_result() {
 fn native_read_only_callbacks_reject_random_state_mutation() {
     let model = IrModel::new("native_readonly".to_owned(), 1).unwrap();
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     frame.read_only_callback = true;
@@ -243,10 +260,12 @@ fn generic_queue_queries_use_the_generic_runtime_layout() {
         maximum_elements: None,
     };
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     let query = IrArrayQuery {

@@ -49,10 +49,12 @@ fn tagged_member_retags_after_the_invalid_access_branch() {
         for two_state in [false, true] {
             let model = model();
             let ctx = RCtx {
+                value_backend: crate::sim::value_backend::ValueBackend::Legacy,
                 model: &model,
                 func: None,
                 sampled: false,
                 activation_label: None,
+                constants: None,
             };
             let mut frame = Frame::new(&ctx);
             let result = frame.expression(&member(signed, two_state)).unwrap();

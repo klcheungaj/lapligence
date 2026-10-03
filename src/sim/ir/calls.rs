@@ -10,7 +10,6 @@ pub enum IrCallArg {
     /// Fixed descriptor operand; passing mode belongs to the callee formal.
     FixedArray(usize),
     FixedValue(Box<IrFixedValue>),
-    FixedRecord(Box<IrFixedRecordValue>),
     /// Input formal value, captured once before the next input is evaluated.
     /// Later defaults can read its call-local binding from `call_argument_name`.
     Val(IrExpr),
@@ -280,7 +279,6 @@ impl IrCallArg {
     pub(in crate::sim) fn expressions(&self, visit: &mut impl FnMut(&IrExpr)) {
         match self {
             Self::FixedValue(value) => value.expressions(visit),
-            Self::FixedRecord(value) => value.expressions(visit),
             Self::Val(value) => visit(value),
             Self::StringVal(value) => value.expressions(visit),
             Self::ChandleVal(value) => value.expressions(visit),
@@ -326,7 +324,6 @@ impl IrCallArg {
     pub(in crate::sim) fn expressions_mut(&mut self, visit: &mut impl FnMut(&mut IrExpr)) {
         match self {
             Self::FixedValue(value) => value.expressions_mut(visit),
-            Self::FixedRecord(value) => value.expressions_mut(visit),
             Self::Val(value) => visit(value),
             Self::StringVal(value) => value.expressions_mut(visit),
             Self::ChandleVal(value) => value.expressions_mut(visit),

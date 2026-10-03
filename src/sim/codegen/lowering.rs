@@ -362,6 +362,8 @@ pub struct CodegenOptions {
     pub optimization: crate::sim::opt::OptConfig,
     /// Stackless-coroutine analysis tunables.
     pub execution: crate::sim::execution::ExecutionAnalysisOptions,
+    /// Compile-time value descriptor and compact kernel selection.
+    pub value_config: crate::sim::value_backend::ValueConfig,
 }
 
 /// Lower an owned Slang semantic database with default optimizations.
@@ -423,9 +425,18 @@ pub fn generate_from_owned_db_with_opts(
         optimization: *cfg,
         ..CodegenOptions::default()
     };
+    generate_from_owned_db_with_codegen_options(db, &options)
+}
+
+/// Consume the database with all generation tunables, releasing its arenas
+/// before execution lowering and C rendering.
+pub fn generate_from_owned_db_with_codegen_options(
+    db: Db,
+    options: &CodegenOptions,
+) -> Result<GeneratedModel, CodegenError> {
     let lowered = lower_model(&db).map_err(CodegenError::new)?;
     drop(db);
-    finish_generation(lowered, &options).map_err(CodegenError::new)
+    finish_generation(lowered, options).map_err(CodegenError::new)
 }
 
 fn generate_from_db_with_codegen_options_impl(
@@ -584,7 +595,7 @@ fn finish_generation(
     execution.validate().map_err(|error| error.to_string())?;
     drop(optimization_stage);
     let render_stage = crate::profile::Stage::new("render");
-    let rendered = crate::sim::emit_c::render_with_symbols(&execution)?;
+    let rendered = crate::sim::emit_c::render_with_value_config(&execution, options.value_config)?;
     drop(render_stage);
     Ok(GeneratedModel {
         design_name,
@@ -898,13 +909,6 @@ struct ArrayInfo {
 }
 
 #[derive(Clone)]
-struct FixedRecordLeaf {
-    path: Vec<String>,
-    array: ArrayInfo,
-    scalar: bool,
-}
-
-#[derive(Clone)]
 struct ContainerInfo {
     ir: usize,
 }
@@ -1209,7 +1213,6 @@ struct Codegen<'a> {
     arrays: Vec<ArrayInfo>,
     /// Array arena node → lowered array info.
     array_globals: HashMap<NodeId, ArrayInfo>,
-    fixed_records: HashMap<NodeId, Vec<FixedRecordLeaf>>,
     /// Dynamic arrays, queues, and associative arrays use owned runtime
     /// storage and never alias fixed unpacked-array storage.
     container_globals: HashMap<NodeId, ContainerInfo>,
@@ -1462,7 +1465,6 @@ impl<'a> Codegen<'a> {
             delayed_driver_inits: Vec::new(),
             arrays: Vec::new(),
             array_globals: HashMap::new(),
-            fixed_records: HashMap::new(),
             container_globals: HashMap::new(),
             container_initializers: Vec::new(),
             container_iterator: None,
@@ -1564,11 +1566,6 @@ impl<'a> Codegen<'a> {
     fn array_of(&self, node: NodeId) -> Option<&ArrayInfo> {
         if let Some(array) = self.array_globals.get(&node) {
             return Some(array);
-        }
-        if self.query_descriptor(node).is_some_and(|descriptor| matches!(descriptor.shape, TypeShape::FixedArray { .. })) {
-            if let Some((root, members, selected)) = self.fixed_record_path(node) {
-                if selected.is_empty() { if let Some(leaf) = self.fixed_records[&root].iter().find(|leaf| leaf.path == members) { return Some(&leaf.array); } }
-            }
         }
         match self.kind(node) {
             NodeKind::Array { .. } => self.array_globals.get(&node),

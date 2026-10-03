@@ -37,6 +37,7 @@ mod native_access;
 mod native_tasks;
 pub(super) mod net_batches;
 mod objects;
+mod operands;
 pub(super) mod pca_batches;
 mod pure_calls;
 mod qualifiers;
@@ -58,6 +59,7 @@ struct Value {
     signed: bool,
     fill: Option<u8>,
     slot: Option<usize>,
+    borrowed_address: Option<String>,
 }
 
 impl Value {
@@ -257,7 +259,7 @@ impl<'a, 'm> Frame<'a, 'm> {
             may_disable: HashMap::new(),
             access_stack: Vec::new(),
             construction_stack: Vec::new(),
-            layout: FrameLayout::new(storage),
+            layout: FrameLayout::with_backend(storage, ctx.value_backend),
             declarations: Vec::new(),
             declaration_error: None,
             brace_kinds: Vec::new(),
@@ -750,6 +752,7 @@ impl<'a, 'm> Frame<'a, 'm> {
             signed,
             fill: None,
             slot: Some(slot),
+            borrowed_address: None,
         }
     }
     fn value(&mut self, code: String, width: u32, signed: bool) -> Value {
@@ -760,6 +763,7 @@ impl<'a, 'm> Frame<'a, 'm> {
                 signed,
                 fill: None,
                 slot: None,
+                borrowed_address: None,
             };
         }
         let value = self.reserve(width, signed);
@@ -770,7 +774,7 @@ impl<'a, 'm> Frame<'a, 'm> {
         if let Some(slot) = value.slot {
             self.line(format!("sv4_destroy(&{});", value.code));
             self.slots[slot] = false;
-        } else {
+        } else if value.width == 0 {
             self.line(format!("(void){};", value.code));
         }
     }
@@ -795,6 +799,22 @@ impl<'a, 'm> Frame<'a, 'm> {
         two_state: bool,
         shortreal: bool,
     ) -> Value {
+        let same_shape =
+            width != 0 && value.fill.is_none() && value.width == width && value.signed == signed;
+        if width != 0 {
+            if let Some(fill) = value.fill {
+                if self.ctx.constants.is_some() {
+                    let result = self.packed_fill(fill, width, signed, value.slot.is_none());
+                    self.discard(value);
+                    return if two_state {
+                        let code = format!("sv4_to_two_state({})", result.code);
+                        self.replace(result, code, width, signed)
+                    } else {
+                        result
+                    };
+                }
+            }
+        }
         let code = if width == 0 {
             round_shortreal(value.real(), shortreal)
         } else if let Some(fill) = value.fill {
@@ -808,7 +828,11 @@ impl<'a, 'm> Frame<'a, 'm> {
         } else {
             format!("sv4_cast({}, {width}, {})", value.code, u8::from(signed))
         };
-        let result = self.replace(value, code, width, signed);
+        let result = if same_shape {
+            value
+        } else {
+            self.replace(value, code, width, signed)
+        };
         if width != 0 && two_state {
             let code = format!("sv4_to_two_state({})", result.code);
             self.replace(result, code, width, signed)

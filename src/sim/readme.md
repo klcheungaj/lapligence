@@ -15,6 +15,8 @@ it is not a Rust runtime dependency.
 | `rt/` | Exact-width values, scheduler, native services and optional waveform output. |
 
 `generate_from_db_with_opts` reuses one owned DB across optimization variants.
+The driver uses `generate_from_owned_db_with_codegen_options` to retain all
+generation tunables while releasing the DB before execution lowering/rendering.
 `GeneratedModel` carries the design name, generated C and warnings. Unsupported
 executable forms fail with source-linked errors before C compilation.
 
@@ -28,3 +30,11 @@ to `/O1`, and O2/O3 to `/O2`.
 See [feature status](../../docs/sim_features.md),
 [build and CLI usage](../../readme.md), [tests](../../tests/readme.md) and
 [source layout](../../docs/source_layout.md).
+
+Experimental packed-value selection uses `LLG_VALUE_BACKEND=compact` and
+`LLG_COMPACT_KERNELS=portable|gmp`; defaults are legacy/portable. GMP mode requires
+`GMP_ROOT` containing compatible headers and library. Portable needs no GMP;
+legacy never inspects or links it. Library callers pass the same `ValueConfig`
+in `CodegenOptions` and `CmakeBuildOpts`. Source export retains the selection,
+ABI guards and dependency fingerprint. Compact selected models include S1–S9
+and native consumer primitives.

@@ -426,7 +426,7 @@ impl<'a> Codegen<'a> {
             }
         }
         for (idx, (io, is_out)) in formals.iter().enumerate() {
-            if self.fixed_formal_array(*io).is_some() || self.fixed_records.contains_key(io) { continue; }
+            if self.fixed_formal_array(*io).is_some() { continue; }
             if matches!(self.kind(*io), NodeKind::FuncArg { ty, .. } if ty.kind == "event") {
                 // A by-value input event formal is the activation's own
                 // handle to the object the caller named. Other directions are
@@ -1067,7 +1067,6 @@ impl<'a> Codegen<'a> {
             return Ok(());
         }
         if let NodeKind::Var { ty } | NodeKind::Array { ty } = self.kind(node) {
-            if self.fixed_records.contains_key(&node) { return Ok(()); }
             if self
                 .array_globals
                 .get(&node)

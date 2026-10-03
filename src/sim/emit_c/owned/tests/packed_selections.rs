@@ -37,10 +37,12 @@ fn lhs() -> IrLhs {
 fn packed_selection_owners_are_released_and_nba_captures_a_narrow_range() {
     let model = model();
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     let target = frame.target(&lhs()).unwrap();
@@ -67,10 +69,12 @@ fn packed_selection_reads_default_the_parent_before_applying_inner_bounds() {
     let mut model = model();
     model.arrays[0].two_state = true;
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     let target = frame.target(&lhs()).unwrap();
@@ -88,10 +92,12 @@ fn packed_selection_reads_default_the_parent_before_applying_inner_bounds() {
 fn packed_selection_input_uses_a_synchronous_plan_descriptor() {
     let model = model();
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     let result = frame

@@ -964,10 +964,12 @@ fn render_stmt_scoped(
         IrStmt::ActivationScope { target, exit, body } => {
             let activation = format!("_llg_act_{}", exit);
             let child = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
                 model: ctx.model,
                 func: ctx.func,
                 sampled: ctx.sampled,
                 activation_label: Some(exit.clone()),
+                constants: None,
             };
             let mut labels = HashSet::new();
             enclosed_labels(body, &mut labels);

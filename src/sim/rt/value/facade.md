@@ -15,12 +15,11 @@ the V01 neutral bridge, core arithmetic/logic/comparison/mux, and V05/S1–S3.
 V05/S4–S9 add selections, captured plans, packed reference reads, streams,
 concatenation, replication, array conditionals, net/strength/UDP/enum, real/time
 and formatting/index adapters. [The checklist](../value_gmp/facade_audit.md)
-records the remaining integration surface. It is
-built standalone by `tests/runtime_value_storage/compact_value.cmake` with
-portable kernels and optionally GMP. It is not embedded in generated models.
-V07 owns selection in `llg_value.h`, source packaging and model integration;
-the production header currently accepts only legacy `LLG_SV4_USE_GMP=0`.
-V07 will include exactly one of `value/backend.h` and `value_gmp/backend.h`;
+records the integrated surface. Standalone probes use
+`tests/runtime_value_storage/compact_value.cmake`; generated sources select it
+experimentally through `ValueConfig`, with portable kernels or optional GMP.
+`llg_value.h` includes exactly one of `value/backend.h` and
+`value_gmp/backend.h`, followed by the neutral `value/bridge.h`;
 the selector must accept only literal tokens `0` and `1`, default to `0`, and
 reject every other token. Owner-free reference/selection types, callbacks and
 enums stay available through the facade. Packed-dependent `llg_ref_*` helpers
@@ -30,8 +29,9 @@ The standalone header defines `llg_gmp_sv4_t` and `llg_gmp_sv4_*` operations.
 Defining `LLG_SV4_GMP_PUBLIC_NAMES` before including `value_gmp/backend.h` maps
 `sv4_t`, implemented `sv4_*` operations, and `llg_sv4_*` accessors directly to
 those names. Small operations are `static inline`; wide paths call prefixed
-out-of-line implementation symbols. No unimplemented operation is declared,
-aliased, or converted through legacy. A differential executable may link both
+out-of-line implementation symbols. All currently emitted operations are
+implemented; unavailable additions must fail at compile/link time without legacy
+fallback. A differential executable may link both
 libraries, but a generated model must select exactly one descriptor ABI.
 
 `LLG_SV4_GMP_KERNELS=0/1` is an independent compile-time choice inside the compact
@@ -45,10 +45,18 @@ the result receives only its low words, with no separate scratch allocation.
 Above it, the result allocation includes a temporary product tail, which is
 removed before returning. Mixed-width add/sub allocate only the result.
 
-Legacy production retains value ABI **4**. Reserve value ABI **5** for the
-compact descriptor. V07 owns
-embedding, CMake, backend/ABI/limb cache keys, frame layout, foreign-module
-fences and all-translation-unit definitions. Configuration alone is not ABI
+Legacy production retains value ABI **4**. The experimental compact descriptor
+uses value ABI **5**. Emission and build callers pass the same `ValueConfig`; the driver reads
+`LLG_VALUE_BACKEND=legacy|compact` and `LLG_COMPACT_KERNELS=portable|gmp`.
+Defaults are legacy/portable. GMP kernels require an explicit `GMP_ROOT` with
+matching headers/library, verified 64-bit nail-free compatible limbs and mpn APIs.
+Legacy/portable builds never inspect GMP inputs. Generated guards record backend,
+kernel and ABI; `llg_value_build.h` records the GMP content fingerprint and names
+the required link symbol. Source exports carry only the selected backend.
+Runtime keys include these choices, selected sources, compiler/target and flags;
+ready markers must match the entry key. Foreign C clients built against the value
+facade must call `llg_value_require_abi()` before exchanging descriptors with a
+runtime; generated `llg_model_start` does this automatically. Configuration alone is not ABI
 support. Regenerate model and runtime together; never cast a descriptor across
 backends. There is no per-value backend tag, virtual/function table, TLS/global
 scratch, backend branch inside an operation, or operation-level fallback.
@@ -165,6 +173,7 @@ holds for inline values: mutation of a result must never mutate an input.
 | `sv4_destroy`, `sv4_destroy_array` | Release owners and reset to empty; repeated destruction of an empty owner is safe. |
 | Existing selected writes | Borrow RHS; snapshot exact/overlapping selected aliases before modifying the target. |
 | Neutral setters/imports | Mutate only an initialized owner, keep width/address/sign, publish no scheduler notifications. Inputs are scalar copies or external buffers, never private payload aliases. |
+| `sv4_add_into`, `sv4_sub_into`, `sv4_mul_into` | Borrow by-value operands; replace an initialized destination with the independent arithmetic result. Exact destination/operand aliases, including both operands, are supported. Same result width/sign/X behavior as the returning operation. No scheduler publication or caller scratch. Added by EMIT-1; implemented in both backends. |
 
 Plain struct assignment is permitted only as a synchronous transient borrow or
 an explicit transfer with the previous owner reset. A borrow must not be
@@ -226,9 +235,29 @@ Do not access `sv4_t`'s `.bits/.x/.z/.width/.is_signed` outside backend code, ta
 plane pointers, fabricate borrowed descriptors over arrays, use encoded-byte
 equality, or embed numeric `sizeof(sv4_t)`/frame-offset constants. Ordinary C
 `sizeof`/`_Alignof` of the selected type is allowed in native layout code; emitted
-frame metadata must be selected and asserted by V07. V06 migrates representation
+frame metadata follows the selected descriptor and asserts its 64-bit-host layout. V06 migrates representation
 consumers; V05 implements operation families; V08 audits retained owner graphs.
 Keep new feature work on legacy through these APIs while those tasks proceed.
+
+### Arithmetic destinations added by EMIT-1 (implemented in both backends)
+
+The additive arithmetic destination family leaves descriptor/value ABI 4 unchanged.
+Legacy add/sub reuse a destination payload when all widths match; sign comes from
+both operands. X/Z inputs fill the result with X after inspecting both inputs.
+Multiplication reuses matching storage only for a destination independent of both
+known operands; exact aliases and mismatched widths use a fresh result before
+replacement. These storage choices are backend details, not client guarantees.
+Clients may destroy operands after the call, and must never use a consumed aliased
+borrow afterwards.
+
+Compact <=64-bit destinations use inline results, including exact aliases. Wide
+add/sub reuse matching-width storage and load both input words before each
+write. Known destinations with known equal-width operands allocate nothing;
+X/Z results promote B only if needed, and known results remove an existing B.
+Wide multiplication uses the existing kernel seam: independent matching-width
+destinations reuse A, with full-product scratch only at the GMP threshold. Known
+operand aliases and mismatched widths compute a fresh result before replacement.
+Every published result retains exact-width canonical storage and masked padding.
 
 ### Consumer primitives added by V06
 
@@ -261,3 +290,8 @@ waits keep copied A/B words and explicit shape metadata; they never fabricate an
 `sv4_t` over that buffer. Publication retains its existing registered snapshots
 and synchronous borrow rules. Native `sizeof`/`_Alignof` remain valid; numeric
 emitter frame estimates and their selected-layout assertions are owned by V07.
+
+Selected compact builds use native reference readers, selections/assembly and
+consumer primitives. This is experimental integration, not production support.
+Generated-HDL execution and independent outputs establish coverage; component
+probes and successful linking alone do not.

@@ -1,7 +1,7 @@
 # Embedded C11 simulation runtime
 
 Generated models compile this runtime separately from Rust. Exact-width values use
-unique ownership (ABI 4); registered scopes and retained destinations support
+unique ownership (legacy ABI 4, experimental compact ABI 5); registered scopes and retained destinations support
 suspension, cancellation and queued publication. See
 [value ownership](value/ownership.md) for the allocation contract.
 Contiguous packed copies use masked limb transfers across value/X/Z planes;
@@ -101,7 +101,8 @@ address-order rules.
 `mod.rs` returns header/flat-source pairs through `value_sources`,
 `random_sources`, `rng_sources`, `coroutine_sources`, `runtime_sources`,
 `string_sources` and `container_sources`; waveform and self-test accessors provide
-their related files. Facades include ordered private fragments; emitted sources
+their related files. `value_sources_for` and `value_backend_sources` carry the
+selected facade, nested headers and compact units. Facades include ordered private fragments; emitted sources
 flatten the same order. `llg_co.c` is an independent translation unit, not a
 scheduler fragment.
 
@@ -164,7 +165,8 @@ sharing the existing allocation. The 128-byte wait and 240-byte resume block
 remain unchanged. These private layouts leave process ABI 3 and llg_co ABI 1
 unchanged; runtime-content hashing rebuilds cached archives.
 
-The standalone [compact value backend](value_gmp/readme.md) reserves ABI 5 and
+The experimental [compact value backend](value_gmp/readme.md) uses ABI 5 and
 provides inline small values, canonical optional B storage and optional GMP wide
-mul/div/mod/pow kernels. It is currently built only by the native value probes;
-generated models continue to use the legacy value implementation.
+mul/div/mod/pow kernels. Generated sources and runtime archives can select it with
+`LLG_VALUE_BACKEND=compact` and `LLG_COMPACT_KERNELS=portable|gmp`; GMP requires
+`GMP_ROOT`. Selected compact builds include S1–S9 and native V06 consumer helpers.

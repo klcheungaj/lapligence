@@ -938,15 +938,11 @@ sv4_t sv4_sub(sv4_t a, sv4_t b) {
     return r;
 }
 
-sv4_t sv4_mul(sv4_t a, sv4_t b) {
-    uint32_t w = sv4_maxw(a, b);
+static void sv4_mul_result(sv4_t* r, sv4_t a, sv4_t b) {
+    uint32_t w = r->width;
     int8_t s = a.is_signed && b.is_signed;
-    if (sv4_is_unknown(a) || sv4_is_unknown(b)) return sv4_x(w, s);
     int nl = sv4_nlimbs(w);
-    // Schoolbook product modulo 2^w.  Terms at limb nl and above cannot affect
-    // the truncated result, so avoid allocating or computing them.
-    sv4_t r = sv4_zero(w, s);
-    uint64_t* acc = r.bits;
+    uint64_t* acc = r->bits;
     for (int i = 0; i < nl; i++) {
         for (int j = 0; j < nl - i; j++) {
             uint64_t plo, phi;
@@ -973,10 +969,92 @@ sv4_t sv4_mul(sv4_t a, sv4_t b) {
             }
         }
     }
-    if (nl > 0) r.bits[nl - 1] &= sv4_limb_mask(w, nl - 1);
-    r.width = w;
-    r.is_signed = s;
+    if (nl > 0) r->bits[nl - 1] &= sv4_limb_mask(w, nl - 1);
+}
+
+sv4_t sv4_mul(sv4_t a, sv4_t b) {
+    uint32_t w = sv4_maxw(a, b);
+    int8_t s = a.is_signed && b.is_signed;
+    if (sv4_is_unknown(a) || sv4_is_unknown(b)) return sv4_x(w, s);
+    sv4_t r = sv4_zero(w, s);
+    sv4_mul_result(&r, a, b);
     return r;
+}
+
+static int sv4_arithmetic_reuse(sv4_t* dst, sv4_t a, sv4_t b) {
+    return dst->width == a.width && a.width == b.width;
+}
+
+static void sv4_arithmetic_planes(sv4_t* dst, int unknown, int8_t sign) {
+    int limbs = sv4_nlimbs(dst->width);
+    for (int i = 0; i < limbs; ++i) {
+        dst->x[i] = unknown ? sv4_limb_mask(dst->width, i) : 0;
+        dst->z[i] = 0;
+        if (unknown) dst->bits[i] = 0;
+    }
+    dst->is_signed = sign;
+}
+
+void sv4_add_into(sv4_t* dst, sv4_t a, sv4_t b) {
+    if (!sv4_arithmetic_reuse(dst, a, b)) {
+        sv4_replace(dst, sv4_add(a, b));
+        return;
+    }
+    int unknown = sv4_is_unknown(a) || sv4_is_unknown(b);
+    int8_t sign = a.is_signed && b.is_signed;
+    if (!unknown) {
+        uint64_t carry = 0;
+        int limbs = sv4_nlimbs(a.width);
+        for (int i = 0; i < limbs; ++i) {
+            uint64_t left = a.bits[i], right = b.bits[i];
+            uint64_t sum = left + right;
+            uint64_t result = sum + carry;
+            carry = (sum < left) || (result < sum);
+            dst->bits[i] = result & sv4_limb_mask(a.width, i);
+        }
+    }
+    sv4_arithmetic_planes(dst, unknown, sign);
+}
+
+void sv4_sub_into(sv4_t* dst, sv4_t a, sv4_t b) {
+    if (!sv4_arithmetic_reuse(dst, a, b)) {
+        sv4_replace(dst, sv4_sub(a, b));
+        return;
+    }
+    int unknown = sv4_is_unknown(a) || sv4_is_unknown(b);
+    int8_t sign = a.is_signed && b.is_signed;
+    if (!unknown) {
+        uint64_t borrow = 0;
+        int limbs = sv4_nlimbs(a.width);
+        for (int i = 0; i < limbs; ++i) {
+            uint64_t left = a.bits[i], right = b.bits[i];
+            uint64_t subtrahend = right + borrow;
+            borrow = (subtrahend < right) || (left < subtrahend);
+            dst->bits[i] = (left - subtrahend) & sv4_limb_mask(a.width, i);
+        }
+    }
+    sv4_arithmetic_planes(dst, unknown, sign);
+}
+
+void sv4_mul_into(sv4_t* dst, sv4_t a, sv4_t b) {
+    if (!sv4_arithmetic_reuse(dst, a, b)) {
+        sv4_replace(dst, sv4_mul(a, b));
+        return;
+    }
+    int unknown = sv4_is_unknown(a) || sv4_is_unknown(b);
+    int8_t sign = a.is_signed && b.is_signed;
+    if (!unknown) {
+        /* Multiplication revisits input limbs; preserve aliased inputs until
+           the complete product has been evaluated. */
+        if (dst->bits == a.bits || dst->bits == b.bits) {
+            sv4_replace(dst, sv4_mul(a, b));
+            return;
+        }
+        size_t limbs = (size_t)sv4_nlimbs(dst->width);
+        if (limbs) memset(dst->bits, 0, limbs * sizeof(uint64_t));
+        sv4_mul_result(dst, a, b);
+    }
+    sv4_arithmetic_planes(dst, unknown, sign);
 }
 
 static int sv4_raw_nlimbs(const sv4_t* v) {
@@ -1452,35 +1530,6 @@ sv4_t sv4_case_eq(sv4_t a, sv4_t b) {
     return sv4_from_u64(1, 1, 0);
 }
 
-int llg_ref_view_valid(const llg_ref_view_t* view, const sv4_t* parent,
-                       size_t* failed_check) {
-    if (failed_check) *failed_check = 0;
-    if (!view || !parent || (view->tag_check_count && !view->tag_checks)) return 0;
-    for (size_t index = 0; index < view->tag_check_count; ++index) {
-        const llg_ref_tag_check_t* check = &view->tag_checks[index];
-        sv4_t receiver = sv4_select_plan_read(*parent, &check->receiver_plan);
-        if (!check->tag_width || check->tag_width > receiver.width) {
-            sv4_destroy(&receiver);
-            if (failed_check) *failed_check = index;
-            return 0;
-        }
-        int64_t right = (int64_t)receiver.width - check->tag_width;
-        int64_t left = (int64_t)receiver.width - 1;
-        sv4_t tag = sv4_part_select(receiver, left, right);
-        sv4_t expected = sv4_from_u64(check->member_index, check->tag_width, 0);
-        sv4_t matches = sv4_case_eq(tag, expected);
-        int valid = sv4_to_bool(matches);
-        sv4_destroy(&matches);
-        sv4_destroy(&expected);
-        sv4_destroy(&tag);
-        sv4_destroy(&receiver);
-        if (!valid) {
-            if (failed_check) *failed_check = index;
-            return 0;
-        }
-    }
-    return 1;
-}
 
 sv4_t sv4_enum_navigate(sv4_t current, sv4_t step, const sv4_t* values,
                         uint32_t count, sv4_t default_value, int direction) {
@@ -1816,88 +1865,6 @@ void sv4_idx_part_select_set_value(sv4_t* tgt, sv4_t base, uint32_t width,
     }
     sv4_copy_window(tgt, low, value, 0, width);
     sv4_destroy(&snapshot);
-}
-
-sv4_t llg_ref_read(const llg_ref_t* ref) {
-    if (!ref) return sv4_x(1, 0);
-    if ((llg_ref_kind_t)ref->kind == LLG_REF_QUEUE) {
-        if (ref->retained_read) return ref->retained_read(ref->retained);
-        if (!ref->queue_read)
-            return ref->two_state
-                       ? sv4_from_u64(0, ref->width, ref->is_signed)
-                       : sv4_x(ref->width ? ref->width : 1, ref->is_signed);
-        sv4_t value = ref->queue_read(ref->queue, ref->queue_identity);
-        sv4_replace(&value, sv4_cast(value, ref->width, ref->is_signed));
-        if (ref->two_state) sv4_replace(&value, sv4_to_two_state(value));
-        return value;
-    }
-    if ((llg_ref_kind_t)ref->kind == LLG_REF_COMPOSITE) {
-        const llg_ref_composite_t* composite = (const llg_ref_composite_t*)ref->retained;
-        if (!composite || !composite->parts || !composite->count)
-            { fputs("llg runtime fatal: invalid composite reference\n", stderr); abort(); }
-        uint32_t remaining = ref->width;
-        sv4_t result = sv4_x(ref->width, ref->is_signed);
-        for (size_t i = 0; i < composite->count; i++) {
-            const llg_ref_t* part = composite->parts[i];
-            if (!part || !part->width || part->width > remaining)
-                { fputs("llg runtime fatal: invalid composite reference width\n", stderr); abort(); }
-            remaining -= part->width;
-            sv4_t value = llg_ref_read(part);
-            sv4_part_select_set(&result, (int64_t)remaining + part->width - 1,
-                               remaining, value);
-            sv4_destroy(&value);
-        }
-        if (remaining) { fputs("llg runtime fatal: incomplete composite reference\n", stderr); abort(); }
-        return result;
-    }
-    if ((llg_ref_kind_t)ref->kind == LLG_REF_VIEW ||
-        (llg_ref_kind_t)ref->kind == LLG_REF_TAGGED_VIEW) {
-        const llg_ref_view_t* view = (const llg_ref_view_t*)ref->retained;
-        if (!view || !view->parent) { fputs("llg runtime fatal: invalid reference view\n", stderr); abort(); }
-        sv4_t parent = llg_ref_read(view->parent);
-        int valid = (llg_ref_kind_t)ref->kind != LLG_REF_TAGGED_VIEW ||
-                    llg_ref_view_valid(view, &parent, NULL);
-        sv4_t result = valid ? sv4_select_plan_read(parent, &view->plan)
-                             : (ref->two_state ? sv4_zero(ref->width, ref->is_signed)
-                                               : sv4_x(ref->width, ref->is_signed));
-        sv4_destroy(&parent);
-        if (ref->two_state) sv4_replace(&result, sv4_to_two_state(result));
-        sv4_replace(&result, sv4_cast(result, ref->width, ref->is_signed));
-        return result;
-    }
-    if (!ref->base) return ref->two_state ? sv4_zero(ref->width, ref->is_signed)
-                                        : sv4_x(ref->width ? ref->width : 1, ref->is_signed);
-    sv4_t value;
-    switch ((llg_ref_kind_t)ref->kind) {
-    case LLG_REF_WHOLE:
-        value = sv4_clone(ref->base);
-        break;
-    case LLG_REF_BIT:
-        value = sv4_bit_select(*ref->base, ref->index);
-        break;
-    case LLG_REF_PART:
-        value = sv4_part_select(*ref->base, ref->left, ref->right);
-        break;
-    case LLG_REF_INDEXED:
-        value = sv4_idx_part_select(*ref->base, ref->index,
-                                    ref->indexed_width,
-                                    ref->indexed_negative);
-        break;
-    case LLG_REF_PACKED_PLAN:
-        value = sv4_select_plan_read(*ref->base, (const sv4_select_plan_t*)ref->retained);
-        break;
-    case LLG_REF_ARRAY:
-        if (ref->index == UINT64_MAX || ref->index >= ref->array_size)
-            return ref->two_state ? sv4_from_u64(0, ref->width, ref->is_signed)
-                                  : sv4_x(ref->width ? ref->width : 1, ref->is_signed);
-        value = sv4_clone(&ref->base[ref->index]);
-        break;
-    default:
-        return sv4_x(ref->width ? ref->width : 1, ref->is_signed);
-    }
-    sv4_replace(&value, sv4_cast(value, ref->width, ref->is_signed));
-    if (ref->two_state) sv4_replace(&value, sv4_to_two_state(value));
-    return value;
 }
 
 // ── Formatting ────────────────────────────────────────────────────────────────

@@ -54,6 +54,8 @@
 //!   resolve from the current directory; an empty value selects the default.
 //!   No path is fixed at compile time.
 
+mod value;
+
 use std::error::Error;
 use std::fmt;
 use std::fs::{File, OpenOptions, TryLockError};
@@ -83,7 +85,9 @@ if(LLG_RUNTIME_LIBRARY)
   add_executable(sim {MODEL_SOURCES})
   target_link_libraries(sim PRIVATE llg_runtime)
 else()
-  add_executable(sim {ALL_SOURCES})
+  add_library(llg_runtime STATIC {RUNTIME_SOURCES})
+  add_executable(sim {MODEL_SOURCES})
+  target_link_libraries(sim PRIVATE llg_runtime)
 endif()
 set_target_properties(sim PROPERTIES ENABLE_EXPORTS ON)
 {MODEL_SOURCE_OPTIONS}if(MSVC)
@@ -203,7 +207,10 @@ fn optimization_setup(level: ModelOptLevel) -> String {
 const WAVE_CMAKE: &str = r#"find_package(Threads REQUIRED)
 find_package(ZLIB REQUIRED)
 target_link_libraries(sim PRIVATE Threads::Threads ZLIB::ZLIB)
-target_compile_definitions(sim PRIVATE LLG_WAVEFORM=1 FST_CONFIG_INCLUDE=\"fst_config.h\")"#;
+target_compile_definitions(sim PRIVATE LLG_WAVEFORM=1 FST_CONFIG_INCLUDE=\"fst_config.h\")
+if(NOT LLG_RUNTIME_LIBRARY)
+  target_compile_definitions(llg_runtime PRIVATE LLG_WAVEFORM=1 FST_CONFIG_INCLUDE=\"fst_config.h\")
+endif()"#;
 const RUNTIME_WAVE_DEFINITION: &str =
     "target_compile_definitions(llg_runtime PRIVATE LLG_WAVEFORM=1 FST_CONFIG_INCLUDE=\\\"fst_config.h\\\")";
 
@@ -218,6 +225,10 @@ pub struct CmakeBuildOpts {
     /// `None`, `$CMAKE_GENERATOR` is forwarded if set and otherwise cmake
     /// chooses its host default.
     pub generator: Option<String>,
+    /// Must match the configuration used by the emitter.
+    pub value_config: super::value_backend::ValueConfig,
+    /// Explicit GMP installation prefix; otherwise GMP_ROOT. Ignored for portable/legacy.
+    pub gmp_root: Option<PathBuf>,
     /// Explicit user DPI-C libraries. Paths are passed to CMake as link
     /// items, so missing or non-files are rejected before configuration and
     /// no ambient linker search path can silently select a different ABI.
@@ -324,6 +335,8 @@ pub enum BuildError {
     InvalidCompilerFlag(String),
     /// Generated source is missing or has an incompatible value ownership ABI.
     InvalidModelAbi(String),
+    /// Invalid value/kernel selection or unavailable GMP input.
+    InvalidValueConfig(String),
     /// A user-supplied DPI-C library is missing or cannot be represented
     /// safely in the generated CMake file.
     InvalidDpiLibrary { path: PathBuf, reason: String },
@@ -361,7 +374,8 @@ impl fmt::Display for BuildError {
                 f,
                 "LLG_CFLAGS flag `{flag}` contains a double quote; quoted flags cannot be passed through the CMake cache"
             ),
-            Self::InvalidModelAbi(value) => write!(f, "incompatible generated model value ABI `{value}`; regenerate the model with ABI {}", super::emit_c::VALUE_ABI_VERSION),
+            Self::InvalidValueConfig(value) => write!(f, "invalid value build configuration: {value}"),
+            Self::InvalidModelAbi(value) => write!(f, "incompatible generated model value ABI `{value}`; regenerate the model for the selected value backend"),
             Self::InvalidDpiLibrary { path, reason } => write!(
                 f,
                 "invalid DPI-C library {}: {reason}",
@@ -510,21 +524,27 @@ pub fn generate_model_sources_with_opts(
     extra: &[(&str, &str)],
     opts: &CmakeBuildOpts,
 ) -> Result<(), BuildError> {
-    validate_model_abi(extra)?;
+    validate_model_abi_for(extra, opts.value_config)?;
+    let guard = value::guard_header(opts)?;
     validate_dpi_libraries(opts)?;
-    super::write_sim_sources(out_dir, extra)?;
+    super::write_sim_sources(out_dir, extra, opts.value_config)?;
+    std::fs::write(out_dir.join("llg_value_build.h"), guard).map_err(|source| BuildError::Io {
+        action: "write",
+        path: out_dir.join("llg_value_build.h"),
+        source,
+    })?;
     let waveform = waveform_enabled(extra);
     if waveform {
         super::rt::write_waveform_sources(out_dir)?;
     }
     write_cmakelists(out_dir, extra, waveform, opts)?;
-    prune_stale_entries(out_dir, extra, waveform);
+    prune_stale_entries_for(out_dir, extra, waveform, opts.value_config.backend);
     Ok(())
 }
 
 /// File names [`super::write_sim_sources`] always writes (must mirror its
 /// fixed list there) plus this module's own `CMakeLists.txt`.
-const FIXED_SOURCE_NAMES: [&str; 19] = [
+const FIXED_SOURCE_NAMES: [&str; 20] = [
     "llg_rt.h",
     "llg_rt.c",
     "llg_value.h",
@@ -544,6 +564,7 @@ const FIXED_SOURCE_NAMES: [&str; 19] = [
     "llg_string.c",
     "svdpi.h",
     "CMakeLists.txt",
+    "llg_value_build.h",
 ];
 
 /// Delete every direct child of `out_dir` that is neither a current source
@@ -553,7 +574,12 @@ const FIXED_SOURCE_NAMES: [&str; 19] = [
 /// (e.g. empty) paths, `/`, and shallow roots like `/tmp` are rejected, while
 /// real callers (`<out-dir>/sim/<design>`, tempdir subdirectories) are
 /// unaffected.
-fn prune_stale_entries(out_dir: &Path, extra: &[(&str, &str)], waveform: bool) {
+fn prune_stale_entries_for(
+    out_dir: &Path,
+    extra: &[(&str, &str)],
+    waveform: bool,
+    backend: super::value_backend::ValueBackend,
+) {
     let canonical = match out_dir.canonicalize() {
         Ok(p) => p,
         Err(_) => return,
@@ -564,10 +590,34 @@ fn prune_stale_entries(out_dir: &Path, extra: &[(&str, &str)], waveform: bool) {
         return;
     }
     let mut expected: Vec<&str> = FIXED_SOURCE_NAMES.to_vec();
+    expected.extend(
+        super::rt::value_backend_sources(backend)
+            .iter()
+            .filter_map(|(name, _)| name.split('/').next()),
+    );
     if waveform {
         expected.extend(super::rt::waveform_sources().iter().map(|(name, _)| *name));
     }
     expected.extend(extra.iter().map(|(name, _)| *name));
+    let nested = super::rt::value_backend_sources(backend)
+        .iter()
+        .map(|(name, _)| *name)
+        .collect::<Vec<_>>();
+    for directory in ["value", "value_gmp"] {
+        let mut paths = Vec::new();
+        collect_paths(&out_dir.join(directory), &mut paths);
+        for path in paths {
+            if path.is_file()
+                && path
+                    .strip_prefix(out_dir)
+                    .ok()
+                    .and_then(Path::to_str)
+                    .is_some_and(|name| !nested.contains(&name))
+            {
+                let _ = std::fs::remove_file(path);
+            }
+        }
+    }
     let Ok(entries) = std::fs::read_dir(out_dir) else {
         return;
     };
@@ -614,24 +664,6 @@ fn write_cmakelists(
     waveform: bool,
     opts: &CmakeBuildOpts,
 ) -> Result<(), BuildError> {
-    let mut sources: Vec<&str> = extra
-        .iter()
-        .map(|(name, _)| *name)
-        .filter(|name| name.ends_with(".c"))
-        .collect();
-    sources.extend([
-        "llg_value.c",
-        "llg_rng.c",
-        "llg_co.c",
-        "llg_rt.c",
-        "llg_random.c",
-        "llg_vpi.c",
-        "llg_container.c",
-        "llg_string.c",
-    ]);
-    if waveform {
-        sources.extend(["llg_wave.c", "fstapi.c", "fastlz.c", "lz4.c"]);
-    }
     let model_sources: Vec<&str> = extra
         .iter()
         .map(|(name, _)| *name)
@@ -649,9 +681,13 @@ fn write_cmakelists(
         )
         .replace("{MODEL_SOURCE_OPTIONS}", &model_source_options)
         .replace("{MODEL_SOURCES}", &model_sources.join(" "))
-        .replace("{ALL_SOURCES}", &sources.join(" "))
+        .replace(
+            "{RUNTIME_SOURCES}",
+            &runtime_source_names_for(waveform, opts.value_config.backend).join(" "),
+        )
         .replace("{WAVE_SETUP}", if waveform { WAVE_CMAKE } else { "" })
-        .replace("{DPI_LINK}", &dpi_link_setup(opts)?);
+        .replace("{DPI_LINK}", &dpi_link_setup(opts)?)
+        + &value::cmake_setup(opts, "sim")?;
     let cmakelists_path = out_dir.join("CMakeLists.txt");
     std::fs::write(&cmakelists_path, cmakelists).map_err(|source| BuildError::Io {
         action: "write",
@@ -740,10 +776,14 @@ fn prepare_runtime_cache(
     jobs: usize,
     opts: &CmakeBuildOpts,
 ) -> Result<PathBuf, BuildError> {
-    let key = runtime_cache_key(waveform, cc, flags, cmake_prog, opts);
+    let key = format!(
+        "{}-{}",
+        runtime_cache_key(waveform, cc, flags, cmake_prog, opts),
+        value::identity(opts)?
+    );
     let cache_root = runtime_cache_root(opts)?;
-    let entry = cache_root.join(key);
-    if let Some(library) = cached_runtime_library(&entry) {
+    let entry = cache_root.join(&key);
+    if let Some(library) = cached_runtime_library(&entry, &key) {
         return Ok(library);
     }
 
@@ -753,7 +793,7 @@ fn prepare_runtime_cache(
         source,
     })?;
     let _lock = RuntimeCacheLock::acquire(&entry)?;
-    if let Some(library) = cached_runtime_library(&entry) {
+    if let Some(library) = cached_runtime_library(&entry, &key) {
         return Ok(library);
     }
 
@@ -774,11 +814,18 @@ fn prepare_runtime_cache(
             });
         }
     }
-    super::write_sim_sources(&entry, &[])?;
+    super::write_sim_sources(&entry, &[], opts.value_config)?;
+    std::fs::write(entry.join("llg_value_build.h"), value::guard_header(opts)?).map_err(
+        |source| BuildError::Io {
+            action: "write",
+            path: entry.join("llg_value_build.h"),
+            source,
+        },
+    )?;
     if waveform {
         super::rt::write_waveform_sources(&entry)?;
     }
-    let runtime_sources = runtime_source_names(waveform).join(" ");
+    let runtime_sources = runtime_source_names_for(waveform, opts.value_config.backend).join(" ");
     let cmakelists = RUNTIME_CMAKELISTS_TEMPLATE
         .replace(
             "{OPTIMIZATION_SETUP}",
@@ -792,7 +839,8 @@ fn prepare_runtime_cache(
             } else {
                 ""
             },
-        );
+        )
+        + &value::cmake_setup(opts, "llg_runtime")?;
     let cmakelists_path = entry.join("CMakeLists.txt");
     std::fs::write(&cmakelists_path, cmakelists).map_err(|source| BuildError::Io {
         action: "write runtime cache project",
@@ -851,7 +899,7 @@ fn prepare_runtime_cache(
         find_runtime_library(&build_dir).ok_or_else(|| BuildError::RuntimeLibraryNotFound {
             directory: build_dir.clone(),
         })?;
-    std::fs::write(&ready_path, b"ready\n").map_err(|source| BuildError::Io {
+    std::fs::write(&ready_path, &key).map_err(|source| BuildError::Io {
         action: "mark runtime cache ready",
         path: ready_path,
         source,
@@ -859,7 +907,10 @@ fn prepare_runtime_cache(
     Ok(library)
 }
 
-fn runtime_source_names(waveform: bool) -> Vec<&'static str> {
+fn runtime_source_names_for(
+    waveform: bool,
+    backend: super::value_backend::ValueBackend,
+) -> Vec<&'static str> {
     let mut sources = vec![
         "llg_value.c",
         "llg_rng.c",
@@ -870,6 +921,12 @@ fn runtime_source_names(waveform: bool) -> Vec<&'static str> {
         "llg_container.c",
         "llg_string.c",
     ];
+    sources.extend(
+        super::rt::value_backend_sources(backend)
+            .iter()
+            .map(|(name, _)| *name)
+            .filter(|name| name.ends_with(".c")),
+    );
     if waveform {
         sources.extend(["llg_wave.c", "fstapi.c", "fastlz.c", "lz4.c"]);
     }
@@ -926,14 +983,15 @@ fn runtime_cache_key_with_compiler(
     let generator = generator_for(opts).unwrap_or_default();
     for text in [
         RUNTIME_CMAKELISTS_TEMPLATE,
+        include_str!("build/value.rs"),
         OPTIMIZATION_CMAKE_TEMPLATE,
         opts.model_opt_level.gnu_flag(),
         opts.model_opt_level.msvc_flag(),
         RUNTIME_WAVE_DEFINITION,
         super::rt::runtime_sources().0,
         super::rt::runtime_sources().1,
-        super::rt::value_sources().0,
-        super::rt::value_sources().1,
+        super::rt::value_sources_for(opts.value_config.backend).0,
+        super::rt::value_sources_for(opts.value_config.backend).1,
         super::rt::random_sources().0,
         super::rt::random_sources().1,
         super::rt::rng_sources().0,
@@ -963,6 +1021,12 @@ fn runtime_cache_key_with_compiler(
             hash = hash.wrapping_mul(0x100000001b3);
         }
     }
+    for (name, source) in super::rt::value_backend_sources(opts.value_config.backend) {
+        for byte in name.bytes().chain(source.bytes()) {
+            hash = (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3);
+        }
+    }
+    hash = (hash ^ u64::from(opts.value_config.kernel.selector())).wrapping_mul(0x100000001b3);
     if waveform {
         for (_, source) in super::rt::waveform_sources() {
             for byte in source.as_bytes() {
@@ -973,7 +1037,7 @@ fn runtime_cache_key_with_compiler(
     }
     format!(
         "owned-v{}-wave{}-{hash:016x}",
-        super::emit_c::VALUE_ABI_VERSION,
+        opts.value_config.backend.abi(),
         u8::from(waveform)
     )
 }
@@ -1050,10 +1114,8 @@ fn find_runtime_library(build_dir: &Path) -> Option<PathBuf> {
     found.into_iter().next()
 }
 
-fn cached_runtime_library(entry: &Path) -> Option<PathBuf> {
-    entry
-        .join("ready")
-        .is_file()
+fn cached_runtime_library(entry: &Path, key: &str) -> Option<PathBuf> {
+    (std::fs::read_to_string(entry.join("ready")).ok().as_deref() == Some(key))
         .then(|| find_runtime_library(&entry.join("build")))
         .flatten()
 }
@@ -1107,17 +1169,57 @@ impl RuntimeCacheLock {
 /// Hand-written C probes may omit model metadata. Generated model translation
 /// units must opt into the ownership ABI explicitly; old source is never guessed
 /// compatible from a default packed capacity.
+#[cfg(test)]
 fn validate_model_abi(extra: &[(&str, &str)]) -> Result<(), BuildError> {
+    validate_model_abi_for(extra, super::value_backend::ValueConfig::default())
+}
+
+fn validate_model_abi_for(
+    extra: &[(&str, &str)],
+    config: super::value_backend::ValueConfig,
+) -> Result<(), BuildError> {
     for (name, source) in extra {
         let mut abi = None;
         for line in source.lines() {
             if let Some(value) = line.strip_prefix("#define LLG_MODEL_VALUE_ABI ") {
                 let value = value.trim();
                 let parsed = value.parse::<u32>().ok();
-                if parsed != Some(super::emit_c::VALUE_ABI_VERSION) || abi.is_some() {
+                if parsed != Some(config.backend.abi()) || abi.is_some() {
                     return Err(BuildError::InvalidModelAbi(value.to_owned()));
                 }
                 abi = parsed;
+            }
+        }
+        for (guard, expected) in [
+            (
+                "#define LLG_MODEL_VALUE_BACKEND ",
+                config.backend.selector(),
+            ),
+            (
+                "#define LLG_MODEL_COMPACT_KERNELS ",
+                config.kernel.selector(),
+            ),
+        ] {
+            let values = source
+                .lines()
+                .filter_map(|line| line.strip_prefix(guard))
+                .collect::<Vec<_>>();
+            if values.len() > 1
+                || values
+                    .first()
+                    .is_some_and(|value| value.trim().parse::<u8>().ok() != Some(expected))
+            {
+                return Err(BuildError::InvalidValueConfig(format!(
+                    "generated {name} selection differs from build; regenerate model"
+                )));
+            }
+            if config.backend == super::value_backend::ValueBackend::Compact
+                && abi.is_some()
+                && values.is_empty()
+            {
+                return Err(BuildError::InvalidValueConfig(format!(
+                    "missing {guard} in {name}; regenerate model"
+                )));
             }
         }
         let generated = Path::new(name)
@@ -1291,6 +1393,45 @@ fn sorted_entries(dir: &Path) -> Option<Vec<PathBuf>> {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU64, Ordering};
+
+    #[test]
+    fn selected_runtime_keys_and_stale_ready_markers_are_rejected() {
+        use crate::sim::value_backend::{CompactKernel, ValueBackend, ValueConfig};
+        let key = |config| {
+            runtime_cache_key_with_compiler(
+                false,
+                "cc",
+                "",
+                "cmake",
+                &CmakeBuildOpts {
+                    value_config: config,
+                    ..Default::default()
+                },
+                "cc",
+                "target",
+            )
+        };
+        let legacy = key(ValueConfig::default());
+        let portable = key(ValueConfig {
+            backend: ValueBackend::Compact,
+            kernel: CompactKernel::Portable,
+        });
+        let gmp = key(ValueConfig {
+            backend: ValueBackend::Compact,
+            kernel: CompactKernel::Gmp,
+        });
+        assert_ne!(legacy, portable);
+        assert_ne!(portable, gmp);
+        let directory = std::env::temp_dir().join(format!("llg-v07-ready-{}", std::process::id()));
+        std::fs::create_dir_all(directory.join("build")).unwrap();
+        std::fs::write(directory.join("build/libllg_runtime.a"), "stale").unwrap();
+        std::fs::write(directory.join("ready"), "ready\n").unwrap();
+        assert!(cached_runtime_library(&directory, &legacy).is_none());
+        std::fs::write(directory.join("ready"), &legacy).unwrap();
+        assert!(cached_runtime_library(&directory, &portable).is_none());
+        assert!(cached_runtime_library(&directory, &legacy).is_some());
+        std::fs::remove_dir_all(directory).unwrap();
+    }
 
     #[test]
     fn model_optimization_levels_parse_and_map_to_compilers() {

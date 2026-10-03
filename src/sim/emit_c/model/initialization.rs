@@ -7,10 +7,12 @@ pub(super) fn render_main(execution: &ExecutionModel) -> Result<String, String> 
     use crate::sim::ir::IrInitStep;
     let model = execution.ir();
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model,
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut out = format!(
         "int main(int argc, char** argv) {{\n    llg_rt_init_with_args_and_precision(argc, argv, {}ULL);\n    if (llg_rt_failed()) {{\n        llg_rt_cleanup();\n        return 1;\n    }}\n",

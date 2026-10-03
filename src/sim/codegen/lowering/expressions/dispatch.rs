@@ -740,10 +740,12 @@ impl<'a> Codegen<'a> {
     #[allow(dead_code)] // retained for fragment callers pending the lowering migration
     pub(in super::super) fn render_ctx(&self) -> RCtx<'_> {
         RCtx {
+            value_backend: crate::sim::value_backend::ValueBackend::Legacy,
             model: &self.model,
             func: self.cur_fn_ir.map(|i| &self.model.funcs[i]),
             sampled: false,
             activation_label: None,
+            constants: None,
         }
     }
 
@@ -761,10 +763,6 @@ impl<'a> Codegen<'a> {
         scope_path: &str,
         h: NodeId,
     ) -> Result<IrExpr, String> {
-        if let Some(IrLhs::ArrayElem { arr, indices, elem_sel }) = self.fixed_record_scalar(scope_path, h)? {
-            let array = &self.model.arrays[arr];
-            return Ok(IrExpr::new(IrExprKind::ArrayRead { arr, indices, elem_sel }, array.elem_width, array.signed, None));
-        }
         let partial_array_select = match self.kind(h) {
             NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
                 Some((*base, indices.clone()))

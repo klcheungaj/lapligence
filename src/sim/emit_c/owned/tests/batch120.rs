@@ -7,10 +7,12 @@ fn pure_callback_inlines_owned_formals_without_native_writes() {
     let mut model = numeric_model();
     model.funcs[0].automatic = true;
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     frame.read_only_callback = true;
@@ -29,7 +31,7 @@ fn pure_callback_inlines_owned_formals_without_native_writes() {
     frame.discard(value);
     assert!(frame.slots.iter().all(|used| !used));
     assert!(frame.formal_overrides.is_empty());
-    assert!(frame.body().contains("sv4_add("));
+    assert!(frame.body().contains("sv4_add_into("));
     assert!(!frame.body().contains("f_increment("));
     assert!(!frame.body().contains("llg_ba("));
 }
@@ -42,10 +44,12 @@ fn persistent_local_functions_remain_rejected_in_read_only_callbacks() {
         .locals
         .push(IrLocal::new("_persistent".to_owned(), 65, false).unwrap());
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     frame.read_only_callback = true;
@@ -82,10 +86,12 @@ fn static_formal_copies_are_private_in_read_only_callbacks() {
     );
     model.funcs[0].callback_private_formal_copies.push((0, 0));
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     frame.read_only_callback = true;
@@ -103,7 +109,7 @@ fn static_formal_copies_are_private_in_read_only_callbacks() {
     let value = frame.expression(&call).unwrap();
     frame.discard(value);
     assert!(!frame.body().contains("llg_ba(&G_value"));
-    assert!(frame.body().contains("sv4_add("));
+    assert!(frame.body().contains("sv4_add_into("));
 }
 
 #[test]
@@ -111,10 +117,12 @@ fn static_callback_returns_require_a_lowering_proof() {
     let mut model = numeric_model();
     model.funcs[0].automatic = false;
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     frame.read_only_callback = true;
@@ -140,10 +148,12 @@ fn static_callback_returns_require_a_lowering_proof() {
 fn streaming_prepares_all_values_before_any_publication() {
     let model = numeric_model();
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     let rhs = frame.expression(&number(7, 130)).unwrap();
@@ -171,10 +181,12 @@ fn streaming_prepares_all_values_before_any_publication() {
 fn inline_event_capture_keeps_identity_and_respects_lexical_scope() {
     let model = numeric_model();
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     frame.begin_block(&[]);
@@ -202,10 +214,12 @@ fn inline_expanded_templates_are_not_callable() {
     assert!(model::inline_template(&model.funcs[0]));
     assert!(model::check_model(&model).is_ok());
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     let call = IrCallExpr::new(0, vec![IrCallArg::Val(number(3, 65))], IrDepth::PROC, false);
@@ -230,10 +244,12 @@ fn input_event_formals_pass_the_object_identity_by_value() {
     let fields = crate::sim::emit_c::model::owned_func_param_fields(&model.funcs[0]);
     assert_eq!(fields[0], ("llg_event_t".to_owned(), "a0".to_owned()));
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     let call = IrCallExpr::new(
@@ -253,10 +269,12 @@ fn input_event_formals_pass_the_object_identity_by_value() {
 fn sampled_expression_uses_snapshot_reads_then_restores_live_reads() {
     let model = numeric_model();
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     let read = IrExpr::new(IrExprKind::SigRead(0), 65, false, None);
@@ -294,7 +312,12 @@ fn alias_lifecycle_initializes_visible_owners_and_resets_bindings() {
         group_bit: 0,
     });
     let mut source = String::new();
-    model::storage_lifecycle(&model, &mut source).unwrap();
+    model::storage_lifecycle(
+        &model,
+        &super::super::super::constants::PackedConstants::default(),
+        &mut source,
+    )
+    .unwrap();
     assert!(source.contains("&llg_net_alias_0,"));
     assert!(source.contains("sv4_copy(&alias->visible, alias->storage)"));
     assert!(source.contains("sv4_destroy(&llg_storage_0[_llg_n]->visible)"));
@@ -309,10 +332,12 @@ fn alias_lifecycle_initializes_visible_owners_and_resets_bindings() {
 fn qualified_case_compares_candidates_before_running_selected_body() {
     let model = numeric_model();
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     let items = vec![
@@ -348,10 +373,12 @@ fn qualified_case_compares_candidates_before_running_selected_body() {
 fn clocking_drive_passes_registered_payload_to_the_runtime() {
     let model = numeric_model();
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     frame
@@ -372,10 +399,12 @@ fn clocking_drive_passes_registered_payload_to_the_runtime() {
 fn vpi_arguments_are_borrowed_from_registered_owners() {
     let model = numeric_model();
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     let value = frame

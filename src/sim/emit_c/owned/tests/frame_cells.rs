@@ -3,10 +3,12 @@ use super::*;
 fn policy(model: &IrModel, statements: &[IrStmt]) -> super::super::frame_cells::CellEligibility {
     super::super::frame_cells::CellEligibility::analyze(
         &RCtx {
+            value_backend: crate::sim::value_backend::ValueBackend::Legacy,
             model,
             func: None,
             sampled: false,
             activation_label: None,
+            constants: None,
         },
         statements,
     )

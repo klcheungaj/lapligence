@@ -58,7 +58,7 @@ impl Frame<'_, '_> {
         }
     }
     pub(super) fn condition(&mut self, expr: &IrExpr) -> Result<String, String> {
-        let value = self.expression(expr)?;
+        let value = self.operand(expr)?;
         let result = self.scalar("int", value.truth());
         self.discard(value);
         Ok(result)
@@ -243,7 +243,11 @@ impl Frame<'_, '_> {
                 self.file_control(*op, descriptor.as_ref())?
             }
             IrStmt::Assign { lhs, rhs, nba } => {
-                let value = self.expression(rhs)?;
+                let value = if matches!(lhs, IrLhs::Whole(_) | IrLhs::WholeRef { .. }) {
+                    self.operand(rhs)?
+                } else {
+                    self.expression(rhs)?
+                };
                 let writes = self.prepare_assignment(lhs, value)?;
                 for (target, value) in writes {
                     self.store(&target, value, *nba, "0")?;

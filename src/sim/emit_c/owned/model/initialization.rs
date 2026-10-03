@@ -178,9 +178,10 @@ fn alias_visible_lifecycle(table: &str, initialize: &mut String, destroy: &mut S
 
 pub(in crate::sim::emit_c) fn storage_lifecycle(
     model: &IrModel,
+    constants: &super::super::super::constants::PackedConstants,
     out: &mut String,
 ) -> Result<(), String> {
-    let mut initialize = String::new();
+    let mut initialize = String::from("    llg_model_constants_init();\n");
     let mut destroy = String::new();
     let mut tables = StorageTables::default();
     let mut block = StorageBlock::default();
@@ -451,12 +452,14 @@ pub(in crate::sim::emit_c) fn storage_lifecycle(
         destroy.push_str("    llg_class_storage_destroy();\n");
     }
     out.push_str(&tables.source);
-    out.push_str(&format!("static void llg_model_storage_defaults(void) {{\n{initialize}}}\n\nstatic void llg_model_storage_destroy(void) {{\n{destroy}}}\n\n"));
+    out.push_str(&format!("static void llg_model_storage_defaults(void) {{\n{initialize}}}\n\nstatic void llg_model_storage_destroy(void) {{\n{destroy}    llg_model_constants_destroy();\n}}\n\n"));
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model,
         func: None,
         sampled: false,
         activation_label: None,
+        constants: Some(constants),
     };
     let mut frame = Frame::new(&ctx);
     // SV static initialization may call legal zero-time user functions. The
@@ -588,7 +591,7 @@ fn initialization_step(frame: &mut Frame<'_, '_>, step: &IrInitStep) -> Result<(
                 shortreal: matches!(signal.ty, IrType::Real { shortreal: true }),
                 automatic: false,
             };
-            let mut result = frame.value(emit_const(value), value.width, value.signed);
+            let mut result = frame.constant(value, false);
             result.fill = value.fill;
             set_initial(frame, target, result);
         }
@@ -602,7 +605,7 @@ fn initialization_step(frame: &mut Frame<'_, '_>, step: &IrInitStep) -> Result<(
                 shortreal: array.shortreal,
                 automatic: false,
             };
-            let mut result = frame.value(emit_const(value), value.width, value.signed);
+            let mut result = frame.constant(value, false);
             result.fill = value.fill;
             set_initial(frame, target, result);
         }
@@ -618,7 +621,7 @@ fn initialization_step(frame: &mut Frame<'_, '_>, step: &IrInitStep) -> Result<(
         }
         IrInitStep::WriteNet { group, slot, value } => {
             let net = model.net_group(*group);
-            let mut result = frame.value(emit_const(value), value.width, value.signed);
+            let mut result = frame.constant(value, false);
             result.fill = value.fill;
             let value = frame.convert(result, net.width, net.signed, false, false);
             frame.line(format!(

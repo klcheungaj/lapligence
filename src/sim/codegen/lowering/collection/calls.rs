@@ -136,11 +136,6 @@ impl<'a> Codegen<'a> {
         let mut in_args: Vec<IrCallArg> = Vec::new();
         let mut arg_irs: Vec<Option<IrExpr>> = vec![None; formals.len()];
         for (idx, (io, is_out)) in formals.iter().enumerate() {
-            if self.fixed_records.contains_key(io) {
-                let argument = IrCallArg::FixedRecord(Box::new(self.lower_fixed_record_value(scope_path, bound[idx].expr)?));
-                if *is_out || matches!(self.kind(*io), NodeKind::FuncArg { direction: DbDirection::Ref, .. }) { out_args.push(argument); } else { in_args.push(argument); }
-                continue;
-            }
             if self.fixed_formal_array(*io).is_some() {
                 let argument = IrCallArg::FixedValue(Box::new(self.lower_fixed_value(scope_path, bound[idx].expr)?));
                 if *is_out || matches!(self.kind(*io), NodeKind::FuncArg { direction: DbDirection::Ref, .. }) { out_args.push(argument); }
@@ -293,7 +288,7 @@ impl<'a> Codegen<'a> {
             }
         }
         for (idx, (io, is_out)) in formals.iter().enumerate() {
-            if self.fixed_formal_array(*io).is_some() || self.fixed_records.contains_key(io) { continue; }
+            if self.fixed_formal_array(*io).is_some() { continue; }
             let is_ref = matches!(
                 self.kind(*io),
                 NodeKind::FuncArg {

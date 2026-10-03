@@ -145,10 +145,12 @@ fn nonblocking_event_trigger_renders_nba_operation() {
 fn runtime_width_limit_is_a_backend_policy_not_an_ir_invariant() {
     let model = IrModel::new("wide".to_owned(), 1).unwrap();
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     for width in [LLG_WIDTH_LIMIT, LLG_WIDTH_LIMIT + 1, u32::MAX] {
         let ty = crate::sim::ir::IrType::packed(width, false).unwrap();
@@ -295,7 +297,8 @@ fn selected_net_driver_preserves_member_state_conversion() {
     };
     add_test_process(&mut model, statement);
     let rendered = render(&model).unwrap();
-    let fill = rendered.find("sv4_fill(2, 4, 0)").unwrap();
+    assert!(rendered.contains("SV4_INIT(0ULL, 15ULL, 0ULL, 4, 0)"));
+    let fill = rendered.find("SV4_INIT(0ULL, 15ULL, 0ULL, 4, 0)").unwrap();
     let conversion = rendered.find("sv4_to_two_state(").unwrap();
     let write = rendered
         .find("llg_net_write_selected(&net, 0, _llg_t[")
@@ -310,10 +313,12 @@ fn selected_net_driver_preserves_member_state_conversion() {
 fn detached_fragments_reject_missing_storage_before_rendering() {
     let model = IrModel::new("empty".to_owned(), 1).unwrap();
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let expression = IrExpr::try_new(IrExprKind::SigRead(7), 1, false, None).unwrap();
     let error = match render_expr(&ctx, &expression) {

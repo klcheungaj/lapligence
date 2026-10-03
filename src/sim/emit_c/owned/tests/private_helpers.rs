@@ -110,10 +110,12 @@ fn call() -> IrExpr {
 fn callback_composite_writes_release_owners_without_publication() {
     let model = model();
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     frame.read_only_callback = true;

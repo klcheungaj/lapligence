@@ -21,7 +21,6 @@ mod design;
 mod events;
 mod fixed_calls;
 mod fixed_transport;
-mod fixed_records;
 mod fixed_defaults;
 mod fixed_patterns;
 mod fixed_projections;
@@ -308,6 +307,10 @@ pub(super) fn pattern_key_matches_descriptor(
     // only the outer type id. Compare their complete shapes when that
     // representation hides the immediate nested array identity.
     if key_type.type_id != descriptor.id
+        && !(is_integral_pattern_key_kind(&key_type.ty.kind)
+            && is_integral_pattern_key_kind(&descriptor.info.kind)
+            && key_type.ty.kind != "enum"
+            && descriptor.info.kind != "enum")
         && !(key_type.ty.kind == "array"
             && descriptor.info.kind == "array"
             && array_pattern_key_shapes_match(&key_type.descriptor, descriptor))

@@ -39,9 +39,6 @@ impl Codegen<'_> {
             }
             return Ok(IrFixedValue::Stream { parts, slice });
         }
-        if let Some(views) = self.fixed_record_views(path, node)? {
-            if let [view] = views.as_slice() { return Ok(IrFixedValue::Array(view.clone())); }
-        }
         let view = self.fixed_memory_view(path, node)?;
         if !self.model.arrays[view.array].sparse() { return Err("descriptor value requires descriptor storage".into()); }
         Ok(IrFixedValue::Array(view))

@@ -86,7 +86,6 @@ pub enum IrExprKind {
         case: bool,
         negate: bool,
     },
-    FixedRecordCompare { left: Box<IrFixedRecordValue>, right: Box<IrFixedRecordValue>, case: bool, negate: bool },
     FixedValueCompare { left: Box<IrFixedValue>, right: Box<IrFixedValue>, case: bool, negate: bool },
     Container(Box<IrContainerExpr>),
     /// A fixed unpacked-array reduction with a lexically bound iterator.

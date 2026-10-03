@@ -6,3 +6,4 @@
 #include "value/array_conditional.c"
 #include "value/selection_plan.c"
 #include "value/udp.c"
+#include "value/references.c"

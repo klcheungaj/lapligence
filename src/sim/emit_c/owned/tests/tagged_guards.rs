@@ -81,10 +81,12 @@ fn check_owners(frame: &Frame<'_, '_>) {
 fn tagged_read_guards_track_comparison_owners() {
     let model = model();
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     let value = frame.expression(&read()).unwrap();
@@ -96,10 +98,12 @@ fn tagged_read_guards_track_comparison_owners() {
 fn tagged_write_guards_track_comparison_owners() {
     let model = model();
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     let target = frame.target(&target()).unwrap();

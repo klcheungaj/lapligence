@@ -13,10 +13,12 @@ fn event_initial(event: IrEventRef) -> IrExpr {
 fn fork_event_capture_copies_object_identity_and_binds_a_private_handle() {
     let model = IrModel::new("event_capture".to_owned(), 1).unwrap();
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let storage = StorageRef::new(
         FrameId::new(0),
@@ -61,10 +63,12 @@ fn fork_event_capture_copies_object_identity_and_binds_a_private_handle() {
 fn event_capture_rejects_numeric_sources_and_invalid_borrowing() {
     let model = IrModel::new("event_capture".to_owned(), 1).unwrap();
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     let owned = StorageRef::new(
@@ -96,10 +100,12 @@ fn event_capture_rejects_numeric_sources_and_invalid_borrowing() {
 fn joined_event_capture_borrows_the_handle_for_sibling_rebinding() {
     let model = IrModel::new("event_alias".to_owned(), 1).unwrap();
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let storage = StorageRef::new(
         FrameId::new(0),

@@ -23,7 +23,7 @@ impl IrFixedValue {
                 for argument in &call.args { if let IrCallArg::FixedValue(value) = argument { value.calls(visit); } }
                 visit(call);
             }
-            Self::Conditional { left, right, .. } => { left.calls(visit); right.calls(visit); left.calls(visit); right.calls(visit); }
+            Self::Conditional { left, right, .. } => { left.calls(visit); right.calls(visit); }
             Self::Stream { parts, .. } => { for part in parts { part.calls(visit); } }
         }
     }
@@ -46,37 +46,6 @@ impl IrFixedValue {
                 visit(selector); left.expressions_mut(visit); right.expressions_mut(visit);
             }
             Self::Stream { parts, .. } => { for part in parts { part.expressions_mut(visit); } }
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum IrFixedRecordValue {
-    Fields(Vec<IrFixedValue>),
-    Call { arrays: Vec<usize>, call: Box<IrCall> },
-    Conditional { selector: Box<IrExpr>, left: Box<IrFixedRecordValue>, right: Box<IrFixedRecordValue>, element_cells: Vec<u64> },
-}
-
-impl IrFixedRecordValue {
-    pub(in crate::sim) fn expressions(&self, visit: &mut impl FnMut(&IrExpr)) {
-        match self {
-            Self::Fields(fields) => { for field in fields { field.expressions(visit); } }
-            Self::Call { call, .. } => { for argument in &call.args { argument.expressions(visit); } }
-            Self::Conditional { selector, left, right, .. } => { visit(selector); left.expressions(visit); right.expressions(visit); }
-        }
-    }
-    pub(in crate::sim) fn expressions_mut(&mut self, visit: &mut impl FnMut(&mut IrExpr)) {
-        match self {
-            Self::Fields(fields) => { for field in fields { field.expressions_mut(visit); } }
-            Self::Call { call, .. } => { for argument in &mut call.args { argument.expressions_mut(visit); } }
-            Self::Conditional { selector, left, right, .. } => { visit(selector); left.expressions_mut(visit); right.expressions_mut(visit); }
-        }
-    }
-    pub(in crate::sim) fn calls(&self, visit: &mut impl FnMut(&IrCall)) {
-        match self {
-            Self::Fields(fields) => { for field in fields { field.calls(visit); } }
-            Self::Call { call, .. } => { visit(call); }
-            Self::Conditional { left, right, .. } => { left.calls(visit); right.calls(visit); left.calls(visit); right.calls(visit); }
         }
     }
 }

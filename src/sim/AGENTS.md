@@ -76,7 +76,8 @@ restore model-maximum arrays. `LLG_MODEL_VALUE_ABI` must match
 
 `write_sim_sources` embeds flat value, random, coroutine, scheduler, container and
 waveform sources plus self-tests into `<out-dir>/sim/<design>/` (driver default
-`build`). Private fragments assemble in facade order. Runtime archives belong only
+`build`). Private fragments assemble in facade order; selected value headers retain their
+`value/` or `value_gmp/` relative paths. Compact backend units compile separately. Runtime archives belong only
 to generated C, never Rust binaries; source-only output remains self-contained.
 Keep original runtime/waveform ownership self-tests active. Property vectors mirror
 `core::elab::Value`; regenerate with:
@@ -146,3 +147,21 @@ partial/mismatched edits; retain upstream-base gitlinks.
 Library optimizer comparisons reuse one DB through `generate_from_db_with_opts`;
 CLI comparisons independently run checked-in HDL in both modes. Follow
 [tests](../../tests/AGENTS.md) and [data semantics](../../docs/sim_data_semantics.md).
+
+## Experimental value selection
+
+The driver reads `LLG_VALUE_BACKEND=legacy|compact` and
+`LLG_COMPACT_KERNELS=portable|gmp`, default legacy/portable. `CodegenOptions` and
+`CmakeBuildOpts` share `value_config`; mismatching generated guards fail before
+export. `gmp_root` overrides `GMP_ROOT`, required only for compact GMP kernels.
+An explicit root is authoritative and has no system fallback. Hash its header and
+library contents; CMake verifies version agreement, required mpn APIs and 64-bit
+nail-free limbs compatible with uint64_t. Legacy never discovers/links GMP.
+Source-only projects compile their selected runtime as a static archive. Apply
+waveform definitions to that archive as well as the model. Every translation unit
+gets both literal selector definitions. Preserve ABI 4 for legacy, 5 for compact,
+and process ABI 3. Generated startup calls the selected build-identity link fence;
+foreign value clients must do likewise before exchanging descriptors. Cache ready
+markers contain the exact key; plain old ready markers cannot admit stale archives.
+Compact selected builds embed all currently emitted value operations, including
+S4/S5 and V06 consumer primitives; unavailable additions must never fall back.

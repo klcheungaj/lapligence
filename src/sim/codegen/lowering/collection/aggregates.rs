@@ -24,7 +24,6 @@ impl<'a> Codegen<'a> {
     }
 
     pub(super) fn collect_aggregate(&mut self, path: &str, node: NodeId) -> Result<bool, String> {
-        if matches!(self.kind(node), NodeKind::Var { .. } | NodeKind::Array { .. }) && self.collect_fixed_record(path, node, false)? { return Ok(true); }
         let Some(layout) = self.db.aggregate_layout(node).cloned() else {
             return Ok(false);
         };
@@ -639,7 +638,6 @@ impl<'a> Codegen<'a> {
         let ir = self.model.arrays.len();
         self.model.arrays.push(crate::sim::ir::IrArray {
             activation: false,
-            descriptor: false,
             net_elements: Vec::new(),
             element_default: self.query_descriptor(node).and_then(|descriptor| {
                 match &descriptor.shape {

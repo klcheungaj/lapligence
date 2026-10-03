@@ -39,6 +39,7 @@ mod static_outputs;
 mod tagged_guards;
 mod tagged_signed;
 mod toolchain;
+mod value_traffic;
 
 fn number(value: u64, width: u32) -> IrExpr {
     let count = width.div_ceil(64) as usize;
@@ -141,10 +142,12 @@ fn numeric_model() -> IrModel {
 fn expressions_sequence_owners_and_reuse_slots() {
     let model = IrModel::new("test".to_owned(), 1).unwrap();
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     let expression = add(add(number(3, 65), number(4, 65), 65), number(5, 65), 65);
@@ -164,10 +167,12 @@ fn expressions_sequence_owners_and_reuse_slots() {
 fn conditional_fill_arms_are_owned_and_context_sized() {
     let model = IrModel::new("test".to_owned(), 1).unwrap();
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     let expression = IrExpr::new(
@@ -232,10 +237,12 @@ fn unmigrated_opaque_expression_is_rejected_not_rendered() {
 fn declaration_calls_remain_rejected_outside_coroutine_context() {
     let model = numeric_model();
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     frame.allow_calls = false;
@@ -348,10 +355,12 @@ fn evaluator_callbacks_reject_side_effect_capable_calls() {
         },
     );
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     frame.read_only_callback = true;
@@ -387,10 +396,12 @@ fn event_array_indices_are_owned_and_invalid_handles_are_inert() {
         vec![0, 1],
     ));
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     let specs = frame

@@ -630,6 +630,7 @@ impl<'a, 'm> Frame<'a, 'm> {
                 binding.two_state,
                 binding.shortreal,
             );
+            let value = self.own(value);
             match (&target.selection, target.width) {
                 (None, 0) => self.line(format!(
                     "if ({}) {{ *({}) = {}; }}",

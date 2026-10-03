@@ -81,7 +81,7 @@ impl Frame<'_, '_> {
             shape,
             rows,
         };
-        let (_, slots) = helper_body(&batch.shape)?;
+        let (_, slots) = helper_body(&batch.shape, self.ctx.constants)?;
         // Use the caller's registered scope, including constant index owners,
         // so synchronous publication retains the original temporary lifetime.
         let start = (0..=self.slots.len())
@@ -116,17 +116,22 @@ impl Frame<'_, '_> {
     }
 }
 
-pub(in crate::sim::emit_c) fn helper_body(shape: &Shape) -> Result<(String, usize), String> {
+pub(in crate::sim::emit_c) fn helper_body(
+    shape: &Shape,
+    constants: Option<&super::super::constants::PackedConstants>,
+) -> Result<(String, usize), String> {
     let mut model = IrModel::new("pca_helper".to_owned(), 1).map_err(|error| error.to_string())?;
     model.signals.push(
         IrSignal::new("llg_source".to_owned(), None, shape.source_type, None)
             .map_err(|error| error.to_string())?,
     );
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
         activation_label: None,
+        constants,
     };
     let mut frame = Frame::new(&ctx);
     frame

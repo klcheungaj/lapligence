@@ -73,12 +73,11 @@ impl<'a> Codegen<'a> {
                                     is_out: *is_out,
                                     mode,
                                     fixed_array: self.fixed_formal_array(*io),
-                                    fixed_record: self.fixed_records.get(io).map(|leaves| leaves.iter().map(|leaf| leaf.array.ir).collect()).unwrap_or_default(),
-                                    fixed_shape: if (self.fixed_formal_array(*io).is_some() || self.fixed_records.contains_key(io)) { None } else { self.fixed_formal_shape(*io)? },
-                                    fixed_default: if (self.fixed_formal_array(*io).is_some() || self.fixed_records.contains_key(io)) { None } else { self.fixed_default_literal(*io) },
+                                    fixed_shape: if self.fixed_formal_array(*io).is_some() { None } else { self.fixed_formal_shape(*io)? },
+                                    fixed_default: if self.fixed_formal_array(*io).is_some() { None } else { self.fixed_default_literal(*io) },
                                     const_ref: *const_ref,
                                     ref_static: *ref_static,
-                                    width: if (self.fixed_formal_array(*io).is_some() || self.fixed_records.contains_key(io)) { 0 } else if is_handle_kind(&ty.kind) || is_real_kind(&ty.kind) {
+                                    width: if self.fixed_formal_array(*io).is_some() { 0 } else if is_handle_kind(&ty.kind) || is_real_kind(&ty.kind) {
                                         0
                                     } else if dpi.is_some() {
                                         ty.width.unwrap_or(0)
@@ -118,15 +117,10 @@ impl<'a> Codegen<'a> {
                     formal.fixed_array = Some(array);
                     formals_ir.push(formal);
                 }
-                if let Some(leaves) = self.fixed_records.get(c) {
-                    let mut formal = IrFormal::new(true, 1, false).map_err(|error| error.to_string())?;
-                    formal.width = 0; formal.fixed_record = leaves.iter().map(|leaf| leaf.array.ir).collect();
-                    formals_ir.push(formal);
-                }
                 let has_wait = *is_task && dpi.is_none() && self.task_has_wait(*c, inst);
                 if !automatic && dpi.is_none() {
                     for (idx, ((io, _), formal)) in formals.iter().zip(&formals_ir).enumerate() {
-                        if formal.is_ref() || formal.fixed_array.is_some() || !formal.fixed_record.is_empty() {
+                        if formal.is_ref() || formal.fixed_array.is_some() {
                             continue;
                         }
                         if formal.chandle || formal.event {

@@ -232,10 +232,12 @@ mod tests {
         )
         .expect("valid model");
         let ctx = RCtx {
+            value_backend: crate::sim::value_backend::ValueBackend::Legacy,
             model: &model,
             func: None,
             sampled: false,
             activation_label: None,
+            constants: None,
         };
         let values = wide_enum_values();
         let rendered = render_memory(

@@ -45,7 +45,7 @@ pub use validate::IrValidationError;
 mod constants;
 pub use constants::IrConst;
 mod fixed_values;
-pub use fixed_values::{IrFixedValue, IrFixedRecordValue};
+pub use fixed_values::IrFixedValue;
 
 mod fixed_array_reductions;
 pub use fixed_array_reductions::{IrFixedArrayReduction, IrFixedArrayReductionSource};

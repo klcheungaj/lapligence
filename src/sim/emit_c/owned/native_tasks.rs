@@ -101,14 +101,20 @@ impl Frame<'_, '_> {
                 0,
                 signed,
             )),
-            Some((width, signed)) => Some(self.value(
-                format!(
-                    "llg_vpi_call_function_site({arguments}, {width}, {})",
-                    u8::from(signed)
-                ),
-                width,
-                signed,
-            )),
+            Some((width, signed)) => {
+                let value = self.value(
+                    format!(
+                        "llg_vpi_call_function_site({arguments}, {width}, {})",
+                        u8::from(signed)
+                    ),
+                    width,
+                    signed,
+                );
+                // Registered VPI callbacks choose their runtime result shape;
+                // the call's width/sign arguments describe only fallback values.
+                let code = format!("sv4_cast({}, {width}, {})", value.code, u8::from(signed));
+                Some(self.replace(value, code, width, signed))
+            }
             None => {
                 self.line(format!("(void)llg_vpi_call_task_site({arguments});"));
                 None

@@ -272,6 +272,8 @@ fn sparse_array_reads_fail_closed_in_legacy_fragments() {
         None,
     );
     let context = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
+        constants: None,
         model: &model,
         func: None,
         sampled: false,

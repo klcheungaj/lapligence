@@ -169,3 +169,49 @@ fn malformed_replication_requires_count_and_elements() {
         );
     }
 }
+
+#[test]
+fn component_packed_pattern_elements_keep_immediate_identity() {
+    let snapshot = crate::core::compile::compile_sources_checked(
+        &[crate::core::compile::OwnedSource::compilation_unit(
+            "packed_keys.sv",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/sim/feature_completion/rtl_004/vector_keys.sv"
+            )),
+        )],
+        &Default::default(),
+    )
+    .unwrap();
+    let db = Db::from_slang(&snapshot.snapshot).unwrap();
+    drop(snapshot);
+    let semantic = crate::sim::semantic::SemanticModel::from_db(&db);
+    let cg = Codegen::new(&semantic);
+    let mut found = false;
+    for (index, node) in db.nodes().iter().enumerate() {
+        if matches!(
+            &node.kind,
+            NodeKind::Expr(ExprKind::Operation {
+                op: Operation::AssignmentPattern,
+                ..
+            })
+        ) {
+            let id = NodeId::from_index(index);
+            let element = db.packed_pattern_element(id).unwrap();
+            let descriptor = db.type_descriptor(id).unwrap();
+            let TypeShape::PackedAtom { ranges } = &descriptor.shape else {
+                continue;
+            };
+            let range = ranges.first().unwrap();
+            let bounds = (range.left as i32, range.right as i32);
+            let result = cg.p30_pattern_level("tb", id, bounds);
+            assert!(result.is_ok(), "{element:?}: {result:?}; {:?}", node.kind);
+            assert_eq!(
+                result.unwrap().len() as u128,
+                range.left.abs_diff(range.right) + 1
+            );
+            found = true;
+        }
+    }
+    assert!(found);
+}

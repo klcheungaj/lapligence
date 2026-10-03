@@ -144,6 +144,7 @@ fn random_runtime_compiles_and_runs_without_scheduler() {
     let dir = sim_harness::TempDir::new("runtime-random").expect("create temp directory");
     let (header, implementation) = llg::sim::rt::rng_sources();
     let (string_header, string_implementation) = llg::sim::rt::string_sources();
+    sim_harness::write_value_backend_sources(dir.path());
     let (value_header, value_implementation) = llg::sim::rt::value_sources();
     for (name, contents) in [
         ("llg_value.h", value_header),

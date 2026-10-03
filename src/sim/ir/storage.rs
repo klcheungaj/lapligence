@@ -198,7 +198,6 @@ impl IrNetGroup {
 pub struct IrArray {
     /// Lexical activation storage, declared by `FixedArrayDeclare`.
     pub(in crate::sim) activation: bool,
-    pub(in crate::sim) descriptor: bool,
     /// Array cells that observe a canonical resolved net signal.
     pub(in crate::sim) net_elements: Vec<(u64, usize)>,
     /// Typed default for a fixed aggregate element, before declaration initialization.
@@ -264,7 +263,6 @@ impl IrArray {
             c_name,
             hdl_name,
             activation: false,
-            descriptor: false,
             net_elements: Vec::new(),
             element_default: None,
             elem_width,
@@ -281,7 +279,6 @@ impl IrArray {
         !self.real
             && self.net_elements.is_empty()
             && (self.activation
-                || self.descriptor
                 || self.total > LLG_DENSE_FIXED_ARRAY_CELLS
                 || self
                     .total
