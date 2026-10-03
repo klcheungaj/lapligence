@@ -656,6 +656,19 @@ static inline double llg_gmp_sv4_bitstoshortreal(g4_t value) {
 static inline int llg_gmp_real_to_bool(double value) { return value != 0.0; }
 /* End V05/S7. */
 
+/* V05/S9: checked widths and owner-free facade helper types. */
+static inline uint32_t llg_gmp_sv4_checked_width(g4_t value) {
+    if (llg_gmp_sv4_is_unknown(value) || (value.is_signed && value.width &&
+        llg_gmp_sv4_state(value, value.width - 1u) == 1u))
+        llg_gmp_sv4_fail("invalid dynamic packed width");
+    uint64_t width = llg_gmp_sv4_to_index(value);
+    if (width >= LLG_GMP_SUPPORTED_WIDTH_LIMIT)
+        llg_gmp_sv4_fail("width reaches exclusive limit");
+    return (uint32_t)width;
+}
+#include "reference_types.h"
+/* End V05/S9. */
+
 #ifdef __cplusplus
 }
 #endif
@@ -767,6 +780,26 @@ static inline int llg_gmp_real_to_bool(double value) { return value != 0.0; }
 #define sv4_to_i64 llg_gmp_sv4_to_i64
 #define sv4_to_index llg_gmp_sv4_to_index
 #define sv4_to_index_i64 llg_gmp_sv4_to_index_i64
+/* V05/S9 public names. */
+#define sv4_checked_width llg_gmp_sv4_checked_width
+#define llg_queue_ref_read_fn llg_gmp_queue_ref_read_fn
+#define llg_queue_ref_write_fn llg_gmp_queue_ref_write_fn
+#define llg_ref_kind_t llg_gmp_ref_kind_t
+#define llg_ref_t llg_gmp_ref_t
+#define llg_ref_composite_t llg_gmp_ref_composite_t
+#define llg_ref_tag_check_t llg_gmp_ref_tag_check_t
+#define llg_ref_view_t llg_gmp_ref_view_t
+#define sv4_select_plan_t llg_gmp_sv4_select_plan_t
+#define LLG_REF_WHOLE LLG_GMP_REF_WHOLE
+#define LLG_REF_BIT LLG_GMP_REF_BIT
+#define LLG_REF_PART LLG_GMP_REF_PART
+#define LLG_REF_INDEXED LLG_GMP_REF_INDEXED
+#define LLG_REF_ARRAY LLG_GMP_REF_ARRAY
+#define LLG_REF_QUEUE LLG_GMP_REF_QUEUE
+#define LLG_REF_PACKED_PLAN LLG_GMP_REF_PACKED_PLAN
+#define LLG_REF_COMPOSITE LLG_GMP_REF_COMPOSITE
+#define LLG_REF_VIEW LLG_GMP_REF_VIEW
+#define LLG_REF_TAGGED_VIEW LLG_GMP_REF_TAGGED_VIEW
 #define sv4_t llg_gmp_sv4_t
 #define llg_sv4_word_t llg_gmp_sv4_word_t
 #define llg_sv4_vpi_word_t llg_gmp_sv4_vpi_word_t

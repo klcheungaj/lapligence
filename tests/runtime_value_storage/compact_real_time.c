@@ -30,6 +30,14 @@ static void small_tables(void) {
         }
 }
 static void conversions(void) {
+    const uint64_t payloads[] = {0, UINT64_C(0x8000000000000000), 1, UINT64_MAX,
+        UINT64_C(0x7ff0000000000000), UINT64_C(0x7ff0000000000001),
+        UINT64_C(0x7ff8123456789abc), UINT64_C(0xfff8123456789abc)};
+    for (size_t i = 0; i < sizeof(payloads) / sizeof(payloads[0]); ++i) {
+        g4_t bits = llg_gmp_sv4_from_u64(payloads[i], 64, 0);
+        double value = llg_gmp_sv4_bitstoreal(bits);
+        CHECK(llg_gmp_sv4_to_u64(llg_gmp_sv4_realtobits(value)) == payloads[i]);
+    }
     double values[] = {0, -0.0, 0.49, -0.49, 0.5, -0.5, 1.5, -1.5, 2.5, -2.5,
         2147483647.5, -2147483648.5, 4294967295.75, -4294967295.75,
         0x1.fffffffffffffp63, 0x1p64, -0x1p64, 0x1.fffffffffffffp128,

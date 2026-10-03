@@ -57,7 +57,9 @@ remain later work. Missing operations have no legacy conversion fallback.
 
 Remaining public `sv4_*` operations at this revision:
 
-`sv4_array_conditional_merge`, `sv4_ashl`, `sv4_ashr`, `sv4_bit_select`, `sv4_bit_select_set`, `sv4_casex_eq`, `sv4_casez_eq`, `sv4_checked_width`, `sv4_concat`, `sv4_countones`, `sv4_idx_part_select`, `sv4_idx_part_select_set`, `sv4_idx_part_select_set_value`, `sv4_idx_part_select_value`, `sv4_inside_range`, `sv4_logequiv`, `sv4_logimpl`, `sv4_onehot`, `sv4_part_select`, `sv4_part_select_set`, `sv4_reduce_and`, `sv4_reduce_nand`, `sv4_reduce_nor`, `sv4_reduce_or`, `sv4_reduce_xnor`, `sv4_reduce_xor`, `sv4_repeat`, `sv4_repeat_count`, `sv4_select_plan_bit`, `sv4_select_plan_indexed`, `sv4_select_plan_init`, `sv4_select_plan_part`, `sv4_select_plan_read`, `sv4_select_plan_set`, `sv4_select_plan_slice`, `sv4_select_plan_step`, `sv4_shl`, `sv4_shr`, `sv4_stream`, `sv4_unstream`, `sv4_wild_eq`, `sv4_wild_neq`.
+`sv4_array_conditional_merge`, `sv4_ashl`, `sv4_ashr`, `sv4_bit_select`, `sv4_bit_select_set`, `sv4_casex_eq`, `sv4_casez_eq`, `sv4_concat`, `sv4_countones`, `sv4_idx_part_select`, `sv4_idx_part_select_set`, `sv4_idx_part_select_set_value`, `sv4_idx_part_select_value`, `sv4_inside_range`, `sv4_logequiv`, `sv4_logimpl`, `sv4_onehot`, `sv4_part_select`, `sv4_part_select_set`, `sv4_reduce_and`, `sv4_reduce_nand`, `sv4_reduce_nor`, `sv4_reduce_or`, `sv4_reduce_xnor`, `sv4_reduce_xor`, `sv4_repeat`, `sv4_repeat_count`, `sv4_select_plan_bit`, `sv4_select_plan_indexed`, `sv4_select_plan_init`, `sv4_select_plan_part`, `sv4_select_plan_read`, `sv4_select_plan_set`, `sv4_select_plan_slice`, `sv4_select_plan_step`, `sv4_shl`, `sv4_shr`, `sv4_stream`, `sv4_unstream`, `sv4_wild_eq`, `sv4_wild_neq`.
 
-The packed-dependent `llg_ref_view_valid` and `llg_ref_read`, the shared scalar
-`llg_real_to_bool`, and owner-free reference/selection types also await V05/V07.
+`sv4_checked_width`, `llg_real_to_bool` and source-compatible owner-free
+reference/selection types are implemented. The [facade checklist](facade_audit.md)
+accounts for every macro, helper type, constant and public operation, including
+the shared `llg_ref_read` / `llg_ref_view_valid` assembly remaining for V07.

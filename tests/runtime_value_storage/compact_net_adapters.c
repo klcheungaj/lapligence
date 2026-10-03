@@ -121,8 +121,14 @@ static void udp_and_enum(void) {
             for (int dir = -1; dir <= 1; ++dir) {
                 g4_t c = llg_gmp_sv4_from_u64(current, 129, (int8_t)sign), s = llg_gmp_sv4_from_u64(step, 32, 0);
                 sv4_t oc = sv4_from_u64(current, 129, (int8_t)sign), os = sv4_from_u64(step, 32, 0);
-                compare(sv4_enum_navigate(oc, os, old, 4, old[1], dir),
-                        llg_gmp_sv4_enum_navigate(c, s, v, 4, v[1], dir));
+                unsigned expected_index = current == 7 ? 2u : current == 2 ? 1u : current == 9 ? 3u : 4u;
+                if (expected_index < 4)
+                    for (unsigned hop = 0; hop < step; ++hop)
+                        expected_index = dir < 0 ? (expected_index ? expected_index - 1u : 3u)
+                                                 : (expected_index == 3u ? 0u : expected_index + 1u);
+                g4_t result = llg_gmp_sv4_enum_navigate(c, s, v, 4, v[1], dir);
+                CHECK(llg_gmp_sv4_to_u64(result) == members[expected_index < 4 ? expected_index : 1u]);
+                compare(sv4_enum_navigate(oc, os, old, 4, old[1], dir), result);
                 compare(sv4_enum_navigate(oc, os, NULL, 0, old[1], dir),
                         llg_gmp_sv4_enum_navigate(c, s, NULL, 0, v[1], dir));
                 sv4_destroy(&oc); sv4_destroy(&os); llg_gmp_sv4_destroy(&c);

@@ -579,7 +579,8 @@ become accidental Cargo targets. Use domain-qualified name filters when necessar
 Fragment/embedding-order tests do not compile runtime fragments independently;
 facade compilation and generated-model execution are separate checks.
 
-Standalone compact-backend checks and microbenchmarks are opt-in CMake targets;
+Standalone compact-backend checks and microbenchmarks, including net/strength,
+real/time, formatting/index and facade adapter probes, are opt-in CMake targets;
 see [native value probes](runtime_value_storage/readme.md#standalone-compact-value-backend).
 They cover portable and optional GMP limb kernels independently of generated
 model selection and do not replace later HDL/model integration acceptance.

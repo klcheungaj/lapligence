@@ -212,3 +212,34 @@ Benchmarks emit seven-sample medians and ranges for fresh results and initialize
 destination reuse, including X/Z operands and 65-bit multiplication. Copy reuse
 uses `sv4_copy`; arithmetic reuse uses the emitter's replace-of-fresh-result
 pattern. These are indicative microbenchmarks, with no whole-model claim.
+
+The S6–S9 adapter probes add exhaustive two-driver strength endpoints, all UDP
+mask/state combinations, enum order/defaults, full/unaligned-range resolution,
+real/time conversion and failure cases, bounded radix/decimal formatting, exact
+host indices, checked widths and source-compatible macro/reference types.
+`compact_adapters_oracle.py` checks numeric/text results against Python integers,
+rational rounding and struct bit conversions in both backends. Large finite
+packed-to-real results permit at most one double ULP; exact bit reinterpretation
+and real-to-integer conversion have exact expectations.
+
+Build the additional targets in either configured compact build directory:
+
+```sh
+cmake --build /build/llg-compact-gcc --parallel 6 --target \
+  compact_portable_net_adapters compact_gmp_net_adapters \
+  compact_portable_real_time compact_gmp_real_time \
+  compact_portable_format_index compact_gmp_format_index \
+  compact_portable_facade_adapters compact_gmp_facade_adapters \
+  compact_legacy_facade_adapters compact_adapters_oracle_legacy \
+  compact_adapters_oracle_portable compact_adapters_oracle_gmp \
+  compact_portable_adapters_benchmark compact_gmp_adapters_benchmark
+ctest --test-dir /build/llg-compact-gcc -R '^compact_' --output-on-failure --parallel 6
+/build/llg-compact-gcc/compact_gmp_adapters_benchmark
+```
+
+The adapter benchmark measures seven alternating-order samples at 1/64/65/256/
+4096 bits, known and X/Z, including fresh owned results and scalar/text inspection.
+Bit reinterpretation and rtoi have their fixed 64/32-bit result widths; real delay
+is a native scalar. Packed delay uses a representable low-limb input. Checked-width timing uses valid
+known inputs; its X/Z rejection is exercised by the failure probes. No model
+selection, scheduler adoption or native non-Linux qualification is implied.
