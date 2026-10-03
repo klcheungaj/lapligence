@@ -127,12 +127,21 @@ Input links evaluate in the parent scope; selected outputs preserve untouched
 bits. Constants/omitted defaults run once; explicit opens ignore defaults. Whole
 packed/fixed aggregate refs retain canonical storage and member views without
 copy links. Scalar real links use doubles and notify changed dependencies.
-Interface/modport bodies use the actual Slang-bound instance. Connection indices
-must be elaborated constants (including genvars), not dynamic connections.
+Interface/modport bodies use the actual Slang-bound instance; a simple modport
+port resolves to its same-named interface member. Connection indices must be
+elaborated constants (including genvars), except a variable output target: it is
+an implied continuous assignment (SV 23.3.3.2) whose link re-evaluates its
+selectors, and the local Slang patch admits only that form. Ref, net and inout
+connections keep constant selects. Descriptor-backed fixed-array ports and
+nested member-array outputs reuse the procedural fixed-array assignment owner
+(`FixedArrayCopy`/`FixedValueAssign`); never expand a descriptor port per cell.
 Precollect hierarchical actual dependencies per instance.
 
 Variable-continuous conflict analysis follows canonical intervals and counts
-ordinary assignments/declaration initialization, not force/release/deassign;
+ordinary assignments/declaration initialization, not force/release/deassign.
+Output ports connected to variables are continuous drivers: constant rows of
+dense arrays drive their cells, runtime selects drive the longest static prefix,
+and constant rows of descriptor storage are not registered (no bounded cell set);
 keep disjoint writers legal and preserve original read sensitivities separately.
 Hierarchical structural driver identity includes owner, source and group.
 
@@ -166,7 +175,10 @@ source offset advances by one. Reversed/permuted or opaque projections retain
 bit groups. Include driver ranges before partitioning, and extend that source
 inventory for new topology forms. Ordinary whole vector groups already resolve
 word-parallel and retain their existing path. Keep per-bit declared-view bindings
-with a group-bit offset; electrical width must never change an HDL storage shape.
+with a group-bit offset (the emitter renders consecutive bits as one run-length
+alias part); electrical width must never change an HDL storage shape.
+Whole net-array inout ports, rows and slices union each formal cell with its
+left-to-left actual cell (`net_array_inout_pairs`) in both storage and type plans.
 Contribution projection gathers contiguous RHS runs with part selects and Z runs,
 then concatenates only disconnected runs. Conversion precedes projection. Array
 publication binds every bit to this partition and rejects a missing root.

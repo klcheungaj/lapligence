@@ -1,0 +1,20 @@
+diff --git a/source/ast/expressions/SelectExpressions.cpp b/source/ast/expressions/SelectExpressions.cpp
+--- a/source/ast/expressions/SelectExpressions.cpp
++++ b/source/ast/expressions/SelectExpressions.cpp
+@@ -111,7 +111,15 @@ bool requireLValueHelper(const T& expr, const ASTContext& context, SourceLocatio
+         }
+     }
+ 
+-    if (context.flags.has(ASTFlags::NonProcedural)) {
++    // An output port connected to a variable is an implied continuous
++    // assignment whose variable_lvalue admits runtime selects (IEEE 1800-2009
++    // 23.3.3.2 and 6.5); the longest static prefix is the driven variable.
++    // Net lvalues and inout connections keep their constant_select rule.
++    auto root = expr.getSymbolReference();
++    const bool runtimeVariableOutput = context.flags.has(ASTFlags::OutputArg) &&
++                                       !flags.has(AssignFlags::InOutPort) && root &&
++                                       VariableSymbol::isKind(root->kind);
++    if (context.flags.has(ASTFlags::NonProcedural) && !runtimeVariableOutput) {
+         if constexpr (std::is_same_v<T, RangeSelectExpression>) {
+             if (!context.eval(expr.left()) || !context.eval(expr.right()))
+                 return false;

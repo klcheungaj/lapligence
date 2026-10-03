@@ -343,3 +343,48 @@ fn electrical_batch_casts_remain_explicit_for_heterogeneous_row_shapes() {
         assert_eq!(source.matches("sv4_part_select_to(").count(), 1);
     }
 }
+
+#[test]
+fn declared_view_bindings_render_contiguous_runs() {
+    let mut model = net_model(2, 2);
+    let mut array =
+        IrArray::new("G_view".to_owned(), String::new(), 16, false, vec![(0, 0)]).unwrap();
+    let mut signal = IrSignal::new(
+        "G_view_element".to_owned(),
+        None,
+        IrType::Packed {
+            width: 16,
+            signed: false,
+            two_state: false,
+        },
+        None,
+    )
+    .unwrap();
+    // Bits 0..10 map onto group 0 from bit 3, bits 10..12 onto group 1 slot 1
+    // and bits 12..16 back onto group 0 with a gap; insertion order is
+    // shuffled so runs come from the binding coordinates, not their order.
+    let mut bindings = (0..10)
+        .map(|bit| (0, 0, bit, bit + 3))
+        .chain((10..12).map(|bit| (1, 1, bit, bit - 10)))
+        .chain((12..16).map(|bit| (0, 0, bit, bit + 8)))
+        .collect::<Vec<_>>();
+    bindings.reverse();
+    for (group, slot, signal_bit, group_bit) in bindings {
+        signal.net_alias.push(IrNetAliasBinding {
+            group,
+            slot,
+            signal_bit,
+            group_bit,
+        });
+    }
+    let signal_index = model.signals.len();
+    model.signals.push(signal);
+    array.net_elements.push((0, signal_index));
+    model.arrays.push(array);
+    model.init_steps.push(IrInitStep::FillArrayZ(0));
+    let source = render(model);
+    assert!(source.contains(
+        "llg_array_net_0_0_parts[] = { { &g_net_0, 0, 0, 3, 10 }, { &g_net_0, 0, 12, 20, 4 }, { &g_net_1, 1, 10, 0, 2 } };"
+    ));
+    assert!(source.contains(".parts = llg_array_net_0_0_parts, .n_parts = 3,"));
+}

@@ -3,6 +3,50 @@
 use super::*;
 
 /// Signal globals plus collapsed inout-net group storage.
+/// Render alias-view bindings as run-length `llg_net_alias_part_t` rows.
+/// Bindings that map consecutive view bits onto consecutive bits of the same
+/// group driver slot share one `{ net, slot, signal_lsb, group_lsb, bit_count }`
+/// row, so a declared view costs one row per contiguous run rather than one
+/// per bit. Returns the initializer list and its row count.
+pub(super) fn render_alias_parts(
+    model: &IrModel,
+    bindings: &[crate::sim::ir::IrNetAliasBinding],
+) -> (String, usize) {
+    let mut ordered = bindings.iter().collect::<Vec<_>>();
+    ordered.sort_by_key(|binding| (binding.group, binding.slot, binding.signal_bit));
+    let mut runs: Vec<(usize, usize, u32, u32, u32)> = Vec::new();
+    for binding in ordered {
+        if let Some(run) = runs.last_mut() {
+            if run.0 == binding.group
+                && run.1 == binding.slot
+                && run.2.checked_add(run.4) == Some(binding.signal_bit)
+                && run.3.checked_add(run.4) == Some(binding.group_bit)
+            {
+                run.4 += 1;
+                continue;
+            }
+        }
+        runs.push((
+            binding.group,
+            binding.slot,
+            binding.signal_bit,
+            binding.group_bit,
+            1,
+        ));
+    }
+    let parts = runs
+        .iter()
+        .map(|(group, slot, signal_lsb, group_lsb, width)| {
+            format!(
+                "{{ &{}, {slot}, {signal_lsb}, {group_lsb}, {width} }}",
+                model.net_group(*group).c_name
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    (parts, runs.len())
+}
+
 pub(super) fn render_signal_decls(model: &IrModel, out: &mut String) {
     let mut emitted: std::collections::HashSet<&str> = std::collections::HashSet::new();
     for sig in &model.signals {
@@ -119,18 +163,7 @@ pub(super) fn render_signal_decls(model: &IrModel, out: &mut String) {
         if sig.net_alias.is_empty() {
             continue;
         }
-        let parts = sig
-            .net_alias
-            .iter()
-            .map(|binding| {
-                let group = &model.net_group(binding.group).c_name;
-                format!(
-                    "{{ &{group}, {}, {}, {} }}",
-                    binding.slot, binding.signal_bit, binding.group_bit
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(", ");
+        let (parts, part_count) = render_alias_parts(model, &sig.net_alias);
         let visible = "SV4_EMPTY";
         out.push_str(&format!(
             "static const llg_net_alias_part_t llg_net_alias_{index}__parts[] = {{ {parts} }};\n\
@@ -138,7 +171,7 @@ pub(super) fn render_signal_decls(model: &IrModel, out: &mut String) {
             sig.c_name,
             sig.ty.width(),
             sig.ty.signed() as u8,
-            sig.net_alias.len(),
+            part_count,
         ));
     }
     // Named events use a stable waiter-table object plus an assignable handle.

@@ -48,6 +48,31 @@ impl Codegen<'_> {
         actual: Option<NodeId>,
         bit_nets: &HashSet<NodeId>,
     ) -> Result<Vec<(NetPoint, NetPoint)>, String> {
+        if let Some(pairs) = actual
+            .map(|actual| self.net_array_inout_pairs(port, actual, low))
+            .transpose()?
+            .flatten()
+        {
+            return Ok(pairs
+                .into_iter()
+                .flat_map(|((formal, formal_cell, width), (actual, actual_cell))| {
+                    (0..width).map(move |bit| {
+                        (
+                            NetPoint::ArrayBit {
+                                owner: formal,
+                                element: formal_cell,
+                                bit,
+                            },
+                            NetPoint::ArrayBit {
+                                owner: actual,
+                                element: actual_cell,
+                                bit,
+                            },
+                        )
+                    })
+                })
+                .collect());
+        }
         if let Some(((array, element), actual_bits)) = actual
             .map(|actual| self.array_net_selection(actual))
             .transpose()?

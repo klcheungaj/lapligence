@@ -1067,6 +1067,32 @@ impl<'a> Codegen<'a> {
         let mut continuous_drivers = Vec::new();
         let mut called_writers = Vec::new();
         for writer in &writers {
+            // An output port connected to a variable is an implied continuous
+            // assignment to that actual (SV 23.3.3.2); its target is the
+            // longest static prefix, so a runtime-selected actual drives the
+            // whole selected variable.
+            if let NodeKind::Port {
+                direction: DbDirection::Output,
+                high,
+                high_expr,
+                ..
+            } = self.kind(writer.node)
+            {
+                if let Some(actual) = high_expr
+                    .or(*high)
+                    .filter(|actual| self.lhs_is_variable_storage(*actual))
+                {
+                    if let Some(writes) = self.output_port_continuous_writes(actual, &writer.writes)
+                    {
+                        continuous_drivers.push(ProcessWriter {
+                            node: writer.node,
+                            label: writer.label.clone(),
+                            writes,
+                        });
+                    }
+                }
+                continue;
+            }
             if !matches!(self.kind(writer.node), NodeKind::ContAssign { .. }) {
                 continue;
             }

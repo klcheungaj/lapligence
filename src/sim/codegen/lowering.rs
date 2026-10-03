@@ -1576,6 +1576,39 @@ impl<'a> Codegen<'a> {
         self.sig_globals.get(&id)
     }
 
+    /// Interface member named by a simple modport port. A modport port
+    /// without an explicit expression is a view of the same-named member of
+    /// its interface instance (SV 25.5); the modport node's parent is the
+    /// modport declaration, whose parent is that instance body.
+    fn modport_member(&self, port: NodeId) -> Option<NodeId> {
+        self.db.modport_port_direction(port)?;
+        let name = &self.node(port).name;
+        let interface = self.node(port).parent()?;
+        let interface = self.node(interface).parent()?;
+        self.node(interface)
+            .children
+            .iter()
+            .copied()
+            .find(|member| {
+                self.node(*member).name == *name
+                    && matches!(
+                        self.kind(*member),
+                        NodeKind::Array { .. } | NodeKind::Var { .. } | NodeKind::Net { .. }
+                    )
+            })
+    }
+
+    /// Collected array bound to a reference target, following a simple
+    /// modport port to its interface member.
+    fn array_target(&self, target: NodeId) -> Option<&ArrayInfo> {
+        self.array_globals.get(&target).or_else(|| {
+            matches!(self.kind(target), NodeKind::ModPort)
+                .then(|| self.modport_member(target))
+                .flatten()
+                .and_then(|member| self.array_globals.get(&member))
+        })
+    }
+
     /// Lowered info for an Array arena node (or a Ref resolving to one), if
     /// the array was collected.
     fn array_of(&self, node: NodeId) -> Option<&ArrayInfo> {
@@ -1584,15 +1617,16 @@ impl<'a> Codegen<'a> {
         }
         match self.kind(node) {
             NodeKind::Array { .. } => self.array_globals.get(&node),
-            NodeKind::Expr(ExprKind::Ref { target }) => {
-                target.and_then(|t| self.array_globals.get(&t))
-            }
+            NodeKind::ModPort => self
+                .modport_member(node)
+                .and_then(|member| self.array_globals.get(&member)),
+            NodeKind::Expr(ExprKind::Ref { target }) => target.and_then(|t| self.array_target(t)),
             NodeKind::Expr(ExprKind::HierPath { refs, .. }) => refs
                 .first()
                 .copied()
                 .flatten()
                 .or_else(|| refs.last().copied().flatten())
-                .and_then(|target| self.array_globals.get(&target)),
+                .and_then(|target| self.array_target(target)),
             NodeKind::Expr(ExprKind::Cast { operand, .. }) => self.array_of(*operand),
             NodeKind::Expr(ExprKind::Operation {
                 op: Operation::Assignment,

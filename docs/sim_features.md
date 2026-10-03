@@ -223,8 +223,8 @@ Macros, includes and their edition-specific behavior are counted in §11.
   admitted fixed integral calls/ports, patterns and operators have the limits in
   §§3, 5, 7 and 9. Native/resizable elements, general real-array expressions,
   and oversized records remain restricted. Integral arrays through
-  16,777,216 cells copy, compare, select rows, pass through formals and stream
-  without packed flattening. Fixed integral record arrays also
+  16,777,216 cells copy, compare, select rows, pass through formals and module
+  ports, and stream without packed flattening. Fixed integral record arrays also
   retain recursive member selections and constant-selected electrical net views.
   V §3.10; SV §§7.4, 7.6 **[1995/SV-2005]**.
 - 🟨 **Initialization and lifetimes** — Scalar, fixed integral composite and
@@ -365,10 +365,15 @@ Macros, includes and their edition-specific behavior are counted in §11.
   Explicit/implicit intermediate casts remain effective, including two-state
   conversion followed by a four-state formal; contents and selectors establish
   dependencies. Fixed outputs admit whole arrays, constant rows/slices, aggregate
-  values, nested member targets and instance-array distribution. Invalid output
+  values, nested member and member-array targets and instance-array
+  distribution; interface modport arrays link through generate and forwarding.
+  A variable output target with runtime selects is an implied continuous
+  assignment: selector changes retarget it and unknown selectors write nothing.
+  Descriptor-backed arrays (to 16M cells) cross ports as descriptor copies.
+  Output targets also written procedurally or by another port, invalid output
   expressions, language-illegal chandle ports (SV §6.14), uncollected layouts
-  and runtime output/inout rewiring reject. V §12.3;
-  SV §§7.4.6, 23.2–23.3 **[1995/SV-2005]**.
+  and runtime-selected net or inout connections reject. V §12.3;
+  SV §§6.5, 7.4.6, 23.2–23.3, 25.5 **[1995/SV-2005]**.
 - 🟨 **Reference and inout ports** — Matching packed/fixed-array references and
   collected recursive aggregate/string leaves share storage. Chandle ports are
   prohibited by SV §6.14. Admitted module ref-port packed projections are
@@ -378,7 +383,9 @@ Macros, includes and their edition-specific behavior are counted in §11.
   members below fixed-array rows. Blocking writes, mutations, NBA issue-time
   capture and call copy-out use the checked projection. Runtime-selected ref
   connections remain an unsupported binding boundary with unresolved rebinding
-  semantics. Dissimilar resolved-net inouts follow §8. SV §23.2.2 **[SV-2005]**.
+  semantics. Whole net-array inout ports, rows and slices join each formal cell
+  to its left-to-left actual cell. Dissimilar resolved-net inouts follow §8.
+  SV §§23.2.2, 23.3.3.5 **[SV-2005]**.
 - 🟨 **Libraries and configurations** — Explicit `--libmap`, repeatable
   `--libfile [library=]path`, `--library-order`, `--default-library`, top
   `module:config`, default `liblist`, cell/instance `use`, nested configurations

@@ -913,24 +913,12 @@ fn render_model(
             } else {
                 signal.net_alias.clone()
             };
-            let parts = bindings
-                .iter()
-                .map(|binding| {
-                    format!(
-                        "{{ &{}, {}, {}, {} }}",
-                        model.net_groups[binding.group].c_name,
-                        binding.slot,
-                        binding.signal_bit,
-                        binding.group_bit
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join(", ");
+            let (parts, part_count) = storage::render_alias_parts(model, &bindings);
             out.push_str(&format!(
                 "static const llg_net_alias_part_t {name}_parts[] = {{ {parts} }};\n"
             ));
             out.push_str(&format!("static llg_net_alias_t {name} = {{ .storage = &{}[{index}], .width = {}, .is_signed = {}, .parts = {name}_parts, .n_parts = {}, .publication_target = &{}[{index}] }};\n",
-                array.c_name, array.elem_width, u8::from(array.signed), array.elem_width, array.c_name));
+                array.c_name, array.elem_width, u8::from(array.signed), part_count, array.c_name));
         }
     }
     for container in &model.containers {

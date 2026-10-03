@@ -111,7 +111,7 @@ static void delay_publication(void) {
     net.propagation_turn_off = 2;
     sv4_t storage = sv4_from_u64(2, 2, 0);
     sv4_t published = sv4_fill(3, 2, 0);
-    const llg_net_alias_part_t part = {&net, 0, 0, 0};
+    const llg_net_alias_part_t part = {&net, 0, 0, 0, 1};
     llg_net_alias_t alias = {0};
     alias.storage = &storage;
     alias.width = 2;

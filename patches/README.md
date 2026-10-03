@@ -41,6 +41,7 @@ admission.
 | `slang/slang-ref-port-binding.patch` | Packed module-ref lvalue binding; subroutine refs retain separate rules. |
 | `slang/slang-package-wildcard-export.patch` | Lazy finite wildcard re-exports, with ambiguous names diagnosed. |
 | `slang/slang-conditional-z-merge.patch` | Selected packed conditional policy: definite true selects one arm despite other X/Z predicate bits; unpacked constants retain matching immediate members and default mismatches by member type, not initializer. Nested members default whole. Local edition policy, not an upstream erratum. |
+| `slang/slang-output-port-runtime-select.patch` | Output ports connected to variables admit runtime selects as implied continuous assignments (SV 23.3.3.2); net and inout lvalues keep constant selects. |
 
 ## Updating patches
 

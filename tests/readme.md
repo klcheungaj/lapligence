@@ -116,6 +116,13 @@ compilation-unit modes through `run_case_with_source_prefix`. Cross-scope
 initialization oracles are order-independent or follow a static read
 dependency; the Verilog-2001 race fixture asserts its allowed result set.
 
+
+RTL-009's port fixtures use `-E 'binary(sim_feature_completion) & test(rtl_009::)'`.
+Positive fixtures run in both optimizer modes on both backends and after Db
+destruction; descriptor ports also bound generated model size. Negatives cover
+assignability, ref shape, variable inout, runtime ref/net/inout selects and
+output-target writer conflicts.
+
 ### Vendor patch preparation
 
 `vendor_patches.rs` checks clean/applied trees, no-Git archives (including archives

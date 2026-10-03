@@ -1086,6 +1086,7 @@ impl<'a> Codegen<'a> {
         let mut rank: HashMap<NodeId, u8> = HashMap::new();
         let mut inout_ports: Vec<NodeId> = Vec::new();
         let mut array_ports = HashSet::new();
+        let mut array_formals = HashSet::new();
         let mut array_endpoints: HashMap<(usize, u64), Vec<Option<AliasBit>>> = HashMap::new();
         for node in sorted_node_ids(&self.array_globals) {
             let info = &self.array_globals[&node];
@@ -1181,6 +1182,31 @@ impl<'a> Codegen<'a> {
                     ..
                 } = self.kind(*id)
                 {
+                    if let Some(pairs) = self.net_array_inout_pairs(*id, *actual, *l)? {
+                        // Whole net-array inout ports (SV 23.3.3.5) join each
+                        // formal cell with its left-to-left actual cell; the
+                        // range partitioner then groups identical runs.
+                        for (formal, actual) in pairs {
+                            for bit in 0..formal.2 {
+                                let formal = AliasBit::Array {
+                                    owner: formal.0,
+                                    element: formal.1,
+                                    bit,
+                                };
+                                let actual = AliasBit::Array {
+                                    owner: actual.0,
+                                    element: actual.1,
+                                    bit,
+                                };
+                                alias_union(&mut alias_parent, &mut alias_rank, actual, formal);
+                                alias_bits.extend([actual, formal]);
+                            }
+                        }
+                        inout_ports.push(*id);
+                        array_ports.insert(*id);
+                        array_formals.insert(*l);
+                        continue;
+                    }
                     if let Some((endpoint, actual_bits)) = self.array_net_selection(*actual)? {
                         let width = self.model.arrays[endpoint.0].elem_width;
                         let owner = sorted_node_ids(&self.array_globals)
@@ -1554,7 +1580,7 @@ impl<'a> Codegen<'a> {
                 if !array_ports.contains(port) && !alias_nets.contains(h) {
                     members.insert(*h);
                 }
-                if !alias_nets.contains(l) {
+                if !alias_nets.contains(l) && !array_formals.contains(l) {
                     members.insert(*l);
                 }
             }
