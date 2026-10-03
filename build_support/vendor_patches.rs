@@ -1318,7 +1318,7 @@ fn validate_regular_file(
             path.display()
         )));
     }
-    if hard_link_count(&metadata).is_some_and(|count| count > 1) {
+    if hard_link_count(path, &metadata).is_some_and(|count| count > 1) {
         return Err(PatchError::new(format!(
             "{label} {context} {} is a hard link; refusing to modify a shared vendor file",
             path.display()
@@ -1379,18 +1379,26 @@ fn is_reparse_point(metadata: &fs::Metadata) -> bool {
     }
 }
 
-fn hard_link_count(metadata: &fs::Metadata) -> Option<u64> {
+fn hard_link_count(path: &Path, metadata: &fs::Metadata) -> Option<u64> {
     #[cfg(unix)]
     {
+        let _ = path;
         Some(std::os::unix::fs::MetadataExt::nlink(metadata))
     }
     #[cfg(windows)]
     {
-        Some(u64::from(metadata.number_of_links()))
+        // Path metadata carries no link count on Windows, and std's
+        // `number_of_links` is unstable (`windows_by_handle`). cap-std reads
+        // it from an open handle. An unopenable file reports no count here;
+        // the handle-relative replacement still rejects shared targets.
+        let _ = metadata;
+        let file = fs::File::open(path).ok()?;
+        let metadata = cap_std::fs::Metadata::from_file(&file).ok()?;
+        Some(CapMetadataExt::nlink(&metadata))
     }
     #[cfg(not(any(unix, windows)))]
     {
-        let _ = metadata;
+        let _ = (path, metadata);
         None
     }
 }
