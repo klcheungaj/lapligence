@@ -17,8 +17,8 @@ convert into legacy descriptors as a fallback.
 | Real/shortreal bits, integer/real conversions, checked delay scaling | Header and `real_time.c` |
 | Formatting, decimal, low i64, exact i64/index checks | Header, `format_index.c` and decimal kernel seam |
 | `sv4_checked_width` | Header; rejects unknown/negative/over-capacity input, preserves zero sentinel |
-| `llg_sv4_word_t`, `llg_sv4_vpi_word_t`, all `llg_sv4_*` bridge functions and `LLG_SV4_BITS/X/Z` | G1 header and storage unit; copied logical words, no native/GMP views |
-| V06 consumer bridge primitives | Legacy helpers in `llg_value.h`; compact counterparts and generated consumer integration remain V07 work. |
+| `llg_sv4_word_t`, `llg_sv4_vpi_word_t`, V01 `llg_sv4_*` bridge functions and `LLG_SV4_BITS/X/Z` | G1 header and storage unit; copied logical words, no native/GMP views |
+| V06 masked/range access, mask maintenance, in-place known arithmetic/two-state/digit operations, VPI32 and text export | Legacy helpers in `llg_value.h`; compact counterparts and generated consumer integration remain V07 work. |
 | All seven `LLG_RESOLVE_*` and eight `LLG_STRENGTH_*` constants | Prefixed enum constants and public aliases, identical values |
 | `llg_real_to_bool` | Inline scalar helper; nonzero including NaN is true, signed zeros false |
 | `sv4_select_plan_t` | Owner-free five-field equivalent in `reference_types.h`, guarded by `LLG_GMP_SV4_SELECT_PLAN_DEFINED`; shared by S4 and S9 |
@@ -28,8 +28,9 @@ convert into legacy descriptors as a fallback.
 
 The reference descriptors contain borrowed cell/callback/plan addresses; copying
 a descriptor does not transfer or extend any lifetime. Their containing runtime
-owns retention, publication and teardown. S4 and S9 use the single guarded plan type in `reference_types.h`. V07 must re-audit any APIs
-added by intervening feature merges, including net-array extensions.
+owns retention, publication and teardown. S4 and S9 use the single guarded plan
+type in `reference_types.h`. V07 must implement and test the V06 bridge additions
+and re-audit APIs added by intervening feature merges, including net arrays.
 
 `compact_facade_adapters.c` builds the same client against live legacy, portable
 compact and GMP compact. It executes every constructor macro, width boundary,

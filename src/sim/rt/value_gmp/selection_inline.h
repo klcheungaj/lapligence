@@ -13,6 +13,20 @@ static inline uint32_t g4_selection_part_width(int64_t left, int64_t right) {
         llg_gmp_sv4_fail("width reaches exclusive limit");
     return g4_selection_width(delta + 1);
 }
+/* Fixed word permutations compile to shifts and a byte swap on common targets. */
+static inline uint64_t g4_reverse_word(uint64_t word) {
+    word =
+        ((word >> 1) & UINT64_C(0x5555555555555555)) | ((word & UINT64_C(0x5555555555555555)) << 1);
+    word =
+        ((word >> 2) & UINT64_C(0x3333333333333333)) | ((word & UINT64_C(0x3333333333333333)) << 2);
+    word =
+        ((word >> 4) & UINT64_C(0x0f0f0f0f0f0f0f0f)) | ((word & UINT64_C(0x0f0f0f0f0f0f0f0f)) << 4);
+    word =
+        ((word >> 8) & UINT64_C(0x00ff00ff00ff00ff)) | ((word & UINT64_C(0x00ff00ff00ff00ff)) << 8);
+    word = ((word >> 16) & UINT64_C(0x0000ffff0000ffff)) |
+           ((word & UINT64_C(0x0000ffff0000ffff)) << 16);
+    return (word >> 32) | (word << 32);
+}
 static inline int g4_selection_small_index(g4_t base, int64_t* index) {
     if (base.data.small.b)
         return 0;
@@ -72,17 +86,9 @@ static inline g4_t llg_gmp_sv4_part_select(g4_t source, int64_t left, int64_t ri
         return llg_gmp_sv4_part_select_wide(source, left, right);
     if (left >= right)
         return g4_selection_small_window(source, right, width);
-    g4_t r = g4_small(0, 0, width, 0);
-    for (uint32_t i = 0; i < width; ++i) {
-        int64_t index = right - i;
-        unsigned state =
-            index < 0 || index >= source.width ? 2 : llg_gmp_sv4_state(source, (uint32_t)index);
-        uint64_t mask = UINT64_C(1) << i;
-        if (state == 1 || state == 2)
-            r.data.small.a |= mask;
-        if (state >= 2)
-            r.data.small.b |= mask;
-    }
+    g4_t r = g4_selection_small_window(source, left, width);
+    r.data.small.a = g4_reverse_word(r.data.small.a) >> (64u - width);
+    r.data.small.b = g4_reverse_word(r.data.small.b) >> (64u - width);
     return r;
 }
 static inline void llg_gmp_sv4_part_select_set(g4_t* dst, int64_t left, int64_t right,
@@ -96,16 +102,15 @@ static inline void llg_gmp_sv4_part_select_set(g4_t* dst, int64_t left, int64_t 
         g4_selection_small_write(dst, right, source, (int64_t)source.width - width, width);
         return;
     }
-    if (right < 0 || left >= dst->width)
+    if (!dst->width || right < 0 || left >= dst->width)
         return;
     int64_t start = left < 0 ? 0 : left,
             end = right >= dst->width ? (int64_t)dst->width - 1 : right;
-    for (int64_t index = start; index <= end; ++index) {
-        int64_t bit = (int64_t)source.width - 1 - (index - left);
-        unsigned state =
-            bit < 0 || bit >= source.width ? 2 : llg_gmp_sv4_state(source, (uint32_t)bit);
-        llg_gmp_sv4_set_state(dst, (uint32_t)index, state);
-    }
+    uint32_t count = (uint32_t)(end - start + 1);
+    g4_t bits = g4_selection_small_window(source, (int64_t)source.width - (end - left + 1), count);
+    bits.data.small.a = g4_reverse_word(bits.data.small.a) >> (64u - count);
+    bits.data.small.b = g4_reverse_word(bits.data.small.b) >> (64u - count);
+    g4_selection_small_write(dst, start, bits, 0, count);
 }
 static inline g4_t llg_gmp_sv4_idx_part_select(g4_t source, uint64_t base, uint32_t width,
                                                int negative) {

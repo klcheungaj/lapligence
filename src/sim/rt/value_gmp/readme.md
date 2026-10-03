@@ -65,7 +65,9 @@ word-range copies in `ranges.h` and inline <=64-bit paths in
 coordinates; reference graphs borrow stable cells and callback/graph storage.
 Every result owns independently. Selected aliases snapshot before writes; known
 selected intervals do not promote B even if another source interval contains X/Z.
-Only reversed bit order uses bit loops. `sv4_stream`/`sv4_unstream` preserve width;
+Reversed intervals use fixed 64-bit bit permutations and shifted range copies.
+Streams gather slices into destination words before storing each word once.
+`sv4_stream`/`sv4_unstream` preserve width;
 assignment padding/truncation remains the caller's conversion before/after them.
 Array conditionals compare each immediate element with logical equality and use
 the supplied default for differing or X/Z-containing elements (SV2009 11.4.11).

@@ -246,6 +246,8 @@ shapes/storage/source widths and invalid array shape. ELF allocation counters
 check no B promotion for known selected subranges of unknown sources, one
 promotion on X/Z writes, automatic B removal and allocation-free small paths.
 The standalone public-name probe exercises reference/selection aliases.
+Word-boundary probes sweep reversed reads and aliased writes at every bit
+alignment, streaming slices 1 through 130, and empty-source/destination writes.
 Benchmarks report seven-sample medians/ranges at 1, 64, 65, 256 and 4096 bits,
 known and X/Z, with fresh results; write rows include cloning the fresh target.
 These remain component measurements, without generated-model or HDL claims.

@@ -31,16 +31,7 @@ g4_t llg_gmp_sv4_part_select_wide(g4_t v, int64_t left, int64_t right) {
         llg_gmp_sv4_finish(&r);
         return r;
     }
-    int64_t step = left > right ? -1 : 1;
-    int out = 0;
-    for (int64_t i = left;; i += step) {
-        int b = i < 0 || i >= (int64_t)v.width ? 2 : g4_range_state(v, (int)i);
-        int pos = w - 1 - out; // first index (left) is the MSB
-        g4_put_state(&r, pos, b);
-        out++;
-        if (i == right)
-            break;
-    }
+    g4_reverse_window(&r, 0, v, right, w);
     llg_gmp_sv4_finish(&r);
     return r;
 }
@@ -58,20 +49,7 @@ void llg_gmp_sv4_part_select_set_wide(g4_t* tgt, int64_t left, int64_t right, g4
         llg_gmp_sv4_destroy(&snapshot);
         return;
     }
-    int64_t step = left > right ? -1 : 1;
-    int in = (int)value.width - 1; // value MSB maps to the first target index
-    for (int64_t i = left;; i += step) {
-        if (i < 0 || i >= (int64_t)tgt->width) {
-            in--;
-            if (i == right)
-                break;
-            continue;
-        }
-        g4_put_state(tgt, (int)i, g4_range_state(value, in));
-        in--;
-        if (i == right)
-            break;
-    }
+    g4_reverse_window(tgt, left, value, (int64_t)value.width - 1, width);
     llg_gmp_sv4_finish(tgt);
     llg_gmp_sv4_destroy(&snapshot);
 }
@@ -256,11 +234,7 @@ g4_t llg_gmp_sv4_select_plan_slice_wide(g4_t source, const llg_gmp_sv4_select_pl
         llg_gmp_sv4_finish(&result);
         return result;
     }
-    for (uint32_t i = 0; i < plan->count; ++i) {
-        uint32_t logical = plan->value_lsb + i;
-        uint32_t source_bit = reverse ? plan->width - 1 - logical : logical;
-        g4_put_state(&result, (int)i, g4_range_state(source, (int)source_bit));
-    }
+    g4_copy_reverse(&result, 0, source, plan->width - plan->value_lsb - plan->count, plan->count);
     llg_gmp_sv4_finish(&result);
     return result;
 }

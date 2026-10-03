@@ -101,13 +101,43 @@ static g4_t g4_stream(g4_t value, uint32_t slice, int reverse, int inverse) {
         return llg_gmp_sv4_clone(&value);
     }
     g4_t result = llg_gmp_sv4_new(value.width, 0, llg_gmp_sv4_is_unknown(value));
+    if (slice == 1) {
+        g4_copy_reverse(&result, 0, value, 0, value.width);
+        return result;
+    }
+    const uint64_t *a = g4_a(&value), *b = g4_b(&value);
+    uint64_t *out_a = g4_mut_a(&result), *out_b = g4_mut_b(&result);
+    uint32_t remaining = inverse ? slice : value.width % slice;
+    if (!remaining)
+        remaining = slice;
+    uint32_t source_start = value.width - remaining, source_bit = source_start;
+    /* Gather one destination word at a time. A slice crossing a word boundary
+     * resumes in the next word without reloading or rewriting its prefix. */
     for (uint32_t bit = 0; bit < value.width;) {
-        uint32_t take = value.width - bit;
-        if (take > slice)
-            take = slice;
-        uint32_t other = value.width - bit - take;
-        g4_copy_bits(&result, inverse ? bit : other, value, inverse ? other : bit, take);
-        bit += take;
+        uint32_t count = value.width - bit < 64u ? value.width - bit : 64u;
+        uint64_t word_a = 0, word_b = 0;
+        for (uint32_t gathered = 0; gathered < count;) {
+            uint32_t take = count - gathered;
+            if (take > remaining)
+                take = remaining;
+            word_a |= g4_range_word(a, source_bit, take) << gathered;
+            if (b)
+                word_b |= g4_range_word(b, source_bit, take) << gathered;
+            source_bit += take;
+            remaining -= take;
+            gathered += take;
+            if (!remaining && bit + gathered < value.width) {
+                remaining = value.width - bit - gathered;
+                if (remaining > slice)
+                    remaining = slice;
+                source_start -= remaining;
+                source_bit = source_start;
+            }
+        }
+        out_a[bit / 64u] = word_a;
+        if (out_b)
+            out_b[bit / 64u] = word_b;
+        bit += count;
     }
     return result;
 }

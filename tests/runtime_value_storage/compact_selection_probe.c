@@ -400,6 +400,21 @@ static void small_indices_and_empty(void) {
                 }
     g4_t empty = LLG_GMP_SV4_EMPTY;
     sv4_t oe = SV4_EMPTY;
+    for (int64_t left = -2; left <= 2; ++left) {
+        g4_t target = LLG_GMP_SV4_EMPTY;
+        sv4_t otarget = SV4_EMPTY;
+        llg_gmp_sv4_part_select_set(&target, left, left + 4, v);
+        sv4_part_select_set(&otarget, left, left + 4, old);
+        compare(otarget, target);
+        target = llg_gmp_sv4_clone(&v);
+        otarget = sv4_clone(&old);
+        llg_gmp_sv4_part_select_set(&target, left, left + 4, empty);
+        sv4_part_select_set(&otarget, left, left + 4, oe);
+        for (uint32_t bit = 0; bit < target.width; ++bit)
+            expect_state(target, bit,
+                         (int64_t)bit >= left && (int64_t)bit <= left + 4 ? 2 : state_at(v, bit));
+        compare(otarget, target);
+    }
     compare(sv4_part_select(oe, 5, -2), llg_gmp_sv4_part_select(empty, 5, -2));
     compare(sv4_idx_part_select(old, 0, 0, 0), llg_gmp_sv4_idx_part_select(v, 0, 0, 0));
     compare(sv4_repeat(oe, UINT64_MAX), llg_gmp_sv4_repeat(empty, UINT64_MAX));
@@ -430,6 +445,56 @@ static uint64_t random_word(void) {
     seed ^= seed >> 7;
     seed ^= seed << 17;
     return seed;
+}
+static void word_boundaries(void) {
+    uint32_t widths[] = {63, 64, 65, 127, 128, 129, 191, 256, 257};
+    uint32_t lengths[] = {1, 7, 31, 63, 64, 65, 127, 128, 129, 193};
+    for (size_t k = 0; k < sizeof(widths) / sizeof(widths[0]); ++k)
+        for (unsigned unknown = 0; unknown < 2; ++unknown) {
+            g4_t value = llg_gmp_sv4_zero(widths[k], 0);
+            for (size_t j = 0; j < llg_gmp_sv4_words(value); ++j) {
+                uint64_t b = unknown ? random_word() : 0;
+                llg_gmp_sv4_set_word(&value, j, random_word() & ~b,
+                                     b & UINT64_C(0x5555555555555555),
+                                     b & UINT64_C(0xaaaaaaaaaaaaaaaa));
+            }
+            sv4_t old = legacy(value);
+            for (uint32_t slice = 1; slice <= 130; ++slice) {
+                g4_t streamed = llg_gmp_sv4_stream(value, slice, 1);
+                g4_t unstreamed = llg_gmp_sv4_unstream(value, slice, 1);
+                for (uint32_t bit = 0; bit < value.width; ++bit) {
+                    uint32_t start = bit / slice * slice;
+                    uint32_t count = value.width - start < slice ? value.width - start : slice;
+                    uint32_t other = value.width - start - count + bit - start;
+                    expect_state(streamed, other, state_at(value, bit));
+                    expect_state(unstreamed, bit, state_at(value, other));
+                }
+                compare(sv4_stream(old, slice, 1), streamed);
+                compare(sv4_unstream(old, slice, 1), unstreamed);
+            }
+            for (int64_t left = -65; left <= 130; ++left)
+                for (size_t n = 0; n < sizeof(lengths) / sizeof(lengths[0]); ++n) {
+                    uint32_t length = lengths[n];
+                    int64_t right = left + length - 1;
+                    g4_t selected = llg_gmp_sv4_part_select(value, left, right);
+                    for (uint32_t bit = 0; bit < length; ++bit)
+                        expect_state(selected, bit, state_at(value, right - bit));
+                    compare(sv4_part_select(old, left, right), selected);
+                    g4_t target = llg_gmp_sv4_clone(&value);
+                    sv4_t otarget = sv4_clone(&old);
+                    llg_gmp_sv4_part_select_set(&target, left, right, target);
+                    sv4_part_select_set(&otarget, left, right, otarget);
+                    for (uint32_t bit = 0; bit < target.width; ++bit)
+                        expect_state(
+                            target, bit,
+                            (int64_t)bit >= left && (int64_t)bit <= right
+                                ? state_at(value, (int64_t)value.width - 1 - ((int64_t)bit - left))
+                                : state_at(value, bit));
+                    compare(otarget, target);
+                }
+            sv4_destroy(&old);
+            llg_gmp_sv4_destroy(&value);
+        }
 }
 static void wide(void) {
     uint32_t widths[] = {1,    2,    7,    8,    31,    32,
@@ -720,6 +785,7 @@ int main(int argc, char** argv) {
     result_ownership();
     array_boundaries();
     stream_padding();
+    word_boundaries();
     wide();
     puts("compact S4/S5 independent and differential checks passed");
     printf("results checked: %lu\n", checks);
