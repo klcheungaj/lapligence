@@ -500,6 +500,33 @@ static inline void llg_gmp_sv4_import_words(g4_t* v, size_t first, const llg_gmp
         llg_gmp_sv4_set_word(v, 0, in[0].bits, in[0].x, in[0].z);
 }
 
+/* V05/S6: net metadata remains outside packed storage. Inputs borrow;
+ * returned values own. UDP rows and scalar inputs are validated by lowering. */
+enum {
+    LLG_GMP_RESOLVE_WIRE = 0, LLG_GMP_RESOLVE_WAND = 1, LLG_GMP_RESOLVE_WOR = 2,
+    LLG_GMP_RESOLVE_TRI0 = 3, LLG_GMP_RESOLVE_TRI1 = 4,
+    LLG_GMP_RESOLVE_SUPPLY0 = 5, LLG_GMP_RESOLVE_SUPPLY1 = 6
+};
+enum {
+    LLG_GMP_STRENGTH_HIGHZ = 0, LLG_GMP_STRENGTH_SMALL = 1, LLG_GMP_STRENGTH_MEDIUM = 2,
+    LLG_GMP_STRENGTH_WEAK = 3, LLG_GMP_STRENGTH_LARGE = 4, LLG_GMP_STRENGTH_PULL = 5,
+    LLG_GMP_STRENGTH_STRONG = 6, LLG_GMP_STRENGTH_SUPPLY = 7
+};
+g4_t llg_gmp_sv4_enum_navigate(g4_t current, g4_t step, const g4_t* values,
+                                uint32_t count, g4_t default_value, int direction);
+g4_t llg_gmp_sv4_resolve(const g4_t* const* drivers, int count, uint32_t width,
+                          int8_t sign, int mode);
+g4_t llg_gmp_sv4_resolve_strengths(const g4_t* const* drivers, const uint8_t* strength0,
+                                    const uint8_t* strength1, int count, uint32_t width,
+                                    int8_t sign, int mode);
+g4_t llg_gmp_sv4_resolve_strengths_range(const g4_t* const* drivers, const uint8_t* strength0,
+                                          const uint8_t* strength1, const int* indices, int count,
+                                          uint32_t source_width, uint32_t offset, uint32_t width,
+                                          int8_t sign, int mode);
+g4_t llg_gmp_sv4_udp_eval(const uint8_t* rows, size_t row_count, size_t input_count,
+                           const g4_t* const* inputs);
+/* End V05/S6. */
+
 #ifdef __cplusplus
 }
 #endif
@@ -572,6 +599,36 @@ static inline void llg_gmp_sv4_import_words(g4_t* v, size_t first, const llg_gmp
 #define sv4_xnor llg_gmp_sv4_xnor
 #define sv4_xor llg_gmp_sv4_xor
 #define sv4_zero llg_gmp_sv4_zero
+/* V05/S6 public names. */
+#define sv4_enum_navigate llg_gmp_sv4_enum_navigate
+#define sv4_resolve llg_gmp_sv4_resolve
+#define sv4_resolve_strengths llg_gmp_sv4_resolve_strengths
+#define sv4_resolve_strengths_range llg_gmp_sv4_resolve_strengths_range
+#define sv4_udp_eval llg_gmp_sv4_udp_eval
+#define LLG_RESOLVE_WIRE LLG_GMP_RESOLVE_WIRE
+#define LLG_RESOLVE_WAND LLG_GMP_RESOLVE_WAND
+#define LLG_RESOLVE_WOR LLG_GMP_RESOLVE_WOR
+#define LLG_RESOLVE_TRI0 LLG_GMP_RESOLVE_TRI0
+#define LLG_RESOLVE_TRI1 LLG_GMP_RESOLVE_TRI1
+#define LLG_RESOLVE_SUPPLY0 LLG_GMP_RESOLVE_SUPPLY0
+#define LLG_RESOLVE_SUPPLY1 LLG_GMP_RESOLVE_SUPPLY1
+#define LLG_STRENGTH_HIGHZ LLG_GMP_STRENGTH_HIGHZ
+#define LLG_STRENGTH_SMALL LLG_GMP_STRENGTH_SMALL
+#define LLG_STRENGTH_MEDIUM LLG_GMP_STRENGTH_MEDIUM
+#define LLG_STRENGTH_WEAK LLG_GMP_STRENGTH_WEAK
+#define LLG_STRENGTH_LARGE LLG_GMP_STRENGTH_LARGE
+#define LLG_STRENGTH_PULL LLG_GMP_STRENGTH_PULL
+#define LLG_STRENGTH_STRONG LLG_GMP_STRENGTH_STRONG
+#define LLG_STRENGTH_SUPPLY LLG_GMP_STRENGTH_SUPPLY
+#define sv4_to_real llg_gmp_sv4_to_real
+#define llg_real_to_bool llg_gmp_real_to_bool
+/* V05/S8 public names. */
+#define sv4_fits_i64 llg_gmp_sv4_fits_i64
+#define sv4_format llg_gmp_sv4_format
+#define sv4_to_dec_string llg_gmp_sv4_to_dec_string
+#define sv4_to_i64 llg_gmp_sv4_to_i64
+#define sv4_to_index llg_gmp_sv4_to_index
+#define sv4_to_index_i64 llg_gmp_sv4_to_index_i64
 #define sv4_t llg_gmp_sv4_t
 #define llg_sv4_word_t llg_gmp_sv4_word_t
 #define llg_sv4_vpi_word_t llg_gmp_sv4_vpi_word_t
