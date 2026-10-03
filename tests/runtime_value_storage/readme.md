@@ -43,6 +43,7 @@ capabilities; check the exact inventory rather than assuming a fixed count.
 
 | Probe / group | Contract |
 | --- | --- |
+| `consumer_bridge_probe.c` | Allocation-free masked/range compare/copy/fill at unaligned offsets and 0/31/32/63/64/65/129/257-bit boundaries; foreign 32-bit record strides, partial imports, copied A/B snapshots, zero-extended text and modular digit parsing. |
 | `neutral_access_probe.c` | Neutral shape/state/word/range mutation at 0..1,048,575 bits; literal Rust/DPI/VPI encodings, source-sign cast versus requested-sign resize, two-state coercion and independent/self-alias owner operations. The prototype compiles this same client against its two selectors. |
 | `storage_probe.c` | Exact contiguous planes, masking, independent clone/copy/move, repeated destruction, 10,000 replacements, zero/exclusive widths and failure-atomic OOM. Fatal cases require specific diagnostics. |
 | `stream_preflight_probe.c` | INT64 endpoints, declared bounds/traversal, unknown selectors, source-size rejection including later short segments, and zero remaining packed owners. |
@@ -248,3 +249,34 @@ The standalone public-name probe exercises reference/selection aliases.
 Benchmarks report seven-sample medians/ranges at 1, 64, 65, 256 and 4096 bits,
 known and X/Z, with fresh results; write rows include cloning the fresh target.
 These remain component measurements, without generated-model or HDL claims.
+
+The S6–S9 adapter probes add exhaustive two-driver strength endpoints, all UDP
+mask/state combinations, enum order/defaults, full/unaligned-range resolution,
+real/time conversion and failure cases, bounded radix/decimal formatting, exact
+host indices, checked widths and source-compatible macro/reference types.
+`compact_adapters_oracle.py` checks numeric/text results against Python integers,
+rational rounding and struct bit conversions in both backends. Large finite
+packed-to-real results permit at most one double ULP; exact bit reinterpretation
+and real-to-integer conversion have exact expectations.
+
+Build the additional targets in either configured compact build directory:
+
+```sh
+cmake --build /build/llg-compact-gcc --parallel 6 --target \
+  compact_portable_net_adapters compact_gmp_net_adapters \
+  compact_portable_real_time compact_gmp_real_time \
+  compact_portable_format_index compact_gmp_format_index \
+  compact_portable_facade_adapters compact_gmp_facade_adapters \
+  compact_legacy_facade_adapters compact_adapters_oracle_legacy \
+  compact_adapters_oracle_portable compact_adapters_oracle_gmp \
+  compact_portable_adapters_benchmark compact_gmp_adapters_benchmark
+ctest --test-dir /build/llg-compact-gcc -R '^compact_' --output-on-failure --parallel 6
+/build/llg-compact-gcc/compact_gmp_adapters_benchmark
+```
+
+The adapter benchmark measures seven alternating-order samples at 1/64/65/256/
+4096 bits, known and X/Z, including fresh owned results and scalar/text inspection.
+Bit reinterpretation and rtoi have their fixed 64/32-bit result widths; real delay
+is a native scalar. Packed delay uses a representable low-limb input. Checked-width timing uses valid
+known inputs; its X/Z rejection is exercised by the failure probes. No model
+selection, scheduler adoption or native non-Linux qualification is implied.

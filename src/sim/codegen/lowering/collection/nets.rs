@@ -1024,6 +1024,21 @@ impl<'a> Codegen<'a> {
 
     pub(in super::super) fn array_net_endpoint(&self, node: NodeId) -> Option<(usize, u64)> {
         let (base, indices) = match self.kind(node) {
+            NodeKind::Expr(ExprKind::HierPath { refs, .. }) => {
+                return refs
+                    .iter()
+                    .flatten()
+                    .find_map(|root| self.array_net_endpoint(*root));
+            }
+            NodeKind::Expr(ExprKind::ArraySelect { base, .. })
+                if self.array_of(*base).is_none() =>
+            {
+                let root = self
+                    .db
+                    .array_select_path(node)
+                    .map_or(*base, |(root, _)| root);
+                return self.array_net_endpoint(root);
+            }
             NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => (*base, indices.clone()),
             NodeKind::Expr(ExprKind::BitSelect { base, index })
                 if self.array_of(*base).is_some() =>

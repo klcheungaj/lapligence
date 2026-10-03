@@ -301,12 +301,12 @@ int64_t llg_fixed_stream_index_at(int64_t left, int64_t right, size_t offset) {
 }
 
 sv4_t llg_stream_to_fixed(sv4_t value, uint32_t width, int is_signed) {
-    if (value.width > width)
+    if (llg_sv4_width(value) > width)
         llg_container_fatal("streaming concatenation is larger than its fixed-size target");
     sv4_t result = sv4_zero(width, is_signed);
-    if (value.width)
+    if (llg_sv4_width(value))
         sv4_part_select_set(&result, (int64_t)width - 1,
-                            (int64_t)(width - value.width), value);
+                            (int64_t)(width - llg_sv4_width(value)), value);
     return result;
 }
 
@@ -423,10 +423,10 @@ void llg_dyn_delete(llg_dyn_array_t* array) {
 }
 
 static uint64_t llg_dynamic_size(sv4_t value) {
-    if (value.width == 0 || value.width > (LLG_SUPPORTED_WIDTH_LIMIT - 1u))
+    if (llg_sv4_width(value) == 0 || llg_sv4_width(value) > (LLG_SUPPORTED_WIDTH_LIMIT - 1u))
         llg_container_fatal("malformed dynamic-array size value");
-    if (sv4_is_unknown(value) || (value.is_signed &&
-        ((value.bits[(value.width - 1) / 64] >> ((value.width - 1) % 64)) & 1u)))
+    if (sv4_is_unknown(value) || (llg_sv4_signed(value) &&
+        ((llg_sv4_word(value, (llg_sv4_width(value) - 1) / 64, LLG_SV4_BITS) >> ((llg_sv4_width(value) - 1) % 64)) & 1u)))
         llg_container_fatal("dynamic-array size is unknown or negative");
     uint64_t size = sv4_to_index(value);
     if (size == UINT64_MAX)

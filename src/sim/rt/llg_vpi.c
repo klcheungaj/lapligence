@@ -754,7 +754,7 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
     if (valid_handle(handle, LLG_VPI_CALL)) {
         llg_vpi_call_t* call = ((llg_vpi_handle_t*)handle)->call;
         if (property == vpiType) return call->is_function ? vpiSysFuncCall : vpiSysTaskCall;
-        if (property == vpiSize) return call->has_real_return ? 0 : (PLI_INT32)call->return_value.width;
+        if (property == vpiSize) return call->has_real_return ? 0 : (PLI_INT32)llg_sv4_width(call->return_value);
         vpi_set_error(vpiPLI, vpiError, "LLG_VPI_UNSUPPORTED", "unsupported VPI system-call property");
         return vpiUndefined;
     }
@@ -816,24 +816,9 @@ static sv4_t call_value(llg_vpi_call_t* call) {
 
 static void copy_to_vector(sv4_t value, s_vpi_vecval* vector) {
     if (!vector) return;
-    uint32_t words = (value.width + 31u) / 32u;
-    for (uint32_t word = 0; word < words; ++word) {
-        uint32_t aval = 0;
-        uint32_t bval = 0;
-        for (uint32_t bit = 0; bit < 32; ++bit) {
-            uint32_t index = word * 32u + bit;
-            if (index >= value.width) break;
-            uint32_t limb = index / 64u;
-            uint32_t offset = index % 64u;
-            uint32_t known = (uint32_t)((value.bits[limb] >> offset) & 1u);
-            uint32_t unknown = (uint32_t)(((value.x[limb] | value.z[limb]) >> offset) & 1u);
-            if (known) aval |= 1u << bit;
-            if (unknown) bval |= 1u << bit;
-            if (unknown && ((value.x[limb] >> offset) & 1u)) aval |= 1u << bit;
-        }
-        vector[word].aval = aval;
-        vector[word].bval = bval;
-    }
+    _Static_assert(offsetof(s_vpi_vecval, bval) == sizeof(uint32_t), "VPI vector layout");
+    _Static_assert(sizeof(vector[0].aval) == sizeof(uint32_t), "VPI word size");
+    llg_sv4_export_vpi32(value, vector, (llg_sv4_width(value) + 31u) / 32u, sizeof(*vector));
 }
 
 static sv4_t handle_value(vpiHandle handle, int* valid) {
@@ -912,11 +897,11 @@ void vpi_get_value(vpiHandle handle, p_vpi_value output) {
     if (!valid) goto cleanup;
     switch (output->format) {
         case vpiScalarVal:
-            if (value.width != 1) {
+            if (llg_sv4_width(value) != 1) {
                 vpi_set_error(vpiPLI, vpiError, "LLG_VPI_VALUE", "scalar value requested for a vector handle");
                 goto cleanup;
             }
-            output->value.scalar = value.z[0] ? vpiZ : value.x[0] ? vpiX : value.bits[0] ? vpi1 : vpi0;
+            output->value.scalar = (PLI_INT32)llg_sv4_state_to_dpi(llg_sv4_state(value, 0));
             break;
         case vpiIntVal:
             output->value.integer = (PLI_INT32)sv4_to_i64(value);
@@ -925,11 +910,11 @@ void vpi_get_value(vpiHandle handle, p_vpi_value output) {
             /* The request supplies only a format, not a writable vector pointer.
              * Keep the result alive until the next get-value call or shutdown. */
             output->value.vector = NULL;
-            if (value.width == 0 || value.width >= LLG_SUPPORTED_WIDTH_LIMIT) {
+            if (llg_sv4_width(value) == 0 || llg_sv4_width(value) >= LLG_SUPPORTED_WIDTH_LIMIT) {
                 vpi_set_error(vpiPLI, vpiError, "LLG_VPI_VALUE", "invalid packed value width");
                 goto cleanup;
             }
-            size_t words = ((size_t)value.width - 1u) / 32u + 1u;
+            size_t words = ((size_t)llg_sv4_width(value) - 1u) / 32u + 1u;
             if (words > SIZE_MAX / sizeof(*g_vpi.value_vector)) {
                 vpi_set_error(vpiPLI, vpiError, "LLG_VPI_NOMEM", "VPI vector size overflow");
                 goto cleanup;
@@ -952,7 +937,7 @@ void vpi_get_value(vpiHandle handle, p_vpi_value output) {
         case vpiOctStrVal:
         case vpiDecStrVal:
         case vpiHexStrVal: {
-            size_t need = (size_t)value.width + 3u;
+            size_t need = (size_t)llg_sv4_width(value) + 3u;
             if (need > g_vpi.value_text_capacity) {
                 char* text = realloc(g_vpi.value_text, need);
                 if (!text) {
@@ -992,24 +977,13 @@ static int value_from_vpi(const s_vpi_value* input, uint32_t width,
             return 1;
         case vpiIntVal:
             sv4_replace(result, sv4_from_i64(input->value.integer, width));
-            result->is_signed = is_signed;
+            llg_sv4_set_signed(result, is_signed);
             return 1;
         case vpiVectorVal: {
             if (!input->value.vector) return 0;
             sv4_t value = sv4_zero(width, is_signed);
-            for (uint32_t word = 0; word < (width + 31u) / 32u; ++word) {
-                uint32_t aval = input->value.vector[word].aval;
-                uint32_t bval = input->value.vector[word].bval;
-                uint32_t shift = (word & 1u) * 32u;
-                value.bits[word / 2u] |= (uint64_t)(aval & ~bval) << shift;
-                value.x[word / 2u] |= (uint64_t)(aval & bval) << shift;
-                value.z[word / 2u] |= (uint64_t)(~aval & bval) << shift;
-            }
-            if (width % 64u) {
-                uint64_t mask = (UINT64_C(1) << (width % 64u)) - 1u;
-                uint32_t top = width / 64u;
-                value.bits[top] &= mask; value.x[top] &= mask; value.z[top] &= mask;
-            }
+            llg_sv4_import_vpi32(&value, input->value.vector,
+                                 (width + 31u) / 32u, sizeof(*input->value.vector));
             sv4_move(result, &value);
             return 1;
         }
@@ -1032,7 +1006,7 @@ vpiHandle vpi_put_value(vpiHandle handle, p_vpi_value input, p_vpi_time time,
             return NULL;
         }
         if (!call->has_real_return) {
-            if (!value_from_vpi(input, call->return_value.width, call->return_value.is_signed, &call->return_value))
+            if (!value_from_vpi(input, llg_sv4_width(call->return_value), llg_sv4_signed(call->return_value), &call->return_value))
                 vpi_set_error(vpiRun, vpiError, "LLG_VPI_VALUE", "invalid system-function return value");
         } else if (!input || input->format != vpiRealVal) {
             vpi_set_error(vpiRun, vpiError, "LLG_VPI_VALUE", "real system-function requires vpiRealVal");
@@ -1368,8 +1342,8 @@ int llg_vpi_compile_call_site(uint64_t id, const char* name,
     invoke_compiletf(&call);
     site->registration = call.registration;
     site->result_real = (int8_t)call.has_real_return;
-    site->result_width = call.has_real_return ? 0 : call.return_value.width;
-    site->result_signed = call.return_value.is_signed;
+    site->result_width = call.has_real_return ? 0 : llg_sv4_width(call.return_value);
+    site->result_signed = llg_sv4_signed(call.return_value);
     site->valid = !g_vpi.error_pending && call.registration != NULL;
     release_compile_call(&call);
     return site->valid;

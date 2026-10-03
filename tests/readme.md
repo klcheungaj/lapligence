@@ -118,6 +118,13 @@ requirements above apply without repeating them for each suite.
 | Integrated selected profile | `sim_syn038_ledger`, pairwise suites and `sim_syn039_acceptance`; [ledger](syn038_coverage_ledger.md), [integrated fixtures](fixtures/sim/syn039_acceptance/readme.md). SYN-039 runs four runtime-stimulated compositions in both optimizer modes and preserves the sequential-UDP rejection. |
 | Compiler directives | `sim_directive_effects`, `sim_syn017_directive_effects`, `sim_edition` and `sim_syn038_ledger`; [SYN-017 matrix](fixtures/sim/syn017_directives/readme.md) covers both editions, both optimizer modes, preprocessing into execution, unit state and strict older-edition gates. |
 
+`runtime_value_facade` runs the cheap private-field/template guard in
+`scripts/check_value_facade.py`. Its explicit whitelist contains only nonpacked
+metadata receivers; value backends and vendored GTKWave are excluded. Run the
+script directly for a quick audit, or with `--self-test` to check rejection cases.
+Native layout expressions (`sizeof`/`_Alignof`) remain legal; V07 owns numeric
+emitter frame estimates and backend ABI selection.
+
 ### Selected-profile qualifications
 
 - [SYN-012 fixed layouts](fixtures/sim/syn012_fixed_layout/readme.md) spans widths
@@ -579,7 +586,8 @@ become accidental Cargo targets. Use domain-qualified name filters when necessar
 Fragment/embedding-order tests do not compile runtime fragments independently;
 facade compilation and generated-model execution are separate checks.
 
-Standalone compact-backend checks and microbenchmarks are opt-in CMake targets;
+Standalone compact-backend checks and microbenchmarks, including net/strength,
+real/time, formatting/index and facade adapter probes, are opt-in CMake targets;
 see [native value probes](runtime_value_storage/readme.md#standalone-compact-value-backend).
 They cover portable and optional GMP limb kernels independently of generated
 model selection and do not replace later HDL/model integration acceptance.
