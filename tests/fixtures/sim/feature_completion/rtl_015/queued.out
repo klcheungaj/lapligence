@@ -1,0 +1,10 @@
+issued 00 00 00 00
+committed 00 a1 a2 00
+mixed b1 00 00 b2 b3
+reversed 65 43 21 b2 b3
+member 9 00 c1 c2
+member_static ee c1 c2
+big dead beef
+before 00 a1 66 00
+after 00 77 88 00
+static c3 c2 c1
