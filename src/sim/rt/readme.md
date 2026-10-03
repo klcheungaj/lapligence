@@ -32,7 +32,7 @@ exit or cancellation. All payload operations use the public value facade.
 | `llg_value.h/.c`, `value/` | Four-state values, arithmetic, selection, resolution, formatting and numeric conversion; scheduler-independent. |
 | `llg_random.h/.c` | Verilog random/distribution functions and explicit seed updates. |
 | `llg_rng.h/.c` | Process/object random streams, independent of scheduling. |
-| `llg_co.h/.c` | Stackless coroutine frames, anchors and arena cold paths; the generated-process contract is [process ABI version 3](process_abi.md). |
+| `llg_co.h/.c` | Stackless coroutine frames, anchors, arena cold paths and the synchronous driver for recursive subprograms; the generated-process contract is [process ABI version 3](process_abi.md). |
 | `llg_string.h/.c` | Owned byte strings, conversion and change notification. |
 | `llg_container.h/.c`, `container/` | Dynamic arrays, queues, associative storage and retained element identities. |
 | `llg_rt.h/.c`, `scheduler/` | IEEE region scheduling, processes, events, assignments, synchronization, assertions, I/O and VPI. |

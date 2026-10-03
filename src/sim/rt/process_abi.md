@@ -264,6 +264,22 @@ LLG_CO_CALL_ARENA(co, ch, 10, &fn_task_desc, F->arena_call);
 The call macro pops the arena allocation only after completion. `CALL`, `CALLED`, child
 return, and READY never visit the scheduler or release `join_none` children.
 
+Recursive subprograms that cannot suspend use the same arena calls without a
+process chain. `<fn>_co` has the coroutine entry type and a `_llg_result`
+destination field; its plain-ABI entry starts a private chain on the native
+stack and runs the coroutine to completion:
+
+```c
+llg_co_sync_t s;
+fn_frame_t* F = (fn_frame_t*)llg_co_sync_begin(&s, &fn_co_desc, NULL);
+F->a0 = *a0; F->depth = depth; F->_llg_result = _llg_result;
+(void)llg_co_sync_run(&s);
+```
+
+Such a coroutine never returns PENDING and keeps plain-function exits, so
+`chain.exiting` of the private chain stays zero; termination is observed
+through `llg_rt_exiting()` exactly as in a plain function.
+
 ## Termination and process end
 
 `chain.exiting` has two nonzero values:

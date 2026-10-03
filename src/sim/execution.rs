@@ -5,6 +5,7 @@
 //! not infer scheduling from source process kinds.
 
 mod analysis;
+mod recursion;
 
 pub use analysis::{
     CallMechanism, CoroutineId, ExecutionAnalysis, ExecutionAnalysisError,
@@ -535,7 +536,7 @@ fn build_processes(ir: &mut IrModel) -> Vec<ExecutionProcess> {
 
 fn effects_for_blocks(ir: &IrModel, blocks: &[ExecutionBlock]) -> Vec<ExecutionEffect> {
     let mut effects = Vec::new();
-    let mut visited_calls = HashSet::new();
+    let mut visited_calls = CallVisits::default();
     for (block_index, block) in blocks.iter().enumerate() {
         collect_effects(ir, &block.operations, &mut effects, &mut visited_calls);
         if matches!(&block.terminator, ExecutionTerminator::Suspend { .. }) {
@@ -557,17 +558,113 @@ fn effects_for_blocks(ir: &IrModel, blocks: &[ExecutionBlock]) -> Vec<ExecutionE
 
 pub(crate) fn effects_for_statements(ir: &IrModel, statements: &[IrStmt]) -> Vec<ExecutionEffect> {
     let mut effects = Vec::new();
-    collect_effects(ir, statements, &mut effects, &mut HashSet::new());
+    collect_effects(ir, statements, &mut effects, &mut CallVisits::default());
     effects.sort();
     effects.dedup();
     effects
+}
+
+/// The subprogram(s) one call site may enter.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum CallTarget {
+    /// A statically bound subprogram.
+    Static(usize),
+    /// Class virtual dispatch through the slot of the named method: any
+    /// subprogram with that `virtual_slot` (the method itself without one).
+    Virtual(usize),
+    /// Virtual-interface dispatch of `(interface, method)`: any instance
+    /// implementation of that method.
+    Interface(usize, usize),
+}
+
+impl CallTarget {
+    pub(crate) fn of_call(
+        function: usize,
+        virtual_dispatch: bool,
+        virtual_call: Option<&crate::sim::ir::IrVirtualCall>,
+    ) -> Self {
+        if let Some(call) = virtual_call {
+            Self::Interface(call.interface, call.method)
+        } else if virtual_dispatch {
+            Self::Virtual(function)
+        } else {
+            Self::Static(function)
+        }
+    }
+
+    /// Every subprogram this target may enter, in ascending index order.
+    pub fn functions(&self, ir: &IrModel) -> Vec<usize> {
+        let mut functions = match *self {
+            Self::Static(function) => vec![function],
+            Self::Virtual(function) => match ir.funcs.get(function).and_then(|f| f.virtual_slot) {
+                Some(slot) => ir
+                    .funcs
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, candidate)| candidate.virtual_slot == Some(slot))
+                    .map(|(index, _)| index)
+                    .collect(),
+                None => vec![function],
+            },
+            Self::Interface(interface, method) => ir
+                .virtual_interfaces
+                .get(interface)
+                .and_then(|interface| interface.methods.get(method))
+                .map(|method| method.instances.iter().flatten().copied().collect())
+                .unwrap_or_default(),
+        };
+        functions.retain(|function| *function < ir.funcs.len());
+        functions.sort_unstable();
+        functions.dedup();
+        functions
+    }
+}
+
+/// Call targets written directly in `statements`, including calls inside
+/// expressions and inline constructor recipes, without following callee
+/// bodies. Each distinct target is reported once, in target order.
+pub(crate) fn direct_call_targets(ir: &IrModel, statements: &[IrStmt]) -> Vec<CallTarget> {
+    let mut visits = CallVisits {
+        direct: Some(BTreeSet::new()),
+        ..CallVisits::default()
+    };
+    collect_effects(ir, statements, &mut Vec::new(), &mut visits);
+    visits.direct.unwrap_or_default().into_iter().collect()
+}
+
+/// Recursion guard and optional call recorder shared by the effect walkers.
+///
+/// Effect summaries follow callee bodies once (`visited`). In direct mode the
+/// walkers instead record every call target and do not enter callee bodies;
+/// constructor recipes and native accesses, which are expanded inline, are
+/// still walked under the same `visited` keys.
+#[derive(Default)]
+struct CallVisits {
+    visited: HashSet<usize>,
+    direct: Option<BTreeSet<CallTarget>>,
+}
+
+impl CallVisits {
+    fn insert(&mut self, key: usize) -> bool {
+        self.visited.insert(key)
+    }
+
+    fn remove(&mut self, key: &usize) {
+        self.visited.remove(key);
+    }
+
+    fn record(&mut self, target: CallTarget) {
+        if let Some(targets) = self.direct.as_mut() {
+            targets.insert(target);
+        }
+    }
 }
 
 fn collect_effects(
     ir: &IrModel,
     statements: &[IrStmt],
     effects: &mut Vec<ExecutionEffect>,
-    visited_calls: &mut HashSet<usize>,
+    visited_calls: &mut CallVisits,
 ) {
     for statement in statements {
         let statement = statement.unlocated();
@@ -749,6 +846,11 @@ fn collect_effects(
                 if let Some(virtual_call) = &call.virtual_call {
                     collect_chandle_effects(ir, &virtual_call.receiver, effects, visited_calls);
                 }
+                visited_calls.record(CallTarget::of_call(
+                    call.function_index(),
+                    call.virtual_dispatch,
+                    call.virtual_call.as_ref(),
+                ));
                 collect_callee_effects(
                     ir,
                     call.function_index(),
@@ -812,14 +914,14 @@ fn collect_callee_effects(
     function: usize,
     conservative: bool,
     effects: &mut Vec<ExecutionEffect>,
-    visited_calls: &mut HashSet<usize>,
+    visited_calls: &mut CallVisits,
 ) {
     if conservative {
         effects.push(ExecutionEffect::Suspend);
         effects.push(ExecutionEffect::Terminate);
         effects.push(ExecutionEffect::Disable);
     }
-    if !visited_calls.insert(function) {
+    if visited_calls.direct.is_some() || !visited_calls.insert(function) {
         return;
     }
     if let Some(function) = ir.funcs.get(function) {
@@ -840,7 +942,7 @@ fn collect_statement_expression_effects(
     ir: &IrModel,
     statement: &IrStmt,
     effects: &mut Vec<ExecutionEffect>,
-    visited_calls: &mut HashSet<usize>,
+    visited_calls: &mut CallVisits,
 ) {
     let statement = statement.unlocated();
     if let Some(value) = statement.delay_expression() {
@@ -1139,7 +1241,7 @@ fn collect_stream_selector_effects(
     ir: &IrModel,
     selector: &IrStreamSelector,
     effects: &mut Vec<ExecutionEffect>,
-    visited_calls: &mut HashSet<usize>,
+    visited_calls: &mut CallVisits,
 ) {
     match selector {
         IrStreamSelector::Index(index) => {
@@ -1160,7 +1262,7 @@ fn collect_native_access_effects(
     ir: &IrModel,
     name: &str,
     effects: &mut Vec<ExecutionEffect>,
-    visited_calls: &mut HashSet<usize>,
+    visited_calls: &mut CallVisits,
 ) {
     let name = name.strip_prefix('&').unwrap_or(name);
     let Some((index, access)) = ir
@@ -1192,7 +1294,7 @@ fn collect_argument_effects(
     ir: &IrModel,
     argument: &IrCallArg,
     effects: &mut Vec<ExecutionEffect>,
-    visited_calls: &mut HashSet<usize>,
+    visited_calls: &mut CallVisits,
 ) {
     match argument {
         IrCallArg::Val(value) => collect_expression_effects(ir, value, effects, visited_calls),
@@ -1260,7 +1362,7 @@ fn collect_expression_effects(
     ir: &IrModel,
     expression: &IrExpr,
     effects: &mut Vec<ExecutionEffect>,
-    visited_calls: &mut HashSet<usize>,
+    visited_calls: &mut CallVisits,
 ) {
     match expression.kind() {
         IrExprKind::Mutation(mutation) => {
@@ -1320,6 +1422,11 @@ fn collect_expression_effects(
             }) {
                 effects.push(ExecutionEffect::ImmediateStore);
             }
+            visited_calls.record(CallTarget::of_call(
+                call.function_index(),
+                call.virtual_dispatch,
+                call.virtual_call.as_ref(),
+            ));
             collect_callee_effects(
                 ir,
                 call.function_index(),
@@ -1672,7 +1779,7 @@ fn collect_object_statement_effects(
     ir: &IrModel,
     statement: &IrObjectStmt,
     effects: &mut Vec<ExecutionEffect>,
-    visited_calls: &mut HashSet<usize>,
+    visited_calls: &mut CallVisits,
 ) {
     match statement {
         IrObjectStmt::StringPrint(value)
@@ -1744,7 +1851,7 @@ fn collect_object_query_effects(
     ir: &IrModel,
     query: &IrObjectQuery,
     effects: &mut Vec<ExecutionEffect>,
-    visited_calls: &mut HashSet<usize>,
+    visited_calls: &mut CallVisits,
 ) {
     match query {
         IrObjectQuery::StringLen(value)
@@ -1821,7 +1928,7 @@ fn collect_mailbox_value_effects(
     ir: &IrModel,
     value: &IrMailboxValue,
     effects: &mut Vec<ExecutionEffect>,
-    visited_calls: &mut HashSet<usize>,
+    visited_calls: &mut CallVisits,
 ) {
     match value {
         IrMailboxValue::Packed { value, .. } | IrMailboxValue::Real { value, .. } => {
@@ -1839,7 +1946,7 @@ fn collect_mailbox_expr_effects(
     ir: &IrModel,
     value: &IrMailboxExpr,
     effects: &mut Vec<ExecutionEffect>,
-    visited_calls: &mut HashSet<usize>,
+    visited_calls: &mut CallVisits,
 ) {
     match value {
         IrMailboxExpr::Read(value) => collect_chandle_effects(ir, value, effects, visited_calls),
@@ -1854,7 +1961,7 @@ fn collect_string_effects(
     ir: &IrModel,
     value: &IrStringExpr,
     effects: &mut Vec<ExecutionEffect>,
-    visited_calls: &mut HashSet<usize>,
+    visited_calls: &mut CallVisits,
 ) {
     match value {
         IrStringExpr::Call {
@@ -1868,6 +1975,7 @@ fn collect_string_effects(
                 collect_chandle_effects(ir, receiver, effects, visited_calls);
             }
             effects.push(ExecutionEffect::RuntimeService);
+            visited_calls.record(CallTarget::of_call(*function, *virtual_dispatch, None));
             collect_callee_effects(ir, *function, *virtual_dispatch, effects, visited_calls);
             for argument in args {
                 collect_expression_effects(ir, argument, effects, visited_calls);
@@ -1884,6 +1992,7 @@ fn collect_string_effects(
                 collect_chandle_effects(ir, receiver, effects, visited_calls);
             }
             effects.push(ExecutionEffect::RuntimeService);
+            visited_calls.record(CallTarget::of_call(*function, *virtual_dispatch, None));
             collect_callee_effects(ir, *function, *virtual_dispatch, effects, visited_calls);
             for argument in args {
                 collect_argument_effects(ir, argument, effects, visited_calls);
@@ -1950,7 +2059,7 @@ fn collect_chandle_effects(
     ir: &IrModel,
     value: &IrChandleExpr,
     effects: &mut Vec<ExecutionEffect>,
-    visited_calls: &mut HashSet<usize>,
+    visited_calls: &mut CallVisits,
 ) {
     match value {
         IrChandleExpr::Construct(index) => {
@@ -1997,6 +2106,7 @@ fn collect_chandle_effects(
                 collect_chandle_effects(ir, receiver, effects, visited_calls);
             }
             effects.push(ExecutionEffect::RuntimeService);
+            visited_calls.record(CallTarget::of_call(*function, *virtual_dispatch, None));
             collect_callee_effects(ir, *function, *virtual_dispatch, effects, visited_calls);
             for argument in args {
                 collect_argument_effects(ir, argument, effects, visited_calls);
@@ -2010,7 +2120,7 @@ fn collect_lhs_expression_effects(
     ir: &IrModel,
     lhs: &IrLhs,
     effects: &mut Vec<ExecutionEffect>,
-    visited_calls: &mut HashSet<usize>,
+    visited_calls: &mut CallVisits,
 ) {
     match lhs {
         IrLhs::PackedSelect { target, steps, .. } => {
@@ -2062,12 +2172,13 @@ fn collect_fixed_value_effects(
     ir: &IrModel,
     value: &crate::sim::ir::IrFixedValue,
     effects: &mut Vec<ExecutionEffect>,
-    visited_calls: &mut HashSet<usize>,
+    visited_calls: &mut CallVisits,
 ) {
     use crate::sim::ir::IrFixedValue;
     value.expressions(&mut |child| collect_expression_effects(ir, child, effects, visited_calls));
     match value {
         IrFixedValue::Call { call, .. } => {
+            visited_calls.record(CallTarget::of_call(call.function_index(), false, None));
             collect_callee_effects(ir, call.function_index(), false, effects, visited_calls)
         }
         IrFixedValue::Conditional { left, right, .. } => {
@@ -2182,7 +2293,12 @@ mod tests {
             );
             model.validate_expr(&expression, None).unwrap();
             let mut effects = Vec::new();
-            collect_expression_effects(&model, &expression, &mut effects, &mut HashSet::new());
+            collect_expression_effects(
+                &model,
+                &expression,
+                &mut effects,
+                &mut CallVisits::default(),
+            );
             assert!(effects.contains(&ExecutionEffect::RuntimeService));
         }
     }
@@ -2471,7 +2587,7 @@ mod tests {
             &ir,
             &expression,
             &mut expression_effects,
-            &mut HashSet::new(),
+            &mut CallVisits::default(),
         );
         assert!(expression_effects.contains(&ExecutionEffect::Suspend));
         assert!(expression_effects.contains(&ExecutionEffect::Terminate));

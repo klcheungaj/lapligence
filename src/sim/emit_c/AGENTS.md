@@ -58,7 +58,22 @@ descriptors and layout assertions all name the shared type. Each storage-bearing
 callees occupy ordinary members of its deterministic `union callsN`, anchored
 callees use `LLG_CO_ANCHORED(T)`,
 and recursive or oversized callees use `ch->arena`. Descriptor
-offsets use the complete nested member path. Compute conservative LP64 upper
+offsets use the complete nested member path.
+
+Recursive synchronous subprograms (`ExecutionAnalysis::is_recursive_function`)
+render twice from the same body: `<fn>_co` in a `Frame::new_recursive` frame and
+the plain-ABI entry `<fn>`, which copies its parameters into an arena frame from
+`llg_co_sync_begin` and runs `llg_co_sync_run`. Every caller outside the
+component, including dispatchers and DPI exports, keeps calling `<fn>`. The
+coroutine keeps plain-function exits (`llg_rt_exiting`, budget and
+cancellation `goto _llg_return`, `llg_current()` for `self`), numbers its
+resume points as it emits arena calls, and writes its result through the
+`_llg_result` frame pointer at `_llg_return`; the guard writes the result
+default. Arena call sites store by-value packed descriptors, `depth + 1` and a
+destination that survives the resume (temporary slot, reserved native object or
+frame scalar). Dynamic calls use per-slot/method helpers returning an anchor for
+a recursive implementation and NULL after a plain call or dispatch failure.
+Compute conservative LP64 upper
 bounds with every embedded call charged its 16-byte anchor prefix and sibling
 blocks contributing their maximum rather than their sum; the named
 `ExecutionAnalysisOptions::embed_limit` tunable defaults to 16 KiB and forces

@@ -45,6 +45,21 @@ optimizer and hash iteration order cannot affect site identity. Inline-expanded
 task statements remain in their host and therefore consume the host's resume
 numbers; existing inline-recursion rejection remains unchanged.
 
+`execution/recursion.rs` finds recursion among synchronous (non-suspending)
+subprograms so that SystemVerilog recursion depth never consumes native stack.
+Its graph has one node per non-inline subprogram with a body that is not
+suspendable; edges come from `direct_call_targets` (statement, expression,
+string/chandle, fixed-value and inline-constructor calls, without following
+callee bodies). A class virtual call contributes an edge to every method with
+the slot, a virtual-interface call to every instance implementation. Every
+member of a cyclic SCC is also emitted as a coroutine; a call from a member to
+any implementation in its own SCC is an arena call (`is_recursive_call`), and
+the slots/methods of such dynamic calls get arena-dispatch helpers. Calls into
+an SCC from outside keep the plain C entry, which runs the coroutine on a
+synchronous `llg_co_sync` driver, so native stack grows by one driver per SCC on
+a call path, bounded by the acyclic condensation. Re-entry through foreign DPI
+code is invisible to the graph and keeps native recursion.
+
 Source-backed suspension operations carry a scope-free `IrStmt::Located`
 wrapper. Analysis copies that owned origin into each numbered site after every
 optimization or arena reanalysis; inline expansions retain the callee statement's

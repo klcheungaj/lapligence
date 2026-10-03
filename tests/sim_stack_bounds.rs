@@ -6,9 +6,16 @@
 //! that supports `-fstack-usage` and reads the reported frame sizes; it skips
 //! only when no such compiler exists. The public CLI runs execute the same
 //! fixtures end to end against independent Python-derived values.
+//!
+//! Recursive subprograms run as stackless coroutines whose recursive calls
+//! use the chain arena, so SystemVerilog recursion depth does not consume
+//! native stack. The deep-recursion fixture runs through the public CLI and
+//! its built model is then rerun under a small POSIX stack limit.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+#[cfg(unix)]
+use std::time::Duration;
 
 use llg::core::compile::{self, CompileOpts};
 use llg::core::db::Db;
@@ -163,5 +170,101 @@ fn long_function_body_frame_is_bounded() {
                 );
             }
         }
+    }
+}
+
+/// Independent model of `mix` in `deep_recursion.sv`: 64-bit wrapping
+/// arithmetic over `n + 1` activations.
+fn mix(n: u32, a: u64) -> u64 {
+    // (addend or the input `a`, multiplier, shift of `a`) per statement pair.
+    const STEPS: [(Option<u64>, u64, u32); 8] = [
+        (None, 3, 1),
+        (Some(5), 7, 2),
+        (None, 11, 3),
+        (Some(13), 17, 4),
+        (None, 19, 5),
+        (Some(23), 29, 6),
+        (None, 31, 7),
+        (Some(37), 41, 8),
+    ];
+    let mut b = a;
+    for (addend, multiplier, shift) in STEPS {
+        b = b.wrapping_add(addend.unwrap_or(a)) ^ b.wrapping_mul(multiplier);
+        b = b.wrapping_sub(a >> shift);
+    }
+    if n == 0 {
+        b
+    } else {
+        mix(n - 1, b).wrapping_add(1)
+    }
+}
+
+fn deep_recursion_expected() -> String {
+    format!(
+        "mix={:016x}\neven=1 odd=1\ncalls=250 total={}\nlen=250 half=250.5\nlist={} doubled={}\nvif={}\n",
+        mix(250, 0x0123_4567_89ab_cdef),
+        (1..=250u32).sum::<u32>(),
+        (0..=200u32).sum::<u32>(),
+        2 * 200 + (0..200u32).sum::<u32>(),
+        7 + 240,
+    )
+}
+
+#[test]
+fn deep_recursion_runs() {
+    sim_cli::run_case(SUITE, "deep_recursion", &deep_recursion_expected(), "", &[]);
+}
+
+/// Stack limit for rerunning the deep-recursion model. With native C
+/// recursion this fixture crashed at `ulimit -s 256`; with arena recursion
+/// it runs in 64 KiB (see the stack-bounding evidence).
+#[cfg(unix)]
+const SMALL_STACK_KIB: &str = "256";
+
+#[cfg(unix)]
+#[test]
+fn deep_recursion_runs_under_a_small_stack_limit() {
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let expected = deep_recursion_expected();
+    for optimized in [true, false] {
+        let directory =
+            sim_harness::TempDir::new("stack-recursion").expect("create recursion directory");
+        let mut build = Command::new(env!("CARGO_BIN_EXE_llg"));
+        build
+            .current_dir(directory.path())
+            .args(["--top", "tb", "--out-dir", "out"]);
+        if !optimized {
+            build.arg("--no-opt");
+        }
+        build.arg(fixture("deep_recursion.sv"));
+        let output = sim_harness::run_command(&mut build, Duration::from_secs(180))
+            .expect("run llg on the deep-recursion fixture");
+        assert!(
+            output.status.success(),
+            "llg failed (optimized={optimized}): {output:?}"
+        );
+        assert_eq!(String::from_utf8_lossy(&output.stdout), expected);
+
+        let executable = directory.path().join("out/sim/tb/build/bin/sim");
+        let output = sim_harness::run_command(
+            Command::new("sh")
+                .args([
+                    "-c",
+                    "ulimit -s \"$1\" && exec \"$2\"",
+                    "llg-small-stack",
+                    SMALL_STACK_KIB,
+                ])
+                .arg(&executable),
+            Duration::from_secs(60),
+        )
+        .expect("rerun the deep-recursion model");
+        assert!(
+            output.status.success(),
+            "model failed under ulimit -s {SMALL_STACK_KIB} (optimized={optimized}): {output:?}"
+        );
+        assert_eq!(String::from_utf8_lossy(&output.stdout), expected);
     }
 }

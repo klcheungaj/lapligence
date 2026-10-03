@@ -100,7 +100,7 @@ fn virtual_call_args(f: &IrFunc) -> String {
     super::functions::func_param_names(f)
 }
 
-fn virtual_impl_for_class(model: &IrModel, class: usize, slot: usize) -> Option<usize> {
+pub(super) fn virtual_impl_for_class(model: &IrModel, class: usize, slot: usize) -> Option<usize> {
     let mut current = Some(class);
     while let Some(index) = current {
         if let Some(function) = model.funcs.iter().position(|function| {

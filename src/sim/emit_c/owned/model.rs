@@ -89,7 +89,80 @@ pub(in crate::sim::emit_c) fn function(
     ctx: &RCtx<'_>,
     function: &IrFunc,
 ) -> Result<String, String> {
-    render_function(ctx, function, Frame::new(ctx), false).map(|(source, _)| source)
+    render_function(ctx, function, Frame::new(ctx), false).map(|(source, _, _)| source)
+}
+
+/// A recursive subprogram's coroutine `<fn>_co` followed by its plain-ABI
+/// entry `<fn>`, which runs the coroutine on a synchronous driver. Returns
+/// the source, the frame layout and the number of resume points.
+pub(in crate::sim::emit_c) fn recursive_function(
+    ctx: &RCtx<'_>,
+    function: &IrFunc,
+    function_index: usize,
+    analysis: &ExecutionAnalysis,
+) -> Result<(String, super::super::frame_layout::FrameLayout, usize), String> {
+    let mut frame = Frame::new_recursive(ctx, analysis, function_index)?;
+    for (ty, name) in super::super::model::owned_frame_param_fields(function) {
+        frame.frame_field(&ty, &name)?;
+    }
+    if let Some((ty, name)) = super::super::model::recursive_result_field(function) {
+        frame.frame_field(&ty, &name)?;
+    }
+    let (mut source, layout, sites) = render_function(ctx, function, frame, true)?;
+    source.push_str(&recursive_entry(function));
+    Ok((
+        source,
+        layout.ok_or_else(|| "recursive function has no frame layout".to_owned())?,
+        sites,
+    ))
+}
+
+/// Plain-ABI entry of a recursive subprogram: copy the parameters into a
+/// fresh arena frame and run the coroutine to completion. Every caller
+/// outside the subprogram's component, including dispatch and DPI export
+/// wrappers, keeps calling this unchanged signature.
+fn recursive_entry(function: &IrFunc) -> String {
+    let name = &function.c_name;
+    let frame_type = format!("{name}_co_frame_t");
+    let return_type = super::super::model::owned_function_return_type(function);
+    let mut out = format!(
+        "static {return_type} {name}({}) {{\n    llg_co_sync_t _llg_sync;\n    {frame_type}* _llg_callee = ({frame_type}*)llg_co_sync_begin(&_llg_sync, &{name}_co_desc, NULL);\n",
+        super::super::model::owned_func_params(function)
+    );
+    for (ty, field) in super::super::model::owned_frame_param_fields(function) {
+        let value = if ty == "sv4_t" {
+            format!("*{field}")
+        } else {
+            field.clone()
+        };
+        out.push_str(&format!("    _llg_callee->{field} = {value};\n"));
+    }
+    let returned = match super::super::model::recursive_result_field(function) {
+        Some(_) if super::super::model::owned_packed_result(function) => {
+            out.push_str("    _llg_callee->_llg_result = _llg_result;\n");
+            false
+        }
+        Some(_) => {
+            let initial = if function.ret_string {
+                "{0}"
+            } else if function.ret_chandle {
+                "NULL"
+            } else {
+                "0.0"
+            };
+            out.push_str(&format!(
+                "    {return_type} _llg_returned = {initial};\n    _llg_callee->_llg_result = &_llg_returned;\n"
+            ));
+            true
+        }
+        None => false,
+    };
+    out.push_str("    (void)llg_co_sync_run(&_llg_sync);\n");
+    if returned {
+        out.push_str("    return _llg_returned;\n");
+    }
+    out.push_str("}\n");
+    out
 }
 
 pub(in crate::sim::emit_c) fn coroutine_function(
@@ -108,7 +181,7 @@ pub(in crate::sim::emit_c) fn coroutine_function(
     for (ty, name) in super::super::model::owned_frame_param_fields(function) {
         frame.frame_field(&ty, &name)?;
     }
-    let (source, layout) = render_function(ctx, function, frame, true)?;
+    let (source, layout, _) = render_function(ctx, function, frame, true)?;
     Ok((
         source,
         layout.ok_or_else(|| "coroutine function has no frame layout".to_owned())?,
@@ -120,14 +193,24 @@ fn render_function(
     function: &IrFunc,
     mut frame: Frame<'_, '_>,
     coroutine: bool,
-) -> Result<(String, Option<super::super::frame_layout::FrameLayout>), String> {
+) -> Result<
+    (
+        String,
+        Option<super::super::frame_layout::FrameLayout>,
+        usize,
+    ),
+    String,
+> {
     check_function(function)?;
+    // A recursive subprogram's coroutine returns its result through the
+    // caller's `_llg_result` destination (see `recursive_function`).
+    let synchronous = coroutine && frame.synchronous;
     frame.cell_eligibility = frame_cells::CellEligibility::analyze(ctx, &function.body);
     if function.dpi.is_some() {
         if coroutine {
             return Err("a DPI subprogram cannot be a coroutine".to_owned());
         }
-        return Ok((super::super::model::owned_dpi_thunk(function)?, None));
+        return Ok((super::super::model::owned_dpi_thunk(function)?, None, 0));
     }
     // Non-coroutine packed results go to the caller's `_llg_result`.
     let packed_result = !coroutine && super::super::model::owned_packed_result(function);
@@ -321,6 +404,37 @@ fn render_function(
     }
 
     if coroutine {
+        if synchronous {
+            if function.ret_string || function.ret_chandle {
+                let kind = if function.ret_string {
+                    NativeKind::String
+                } else {
+                    NativeKind::Chandle
+                };
+                let binding = frame.native_lookup("_ret", kind)?;
+                frame.line(if function.ret_string {
+                    format!("*(_llg_result) = llg_string_clone({});", binding.address)
+                } else {
+                    format!("*(_llg_result) = *({});", binding.address)
+                });
+            } else if let Some(ty) = function.ret {
+                let binding = frame
+                    .lookup("_ret")
+                    .ok_or_else(|| "return owner was not created".to_owned())?;
+                if ty.width() == 0 {
+                    frame.line(format!(
+                        "*(_llg_result) = {};",
+                        round_shortreal(
+                            format!("*({})", binding.address),
+                            matches!(ty, IrType::Real { shortreal: true })
+                        )
+                    ));
+                } else {
+                    // As for a plain return: copy, a queued NBA may retain the cell.
+                    frame.line(format!("sv4_copy(_llg_result, {});", binding.address));
+                }
+            }
+        }
         frame.line("llg_value_scopes_end_since(_llg_frame_base);");
         frame.poison_completed_frame();
         frame.line("return LLG_CO_DONE;");
@@ -364,7 +478,18 @@ fn render_function(
         frame.line("llg_value_scopes_end_since(_llg_frame_base);");
         frame.line("return;");
     }
-    let guard = if coroutine {
+    let guard = if synchronous && super::super::model::owned_packed_result(function) {
+        format!(
+            "{} return LLG_CO_DONE;",
+            super::super::destinations::assign("F->_llg_result", &function.ret_x())
+        )
+    } else if synchronous && !function.ret_string && !function.ret_chandle && function.ret.is_some()
+    {
+        format!(
+            "*F->_llg_result = {}; return LLG_CO_DONE;",
+            function.ret_x()
+        )
+    } else if coroutine {
         "return LLG_CO_DONE;".to_owned()
     } else if function.ret_string {
         "return (llg_string_t){0};".to_owned()
@@ -388,6 +513,7 @@ fn render_function(
     let prologue = frame.prologue();
     let dispatch = frame.dispatch();
     let macro_epilogue = frame.macro_epilogue();
+    let sites = frame.recursive_sites();
     let (body, layout, cached_locals) = if coroutine {
         let finished = frame.into_coframe()?;
         (finished.body, Some(finished.layout), finished.cached_locals)
@@ -395,17 +521,18 @@ fn render_function(
         (frame.body().to_owned(), None, String::new())
     };
     let depth = if coroutine { "F->depth" } else { "depth" };
+    let name = if synchronous {
+        format!("{}_co", function.c_name)
+    } else {
+        function.c_name.clone()
+    };
     let coroutine_prologue = if coroutine {
-        format!(
-            "    {}_frame_t* F = ({}_frame_t*)co;\n{cached_locals}{dispatch}",
-            function.c_name, function.c_name
-        )
+        format!("    {name}_frame_t* F = ({name}_frame_t*)co;\n{cached_locals}{dispatch}")
     } else {
         String::new()
     };
-    let source = format!("static {return_type} {}({signature}) {{\n{coroutine_prologue}    if ({depth} >= 256) {{ fprintf(stderr, \"llg: recursion limit exceeded\\n\"); {guard} }}\n{prologue}{body}\n}}\n{macro_epilogue}",
-        function.c_name);
-    Ok((source, layout))
+    let source = format!("static {return_type} {name}({signature}) {{\n{coroutine_prologue}    if ({depth} >= 256) {{ fprintf(stderr, \"llg: recursion limit exceeded\\n\"); {guard} }}\n{prologue}{body}\n}}\n{macro_epilogue}");
+    Ok((source, layout, sites))
 }
 
 pub(in crate::sim::emit_c) fn coroutine_process(
