@@ -91,8 +91,31 @@ void llg_gmp_sv4_format(char fmt, g4_t value, char* buf, size_t cap) {
         return;
     }
     const uint64_t *a = g4_a(&value), *b = g4_b(&value);
-    uint32_t digits = (value.width + size - 1u) / size;
     size_t len = 0;
+    if (size == 1) {
+        size_t n = llg_gmp_sv4_words(value);
+        while (n && len + 1u < cap) {
+            --n;
+            unsigned remaining = n + 1u == llg_gmp_sv4_words(value) && value.width % 64u
+                                     ? value.width % 64u : 64u;
+            unsigned take = cap - len - 1u < remaining ? (unsigned)(cap - len - 1u) : remaining;
+            uint64_t aa = a[n], bb = b ? b[n] : 0;
+            if (!bb) {
+                for (unsigned i = 0; i < take; ++i)
+                    buf[len++] = (char)('0' + ((aa >> --remaining) & 1u));
+            } else {
+                for (unsigned i = 0; i < take; ++i) {
+                    --remaining;
+                    unsigned state = (unsigned)((aa >> remaining) & 1u) |
+                                     (unsigned)(((bb >> remaining) & 1u) << 1);
+                    buf[len++] = "01zx"[state];
+                }
+            }
+        }
+        buf[len] = 0;
+        return;
+    }
+    uint32_t digits = (value.width + size - 1u) / size;
     while (digits && len + 1u < cap) {
         uint32_t bit = --digits * size;
         uint64_t mask = g4_mask(size), aa = group(a, value.width, bit) & mask;
