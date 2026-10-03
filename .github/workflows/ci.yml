@@ -472,7 +472,10 @@ jobs:
             --env CMAKE_GENERATOR=Ninja \
             --env LLG_TARGET="${{ matrix.target }}" \
             rust:1.98.0-alpine sh -euxc '
-              apk add --no-cache build-base cmake curl git linux-headers ninja python3
+              # Waveform-enabled generated models compile and statically link
+              # zlib, as in the repository Dockerfile.
+              apk add --no-cache build-base cmake curl git linux-headers ninja python3 \
+                zlib-dev zlib-static
               git config --global --add safe.directory /workspace
               git config --global --add safe.directory /workspace/vendor/slang
               rustup target add "$LLG_TARGET"
