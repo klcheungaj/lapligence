@@ -10,7 +10,7 @@ BASE_TESTS = {
     "storage_lifecycle", "storage_reject_limit", "storage_reject_uint32-max",
     "storage_reject_oom", "storage_reject_oom-copy", "value_ownership",
     "container_ownership", "four_state", "udp", "owner_allocation_plateau",
-    "value_isolation", "container_isolation",
+    "value_isolation", "container_isolation", "neutral_value_access",
     "stream_preflight",
     "stream_reject_short",
     "stream_reject_multi-short",

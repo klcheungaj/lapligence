@@ -15,7 +15,8 @@ static inline void llg_sv4_cell_init(llg_sv4_cell_t *cell, uint32_t width,
     sv4_replace(&cell->value, sv4_fill(cell->two_state ? 0 : 2, width, sign));
 }
 static inline void llg_sv4_cell_write(llg_sv4_cell_t *cell, sv4_t source) {
-    sv4_t converted = sv4_cast(source, cell->value.width, cell->value.is_signed);
+    sv4_t converted = sv4_cast(source, llg_sv4_width(cell->value),
+                              llg_sv4_signed(cell->value));
     if (cell->two_state) sv4_replace(&converted, sv4_to_two_state(converted));
     sv4_move(&cell->value, &converted);
 }
@@ -32,7 +33,7 @@ static inline sv4_t llg_sv4_wire_resolve(const sv4_t *const *drivers,
         fputs("sv4 prototype: invalid driver table\n", stderr); abort();
     }
     for (size_t i = 0; i < count; ++i) {
-        if (drivers[i] && drivers[i]->width != width) {
+        if (drivers[i] && llg_sv4_width(*drivers[i]) != width) {
             fputs("sv4 prototype: driver width mismatch\n", stderr); abort();
         }
     }

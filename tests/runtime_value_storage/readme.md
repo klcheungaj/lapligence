@@ -43,6 +43,7 @@ capabilities; check the exact inventory rather than assuming a fixed count.
 
 | Probe / group | Contract |
 | --- | --- |
+| `neutral_access_probe.c` | Neutral shape/state/word/range mutation at 0..1,048,575 bits; literal Rust/DPI/VPI encodings, source-sign cast versus requested-sign resize, two-state coercion and independent/self-alias owner operations. The prototype compiles this same client against its two selectors. |
 | `storage_probe.c` | Exact contiguous planes, masking, independent clone/copy/move, repeated destruction, 10,000 replacements, zero/exclusive widths and failure-atomic OOM. Fatal cases require specific diagnostics. |
 | `stream_preflight_probe.c` | INT64 endpoints, declared bounds/traversal, unknown selectors, source-size rejection including later short segments, and zero remaining packed owners. |
 | `array_conditional_probe.c` | Immediate-element equality/defaults versus packed mux, mixed X/zero defaults, aliased inputs, boundary/max widths, independent results, 10,000 replacements and malformed shapes. |

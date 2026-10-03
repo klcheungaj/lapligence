@@ -1,5 +1,9 @@
 # Packed-value ownership
 
+The [facade contract](facade.md) defines backend selection, neutral access,
+width/sign semantics and boundary encodings. The representation below describes
+the selectable legacy backend; feature code must use the facade's neutral API.
+
 ## Representation and lifetime
 
 `sv4_t` is a unique owner, not a trivially copyable value. One checked allocation

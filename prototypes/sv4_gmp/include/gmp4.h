@@ -5,6 +5,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #define GMP4_WIDTH_LIMIT (UINT32_C(1) << 20)
 #define GMP4_PROTOTYPE_ABI 1u
 
@@ -60,6 +64,9 @@ uint64_t gmp4_word(gmp4_t value, size_t word, unsigned plane);
 /* Scalar codes match legacy sv4_fill: 0,1,2=X,3=Z, NOT DPI scalar codes. */
 unsigned gmp4_get_bit(gmp4_t value, uint64_t bit);
 void gmp4_set_bit(gmp4_t *value, uint64_t bit, unsigned state);
+/* Canonical legacy-plane word import; X wins overlapping X/Z masks. */
+void gmp4_set_word(gmp4_t *value, size_t word,
+                   uint64_t bits, uint64_t x, uint64_t z);
 uint64_t gmp4_to_u64(gmp4_t value);
 int gmp4_is_unknown(gmp4_t value);
 int gmp4_to_bool(gmp4_t value);
@@ -92,5 +99,9 @@ gmp4_t gmp4_mux(gmp4_t condition, gmp4_t a, gmp4_t b);
  * This is not llg_net_t: no strengths, delays, charge, aliases or scheduling. */
 gmp4_t gmp4_resolve_wire(const gmp4_t *const *drivers, size_t count,
                          uint32_t width, int8_t is_signed);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif
