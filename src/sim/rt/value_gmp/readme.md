@@ -55,7 +55,9 @@ allocation, then shrinks it before publication. Portable mode always computes
 the low half. Mixed add/sub allocate only their result. Division uses GMP's public
 `mpn_tdiv_qr` or portable base-2^32 Knuth division; signed results truncate toward
 zero, retain dividend remainder sign, and wrap at width. Pow uses repeated
-truncated squaring. There is no global/TLS workspace or allocator-hook policy.
+truncated squaring; bases 1 and all-ones return from the exponent parity, and an
+even base stops once its square reaches zero (at most log2(width) squarings), so
+only other odd bases pay one product per exponent bit. There is no global/TLS workspace or allocator-hook policy.
 
 [Native probes](../../../../tests/runtime_value_storage/readme.md) build both
 kernels against live legacy and independent integer/state oracles. Generated

@@ -109,6 +109,14 @@ def main():
                         got = call(fn, 5, av, aw, sa, bv, bw, 1)
                         assert got[:3] == expected, (index, "pow", aw, sa, av, exponent, expected, got)
                     cases += 1
+        for sa in (0, 1):
+            for av in (1, 2, 6, 1 << (aw - 1), (1 << aw) - 1, (1 << aw) - 2):
+                for bv in ((1 << aw) - 1, 1 << (aw - 1), (1 << (aw - 1)) + 1, rng.getrandbits(aw) | 1):
+                    expected = oracle(5, av, aw, sa, bv, aw, 0)
+                    for index, (_, fn) in enumerate(libs):
+                        got = call(fn, 5, av, aw, sa, bv, aw, 0)
+                        assert got[:3] == expected, (index, "pow", aw, sa, av, bv, expected, got)
+                    cases += 1
     aw = (1 << 20) - 1
     for op in (0, 1, 3, 4, 6, 7, 25, 26):
         av, bv, bw = (1 << (aw - 1)) | 7, 3, 8

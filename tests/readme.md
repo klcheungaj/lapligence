@@ -96,6 +96,12 @@ RTL-005's fixed equality, conditional and cast fixtures use
 both optimizer modes on the legacy and compact backends (`run_case_backend_parity`)
 and after Db destruction; descriptor casts also bound generated model size.
 
+RTL-006's arithmetic and mutation fixtures use `-E 'binary(sim_feature_completion) &
+test(rtl_006::)'`; set `LLG_TEST_GMP_ROOT` to include the compact GMP lane. The
+arithmetic expectations come from the in-test limb oracle
+(`sim_feature_completion/rtl_006/oracle.rs`) at widths 1 through 129 and at the
+8,128/8,129-bit kernel threshold, in both optimizer modes on every backend.
+
 RTL-007's zero-time call and evaluator fixtures use
 `-E 'binary(sim_feature_completion) & test(rtl_007::)'`. Positive fixtures run in
 both optimizer modes on both backends (set `LLG_TEST_GMP_ROOT` for the GMP
