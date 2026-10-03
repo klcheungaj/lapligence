@@ -169,16 +169,33 @@ impl Frame<'_, '_> {
         for ((index, formal), argument) in order.zip(args) {
             match argument {
                 IrCallArg::FixedValue(value) => {
-                    let shape = formal.fixed_array.ok_or("fixed operand requires descriptor formal")?;
-                    let actual = if let IrFixedValue::Array(view) = value.as_ref() { Some(self.fixed_view(view)?) } else { None };
-                    if formal.is_ref() { parameters.push(actual.ok_or("fixed reference requires a storage view")?); }
-                    else {
+                    let shape = formal
+                        .fixed_array
+                        .ok_or("fixed operand requires descriptor formal")?;
+                    let actual = if let IrFixedValue::Array(view) = value.as_ref() {
+                        Some(self.fixed_view(view)?)
+                    } else {
+                        None
+                    };
+                    if formal.is_ref() {
+                        parameters.push(actual.ok_or("fixed reference requires a storage view")?);
+                    } else {
                         let storage = self.new_fixed_array(shape)?;
                         if matches!(formal.mode, IrFormalMode::Input | IrFormalMode::Inout) {
-                            let source = self.fixed_value(value, shape, self.ctx.model.array(shape).total)?;
-                            self.line(format!("llg_fixed_array_copy({storage}, {source}, {}, 0);", u8::from(self.ctx.model.array(shape).two_state)));
+                            let source =
+                                self.fixed_value(value, shape, self.ctx.model.array(shape).total)?;
+                            self.line(format!(
+                                "llg_fixed_array_copy({storage}, {source}, {}, 0);",
+                                u8::from(self.ctx.model.array(shape).two_state)
+                            ));
                         }
-                        if formal.is_out { fixed_copyouts.push((actual.ok_or("fixed output requires a storage view")?, storage.clone(), self.ctx.model.array(shape).two_state)); }
+                        if formal.is_out {
+                            fixed_copyouts.push((
+                                actual.ok_or("fixed output requires a storage view")?,
+                                storage.clone(),
+                                self.ctx.model.array(shape).two_state,
+                            ));
+                        }
                         parameters.push(storage);
                     }
                 }
@@ -187,11 +204,24 @@ impl Frame<'_, '_> {
                     if formal.is_ref() {
                         parameters.push(actual);
                     } else {
-                        let storage = self.new_fixed_array(formal.fixed_array.ok_or("descriptor operand requires descriptor formal")?)?;
+                        let storage = self.new_fixed_array(
+                            formal
+                                .fixed_array
+                                .ok_or("descriptor operand requires descriptor formal")?,
+                        )?;
                         if matches!(formal.mode, IrFormalMode::Input | IrFormalMode::Inout) {
-                            self.line(format!("llg_fixed_array_copy({storage}, {actual}, {}, 0);", u8::from(formal.two_state)));
+                            self.line(format!(
+                                "llg_fixed_array_copy({storage}, {actual}, {}, 0);",
+                                u8::from(formal.two_state)
+                            ));
                         }
-                        if formal.is_out { fixed_copyouts.push((actual, storage.clone(), self.ctx.model.array(*array).two_state)); }
+                        if formal.is_out {
+                            fixed_copyouts.push((
+                                actual,
+                                storage.clone(),
+                                self.ctx.model.array(*array).two_state,
+                            ));
+                        }
                         parameters.push(storage);
                     }
                 }
@@ -394,7 +424,10 @@ impl Frame<'_, '_> {
             self.cancellation_check_since(mark)?;
         }
         for (target, storage, two_state) in fixed_copyouts {
-            self.line(format!("llg_fixed_array_copy({target}, {storage}, {}, 0);", u8::from(two_state)));
+            self.line(format!(
+                "llg_fixed_array_copy({target}, {storage}, {}, 0);",
+                u8::from(two_state)
+            ));
         }
         for (target, storage) in string_copyouts {
             self.line(format!(

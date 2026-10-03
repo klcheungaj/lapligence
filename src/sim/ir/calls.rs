@@ -30,7 +30,10 @@ pub enum IrCallArg {
     /// Output/inout native string formal bound to a caller-owned slot.
     StringOutAddr(String),
     /// Native string `ref` formal bound to a whole caller-owned slot.
-    StringRefAddr { addr: String, const_ref: bool },
+    StringRefAddr {
+        addr: String,
+        const_ref: bool,
+    },
     /// Output/inout formal bound to a direct C address (statement calls):
     /// `&G_sig`, a whole-reference address (`o0`, `&_l0`) or a caller-side
     /// temp declared separately (`&_t5`); passed to the callee verbatim.

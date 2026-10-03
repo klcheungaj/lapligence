@@ -76,6 +76,13 @@ impl<'a> Codegen<'a> {
 
         let mut targets = Vec::new();
         self.p30_collect_pattern_lvalue_targets(path, pattern, &target_descriptor, &mut targets)?;
+        if kind != PatternAssignmentKind::Continuous {
+            if let Some(statement) =
+                self.lower_descriptor_pattern_scatter(path, rhs, &targets, !blocking)?
+            {
+                return Ok(Some(statement));
+            }
+        }
         let mut lowered_targets = Vec::with_capacity(targets.len());
         let mut target_widths = Vec::with_capacity(targets.len());
         for (target, descriptor) in targets {
@@ -1710,16 +1717,15 @@ impl<'a> Codegen<'a> {
     ) -> Result<Option<IrStmt>, String> {
         if op == Operation::Assignment {
             if let Ok(dst) = self.fixed_memory_view(path, lhs) {
-                if self.model.arrays[dst.array].sparse() {
-                    let source = self.p30_unwrap_cast(rhs);
-                    let compound = !dst.selectors.is_empty() || dst.sliced || dst.total != self.model.arrays[dst.array].total
-                        || matches!(self.kind(source), NodeKind::Expr(ExprKind::Operation { op: Operation::Conditional, .. }))
-                        || (matches!(self.kind(source), NodeKind::Expr(ExprKind::Streaming { .. })) && !matches!(self.kind(source), NodeKind::Expr(ExprKind::Streaming { streams, slice_size, .. }) if streams.len() == 1 && self.array_of(streams[0].value).is_some_and(|src| src.elem_width.is_multiple_of((*slice_size).max(1) as u32) || ((*slice_size).max(1) as u32).is_multiple_of(src.elem_width))))
-                        || self.array_of(source).is_none() && !matches!(self.kind(source), NodeKind::FuncCall { .. });
-                    if compound && self.assignment_pattern_operands(path, source)?.is_none() {
-                        let src = self.lower_fixed_value(path, rhs)?;
-                        return Ok(Some(IrStmt::FixedValueAssign { dst, src: Box::new(src), nba: !blocking }));
-                    }
+                if self.model.arrays[dst.array].sparse()
+                    && self.descriptor_value_transport(path, &dst, rhs, blocking)?
+                {
+                    let src = self.lower_fixed_value(path, rhs)?;
+                    return Ok(Some(IrStmt::FixedValueAssign {
+                        dst,
+                        src: Box::new(src),
+                        nba: !blocking,
+                    }));
                 }
             }
         }

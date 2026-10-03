@@ -164,8 +164,16 @@ impl Validator<'_> {
                 self.validate_fixed_activation(dst.array, path)?;
                 self.validate_memory_view(dst, formals, path)?;
                 let array = &self.model.arrays[dst.array];
-                let target_bits = dst.total.checked_mul(u64::from(array.elem_width)).ok_or_else(|| IrValidationError::new(path, "fixed target width overflow"))?;
-                if !array.sparse() || (*nba && array.activation) || source_bits > target_bits || (!matches!(src.as_ref(), IrFixedValue::Stream { .. }) && source_bits != target_bits) {
+                let target_bits = dst
+                    .total
+                    .checked_mul(u64::from(array.elem_width))
+                    .ok_or_else(|| IrValidationError::new(path, "fixed target width overflow"))?;
+                if !array.sparse()
+                    || (*nba && array.activation)
+                    || source_bits > target_bits
+                    || (!matches!(src.as_ref(), IrFixedValue::Stream { .. })
+                        && source_bits != target_bits)
+                {
                     return self.fail(path, "incompatible descriptor assignment shape or lifetime");
                 }
             }

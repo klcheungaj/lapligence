@@ -18,7 +18,8 @@ pub(super) fn ident_expr(e: &mut IrExpr) {
 fn ident_children(e: &mut IrExpr) {
     match &mut e.kind {
         IrExprKind::FixedValueCompare { left, right, .. } => {
-            left.expressions_mut(&mut ident_expr); right.expressions_mut(&mut ident_expr);
+            left.expressions_mut(&mut ident_expr);
+            right.expressions_mut(&mut ident_expr);
         }
         IrExprKind::FixedArrayReduce(reduction) => {
             reduction.expressions_mut(&mut |child| ident_expr(child));
@@ -165,7 +166,8 @@ fn ident_children(e: &mut IrExpr) {
                     | IrCallArg::StringOutAddr(_)
                     | IrCallArg::StringRefAddr { .. }
                     | IrCallArg::ChandleVal(_)
-                    | IrCallArg::FixedArray(_) | IrCallArg::EventVal(_)
+                    | IrCallArg::FixedArray(_)
+                    | IrCallArg::EventVal(_)
                     | IrCallArg::ChandleAddr(_)
                     | IrCallArg::ChandleRefAddr(_) => {}
                     IrCallArg::RefAddr { read, lhs, .. } => {

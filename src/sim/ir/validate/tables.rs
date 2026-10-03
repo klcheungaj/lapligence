@@ -878,7 +878,18 @@ impl Validator<'_> {
             }
             for (formal_idx, formal) in func.formals.iter().enumerate() {
                 if let Some(array) = formal.fixed_array {
-                    if self.model.arrays.get(array).is_none_or(|array| !array.sparse()) || formal.width != 0 || formal.real || formal.string || formal.chandle || formal.fixed_shape.is_some() || formal.fixed_default.is_some() {
+                    if self
+                        .model
+                        .arrays
+                        .get(array)
+                        .is_none_or(|array| !array.sparse())
+                        || formal.width != 0
+                        || formal.real
+                        || formal.string
+                        || formal.chandle
+                        || formal.fixed_shape.is_some()
+                        || formal.fixed_default.is_some()
+                    {
                         return self.fail(&path, "invalid descriptor formal storage");
                     }
                 }
@@ -907,7 +918,12 @@ impl Validator<'_> {
                         "ref static qualification requires ref mode",
                     );
                 }
-                if formal.fixed_array.is_none() && !formal.chandle && !formal.event && !formal.real && !formal.string {
+                if formal.fixed_array.is_none()
+                    && !formal.chandle
+                    && !formal.event
+                    && !formal.real
+                    && !formal.string
+                {
                     self.validate_width(
                         formal.width,
                         &format!("{path}.formals[{formal_idx}].width"),

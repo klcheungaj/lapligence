@@ -106,7 +106,11 @@ impl Frame<'_, '_> {
             IrStmt::FixedValueAssign { dst, src, nba } => {
                 let source = self.fixed_value(src, dst.array, dst.total)?;
                 let target = self.fixed_view(dst)?;
-                self.line(format!("llg_fixed_array_copy({target}, {source}, {}, {});", u8::from(self.ctx.model.array(dst.array).two_state), u8::from(*nba)));
+                self.line(format!(
+                    "llg_fixed_array_copy({target}, {source}, {}, {});",
+                    u8::from(self.ctx.model.array(dst.array).two_state),
+                    u8::from(*nba)
+                ));
             }
             IrStmt::FixedArrayFill { array, value, nba } => {
                 let address = self.fixed_array_address(*array)?;

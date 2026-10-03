@@ -318,8 +318,8 @@ struct llg_fixed_range {
 struct llg_fixed_image {
     size_t refs, count;
     llg_fixed_array_t* sources;
-    uint64_t bits, element_cells;
-    uint32_t slice, width;
+    uint64_t bit_count, element_cells;
+    uint32_t slice, cell_width;
     int two_state, merge;
 };
 
@@ -357,21 +357,21 @@ static sv4_t fixed_image_read(const llg_fixed_image_t* image, uint64_t index) {
             sv4_destroy(&left); sv4_destroy(&right);
             if (state != 1) { equal = 0; break; }
         }
-        if (!equal) return image->two_state ? sv4_zero(image->width, 0) : sv4_x(image->width, 0);
+        if (!equal) return image->two_state ? sv4_zero(image->cell_width, 0) : sv4_x(image->cell_width, 0);
         return fixed_read(&image->sources[0], index);
     }
-    sv4_t result = sv4_zero(image->width, 0);
+    sv4_t result = sv4_zero(image->cell_width, 0);
     sv4_t cached = SV4_EMPTY;
     const llg_fixed_array_t* cached_source = NULL;
     uint64_t cached_index = UINT64_MAX;
-    for (uint32_t bit = 0; bit < image->width; ++bit) {
-        uint64_t position = index * image->width + (image->width - 1 - bit);
-        if (position >= image->bits) continue;
+    for (uint32_t bit = 0; bit < image->cell_width; ++bit) {
+        uint64_t position = index * image->cell_width + (image->cell_width - 1 - bit);
+        if (position >= image->bit_count) continue;
         if (image->slice) {
-            uint64_t first_size = image->bits % image->slice;
+            uint64_t first_size = image->bit_count % image->slice;
             if (!first_size) first_size = image->slice;
-            position = position < first_size ? image->bits - first_size + position
-                : image->bits - first_size - ((position - first_size) / image->slice + 1) * image->slice
+            position = position < first_size ? image->bit_count - first_size + position
+                : image->bit_count - first_size - ((position - first_size) / image->slice + 1) * image->slice
                     + (position - first_size) % image->slice;
         }
         const llg_fixed_array_t* source = NULL;
@@ -429,14 +429,31 @@ static llg_fixed_range_t* fixed_range_clone(const llg_fixed_range_t* range, uint
     return result;
 }
 
+/* Earlier ranges take precedence, so lists keep their order. A range wholly
+ * shadowed by an earlier one is dropped; repeated row copies therefore keep
+ * the list bounded by the number of distinct intervals instead of growing. */
+static void fixed_range_append(llg_fixed_range_t** head, llg_fixed_range_t*** tail, llg_fixed_range_t* range) {
+    for (const llg_fixed_range_t* earlier = *head; earlier; earlier = earlier->next) {
+        if (earlier->start <= range->start
+            && range->start + range->count <= earlier->start + earlier->count) {
+            range->next = NULL;
+            fixed_ranges_destroy(range);
+            return;
+        }
+    }
+    range->next = NULL;
+    **tail = range;
+    *tail = &range->next;
+}
+
 static llg_fixed_range_t* fixed_ranges_copy(const llg_fixed_array_t* array, uint64_t first, uint64_t count, uint64_t target, int two_state) {
     llg_fixed_range_t* result = NULL;
+    llg_fixed_range_t** tail = &result;
     for (const llg_fixed_range_t* range = array->ranges; range; range = range->next) {
         uint64_t begin = range->start > first ? range->start : first;
         uint64_t end = range->start + range->count < first + count ? range->start + range->count : first + count;
         if (begin >= end) continue;
-        llg_fixed_range_t* copy = fixed_range_clone(range, target + begin - first, end - begin, range->source + begin - range->start, two_state);
-        copy->next = result; result = copy;
+        fixed_range_append(&result, &tail, fixed_range_clone(range, target + begin - first, end - begin, range->source + begin - range->start, two_state));
     }
     return result;
 }
@@ -491,24 +508,20 @@ static void fixed_array_apply(llg_fixed_array_t* destination, const llg_fixed_ar
         (void)llg_fixed_array_cell(dst, origin + cell->index);
     prepared->ranges = fixed_ranges_copy(snapshot, 0, snapshot->total, origin, 0);
     if (origin || destination->total != dst->total) {
-        llg_fixed_range_t uniform = {0}; uniform.value = snapshot->initial;
-        llg_fixed_range_t* range = fixed_range_clone(&uniform, origin, snapshot->total, 0, 0);
-        /* Source ranges take precedence over this interval's uniform default. */
         llg_fixed_range_t** tail = &prepared->ranges;
         while (*tail) tail = &(*tail)->next;
-        *tail = range;
+        /* Source ranges take precedence over this interval's uniform default. */
+        llg_fixed_range_t uniform = {0}; uniform.value = snapshot->initial;
+        fixed_range_append(&prepared->ranges, &tail, fixed_range_clone(&uniform, origin, snapshot->total, 0, 0));
+        /* Retained ranges lie outside the interval; their relative order is kept. */
         for (llg_fixed_range_t* old = dst->ranges; old; old = old->next) {
             uint64_t end = old->start + old->count, limit = origin + snapshot->total;
             uint64_t before = end < origin ? end : origin;
-            if (before > old->start) {
-                range = fixed_range_clone(old, old->start, before - old->start, old->source, 0);
-                range->next = prepared->ranges; prepared->ranges = range;
-            }
+            if (before > old->start)
+                fixed_range_append(&prepared->ranges, &tail, fixed_range_clone(old, old->start, before - old->start, old->source, 0));
             uint64_t after = old->start > limit ? old->start : limit;
-            if (after < end) {
-                range = fixed_range_clone(old, after, end - after, old->source + after - old->start, 0);
-                range->next = prepared->ranges; prepared->ranges = range;
-            }
+            if (after < end)
+                fixed_range_append(&prepared->ranges, &tail, fixed_range_clone(old, after, end - after, old->source + after - old->start, 0));
         }
         prepared->initial = sv4_clone(&dst->initial);
     } else prepared->initial = sv4_clone(&snapshot->initial);
@@ -565,16 +578,16 @@ void llg_fixed_array_stream_segments(llg_fixed_array_t* dst, const llg_fixed_arr
     } else {
         llg_fixed_image_t* image = llg_checked_calloc(1, sizeof(*image), "fixed stream image");
         image->refs = 1; image->count = count; image->slice = slice;
-        image->width = llg_sv4_width(dst->initial); image->two_state = two_state;
+        image->cell_width = llg_sv4_width(dst->initial); image->two_state = two_state;
         image->sources = llg_checked_calloc(count, sizeof(*image->sources), "fixed stream sources");
         for (size_t i = 0; i < count; ++i) {
             fixed_array_snapshot(&image->sources[i], sources[i], 0);
             uint64_t width = llg_sv4_width(sources[i]->initial);
-            if (sources[i]->total > (UINT64_MAX - image->bits) / width) fixed_bad_state("fixed stream width overflow");
-            image->bits += sources[i]->total * width;
+            if (sources[i]->total > (UINT64_MAX - image->bit_count) / width) fixed_bad_state("fixed stream width overflow");
+            image->bit_count += sources[i]->total * width;
         }
-        if (dst->total > UINT64_MAX / image->width || image->bits > dst->total * image->width) fixed_bad_state("fixed stream exceeds destination");
-        llg_fixed_array_init(snapshot, dst->total, sv4_zero(image->width, llg_sv4_signed(dst->initial)), NULL);
+        if (dst->total > UINT64_MAX / image->cell_width || image->bit_count > dst->total * image->cell_width) fixed_bad_state("fixed stream exceeds destination");
+        llg_fixed_array_init(snapshot, dst->total, sv4_zero(image->cell_width, llg_sv4_signed(dst->initial)), NULL);
         llg_fixed_range_t* range = llg_checked_calloc(1, sizeof(*range), "fixed stream range");
         range->count = dst->total; range->image = image; snapshot->ranges = range;
     }
@@ -597,10 +610,10 @@ void llg_fixed_array_merge(llg_fixed_array_t* dst, const llg_fixed_array_t* left
     llg_fixed_array_t* snapshot = llg_value_scope_object(scope);
     llg_fixed_image_t* image = llg_checked_calloc(1, sizeof(*image), "fixed conditional image");
     image->refs = 1; image->count = 2; image->merge = 1; image->element_cells = element_cells;
-    image->width = llg_sv4_width(dst->initial); image->two_state = two_state;
+    image->cell_width = llg_sv4_width(dst->initial); image->two_state = two_state;
     image->sources = llg_checked_calloc(2, sizeof(*image->sources), "fixed conditional sources");
     fixed_array_snapshot(&image->sources[0], left, 0); fixed_array_snapshot(&image->sources[1], right, 0);
-    llg_fixed_array_init(snapshot, dst->total, two_state ? sv4_zero(image->width, 0) : sv4_x(image->width, 0), NULL);
+    llg_fixed_array_init(snapshot, dst->total, two_state ? sv4_zero(image->cell_width, 0) : sv4_x(image->cell_width, 0), NULL);
     llg_fixed_range_t* range = llg_checked_calloc(1, sizeof(*range), "fixed conditional range");
     range->count = dst->total; range->image = image; snapshot->ranges = range;
     fixed_array_apply(dst, snapshot);

@@ -699,7 +699,11 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
         }
         IrStmt::FixedValueAssign { dst, src, .. } => {
             src.expressions(&mut |child| collect_expr_reads(child, model, rw));
-            for selector in &dst.selectors { collect_expr_reads(&selector.value, model, rw); }
+            // Descriptor operand calls can write through address formals.
+            src.calls(&mut |call| collect_call_rw(call, model, rw));
+            for selector in &dst.selectors {
+                collect_expr_reads(&selector.value, model, rw);
+            }
         }
         IrStmt::DeclString {
             init: Some(init), ..
@@ -739,7 +743,10 @@ fn collect_call_rw(call: &crate::sim::ir::IrCall, model: &IrModel, rw: &mut Rw) 
     }
     for (index, arg) in call.args.iter().enumerate() {
         match arg {
-            IrCallArg::FixedValue(value) => value.expressions(&mut |child| collect_expr_reads(child, model, rw)),
+            IrCallArg::FixedValue(value) => {
+                value.expressions(&mut |child| collect_expr_reads(child, model, rw));
+                value.calls(&mut |call| collect_call_rw(call, model, rw));
+            }
             IrCallArg::Val(e) => collect_expr_reads(e, model, rw),
             IrCallArg::StringVal(value) => {
                 value.expressions(&mut |expression| collect_expr_reads(expression, model, rw));
@@ -805,7 +812,8 @@ fn collect_call_rw(call: &crate::sim::ir::IrCall, model: &IrModel, rw: &mut Rw) 
                 }
             }
             IrCallArg::ChandleVal(_)
-            | IrCallArg::FixedArray(_) | IrCallArg::EventVal(_)
+            | IrCallArg::FixedArray(_)
+            | IrCallArg::EventVal(_)
             | IrCallArg::ChandleAddr(_)
             | IrCallArg::ChandleRefAddr(_) => {}
         }
@@ -936,6 +944,11 @@ fn collect_children_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
         IrExprKind::FixedValueCompare { left, right, .. } => {
             left.expressions(&mut |child| collect_expr_reads(child, model, rw));
             right.expressions(&mut |child| collect_expr_reads(child, model, rw));
+            for value in [left, right] {
+                value.calls(&mut |call| {
+                    collect_call_rw_readonly(call.function_index(), &call.args, model, rw)
+                });
+            }
         }
         IrExprKind::FixedArrayReduce(reduction) => {
             reduction.expressions(&mut |child| collect_expr_reads(child, model, rw));
@@ -1198,7 +1211,12 @@ fn collect_children_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
 fn collect_call_rw_readonly(function: usize, args: &[IrCallArg], model: &IrModel, rw: &mut Rw) {
     for (index, arg) in args.iter().enumerate() {
         match arg {
-            IrCallArg::FixedValue(value) => value.expressions(&mut |child| collect_expr_reads(child, model, rw)),
+            IrCallArg::FixedValue(value) => {
+                value.expressions(&mut |child| collect_expr_reads(child, model, rw));
+                value.calls(&mut |call| {
+                    collect_call_rw_readonly(call.function_index(), &call.args, model, rw)
+                });
+            }
             IrCallArg::Val(e) => collect_expr_reads(e, model, rw),
             IrCallArg::StringVal(value) => {
                 value.expressions(&mut |expression| collect_expr_reads(expression, model, rw));
@@ -1256,7 +1274,8 @@ fn collect_call_rw_readonly(function: usize, args: &[IrCallArg], model: &IrModel
                 }
             }
             IrCallArg::ChandleVal(_)
-            | IrCallArg::FixedArray(_) | IrCallArg::EventVal(_)
+            | IrCallArg::FixedArray(_)
+            | IrCallArg::EventVal(_)
             | IrCallArg::ChandleAddr(_)
             | IrCallArg::ChandleRefAddr(_) => {}
         }

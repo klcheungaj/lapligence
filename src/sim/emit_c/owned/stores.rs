@@ -25,12 +25,27 @@ impl<'a, 'm> Frame<'a, 'm> {
     pub(super) fn new_fixed_array(&mut self, index: usize) -> Result<String, String> {
         self.new_fixed_array_total(index, self.ctx.model.array(index).total)
     }
-    pub(super) fn new_fixed_array_total(&mut self, index: usize, total: u64) -> Result<String, String> {
+    pub(super) fn new_fixed_array_total(
+        &mut self,
+        index: usize,
+        total: u64,
+    ) -> Result<String, String> {
         let array = self.ctx.model.array(index);
-        let initial = array.element_default.as_ref().map(emit_const).unwrap_or_else(||
-            super::super::expressions::packed_default(array.elem_width, array.signed, array.two_state));
+        let initial = array
+            .element_default
+            .as_ref()
+            .map(emit_const)
+            .unwrap_or_else(|| {
+                super::super::expressions::packed_default(
+                    array.elem_width,
+                    array.signed,
+                    array.two_state,
+                )
+            });
         let pointer = self.scalar("llg_fixed_array_t*", "(llg_fixed_array_t*)llg_value_scope_object(llg_value_scope_begin_object(sizeof(llg_fixed_array_t), llg_fixed_array_destroy))".to_owned());
-        self.line(format!("llg_fixed_array_init({pointer}, {total}ULL, {initial}, NULL);"));
+        self.line(format!(
+            "llg_fixed_array_init({pointer}, {total}ULL, {initial}, NULL);"
+        ));
         Ok(pointer)
     }
 

@@ -218,12 +218,24 @@ fn render_function(
     }
     for (index, formal) in function.formals.iter().enumerate() {
         if let Some(array) = formal.fixed_array {
-            let parameter = format!("{}{index}", if formal.is_ref() { "r" } else if formal.is_out { "o" } else { "a" });
+            let parameter = format!(
+                "{}{index}",
+                if formal.is_ref() {
+                    "r"
+                } else if formal.is_out {
+                    "o"
+                } else {
+                    "a"
+                }
+            );
             if formal.is_ref() || ctx.model.array(array).activation {
                 frame.fixed_arrays.insert(array, parameter);
             } else if matches!(formal.mode, IrFormalMode::Input | IrFormalMode::Inout) {
                 let address = frame.fixed_array_address(array)?;
-                frame.line(format!("llg_fixed_array_copy({address}, {parameter}, {}, 0);", u8::from(ctx.model.array(array).two_state)));
+                frame.line(format!(
+                    "llg_fixed_array_copy({address}, {parameter}, {}, 0);",
+                    u8::from(ctx.model.array(array).two_state)
+                ));
             }
             continue;
         }
@@ -292,9 +304,15 @@ fn render_function(
     frame.line("goto _llg_return;");
     frame.line("_llg_return: ;");
     for (index, formal) in function.formals.iter().enumerate() {
-        if let Some(array) = formal.fixed_array.filter(|array| !ctx.model.array(*array).activation && formal.is_out) {
+        if let Some(array) = formal
+            .fixed_array
+            .filter(|array| !ctx.model.array(*array).activation && formal.is_out)
+        {
             let address = frame.fixed_array_address(array)?;
-            frame.line(format!("llg_fixed_array_copy(o{index}, {address}, {}, 0);", u8::from(ctx.model.array(array).two_state)));
+            frame.line(format!(
+                "llg_fixed_array_copy(o{index}, {address}, {}, 0);",
+                u8::from(ctx.model.array(array).two_state)
+            ));
         }
     }
 

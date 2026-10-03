@@ -36,6 +36,10 @@ module tb;
         if (target[0] !== 10 || target[1] !== 11 || target[2] !== 12 || target[3] !== 13 || source[0] !== 8) $fatal;
         update(output_value, target, source);
         if (output_value[0] !== 10 || target[0] !== 21 || source[16777215] !== 22) $fatal;
+        target <= persistent(source, 1);
+        source[0] = 5;
+        #1;
+        if (target[0] !== 8 || target[16777215] !== 22 || source[0] !== 5) $fatal;
         $display("PASS rtl002b calls");
         $finish(0);
     end

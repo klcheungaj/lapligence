@@ -781,7 +781,9 @@ impl<'a> Codegen<'a> {
                             info.ir, node.full_name
                         ));
                     };
-                    if array.hdl_name.is_empty() { continue; }
+                    if array.hdl_name.is_empty() {
+                        continue;
+                    }
                     let full_name = array.hdl_name.clone();
                     let name = components(&full_name)
                         .last()

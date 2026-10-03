@@ -25,9 +25,10 @@ them separately: one packed value is strictly below 1,048,576 bits, and one
 generated fixed unpacked array contains at most 16,777,216 cells. Array dimension
 extents and products use checked arithmetic before allocation or C emission.
 Each direct rank-one reduction reads owned cells individually, while
-the RTL-002 integral-variable profile uses lazy defaults, stable selected cells
-and descriptor copies for whole values and supported calls/streams. Other
-flattened contexts retain the packed payload limit; see
+the RTL-002/RTL-002b integral-array profile uses lazy defaults, stable selected
+cells and descriptor views for whole and selected values, conditionals, patterns,
+streams and function formals/returns. Oversized records retain the packed payload
+limit; see
 [resource limits](sim_features.md#resource-limits) for the exact descriptor profile.
 Dynamic, resizable and unbounded aggregate values remain separately bounded. The executable
 boundary cases are in [`tests/fixtures/sim/syn036_capacity`](../tests/fixtures/sim/syn036_capacity/).

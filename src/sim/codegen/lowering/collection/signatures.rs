@@ -73,11 +73,22 @@ impl<'a> Codegen<'a> {
                                     is_out: *is_out,
                                     mode,
                                     fixed_array: self.fixed_formal_array(*io),
-                                    fixed_shape: if self.fixed_formal_array(*io).is_some() { None } else { self.fixed_formal_shape(*io)? },
-                                    fixed_default: if self.fixed_formal_array(*io).is_some() { None } else { self.fixed_default_literal(*io) },
+                                    fixed_shape: if self.fixed_formal_array(*io).is_some() {
+                                        None
+                                    } else {
+                                        self.fixed_formal_shape(*io)?
+                                    },
+                                    fixed_default: if self.fixed_formal_array(*io).is_some() {
+                                        None
+                                    } else {
+                                        self.fixed_default_literal(*io)
+                                    },
                                     const_ref: *const_ref,
                                     ref_static: *ref_static,
-                                    width: if self.fixed_formal_array(*io).is_some() { 0 } else if is_handle_kind(&ty.kind) || is_real_kind(&ty.kind) {
+                                    width: if self.fixed_formal_array(*io).is_some()
+                                        || is_handle_kind(&ty.kind)
+                                        || is_real_kind(&ty.kind)
+                                    {
                                         0
                                     } else if dpi.is_some() {
                                         ty.width.unwrap_or(0)
@@ -112,7 +123,8 @@ impl<'a> Codegen<'a> {
                     }
                 }
                 if let Some(array) = self.fixed_formal_array(*c) {
-                    let mut formal = IrFormal::new(true, 1, false).map_err(|error| error.to_string())?;
+                    let mut formal =
+                        IrFormal::new(true, 1, false).map_err(|error| error.to_string())?;
                     formal.width = 0;
                     formal.fixed_array = Some(array);
                     formals_ir.push(formal);

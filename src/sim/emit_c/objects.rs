@@ -307,7 +307,9 @@ pub(super) fn chandle(ctx: &RCtx<'_>, value: &IrChandleExpr) -> Result<String, S
                     IrCallArg::StringVal(_) | IrCallArg::StringOutTemp { .. } => {
                         Err("string argument is invalid in a chandle call".to_owned())
                     }
-                    IrCallArg::FixedValue(_) | IrCallArg::FixedArray(_) | IrCallArg::EventVal(_) => {
+                    IrCallArg::FixedValue(_)
+                    | IrCallArg::FixedArray(_)
+                    | IrCallArg::EventVal(_) => {
                         Err("event argument requires the ownership emitter".to_owned())
                     }
                 })

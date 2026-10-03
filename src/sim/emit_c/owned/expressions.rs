@@ -19,11 +19,24 @@ impl Frame<'_, '_> {
             }
         }
         let result = match &expr.kind {
-            IrExprKind::FixedValueCompare { left, right, case, negate } => {
+            IrExprKind::FixedValueCompare {
+                left,
+                right,
+                case,
+                negate,
+            } => {
                 let (array, total) = self.fixed_value_storage(left)?;
                 let left = self.fixed_value(left, array, total)?;
                 let right = self.fixed_value(right, array, total)?;
-                self.value(format!("llg_fixed_array_compare({left}, {right}, {}, {})", u8::from(*case), u8::from(*negate)), 1, false)
+                self.value(
+                    format!(
+                        "llg_fixed_array_compare({left}, {right}, {}, {})",
+                        u8::from(*case),
+                        u8::from(*negate)
+                    ),
+                    1,
+                    false,
+                )
             }
             IrExprKind::FixedArrayCompare {
                 left,

@@ -38,6 +38,8 @@ module tb;
         index = 2;
         result = rows[index];
         if (result[0] !== 'x || result[65536] !== 'x) $fatal;
+        rows[index] = right_value;
+        if (rows[1][65536] !== 77 || rows[0][0] !== 1) $fatal;
         index = 0;
         rows[index] <= rows[1];
         rows[1][65536] = 88;

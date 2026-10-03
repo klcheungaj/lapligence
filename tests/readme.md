@@ -38,7 +38,7 @@ python3 -m unittest discover -s scripts -p test_sim_fixture_integrity.py
 ### Feature completion slices
 
 New tasks use `fixtures/sim/feature_completion/<task_slug>/` (ASCII slugs such as
-`rtl_001`) and `sim_feature_completion/<task_slug>.rs`, explicitly declared with
+`rtl_001`, or `rtl_002b` for a follow-up slice) and `sim_feature_completion/<task_slug>.rs`, explicitly declared with
 `#[path = "sim_feature_completion/rtl_001.rs"] mod rtl_001;` in
 `sim_feature_completion.rs`. Keep the existing `g1_*` fixtures with their owners.
 Copy an adopted FND-002 witness from local evidence into the task directory,

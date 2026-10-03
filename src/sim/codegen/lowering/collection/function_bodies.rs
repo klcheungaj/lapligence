@@ -426,7 +426,9 @@ impl<'a> Codegen<'a> {
             }
         }
         for (idx, (io, is_out)) in formals.iter().enumerate() {
-            if self.fixed_formal_array(*io).is_some() { continue; }
+            if self.fixed_formal_array(*io).is_some() {
+                continue;
+            }
             if matches!(self.kind(*io), NodeKind::FuncArg { ty, .. } if ty.kind == "event") {
                 // A by-value input event formal is the activation's own
                 // handle to the object the caller named. Other directions are

@@ -77,7 +77,9 @@ fn walk_call_args_mut(args: &mut [IrCallArg], f: &mut impl FnMut(&mut IrExpr)) {
                 value.expressions_mut(&mut |child| walk_expr_mut(child, f))
             }
             IrCallArg::ChandleAddr(_) | IrCallArg::ChandleRefAddr(_) => {}
-            IrCallArg::FixedValue(value) => value.expressions_mut(&mut |child| walk_expr_mut(child, f)),
+            IrCallArg::FixedValue(value) => {
+                value.expressions_mut(&mut |child| walk_expr_mut(child, f))
+            }
             IrCallArg::FixedArray(_) | IrCallArg::EventVal(_) => {}
         }
     }
@@ -321,7 +323,9 @@ fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
     match s {
         IrStmt::FixedValueAssign { dst, src, .. } => {
             src.expressions_mut(&mut |child| walk_expr_mut(child, f));
-            for selector in &mut dst.selectors { walk_expr_mut(&mut selector.value, f); }
+            for selector in &mut dst.selectors {
+                walk_expr_mut(&mut selector.value, f);
+            }
         }
         IrStmt::System(Some(command)) => {
             command.expressions_mut(&mut |child| walk_expr_mut(child, f));
