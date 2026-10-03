@@ -291,6 +291,67 @@ fn manual_cli_witness(row_id: &str) -> Option<&'static ManualCliWitness> {
     })
 }
 
+fn assert_public_cli_fixture_contract(cli_helper: &str, row_id: &str) {
+    let fixture_body = named_function_body(cli_helper, "fixture_path");
+    for required in [
+        "Path::new(env!(\"CARGO_MANIFEST_DIR\"))",
+        ".join(\"tests/fixtures/sim\")",
+        ".join(suite)",
+        ".join(name)",
+        "Some(\"v\" | \"sv\")",
+        "fixture.to_owned()",
+        "format!(\"{fixture}.sv\")",
+        "assert!(source.is_file()",
+    ] {
+        assert!(
+            fixture_body.contains(required),
+            "{} fixture helper no longer guarantees the named checked-in fixture: {required}",
+            row_id
+        );
+    }
+    let invoke_body = named_function_body(cli_helper, "invoke_with_env");
+    for required in [
+        "let source = fixture_path(suite, fixture);",
+        "Command::new(env!(\"CARGO_BIN_EXE_llg\"))",
+        "current_dir(directory.path())",
+        "if !optimized",
+        "command.arg(\"--no-opt\")",
+        "command.args(args)",
+        "command.arg(source)",
+    ] {
+        assert!(
+            invoke_body.contains(required),
+            "{} public-CLI helper no longer guarantees the named fixture, mode, and arguments: {required}",
+            row_id
+        );
+    }
+}
+
+#[test]
+fn public_cli_fixture_contract_rejects_path_mode_and_argument_drift() {
+    let helper = include_str!("support/sim_cli.rs");
+    assert_public_cli_fixture_contract(helper, "mutation control");
+    for (original, replacement) in [
+        (".join(suite)", r#".join("other")"#),
+        (
+            "let source = fixture_path(suite, fixture);",
+            r#"let source = fixture_path("other", fixture);"#,
+        ),
+        (r#"command.arg("--no-opt")"#, r#"command.arg("--help")"#),
+        ("command.args(args)", "command.args([])"),
+    ] {
+        assert!(helper.contains(original));
+        let changed = helper.replace(original, replacement);
+        assert!(
+            std::panic::catch_unwind(|| {
+                assert_public_cli_fixture_contract(&changed, "mutation witness");
+            })
+            .is_err(),
+            "ledger must reject helper drift: {original}"
+        );
+    }
+}
+
 fn assert_manual_cli_contract(
     root: &Path,
     owner_body: &str,
@@ -331,24 +392,7 @@ fn assert_manual_cli_contract(
 
     let cli_helper = fs::read_to_string(root.join("tests/support/sim_cli.rs"))
         .expect("read public-CLI invocation helper");
-    let invoke_body = named_function_body(&cli_helper, "invoke_with_env");
-    for required in [
-        "Command::new(env!(\"CARGO_BIN_EXE_llg\"))",
-        ".join(\"tests/fixtures/sim\")",
-        ".join(suite)",
-        ".join(format!(\"{fixture}.sv\"))",
-        "assert!(source.is_file()",
-        "if !optimized",
-        "command.arg(\"--no-opt\")",
-        "command.args(args)",
-        "command.arg(source)",
-    ] {
-        assert!(
-            invoke_body.contains(required),
-            "{} public-CLI helper no longer guarantees the named fixture, mode, and arguments: {required}",
-            witness.row_id
-        );
-    }
+    assert_public_cli_fixture_contract(&cli_helper, witness.row_id);
 }
 
 fn assert_static_return_continuous_cli_contract(
@@ -784,24 +828,7 @@ fn assert_storage_write_remainders_cli_contract(root: &Path, owner_body: &str, o
 
     let cli_helper = fs::read_to_string(root.join("tests/support/sim_cli.rs"))
         .expect("read public-CLI invocation helper");
-    let invoke_body = named_function_body(&cli_helper, "invoke_with_env");
-    for required in [
-        "Command::new(env!(\"CARGO_BIN_EXE_llg\"))",
-        ".join(\"tests/fixtures/sim\")",
-        ".join(suite)",
-        ".join(format!(\"{fixture}.sv\"))",
-        "assert!(source.is_file()",
-        "current_dir(directory.path())",
-        "if !optimized",
-        "command.arg(\"--no-opt\")",
-        "command.args(args)",
-        "command.arg(source)",
-    ] {
-        assert!(
-            invoke_body.contains(required),
-            "W88 public-CLI helper no longer guarantees its fixture, modes, and arguments: {required}"
-        );
-    }
+    assert_public_cli_fixture_contract(&cli_helper, "W88");
 }
 
 fn storage_write_remainders_warning_oracle_matches(
@@ -858,24 +885,7 @@ fn assert_static_return_ref_actual_cli_contract(root: &Path, owner_body: &str, o
 
     let cli_helper = fs::read_to_string(root.join("tests/support/sim_cli.rs"))
         .expect("read public-CLI invocation helper");
-    let invoke_body = named_function_body(&cli_helper, "invoke_with_env");
-    for required in [
-        "Command::new(env!(\"CARGO_BIN_EXE_llg\"))",
-        ".join(\"tests/fixtures/sim\")",
-        ".join(suite)",
-        ".join(format!(\"{fixture}.sv\"))",
-        "assert!(source.is_file()",
-        "current_dir(directory.path())",
-        "if !optimized",
-        "command.arg(\"--no-opt\")",
-        "command.args(args)",
-        "command.arg(source)",
-    ] {
-        assert!(
-            invoke_body.contains(required),
-            "W89 public-CLI helper no longer guarantees its fixture, modes, and arguments: {required}"
-        );
-    }
+    assert_public_cli_fixture_contract(&cli_helper, "W89");
 }
 
 fn assert_read_only_ref_continuous_variable_cli_contract(
