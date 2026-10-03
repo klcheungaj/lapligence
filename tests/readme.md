@@ -591,3 +591,23 @@ real/time, formatting/index and facade adapter probes, are opt-in CMake targets;
 see [native value probes](runtime_value_storage/readme.md#standalone-compact-value-backend).
 They cover portable and optional GMP limb kernels independently of generated
 model selection and do not replace later HDL/model integration acceptance.
+
+### Experimental value backend builds
+
+`sim_value_backends` checks selected runtime archives, clean source-only builds,
+both wrong-backend and wrong-kernel links, exact C selectors, missing GMP and the current compact
+HDL link rejection. Set `LLG_TEST_GMP_ROOT` to include the GMP lane; without it only
+legacy and compact portable run. This does not establish compact HDL execution:
+the scheduler still requires pending S2–S5. Native `selected_*_facade` probes in
+`runtime_value_storage` exercise the common consumer bridge in all three modes.
+
+```sh
+CARGO_BUILD_JOBS=6 CMAKE_BUILD_PARALLEL_LEVEL=6 LLG_TEST_GMP_ROOT=/path/to/gmp scripts/run-tests.sh --test-work-dir /build --cargo-profile quick --test sim_value_backends --test-threads 6
+```
+
+`CodegenOptions.value_config` and `CmakeBuildOpts.value_config` must agree. Driver
+selection uses `LLG_VALUE_BACKEND` and `LLG_COMPACT_KERNELS`; default legacy/portable.
+GMP mode requires `GMP_ROOT`, with no system fallback. Compact frame checks use a
+24-byte descriptor instead of legacy's 32-byte descriptor on 64-bit hosts;
+`compact_selected_frame_lint` covers suspended values, shared instances and
+structural nets with both kernels and optimizer modes.

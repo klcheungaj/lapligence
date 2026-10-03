@@ -17,6 +17,11 @@ were inspected alongside those paths. Parser acceptance, an IR variant, a
 legacy C-rendering helper or a test name alone does not establish execution
 support. Simulator status is not an LSP or synthesis-support guarantee.
 
+Generated sources have experimental compile-time packed-value selection
+(legacy ABI 4 by default, compact ABI 5 with portable or optional GMP kernels).
+Complete compact simulator linking awaits S2–S5 value operations; current feature
+execution claims remain legacy-only. See [the facade contract](../src/sim/rt/value/facade.md).
+
 | Marker | Meaning |
 | --- | --- |
 | 🟦 Source-implemented | A source implementation exists for the explicitly stated scope; not a claim of full family or IEEE conformance. |

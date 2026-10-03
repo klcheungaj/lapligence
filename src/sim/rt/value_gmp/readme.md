@@ -1,8 +1,9 @@
 # Compact packed values
 
-This standalone C11 backend reserves value ABI 5 and implements storage/ownership,
+This C11 backend uses value ABI 5 and implements storage/ownership,
 core arithmetic, bitwise/logical operators, equality/relations, integral mux,
-div/mod/pow/clog2, net/strength/UDP/enum adapters, real/time conversions, and formatting/scalar/index adapters. Production models still use the legacy backend.
+div/mod/pow/clog2, net/strength/UDP/enum adapters, real/time conversions, and formatting/scalar/index adapters. Generated sources can select this backend experimentally; legacy remains the default.
+Complete model linking still requires the pending S2–S5 operation families.
 
 `backend.h` supplies inline operations for widths through 64 and a static
 `LLG_GMP_SV4_LITERAL(bits,x,z,width,sign)` initializer for those widths. Define
@@ -62,4 +63,12 @@ Remaining public `sv4_*` operations at this revision:
 `sv4_checked_width`, `llg_real_to_bool` and source-compatible owner-free
 reference/selection types are implemented. The [facade checklist](facade_audit.md)
 accounts for every macro, helper type, constant and public operation, including
-the shared `llg_ref_read` / `llg_ref_view_valid` assembly remaining for V07.
+the shared `llg_ref_read` / `llg_ref_view_valid` assembly in `value/references.c`.
+Their selection dependencies remain unresolved until S4 merges.
+
+Generated builds select `LLG_VALUE_BACKEND=compact` and
+`LLG_COMPACT_KERNELS=portable|gmp`; GMP mode requires `GMP_ROOT`. Exported CMake
+projects propagate both literal definitions to every model/runtime unit and
+verify matching GMP headers/library and 64-bit nail-free compatible limbs. The
+facade adds shared consumer-word adapters and prefixed reference helpers;
+`pending.h` contains declarations, never implementations or legacy fallbacks.

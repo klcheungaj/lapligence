@@ -244,3 +244,9 @@ Bit reinterpretation and rtoi have their fixed 64/32-bit result widths; real del
 is a native scalar. Packed delay uses a representable low-limb input. Checked-width timing uses valid
 known inputs; its X/Z rejection is exercised by the failure probes. No model
 selection, scheduler adoption or native non-Linux qualification is implied.
+
+`selected_legacy_facade`, `selected_portable_facade` and `selected_gmp_facade` use
+`llg_value.h` with compile-time selection to exercise the shared word/text/VPI32
+bridge and the selected descriptor size. They supplement the standalone prefixed
+backend probes. Generated-source and archive selection are checked separately by
+`sim_value_backends`; current complete compact models reject missing S2–S5 links.

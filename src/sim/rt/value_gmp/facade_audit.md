@@ -2,7 +2,7 @@
 
 The standalone header uses prefixed symbols beside the live legacy oracle;
 `LLG_SV4_GMP_PUBLIC_NAMES` exposes the implemented source-compatible names.
-Generated selection and embedding remain V07 work. Numerical operations never
+Generated selection and embedding use `ValueConfig` and the compile-time facade. Numerical operations never
 convert into legacy descriptors as a fallback.
 
 | Public surface in `llg_value.h` | Compact equivalent / integration owner |
@@ -22,13 +22,13 @@ convert into legacy descriptors as a fallback.
 | `sv4_select_plan_t` | Owner-free five-field equivalent in `reference_types.h`, guarded by `LLG_GMP_SV4_SELECT_PLAN_DEFINED` for S4 integration |
 | `llg_queue_t`, queue read/write callback types | Same opaque queue tag; callback packed arguments/results use the selected owner |
 | `llg_ref_kind_t`, `llg_ref_t`, `llg_ref_composite_t`, `llg_ref_tag_check_t`, `llg_ref_view_t`, all ten `LLG_REF_*` constants | Source-compatible owner-free equivalents and aliases in `reference_types.h` / `backend.h` |
-| `llg_ref_read`, `llg_ref_view_valid` | Existing runtime reference algorithms in `value/operations.c`; must be assembled against the selected operations by V07 after S4. These two functions are not standalone compact symbols yet. |
+| `llg_ref_read`, `llg_ref_view_valid` | Shared algorithms in `value/references.c`, assembled as selected `llg_value.c`; compact symbols are prefixed. S4 dependencies remain unresolved until that family merges. |
 
 The reference descriptors contain borrowed cell/callback/plan addresses; copying
 a descriptor does not transfer or extend any lifetime. Their containing runtime
 owns retention, publication and teardown. S4 should use the guarded plan type,
-rather than introduce a second incompatible typedef. V07 must re-audit any APIs
-added by intervening feature merges, including net-array extensions.
+rather than introduce a second incompatible typedef. Re-audit APIs added by
+intervening feature merges, including net-array extensions.
 
 `compact_facade_adapters.c` builds the same client against live legacy, portable
 compact and GMP compact. It executes every constructor macro, width boundary,

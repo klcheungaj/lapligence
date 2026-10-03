@@ -58,8 +58,8 @@ The standalone compact value backend in
 storage, logic, arithmetic, net adapters, real/time, formatting/index and
 limb-kernel units. Its optional GMP dependency
 is confined to the limb kernel. Native probes in `tests/runtime_value_storage/`
-link it beside live legacy for differential checks; production selection and
-embedding remain separate integration work.
+link it beside live legacy for differential checks; experimental generated-source selection embeds it behind the unchanged facade.
+Complete compact model linking awaits S2–S5.
 
 The legacy facades preserve declaration order and private `static` state. The prelude
 files stay beside the public headers so direct source-tree inclusion retains
@@ -69,8 +69,9 @@ CMake source lists, or export scheduler globals to connect them.
 [`rt/mod.rs`](../src/sim/rt/mod.rs) embeds each ordered list with
 `concat!(include_str!(...), ...)`. `value_sources()`, `runtime_sources()` and
 `container_sources()` still return a header and one flat implementation string.
-The generated build directory therefore needs only the established flat C
-filenames, not a copy of the fragment directories. Keep the facade include
+Selected value exports additionally carry the backend headers at their relative
+`value/` or `value_gmp/` paths and compact translation units through
+`value_backend_sources()`. Scheduler/container fragments remain flattened. Keep the facade include
 order and embedded list synchronized; [`rt/tests.rs`](../src/sim/rt/tests.rs)
 checks that relationship without compiling C.
 

@@ -28,3 +28,11 @@ to `/O1`, and O2/O3 to `/O2`.
 See [feature status](../../docs/sim_features.md),
 [build and CLI usage](../../readme.md), [tests](../../tests/readme.md) and
 [source layout](../../docs/source_layout.md).
+
+Experimental packed-value selection uses `LLG_VALUE_BACKEND=compact` and
+`LLG_COMPACT_KERNELS=portable|gmp`; defaults are legacy/portable. GMP mode requires
+`GMP_ROOT` containing compatible headers and library. Portable needs no GMP;
+legacy never inspects or links it. Library callers pass the same `ValueConfig`
+in `CodegenOptions` and `CmakeBuildOpts`. Source export retains the selection,
+ABI guards and dependency fingerprint. Compact runtime archives/value-only clients
+build, but generated simulation execution awaits the pending S2–S5 operations.
