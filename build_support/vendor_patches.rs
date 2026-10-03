@@ -932,15 +932,24 @@ fn safe_vendor_target_path(
             relative.display()
         ))
     })?;
-    if !canonical.starts_with(repository) {
+    // Compare canonical forms: Windows canonicalization yields verbatim
+    // `\\?\D:\...` paths whose prefix never matches a plain `D:\...` root.
+    let canonical_repository = repository.canonicalize().map_err(|error| {
+        PatchError::new(format!(
+            "{label} vendor repository {} cannot be canonicalized: {error}",
+            repository.display()
+        ))
+    })?;
+    let Ok(contained) = canonical.strip_prefix(&canonical_repository) else {
         return Err(PatchError::new(format!(
             "{label} {context} {} resolves outside vendor tree {}; restore the checkout",
             relative.display(),
             repository.display()
         )));
-    }
+    };
     validate_readable_regular_file(&canonical, label, context)?;
-    Ok(canonical)
+    // Callers strip `repository` from the result, so keep its spelling.
+    Ok(repository.join(contained))
 }
 
 fn canonical_repository(
