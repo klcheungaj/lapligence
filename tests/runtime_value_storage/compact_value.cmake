@@ -69,3 +69,5 @@ if(LLG_STORAGE_TEST_COMPACT)
     set_tests_properties(compact_${mode}_benchmark_smoke PROPERTIES TIMEOUT 60)
   endforeach()
 endif()
+
+include("${CMAKE_CURRENT_SOURCE_DIR}/compact_adapters.cmake")

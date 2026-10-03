@@ -151,13 +151,13 @@ static void llg_net_index_collect(const llg_net_t* net, int root,
 }
 
 static int llg_net_all_z(const sv4_t* value) {
-    int limbs = (int)((value->width + 63u) / 64u);
+    int limbs = (int)((llg_sv4_width(*value) + 63u) / 64u);
     for (int limb = 0; limb < limbs; limb++) {
-        uint32_t remaining = value->width - (uint32_t)limb * 64u;
+        uint32_t remaining = llg_sv4_width(*value) - (uint32_t)limb * 64u;
         uint64_t mask = remaining >= 64u
             ? UINT64_MAX : (UINT64_C(1) << remaining) - UINT64_C(1);
-        if ((value->bits[limb] & mask) || (value->x[limb] & mask) ||
-            (value->z[limb] & mask) != mask)
+        if ((llg_sv4_word(*value, limb, LLG_SV4_BITS) & mask) || (llg_sv4_word(*value, limb, LLG_SV4_X) & mask) ||
+            (llg_sv4_word(*value, limb, LLG_SV4_Z) & mask) != mask)
             return 0;
     }
     return 1;
@@ -188,8 +188,8 @@ static void llg_net_alias_refresh(llg_net_alias_t* alias) {
     sv4_copy(&owned[0], alias->storage);
     for (uint32_t i = 0; i < alias->n_parts; i++) {
         const llg_net_alias_part_t* part = &alias->parts[i];
-        if (!part->net || part->signal_bit >= owned[0].width ||
-            part->group_bit >= part->net->resolved.width)
+        if (!part->net || part->signal_bit >= llg_sv4_width(owned[0]) ||
+            part->group_bit >= llg_sv4_width(part->net->resolved))
             continue;
         sv4_t bit = sv4_bit_select(part->net->resolved, part->group_bit);
         sv4_bit_select_set(&owned[0], part->signal_bit, bit);
@@ -298,53 +298,17 @@ void llg_net_write(llg_net_t* net, int idx, sv4_t value) {
 
 static int llg_net_range_same(const sv4_t* target, uint32_t offset,
                               const sv4_t* value) {
-    for (uint32_t bit = 0; bit < value->width; bit++) {
-        uint32_t target_bit = offset + bit;
-        uint64_t target_mask = UINT64_C(1) << (target_bit % 64u);
-        uint64_t value_mask = UINT64_C(1) << (bit % 64u);
-        uint32_t target_limb = target_bit / 64u;
-        uint32_t value_limb = bit / 64u;
-        if (!!(target->bits[target_limb] & target_mask) !=
-                !!(value->bits[value_limb] & value_mask) ||
-            !!(target->x[target_limb] & target_mask) !=
-                !!(value->x[value_limb] & value_mask) ||
-            !!(target->z[target_limb] & target_mask) !=
-                !!(value->z[value_limb] & value_mask))
-            return 0;
-    }
-    return 1;
+    return llg_sv4_range_same(*target, offset, *value);
 }
 
 static void llg_net_range_fill_z(sv4_t* target, uint32_t offset,
                                  uint32_t width) {
-    for (uint32_t bit = 0; bit < width; bit++) {
-        uint32_t target_bit = offset + bit;
-        uint64_t mask = UINT64_C(1) << (target_bit % 64u);
-        uint32_t limb = target_bit / 64u;
-        target->bits[limb] &= ~mask;
-        target->x[limb] &= ~mask;
-        target->z[limb] |= mask;
-    }
+    llg_sv4_range_fill(target, offset, width, 3);
 }
 
 static void llg_net_range_copy(sv4_t* target, uint32_t offset,
                                const sv4_t* value) {
-    for (uint32_t bit = 0; bit < value->width; bit++) {
-        uint32_t target_bit = offset + bit;
-        uint64_t target_mask = UINT64_C(1) << (target_bit % 64u);
-        uint64_t value_mask = UINT64_C(1) << (bit % 64u);
-        uint32_t target_limb = target_bit / 64u;
-        uint32_t value_limb = bit / 64u;
-        target->bits[target_limb] =
-            (target->bits[target_limb] & ~target_mask) |
-            ((value->bits[value_limb] & value_mask) ? target_mask : 0);
-        target->x[target_limb] =
-            (target->x[target_limb] & ~target_mask) |
-            ((value->x[value_limb] & value_mask) ? target_mask : 0);
-        target->z[target_limb] =
-            (target->z[target_limb] & ~target_mask) |
-            ((value->z[value_limb] & value_mask) ? target_mask : 0);
-    }
+    llg_sv4_range_copy(target, offset, *value);
 }
 
 static void llg_net_write_slice(llg_net_t* net, int idx, sv4_t selected,
@@ -359,8 +323,8 @@ static void llg_net_write_slice(llg_net_t* net, int idx, sv4_t selected,
         old_high = node->high;
         old_active = node->active;
     }
-    int new_active = selected.width && !llg_net_all_z(&selected);
-    uint32_t new_high = new_active ? new_low + selected.width - 1u : new_low;
+    int new_active = llg_sv4_width(selected) && !llg_net_all_z(&selected);
+    uint32_t new_high = new_active ? new_low + llg_sv4_width(selected) - 1u : new_low;
     if (old_active == new_active &&
         (!new_active || (old_low == new_low && old_high == new_high &&
                          llg_net_range_same(slot, new_low, &selected)))) {
@@ -499,8 +463,8 @@ void llg_net_alias_write(llg_net_alias_t* alias, sv4_t value) {
         for (uint32_t j = i; j < alias->n_parts; j++) {
             const llg_net_alias_part_t* mapped = &alias->parts[j];
             if (mapped->net != part->net || mapped->slot != part->slot ||
-                mapped->signal_bit >= owned[0].width ||
-                mapped->group_bit >= owned[1].width)
+                mapped->signal_bit >= llg_sv4_width(owned[0]) ||
+                mapped->group_bit >= llg_sv4_width(owned[1]))
                 continue;
             sv4_t bit = sv4_bit_select(owned[0], mapped->signal_bit);
             sv4_bit_select_set(&owned[1], mapped->group_bit, bit);
@@ -513,42 +477,18 @@ void llg_net_alias_write(llg_net_alias_t* alias, sv4_t value) {
 }
 
 static int inertial_bit(const sv4_t* value, uint32_t bit) {
-    if (!value || bit >= value->width) return 0;
-    uint64_t mask = 1ULL << (bit % 64u);
-    uint32_t limb = bit / 64u;
-    if (value->x[limb] & mask) return 2;
-    if (value->z[limb] & mask) return 3;
-    return (value->bits[limb] & mask) ? 1 : 0;
-}
-
-static void inertial_set_bit(sv4_t* value, uint32_t bit, int state) {
-    uint64_t mask = 1ULL << (bit % 64u);
-    uint32_t limb = bit / 64u;
-    value->bits[limb] &= ~mask;
-    value->x[limb] &= ~mask;
-    value->z[limb] &= ~mask;
-    if (state == 1) value->bits[limb] |= mask;
-    else if (state == 2) value->x[limb] |= mask;
-    else if (state == 3) value->z[limb] |= mask;
+    if (!value || bit >= llg_sv4_width(*value)) return 0;
+    return (int)llg_sv4_state(*value, bit);
 }
 
 static int inertial_masked_same(const sv4_t* a, const sv4_t* b,
                                 const sv4_t* mask) {
-    uint32_t width = a->width < b->width ? a->width : b->width;
-    for (uint32_t bit = 0; bit < width; bit++) {
-        if (mask && inertial_bit(mask, bit) != 1) continue;
-        if (inertial_bit(a, bit) != inertial_bit(b, bit)) return 0;
-    }
-    return 1;
+    return llg_sv4_masked_same(*a, *b, mask);
 }
 
 static void inertial_merge(sv4_t* target, const sv4_t* value,
                            const sv4_t* mask) {
-    uint32_t width = target->width < value->width ? target->width : value->width;
-    for (uint32_t bit = 0; bit < width; bit++) {
-        if (inertial_bit(mask, bit) == 1)
-            inertial_set_bit(target, bit, inertial_bit(value, bit));
-    }
+    llg_sv4_masked_copy(target, *value, *mask);
 }
 
 enum {
@@ -586,9 +526,9 @@ static uint64_t inertial_transition_ticks(const sv4_t* old_value,
                                            uint64_t fall, uint64_t turn_off) {
     uint64_t selected = UINT64_MAX;
     int has_transition = 0;
-    uint32_t width = old_value->width < new_value->width
-                         ? old_value->width
-                         : new_value->width;
+    uint32_t width = llg_sv4_width(*old_value) < llg_sv4_width(*new_value)
+                         ? llg_sv4_width(*old_value)
+                         : llg_sv4_width(*new_value);
     for (uint32_t bit = 0; bit < width; bit++) {
         if (mask && inertial_bit(mask, bit) != 1) continue;
         int transition = inertial_transition(
@@ -656,10 +596,10 @@ static void inertial_update(llg_inertial_t** handle, sv4_t* target,
     driver->region = region_is_reactive(g.current_region)
                          ? LLG_REGION_REACTIVE
                          : LLG_REGION_ACTIVE;
-    value = sv4_resize(value, target->width, target->is_signed);
+    value = sv4_resize(value, llg_sv4_width(*target), llg_sv4_signed(*target));
     sv4_t selected_mask = SV4_EMPTY;
     if (mask) {
-        selected_mask = sv4_resize(*mask, target->width, 0);
+        selected_mask = sv4_resize(*mask, llg_sv4_width(*target), 0);
     }
     const sv4_t* effective_mask = mask ? &selected_mask : NULL;
     uint64_t ticks;

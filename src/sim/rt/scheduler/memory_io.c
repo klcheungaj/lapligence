@@ -33,15 +33,6 @@ static char* llg_memory_path_copy(llg_string_t path) {
     return copy;
 }
 
-static void llg_memory_shift_limbs(uint64_t* limbs, uint32_t count, unsigned shift) {
-    uint64_t carry = 0;
-    for (uint32_t i = 0; i < count; ++i) {
-        uint64_t old = limbs[i];
-        limbs[i] = (old << shift) | carry;
-        carry = old >> (64u - shift);
-    }
-}
-
 // Append one binary or hexadecimal digit, retaining the least significant
 // token-capacity bits. The caller diagnoses an over-width token separately.
 static void llg_memory_append_digit(llg_memory_value_t* value, unsigned bits,
@@ -52,19 +43,12 @@ static void llg_memory_append_digit(llg_memory_value_t* value, unsigned bits,
         return;
     }
     uint32_t required = (uint32_t)((value->digits + 1u) * bits);
-    if (required > value->value.width) {
-        uint32_t capacity = value->value.width ? value->value.width * 2u : 64u;
+    if (required > llg_sv4_width(value->value)) {
+        uint32_t capacity = llg_sv4_width(value->value) ? llg_sv4_width(value->value) * 2u : 64u;
         if (capacity >= LLG_SUPPORTED_WIDTH_LIMIT) capacity = LLG_SUPPORTED_WIDTH_LIMIT - 1u;
         sv4_replace(&value->value, sv4_resize(value->value, capacity, 0));
     }
-    uint32_t count = (value->value.width + 63u) / 64u;
-    llg_memory_shift_limbs(value->value.bits, count, bits);
-    llg_memory_shift_limbs(value->value.x, count, bits);
-    llg_memory_shift_limbs(value->value.z, count, bits);
-    uint64_t mask = bits == 1u ? 1u : 0xfu;
-    if (state == 1) value->value.x[0] |= mask;
-    else if (state == 2) value->value.z[0] |= mask;
-    else value->value.bits[0] |= (uint64_t)numeric & mask;
+    llg_sv4_append_digit(&value->value, bits, state == 1 ? 2u : state == 2 ? 3u : 0u, numeric);
     ++value->digits;
 }
 
@@ -424,12 +408,12 @@ static int llg_memory_enum_value_allowed(sv4_t value,
 // unsigned base, or copies of the retained sign bit for a signed base.
 static int llg_memory_enum_word_fits_width(sv4_t value, uint32_t width,
                                             int8_t is_signed) {
-    if (sv4_is_unknown(value) || value.width <= width) return 1;
+    if (sv4_is_unknown(value) || llg_sv4_width(value) <= width) return 1;
     int sign = is_signed && width != 0
-                   ? (int)((value.bits[(width - 1u) / 64u] >> ((width - 1u) % 64u)) & 1u)
+                   ? (int)((llg_sv4_word(value, (width - 1u) / 64u, LLG_SV4_BITS) >> ((width - 1u) % 64u)) & 1u)
                    : 0;
-    for (uint32_t bit = width; bit < value.width; ++bit) {
-        int high = (int)((value.bits[bit / 64u] >> (bit % 64u)) & 1u);
+    for (uint32_t bit = width; bit < llg_sv4_width(value); ++bit) {
+        int high = (int)((llg_sv4_word(value, bit / 64u, LLG_SV4_BITS) >> (bit % 64u)) & 1u);
         if (high != sign) return 0;
     }
     return 1;
@@ -439,13 +423,12 @@ static int llg_memory_enum_word_fits_width(sv4_t value, uint32_t width,
 // its state; a known leading one still zero-extends, even into signed storage.
 static sv4_t llg_memory_word_cast(sv4_t word, uint32_t width, int8_t is_signed) {
     int8_t extend_unknown = 0;
-    if (word.width != 0 && width > word.width) {
-        uint32_t bit = word.width - 1u;
-        uint64_t mask = UINT64_C(1) << (bit % 64u);
-        extend_unknown = ((word.x[bit / 64u] | word.z[bit / 64u]) & mask) != 0;
+    if (llg_sv4_width(word) != 0 && width > llg_sv4_width(word)) {
+        uint32_t bit = llg_sv4_width(word) - 1u;
+        extend_unknown = llg_sv4_state(word, bit) >= 2u;
     }
     sv4_t result = sv4_resize(word, width, extend_unknown);
-    result.is_signed = is_signed;
+    llg_sv4_set_signed(&result, is_signed);
     return result;
 }
 

@@ -150,7 +150,7 @@ impl Frame<'_, '_> {
         );
         let value = self.replace(value, code, width, false);
         // The descriptor's width is authoritative for a resizable source.
-        let cursor = self.scalar("int64_t", format!("(int64_t){}.width", value.code));
+        let cursor = self.scalar("int64_t", format!("(int64_t)llg_sv4_width({})", value.code));
         let mut owners = Vec::new();
         for (position, target) in targets.iter().enumerate() {
             let mut writes = Vec::new();

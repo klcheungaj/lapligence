@@ -187,7 +187,7 @@ static void llg_queue_unstream_assign_impl(llg_queue_t* dst, sv4_t source,
     sv4_t unpacked = sv4_unstream(source, slice, right_to_left);
     if (!selector_kind) {
         sv4_t* values = llg_alloc_items(count, sizeof(*values));
-        uint32_t cursor = unpacked.width;
+        uint32_t cursor = llg_sv4_width(unpacked);
         for (size_t offset = 0; offset < count; ++offset) {
             uint32_t right_bit = cursor - dst->element_width;
             values[offset] = sv4_part_select(
@@ -211,7 +211,7 @@ static void llg_queue_unstream_assign_impl(llg_queue_t* dst, sv4_t source,
         llg_container_fatal("queue streaming target index overflows size");
     if ((uint64_t)high >= (uint64_t)dst->size)
         llg_queue_resize_default(dst, (size_t)high + 1);
-    uint32_t cursor = unpacked.width;
+    uint32_t cursor = llg_sv4_width(unpacked);
     for (size_t offset = 0; offset < count; ++offset) {
         uint32_t right_bit = cursor - dst->element_width;
         sv4_t value = sv4_part_select(

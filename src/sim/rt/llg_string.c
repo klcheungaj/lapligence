@@ -115,18 +115,18 @@ llg_string_t llg_string_substr(llg_string_t value, sv4_t first, sv4_t last) {
 
 llg_string_t llg_string_from_packed(sv4_t value) {
     value = sv4_to_two_state(value);
-    size_t raw_length = ((size_t)value.width + 7) / 8;
+    size_t raw_length = ((size_t)llg_sv4_width(value) + 7) / 8;
     size_t length = 0;
     for (size_t i = raw_length; i; --i) {
         size_t bit = (i - 1) * 8;
-        unsigned char byte = (unsigned char)(value.bits[bit / 64] >> (bit % 64));
+        unsigned char byte = (unsigned char)(llg_sv4_word(value, bit / 64, LLG_SV4_BITS) >> (bit % 64));
         if (byte) ++length;
     }
     llg_string_t result = string_alloc(length);
     size_t out = 0;
     for (size_t i = raw_length; i; --i) {
         size_t bit = (i - 1) * 8;
-        unsigned char byte = (unsigned char)(value.bits[bit / 64] >> (bit % 64));
+        unsigned char byte = (unsigned char)(llg_sv4_word(value, bit / 64, LLG_SV4_BITS) >> (bit % 64));
         if (byte) result.data[out++] = (char)byte;
     }
     sv4_destroy(&value);
@@ -137,10 +137,14 @@ sv4_t llg_string_to_packed(llg_string_t value, uint32_t width, int is_signed) {
     sv4_t result = sv4_from_u64(0, width, is_signed);
     size_t bytes = ((size_t)width + 7) / 8;
     if (bytes > value.len) bytes = value.len;
-    for (size_t i = 0; i < bytes; ++i)
-        result.bits[i / 8] |= (uint64_t)(unsigned char)value.data[value.len - 1 - i] << ((i % 8) * 8);
+    for (size_t i = 0; i < bytes;) {
+        uint64_t word = 0;
+        size_t first = i;
+        for (unsigned shift = 0; shift < 64u && i < bytes; shift += 8u, ++i)
+            word |= (uint64_t)(unsigned char)value.data[value.len - 1u - i] << shift;
+        llg_sv4_set_word(&result, first / 8u, word, 0, 0);
+    }
     llg_string_destroy(&value);
-    if (width % 64u) result.bits[(width - 1u) / 64u] &= UINT64_MAX >> (64u - width % 64u);
     return result;
 }
 
@@ -161,8 +165,8 @@ sv4_t llg_string_getc(llg_string_t value, sv4_t index) {
 
 void llg_string_putc(llg_string_t *value, sv4_t index, sv4_t character) {
     int64_t i;
-    unsigned char c = character.width
-        ? (unsigned char)(character.bits[0] & ~(character.x[0] | character.z[0])) : 0;
+    unsigned char c = llg_sv4_width(character)
+        ? (unsigned char)(llg_sv4_word(character, 0, LLG_SV4_BITS) & ~(llg_sv4_word(character, 0, LLG_SV4_X) | llg_sv4_word(character, 0, LLG_SV4_Z))) : 0;
     if (c != 0 && sv4_to_index_i64(index, &i) && i >= 0 &&
         (uint64_t)i < value->len) {
         int changed = (unsigned char)value->data[(size_t)i] != c;
@@ -210,7 +214,7 @@ void llg_string_itoa(llg_string_t *target, sv4_t value, unsigned base) {
         sv4_destroy(&value);
         return;
     }
-    uint32_t number = (uint32_t)value.bits[0];
+    uint32_t number = (uint32_t)llg_sv4_word(value, 0, LLG_SV4_BITS);
     int negative = base == 10 && (number >> 31);
     if (negative) number = 0u - number;
     do { buffer[n++] = "0123456789abcdef"[number % base]; number /= base; } while (number);

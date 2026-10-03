@@ -39,20 +39,27 @@ LLG_PROBE_SIMPLE_PROCESS(quick_child, 0) {
     LLG_PROBE_DONE();
 }
 
-LLG_PROBE_SIMPLE_PROCESS(scale_parent, 4) {
-    LLG_PROBE_SIMPLE_BEGIN(4);
-    llg_fork_group_t* group = NULL;
+typedef struct {
+    llg_co_frame_t co;
+    int index;
+    llg_fork_group_t* group;
+} parent_frame_t;
+LLG_CO_ROOT_FRAME_OK(parent_frame_t);
+
+LLG_PROBE_PROCESS(scale_parent, parent_frame_t, 4) {
+    LLG_PROBE_BEGIN(parent_frame_t, 4);
+    F->group = NULL;
     for (F->index = 0; (unsigned)F->index < count; F->index++) {
-        if (!one_group || !group) group = llg_fork_group_new(LLG_JOIN_NONE);
-        llg_proc_t* child = llg_fork(&scale_child_desc, "ordered child", group);
+        if (!one_group || !F->group) F->group = llg_fork_group_new(LLG_JOIN_NONE);
+        llg_proc_t* child = llg_fork(&scale_child_desc, "ordered child", F->group);
         ((child_frame_t*)LLG_CO_ROOT(&child->chain))->index = (unsigned)F->index;
-        if (!one_group) CHECK(llg_arm_join(self, group) == LLG_CO_ARM_READY);
+        if (!one_group) CHECK(llg_arm_join(self, F->group) == LLG_CO_ARM_READY);
         if (staggered) {
             LLG_PROBE_AWAIT(3, llg_arm_time(self, 0));
             CHECK(started == (unsigned)F->index + 1);
         }
     }
-    if (one_group) CHECK(llg_arm_join(self, group) == LLG_CO_ARM_READY);
+    if (one_group) CHECK(llg_arm_join(self, F->group) == LLG_CO_ARM_READY);
     CHECK(started == (staggered ? count : 0));
     LLG_PROBE_AWAIT(1, llg_arm_time(self, 1));
     CHECK(started == count && completed == 0);
