@@ -7,6 +7,10 @@ CMake build → execution. [Lowering](codegen/AGENTS.md),
 
 ## Ownership and validation
 
+- The CLI uses the simulator frontend export policy documented by
+  [FFI](../ffi/AGENTS.md) and [driver](../bin/AGENTS.md); library generation
+  consumes its caller's owned DB without changing capture limits.
+
 - `codegen::{generate, generate_with_opts}` accepts owned DB data.
   `GeneratedModel` retains public `design_name: String`, `model_c` and warnings.
   `SemanticModel` owns synthesis classification and returns a checked

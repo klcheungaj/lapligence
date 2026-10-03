@@ -201,6 +201,8 @@ impl<'a> Codegen<'a> {
                 canonicalize(info);
             }
         }
+        // Canonicalization rewrote `ir` in place.
+        self.rebuild_sig_global_index();
         Ok(())
     }
 

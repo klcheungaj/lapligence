@@ -95,10 +95,7 @@ impl<'a> Codegen<'a> {
             else {
                 continue;
             };
-            if let Some(target) = sorted_node_ids(&self.sig_globals)
-                .into_iter()
-                .find(|target| self.sig_globals[target].ir == info.ir)
-            {
+            if let Some(target) = self.sig_global_for_ir(info.ir) {
                 return Some((target, base_index));
             }
         }
@@ -941,11 +938,7 @@ impl<'a> Codegen<'a> {
                 .map(|(_, member)| member.packed_ranges)
                 .or_else(|| {
                     self.hier_path_signal(base)
-                        .and_then(|info| {
-                            sorted_node_ids(&self.sig_globals)
-                                .into_iter()
-                                .find(|target| self.sig_globals[target].ir == info.ir)
-                        })
+                        .and_then(|info| self.sig_global_for_ir(info.ir))
                         .and_then(|target| self.packed_ranges_for_base(target))
                 }),
             NodeKind::Expr(ExprKind::Ref { target }) => {

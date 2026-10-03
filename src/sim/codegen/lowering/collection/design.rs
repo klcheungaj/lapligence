@@ -188,7 +188,7 @@ impl<'a> Codegen<'a> {
                         omit: false,
                     });
                     self.signals.push(info.clone());
-                    self.sig_globals.insert(nid, info.clone());
+                    self.insert_sig_global(nid, info.clone());
                     self.scope_sig_names
                         .entry(path.to_string())
                         .or_default()
@@ -492,7 +492,7 @@ impl<'a> Codegen<'a> {
                         omit: false,
                     });
                     self.signals.push(info.clone());
-                    self.sig_globals.insert(nid, info.clone());
+                    self.insert_sig_global(nid, info.clone());
                     self.scope_sig_names
                         .entry(gs_path.clone())
                         .or_default()

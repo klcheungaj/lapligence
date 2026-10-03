@@ -30,6 +30,11 @@ Keep reusable processing in the library. Bins import `llg::core`, `llg::ffi` and
 - `--include-dir`/`-I` admits bounded canonical files under source/configured
   include roots. `--define`/`-D <NAME[=VALUE]>` seeds preprocessing before admission,
   including macro-expanded include names. Native reads remain cache-only.
+- `--max-export-mib <MiB>` accepts 1–16384, default 4096, and supplies
+  `Limits::simulator` to checked compilation, including report-only lint.
+  Export exhaustion names the effective budget and the option; native record
+  ceilings are fixed. [FFI](../ffi/AGENTS.md) owns the separate library defaults
+  and native ceilings. The optional process-memory guard remains independent.
 - `--lint` runs shared lint before codegen and exits 1 on errors.
   `--lint-config <path>` loads `llg-lint.toml`. `--lint-json [<path>]` takes
   precedence over `--lint`, emits one JSON object to stdout/file and exits without

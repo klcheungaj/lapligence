@@ -230,7 +230,7 @@
 //!   retained in the IR so program initial processes launch in Reactive and
 //!   `$exit` remains a typed runtime operation.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use super::timescale::{real_delay_ticks, round_time_literal, time_literal_delay_ticks, Timescale};
 use super::CodegenError;
@@ -539,6 +539,48 @@ fn generate_from_db_with_codegen_options_impl(
 }
 
 impl<'a> Codegen<'a> {
+    /// Record a node's lowered signal and keep the reverse index in step.
+    fn insert_sig_global(&mut self, node: NodeId, info: SignalInfo) {
+        let ir = info.ir;
+        if let Some(old) = self.sig_globals.insert(node, info) {
+            if old.ir != ir {
+                self.unindex_sig_global(old.ir, node);
+            }
+        }
+        self.sig_global_by_ir
+            .entry(ir)
+            .or_default()
+            .insert(node.index(), node);
+    }
+
+    fn unindex_sig_global(&mut self, ir: usize, node: NodeId) {
+        if let Some(nodes) = self.sig_global_by_ir.get_mut(&ir) {
+            nodes.remove(&node.index());
+            if nodes.is_empty() {
+                self.sig_global_by_ir.remove(&ir);
+            }
+        }
+    }
+
+    /// Rebuild the reverse index after `ir` fields change in place.
+    fn rebuild_sig_global_index(&mut self) {
+        self.sig_global_by_ir.clear();
+        for (&node, info) in &self.sig_globals {
+            self.sig_global_by_ir
+                .entry(info.ir)
+                .or_default()
+                .insert(node.index(), node);
+        }
+    }
+
+    /// The lowest-index node whose lowered signal is `ir`, matching the
+    /// former first match of a scan over `sig_globals` in node order.
+    fn sig_global_for_ir(&self, ir: usize) -> Option<NodeId> {
+        self.sig_global_by_ir
+            .get(&ir)
+            .and_then(|nodes| nodes.values().next().copied())
+    }
+
     /// Capture the source-owned hierarchy and storage identities used by the
     /// generated VPI catalog.  This runs after collection has assigned stable
     /// IR indices but before optimization can prune any otherwise dead signal.
@@ -984,6 +1026,10 @@ struct Codegen<'a> {
     signals: Vec<SignalInfo>,
     /// Net/Var arena node → lowered signal info (all instances + gen scopes).
     sig_globals: HashMap<NodeId, SignalInfo>,
+    /// Reverse index of `sig_globals`: lowered signal → its nodes, ordered by
+    /// node index. Reverse lookups take the first (lowest-index) node, which
+    /// keeps them deterministic without sorting every global per lookup.
+    sig_global_by_ir: HashMap<usize, BTreeMap<usize, NodeId>>,
     /// Clocking block variable → synthesized sampled storage and source.
     clocking_samples: HashMap<NodeId, ClockingSampleInfo>,
     /// Canonical lvalues for module `ref` port storage.  A target may be a
@@ -1176,6 +1222,9 @@ struct Codegen<'a> {
     /// the key as well: elaborated instances may retain a shared source
     /// identity while their storage and canonical groups remain independent.
     structural_driver_sites: HashMap<(NodeId, NodeId, usize), DriverId>,
+    /// `(owner, source)` keys of `structural_driver_sites`, so asking whether a
+    /// source drives any group does not scan every site.
+    structural_driver_sources: HashSet<(NodeId, NodeId)>,
     /// Typed structural-driver records kept until the model is fully lowered.
     /// The record is the single source of truth for contribution identity;
     /// synthetic signal indices are only an emission detail.
@@ -1288,6 +1337,7 @@ impl<'a> Codegen<'a> {
             static_task_chandle_locals: HashMap::new(),
             signals: Vec::new(),
             sig_globals: HashMap::new(),
+            sig_global_by_ir: HashMap::new(),
             clocking_samples: HashMap::new(),
             reference_signals: HashMap::new(),
             reference_arrays: HashMap::new(),
@@ -1354,6 +1404,7 @@ impl<'a> Codegen<'a> {
             pca_seq: 0,
             wired_driver_sites: HashMap::new(),
             structural_driver_sites: HashMap::new(),
+            structural_driver_sources: HashSet::new(),
             structural_drivers: Vec::new(),
             structural_driver_terminal_sites: HashMap::new(),
             final_procs: Vec::new(),

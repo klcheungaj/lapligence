@@ -15,6 +15,11 @@ escapes the safe interface. See [wrapper](../wrapper/readme.md),
 [owned database](../core/db/readme.md) and
 [patch preparation](../../patches/README.md).
 
+`Limits::default()` preserves the interactive/library capture budgets.
+`Limits::simulator(bytes)` admits batch designs using larger native record
+ceilings and the caller's explicit export byte budget. Export accounting covers
+captured records and strings; it is separate from the process-memory guard.
+
 The source map flag asks Slang to parse an admitted original map buffer with
 its preprocessor. It requires compilation-unit admission and preserves macro
 invocation locations in configuration diagnostics.

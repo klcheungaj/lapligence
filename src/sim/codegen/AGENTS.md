@@ -141,7 +141,11 @@ including undriven arrays, and dynamic net selectors. Keep disjoint constant
 uwire selections legal; overlapping drivers reject.
 
 Fixed net arrays, selected ports and interfaces share canonical bits; array
-publication notifies array dependencies. True aliases flatten MSB-to-LSB, with
+publication notifies array dependencies. Keep the signal reverse index aligned
+with every insertion and rebuild it after port canonicalization. Alias whole-net
+views resolve selected positions lazily; retain eager first-error behavior when
+endpoint validation cannot prove the complete affine range valid. True aliases
+flatten MSB-to-LSB, with
 ascending indexed-minus starts checked as base-width+1 before materialization.
 Retain self/duplicate/net-kind/cross-scope restrictions. Hierarchical/concatenated
 continuous targets use resolved sites, not function/task-output or procedural-net

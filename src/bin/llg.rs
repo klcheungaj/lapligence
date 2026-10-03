@@ -4,7 +4,7 @@
 //!
 //! ```text
 //! llg [generate options] [build options] <file.sv>... [-- <plusargs>...]
-//! generate: --top <module[:config]>  --edition <2001|2009>  --compilation-units <separate|merged>  --include-dir <path>  --define <NAME[=VALUE]>  --define-system-task <prototype>  --libmap <file>  --libfile [<library>=]<file>  --library-order <library>[,<library>...]  --default-library <library>  --lint  --lint-json [<path>]  --lint-config <file>  --gen-only  --no-opt  --stop-policy <resume|exit>
+//! generate: --top <module[:config]>  --edition <2001|2009>  --compilation-units <separate|merged>  --include-dir <path>  --define <NAME[=VALUE]>  --define-system-task <prototype>  --libmap <file>  --libfile [<library>=]<file>  --library-order <library>[,<library>...]  --default-library <library>  --lint  --lint-json [<path>]  --lint-config <file>  --gen-only  --no-opt  --stop-policy <resume|exit>  --max-export-mib <MiB>
 //! build:    --generator <backend>  --launcher <program>  --dpi-lib <path>...  --cc <program>  --cflags <flags>  --model-opt-level <O0|O1|O2|O3|Os>  --cmake <program>  --build-jobs <N>
 //! output:   --out-dir <dir>  --runtime-cache <dir>
 //! ```
@@ -26,6 +26,14 @@
 //! Frontend diagnostics remain on stderr. When both `--lint` and `--lint-json`
 //! are given, `--lint-json` wins.  Exit codes: 0 clean, 1 on lint errors, 2
 //! usage errors.
+//!
+//! `--max-export-mib <MiB>` sets the frontend export budget: the bytes of
+//! semantic records Slang capture may export for the whole elaborated design
+//! (default `SIMULATOR_DEFAULT_MAX_OUTPUT_BYTES`, 4096 MiB; at most the native
+//! ceiling of 16384 MiB). The export grows linearly with the design, about
+//! 15 KiB per small `always` process; it is a finite guard because the driver
+//! has no other memory limit unless `LLG_MEMORY_LIMIT_MB` is set. A design that
+//! exhausts it fails with an error naming the limit and this option.
 //!
 //! Model build (CMake is the only supported model builder):
 //!
@@ -62,7 +70,10 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use llg::core::compile;
+use llg::ffi::slang::{NATIVE_HARD_MAX_OUTPUT_BYTES, SIMULATOR_DEFAULT_MAX_OUTPUT_BYTES};
 use llg::sim;
+
+const MIB: u64 = 1024 * 1024;
 
 /// Default output root: models go to `build/sim/<design>` and the runtime
 /// cache to `build/llg-runtime-cache`, both under the current directory.
@@ -99,6 +110,7 @@ struct DriverOptions {
     gen_only: bool,
     no_opt: bool,
     stop_policy: StopPolicy,
+    max_export_bytes: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -140,7 +152,7 @@ fn parse_args(args: Vec<String>) -> Result<DriverOptions, i32> {
     if args.is_empty() {
         eprintln!(
             "usage: llg [generate options] [build options] <file.sv>... [-- <plusargs>...]\n\
-             generate: --top <module[:config]>  --edition <2001|2009>  --compilation-units <separate|merged>  --include-dir <path>  --define <NAME[=VALUE]>  --define-system-task <prototype>  --libmap <file>  --libfile [<library>=]<file>  --library-order <library>[,<library>...]  --default-library <library>  --lint  --lint-json [<path>]  --lint-config <file>  --gen-only  --no-opt\n\
+             generate: --top <module[:config]>  --edition <2001|2009>  --compilation-units <separate|merged>  --include-dir <path>  --define <NAME[=VALUE]>  --define-system-task <prototype>  --libmap <file>  --libfile [<library>=]<file>  --library-order <library>[,<library>...]  --default-library <library>  --lint  --lint-json [<path>]  --lint-config <file>  --gen-only  --no-opt  --max-export-mib <MiB>\n\
              build:    --generator <backend>  --launcher <program>  --dpi-lib <path>...  --cc <program>  --cflags <flags>  --model-opt-level <O0|O1|O2|O3|Os>  --cmake <program>  --build-jobs <N>\n\
              output:   --out-dir <dir>  --runtime-cache <dir>\n\
              stop:     --stop-policy <resume|exit>  # `$stop` handling (default: resume)"
@@ -177,6 +189,7 @@ fn parse_args(args: Vec<String>) -> Result<DriverOptions, i32> {
     let mut gen_only = false;
     let mut no_opt = false;
     let mut stop_policy = StopPolicy::Resume;
+    let mut max_export_bytes = SIMULATOR_DEFAULT_MAX_OUTPUT_BYTES;
     let mut it = args.into_iter().peekable();
     while let Some(a) = it.next() {
         if a == "--" {
@@ -215,6 +228,8 @@ Options:
       --no-opt               Disable simulator optimization passes
       --stop-policy <resume|exit>
                               Handle `$stop` by resuming (default) or exiting
+      --max-export-mib <MiB> Frontend export budget for the elaborated design
+                              (default: {export_default}, at most {export_ceiling})
       --                    Pass remaining arguments to the generated simulator
       --generator <backend>  Select the CMake generator
       --launcher <program>   Select the CMake C compiler launcher
@@ -234,7 +249,9 @@ Options:
                               <out-dir>/llg-runtime-cache)",
                     model_opt_default = sim::build::DEFAULT_MODEL_OPT_LEVEL
                         .gnu_flag()
-                        .trim_start_matches('-')
+                        .trim_start_matches('-'),
+                    export_default = SIMULATOR_DEFAULT_MAX_OUTPUT_BYTES / MIB,
+                    export_ceiling = NATIVE_HARD_MAX_OUTPUT_BYTES / MIB,
                 );
                 return Err(0);
             }
@@ -401,6 +418,18 @@ Options:
                     return Err(2);
                 }
             },
+            "--max-export-mib" => match it.next().map(|value| value.parse::<u64>()) {
+                Some(Ok(mib)) if (1..=NATIVE_HARD_MAX_OUTPUT_BYTES / MIB).contains(&mib) => {
+                    max_export_bytes = mib * MIB;
+                }
+                _ => {
+                    eprintln!(
+                        "llg: --max-export-mib requires an integer from 1 to {}",
+                        NATIVE_HARD_MAX_OUTPUT_BYTES / MIB
+                    );
+                    return Err(2);
+                }
+            },
             "--gen-only" | "-gen-only" => gen_only = true,
             "--no-opt" => no_opt = true,
             "--stop-policy" => match it.next() {
@@ -473,7 +502,46 @@ Options:
         gen_only,
         no_opt,
         stop_policy,
+        max_export_bytes,
     })
+}
+
+/// Explain how to raise an exhausted frontend export budget. The native
+/// bridge names the exhausted budget; record-count ceilings are fixed, so only
+/// the byte budget is adjustable from the command line.
+fn export_limit_hint(error: &compile::StartupError, max_export_bytes: u64) -> Option<String> {
+    if error.kind() != compile::StartupErrorKind::LimitExceeded {
+        return None;
+    }
+    let ceiling = NATIVE_HARD_MAX_OUTPUT_BYTES / MIB;
+    let current = max_export_bytes / MIB;
+    if error.contains("export byte limit") {
+        Some(if current < ceiling {
+            format!(
+                "the elaborated design exceeds the {current} MiB frontend export budget; \
+                 raise it with --max-export-mib <MiB> (at most {ceiling})"
+            )
+        } else {
+            format!(
+                "the elaborated design exceeds the native {ceiling} MiB frontend export ceiling"
+            )
+        })
+    } else if [
+        "semantic node limit",
+        "semantic edge limit",
+        "constant limit",
+    ]
+    .iter()
+    .any(|limit| error.contains(limit))
+    {
+        Some(
+            "the elaborated design exceeds a native frontend record-count ceiling, \
+             which --max-export-mib cannot raise"
+                .to_owned(),
+        )
+    } else {
+        None
+    }
 }
 
 fn run(options: DriverOptions) -> i32 {
@@ -507,6 +575,7 @@ fn run(options: DriverOptions) -> i32 {
         gen_only,
         no_opt,
         stop_policy,
+        max_export_bytes,
     } = options;
     // 0. Optional lint config: read + parse before compiling so a missing or
     //    malformed file aborts fast and with a clear message.
@@ -541,11 +610,15 @@ fn run(options: DriverOptions) -> i32 {
         library_files,
         library_order,
         default_library,
+        limits: llg::ffi::slang::Limits::simulator(max_export_bytes),
         ..Default::default()
     }) {
         Ok(out) => out,
         Err(compile::CompileError::Startup(e)) => {
             eprintln!("llg: compile failed to start: {e}");
+            if let Some(hint) = export_limit_hint(&e, max_export_bytes) {
+                eprintln!("llg: {hint}");
+            }
             return 1;
         }
         Err(compile::CompileError::FrontendDiagnostics(diagnostics)) => {
@@ -752,4 +825,46 @@ fn gen_name(gen: &sim::codegen::GeneratedModel) -> String {
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn export_budget_defaults_to_the_simulator_policy() {
+        let options = parse_args(vec!["design.sv".to_owned()]).unwrap();
+        assert_eq!(options.max_export_bytes, SIMULATOR_DEFAULT_MAX_OUTPUT_BYTES);
+        let options = parse_args(vec![
+            "--max-export-mib".to_owned(),
+            "1".to_owned(),
+            "design.sv".to_owned(),
+        ])
+        .unwrap();
+        assert_eq!(options.max_export_bytes, MIB);
+    }
+
+    #[test]
+    fn export_failure_hint_names_the_option_and_native_ceiling() {
+        let error = compile::compile_sources_checked(
+            &[compile::OwnedSource::compilation_unit(
+                "tb.sv",
+                "module tb; endmodule",
+            )],
+            &compile::CompileOpts {
+                limits: llg::ffi::slang::Limits::simulator(1),
+                ..Default::default()
+            },
+        )
+        .expect_err("the export cannot fit one byte");
+        let compile::CompileError::Startup(error) = error else {
+            panic!("expected startup limit failure");
+        };
+        let hint = export_limit_hint(&error, MIB).expect("adjustable export hint");
+        assert!(hint.contains("1 MiB frontend export budget"));
+        assert!(hint.contains("--max-export-mib <MiB> (at most 16384)"));
+        let hint = export_limit_hint(&error, NATIVE_HARD_MAX_OUTPUT_BYTES)
+            .expect("native export ceiling hint");
+        assert!(hint.contains("native 16384 MiB frontend export ceiling"));
+    }
 }
