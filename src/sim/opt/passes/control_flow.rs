@@ -66,6 +66,7 @@ pub(super) fn prune_stmt_list(stmts: &mut Vec<IrStmt>) {
 }
 
 fn prune_nested_in_place(s: &mut IrStmt) {
+    let s = s.unlocated_mut();
     match s {
         IrStmt::Block(b) | IrStmt::ActivationScope { body: b, .. } => prune_stmt_list(b),
         IrStmt::ImmediateAssertion {
@@ -152,7 +153,7 @@ fn prune_nested_in_place(s: &mut IrStmt) {
 /// statements are definitions, not references).
 fn collect_goto_names(stmts: &[IrStmt], out: &mut HashSet<String>) {
     for s in stmts {
-        match s {
+        match s.unlocated() {
             IrStmt::Goto(l) => {
                 out.insert(l.clone());
             }
@@ -216,9 +217,9 @@ pub(super) fn strip_unreferenced_labels(stmts: &mut Vec<IrStmt>) {
 }
 
 fn strip_labels_in(stmts: &mut Vec<IrStmt>, referenced: &HashSet<String>) {
-    stmts.retain(|s| !matches!(s, IrStmt::Label(l) if !referenced.contains(l)));
+    stmts.retain(|s| !matches!(s.unlocated(), IrStmt::Label(l) if !referenced.contains(l)));
     for s in stmts.iter_mut() {
-        match s {
+        match s.unlocated_mut() {
             IrStmt::Block(b)
             | IrStmt::Forever { body: b }
             | IrStmt::ActivationScope { body: b, .. } => strip_labels_in(b, referenced),

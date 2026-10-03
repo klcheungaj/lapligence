@@ -45,6 +45,14 @@ optimizer and hash iteration order cannot affect site identity. Inline-expanded
 task statements remain in their host and therefore consume the host's resume
 numbers; existing inline-recursion rejection remains unchanged.
 
+Source-backed suspension operations carry a scope-free `IrStmt::Located`
+wrapper. Analysis copies that owned origin into each numbered site after every
+optimization or arena reanalysis; inline expansions retain the callee statement's
+origin. Site metadata uses the individual HDL location, including the owned DB's
+physical include/macro expansion mapping. Operations without provenance and
+implicit process-trigger terminators fall back to the procedure origin. Shared
+instance bodies keep independent descriptors and site tables.
+
 `ExecutionModel::validate` checks reachable targets, typed references, unique
 signal triggers backed by emitted packed storage (including bounded constant
 array elements), block-local labels, body-controlled wait ownership, resume

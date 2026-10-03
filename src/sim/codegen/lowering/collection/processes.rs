@@ -560,7 +560,7 @@ impl<'a> Codegen<'a> {
         captures: &mut usize,
         terminals: &mut HashMap<usize, usize>,
     ) -> Result<(), String> {
-        match statement {
+        match statement.unlocated_mut() {
             IrStmt::Block(statements) => {
                 for statement in statements {
                     self.remap_pattern_continuous_targets(statement, source, captures, terminals)?;

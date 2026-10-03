@@ -78,6 +78,7 @@ impl Validator<'_> {
             }
         }
         match stmt {
+            IrStmt::Located { statement, .. } => self.validate_stmt(statement, formals, path)?,
             IrStmt::System(command) => {
                 if let Some(command) = command {
                     command.validate(self.model, self.string_return.get())?;

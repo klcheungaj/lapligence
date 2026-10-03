@@ -398,6 +398,7 @@ fn collect_control_labels<'a>(
     gotos: &mut Vec<&'a str>,
 ) -> Result<(), IrValidationError> {
     for statement in statements {
+        let statement = statement.unlocated();
         match statement {
             IrStmt::Label(label) => {
                 if label.starts_with("_llg_exec_") || !labels.insert(label) {
@@ -569,6 +570,7 @@ fn collect_effects(
     visited_calls: &mut HashSet<usize>,
 ) {
     for statement in statements {
+        let statement = statement.unlocated();
         match statement {
             IrStmt::InertialAssign { .. } => {
                 effects.push(ExecutionEffect::EnqueueUpdate(ScheduleRegion::Active))
@@ -833,6 +835,7 @@ fn collect_statement_expression_effects(
     effects: &mut Vec<ExecutionEffect>,
     visited_calls: &mut HashSet<usize>,
 ) {
+    let statement = statement.unlocated();
     if let Some(value) = statement.delay_expression() {
         collect_expression_effects(ir, value, effects, visited_calls);
     }

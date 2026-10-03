@@ -1,12 +1,19 @@
 //! Dispatch.
 
 use super::*;
+use crate::sim::ir::IrProcessControl;
 
 impl EmitCtx<'_, '_> {
     /// Lower one statement (or construct) into its IR statements.  Mirrors
     /// the pre-IR emitter decision-for-decision: same errors, warnings,
     /// sensitivity sets and wait tracking.
     pub(in super::super) fn lower_stmt(&mut self, h: NodeId) -> Result<Vec<IrStmt>, String> {
+        let mut statements = self.lower_stmt_operations(h)?;
+        locate_suspensions(&mut statements, &self.cg.origin(h));
+        Ok(statements)
+    }
+
+    fn lower_stmt_operations(&mut self, h: NodeId) -> Result<Vec<IrStmt>, String> {
         match self.cg.kind(h) {
             NodeKind::Stmt(StmtKind::Begin) => {
                 let mut body = Vec::new();
@@ -612,6 +619,84 @@ impl EmitCtx<'_, '_> {
                 "unsupported statement in `{}` (node kind {other:?})",
                 self.path
             )),
+        }
+    }
+}
+
+fn locate_suspensions(statements: &mut [IrStmt], origin: &crate::sim::semantic::Origin) {
+    for statement in statements {
+        match statement {
+            IrStmt::Located { .. } => continue,
+            IrStmt::Block(body)
+            | IrStmt::While { body, .. }
+            | IrStmt::Repeat { body, .. }
+            | IrStmt::Forever { body }
+            | IrStmt::WaitCond { body, .. }
+            | IrStmt::WaitEventTriggered { body, .. }
+            | IrStmt::ActivationScope { body, .. } => locate_suspensions(body, origin),
+            IrStmt::If { then_, els, .. } => {
+                locate_suspensions(then_, origin);
+                if let Some(els) = els {
+                    locate_suspensions(els, origin);
+                }
+            }
+            IrStmt::For {
+                init, incr, body, ..
+            } => {
+                locate_suspensions(init, origin);
+                locate_suspensions(incr, origin);
+                locate_suspensions(body, origin);
+            }
+            IrStmt::Case { items, .. } => {
+                for item in items {
+                    locate_suspensions(&mut item.body, origin);
+                }
+            }
+            IrStmt::WaitOrder {
+                success, failure, ..
+            } => {
+                locate_suspensions(success, origin);
+                locate_suspensions(failure, origin);
+            }
+            IrStmt::ImmediateAssertion {
+                if_true, if_false, ..
+            } => {
+                if let Some(body) = if_true {
+                    locate_suspensions(body, origin);
+                }
+                if let Some(body) = if_false {
+                    locate_suspensions(body, origin);
+                }
+            }
+            _ => {}
+        }
+        if matches!(
+            statement,
+            IrStmt::Delay { .. }
+                | IrStmt::WaitEvents { .. }
+                | IrStmt::WaitAny { .. }
+                | IrStmt::WaitCond { .. }
+                | IrStmt::WaitEventTriggered { .. }
+                | IrStmt::WaitOrder { .. }
+                | IrStmt::ClockingCycleWait { .. }
+                | IrStmt::Fork { .. }
+                | IrStmt::CapturedFork { .. }
+                | IrStmt::WaitFork
+                | IrStmt::Expect { .. }
+                | IrStmt::StopControl { .. }
+                | IrStmt::Call(_)
+                | IrStmt::Object(IrObjectStmt::ProcessControl {
+                    op: IrProcessControl::Suspend,
+                    ..
+                })
+                | IrStmt::Object(IrObjectStmt::ProcessAwait(_))
+                | IrStmt::Object(IrObjectStmt::SemaphoreGet(..))
+                | IrStmt::Object(IrObjectStmt::MailboxPut(..))
+                | IrStmt::Object(IrObjectStmt::MailboxPutLocal(..))
+                | IrStmt::Object(IrObjectStmt::MailboxGet(..))
+                | IrStmt::Object(IrObjectStmt::MailboxGetLocal(..))
+        ) {
+            *statement = std::mem::replace(statement, IrStmt::Nop).with_origin(origin.clone());
         }
     }
 }

@@ -290,7 +290,7 @@ fn collect_pre_fns_rw(pre_fns: &[IrPreFn], model: &IrModel, rw: &mut Rw) {
 /// loops, case items + default, and wait bodies.  Named-event entries are
 /// skipped here (they are not signal storage).
 fn sens_lists_of(s: &IrStmt, out: &mut Vec<IrDependency>) {
-    match s {
+    match s.unlocated() {
         IrStmt::WaitCond { sens, body, .. } => {
             out.extend(sens.iter().cloned());
             for x in body {
@@ -372,7 +372,7 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
     if let Some(value) = s.delay_expression() {
         collect_expr_reads(value, model, rw);
     }
-    match s {
+    match s.unlocated() {
         IrStmt::VpiCall { args, .. } => {
             for arg in args {
                 collect_expr_reads(arg, model, rw);

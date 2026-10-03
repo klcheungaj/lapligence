@@ -239,6 +239,9 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
         let mut capture =
             |expression: IrExpr| self.capture_deferred_assertion_expr(frame, captures, expression);
         match stmt {
+            IrStmt::Located { origin, statement } => self
+                .capture_deferred_assertion_stmt(frame, captures, *statement)
+                .map(|statement| statement.with_origin(origin)),
             IrStmt::Display {
                 fmt,
                 args,

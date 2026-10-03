@@ -345,7 +345,12 @@ fn render_coroutine_metadata(
         };
         out.push_str(&format!(
             "    {{ {callee}, {offset}, 0, {} }},\n",
-            c_string_literal(&artifact.location)
+            c_string_literal(
+                &site
+                    .origin()
+                    .map(origin_location)
+                    .unwrap_or_else(|| artifact.location.clone())
+            )
         ));
     }
     out.push_str("};\n");

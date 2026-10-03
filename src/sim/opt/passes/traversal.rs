@@ -309,6 +309,7 @@ fn walk_expr_mut(e: &mut IrExpr, f: &mut impl FnMut(&mut IrExpr)) {
 
 /// Visit every expression slot of one statement (recursively).
 fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
+    let s = s.unlocated_mut();
     if let Some(value) = s.delay_expression_mut() {
         walk_expr_mut(value, f);
     }

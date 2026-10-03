@@ -142,6 +142,7 @@ pub struct SuspensionSite {
     resume: u32,
     operation: SuspensionOperation,
     mechanism: Option<CallMechanism>,
+    origin: Option<crate::sim::semantic::Origin>,
 }
 
 impl SuspensionSite {
@@ -155,6 +156,11 @@ impl SuspensionSite {
 
     pub fn mechanism(&self) -> Option<CallMechanism> {
         self.mechanism
+    }
+
+    /// Owned provenance of the suspension or call operation, when available.
+    pub fn origin(&self) -> Option<&crate::sim::semantic::Origin> {
+        self.origin.as_ref()
     }
 }
 
@@ -258,6 +264,7 @@ impl ExecutionAnalysis {
                         path: block_path.child(OperationPathElement::Terminator),
                         operation: SuspensionOperation::ProcessTrigger,
                         call: None,
+                        origin: None,
                     });
                 }
             }
@@ -350,6 +357,7 @@ impl ExecutionAnalysis {
                             resume,
                             operation: draft.operation,
                             mechanism,
+                            origin: draft.origin,
                         },
                     )
                     .is_some()
@@ -457,6 +465,7 @@ struct SiteDraft {
     path: OperationPath,
     operation: SuspensionOperation,
     call: Option<DirectCall>,
+    origin: Option<crate::sim::semantic::Origin>,
 }
 
 fn scan_branches(
@@ -489,12 +498,15 @@ fn scan_statements(
 ) {
     for (index, statement) in statements.iter().enumerate() {
         let path = parent.child(OperationPathElement::Statement(index));
+        let origin = statement.origin().cloned();
+        let statement = statement.unlocated();
         if matches!(statement, IrStmt::ClockingCycleWait { .. }) {
             for branch in [OperationPathElement::Then, OperationPathElement::Else] {
                 sites.push(SiteDraft {
                     path: path.child(branch),
                     operation: SuspensionOperation::ClockingCycle,
                     call: None,
+                    origin: origin.clone(),
                 });
             }
         } else if let Some((operation, call)) = suspension_operation(statement, function_effects) {
@@ -502,6 +514,7 @@ fn scan_statements(
                 path: path.clone(),
                 operation,
                 call,
+                origin,
             });
         }
         match statement {
@@ -1030,6 +1043,69 @@ mod tests {
     }
 
     #[test]
+    fn suspension_origins_survive_reanalysis_and_missing_provenance_stays_optional() {
+        let first = crate::sim::semantic::Origin::Source {
+            path: "sites.sv".into(),
+            line: 3,
+            column: 5,
+            end_line: 3,
+            end_column: 8,
+        };
+        let second = crate::sim::semantic::Origin::Source {
+            path: "sites.sv".into(),
+            line: 7,
+            column: 5,
+            end_line: 7,
+            end_column: 8,
+        };
+        let delay = || IrStmt::Delay {
+            ticks: IrDelay::Constant(1),
+        };
+        let process = IrProcess::new(
+            "p0".into(),
+            "top.p".into(),
+            IrShape::RunOnce,
+            vec![],
+            vec![
+                delay().with_origin(first.clone()),
+                delay(),
+                delay().with_origin(second.clone()),
+            ],
+        );
+        let ir = IrModel::from_parts(
+            "top".into(),
+            1,
+            IrModelParts {
+                processes: vec![process],
+                spawns: vec!["p0".into()],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let mut execution = ExecutionModel::lower(ir).unwrap();
+        crate::sim::opt::run(&mut execution, &crate::sim::opt::OptConfig::default()).unwrap();
+        execution
+            .reanalyze_with_forced_arena_callees(&BTreeSet::new())
+            .unwrap();
+        execution.validate().unwrap();
+        let mut sites = execution
+            .analysis()
+            .sites(CoroutineId::Process(0))
+            .unwrap()
+            .values()
+            .collect::<Vec<_>>();
+        sites.sort_by_key(|site| site.resume());
+        assert_eq!(
+            sites.iter().map(|site| site.origin()).collect::<Vec<_>>(),
+            [Some(&first), None, Some(&second)]
+        );
+        let c = crate::sim::emit_c::render(&execution).unwrap();
+        assert!(c.contains("{ NULL, 0, 0, \"sites.sv:3:5\" }"));
+        assert!(c.contains("{ NULL, 0, 0, \"sites.sv:7:5\" }"));
+        assert!(c.contains("{ NULL, 0, 0, \"<synthetic: manually constructed process top.p>\" }"));
+    }
+
+    #[test]
     fn stop_does_not_make_a_void_function_a_coroutine() {
         let stop = IrStmt::StopControl {
             verbosity: 1,
@@ -1070,6 +1146,7 @@ mod tests {
 
     fn call(callee: usize) -> SiteDraft {
         SiteDraft {
+            origin: None,
             path: OperationPath::default(),
             operation: SuspensionOperation::Call {
                 callee: Some(callee),

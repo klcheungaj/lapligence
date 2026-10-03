@@ -18,7 +18,7 @@ const PURE_CALL_LIMIT: usize = 32;
 /// behavior even though the selected body remains private to the callback.
 fn callback_safe_statements(body: &[IrStmt]) -> Result<(), String> {
     for statement in body {
-        match statement {
+        match statement.unlocated() {
             IrStmt::Nop | IrStmt::Label(_) | IrStmt::Goto(_) => {}
             IrStmt::Block(body) => callback_safe_statements(body)?,
             IrStmt::DeclLocal { init, .. } => {
@@ -135,7 +135,7 @@ fn callback_safe_expression(expr: &IrExpr) -> Result<(), String> {
 }
 
 fn callback_effect(statement: &IrStmt) -> String {
-    let reason = match statement {
+    let reason = match statement.unlocated() {
         IrStmt::Delay { .. }
         | IrStmt::ClockingCycleWait { .. }
         | IrStmt::WaitEvents { .. }

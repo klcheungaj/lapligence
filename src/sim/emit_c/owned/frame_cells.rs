@@ -315,6 +315,7 @@ impl CellEligibility {
     }
 
     fn statement(&mut self, ctx: &RCtx<'_>, statement: &IrStmt) {
+        let statement = statement.unlocated();
         match statement {
             IrStmt::Nop
             | IrStmt::Label(_)

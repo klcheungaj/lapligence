@@ -195,7 +195,7 @@ struct ActivationRenderScope {
 fn enclosed_labels(stmts: &[crate::sim::ir::IrStmt], labels: &mut HashSet<String>) {
     use crate::sim::ir::IrStmt;
     for stmt in stmts {
-        match stmt {
+        match stmt.unlocated() {
             IrStmt::Label(label) => {
                 labels.insert(label.clone());
             }
@@ -287,6 +287,7 @@ fn render_stmt_scoped(
         Ok(out)
     }
     let out = match st {
+        IrStmt::Located { statement, .. } => return render_stmt_scoped(ctx, statement, scopes),
         IrStmt::System(command) => {
             let (command, has_command) = match command.as_ref() {
                 Some(command) => (super::objects::string(ctx, command)?, 1),

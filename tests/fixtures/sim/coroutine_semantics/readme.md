@@ -25,6 +25,12 @@ expectation, and treats any frontend or lowering warning as a failure.
 | `termination_depth.sv` | Default `$stop` resumes at task depth two; `$finish` from a plain function inside a timing task abandons callers and runs finals once. |
 | `function_step_budget.sv` | A non-yielding loop in a plain function terminates with the exact process-budget diagnostic instead of hanging. |
 
+`resume_locations.sv` belongs to `tests/sim_resume_locations.rs`: the test
+generates the model, injects a bad-state hook after a resumed wait, and checks
+the runtime HDL backtrace's distinct wait and caller locations through polled
+and anchored calls. Other focused tests in that suite check source metadata
+after pruning, inline task expansion, includes/macros and instance body sharing.
+
 The scheduler wake-order fixture deliberately pins llg's deterministic ordering
 of otherwise unordered Active processes; it is a runtime regression oracle, not
 a claim that IEEE specifies this order. Other fixtures use specified outcomes;

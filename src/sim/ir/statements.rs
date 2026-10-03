@@ -216,6 +216,12 @@ impl IrActivationTarget {
 /// (`sens`/`reads`); those lists are never recomputed afterwards.
 #[derive(Clone, Debug, PartialEq)]
 pub enum IrStmt {
+    /// Source provenance for one operation, without an added lexical scope.
+    /// Optimizers retain this wrapper when rewriting the enclosed operation.
+    Located {
+        origin: crate::sim::semantic::Origin,
+        statement: Box<IrStmt>,
+    },
     /// Task-position `$system`; an optional owned command is evaluated exactly
     /// once when the statement executes and its host status is discarded.
     /// `None` means the standard's omitted-argument `system(NULL)` query.
@@ -758,8 +764,39 @@ impl IrWaveDumpVars {
 }
 
 impl IrStmt {
-    pub(in crate::sim) fn delay_expression(&self) -> Option<&IrExpr> {
+    /// Attach owned provenance without changing the operation's scope or effects.
+    pub fn with_origin(self, origin: crate::sim::semantic::Origin) -> Self {
+        Self::Located {
+            origin,
+            statement: Box::new(self),
+        }
+    }
+
+    /// Return the executable operation through any provenance wrappers.
+    pub fn unlocated(&self) -> &Self {
         match self {
+            Self::Located { statement, .. } => statement.unlocated(),
+            statement => statement,
+        }
+    }
+
+    pub(in crate::sim) fn unlocated_mut(&mut self) -> &mut Self {
+        match self {
+            Self::Located { statement, .. } => statement.unlocated_mut(),
+            statement => statement,
+        }
+    }
+
+    /// Return this operation's source provenance, if it was captured.
+    pub fn origin(&self) -> Option<&crate::sim::semantic::Origin> {
+        match self {
+            Self::Located { origin, .. } => Some(origin),
+            _ => None,
+        }
+    }
+
+    pub(in crate::sim) fn delay_expression(&self) -> Option<&IrExpr> {
+        match self.unlocated() {
             Self::Delay { ticks }
             | Self::DelayedAssign { ticks, .. }
             | Self::ClockingDrive { ticks, .. }
@@ -772,7 +809,7 @@ impl IrStmt {
     }
 
     pub(in crate::sim) fn delay_expression_mut(&mut self) -> Option<&mut IrExpr> {
-        match self {
+        match self.unlocated_mut() {
             Self::Delay { ticks }
             | Self::DelayedAssign { ticks, .. }
             | Self::ClockingDrive { ticks, .. }

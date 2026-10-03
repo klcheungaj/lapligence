@@ -92,6 +92,7 @@ impl Frame<'_, '_> {
     pub(super) fn statement(&mut self, statement: &IrStmt) -> Result<(), String> {
         let cancellation_mark = self.cancellation_mark();
         match statement {
+            IrStmt::Located { statement, .. } => return self.statement(statement),
             IrStmt::Nop => self.line(";"),
             IrStmt::Container(operation) => self.container_statement(operation)?,
             IrStmt::StreamAssign {
