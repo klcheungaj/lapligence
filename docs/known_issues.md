@@ -201,3 +201,14 @@ in §A.8.5, then apply a narrow tracked frontend patch for the legal forms; do
 not bypass checked compilation or treat frontend rejection as an illegal-type
 oracle. This admission gap prevents member alias identity tests from reaching
 the otherwise shared electrical projection path.
+
+
+## Runtime-selected module reference connections have no qualified binding oracle
+
+The fixed module-ref path requires constant actual selectors. A connection such
+as `child c(values[index]);` rejects with an explicit runtime-reference-rewiring
+diagnostic; it must not silently reread `index` on each access or invent a
+canonical storage cell. IEEE 1800-2009 §23.3.3.2 describes hierarchical reference
+binding, but the retained runtime-selector characterization has no adjudicated
+binding/rebinding oracle. Qualify that boundary before enabling runtime-selected
+connections. Static selected connections and nested packed projections execute.

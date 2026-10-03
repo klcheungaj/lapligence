@@ -57,6 +57,12 @@ impl<'a> Codegen<'a> {
                 .owning_inst(port)
                 .map(|instance| self.instance_path_of(instance))
                 .unwrap_or_default();
+            if !self.net_lvalue_selects_are_constant(actual) {
+                return Err(format!(
+                    "reference port `{}` requires constant actual selectors; runtime reference rewiring is not supported",
+                    self.display_name(port)
+                ));
+            }
             if let Some(child) = self.signal_of(internal).cloned() {
                 let target = self.lower_lhs(&path, actual).map_err(|error| {
                     format!(

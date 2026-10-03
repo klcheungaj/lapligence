@@ -80,6 +80,11 @@ with `-E 'binary(sim_feature_completion) & test(rtl_001::)'`; run the checker an
 architecture gates as well. `--no-tests fail` makes a misspelled/disabled selection
 fail rather than accept a zero-test run. No new acceptance wrapper is needed.
 
+RTL-003's projection fixtures use `-E 'binary(sim_feature_completion) &
+test(rtl_003::)'`. They cover selected module refs, fixed record rows, selector
+capture for blocking/NBA/mutation/copy-out and synchronous scanner ref views;
+representative cases also run after Db destruction at native O0/O3.
+
 ### Vendor patch preparation
 
 `vendor_patches.rs` checks clean/applied trees, no-Git archives (including archives
