@@ -5,6 +5,12 @@ scheduler state, VPI, waveforms and cancellation-safe scopes. It needs no Rust,
 Slang or HDL; `tests/runtime_value_storage.rs` invokes the same CTest project.
 All C probes here are handwritten, including those named `generated_*`.
 
+The Rust launcher bounds configure and CTest to 180 seconds each. Its native
+build has a separate 600-second limit to accommodate compiler contention on
+shared hosts; timed-out stages still terminate their descendant processes.
+Individual CTest probe deadlines remain in force. Set
+`CMAKE_BUILD_PARALLEL_LEVEL` to bound native build jobs (for example, `6`).
+
 ## Native run
 
 ```sh
