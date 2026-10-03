@@ -17,6 +17,58 @@ impl Codegen<'_> {
         self.descriptor_transport(node)
     }
 
+    /// Turn a lexical activation array into persistent static storage. The
+    /// model-global name keeps coroutine bodies addressing it as a global,
+    /// never as a frame-local value.
+    pub(in super::super) fn make_fixed_array_persistent(&mut self, info: &mut ArrayInfo) {
+        let name = format!("S_llg_fixed_{}", info.ir);
+        let array = &mut self.model.arrays[info.ir];
+        array.activation = false;
+        array.c_name = name.clone();
+        info.global = name;
+    }
+
+    /// Whether a declaration needs descriptor storage rather than one packed
+    /// payload.
+    pub(in super::super) fn descriptor_declaration(&self, node: NodeId) -> bool {
+        matches!(
+            self.kind(node),
+            NodeKind::Array { .. } | NodeKind::Var { .. }
+        ) && self.descriptor_transport(node)
+    }
+
+    /// Queue the initializers of static descriptor-backed locals below
+    /// `body` once. They share module-array initialization: the typed
+    /// pattern transport into persistent descriptor storage, scheduled with
+    /// the other static declaration initializers.
+    pub(super) fn queue_static_descriptor_initializers(&mut self, body: NodeId) {
+        let mut locals = Vec::new();
+        self.fixed_call_locals(body, &mut locals);
+        for local in locals {
+            if self.db.variable_lifetime(local) != VariableLifetime::Static
+                || !self
+                    .array_globals
+                    .get(&local)
+                    .is_some_and(|array| !self.model.arrays[array.ir].activation)
+                || self
+                    .array_initializers
+                    .iter()
+                    .any(|(declaration, _)| *declaration == local)
+            {
+                continue;
+            }
+            let Some(initializer) = self
+                .db
+                .var_initializer(local)
+                .or_else(|| self.db.array_meta(local).and_then(|array| array.init))
+            else {
+                continue;
+            };
+            self.reserve_initializer_order(local);
+            self.array_initializers.push((local, initializer));
+        }
+    }
+
     pub(in super::super) fn fixed_activation_array(
         &mut self,
         node: NodeId,
@@ -114,8 +166,12 @@ impl Codegen<'_> {
             } else {
                 self.db.variable_lifetime(node) == VariableLifetime::Automatic
             };
-            let info = self.fixed_activation_array(node)?;
-            self.model.arrays[info.ir].activation = lifetime;
+            let mut info = self.fixed_activation_array(node)?;
+            if lifetime {
+                self.model.arrays[info.ir].activation = true;
+            } else {
+                self.make_fixed_array_persistent(&mut info);
+            }
             self.array_globals.insert(node, info);
         }
         Ok(())

@@ -7,6 +7,35 @@ impl EmitCtx<'_, '_> {
         &mut self,
         declaration: NodeId,
     ) -> Result<Vec<IrStmt>, String> {
+        // Procedural-block descriptor arrays: static storage is persistent
+        // and initializes once in the static schedule (SV §6.21); automatic
+        // storage is a lexical activation initialized at each entry.
+        if self.func.is_none()
+            && self.cg.descriptor_declaration(declaration)
+            && !self.cg.array_globals.contains_key(&declaration)
+        {
+            let automatic =
+                self.cg.db.variable_lifetime(declaration) == VariableLifetime::Automatic;
+            let mut info = self.cg.fixed_activation_array(declaration)?;
+            if automatic {
+                self.cg.model.arrays[info.ir].activation = true;
+            } else {
+                self.cg.make_fixed_array_persistent(&mut info);
+            }
+            self.cg.array_globals.insert(declaration, info);
+            if !automatic {
+                if let Some(initializer) = self.cg.db.var_initializer(declaration).or_else(|| {
+                    self.cg
+                        .db
+                        .array_meta(declaration)
+                        .and_then(|meta| meta.init)
+                }) {
+                    self.cg.reserve_initializer_order(declaration);
+                    self.cg.array_initializers.push((declaration, initializer));
+                }
+                return Ok(Vec::new());
+            }
+        }
         if let Some(array) = self
             .cg
             .array_globals

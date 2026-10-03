@@ -561,6 +561,32 @@ fn z_array_initialization_requires_valid_four_state_storage() {
 }
 
 #[test]
+fn statement_initialization_validates_its_body() {
+    let execute = |sig| IrInitStep::Execute {
+        declaration: 0,
+        body: Box::new(IrStmt::Assign {
+            lhs: IrLhs::Whole(sig),
+            rhs: packed_const(1, 1),
+            nba: false,
+        }),
+    };
+    let mut model = valid_model();
+    model.init_steps.push(execute(0));
+    model
+        .validate()
+        .expect("a statement initializer may write static storage");
+    model.init_steps[0] = execute(1);
+    let error = model
+        .validate()
+        .expect_err("a statement initializer body is validated");
+    assert!(
+        error.path().starts_with("init_steps[0].body"),
+        "{}",
+        error.path()
+    );
+}
+
+#[test]
 fn indexed_lhs_selected_width_contributes_to_capacity() {
     let statement = IrStmt::Assign {
         lhs: IrLhs::IdxPart(

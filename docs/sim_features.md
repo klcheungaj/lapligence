@@ -141,7 +141,7 @@ later-form gates do not establish complete 2009 semantic conformance.
 | Boundary | Verilog-2001 | SystemVerilog-2009 |
 | --- | --- | --- |
 | Legacy modules, ANSI/non-ANSI ports, `assign`, `always @*`, `$display`, `$finish`, `$signed` | Admitted | Admitted |
-| Scalar declaration initialization | Active-process race retained | Static initialization precedes ordinary processes |
+| Declaration initialization | Active-process race retained | Static initialization precedes ordinary processes, ordered by static reads |
 | `logic`, `typedef`, packed structures, type parameters, patterns, `always_comb` | Rejected | Admitted within the feature limits below |
 | Whole unpacked-array values, assignments and ports | Rejected; memory declarations, indexed elements and admitted memory-I/O storage arguments remain legal | Admitted fixed forms |
 | Unbased-unsized literals and SV-only `for` headers | Rejected | Admitted |
@@ -167,7 +167,7 @@ supported.
 | --- | --- |
 | Packed element or value | 1–1,048,575 bits inclusive; `LLG_SUPPORTED_WIDTH_LIMIT = 1 << 20` is exclusive. Each packed cell uses its actual width. |
 | Generated fixed unpacked array | At most 16,777,216 cells in the product of all dimensions (`LLG_MAX_FIXED_ARRAY_CELLS`). Extents/products are checked before allocation; an over-limit declaration receives a resource diagnostic. |
-| Fixed array used as a value, formal or stream | Integral variable arrays use non-flattened descriptor transport: whole and selected-row copies, equality, conditionals (element-wise merge for an ambiguous selector), default fills, declaration initializers, array-valued pattern items, pattern-lvalue row scatter and multi-segment/unaligned streams. Static, automatic and recursive functions pass such arrays through input, output, inout and ref formals and return them. Oversized records and arrays of records retain the 1,048,575-bit packed payload limit. Direct reductions read cells individually. |
+| Fixed array used as a value, formal or stream | Integral variable arrays use non-flattened descriptor transport: whole and selected-row copies, equality, conditionals (element-wise merge for an ambiguous selector), default fills, declaration initializers, array-valued pattern items, pattern-lvalue row scatter and multi-segment/unaligned streams. Module, package, function-static and block-static declaration initializers run in the static schedule; automatic block and function arrays initialize per entry. Static, automatic and recursive functions pass such arrays through input, output, inout and ref formals and return them. Oversized records and arrays of records retain the 1,048,575-bit packed payload limit. Direct reductions read cells individually. |
 | Subroutine recursion | At most 256 active calls; a further call emits a recursion-limit diagnostic and returns the result type's default. Recursive calls, including through class virtual and virtual-interface dispatch, use heap frames, so their depth does not consume native stack; recursion re-entering through DPI C code does. |
 | Read-only helper inlining | At most 32 nested callback calls; deeper emission receives an explicit diagnostic. |
 | Scheduler region passes | Default 10,000,000 per time slot; `LLG_ZERO_LOOP_LIMIT` accepts a positive decimal `uint64`. Exhaustion diagnoses a zero-delay loop. |
@@ -227,15 +227,20 @@ Macros, includes and their edition-specific behavior are counted in §11.
   without packed flattening. Fixed integral record arrays also
   retain recursive member selections and constant-selected electrical net views.
   V §3.10; SV §§7.4, 7.6 **[1995/SV-2005]**.
-- 🟨 **Initialization and lifetimes** — Scalar and fixed integral composite
-  initializers, including zero-time calls, run before 2009 processes; 2001 keeps
-  its initialization schedule. Static locals/formals initialize once, not on
-  first call; automatic storage initializes per activation. SV `const` module
-  variables and automatic-function locals retain their initialized values;
-  subsequent writes diagnose. Explicit member defaults, recursive array
+- 🟨 **Initialization and lifetimes** — Scalar, fixed integral composite and
+  descriptor-backed array initializers, including zero-time calls, run before
+  2009 processes in one schedule: each runs after the static declarations it
+  reads (directly or through called functions) and otherwise in declaration
+  order; 2001 keeps its active-region initialization race. Static
+  locals/formals of functions, tasks and blocks initialize once per module,
+  interface, generate scope or package, not on first call; automatic storage,
+  including descriptor-backed arrays, initializes per activation. SV `const`
+  module variables and automatic-function locals retain their initialized
+  values; subsequent writes diagnose. Explicit member defaults, recursive array
   defaults and mixed state domains are retained.
   Timing-bearing initializer calls are illegal; unsupported native/resizable
-  layouts and ambiguous/opposite-lifetime captures remain rejected.
+  layouts, oversized records and ambiguous/opposite-lifetime captures remain
+  rejected.
   V §6.2.1; SV §§6.8, 6.21, 10.5 **[2001/SV-2005]**.
 - 🟨 **Real types** — `real`/`realtime`/`shortreal` support scalar/fixed-array
   storage, parameters, scalar ports, value calls, arithmetic, ordinary `case`,
@@ -335,9 +340,11 @@ Macros, includes and their edition-specific behavior are counted in §11.
   SV §§6.20, 6.23, 13.4.3 **[1995/2001/SV-2005]**.
 - 🟨 **Packages and `$unit`** — Qualified/imported/re-exported names, wildcard
   exports, shared variables, dependent initialization, static subprogram state,
-  types and constants are represented. Separate/merged unit scope is retained.
-  Unsupported layouts, callable environments and post-2009 forms remain
-  restricted. Instance-hierarchical names are not constant-expression operands;
+  types and typed (including aggregate) constants are represented, and module
+  initializers read them regardless of collection order. Separate/merged unit
+  scope is retained; a name redeclared in a package or unit scope rejects.
+  Native element layouts (for example string arrays), unsupported callable
+  environments and post-2009 forms remain restricted. Instance-hierarchical names are not constant-expression operands;
   lexical package references remain distinct. SV §26 **[SV-2005]**.
 - 🟦 **Interfaces and modports** — Concrete storage, instance-local processes,
   parameterized interfaces, member references and modport views are represented.
@@ -757,10 +764,13 @@ Macros, includes and their edition-specific behavior are counted in §11.
   mismatches, unpacked-union bit-stream casts, real/associative operands, native
   strings, recursive objects and unsupported reference combinations reject.
   SV §§6.24.3, 11.4.14 **[SV-2005]**.
-- 🟨 **Let expressions** — Numeric expansions bind free names in declaration
-  scope; runtime and constant actuals with a declaration-scope parameter execute in SV2009,
-  while V2001 rejects the syntax. Recursive lets reject. Expanded assertion,
-  native and aggregate bodies still need an admitted consumer representation.
+- 🟨 **Let expressions** — Expansions bind free names and defaults in
+  declaration scope, take positional, named, default and typed actuals,
+  re-evaluate operands at every use, and return numeric and fixed packed,
+  unpacked and descriptor-backed aggregate results in procedural, continuous,
+  comparison and declaration-initializer contexts in SV2009, while V2001
+  rejects the syntax. Recursive lets reject. Expanded assertion and native
+  bodies still need an admitted consumer representation.
   SV §11.13 **[SV-2009]**.
 - ❌ **Operator overloading** — No dedicated simulator contract for
   operator-overloading declarations. Parsing or ordinary built-in operator

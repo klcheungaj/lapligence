@@ -720,11 +720,17 @@ pub(super) fn walk_model_exprs_mut(model: &mut IrModel, f: &mut impl FnMut(&mut 
         walk_stmts_mut(&mut p.body, f);
     }
     for step in &mut model.init_steps {
-        if let crate::sim::ir::IrInitStep::Initialize(initialization) = step {
-            if let crate::sim::ir::IrInitTarget::Fixed(lhs) = &mut initialization.target {
-                walk_lhs_mut(lhs, f);
+        match step {
+            crate::sim::ir::IrInitStep::Initialize(initialization) => {
+                if let crate::sim::ir::IrInitTarget::Fixed(lhs) = &mut initialization.target {
+                    walk_lhs_mut(lhs, f);
+                }
+                walk_expr_mut(&mut initialization.value, f);
             }
-            walk_expr_mut(&mut initialization.value, f);
+            crate::sim::ir::IrInitStep::Execute { body, .. } => {
+                walk_stmts_mut(std::slice::from_mut(body.as_mut()), f);
+            }
+            _ => {}
         }
     }
     for assertion in &mut model.assertions {

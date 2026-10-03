@@ -105,4 +105,10 @@ pub enum IrInitStep {
     /// Apply a declaration initializer according to its recorded lifetime and
     /// edition-specific scheduling phase.
     Initialize(IrInitialization),
+    /// Execute a static declaration initializer whose typed transport is a
+    /// statement rather than one value, such as a descriptor-backed fixed
+    /// array pattern. It always belongs to the SystemVerilog before-process
+    /// phase; Verilog declaration initializers remain active-region processes.
+    /// The body must not suspend.
+    Execute { declaration: u32, body: Box<IrStmt> },
 }

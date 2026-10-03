@@ -111,6 +111,17 @@ recursion depth reset; fail the whole replay on error. Declaration-call and memb
 default initialization finish before SystemVerilog processes start, never lazily
 on first call. Reject unavailable lifetime/provenance or unrepresented native/
 resizable initialization rather than fabricating storage.
+Static initializers form one schedule (`lowering/initialization/order.rs`): an
+initializer runs after every static declaration its value reads, directly or
+through called functions (including their static locals), and otherwise keeps
+the declaration order reserved at collection, so deferred and late-lowered
+initializers keep their declaration slot. Package and `$unit` parameters are
+collected before any module initializer folds them. Descriptor-backed fixed
+arrays (module, package, function-static and block-static) initialize through
+the typed pattern transport as `IrInitStep::Execute` in SystemVerilog and as an
+active-region process in Verilog-2001; automatic descriptor locals declare and
+initialize on each entry. A name redeclared in a package or `$unit` scope (a
+frontend warning) rejects instead of aliasing storage.
 
 Input links evaluate in the parent scope; selected outputs preserve untouched
 bits. Constants/omitted defaults run once; explicit opens ignore defaults. Whole

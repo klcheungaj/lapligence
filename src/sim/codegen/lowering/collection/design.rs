@@ -57,6 +57,17 @@ impl<'a> Codegen<'a> {
                 &mut next_virtual_slot,
             );
         }
+        // Package and `$unit` constants precede every importing module (SV
+        // §26.3), whose declaration initializers read them while collecting.
+        for scope in self
+            .db
+            .packages()
+            .iter()
+            .copied()
+            .chain(self.compilation_unit_scopes())
+        {
+            self.collect_parameter_subtree(scope)?;
+        }
         for top in self.db.tops() {
             let source_name = strip_lib(&self.node(*top).name);
             if source_name.is_empty() {
@@ -78,6 +89,7 @@ impl<'a> Codegen<'a> {
             if path.is_empty() {
                 return Err("package has no name".to_string());
             }
+            self.reject_shared_scope_redeclarations(*package)?;
             self.collect_instance(*package, &path)?;
             self.collect_funcs(*package, &path)?;
         }
@@ -87,10 +99,57 @@ impl<'a> Codegen<'a> {
         // their owned declaration identity across every importing module.
         for unit in self.compilation_unit_scopes() {
             let path = self.instance_path_of(unit);
+            self.reject_shared_scope_redeclarations(unit)?;
             self.collect_instance(unit, &path)?;
             self.collect_funcs(unit, &path)?;
         }
         Ok(tops)
+    }
+
+    /// A name may be declared once per package or compilation-unit scope
+    /// (SV §§3.12.1, 3.13). The frontend reports a merged-unit or package
+    /// redeclaration only as a warning and keeps both declarations, which
+    /// would otherwise alias one shared static storage name.
+    fn reject_shared_scope_redeclarations(&self, scope: NodeId) -> Result<(), String> {
+        let mut seen: HashMap<&str, NodeId> = HashMap::new();
+        for child in &self.node(scope).children {
+            if !matches!(
+                self.kind(*child),
+                NodeKind::Var { .. }
+                    | NodeKind::Net { .. }
+                    | NodeKind::Array { .. }
+                    | NodeKind::NamedEvent
+                    | NodeKind::FuncTask { .. }
+            ) {
+                continue;
+            }
+            let name = self.node(*child).name.as_str();
+            if name.is_empty() {
+                continue;
+            }
+            if let Some(previous) = seen.insert(name, *child) {
+                let location = |node: NodeId| {
+                    let node = self.node(node);
+                    format!(
+                        "{}:{}:{}",
+                        node.file.as_deref().unwrap_or("<unknown>"),
+                        node.line,
+                        node.col
+                    )
+                };
+                let scope_name = if self.is_compilation_unit(scope) {
+                    "the compilation-unit scope".to_owned()
+                } else {
+                    format!("package `{}`", self.namespace_path(scope))
+                };
+                return Err(format!(
+                    "redefinition of `{name}` in {scope_name} at {} (previous declaration at {}); a name is declared once per package or compilation-unit scope",
+                    location(*child),
+                    location(previous)
+                ));
+            }
+        }
+        Ok(())
     }
 
     pub(in super::super) fn compilation_unit_scopes(&self) -> Vec<NodeId> {

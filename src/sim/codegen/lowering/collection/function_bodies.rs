@@ -868,6 +868,12 @@ impl<'a> Codegen<'a> {
             declaration_initializations.push(initialization);
         }
         self.declaration_inits.extend(declaration_initializations);
+        // Static descriptor-backed locals have persistent storage prepared by
+        // `prepare_fixed_function`; their initializers use the module-array
+        // descriptor transport and run once in the static schedule.
+        if specialization.is_none() {
+            self.queue_static_descriptor_initializers(body);
+        }
         // Restore the process-level context for whatever is lowered next
         // (continuous assignments, processes).
         self.func = None;

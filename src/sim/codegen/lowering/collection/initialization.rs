@@ -23,6 +23,9 @@ impl<'a> Codegen<'a> {
                 Some(init) => init,
                 None => continue,
             };
+            // Deferred and late-lowered initializers keep this declaration
+            // slot in the static initialization schedule.
+            self.reserve_initializer_order(*c);
             if let Some(aggregate) = self.unpacked_aggregates.get(c).cloned() {
                 self.collect_unpacked_aggregate_decl_init(path, *c, init, &aggregate)?;
                 continue;
@@ -37,9 +40,13 @@ impl<'a> Codegen<'a> {
                     AggregateKind::PackedStruct | AggregateKind::PackedUnion
                 ) && self.assignment_pattern_operands(path, init)?.is_some()
                 {
-                    let value = self.packed_aggregate_decl_init(path, init, layout, &info)?;
-                    self.var_inits.push((info, value));
-                    continue;
+                    // Constant patterns fold; patterns with runtime members
+                    // (variables, calls, let operands) use the typed
+                    // initializer below.
+                    if let Ok(value) = self.packed_aggregate_decl_init(path, init, layout, &info) {
+                        self.var_inits.push((info, value));
+                        continue;
+                    }
                 }
             }
             let name = self.node(*c).name.clone();
@@ -89,11 +96,15 @@ impl<'a> Codegen<'a> {
     /// Whether an initializer names a bound variable or net whose signal
     /// storage has not been collected yet, as can happen for child interfaces.
     fn initializer_has_uncollected_signal_ref(&self, node: NodeId) -> bool {
-        let uncollected = |target| {
-            matches!(
-                self.kind(target),
-                NodeKind::Var { .. } | NodeKind::Net { .. }
-            ) && self.signal_of(target).is_none()
+        let uncollected = |target| match self.kind(target) {
+            NodeKind::Var { .. } | NodeKind::Net { .. } => self.signal_of(target).is_none(),
+            // Package and `$unit` arrays are collected after the modules
+            // that import them.
+            NodeKind::Array { .. } => {
+                !self.array_globals.contains_key(&target)
+                    && !self.unpacked_aggregates.contains_key(&target)
+            }
+            _ => false,
         };
         match self.kind(node) {
             NodeKind::Expr(ExprKind::Ref {
@@ -588,7 +599,11 @@ impl<'a> Codegen<'a> {
         let Some(info) = self.signal_of(target).cloned() else {
             return Ok(false);
         };
-        let value = self.packed_aggregate_decl_init(path, rhs, &layout, &info)?;
+        // A pattern with runtime members is lowered later as a typed scalar
+        // declaration initializer.
+        let Ok(value) = self.packed_aggregate_decl_init(path, rhs, &layout, &info) else {
+            return Ok(false);
+        };
         self.scalar_inits.push((info, value));
         Ok(true)
     }

@@ -1002,6 +1002,25 @@ fn unused_storage_counts_function_local_initializer_reads() {
 }
 
 #[test]
+fn unused_storage_counts_statement_initializer_reads_and_writes() {
+    let mut m = model_with(Vec::new(), sigs(3));
+    m.init_steps.push(crate::sim::ir::IrInitStep::Execute {
+        declaration: 0,
+        body: Box::new(IrStmt::Assign {
+            lhs: IrLhs::Whole(1),
+            rhs: IrExpr::new(IrExprKind::SigRead(0), 8, false, None),
+            nba: false,
+        }),
+    });
+
+    run(&mut m, &storage_only());
+
+    assert!(!m.signals[0].omit, "statement-initializer read stays");
+    assert!(!m.signals[1].omit, "statement-initializer target stays");
+    assert!(m.signals[2].omit, "unreferenced signal is omitted");
+}
+
+#[test]
 fn waveform_keeps_user_storage_but_not_synthesized_storage() {
     let mut signals = sigs(2);
     signals[1].hdl_name = None;

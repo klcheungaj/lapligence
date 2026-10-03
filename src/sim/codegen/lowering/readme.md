@@ -19,6 +19,9 @@ physical strides. Subroutine lowering retains activation-relative storage,
 reference identity and static/automatic initialization. Static fixed-array
 locals use one persistent signal per declaration and instance, shared by
 subroutine writes, delayed NBAs and hierarchical fixed selections.
+`initialization/order.rs` orders all static declaration initializers by the
+static declarations they read (through called functions too), with collection
+declaration order as the tie-break.
 
 Electrical storage uses maximal adjacent runs whose member mappings, driver
 ranges, force targets and effective type/delay agree. The partitioner in

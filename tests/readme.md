@@ -108,6 +108,14 @@ both optimizer modes on both backends (set `LLG_TEST_GMP_ROOT` for the GMP
 kernel lane); stateful event helpers assert the documented process-evaluation
 policy and check evaluation counters only as lower bounds.
 
+RTL-008's initialization, package/`$unit` and let fixtures use
+`-E 'binary(sim_feature_completion) & test(rtl_008::)'`. Single-file positives run
+in both optimizer modes on both backends (set `LLG_TEST_GMP_ROOT` for the GMP
+lane); multi-file package and `$unit` cases run in separate and merged
+compilation-unit modes through `run_case_with_source_prefix`. Cross-scope
+initialization oracles are order-independent or follow a static read
+dependency; the Verilog-2001 race fixture asserts its allowed result set.
+
 ### Vendor patch preparation
 
 `vendor_patches.rs` checks clean/applied trees, no-Git archives (including archives

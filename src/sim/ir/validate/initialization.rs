@@ -234,6 +234,9 @@ impl Validator<'_> {
                     }
                 }
             },
+            IrInitStep::Execute { body, .. } => {
+                self.validate_stmts(std::slice::from_ref(body), &[], &format!("{path}.body"))?;
+            }
             IrInitStep::WriteNet { group, slot, .. } => {
                 let net = self.model.net_groups.get(*group).ok_or_else(|| {
                     IrValidationError::new(
@@ -252,6 +255,9 @@ impl Validator<'_> {
             | IrInitStep::WriteNet { value, .. } => self.validate_const(value, path),
             IrInitStep::FillArrayX(_) => Ok(()),
             IrInitStep::RegisterSampled(_) => Ok(()),
+            // The body was validated above. Suspension is rejected by the
+            // owned emitter, which owns the execution-effect analysis.
+            IrInitStep::Execute { .. } => Ok(()),
             IrInitStep::FillArrayZ(array) => {
                 if self.model.arrays[*array].two_state {
                     self.fail(path, "Z initialization requires four-state array elements")
