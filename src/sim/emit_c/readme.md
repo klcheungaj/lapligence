@@ -15,6 +15,12 @@ model remains live until resumed or closed; the process-global runtime supports
 one model at a time. Legacy string-only fragment APIs remain fail-closed when
 ownership cannot be represented.
 
+Large integral variable arrays emit one lazy storage descriptor. Selected reads
+borrow an existing cell or its default; writes and selected registrations obtain
+stable descriptors. Whole copies, equality, fills and admitted streams call typed
+runtime operations. Lexical array activations use registered object scopes; waveform
+registration uses loops instead of per-element generated tables.
+
 Fork activation frames store input event captures in opaque slots. Joined
 branches borrow the live parent's handle, preserving sibling rebinding; detached
 branches snapshot the object identity and bind a private handle that survives the

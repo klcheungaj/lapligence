@@ -6,8 +6,10 @@ its independent result is 17 × 19 = 323. The historically named `missing_shift.
 These cover IEEE 1800 arithmetic, shift, packed selection, assignment and delay
 semantics through checked-in public CLI sources in both optimizer modes.
 
-Legacy executes all three. Compact archive/value clients can build, but the shared
-scheduler currently refers to missing S4–S5 symbols even for `implemented.sv`.
-The compact CLI test records that link rejection in portable and optional GMP
-configurations; it is a dependency witness, not compact HDL execution acceptance.
-Update the rejection test to positive parity when the operation families merge.
+Legacy and compact execute all three. The positive CLI parity test compares each
+independent stdout with legacy, compact portable and optional compact GMP in
+both optimizer modes. The historical `missing_*` filenames are retained.
+`sim_value_backends/parity.rs` extends this matrix to existing arithmetic/width,
+selection, streams, nets/strength, NBA/force, VPI/waveform, RTL-001/002/003 and
+large-array fixtures. Component export/archive tests remain separate from HDL
+execution evidence.

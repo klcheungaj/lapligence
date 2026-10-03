@@ -13,6 +13,11 @@ It performs no native frontend calls, unsafe operations or C emission.
 | `lowering/collection/packed_elements.rs` | Dimension-relative packed selection chains over fixed-array elements. |
 | `net_collapse.rs`, `port_net_types.rs`, `nets.rs`, `net_arrays.rs` | Directional net-type selection, canonical electrical identities, drivers and publication. |
 
+Oversized whole integral array copies and supported streams lower to descriptor
+operations instead of coordinate expansion. `collection/fixed_calls.rs` creates
+lexical array activations for automatic nonrecursive oversized array-returning
+functions; packed signatures keep their existing transport.
+
 Collection consumes the semantic coverage ledger so reachable unknown executable
 nodes reject with source locations. Initialization keeps declaration identity,
 lifetime, origin and edition-specific phase. Process, assertion, clocking, event

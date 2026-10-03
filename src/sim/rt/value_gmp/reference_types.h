@@ -4,6 +4,8 @@
  * retained cells and publication behavior belong to the runtime facade. */
 #ifndef LLG_GMP_SV4_SELECT_PLAN_DEFINED
 #define LLG_GMP_SV4_SELECT_PLAN_DEFINED
+// Valid interval maps value[value_lsb + i] to storage[storage_lsb + i].
+// Refinement clips to the previous interval before advancing to the next slice.
 typedef struct {
     uint32_t storage_width;
     uint32_t width;

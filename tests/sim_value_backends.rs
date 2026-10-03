@@ -264,37 +264,14 @@ fn legacy_hdl_subset_matches_independent_outputs() {
 }
 
 #[test]
-fn compact_hdl_subset_exposes_missing_runtime_operations_without_fallback() {
-    for optimized in [false, true] {
-        for kernel in ["portable", "gmp"] {
-            let gmp = std::env::var("LLG_TEST_GMP_ROOT").unwrap_or_default();
-            if kernel == "gmp" && gmp.is_empty() {
-                continue;
-            }
-            for fixture in ["implemented", "missing_shift", "missing_select"] {
-                let output = sim_cli::invoke_with_env(
-                    "value_backends",
-                    fixture,
-                    optimized,
-                    &["--build-jobs", "6"],
-                    &[
-                        ("LLG_VALUE_BACKEND", "compact"),
-                        ("LLG_COMPACT_KERNELS", kernel),
-                        ("GMP_ROOT", &gmp),
-                    ],
-                    &[],
-                );
-                assert!(!output.status.success());
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                assert!(
-                    stderr.contains("llg_gmp_sv4_select_plan")
-                        || stderr.contains("llg_gmp_sv4_part_select"),
-                    "{stderr}"
-                );
-                assert!(output.stdout.is_empty());
-            }
-        }
-    }
+fn compact_hdl_subset_matches_legacy_and_independent_outputs() {
+    sim_cli::run_case_backend_parity("value_backends", "implemented", "product=323\n", &[], &[]);
+    sim_cli::run_case_backend_parity("value_backends", "missing_shift", "shift=34\n", &[], &[]);
+    sim_cli::run_case_backend_parity("value_backends", "missing_select", "part=19\n", &[], &[]);
+}
+
+#[test]
+fn component_invalid_driver_selector_is_rejected() {
     let output = sim_cli::invoke_with_env(
         "value_backends",
         "implemented",
@@ -365,3 +342,6 @@ fn component_gmp_header_library_and_limb_mismatches_fail_configure() {
         );
     }
 }
+
+#[path = "sim_value_backends/parity.rs"]
+mod parity;

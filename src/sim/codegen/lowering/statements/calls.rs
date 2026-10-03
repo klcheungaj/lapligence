@@ -1233,6 +1233,37 @@ impl EmitCtx<'_, '_> {
     /// is a bare return.  Inside an inlined task body it jumps to the done
     /// label.
     pub(super) fn lower_return(&mut self, value: Option<NodeId>) -> Result<IrStmt, String> {
+        if let Some(inline) = self.inline.as_mut() {
+            if let Some(result) = self
+                .func
+                .as_ref()
+                .and_then(|function| function.ret_node)
+                .filter(|node| {
+                    self.cg
+                        .array_globals
+                        .get(node)
+                        .is_some_and(|array| self.cg.model.arrays[array.ir].activation)
+                })
+            {
+                let mut statements = Vec::new();
+                if let Some(value) = value {
+                    let statement = self
+                        .cg
+                        .lower_p30_fixed_array_assignment(
+                            &self.path,
+                            result,
+                            value,
+                            true,
+                            Operation::Assignment,
+                        )?
+                        .ok_or("fixed return has no array assignment")?;
+                    statements.push(statement);
+                }
+                inline.used = true;
+                statements.push(IrStmt::Goto(inline.done_label.clone()));
+                return Ok(IrStmt::Block(statements));
+            }
+        }
         if let Some(inl) = self.inline.as_mut() {
             if value.is_some() {
                 return Err("return with a value inside a task".to_string());

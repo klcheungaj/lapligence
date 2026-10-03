@@ -128,6 +128,7 @@ struct DeferredDeclaration {
 pub(super) struct Frame<'a, 'm> {
     ctx: &'a RCtx<'m>,
     code: String,
+    fixed_arrays: HashMap<usize, String>,
     slots: Vec<bool>,
     next_name: usize,
     bindings: Vec<HashMap<String, Binding>>,
@@ -231,6 +232,7 @@ impl<'a, 'm> Frame<'a, 'm> {
         Self {
             ctx,
             code: String::new(),
+            fixed_arrays: HashMap::new(),
             slots: Vec::new(),
             next_name: 0,
             bindings: vec![HashMap::new()],

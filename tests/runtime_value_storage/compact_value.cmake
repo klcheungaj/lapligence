@@ -4,6 +4,8 @@ if(LLG_STORAGE_TEST_COMPACT)
   find_package(Python3 REQUIRED COMPONENTS Interpreter)
   set(compact_sources "${LLG_RT}/value_gmp/storage.c" "${LLG_RT}/value_gmp/logic.c"
       "${LLG_RT}/value_gmp/arithmetic.c" "${LLG_RT}/value_gmp/kernels.c"
+      "${LLG_RT}/value_gmp/selections.c" "${LLG_RT}/value_gmp/references.c"
+      "${LLG_RT}/value_gmp/assembly.c" "${LLG_RT}/value_gmp/consumer_bridge.c"
       "${LLG_RT}/value_gmp/shifts_reductions.c" "${LLG_RT}/value_gmp/comparison_membership.c")
   add_library(compact_legacy STATIC "${LLG_RT}/llg_value.c")
   target_include_directories(compact_legacy PUBLIC "${LLG_RT}")
@@ -36,7 +38,9 @@ if(LLG_STORAGE_TEST_COMPACT)
       target_compile_definitions(compact_${mode} PRIVATE LLG_SV4_GMP_KERNELS=0)
     endif()
     strict_c(compact_${mode})
+    include("${CMAKE_CURRENT_SOURCE_DIR}/compact_selection.cmake")
     include(compact_families.cmake)
+    include(compact_consumers.cmake)
     add_executable(compact_${mode}_probe compact_probe.c)
     target_link_libraries(compact_${mode}_probe PRIVATE compact_${mode} compact_legacy)
     strict_c(compact_${mode}_probe)
@@ -81,6 +85,13 @@ if(LLG_STORAGE_TEST_COMPACT)
     add_dependencies(compact_checks
       compact_${mode}_net_adapters compact_${mode}_real_time
       compact_${mode}_format_index compact_${mode}_facade_adapters
-      compact_adapters_oracle_${mode} compact_${mode}_adapters_benchmark)
+      compact_adapters_oracle_${mode} compact_${mode}_adapters_benchmark
+      compact_${mode}_selection_probe compact_${mode}_selection_facade
+      compact_${mode}_selection_benchmark compact_${mode}_consumers_probe
+      compact_${mode}_consumers_facade)
+    if(UNIX AND NOT APPLE)
+      add_dependencies(compact_checks compact_${mode}_selection_allocations
+        compact_${mode}_consumers_allocations)
+    endif()
   endforeach()
 endif()

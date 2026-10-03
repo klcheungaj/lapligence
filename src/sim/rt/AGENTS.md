@@ -11,15 +11,18 @@ Rust-emitted model, HDL, parity, sanitizer or native-platform acceptance.
 
 ## Standalone compact backend
 
-`value_gmp/backend.h` uses ABI 5 and supplies the G1 core, V01 bridge,
-V05/S1–S3 operations and V05/S6–S9 adapters. See `value_gmp/facade_audit.md`
-for the remaining surface. Experimental `ValueConfig` selection embeds it,
-default legacy. Missing S4–S5 symbols must fail at link time; never add legacy
-fallback. Build its separate translation units through
+`value_gmp/backend.h` uses ABI 5 and supplies G1, the V01 bridge and
+V05/S1–S9 selections, references, assembly and adapters, plus V06 consumer
+primitives. See
+`value_gmp/facade_audit.md` for the remaining surface.
+Experimental `ValueConfig` selection embeds it, with legacy as the default.
+Never add a legacy fallback for an unavailable compact operation. Build its
+separate translation units through
 `tests/runtime_value_storage/compact_value.cmake`. Plain C kernels are always
 available; `LLG_SV4_GMP_KERNELS=1` accelerates wide mul/div/mod/pow and decimal
-conversion. Include GMP only in `kernels.c`, require compatible 64-bit nail-free limbs, and keep all
-other operations on direct word loops. The header inlines <=64-bit operations
+conversion. Include GMP only in `kernels.c`, require compatible 64-bit nail-free
+limbs, and keep all other operations on direct word loops. The `compact_checks`
+CMake target builds the complete standalone compact inventory. The header inlines <=64-bit operations
 and supports static constants through `LLG_GMP_SV4_LITERAL`.
 
 The wide B plane exists exactly when a logical bit is X/Z. Every mutation/result
@@ -31,7 +34,8 @@ with both kernel configurations; never import a legacy descriptor as a fallback.
 
 ## Values and native owners
 
-`LLG_VALUE_ABI_VERSION` is 4, independent of model width. `sv4_t` stores
+The default legacy `LLG_VALUE_ABI_VERSION` is 4, independent of model width.
+Compact uses ABI 5. The legacy `sv4_t` stores
 `uint32_t width`, `int8_t is_signed` and bits/x/z pointers into one allocation of
 three `uint64_t` limb planes, each ceil(width/64). Width zero allocates nothing;
 packed widths stay below exclusive `LLG_SUPPORTED_WIDTH_LIMIT` (`1 << 20`). Initialize with `SV4_EMPTY`, use

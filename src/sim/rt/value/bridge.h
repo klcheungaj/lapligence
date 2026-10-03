@@ -18,17 +18,13 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#if LLG_SV4_USE_GMP
-#include "../value_gmp/pending.h"
-#include "../value_gmp/consumer_bridge.h"
-#define llg_ref_read llg_gmp_ref_read
-#define llg_ref_view_valid llg_gmp_ref_view_valid
-#else
+#if !LLG_SV4_USE_GMP
 #include "consumer_bridge.h"
 #endif
 void llg_value_require_abi(void);
 int llg_ref_view_valid(const llg_ref_view_t*, const sv4_t*, size_t*);
 sv4_t llg_ref_read(const llg_ref_t*);
+#if !LLG_SV4_USE_GMP
 static inline void llg_sv4_export_vpi32(sv4_t value, void* output,
                                        size_t count, size_t stride) {
     unsigned char* bytes = (unsigned char*)output;
@@ -87,6 +83,7 @@ static inline void llg_sv4_export_text(sv4_t value, uint32_t width, char* output
     }
     output[width] = 0;
 }
+#endif
 
 #ifdef __cplusplus
 }

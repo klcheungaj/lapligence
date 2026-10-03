@@ -100,6 +100,20 @@ impl Frame<'_, '_> {
         } else {
             "llg_memory_read_view"
         };
+        let runtime = if array.sparse() {
+            if *write {
+                "llg_fixed_memory_write_view"
+            } else {
+                "llg_fixed_memory_read_view"
+            }
+        } else {
+            runtime
+        };
+        let memory = if array.sparse() {
+            self.fixed_array_address(view.array)?
+        } else {
+            array.c_name.clone()
+        };
         let radix = match radix {
             IrMemoryRadix::Binary => 2,
             IrMemoryRadix::Hex => 16,
@@ -140,7 +154,7 @@ impl Frame<'_, '_> {
             .collect::<Vec<_>>()
             .join(", ");
         self.line(format!("{runtime}({}, {}, {}ULL, {}u, {}, {}, (const int32_t[]){{ {dimensions} }}, {}, (const uint64_t[]){{ {strides} }}, {origin}, {}ULL, {first}, {last}, {}, {}, {addressing}, {enum_pointer}, {enum_count}, {radix});",
-            path.take_string(), array.c_name, array.total, array.elem_width, u8::from(array.signed),
+            path.take_string(), memory, array.total, array.elem_width, u8::from(array.signed),
             u8::from(array.two_state), view.dims.len(), view.total,
             u8::from(start.is_some()), u8::from(finish.is_some())));
         if let Some(enum_name) = enum_name {
@@ -223,7 +237,9 @@ impl Frame<'_, '_> {
                     ),
                     IrDependency::ArrayElement { array, index } => {
                         let array = self.ctx.model.array(*array);
-                        if array.real {
+                        if array.sparse() {
+                            ("LLG_FMT_PACKED", array.cell_address(&index.to_string()))
+                        } else if array.real {
                             ("LLG_FMT_REAL", format!("&{}[{index}]", array.c_name))
                         } else {
                             (

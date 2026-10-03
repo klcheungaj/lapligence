@@ -80,7 +80,7 @@ pub(super) fn render_vpi_metadata(model: &IrModel, out: &mut String) {
             value,
         ));
     }
-    for array in &model.arrays {
+    for array in model.arrays.iter().filter(|array| !array.activation) {
         let parts = split_name(&array.hdl_name);
         if parts.len() < 2 {
             continue;

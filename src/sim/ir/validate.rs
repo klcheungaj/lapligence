@@ -180,6 +180,7 @@ struct Validator<'model> {
     max_width: Cell<u128>,
     /// Lexical bindings introduced by fixed-array method maps, innermost last.
     reduction_bindings: RefCell<Vec<(String, u32, bool)>>,
+    fixed_activations: RefCell<Vec<HashSet<usize>>>,
     /// None outside a C function; otherwise whether that function returns chandle.
     chandle_return: Cell<Option<bool>>,
     string_return: Cell<Option<bool>>,

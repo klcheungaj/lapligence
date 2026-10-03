@@ -36,5 +36,5 @@ Experimental packed-value selection uses `LLG_VALUE_BACKEND=compact` and
 `GMP_ROOT` containing compatible headers and library. Portable needs no GMP;
 legacy never inspects or links it. Library callers pass the same `ValueConfig`
 in `CodegenOptions` and `CmakeBuildOpts`. Source export retains the selection,
-ABI guards and dependency fingerprint. Compact runtime archives/value-only clients
-build, but generated simulation execution awaits the pending S4–S5 operations.
+ABI guards and dependency fingerprint. Compact selected models include S1–S9
+and native consumer primitives.

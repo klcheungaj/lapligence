@@ -12,12 +12,14 @@ alongside independent Python integer oracles and exhaustive small truth tables.
 
 The compact implementation lives in `src/sim/rt/value_gmp/`. G1 supplies storage,
 the V01 neutral bridge, core arithmetic/logic/comparison/mux, and V05/S1–S3.
-V05/S6–S9 add full net/strength/UDP/enum, real/time,
-formatting/index and header adapters; [the checklist](../value_gmp/facade_audit.md)
-records the remaining selection/reference integration. It is
-built standalone by `tests/runtime_value_storage/compact_value.cmake` and can
-be selected experimentally for generated sources. `llg_value.h` includes exactly
-one of `value/backend.h` and `value_gmp/backend.h`, then `value/bridge.h`;
+V05/S4–S9 add selections, captured plans, packed reference reads, streams,
+concatenation, replication, array conditionals, net/strength/UDP/enum, real/time
+and formatting/index adapters. [The checklist](../value_gmp/facade_audit.md)
+records the integrated surface. Standalone probes use
+`tests/runtime_value_storage/compact_value.cmake`; generated sources select it
+experimentally through `ValueConfig`, with portable kernels or optional GMP.
+`llg_value.h` includes exactly one of `value/backend.h` and
+`value_gmp/backend.h`, followed by the neutral `value/bridge.h`;
 the selector must accept only literal tokens `0` and `1`, default to `0`, and
 reject every other token. Owner-free reference/selection types, callbacks and
 enums stay available through the facade. Packed-dependent `llg_ref_*` helpers
@@ -27,9 +29,9 @@ The standalone header defines `llg_gmp_sv4_t` and `llg_gmp_sv4_*` operations.
 Defining `LLG_SV4_GMP_PUBLIC_NAMES` before including `value_gmp/backend.h` maps
 `sv4_t`, implemented `sv4_*` operations, and `llg_sv4_*` accessors directly to
 those names. Small operations are `static inline`; wide paths call prefixed
-out-of-line implementation symbols. `pending.h` temporarily declares unavailable S4–S5 operations with compact
-prefixed symbols so runtime translation units compile. They have no definitions
-and fail at link time when required; they never convert through legacy. A differential executable may link both
+out-of-line implementation symbols. All currently emitted operations are
+implemented; unavailable additions must fail at compile/link time without legacy
+fallback. A differential executable may link both
 libraries, but a generated model must select exactly one descriptor ABI.
 
 `LLG_SV4_GMP_KERNELS=0/1` is an independent compile-time choice inside the compact
@@ -238,12 +240,14 @@ Keep new feature work on legacy through these APIs while those tasks proceed.
 
 ### Consumer primitives added by V06
 
-These `static inline` operations replace consumer plane loops. They do not resize,
-change sign, expose a payload view or publish a scheduler notification. Legacy
-mutates its existing planes without allocation. Compact uses copied word accessors
-with implicit-zero B, allocating only to promote B for incoming X/Z and dropping
-it when the result becomes known. Ordinary shape/state queries
-remain inline; bulk consumers must not substitute an out-of-line call per bit.
+These additive legacy `static inline` operations replace consumer plane loops.
+The legacy implementations never allocate; neither backend resizes, changes sign,
+exposes a payload view or publishes a scheduler notification. The compact
+implementations in `value_gmp/consumer_bridge.c` and `consumer_inline.h` operate
+on native A/B words with implicit-zero B. Known writes and reads need no
+allocation or scratch owner; actual incoming X/Z can promote B once, and removing
+the last X/Z shrinks it once to preserve the canonical exact-width layout.
+Ordinary shape/state queries remain inline; bulk consumers must not substitute an out-of-line call per bit.
 
 | API | Contract |
 | --- | --- |
@@ -266,8 +270,7 @@ waits keep copied A/B words and explicit shape metadata; they never fabricate an
 and synchronous borrow rules. Native `sizeof`/`_Alignof` remain valid; numeric
 emitter frame estimates and their selected-layout assertions are owned by V07.
 
-The current S4–S5 gaps are referenced by scheduler/reference code even when an
-HDL fixture itself only uses implemented arithmetic. Compact runtime archives
-and value-only clients build; complete generated simulators fail to link until
-those operation families merge. This is experimental scaffolding, not production
-support. No fixture build failure establishes language execution coverage.
+Selected compact builds use native reference readers, selections/assembly and
+consumer primitives. This is experimental integration, not production support.
+Generated-HDL execution and independent outputs establish coverage; component
+probes and successful linking alone do not.

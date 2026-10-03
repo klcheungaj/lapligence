@@ -12,6 +12,14 @@ coroutine frames or frame-less functions' C scopes. Escaping and unproven cells
 keep heap owners. [Retainer and lifetime rules](AGENTS.md#frame-resident-cells)
 cover exact-pointer indexing, final history removal and zero-resume exits.
 
+Fixed integral variable arrays above the dense threshold use
+`scheduler/fixed_arrays.c`: one owned default, indexed stable exceptions and a
+contents dependency. Reads borrow defaults without allocating cells. Whole copies
+capture only exceptions plus the default; an NBA owns one descriptor snapshot.
+Selected observers materialize stable cells. Model arrays are destroyed after
+scheduler cleanup; lexical descriptors are registered objects drained on scope
+exit or cancellation. All payload operations use the public value facade.
+
 ## Components
 
 | Source pair / directory | Responsibility |
@@ -161,4 +169,4 @@ The experimental [compact value backend](value_gmp/readme.md) uses ABI 5 and
 provides inline small values, canonical optional B storage and optional GMP wide
 mul/div/mod/pow kernels. Generated sources and runtime archives can select it with
 `LLG_VALUE_BACKEND=compact` and `LLG_COMPACT_KERNELS=portable|gmp`; GMP requires
-`GMP_ROOT`. Complete HDL model linking awaits the missing S4–S5 operation families.
+`GMP_ROOT`. Selected compact builds include S1–S9 and native V06 consumer helpers.

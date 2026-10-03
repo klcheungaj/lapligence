@@ -47,10 +47,12 @@ impl Validator<'_> {
         formals: &[IrFormal],
         path: &str,
     ) -> ValidationResult {
-        for (idx, stmt) in stmts.iter().enumerate() {
-            self.validate_stmt(stmt, formals, &format!("{path}[{idx}]"))?;
-        }
-        Ok(())
+        self.fixed_activations.borrow_mut().push(HashSet::new());
+        let result = stmts.iter().enumerate().try_for_each(|(idx, stmt)| {
+            self.validate_stmt(stmt, formals, &format!("{path}[{idx}]"))
+        });
+        self.fixed_activations.borrow_mut().pop();
+        result
     }
 
     pub(super) fn validate_event_assignment_specs(

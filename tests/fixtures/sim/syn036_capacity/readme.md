@@ -11,13 +11,15 @@ not set this implementation's storage ceiling.
 1,048,575, and 1,048,576 bits per packed array element. `cellwise_reduction.sv` uses 65,536
 17-bit cells (1,114,112 flattened bits), above the 1,048,575-bit packed value
 capacity, while reading owned cells one at a time. `aggregate_value_limit.sv`
-uses that same bounded cell count in a formal; its flattened payload is rejected
-with a resource diagnostic. `flat_value_below.sv` and `flat_value_at.sv` keep
+uses that same bounded cell count in an automatic formal/result; RTL-002 now
+executes it through descriptor transport. `flat_value_below.sv` and `flat_value_at.sv` keep
 fixed-value formals/returns at 1,048,574 and 1,048,575 bits. The smaller
 `nested_fixed_value.sv` checks two-dimensional value copies separately from
 cell-wise reductions. `recursion_boundary.sv` admits 255 and 256 active calls;
-`recursion_guard.sv` exercises the 257th-call diagnostic. All large generated
-models are ignored by the fast lane and run with `--run-ignored only`.
+`recursion_guard.sv` exercises the 257th-call diagnostic. Four historical resource cases remain ignored and run with `--run-ignored only`.
+The former 65,537-cell rejection now executes in the normal suite. The required
+[RTL-002 lane](../../../sim_feature_completion/rtl_002.rs) executes storage and
+an SV whole value copy at 16,777,216 cells without an ignore marker.
 
 Dimension-product, projection-stride and flattened-width overflow checks have focused Rust
 unit tests. No case enables unbounded or automatically resizable aggregates.

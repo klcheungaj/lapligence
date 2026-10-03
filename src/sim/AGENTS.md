@@ -163,4 +163,5 @@ gets both literal selector definitions. Preserve ABI 4 for legacy, 5 for compact
 and process ABI 3. Generated startup calls the selected build-identity link fence;
 foreign value clients must do likewise before exchanging descriptors. Cache ready
 markers contain the exact key; plain old ready markers cannot admit stale archives.
-Compact full-model linking awaits pending S4–S5, even for simple arithmetic HDL.
+Compact selected builds embed all currently emitted value operations, including
+S4/S5 and V06 consumer primitives; unavailable additions must never fall back.

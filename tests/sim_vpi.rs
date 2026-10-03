@@ -68,9 +68,24 @@ fn build_model(
     .expect("VPI HDL should compile");
     let database = llg::core::db::Db::from_slang(&compiled.snapshot)
         .expect("VPI HDL should import into the owned database");
-    let generated = sim::codegen::generate(&database).expect("VPI model should lower");
-    sim::build::build_model_cmake(dir, &[("model.c", generated.model_c.as_str())])
-        .expect("VPI model should build")
+    let value_config = sim::value_backend::ValueConfig::from_env().expect("value selection");
+    let generated = sim::codegen::generate_from_db_with_codegen_options(
+        &database,
+        &sim::codegen::CodegenOptions {
+            value_config,
+            ..Default::default()
+        },
+    )
+    .expect("VPI model should lower");
+    sim::build::build_model_cmake_with_opts(
+        dir,
+        &[("model.c", generated.model_c.as_str())],
+        &sim::build::CmakeBuildOpts {
+            value_config,
+            ..Default::default()
+        },
+    )
+    .expect("VPI model should build")
 }
 
 fn run_plugin(_dir: &Path, executable: &Path, plugin: &Path) -> std::process::Output {
@@ -268,11 +283,25 @@ fn vpi_partitioned_net_arrays_keep_declared_shapes_and_values() {
         let database =
             llg::core::db::Db::from_slang(&compiled.snapshot).map_err(|error| error.to_string())?;
         for options in [sim::opt::OptConfig::default(), sim::opt::OptConfig::none()] {
-            let generated = sim::codegen::generate_from_db_with_opts(&database, &options)
-                .map_err(|error| error.to_string())?;
-            let executable =
-                sim::build::build_model_cmake(dir, &[("model.c", generated.model_c.as_str())])
-                    .map_err(|error| error.to_string())?;
+            let value_config = sim::value_backend::ValueConfig::from_env()?;
+            let generated = sim::codegen::generate_from_db_with_codegen_options(
+                &database,
+                &sim::codegen::CodegenOptions {
+                    optimization: options,
+                    value_config,
+                    ..Default::default()
+                },
+            )
+            .map_err(|error| error.to_string())?;
+            let executable = sim::build::build_model_cmake_with_opts(
+                dir,
+                &[("model.c", generated.model_c.as_str())],
+                &sim::build::CmakeBuildOpts {
+                    value_config,
+                    ..Default::default()
+                },
+            )
+            .map_err(|error| error.to_string())?;
             let plugin = compile_plugin(dir, "vpi_partitioned_nets.c");
             let output = run_plugin(dir, &executable, &plugin);
             assert!(output.status.success(), "{output:?}");

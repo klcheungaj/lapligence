@@ -129,7 +129,7 @@ fn registry(
             );
         }
     }
-    for array in &model.arrays {
+    for array in model.arrays.iter().filter(|array| !array.activation) {
         let ty = if array.real { "double" } else { "sv4_t" };
         let shape = format!(
             "{}:{}:{}:{:?}:{}",
@@ -138,7 +138,11 @@ fn registry(
         registry.insert(
             array.c_name.clone(),
             Operand {
-                declaration: format!("{ty} (*@)[{}]", array.total),
+                declaration: if array.sparse() {
+                    "llg_fixed_array_t *@".to_owned()
+                } else {
+                    format!("{ty} (*@)[{}]", array.total)
+                },
                 shape,
                 value: format!("&{}", array.c_name),
                 access: "(*I->@)".to_owned(),

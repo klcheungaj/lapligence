@@ -75,6 +75,7 @@ pub fn runtime_sources() -> (&'static str, &'static str) {
             include_str!("scheduler/process_waits.c"),
             include_str!("scheduler/event_waits.c"),
             include_str!("scheduler/nonblocking.c"),
+            include_str!("scheduler/fixed_arrays.c"),
             include_str!("scheduler/stochastic.c"),
             include_str!("scheduler/reference_writes.c"),
             include_str!("scheduler/nets.c"),
@@ -117,7 +118,7 @@ pub fn value_sources_for(
             include_str!("value/udp.c"),
             include_str!("value/references.c"),
         ),
-        super::value_backend::ValueBackend::Compact => include_str!("value/references.c"),
+        super::value_backend::ValueBackend::Compact => "#include \"llg_value.h\"\n",
     };
     (include_str!("llg_value.h"), source)
 }
@@ -143,11 +144,15 @@ pub fn value_backend_sources(
                 include_str!("value_gmp/reference_types.h"),
             ),
             (
-                "value_gmp/consumer_bridge.h",
-                include_str!("value_gmp/consumer_bridge.h"),
+                "value_gmp/selection_inline.h",
+                include_str!("value_gmp/selection_inline.h"),
             ),
-            ("value_gmp/pending.h", include_str!("value_gmp/pending.h")),
+            (
+                "value_gmp/consumer_inline.h",
+                include_str!("value_gmp/consumer_inline.h"),
+            ),
             ("value_gmp/internal.h", include_str!("value_gmp/internal.h")),
+            ("value_gmp/ranges.h", include_str!("value_gmp/ranges.h")),
             ("value_gmp/storage.c", include_str!("value_gmp/storage.c")),
             ("value_gmp/logic.c", include_str!("value_gmp/logic.c")),
             (
@@ -161,6 +166,19 @@ pub fn value_backend_sources(
             (
                 "value_gmp/comparison_membership.c",
                 include_str!("value_gmp/comparison_membership.c"),
+            ),
+            (
+                "value_gmp/selections.c",
+                include_str!("value_gmp/selections.c"),
+            ),
+            (
+                "value_gmp/references.c",
+                include_str!("value_gmp/references.c"),
+            ),
+            ("value_gmp/assembly.c", include_str!("value_gmp/assembly.c")),
+            (
+                "value_gmp/consumer_bridge.c",
+                include_str!("value_gmp/consumer_bridge.c"),
             ),
             ("value_gmp/kernels.c", include_str!("value_gmp/kernels.c")),
             (

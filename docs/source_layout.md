@@ -55,13 +55,12 @@ fragments of one translation unit each**, not independently linked modules:
 
 The standalone compact value backend in
 [`value_gmp/`](../src/sim/rt/value_gmp/) has its own header and separately compiled
-storage, logic, arithmetic, shifts/reductions, comparison/membership, net
-adapters, real/time, formatting/index and limb-kernel units. Its optional GMP
-dependency is confined to the limb kernel. Native probes in
-`tests/runtime_value_storage/`
+storage, logic, arithmetic, shifts/reductions, comparison/membership, selections,
+references, assembly, consumer bridges, net adapters, real/time, formatting/index
+and limb-kernel units. Its optional GMP dependency is confined to the limb kernel.
+Native probes in `tests/runtime_value_storage/`
 link it beside live legacy for differential checks; experimental generated-source
-selection embeds it behind the unchanged facade. Complete compact model linking
-awaits S4–S5.
+selection embeds it behind the unchanged facade, with legacy as the default.
 
 The legacy facades preserve declaration order and private `static` state. The prelude
 files stay beside the public headers so direct source-tree inclusion retains

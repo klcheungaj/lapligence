@@ -325,10 +325,25 @@ fn run_generated_sim_in_dir(
     .map_err(|error| format!("compile: {error}"))?;
     let database = llg::core::db::Db::from_slang(&compiled.snapshot)
         .map_err(|error| format!("database: {error}"))?;
-    let generated = sim::codegen::generate_from_db_with_opts(&database, options)
-        .map_err(|error| format!("codegen: {error}"))?;
-    let executable = sim::build::build_model_cmake(dir, &[("model.c", generated.model_c.as_str())])
-        .map_err(|error| format!("cmake: {error}"))?;
+    let value_config = sim::value_backend::ValueConfig::from_env()?;
+    let generated = sim::codegen::generate_from_db_with_codegen_options(
+        &database,
+        &sim::codegen::CodegenOptions {
+            optimization: *options,
+            value_config,
+            ..Default::default()
+        },
+    )
+    .map_err(|error| format!("codegen: {error}"))?;
+    let executable = sim::build::build_model_cmake_with_opts(
+        dir,
+        &[("model.c", generated.model_c.as_str())],
+        &sim::build::CmakeBuildOpts {
+            value_config,
+            ..Default::default()
+        },
+    )
+    .map_err(|error| format!("cmake: {error}"))?;
     // The model builder intentionally removes stale entries from the output
     // directory, so fixture files must be written after CMake generation.
     for (name, contents) in files {

@@ -284,6 +284,76 @@ impl Validator<'_> {
                     }
                 }
             }
+            IrStmt::FixedArrayDeclare(index) => {
+                if self
+                    .model
+                    .arrays
+                    .get(*index)
+                    .is_none_or(|array| !array.activation || !array.sparse())
+                {
+                    return self.fail(path, "invalid activation fixed array declaration");
+                }
+                let mut scopes = self.fixed_activations.borrow_mut();
+                let scope = scopes.last_mut().ok_or_else(|| {
+                    IrValidationError::new(path, "fixed declaration requires a lexical scope")
+                })?;
+                if !scope.insert(*index) {
+                    return self.fail(path, "duplicate fixed activation declaration");
+                }
+            }
+            IrStmt::FixedArrayFill { array, value, nba } => {
+                self.validate_fixed_activation(*array, path)?;
+                let array = self
+                    .model
+                    .arrays
+                    .get(*array)
+                    .ok_or_else(|| IrValidationError::new(path, "invalid fixed fill array"))?;
+                if !array.sparse()
+                    || value.width != array.elem_width
+                    || value.signed != array.signed
+                    || (*nba && array.activation)
+                {
+                    return self.fail(path, "incompatible fixed fill shape");
+                }
+                self.validate_expr(value, formals, path)?;
+            }
+            IrStmt::FixedArrayCopy {
+                dst,
+                src,
+                nba,
+                slice,
+            } => {
+                self.validate_fixed_activation(*dst, path)?;
+                self.validate_fixed_activation(*src, path)?;
+                let dst = self.model.arrays.get(*dst).ok_or_else(|| {
+                    IrValidationError::new(path, "invalid fixed copy destination")
+                })?;
+                let src = self
+                    .model
+                    .arrays
+                    .get(*src)
+                    .ok_or_else(|| IrValidationError::new(path, "invalid fixed copy source"))?;
+                if (*slice != 0
+                    && !dst.elem_width.is_multiple_of(*slice)
+                    && !slice.is_multiple_of(dst.elem_width))
+                    || !dst.sparse()
+                    || !src.sparse()
+                    || dst.total != src.total
+                    || dst.dims.len() != src.dims.len()
+                    || dst
+                        .dims
+                        .iter()
+                        .zip(&src.dims)
+                        .any(|(left, right)| left.0.abs_diff(left.1) != right.0.abs_diff(right.1))
+                    || dst.elem_width != src.elem_width
+                    || (*nba && dst.activation)
+                {
+                    return Err(IrValidationError::new(
+                        path,
+                        "incompatible non-flattened fixed copy shape",
+                    ));
+                }
+            }
             IrStmt::Container(operation) => {
                 operation.validate(self.model, self.string_return.get())?;
                 let mut result = Ok(());

@@ -75,6 +75,9 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
     super::check_capacity(u128::from(e.width)).map_err(|error| error.to_string())?;
     let w = |x: &IrExpr| render_expr_impl(ctx, x);
     let out = match &e.kind {
+        IrExprKind::FixedArrayCompare { .. } => {
+            return Err("fixed comparisons require owned whole-model emission".into())
+        }
         IrExprKind::Container(operation) => RenderedExpr {
             code: super::containers::expression(ctx, operation)?,
             width: e.width,
@@ -661,6 +664,11 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
             elem_sel,
         } => {
             let ai = ctx.model.array(*arr);
+            if ai.sparse() {
+                return Err(
+                    "fixed-array descriptor reads require owned whole-model emission".into(),
+                );
+            }
             let mut index_codes = Vec::with_capacity(indices.len());
             for i in indices {
                 index_codes.push(w(i)?.code);

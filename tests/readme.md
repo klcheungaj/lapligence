@@ -182,9 +182,9 @@ emitter frame estimates and backend ABI selection.
   modes, then checks elaborated names and parameters after snapshot destruction;
   unknown/illegal targets, duplicate names and out-of-scope actuals reject.
 - [SYN-036 capacity](fixtures/sim/syn036_capacity/readme.md) separates syntax from
-  resource limits. Public cases cover below/at/above 65,536 cells and the
+  resource limits. Public cases cover the former 65,536-cell boundary and the
   exclusive 1,048,576-bit packed boundary in both editions and optimizer modes;
-  2009 fixed-value formals cover the separate flattened payload bound. Nested
+  2009 fixed-value formals also cover descriptor transport beyond packed capacity. Nested
   values, cell-wise reductions, recursion and checked dimension products/strides retain
   separate controls. Run the large generated models in the dedicated resource lane:
   `scripts/run-tests.sh --test-work-dir /build --test-threads 10 --test sim_syn036_capacity --run-ignored only`.
@@ -674,10 +674,10 @@ model selection and do not replace later HDL/model integration acceptance.
 ### Experimental value backend builds
 
 `sim_value_backends` checks selected runtime archives, clean source-only builds,
-both wrong-backend and wrong-kernel links, exact C selectors, missing GMP and the current compact
-HDL link rejection. Set `LLG_TEST_GMP_ROOT` to include the GMP lane; without it only
-legacy and compact portable run. This does not establish compact HDL execution:
-the scheduler still requires pending S4–S5. Native `selected_*_facade` probes in
+both wrong-backend and wrong-kernel links, exact C selectors, missing GMP and
+positive generated-HDL parity with independent expected outputs. Set
+`LLG_TEST_GMP_ROOT` to include the GMP lane; without it legacy and compact portable
+run, and GMP parity is reported blocked. Native `selected_*_facade` probes in
 `runtime_value_storage` exercise the common consumer bridge in all three modes.
 
 ```sh
@@ -690,3 +690,40 @@ GMP mode requires `GMP_ROOT`, with no system fallback. Compact frame checks use 
 24-byte descriptor instead of legacy's 32-byte descriptor on 64-bit hosts;
 `compact_selected_frame_lint` covers suspended values, shared instances and
 structural nets with both kernels and optimizer modes.
+
+### Required RTL-002 capacity lane
+
+This normal suite executes 16,777,216-cell storage, a multidimensional product at
+that capacity, whole copies, equality, issue-time NBA snapshots, automatic value
+calls, streams, selected dependencies and memory-file services. It also retains
+separate packed-width and language-illegal witnesses. Run with the launch's thread
+budget (six in this example):
+
+```sh
+CARGO_BUILD_JOBS=6 CMAKE_BUILD_PARALLEL_LEVEL=6 scripts/run-tests.sh --test-work-dir /build --cargo-profile quick --test sim_feature_completion -E 'test(rtl_002)' --test-threads 6 --no-tests fail
+```
+
+The source-size case compares 65,537 and 16,777,216 cells. Native
+`fixed_array_storage_probe.c` checks repeated descriptor copies, stable cells,
+queued snapshot cleanup and zero remaining value owners.
+
+The public CLI, shared `support/sim.rs` execution helpers, owned-DB lifetime helper,
+VPI and waveform execution harnesses honor `LLG_VALUE_BACKEND` and
+`LLG_COMPACT_KERNELS`. Direct library/component tests retain explicit or default
+configurations; this environment does not change the library's legacy defaults.
+Run the whole suite with compact portable using:
+
+```sh
+LLG_VALUE_BACKEND=compact LLG_COMPACT_KERNELS=portable CARGO_BUILD_JOBS=6 CMAKE_BUILD_PARALLEL_LEVEL=6 scripts/run-tests.sh --test-work-dir /build --cargo-profile quick --test-threads 6 --no-fail-fast
+```
+
+Run the cross-backend parity matrix alone with:
+
+```sh
+LLG_TEST_GMP_ROOT=/path/to/gmp CARGO_BUILD_JOBS=6 CMAKE_BUILD_PARALLEL_LEVEL=6 scripts/run-tests.sh --test-work-dir /build --cargo-profile quick --test sim_value_backends -E 'test(parity::compact_parity_) | test(compact_hdl_subset_matches_legacy_and_independent_outputs)' --test-threads 6
+```
+
+These tests force both backends,
+both compact kernels and both HDL optimizer modes independently of the runner's
+selection. VPI requires a Unix shared-library compiler. The matrix includes a
+16,777,216-cell array copy/NBA fixture.

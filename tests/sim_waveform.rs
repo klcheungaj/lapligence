@@ -41,14 +41,28 @@ fn run_waveform_with_opts(
         .map_err(|error| format!("compile: {error}"))?;
         let db = llg::core::db::Db::from_slang(&output.snapshot)
             .map_err(|error| format!("db: {error}"))?;
-        let generated = sim::codegen::generate_with_opts(&db, opts)
-            .map_err(|error| format!("codegen: {error}"))?;
+        let value_config = sim::value_backend::ValueConfig::from_env()?;
+        let generated = sim::codegen::generate_from_db_with_codegen_options(
+            &db,
+            &sim::codegen::CodegenOptions {
+                optimization: *opts,
+                value_config,
+                ..Default::default()
+            },
+        )
+        .map_err(|error| format!("codegen: {error}"))?;
         if !generated.model_c.contains("#define LLG_WAVEFORM 1") {
             return Err("waveform controls did not enable generated runtime support".to_string());
         }
-        let exe =
-            sim::build::build_model_cmake(dir.path(), &[("model.c", generated.model_c.as_str())])
-                .map_err(|error| format!("cmake: {error}"))?;
+        let exe = sim::build::build_model_cmake_with_opts(
+            dir.path(),
+            &[("model.c", generated.model_c.as_str())],
+            &sim::build::CmakeBuildOpts {
+                value_config,
+                ..Default::default()
+            },
+        )
+        .map_err(|error| format!("cmake: {error}"))?;
         let process = sim_harness::run_command(
             Command::new(&exe).current_dir(dir.path()),
             Duration::from_secs(60),

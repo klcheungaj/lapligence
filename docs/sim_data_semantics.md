@@ -22,12 +22,14 @@ The IEEE 1364-2001 vector and memory clauses (§§3.3.1, 3.10) and IEEE
 1800-2009 unpacked-array clause (§7.4.2) define the source forms but do not set
 the generated model's resource ceilings. The selected SYN-036 profile records
 them separately: one packed value is strictly below 1,048,576 bits, and one
-generated fixed unpacked array contains at most 65,536 cells. Array dimension
+generated fixed unpacked array contains at most 16,777,216 cells. Array dimension
 extents and products use checked arithmetic before allocation or C emission.
 Each direct rank-one reduction reads owned cells individually, while
-fixed-array values, formals, streams and other flattened contexts require a
-single packed payload. This keeps ownership explicit and leaves dynamic,
-resizable and unbounded aggregate values outside the profile. The executable
+the RTL-002 integral-variable profile uses lazy defaults, stable selected cells
+and descriptor copies for whole values and supported calls/streams. Other
+flattened contexts retain the packed payload limit; see
+[resource limits](sim_features.md#resource-limits) for the exact descriptor profile.
+Dynamic, resizable and unbounded aggregate values remain separately bounded. The executable
 boundary cases are in [`tests/fixtures/sim/syn036_capacity`](../tests/fixtures/sim/syn036_capacity/).
 
 ## Scope and edition boundary

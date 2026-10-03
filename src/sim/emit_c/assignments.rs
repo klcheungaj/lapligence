@@ -161,6 +161,9 @@ fn render_selected_array(
         unreachable!("array renderer received a non-array target")
     };
     let array = ctx.model.array(*arr);
+    if array.sparse() {
+        return Err("fixed-array descriptor writes require owned whole-model emission".into());
+    }
     if array.real {
         return Err("inertial update requires a packed array target".into());
     }
@@ -435,6 +438,9 @@ fn render_nba_inner(
     } = lhs
     {
         let array = ctx.model.array(*arr);
+        if array.sparse() {
+            return Err("fixed-array descriptor writes require owned whole-model emission".into());
+        }
         if array.real {
             if !matches!(elem_sel, IrElemSel::Whole) {
                 return Err("select on a real array element is not supported".to_string());

@@ -729,7 +729,14 @@ fn render_model(
     out.push('\n');
     // Arrays start all-X; elements are filled in `main()` (a function call
     // is not a valid static initializer).
-    for a in &model.arrays {
+    for a in model.arrays.iter().filter(|array| !array.activation) {
+        if a.sparse() {
+            out.push_str(&format!(
+                "llg_fixed_array_t {} = {{0}};\nstatic sv4_t {}_llg_contents_dep = SV4_EMPTY;\n",
+                a.c_name, a.c_name
+            ));
+            continue;
+        }
         out.push_str(&format!(
             "{} {}[{}];\n",
             if a.real { "double" } else { "sv4_t" },
