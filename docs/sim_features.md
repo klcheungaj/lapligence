@@ -833,8 +833,11 @@ Macros, includes and their edition-specific behavior are counted in §11.
   transfers, native/DPI dispatch, suspension and arbitrary shared/native captures
   reject. Unique/priority diagnostics remain active; side-effect-free source
   alone does not establish eligibility.
-- ❌ **Unsupported or illegal call forms** — Recursive delay/wait-bearing tasks,
-  timing-bearing class/virtual-interface tasks and jumps into other lexical
+- ❌ **Unsupported or illegal call forms** — Recursive task calls requiring
+  inline-only event/ref environments remain rejected. Typed recursive
+  delay-bearing tasks use independent SCC/arena activations; direct and mutual
+  recursion have witnesses in [the function/task suite](../tests/sim_function.rs).
+  Timing-bearing class/virtual-interface tasks and jumps into other lexical
   scopes/backward unstructured jumps remain rejected. Direct task calls and
   blocking `#/@/wait` inside functions are illegal; timing in an admitted detached
   join_none branch is separate. Disabling a task leaves output/inout results
