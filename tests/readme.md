@@ -102,6 +102,12 @@ both optimizer modes on both backends (set `LLG_TEST_GMP_ROOT` for the GMP
 kernel lane); stateful event helpers assert the documented process-evaluation
 policy and check evaluation counters only as lower bounds.
 
+RTL-009's port fixtures use `-E 'binary(sim_feature_completion) & test(rtl_009::)'`.
+Positive fixtures run in both optimizer modes on both backends and after Db
+destruction; descriptor ports also bound generated model size. Negatives cover
+assignability, ref shape, variable inout, runtime ref/net/inout selects and
+output-target writer conflicts.
+
 ### Vendor patch preparation
 
 `vendor_patches.rs` checks clean/applied trees, no-Git archives (including archives
