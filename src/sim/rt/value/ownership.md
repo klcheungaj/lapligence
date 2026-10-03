@@ -4,6 +4,14 @@ The [facade contract](facade.md) defines backend selection, neutral access,
 width/sign semantics and boundary encodings. The representation below describes
 the selectable legacy backend; feature code must use the facade's neutral API.
 
+The standalone compact backend in `../value_gmp/` reserves value ABI 5. Widths
+through 64 use inline A/B words and allocate nothing. Wider values own one exact
+A plane, plus a contiguous B plane only while X/Z exists; only A is freed. Known
+wide payloads are `8*ceil(width/64)` bytes and unknown payloads twice that. Writes,
+copies and results drop zero B automatically. Public headers expose no GMP type.
+Both layouts follow the owner rules below. Descriptor addresses remain cell
+identity across promotion/replacement; payload pointers are private.
+
 ## Representation and lifetime
 
 `sv4_t` is a unique owner, not a trivially copyable value. One checked allocation
@@ -23,7 +31,7 @@ Never destroy a borrow, or retain its interior pointers across mutation/yield.
 
 | API family | Input/output ownership |
 | --- | --- |
-| `sv4_zero`, `sv4_from_*`, `SV4_C/S/X/Z/INIT` | Construct a fresh owner; macros are runtime calls, never static initializers. Raw limb inputs are borrowed. |
+| `sv4_zero`, `sv4_from_*`, `SV4_C/S/X/Z/INIT` | Construct a fresh owner; legacy macros are runtime calls; the compact <=64-bit `SV4_LITERAL` supports static initializers. Raw limb inputs are borrowed. |
 | All arithmetic, predicates returning sv4_t, conversions returning sv4_t, resize, cast, selection, enum, resolution, stream and string-to-packed results | Borrow packed arguments, return a fresh owner. String arguments retain their separately documented consuming convention. |
 | Scalar inspectors, comparison helpers, packed-to-real, formatting | Borrow packed arguments, return scalars or fill caller-owned buffers. |
 | `sv4_clone`, `sv4_copy`, `sv4_assign` | Deep clone. Copy/assign replace an initialized destination; allocation precedes destruction. Copy supports self-copy. |
