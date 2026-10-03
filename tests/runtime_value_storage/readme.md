@@ -43,6 +43,7 @@ capabilities; check the exact inventory rather than assuming a fixed count.
 
 | Probe / group | Contract |
 | --- | --- |
+| `consumer_bridge_probe.c` | Allocation-free masked/range compare/copy/fill at unaligned offsets and 0/31/32/63/64/65/129/257-bit boundaries; foreign 32-bit record strides, partial imports, copied A/B snapshots, zero-extended text and modular digit parsing. |
 | `neutral_access_probe.c` | Neutral shape/state/word/range mutation at 0..1,048,575 bits; literal Rust/DPI/VPI encodings, source-sign cast versus requested-sign resize, two-state coercion and independent/self-alias owner operations. The prototype compiles this same client against its two selectors. |
 | `storage_probe.c` | Exact contiguous planes, masking, independent clone/copy/move, repeated destruction, 10,000 replacements, zero/exclusive widths and failure-atomic OOM. Fatal cases require specific diagnostics. |
 | `stream_preflight_probe.c` | INT64 endpoints, declared bounds/traversal, unknown selectors, source-size rejection including later short segments, and zero remaining packed owners. |

@@ -81,15 +81,15 @@ static size_t llg_stream_unpacked_values(sv4_t source, uint32_t element_width,
     size_t count;
     llg_stream_bounds(selector_kind, first, second, 0, left, right, &count);
     if (!selector_kind) {
-        if (element_width == 0 || source.width % element_width != 0)
+        if (element_width == 0 || llg_sv4_width(source) % element_width != 0)
             llg_container_fatal(
                 "streaming source width is not divisible by destination element width");
-        count = source.width / element_width;
+        count = llg_sv4_width(source) / element_width;
         *left = 0;
         *right = count ? (int64_t)(count - 1) : -1;
     } else if (count > 0
                && (count > (size_t)((LLG_SUPPORTED_WIDTH_LIMIT - 1u) / element_width)
-                   || (uint64_t)count * element_width != source.width)) {
+                   || (uint64_t)count * element_width != llg_sv4_width(source))) {
         llg_container_fatal(
             "streaming selector width does not match source width");
     }
@@ -108,7 +108,7 @@ static void llg_dyn_unstream_assign_impl(llg_dyn_array_t* dst, sv4_t source,
     sv4_t unpacked = sv4_unstream(source, slice, right_to_left);
     if (!selector_kind) {
         sv4_t* values = llg_alloc_items(count, sizeof(*values));
-        uint32_t cursor = unpacked.width;
+        uint32_t cursor = llg_sv4_width(unpacked);
         for (size_t offset = 0; offset < count; ++offset) {
             uint32_t right_bit = cursor - dst->element_width;
             values[offset] = sv4_part_select(
@@ -135,7 +135,7 @@ static void llg_dyn_unstream_assign_impl(llg_dyn_array_t* dst, sv4_t source,
         llg_dyn_resize(dst, new_size);
         sv4_destroy(&new_size);
     }
-    uint32_t cursor = unpacked.width;
+    uint32_t cursor = llg_sv4_width(unpacked);
     for (size_t offset = 0; offset < count; ++offset) {
         uint32_t right_bit = cursor - dst->element_width;
         sv4_t value = sv4_part_select(
