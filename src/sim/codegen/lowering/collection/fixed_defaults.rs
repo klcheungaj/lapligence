@@ -23,6 +23,25 @@ impl Codegen<'_> {
         Self::fixed_descriptor_default_impl(descriptor, true)
     }
 
+    /// Invalid-index reads of an aggregate element return its type's
+    /// default-uninitialized value (SV 7.4.6), which keeps two-state members
+    /// at zero. Integral elements use the storage default and need no entry.
+    pub(in super::super) fn fixed_element_uninitialized(
+        element: &TypeDescriptor,
+    ) -> Option<IrConst> {
+        if !matches!(
+            &element.shape,
+            TypeShape::FixedArray { .. }
+                | TypeShape::Aggregate(crate::core::db::AggregateLayout {
+                    kind: AggregateKind::UnpackedStruct | AggregateKind::UnpackedUnion,
+                    ..
+                })
+        ) {
+            return None;
+        }
+        Self::fixed_descriptor_uninitialized(element)
+    }
+
     /// A type's default-uninitialized value, not a declaration initializer.
     pub(in super::super) fn fixed_descriptor_uninitialized(
         descriptor: &TypeDescriptor,

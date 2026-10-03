@@ -845,6 +845,13 @@ impl<'a> Codegen<'a> {
                 self.node(right_target).name
             ));
         }
+        // A structure net is one packed payload with no member leaves. Against
+        // variable storage, compare complete payloads instead: net members are
+        // four-state integral, so this equals the member-wise result.
+        let whole = |aggregate: &UnpackedAggregateInfo| matches!(aggregate.leaves.as_slice(), [leaf] if leaf.path.is_empty());
+        if whole(&left_aggregate) != whole(&right_aggregate) {
+            return Ok(None);
+        }
 
         let compare = |op: IrBinOp, left: IrExpr, right: IrExpr| {
             if op == IrBinOp::CaseEq || op == IrBinOp::CaseNeq {

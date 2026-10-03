@@ -198,6 +198,7 @@ fn rejects_array_total_that_disagrees_with_dimensions() {
         activation: false,
         net_elements: Vec::new(),
         element_default: None,
+        element_uninitialized: None,
         c_name: "memory".to_string(),
         hdl_name: "memory".to_string(),
         elem_width: 8,
@@ -221,6 +222,7 @@ fn rejects_array_storage_above_selected_cell_limit() {
         activation: false,
         net_elements: Vec::new(),
         element_default: None,
+        element_uninitialized: None,
         c_name: "memory".to_string(),
         hdl_name: "memory".to_string(),
         elem_width: 1,
@@ -1243,6 +1245,7 @@ fn descriptor_value_assignment_requires_matching_descriptor_shape() {
         activation: false,
         net_elements: Vec::new(),
         element_default: None,
+        element_uninitialized: None,
         c_name: c_name.to_string(),
         hdl_name: c_name.to_string(),
         elem_width: 17,
@@ -1302,4 +1305,105 @@ fn descriptor_value_assignment_requires_matching_descriptor_shape() {
     assert!(error
         .detail()
         .contains("incompatible descriptor assignment"));
+}
+
+#[test]
+fn descriptor_cast_requires_equal_size_lexical_shape() {
+    let mut model = valid_model();
+    let array = |c_name: &str, elem_width: u32, dims: Vec<(i32, i32)>, activation: bool| {
+        let total = dims
+            .iter()
+            .map(|(left, right)| u64::from(left.abs_diff(*right)) + 1)
+            .product();
+        IrArray {
+            activation,
+            net_elements: Vec::new(),
+            element_default: None,
+            element_uninitialized: None,
+            c_name: c_name.to_string(),
+            hdl_name: c_name.to_string(),
+            elem_width,
+            signed: false,
+            two_state: false,
+            real: false,
+            shortreal: false,
+            dims,
+            total,
+        }
+    };
+    model
+        .arrays
+        .push(array("source", 17, vec![(0, 65535)], false));
+    model
+        .arrays
+        .push(array("pairs", 34, vec![(0, 32767)], true));
+    model
+        .arrays
+        .push(array("short", 34, vec![(0, 32766)], true));
+    model
+        .arrays
+        .push(array("storage", 34, vec![(0, 32767)], false));
+    let source = IrMemoryView {
+        array: 0,
+        origin: 0,
+        selectors: Vec::new(),
+        sliced: false,
+        dims: vec![(0, 65535)],
+        strides: vec![1],
+        total: 65_536,
+    };
+    let target = IrMemoryView {
+        array: 3,
+        origin: 0,
+        selectors: Vec::new(),
+        sliced: false,
+        dims: vec![(0, 32767)],
+        strides: vec![1],
+        total: 32_768,
+    };
+    let assign = |shape: usize| IrStmt::FixedValueAssign {
+        dst: target.clone(),
+        src: Box::new(IrFixedValue::Convert {
+            value: Box::new(IrFixedValue::Array(source.clone())),
+            array: shape,
+        }),
+        nba: false,
+    };
+    model
+        .validate_stmt(&assign(1), None)
+        .expect("an equal-size lexical cast shape reshapes descriptor cells");
+    for (shape, reason) in [
+        (2, "a shorter cast shape"),
+        (3, "non-lexical storage"),
+        (9, "an unknown array"),
+    ] {
+        let error = model.validate_stmt(&assign(shape), None).expect_err(reason);
+        assert!(error.detail().contains("fixed cast"), "{reason}: {error:?}");
+    }
+}
+
+#[test]
+fn rejects_invalid_index_default_with_wrong_width() {
+    let mut model = valid_model();
+    model.arrays.push(IrArray {
+        activation: false,
+        net_elements: Vec::new(),
+        element_default: None,
+        element_uninitialized: Some(
+            IrConst::packed(vec![0], vec![0b111], vec![0], 3, false, None).expect("constant"),
+        ),
+        c_name: "records".to_string(),
+        hdl_name: "records".to_string(),
+        elem_width: 6,
+        signed: false,
+        two_state: false,
+        real: false,
+        shortreal: false,
+        dims: vec![(0, 2)],
+        total: 3,
+    });
+    let error = model
+        .validate()
+        .expect_err("an invalid-index default must match the element width");
+    assert!(error.detail().contains("element default"));
 }

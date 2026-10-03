@@ -91,6 +91,11 @@ snapshots, persistent NBA publication, undefined-multiplicity effects and sparse
 patterns at 16M cells. Representative fixtures run after Db destruction at O0/O3;
 source-size checks supplement public execution.
 
+RTL-005's fixed equality, conditional and cast fixtures use
+`-E 'binary(sim_feature_completion) & test(rtl_005::)'`. Positive fixtures run in
+both optimizer modes on the legacy and compact backends (`run_case_backend_parity`)
+and after Db destruction; descriptor casts also bound generated model size.
+
 ### Vendor patch preparation
 
 `vendor_patches.rs` checks clean/applied trees, no-Git archives (including archives

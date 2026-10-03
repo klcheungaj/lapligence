@@ -260,10 +260,19 @@ casts, descends arrays to singulars (not struct members), evaluates selector and
 scalar/range endpoints once, and uses wildcard equality/inclusive comparisons.
 
 Integral fixed arrays beyond packed capacity lower to `IrFixedValue` operands
-(views, calls, conditionals, streams) and `FixedValueAssign`; never expand them
-per cell or flatten them into one packed value. Descriptor formals carry their
-storage in `IrFormal::fixed_array`; returns use a trailing output formal. Pattern
-items and scatter sources are captured once into lexical snapshots before writes.
+(views, calls, conditionals, streams, converting casts) and `FixedValueAssign`;
+never expand them per cell or flatten them into one packed value. Descriptor
+formals carry their storage in `IrFormal::fixed_array`; returns use a trailing
+output formal. Pattern items and scatter sources are captured once into lexical
+snapshots before writes. Never look through a cast that reshapes cells or enters
+a two-state element domain: it is an `IrFixedValue::Convert` into a lexical shape.
+Equality whose operands are all descriptor values also uses descriptor compare
+below packed capacity rather than flattening each cell.
+
+An invalid index reads the element type's uninitialized default (SV 7.4.6), not
+an all-X payload: mixed-state aggregate elements keep two-state leaves at zero
+(`IrArray::element_uninitialized`, projection leaf-state reapplication). A failed
+task-form `$cast` reports a run-time error; the function form only returns zero.
 
 Streams retain typed direction, slice size, operand order, unsigned result and
 component LHS widths. Snapshot RHS once. Runtime fixed-array `with` selectors are

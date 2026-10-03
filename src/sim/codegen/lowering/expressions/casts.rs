@@ -299,15 +299,15 @@ impl<'a> Codegen<'a> {
                     class_target: Some(target_address),
                     class_source: Some(source),
                     class_expected: Some(expected),
+                    failure_location: None,
                 })),
                 1,
                 false,
                 None,
             ));
         }
-        let lhs = self.lower_lhs(path, destination)?;
-        let (target_width, target_signed, target_two_state, target_shortreal) =
-            self.dynamic_cast_lhs_shape(&lhs)?;
+        // Check singularity before lowering: an unpacked destination would
+        // otherwise lower as an aggregate scatter rather than one value.
         let target_descriptor = self.query_descriptor(destination).cloned();
         if let Some(descriptor) = &target_descriptor {
             match &descriptor.shape {
@@ -317,21 +317,22 @@ impl<'a> Codegen<'a> {
                         layout.kind,
                         AggregateKind::PackedStruct | AggregateKind::PackedUnion
                     ) => {}
-                TypeShape::Aggregate(_) => {
+                // SV 6.24.2 admits only singular destinations.
+                TypeShape::Aggregate(_) | TypeShape::FixedArray { .. } => {
                     return Err(format!(
                         "$cast destination must be a singular value in `{path}`"
                     ));
                 }
-                TypeShape::FixedArray { .. }
-                | TypeShape::Container { .. }
-                | TypeShape::String
-                | TypeShape::Opaque { .. } => {
+                TypeShape::Container { .. } | TypeShape::String | TypeShape::Opaque { .. } => {
                     return Err(format!(
                         "$cast destination type is not supported in `{path}`"
                     ));
                 }
             }
         }
+        let lhs = self.lower_lhs(path, destination)?;
+        let (target_width, target_signed, target_two_state, target_shortreal) =
+            self.dynamic_cast_lhs_shape(&lhs)?;
         let source_descriptor = self.query_descriptor(*source).cloned();
         if let Some(descriptor) = &source_descriptor {
             let unsupported = matches!(
@@ -410,6 +411,7 @@ impl<'a> Codegen<'a> {
                 class_target: None,
                 class_source: None,
                 class_expected: None,
+                failure_location: None,
             })),
             1,
             false,

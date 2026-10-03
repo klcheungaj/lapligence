@@ -271,6 +271,14 @@ arrays inside an oversized source, `with` stream selections and nested oversized
 streams reject with explicit diagnostics. Extending those paths through per-cell
 source expansion would recreate the capacity cost.
 
+Casts between descriptor-backed arrays reshape and apply two-state conversion as
+descriptor values. Arrays above the dense-cell threshold but within the packed
+limit still flatten outside equality and descriptor-destination assignment: a
+reshaping cast into a dense destination, mid-size conditionals passed to packed
+formals, and mid-size function returns expand every cell into the generated C
+(megabytes at 5,000 cells). Correctness is unaffected; widening the
+descriptor call ABI below the packed limit is the intended direction.
+
 Each call or view operand currently takes its own snapshot, so a whole-array
 input argument or selected source is copied once more than necessary; the cost
 is proportional to materialized cells, not to the logical extent. Stream and

@@ -615,9 +615,13 @@ Macros, includes and their edition-specific behavior are counted in §11.
   Ordinary SV `->` short-circuits a known-false antecedent; `<->` evaluates both
   sides. SVA `|->`/`|=>` belongs to the assertion boundary (§12), not these operators.
   V §§4.1.7, 4.1.9–4.1.12; SV §11.4.7 **[1995/2001/SV-2009]**.
-- 🟨 **Equality** — `===`/`!==` compare X/Z literally; `==`/`!=` preserve known-mismatch dominance. Admitted fixed integral aggregates compare complete
-  member payloads even when only one side is storage-backed. Broader formal/
-  native aggregate combinations remain partial. V §4.1.8; SV §11.4.5 **[1995]**.
+- 🟨 **Equality** — `===`/`!==` compare X/Z literally; `==`/`!=` preserve known-mismatch dominance. Fixed integral records and arrays compare immediate
+  members from storage, input/const-ref/inout/output/task-ref formals, returns,
+  ports, structure nets, casts and conditionals. An invalid index reads the
+  element type's uninitialized default, so a two-state member still decides a
+  known mismatch. Descriptor-backed arrays compare cell-wise after reshaping or
+  two-state casts. Native/dynamic aggregates and real-member formal/return
+  operands remain partial. V §4.1.8; SV §§7.4.6, 11.4.5 **[1995]**.
 - 🟨 **Conditional values** — Known truth selects one arm, including a vector
   predicate with a dominant known 1. Ambiguous truth evaluates both reached arms
   once. Packed values follow the selected published-table policy: equal 0, 1 or X
@@ -629,6 +633,8 @@ Macros, includes and their edition-specific behavior are counted in §11.
   fallbacks. A runtime-selected unpacked record with an eight-bit `logic` member
   and a one-bit `bit` member retains these defaults through a persistent NBA:
   unequal data becomes X and the two-state member becomes zero at commit.
+  Constant folding and identical-arm simplification keep every reached arm's
+  side effects. Descriptor-backed arrays merge cells without packed flattening.
   Dynamic/native aggregate merges remain restricted.
   V Table 28; SV Table 11-20, §11.4.11 **[2001/SV-2009]**.
 - 🟦 **Concatenation, replication and selection** — Preserve order and
@@ -647,9 +653,13 @@ Macros, includes and their edition-specific behavior are counted in §11.
   shifts, concatenation, case equality and real selects reject. V §4.1.1 **[1995]**.
 - 🟨 **Static and dynamic casts** — Typed, size and sign casts preserve width,
   state and conversion boundaries in admitted scalar/vector and fixed contexts.
-  `$cast` supports packed/real values, enum membership and nominal class checks
-  with success-only writes. Fixed bit-stream casts are described below;
-  unsupported aggregate/net/reference targets remain restricted.
+  `$cast` supports packed/real values, enum membership against the complete
+  source value and nominal class checks. Selectors and the source are evaluated
+  once and only a successful cast writes; a failed task-form `$cast` reports a
+  run-time error. Non-singular destinations reject. Fixed bit-stream casts are
+  described below; descriptor-backed arrays reshape and clear X/Z for two-state
+  targets before comparison or storage. Real-source enum `$cast` and unsupported
+  aggregate/net/reference targets remain restricted.
   SV §6.24 **[SV-2005]**.
 - 🟨 **Mutating operators** — Prefix/postfix `++/--` and `+= -= *= /= %= &= |= ^=`
   plus shift assignments capture an admitted whole/member/selected/fixed-array

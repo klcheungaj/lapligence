@@ -181,6 +181,7 @@ fn waveform_model_emits_controls_hierarchy_and_final_time_close() {
         activation: false,
         net_elements: Vec::new(),
         element_default: None,
+        element_uninitialized: None,
         c_name: "G_top_mem".to_string(),
         hdl_name: "top\u{1f}mem".to_string(),
         elem_width: 8,

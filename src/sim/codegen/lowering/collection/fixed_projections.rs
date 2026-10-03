@@ -18,6 +18,10 @@ struct Projection {
     root: FixedRoot,
     descriptor: TypeDescriptor,
     steps: Vec<(IrPackedSelect, bool, Option<TaggedMemberGuard>)>,
+    /// Steps whose dynamic unpacked index selects a mixed-state aggregate
+    /// element. A read reapplies that element's leaf state domains, so an
+    /// invalid index yields X four-state leaves and zero two-state leaves.
+    element_states: Vec<(usize, TypeDescriptor)>,
     signed: bool,
     ref_legal: bool,
 }
@@ -87,6 +91,7 @@ impl Codegen<'_> {
             signed: descriptor.info.signed,
             descriptor,
             steps: Vec::new(),
+            element_states: Vec::new(),
             ref_legal: true,
         }))
     }
@@ -112,6 +117,7 @@ impl Codegen<'_> {
                 signed: descriptor.info.signed,
                 descriptor,
                 steps: Vec::new(),
+                element_states: Vec::new(),
                 ref_legal: false,
             }));
         }
@@ -142,6 +148,7 @@ impl Codegen<'_> {
                         signed: descriptor.info.signed,
                         descriptor: descriptor.clone(),
                         steps: Vec::new(),
+                        element_states: Vec::new(),
                         ref_legal: true,
                     }));
                 }
@@ -190,6 +197,7 @@ impl Codegen<'_> {
                     root: FixedRoot::Cell { read, target },
                     descriptor,
                     steps: Vec::new(),
+                    element_states: Vec::new(),
                     signed: info.signed,
                     ref_legal: true,
                 }));
@@ -219,6 +227,7 @@ impl Codegen<'_> {
                             },
                             descriptor,
                             steps: Vec::new(),
+                            element_states: Vec::new(),
                             signed: false,
                             ref_legal: true,
                         }));
@@ -247,6 +256,7 @@ impl Codegen<'_> {
                     },
                     descriptor,
                     steps: Vec::new(),
+                    element_states: Vec::new(),
                     signed: false,
                     ref_legal: true,
                 }));
@@ -295,6 +305,7 @@ impl Codegen<'_> {
                         descriptor,
                         signed: false,
                         steps: Vec::new(),
+                        element_states: Vec::new(),
                         ref_legal: true,
                     }));
                 }
@@ -353,6 +364,7 @@ impl Codegen<'_> {
             signed: descriptor.info.signed,
             descriptor,
             steps: Vec::new(),
+            element_states: Vec::new(),
             ref_legal: true,
         };
         for index in packed_indices {
@@ -393,6 +405,7 @@ impl Codegen<'_> {
                                         signed: descriptor.info.signed,
                                         descriptor: descriptor.clone(),
                                         steps: Vec::new(),
+                                        element_states: Vec::new(),
                                         ref_legal: true,
                                     })
                                 }
@@ -646,6 +659,9 @@ impl Codegen<'_> {
         };
         let width = fixed_width(&element).ok_or("fixed element width overflow")?;
         element.info.width = Some(width);
+        let known_valid = self
+            .eval_bound_i128(index)
+            .is_ok_and(|index| (left.min(right)..=left.max(right)).contains(&index));
         let index = self.lower_expr(path, index)?;
         let base = super::packed_elements::packed_lsb(
             index,
@@ -658,6 +674,11 @@ impl Codegen<'_> {
             unpacked && two_state(&element),
             None,
         ));
+        if unpacked && !known_valid && !two_state(&element) && has_two_state_leaf(&element) {
+            projection
+                .element_states
+                .push((projection.steps.len() - 1, element.clone()));
+        }
         projection.ref_legal = unpacked;
         projection.signed = element.info.signed;
         projection.descriptor = element;
@@ -735,10 +756,17 @@ impl Codegen<'_> {
                 None,
             )));
         }
-        for (step, state, _tagged_guard) in projection.steps {
+        let mut element_states = projection.element_states.into_iter().peekable();
+        for (ordinal, (step, state, _tagged_guard)) in projection.steps.into_iter().enumerate() {
             value = super::packed_formals::packed_step_read(value, step);
             if state {
                 value = IrExpr::to_two_state(value);
+            }
+            if let Some((_, element)) = element_states.next_if(|(at, _)| *at == ordinal) {
+                // Stored two-state leaves are already known, so the helper is
+                // the identity for a valid index and supplies the element's
+                // default-uninitialized value otherwise (SV 7.4.6).
+                value = self.convert_fixed_descriptor_payload(&element, value)?;
             }
         }
         let width = value.width;
@@ -867,4 +895,17 @@ impl Codegen<'_> {
             two_state: two_state(&projection.descriptor),
         }))
     }
+}
+
+/// Whether a four-state fixed aggregate contains a two-state leaf.
+fn has_two_state_leaf(descriptor: &TypeDescriptor) -> bool {
+    two_state(descriptor)
+        || match &descriptor.shape {
+            TypeShape::Aggregate(layout) => layout
+                .members
+                .iter()
+                .any(|member| member.two_state || has_two_state_leaf(&member.descriptor)),
+            TypeShape::FixedArray { element, .. } => has_two_state_leaf(element),
+            _ => false,
+        }
 }

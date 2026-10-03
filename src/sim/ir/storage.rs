@@ -202,6 +202,10 @@ pub struct IrArray {
     pub(in crate::sim) net_elements: Vec<(u64, usize)>,
     /// Typed default for a fixed aggregate element, before declaration initialization.
     pub(in crate::sim) element_default: Option<IrConst>,
+    /// Default-uninitialized element value read through an invalid index
+    /// (SV 7.4.6). Differs from `packed_default` only for mixed-state
+    /// aggregate elements; member initializers are excluded.
+    pub(in crate::sim) element_uninitialized: Option<IrConst>,
     pub(in crate::sim) c_name: String,
     /// Original HDL hierarchical name (before C-identifier sanitization).
     pub(in crate::sim) hdl_name: String,
@@ -265,6 +269,7 @@ impl IrArray {
             activation: false,
             net_elements: Vec::new(),
             element_default: None,
+            element_uninitialized: None,
             elem_width,
             signed,
             two_state: false,

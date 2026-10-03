@@ -422,6 +422,10 @@ pub struct IrDynamicCast {
     pub(in crate::sim) class_target: Option<String>,
     pub(in crate::sim) class_source: Option<IrChandleExpr>,
     pub(in crate::sim) class_expected: Option<usize>,
+    /// Task-form source location. A failed task-form cast is a run-time
+    /// error that leaves the destination unchanged (SV 6.24.2); the function
+    /// form only returns zero.
+    pub(in crate::sim) failure_location: Option<String>,
 }
 
 impl IrExpr {

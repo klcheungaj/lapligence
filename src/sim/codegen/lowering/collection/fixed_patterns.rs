@@ -100,6 +100,16 @@ impl Codegen<'_> {
         let Some(descriptor) = self.query_descriptor(node).cloned() else {
             return Ok(value);
         };
+        self.convert_fixed_descriptor_payload(&descriptor, value)
+    }
+
+    /// Descriptor form of [`Self::convert_fixed_payload`].
+    pub(in super::super) fn convert_fixed_descriptor_payload(
+        &mut self,
+        descriptor: &TypeDescriptor,
+        value: IrExpr,
+    ) -> Result<IrExpr, String> {
+        let descriptor = descriptor.clone();
         if !matches!(
             &descriptor.shape,
             TypeShape::FixedArray { .. }
@@ -151,7 +161,9 @@ impl Codegen<'_> {
             }
             Codegen::join_bitstream_parts("fixed conversion", values)
         }
-        let name = format!("_llg_fixed_cast_{}", descriptor.id.0);
+        // Row and slice descriptors share their parent's type id; the width
+        // distinguishes their (structurally identical per width) layouts.
+        let name = format!("_llg_fixed_cast_{}_{width}", descriptor.id.0);
         let index = if let Some(index) = self
             .model
             .funcs

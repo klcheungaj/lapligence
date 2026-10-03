@@ -686,7 +686,11 @@ impl Validator<'_> {
             }
 
             let path = format!("arrays[{idx}]");
-            if let Some(value) = &array.element_default {
+            for value in array
+                .element_default
+                .iter()
+                .chain(array.element_uninitialized.iter())
+            {
                 if value.width != array.elem_width
                     || value.signed != array.signed
                     || value.real.is_some()
