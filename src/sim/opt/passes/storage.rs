@@ -417,6 +417,12 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
                     IrStreamTarget::FixedSelector { selector, .. } => {
                         collect_stream_selector_reads(selector, model, rw);
                     }
+                    IrStreamTarget::FixedImageSelector {
+                        target, selector, ..
+                    } => {
+                        collect_lhs_rw(target, model, rw);
+                        collect_stream_selector_reads(selector, model, rw);
+                    }
                 }
             }
         }
@@ -1015,6 +1021,16 @@ fn collect_children_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
         }
         IrExprKind::Stream { value, .. } => collect_expr_reads(value, model, rw),
         IrExprKind::FixedStream { selector, .. } => {
+            collect_stream_selector_reads(selector, model, rw)
+        }
+        IrExprKind::FixedImageStream {
+            image,
+            fallback,
+            selector,
+            ..
+        } => {
+            collect_expr_reads(image, model, rw);
+            collect_expr_reads(fallback, model, rw);
             collect_stream_selector_reads(selector, model, rw)
         }
         IrExprKind::Inside { value, items } => {

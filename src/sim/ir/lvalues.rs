@@ -205,9 +205,56 @@ pub enum IrStreamTarget {
         array: usize,
         selector: IrStreamSelector,
     },
+    /// A one-dimensional fixed array without model array storage (a ref
+    /// formal, automatic local, member or row) selected by a `with` range
+    /// whose extent is only known at runtime or lies partly outside
+    /// `bounds`. `target` is the whole array as one packed lvalue in
+    /// declaration order; only in-bounds integral elements are written.
+    FixedImageSelector {
+        target: Box<IrLhs>,
+        bounds: (i32, i32),
+        element_width: u32,
+        two_state: bool,
+        selector: IrStreamSelector,
+    },
 }
 
 impl IrLhs {
+    /// One element of a fixed array represented as a whole packed lvalue
+    /// (`target`), selected at bit offset `lsb`. A selected target gains one
+    /// relative step so the chain keeps its intermediate bounds.
+    pub(in crate::sim) fn fixed_image_element(
+        target: &IrLhs,
+        lsb: IrExpr,
+        width: u32,
+        two_state: bool,
+    ) -> IrLhs {
+        let step = IrPackedSelect { base: lsb, width };
+        match target {
+            IrLhs::PackedSelect {
+                target: root,
+                steps,
+                two_state: root_two_state,
+                ..
+            } => {
+                let mut steps = steps.clone();
+                steps.push(step);
+                IrLhs::PackedSelect {
+                    target: root.clone(),
+                    steps,
+                    signed: false,
+                    two_state: two_state || *root_two_state,
+                }
+            }
+            _ => IrLhs::PackedSelect {
+                target: Box::new(target.clone()),
+                steps: vec![step],
+                signed: false,
+                two_state,
+            },
+        }
+    }
+
     /// A deferred operation must not retain a local owner or reference formal.
     /// Selected members inherit the lifetime of their root capability.
     pub(in crate::sim) fn has_activation_root(&self) -> bool {

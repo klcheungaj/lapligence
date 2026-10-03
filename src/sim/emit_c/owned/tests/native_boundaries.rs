@@ -327,6 +327,7 @@ fn mixed_stream_publishes_each_component_before_selecting_the_next() {
                     width: 65,
                 },
             ],
+            false,
         )
         .unwrap();
     let source = frame.body();

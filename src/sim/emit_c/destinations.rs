@@ -147,6 +147,11 @@ const OPERATIONS: &[(&str, &str, &[Param])] = &[
         "llg_fixed_array_compare_to",
         &[S, S, S, S],
     ),
+    (
+        "llg_fixed_array_stream_source",
+        "llg_fixed_array_stream_source_to",
+        &[S, S, S, S, P, S, P, P],
+    ),
     ("llg_net_alias_read", "llg_net_alias_read_to", &[S]),
     ("llg_q_full", "llg_q_full_to", &[P, S]),
     ("llg_urandom", "llg_urandom_to", &[]),
@@ -173,7 +178,17 @@ const OPERATIONS: &[(&str, &str, &[Param])] = &[
     (
         "llg_fixed_stream_source",
         "llg_fixed_stream_source_to",
-        &[S, S, S, S, S, S, P, P],
+        &[S, S, S, S, P, S, P, P],
+    ),
+    (
+        "llg_stream_unpack_source",
+        "llg_stream_unpack_source_to",
+        &[P, S, S, S],
+    ),
+    (
+        "llg_fixed_image_stream_source",
+        "llg_fixed_image_stream_source_to",
+        &[P, S, S, S, P, S, P, P],
     ),
     ("llg_stream_to_fixed", "llg_stream_to_fixed_to", &[P, S, S]),
     ("llg_queue_value_get", "llg_queue_value_get_to", &[S, P]),

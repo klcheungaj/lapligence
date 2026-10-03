@@ -261,6 +261,7 @@ impl Validator<'_> {
                 source,
                 slice,
                 targets,
+                nba,
                 ..
             } => {
                 if *slice == 0 {
@@ -273,20 +274,41 @@ impl Validator<'_> {
                     return self.fail(path, "streaming assignment requires a target");
                 }
                 self.validate_expr(source, formals, &format!("{path}.source"))?;
+                let validate_selector = |selector: &IrStreamSelector, target: &str| {
+                    validate_stream_selector(selector).map_err(|error| {
+                        IrValidationError::new(format!("{target}.selector"), error.detail())
+                    })?;
+                    match selector {
+                        IrStreamSelector::Index(bound) => {
+                            self.validate_expr(bound, formals, &format!("{target}.selector.index"))
+                        }
+                        IrStreamSelector::Range { left, right } => {
+                            self.validate_expr(left, formals, &format!("{target}.selector.left"))?;
+                            self.validate_expr(right, formals, &format!("{target}.selector.right"))
+                        }
+                        IrStreamSelector::Indexed { base, width, .. } => {
+                            self.validate_expr(base, formals, &format!("{target}.selector.base"))?;
+                            self.validate_expr(width, formals, &format!("{target}.selector.width"))
+                        }
+                    }
+                };
                 let mut dynamic_targets = 0usize;
                 for (index, target) in targets.iter().enumerate() {
+                    let target_path = format!("{path}.targets[{index}]");
                     match target {
                         IrStreamTarget::Packed { lhs, width } => {
-                            self.validate_width(*width, &format!("{path}.targets[{index}].width"))?;
-                            self.validate_lhs(
-                                lhs,
-                                formals,
-                                &format!("{path}.targets[{index}].lhs"),
-                            )?;
+                            self.validate_width(*width, &format!("{target_path}.width"))?;
+                            self.validate_lhs(lhs, formals, &format!("{target_path}.lhs"))?;
                             if self.lhs_packed_width(lhs) != Some(*width) {
                                 return self.fail(
-                                    format!("{path}.targets[{index}].width"),
+                                    format!("{target_path}.width"),
                                     "streaming target width disagrees with its lvalue",
+                                );
+                            }
+                            if *nba && self.has_transient_target(lhs) {
+                                return self.fail(
+                                    target_path,
+                                    "nonblocking assignment requires persistent target storage",
                                 );
                             }
                         }
@@ -297,8 +319,14 @@ impl Validator<'_> {
                             dynamic_targets += 1;
                             if dynamic_targets > 1 {
                                 return self.fail(
-                                    format!("{path}.targets[{index}]"),
+                                    target_path,
                                     "streaming assignment supports at most one resizable target",
+                                );
+                            }
+                            if *nba {
+                                return self.fail(
+                                    target_path,
+                                    "nonblocking streaming assignment cannot resize a container",
                                 );
                             }
                             let container = container_kind(self.model, *container, None)?;
@@ -308,100 +336,60 @@ impl Validator<'_> {
                             ) || !container.element.is_packed()
                             {
                                 return self.fail(
-                                    format!("{path}.targets[{index}]"),
+                                    target_path,
                                     "streaming target requires a packed dynamic array or queue",
                                 );
                             }
                             if let Some(selector) = selector {
-                                validate_stream_selector(selector).map_err(|error| {
-                                    IrValidationError::new(
-                                        format!("{path}.targets[{index}].selector"),
-                                        error.detail(),
-                                    )
-                                })?;
-                                match selector {
-                                    IrStreamSelector::Index(bound) => self.validate_expr(
-                                        bound,
-                                        formals,
-                                        &format!("{path}.targets[{index}].selector.index"),
-                                    )?,
-                                    IrStreamSelector::Range { left, right } => {
-                                        self.validate_expr(
-                                            left,
-                                            formals,
-                                            &format!("{path}.targets[{index}].selector.left"),
-                                        )?;
-                                        self.validate_expr(
-                                            right,
-                                            formals,
-                                            &format!("{path}.targets[{index}].selector.right"),
-                                        )?;
-                                    }
-                                    IrStreamSelector::Indexed { base, width, .. } => {
-                                        self.validate_expr(
-                                            base,
-                                            formals,
-                                            &format!("{path}.targets[{index}].selector.base"),
-                                        )?;
-                                        self.validate_expr(
-                                            width,
-                                            formals,
-                                            &format!("{path}.targets[{index}].selector.width"),
-                                        )?;
-                                    }
-                                }
+                                validate_selector(selector, &target_path)?;
                             }
                         }
                         IrStreamTarget::FixedSelector { array, selector } => {
                             let Some(array) = self.model.arrays.get(*array) else {
                                 return self.fail(
-                                    format!("{path}.targets[{index}]"),
+                                    target_path,
                                     "streaming fixed-array target index is out of bounds",
                                 );
                             };
                             if array.real || array.dims.is_empty() || array.elem_width == 0 {
                                 return self.fail(
-                                    format!("{path}.targets[{index}]"),
+                                    target_path,
                                     "streaming fixed-array target requires a packed nonzero element",
                                 );
                             }
-                            validate_stream_selector(selector).map_err(|error| {
-                                IrValidationError::new(
-                                    format!("{path}.targets[{index}].selector"),
-                                    error.detail(),
-                                )
-                            })?;
-                            match selector {
-                                IrStreamSelector::Index(bound) => self.validate_expr(
-                                    bound,
-                                    formals,
-                                    &format!("{path}.targets[{index}].selector.index"),
-                                )?,
-                                IrStreamSelector::Range { left, right } => {
-                                    self.validate_expr(
-                                        left,
-                                        formals,
-                                        &format!("{path}.targets[{index}].selector.left"),
-                                    )?;
-                                    self.validate_expr(
-                                        right,
-                                        formals,
-                                        &format!("{path}.targets[{index}].selector.right"),
-                                    )?;
-                                }
-                                IrStreamSelector::Indexed { base, width, .. } => {
-                                    self.validate_expr(
-                                        base,
-                                        formals,
-                                        &format!("{path}.targets[{index}].selector.base"),
-                                    )?;
-                                    self.validate_expr(
-                                        width,
-                                        formals,
-                                        &format!("{path}.targets[{index}].selector.width"),
-                                    )?;
-                                }
+                            if *nba && array.activation {
+                                return self.fail(
+                                    target_path,
+                                    "nonblocking assignment requires persistent target storage",
+                                );
                             }
+                            validate_selector(selector, &target_path)?;
+                        }
+                        IrStreamTarget::FixedImageSelector {
+                            target,
+                            bounds: (left, right),
+                            element_width,
+                            selector,
+                            ..
+                        } => {
+                            self.validate_lhs(target, formals, &format!("{target_path}.target"))?;
+                            let count = u64::from(left.abs_diff(*right)) + 1;
+                            if *element_width == 0
+                                || self.lhs_packed_width(target).map(u64::from)
+                                    != Some(count * u64::from(*element_width))
+                            {
+                                return self.fail(
+                                    target_path,
+                                    "streaming fixed image target must be a one-dimensional packed lvalue of its element width",
+                                );
+                            }
+                            if *nba && self.has_transient_target(target) {
+                                return self.fail(
+                                    target_path,
+                                    "nonblocking assignment requires persistent target storage",
+                                );
+                            }
+                            validate_selector(selector, &target_path)?;
                         }
                     }
                 }

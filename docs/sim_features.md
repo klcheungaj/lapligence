@@ -168,7 +168,7 @@ supported.
 | --- | --- |
 | Packed element or value | 1–1,048,575 bits inclusive; `LLG_SUPPORTED_WIDTH_LIMIT = 1 << 20` is exclusive. Each packed cell uses its actual width. |
 | Generated fixed unpacked array | At most 16,777,216 cells in the product of all dimensions (`LLG_MAX_FIXED_ARRAY_CELLS`). Extents/products are checked before allocation; an over-limit declaration receives a resource diagnostic. |
-| Fixed array used as a value, formal or stream | Integral variable arrays use non-flattened descriptor transport: whole and selected-row copies, equality, conditionals (element-wise merge for an ambiguous selector), default fills, declaration initializers, array-valued pattern items, pattern-lvalue row scatter and multi-segment/unaligned streams. Module, package, function-static and block-static declaration initializers run in the static schedule; automatic block and function arrays initialize per entry. Static, automatic and recursive functions pass such arrays through input, output, inout and ref formals and return them. Oversized records and arrays of records retain the 1,048,575-bit packed payload limit. Direct reductions read cells individually. |
+| Fixed array used as a value, formal or stream | Integral variable arrays use non-flattened descriptor transport: whole and selected-row copies, equality, conditionals (element-wise merge for an ambiguous selector), default fills, declaration initializers, array-valued pattern items, pattern-lvalue row scatter and multi-segment/unaligned streams, including constant in-bounds `with` ranges. Module, package, function-static and block-static declaration initializers run in the static schedule; automatic block and function arrays initialize per entry. Static, automatic and recursive functions pass such arrays through input, output, inout and ref formals and return them. Oversized records and arrays of records retain the 1,048,575-bit packed payload limit. Direct reductions read cells individually. |
 | Subroutine recursion | At most 256 active calls; a further call emits a recursion-limit diagnostic and returns the result type's default. Recursive calls, including through class virtual and virtual-interface dispatch, use heap frames, so their depth does not consume native stack; recursion re-entering through DPI C code does. |
 | Read-only helper inlining | At most 32 nested callback calls; deeper emission receives an explicit diagnostic. |
 | Scheduler region passes | Default 10,000,000 per time slot; `LLG_ZERO_LOOP_LIMIT` accepts a positive decimal `uint64`. Exhaustion diagnoses a zero-delay loop. |
@@ -757,25 +757,32 @@ Macros, includes and their edition-specific behavior are counted in §11.
 - 🟨 **Bit-stream casts and streaming** — Fixed arrays/nested records, selected
   rows/members, call results and admitted ref/const-ref projections preserve
   state conversion and non-dividing/type slice sizes within packed capacity.
-  Oversized streams of integral arrays, selected rows and call results support
-  multiple segments and unaligned slice sizes through a lazily read stream image;
-  the RHS is snapshotted before publication. `with` selections and nested oversized
-  streams reject.
+  Oversized streams of integral arrays, selected rows, call results and constant
+  in-bounds `with` ranges support multiple segments and unaligned slice sizes
+  through a lazily read stream image; the RHS is snapshotted before publication.
+  Runtime `with` ranges and nested oversized streams in such streams reject.
   Packed and bounded
   dynamic/queue-element streams capture one RHS, then publish destinations in
   stream order with overlap-safe snapshots. A stream assigned to a wider fixed
   target is left-aligned and zero-filled on the right; oversize streams reject.
-  Unpacking consumes the leftmost required bits; undersized sources reject.
+  Unpacking consumes the leftmost required bits, also for `<<` with runtime
+  ranges; undersized sources reject.
   `with` follows slice/declaration order, including descending arrays and `-:`
-  ranges, and requires a one-dimensional operand. At most one resizable
-  destination is allowed. Mixed/resizable destinations and fixed destinations
-  requiring a runtime `with` selector use a
-  [blocking-only assignment path](../src/sim/codegen/lowering/containers/streaming.rs);
-  nonblocking assignments on that path reject. Compound streaming assignments
-  are outside the assignment grammar (SV §11.4.14.3, Annex A.6.2). This does not
-  reject every statically represented packed/fixed streaming NBA. Fixed-size cast
-  mismatches, unpacked-union bit-stream casts, real/associative operands, native
-  strings, recursive objects and unsupported reference combinations reject.
+  ranges, and requires a one-dimensional operand: model and descriptor arrays,
+  ref/const-ref formals, automatic locals, members, rows and call results. A
+  source range past the bounds streams element defaults; a target range past
+  them writes the in-range part and reports an error. Fixed destinations,
+  including runtime `with` ranges, accept nonblocking streams with issue-time
+  sources and selectors. At most one resizable destination is allowed;
+  mixed/resizable destinations use a
+  [blocking-only assignment path](../src/sim/codegen/lowering/containers/streaming.rs).
+  Nonblocking or right-to-left selectors that read an earlier target of the same
+  unpack, runtime target ranges in copy-out or delayed assignments, and runtime
+  target ranges over mixed two-state/four-state record elements reject.
+  Compound streaming assignments are outside the assignment grammar
+  (SV §11.4.14.3, Annex A.6.2). Fixed-size cast mismatches, unpacked-union
+  bit-stream casts, real/associative operands, native strings, recursive objects
+  and unsupported reference combinations reject.
   SV §§6.24.3, 11.4.14 **[SV-2005]**.
 - 🟨 **Let expressions** — Expansions bind free names and defaults in
   declaration scope, take positional, named, default and typed actuals,

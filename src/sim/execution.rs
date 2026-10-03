@@ -675,6 +675,7 @@ fn collect_effects(
             IrStmt::FixedValueAssign { nba: true, .. }
             | IrStmt::FixedArrayFill { nba: true, .. }
             | IrStmt::FixedArrayCopy { nba: true, .. }
+            | IrStmt::StreamAssign { nba: true, .. }
             | IrStmt::Assign { nba: true, .. }
             | IrStmt::DelayedAssign { .. }
             | IrStmt::DelayedStringAssign { .. } => effects.push(ExecutionEffect::EnqueueUpdate(
@@ -697,7 +698,9 @@ fn collect_effects(
             | IrStmt::Force { .. }
             | IrStmt::Release { .. }
             | IrStmt::Container(_)
-            | IrStmt::StreamAssign { .. } => effects.push(ExecutionEffect::ImmediateStore),
+            | IrStmt::StreamAssign { nba: false, .. } => {
+                effects.push(ExecutionEffect::ImmediateStore)
+            }
             IrStmt::ClockingSample { .. } => {
                 effects.push(ExecutionEffect::ImmediateStore);
                 effects.push(ExecutionEffect::RuntimeService);
@@ -1008,6 +1011,12 @@ fn collect_statement_expression_effects(
                         }
                     }
                     IrStreamTarget::FixedSelector { selector, .. } => {
+                        collect_stream_selector_effects(ir, selector, effects, visited_calls);
+                    }
+                    IrStreamTarget::FixedImageSelector {
+                        target, selector, ..
+                    } => {
+                        collect_lhs_expression_effects(ir, target, effects, visited_calls);
                         collect_stream_selector_effects(ir, selector, effects, visited_calls);
                     }
                 }
@@ -1763,6 +1772,16 @@ fn collect_expression_effects(
             collect_fixed_value_effects(ir, right, effects, visited_calls);
         }
         IrExprKind::FixedStream { selector, .. } => {
+            collect_stream_selector_effects(ir, selector, effects, visited_calls)
+        }
+        IrExprKind::FixedImageStream {
+            image,
+            fallback,
+            selector,
+            ..
+        } => {
+            collect_expression_effects(ir, image, effects, visited_calls);
+            collect_expression_effects(ir, fallback, effects, visited_calls);
             collect_stream_selector_effects(ir, selector, effects, visited_calls)
         }
         IrExprKind::Const(_)

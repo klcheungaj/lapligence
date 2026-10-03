@@ -280,6 +280,15 @@ impl IrArray {
         })
     }
 
+    /// Value read through an invalid index and streamed for a `with`
+    /// selection outside the bounds: the element's default-uninitialized
+    /// value, keeping two-state members of aggregate elements at zero.
+    pub(in crate::sim) fn element_fallback(&self) -> IrConst {
+        self.element_uninitialized
+            .clone()
+            .unwrap_or_else(|| IrConst::integral_default(self.elem_width, self.two_state))
+    }
+
     pub(in crate::sim) fn sparse(&self) -> bool {
         !self.real
             && self.net_elements.is_empty()

@@ -19,6 +19,27 @@ pub struct IrConst {
 }
 
 impl IrConst {
+    /// The default-uninitialized value of an integral type: all X for a
+    /// four-state type and zero for a two-state type (SV 6.8).
+    pub(in crate::sim) fn integral_default(width: u32, two_state: bool) -> Self {
+        let limbs = width.div_ceil(64) as usize;
+        let mut x = vec![if two_state { 0 } else { u64::MAX }; limbs];
+        if !width.is_multiple_of(64) {
+            if let Some(last) = x.last_mut() {
+                *last &= (1u64 << (width % 64)) - 1;
+            }
+        }
+        Self {
+            bits: vec![0; limbs],
+            x,
+            z: vec![0; limbs],
+            width,
+            signed: false,
+            real: None,
+            fill: None,
+        }
+    }
+
     /// Construct and validate a packed four-state constant.
     pub fn packed(
         bits: Vec<u64>,

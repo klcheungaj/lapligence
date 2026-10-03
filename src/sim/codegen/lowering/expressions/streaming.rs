@@ -42,9 +42,7 @@ impl<'a> Codegen<'a> {
             }),
             // A single-index selector on a fixed array is captured as the
             // element select `array[index]`; only its index is the selector.
-            NodeKind::Expr(ExprKind::ArraySelect { base, indices })
-                if indices.len() == 1 && self.array_of(*base).is_some() =>
-            {
+            NodeKind::Expr(ExprKind::ArraySelect { indices, .. }) if indices.len() == 1 => {
                 Ok(IrStreamSelector::Index(lower_integral(self, indices[0])?))
             }
             _ => Err(format!("unsupported streaming `with` selector in `{path}`")),
@@ -121,13 +119,100 @@ impl<'a> Codegen<'a> {
             }
             // A single-index selector on a fixed array is captured as the
             // element select `array[index]`; only its index is the selector.
-            NodeKind::Expr(ExprKind::ArraySelect { base, indices })
-                if indices.len() == 1 && self.array_of(*base).is_some() =>
-            {
+            NodeKind::Expr(ExprKind::ArraySelect { indices, .. }) if indices.len() == 1 => {
                 Ok(constant(self, indices[0]).map(|index| vec![index]))
             }
             _ => Err(format!("unsupported streaming `with` selector in `{path}`")),
         }
+    }
+
+    /// Shape of a one-dimensional fixed array operand of a `with` range that
+    /// has no model array storage (a ref or const-ref formal, automatic
+    /// local, member, row or call result). Such an operand is lowered as its
+    /// whole declaration-order image. `None` means the operand is not a fixed
+    /// unpacked array.
+    pub(in super::super) fn fixed_image_shape(
+        &self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<Option<FixedImageShape>, String> {
+        let Some(descriptor) = self.query_descriptor(node) else {
+            return Ok(None);
+        };
+        let TypeShape::FixedArray {
+            dimensions,
+            element,
+        } = &descriptor.shape
+        else {
+            return Ok(None);
+        };
+        let [bounds] = dimensions.as_slice() else {
+            return Err(Self::multidimensional_with_error(path));
+        };
+        let element_width = Self::fixed_descriptor_width(element).ok_or_else(|| {
+            format!("streaming `with` operand requires fixed bit-stream elements in `{path}`")
+        })?;
+        let uninitialized = Self::fixed_element_uninitialized(element);
+        // An aggregate element is uniform when its default is all X (every
+        // leaf four-state) or all zero (every leaf two-state).
+        let (uniform, two_state) = match &uninitialized {
+            None => (true, element.two_state),
+            Some(default) => {
+                let all_x = IrConst::integral_default(element_width, false);
+                let limb = |words: &[u64], index: usize| words.get(index).copied().unwrap_or(0);
+                if (0..all_x.x.len()).all(|index| limb(&default.x, index) == all_x.x[index])
+                    && default.z.iter().all(|word| *word == 0)
+                {
+                    (true, false)
+                } else if default
+                    .x
+                    .iter()
+                    .chain(&default.z)
+                    .chain(&default.bits)
+                    .all(|word| *word == 0)
+                {
+                    (true, true)
+                } else {
+                    (false, element.two_state)
+                }
+            }
+        };
+        let count = u64::from(bounds.0.abs_diff(bounds.1)) + 1;
+        if count
+            .checked_mul(u64::from(element_width))
+            .is_none_or(|width| width > u64::from(LLG_MAX_WIDTH))
+        {
+            return Err(format!(
+                "streaming `with` operand without array storage in `{path}` exceeds the runtime maximum width"
+            ));
+        }
+        Ok(Some(FixedImageShape {
+            bounds: *bounds,
+            element_width,
+            two_state,
+            uniform,
+            fallback: uninitialized
+                .unwrap_or_else(|| IrConst::integral_default(element_width, element.two_state)),
+        }))
+    }
+
+    /// Whether a `with` selector is constant and selects only elements
+    /// inside `bounds`. Such a selection unpacks into fixed element parts;
+    /// any other selection needs the runtime-checked selector path.
+    pub(in super::super) fn static_with_in_bounds(
+        &self,
+        path: &str,
+        with_node: NodeId,
+        (left, right): (i32, i32),
+    ) -> Result<bool, String> {
+        let (low, high) = (left.min(right), left.max(right));
+        Ok(self
+            .static_stream_selector_indices(path, with_node)?
+            .is_some_and(|indices| {
+                indices
+                    .iter()
+                    .all(|index| (i128::from(low)..=i128::from(high)).contains(index))
+            }))
     }
 
     fn fixed_stream_parts(
@@ -345,14 +430,68 @@ impl<'a> Codegen<'a> {
                 None,
             ));
         }
-        if with_node.is_some() {
-            return Err(format!(
-                "streaming `with` selector requires a packed-element array in `{path}`"
-            ));
+        if let Some(with_node) = with_node {
+            let Some(shape) = self.fixed_image_shape(path, value_node)? else {
+                return Err(format!(
+                    "streaming `with` selector requires a one-dimensional unpacked array in `{path}`"
+                ));
+            };
+            return self.lower_fixed_image_stream(path, value_node, with_node, shape);
         }
         if let Some(value) = self.lower_bitstream_source(path, value_node)? {
             return Ok(value);
         }
         self.lower_expr(path, value_node)
+    }
+
+    /// Lower a `with` selection of an image-represented fixed array. The
+    /// whole image is evaluated once; a constant selection keeps its static
+    /// width, a runtime one carries its width at runtime.
+    fn lower_fixed_image_stream(
+        &mut self,
+        path: &str,
+        value_node: NodeId,
+        with_node: NodeId,
+        shape: FixedImageShape,
+    ) -> Result<IrExpr, String> {
+        let image = match self.lower_bitstream_source(path, value_node)? {
+            Some(value) => value,
+            None => self.lower_expr(path, value_node)?,
+        };
+        let count = u64::from(shape.bounds.0.abs_diff(shape.bounds.1)) + 1;
+        if image.is_real() || u64::from(image.width) != count * u64::from(shape.element_width) {
+            return Err(format!(
+                "streaming `with` operand has no packed image of its declared shape in `{path}`"
+            ));
+        }
+        let width = match self.static_stream_selector_indices(path, with_node)? {
+            Some(indices) => u32::try_from(indices.len())
+                .ok()
+                .and_then(|count| count.checked_mul(shape.element_width))
+                .filter(|width| *width <= LLG_MAX_WIDTH)
+                .ok_or_else(|| {
+                    format!("streaming selection in `{path}` exceeds the runtime maximum width")
+                })?,
+            None => LLG_MAX_WIDTH,
+        };
+        let selector = self.lower_stream_selector(path, with_node)?;
+        let fallback_width = shape.element_width;
+        Ok(IrExpr::new(
+            IrExprKind::FixedImageStream {
+                image: Box::new(image),
+                bounds: shape.bounds,
+                element_width: shape.element_width,
+                fallback: Box::new(IrExpr::new(
+                    IrExprKind::Const(shape.fallback),
+                    fallback_width,
+                    false,
+                    None,
+                )),
+                selector: Box::new(selector),
+            },
+            width,
+            false,
+            None,
+        ))
     }
 }

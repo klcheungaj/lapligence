@@ -2,8 +2,14 @@
 void llg_dyn_value_get_nested_to(sv4_t* dst, const llg_dyn_value_array_t* array, const sv4_t* indices, size_t count) {
     sv4_replace(dst, llg_dyn_value_get_nested(array, indices, count));
 }
-void llg_fixed_stream_source_to(sv4_t* dst, const sv4_t* values, int64_t declaration_left, int64_t declaration_right, uint32_t element_width, int element_two_state, int selector_kind, const sv4_t* first, const sv4_t* second) {
-    sv4_replace(dst, llg_fixed_stream_source(values, declaration_left, declaration_right, element_width, element_two_state, selector_kind, *first, *second));
+void llg_fixed_stream_source_to(sv4_t* dst, const sv4_t* values, int64_t declaration_left, int64_t declaration_right, uint32_t element_width, const sv4_t* fallback, int selector_kind, const sv4_t* first, const sv4_t* second) {
+    sv4_replace(dst, llg_fixed_stream_source(values, declaration_left, declaration_right, element_width, *fallback, selector_kind, *first, *second));
+}
+void llg_stream_unpack_source_to(sv4_t* dst, const sv4_t* value, uint64_t bits, uint32_t slice, int right_to_left) {
+    sv4_replace(dst, llg_stream_unpack_source(*value, bits, slice, right_to_left));
+}
+void llg_fixed_image_stream_source_to(sv4_t* dst, const sv4_t* image, int64_t declaration_left, int64_t declaration_right, uint32_t element_width, const sv4_t* fallback, int selector_kind, const sv4_t* first, const sv4_t* second) {
+    sv4_replace(dst, llg_fixed_image_stream_source(*image, declaration_left, declaration_right, element_width, *fallback, selector_kind, *first, *second));
 }
 void llg_stream_to_fixed_to(sv4_t* dst, const sv4_t* value, uint32_t width, int is_signed) {
     sv4_replace(dst, llg_stream_to_fixed(*value, width, is_signed));

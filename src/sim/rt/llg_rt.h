@@ -122,6 +122,9 @@ void llg_fixed_array_copy(llg_fixed_array_t*, const llg_fixed_array_t*, int, int
 void llg_fixed_array_fill(llg_fixed_array_t*, sv4_t, int, int);
 void llg_fixed_array_stream_copy(llg_fixed_array_t*, const llg_fixed_array_t*, int, int, uint32_t);
 sv4_t llg_fixed_array_compare(const llg_fixed_array_t*, const llg_fixed_array_t*, int, int);
+/* Pack a runtime `with` selection of a one-dimensional descriptor array in
+ * stream order; indices outside the bounds stream `fallback` (borrowed). */
+sv4_t llg_fixed_array_stream_source(const llg_fixed_array_t*, int64_t, int64_t, uint32_t, sv4_t, int, sv4_t, sv4_t);
 
 // Keep the library and every model translation unit on the host-allocation
 // declaration contract. CMake supplies the same definition when compiling
@@ -891,12 +894,40 @@ int llg_fixed_stream_target_in_bounds(int64_t declaration_left,
                                       int64_t left, int64_t right, size_t count);
 int64_t llg_fixed_stream_index_at(int64_t left, int64_t right, size_t offset);
 /* Pack the runtime-selected elements of a fixed unpacked array into one
- * packed value in stream order, using the element type default for logical
- * indices outside the declared bounds. */
+ * packed value in stream order, using `fallback` (the element's
+ * default-uninitialized value) for logical indices outside the bounds. */
 sv4_t llg_fixed_stream_source(const sv4_t* values, int64_t declaration_left,
                               int64_t declaration_right, uint32_t element_width,
-                              int element_two_state, int selector_kind,
+                              sv4_t fallback, int selector_kind,
                               sv4_t first, sv4_t second);
+/* Fixed-array `with` helpers for arrays without model storage, represented
+ * by their whole declaration-order image (left declared element in the MSBs).
+ * `storage_offset` returns -1 outside the bounds. `image_stream_source`
+ * packs the selection like `llg_fixed_stream_source`; `image_stream_scatter`
+ * writes the leading selected elements of `segment` into the in-bounds
+ * positions of `image`; `image_element_lsb` locates one in-bounds element.
+ * Packed operands are borrowed; only `image` is modified. */
+/* Consume `bits` from the left of an unpack source, then reorder them by the
+ * stream operator. A wider source keeps its leftmost bits (SV 11.4.14.3);
+ * a narrower one is a fatal error. Borrows `value`. */
+sv4_t llg_stream_unpack_source(sv4_t value, uint64_t bits, uint32_t slice,
+                               int right_to_left);
+int64_t llg_fixed_stream_storage_offset(int64_t declaration_left,
+                                        int64_t declaration_right,
+                                        int64_t logical);
+sv4_t llg_fixed_image_stream_source(sv4_t image, int64_t declaration_left,
+                                    int64_t declaration_right,
+                                    uint32_t element_width, sv4_t fallback,
+                                    int selector_kind, sv4_t first,
+                                    sv4_t second);
+void llg_fixed_image_stream_scatter(sv4_t* image, sv4_t segment,
+                                    int64_t declaration_left,
+                                    int64_t declaration_right,
+                                    uint32_t element_width, int64_t left,
+                                    int64_t right, size_t count);
+int64_t llg_fixed_image_element_lsb(int64_t declaration_left,
+                                    int64_t declaration_right, int64_t logical,
+                                    uint32_t element_width);
 /* Left-align a runtime-sized stream in a fixed-size bit-stream target; an
  * oversize stream is an error (IEEE 1800-2009 11.4.14). Borrows `value`. */
 sv4_t llg_stream_to_fixed(sv4_t value, uint32_t width, int is_signed);
@@ -1681,6 +1712,7 @@ void llg_release(sv4_t* sig);
  * arguments are borrowed by address; string arguments are consumed through
  * their address and left empty, like the returning forms' by-value strings. */
 void llg_fixed_array_compare_to(sv4_t* dst, const llg_fixed_array_t* p0, const llg_fixed_array_t* p1, int p2, int p3);
+void llg_fixed_array_stream_source_to(sv4_t* dst, const llg_fixed_array_t* array, int64_t declaration_left, int64_t declaration_right, uint32_t element_width, const sv4_t* fallback, int selector_kind, const sv4_t* first, const sv4_t* second);
 void llg_net_alias_read_to(sv4_t* dst, llg_net_alias_t* alias);
 void llg_q_full_to(sv4_t* dst, const sv4_t* q_id, sv4_t* status);
 void llg_urandom_to(sv4_t* dst);
@@ -1697,7 +1729,9 @@ void llg_rt_ref_read_to(sv4_t* dst, const llg_ref_t* ref);
 void llg_process_get_randstate_to(llg_string_t* dst);
 void llg_string_format_typed_to(llg_string_t* dst, llg_string_t* format, llg_fmt_arg_t* args, int n, const char* scope);
 /* Implemented with the container runtime; declared in both headers. */
-void llg_fixed_stream_source_to(sv4_t* dst, const sv4_t* values, int64_t declaration_left, int64_t declaration_right, uint32_t element_width, int element_two_state, int selector_kind, const sv4_t* first, const sv4_t* second);
+void llg_fixed_stream_source_to(sv4_t* dst, const sv4_t* values, int64_t declaration_left, int64_t declaration_right, uint32_t element_width, const sv4_t* fallback, int selector_kind, const sv4_t* first, const sv4_t* second);
+void llg_stream_unpack_source_to(sv4_t* dst, const sv4_t* value, uint64_t bits, uint32_t slice, int right_to_left);
+void llg_fixed_image_stream_source_to(sv4_t* dst, const sv4_t* image, int64_t declaration_left, int64_t declaration_right, uint32_t element_width, const sv4_t* fallback, int selector_kind, const sv4_t* first, const sv4_t* second);
 void llg_stream_to_fixed_to(sv4_t* dst, const sv4_t* value, uint32_t width, int is_signed);
 
 #ifdef __cplusplus

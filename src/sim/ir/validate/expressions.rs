@@ -763,6 +763,52 @@ impl Validator<'_> {
                 }
                 result?;
             }
+            IrExprKind::FixedImageStream {
+                image,
+                bounds: (left, right),
+                element_width,
+                fallback,
+                selector,
+            } => {
+                let count = u64::from(left.abs_diff(*right)) + 1;
+                if *element_width == 0
+                    || fallback.width != *element_width
+                    || fallback.is_real()
+                    || u64::from(image.width) != count * u64::from(*element_width)
+                {
+                    return self.fail(
+                        path,
+                        "fixed image stream requires a one-dimensional packed image of its element width",
+                    );
+                }
+                if expr.width == 0 || expr.signed {
+                    return self.fail(
+                        path,
+                        "fixed stream source must produce an unsigned packed value",
+                    );
+                }
+                self.validate_expr(image, formals, &format!("{path}.image"))?;
+                self.validate_expr(fallback, formals, &format!("{path}.fallback"))?;
+                validate_stream_selector(selector)?;
+                let mut result = Ok(());
+                let mut visit = |child: &IrExpr| {
+                    result = result.clone().and_then(|_| {
+                        self.validate_expr(child, formals, &format!("{path}.selector"))
+                    });
+                };
+                match selector.as_ref() {
+                    IrStreamSelector::Index(index) => visit(index),
+                    IrStreamSelector::Range { left, right } => {
+                        visit(left);
+                        visit(right);
+                    }
+                    IrStreamSelector::Indexed { base, width, .. } => {
+                        visit(base);
+                        visit(width);
+                    }
+                }
+                result?;
+            }
             IrExprKind::Inside { value, items } => {
                 if items.is_empty() {
                     return self.fail(path, "inside expression requires at least one set item");

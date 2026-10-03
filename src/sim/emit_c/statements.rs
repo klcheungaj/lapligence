@@ -129,7 +129,8 @@ fn render_stream_assignment(
                                 .checked_add(*width)
                                 .ok_or_else(|| "streaming target width overflows".to_owned()),
                             IrStreamTarget::Container { .. }
-                            | IrStreamTarget::FixedSelector { .. } => {
+                            | IrStreamTarget::FixedSelector { .. }
+                            | IrStreamTarget::FixedImageSelector { .. } => {
                                 Err("streaming assignment supports at most one resizable target"
                                     .to_owned())
                             }
@@ -174,7 +175,7 @@ fn render_stream_assignment(
                     model.c_name
                 ));
             }
-            IrStreamTarget::FixedSelector { .. } => {
+            IrStreamTarget::FixedSelector { .. } | IrStreamTarget::FixedImageSelector { .. } => {
                 return Err(
                     "fixed-array runtime streaming selectors require the owned emitter".to_owned(),
                 );
@@ -328,11 +329,15 @@ fn render_stmt_scoped(
         )?,
         IrStmt::FixedValueAssign { .. } | IrStmt::FixedArrayDeclare(_) | IrStmt::FixedArrayCopy { .. } | IrStmt::FixedArrayFill { .. } => return Err("fixed-array copies require owned whole-model emission".to_owned()),
         IrStmt::Container(operation) => super::containers::statement(ctx, operation)?,
+        IrStmt::StreamAssign { nba: true, .. } => {
+            return Err("nonblocking streaming assignments require whole-model emission".to_owned())
+        }
         IrStmt::StreamAssign {
             source,
             slice,
             direction,
             targets,
+            nba: false,
         } => render_stream_assignment(ctx, source, *slice, *direction, targets)?,
         IrStmt::Object(operation) => super::objects::statement(ctx, operation)?,
         IrStmt::PlusArg(expression) => {

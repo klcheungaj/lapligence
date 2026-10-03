@@ -1,4 +1,7 @@
 /* Destination-passing `_to` forms; private fragment, see value/destinations.h. */
+void llg_fixed_array_stream_source_to(sv4_t* dst, const llg_fixed_array_t* array, int64_t declaration_left, int64_t declaration_right, uint32_t element_width, const sv4_t* fallback, int selector_kind, const sv4_t* first, const sv4_t* second) {
+    sv4_replace(dst, llg_fixed_array_stream_source(array, declaration_left, declaration_right, element_width, *fallback, selector_kind, *first, *second));
+}
 void llg_fixed_array_compare_to(sv4_t* dst, const llg_fixed_array_t* p0, const llg_fixed_array_t* p1, int p2, int p3) {
     sv4_replace(dst, llg_fixed_array_compare(p0, p1, p2, p3));
 }

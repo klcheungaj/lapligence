@@ -93,11 +93,13 @@ impl Codegen<'_> {
             let streams = streams.clone();
             let mut parts = Vec::new();
             for stream in streams {
-                if stream.with_expr.is_some() {
-                    return Err(
-                        "fixed descriptor stream with selection requires a fixed array slice"
-                            .into(),
-                    );
+                if let Some(with_node) = stream.with_expr {
+                    parts.push(IrFixedValue::Array(self.fixed_with_view(
+                        path,
+                        stream.value,
+                        with_node,
+                    )?));
+                    continue;
                 }
                 let part = self.lower_fixed_value(path, stream.value)?;
                 if matches!(part, IrFixedValue::Stream { .. }) {
@@ -113,6 +115,64 @@ impl Codegen<'_> {
             return Err("descriptor value requires descriptor storage".into());
         }
         Ok(IrFixedValue::Array(view))
+    }
+}
+
+impl Codegen<'_> {
+    /// A constant in-bounds `with` range of a one-dimensional descriptor
+    /// array streams like the equivalent slice (SV 11.4.14.4), so it is a
+    /// sliced view in storage order. A runtime or out-of-bounds range would
+    /// give the stream a runtime extent, which descriptor streams cannot
+    /// represent.
+    fn fixed_with_view(
+        &mut self,
+        path: &str,
+        value: NodeId,
+        with_node: NodeId,
+    ) -> Result<IrMemoryView, String> {
+        let array = self
+            .array_of(value)
+            .cloned()
+            .filter(|array| self.model.arrays[array.ir].sparse())
+            .ok_or_else(|| {
+                format!("descriptor stream `with` operand requires descriptor array storage in `{path}`")
+            })?;
+        let [(left, right)] = array.dims.as_slice() else {
+            return Err(Self::multidimensional_with_error(path));
+        };
+        let (left, right) = (*left, *right);
+        if !self.static_with_in_bounds(path, with_node, (left, right))? {
+            return Err(format!(
+                "descriptor stream `with` range must be constant and inside the array bounds in `{path}`"
+            ));
+        }
+        let indices = self
+            .static_stream_selector_indices(path, with_node)?
+            .unwrap_or_default();
+        let (Some(low), Some(high)) = (indices.first(), indices.last()) else {
+            return Err(format!("empty descriptor stream `with` range in `{path}`"));
+        };
+        // Bounds were checked against the i32 declaration above.
+        let (low, high) = (*low as i32, *high as i32);
+        let (view_left, view_right) = if left >= right {
+            (high, low)
+        } else {
+            (low, high)
+        };
+        let origin = if left >= right {
+            u64::from(left.abs_diff(view_left))
+        } else {
+            u64::from(view_left.abs_diff(left))
+        };
+        Ok(IrMemoryView {
+            array: array.ir,
+            origin,
+            selectors: Vec::new(),
+            sliced: true,
+            dims: vec![(view_left, view_right)],
+            strides: vec![1],
+            total: u64::from(high.abs_diff(low)) + 1,
+        })
     }
 }
 

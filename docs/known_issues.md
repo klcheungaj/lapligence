@@ -257,9 +257,11 @@ pattern-lvalue row scatter use the same views. Oversized unpacked records,
 arrays of records and finite tagged unions still have no descriptor layout and
 retain the packed payload limit; so does the source of a whole-value `matches`
 wildcard or binding, which rejects with its size (RTL-016). Descriptor pattern items and scatter targets whose rows are small dense
-arrays inside an oversized source, `with` stream selections and nested oversized
-streams reject with explicit diagnostics. Extending those paths through per-cell
-source expansion would recreate the capacity cost.
+arrays inside an oversized source, dense arrays and runtime `with` ranges as parts
+of an oversized stream, and nested oversized streams reject with explicit
+diagnostics; constant in-bounds `with` ranges stream as sliced views (RTL-015).
+Extending those paths through per-cell source expansion would recreate the
+capacity cost.
 
 Casts between descriptor-backed arrays reshape and apply two-state conversion as
 descriptor values. Arrays above the dense-cell threshold but within the packed
@@ -285,6 +287,27 @@ before the first value becomes visible, and runs observer callbacks only after
 the complete image is committed. Callback-side allocation can still fail after
 that commit; allocation failure is fatal, so no partial image is observed.
 
+
+## Streaming `with` targets outside the direct assignment path
+
+**Status:** open; RTL-015 represents runtime and partly out-of-bounds fixed
+`with` targets only in a direct (blocking or nonblocking) streaming assignment.
+
+Such a range needs its bounds checked and its in-range elements written at run
+time (IEEE 1800-2009 §11.4.14.4), which the `StreamAssign` statement does. An
+output or inout copy-out actual and an intra-assignment-delayed assignment lower
+their target as a static lvalue instead, so a runtime or out-of-bounds `with`
+range there rejects with "requires a direct streaming assignment"; a constant
+in-bounds range works. A runtime range over a record member array, ref formal or
+local whose elements mix two-state and four-state members also rejects, because
+its packed element write cannot apply member-wise state conversion; a uniform
+element domain, any model array and every source use work. Supporting either
+needs a copy-out/delayed stream plan or a member-wise conversion mask.
+
+Two forms reject by owner policy rather than cost: a selector that reads a target
+unpacked earlier by the same nonblocking unpack (nothing is published at issue)
+or by a right-to-left unpack (the consumed width must be known before the bits
+are reordered). Assign the length first in its own statement.
 
 ## Runtime-selected module reference connections have no qualified binding oracle
 

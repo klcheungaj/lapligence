@@ -312,12 +312,20 @@ an all-X payload: mixed-state aggregate elements keep two-state leaves at zero
 task-form `$cast` reports a run-time error; the function form only returns zero.
 
 Streams retain typed direction, slice size, operand order, unsigned result and
-component LHS widths. Snapshot RHS once. Runtime fixed-array `with` selectors are
-one-dimensional only, not multidimensional arrays or decorated nested concats;
-traverse declared storage order. Each target selector may observe earlier unpacked
-fields, unlike frozen positional targets. Wider fixed destinations left-align and
-zero-fill; oversize fixed sources diagnose, while longer unpack sources consume
-leftmost bits. Composite call/ref layouts use the same recursive descriptors.
+component LHS widths. Snapshot RHS once. Fixed `with` operands are one-dimensional
+only, not multidimensional arrays or decorated nested concats; traverse declared
+storage order. Never drop a `with` range: model arrays use `FixedStream`/
+`FixedSelector`, other fixed arrays (ref formals, locals, members, rows, call
+results) use their whole image (`FixedImageStream`/`FixedImageSelector`), and
+constant in-bounds target ranges unpack into element parts. A runtime or
+out-of-bounds target range needs a direct streaming assignment (not copy-out or
+intra-assignment delay). Each blocking `>>` selector may observe earlier unpacked
+fields, unlike frozen positional targets; nonblocking and `<<` forms reject a
+selector that reads an earlier target of the same unpack. Oversized descriptor
+streams accept only constant in-bounds ranges, as sliced views. Wider fixed
+destinations left-align and zero-fill; oversize fixed sources diagnose, while
+longer unpack sources consume leftmost bits. Composite call/ref layouts use the
+same recursive descriptors.
 Memory views evaluate each dynamic selector once, retaining static strides and HDL
 bounds; invalid views fail before writes. Binary rank-one reads advance numeric
 addresses independently of declaration order. Packed `$fread` optional bounds

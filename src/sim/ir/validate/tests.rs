@@ -2,6 +2,7 @@ use super::*;
 
 mod array_conditionals;
 mod fixed_array_reductions;
+mod fixed_streams;
 mod sequential_predicates;
 
 fn valid_model() -> IrModel {

@@ -310,53 +310,156 @@ sv4_t llg_stream_to_fixed(sv4_t value, uint32_t width, int is_signed) {
     return result;
 }
 
-sv4_t llg_fixed_stream_source(const sv4_t* values, int64_t declaration_left,
-                              int64_t declaration_right, uint32_t element_width,
-                              int element_two_state, int selector_kind,
-                              sv4_t first, sv4_t second) {
+/* SV 11.4.14.3 consumes a wider unpack source from its left end, before the
+ * stream operator reorders the consumed bits. */
+sv4_t llg_stream_unpack_source(sv4_t value, uint64_t bits, uint32_t slice,
+                               int right_to_left) {
+    uint32_t width = llg_sv4_width(value);
+    if (bits > width)
+        llg_container_fatal("streaming unpack source has insufficient bits");
+    if (!bits) {
+        sv4_t empty = SV4_EMPTY;
+        return empty;
+    }
+    sv4_t consumed = sv4_part_select(value, (int64_t)width - 1,
+                                     (int64_t)(width - (uint32_t)bits));
+    sv4_t result = sv4_unstream(consumed, slice, right_to_left);
+    sv4_destroy(&consumed);
+    return result;
+}
+
+/* Storage offset of a logical index of a fixed unpacked dimension, or -1
+ * when the index lies outside the declared bounds. */
+int64_t llg_fixed_stream_storage_offset(int64_t declaration_left,
+                                        int64_t declaration_right,
+                                        int64_t logical) {
+    if (declaration_left >= declaration_right) {
+        if (logical < declaration_right || logical > declaration_left) return -1;
+        return declaration_left - logical;
+    }
+    if (logical < declaration_left || logical > declaration_right) return -1;
+    return logical - declaration_left;
+}
+
+/* Resolve a runtime source selector and return its element count. `*result`
+ * receives an empty value for a zero count and a zeroed packed owner of the
+ * selected width otherwise. */
+static size_t llg_fixed_stream_source_begin(int64_t declaration_left,
+                                            int64_t declaration_right,
+                                            uint32_t element_width,
+                                            int selector_kind, sv4_t first,
+                                            sv4_t second, int64_t* left,
+                                            int64_t* right, sv4_t* result) {
     llg_check_element_type(element_width);
     if (selector_kind == LLG_STREAM_SELECTOR_NONE)
         llg_container_fatal("whole fixed-array streaming source has no selector");
-    int64_t left;
-    int64_t right;
     size_t count;
-    llg_stream_bounds(selector_kind, first, second, 0, &left, &right, &count);
-    llg_fixed_stream_orient(declaration_left, declaration_right, &left, &right);
+    llg_stream_bounds(selector_kind, first, second, 0, left, right, &count);
+    llg_fixed_stream_orient(declaration_left, declaration_right, left, right);
     if (!count) {
-        sv4_t empty;
-        memset(&empty, 0, sizeof(empty));
-        return empty;
+        sv4_t empty = SV4_EMPTY;
+        *result = empty;
+        return 0;
     }
     if (count > (size_t)((LLG_SUPPORTED_WIDTH_LIMIT - 1u) / element_width))
         llg_container_fatal("streaming source reaches supported width limit");
-    uint32_t width = (uint32_t)(count * element_width);
-    sv4_t packed = sv4_zero(width, 0);
-    uint32_t cursor = width;
+    *result = sv4_zero((uint32_t)(count * element_width), 0);
+    return count;
+}
+
+sv4_t llg_fixed_stream_source(const sv4_t* values, int64_t declaration_left,
+                              int64_t declaration_right, uint32_t element_width,
+                              sv4_t fallback, int selector_kind,
+                              sv4_t first, sv4_t second) {
+    int64_t left;
+    int64_t right;
+    sv4_t packed;
+    size_t count = llg_fixed_stream_source_begin(
+        declaration_left, declaration_right, element_width, selector_kind,
+        first, second, &left, &right, &packed);
+    uint32_t cursor = (uint32_t)(count * element_width);
     for (size_t i = 0; i < count; ++i) {
-        int64_t logical = llg_fixed_stream_index_at(left, right, i);
-        int in_range;
-        uint64_t offset;
-        if (declaration_left >= declaration_right) {
-            in_range = logical >= declaration_right && logical <= declaration_left;
-            offset = in_range ? (uint64_t)(declaration_left - logical) : 0;
+        int64_t offset = llg_fixed_stream_storage_offset(
+            declaration_left, declaration_right,
+            llg_fixed_stream_index_at(left, right, i));
+        sv4_part_select_set(&packed, (int64_t)cursor - 1,
+                            (int64_t)(cursor - element_width),
+                            offset < 0 ? fallback : values[offset]);
+        cursor -= element_width;
+    }
+    return packed;
+}
+
+sv4_t llg_fixed_image_stream_source(sv4_t image, int64_t declaration_left,
+                                    int64_t declaration_right,
+                                    uint32_t element_width, sv4_t fallback,
+                                    int selector_kind, sv4_t first,
+                                    sv4_t second) {
+    int64_t left;
+    int64_t right;
+    sv4_t packed;
+    size_t count = llg_fixed_stream_source_begin(
+        declaration_left, declaration_right, element_width, selector_kind,
+        first, second, &left, &right, &packed);
+    uint32_t image_width = llg_sv4_width(image);
+    uint32_t cursor = (uint32_t)(count * element_width);
+    for (size_t i = 0; i < count; ++i) {
+        int64_t offset = llg_fixed_stream_storage_offset(
+            declaration_left, declaration_right,
+            llg_fixed_stream_index_at(left, right, i));
+        int64_t high = (int64_t)cursor - 1;
+        int64_t low = (int64_t)(cursor - element_width);
+        if (offset < 0) {
+            sv4_part_select_set(&packed, high, low, fallback);
         } else {
-            in_range = logical >= declaration_left && logical <= declaration_right;
-            offset = in_range ? (uint64_t)(logical - declaration_left) : 0;
-        }
-        if (in_range) {
-            sv4_part_select_set(&packed, (int64_t)cursor - 1,
-                                (int64_t)(cursor - element_width), values[offset]);
-        } else {
-            sv4_t fallback = element_two_state
-                                 ? sv4_zero(element_width, 0)
-                                 : sv4_x(element_width, 0);
-            sv4_part_select_set(&packed, (int64_t)cursor - 1,
-                                (int64_t)(cursor - element_width), fallback);
-            sv4_destroy(&fallback);
+            /* The image holds the left declared element in its MSBs. */
+            int64_t image_high = (int64_t)image_width - 1 - offset * (int64_t)element_width;
+            sv4_t element = sv4_part_select(image, image_high,
+                                            image_high - (int64_t)element_width + 1);
+            sv4_part_select_set(&packed, high, low, element);
+            sv4_destroy(&element);
         }
         cursor -= element_width;
     }
     return packed;
+}
+
+void llg_fixed_image_stream_scatter(sv4_t* image, sv4_t segment,
+                                    int64_t declaration_left,
+                                    int64_t declaration_right,
+                                    uint32_t element_width, int64_t left,
+                                    int64_t right, size_t count) {
+    llg_check_element_type(element_width);
+    if ((uint64_t)count * element_width > llg_sv4_width(segment))
+        llg_container_fatal("fixed streaming target segment is narrower than its selection");
+    uint32_t image_width = llg_sv4_width(*image);
+    uint32_t cursor = llg_sv4_width(segment);
+    for (size_t i = 0; i < count; ++i) {
+        int64_t offset = llg_fixed_stream_storage_offset(
+            declaration_left, declaration_right,
+            llg_fixed_stream_index_at(left, right, i));
+        if (offset >= 0) {
+            int64_t image_high = (int64_t)image_width - 1 - offset * (int64_t)element_width;
+            sv4_t element = sv4_part_select(segment, (int64_t)cursor - 1,
+                                            (int64_t)(cursor - element_width));
+            sv4_part_select_set(image, image_high,
+                                image_high - (int64_t)element_width + 1, element);
+            sv4_destroy(&element);
+        }
+        cursor -= element_width;
+    }
+}
+
+int64_t llg_fixed_image_element_lsb(int64_t declaration_left,
+                                    int64_t declaration_right, int64_t logical,
+                                    uint32_t element_width) {
+    int64_t offset = llg_fixed_stream_storage_offset(declaration_left,
+                                                     declaration_right, logical);
+    if (offset < 0) llg_container_fatal("fixed streaming element is outside its bounds");
+    uint64_t count = (uint64_t)(declaration_left >= declaration_right
+                                    ? declaration_left - declaration_right
+                                    : declaration_right - declaration_left) + 1u;
+    return (int64_t)((count - 1u - (uint64_t)offset) * element_width);
 }
 
 static sv4_t llg_pack_stream_values(const sv4_t* values, size_t count,

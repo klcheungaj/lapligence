@@ -222,6 +222,21 @@ pub enum IrExprKind {
         array: usize,
         selector: Box<IrStreamSelector>,
     },
+    /// Packed streaming source selected by a `with` range from a
+    /// one-dimensional fixed array that has no model array storage (a ref or
+    /// const-ref formal, automatic local, member, row or call result).
+    /// `image` is the whole array in declaration order and is evaluated once;
+    /// `fallback` is the element default-uninitialized value streamed for
+    /// logical indices outside `bounds` (SV 11.4.14.4). The expression width
+    /// is the selected width for a constant selector and `LLG_MAX_WIDTH`
+    /// otherwise; the runtime value always carries the actual width.
+    FixedImageStream {
+        image: Box<IrExpr>,
+        bounds: (i32, i32),
+        element_width: u32,
+        fallback: Box<IrExpr>,
+        selector: Box<IrStreamSelector>,
+    },
     /// Integral set-membership expression. The selector and each endpoint
     /// are evaluated once by the emitter.
     Inside {
