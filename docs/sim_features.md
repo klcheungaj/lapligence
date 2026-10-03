@@ -707,6 +707,8 @@ Macros, includes and their edition-specific behavior are counted in §11.
   SV §7.12.2 **[SV-2009]**.
 - 🟨 **Resizable-container methods** — Packed reductions/`with` callbacks,
   locators, min/max/unique result queues, sort/rsort/reverse/shuffle are present.
+  Queue/dynamic `sort`/`rsort` evaluate each `with` key once in index order, then
+  stable merge-sort in O(n log n); elements with an X/Z key stay in place.
   Callbacks require packed items and cannot capture automatic locals/formals;
   generic leaf storage does not remove method/result limits. Shuffle uses its
   container seed API, not full process/object RNG integration.

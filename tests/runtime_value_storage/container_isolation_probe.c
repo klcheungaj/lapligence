@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define CHECK(condition)                                                     \
@@ -242,6 +243,192 @@ static int check_array_methods(void) {
     return 0;
 }
 
+typedef struct {
+    size_t calls;
+    size_t next_index;
+    int in_order;
+    int mode;
+} sort_key_context_t;
+
+// Mode 0 keys the element itself; mode 1 keys signed values at alternating
+// 40/70-bit widths and mode 2 keys unsigned values at alternating 16/90-bit
+// widths, so the comparison must extend mixed-width keys.
+static void eval_sort_key(sv4_t* out, sv4_t item, sv4_t index, void* context) {
+    sort_key_context_t* state = (sort_key_context_t*)context;
+    uint64_t position = sv4_to_u64(index);
+    state->calls++;
+    if (position != state->next_index) state->in_order = 0;
+    state->next_index = (size_t)position + 1;
+    if (state->mode == 1)
+        sv4_replace(out, sv4_resize(item, (position & 1u) ? 70 : 40, 1));
+    else if (state->mode == 2)
+        sv4_replace(out, sv4_resize(item, (position & 1u) ? 90 : 16, 0));
+    else
+        sv4_copy(out, &item);
+}
+
+typedef struct {
+    int64_t key;
+    size_t original;
+} sort_oracle_t;
+
+static int sort_oracle_ascending(const void* left, const void* right) {
+    const sort_oracle_t* a = (const sort_oracle_t*)left;
+    const sort_oracle_t* b = (const sort_oracle_t*)right;
+    if (a->key != b->key) return a->key < b->key ? -1 : 1;
+    return a->original < b->original ? -1 : a->original > b->original;
+}
+
+static int sort_oracle_descending(const void* left, const void* right) {
+    const sort_oracle_t* a = (const sort_oracle_t*)left;
+    const sort_oracle_t* b = (const sort_oracle_t*)right;
+    if (a->key != b->key) return a->key > b->key ? -1 : 1;
+    return a->original < b->original ? -1 : a->original > b->original;
+}
+
+// One sort over `count` pseudo-random 32-bit elements. Keys are the values
+// themselves (mode 0), their sign-extended wide forms (mode 1) or their
+// zero-extended low 16 bits (mode 2). The oracle is a stable libc sort over
+// the same keys; every call must evaluate each key once, in index order, and
+// element identities must follow their values.
+static int check_sort_round(size_t count, int descending, int mode,
+                            int use_queue, uint64_t seed) {
+    enum { MODULUS = 61 };
+    sv4_t* values = (sv4_t*)malloc((count + 1) * sizeof(*values));
+    sort_oracle_t* oracle = (sort_oracle_t*)malloc((count + 1) * sizeof(*oracle));
+    uint64_t* identities = (uint64_t*)malloc((count + 1) * sizeof(*identities));
+    void** cells = (void**)malloc((count + 1) * sizeof(*cells));
+    CHECK(values && oracle && identities && cells);
+    uint64_t state = seed;
+    for (size_t i = 0; i < count; ++i) {
+        state = state * UINT64_C(6364136223846793005) + UINT64_C(1442695040888963407);
+        int64_t value = (int64_t)((state >> 33) % MODULUS) - 30;
+        if (mode == 2) value += 30;
+        values[i] = sv4_from_i64(value, 32);
+        oracle[i].key = value;
+        oracle[i].original = i;
+    }
+    qsort(oracle, count, sizeof(*oracle),
+          descending ? sort_oracle_descending : sort_oracle_ascending);
+
+    llg_queue_t queue;
+    llg_dyn_array_t dynamic;
+    sv4_t* data;
+    llg_queue_init(&queue, 32, 1, 0, UINT64_MAX);
+    llg_dyn_init(&dynamic, 32, 1, 0);
+    if (use_queue) {
+        llg_queue_assign_values(&queue, values, count);
+        for (size_t i = 0; i < count; ++i) {
+            identities[i] = llg_queue_ref_identity(&queue, i);
+            cells[i] = llg_queue_ref_acquire(&queue, i);
+        }
+        data = queue.data;
+    } else {
+        llg_dyn_assign_values(&dynamic, values, count);
+        data = dynamic.data;
+    }
+
+    sort_key_context_t context = { 0, 0, 1, mode };
+    int method = descending ? LLG_CONTAINER_METHOD_RSORT : LLG_CONTAINER_METHOD_SORT;
+    if (use_queue) llg_queue_method(&queue, method, eval_sort_key, &context);
+    else llg_dyn_method(&dynamic, method, eval_sort_key, &context);
+    CHECK(count < 2 || (context.calls == count && context.in_order));
+    CHECK(count >= 2 || context.calls == 0);
+
+    for (size_t j = 0; j < count; ++j) {
+        CHECK(sv4_to_i64(data[j]) == sv4_to_i64(values[oracle[j].original]));
+        if (use_queue)
+            CHECK(llg_queue_ref_identity(&queue, j) == identities[oracle[j].original]);
+    }
+    if (use_queue) {
+        // A retained reference follows its element to the sorted position.
+        for (size_t j = 0; j < count; ++j) {
+            size_t original = oracle[j].original;
+            CHECK(sv4_to_i64(test_value(llg_queue_cell_read(cells[original]))) ==
+                  sv4_to_i64(values[original]));
+            CHECK(llg_queue_cell_write(
+                cells[original], test_value(sv4_from_i64(1000 + (int64_t)j, 32))));
+        }
+        for (size_t j = 0; j < count; ++j)
+            CHECK(sv4_to_i64(queue.data[j]) == 1000 + (int64_t)j);
+        for (size_t i = 0; i < count; ++i) llg_queue_ref_release(cells[i]);
+    }
+
+    // Sorting an already ordered receiver must not report a change.
+    int before;
+    queue.notify = notify;
+    dynamic.notify = notify;
+    sort_key_context_t again = { 0, 0, 1, mode };
+    if (use_queue) {
+        llg_queue_assign_values(&queue, values, count);
+        llg_queue_method(&queue, method, eval_sort_key, &again);
+        before = changes;
+        llg_queue_method(&queue, method, eval_sort_key, &again);
+    } else {
+        llg_dyn_assign_values(&dynamic, values, count);
+        llg_dyn_method(&dynamic, method, eval_sort_key, &again);
+        before = changes;
+        llg_dyn_method(&dynamic, method, eval_sort_key, &again);
+    }
+    CHECK(changes == before);
+
+    llg_queue_destroy(&queue);
+    llg_dyn_destroy(&dynamic);
+    sv4_destroy_array(values, count);
+    free(cells);
+    free(identities);
+    free(oracle);
+    free(values);
+    return 0;
+}
+
+static sv4_t four_state_nibble(unsigned kind, uint64_t value) {
+    if (kind == 1) return sv4_x(4, 0);
+    if (kind == 2) return sv4_fill(3, 4, 0);
+    return sv4_from_u64(value, 4, 0);
+}
+
+// Elements with an X/Z bit keep their positions and nothing crosses them.
+static int check_sort_unknown_barriers(void) {
+    static const unsigned kinds[8] = { 0, 0, 1, 0, 0, 2, 0, 0 };
+    static const uint64_t input[8] = { 5, 2, 0, 1, 0, 0, 3, 9 };
+    static const uint64_t ascending[8] = { 2, 5, 0, 0, 1, 0, 3, 9 };
+    static const uint64_t descending[8] = { 5, 2, 0, 1, 0, 0, 9, 3 };
+    for (int direction = 0; direction < 2; ++direction) {
+        sv4_t values[8];
+        for (size_t i = 0; i < 8; ++i)
+            values[i] = four_state_nibble(kinds[i], input[i]);
+        llg_queue_t queue;
+        llg_queue_init(&queue, 4, 0, 0, UINT64_MAX);
+        llg_queue_assign_values(&queue, values, 8);
+        llg_queue_method(&queue,
+                         direction ? LLG_CONTAINER_METHOD_RSORT : LLG_CONTAINER_METHOD_SORT,
+                         NULL, NULL);
+        const uint64_t* expected = direction ? descending : ascending;
+        for (size_t i = 0; i < 8; ++i) {
+            CHECK(sv4_is_unknown(queue.data[i]) == (kinds[i] != 0));
+            if (kinds[i] == 0) CHECK(sv4_to_u64(queue.data[i]) == expected[i]);
+        }
+        CHECK(llg_sv4_state(queue.data[2], 0) == 2);
+        llg_queue_destroy(&queue);
+        sv4_destroy_array(values, 8);
+    }
+    return 0;
+}
+
+static int check_sort_methods(void) {
+    for (int use_queue = 0; use_queue < 2; ++use_queue)
+        for (int descending = 0; descending < 2; ++descending)
+            for (int mode = 0; mode < 3; ++mode) {
+                CHECK(check_sort_round(0, descending, mode, use_queue, 1) == 0);
+                CHECK(check_sort_round(1, descending, mode, use_queue, 2) == 0);
+                CHECK(check_sort_round(2, descending, mode, use_queue, 3) == 0);
+                CHECK(check_sort_round(3001, descending, mode, use_queue, 4) == 0);
+            }
+    CHECK(check_sort_unknown_barriers() == 0);
+    return 0;
+}
+
 static int check_recursive_values(void) {
     static const llg_value_desc_t real_desc = {
         .kind = LLG_VALUE_REAL
@@ -370,6 +557,7 @@ int main(void) {
     CHECK(test_values_run(check_queue_references) == 0);
     CHECK(test_values_run(check_retained_queue_cells) == 0);
     CHECK(test_values_run(check_array_methods) == 0);
+    CHECK(test_values_run(check_sort_methods) == 0);
     CHECK(test_values_run(check_recursive_values) == 0);
     puts("runtime container isolation ok");
     return 0;

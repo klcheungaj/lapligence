@@ -77,7 +77,10 @@ queue bounds/discard rules, ordered integral/byte-string associative keys, and
 invalid-index default-read/no-op-write semantics. Reject X/Z integral keys before
 key casting. Allocation overflow/exhaustion is fatal. Descriptor-backed dynamic
 array elements use type operations; do not apply packed-only queue/associative
-paths to other types. Queue refs use LIFO `llg_ref_scope_t`: retain descriptor/cell
+paths to other types. Packed `sort`/`rsort` evaluate each `with` key once, merge-sort
+an index permutation without recursion, then permute data and queue element
+identities in place; X/Z-key elements stay fixed. Queue refs use LIFO
+`llg_ref_scope_t`: retain descriptor/cell
 through copy-out/cancellation; snapshot/disconnect removed identities before
 structural mutation. Destruction cannot free pinned cells, and ref lists are
 borrowed. Alias reads never publish or mutate resolved storage.

@@ -343,33 +343,3 @@ model with clang at `-O0` (`--cc clang --cflags -O0`) and measure the frame size
 of the generated process function, for instance with `-fstack-usage` or
 `-Wframe-larger-than=`. The frame is about 159 KiB; halving `argc` roughly
 halves it.
-
-## Queue and dynamic-array `sort`/`rsort` are quadratic and re-evaluate `with` keys
-
-**Status:** open.
-
-### Symptom
-
-Sorting 20,000 integers with `sort()` on a queue or dynamic array takes 9.3 s
-at gcc `-O3`. A `with (expr)` key expression is evaluated again on every
-comparison, so side effects and cost multiply with the comparison count.
-
-### Cause
-
-`llg_method_reorder` in [`container/methods.c`](../src/sim/rt/container/methods.c)
-implements `sort` and `rsort` as insertion sorts that evaluate the `with` key
-inside the comparison. That is O(n^2) comparisons and O(n^2) key evaluations.
-
-### Intended direction
-
-Use an O(n log n) sort (for example a stable merge sort) that evaluates each
-element's key exactly once into a key array, then sorts element indices by those
-keys, with bounded native stack depth and no per-comparison allocation. Keep the
-existing ordering rules for ties and four-state keys, and re-check the key
-evaluation order against the LRM.
-
-### Reproduce
-
-Fill a `int q[$]` or dynamic array with 20,000 pseudo-random values, call
-`q.sort();` (and `q.sort with (item);`), and time the simulation with a model
-built at gcc `-O3`. Doubling the size roughly quadruples the time.
