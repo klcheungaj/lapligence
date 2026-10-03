@@ -196,6 +196,7 @@ fn alias_visible_lifecycle(table: &str, initialize: &mut String, destroy: &mut S
 pub(in crate::sim::emit_c) fn storage_lifecycle(
     model: &IrModel,
     constants: &super::super::super::constants::PackedConstants,
+    backend: crate::sim::value_backend::ValueBackend,
     out: &mut String,
 ) -> Result<(), String> {
     let mut initialize = String::from("    llg_model_constants_init();\n");
@@ -457,7 +458,7 @@ pub(in crate::sim::emit_c) fn storage_lifecycle(
     out.push_str(&tables.source);
     out.push_str(&format!("static void llg_model_storage_defaults(void) {{\n{initialize}}}\n\nstatic void llg_model_storage_destroy(void) {{\n{destroy}    llg_model_constants_destroy();\n}}\n\n"));
     let ctx = RCtx {
-        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
+        value_backend: backend,
         model,
         func: None,
         sampled: false,

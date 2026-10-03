@@ -1,9 +1,7 @@
 #include "probe.h"
 
 static unsigned state(const sv4_t* value) {
-    if (value->x[0] & 1u) return 2;
-    if (value->z[0] & 1u) return 3;
-    return (unsigned)(value->bits[0] & 1u);
+    return probe_state(*value, 0);
 }
 
 static void check(const uint8_t* rows, size_t count, unsigned a, unsigned b,
@@ -15,8 +13,8 @@ static void check(const uint8_t* rows, size_t count, unsigned a, unsigned b,
     sv4_t result = sv4_udp_eval(rows, count, 2, inputs);
     CHECK(result.width == 1 && !result.is_signed);
     CHECK(state(&result) == expected);
-    CHECK(result.bits != left.bits && result.bits != right.bits);
-    CHECK(value_test_live() == live + 1);
+    CHECK(probe_distinct(&result, left) && probe_distinct(&result, right));
+    CHECK(value_test_live() == live + probe_owner_allocations(1));
     CHECK(state(&left) == a && state(&right) == b);
     sv4_destroy(&result);
     CHECK(value_test_live() == live);

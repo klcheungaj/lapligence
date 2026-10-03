@@ -714,7 +714,8 @@ fn render_model(
             plain_functions.insert(index, super::owned::model::function(&ctx, function)?);
         }
     }
-    let mut pca_tables = pca_batches::collect(model, &constants, &mut coroutine_processes)?;
+    let mut pca_tables =
+        pca_batches::collect(model, &constants, config.backend, &mut coroutine_processes)?;
     let net_tables = net_batches::collect(model, &coroutine_processes);
     pca_tables.declarations.push_str(&net_tables.declarations);
     pca_tables.operands.extend(net_tables.operands);
@@ -1029,9 +1030,13 @@ fn render_model(
         }
     }
     out.push_str(&sharing.bodies);
-    out.push_str(&super::owned::assertions::callbacks(model, &constants)?);
+    out.push_str(&super::owned::assertions::callbacks(
+        model,
+        &constants,
+        config.backend,
+    )?);
     out.push_str(&super::owned::assertions::registrations(model)?);
-    super::owned::model::storage_lifecycle(model, &constants, &mut out)?;
+    super::owned::model::storage_lifecycle(model, &constants, config.backend, &mut out)?;
     out.push_str(&constants.lifecycle());
     out.push_str(&super::owned::model::main(execution, &sharing.spawns)?);
     out.insert_str(constant_declarations_at, &constants.declarations());

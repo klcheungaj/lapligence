@@ -39,18 +39,18 @@ static void check_nba_and_scopes(void) {
     sv4_t mask = sv4_from_u64(255, 129, 0);
     const size_t baseline = value_test_live();
     for (unsigned i = 0; i < 1000; ++i) {
-        source.bits[0] = 42;
+        probe_set_bits(&source, 0, 42);
         llg_nba_after(&target, source, 0);
-        CHECK(g.nba_queues[LLG_REGION_NBA].head->value.bits != source.bits);
-        source.bits[0] = 99;
+        CHECK(probe_distinct(&g.nba_queues[LLG_REGION_NBA].head->value, source));
+        probe_set_bits(&source, 0, 99);
         commit_nbas(LLG_REGION_NBA);
-        CHECK(target.bits[0] == 42);
+        CHECK(PROBE_BITS(target, 0) == 42);
         CHECK(value_test_live() == baseline);
         llg_nba_masked(&target, source, mask, 1);
-        source.bits[0] = 7;
+        probe_set_bits(&source, 0, 7);
         ++g.now;
         commit_nbas(LLG_REGION_NBA);
-        CHECK(target.bits[0] == 99);
+        CHECK(PROBE_BITS(target, 0) == 99);
         CHECK(value_test_live() == baseline);
     }
     llg_proc_t* proc = llg_spawn(&never_run_desc, "cancel-owner");
@@ -111,10 +111,10 @@ static void check_nba_fifo_and_cancellation(void) {
     reap_retired_procs();
     CHECK(g.nba_queues[LLG_REGION_NBA].head == second->nba_head);
     commit_nbas(LLG_REGION_NBA);
-    CHECK(target.bits[0] == 2 && second->nba_head == NULL);
+    CHECK(PROBE_BITS(target, 0) == 2 && second->nba_head == NULL);
     ++g.now;
     commit_nbas(LLG_REGION_NBA);
-    CHECK(target.bits[0] == 3);
+    CHECK(PROBE_BITS(target, 0) == 3);
 
     llg_kill_proc(second, 0);
     reap_retired_procs();
@@ -173,10 +173,10 @@ static void check_frames(void) {
     for (unsigned i = 0; i < 1000; ++i) {
         llg_frame_t* parent = llg_frame_new(2);
         llg_frame_t* child = llg_frame_new(1);
-        source.bits[0] = 17;
+        probe_set_bits(&source, 0, 17);
         llg_frame_capture_value(parent, 0, source);
         llg_frame_capture_value(parent, 0, source);
-        source.bits[0] = 22;
+        probe_set_bits(&source, 0, 22);
         expect_number(llg_frame_read_value(parent, 0), 17);
         llg_frame_alias_slot(child, 0, parent, 0);
         llg_frame_release(parent);
@@ -198,28 +198,28 @@ static void check_inertial_and_force(void) {
     sv4_t mask = sv4_from_u64(255, 65, 0);
     llg_inertial_t* driver = NULL;
     llg_inertial_assign(&driver, &target, source, 2, 2, 2);
-    source.bits[0] = 0;
+    probe_set_bits(&source, 0, 0);
     llg_inertial_assign(&driver, &target, source, 2, 2, 2);
-    CHECK(driver && !driver->pending && driver->value.bits == NULL);
+    CHECK(driver && !driver->pending && probe_is_empty(driver->value));
     size_t retained = value_test_live();
     for (unsigned i = 0; i < 1000; ++i) {
-        source.bits[0] = i % 2 ? 0xaa : 0x55;
-        uint64_t expected = source.bits[0];
+        probe_set_bits(&source, 0, i % 2 ? 0xaa : 0x55);
+        uint64_t expected = PROBE_BITS(source, 0);
         llg_inertial_selected_assign(&driver, &target, source, mask, 2, 2, 2);
-        source.bits[0] = 0;
+        probe_set_bits(&source, 0, 0);
         g.now += 2;
         commit_inertial(LLG_REGION_ACTIVE);
-        CHECK(target.bits[0] == expected);
+        CHECK(PROBE_BITS(target, 0) == expected);
         CHECK(value_test_live() == retained);
         llg_force(&target, source);
-        CHECK(target.bits[0] == 0);
-        source.bits[0] = 19;
+        CHECK(PROBE_BITS(target, 0) == 0);
+        probe_set_bits(&source, 0, 19);
         llg_ba(&target, source);
-        CHECK(target.bits[0] == 0);
+        CHECK(PROBE_BITS(target, 0) == 0);
         llg_release(&target);
         CHECK(value_test_live() == retained);
     }
-    source.bits[0] = 1;
+    probe_set_bits(&source, 0, 1);
     llg_inertial_assign(&driver, &target, source, 100, 100, 100);
     llg_rt_cleanup();
     CHECK(driver == NULL && value_test_live() == 3);
@@ -241,7 +241,7 @@ static void check_sequence_snapshots(void) {
         llg_sequence_token_t seed = {.locals = attempt->locals};
         llg_sequence_token_t* token = sequence_token_copy(&graph, &seed);
         sequence_endpoint_add(attempt, token, 0);
-        attempt->locals[0].bits[0] = 99;
+        probe_set_bits(&attempt->locals[0], 0, 99);
         expect_number(sv4_clone(&token->locals[0]), 23);
         expect_number(sv4_clone(&attempt->endpoints->locals[0]), 23);
         expect_number(llg_sequence_local_read(inherited, 0), 23);
@@ -264,7 +264,7 @@ static void check_sampling_mailboxes_and_reinit(void) {
         sv4_t bound = sv4_zero(32, 0);
         llg_sampled_register(&source);
         sample_preponed_values();
-        source.bits[0] = 33;
+        probe_set_bits(&source, 0, 33);
         sampled_record_write(&source);
         sv4_t snapshot = SV4_EMPTY;
         CHECK(llg_sampled_copy(&source, &snapshot));
@@ -273,19 +273,19 @@ static void check_sampling_mailboxes_and_reinit(void) {
         llg_mailbox_t* mailbox = llg_mailbox_new(bound, LLG_MAILBOX_PACKED, 65, 0, 0, 0);
         size_t retained = value_test_live();
         for (unsigned i = 0; i < 100; ++i) {
-            source.bits[0] = 33;
+            probe_set_bits(&source, 0, 33);
             CHECK(llg_mailbox_try_put_value(mailbox, llg_mailbox_value_packed(source, 65, 0, 0)));
-            source.bits[0] = 99;
+            probe_set_bits(&source, 0, 99);
             CHECK(llg_mailbox_try_get_value(mailbox, llg_mailbox_target_packed(&target, 65, 0, 0), 1));
-            CHECK(target.bits[0] == 33);
+            CHECK(PROBE_BITS(target, 0) == 33);
             CHECK(llg_mailbox_try_get_value(mailbox, llg_mailbox_target_packed(&target, 65, 0, 0), 0));
-            CHECK(target.bits[0] == 33);
+            CHECK(PROBE_BITS(target, 0) == 33);
             CHECK(value_test_live() == retained);
         }
         CHECK(llg_mailbox_try_put_value(mailbox, llg_mailbox_value_packed(source, 65, 0, 0)));
         // init tears down the previous runtime even with pending retained owners.
         llg_rt_init();
-        CHECK(value_test_live() == 3);
+        CHECK(value_test_live() == 2 * probe_owner_allocations(65) + probe_owner_allocations(32));
         llg_rt_cleanup();
         sv4_destroy(&source);
         sv4_destroy(&target);
@@ -401,12 +401,12 @@ static void check_time_and_io(void) {
         CHECK(result == (double)magnitude);
     }
     sv4_t wide = sv4_zero(65537, 0);
-    wide.bits[1024] = 1;
+    probe_set_bits(&wide, 1024, 1);
     for (unsigned i = 0; i < 50; ++i) {
         llg_fmt_arg_t arg = {.kind = LLG_FMT_PACKED, .value.packed = sv4_clone(&wide)};
         llg_string_t text = llg_string_format_typed(llg_string_bytes("%b", 2), &arg, 1, "top");
         CHECK(text.len == 65537 && text.data[0] == '1');
-        CHECK(arg.value.packed.bits == NULL);
+        CHECK(probe_is_empty(arg.value.packed));
         llg_string_destroy(&text);
         CHECK(value_test_live() == 1);
     }

@@ -56,7 +56,7 @@ static int observed;
 static sv4_t v(unsigned value) { return sv4_from_u64(value, 8, 0); }
 static unsigned u(sv4_t value) {
     assert(!sv4_is_unknown(value));
-    return (unsigned)value.bits[0];
+    return (unsigned)sv4_to_u64(value);
 }
 static llg_force_part_t part(sv4_t* target, llg_net_t* object, int hi, int lo) {
     llg_force_part_t result = { target, object, hi, lo, (uint32_t)(hi-lo+1), 0, 0 };

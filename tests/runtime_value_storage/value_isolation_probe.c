@@ -1,5 +1,6 @@
 #include "llg_value.h"
 #include "test_value_temporaries.h"
+#include "probe_value.h"
 
 /* A 1024-bit vector, not a model-global storage capacity. */
 enum { VECTOR_WIDTH = 1024, VECTOR_LIMBS = 16 };
@@ -21,9 +22,9 @@ enum { VECTOR_WIDTH = 1024, VECTOR_LIMBS = 16 };
 static int state_at(sv4_t value, unsigned bit) {
     unsigned limb = bit / 64u;
     uint64_t mask = UINT64_C(1) << (bit % 64u);
-    if ((value.x[limb] & mask) != 0) return 2;
-    if ((value.z[limb] & mask) != 0) return 3;
-    return (value.bits[limb] & mask) != 0;
+    if ((PROBE_X(value, limb) & mask) != 0) return 2;
+    if ((PROBE_Z(value, limb) & mask) != 0) return 3;
+    return (PROBE_BITS(value, limb) & mask) != 0;
 }
 
 static int check_wide_four_state_ops(void) {
@@ -45,15 +46,15 @@ static int check_wide_four_state_ops(void) {
     sv4_t xor_result = test_value(sv4_xor(ones, mixed));
     for (unsigned i = 0; i < VECTOR_LIMBS; i++) {
         uint64_t unknown = x[i] | z[i];
-        CHECK(and_result.bits[i] == bits[i]);
-        CHECK(and_result.x[i] == unknown);
-        CHECK(and_result.z[i] == 0);
-        CHECK(or_result.bits[i] == bits[i]);
-        CHECK(or_result.x[i] == unknown);
-        CHECK(or_result.z[i] == 0);
-        CHECK(xor_result.bits[i] == (~bits[i] & ~unknown));
-        CHECK(xor_result.x[i] == unknown);
-        CHECK(xor_result.z[i] == 0);
+        CHECK(PROBE_BITS(and_result, i) == bits[i]);
+        CHECK(PROBE_X(and_result, i) == unknown);
+        CHECK(PROBE_Z(and_result, i) == 0);
+        CHECK(PROBE_BITS(or_result, i) == bits[i]);
+        CHECK(PROBE_X(or_result, i) == unknown);
+        CHECK(PROBE_Z(or_result, i) == 0);
+        CHECK(PROBE_BITS(xor_result, i) == (~bits[i] & ~unknown));
+        CHECK(PROBE_X(xor_result, i) == unknown);
+        CHECK(PROBE_Z(xor_result, i) == 0);
     }
 
     sv4_t one = test_value(sv4_from_u64(1, VECTOR_WIDTH, 0));
@@ -62,15 +63,15 @@ static int check_wide_four_state_ops(void) {
     CHECK(sum.width == VECTOR_WIDTH && !sv4_is_unknown(sum));
     CHECK(difference.width == VECTOR_WIDTH && !sv4_is_unknown(difference));
     for (unsigned i = 0; i < VECTOR_LIMBS; i++) {
-        CHECK(sum.bits[i] == 0);
-        CHECK(difference.bits[i] == UINT64_MAX);
+        CHECK(PROBE_BITS(sum, i) == 0);
+        CHECK(PROBE_BITS(difference, i) == UINT64_MAX);
     }
 
     sv4_t unknown_sum = test_value(sv4_add(mixed, one));
     for (unsigned i = 0; i < VECTOR_LIMBS; i++) {
-        CHECK(unknown_sum.bits[i] == 0);
-        CHECK(unknown_sum.x[i] == UINT64_MAX);
-        CHECK(unknown_sum.z[i] == 0);
+        CHECK(PROBE_BITS(unknown_sum, i) == 0);
+        CHECK(PROBE_X(unknown_sum, i) == UINT64_MAX);
+        CHECK(PROBE_Z(unknown_sum, i) == 0);
     }
 
     return 0;
@@ -82,7 +83,7 @@ static int check_signed_resize(void) {
     CHECK(extended.width == 130 && extended.is_signed);
     CHECK(state_at(extended, 0) == 0);
     for (unsigned bit = 1; bit < 130; bit++) CHECK(state_at(extended, bit) == 1);
-    CHECK((extended.bits[2] & ~UINT64_C(3)) == 0);
+    CHECK((PROBE_BITS(extended, 2) & ~UINT64_C(3)) == 0);
 
     uint64_t x_bits[VECTOR_LIMBS] = {0};
     uint64_t z_bits[VECTOR_LIMBS] = {0};
@@ -101,13 +102,13 @@ static int check_signed_resize(void) {
     sv4_t unsigned_source = test_value(sv4_from_u64(0x80, 8, 0));
     sv4_t cast_unsigned = test_value(sv4_cast(signed_source, 16, 0));
     sv4_t cast_signed = test_value(sv4_cast(unsigned_source, 16, 1));
-    CHECK(cast_unsigned.bits[0] == UINT64_C(0xff80));
+    CHECK(PROBE_BITS(cast_unsigned, 0) == UINT64_C(0xff80));
     CHECK(cast_unsigned.is_signed == 0);
-    CHECK(cast_signed.bits[0] == UINT64_C(0x0080));
+    CHECK(PROBE_BITS(cast_signed, 0) == UINT64_C(0x0080));
     CHECK(cast_signed.is_signed == 1);
 
     sv4_t target_signed_resize = test_value(sv4_resize(unsigned_source, 16, 1));
-    CHECK(target_signed_resize.bits[0] == UINT64_C(0xff80));
+    CHECK(PROBE_BITS(target_signed_resize, 0) == UINT64_C(0xff80));
     return 0;
 }
 
@@ -126,11 +127,13 @@ static int check_queries(void) {
     CHECK(sv4_to_u64(test_value(sv4_onehot(many, 1))) == 0);
     CHECK(sv4_is_unknown(many));
 
-    sv4_t only_unknown = test_value(sv4_from_limbs(NULL, x, z, VECTOR_WIDTH, 0));
+    sv4_t* only_unknown_owner = test_value_owner(sv4_from_limbs(NULL, x, z, VECTOR_WIDTH, 0));
+    sv4_t only_unknown = *only_unknown_owner;
     CHECK(sv4_to_i64(test_value(sv4_countones(only_unknown))) == 0);
     CHECK(sv4_to_u64(test_value(sv4_onehot(only_unknown, 0))) == 0);
     CHECK(sv4_to_u64(test_value(sv4_onehot(only_unknown, 1))) == 1);
-    only_unknown.bits[15] = UINT64_C(1) << 63;
+    probe_set_bits(only_unknown_owner, 15, UINT64_C(1) << 63);
+    only_unknown = *only_unknown_owner;
     CHECK(sv4_to_u64(test_value(sv4_onehot(only_unknown, 0))) == 1);
     CHECK(sv4_to_u64(test_value(sv4_onehot(only_unknown, 1))) == 1);
 
@@ -143,14 +146,7 @@ static int check_queries(void) {
 }
 
 static void set_state(sv4_t* value, unsigned bit, int state) {
-    unsigned limb = bit / 64u;
-    uint64_t mask = UINT64_C(1) << (bit % 64u);
-    value->bits[limb] &= ~mask;
-    value->x[limb] &= ~mask;
-    value->z[limb] &= ~mask;
-    if (state == 1) value->bits[limb] |= mask;
-    else if (state == 2) value->x[limb] |= mask;
-    else if (state == 3) value->z[limb] |= mask;
+    probe_put_state(value, bit, (unsigned)state);
 }
 
 static int check_normalized(sv4_t value) {
@@ -160,9 +156,9 @@ static int check_normalized(sv4_t value) {
         if (i >= limbs) mask = 0;
         else if (i + 1 == limbs && value.width % 64u != 0)
             mask = (UINT64_C(1) << (value.width % 64u)) - 1;
-        CHECK((value.x[i] & value.z[i]) == 0);
-        CHECK((value.bits[i] & (value.x[i] | value.z[i])) == 0);
-        CHECK(((value.bits[i] | value.x[i] | value.z[i]) & ~mask) == 0);
+        CHECK((PROBE_X(value, i) & PROBE_Z(value, i)) == 0);
+        CHECK((PROBE_BITS(value, i) & (PROBE_X(value, i) | PROBE_Z(value, i))) == 0);
+        CHECK(((PROBE_BITS(value, i) | PROBE_X(value, i) | PROBE_Z(value, i)) & ~mask) == 0);
     }
     return 0;
 }
@@ -201,12 +197,14 @@ static int check_net_resolution(void) {
     static const uint16_t widths[3] = {65, 130, VECTOR_WIDTH};
     for (unsigned w = 0; w < 3; w++) {
         uint16_t width = widths[w];
-        sv4_t a = test_value(sv4_fill(0, width, 0));
-        sv4_t b = test_value(sv4_fill(0, width, 0));
+        sv4_t* a_owner = test_value_owner(sv4_fill(0, width, 0));
+        sv4_t* b_owner = test_value_owner(sv4_fill(0, width, 0));
         for (unsigned bit = 0; bit < width; bit++) {
-            set_state(&a, bit, (int)(bit % 4u));
-            set_state(&b, bit, (int)((bit / 4u) % 4u));
+            set_state(a_owner, bit, (int)(bit % 4u));
+            set_state(b_owner, bit, (int)((bit / 4u) % 4u));
         }
+        sv4_t a = *a_owner;
+        sv4_t b = *b_owner;
         const sv4_t* drivers[2] = {&a, &b};
         for (int mode = 0; mode < 7; mode++) {
             sv4_t result = test_value(sv4_resolve(drivers, 2, width, 1, modes[mode]));
@@ -350,11 +348,13 @@ static int check_numeric_conversions(void) {
     double real_value = -13.25;
     uint64_t real_bits = 0;
     memcpy(&real_bits, &real_value, sizeof(real_bits));
-    sv4_t encoded_real = test_value(sv4_realtobits(real_value));
-    CHECK(encoded_real.width == 64 && encoded_real.bits[0] == real_bits);
+    sv4_t* encoded_real_owner = test_value_owner(sv4_realtobits(real_value));
+    sv4_t encoded_real = *encoded_real_owner;
+    CHECK(encoded_real.width == 64 && PROBE_BITS(encoded_real, 0) == real_bits);
     CHECK(sv4_bitstoreal(encoded_real) == real_value);
-    encoded_real.x[0] |= UINT64_C(1);
-    encoded_real.z[0] |= UINT64_C(2);
+    probe_put_state(encoded_real_owner, 0, 2);
+    probe_put_state(encoded_real_owner, 1, 3);
+    encoded_real = *encoded_real_owner;
     real_bits &= ~UINT64_C(3);
     double masked_real = 0.0;
     memcpy(&masked_real, &real_bits, sizeof(masked_real));
@@ -364,11 +364,13 @@ static int check_numeric_conversions(void) {
     float narrowed = (float)short_value;
     uint32_t short_bits = 0;
     memcpy(&short_bits, &narrowed, sizeof(short_bits));
-    sv4_t encoded_short = test_value(sv4_shortrealtobits(short_value));
-    CHECK(encoded_short.width == 32 && encoded_short.bits[0] == short_bits);
+    sv4_t* encoded_short_owner = test_value_owner(sv4_shortrealtobits(short_value));
+    sv4_t encoded_short = *encoded_short_owner;
+    CHECK(encoded_short.width == 32 && PROBE_BITS(encoded_short, 0) == short_bits);
     CHECK(sv4_bitstoshortreal(encoded_short) == short_value);
-    encoded_short.x[0] |= UINT64_C(1);
-    encoded_short.z[0] |= UINT64_C(2);
+    probe_put_state(encoded_short_owner, 0, 2);
+    probe_put_state(encoded_short_owner, 1, 3);
+    encoded_short = *encoded_short_owner;
     short_bits &= ~UINT32_C(3);
     memcpy(&narrowed, &short_bits, sizeof(narrowed));
     CHECK(sv4_bitstoshortreal(encoded_short) == (double)narrowed);
@@ -383,15 +385,15 @@ static int check_partial_selects(void) {
     sv4_t value = test_value(sv4_from_u64(0xa5, 8, 0));
     sv4_t high = test_value(sv4_part_select(value, 9, 6));
     CHECK(high.width == 4);
-    CHECK(high.bits[0] == 2 && high.x[0] == 12 && high.z[0] == 0);
+    CHECK(PROBE_BITS(high, 0) == 2 && PROBE_X(high, 0) == 12 && PROBE_Z(high, 0) == 0);
     sv4_t low = test_value(sv4_part_select(value, 1, -2));
     CHECK(low.width == 4);
-    CHECK(low.bits[0] == 4 && low.x[0] == 3 && low.z[0] == 0);
+    CHECK(PROBE_BITS(low, 0) == 4 && PROBE_X(low, 0) == 3 && PROBE_Z(low, 0) == 0);
     sv4_t outside = test_value(sv4_part_select(value, -1, -4));
-    CHECK(outside.width == 4 && outside.x[0] == 15);
+    CHECK(outside.width == 4 && PROBE_X(outside, 0) == 15);
     sv4_t reversed = test_value(sv4_part_select(value, 6, 9));
     CHECK(reversed.width == 4);
-    CHECK(reversed.bits[0] == 4 && reversed.x[0] == 3);
+    CHECK(PROBE_BITS(reversed, 0) == 4 && PROBE_X(reversed, 0) == 3);
     return 0;
 }
 
@@ -442,8 +444,9 @@ static int check_negative_powers(void) {
     CHECK(sv4_to_bool(test_value(sv4_case_eq(test_value(sv4_pow(minus_one, odd)), minus_one))));
     CHECK(sv4_to_bool(test_value(sv4_case_eq(test_value(sv4_pow(minus_one, even)),
                                 test_value(sv4_from_u64(1, 65, 1))))));
-    sv4_t minus_two = test_value(sv4_clone(&minus_one));
-    minus_two.bits[0] &= ~UINT64_C(1);
+    sv4_t* minus_two_owner = test_value_owner(sv4_clone(&minus_one));
+    probe_set_bits(minus_two_owner, 0, PROBE_BITS(*minus_two_owner, 0) & ~UINT64_C(1));
+    sv4_t minus_two = *minus_two_owner;
     CHECK(sv4_to_bool(test_value(sv4_case_eq(test_value(sv4_pow(minus_two, odd)),
                                 test_value(sv4_from_u64(0, 65, 1))))));
     return 0;

@@ -83,3 +83,18 @@ multiply reuse, alias result allocation and B promotion/removal. Benchmarks cove
 all three destination operations at 1/64/65/256/4096 bits, known/X/Z and each exact
 alias mode. These are standalone component witnesses; selected generated models
 reach the same implementations through the `sv4_*_into` facade aliases.
+
+The V08 audit covers retained owners merged through the stack-bounding work.
+Packed `_to` destination forms (`value/destinations.c`) and pointer-passed
+results/operands compile against the selected backend; recursive subprograms on
+the chain arena keep packed locals in arena frames whose estimates follow the
+selected descriptor. Runtime C outside the backends uses only facade names; numeric
+`sizeof(sv4_t)` appears only as native allocation arithmetic. Every emitter render
+context now carries the selected backend: assertion predicates, sampled
+domains, sequence callbacks, storage initialization and PCA batch helpers no
+longer assume legacy layout (their C-stack frames did not use it, so generated
+code is unchanged). The native runtime/scheduler/container/VPI/waveform probes
+run against compact portable and GMP kernels as well as legacy (see the
+[runtime probe guide](../../../../tests/runtime_value_storage/readme.md#selected-value-backend));
+they access values only through the neutral bridge. `sv4_gmp_integration`
+fixtures and the stack-bounds fixtures extend the HDL parity matrix.

@@ -39,7 +39,7 @@ static int check_file_io(void) {
     }
     if (llg_file_open(llg_string_bytes("full.txt", 8), llg_string_bytes("", 0), 0) != 0u)
         return fail("full table accepted");
-    if (arg.value.packed.bits != NULL) return fail("formatter did not consume packed argument");
+    if (llg_sv4_width(arg.value.packed) != 0) return fail("formatter did not consume packed argument");
     arg.value.packed = sv4_from_u64(7, 32, 1);
     llg_file_display_typed(descriptors[0] | 1u, "probe=%0d", &arg, 1, "probe", 1);
     for (int i = 0; i < 30; i++) llg_file_close(descriptors[i]);

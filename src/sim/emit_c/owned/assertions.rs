@@ -42,13 +42,14 @@ fn bind_sequence(frame: &mut Frame<'_, '_>, sequence: &IrSequence) {
 fn predicate(
     model: &IrModel,
     constants: &super::super::constants::PackedConstants,
+    backend: crate::sim::value_backend::ValueBackend,
     index: usize,
     role: &str,
     expression: &IrExpr,
     sampled: bool,
 ) -> Result<String, String> {
     let ctx = RCtx {
-        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
+        value_backend: backend,
         model,
         func: None,
         sampled,
@@ -77,11 +78,12 @@ fn predicate(
 fn sampled_value(
     model: &IrModel,
     constants: &super::super::constants::PackedConstants,
+    backend: crate::sim::value_backend::ValueBackend,
     name: &str,
     expression: &IrExpr,
 ) -> Result<String, String> {
     let ctx = RCtx {
-        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
+        value_backend: backend,
         model,
         func: None,
         sampled: true,
@@ -108,12 +110,14 @@ fn sampled_value(
 pub(in crate::sim::emit_c) fn callbacks(
     model: &IrModel,
     constants: &super::super::constants::PackedConstants,
+    backend: crate::sim::value_backend::ValueBackend,
 ) -> Result<String, String> {
     let mut out = String::new();
     for (index, domain) in model.sampled_domains().iter().enumerate() {
         out.push_str(&sampled_value(
             model,
             constants,
+            backend,
             &sampled_domain_callback_name(index, "value"),
             &domain.sample,
         )?);
@@ -121,6 +125,7 @@ pub(in crate::sim::emit_c) fn callbacks(
             out.push_str(&sampled_value(
                 model,
                 constants,
+                backend,
                 &sampled_domain_callback_name(index, "gate"),
                 gate,
             )?);
@@ -134,7 +139,7 @@ pub(in crate::sim::emit_c) fn callbacks(
         ] {
             if let Some(expression) = expression {
                 out.push_str(&predicate(
-                    model, constants, index, role, expression, sampled,
+                    model, constants, backend, index, role, expression, sampled,
                 )?);
             }
         }
@@ -143,7 +148,9 @@ pub(in crate::sim::emit_c) fn callbacks(
             ("consequent", assertion.consequent_sequence()),
         ] {
             if let Some(graph) = graph {
-                out.push_str(&sequence::render(model, constants, index, role, graph)?);
+                out.push_str(&sequence::render(
+                    model, constants, backend, index, role, graph,
+                )?);
             }
         }
     }

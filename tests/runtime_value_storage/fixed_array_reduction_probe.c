@@ -69,14 +69,14 @@ static void values(void) {
     sv4_replace(&cells[0], sv4_fill(3, 8, 0));
     for (unsigned op = 0; op < 5; ++op) {
         sv4_t result = fold(cells, NULL, 1, 8, 8, 0, op, 0, 0, 0);
-        CHECK(result.bits[0] == 0 && result.x[0] == 0 && result.z[0] == 0xff);
+        CHECK(PROBE_BITS(result, 0) == 0 && PROBE_X(result, 0) == 0 && PROBE_Z(result, 0) == 0xff);
         sv4_destroy(&result);
     }
     sv4_replace(&cells[1], sv4_zero(8, 0));
     expect_number(fold(cells, NULL, 2, 8, 8, 0, 2, 0, 0, 0), 0);
     expect_number(fold(cells, NULL, 2, 8, 32, 1, 0, 1, 0, 0), 0);
     sv4_t result = fold(cells, NULL, 2, 8, 8, 0, 1, 0, 0, 0);
-    CHECK(result.x[0] == 0xff);
+    CHECK(PROBE_X(result, 0) == 0xff);
     sv4_destroy(&result);
     sv4_destroy(&cells[0]); sv4_destroy(&cells[1]);
 
@@ -89,17 +89,17 @@ static void values(void) {
         sv4_destroy(&slice);
     }
     expect_number(fold(rows, NULL, 2, 32, 32, 1, 0, 0, 1, 1), 50);
-    CHECK(payload.bits[0] == UINT64_C(0x050a0f14));
+    CHECK(PROBE_BITS(payload, 0) == UINT64_C(0x050a0f14));
     sv4_destroy(&rows[0]); sv4_destroy(&rows[1]); sv4_destroy(&payload);
 
     for (uint32_t width = 65; width <= 129; width += 64) {
         sv4_t wide[2] = {sv4_fill(1, width, 0), sv4_from_u64(2, width, 0)};
         expect_number(fold(wide, NULL, 2, width, width, 0, 0, 0, 0, 0), 1);
         result = fold(wide, NULL, 2, width, width, 0, 1, 0, 0, 0);
-        CHECK(result.bits[0] == UINT64_MAX - 1);
-        CHECK(result.bits[(width - 1) / 64] == 1);
+        CHECK(PROBE_BITS(result, 0) == UINT64_MAX - 1);
+        CHECK(PROBE_BITS(result, (width - 1) / 64) == 1);
         CHECK(!sv4_is_unknown(result));
-        CHECK(sv4_bytes(&result) == (size_t)width / 64 * 24 + 24);
+        CHECK(sv4_bytes(&result) == probe_payload_bytes(width, 0));
         sv4_destroy(&result); sv4_destroy(&wide[0]); sv4_destroy(&wide[1]);
     }
     CHECK(value_test_live() == 0 && value_test_bytes() == 0);
@@ -115,16 +115,16 @@ static void ownership(void) {
     const size_t baseline_bytes = value_test_bytes();
     value_test_reset_stats();
     sv4_t result = fold(cells, NULL, count, 8, 8, 0, 0, 0, 0, 0);
-    CHECK(result.bits[0] == count % 256);
-    CHECK(value_test_live() == baseline + 1);
+    CHECK(PROBE_BITS(result, 0) == count % 256);
+    CHECK(value_test_live() == baseline + probe_owner_allocations(8));
     CHECK(value_test_peak_live() <= baseline + 6);
     for (size_t round = 0; round < 10000; ++round) {
         sv4_replace(&result, fold(cells, NULL, 2, 8, 32, 0, 0, 1, 0, 0));
-        CHECK(result.bits[0] == 2);
-        CHECK(value_test_live() == baseline + 1);
+        CHECK(PROBE_BITS(result, 0) == 2);
+        CHECK(value_test_live() == baseline + probe_owner_allocations(32));
     }
     sv4_replace(&cells[0], sv4_from_u64(99, 8, 0));
-    CHECK(result.bits[0] == 2); /* No alias of the receiver or map temporary. */
+    CHECK(PROBE_BITS(result, 0) == 2); /* No alias of the receiver or map temporary. */
     sv4_destroy(&result);
     CHECK(value_test_live() == baseline && value_test_bytes() == baseline_bytes);
     for (size_t i = 0; i < count; ++i) sv4_destroy(&cells[i]);

@@ -37,9 +37,9 @@ static void truth_table(void) {
                 sv4_t result = evaluate(borrowed, 3, &trace);
                 CHECK(trace == expected_trace);
                 if (expected < 2) CHECK(!sv4_is_unknown(result) && sv4_to_u64(result) == expected);
-                else CHECK(result.x[0] == 1u && result.z[0] == 0u);
+                else CHECK(PROBE_X(result, 0) == 1u && PROBE_Z(result, 0) == 0u);
                 sv4_destroy(&result);
-                CHECK(value_test_live() == 4);
+                CHECK(value_test_live() == 4 * probe_owner_allocations(1));
             }
         }
     }
@@ -64,8 +64,8 @@ static void truth_table(void) {
     sv4_t default_value = sv4_x(8, 0);
     sv4_t packed = sv4_mux(selector, a, b);
     sv4_t array = sv4_array_conditional_merge(a, b, default_value);
-    CHECK(trace == 1 && packed.bits[0] == 0xa4 && packed.x[0] == 3);
-    CHECK(array.bits[0] == 0 && array.x[0] == 0xff);
+    CHECK(trace == 1 && PROBE_BITS(packed, 0) == 0xa4 && PROBE_X(packed, 0) == 3);
+    CHECK(PROBE_BITS(array, 0) == 0 && PROBE_X(array, 0) == 0xff);
     sv4_destroy(&selector); sv4_destroy(&a); sv4_destroy(&b);
     sv4_destroy(&default_value); sv4_destroy(&packed); sv4_destroy(&array);
     for (unsigned i = 0; i < 4; ++i) sv4_destroy(&states[i]);
@@ -78,8 +78,8 @@ static void ownership(void) {
     for (unsigned iteration = 0; iteration < 10000; ++iteration) {
         unsigned trace = 0;
         sv4_t result = evaluate(inputs, 3, &trace);
-        CHECK(trace == 12 && result.x[0] == 1);
-        CHECK(value_test_live() == live + 1);
+        CHECK(trace == 12 && PROBE_X(result, 0) == 1);
+        CHECK(value_test_live() == live + probe_owner_allocations(llg_sv4_width(result)));
         sv4_destroy(&result);
         CHECK(value_test_live() == live && value_test_bytes() == bytes);
     }
@@ -89,7 +89,9 @@ static void ownership(void) {
     const size_t before = value_test_allocations();
     unsigned trace = 0;
     expect_number(evaluate(inputs, 3, &trace), 0);
-    CHECK(trace == 1 && value_test_allocations() - before == 3);
+    /* The initial result, the clause clone and its reduction. */
+    CHECK(trace == 1 && value_test_allocations() - before ==
+          2 * probe_owner_allocations(1) + probe_owner_allocations(129));
     for (unsigned i = 0; i < 3; ++i) sv4_destroy(&inputs[i]);
 }
 

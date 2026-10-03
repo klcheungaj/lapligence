@@ -22,8 +22,9 @@ LLG_PROBE_PROCESS(normal_process, ownership_frame_t, 1) {
     for (F->index = 0; F->index < 1000; ++F->index) {
         sv4_replace(&F->values[0], sv4_add(F->values[0], F->values[1]));
         LLG_PROBE_AWAIT(1, llg_arm_time(self, 1));
-        CHECK(F->values[0].bits[0] == F->index + 1);
-        CHECK(value_test_live() == 2);
+        CHECK(PROBE_BITS(F->values[0], 0) == F->index + 1);
+        CHECK(value_test_live() ==
+              probe_owner_allocations(129) + probe_owner_allocations(1));
         ++progress;
     }
     // Normal completion destroys all remaining registered scope owners.

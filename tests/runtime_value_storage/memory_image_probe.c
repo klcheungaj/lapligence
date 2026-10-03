@@ -10,10 +10,7 @@ static void write_input(const char* name, const char* data) {
 }
 
 static unsigned bit_state(sv4_t value, uint32_t bit) {
-    uint64_t mask = UINT64_C(1) << (bit % 64u);
-    if (value.x[bit / 64u] & mask) return 2;
-    if (value.z[bit / 64u] & mask) return 3;
-    return (value.bits[bit / 64u] & mask) != 0;
+    return probe_state(value, bit);
 }
 
 static void load(const char* name, sv4_t* memory, uint32_t count, uint32_t width,

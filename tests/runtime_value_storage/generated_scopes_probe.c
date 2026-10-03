@@ -111,7 +111,7 @@ static void check_net_region_and_mask(void) {
         .drivers = driver_table, .strength0 = strength0, .strength1 = strength1};
     sv4_replace(&net.resolved, sv4_zero(65, 0));
     llg_nba_net_after(&net, 0, value, 1);
-    value.bits[0] = 85;
+    probe_set_bits(&value, 0, 85);
     ++g.now;
     commit_nbas(LLG_REGION_RE_NBA); /* ordinary NBA is not re-NBA */
     expect_number(sv4_clone(&driver), 0);
@@ -119,7 +119,7 @@ static void check_net_region_and_mask(void) {
     expect_number(sv4_clone(&driver), 170);
     expect_number(sv4_clone(&net.resolved), 170);
     llg_nba_net_masked_after(&net, 0, value, mask, 1);
-    value.bits[0] = 0;
+    probe_set_bits(&value, 0, 0);
     ++g.now;
     commit_nbas(LLG_REGION_NBA);
     expect_number(sv4_clone(&driver), 165);

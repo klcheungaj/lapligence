@@ -746,5 +746,16 @@ These tests force both backends,
 both compact kernels and both HDL optimizer modes independently of the runner's
 selection. VPI requires a Unix shared-library compiler. The matrix covers
 arithmetic destinations, selections, streams, nets/force, NBA capture, VPI and
-waveforms, RTL-001 through RTL-004 fixtures and a 16,777,216-cell array copy/NBA
-fixture.
+waveforms, RTL-001 through RTL-004 fixtures, a 16,777,216-cell array copy/NBA
+fixture and the `sv4_gmp_integration` owner fixtures (scheduler snapshots,
+containers/mailboxes, recursive activations and canceled waits, clocking/
+inertial/sequence captures). `sim_stack_bounds` adds the deep-recursion and
+long-body fixtures to the same matrix.
+
+The native runtime probes run against each backend through
+`tests/runtime_value_storage.rs` (legacy, compact portable, and compact GMP when
+`LLG_TEST_GMP_ROOT` is set):
+
+```sh
+LLG_TEST_GMP_ROOT=/path/to/gmp CARGO_BUILD_JOBS=6 CMAKE_BUILD_PARALLEL_LEVEL=6 scripts/run-tests.sh --test-work-dir /build --cargo-profile quick --test runtime_value_storage --test-threads 6
+```

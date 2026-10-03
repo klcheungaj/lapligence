@@ -964,7 +964,7 @@ fn render_stmt_scoped(
         IrStmt::ActivationScope { target, exit, body } => {
             let activation = format!("_llg_act_{}", exit);
             let child = RCtx {
-        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
+                value_backend: ctx.value_backend,
                 model: ctx.model,
                 func: ctx.func,
                 sampled: ctx.sampled,

@@ -51,7 +51,8 @@ capabilities; check the exact inventory rather than assuming a fixed count.
 | --- | --- |
 | `consumer_bridge_probe.c` | Allocation-free masked/range compare/copy/fill at unaligned offsets and 0/31/32/63/64/65/129/257-bit boundaries; foreign 32-bit record strides, partial imports, copied A/B snapshots, zero-extended text and modular digit parsing. |
 | `neutral_access_probe.c` | Neutral shape/state/word/range mutation at 0..1,048,575 bits; literal Rust/DPI/VPI encodings, source-sign cast versus requested-sign resize, two-state coercion and independent/self-alias owner operations. The standalone compact probes exercise its V01 bridge independently. |
-| `storage_probe.c` | Exact contiguous planes, masking, independent clone/copy/move, repeated destruction, 10,000 replacements, zero/exclusive widths and failure-atomic OOM. Fatal cases require specific diagnostics. |
+| `allocation_failure_probe.c` | Injected allocation failure in constructors, wide clones, X/Z results and queue element capture ends with the selected backend's fatal diagnostic. |
+| `storage_probe.c` | Legacy only: exact contiguous planes, masking, independent clone/copy/move, repeated destruction, 10,000 replacements, zero/exclusive widths and failure-atomic OOM. Fatal cases require specific diagnostics. |
 | `stream_preflight_probe.c` | INT64 endpoints, declared bounds/traversal, unknown selectors, source-size rejection including later short segments, and zero remaining packed owners. |
 | `array_conditional_probe.c` | Immediate-element equality/defaults versus packed mux, mixed X/zero defaults, aliased inputs, boundary/max widths, independent results, 10,000 replacements and malformed shapes. |
 | `four_state_probe.c`, `value_ownership_probe.c` | Independent scalar state/sign tables, casez/casex, mixed widths through 4,097 bits, equality/mux/arithmetic/selections, widths 0..257, maximum values, conversion, nonmutation and steady ownership. |
@@ -185,6 +186,39 @@ validation before they certify their platforms; Linux results do not substitute 
 The flat checker verifies fragment order and strict facade C11 compilation, accepts
 GCC/Clang and cl/clang-cl with optional `--without-scheduler`, requires the current
 ABI to compile and the stale ABI to fail. Linux execution does not validate MSVC.
+
+## Selected value backend
+
+`LLG_STORAGE_TEST_VALUE_BACKEND=compact` builds every runtime, scheduler,
+container, VPI and waveform probe above against the compact descriptor, as
+generated models select it; `LLG_STORAGE_TEST_COMPACT_KERNELS=gmp` (with
+`LLG_GMP_ROOT`) selects GMP kernels. The compact units are compiled once with
+`malloc`/`calloc`/`realloc`/`free` renamed to the tracked hooks in
+`tracked_value.c`/`storage_runtime.c`, so live-owner, byte and allocation
+counters cover both backends. A resize of an existing owner (compact X/Z plane
+growth or removal) changes the byte counters but is not counted as a new
+allocation. Only the legacy plane-layout probe (`storage_probe.c`) is omitted;
+the standalone compact probes below own the compact storage contract and cannot
+be combined with this option.
+
+Probes read and write values only through the neutral bridge (`probe_value.h`):
+oracle plane words, per-bit states, owner independence by mutate-and-restore,
+and the selected backend's exact payload bytes and owner allocation counts.
+`allocation_failure_probe.c` injects an allocation failure into constructors,
+wide clones, X/Z results and a queue element capture; each mode must end with
+the backend's fatal `allocation failed` diagnostic.
+
+```sh
+cmake -S tests/runtime_value_storage -B /build/llg-storage-compact -DCMAKE_BUILD_TYPE=Debug \
+  -DLLG_STORAGE_TEST_VALUE_BACKEND=compact -DLLG_STORAGE_TEST_COMPACT_KERNELS=gmp \
+  -DLLG_GMP_ROOT=/path/to/gmp-install
+cmake --build /build/llg-storage-compact --parallel 6
+ctest --test-dir /build/llg-storage-compact --output-on-failure --parallel 6
+```
+
+Add `-DLLG_STORAGE_TEST_SANITIZERS=ON -DCMAKE_C_FLAGS=-DLLG_CO_DEBUG=1` for the
+sanitizer and coroutine-debug lane. `tests/runtime_value_storage.rs` runs the
+legacy, compact portable and (given `LLG_TEST_GMP_ROOT`) compact GMP projects.
 
 ## Standalone compact value backend
 

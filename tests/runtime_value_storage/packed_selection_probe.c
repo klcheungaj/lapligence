@@ -5,22 +5,9 @@
 #include <string.h>
 
 #define ORACLE_BITS 256
-static unsigned state_at(sv4_t value, unsigned bit) {
-    uint64_t mask = UINT64_C(1) << (bit % 64);
-    unsigned limb = bit / 64;
-    if (value.x[limb] & mask) return 2;
-    if (value.z[limb] & mask) return 3;
-    return (value.bits[limb] & mask) != 0;
-}
+static unsigned state_at(sv4_t value, unsigned bit) { return probe_state(value, bit); }
 static void put_state(sv4_t* value, unsigned bit, unsigned state) {
-    uint64_t mask = UINT64_C(1) << (bit % 64);
-    unsigned limb = bit / 64;
-    value->bits[limb] &= ~mask;
-    value->x[limb] &= ~mask;
-    value->z[limb] &= ~mask;
-    if (state == 1) value->bits[limb] |= mask;
-    if (state == 2) value->x[limb] |= mask;
-    if (state == 3) value->z[limb] |= mask;
+    probe_put_state(value, bit, state);
 }
 static sv4_t pattern(unsigned width, unsigned seed) {
     sv4_t value = sv4_zero(width, 0);
@@ -49,7 +36,7 @@ static void check_value_and_store(sv4_t source, const sv4_select_plan_t* plan, c
     sv4_t target = sv4_clone(&source);
     sv4_t rhs = pattern(plan->width, 3);
     unsigned expected[ORACLE_BITS];
-    CHECK(read.width == plan->width && !read.is_signed && read.bits != source.bits);
+    CHECK(read.width == plan->width && !read.is_signed && probe_distinct(&read, source));
     for (unsigned bit = 0; bit < source.width; ++bit) expected[bit] = state_at(source, bit);
     for (unsigned bit = 0; bit < plan->width; ++bit) {
         unsigned want = map[bit] < 0 ? 2 : state_at(source, (unsigned)map[bit]);
@@ -82,7 +69,7 @@ static void matrix(void) {
                     step(&plan, -1, 4);
                     oracle_step(map, &old_width, -1, 4);
                     check_value_and_store(source, &plan, map);
-                    CHECK(value_test_live() == 1);
+                    CHECK(value_test_live() == probe_owner_allocations(source.width));
                     ++cases;
                 }
             }
@@ -135,7 +122,7 @@ static void reported_examples(void) {
     sv4_select_plan_set(&source, &plan, rhs);
     CHECK(sv4_to_u64(source) == 0xa5c0); /* R04: no adjacent-lane write. */
     sv4_t read = sv4_select_plan_read(source, &plan);
-    CHECK(read.bits[0] == 3 && read.x[0] == 12 && !read.z[0]);
+    CHECK(PROBE_BITS(read, 0) == 3 && PROBE_X(read, 0) == 12 && !PROBE_Z(read, 0));
     sv4_destroy(&read);
     sv4_replace(&source, sv4_from_u64(UINT64_C(0x1122334455667788), 64, 0));
     sv4_replace(&rhs, sv4_from_u64(0xbeef, 16, 0));
@@ -159,15 +146,15 @@ static void invalid_indices(void) {
         else if (mode == 3) index = sv4_from_i64(INT64_MAX, 64);
         else {
             index = sv4_zero(129, 0);
-            index.bits[2] = 1; /* Must not truncate a wide index to zero. */
+            probe_set_bits(&index, 2, 1); /* Must not truncate a wide index to zero. */
         }
         sv4_select_plan_t plan = sv4_select_plan_init(16);
         sv4_select_plan_step(&plan, index, 8);
         step(&plan, 0, 3);
         sv4_t read = sv4_select_plan_read(source, &plan);
-        CHECK(read.width == 3 && read.x[0] == 7);
+        CHECK(read.width == 3 && PROBE_X(read, 0) == 7);
         sv4_select_plan_set(&source, &plan, rhs);
-        CHECK(source.bits[0] == 0 && !sv4_is_unknown(source));
+        CHECK(PROBE_BITS(source, 0) == 0 && !sv4_is_unknown(source));
         sv4_destroy(&read);
         sv4_destroy(&index);
     }

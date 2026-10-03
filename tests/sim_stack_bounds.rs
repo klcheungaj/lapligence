@@ -215,6 +215,28 @@ fn deep_recursion_runs() {
     sim_cli::run_case(SUITE, "deep_recursion", &deep_recursion_expected(), "", &[]);
 }
 
+/// Recursion on the chain arena and pointer-passed packed results with the
+/// compact backend (portable and, given `LLG_TEST_GMP_ROOT`, GMP kernels),
+/// against legacy and the independent expected output.
+#[test]
+fn stack_bounds_fixtures_match_on_compact_backends() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "deep_recursion",
+        &deep_recursion_expected(),
+        &[],
+        &[],
+    );
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "long_function_body",
+        "short=fffffff8fffffff8fffffff900000009\n\
+         long=0000001f0000000b0000000700000079\n",
+        &[],
+        &[],
+    );
+}
+
 /// Stack limit for rerunning the deep-recursion model. With native C
 /// recursion this fixture crashed at `ulimit -s 256`; with arena recursion
 /// it runs in 64 KiB (see the stack-bounding evidence).
