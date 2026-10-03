@@ -183,7 +183,9 @@ leave them disabled unless requested and fail for missing requested tools.
 Run the complete [repository gate](readme.md#repository-gate), not fmt/check/clippy
 alone. [ci.yml](../.github/workflows/ci.yml) defines Ubuntu gates and five-platform
 builds on master pushes, manual dispatch and published Releases (including
-prereleases), not draft saves or standalone tag pushes.
+prereleases), not draft saves or standalone tag pushes. Each matrix target also
+runs the full `cargo nextest run --all-features --cargo-profile release` suite
+(Linux inside the static-musl Alpine container) before packaging.
 
 Lint/sanitizer jobs disable Rust debug info/incremental compilation and strip native
 frontend debug sections while retaining debug assertions/overflow checks. Preserve

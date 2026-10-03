@@ -188,7 +188,8 @@ jobs:
     if: github.event_name != 'schedule'
     name: ${{ matrix.name }} (${{ matrix.target }})
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 240
+    # Release build plus the full release-profile nextest suite.
+    timeout-minutes: 360
     strategy:
       fail-fast: false
       matrix:
@@ -258,6 +259,9 @@ jobs:
         with:
           python-version: "3.12"
           architecture: ${{ matrix.python_arch }}
+
+      - uses: taiki-e/install-action@nextest
+        if: matrix.platform != 'linux'
 
       - name: Install Linux verification tools
         if: matrix.platform == 'linux'
@@ -339,8 +343,10 @@ jobs:
         if: matrix.platform == 'linux'
         shell: bash
         run: |
+          mkdir -p "$RUNNER_TEMP/cargo-registry"
           docker run --rm \
             --volume "$GITHUB_WORKSPACE:/workspace" \
+            --volume "$RUNNER_TEMP/cargo-registry:/usr/local/cargo/registry" \
             --workdir /workspace \
             --env CMAKE_GENERATOR=Ninja \
             --env LLG_TARGET="${{ matrix.target }}" \
@@ -452,6 +458,57 @@ jobs:
           status=$?
           set -e
           test "$status" -eq 2
+
+      # The whole suite runs against each release target in the release
+      # profile, reusing the release build above. Failures block packaging.
+      - name: Run full nextest suite in release mode (static musl)
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE:/workspace" \
+            --volume "$RUNNER_TEMP/cargo-registry:/usr/local/cargo/registry" \
+            --workdir /workspace \
+            --env CMAKE_GENERATOR=Ninja \
+            --env LLG_TARGET="${{ matrix.target }}" \
+            rust:1.98.0-alpine sh -euxc '
+              apk add --no-cache build-base cmake curl git linux-headers ninja python3
+              git config --global --add safe.directory /workspace
+              git config --global --add safe.directory /workspace/vendor/slang
+              rustup target add "$LLG_TARGET"
+              export CC=gcc CXX=g++
+              case "$LLG_TARGET" in
+                x86_64-unknown-linux-musl)
+                  export CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=gcc
+                  nextest_platform=linux-musl
+                  ;;
+                aarch64-unknown-linux-musl)
+                  export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=gcc
+                  nextest_platform=linux-arm-musl
+                  ;;
+                *)
+                  echo "unsupported native Linux target: $LLG_TARGET" >&2
+                  exit 1
+                  ;;
+              esac
+              curl -LsSf "https://get.nexte.st/latest/$nextest_platform" \
+                | tar -xzf - -C /usr/local/cargo/bin
+              cargo nextest run --locked --all-features --cargo-profile release \
+                --target "$LLG_TARGET"
+            '
+
+      - name: Run full nextest suite in release mode
+        if: matrix.platform != 'linux'
+        run: >-
+          cargo nextest run --locked --all-features --cargo-profile release
+          --target ${{ matrix.target }}
+
+      - name: Report runner resources
+        if: always()
+        shell: bash
+        run: |
+          df -h
+          du -sh target || true
 
       - name: Package Unix executables
         if: github.event_name == 'release' && matrix.platform != 'windows'
