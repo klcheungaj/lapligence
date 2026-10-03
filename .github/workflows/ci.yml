@@ -476,7 +476,8 @@ jobs:
           test "$status" -eq 2
 
       # The whole suite runs against each release target in the release
-      # profile, reusing the release build above. Failures block packaging.
+      # profile, reusing the release build above. --no-fail-fast reports every
+      # failing test in one run; any failure still blocks packaging.
       # Linux runs the static musl test binaries from the Alpine build on
       # glibc distributions; neither needs a Rust toolchain. Rocky also runs
       # when Ubuntu fails so both results are reported.
@@ -493,7 +494,7 @@ jobs:
               apt-get install -y --no-install-recommends \
                 build-essential clang cmake procps python3
               reuse=target/nextest-reuse
-              "$reuse/cargo-nextest" nextest run \
+              "$reuse/cargo-nextest" nextest run --no-fail-fast \
                 --binaries-metadata "$reuse/binaries.json" \
                 --cargo-metadata "$reuse/cargo-metadata.json" \
                 --workspace-remap /workspace
@@ -510,7 +511,7 @@ jobs:
               dnf install -y --setopt=install_weak_deps=False \
                 clang cmake gcc gcc-c++ make procps-ng python3 util-linux
               reuse=target/nextest-reuse
-              "$reuse/cargo-nextest" nextest run \
+              "$reuse/cargo-nextest" nextest run --no-fail-fast \
                 --binaries-metadata "$reuse/binaries.json" \
                 --cargo-metadata "$reuse/cargo-metadata.json" \
                 --workspace-remap /workspace
@@ -519,7 +520,7 @@ jobs:
       - name: Run full nextest suite in release mode
         if: matrix.platform != 'linux'
         run: >-
-          cargo nextest run --locked --all-features --cargo-profile release
+          cargo nextest run --locked --all-features --cargo-profile release --no-fail-fast
           --target ${{ matrix.target }}
 
       - name: Report runner resources
