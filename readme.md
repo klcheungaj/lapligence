@@ -142,6 +142,28 @@ cargo build --locked --release --bin llg --bin llg_ls `
 For Windows arm64, install the MSVC arm64 tools and replace the target with
 `aarch64-pc-windows-msvc`.
 
+## Optional development accelerators
+
+Sccache for Rust compilation and mold for linking are **off by default**. Install
+the tools you want on `PATH`; mold requires a Linux GNU Rust host and a C compiler.
+From the repository root, enable either or both for plain Cargo in Bash:
+
+```bash
+export LLG_SCCACHE=1 LLG_MOLD=1; source scripts/dev-env.sh
+cargo build --locked --profile quick --bin llg -v
+```
+
+Omit either environment variable to enable only the other tool. For the test
+runner, use `scripts/run-tests.sh --cargo-profile quick --test sim_function
+--sccache --mold` (omit either flag as needed). Requested tools must be installed;
+missing tools produce an error. An existing `RUSTC_WRAPPER` is preserved.
+
+In verbose compiler commands, check for `scripts/sccache.sh` and
+`-C linker=.../scripts/mold-linker.sh`; `sccache --show-stats` reports cache usage.
+On Linux, `readelf --string-dump .comment target/quick/llg` should identify mold.
+See [development accelerators](tests/readme.md#optional-development-accelerators)
+for native C/C++ caching, platform limits, and thread controls.
+
 ## Using `llg`
 
 ```text

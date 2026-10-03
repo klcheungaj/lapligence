@@ -588,3 +588,101 @@ fn owned_snapshot_survives_native_compile_teardown() {
             .any(|parameter| parameter.name == "W"));
     });
 }
+
+#[test]
+fn dense_owned_import_rejects_malformed_ids_and_keeps_source_identity() {
+    let output = compile::compile_sources_checked(
+        &[compile::OwnedSource::compilation_unit(
+            "dense_import.sv",
+            "module top; logic [3:0] x = 4'bxz01; endmodule",
+        )],
+        &compile::CompileOpts {
+            top: Some("top".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let snapshot = output.snapshot;
+    let database = db::Db::from_slang(&snapshot).unwrap();
+    for malformed in [0, 1, 2] {
+        let mut invalid = snapshot.clone();
+        match malformed {
+            0 => invalid.semantic_nodes[1].id = invalid.semantic_nodes[0].id,
+            1 => invalid.semantic_nodes.swap(0, 1),
+            _ => invalid.semantic_nodes[0].id = u64::MAX,
+        }
+        assert!(db::Db::from_slang(&invalid).is_err());
+    }
+    for malformed in [0, 1, 2] {
+        let mut invalid = snapshot.clone();
+        match malformed {
+            0 => invalid.semantic_nodes[0].parent_id = Some(u64::MAX - 1),
+            1 => invalid.semantic_nodes[0].target_id = Some(u64::MAX - 1),
+            _ => invalid.semantic_edges[0].target_id = u64::MAX - 1,
+        }
+        assert!(db::Db::from_slang(&invalid).is_err());
+    }
+    drop(snapshot);
+    database.validate().unwrap();
+    assert_eq!(
+        database.source_text("dense_import.sv"),
+        Some("module top; logic [3:0] x = 4'bxz01; endmodule")
+    );
+}
+
+#[test]
+fn consuming_generation_matches_borrowing_generation_in_both_optimizer_modes() {
+    let output = compile::compile_sources_checked(
+        &[compile::OwnedSource::compilation_unit(
+            "owned_generation.sv",
+            "module top; logic [3:0] x = 4'bxz01; initial #1 x = 4'b1zx0; endmodule",
+        )],
+        &compile::CompileOpts {
+            top: Some("top".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let database = db::Db::from_slang(&output.snapshot).unwrap();
+    for options in [
+        llg::sim::opt::OptConfig::default(),
+        llg::sim::opt::OptConfig::none(),
+    ] {
+        let borrowed = llg::sim::codegen::generate_from_db_with_opts(&database, &options).unwrap();
+        let consumed = llg::sim::codegen::generate_from_owned_db_with_opts(
+            db::Db::from_slang(&output.snapshot).unwrap(),
+            &options,
+        )
+        .unwrap();
+        assert_eq!(borrowed.model_c, consumed.model_c);
+        assert_eq!(borrowed.symbols_tsv, consumed.symbols_tsv);
+        assert_eq!(borrowed.design_name, consumed.design_name);
+        assert_eq!(borrowed.warnings, consumed.warnings);
+        for kernel in [
+            llg::sim::value_backend::CompactKernel::Portable,
+            llg::sim::value_backend::CompactKernel::Gmp,
+        ] {
+            let options = llg::sim::codegen::CodegenOptions {
+                optimization: options,
+                value_config: llg::sim::value_backend::ValueConfig {
+                    backend: llg::sim::value_backend::ValueBackend::Compact,
+                    kernel,
+                },
+                ..Default::default()
+            };
+            let borrowed =
+                llg::sim::codegen::generate_from_db_with_codegen_options(&database, &options)
+                    .unwrap();
+            let consumed = llg::sim::codegen::generate_from_owned_db_with_codegen_options(
+                db::Db::from_slang(&output.snapshot).unwrap(),
+                &options,
+            )
+            .unwrap();
+            assert!(consumed.model_c.contains("#define LLG_MODEL_VALUE_ABI 5\n"));
+            assert_eq!(borrowed.model_c, consumed.model_c);
+            assert_eq!(borrowed.symbols_tsv, consumed.symbols_tsv);
+            assert_eq!(borrowed.design_name, consumed.design_name);
+            assert_eq!(borrowed.warnings, consumed.warnings);
+        }
+    }
+}

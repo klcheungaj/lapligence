@@ -4,7 +4,7 @@ use super::*;
 
 pub(super) fn virtual_interface_instance_from_slang(
     snapshot: &SlangSnapshot,
-    ids: &HashMap<u64, NodeId>,
+    ids: &SemanticIds,
     variable: NodeId,
 ) -> Result<Option<NodeId>, DbError> {
     let variable_node = snapshot
@@ -61,7 +61,7 @@ pub(super) fn virtual_interface_instance_from_slang(
 
 fn find_clocking_member_from_slang(
     snapshot: &SlangSnapshot,
-    ids: &HashMap<u64, NodeId>,
+    ids: &SemanticIds,
     owner: NodeId,
     name: &str,
     depth: usize,
@@ -107,7 +107,7 @@ fn find_clocking_member_from_slang(
 
 pub(super) fn clocking_block_from_expression(
     snapshot: &SlangSnapshot,
-    ids: &HashMap<u64, NodeId>,
+    ids: &SemanticIds,
     expression: NodeId,
     depth: usize,
 ) -> Result<Option<NodeId>, DbError> {
@@ -172,7 +172,7 @@ pub(super) fn clocking_block_from_expression(
 
 pub(super) fn clocking_source_from_expression(
     snapshot: &SlangSnapshot,
-    ids: &HashMap<u64, NodeId>,
+    ids: &SemanticIds,
     expression: NodeId,
     depth: usize,
 ) -> Result<Option<NodeId>, DbError> {
@@ -249,7 +249,7 @@ fn clocking_edge(code: u64) -> Result<ClockingEdge, DbError> {
 
 fn clocking_delay_expression(
     snapshot: &SlangSnapshot,
-    ids: &HashMap<u64, NodeId>,
+    ids: &SemanticIds,
     delay: Option<NodeId>,
 ) -> Result<Option<NodeId>, DbError> {
     let Some(delay) = delay else {
@@ -278,7 +278,7 @@ fn clocking_delay_expression(
 
 pub(super) fn clocking_skew_from_slang(
     snapshot: &SlangSnapshot,
-    ids: &HashMap<u64, NodeId>,
+    ids: &SemanticIds,
     delay: Option<NodeId>,
     edge: u64,
 ) -> Result<ClockingSkew, DbError> {

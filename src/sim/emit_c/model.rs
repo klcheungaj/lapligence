@@ -39,6 +39,7 @@ use dpi::{dpi_external_prototype, dpi_helpers, internal_return_type, render_dpi_
 mod processes;
 use processes::process_runtime_name;
 mod initialization;
+mod net_batches;
 mod pca_batches;
 mod sharing;
 
@@ -95,6 +96,11 @@ pub(in crate::sim::emit_c) fn render_with_sharing_threshold(
     .source)
 }
 
+#[cfg(test)]
+thread_local! {
+    pub(in crate::sim::emit_c) static PREPARE_MODEL_CLONES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 fn render_bounded(
     execution: &ExecutionModel,
     threshold: usize,
@@ -112,9 +118,9 @@ fn render_bounded(
         )));
     }
     super::owned::model::check_model(execution.ir()).map_err(EmitError::new)?;
-    let mut execution = execution.clone();
+    let prepare_stage = crate::profile::Stage::new("render.prepare");
     let (_, upper_bounds) =
-        render_coroutine_functions(&execution, config.backend).map_err(EmitError::new)?;
+        render_coroutine_functions(execution, config.backend).map_err(EmitError::new)?;
     let forced = upper_bounds
         .iter()
         .filter_map(|(function, size)| {
@@ -122,9 +128,17 @@ fn render_bounded(
                 .then_some(*function)
         })
         .collect::<BTreeSet<_>>();
+    if &forced == execution.analysis().forced_arena_callees() {
+        drop(prepare_stage);
+        return render_model(execution, threshold, config).map_err(EmitError::new);
+    }
+    #[cfg(test)]
+    PREPARE_MODEL_CLONES.with(|count| count.set(count.get() + 1));
+    let mut execution = execution.clone();
     execution
         .reanalyze_with_forced_arena_callees(&forced)
         .map_err(EmitError::InvalidIr)?;
+    drop(prepare_stage);
     render_model(&execution, threshold, config).map_err(EmitError::new)
 }
 
@@ -139,6 +153,7 @@ struct CoroutineArtifact {
     root: bool,
     shared_entry: Option<String>,
     pca_batches: Vec<super::statements::pca_batches::Batch>,
+    net_batches: Vec<super::owned::net_batches::NetBatch>,
 }
 
 type CoroutineArtifacts = BTreeMap<usize, CoroutineArtifact>;
@@ -191,6 +206,7 @@ fn render_coroutine_functions(
                 root: false,
                 shared_entry: None,
                 pca_batches: Vec::new(),
+                net_batches: Vec::new(),
             },
         );
     }
@@ -219,14 +235,15 @@ fn render_coroutine_processes(
             if process.kind() == IrProcessKind::Final {
                 return Ok(None);
             }
-            let (source, layout, pca_batches) = super::owned::model::coroutine_process(
-                &ctx,
-                process,
-                index,
-                executable,
-                execution.analysis(),
-                upper_bounds,
-            )?;
+            let (source, layout, pca_batches, net_batches) =
+                super::owned::model::coroutine_process(
+                    &ctx,
+                    process,
+                    index,
+                    executable,
+                    execution.analysis(),
+                    upper_bounds,
+                )?;
             Ok(Some(CoroutineArtifact {
                 source,
                 layout,
@@ -238,6 +255,7 @@ fn render_coroutine_processes(
                 root: true,
                 shared_entry: None,
                 pca_batches,
+                net_batches,
             }))
         })
         .collect()
@@ -296,6 +314,7 @@ fn render_coroutine_branches(
                     root: true,
                     shared_entry: None,
                     pca_batches: Vec::new(),
+                    net_batches: Vec::new(),
                 },
             );
         }
@@ -327,6 +346,7 @@ fn render_coroutine_branches(
                     root: true,
                     shared_entry: None,
                     pca_batches: Vec::new(),
+                    net_batches: Vec::new(),
                 },
             );
         }
@@ -531,6 +551,7 @@ fn render_model(
     config: crate::sim::value_backend::ValueConfig,
 ) -> Result<BoundedIdentifiers, String> {
     let model = execution.ir();
+    let artifact_stage = crate::profile::Stage::new("render.artifacts");
     let (mut coroutine_functions, frame_upper_bounds) =
         render_coroutine_functions(execution, config.backend)?;
     let mut coroutine_processes =
@@ -558,7 +579,12 @@ fn render_model(
             plain_functions.insert(index, super::owned::model::function(&ctx, function)?);
         }
     }
-    let pca_tables = pca_batches::collect(model, &mut coroutine_processes)?;
+    let mut pca_tables = pca_batches::collect(model, &mut coroutine_processes)?;
+    let net_tables = net_batches::collect(model, &coroutine_processes);
+    pca_tables.declarations.push_str(&net_tables.declarations);
+    pca_tables.operands.extend(net_tables.operands);
+    drop(artifact_stage);
+    let sharing_stage = crate::profile::Stage::new("render.sharing");
     let sharing = sharing::share(
         execution,
         &mut coroutine_functions,
@@ -568,6 +594,8 @@ fn render_model(
         threshold,
         &pca_tables.operands,
     )?;
+    drop(sharing_stage);
+    let assemble_stage = crate::profile::Stage::new("render.assemble");
     let mut out = format!(
         "// llg-generated C11 model for design `{}`\n",
         model.design_name
@@ -852,6 +880,8 @@ fn render_model(
         .iter()
         .filter_map(|function| function.dpi_import().map(|dpi| dpi.c_name()))
         .collect::<BTreeSet<_>>();
+    drop(assemble_stage);
+    let _identifiers_stage = crate::profile::Stage::new("render.identifiers");
     Ok(bound_identifiers(out, &external))
 }
 

@@ -45,5 +45,33 @@ fn component_record_net_arrays_preserve_cell_and_recursive_member_offsets() {
         ]
     );
     codegen.build_net_groups().unwrap();
+    // Each member has its own driver site, so its adjacent bits share one run.
+    // The two 28-bit cells retain all member offsets through eight wide groups.
+    let mut widths = codegen
+        .model
+        .net_groups
+        .iter()
+        .map(|group| group.width)
+        .collect::<Vec<_>>();
+    widths.sort_unstable();
+    assert_eq!(widths, [4, 4, 8, 8, 8, 8, 8, 8]);
+    for (element, signal) in &codegen.model.arrays[0].net_elements {
+        let bindings = &codegen.model.signals[*signal].net_alias;
+        assert_eq!(bindings.len(), 28, "cell {element}");
+        for (offset, width) in [(0, 4), (4, 8), (12, 8), (20, 8)] {
+            let member = bindings
+                .iter()
+                .filter(|binding| {
+                    binding.signal_bit >= offset && binding.signal_bit < offset + width
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(member.len(), width as usize);
+            let group = member[0].group;
+            assert_eq!(codegen.model.net_groups[group].width, width);
+            assert!(member.iter().all(|binding| {
+                binding.group == group && binding.group_bit == binding.signal_bit - offset
+            }));
+        }
+    }
     codegen.model.validate().unwrap();
 }

@@ -352,3 +352,21 @@ curves. Larger cache caps accelerate sustained bursts by retaining more memory:
 4 MiB retains 3,614,720 B in the mixed burst versus 1,047,584 B at the default;
 16 MiB can retain up to 15 MiB more than the default. These are workload and
 memory-budget trade-offs, not evidence for a universally better default.
+
+### Frontend stage scaling
+
+On Linux, build `llg` in release mode and run:
+
+```sh
+python3 perf/scripts/frontend_scale.py target/release/llg <evidence-dir>
+```
+
+The runner generates `many_processes_registers_config` with two edges at
+5k/10k/20k/40k processes, serially, three times per point. It enables
+`LLG_PROFILE_STAGES=1`, records GNU `time -v` output, samples process RSS every
+5 ms, and records stage times and `model.c` SHA-256 hashes in `metrics.json`.
+Use `--time <path>` when GNU time is installed elsewhere and `--sample-ms` to
+change sampling. Do not run concurrent 40k points on a shared host. Short stages
+can have no RSS sample; sampled RSS includes earlier retained data and allocator
+pages. Compare medians and retain individual runs because host contention affects
+wall time. See [known issues](../docs/known_issues.md) for remaining limits.

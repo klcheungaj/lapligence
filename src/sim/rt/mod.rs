@@ -154,6 +154,14 @@ pub fn value_backend_sources(
                 "value_gmp/arithmetic.c",
                 include_str!("value_gmp/arithmetic.c"),
             ),
+            (
+                "value_gmp/shifts_reductions.c",
+                include_str!("value_gmp/shifts_reductions.c"),
+            ),
+            (
+                "value_gmp/comparison_membership.c",
+                include_str!("value_gmp/comparison_membership.c"),
+            ),
             ("value_gmp/kernels.c", include_str!("value_gmp/kernels.c")),
             (
                 "value_gmp/net_adapters.c",

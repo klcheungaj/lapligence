@@ -10,21 +10,19 @@ fn edge(role: SemanticEdgeRole, index: u32, target_id: u64) -> SemanticEdge {
     }
 }
 
-fn ids() -> HashMap<u64, NodeId> {
-    (0..6)
-        .map(|index| (10 + u64::from(index), NodeId(index)))
-        .collect()
+fn ids() -> SemanticIds {
+    SemanticIds { len: 6 }
 }
 
 #[test]
 fn sequential_predicate_import_orders_clauses_by_role_index() {
     let edges = [
-        edge(SemanticEdgeRole::Condition, 2, 12),
-        edge(SemanticEdgeRole::Else, 0, 15),
-        edge(SemanticEdgeRole::ConditionPattern, 1, 13),
-        edge(SemanticEdgeRole::Condition, 0, 10),
-        edge(SemanticEdgeRole::Then, 0, 14),
-        edge(SemanticEdgeRole::Condition, 1, 11),
+        edge(SemanticEdgeRole::Condition, 2, 2),
+        edge(SemanticEdgeRole::Else, 0, 5),
+        edge(SemanticEdgeRole::ConditionPattern, 1, 3),
+        edge(SemanticEdgeRole::Condition, 0, 0),
+        edge(SemanticEdgeRole::Then, 0, 4),
+        edge(SemanticEdgeRole::Condition, 1, 1),
     ];
     let predicate = predicate_from_slang(&edges, &ids()).unwrap();
     assert_eq!(
@@ -48,7 +46,7 @@ fn sequential_predicate_import_rejects_empty_duplicate_and_gapped_clauses() {
     for indices in [vec![], vec![1], vec![0, 0], vec![0, 2], vec![0, u32::MAX]] {
         let edges = indices
             .into_iter()
-            .map(|index| edge(SemanticEdgeRole::Condition, index, 10))
+            .map(|index| edge(SemanticEdgeRole::Condition, index, 0))
             .collect::<Vec<_>>();
         assert!(predicate_from_slang(&edges, &ids()).is_err());
     }
@@ -57,14 +55,14 @@ fn sequential_predicate_import_rejects_empty_duplicate_and_gapped_clauses() {
 #[test]
 fn sequential_predicate_import_rejects_orphan_duplicate_and_dangling_patterns() {
     for patterns in [
-        vec![edge(SemanticEdgeRole::ConditionPattern, 1, 11)],
+        vec![edge(SemanticEdgeRole::ConditionPattern, 1, 1)],
         vec![
-            edge(SemanticEdgeRole::ConditionPattern, 0, 11),
-            edge(SemanticEdgeRole::ConditionPattern, 0, 12),
+            edge(SemanticEdgeRole::ConditionPattern, 0, 1),
+            edge(SemanticEdgeRole::ConditionPattern, 0, 2),
         ],
         vec![edge(SemanticEdgeRole::ConditionPattern, 0, 99)],
     ] {
-        let mut edges = vec![edge(SemanticEdgeRole::Condition, 0, 10)];
+        let mut edges = vec![edge(SemanticEdgeRole::Condition, 0, 0)];
         edges.extend(patterns);
         assert!(predicate_from_slang(&edges, &ids()).is_err());
     }
@@ -74,18 +72,18 @@ fn sequential_predicate_import_rejects_orphan_duplicate_and_dangling_patterns() 
 #[test]
 fn sequential_predicate_branches_ignore_positional_children_and_allow_missing_else() {
     let mut edges = vec![
-        edge(SemanticEdgeRole::Child, 0, 10),
-        edge(SemanticEdgeRole::Child, 1, 11),
-        edge(SemanticEdgeRole::Condition, 0, 10),
-        edge(SemanticEdgeRole::Condition, 1, 11),
-        edge(SemanticEdgeRole::Then, 0, 14),
+        edge(SemanticEdgeRole::Child, 0, 0),
+        edge(SemanticEdgeRole::Child, 1, 1),
+        edge(SemanticEdgeRole::Condition, 0, 0),
+        edge(SemanticEdgeRole::Condition, 1, 1),
+        edge(SemanticEdgeRole::Then, 0, 4),
     ];
     assert_eq!(
         conditional_branches_from_slang(&edges, &ids(), false).unwrap(),
         (NodeId(4), None)
     );
     assert!(conditional_branches_from_slang(&edges, &ids(), true).is_err());
-    edges.push(edge(SemanticEdgeRole::Else, 0, 15));
+    edges.push(edge(SemanticEdgeRole::Else, 0, 5));
     assert_eq!(
         conditional_branches_from_slang(&edges, &ids(), true).unwrap(),
         (NodeId(4), Some(NodeId(5)))
@@ -94,17 +92,17 @@ fn sequential_predicate_branches_ignore_positional_children_and_allow_missing_el
 
 #[test]
 fn sequential_predicate_import_rejects_invalid_branch_roles() {
-    let branch = edge(SemanticEdgeRole::Then, 0, 14);
+    let branch = edge(SemanticEdgeRole::Then, 0, 4);
     for edges in [
         vec![],
-        vec![edge(SemanticEdgeRole::Then, 1, 14)],
+        vec![edge(SemanticEdgeRole::Then, 1, 4)],
         vec![branch.clone(), branch.clone()],
         vec![edge(SemanticEdgeRole::Then, 0, 99)],
-        vec![branch.clone(), edge(SemanticEdgeRole::Else, 1, 15)],
+        vec![branch.clone(), edge(SemanticEdgeRole::Else, 1, 5)],
         vec![
             branch.clone(),
-            edge(SemanticEdgeRole::Else, 0, 15),
-            edge(SemanticEdgeRole::Else, 0, 15),
+            edge(SemanticEdgeRole::Else, 0, 5),
+            edge(SemanticEdgeRole::Else, 0, 5),
         ],
         vec![branch, edge(SemanticEdgeRole::Else, 0, 99)],
     ] {

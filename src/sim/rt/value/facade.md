@@ -11,7 +11,7 @@ The live legacy implementation in `value/` is the differential reference,
 alongside independent Python integer oracles and exhaustive small truth tables.
 
 The compact implementation lives in `src/sim/rt/value_gmp/`. G1 supplies storage,
-the V01 neutral bridge, core arithmetic/logic/comparison/mux, and V05/S1.
+the V01 neutral bridge, core arithmetic/logic/comparison/mux, and V05/S1–S3.
 V05/S6–S9 add full net/strength/UDP/enum, real/time,
 formatting/index and header adapters; [the checklist](../value_gmp/facade_audit.md)
 records the remaining selection/reference integration. It is
@@ -27,14 +27,15 @@ The standalone header defines `llg_gmp_sv4_t` and `llg_gmp_sv4_*` operations.
 Defining `LLG_SV4_GMP_PUBLIC_NAMES` before including `value_gmp/backend.h` maps
 `sv4_t`, implemented `sv4_*` operations, and `llg_sv4_*` accessors directly to
 those names. Small operations are `static inline`; wide paths call prefixed
-out-of-line implementation symbols. `pending.h` temporarily declares unavailable S2–S5 operations with compact
+out-of-line implementation symbols. `pending.h` temporarily declares unavailable S4–S5 operations with compact
 prefixed symbols so runtime translation units compile. They have no definitions
 and fail at link time when required; they never convert through legacy. A differential executable may link both
 libraries, but a generated model must select exactly one descriptor ABI.
 
 `LLG_SV4_GMP_KERNELS=0/1` is an independent compile-time choice inside the compact
-backend. It changes only wide mul/div/mod/pow kernels. All other operations use
-plain C word loops. `<gmp.h>` appears only in `value_gmp/kernels.c`; GMP must use
+backend. It changes wide mul/div/mod/pow and thresholded decimal conversion kernels.
+All other operations use plain C word loops. `<gmp.h>` appears only in
+`value_gmp/kernels.c`; GMP must use
 64-bit nail-free limbs compatible with `uint64_t`. Portable kernels require no
 GMP headers or library. The multiplication full-product threshold is the named
 `LLG_SV4_MUL_FULL_THRESHOLD` (128 words by default, about 8192 bits). Below it,
@@ -93,8 +94,16 @@ nonzero requested sign means signed. The bridge setter normalizes it to 0/1.
 
 Division truncates the quotient toward zero, remainder has the dividend sign,
 zero divisor yields X, and minimum signed value divided by -1 wraps modulo
-width. Shifts must check unknown, huge and at/above-width counts before calling
-GMP kernels. These requirements belong to V05, not a claim of prototype coverage.
+width. Shifts retain the left operand's width/sign, interpret counts as unsigned
+regardless of count sign, and check X/Z and all high count words before narrowing.
+Logical shifts and arithmetic left shift fill zero; signed arithmetic right shift
+repeats the MSB state, including X/Z. Oversized counts fill the entire result.
+Reductions honor controlling known bits; countones and onehot ignore X/Z.
+Casez/casex helpers zero-extend inputs, with case-expression normalization left
+to the caller. Casez ignores Z on either side; casex ignores X/Z on either side.
+Wildcard equality ignores X/Z only on the right and otherwise uses the binary
+width/sign rules. Inclusive range membership combines pairwise >= and <= with
+four-state AND. All of these operations return independent owners.
 Strengths, net modes, driver identity, scheduling and two-state declaration
 policy belong to containing objects, not the packed numeric descriptor. A
 currently known four-state variable must still accept a later X/Z write.
@@ -257,7 +266,7 @@ waits keep copied A/B words and explicit shape metadata; they never fabricate an
 and synchronous borrow rules. Native `sizeof`/`_Alignof` remain valid; numeric
 emitter frame estimates and their selected-layout assertions are owned by V07.
 
-The current S2–S5 gaps are referenced by scheduler/reference code even when an
+The current S4–S5 gaps are referenced by scheduler/reference code even when an
 HDL fixture itself only uses implemented arithmetic. Compact runtime archives
 and value-only clients build; complete generated simulators fail to link until
 those operation families merge. This is experimental scaffolding, not production

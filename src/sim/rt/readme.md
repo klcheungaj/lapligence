@@ -161,4 +161,4 @@ The experimental [compact value backend](value_gmp/readme.md) uses ABI 5 and
 provides inline small values, canonical optional B storage and optional GMP wide
 mul/div/mod/pow kernels. Generated sources and runtime archives can select it with
 `LLG_VALUE_BACKEND=compact` and `LLG_COMPACT_KERNELS=portable|gmp`; GMP requires
-`GMP_ROOT`. Complete HDL model linking awaits the missing S2–S5 operation families.
+`GMP_ROOT`. Complete HDL model linking awaits the missing S4–S5 operation families.

@@ -4,7 +4,7 @@ use super::*;
 
 pub(super) fn peel_gate_terminal(
     snapshot: &SlangSnapshot,
-    ids: &HashMap<u64, NodeId>,
+    ids: &SemanticIds,
     mut expression: NodeId,
     direction: Direction,
 ) -> Result<NodeId, DbError> {
@@ -43,7 +43,7 @@ pub(super) fn peel_gate_terminal(
 
 pub(super) fn connection_source_expression(
     snapshot: &SlangSnapshot,
-    ids: &HashMap<u64, NodeId>,
+    ids: &SemanticIds,
     mut expression: NodeId,
     direction: Direction,
 ) -> Result<NodeId, DbError> {
@@ -94,7 +94,7 @@ pub(super) fn direction_from_slang(node: &SemanticNode) -> Direction {
 
 pub(super) fn driver_delay(
     snapshot: &SlangSnapshot,
-    ids: &HashMap<u64, NodeId>,
+    ids: &SemanticIds,
     edges: &[crate::ffi::slang::SemanticEdge],
 ) -> Result<Option<DriverDelay>, DbError> {
     let Some(delay) = edge_target(ids, edges, SemanticEdgeRole::Delay)? else {

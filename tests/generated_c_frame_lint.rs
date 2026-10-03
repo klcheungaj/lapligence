@@ -252,6 +252,8 @@ fn compact_selected_frame_lint() {
         "tests/fixtures/sim/value_backends/implemented.sv",
         "tests/fixtures/sim/instance_sharing/identities.sv",
         "tests/fixtures/sim/net_resolution/mixed_biased_structural.sv",
+        "tests/fixtures/sim/net_partition/ranges.sv",
+        "tests/fixtures/sim/net_partition/runtime.sv",
     ] {
         let fixture = root.join(path);
         let compiled = compile::compile_checked(&CompileOpts {
@@ -288,6 +290,45 @@ fn compact_selected_frame_lint() {
                 {
                     syntax_check(compiler, &model.model_c, &fixture, mode);
                 }
+            }
+        }
+    }
+}
+
+#[test]
+fn electrical_net_partition_fixtures() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sim");
+    let compilers = ["gcc", "clang"]
+        .into_iter()
+        .filter(|compiler| compiler_available(compiler))
+        .collect::<Vec<_>>();
+    assert!(
+        !compilers.is_empty(),
+        "electrical frame lint requires a C compiler"
+    );
+    for fixture in [
+        "net_partition/ranges.sv",
+        "net_partition/runtime.sv",
+        "waveform/partitioned_nets.sv",
+        "continuation_20_23/continuous_contexts.sv",
+    ] {
+        let path = root.join(fixture);
+        let compiled = compile::compile_checked(&CompileOpts {
+            files: vec![path.to_string_lossy().into_owned()],
+            top: Some("tb".to_owned()),
+            ..Default::default()
+        })
+        .unwrap();
+        let database = Db::from_slang(&compiled.snapshot).unwrap();
+        for (mode, options) in [
+            ("default", sim::opt::OptConfig::default()),
+            ("no-opt", sim::opt::OptConfig::none()),
+        ] {
+            let model = sim::codegen::generate_from_db_with_opts(&database, &options).unwrap();
+            generated_c_lint::lint_generated_coroutine_c(&model.model_c).unwrap();
+            generated_c_lint::lint_standard_identifiers(&model.model_c).unwrap();
+            for compiler in &compilers {
+                syntax_check(compiler, &model.model_c, &path, mode);
             }
         }
     }

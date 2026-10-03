@@ -7,8 +7,12 @@ use super::*;
 impl Frame<'_, '_> {
     pub(super) fn statements(&mut self, mut statements: &[IrStmt]) -> Result<(), String> {
         while let Some(statement) = statements.first() {
-            let mut consumed = 0;
-            if self.pca_owner.is_some() && !self.sampled_reads && self.formal_overrides.is_empty() {
+            let mut consumed = self.net_batch(statements)?;
+            if consumed == 0
+                && self.pca_owner.is_some()
+                && !self.sampled_reads
+                && self.formal_overrides.is_empty()
+            {
                 if let Some((shape, first)) = self.pca_assignment(statement) {
                     let mut rows = vec![first];
                     for statement in &statements[1..] {

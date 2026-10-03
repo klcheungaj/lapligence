@@ -80,6 +80,11 @@ with `-E 'binary(sim_feature_completion) & test(rtl_001::)'`; run the checker an
 architecture gates as well. `--no-tests fail` makes a misspelled/disabled selection
 fail rather than accept a zero-test run. No new acceptance wrapper is needed.
 
+RTL-003's projection fixtures use `-E 'binary(sim_feature_completion) &
+test(rtl_003::)'`. They cover selected module refs, fixed record rows, selector
+capture for blocking/NBA/mutation/copy-out and synchronous scanner ref views;
+representative cases also run after Db destruction at native O0/O3.
+
 ### Vendor patch preparation
 
 `vendor_patches.rs` checks clean/applied trees, no-Git archives (including archives
@@ -100,7 +105,7 @@ requirements above apply without repeating them for each suite.
 | --- | --- |
 | Frontend and owned models | `slang_frontend`, `slang_semantics`, `model_tests`: safe capture, diagnostics, types, bindings, initialization, complete delays and ownership after snapshot destruction. |
 | Datatypes | `sim_data_types`, `sim_data_types_extended`, `sim_data_type_edges`, `sim_data_types_next`, `sim_data_types_completion`; [mixed-type/net matrix](fixtures/sim/type_conformance/readme.md) for independent arithmetic, conversion and resolution oracles. |
-| Ports and nets | `sim_port_net_types`, `sim_net_resolution`, `sim_net_defaults`, `sim_net_decl`, `sim_inout`: directional collapse, independent drivers, strengths/defaults, aliases, selections and delayed publication. Port-type unit tests cover all 81 cells; frontend tests cover 49 resolved pairs. |
+| Ports and nets | `sim_port_net_types`, `sim_net_resolution`, `sim_net_defaults`, `sim_net_decl`, `sim_inout`: directional collapse, independent drivers, strengths/defaults, aliases, selections and delayed publication. [Electrical ranges](fixtures/sim/net_partition/readme.md), `sim_net_partition` and `generated_c_frame_lint::electrical_net_partition_fixtures` cover electrical runs across 1/7/64/65/129 bits, independent value oracles, delayed descriptor loops and declared shapes; `sim_waveform`/`sim_vpi` have generated-model net-view probes. Port-type unit tests cover all 81 cells; frontend tests cover 49 resolved pairs. |
 | Structural UDPs | `sim_udp`, [SYN-031 matrix](fixtures/sim/syn031_combinational_udp/readme.md): Verilog-2001 and SystemVerilog-2009 mux/parity tables, four-state inputs, `?`/`b`, unmatched rows, instance arrays, independent net drivers, delays, invalid port/row-width diagnostics and sequential/edge rejections in both optimizer modes. |
 | Practical RTL | [RTL composition](fixtures/sim/rtl_completion/readme.md), `sim_rtl_completion`: initialization, fixed values/references/unions, ports and array/interface/inout composition. |
 | Arrays and projections | `sim_fixed_array_reductions`, `sim_syn026_iterator_indices`, `sim_array_conditional_assignments`, `sim_fixed_ordering_review`, `sim_syn027_fixed_reverse`, `sim_syn028_fixed_sort`, `sim_group1_repairs`, `sim_group1_formal_repairs`: [reductions](fixtures/sim/fixed_array_reductions/readme.md), [iterator indices](fixtures/sim/syn026_iterator_indices/readme.md), [conditional assignments](fixtures/sim/array_conditional_assignments/readme.md), [fixed reverse](fixtures/sim/syn027_fixed_reverse/readme.md), fixed sort/rsort maps and permutation, activation isolation, signed member conversion, captured outputs and const/NBA negatives. |
@@ -346,6 +351,79 @@ tree at `target/quick/`, including its own dependencies and incremental state.
 Budget disk for both. The worktree runner keeps both on disk and uses the same
 isolated scratch and compatible runtime cache for either profile.
 
+### Optional development accelerators
+
+All accelerators are opt-in. With no settings, Cargo and the test runner keep
+their existing compiler, linker and wrapper defaults; no extra tools are required.
+Install the requested tools on `PATH` before opting in. A missing tool is an error.
+
+```sh
+# Rust cache and Linux GNU host linker for this test invocation:
+CARGO_BUILD_JOBS=4 scripts/run-tests.sh --test-work-dir /build \
+  --cargo-profile quick --test-threads 4 --test sim_function --sccache --mold
+
+# Plain cargo build/test/nextest in this Bash shell (source from repository root):
+export LLG_SCCACHE=1 LLG_MOLD=1; source scripts/dev-env.sh
+cargo build --locked --profile quick --bin llg
+```
+
+The runner also accepts `LLG_SCCACHE=1` and `LLG_MOLD=1` directly. Plain Cargo
+needs the sourced helper; these variables alone cannot configure Cargo's linker
+or Rust wrapper. Sourcing validates all requested tools before exporting settings.
+An existing nonempty `RUSTC_WRAPPER` wins. The tracked sccache wrapper sets
+`TMPDIR=/tmp` only in cache/compiler subprocesses, so the server's Unix socket
+fits even when the test runner uses a long scratch path. Tests keep their own
+`TMPDIR`; existing sccache cache/server settings are preserved.
+Sccache cannot cache Rust's incremental compilation or final executable linking.
+For cache reuse of workspace library objects across cleans, optionally set
+`CARGO_INCREMENTAL=0`; the helper leaves Cargo's incremental setting unchanged.
+
+Mold uses `CARGO_TARGET_<GNU_HOST_TRIPLE>_LINKER` and the tracked wrapper's
+`cc -fuse-ld=mold`. It leaves `RUSTFLAGS` and `.cargo/config.toml` unchanged,
+including Linux `split-debuginfo=unpacked`. A conflicting explicit host linker
+is an error; clear it before opting in. `LLG_MOLD_CC=clang` selects another
+compiler driver. Only the Linux GNU host triple is changed; musl and other
+cross targets retain their configured linkers, and opting in on a non-GNU host
+fails. Generated-model linkers retain their defaults.
+`LLG_MOLD_THREADS=4` limits mold's internal threads on a busy host; unset uses
+mold's own default. Cargo and nextest concurrency remain separate settings.
+
+Native caching is independent of the Rust opt-in:
+
+```sh
+# Slang and its wrapper, through root build.rs (1/on/true still select ccache):
+export LLG_CCACHE=sccache  # or ccache; 0/off/false disable
+
+# Generated models through the existing compiler option/environment:
+export LLG_CC="$PWD/scripts/sccache-cc.sh"  # uses LLG_SCCACHE_CC, otherwise cc
+# Or select a launcher for an individual model:
+target/quick/llg --launcher "$PWD/scripts/sccache.sh" --top tb design.sv
+# ccache works through the same --launcher option: --launcher ccache
+```
+
+`LLG_CCACHE` now rejects invalid values or a missing requested executable instead
+of continuing uncached. Changing the launcher reconfigures the native CMake cache
+while retaining objects. The Unix Slang sccache launcher and both model examples
+use the short-TMPDIR wrapper. Sourcing the helper checks `LLG_CCACHE` too; choose it
+before sourcing if you want that early check for plain Cargo.
+`LLG_SCCACHE_CC=clang` changes the generated-model wrapper's underlying compiler;
+it uses a separate variable because CMake can set `CC` to the wrapper itself.
+
+Settings exported into a shell remain until unset or the shell exits. To return
+to defaults, unset `LLG_SCCACHE`, `LLG_MOLD`, the helper-installed `RUSTC_WRAPPER`
+and `CARGO_TARGET_<GNU_HOST_TRIPLE>_LINKER`; unset `LLG_CCACHE`/`LLG_CC` if selected.
+Use a fresh shell if you need to restore earlier user overrides.
+
+Script regression checks (fake tools; no Rust/native build required):
+
+```sh
+python3 -m unittest discover -s scripts -p test_dev_env.py
+python3 -m unittest discover -s scripts -p test_run_tests.py
+```
+
+Native launcher selection and CMake cache-state regressions run with
+`scripts/run-tests.sh --cargo-profile quick --test compiler_cache`.
+
 ### Test build storage
 
 #### Parallel worktrees
@@ -589,7 +667,8 @@ facade compilation and generated-model execution are separate checks.
 Standalone compact-backend checks and microbenchmarks, including net/strength,
 real/time, formatting/index and facade adapter probes, are opt-in CMake targets;
 see [native value probes](runtime_value_storage/readme.md#standalone-compact-value-backend).
-They cover portable and optional GMP limb kernels independently of generated
+They cover core values and the S2/S3 shifts, reductions, case/wildcard and range
+families with portable and optional GMP limb kernels, independently of generated
 model selection and do not replace later HDL/model integration acceptance.
 
 ### Experimental value backend builds
@@ -598,7 +677,7 @@ model selection and do not replace later HDL/model integration acceptance.
 both wrong-backend and wrong-kernel links, exact C selectors, missing GMP and the current compact
 HDL link rejection. Set `LLG_TEST_GMP_ROOT` to include the GMP lane; without it only
 legacy and compact portable run. This does not establish compact HDL execution:
-the scheduler still requires pending S2–S5. Native `selected_*_facade` probes in
+the scheduler still requires pending S4–S5. Native `selected_*_facade` probes in
 `runtime_value_storage` exercise the common consumer bridge in all three modes.
 
 ```sh

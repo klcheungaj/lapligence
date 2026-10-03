@@ -2,6 +2,9 @@
 
 #include <algorithm>
 #include <bit>
+#include <chrono>
+#include <cstdio>
+#include <cstdlib>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -56,6 +59,34 @@ using namespace slang;
 using namespace slang::ast;
 
 namespace {
+
+class ProfileStage {
+public:
+  explicit ProfileStage(const char* name) : name(name) {
+    const char* value = std::getenv("LLG_PROFILE_STAGES");
+    enabled = value && std::strcmp(value, "1") == 0;
+    if (enabled) {
+      std::fprintf(stderr, "llg-profile begin %s\n", name);
+      started = std::chrono::steady_clock::now();
+    }
+  }
+  void finish() {
+    if (enabled) {
+      const double seconds = std::chrono::duration<double>(
+          std::chrono::steady_clock::now() - started).count();
+      std::fprintf(stderr, "llg-profile end %s seconds=%.6f\n", name, seconds);
+      enabled = false;
+    }
+  }
+  ~ProfileStage() { finish(); }
+  ProfileStage(const ProfileStage&) = delete;
+  ProfileStage& operator=(const ProfileStage&) = delete;
+
+private:
+  const char* name;
+  bool enabled;
+  std::chrono::steady_clock::time_point started;
+};
 
 constexpr uint64_t kDefaultMaxSources = 256;
 constexpr uint64_t kHardMaxSources = 4096;
@@ -198,11 +229,18 @@ struct LlgSlangError {
   bool is_static = false;
 };
 
+struct SnapshotStringHash {
+  using is_transparent = void;
+  size_t operator()(std::string_view value) const noexcept {
+    return std::hash<std::string_view>{}(value);
+  }
+};
+
 struct LlgSlangSnapshot {
   uint32_t flags = 0;
   uint64_t output_bytes = 0;
   uint64_t output_byte_limit = kDefaultMaxOutputBytes;
-  std::deque<std::string> strings;
+  std::unordered_set<std::string, SnapshotStringHash, std::equal_to<>> strings;
   std::vector<LlgSlangFile> files;
   std::vector<LlgSlangDiagnostic> diagnostics;
   std::vector<LlgSlangRelatedDiagnostic> related;
@@ -242,7 +280,10 @@ LlgSlangString storeString(LlgSlangSnapshot& snapshot, std::string_view value) {
     return {nullptr, 0};
   addChecked(snapshot.output_bytes, value.size(), snapshot.output_byte_limit,
              "export byte");
-  auto& stored = snapshot.strings.emplace_back(value);
+  auto found = snapshot.strings.find(value);
+  if (found == snapshot.strings.end())
+    found = snapshot.strings.emplace(value).first;
+  const auto& stored = *found;
   return {reinterpret_cast<const uint8_t*>(stored.data()),
           static_cast<uint64_t>(stored.size())};
 }
@@ -1144,7 +1185,10 @@ struct Capture {
       node.edge_count = pendingEdges[i].size();
       output.semantic_edges.insert(output.semantic_edges.end(),
                                    pendingEdges[i].begin(), pendingEdges[i].end());
+      std::vector<LlgSlangSemanticEdge>().swap(pendingEdges[i]);
     }
+    std::vector<std::vector<LlgSlangSemanticEdge>>().swap(pendingEdges);
+    indexedSemanticEdges.clear();
   }
 
   void sourceIdentity(const syntax::SyntaxNode* syntaxNode, uint64_t semanticId) {
@@ -4620,6 +4664,7 @@ std::unique_ptr<LlgSlangSnapshot> compileImpl(const LlgSlangCompileRequest& requ
   parseOptions.set(std::move(parserOptions));
   Bag compileOptions;
   compileOptions.set(std::move(compilationOptions));
+  ProfileStage parseStage("slang.parse");
   Compilation compilation(compileOptions, &defaultLibrary);
   for (const auto& subroutine : userDefinedSubroutines)
     compilation.addSystemSubroutine(subroutine);
@@ -4674,6 +4719,7 @@ std::unique_ptr<LlgSlangSnapshot> compileImpl(const LlgSlangCompileRequest& requ
     throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT,
                         "at least one compilation unit source is required");
 
+  parseStage.finish();
   auto output = std::make_unique<LlgSlangSnapshot>();
   output->flags |= edition.snapshotFlag;
   if ((request.flags & LLG_SLANG_COMPILE_MERGED_COMPILATION_UNITS) != 0)
@@ -4710,7 +4756,10 @@ std::unique_ptr<LlgSlangSnapshot> compileImpl(const LlgSlangCompileRequest& requ
   // Capture source bodies before diagnostics are cached so their errors are included.
   if (capture.declarationOnly)
     captureNavigation(compilation, capture);
+  ProfileStage elaborateStage("slang.elaborate");
   const Diagnostics& compilationDiagnostics = compilation.getAllDiagnostics();
+  elaborateStage.finish();
+  ProfileStage instanceStage("wrapper.instances");
   DiagnosticEngine engine(sourceManager);
   auto compilationClient = std::make_shared<CaptureClient>(
       capture, LLG_SLANG_DIAG_COMPILATION);
@@ -4735,7 +4784,9 @@ std::unique_ptr<LlgSlangSnapshot> compileImpl(const LlgSlangCompileRequest& requ
   for (const InstanceSymbol* top : root.topInstances)
     capture.instance(*top, LLG_SLANG_INVALID_ID);
 
+  instanceStage.finish();
   {
+    ProfileStage analysisStage("slang.analysis");
     FreezeGuard frozen(compilation);
     analysis::AnalysisOptions analysisOptions;
     analysisOptions.flags |= analysis::AnalysisFlags::CheckUnused |
@@ -4754,21 +4805,27 @@ std::unique_ptr<LlgSlangSnapshot> compileImpl(const LlgSlangCompileRequest& requ
     output->flags |= LLG_SLANG_SNAPSHOT_ANALYSIS_RAN;
   }
 
+  ProfileStage semanticStage("wrapper.semantic");
   if (!capture.declarationOnly) {
     SemanticCapture semanticCapture(capture);
     root.visit(semanticCapture);
     for (const Symbol* definition : compilation.getDefinitions())
       definition->visit(semanticCapture);
   }
+  semanticStage.finish();
+  ProfileStage finalizeStage("wrapper.finalize");
   capture.markOverriddenParameters();
   capture.finalizeSourceIdentities();
   capture.finalizeSemanticEdges();
 
+  finalizeStage.finish();
+  ProfileStage lexicalStage("wrapper.lexical");
   LexicalCapture lexicalCapture(capture);
   for (const auto& tree : compilation.getSyntaxTrees())
     tree->root().visit(lexicalCapture);
   lexicalCapture.bindSemanticTokens();
 
+  lexicalStage.finish();
   return output;
 }
 

@@ -19,7 +19,14 @@ int main(void) {
     llg_value_require_abi();
     sv4_t a = sv4_from_u64(17, 129, 0), b = sv4_from_u64(19, 129, 0);
     sv4_t product = sv4_mul(a, b);
+    sv4_t count = sv4_from_u64(1, 129, 0);
+    sv4_t shifted = sv4_shl(product, count);
+    sv4_t ones = sv4_countones(product);
+    sv4_t inside = sv4_inside_range(product, a, product);
+    if (sv4_to_u64(shifted) != 646 || sv4_to_u64(ones) != 4 ||
+        !sv4_to_bool(inside)) return 1;
     printf("%llu\n", (unsigned long long)sv4_to_u64(product));
+    sv4_destroy(&inside); sv4_destroy(&ones); sv4_destroy(&shifted); sv4_destroy(&count);
     sv4_destroy(&product); sv4_destroy(&a); sv4_destroy(&b);
     return 0;
 }

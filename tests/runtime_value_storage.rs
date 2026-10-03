@@ -7,6 +7,9 @@ use std::path::Path;
 use std::process::Command;
 use std::time::Duration;
 
+const STAGE_TIMEOUT: Duration = Duration::from_secs(180);
+const BUILD_TIMEOUT: Duration = Duration::from_secs(600);
+
 #[test]
 fn dynamic_storage_and_waveform_snapshots() {
     let cmake = std::env::var("LLG_CMAKE").unwrap_or_else(|_| "cmake".to_owned());
@@ -40,12 +43,12 @@ fn dynamic_storage_and_waveform_snapshots() {
     test.arg("--test-dir")
         .arg(dir.path())
         .args(["--build-config", "Debug", "--output-on-failure"]);
-    for (stage, command) in [
-        ("configure", &mut configure),
-        ("build", &mut build),
-        ("test", &mut test),
+    for (stage, command, timeout) in [
+        ("configure", &mut configure, STAGE_TIMEOUT),
+        ("build", &mut build, BUILD_TIMEOUT),
+        ("test", &mut test, STAGE_TIMEOUT),
     ] {
-        let output = sim_harness::run_command(command, Duration::from_secs(180))
+        let output = sim_harness::run_command(command, timeout)
             .unwrap_or_else(|error| panic!("storage tests {stage}: {error}"));
         assert!(
             output.status.success(),

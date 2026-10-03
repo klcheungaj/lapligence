@@ -540,7 +540,23 @@ impl<'a> Codegen<'a> {
                 (read.width, read.signed, self.model.arrays[*arr].two_state)
             }
             IrLhs::PackedSelect { .. } => {
-                if !self.fixed_ref_is_legal(scope_path, bound.expr)? {
+                // A whole module-ref variable can have selected canonical
+                // storage without making the source actual a packed select.
+                let whole_port_actual = match self.kind(bound.expr) {
+                    NodeKind::Var { .. } => self.signal_of(bound.expr),
+                    NodeKind::Expr(ExprKind::Ref {
+                        target: Some(target),
+                    }) => self.signal_of(*target),
+                    NodeKind::Expr(ExprKind::HierPath { .. })
+                        if self.packed_member_info(bound.expr).is_none() =>
+                    {
+                        self.hier_path_signal(bound.expr)
+                    }
+                    _ => None,
+                }
+                .is_some_and(|signal| self.reference_signals.contains_key(&signal.ir))
+                    && self.reference_lhs_is_variable(&lhs);
+                if !whole_port_actual && !self.fixed_ref_is_legal(scope_path, bound.expr)? {
                     return Err(
                         "packed members and selections cannot be passed by reference".to_owned(),
                     );

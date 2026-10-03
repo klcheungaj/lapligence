@@ -32,8 +32,16 @@ g4_t llg_gmp_sv4_new(uint32_t width, int8_t sign, int with_b) {
 g4_t llg_gmp_sv4_zero_wide(uint32_t width, int8_t sign) { return llg_gmp_sv4_new(width, sign, 0); }
 void llg_gmp_sv4_destroy_wide(g4_t* v) { free(v->data.wide.a); }
 g4_t llg_gmp_sv4_clone_wide(const g4_t* v) {
-    g4_t out = llg_gmp_sv4_new(v->width, v->is_signed, v->data.wide.b != NULL);
-    memcpy(out.data.wide.a, v->data.wide.a, llg_gmp_sv4_bytes(v));
+    size_t bytes = llg_gmp_sv4_bytes(v);
+    uint64_t* p = (uint64_t*)malloc(bytes);
+    if (!p)
+        llg_gmp_sv4_fail("allocation failed");
+    g4_t out = LLG_GMP_SV4_EMPTY;
+    out.width = v->width;
+    out.is_signed = v->is_signed;
+    out.data.wide.a = p;
+    out.data.wide.b = v->data.wide.b ? p + llg_gmp_sv4_words(*v) : NULL;
+    memcpy(p, v->data.wide.a, bytes);
     return out;
 }
 void llg_gmp_sv4_copy_wide(g4_t* out, const g4_t* v) {
@@ -79,14 +87,25 @@ void llg_gmp_sv4_finish(g4_t* v) {
     v->data.wide.b = NULL;
 }
 g4_t llg_gmp_sv4_fill_wide(uint8_t state, uint32_t width, int8_t sign) {
-    g4_t v = llg_gmp_sv4_new(width, sign, state >= 2);
-    size_t n = llg_gmp_sv4_words(v);
-    uint64_t *a = g4_mut_a(&v), *b = g4_mut_b(&v);
-    if (state == 1 || state == 2)
-        memset(a, 0xff, n * 8u);
-    if (state >= 2 && b)
-        memset(b, 0xff, n * 8u);
-    llg_gmp_sv4_finish(&v);
+    if (width <= 64)
+        return llg_gmp_sv4_fill(state, width, sign);
+    g4_width_check(width);
+    size_t n = ((size_t)width + 63u) / 64u;
+    uint64_t* p = (uint64_t*)malloc(n * (state >= 2 ? 2u : 1u) * sizeof(uint64_t));
+    if (!p)
+        llg_gmp_sv4_fail("allocation failed");
+    g4_t v = LLG_GMP_SV4_EMPTY;
+    v.width = width;
+    v.is_signed = sign != 0;
+    v.data.wide.a = p;
+    v.data.wide.b = state >= 2 ? p + n : NULL;
+    memset(p, state == 1 || state == 2 ? 0xff : 0, n * sizeof(uint64_t));
+    p[n - 1] &= g4_topmask(width);
+    if (state >= 2) {
+        memset(p + n, 0xff, n * sizeof(uint64_t));
+        p[2u * n - 1] &= g4_topmask(width);
+    }
+    /* Nonempty X/Z fills necessarily have a nonzero B plane. */
     return v;
 }
 g4_t llg_gmp_sv4_from_limbs_wide(const uint64_t* bits, const uint64_t* x, const uint64_t* z,

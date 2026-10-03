@@ -7,7 +7,9 @@ naming/formatting and the C++ coding guide. Minimize includes/public-header
 implementation details; prefer RAII, smart pointers and references to raw owners.
 Do not introduce exceptions unless existing code uses them. Document ownership
 at every function and clarify uncertain assumptions. Snapshot-owned strings are
-borrowed views, never individually freed; snapshots outlive temporary compilation.
+interned stable borrowed views, never individually freed. Charge every occurrence
+against the logical export budget even when its bytes are shared; snapshots
+outlive temporary compilation.
 Keep [FFI](../ffi/AGENTS.md) layouts/errors/budgets aligned. `mimalloc_shim.c`
 redirects C malloc/free through GNU/LLD wrapping on musl.
 

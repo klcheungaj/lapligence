@@ -57,3 +57,14 @@ memory separately.
   changing platform claims.
 - Update defaults, diagnostics, tests and owning guides together for any changed
   environment variable, configuration key, limit or fallback.
+
+## Pipeline profiling
+
+`profile.rs` emits opt-in `llg-profile begin/end` stderr markers when
+`LLG_PROFILE_STAGES=1`. Wrapper markers separate Slang elaboration/analysis from
+capture; FFI, DB import, semantic/typed/execution lowering, optimization and
+rendering use the same format. Keep this diagnostic helper frontend-neutral;
+markers must not affect ABI fields, diagnostics or generated files.
+`perf/scripts/frontend_scale.py` combines these markers with sampled Linux RSS
+and GNU time whole-process peaks. RSS includes all representations live in a
+stage and allocator-retained pages, not that stage's exclusive allocation cost.

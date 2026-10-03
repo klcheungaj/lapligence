@@ -428,6 +428,32 @@ struct Candidate {
     plain: Option<usize>,
 }
 
+fn push_candidate(
+    mut candidate: Candidate,
+    groups: &mut Vec<Vec<Candidate>>,
+    by_key: &mut HashMap<String, usize>,
+) {
+    let shapes = candidate
+        .normalized
+        .operands
+        .iter()
+        .map(|operand| format!("{}:{}", operand.declaration, operand.shape))
+        .collect::<Vec<_>>()
+        .join(";");
+    candidate.key.push(':');
+    candidate.key.push_str(&shapes);
+    let key = std::mem::take(&mut candidate.key);
+    let next = groups.len();
+    let group = *by_key.entry(key).or_insert_with(|| {
+        groups.push(Vec::new());
+        next
+    });
+    if !groups[group].is_empty() {
+        candidate.normalized.source = String::new();
+    }
+    groups[group].push(candidate);
+}
+
 pub(super) fn share(
     execution: &ExecutionModel,
     functions: &mut CoroutineArtifacts,
@@ -475,7 +501,8 @@ pub(super) fn share(
         .into_iter()
         .map(|(name, _)| name)
         .collect::<BTreeSet<_>>();
-    let mut candidates = Vec::new();
+    let mut groups = Vec::<Vec<Candidate>>::new();
+    let mut by_key = HashMap::new();
     for artifact in functions
         .values()
         .chain(processes.iter().flatten())
@@ -506,13 +533,17 @@ pub(super) fn share(
                 std::mem::discriminant(&artifact.owner),
                 normalized.source
             );
-            candidates.push(Candidate {
-                owner: artifact.owner,
-                name: name.to_owned(),
-                normalized,
-                key,
-                plain: None,
-            });
+            push_candidate(
+                Candidate {
+                    owner: artifact.owner,
+                    name: name.to_owned(),
+                    normalized,
+                    key,
+                    plain: None,
+                },
+                &mut groups,
+                &mut by_key,
+            );
         }
     }
     for (index, source) in plain.iter() {
@@ -525,32 +556,18 @@ pub(super) fn share(
                 "plain:{:?}:{:?}:{:?}:{}",
                 function.origin, function.formals, function.ret, normalized.source
             );
-            candidates.push(Candidate {
-                owner: CoroutineId::Function(*index),
-                name: function.c_name.clone(),
-                normalized,
-                key,
-                plain: Some(*index),
-            });
+            push_candidate(
+                Candidate {
+                    owner: CoroutineId::Function(*index),
+                    name: function.c_name.clone(),
+                    normalized,
+                    key,
+                    plain: Some(*index),
+                },
+                &mut groups,
+                &mut by_key,
+            );
         }
-    }
-    let mut groups = Vec::<Vec<Candidate>>::new();
-    let mut by_key = HashMap::new();
-    for candidate in candidates {
-        let shapes = candidate
-            .normalized
-            .operands
-            .iter()
-            .map(|operand| format!("{}:{}", operand.declaration, operand.shape))
-            .collect::<Vec<_>>()
-            .join(";");
-        let key = format!("{}:{shapes}", candidate.key);
-        let next = groups.len();
-        let group = *by_key.entry(key).or_insert_with(|| {
-            groups.push(Vec::new());
-            next
-        });
-        groups[group].push(candidate);
     }
     let mut result = Sharing {
         declarations: String::new(),
@@ -726,4 +743,47 @@ pub(super) fn share(
         }
     }
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sharing_retains_one_normalized_body_per_exact_group() {
+        for count in [32, 512] {
+            let mut groups = Vec::new();
+            let mut by_key = HashMap::new();
+            for index in 0..count {
+                push_candidate(
+                    Candidate {
+                        owner: CoroutineId::Process(index),
+                        name: format!("p_{index}"),
+                        normalized: Normalized {
+                            source: "identical body".to_owned(),
+                            operands: vec![Operand::scalar("uint64_t", index.to_string())],
+                        },
+                        key: "identical key".to_owned(),
+                        plain: None,
+                    },
+                    &mut groups,
+                    &mut by_key,
+                );
+            }
+            assert_eq!(groups.len(), 1);
+            assert_eq!(groups[0].len(), count);
+            assert_eq!(
+                groups[0]
+                    .iter()
+                    .map(|candidate| candidate.normalized.source.len())
+                    .sum::<usize>(),
+                "identical body".len()
+            );
+            assert!(groups[0].iter().all(|candidate| candidate.key.is_empty()));
+            for (index, candidate) in groups[0].iter().enumerate() {
+                assert_eq!(candidate.owner, CoroutineId::Process(index));
+                assert_eq!(candidate.normalized.operands[0].value, index.to_string());
+            }
+        }
+    }
 }

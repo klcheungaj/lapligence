@@ -1,0 +1,4 @@
+scan 1 a9 1
+partial 1 ab 2
+failed 0 ab 3
+root 0ab0

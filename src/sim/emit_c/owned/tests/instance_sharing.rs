@@ -223,3 +223,17 @@ fn shared_net_writers_keep_distinct_array_backed_contributions() {
         assert!(source.contains(&format!("= {{ {slot} }};")), "{source}");
     }
 }
+
+#[test]
+fn unchanged_arena_analysis_renders_without_cloning_the_execution_model() {
+    for count in [32, 512] {
+        let execution = instances(count);
+        let before = super::super::super::model::PREPARE_MODEL_CLONES.with(std::cell::Cell::get);
+        let source = render_with_sharing_threshold(&execution, 4).unwrap();
+        let clones =
+            super::super::super::model::PREPARE_MODEL_CLONES.with(std::cell::Cell::get) - before;
+        assert_eq!(clones, 0);
+        assert!(source.contains("llg_shared_body_0"));
+        execution.validate().unwrap();
+    }
+}
