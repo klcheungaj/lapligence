@@ -35,6 +35,56 @@ python3 scripts/check_sim_fixture_integrity.py --tracked
 python3 -m unittest discover -s scripts -p test_sim_fixture_integrity.py
 ```
 
+### Feature completion slices
+
+New tasks use `fixtures/sim/feature_completion/<task_slug>/` (ASCII slugs such as
+`rtl_001`) and `sim_feature_completion/<task_slug>.rs`, explicitly declared with
+`#[path = "sim_feature_completion/rtl_001.rs"] mod rtl_001;` in
+`sim_feature_completion.rs`. Keep the existing `g1_*` fixtures with their owners.
+Copy an adopted FND-002 witness from local evidence into the task directory,
+rename it to an ASCII descriptive name, retain its edition/clause citation, and
+add a reviewed independent `.out` oracle (or a specific rejection diagnostic).
+Resolve any unresolved oracle with the owning task's policy before claiming acceptance.
+Checked-in tests must work without the local evidence, plan or specification PDFs.
+
+Use direct `sim_cli::run_case*` / `reject_case*` calls inside ordinary `#[test]`
+functions, with literal fixture names and a literal or `const &str` suite path.
+Stems select `.sv`; explicit `.v` and `.sv` names are also supported. Read output
+files with `include_str!`; never generate expected values with production code.
+These helpers assert prerequisites, status, output and diagnostics in both HDL
+optimizer modes. Keep mandatory modules/tests unconditional and unignored;
+do not return early on missing tools. The checker requires every new HDL fixture
+to be referenced by a public CLI helper inside a declared test. It detects empty
+task modules/directories, missing declarations/inputs, disabled tests and untracked
+inputs (`--tracked`).
+Extend its bounded recognizers and unit tests before adopting another call shape.
+
+The [FND-003 pilot](fixtures/sim/feature_completion/fnd_003/readme.md) also uses
+`sim_cli::run_case_after_db_drop`: checked compilation, snapshot destruction,
+validated semantic/execution IR and owned whole-model emission, then Db destruction
+before CMake and execution. This is generated-model execution; the
+`component_fixture_integrity` test and existing validator/architecture probes are
+component checks and do not replace public CLI tests.
+
+Run focused acceptance with an explicit empty-selection failure:
+
+```sh
+scripts/run-tests.sh --test-work-dir /build --cargo-profile quick \
+  --test sim_feature_completion --test emit_decoupling --lib \
+  -E 'binary(sim_feature_completion) | binary(emit_decoupling) | test(sim::rt::tests::)' \
+  --test-threads 6 --no-tests fail
+```
+
+Use the assigned host thread budget. For a single later task, select its module
+with `-E 'binary(sim_feature_completion) & test(rtl_001::)'`; run the checker and
+architecture gates as well. `--no-tests fail` makes a misspelled/disabled selection
+fail rather than accept a zero-test run. No new acceptance wrapper is needed.
+
+RTL-003's projection fixtures use `-E 'binary(sim_feature_completion) &
+test(rtl_003::)'`. They cover selected module refs, fixed record rows, selector
+capture for blocking/NBA/mutation/copy-out and synchronous scanner ref views;
+representative cases also run after Db destruction at native O0/O3.
+
 ### Vendor patch preparation
 
 `vendor_patches.rs` checks clean/applied trees, no-Git archives (including archives
@@ -72,6 +122,13 @@ requirements above apply without repeating them for each suite.
 | Native components | `runtime_values`, `runtime_random`, `runtime_file_io`, `runtime_boundaries`, `runtime_value_storage`: direct runtime probes, independent of HDL lowering. |
 | Integrated selected profile | `sim_syn038_ledger`, pairwise suites and `sim_syn039_acceptance`; [ledger](syn038_coverage_ledger.md), [integrated fixtures](fixtures/sim/syn039_acceptance/readme.md). SYN-039 runs four runtime-stimulated compositions in both optimizer modes and preserves the sequential-UDP rejection. |
 | Compiler directives | `sim_directive_effects`, `sim_syn017_directive_effects`, `sim_edition` and `sim_syn038_ledger`; [SYN-017 matrix](fixtures/sim/syn017_directives/readme.md) covers both editions, both optimizer modes, preprocessing into execution, unit state and strict older-edition gates. |
+
+`runtime_value_facade` runs the cheap private-field/template guard in
+`scripts/check_value_facade.py`. Its explicit whitelist contains only nonpacked
+metadata receivers; value backends and vendored GTKWave are excluded. Run the
+script directly for a quick audit, or with `--self-test` to check rejection cases.
+Native layout expressions (`sizeof`/`_Alignof`) remain legal; V07 owns numeric
+emitter frame estimates and backend ABI selection.
 
 ### Selected-profile qualifications
 
@@ -293,6 +350,79 @@ Default test artifacts use `target/debug/`; `quick` adds a second Cargo artifact
 tree at `target/quick/`, including its own dependencies and incremental state.
 Budget disk for both. The worktree runner keeps both on disk and uses the same
 isolated scratch and compatible runtime cache for either profile.
+
+### Optional development accelerators
+
+All accelerators are opt-in. With no settings, Cargo and the test runner keep
+their existing compiler, linker and wrapper defaults; no extra tools are required.
+Install the requested tools on `PATH` before opting in. A missing tool is an error.
+
+```sh
+# Rust cache and Linux GNU host linker for this test invocation:
+CARGO_BUILD_JOBS=4 scripts/run-tests.sh --test-work-dir /build \
+  --cargo-profile quick --test-threads 4 --test sim_function --sccache --mold
+
+# Plain cargo build/test/nextest in this Bash shell (source from repository root):
+export LLG_SCCACHE=1 LLG_MOLD=1; source scripts/dev-env.sh
+cargo build --locked --profile quick --bin llg
+```
+
+The runner also accepts `LLG_SCCACHE=1` and `LLG_MOLD=1` directly. Plain Cargo
+needs the sourced helper; these variables alone cannot configure Cargo's linker
+or Rust wrapper. Sourcing validates all requested tools before exporting settings.
+An existing nonempty `RUSTC_WRAPPER` wins. The tracked sccache wrapper sets
+`TMPDIR=/tmp` only in cache/compiler subprocesses, so the server's Unix socket
+fits even when the test runner uses a long scratch path. Tests keep their own
+`TMPDIR`; existing sccache cache/server settings are preserved.
+Sccache cannot cache Rust's incremental compilation or final executable linking.
+For cache reuse of workspace library objects across cleans, optionally set
+`CARGO_INCREMENTAL=0`; the helper leaves Cargo's incremental setting unchanged.
+
+Mold uses `CARGO_TARGET_<GNU_HOST_TRIPLE>_LINKER` and the tracked wrapper's
+`cc -fuse-ld=mold`. It leaves `RUSTFLAGS` and `.cargo/config.toml` unchanged,
+including Linux `split-debuginfo=unpacked`. A conflicting explicit host linker
+is an error; clear it before opting in. `LLG_MOLD_CC=clang` selects another
+compiler driver. Only the Linux GNU host triple is changed; musl and other
+cross targets retain their configured linkers, and opting in on a non-GNU host
+fails. Generated-model linkers retain their defaults.
+`LLG_MOLD_THREADS=4` limits mold's internal threads on a busy host; unset uses
+mold's own default. Cargo and nextest concurrency remain separate settings.
+
+Native caching is independent of the Rust opt-in:
+
+```sh
+# Slang and its wrapper, through root build.rs (1/on/true still select ccache):
+export LLG_CCACHE=sccache  # or ccache; 0/off/false disable
+
+# Generated models through the existing compiler option/environment:
+export LLG_CC="$PWD/scripts/sccache-cc.sh"  # uses LLG_SCCACHE_CC, otherwise cc
+# Or select a launcher for an individual model:
+target/quick/llg --launcher "$PWD/scripts/sccache.sh" --top tb design.sv
+# ccache works through the same --launcher option: --launcher ccache
+```
+
+`LLG_CCACHE` now rejects invalid values or a missing requested executable instead
+of continuing uncached. Changing the launcher reconfigures the native CMake cache
+while retaining objects. The Unix Slang sccache launcher and both model examples
+use the short-TMPDIR wrapper. Sourcing the helper checks `LLG_CCACHE` too; choose it
+before sourcing if you want that early check for plain Cargo.
+`LLG_SCCACHE_CC=clang` changes the generated-model wrapper's underlying compiler;
+it uses a separate variable because CMake can set `CC` to the wrapper itself.
+
+Settings exported into a shell remain until unset or the shell exits. To return
+to defaults, unset `LLG_SCCACHE`, `LLG_MOLD`, the helper-installed `RUSTC_WRAPPER`
+and `CARGO_TARGET_<GNU_HOST_TRIPLE>_LINKER`; unset `LLG_CCACHE`/`LLG_CC` if selected.
+Use a fresh shell if you need to restore earlier user overrides.
+
+Script regression checks (fake tools; no Rust/native build required):
+
+```sh
+python3 -m unittest discover -s scripts -p test_dev_env.py
+python3 -m unittest discover -s scripts -p test_run_tests.py
+```
+
+Native launcher selection and CMake cache-state regressions run with
+`scripts/run-tests.sh --cargo-profile quick --test compiler_cache`.
 
 ### Test build storage
 
@@ -545,3 +675,9 @@ Render tests in `sim::emit_c::owned::tests::value_traffic` cover borrow eligibil
 matching/mismatched conversions, constant lifetimes and retained frame values.
 `runtime_value_storage/value_ownership_probe.c` checks destination aliases and
 allocation-free same-width arithmetic, including X/Z and 64/65-bit boundaries.
+
+Standalone compact-backend checks and microbenchmarks, including net/strength,
+real/time, formatting/index and facade adapter probes, are opt-in CMake targets;
+see [native value probes](runtime_value_storage/readme.md#standalone-compact-value-backend).
+They cover portable and optional GMP limb kernels independently of generated
+model selection and do not replace later HDL/model integration acceptance.

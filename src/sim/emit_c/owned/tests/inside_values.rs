@@ -57,9 +57,11 @@ fn captured_inside_elements_retag_native_values_before_comparison() {
             let result = frame.expression(&membership(width, signed)).unwrap();
             let body = frame.body();
             let select = body.find("sv4_part_select(").unwrap();
-            let sign = body[select..]
-                .find(&format!(".is_signed = {};", u8::from(signed)))
-                .unwrap();
+            let setter = body[select..].find("llg_sv4_set_signed(").unwrap();
+            let sign = body[select + setter..]
+                .find(&format!(", {});", u8::from(signed)))
+                .unwrap()
+                + setter;
             let compare = body[select..].find("sv4_wild_eq(").unwrap();
             assert!(sign < compare, "{body}");
             frame.discard(result);

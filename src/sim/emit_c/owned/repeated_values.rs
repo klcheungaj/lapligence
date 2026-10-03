@@ -36,7 +36,7 @@ impl Frame<'_, '_> {
             }
         }
         // Even a one-element concatenation is unsigned and self-determined.
-        self.line(format!("{}.is_signed = 0;", result.code));
+        self.line(format!("llg_sv4_set_signed(&{}, 0);", result.code));
         result.signed = false;
         result.fill = None;
         Ok(result)

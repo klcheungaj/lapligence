@@ -357,13 +357,13 @@ llg_mailbox_t* llg_mailbox_new(sv4_t bound, int kind, uint32_t width,
         g.finish = 1;
         return NULL;
     }
-    if (bound.width > 64) {
+    if (llg_sv4_width(bound) > 64) {
         fprintf(stderr, "llg: mailbox bound exceeds 64-bit capacity\n");
         llg_last_failure = 1;
         g.finish = 1;
         return NULL;
     }
-    if (bound.is_signed && sv4_to_i64(bound) < 0) {
+    if (llg_sv4_signed(bound) && sv4_to_i64(bound) < 0) {
         fprintf(stderr, "llg: mailbox bound must be non-negative\n");
         llg_last_failure = 1;
         g.finish = 1;

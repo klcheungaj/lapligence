@@ -31,6 +31,10 @@ name = "llg_ls"
 path = "src/bin/llg_ls/main.rs"
 required-features = ["lsp"]
 
+[[test]]
+name = "sim_feature_completion"
+path = "tests/sim_feature_completion.rs"
+
 [dependencies]
 # `llg_ls` and `helloworld` select MiMalloc as their Rust global allocator.
 # The `override` feature stays disabled to avoid exporting replacement C++

@@ -465,7 +465,7 @@ impl Frame<'_, '_> {
                         // A packed slice is unsigned; this projection denotes a
                         // typed array element whose sign controls common sizing.
                         self.line(format!(
-                            "{}.is_signed = {};",
+                            "llg_sv4_set_signed(&{}, {});",
                             item.code,
                             u8::from(element.signed)
                         ));

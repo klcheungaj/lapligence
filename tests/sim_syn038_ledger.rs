@@ -334,10 +334,7 @@ fn assert_manual_cli_contract(
     let invoke_body = named_function_body(&cli_helper, "invoke_with_env");
     for required in [
         "Command::new(env!(\"CARGO_BIN_EXE_llg\"))",
-        ".join(\"tests/fixtures/sim\")",
-        ".join(suite)",
-        ".join(format!(\"{fixture}.sv\"))",
-        "assert!(source.is_file()",
+        "let source = fixture_path(suite, fixture);",
         "if !optimized",
         "command.arg(\"--no-opt\")",
         "command.args(args)",
@@ -787,10 +784,7 @@ fn assert_storage_write_remainders_cli_contract(root: &Path, owner_body: &str, o
     let invoke_body = named_function_body(&cli_helper, "invoke_with_env");
     for required in [
         "Command::new(env!(\"CARGO_BIN_EXE_llg\"))",
-        ".join(\"tests/fixtures/sim\")",
-        ".join(suite)",
-        ".join(format!(\"{fixture}.sv\"))",
-        "assert!(source.is_file()",
+        "let source = fixture_path(suite, fixture);",
         "current_dir(directory.path())",
         "if !optimized",
         "command.arg(\"--no-opt\")",
@@ -861,10 +855,7 @@ fn assert_static_return_ref_actual_cli_contract(root: &Path, owner_body: &str, o
     let invoke_body = named_function_body(&cli_helper, "invoke_with_env");
     for required in [
         "Command::new(env!(\"CARGO_BIN_EXE_llg\"))",
-        ".join(\"tests/fixtures/sim\")",
-        ".join(suite)",
-        ".join(format!(\"{fixture}.sv\"))",
-        "assert!(source.is_file()",
+        "let source = fixture_path(suite, fixture);",
         "current_dir(directory.path())",
         "if !optimized",
         "command.arg(\"--no-opt\")",
@@ -1162,6 +1153,23 @@ fn assert_sim_cli_oracle_contract(root: &Path) {
         helper.contains("assert_eq!(warnings, expected_warnings"),
         "public-CLI case helper must compare the exact lowering-warning set"
     );
+    let fixture_helper = named_function_body(&helper, "fixture_path");
+    for required in [
+        "Path::new(env!(\"CARGO_MANIFEST_DIR\"))",
+        "Path::new(fixture).extension().and_then(|ext| ext.to_str())",
+        "Some(\"v\" | \"sv\")",
+        "fixture.to_owned()",
+        "format!(\"{fixture}.sv\")",
+        ".join(\"tests/fixtures/sim\")",
+        ".join(suite)",
+        ".join(name)",
+        "assert!(source.is_file()",
+    ] {
+        assert!(
+            fixture_helper.contains(required),
+            "public-CLI fixture helper no longer resolves checked-in sources: {required}"
+        );
+    }
     let rejection_helper = named_function_body(&helper, "reject_case_with_args");
     for required in [
         "for optimized in [false, true]",

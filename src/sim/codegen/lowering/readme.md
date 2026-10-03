@@ -20,6 +20,21 @@ reference identity and static/automatic initialization. Static fixed-array
 locals use one persistent signal per declaration and instance, shared by
 subroutine writes, delayed NBAs and hierarchical fixed selections.
 
+Packed record member selections use the recursive descriptor and guarded typed
+selection steps, including runtime indexed part-selects. Fixed record net arrays
+map member paths and declared coordinates to canonical electrical bits before
+driver planning; member selection materializes the selected interval rather than
+the complete cell. Net admission excludes recursively nested unpacked unions in
+the SystemVerilog-2009 profile. These paths reuse the existing storage, validation,
+dependency and owned-emission operations.
+
+Selected module references normalize to canonical storage plus ordered packed
+selection steps. Composing bit, part and indexed selections preserves each
+intermediate bound, including fixed-array element/member roots. The same typed
+projection supplies reads, mutations, NBA capture and call copy-out; module
+connections require constant selectors and keep subroutine ref-actual legality
+separate.
+
 See [lowering overview](../readme.md),
 [execution model](../../execution/readme.md),
 [feature boundaries](../../../../docs/sim_features.md) and

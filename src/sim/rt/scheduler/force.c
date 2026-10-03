@@ -92,7 +92,7 @@ static int pca_real_active(double* target) {
 static void pca_set_enable(sv4_t* enable, int active) {
     llg_value_scope_t* scope = llg_value_scope_begin(1);
     sv4_t* value = llg_value_scope_values(scope);
-    sv4_replace(value, sv4_from_u64(active ? 1 : 0, enable->width, enable->is_signed));
+    sv4_replace(value, sv4_from_u64(active ? 1 : 0, llg_sv4_width(*enable), llg_sv4_signed(*enable)));
     sig_write(enable, *value);
     llg_value_scope_end(scope);
 }
@@ -116,7 +116,7 @@ void llg_pca_assign(sv4_t* target, sv4_t* enable, uint64_t site, sv4_t value) {
     }
     binding->enable = enable;
     binding->site = site;
-    sv4_replace(&binding->value, sv4_resize(value, target->width, target->is_signed));
+    sv4_replace(&binding->value, sv4_resize(value, llg_sv4_width(*target), llg_sv4_signed(*target)));
     binding->active = 1;
     pca_set_enable(enable, 1);
     if (!llg_is_forced(target)) sig_write(target, binding->value);
@@ -127,7 +127,7 @@ void llg_pca_drive(sv4_t* target, sv4_t* enable, uint64_t site, sv4_t value) {
     llg_pca_binding_t* binding = pca_binding(target);
     if (!binding || !binding->active || binding->enable != enable || binding->site != site)
         return;
-    sv4_replace(&binding->value, sv4_resize(value, target->width, target->is_signed));
+    sv4_replace(&binding->value, sv4_resize(value, llg_sv4_width(*target), llg_sv4_signed(*target)));
     if (!llg_is_forced(target)) sig_write(target, binding->value);
 }
 
@@ -192,15 +192,13 @@ static void force_free_entry(llg_force_entry_t* entry) {
 }
 
 static sv4_t force_part_mask(const llg_force_part_t* part) {
-    if (!part->target || part->target->width >= LLG_SUPPORTED_WIDTH_LIMIT ||
+    if (!part->target || llg_sv4_width(*part->target) >= LLG_SUPPORTED_WIDTH_LIMIT ||
         part->width >= LLG_SUPPORTED_WIDTH_LIMIT) {
         fprintf(stderr, "llg: invalid force target or width\n");
         abort();
     }
-    sv4_t mask = sv4_from_u64(0, part->target->width, 0);
-    sv4_t ones = sv4_from_u64(0, part->width, 0);
-    for (uint32_t bit = 0; bit < part->width; bit++)
-        ones.bits[bit / 64u] |= UINT64_C(1) << (bit % 64u);
+    sv4_t mask = sv4_from_u64(0, llg_sv4_width(*part->target), 0);
+    sv4_t ones = sv4_fill(1, part->width, 0);
     sv4_part_select_set(&mask, part->left, part->right, ones);
     sv4_destroy(&ones);
     return mask;
@@ -218,8 +216,7 @@ static void force_remove_coverage(const llg_force_part_t* parts, int n_parts) {
             for (int k = 0; k < n_parts; k++) {
                 if (entry->parts[j].target != parts[k].target) continue;
                 sv4_t removed = force_part_mask(&parts[k]);
-                for (uint32_t limb = 0; limb < ((mask->width + 63u) / 64u); limb++)
-                    mask->bits[limb] &= ~removed.bits[limb];
+                llg_sv4_mask_remove(mask, removed);
                 sv4_destroy(&removed);
             }
             remains |= sv4_to_bool(*mask);
@@ -296,13 +293,7 @@ static void force_apply_part(sv4_t* target, const llg_force_part_t* part,
     if (part->two_state) sv4_replace(&selected, sv4_to_two_state(selected));
     sv4_t updated = sv4_clone(target);
     sv4_part_select_set(&updated, part->left, part->right, selected);
-    uint32_t count = (target->width + 63u) / 64u;
-    for (uint32_t i = 0; i < count; ++i) {
-        uint64_t bits = mask->bits[i];
-        target->bits[i] = (target->bits[i] & ~bits) | (updated.bits[i] & bits);
-        target->x[i] = (target->x[i] & ~bits) | (updated.x[i] & bits);
-        target->z[i] = (target->z[i] & ~bits) | (updated.z[i] & bits);
-    }
+    llg_sv4_masked_merge(target, updated, *mask);
     sv4_destroy(&updated);
     sv4_destroy(&selected);
 }
@@ -482,7 +473,7 @@ void llg_force(sv4_t* sig, sv4_t value) {
     if (!region_can_mutate("force scheduling")) return;
     if (!sig) return;
     llg_force_part_t part = {
-        sig, NULL, (int64_t)sig->width - 1, 0, sig->width, 0, 0
+        sig, NULL, (int64_t)llg_sv4_width(*sig) - 1, 0, llg_sv4_width(*sig), 0, 0
     };
     llg_force_entry_t* entry = force_prepare_packed(&part, 1, 0, 0, NULL, NULL, 0);
     sv4_copy(&entry->value, &value);
@@ -492,7 +483,7 @@ void llg_force(sv4_t* sig, sv4_t value) {
 void llg_release(sv4_t* sig) {
     if (!sig) return;
     llg_force_part_t part = {
-        sig, NULL, (int64_t)sig->width - 1, 0, sig->width, 0, 0
+        sig, NULL, (int64_t)llg_sv4_width(*sig) - 1, 0, llg_sv4_width(*sig), 0, 0
     };
     llg_release_parts(&part, 1, 0, 0);
 }

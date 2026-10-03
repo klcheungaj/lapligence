@@ -70,16 +70,17 @@ at most five rounded summary words. These internal layouts keep process ABI 3;
 runtime-content hashing invalidates older cached archives.
 
 `LLG_WAIT_INLINE_SPECS` is one and `LLG_WAIT_INLINE_LIMBS` is one (64 bits per
-plane). Single packed any/edge waits and level targets through 64 bits copy their
-spec and all bits/X/Z planes into the wait payload, alongside one subscription.
+word). Single packed any/edge waits and level targets through 64 bits copy their
+spec and neutral A/B words into the wait payload, alongside one subscription.
 Timed queue links share that union, keeping waits at 128 bytes and processes at
 424 bytes. A single named-event wait copies its resolved object into an inline
 list slot. Wide, multiple, mixed, expression and dependency waits keep owned heap
 storage. Source rows and named-event tables still allocate on first use/growth;
 there is no per-wait allocation for the inline paths after that shared storage is
-available. Inline descriptors are temporary borrowed views used only in synchronous
-comparisons, never owning values. Native signal-width growth promotes a live edge
-wait to heap storage while preserving its subscription's exact list position.
+available. Inline snapshots are copied words used only in synchronous
+comparisons; no packed descriptor is fabricated over their storage. Native
+signal-width growth promotes a live edge wait to heap storage while preserving
+its subscription's exact list position.
 Wake, cancellation and teardown unlink subscriptions before clearing the payload.
 
 Stop/resume retains a live context; close releases observers/queues before model
@@ -154,3 +155,8 @@ fit the inline payload; other lists add four bytes per reserved event entry,
 sharing the existing allocation. The 128-byte wait and 240-byte resume block
 remain unchanged. These private layouts leave process ABI 3 and llg_co ABI 1
 unchanged; runtime-content hashing rebuilds cached archives.
+
+The standalone [compact value backend](value_gmp/readme.md) reserves ABI 5 and
+provides inline small values, canonical optional B storage and optional GMP wide
+mul/div/mod/pow kernels. It is currently built only by the native value probes;
+generated models continue to use the legacy value implementation.

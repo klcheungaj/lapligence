@@ -8,6 +8,9 @@ use std::path::{Path, PathBuf};
 #[path = "build_support/vendor_patches.rs"]
 mod vendor_patches;
 
+#[path = "build_support/compiler_cache.rs"]
+mod compiler_cache;
+
 fn emit_rerun_if_changed() {
     let target = std::env::var("TARGET").unwrap_or_default();
     let target_underscored = target.replace('-', "_");
@@ -32,6 +35,8 @@ fn emit_rerun_if_changed() {
         "src/wrapper/slang/CMakeLists.txt",
         "src/wrapper/slang_c_api.cpp",
         "src/wrapper/slang_c_api.h",
+        "scripts/sccache.sh",
+        "build_support/compiler_cache.rs",
         "vendor/slang/CMakeLists.txt",
         "vendor/slang/cmake",
         "vendor/slang/external",
@@ -41,54 +46,6 @@ fn emit_rerun_if_changed() {
     ] {
         println!("cargo:rerun-if-changed={path}");
     }
-}
-
-fn requested_ccache() -> Option<PathBuf> {
-    let requested = std::env::var("LLG_CCACHE").unwrap_or_default();
-    if !matches!(requested.to_ascii_lowercase().as_str(), "1" | "on" | "true") {
-        return None;
-    }
-    let executable = if cfg!(windows) {
-        "ccache.exe"
-    } else {
-        "ccache"
-    };
-    let found = std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
-        .map(|directory| directory.join(executable))
-        .find(|path| path.is_file());
-    if found.is_none() {
-        println!(
-            "cargo:warning=LLG_CCACHE requested `{executable}` but it was not found on PATH; \
-             continuing without a compiler launcher"
-        );
-    }
-    found
-}
-
-/// CMake caches launcher values. Remove only its cache when the requested
-/// launcher changes, leaving compiled objects available for reuse.
-fn sync_launcher_state(build_dir: &Path, active: bool) {
-    let state = if active { "ccache" } else { "none" };
-    let marker = build_dir.join(".llg_ccache_state");
-    let changed = match std::fs::read_to_string(&marker) {
-        Ok(previous) => previous.trim() != state,
-        Err(_) => active,
-    };
-    if !changed {
-        return;
-    }
-    let cache = build_dir.join("build/CMakeCache.txt");
-    if cache.exists() {
-        std::fs::remove_file(&cache)
-            .unwrap_or_else(|error| panic!("failed to remove {}: {error}", cache.display()));
-        println!("cargo:warning=LLG_CCACHE changed to `{state}`; forcing Slang CMake reconfigure");
-    }
-    if let Some(parent) = marker.parent() {
-        std::fs::create_dir_all(parent)
-            .unwrap_or_else(|error| panic!("failed to create {}: {error}", parent.display()));
-    }
-    std::fs::write(&marker, format!("{state}\n"))
-        .unwrap_or_else(|error| panic!("failed to write {}: {error}", marker.display()));
 }
 
 /// Native build caches can survive a workspace move through a shared target
@@ -192,13 +149,22 @@ fn build_slang(manifest_dir: &Path) {
         config.define("SLANG_WARN_FLAGS", "-w");
     }
 
-    let ccache = requested_ccache();
-    sync_launcher_state(&build_dir, ccache.is_some());
-    let launcher = ccache
+    let compiler_launcher = compiler_cache::requested_launcher(
+        manifest_dir,
+        &std::env::var("LLG_CCACHE").unwrap_or_default(),
+        &std::env::var_os("PATH").unwrap_or_default(),
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
+    compiler_cache::sync_launcher_state(&build_dir, compiler_launcher.as_deref())
+        .unwrap_or_else(|error| panic!("failed to update Slang launcher state: {error}"));
+    let launcher = compiler_launcher
         .as_ref()
         .map(|path| path.to_string_lossy().into_owned())
         .unwrap_or_default();
-    config.define("CMAKE_CXX_COMPILER_LAUNCHER", launcher);
+    if compiler_launcher.is_some() {
+        config.define("CMAKE_C_COMPILER_LAUNCHER", &launcher);
+    }
+    config.define("CMAKE_CXX_COMPILER_LAUNCHER", &launcher);
 
     if is_musl {
         config

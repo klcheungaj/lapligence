@@ -79,7 +79,7 @@ fn render_stream_assignment(
     let source = render_expr(ctx, source)?;
     let mut code = format!(
         "{{ sv4_t _stream_value = sv4_unstream({}, {slice}, {}); \
-         int64_t _stream_cursor = (int64_t)_stream_value.width; ",
+         int64_t _stream_cursor = (int64_t)llg_sv4_width(_stream_value); ",
         source.code,
         matches!(direction, IrStreamDirection::RightToLeft) as u8
     );
@@ -611,7 +611,7 @@ fn render_stmt_scoped(
         IrStmt::Repeat { count, body } => {
             let rc = render_expr(ctx, count)?;
             format!(
-                "{{ for (sv4_t _rc = sv4_repeat_count({}); sv4_to_bool(_rc); _rc = sv4_sub(_rc, sv4_from_u64(1, _rc.width, 0))) {{\n    llg_budget_point(NULL);\n{}}}}}\n",
+                "{{ for (sv4_t _rc = sv4_repeat_count({}); sv4_to_bool(_rc); _rc = sv4_sub(_rc, sv4_from_u64(1, llg_sv4_width(_rc), 0))) {{\n    llg_budget_point(NULL);\n{}}}}}\n",
                 rc.code,
                 block_stmts(ctx, body, scopes)?
             )
