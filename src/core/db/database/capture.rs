@@ -9,6 +9,7 @@ impl Db {
     pub fn from_slang(snapshot: &SlangSnapshot) -> Result<Self, DbError> {
         let type_projector = SlangTypeProjector::new(snapshot)?;
         let ids = SemanticIds::new(&snapshot.semantic_nodes)?;
+        let mut source_positions = SourcePositions::new(snapshot);
         let mut source_identities = HashMap::new();
         for semantic in &snapshot.semantic_nodes {
             let id = NodeId::from_index(semantic.id as usize);
@@ -629,7 +630,7 @@ impl Db {
                         .transpose()?;
                 }
             }
-            let (file, line, col, end_line, end_col) = source_position(snapshot, semantic)?;
+            let (file, line, col, end_line, end_col) = source_positions.position(semantic)?;
             let mut kind =
                 node_kind_from_slang(snapshot, &type_projector, semantic, edges, &ids, type_info)?;
             if semantic.kind == SemanticKind::Net {
