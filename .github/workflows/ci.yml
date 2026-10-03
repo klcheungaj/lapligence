@@ -499,7 +499,7 @@ jobs:
               export DEBIAN_FRONTEND=noninteractive
               apt-get update
               apt-get install -y --no-install-recommends \
-                build-essential clang cmake procps python3
+                build-essential clang cmake git procps python3
               reuse=target/nextest-reuse
               "$reuse/cargo-nextest" nextest run --no-fail-fast \
                 --binaries-metadata "$reuse/binaries.json" \
@@ -517,7 +517,7 @@ jobs:
             --env NEXTEST_PROFILE \
             rockylinux/rockylinux:9 sh -euxc '
               dnf install -y --setopt=install_weak_deps=False \
-                clang cmake gcc gcc-c++ make procps-ng python3 util-linux
+                clang cmake gcc gcc-c++ git make procps-ng python3 util-linux
               reuse=target/nextest-reuse
               "$reuse/cargo-nextest" nextest run --no-fail-fast \
                 --binaries-metadata "$reuse/binaries.json" \
