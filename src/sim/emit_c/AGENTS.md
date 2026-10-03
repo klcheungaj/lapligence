@@ -389,8 +389,9 @@ their original emission.
 Each batch has a file-scope `static const` source/target/enable/binding table.
 One model-local non-inlined helper per exact typed shape uses the ordinary owned
 expression/conversion emitter and the caller's registered temporary slots. Each
-row evaluates/clones its source, applies every original selection/cast, publishes
-with its own binding and destroys its owners before the next row. Repeated
+row evaluates/clones its source and preserves the original selection/conversion
+semantics under the packed borrow and cast-elision rules above, publishes with
+its own binding and destroys its owners before the next row. Repeated
 targets and reads of earlier targets remain legal; never hoist source values.
 The loop has a separate resume-free block, and its index uses `Frame::declare`.
 Deassign, drive, force/release and callable/final bodies retain their original
