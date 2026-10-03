@@ -3036,6 +3036,12 @@ fn expand_library_pattern_admitted_with_kind(
         })?)
     };
     let base_handle = admitted_base.or(owned_base_handle.as_ref());
+    // Candidates are opened beneath the handle's resolved path. A base spelled
+    // through a symlink (macOS reports /var/... as /private/var/...) must use
+    // that resolved spelling, as the absolute-anchor branch above does.
+    let base = owned_base_handle
+        .as_ref()
+        .map_or(base, |handle| handle.actual_path());
     let Some(wildcard_index) = wildcard_index else {
         if pattern_path.is_absolute() {
             charge_library_path_bytes(work, pattern_path, "filesystem pattern path bytes")?;

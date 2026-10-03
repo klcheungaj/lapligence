@@ -153,7 +153,10 @@ impl Directory {
         ));
         std::fs::create_dir_all(path.join("rtl")).expect("temporary source directory");
         std::fs::write(path.join("rtl/cell.sv"), "body").expect("source bytes");
-        Self(path)
+        // Disk admission names files by their resolved handle path, while
+        // in-memory maps resolve lexically; macOS reports /var/... as
+        // /private/var/..., so use the resolved spelling for both.
+        Self(path.canonicalize().expect("canonical temporary directory"))
     }
 }
 impl Drop for Directory {
