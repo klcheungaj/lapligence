@@ -25,7 +25,7 @@ pub(super) fn expression_from_slang(
     type_projector: &SlangTypeProjector<'_>,
     node: &SemanticNode,
     edges: &[crate::ffi::slang::SemanticEdge],
-    ids: &HashMap<u64, NodeId>,
+    ids: &SemanticIds,
     ty: TypeInfo,
 ) -> Result<NodeKind, DbError> {
     let first = |role| edge_target(ids, edges, role);
@@ -401,40 +401,161 @@ pub(super) fn expression_from_slang(
     }))
 }
 
+// Bound scan work and indexing memory; template offsets use a bounded cache.
+const SOURCE_POSITION_CHECKPOINT_BYTES: usize = 4096;
+const SOURCE_POSITION_CACHE_ENTRIES: usize = 256;
+
+#[cfg(test)]
+thread_local! {
+    static SOURCE_INDEX_BYTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static SOURCE_QUERY_BYTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[derive(Clone, Copy)]
+struct SourceCheckpoint {
+    offset: usize,
+    line: usize,
+    line_start: usize,
+}
+
+#[derive(Clone, Copy)]
+struct CachedPosition {
+    offset: usize,
+    line: u32,
+    column: u32,
+}
+
+struct SourceLines<'a> {
+    text: &'a str,
+    checkpoints: Vec<SourceCheckpoint>,
+    positions: Box<[Option<CachedPosition>]>,
+}
+
+impl<'a> SourceLines<'a> {
+    fn new(text: &'a str) -> Self {
+        let mut checkpoints = Vec::with_capacity(text.len() / SOURCE_POSITION_CHECKPOINT_BYTES + 1);
+        let mut line = 1;
+        let mut line_start = 0;
+        for (offset, character) in text.char_indices() {
+            #[cfg(test)]
+            SOURCE_INDEX_BYTES.with(|work| work.set(work.get() + character.len_utf8()));
+            // Following a UTF-8 boundary is safe: earlier offsets in this bucket
+            // are inside the preceding character and cannot be queried.
+            while checkpoints.len() * SOURCE_POSITION_CHECKPOINT_BYTES <= offset {
+                checkpoints.push(SourceCheckpoint {
+                    offset,
+                    line,
+                    line_start,
+                });
+            }
+            if character == '\n' {
+                line += 1;
+                line_start = offset + 1;
+            }
+        }
+        while checkpoints.len() * SOURCE_POSITION_CHECKPOINT_BYTES <= text.len() {
+            checkpoints.push(SourceCheckpoint {
+                offset: text.len(),
+                line,
+                line_start,
+            });
+        }
+        Self {
+            text,
+            checkpoints,
+            positions: vec![None; SOURCE_POSITION_CACHE_ENTRIES].into_boxed_slice(),
+        }
+    }
+
+    fn position(&mut self, offset: usize) -> Result<(u32, u32), DbError> {
+        if offset > self.text.len() || !self.text.is_char_boundary(offset) {
+            return Err(DbError::InvalidSnapshot(
+                "semantic range is not on a source character boundary".into(),
+            ));
+        }
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        offset.hash(&mut hasher);
+        let slot = hasher.finish() as usize % SOURCE_POSITION_CACHE_ENTRIES;
+        if let Some(position) = self.positions[slot].filter(|position| position.offset == offset) {
+            return Ok((position.line, position.column));
+        }
+        let checkpoint = self.checkpoints[offset / SOURCE_POSITION_CHECKPOINT_BYTES];
+        let prefix = &self.text[checkpoint.offset..offset];
+        #[cfg(test)]
+        SOURCE_QUERY_BYTES.with(|work| work.set(work.get() + prefix.len()));
+        let line =
+            u32::try_from(checkpoint.line + prefix.bytes().filter(|byte| *byte == b'\n').count())
+                .map_err(|_| DbError::InvalidSnapshot("source line number is too large".into()))?;
+        let line_start = prefix
+            .rfind('\n')
+            .map_or(checkpoint.line_start, |index| checkpoint.offset + index + 1);
+        let column = u32::try_from(offset - line_start + 1)
+            .map_err(|_| DbError::InvalidSnapshot("source column is too large".into()))?;
+        self.positions[slot] = Some(CachedPosition {
+            offset,
+            line,
+            column,
+        });
+        Ok((line, column))
+    }
+}
+
+struct SourcePositionFile<'a> {
+    file: &'a crate::ffi::slang::File,
+    lines: Option<SourceLines<'a>>,
+}
+
+pub(super) struct SourcePositions<'a> {
+    files: HashMap<u64, SourcePositionFile<'a>>,
+}
+
+impl<'a> SourcePositions<'a> {
+    pub(super) fn new(snapshot: &'a SlangSnapshot) -> Self {
+        let mut files = HashMap::with_capacity(snapshot.files.len());
+        for file in &snapshot.files {
+            files
+                .entry(file.id)
+                .or_insert(SourcePositionFile { file, lines: None });
+        }
+        Self { files }
+    }
+
+    pub(super) fn position(
+        &mut self,
+        node: &SemanticNode,
+    ) -> Result<(Option<String>, u32, u32, u32, u32), DbError> {
+        let Some(range) = node.range else {
+            return Ok((None, 0, 0, 0, 0));
+        };
+        let file = self
+            .files
+            .get_mut(&range.file_id)
+            .ok_or_else(|| DbError::InvalidSnapshot("semantic range file is missing".into()))?;
+        let start = usize::try_from(range.start)
+            .map_err(|_| DbError::InvalidSnapshot("semantic range start is too large".into()))?;
+        let end = usize::try_from(range.end)
+            .map_err(|_| DbError::InvalidSnapshot("semantic range end is too large".into()))?;
+        let lines = file
+            .lines
+            .get_or_insert_with(|| SourceLines::new(&file.file.text));
+        let (line, column) = lines.position(start)?;
+        let (end_line, end_column) = lines.position(end)?;
+        Ok((
+            Some(file.file.name.clone()),
+            line,
+            column,
+            end_line,
+            end_column,
+        ))
+    }
+}
+
 pub(super) fn source_position(
     snapshot: &SlangSnapshot,
     node: &SemanticNode,
 ) -> Result<(Option<String>, u32, u32, u32, u32), DbError> {
-    let Some(range) = node.range else {
-        return Ok((None, 0, 0, 0, 0));
-    };
-    let file = snapshot
-        .files
-        .iter()
-        .find(|file| file.id == range.file_id)
-        .ok_or_else(|| DbError::InvalidSnapshot("semantic range file is missing".into()))?;
-    let start = usize::try_from(range.start)
-        .map_err(|_| DbError::InvalidSnapshot("semantic range start is too large".into()))?;
-    let end = usize::try_from(range.end)
-        .map_err(|_| DbError::InvalidSnapshot("semantic range end is too large".into()))?;
-    let (line, col) = line_column(&file.text, start)?;
-    let (end_line, end_col) = line_column(&file.text, end)?;
-    Ok((Some(file.name.clone()), line, col, end_line, end_col))
-}
-
-fn line_column(text: &str, offset: usize) -> Result<(u32, u32), DbError> {
-    if offset > text.len() || !text.is_char_boundary(offset) {
-        return Err(DbError::InvalidSnapshot(
-            "semantic range is not on a source character boundary".into(),
-        ));
-    }
-    let prefix = &text[..offset];
-    let line_start = prefix.rfind('\n').map_or(0, |index| index + 1);
-    let line = u32::try_from(prefix.bytes().filter(|byte| *byte == b'\n').count() + 1)
-        .map_err(|_| DbError::InvalidSnapshot("source line number is too large".into()))?;
-    let column = u32::try_from(offset - line_start + 1)
-        .map_err(|_| DbError::InvalidSnapshot("source column is too large".into()))?;
-    Ok((line, column))
+    SourcePositions::new(snapshot).position(node)
 }
 
 pub(super) fn semantic_full_name(nodes: &[Node], id: NodeId) -> Result<String, DbError> {
@@ -468,4 +589,102 @@ pub(super) fn enclosing_scope_name(nodes: &[Node], id: NodeId) -> Option<String>
     let parent = nodes.get(id.index())?.parent?;
     let full_name = &nodes.get(parent.index())?.full_name;
     (!full_name.is_empty()).then(|| full_name.clone())
+}
+
+#[cfg(test)]
+mod source_position_tests {
+    use super::*;
+
+    #[test]
+    fn source_position_scan_work_scales_with_source_bytes_and_queries() {
+        let mut measured = Vec::new();
+        for count in [
+            SOURCE_POSITION_CHECKPOINT_BYTES / 64,
+            SOURCE_POSITION_CHECKPOINT_BYTES / 4,
+        ] {
+            let text = format!("{}\n", "x".repeat(63)).repeat(count);
+            let before_index = SOURCE_INDEX_BYTES.with(std::cell::Cell::get);
+            let before_query = SOURCE_QUERY_BYTES.with(std::cell::Cell::get);
+            let mut lines = SourceLines::new(&text);
+            for index in 0..count {
+                assert_eq!(lines.position(index * 64).unwrap(), (index as u32 + 1, 1));
+                assert_eq!(
+                    lines.position(index * 64 + 63).unwrap(),
+                    (index as u32 + 1, 64)
+                );
+            }
+            let indexed = SOURCE_INDEX_BYTES.with(std::cell::Cell::get) - before_index;
+            let queried = SOURCE_QUERY_BYTES.with(std::cell::Cell::get) - before_query;
+            assert_eq!(indexed, text.len());
+            assert!(queried <= count * 2 * SOURCE_POSITION_CHECKPOINT_BYTES);
+            measured.push(indexed + queried);
+        }
+        assert_eq!(measured[1], measured[0] * 16);
+    }
+
+    #[test]
+    fn source_position_preserves_byte_columns_crlf_and_utf8_checkpoint_boundaries() {
+        let text = "a\r\né\nlast";
+        let mut lines = SourceLines::new(text);
+        for (offset, expected) in [
+            (0, (1, 1)),
+            (1, (1, 2)),
+            (2, (1, 3)),
+            (3, (2, 1)),
+            (5, (2, 3)),
+            (6, (3, 1)),
+            (10, (3, 5)),
+        ] {
+            assert_eq!(lines.position(offset).unwrap(), expected);
+            assert_eq!(lines.position(offset).unwrap(), expected);
+        }
+        assert!(lines.position(4).is_err());
+        assert!(lines.position(11).is_err());
+        assert_eq!(SourceLines::new("").position(0).unwrap(), (1, 1));
+        let text = format!(
+            "{}é\nlast",
+            "x".repeat(SOURCE_POSITION_CHECKPOINT_BYTES - 1)
+        );
+        let mut lines = SourceLines::new(&text);
+        assert!(lines.position(SOURCE_POSITION_CHECKPOINT_BYTES).is_err());
+        assert_eq!(
+            lines
+                .position(SOURCE_POSITION_CHECKPOINT_BYTES + 1)
+                .unwrap(),
+            (1, SOURCE_POSITION_CHECKPOINT_BYTES as u32 + 2)
+        );
+        assert_eq!(
+            lines
+                .position(SOURCE_POSITION_CHECKPOINT_BYTES + 2)
+                .unwrap(),
+            (2, 1)
+        );
+        assert_eq!(lines.position(text.len()).unwrap(), (2, 5));
+    }
+
+    #[test]
+    fn owned_import_builds_each_source_index_once() {
+        let source =
+            "module top; for(genvar i=0;i<32;i++) begin: g logic [3:0] x=4'bxz01; end endmodule";
+        let output = crate::core::compile::compile_sources_checked(
+            &[crate::core::compile::OwnedSource::compilation_unit(
+                "indexed_source.sv",
+                source,
+            )],
+            &crate::core::compile::CompileOpts {
+                top: Some("top".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let before = SOURCE_INDEX_BYTES.with(std::cell::Cell::get);
+        let db = Db::from_slang(&output.snapshot).unwrap();
+        assert_eq!(
+            SOURCE_INDEX_BYTES.with(std::cell::Cell::get) - before,
+            source.len()
+        );
+        drop(output);
+        db.validate().unwrap();
+        assert_eq!(db.source_text("indexed_source.sv"), Some(source));
+    }
 }

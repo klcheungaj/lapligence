@@ -597,6 +597,8 @@ fn run(options: DriverOptions) -> i32 {
         }
     }
 
+    let _generation_stage = llg::profile::Stage::new("generation");
+    let frontend_stage = llg::profile::Stage::new("frontend");
     // 1. Slang parse, compile and elaborate into an owned snapshot.
     let out = match compile::compile_checked(&compile::CompileOpts {
         files,
@@ -636,6 +638,7 @@ fn run(options: DriverOptions) -> i32 {
             return 1;
         }
     };
+    drop(frontend_stage);
     for d in &out.diagnostics {
         eprintln!(
             "{:?}: {}:{}:{} {}",
@@ -649,6 +652,7 @@ fn run(options: DriverOptions) -> i32 {
 
     // 2. Lint gate (--lint mode): build the owned db + model, print findings,
     //    and abort on lint errors before codegen.
+    let db_stage = llg::profile::Stage::new("db.import");
     let codegen_db = match llg::core::db::Db::from_slang(&out.snapshot) {
         Ok(db) => db,
         Err(e) => {
@@ -656,6 +660,8 @@ fn run(options: DriverOptions) -> i32 {
             return 1;
         }
     };
+    drop(db_stage);
+    drop(out);
     if lint_mode {
         let model = llg::core::model::DesignModel::from_db(&codegen_db);
         let findings = llg::core::lint::lint_with_config(&codegen_db, &model, &lint_config);
@@ -729,7 +735,7 @@ fn run(options: DriverOptions) -> i32 {
     } else {
         sim::opt::OptConfig::default()
     };
-    let generated = sim::codegen::generate_from_db_with_opts(&codegen_db, &optimization);
+    let generated = sim::codegen::generate_from_owned_db_with_opts(codegen_db, &optimization);
     let gen = match generated {
         Ok(g) => g,
         Err(e) => {

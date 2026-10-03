@@ -2,6 +2,44 @@
 
 use super::*;
 
+pub(super) struct SemanticIds {
+    pub(super) len: usize,
+}
+
+impl SemanticIds {
+    pub(super) fn new(nodes: &[SemanticNode]) -> Result<Self, DbError> {
+        if nodes
+            .iter()
+            .enumerate()
+            .all(|(index, node)| node.id == index as u64)
+        {
+            let ids = Self { len: nodes.len() };
+            for node in nodes {
+                for id in [node.parent_id, node.target_id].into_iter().flatten() {
+                    semantic_id(&ids, id)?;
+                }
+            }
+            return Ok(ids);
+        }
+        let ids = nodes.iter().map(|node| node.id).collect::<HashSet<_>>();
+        if ids.len() != nodes.len() {
+            return Err(DbError::InvalidSnapshot(
+                "duplicate Slang semantic node id".into(),
+            ));
+        }
+        Err(DbError::InvalidSnapshot(
+            "Slang semantic node ids are not contiguous arena indices".into(),
+        ))
+    }
+
+    pub(super) fn get(&self, id: &u64) -> Option<NodeId> {
+        usize::try_from(*id)
+            .ok()
+            .filter(|index| *index < self.len)
+            .map(NodeId::from_index)
+    }
+}
+
 pub(super) fn semantic_edges<'a>(
     snapshot: &'a SlangSnapshot,
     node: &SemanticNode,
@@ -19,15 +57,14 @@ pub(super) fn semantic_edges<'a>(
         .ok_or_else(|| DbError::InvalidSnapshot("semantic edge window is invalid".to_owned()))
 }
 
-pub(super) fn semantic_id(ids: &HashMap<u64, NodeId>, id: u64) -> Result<NodeId, DbError> {
+pub(super) fn semantic_id(ids: &SemanticIds, id: u64) -> Result<NodeId, DbError> {
     ids.get(&id)
-        .copied()
         .ok_or_else(|| DbError::InvalidSnapshot(format!("unknown semantic node id {id}")))
 }
 
 pub(super) fn canonical_reference_target(
     snapshot: &SlangSnapshot,
-    ids: &HashMap<u64, NodeId>,
+    ids: &SemanticIds,
     target_id: u64,
 ) -> Result<NodeId, DbError> {
     let target = semantic_id(ids, target_id)?;
@@ -53,7 +90,7 @@ pub(super) fn canonical_reference_target(
 
 pub(super) fn hierarchical_reference_target(
     snapshot: &SlangSnapshot,
-    ids: &HashMap<u64, NodeId>,
+    ids: &SemanticIds,
     target_id: u64,
 ) -> Result<NodeId, DbError> {
     let target = semantic_id(ids, target_id)?;
@@ -76,7 +113,7 @@ pub(super) fn hierarchical_reference_target(
 }
 
 pub(super) fn edge_target(
-    ids: &HashMap<u64, NodeId>,
+    ids: &SemanticIds,
     edges: &[crate::ffi::slang::SemanticEdge],
     role: SemanticEdgeRole,
 ) -> Result<Option<NodeId>, DbError> {
@@ -88,7 +125,7 @@ pub(super) fn edge_target(
 }
 
 pub(super) fn edge_target_at(
-    ids: &HashMap<u64, NodeId>,
+    ids: &SemanticIds,
     edges: &[crate::ffi::slang::SemanticEdge],
     role: SemanticEdgeRole,
     index: u32,
@@ -101,7 +138,7 @@ pub(super) fn edge_target_at(
 }
 
 pub(super) fn edge_targets(
-    ids: &HashMap<u64, NodeId>,
+    ids: &SemanticIds,
     edges: &[crate::ffi::slang::SemanticEdge],
     role: SemanticEdgeRole,
 ) -> Result<Vec<NodeId>, DbError> {
@@ -114,7 +151,7 @@ pub(super) fn edge_targets(
 
 pub(super) fn resolved_edge_target(
     snapshot: &SlangSnapshot,
-    ids: &HashMap<u64, NodeId>,
+    ids: &SemanticIds,
     edges: &[crate::ffi::slang::SemanticEdge],
     role: SemanticEdgeRole,
 ) -> Result<Option<NodeId>, DbError> {
@@ -180,7 +217,7 @@ fn is_array_semantic(snapshot: &SlangSnapshot, id: NodeId) -> bool {
 pub(super) fn array_select_from_slang(
     snapshot: &SlangSnapshot,
     type_projector: &SlangTypeProjector<'_>,
-    ids: &HashMap<u64, NodeId>,
+    ids: &SemanticIds,
     node: &SemanticNode,
     depth: usize,
 ) -> Result<Option<(NodeId, Vec<NodeId>)>, DbError> {
@@ -217,7 +254,7 @@ pub(super) type SemanticMemberPath = (Vec<String>, Vec<Option<NodeId>>);
 pub(super) fn member_path_from_slang(
     snapshot: &SlangSnapshot,
     type_projector: &SlangTypeProjector<'_>,
-    ids: &HashMap<u64, NodeId>,
+    ids: &SemanticIds,
     node: &SemanticNode,
     depth: usize,
 ) -> Result<Option<SemanticMemberPath>, DbError> {
@@ -287,7 +324,7 @@ pub(super) fn member_path_from_slang(
 
 pub(super) fn expression_reference_target(
     snapshot: &SlangSnapshot,
-    ids: &HashMap<u64, NodeId>,
+    ids: &SemanticIds,
     node: &SemanticNode,
 ) -> Result<Option<NodeId>, DbError> {
     if let Some(target) = node.target_id {

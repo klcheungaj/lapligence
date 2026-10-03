@@ -7,7 +7,7 @@ pub(super) fn statement_from_slang(
     type_projector: &SlangTypeProjector<'_>,
     node: &SemanticNode,
     edges: &[crate::ffi::slang::SemanticEdge],
-    ids: &HashMap<u64, NodeId>,
+    ids: &SemanticIds,
 ) -> Result<NodeKind, DbError> {
     let first = |role| edge_target(ids, edges, role);
     let required = |role, name| {
@@ -415,7 +415,7 @@ fn unique_priority_check(value: u64) -> Result<UniquePriorityCheck, DbError> {
 
 fn block_statement_for_symbol(
     snapshot: &SlangSnapshot,
-    ids: &HashMap<u64, NodeId>,
+    ids: &SemanticIds,
     symbol: u64,
 ) -> Result<Option<NodeId>, DbError> {
     let mut statements = snapshot.semantic_nodes.iter().filter(|candidate| {
@@ -450,7 +450,7 @@ fn intra_control(
     snapshot: &SlangSnapshot,
     _assignment: &SemanticNode,
     edges: &[crate::ffi::slang::SemanticEdge],
-    ids: &HashMap<u64, NodeId>,
+    ids: &SemanticIds,
 ) -> Result<Option<IntraControl>, DbError> {
     let Some(timing_id) = edge_target(ids, edges, SemanticEdgeRole::Delay)? else {
         return Ok(None);
@@ -461,7 +461,7 @@ fn intra_control(
 fn intra_control_timing(
     snapshot: &SlangSnapshot,
     timing_id: NodeId,
-    ids: &HashMap<u64, NodeId>,
+    ids: &SemanticIds,
 ) -> Result<IntraControl, DbError> {
     let timing = snapshot
         .semantic_nodes
@@ -515,7 +515,7 @@ fn timing_statement(
     snapshot: &SlangSnapshot,
     _statement: &SemanticNode,
     edges: &[crate::ffi::slang::SemanticEdge],
-    ids: &HashMap<u64, NodeId>,
+    ids: &SemanticIds,
 ) -> Result<StmtKind, DbError> {
     let timing_id = edge_target(ids, edges, SemanticEdgeRole::Event)?
         .ok_or_else(|| DbError::InvalidSnapshot("timed statement has no timing control".into()))?;
@@ -545,7 +545,7 @@ fn timing_statement(
 fn event_trigger_timing(
     snapshot: &SlangSnapshot,
     timing_id: NodeId,
-    ids: &HashMap<u64, NodeId>,
+    ids: &SemanticIds,
 ) -> Result<EventTriggerTiming, DbError> {
     let timing = snapshot
         .semantic_nodes
@@ -601,7 +601,7 @@ fn event_trigger_timing(
 pub(super) fn event_specs(
     snapshot: &SlangSnapshot,
     timing: &SemanticNode,
-    ids: &HashMap<u64, NodeId>,
+    ids: &SemanticIds,
 ) -> Result<(Vec<EventSpec>, bool), DbError> {
     let edges = semantic_edges(snapshot, timing)?;
     match timing.subkind {
@@ -669,7 +669,7 @@ pub(super) fn event_specs(
 
 pub(super) fn is_named_event_expression(
     snapshot: &SlangSnapshot,
-    ids: &HashMap<u64, NodeId>,
+    ids: &SemanticIds,
     expression: NodeId,
 ) -> Result<bool, DbError> {
     let node = snapshot
