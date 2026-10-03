@@ -48,6 +48,73 @@ typedef struct {
 } llg_gmp_sv4_vpi_word_t;
 
 typedef llg_gmp_sv4_t g4_t;
+
+/* V05d: V06 consumer primitives. Borrowed inputs, fixed shape/sign; no
+ * scratch owners. Only actual X/Z writes can promote B; mutations compact it.
+ * Range copy/same require a fitting interval and independent owners or self at
+ * offset zero. Arithmetic requires known inputs; digit count is in 1..4.
+ * Foreign records have stride >=8 and hold count records without size overflow. */
+void llg_gmp_sv4_masked_merge(g4_t* target, g4_t source, g4_t mask);
+void llg_gmp_sv4_masked_copy(g4_t* target, g4_t source, g4_t mask);
+int llg_gmp_sv4_masked_same(g4_t a, g4_t b, const g4_t* mask);
+int llg_gmp_sv4_range_same(g4_t target, uint32_t offset, g4_t source);
+void llg_gmp_sv4_range_copy(g4_t* target, uint32_t offset, g4_t source);
+void llg_gmp_sv4_range_fill(g4_t* target, uint32_t low, uint32_t count, unsigned state);
+void llg_gmp_sv4_mask_remove(g4_t* target, g4_t removed);
+void llg_gmp_sv4_mask_top_wide(g4_t* value);
+void llg_gmp_sv4_mul_add_known_wide(g4_t* value, uint32_t factor, uint32_t addend);
+void llg_gmp_sv4_negate_known_wide(g4_t* value);
+void llg_gmp_sv4_two_state_inplace_wide(g4_t* value);
+void llg_gmp_sv4_append_digit_wide(g4_t* value, unsigned count, unsigned state, unsigned digit);
+void llg_gmp_sv4_export_vpi32(g4_t value, void* output, size_t count, size_t stride);
+void llg_gmp_sv4_import_vpi32(g4_t* value, const void* input, size_t count, size_t stride);
+int llg_gmp_sv4_same_vpi_words(g4_t value, const llg_gmp_sv4_vpi_word_t* words, size_t count);
+void llg_gmp_sv4_export_text(g4_t value, uint32_t width, char* output);
+/* End V05d consumer declarations. */
+
+/* V05 S4/S5: selections, borrowed reference graphs and assembly. */
+#include "reference_types.h"
+
+llg_gmp_sv4_select_plan_t llg_gmp_sv4_select_plan_init(uint32_t storage_width);
+// Single-stage plans used when a selected write must retain its coordinates.
+// Invalid or wholly out-of-range selectors produce an empty valid interval.
+llg_gmp_sv4_select_plan_t llg_gmp_sv4_select_plan_bit(uint32_t storage_width, uint64_t index);
+llg_gmp_sv4_select_plan_t llg_gmp_sv4_select_plan_part(uint32_t storage_width, int64_t left,
+                                                       int64_t right);
+llg_gmp_sv4_select_plan_t llg_gmp_sv4_select_plan_indexed(uint32_t storage_width, g4_t base,
+                                                          uint32_t width, int negative);
+// All bases are borrowed. Unknown or unrepresentable bases select no bits.
+void llg_gmp_sv4_select_plan_step(llg_gmp_sv4_select_plan_t* plan, g4_t base, uint32_t width);
+// Read returns an independent unsigned owner, with X at missing positions.
+g4_t llg_gmp_sv4_select_plan_read_wide(g4_t source, const llg_gmp_sv4_select_plan_t* plan);
+// Return only the plan's valid contiguous interval. Reverse maps ascending
+// declared part-selects into increasing storage-bit order.
+g4_t llg_gmp_sv4_select_plan_slice_wide(g4_t source, const llg_gmp_sv4_select_plan_t* plan,
+                                        int reverse);
+// Set borrows source; supports aliasing and changes only the valid interval.
+void llg_gmp_sv4_select_plan_set_wide(g4_t* destination, const llg_gmp_sv4_select_plan_t* plan,
+                                      g4_t source);
+
+// Pure validation; runtime-facing reference access reports a failed check.
+int llg_gmp_ref_view_valid(const llg_gmp_ref_view_t* view, const g4_t* parent,
+                           size_t* failed_check);
+g4_t llg_gmp_ref_read(const llg_gmp_ref_t* ref);
+
+g4_t llg_gmp_sv4_part_select_wide(g4_t v, int64_t left, int64_t right);
+void llg_gmp_sv4_part_select_set_wide(g4_t* tgt, int64_t left, int64_t right, g4_t value);
+g4_t llg_gmp_sv4_idx_part_select_wide(g4_t v, uint64_t base, uint32_t width, int neg);
+void llg_gmp_sv4_idx_part_select_set_wide(g4_t* tgt, uint64_t base, uint32_t width, int neg,
+                                          g4_t value);
+g4_t llg_gmp_sv4_idx_part_select_value_wide(g4_t v, g4_t base, uint32_t width, int neg);
+void llg_gmp_sv4_idx_part_select_set_value_wide(g4_t* tgt, g4_t base, uint32_t width, int neg,
+                                                g4_t value);
+g4_t llg_gmp_sv4_concat_wide(g4_t hi, g4_t lo);
+g4_t llg_gmp_sv4_repeat_wide(g4_t pat, uint64_t n);
+g4_t llg_gmp_sv4_repeat_count_wide(g4_t v);
+g4_t llg_gmp_sv4_stream_wide(g4_t value, uint32_t slice, int right_to_left);
+g4_t llg_gmp_sv4_unstream_wide(g4_t value, uint32_t slice, int right_to_left);
+g4_t llg_gmp_sv4_array_conditional_merge_wide(g4_t a, g4_t b, g4_t element_default);
+/* End V05 S4/S5 declarations. */
 void llg_gmp_sv4_fail(const char* message);
 g4_t llg_gmp_sv4_zero_wide(uint32_t width, int8_t sign);
 g4_t llg_gmp_sv4_fill_wide(uint8_t state, uint32_t width, int8_t sign);
@@ -385,6 +452,16 @@ static inline uint64_t llg_gmp_sv4_word(g4_t v, size_t word, unsigned plane) {
     llg_gmp_sv4_vpi_word_t r = llg_gmp_sv4_vpi_word(v, word);
     return plane == 0 ? r.aval & ~r.bval : plane == 1 ? r.aval & r.bval : ~r.aval & r.bval;
 }
+/* Internal zero-padded logical-plane slice, count in 1..64. */
+static inline uint64_t llg_gmp_sv4_plane_slice(g4_t value, uint32_t low,
+                                             unsigned count, unsigned plane) {
+    size_t word = low / 64u;
+    unsigned shift = low % 64u;
+    uint64_t result = llg_gmp_sv4_word(value, word, plane) >> shift;
+    if (shift && count > 64u - shift)
+        result |= llg_gmp_sv4_word(value, word + 1u, plane) << (64u - shift);
+    return result & g4_mask(count);
+}
 static inline unsigned llg_gmp_sv4_state(g4_t v, uint64_t bit) {
     if (bit >= v.width)
         return 2;
@@ -622,6 +699,9 @@ static inline void llg_gmp_sv4_import_words(g4_t* v, size_t first, const llg_gmp
         llg_gmp_sv4_set_word(v, 0, in[0].bits, in[0].x, in[0].z);
 }
 
+#include "selection_inline.h"
+#include "consumer_inline.h"
+
 /* V05/S6: net metadata remains outside packed storage. Inputs borrow;
  * returned values own. UDP rows and scalar inputs are validated by lowering. */
 enum {
@@ -786,7 +866,6 @@ static inline uint32_t llg_gmp_sv4_checked_width(g4_t value) {
         llg_gmp_sv4_fail("width reaches exclusive limit");
     return (uint32_t)width;
 }
-#include "reference_types.h"
 /* End V05/S9. */
 
 #ifdef __cplusplus
@@ -795,6 +874,25 @@ static inline uint32_t llg_gmp_sv4_checked_width(g4_t value) {
 
 /* Standalone facade. V07 owns selection through llg_value.h. */
 #ifdef LLG_SV4_GMP_PUBLIC_NAMES
+/* V05d consumer aliases. */
+#define llg_sv4_masked_merge llg_gmp_sv4_masked_merge
+#define llg_sv4_masked_copy llg_gmp_sv4_masked_copy
+#define llg_sv4_masked_same llg_gmp_sv4_masked_same
+#define llg_sv4_range_same llg_gmp_sv4_range_same
+#define llg_sv4_range_copy llg_gmp_sv4_range_copy
+#define llg_sv4_range_fill llg_gmp_sv4_range_fill
+#define llg_sv4_mask_remove llg_gmp_sv4_mask_remove
+#define llg_sv4_mask_top llg_gmp_sv4_mask_top
+#define llg_sv4_mul_add_known llg_gmp_sv4_mul_add_known
+#define llg_sv4_negate_known llg_gmp_sv4_negate_known
+#define llg_sv4_two_state_inplace llg_gmp_sv4_two_state_inplace
+#define llg_sv4_append_digit llg_gmp_sv4_append_digit
+#define llg_sv4_export_vpi32 llg_gmp_sv4_export_vpi32
+#define llg_sv4_import_vpi32 llg_gmp_sv4_import_vpi32
+#define llg_sv4_same_vpi_words llg_gmp_sv4_same_vpi_words
+#define llg_sv4_export_text llg_gmp_sv4_export_text
+#define llg_sv4_plane_slice llg_gmp_sv4_plane_slice
+
 /* V05/S2 and S3 public names. */
 #define sv4_ashl llg_gmp_sv4_ashl
 #define sv4_ashr llg_gmp_sv4_ashr
@@ -816,6 +914,51 @@ static inline uint32_t llg_gmp_sv4_checked_width(g4_t value) {
 #define sv4_wild_eq llg_gmp_sv4_wild_eq
 #define sv4_wild_neq llg_gmp_sv4_wild_neq
 /* End V05/S2 and S3 public names. */
+
+
+/* V05 S4/S5 public names. */
+#define sv4_bit_select llg_gmp_sv4_bit_select
+#define sv4_bit_select_set llg_gmp_sv4_bit_select_set
+#define sv4_part_select llg_gmp_sv4_part_select
+#define sv4_part_select_set llg_gmp_sv4_part_select_set
+#define sv4_idx_part_select llg_gmp_sv4_idx_part_select
+#define sv4_idx_part_select_set llg_gmp_sv4_idx_part_select_set
+#define sv4_idx_part_select_value llg_gmp_sv4_idx_part_select_value
+#define sv4_idx_part_select_set_value llg_gmp_sv4_idx_part_select_set_value
+#define sv4_select_plan_init llg_gmp_sv4_select_plan_init
+#define sv4_select_plan_bit llg_gmp_sv4_select_plan_bit
+#define sv4_select_plan_part llg_gmp_sv4_select_plan_part
+#define sv4_select_plan_indexed llg_gmp_sv4_select_plan_indexed
+#define sv4_select_plan_step llg_gmp_sv4_select_plan_step
+#define sv4_select_plan_read llg_gmp_sv4_select_plan_read
+#define sv4_select_plan_slice llg_gmp_sv4_select_plan_slice
+#define sv4_select_plan_set llg_gmp_sv4_select_plan_set
+#define sv4_concat llg_gmp_sv4_concat
+#define sv4_repeat llg_gmp_sv4_repeat
+#define sv4_repeat_count llg_gmp_sv4_repeat_count
+#define sv4_stream llg_gmp_sv4_stream
+#define sv4_unstream llg_gmp_sv4_unstream
+#define sv4_array_conditional_merge llg_gmp_sv4_array_conditional_merge
+#define llg_ref_read llg_gmp_ref_read
+#define llg_ref_view_valid llg_gmp_ref_view_valid
+#define sv4_select_plan_t llg_gmp_sv4_select_plan_t
+#define llg_queue_ref_read_fn llg_gmp_queue_ref_read_fn
+#define llg_queue_ref_write_fn llg_gmp_queue_ref_write_fn
+#define llg_ref_kind_t llg_gmp_ref_kind_t
+#define llg_ref_t llg_gmp_ref_t
+#define llg_ref_composite_t llg_gmp_ref_composite_t
+#define llg_ref_tag_check_t llg_gmp_ref_tag_check_t
+#define llg_ref_view_t llg_gmp_ref_view_t
+#define LLG_REF_WHOLE LLG_GMP_REF_WHOLE
+#define LLG_REF_BIT LLG_GMP_REF_BIT
+#define LLG_REF_PART LLG_GMP_REF_PART
+#define LLG_REF_INDEXED LLG_GMP_REF_INDEXED
+#define LLG_REF_ARRAY LLG_GMP_REF_ARRAY
+#define LLG_REF_QUEUE LLG_GMP_REF_QUEUE
+#define LLG_REF_PACKED_PLAN LLG_GMP_REF_PACKED_PLAN
+#define LLG_REF_COMPOSITE LLG_GMP_REF_COMPOSITE
+#define LLG_REF_VIEW LLG_GMP_REF_VIEW
+#define LLG_REF_TAGGED_VIEW LLG_GMP_REF_TAGGED_VIEW
 #define sv4_add llg_gmp_sv4_add
 #define sv4_and llg_gmp_sv4_and
 #define sv4_assign llg_gmp_sv4_assign
@@ -923,24 +1066,6 @@ static inline uint32_t llg_gmp_sv4_checked_width(g4_t value) {
 #define sv4_to_index_i64 llg_gmp_sv4_to_index_i64
 /* V05/S9 public names. */
 #define sv4_checked_width llg_gmp_sv4_checked_width
-#define llg_queue_ref_read_fn llg_gmp_queue_ref_read_fn
-#define llg_queue_ref_write_fn llg_gmp_queue_ref_write_fn
-#define llg_ref_kind_t llg_gmp_ref_kind_t
-#define llg_ref_t llg_gmp_ref_t
-#define llg_ref_composite_t llg_gmp_ref_composite_t
-#define llg_ref_tag_check_t llg_gmp_ref_tag_check_t
-#define llg_ref_view_t llg_gmp_ref_view_t
-#define sv4_select_plan_t llg_gmp_sv4_select_plan_t
-#define LLG_REF_WHOLE LLG_GMP_REF_WHOLE
-#define LLG_REF_BIT LLG_GMP_REF_BIT
-#define LLG_REF_PART LLG_GMP_REF_PART
-#define LLG_REF_INDEXED LLG_GMP_REF_INDEXED
-#define LLG_REF_ARRAY LLG_GMP_REF_ARRAY
-#define LLG_REF_QUEUE LLG_GMP_REF_QUEUE
-#define LLG_REF_PACKED_PLAN LLG_GMP_REF_PACKED_PLAN
-#define LLG_REF_COMPOSITE LLG_GMP_REF_COMPOSITE
-#define LLG_REF_VIEW LLG_GMP_REF_VIEW
-#define LLG_REF_TAGGED_VIEW LLG_GMP_REF_TAGGED_VIEW
 #define sv4_t llg_gmp_sv4_t
 #define llg_sv4_word_t llg_gmp_sv4_word_t
 #define llg_sv4_vpi_word_t llg_gmp_sv4_vpi_word_t
