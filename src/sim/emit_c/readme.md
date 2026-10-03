@@ -3,6 +3,11 @@
 The emitter consumes validated execution IR and renders standalone models with
 ordered setup, evaluation and cleanup. It has no frontend dependency.
 
+Rendering borrows the execution model when the computed arena-callee set matches
+its current analysis, and copies it only when reanalysis changes that set. Exact
+body sharing groups candidates as they arrive, retaining one normalized body and
+one comparison key per group while preserving member and group order.
+
 `owned/` handles expressions, typed lvalues, calls, captures, native services and
 registered temporary/local scopes. Its model layer emits persistent storage,
 initialization, procedures and the start/advance/close embedding API. A suspended

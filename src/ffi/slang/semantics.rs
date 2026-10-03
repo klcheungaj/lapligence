@@ -3,14 +3,34 @@
 use super::*;
 use std::collections::HashMap;
 
+fn validate_semantic_ids(raw: &[RawSemanticNode]) -> Result<(), SlangError> {
+    if raw
+        .iter()
+        .enumerate()
+        .all(|(index, node)| node.id == index as u64)
+    {
+        return Ok(());
+    }
+    // Preserve malformed-output diagnostics without indexing valid arenas twice.
+    let ids: HashSet<_> = raw.iter().map(|node| node.id).collect();
+    if ids.len() != raw.len() || ids.contains(&INVALID_ID) {
+        return Err(invalid_native(
+            "snapshot contains duplicate or invalid semantic node ids",
+        ));
+    }
+    Err(invalid_native(
+        "semantic node ids are not contiguous arena indices",
+    ))
+}
+
 pub(super) fn decode_semantic_edges(
     raw: &[RawSemanticEdge],
     nodes: &[RawSemanticNode],
 ) -> Result<Vec<SemanticEdge>, SlangError> {
-    let node_ids: HashSet<_> = nodes.iter().map(|node| node.id).collect();
+    validate_semantic_ids(nodes)?;
     raw.iter()
         .map(|edge| {
-            if !node_ids.contains(&edge.target_id) {
+            if edge.target_id >= nodes.len() as u64 {
                 return Err(invalid_native("semantic edge target does not exist"));
             }
             if edge.sequence_delay_valid > 1
@@ -73,7 +93,10 @@ pub(super) fn decode_semantic_edges(
                 }),
             })
         })
-        .collect()
+        .try_fold(Vec::with_capacity(raw.len()), |mut decoded, record| {
+            decoded.push(record?);
+            Ok(decoded)
+        })
 }
 
 pub(super) fn decode_semantic_nodes(
@@ -83,21 +106,7 @@ pub(super) fn decode_semantic_nodes(
     types: &[Type],
     constant_len: usize,
 ) -> Result<Vec<SemanticNode>, SlangError> {
-    let ids: HashSet<_> = raw.iter().map(|node| node.id).collect();
-    if ids.len() != raw.len() || ids.contains(&INVALID_ID) {
-        return Err(invalid_native(
-            "snapshot contains duplicate or invalid semantic node ids",
-        ));
-    }
-    if raw
-        .iter()
-        .enumerate()
-        .any(|(index, node)| node.id != index as u64)
-    {
-        return Err(invalid_native(
-            "semantic node ids are not contiguous arena indices",
-        ));
-    }
+    validate_semantic_ids(raw)?;
     let type_ids: HashSet<_> = types.iter().map(|ty| ty.id).collect();
     let mut claimed_edges = vec![false; edges.len()];
     for node in raw {
@@ -159,8 +168,8 @@ pub(super) fn decode_semantic_nodes(
             }
             let parent_id = (node.parent_id != INVALID_ID).then_some(node.parent_id);
             let target_id = (node.target_id != INVALID_ID).then_some(node.target_id);
-            if parent_id.is_some_and(|id| !ids.contains(&id))
-                || target_id.is_some_and(|id| !ids.contains(&id))
+            if parent_id.is_some_and(|id| id >= raw.len() as u64)
+                || target_id.is_some_and(|id| id >= raw.len() as u64)
             {
                 return Err(invalid_native(
                     "semantic node refers to an unknown semantic node",
@@ -263,7 +272,10 @@ pub(super) fn decode_semantic_nodes(
                 assertion_repetition_kind: node.assertion_repetition_kind,
             })
         })
-        .collect()
+        .try_fold(Vec::with_capacity(raw.len()), |mut decoded, record| {
+            decoded.push(record?);
+            Ok(decoded)
+        })
 }
 
 fn decode_semantic_kind(raw: u32) -> Result<SemanticKind, SlangError> {

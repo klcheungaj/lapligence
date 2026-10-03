@@ -440,6 +440,11 @@ Only known activation/PCA/net-contribution identities become scalar operands.
 Bodies with local static storage stay separate. Startup-external roots (assertion
 actions) stay separate because they do not receive the startup record initialization.
 
+Candidates enter exact sharing groups as they are rendered; each group retains
+one normalized source and key. Every member retains its typed operands, including
+each generated constant occurrence and its width/sign, even after its duplicate
+normalized source is released.
+
 `LLG_SHARE_MIN_INSTANCES` is a positive integer (default 4); `unlimited` disables
 sharing. Each qualifying class emits one body and static const typed records.
 Operands equal across all members stay direct constants/references. Shared root

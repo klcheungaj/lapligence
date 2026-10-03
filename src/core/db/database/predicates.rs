@@ -72,7 +72,7 @@ impl ConditionalPredicate {
 
 pub(super) fn predicate_from_slang(
     edges: &[SemanticEdge],
-    ids: &HashMap<u64, NodeId>,
+    ids: &SemanticIds,
 ) -> Result<ConditionalPredicate, DbError> {
     let mut conditions: Vec<_> = edges
         .iter()
@@ -118,7 +118,7 @@ pub(super) fn predicate_from_slang(
 
 pub(super) fn conditional_branches_from_slang(
     edges: &[SemanticEdge],
-    ids: &HashMap<u64, NodeId>,
+    ids: &SemanticIds,
     require_false: bool,
 ) -> Result<(NodeId, Option<NodeId>), DbError> {
     let branch = |role, required: bool, name: &str| {
