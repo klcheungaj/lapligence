@@ -31,15 +31,15 @@ int main(int argc, char** argv) {
     for (size_t i = 0; i < slots; ++i) {
         uint32_t width = widths[i % (sizeof(widths) / sizeof(*widths))];
         sv4_replace(&values[i], sv4_from_u64((uint64_t)i, width, 0));
-        expected_bytes += 24u * (((size_t)width + 63u) / 64u);
-        expected_live += width != 0;
+        expected_bytes += probe_payload_bytes(width, 0);
+        expected_live += probe_owner_allocations(width);
         empty_slots += width == 0;
     }
     /* A single legal wide declaration must not inflate all the other cells. */
     sv4_replace(&values[slots], sv4_zero(LLG_SUPPORTED_WIDTH_LIMIT - 1u, 0));
     const size_t widest_payload = sv4_bytes(&values[slots]);
     expected_bytes += widest_payload;
-    ++expected_live;
+    expected_live += probe_owner_allocations(LLG_SUPPORTED_WIDTH_LIMIT - 1u);
     CHECK(value_test_bytes() == expected_bytes && value_test_live() == expected_live);
     const uint64_t fixed_reference = (uint64_t)(slots + 1u) * (uint64_t)widest_payload;
     value_test_reset_stats();

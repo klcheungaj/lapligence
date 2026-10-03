@@ -37,6 +37,13 @@ static sv4_t test_value(sv4_t value) {
     return owner->value;
 }
 
+/* Registered owner for a test that edits the value in place. Re-read borrowed
+ * copies after each edit: a payload may move when X/Z storage changes. */
+static inline sv4_t* test_value_owner(sv4_t value) {
+    (void)test_value(value);
+    return &test_value_owners->value;
+}
+
 static int test_values_run(int (*probe)(void)) {
     int result = probe();
     test_values_clear();

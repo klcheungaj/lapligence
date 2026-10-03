@@ -52,7 +52,7 @@ static void resolver_values(void) {
                         sv4_destroy(&bv);
                         expect_state(net.resolved, (int)(kinds[k] == LLG_RESOLVE_WAND
                             ? and_table[a][b] : or_table[a][b]));
-                        CHECK(value_test_live() == 3);
+                        CHECK(value_test_live() == 3 * probe_owner_allocations(widths[w]));
                     }
                 }
             }
@@ -69,7 +69,7 @@ static void resolver_values(void) {
                 llg_net_write(&net, 1, floating);
                 sv4_destroy(&floating);
                 expect_state(net.resolved, floats[k]);
-                CHECK(value_test_live() == 3);
+                CHECK(value_test_live() == 3 * probe_owner_allocations(widths[w]));
             }
             sv4_destroy(&first);
             sv4_destroy(&second);

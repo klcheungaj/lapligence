@@ -1,6 +1,7 @@
 // Include the production writer to test private ownership transfers without
 // thread timing assumptions, then exercise its public threaded VCD/FST API.
 #include "llg_wave.c"
+#include "probe_value.h"
 
 size_t storage_test_allocated(void);
 size_t storage_test_released(void);
@@ -14,7 +15,7 @@ size_t storage_test_released(void);
 
 static void set_value(sv4_t* value, uint32_t width, uint64_t bits) {
     sv4_replace(value, sv4_zero(width, 0));
-    if (width) value->bits[0] = bits;
+    if (width) probe_set_bits(value, 0, bits);
 }
 
 static void check_released(void) {
@@ -47,19 +48,21 @@ static void check_queue_transfers(void) {
         // scheduling. Subsequent rounds reuse every slot.
         for (uint32_t i = 0; i < LLG_WAVE_QUEUE_CAP; i++) {
             set_value(&source, 65, (uint64_t)round * LLG_WAVE_QUEUE_CAP + i);
-            source.bits[1] = 1;
-            source.x[0] = 2;
-            source.z[0] = 4;
+            probe_set_bits(&source, 1, 1);
+            probe_put_state(&source, 1, 2);
+            probe_put_state(&source, 2, 3);
             wave_event_t event = {0};
             event.kind = EV_CHANGE_SV4;
             CHECK(capture_sv4(&event, &source));
-            CHECK(event.payload.sv4.bits != source.bits);
-            uint64_t* allocation = event.payload.sv4.bits;
+            CHECK(probe_distinct(&event.payload.sv4, source));
+            // Publication transfers the captured owner without another copy.
+            size_t allocated = storage_test_allocated();
             queue_push(&event);
-            CHECK(event.kind == EV_FILE && event.payload.sv4.bits == NULL);
+            CHECK(event.kind == EV_FILE && probe_is_empty(event.payload.sv4));
+            CHECK(storage_test_allocated() == allocated);
             uint64_t head = atomic_u64_load(&g_wave.head);
-            CHECK(g_wave.queue[(head - 1u) % LLG_WAVE_QUEUE_CAP].payload.sv4.bits
-                  == allocation);
+            CHECK(llg_sv4_width(g_wave.queue[(head - 1u) % LLG_WAVE_QUEUE_CAP].payload.sv4)
+                  == 65);
             set_value(&source, 1, 0);
         }
         CHECK(atomic_u64_load(&g_wave.head) - atomic_u64_load(&g_wave.tail)
@@ -68,13 +71,14 @@ static void check_queue_transfers(void) {
             uint64_t tail = atomic_u64_load(&g_wave.tail);
             wave_event_t event = queue_pop();
             CHECK(g_wave.queue[tail % LLG_WAVE_QUEUE_CAP].kind == EV_FILE);
-            CHECK(g_wave.queue[tail % LLG_WAVE_QUEUE_CAP].payload.sv4.bits == NULL);
+            CHECK(probe_is_empty(g_wave.queue[tail % LLG_WAVE_QUEUE_CAP].payload.sv4));
             CHECK(event.kind == EV_CHANGE_SV4 && event.payload.sv4.width == 65);
-            CHECK(event.payload.sv4.bits[0] == (uint64_t)round * LLG_WAVE_QUEUE_CAP + i);
-            CHECK(event.payload.sv4.bits[1] == 1);
-            CHECK(event.payload.sv4.x[0] == 2 && event.payload.sv4.z[0] == 4);
+            CHECK(PROBE_BITS(event.payload.sv4, 0) ==
+                  (((uint64_t)round * LLG_WAVE_QUEUE_CAP + i) & ~UINT64_C(6)));
+            CHECK(PROBE_BITS(event.payload.sv4, 1) == 1);
+            CHECK(PROBE_X(event.payload.sv4, 0) == 2 && PROBE_Z(event.payload.sv4, 0) == 4);
             event_destroy(&event);
-            CHECK(event.payload.sv4.bits == NULL);
+            CHECK(probe_is_empty(event.payload.sv4));
         }
         sv4_destroy(&source);
         check_released();
@@ -89,8 +93,8 @@ static void check_vcd_snapshots(void) {
     sv4_t padded = SV4_EMPTY, empty = SV4_EMPTY;
     set_value(&packed, 8, 0x3c);
     set_value(&wide, 65, 0);
-    wide.x[0] = 1;
-    wide.z[1] = 1;
+    probe_put_state(&wide, 0, 2);
+    probe_put_state(&wide, 64, 3);
     set_value(&padded, 8, 0x5a);
     set_value(&empty, 0, 0);
     CHECK(llg_wave_model_init(1) == 0);
@@ -101,13 +105,13 @@ static void check_vcd_snapshots(void) {
     CHECK(llg_wave_register_sv4("top\037empty", &empty, 1) == 0);
     llg_wave_file(path, 0);
     llg_wave_dumpvars(0);
-    packed.bits[0] = 0xa5;
+    probe_set_bits(&packed, 0, 0xa5);
     llg_wave_changed_sv4(&packed, &packed, 1);
-    packed.bits[0] = 0x5a;
+    probe_set_bits(&packed, 0, 0x5a);
     for (uint64_t now = 2; now <= 4096; now++) {
-        packed.bits[0] = now & 0xffu;
+        probe_set_bits(&packed, 0, now & 0xffu);
         llg_wave_changed_sv4(&packed, &packed, now);
-        packed.bits[0] = 0xff;
+        probe_set_bits(&packed, 0, 0xff);
     }
     llg_wave_flush(4096);
     char* text = read_file(path);
@@ -146,9 +150,9 @@ static void check_fst_snapshots(void) {
     CHECK(llg_wave_register_sv4("top\037alias", &packed, 8) == 0);
     llg_wave_file(path, 0);
     llg_wave_dumpvars(0);
-    packed.bits[0] = 0xa5;
+    probe_set_bits(&packed, 0, 0xa5);
     llg_wave_changed_sv4(&packed, &packed, 7);
-    packed.bits[0] = 0x5a;
+    probe_set_bits(&packed, 0, 0x5a);
     llg_wave_off(8);
     llg_wave_on(9);
     CHECK(llg_wave_close(9) == 0);
@@ -181,7 +185,7 @@ static void check_discard_and_close(void) {
         if (cycle % 3 == 1) llg_wave_limit(1, 0);
         llg_wave_dumpvars(0);
         for (uint64_t now = 1; now <= 3000; now++) {
-            source.bits[0] = now & 0xffu;
+            probe_set_bits(&source, 0, now & 0xffu);
             llg_wave_changed_sv4(&source, &source, now);
         }
         if (error_case) llg_wave_flush(3000);

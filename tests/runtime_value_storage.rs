@@ -12,13 +12,43 @@ const BUILD_TIMEOUT: Duration = Duration::from_secs(600);
 
 #[test]
 fn dynamic_storage_and_waveform_snapshots() {
+    run_storage_tests("runtime-value-storage", &[]);
+}
+
+/// The same runtime, scheduler and waveform probes against the compact backend
+/// with portable kernels, as generated models select it.
+#[test]
+fn dynamic_storage_and_waveform_snapshots_compact_portable() {
+    run_storage_tests(
+        "runtime-value-storage-compact",
+        &["-DLLG_STORAGE_TEST_VALUE_BACKEND=compact".to_owned()],
+    );
+}
+
+/// The compact probes with GMP kernels; requires `LLG_TEST_GMP_ROOT`.
+#[test]
+fn dynamic_storage_and_waveform_snapshots_compact_gmp() {
+    let Ok(gmp) = std::env::var("LLG_TEST_GMP_ROOT") else {
+        eprintln!("BLOCKED compact GMP storage probes: set LLG_TEST_GMP_ROOT");
+        return;
+    };
+    run_storage_tests(
+        "runtime-value-storage-gmp",
+        &[
+            "-DLLG_STORAGE_TEST_VALUE_BACKEND=compact".to_owned(),
+            "-DLLG_STORAGE_TEST_COMPACT_KERNELS=gmp".to_owned(),
+            format!("-DLLG_GMP_ROOT={gmp}"),
+        ],
+    );
+}
+
+fn run_storage_tests(label: &str, options: &[String]) {
     let cmake = std::env::var("LLG_CMAKE").unwrap_or_else(|_| "cmake".to_owned());
     if Command::new(&cmake).arg("--version").output().is_err() {
         eprintln!("SKIP: CMake `{cmake}` not available");
         return;
     }
-    let dir =
-        sim_harness::TempDir::new("runtime-value-storage").expect("create storage test directory");
+    let dir = sim_harness::TempDir::new(label).expect("create storage test directory");
     let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/runtime_value_storage");
     let mut configure = Command::new(&cmake);
     configure
@@ -26,7 +56,8 @@ fn dynamic_storage_and_waveform_snapshots() {
         .arg(source)
         .arg("-B")
         .arg(dir.path())
-        .arg("-DCMAKE_BUILD_TYPE=Debug");
+        .arg("-DCMAKE_BUILD_TYPE=Debug")
+        .args(options);
     if let Ok(compiler) = std::env::var("LLG_CC").or_else(|_| std::env::var("CC")) {
         configure.arg(format!("-DCMAKE_C_COMPILER={compiler}"));
     }

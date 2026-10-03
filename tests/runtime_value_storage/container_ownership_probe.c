@@ -10,12 +10,12 @@ static void check_dynamic_array(void) {
     sv4_t value = sv4_from_u64(17, 129, 0);
     llg_dyn_new(&array, count, NULL);
     CHECK(llg_dyn_set(&array, index, value));
-    value.bits[0] = 99;
+    probe_set_bits(&value, 0, 99);
     expect_number(llg_dyn_get(&array, index), 17);
     llg_dyn_copy(&copy, &array);
     llg_dyn_copy(&array, &array);
     sv4_t read = llg_dyn_get(&copy, index);
-    read.bits[0] = 32;
+    probe_set_bits(&read, 0, 32);
     expect_number(llg_dyn_get(&copy, index), 17);
     sv4_destroy(&read);
     size_t retained = value_test_live();
@@ -42,11 +42,11 @@ static void check_pinned_queue(void) {
     void* pinned = llg_queue_ref_acquire(&queue, 0);
     void* again = llg_queue_ref_acquire(&queue, 0);
     CHECK(pinned == again);
-    value.bits[0] = 22;
+    probe_set_bits(&value, 0, 22);
     llg_queue_push_front(&queue, value);
     expect_number(llg_queue_cell_read(pinned), 11);
     expect_number(llg_queue_pop_back(&queue), 11);
-    value.bits[0] = 33;
+    probe_set_bits(&value, 0, 33);
     CHECK(llg_queue_cell_write(pinned, value));
     expect_number(llg_queue_cell_read(pinned), 33);
     expect_number(llg_queue_front(&queue), 22);
@@ -79,7 +79,7 @@ static void check_associative_owners(void) {
     sv4_t absent = sv4_from_u64(9, 8, 0);
     sv4_t value = sv4_from_u64(42, 129, 0);
     CHECK(llg_assoc_set_integral(&array, short_key, value));
-    value.bits[0] = 17;
+    probe_set_bits(&value, 0, 17);
     CHECK(llg_assoc_set_integral(&array, wide_key, value));
     CHECK(llg_assoc_count(&array) == 1);
     CHECK(array.entries[0].integral_key.width < 65);
@@ -87,7 +87,7 @@ static void check_associative_owners(void) {
     CHECK(llg_assoc_set_integral(&array, positive, value));
     CHECK(llg_assoc_count(&array) == 2);
     llg_assoc_set_default(&array, value);
-    value.bits[0] = 99;
+    probe_set_bits(&value, 0, 99);
     expect_number(llg_assoc_get_integral(&array, absent), 17);
     llg_assoc_copy(&copy, &array);
     llg_assoc_copy(&array, &array);

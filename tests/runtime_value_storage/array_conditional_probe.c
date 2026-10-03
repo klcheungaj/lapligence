@@ -2,23 +2,10 @@
 #include "probe.h"
 #include <string.h>
 
-static unsigned state(sv4_t value, uint32_t bit) {
-    uint64_t mask = UINT64_C(1) << (bit % 64u);
-    size_t limb = bit / 64u;
-    if (value.x[limb] & mask) return 2;
-    if (value.z[limb] & mask) return 3;
-    return (value.bits[limb] & mask) != 0;
-}
+static unsigned state(sv4_t value, uint32_t bit) { return probe_state(value, bit); }
 
 static void put(sv4_t* value, uint32_t bit, unsigned digit) {
-    uint64_t mask = UINT64_C(1) << (bit % 64u);
-    size_t limb = bit / 64u;
-    value->bits[limb] &= ~mask;
-    value->x[limb] &= ~mask;
-    value->z[limb] &= ~mask;
-    if (digit == 1) value->bits[limb] |= mask;
-    if (digit == 2) value->x[limb] |= mask;
-    if (digit == 3) value->z[limb] |= mask;
+    probe_put_state(value, bit, digit);
 }
 
 static void check_merge(sv4_t left, sv4_t right, sv4_t fallback) {
@@ -28,11 +15,12 @@ static void check_merge(sv4_t left, sv4_t right, sv4_t fallback) {
     size_t live = value_test_live();
     size_t allocations = value_test_allocations();
     sv4_t result = sv4_array_conditional_merge(left, right, fallback);
-    CHECK(value_test_live() == live + 1);
-    CHECK(value_test_allocations() == allocations + 1);
+    CHECK(value_test_live() == live + probe_owner_allocations(left.width));
+    CHECK(value_test_allocations() == allocations + probe_owner_allocations(left.width));
     CHECK(result.width == left.width && result.is_signed == 0);
-    CHECK(result.bits != left.bits && result.bits != right.bits && result.bits != fallback.bits);
-    CHECK(sv4_bytes(&result) == ((size_t)left.width + 63u) / 64u * 24u);
+    CHECK(probe_distinct(&result, left) && probe_distinct(&result, right) &&
+          probe_distinct(&result, fallback));
+    CHECK(sv4_bytes(&result) == probe_payload_bytes(left.width, sv4_is_unknown(result)));
     for (uint32_t start = 0; start < left.width; start += fallback.width) {
         unsigned equal = 1;
         for (uint32_t j = 0; j < fallback.width; ++j) {
@@ -48,11 +36,11 @@ static void check_merge(sv4_t left, sv4_t right, sv4_t fallback) {
     if (result.width % 64u) {
         uint64_t outside = UINT64_MAX << (result.width % 64u);
         size_t last = (result.width - 1u) / 64u;
-        CHECK(((result.bits[last] | result.x[last] | result.z[last]) & outside) == 0);
+        CHECK(((PROBE_BITS(result, last) | PROBE_X(result, last) | PROBE_Z(result, last)) & outside) == 0);
     }
-    CHECK(memcmp(left.bits, left_before.bits, sv4_bytes(&left)) == 0);
-    CHECK(memcmp(right.bits, right_before.bits, sv4_bytes(&right)) == 0);
-    CHECK(memcmp(fallback.bits, default_before.bits, sv4_bytes(&fallback)) == 0);
+    CHECK(probe_same(left, left_before));
+    CHECK(probe_same(right, right_before));
+    CHECK(probe_same(fallback, default_before));
     sv4_destroy(&result);
     CHECK(value_test_live() == live);
     sv4_destroy(&left_before);
@@ -67,8 +55,8 @@ static void check_packed_control(void) {
     sv4_t fallback = sv4_x(8, 0);
     sv4_t packed = sv4_mux(selector, left, right);
     sv4_t array = sv4_array_conditional_merge(left, right, fallback);
-    CHECK(packed.bits[0] == 0xa4 && packed.x[0] == 3 && packed.z[0] == 0);
-    CHECK(array.bits[0] == 0 && array.x[0] == 0xff && array.z[0] == 0);
+    CHECK(PROBE_BITS(packed, 0) == 0xa4 && PROBE_X(packed, 0) == 3 && PROBE_Z(packed, 0) == 0);
+    CHECK(PROBE_BITS(array, 0) == 0 && PROBE_X(array, 0) == 0xff && PROBE_Z(array, 0) == 0);
     sv4_destroy(&left);
     sv4_destroy(&right);
     sv4_destroy(&selector);
@@ -120,13 +108,14 @@ static void check_replacement_plateau(void) {
     sv4_t result = SV4_EMPTY;
     for (unsigned iteration = 0; iteration < 10000; ++iteration) {
         sv4_replace(&result, sv4_array_conditional_merge(left, right, fallback));
-        CHECK(value_test_live() == 4);
-        CHECK(result.bits[0] == 0x5a && result.x[0] == 0xff00);
+        CHECK(value_test_live() ==
+              3 * probe_owner_allocations(16) + probe_owner_allocations(8));
+        CHECK(PROBE_BITS(result, 0) == 0x5a && PROBE_X(result, 0) == 0xff00);
     }
     sv4_destroy(&left);
     sv4_destroy(&right);
     sv4_destroy(&fallback);
-    CHECK(result.bits[0] == 0x5a && result.x[0] == 0xff00);
+    CHECK(PROBE_BITS(result, 0) == 0x5a && PROBE_X(result, 0) == 0xff00);
     sv4_destroy(&result);
 }
 

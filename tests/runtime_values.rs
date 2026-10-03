@@ -56,6 +56,11 @@ fn value_runtime_compiles_and_runs_without_scheduler() {
         include_str!("runtime_value_storage/test_value_temporaries.h"),
     )
     .expect("write test owner helper");
+    std::fs::write(
+        dir.path().join("probe_value.h"),
+        include_str!("runtime_value_storage/probe_value.h"),
+    )
+    .expect("write neutral value access helper");
 
     let executable = dir.path().join("runtime_values_probe");
     let mut command = Command::new(&compiler);

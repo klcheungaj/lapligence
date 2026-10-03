@@ -11,23 +11,10 @@ static uint64_t next_random(void) {
     return seed;
 }
 
-static unsigned state(sv4_t value, uint32_t bit) {
-    uint64_t mask = UINT64_C(1) << (bit % 64u);
-    size_t limb = bit / 64u;
-    if (value.x[limb] & mask) return 2;
-    if (value.z[limb] & mask) return 3;
-    return (value.bits[limb] & mask) != 0;
-}
+static unsigned state(sv4_t value, uint32_t bit) { return probe_state(value, bit); }
 
 static void put(sv4_t* value, uint32_t bit, unsigned digit) {
-    uint64_t mask = UINT64_C(1) << (bit % 64u);
-    size_t limb = bit / 64u;
-    value->bits[limb] &= ~mask;
-    value->x[limb] &= ~mask;
-    value->z[limb] &= ~mask;
-    if (digit == 1) value->bits[limb] |= mask;
-    if (digit == 2) value->x[limb] |= mask;
-    if (digit == 3) value->z[limb] |= mask;
+    probe_put_state(value, bit, digit);
 }
 
 static unsigned extended(sv4_t value, uint32_t bit, int is_signed) {
@@ -67,23 +54,25 @@ static const unsigned casex_table[4][4] = {
     {1, 0, 1, 1}, {0, 1, 1, 1}, {1, 1, 1, 1}, {1, 1, 1, 1}
 };
 
-static void check_shape(sv4_t result, uint32_t width, int is_signed,
+static void check_shape(sv4_t* owner, uint32_t width, int is_signed,
                         sv4_t left, sv4_t right) {
-    CHECK(result.width == width && result.is_signed == is_signed);
-    CHECK(!result.bits || (result.bits != left.bits && result.bits != right.bits));
-    CHECK(sv4_bytes(&result) == ((size_t)width + 63u) / 64u * 24u);
+    /* The owner is mutated and restored by the independence check. */
+    CHECK(owner->width == width && owner->is_signed == is_signed);
+    CHECK(probe_distinct(owner, left) && probe_distinct(owner, right));
+    sv4_t result = *owner;
+    CHECK(sv4_bytes(&result) == probe_payload_bytes(width, sv4_is_unknown(result)));
     if (!width) {
-        CHECK(!result.bits && !result.x && !result.z);
+        CHECK(probe_is_empty(result));
     } else if (width % 64u) {
         size_t last = (width - 1u) / 64u;
         uint64_t unused = UINT64_MAX << (width % 64u);
-        CHECK(((result.bits[last] | result.x[last] | result.z[last]) & unused) == 0);
+        CHECK(((PROBE_BITS(result, last) | PROBE_X(result, last) | PROBE_Z(result, last)) & unused) == 0);
     }
     ++checked_results;
 }
 
 static void check_scalar(sv4_t result, unsigned expected, sv4_t left, sv4_t right) {
-    check_shape(result, 1, 0, left, right);
+    check_shape(&result, 1, 0, left, right);
     CHECK(state(result, 0) == expected);
     sv4_destroy(&result);
 }
@@ -98,7 +87,7 @@ static void check_pair(sv4_t left, sv4_t right) {
     const binary_fn functions[] = {sv4_and, sv4_or, sv4_xor, sv4_xnor};
     for (unsigned op = 0; op < 4; ++op) {
         sv4_t result = functions[op](left, right);
-        check_shape(result, width, is_signed, left, right);
+        check_shape(&result, width, is_signed, left, right);
         for (uint32_t bit = 0; bit < width; ++bit) {
             unsigned a = extended(left, bit, is_signed);
             unsigned b = extended(right, bit, is_signed);
@@ -150,7 +139,7 @@ static void check_pair(sv4_t left, sv4_t right) {
         put(&selector, 0, digit < 4 ? digit : 1);
         if (digit == 4) put(&selector, 1, 2); /* known one dominates an X */
         sv4_t result = sv4_mux(selector, left, right);
-        check_shape(result, width, is_signed, left, right);
+        check_shape(&result, width, is_signed, left, right);
         for (uint32_t bit = 0; bit < width; ++bit) {
             unsigned x = extended(left, bit, is_signed), y = extended(right, bit, is_signed);
             /* Published 1364-2001 / 1800-2009 packed mux tables map Z/Z to X
@@ -167,7 +156,7 @@ static void check_pair(sv4_t left, sv4_t right) {
         for (int cast = 0; cast < 2; ++cast) {
             sv4_t result = cast ? sv4_cast(left, right.width, (int8_t)sign) :
                                   sv4_resize(left, right.width, (int8_t)sign);
-            check_shape(result, right.width, sign, left, right);
+            check_shape(&result, right.width, sign, left, right);
             for (uint32_t bit = 0; bit < right.width; ++bit)
                 CHECK(state(result, bit) == extended(left, bit, cast ? left.is_signed : sign));
             sv4_destroy(&result);
@@ -185,7 +174,7 @@ static void check_selects(sv4_t source) {
         for (int neg = 0; neg < 2; ++neg) {
             sv4_t base = sv4_from_i64(bases[j], 65);
             sv4_t result = sv4_idx_part_select_value(source, base, 65, neg);
-            check_shape(result, 65, 0, source, base);
+            check_shape(&result, 65, 0, source, base);
             for (uint32_t bit = 0; bit < 65; ++bit) {
                 int64_t offset = neg ? (int64_t)bit - 64 : (int64_t)bit;
                 int overflow = (offset > 0 && bases[j] > INT64_MAX - offset) ||
@@ -203,7 +192,7 @@ static void check_selects(sv4_t source) {
     for (uint32_t base = 0; base < 66; base += 13) {
         sv4_t target = sv4_clone(&source);
         sv4_idx_part_select_set(&target, base, source.width, 0, target);
-        check_shape(target, source.width, source.is_signed, source, source);
+        check_shape(&target, source.width, source.is_signed, source, source);
         for (uint32_t bit = 0; bit < source.width; ++bit)
             CHECK(state(target, bit) == state(source, bit < base ? bit : bit - base));
         sv4_destroy(&target);

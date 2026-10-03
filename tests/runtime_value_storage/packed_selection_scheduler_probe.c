@@ -16,7 +16,7 @@ static void masked_nba(void) {
     step(&plan, 0, 8); step(&plan, 6, 4);
     sv4_select_plan_set(&value, &plan, rhs);
     sv4_select_plan_set(&mask, &plan, rhs);
-    CHECK(mask.bits[0] == 0xc0);
+    CHECK(PROBE_BITS(mask, 0) == 0xc0);
     llg_nba_masked(&target, value, mask, 1);
     sv4_destroy(&value); sv4_destroy(&mask); sv4_destroy(&rhs);
     plan = sv4_select_plan_init(16); /* Plan can change or disappear after issue. */
@@ -24,8 +24,8 @@ static void masked_nba(void) {
     sv4_replace(&target, sv4_from_u64(0x5a15, 16, 0));
     ++g.now;
     commit_nbas(LLG_REGION_NBA);
-    CHECK(target.bits[0] == 0x5ad5); /* Preserve updates outside original selected mask. */
-    CHECK(value_test_live() == 1);
+    CHECK(PROBE_BITS(target, 0) == 0x5ad5); /* Preserve updates outside original selected mask. */
+    CHECK(value_test_live() == probe_owner_allocations(16));
     sv4_destroy(&target);
     llg_rt_cleanup();
     CHECK(value_test_live() == 0);
@@ -41,11 +41,11 @@ static void synchronous_input(void) {
     llg_file_input_target_t input = {LLG_FILE_INPUT_PACKED, &ref, NULL, NULL, 0};
     for (int count = 0; count < 1000; ++count) {
         CHECK(llg_string_scanf("f", 1, "%h", &input, 1) == 1);
-        CHECK(target.bits[0] == 0xa5c0);
+        CHECK(PROBE_BITS(target, 0) == 0xa5c0);
         sv4_t read = llg_ref_read(&ref);
-        CHECK(read.bits[0] == 3 && read.x[0] == 12);
+        CHECK(PROBE_BITS(read, 0) == 3 && PROBE_X(read, 0) == 12);
         sv4_destroy(&read);
-        CHECK(value_test_live() == 1);
+        CHECK(value_test_live() == probe_owner_allocations(16));
     }
     sv4_destroy(&target);
     llg_rt_cleanup();

@@ -44,10 +44,10 @@ int main(void) {
             CHECK(output.value.vector[0].aval == 0x55);
             CHECK(output.value.vector[0].bval == 6);
             CHECK(output.value.vector[4].aval == 1);
-            CHECK(target.bits[0] == 0x51 && target.x[0] == 4 && target.z[0] == 2);
+            CHECK(PROBE_BITS(target, 0) == 0x51 && PROBE_X(target, 0) == 4 && PROBE_Z(target, 0) == 2);
             CHECK(value_test_live() == 2);
         }
-        wide.bits[1024] = 1;
+        probe_set_bits(&wide, 1024, 1);
         s_vpi_value text = {.format = vpiBinStrVal};
         vpi_get_value(wide_handle, &text);
         CHECK(strlen(text.value.str) == 65537 && text.value.str[0] == '1');

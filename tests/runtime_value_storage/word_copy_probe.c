@@ -7,23 +7,12 @@ static const uint32_t widths[] = {1, 7, 63, 64, 65, 127, 128, 129, 1023, 4096};
 
 static unsigned digit(sv4_t value, int64_t bit) {
     if (bit < 0 || bit >= value.width) return 2;
-    uint64_t mask = UINT64_C(1) << ((uint32_t)bit % 64u);
-    uint32_t limb = (uint32_t)bit / 64u;
-    if (value.x[limb] & mask) return 2;
-    if (value.z[limb] & mask) return 3;
-    return (value.bits[limb] & mask) != 0;
+    return probe_state(value, (uint64_t)bit);
 }
 
 static void put(sv4_t* value, int64_t bit, unsigned state) {
     if (bit < 0 || bit >= value->width) return;
-    uint64_t mask = UINT64_C(1) << ((uint32_t)bit % 64u);
-    uint32_t limb = (uint32_t)bit / 64u;
-    value->bits[limb] &= ~mask;
-    value->x[limb] &= ~mask;
-    value->z[limb] &= ~mask;
-    if (state == 1) value->bits[limb] |= mask;
-    if (state == 2) value->x[limb] |= mask;
-    if (state == 3) value->z[limb] |= mask;
+    probe_put_state(value, (uint64_t)bit, state);
 }
 
 static sv4_t pattern(uint32_t width, unsigned seed) {
@@ -40,16 +29,16 @@ static void equal(sv4_t actual, sv4_t expected) {
     CHECK(actual.width == expected.width && actual.is_signed == expected.is_signed);
     size_t limbs = (actual.width + 63u) / 64u;
     for (size_t limb = 0; limb < limbs; ++limb) {
-        CHECK(actual.bits[limb] == expected.bits[limb]);
-        CHECK(actual.x[limb] == expected.x[limb]);
-        CHECK(actual.z[limb] == expected.z[limb]);
-        CHECK(!(actual.x[limb] & actual.z[limb]));
-        CHECK(!(actual.bits[limb] & (actual.x[limb] | actual.z[limb])));
+        CHECK(PROBE_BITS(actual, limb) == PROBE_BITS(expected, limb));
+        CHECK(PROBE_X(actual, limb) == PROBE_X(expected, limb));
+        CHECK(PROBE_Z(actual, limb) == PROBE_Z(expected, limb));
+        CHECK(!(PROBE_X(actual, limb) & PROBE_Z(actual, limb)));
+        CHECK(!(PROBE_BITS(actual, limb) & (PROBE_X(actual, limb) | PROBE_Z(actual, limb))));
     }
     if (actual.width % 64u) {
         uint64_t mask = UINT64_MAX << (actual.width % 64u);
-        CHECK(!((actual.bits[limbs - 1] | actual.x[limbs - 1] |
-                 actual.z[limbs - 1]) & mask));
+        CHECK(!((PROBE_BITS(actual, limbs - 1) | PROBE_X(actual, limbs - 1) |
+                 PROBE_Z(actual, limbs - 1)) & mask));
     }
     ++cases;
 }
@@ -252,7 +241,7 @@ static void extremes(void) {
     }
     sv4_t bases[] = {sv4_from_i64(INT64_MIN, 64), sv4_from_i64(INT64_MAX, 64),
                      sv4_x(129, 1), sv4_fill(3, 129, 0), sv4_from_u64(1, 129, 0)};
-    bases[4].bits[1] = 1;
+    probe_set_bits(&bases[4], 1, 1);
     for (size_t i = 0; i < sizeof(bases) / sizeof(*bases); ++i) {
         for (int neg = 0; neg < 2; ++neg) {
             result(sv4_idx_part_select_value(source, bases[i], 65, neg), sv4_x(65, 0));

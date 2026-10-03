@@ -49,7 +49,7 @@ static void exercise_index(void) {
     CHECK(value_scope_count == 1);
     g.now = 1;
     commit_nbas(LLG_REGION_NBA);
-    CHECK(pending->references == 1 && target->bits[0] == 7);
+    CHECK(pending->references == 1 && PROBE_BITS(*target, 0) == 7);
     g.now = 2;
     commit_nbas(LLG_REGION_NBA);
     /* Do not read target/pending after their final owning NBA is released. */

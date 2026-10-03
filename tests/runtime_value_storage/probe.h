@@ -3,12 +3,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include "llg_value.h"
+#include "probe_value.h"
 size_t value_test_live(void);
 size_t value_test_bytes(void);
 size_t value_test_allocations(void);
 size_t value_test_peak_bytes(void);
 size_t value_test_peak_live(void);
 void value_test_reset_stats(void);
+void value_test_fail_allocation_after(size_t count);
 #define CHECK(condition) do { \
     if (!(condition)) { \
         fprintf(stderr, "ownership check failed at %s:%d: %s (live=%zu bytes=%zu)\n", \

@@ -428,7 +428,8 @@ static unsigned count_synchronously(unsigned n) {
     unsigned result = ~0u;
     sync_count_frame_t* frame =
         (sync_count_frame_t*)llg_co_sync_begin(&sync, &sync_count_desc, NULL);
-    CHECK(frame->co.state == 0);
+    /* The fresh arena frame is uninitialized; the driver's anchored call sets
+     * its resume state, so only the payload is written here. */
     frame->n = n;
     frame->result = &result;
     CHECK(llg_co_sync_run(&sync) == LLG_CO_DONE);

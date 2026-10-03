@@ -15,7 +15,7 @@ LLG_PROBE_SIMPLE_PROCESS(delayed_producer, 0) {
     retained_target = llg_value_scope_values(cell);
     sv4_replace(retained_target, sv4_zero(65, 0));
     llg_nba_after(retained_target, *value, 1);
-    value->bits[0] = 23;
+    probe_set_bits(value, 0, 23);
     llg_nba_after(retained_target, *value, 3);
     llg_value_scopes_end_since(base);
     /* Both lexical cells and coroutine disappear before the first write. */

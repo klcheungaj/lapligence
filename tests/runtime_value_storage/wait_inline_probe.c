@@ -175,12 +175,10 @@ static void state_edges_and_resize(void) {
     sig_write(&signal, states[3]); // Z -> 0 is a negedge
     CHECK(dequeue_region(LLG_REGION_ACTIVE) == proc);
     CHECK(llg_arm_level(proc, &signal, states[1]) == LLG_CO_ARM_SUSPEND);
-    states[1].x[0] = 1;
-    states[1].z[0] = 0;
+    probe_put_state(&states[1], 0, 2);
     sig_write(&signal, states[0]);
     CHECK(proc->wait.kind == W_LEVEL_INLINE);
-    states[1].x[0] = 0;
-    states[1].z[0] = 1;
+    probe_put_state(&states[1], 0, 3);
     sig_write(&signal, states[1]);
     CHECK(dequeue_region(LLG_REGION_ACTIVE) == proc);
     sig_write(&signal, states[3]);
@@ -190,7 +188,7 @@ static void state_edges_and_resize(void) {
     CHECK(proc->wait.kind == W_EVENTS && proc->wait.n_subscriptions == 1);
     CHECK(proc->wait.subscriptions->prev_link != NULL);
     CHECK(proc->wait.payload.expression.last[0].width == 65);
-    wide.bits[0] = 1;
+    probe_set_bits(&wide, 0, 1);
     sig_write(&signal, wide);
     CHECK(dequeue_region(LLG_REGION_ACTIVE) == proc);
     CHECK(g.n_wait_sources == 0);
