@@ -1,0 +1,3 @@
+array=a5:-2 42:3
+nested=5a:a5 11:22
+changed=ac nested=ac

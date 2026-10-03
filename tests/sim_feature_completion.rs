@@ -8,6 +8,9 @@ mod sim_harness;
 #[path = "sim_feature_completion/fnd_003.rs"]
 mod fnd_003;
 
+#[path = "sim_feature_completion/rtl_001.rs"]
+mod rtl_001;
+
 #[test]
 fn component_fixture_integrity() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
