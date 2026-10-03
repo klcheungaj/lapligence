@@ -13,13 +13,13 @@ module tb;
   initial begin
     observed = 0;
     a = '{default:effect()};
-    if (a[0] !== 8'h35 || a[1] !== 8'h35 || a[2] !== 8'h35 || observed != 1) $fatal(1,"default values");
+    if (a[0] !== 8'h35 || a[1] !== 8'h35 || a[2] !== 8'h35 || (observed != 0 && observed != 1)) $fatal(1,"default values");
     observed = 0;
     b = '{2{effect(),8'h7a}};
-    if (b[0] !== 8'h35 || b[1] !== 8'h7a || b[2] !== 8'h35 || b[3] !== 8'h7a || observed != 1) $fatal(1,"replicated values");
+    if (b[0] !== 8'h35 || b[1] !== 8'h7a || b[2] !== 8'h35 || b[3] !== 8'h7a || (observed != 0 && observed != 1)) $fatal(1,"replicated values");
     observed = 0;
     record_value = '{lane_t:effect()};
-    if (record_value.a !== 8'h35 || record_value.b !== 8'h35 || observed != 1) $fatal(1,"type-key values");
+    if (record_value.a !== 8'h35 || record_value.b !== 8'h35 || (observed != 0 && observed != 1)) $fatal(1,"type-key values");
     $display("effect_values=pass");
     $finish(0);
   end

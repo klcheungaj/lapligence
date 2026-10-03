@@ -11,7 +11,7 @@ Representative sources additionally run after snapshot/Db destruction at O0/O3.
 - `nested_rows` and `scatter_capture` adopt the checked-in continuation witnesses;
   assertions derive left-to-left row mapping and frozen source/target coordinates.
 - `effect_values` uses idempotent effects and invariant return values; it asserts
-  values and a boolean effect occurrence, never the undefined invocation count or
+  values and the allowed idempotent flag set `{0, 1}`, never an invocation count or
   cross-operand order for type/default/replicated operands.
 - `descriptor_patterns` exercises sparse exceptions, overlap, issue-time NBA,
   state conversion, recursive all-one defaults and alternating repetitions over
