@@ -340,17 +340,15 @@ mod platform {
     }
 
     pub(super) fn path_from_handle(file: &File) -> io::Result<PathBuf> {
-        let descriptor = file.as_raw_fd();
         #[cfg(target_os = "linux")]
-        let link = format!("/proc/self/fd/{descriptor}");
+        let path = std::fs::read_link(format!("/proc/self/fd/{}", file.as_raw_fd()))?;
         #[cfg(target_os = "macos")]
-        let link = format!("/dev/fd/{descriptor}");
+        let path = descriptor_path(file)?;
         #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-        let link = return Err(io::Error::new(
+        let path: PathBuf = return Err(io::Error::new(
             io::ErrorKind::Unsupported,
             "secure handle paths are unavailable on this Unix target",
         ));
-        let path = std::fs::read_link(link)?;
         // Linux appends ` (deleted)` to the procfs link for an unlinked
         // inode.  A live file may have those exact bytes in its name, so the
         // link spelling alone cannot identify deletion.  An unlinked inode
@@ -362,6 +360,31 @@ mod platform {
             ));
         }
         Ok(path)
+    }
+
+    /// macOS `/dev/fd` entries are fdesc device nodes rather than symlinks,
+    /// so `readlink` fails with EINVAL. `F_GETPATH` asks the kernel for the
+    /// descriptor's current path instead, with symlinks resolved.
+    #[cfg(target_os = "macos")]
+    fn descriptor_path(file: &File) -> io::Result<PathBuf> {
+        use std::os::unix::ffi::OsStringExt;
+
+        // F_GETPATH requires a MAXPATHLEN (== PATH_MAX) byte buffer.
+        let mut buffer = vec![0_u8; libc::PATH_MAX as usize];
+        let result = unsafe {
+            // SAFETY: `file` is a live descriptor and `buffer` is an owned,
+            // writable PATH_MAX-byte allocation that outlives the call;
+            // F_GETPATH writes at most that many bytes, NUL included.
+            libc::fcntl(file.as_raw_fd(), libc::F_GETPATH, buffer.as_mut_ptr())
+        };
+        if result < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let length = buffer.iter().position(|&byte| byte == 0).ok_or_else(|| {
+            io::Error::other("F_GETPATH returned an unterminated descriptor path")
+        })?;
+        buffer.truncate(length);
+        Ok(PathBuf::from(std::ffi::OsString::from_vec(buffer)))
     }
 
     pub(super) fn path_is_within(path: &Path, root: &Path) -> bool {
@@ -455,17 +478,22 @@ mod platform {
     }
 
     pub(super) fn read_dir(file: &File, _actual_path: &Path) -> io::Result<SecureReadDir> {
-        let descriptor = file.as_raw_fd();
         #[cfg(target_os = "linux")]
-        let handle_path = format!("/proc/self/fd/{descriptor}");
+        let read_dir = std::fs::read_dir(format!("/proc/self/fd/{}", file.as_raw_fd()))?;
+        // Opening `/dev/fd/N` on macOS duplicates N and shares its directory
+        // offset, unlike Linux procfs which opens a new description. List a
+        // fresh `openat(".")` descriptor so the admitted handle is untouched;
+        // the stream keeps its duplicate open after `fresh` is dropped.
         #[cfg(target_os = "macos")]
-        let handle_path = format!("/dev/fd/{descriptor}");
+        let read_dir = {
+            let fresh = open_child(file, OsStr::new("."))?;
+            std::fs::read_dir(format!("/dev/fd/{}", fresh.as_raw_fd()))?
+        };
         #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-        let handle_path = return Err(io::Error::new(
+        let read_dir: std::fs::ReadDir = return Err(io::Error::new(
             io::ErrorKind::Unsupported,
             "secure directory handles are unavailable on this Unix target",
         ));
-        let read_dir = std::fs::read_dir(handle_path)?;
         Ok(SecureReadDir {
             inner: SecureReadDirInner::Standard(read_dir),
         })
@@ -487,7 +515,9 @@ mod tests {
             std::process::id()
         ));
         std::fs::create_dir(&path).expect("create secure filesystem test directory");
-        path
+        // Handle paths are resolved (macOS reports /var/... as /private/var/...).
+        path.canonicalize()
+            .expect("canonicalize secure filesystem test directory")
     }
 
     #[test]
