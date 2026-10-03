@@ -73,45 +73,6 @@ llg --gen-only --top tb --edition 2009 --out-dir <dir> \
 grep -c '^static llg_net_t g_array_net_' <dir>/sim/*/model.c
 ```
 
-## Wide-value concatenation and part-selects copy one bit at a time
-
-**Status:** open; deferred.
-
-### Symptom
-
-Simulation time of designs that concatenate or part-select wide packed values
-grows with the number of bits copied, not with the number of 64-bit words. In
-the `wide-values-default` configuration of
-[`perf/scripts/corpus.sh`](../perf/scripts/corpus.sh) (128 tasks on
-4,096-bit values), `sv4_lsb_bit` and `sv4_lsb_bit_set` take about 79% of the
-simulation's CPU samples.
-
-### Cause
-
-[`sv4_concat`](../src/sim/rt/value/operations.c) and the packed selection-plan
-read, slice and write paths in
-[`value/selection_plan.c`](../src/sim/rt/value/selection_plan.c) copy each bit
-with `sv4_lsb_bit` and `sv4_lsb_bit_set`. That is two calls and a limb lookup
-per bit for value, X and Z planes, where a contiguous range could move up to
-64 bits per step.
-
-### Intended direction
-
-Copy contiguous ranges with word-level shift-and-mask operations over the
-value, X and Z limbs. Keep a bit loop only for reversed slices. The
-four-state value suites and the `wide-values` corpus stdout hashes are the
-oracles; add a differential test across widths, offsets and limb boundaries.
-
-### Reproduce
-
-```sh
-perf/scripts/corpus.sh --sim-bin <llg> --size standard --mode default --runs 1 \
-    --scratch-dir <scratch> --output-dir <out>
-```
-
-Profile `wide-values-default` with the sampler described in
-[`perf/README.md`](../perf/README.md).
-
 ## High frontend memory use during Slang wrapper capture and import
 
 **Status:** open; memory reduction deferred.
@@ -225,43 +186,3 @@ work-count regression tests.
 
 Use the command in the frontend memory entry with `LLG_CORPUS_N` set to
 5,000, 10,000, 20,000 and 40,000, and compare wall times.
-
-## Debug builds do not poison dead frame overlays or frame payloads
-
-**Status:** open; optional follow-up.
-
-### Symptom
-
-`LLG_CO_DEBUG` builds detect corrupted frame liveness, re-entry of live
-frames, invalid dispatch states and debug/release link mismatches. They do
-not detect a read of storage whose lifetime has ended:
-
-- a block-scoped variable read after its block exits, from a frame overlay
-  that a sibling block now reuses;
-- uninitialized payload of an embedded or arena-allocated callee frame.
-
-Such a read returns stale data instead of aborting. Fresh process and fork
-root frames are filled with `0xA5`, which makes uninitialized root reads
-visible in output but is not a detector.
-
-### Cause
-
-The design's debug poisoning of overlay blocks at block exit, and of embedded
-and arena frame payloads at allocation, was not implemented. Emitter and
-runtime tests cover overlay placement and frame lifetime directly, so no known
-defect depends on it.
-
-### Intended direction
-
-Under `LLG_CO_DEBUG` only, fill an overlay block's bytes at block exit and
-embedded/arena payloads at acquisition with a poison pattern. Add native
-probes that read poisoned storage, and run the `LLG_CFLAGS=-DLLG_CO_DEBUG`
-suite and sanitizers. Release output must not change.
-
-### Reproduce
-
-No failing design is known. Root frames are poisoned under `LLG_CO_DEBUG` in
-[`process_waits.c`](../src/sim/rt/scheduler/process_waits.c) and
-[`forks.c`](../src/sim/rt/scheduler/forks.c); block exits and embedded/arena
-frame acquisition in [`llg_co.h`](../src/sim/rt/llg_co.h) have no
-equivalent.

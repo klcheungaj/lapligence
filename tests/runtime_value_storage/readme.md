@@ -72,6 +72,7 @@ capabilities; check the exact inventory rather than assuming a fixed count.
 | `native_ownership_probe.c` | Root string cleanup and independent copies; 15 input/callback modes repeated eight times, including scans/plusargs/containers and writer cancellation through stackless frames. |
 | `native_boundaries_probe.c` | Ref scope/relocation/removal; nine mailbox/stream modes repeated eight times with reentrant delivery, peek, cancellation and returning termination. |
 | `review_lifetimes_probe.c` | Native indexing, detached refs/tombstones/zero payloads and wide indices; stable real/shortreal mailbox targets and publication cancellation. Defensive API effects are not legal read-only HDL callback claims. |
+| `word_copy_probe.c` | Independent per-bit reference for concat/repeat, shifts, stream/unstream, part/indexed selections and selection-plan read/slice/set at 1/7/63/64/65/127/128/129/1023/4096 bits; unaligned offsets, every limb boundary, X/Z, reversed/clipped ranges, aliased writes, raw-mask normalization and zero owners. |
 | `packed_selection_probe.c`, `packed_selection_scheduler_probe.c` | Independent per-bit oracle for 7,056 two-step chains plus third refinement, aliasing/X/wide indices, limb endpoints, NBA masks and synchronous scanner targets; scheduler cases do not switch stacks. |
 | `packed_formal_probe.c` | 4,096 private-input mutations without caller changes, immediate ref publication, two-state member conversion and neighboring-field preservation; sanitizer-safe. |
 | `fixed_array_reduction_probe.c` | Five folds, first-element X/Z seeding, signed/widened maps, nested values/declared indices and 65/129-bit owners; 200,000 separate eight-bit cells without flattening and exact cleanup. |
@@ -84,9 +85,12 @@ value rejection modes, `packed_selection_nba`, `packed_selection_input`,
 `packed_formal_owner_contracts`, both fixed-fold/predicate modes and memory_image.
 Do not silently omit tests or count native cases as accepted HDL features.
 
-Fresh-root poisoning fills payload bytes with `0xA5`; it does not itself trap
-an arbitrary uninitialized payload read. Embedded/arena payloads and dead
-overlay blocks are not poisoned. Header liveness and dispatch checks catch the
+Debug poisoning fills fresh root and embedded/arena callee payloads and dead
+sibling overlays with `LLG_CO_POISON_BYTE` (`0xA5`); it does not itself trap an
+arbitrary uninitialized payload read. `coroutine_poison_probe.c` reads those
+bytes and checks that release macros preserve seeded storage and callee headers.
+Generated overlay exits drain owners before poisoning; flattened parent storage
+and retained heap owners remain live. Header liveness and dispatch checks catch the
 explicit corruptions above. The standalone anchor-loop bad-state handler prints
 the function/state; the scheduler's handler additionally prints an HDL backtrace.
 Chunk counters count system allocations and cache hits, not value/wait allocations

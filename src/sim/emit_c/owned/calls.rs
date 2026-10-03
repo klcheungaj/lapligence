@@ -39,6 +39,13 @@ impl Frame<'_, '_> {
                 format!("(*({frame_type}*)LLG_CO_ANCHOR_FRAME({storage}))")
             }
         };
+        if slot.mechanism != crate::sim::execution::CallMechanism::Arena {
+            self.line("#ifdef LLG_CO_DEBUG");
+            self.line(format!(
+                "LLG_CO_DEBUG_POISON_FRAME(&{child}, sizeof({child}));"
+            ));
+            self.line("#endif");
+        }
         let fields = super::super::model::owned_func_param_fields(function);
         if fields.len() != parameters.len() {
             return Err("coroutine call argument layout mismatch".to_owned());

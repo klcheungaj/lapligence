@@ -488,6 +488,18 @@ Rust checks, actual emitted-C tests, public HDL and the repository suite; missin
 prerequisites are blocked. Native generated-HDL execution does not implicitly enable
 sanitizers.
 
+For a focused debug-frame check, run the overlay render tests and the checked-in
+coroutine fixtures through both GCC/Clang debug and release syntax checks:
+
+```sh
+LLG_CFLAGS=-DLLG_CO_DEBUG scripts/run-tests.sh --test-work-dir /build --cargo-profile quick --lib --test generated_c_frame_lint -E 'test(debug_poison) | test(debug_frame_overlay_fixtures)' --test-threads 8
+```
+
+The native `coroutine_poison_release`/`coroutine_poison_debug` probes read fresh
+callee and dead overlay bytes, preserve headers/anchors, and check owner release
+before poisoning. Select them with `ctest -R '^coroutine_poison_'` in a configured
+native build; keep generated HDL fork/ref/recursive lifetime tests alongside them.
+
 `generated_scopes_probe.c`/`generated_coroutine_probe.c` are handwritten output-shape
 probes. Actual emitter tests render numeric `ExecutionModel` instances, compile C
 and exercise loops and repeated start/advance/close. Public HDL acceptance then

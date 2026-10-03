@@ -689,6 +689,80 @@ static void sv4_lsb_bit_set(sv4_t* v, int i, int val) {
     }
 }
 
+// Both intervals are in bounds and do not overlap. Decode the planes
+// like sv4_lsb_bit so even raw mask inputs retain X precedence and canonical bits.
+static void sv4_copy_bits(sv4_t* dst, uint32_t dst_bit, sv4_t src,
+                          uint32_t src_bit, uint32_t count) {
+    while (count) {
+        uint32_t dst_shift = dst_bit % 64u, src_shift = src_bit % 64u;
+        uint32_t take = 64u - dst_shift;
+        if (take > count) take = count;
+        uint32_t sl = src_bit / 64u, dl = dst_bit / 64u;
+        uint64_t bits = src.bits[sl] >> src_shift;
+        uint64_t x = src.x[sl] >> src_shift;
+        uint64_t z = src.z[sl] >> src_shift;
+        if (take > 64u - src_shift) {
+            bits |= src.bits[sl + 1u] << (64u - src_shift);
+            x |= src.x[sl + 1u] << (64u - src_shift);
+            z |= src.z[sl + 1u] << (64u - src_shift);
+        }
+        uint64_t mask = (UINT64_MAX >> (64u - take)) << dst_shift;
+        bits &= ~(x | z);
+        z &= ~x;
+        dst->bits[dl] = (dst->bits[dl] & ~mask) | ((bits << dst_shift) & mask);
+        dst->x[dl] = (dst->x[dl] & ~mask) | ((x << dst_shift) & mask);
+        dst->z[dl] = (dst->z[dl] & ~mask) | ((z << dst_shift) & mask);
+        dst_bit += take;
+        src_bit += take;
+        count -= take;
+    }
+}
+
+static void sv4_fill_bits(sv4_t* dst, uint32_t bit, uint32_t count, int state) {
+    while (count) {
+        uint32_t shift = bit % 64u, take = 64u - shift;
+        if (take > count) take = count;
+        uint64_t mask = (UINT64_MAX >> (64u - take)) << shift;
+        uint32_t limb = bit / 64u;
+        dst->bits[limb] = (dst->bits[limb] & ~mask) | (state == 1 ? mask : 0);
+        dst->x[limb] = (dst->x[limb] & ~mask) | (state == 2 ? mask : 0);
+        dst->z[limb] = (dst->z[limb] & ~mask) | (state == 3 ? mask : 0);
+        bit += take;
+        count -= take;
+    }
+}
+
+// Clip destination writes and fill missing source bits with X. Bound signed
+// offsets before addition, including INT64_MIN/MAX. Callers snapshot aliases.
+static void sv4_copy_window(sv4_t* dst, int64_t dst_bit, sv4_t src,
+                            int64_t src_bit, uint32_t count) {
+    if (!count || dst_bit >= (int64_t)dst->width || dst_bit <= -(int64_t)count)
+        return;
+    uint32_t skip = dst_bit < 0 ? (uint32_t)-dst_bit : 0;
+    uint32_t start = (uint32_t)(dst_bit + skip);
+    uint32_t length = count - skip;
+    if (length > dst->width - start) length = dst->width - start;
+    if (src_bit >= (int64_t)src.width || src_bit <= -(int64_t)count) {
+        sv4_fill_bits(dst, start, length, 2);
+        return;
+    }
+    src_bit += skip;
+    if (src_bit < 0) {
+        uint32_t missing = (uint32_t)-src_bit;
+        if (missing > length) missing = length;
+        sv4_fill_bits(dst, start, missing, 2);
+        start += missing;
+        length -= missing;
+        src_bit += missing;
+    }
+    if (!length) return;
+    uint32_t available = src_bit < (int64_t)src.width
+        ? src.width - (uint32_t)src_bit : 0;
+    uint32_t take = length < available ? length : available;
+    sv4_copy_bits(dst, start, src, (uint32_t)src_bit, take);
+    sv4_fill_bits(dst, start + take, length - take, 2);
+}
+
 // Shared resize core: pad/truncate `v` to `width` bits, tagging the result
 // `is_signed`.  Widening fills the new MSBs per `ext_signed`; a signed X/Z
 // sign bit fills with that same literal state (IEEE 1800-2009 §11.8.4).
@@ -710,8 +784,7 @@ static sv4_t sv4_resize_ext(sv4_t v, uint32_t width, int8_t is_signed, int8_t ex
     }
     if (width > v.width && ext_signed && v.width > 0) {
         int sign = sv4_lsb_bit(v, (int)v.width - 1);
-        for (int i = (int)v.width; i < (int)width; i++)
-            sv4_lsb_bit_set(&r, i, sign);
+        sv4_fill_bits(&r, v.width, width - v.width, sign);
     }
     if (nln > 0) {
         uint64_t m = sv4_limb_mask(width, nln - 1);
@@ -1312,15 +1385,12 @@ static sv4_t sv4_shift(sv4_t a, sv4_t b, int right, int arith) {
     r.is_signed = a.is_signed;
     int nsh = (int)sh;
     if (!right) {
-        for (int i = nsh; i < (int)w; i++)
-            sv4_lsb_bit_set(&r, i, sv4_lsb_bit(a, i - nsh));
+        sv4_copy_bits(&r, (uint32_t)nsh, a, 0, w - (uint32_t)nsh);
     } else {
-        for (int i = 0; i + nsh < (int)w; i++)
-            sv4_lsb_bit_set(&r, i, sv4_lsb_bit(a, i + nsh));
+        sv4_copy_bits(&r, 0, a, (uint32_t)nsh, w - (uint32_t)nsh);
         if (arith && a.is_signed && nsh > 0) {
             int msb = sv4_lsb_bit(a, (int)w - 1); // 2 = X fills X
-            for (int i = (int)w - nsh; i < (int)w; i++)
-                sv4_lsb_bit_set(&r, i, msb);
+            sv4_fill_bits(&r, w - (uint32_t)nsh, (uint32_t)nsh, msb);
         }
     }
     return r;
@@ -1544,10 +1614,8 @@ sv4_t sv4_concat(sv4_t hi, sv4_t lo) {
     sv4_t r = sv4_zero((uint32_t)total, 0);
     r.width = (uint32_t)total;
     r.is_signed = 0;
-    for (int i = 0; i < (int)lo.width; i++)
-        sv4_lsb_bit_set(&r, i, sv4_lsb_bit(lo, i));
-    for (int i = 0; i < (int)hi.width && (int)lo.width + i < (int)total; i++)
-        sv4_lsb_bit_set(&r, (int)lo.width + i, sv4_lsb_bit(hi, i));
+    sv4_copy_bits(&r, 0, lo, 0, lo.width);
+    sv4_copy_bits(&r, lo.width, hi, 0, hi.width);
     return r;
 }
 
@@ -1561,12 +1629,14 @@ sv4_t sv4_repeat(sv4_t pat, uint64_t n) {
     sv4_t r = sv4_zero(w_total, 0);
     r.width = w_total;
     r.is_signed = 0;
-    for (uint64_t rep = 0; rep < n; rep++) {
-        uint64_t dst64 = rep * (uint64_t)pat.width;
-        if (dst64 >= w_total64) break;
-        int dst = (int)dst64;
-        for (int i = 0; i < (int)pat.width && dst + i < (int)w_total; i++)
-            sv4_lsb_bit_set(&r, dst + i, sv4_lsb_bit(pat, i));
+    if (w_total) sv4_copy_bits(&r, 0, pat, 0, pat.width);
+    for (uint32_t copied = pat.width; copied < w_total;) {
+        uint32_t take = w_total - copied;
+        if (take > copied) take = copied;
+        // The populated prefix and the next block are disjoint, even when
+        // they share a limb. Doubling avoids a one-bit copy per repetition.
+        sv4_copy_bits(&r, copied, r, 0, take);
+        copied += take;
     }
     return r;
 }
@@ -1588,14 +1658,12 @@ sv4_t sv4_stream(sv4_t value, uint32_t slice, int right_to_left) {
         }
         return r;
     }
-    uint64_t width = value.width;
-    for (uint64_t src = 0; src < width; src++) {
-        uint64_t block = src / slice;
-        uint64_t offset = src % slice;
-        uint64_t consumed = (block + 1) * (uint64_t)slice;
-        if (consumed > width) consumed = width;
-        uint64_t dst = width - consumed + offset;
-        sv4_lsb_bit_set(&r, (int)dst, sv4_lsb_bit(value, (int)src));
+    for (uint32_t bit = 0; bit < value.width;) {
+        uint32_t take = value.width - bit;
+        if (take > slice) take = slice;
+        uint32_t other = value.width - bit - take;
+        sv4_copy_bits(&r, other, value, bit, take);
+        bit += take;
     }
     return r;
 }
@@ -1617,14 +1685,12 @@ sv4_t sv4_unstream(sv4_t value, uint32_t slice, int right_to_left) {
         }
         return r;
     }
-    uint64_t width = value.width;
-    for (uint64_t dst = 0; dst < width; dst++) {
-        uint64_t block = dst / slice;
-        uint64_t offset = dst % slice;
-        uint64_t consumed = (block + 1) * (uint64_t)slice;
-        if (consumed > width) consumed = width;
-        uint64_t src = width - consumed + offset;
-        sv4_lsb_bit_set(&r, (int)dst, sv4_lsb_bit(value, (int)src));
+    for (uint32_t bit = 0; bit < value.width;) {
+        uint32_t take = value.width - bit;
+        if (take > slice) take = slice;
+        uint32_t other = value.width - bit - take;
+        sv4_copy_bits(&r, bit, value, other, take);
+        bit += take;
     }
     return r;
 }
@@ -1653,8 +1719,11 @@ static uint32_t llg_part_select_width(int64_t left, int64_t right) {
 
 sv4_t sv4_part_select(sv4_t v, int64_t left, int64_t right) {
     uint32_t w = llg_part_select_width(left, right);
-    sv4_t r = sv4_zero(w, 0);
-    r.width = w;
+    sv4_t r = sv4_x(w, 0);
+    if (left >= right) {
+        sv4_copy_window(&r, 0, v, right, w);
+        return r;
+    }
     int64_t step = left > right ? -1 : 1;
     int out = 0;
     for (int64_t i = left; ; i += step) {
@@ -1668,11 +1737,16 @@ sv4_t sv4_part_select(sv4_t v, int64_t left, int64_t right) {
 }
 
 void sv4_part_select_set(sv4_t* tgt, int64_t left, int64_t right, sv4_t value) {
-    (void)llg_part_select_width(left, right);
+    uint32_t width = llg_part_select_width(left, right);
     sv4_t snapshot = SV4_EMPTY;
     if (tgt->bits && tgt->bits == value.bits) {
         snapshot = sv4_clone(&value);
         value = snapshot;
+    }
+    if (left >= right) {
+        sv4_copy_window(tgt, right, value, (int64_t)value.width - width, width);
+        sv4_destroy(&snapshot);
+        return;
     }
     int64_t step = left > right ? -1 : 1;
     int in = (int)value.width - 1; // value MSB maps to the first target index
@@ -1689,108 +1763,58 @@ void sv4_part_select_set(sv4_t* tgt, int64_t left, int64_t right, sv4_t value) {
     sv4_destroy(&snapshot);
 }
 
+// A negative indexed select with a negative base is entirely out of range.
+static int sv4_indexed_low(int64_t base, uint32_t width, int neg, int64_t* low) {
+    if (!width || (neg && base < 0)) return 0;
+    *low = neg ? base - ((int64_t)width - 1) : base;
+    return 1;
+}
+
 sv4_t sv4_idx_part_select(sv4_t v, uint64_t base, uint32_t width, int neg) {
     sv4_require_width(width, "indexed part-select");
-    sv4_t r = sv4_zero(width, 0);
-    r.width = width;
-    for (uint32_t output_bit = 0; output_bit < width; output_bit++) {
-        uint64_t source_bit;
-        int in_range;
-        if (!neg) {
-            source_bit = base + output_bit;
-            in_range = source_bit >= base && source_bit < v.width;
-        } else {
-            uint64_t distance = (uint64_t)width - 1 - output_bit;
-            in_range = base >= distance;
-            source_bit = in_range ? base - distance : 0;
-            in_range = in_range && source_bit < v.width;
-        }
-        sv4_lsb_bit_set(&r, (int)output_bit,
-                        in_range ? sv4_lsb_bit(v, (int)source_bit) : 2);
-    }
-    return r;
+    sv4_t result = sv4_x(width, 0);
+    int64_t low;
+    if (base <= INT64_MAX && sv4_indexed_low((int64_t)base, width, neg, &low))
+        sv4_copy_window(&result, 0, v, low, width);
+    return result;
 }
 
 void sv4_idx_part_select_set(sv4_t* tgt, uint64_t base, uint32_t width, int neg,
                              sv4_t value) {
     sv4_require_width(width, "indexed part-select");
+    int64_t low;
+    if (base > INT64_MAX || !sv4_indexed_low((int64_t)base, width, neg, &low)) return;
     sv4_t snapshot = SV4_EMPTY;
     if (tgt->bits && tgt->bits == value.bits) {
         snapshot = sv4_clone(&value);
         value = snapshot;
     }
-    for (uint32_t value_bit = 0; value_bit < width; value_bit++) {
-        uint64_t target_bit;
-        int in_range;
-        if (!neg) {
-            target_bit = base + value_bit;
-            in_range = target_bit >= base && target_bit < tgt->width;
-        } else {
-            uint64_t distance = (uint64_t)width - 1 - value_bit;
-            in_range = base >= distance;
-            target_bit = in_range ? base - distance : 0;
-            in_range = in_range && target_bit < tgt->width;
-        }
-        if (in_range)
-            sv4_lsb_bit_set(tgt, (int)target_bit,
-                            sv4_lsb_bit(value, (int)value_bit));
-    }
+    sv4_copy_window(tgt, low, value, 0, width);
     sv4_destroy(&snapshot);
-}
-
-static int sv4_indexed_source(int64_t base, uint32_t width,
-                              uint32_t output_bit, int neg,
-                              uint64_t* source_bit) {
-    if (!neg) {
-        if (base >= 0) {
-            *source_bit = (uint64_t)base + output_bit;
-            return 1;
-        }
-        uint64_t magnitude = 0 - (uint64_t)base;
-        if ((uint64_t)output_bit < magnitude) return 0;
-        *source_bit = (uint64_t)output_bit - magnitude;
-        return 1;
-    }
-    uint64_t distance = (uint64_t)width - 1 - output_bit;
-    if (base < 0 || (uint64_t)base < distance) return 0;
-    *source_bit = (uint64_t)base - distance;
-    return 1;
 }
 
 sv4_t sv4_idx_part_select_value(sv4_t v, sv4_t base, uint32_t width, int neg) {
     sv4_require_width(width, "indexed part-select");
-    int64_t signed_base;
-    if (!sv4_to_index_i64(base, &signed_base)) return sv4_x(width, 0);
+    int64_t signed_base, low;
     sv4_t result = sv4_x(width, 0);
-    for (uint32_t output_bit = 0; output_bit < width; output_bit++) {
-        uint64_t source_bit;
-        if (sv4_indexed_source(signed_base, width, output_bit, neg, &source_bit) &&
-            source_bit < v.width) {
-            sv4_lsb_bit_set(&result, (int)output_bit,
-                            sv4_lsb_bit(v, (int)source_bit));
-        }
-    }
+    if (sv4_to_index_i64(base, &signed_base) &&
+        sv4_indexed_low(signed_base, width, neg, &low))
+        sv4_copy_window(&result, 0, v, low, width);
     return result;
 }
 
 void sv4_idx_part_select_set_value(sv4_t* tgt, sv4_t base, uint32_t width,
                                    int neg, sv4_t value) {
     sv4_require_width(width, "indexed part-select");
-    int64_t signed_base;
-    if (!sv4_to_index_i64(base, &signed_base)) return;
+    int64_t signed_base, low;
+    if (!sv4_to_index_i64(base, &signed_base) ||
+        !sv4_indexed_low(signed_base, width, neg, &low)) return;
     sv4_t snapshot = SV4_EMPTY;
     if (tgt->bits && tgt->bits == value.bits) {
         snapshot = sv4_clone(&value);
         value = snapshot;
     }
-    for (uint32_t value_bit = 0; value_bit < width; value_bit++) {
-        uint64_t target_bit;
-        if (sv4_indexed_source(signed_base, width, value_bit, neg, &target_bit) &&
-            target_bit < tgt->width) {
-            sv4_lsb_bit_set(tgt, (int)target_bit,
-                            sv4_lsb_bit(value, (int)value_bit));
-        }
-    }
+    sv4_copy_window(tgt, low, value, 0, width);
     sv4_destroy(&snapshot);
 }
 
