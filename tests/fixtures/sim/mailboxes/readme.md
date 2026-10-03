@@ -5,5 +5,7 @@ These fixtures cover the simulator's bounded mailbox subset from IEEE
 copy semantics, and class-handle identity; `blocking.sv` checks producer and
 consumer waiter order plus non-consuming peeks; `cancellation.sv` checks
 `disable fork` cleanup; `typed_values.sv` checks four-state, real, shortreal,
-typedef, and enum elements; and `locals.sv` checks nested and automatic local
-mailbox storage. `tests/sim_mailboxes.rs` runs each fixture in both optimizer modes and compares exact output.
+typedef, and enum elements; `locals.sv` checks nested and automatic local
+mailbox storage; and `scoped_typedefs.sv` checks that same-named module,
+package and compilation-unit typedef elements keep their own widths, on both
+value backends. `tests/sim_mailboxes.rs` runs each fixture in both optimizer modes and compares exact output.

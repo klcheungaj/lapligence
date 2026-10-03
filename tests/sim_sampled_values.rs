@@ -7,10 +7,13 @@ mod sim_harness;
 
 #[test]
 fn sampled_value_domains_preserve_history_and_preponed_values() {
+    // At the gated-off edge (time 3) the latest strictly prior enabled edge is
+    // time 1, whose Preponed sample of `value` is 0000 (IEEE 1800-2009
+    // §16.9.3); only the first edge has no prior one and returns the initial X.
     sim_cli::run_case(
         "concurrent_assertions",
         "sampled_values",
-        "SAMPLED 0000 0 xxxx 0\nSAMPLED 0001 1 xxxx 0\nSAMPLED 0000 0 0000 0\n",
+        "SAMPLED 0000 0 xxxx 0\nSAMPLED 0001 1 0000 0\nSAMPLED 0000 0 0000 0\n",
         "",
         &[],
     );
@@ -86,5 +89,16 @@ fn unsupported_sequence_status_fails_closed() {
         "concurrent_assertions",
         "unsupported_sequence_status",
         "sequence `.triggered` status is not supported",
+    );
+}
+
+#[test]
+fn procedural_past_counts_only_time_steps_strictly_before_the_evaluation() {
+    sim_cli::run_case_backend_parity(
+        "concurrent_assertions",
+        "procedural_past",
+        "A 0\nB 3 2 1 0\nC 3 2\n",
+        &[],
+        &[],
     );
 }

@@ -356,6 +356,50 @@ fn packed_ranges_distinguish_same_named_locals_in_unnamed_blocks() {
 }
 
 #[test]
+fn mailbox_element_types_resolve_in_their_specializing_scope() {
+    let compiled = compile::compile_checked(&compile::CompileOpts {
+        sources: vec![compile::OwnedSource::compilation_unit(
+            "mailbox_elements.sv",
+            "package p; typedef logic [11:0] w_t; endpackage
+             module child; typedef bit [3:0] w_t; mailbox #(w_t) box = new(); endmodule
+             module tb;
+                typedef logic signed [129:0] w_t;
+                class mailbox_like #(type T = int); endclass
+                mailbox #(w_t) wide = new();
+                mailbox #(p::w_t) pkg = new();
+                mailbox plain = new();
+                mailbox_like #(w_t) user = new();
+                child c();
+             endmodule",
+        )],
+        top: Some("tb".to_owned()),
+        ..Default::default()
+    })
+    .expect("valid mailbox declarations");
+    let database = db::Db::from_slang(&compiled.snapshot).expect("owned mailbox types");
+    let element = |name: &str| {
+        let declaration = database
+            .node_ids()
+            .find(|id| {
+                database.node(*id).name == name
+                    && matches!(database.node(*id).kind, db::NodeKind::Var { .. })
+            })
+            .unwrap_or_else(|| panic!("declaration `{name}`"));
+        let descriptor = database
+            .type_descriptor(declaration)
+            .unwrap_or_else(|| panic!("descriptor of `{name}`"));
+        database
+            .mailbox_element(descriptor.id)
+            .map(|element| (element.info.width, element.info.signed, element.two_state))
+    };
+    assert_eq!(element("wide"), Some((Some(130), true, false)));
+    assert_eq!(element("pkg"), Some((Some(12), false, false)));
+    assert_eq!(element("box"), Some((Some(4), false, true)));
+    assert_eq!(element("plain"), None);
+    assert_eq!(element("user"), None);
+}
+
+#[test]
 fn instance_containers_normalize_gate_arrays_and_reject_cycles() {
     let compiled = compile::compile_checked(&compile::CompileOpts {
         sources: vec![compile::OwnedSource::compilation_unit(

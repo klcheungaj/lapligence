@@ -17,6 +17,7 @@ mod initialization;
 mod methods;
 mod patterns;
 mod queries;
+mod selects;
 mod streaming;
 
 #[derive(Clone, Copy, PartialEq, Eq)]

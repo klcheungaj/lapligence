@@ -299,7 +299,9 @@ Macros, includes and their edition-specific behavior are counted in §11.
   Dynamic/associative/queue event storage is unsupported. SV §6.17 **[SV-2005]**.
 - 🟨 **Dynamic arrays, associative arrays and queues** — Allocation, resize,
   delete, copy, bounded patterns, generic/nested leaves, associative defaults and
-  traversal, queue slices/overflow, and collected value-port copies are present.
+  traversal, queue slices/overflow, collected value-port copies and bit/part
+  selects of packed elements (written as one element read/modify/write) are
+  present.
   Contents/shape changes notify readers. General subroutine storage, non-packed
   endpoint/pop expressions, string-key index-result queues, nested scalar queries
   and broader recursive/object forms remain restricted. Methods are in §7.
@@ -1210,7 +1212,8 @@ rules; graph/lowering support alone is not executable acceptance.
 
 🟨 **Sampled functions** — `$sampled/$rose/$fell/$stable/$changed/$past` and
 2009 global-clock history/status forms support packed explicit/default edge
-domains, gated/initial history, Preponed reads and LSB/X/Z edge rules. Future global
+domains, gated/initial history, Preponed reads and LSB/X/Z edge rules; `$past`
+counts only clock time steps strictly before its evaluation. Future global
 forms, complex clocks and real-valued sampling remain rejected. Future global
 functions are legal in SV2009 property/sequence contexts under §16.9.4, with
 global clocking, nonnesting and match-item restrictions and delayed assertion

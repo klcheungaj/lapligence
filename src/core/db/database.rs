@@ -216,6 +216,9 @@ pub struct Db {
     /// Complete recursive type descriptors keyed by the declared object.
     type_descriptors: HashMap<NodeId, TypeDescriptor>,
     packed_pattern_elements: HashMap<NodeId, TypeDescriptor>,
+    /// Resolved `T` of each `std::mailbox #(T)` specialization, keyed by the
+    /// class type identity.
+    mailbox_elements: HashMap<TypeId, TypeDescriptor>,
     /// Ordered enum members keyed by Slang's canonical type identity.
     enum_types: HashMap<TypeId, EnumTypeMetadata>,
     /// Ordered ranges of multidimensional packed declarations.
@@ -291,6 +294,7 @@ impl Db {
             aggregate_layouts: HashMap::new(),
             type_descriptors: HashMap::new(),
             packed_pattern_elements: HashMap::new(),
+            mailbox_elements: HashMap::new(),
             enum_types: HashMap::new(),
             packed_dimensions: HashMap::new(),
             two_state_types: HashSet::new(),
@@ -353,6 +357,7 @@ impl Db {
             aggregate_layouts: HashMap::new(),
             type_descriptors: HashMap::new(),
             packed_pattern_elements: HashMap::new(),
+            mailbox_elements: HashMap::new(),
             enum_types: HashMap::new(),
             packed_dimensions: HashMap::new(),
             two_state_types: HashSet::new(),
@@ -704,6 +709,12 @@ impl Db {
     /// Immediate packed-array element type for an assignment pattern.
     pub fn packed_pattern_element(&self, id: NodeId) -> Option<&TypeDescriptor> {
         self.packed_pattern_elements.get(&id)
+    }
+
+    /// Element type of a `std::mailbox #(T)` specialization, resolved in the
+    /// specializing scope. `None` for every other type.
+    pub fn mailbox_element(&self, id: TypeId) -> Option<&TypeDescriptor> {
+        self.mailbox_elements.get(&id)
     }
 
     /// Return the owned declaration-order member table for an enum type.

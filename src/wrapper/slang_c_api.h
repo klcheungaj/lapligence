@@ -267,6 +267,8 @@ typedef struct {
   uint32_t flags;
   uint64_t bit_width;
   LlgSlangString display_name;
+  /* Array/enum element or base type; for a `std::mailbox #(T)`
+     specialization, the resolved `T`. Otherwise LLG_SLANG_INVALID_ID. */
   uint64_t element_type_id;
   uint64_t index_type_id;
   uint64_t range_start;

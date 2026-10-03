@@ -229,6 +229,9 @@ impl Db {
         let mut aggregate_layouts = HashMap::new();
         let mut type_descriptors = HashMap::new();
         let mut packed_pattern_elements = HashMap::new();
+        let mailbox_elements = type_projector
+            .mailbox_elements()
+            .map_err(DbError::InvalidSnapshot)?;
         let mut enum_types = HashMap::new();
         let mut packed_dimensions = HashMap::new();
         let mut clocking_blocks = HashMap::new();
@@ -1005,6 +1008,7 @@ impl Db {
             aggregate_layouts,
             type_descriptors,
             packed_pattern_elements,
+            mailbox_elements,
             enum_types,
             packed_dimensions,
             two_state_types,
