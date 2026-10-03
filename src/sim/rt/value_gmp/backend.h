@@ -57,6 +57,9 @@ g4_t llg_gmp_sv4_from_limbs_wide(const uint64_t* bits, const uint64_t* x, const 
 g4_t llg_gmp_sv4_convert_wide(g4_t value, uint32_t width, int8_t sign, int extend);
 g4_t llg_gmp_sv4_two_state_wide(g4_t value);
 g4_t llg_gmp_sv4_binary_wide(g4_t a, g4_t b, unsigned op);
+/* Private wide kernel: canonical known planes, equal width >64, op != 2. */
+g4_t llg_gmp_sv4_binary_known_equal(const uint64_t* a, const uint64_t* b, uint32_t width,
+                                    int8_t sign, unsigned op);
 g4_t llg_gmp_sv4_unary_wide(g4_t value, int bitwise);
 g4_t llg_gmp_sv4_compare_wide(g4_t a, g4_t b, unsigned op);
 g4_t llg_gmp_sv4_mux_wide(g4_t a, g4_t b);
@@ -203,8 +206,13 @@ static inline int llg_gmp_sv4_to_bool(g4_t v) { return g4_truth(v) == 1; }
 static inline g4_t g4_binary(g4_t a, g4_t b, unsigned op) {
     uint32_t w = g4_maxw(a, b);
     int8_t s = a.is_signed && b.is_signed;
-    if (w > 64)
+    if (w > 64) {
+        if (op <= 2 && (llg_gmp_sv4_is_unknown(a) || llg_gmp_sv4_is_unknown(b)))
+            return llg_gmp_sv4_x(w, s);
+        if (op != 2 && a.width == b.width && !a.data.wide.b && !b.data.wide.b)
+            return llg_gmp_sv4_binary_known_equal(a.data.wide.a, b.data.wide.a, w, s, op);
         return llg_gmp_sv4_binary_wide(a, b, op);
+    }
     uint64_t aa = g4_extend(a.data.small.a, a.width, w, s),
              ab = g4_extend(a.data.small.b, a.width, w, s);
     uint64_t ba = g4_extend(b.data.small.a, b.width, w, s),

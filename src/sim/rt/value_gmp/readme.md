@@ -33,6 +33,17 @@ kernels against live legacy and independent integer/state oracles. Generated
 selection, packaging, frame layouts, caches and containing-owner integration
 remain later work. Missing operations have no legacy conversion fallback.
 
+Known equal-width wide add/sub and bitwise operations write an uninitialized
+result allocation directly from the two planes. The inline facade passes private
+plane pointers to this kernel, avoiding descriptor copies and the normalization
+path. All words are written and padding masked before publication. Equality uses
+a direct memcmp for equal-width known inputs; clone allocates without zeroing
+before memcpy. Wide constant-state fills also write and mask their allocation
+directly; nonempty X/Z fills need no zero-B scan. The inline arithmetic facade
+returns these all-X results before copying descriptors to the generic kernel.
+Copy reuse already uses a
+direct memcpy.
+
 Remaining public `sv4_*` operations at this revision:
 
 `sv4_array_conditional_merge`, `sv4_ashl`, `sv4_ashr`, `sv4_bit_select`, `sv4_bit_select_set`, `sv4_bitstoreal`, `sv4_bitstoshortreal`, `sv4_casex_eq`, `sv4_casez_eq`, `sv4_checked_width`, `sv4_concat`, `sv4_countones`, `sv4_delay_ticks`, `sv4_enum_navigate`, `sv4_fits_i64`, `sv4_format`, `sv4_from_real`, `sv4_idx_part_select`, `sv4_idx_part_select_set`, `sv4_idx_part_select_set_value`, `sv4_idx_part_select_value`, `sv4_inside_range`, `sv4_logequiv`, `sv4_logimpl`, `sv4_onehot`, `sv4_part_select`, `sv4_part_select_set`, `sv4_real_delay_ticks`, `sv4_realtobits`, `sv4_reduce_and`, `sv4_reduce_nand`, `sv4_reduce_nor`, `sv4_reduce_or`, `sv4_reduce_xnor`, `sv4_reduce_xor`, `sv4_repeat`, `sv4_repeat_count`, `sv4_resolve`, `sv4_resolve_strengths`, `sv4_resolve_strengths_range`, `sv4_rtoi`, `sv4_select_plan_bit`, `sv4_select_plan_indexed`, `sv4_select_plan_init`, `sv4_select_plan_part`, `sv4_select_plan_read`, `sv4_select_plan_set`, `sv4_select_plan_slice`, `sv4_select_plan_step`, `sv4_shl`, `sv4_shortrealtobits`, `sv4_shr`, `sv4_stream`, `sv4_to_dec_string`, `sv4_to_i64`, `sv4_to_index`, `sv4_to_index_i64`, `sv4_to_real`, `sv4_udp_eval`, `sv4_unstream`, `sv4_wild_eq`, `sv4_wild_neq`.
