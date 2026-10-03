@@ -16,7 +16,9 @@ retain independent local snapshots at a common endpoint, while
 `h24_formal_default.sv` covers a typed local input formal with a declaration
 default. Existing fixtures also cover
 explicit/default sampled clocks, initial/gated history, global-clock
-status/history, and LSB/X/Z edge rules. H25 adds legal clock-flow across
+status/history, and LSB/X/Z edge rules. `procedural_past.sv` checks that
+`$past` counts only clock time steps strictly before the evaluating one, both
+between edges and in an edge's own time step. H25 adds legal clock-flow across
 `##0`/`##1` multiclock sequence segments, nearest default-clock inheritance,
 conditional properties, and accept/reject controls with synchronous forms.
 

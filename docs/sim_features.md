@@ -1200,7 +1200,8 @@ rules; graph/lowering support alone is not executable acceptance.
 
 🟨 **Sampled functions** — `$sampled/$rose/$fell/$stable/$changed/$past` and
 2009 global-clock history/status forms support packed explicit/default edge
-domains, gated/initial history, Preponed reads and LSB/X/Z edge rules. Future global
+domains, gated/initial history, Preponed reads and LSB/X/Z edge rules; `$past`
+counts only clock time steps strictly before its evaluation. Future global
 forms, complex clocks and real-valued sampling remain rejected. Future global
 functions are legal in SV2009 property/sequence contexts under §16.9.4, with
 global clocking, nonnesting and match-item restrictions and delayed assertion
