@@ -18,7 +18,7 @@ convert into legacy descriptors as a fallback.
 | Formatting, decimal, low i64, exact i64/index checks | Header, `format_index.c` and decimal kernel seam |
 | `sv4_checked_width` | Header; rejects unknown/negative/over-capacity input, preserves zero sentinel |
 | `llg_sv4_word_t`, `llg_sv4_vpi_word_t`, V01 `llg_sv4_*` bridge functions and `LLG_SV4_BITS/X/Z` | G1 header and storage unit; copied logical words, no native/GMP views |
-| V06 masked/range access, mask maintenance, in-place known arithmetic/two-state/digit operations, VPI32 and text export | Legacy helpers in `llg_value.h`; compact counterparts and generated consumer integration remain V07 work. |
+| V06 masked/range access, mask maintenance, in-place known arithmetic/two-state/digit operations, VPI32 and text export | `consumer_bridge.c`, `consumer_inline.h` and header aliases; native A/B loops, selected X/Z promotion and canonical B removal. All V06 consumer additions implemented; generated integration remains V07 work. |
 | All seven `LLG_RESOLVE_*` and eight `LLG_STRENGTH_*` constants | Prefixed enum constants and public aliases, identical values |
 | `llg_real_to_bool` | Inline scalar helper; nonzero including NaN is true, signed zeros false |
 | `sv4_select_plan_t` | Owner-free five-field equivalent in `reference_types.h`, guarded by `LLG_GMP_SV4_SELECT_PLAN_DEFINED`; shared by S4 and S9 |
@@ -29,8 +29,12 @@ convert into legacy descriptors as a fallback.
 The reference descriptors contain borrowed cell/callback/plan addresses; copying
 a descriptor does not transfer or extend any lifetime. Their containing runtime
 owns retention, publication and teardown. S4 and S9 use the single guarded plan
-type in `reference_types.h`. V07 must implement and test the V06 bridge additions
-and re-audit APIs added by intervening feature merges, including net arrays.
+type in `reference_types.h`. V07 must select/embed the backend and re-audit APIs
+added by intervening feature merges, including net arrays. The V06 closure includes
+`llg_sv4_plane_slice`, masked NBA merge, clipped compare/copy, range compare/copy/
+fill, mask removal/top, known modular arithmetic, append-digit/two-state mutation,
+foreign VPI32 import/export, copied A/B snapshot comparison and waveform text.
+Inline waits already use the V01 copied A/B export; they retain no payload view.
 
 `compact_facade_adapters.c` builds the same client against live legacy, portable
 compact and GMP compact. It executes every constructor macro, width boundary,
@@ -47,3 +51,13 @@ Independent Python state/integer vectors and live-legacy differential checks cov
 wide and maximum widths, unknown/high shift counts, canonical B removal and
 independent owners in both kernel configurations. `compact_v05a_checks` builds
 these probes alongside the G1 core checks.
+
+The V06 consumer probes exhaust masks/payload pairs through three bits, four-state
+range fills and digit appends through four bits, and known arithmetic through
+eight bits. Per-state and binary arithmetic oracles accompany live-legacy
+comparisons over every G1 width and the exclusive limit minus one. Unaligned
+foreign records, odd import counts, top padding, zero extension, exact aliases
+and unchanged sign/shape are covered. ELF counters check no scratch allocations,
+known writes from unknown sources without promotion, and one realloc for each
+required B promotion/removal. `compact_checks` builds all S1–S9 and consumer
+executables, including the S4/S5 targets.

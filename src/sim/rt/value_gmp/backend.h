@@ -49,6 +49,29 @@ typedef struct {
 
 typedef llg_gmp_sv4_t g4_t;
 
+/* V05d: V06 consumer primitives. Borrowed inputs, fixed shape/sign; no
+ * scratch owners. Only actual X/Z writes can promote B; mutations compact it.
+ * Range copy/same require a fitting interval and independent owners or self at
+ * offset zero. Arithmetic requires known inputs; digit count is in 1..4.
+ * Foreign records have stride >=8 and hold count records without size overflow. */
+void llg_gmp_sv4_masked_merge(g4_t* target, g4_t source, g4_t mask);
+void llg_gmp_sv4_masked_copy(g4_t* target, g4_t source, g4_t mask);
+int llg_gmp_sv4_masked_same(g4_t a, g4_t b, const g4_t* mask);
+int llg_gmp_sv4_range_same(g4_t target, uint32_t offset, g4_t source);
+void llg_gmp_sv4_range_copy(g4_t* target, uint32_t offset, g4_t source);
+void llg_gmp_sv4_range_fill(g4_t* target, uint32_t low, uint32_t count, unsigned state);
+void llg_gmp_sv4_mask_remove(g4_t* target, g4_t removed);
+void llg_gmp_sv4_mask_top_wide(g4_t* value);
+void llg_gmp_sv4_mul_add_known_wide(g4_t* value, uint32_t factor, uint32_t addend);
+void llg_gmp_sv4_negate_known_wide(g4_t* value);
+void llg_gmp_sv4_two_state_inplace_wide(g4_t* value);
+void llg_gmp_sv4_append_digit_wide(g4_t* value, unsigned count, unsigned state, unsigned digit);
+void llg_gmp_sv4_export_vpi32(g4_t value, void* output, size_t count, size_t stride);
+void llg_gmp_sv4_import_vpi32(g4_t* value, const void* input, size_t count, size_t stride);
+int llg_gmp_sv4_same_vpi_words(g4_t value, const llg_gmp_sv4_vpi_word_t* words, size_t count);
+void llg_gmp_sv4_export_text(g4_t value, uint32_t width, char* output);
+/* End V05d consumer declarations. */
+
 /* V05 S4/S5: selections, borrowed reference graphs and assembly. */
 #include "reference_types.h"
 
@@ -429,6 +452,16 @@ static inline uint64_t llg_gmp_sv4_word(g4_t v, size_t word, unsigned plane) {
     llg_gmp_sv4_vpi_word_t r = llg_gmp_sv4_vpi_word(v, word);
     return plane == 0 ? r.aval & ~r.bval : plane == 1 ? r.aval & r.bval : ~r.aval & r.bval;
 }
+/* Internal zero-padded logical-plane slice, count in 1..64. */
+static inline uint64_t llg_gmp_sv4_plane_slice(g4_t value, uint32_t low,
+                                             unsigned count, unsigned plane) {
+    size_t word = low / 64u;
+    unsigned shift = low % 64u;
+    uint64_t result = llg_gmp_sv4_word(value, word, plane) >> shift;
+    if (shift && count > 64u - shift)
+        result |= llg_gmp_sv4_word(value, word + 1u, plane) << (64u - shift);
+    return result & g4_mask(count);
+}
 static inline unsigned llg_gmp_sv4_state(g4_t v, uint64_t bit) {
     if (bit >= v.width)
         return 2;
@@ -667,6 +700,7 @@ static inline void llg_gmp_sv4_import_words(g4_t* v, size_t first, const llg_gmp
 }
 
 #include "selection_inline.h"
+#include "consumer_inline.h"
 
 /* V05/S6: net metadata remains outside packed storage. Inputs borrow;
  * returned values own. UDP rows and scalar inputs are validated by lowering. */
@@ -840,6 +874,25 @@ static inline uint32_t llg_gmp_sv4_checked_width(g4_t value) {
 
 /* Standalone facade. V07 owns selection through llg_value.h. */
 #ifdef LLG_SV4_GMP_PUBLIC_NAMES
+/* V05d consumer aliases. */
+#define llg_sv4_masked_merge llg_gmp_sv4_masked_merge
+#define llg_sv4_masked_copy llg_gmp_sv4_masked_copy
+#define llg_sv4_masked_same llg_gmp_sv4_masked_same
+#define llg_sv4_range_same llg_gmp_sv4_range_same
+#define llg_sv4_range_copy llg_gmp_sv4_range_copy
+#define llg_sv4_range_fill llg_gmp_sv4_range_fill
+#define llg_sv4_mask_remove llg_gmp_sv4_mask_remove
+#define llg_sv4_mask_top llg_gmp_sv4_mask_top
+#define llg_sv4_mul_add_known llg_gmp_sv4_mul_add_known
+#define llg_sv4_negate_known llg_gmp_sv4_negate_known
+#define llg_sv4_two_state_inplace llg_gmp_sv4_two_state_inplace
+#define llg_sv4_append_digit llg_gmp_sv4_append_digit
+#define llg_sv4_export_vpi32 llg_gmp_sv4_export_vpi32
+#define llg_sv4_import_vpi32 llg_gmp_sv4_import_vpi32
+#define llg_sv4_same_vpi_words llg_gmp_sv4_same_vpi_words
+#define llg_sv4_export_text llg_gmp_sv4_export_text
+#define llg_sv4_plane_slice llg_gmp_sv4_plane_slice
+
 /* V05/S2 and S3 public names. */
 #define sv4_ashl llg_gmp_sv4_ashl
 #define sv4_ashr llg_gmp_sv4_ashr

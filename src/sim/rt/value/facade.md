@@ -230,13 +230,16 @@ frame metadata must be selected and asserted by V07. V06 migrates representation
 consumers; V05 implements operation families; V08 audits retained owner graphs.
 Keep new feature work on legacy through these APIs while those tasks proceed.
 
-### Consumer primitives added by V06 (GMP implementation pending, V05)
+### Consumer primitives added by V06
 
 These additive legacy `static inline` operations replace consumer plane loops.
-They never allocate, resize, change sign, expose a payload view or publish a
-scheduler notification. The option-A backend can implement them on A words with
-implicit-zero B, promoting B only for incoming X/Z. Ordinary shape/state queries
-remain inline; bulk consumers must not substitute an out-of-line call per bit.
+The legacy implementations never allocate; neither backend resizes, changes sign,
+exposes a payload view or publishes a scheduler notification. The compact
+implementations in `value_gmp/consumer_bridge.c` and `consumer_inline.h` operate
+on native A/B words with implicit-zero B. Known writes and reads need no
+allocation or scratch owner; actual incoming X/Z can promote B once, and removing
+the last X/Z shrinks it once to preserve the canonical exact-width layout.
+Ordinary shape/state queries remain inline; bulk consumers must not substitute an out-of-line call per bit.
 
 | API | Contract |
 | --- | --- |

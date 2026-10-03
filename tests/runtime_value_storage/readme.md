@@ -197,8 +197,8 @@ ctest --test-dir /build/llg-compact-gcc -R '^compact_' --output-on-failure --par
 /build/llg-compact-gcc/compact_gmp_benchmark
 ```
 
-The `compact_checks` target builds every enabled compact probe (S1–S3 and
-S6–S9); S4/S5 remain pending. Omit `LLG_GMP_ROOT` for a dependency-free
+The `compact_checks` target builds every enabled compact probe (S1–S9 and
+V06 consumer bridges). Omit `LLG_GMP_ROOT` for a dependency-free
 portable build. Use a separate build directory with
 `-DCMAKE_C_COMPILER=clang` for Clang, or add
 `-DLLG_STORAGE_TEST_SANITIZERS=ON` for GCC ASan/UBSan. Allocation counter targets
@@ -304,3 +304,23 @@ independent zero-count shifts and B removal when all unknown bits shift out.
 Family benchmarks emit seven-sample fresh-result medians/ranges for all 20 call
 variants, including both onehot modes, known and X/Z at 1..4096 bits. Their
 comparison operands are independent equal values so case scans execute fully.
+
+### Compact V06 consumer bridges (V05d)
+
+`compact_consumers.cmake` adds small exhaustive and wide differential probes, a
+public-name client and ELF allocation counters for each kernel configuration.
+Masks/payloads exhaust all four-state pairs through three bits; ranges and digit
+appends exhaust four-state payloads through four, and known modular arithmetic
+exhausts eight-bit payloads with small factors/addends. Independent per-position
+and binary arithmetic oracles check ordering, clipping and modulo-width carries.
+Wide cases include every G1 width through 1048575, all word alignments of the
+logical-plane slice loader, UINT32_MAX clipping, source/destination/mask aliases,
+unaligned VPI32 records with stride 8/9/13, odd/partial imports, padding and copied
+A/B snapshots, and exact `01xz` text with zero extension and output sentinels.
+Known/read paths use no scratch allocation; X/Z writes require at most one B
+promotion, and removing the last unknown requires one shrink. This describes
+compact allocation behavior; legacy always retains three allocated planes.
+
+Build `compact_checks` using the compact configure command above. For a focused
+run use `ctest --test-dir /build/llg-compact-gcc -R '^compact_.*consumers_'
+--output-on-failure --parallel 6`. Generated model selection remains V07 work.

@@ -6,6 +6,8 @@ div/mod/pow/clog2, shifts/reductions, case modes, directional wildcard equality,
 range membership, selections/captured plans, packed reference reads,
 concatenation, replication, streaming, array conditional merge,
 net/strength/UDP/enum, real/time and formatting/scalar/index adapters.
+V06 consumer primitives are implemented on native A/B words in
+`consumer_bridge.c`, with inline small scanner mutations in `consumer_inline.h`.
 Production models still use the legacy backend.
 
 `backend.h` supplies inline operations for widths through 64 and a static
@@ -97,3 +99,13 @@ direct memcpy.
 and source-compatible owner-free reference/selection types are implemented.
 The [facade checklist](facade_audit.md) records operations, helpers and the
 remaining V07 integration surface.
+
+Consumer mutations preserve width, sign and owner identity without scratch
+values. Known writes allocate nothing. Masked/range writes inspect only selected
+source bits before promoting B; a canonical mutation removes an all-zero B once.
+External VPI32 records use memcpy for alignment and foreign-type safety, clip
+imports, preserve untouched halves and ignore padding X/Z. Copied wait snapshots
+use native A/B export and comparison; waveform text loads each A/B word once.
+The complete standalone build target is `compact_checks`; its consumer probes
+include independent state/arithmetic oracles, differential checks and allocation
+counters.
