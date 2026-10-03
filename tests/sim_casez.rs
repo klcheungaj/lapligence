@@ -188,9 +188,10 @@ endmodule
     //   t=1  $display("zz=z") — the z written by the assign stays z (a
     //        single-driver continuous assignment writes Z into the net).
     //   t=2  $display("w=10zx") — %b prints 'z' for bit 1 and 'x' for bit 0.
-    //   t=3  $display("wh=x") — the nibble 10zx contains X, so %h prints 'x'.
+    //   t=3  $display("wh=X") — the nibble 10zx has some, not all, bits x, so
+    //        %h prints uppercase 'X' (IEEE 1800-2009 21.2.1.4).
     let stdout = run_sim("llg_zdisp", sv).expect("z display simulation should run");
-    assert_eq!(stdout, "zz=z\nw=10zx\nwh=x\n");
+    assert_eq!(stdout, "zz=z\nw=10zx\nwh=X\n");
 }
 
 /// `===`/`!==` compare X and Z literally: X==X true, Z==Z true, X==Z false.

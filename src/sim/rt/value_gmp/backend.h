@@ -753,6 +753,16 @@ g4_t llg_gmp_sv4_udp_eval(const uint8_t* rows, size_t row_count, size_t input_co
  * Formatting borrows values and writes only a bounded NUL-terminated prefix. */
 int llg_gmp_sv4_fits_i64_wide(g4_t value);
 uint64_t llg_gmp_sv4_to_index_wide(g4_t value);
+/* IEEE 1800-2009 21.2.1.4: a group or %d value with every bit unknown prints
+ * lowercase x/z; a partial one prints uppercase with X taking precedence over Z.
+ * `xm`/`zm` are the X and Z bit masks and `full` the group's valid-bit mask. */
+static inline char g4_unknown_char(uint64_t xm, uint64_t zm, uint64_t full) {
+    if (xm == full)
+        return 'x';
+    if (zm == full)
+        return 'z';
+    return xm ? 'X' : 'Z';
+}
 void llg_gmp_sv4_to_dec_string_wide(g4_t value, char* buf, size_t cap);
 void llg_gmp_sv4_format(char fmt, g4_t value, char* buf, size_t cap);
 static inline int64_t llg_gmp_sv4_to_i64(g4_t value) {
@@ -790,7 +800,10 @@ static inline void llg_gmp_sv4_to_dec_string(g4_t value, char* buf, size_t cap) 
     }
     size_t len = 0;
     if (value.data.small.b) {
-        buf[0] = cap > 1 ? 'x' : 0;
+        buf[0] = cap > 1 ? g4_unknown_char(value.data.small.a & value.data.small.b,
+                                           value.data.small.b & ~value.data.small.a,
+                                           g4_mask(value.width))
+                         : 0;
         if (cap > 1)
             buf[1] = 0;
         return;

@@ -30,14 +30,23 @@ uint64_t llg_gmp_sv4_to_index_wide(g4_t value) {
 void llg_gmp_sv4_to_dec_string_wide(g4_t value, char* buf, size_t cap) {
     if (!cap)
         return;
+    size_t n = llg_gmp_sv4_words(value);
+    const uint64_t* a = g4_a(&value);
     if (llg_gmp_sv4_is_unknown(value)) {
-        buf[0] = cap > 1 ? 'x' : 0;
+        const uint64_t* b = g4_b(&value);
+        int any_x = 0, all_x = 1, all_z = 1;
+        for (size_t i = 0; i < n; ++i) {
+            uint64_t full = i + 1u == n ? g4_topmask(value.width) : UINT64_MAX;
+            uint64_t xm = a[i] & b[i], zm = b[i] & ~a[i];
+            any_x |= xm != 0;
+            all_x &= xm == full;
+            all_z &= zm == full;
+        }
+        buf[0] = cap > 1 ? (all_x ? 'x' : all_z ? 'z' : any_x ? 'X' : 'Z') : 0;
         if (cap > 1)
             buf[1] = 0;
         return;
     }
-    size_t n = llg_gmp_sv4_words(value);
-    const uint64_t* a = g4_a(&value);
     int negative = value.is_signed && ((a[n - 1u] >> ((value.width - 1u) % 64u)) & 1u);
     uint64_t* magnitude = llg_gmp_sv4_alloc(n);
     uint64_t carry = 1;
@@ -118,9 +127,10 @@ void llg_gmp_sv4_format(char fmt, g4_t value, char* buf, size_t cap) {
     uint32_t digits = (value.width + size - 1u) / size;
     while (digits && len + 1u < cap) {
         uint32_t bit = --digits * size;
-        uint64_t mask = g4_mask(size), aa = group(a, value.width, bit) & mask;
+        uint32_t valid = value.width - bit < size ? value.width - bit : size;
+        uint64_t mask = g4_mask(valid), aa = group(a, value.width, bit) & mask;
         uint64_t bb = group(b, value.width, bit) & mask;
-        buf[len++] = aa & bb ? 'x' : bb ? 'z' : "0123456789abcdef"[aa];
+        buf[len++] = bb ? g4_unknown_char(aa & bb, bb & ~aa, mask) : "0123456789abcdef"[aa];
     }
     buf[len] = 0;
 }

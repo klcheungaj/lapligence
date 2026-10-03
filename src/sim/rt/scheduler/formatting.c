@@ -210,7 +210,7 @@ static size_t llg_format_time_integer(sv4_t value, uint64_t source_unit_fs,
     size_t scaled_len;
     int precision;
     if (decimal_len == 0) goto cleanup;
-    if (decimal[0] == 'x') {
+    if (strchr("xXzZ", decimal[0])) {
         llg_append_text(raw, cap, &len, decimal, decimal_len);
         llg_append_text(raw, cap, &len, g.time_format.suffix.data,
                         g.time_format.suffix.len);
@@ -471,7 +471,7 @@ static void llg_emit_field(char* out, size_t cap, size_t* len,
         }
     }
     if (spec.alternate && strchr("hbo", conversion) && n > 0 &&
-        !(n == 1 && (field[0] == 'x' || field[0] == 'z'))) {
+        !(n == 1 && strchr("xXzZ", field[0]))) {
         const char* prefix = conversion == 'h' ? "0x" : conversion == 'o' ? "0" : "0b";
         size_t prefix_len = strlen(prefix);
         if (n + prefix_len < field_cap) {

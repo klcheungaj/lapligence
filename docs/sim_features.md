@@ -907,7 +907,9 @@ Macros, includes and their edition-specific behavior are counted in §11.
   radix. V §§17.1, 17.2.1–17.2.2 **[1995/SV-2005]**.
 - 🟨 **Typed formatting** — `%d/%h/%x/%b/%o/%c/%u/%z/%v/%t`, `%f/%e/%g`, `%s`,
   `%m`, `%l`, `%%` and admitted width/precision grammar retain packed X/Z,
-  strengths, real and string values. Packed `%s` uses ASCII bytes without leading
+  strengths, real and string values. A `%h/%x/%o` digit or `%d` value with every
+  bit x/z prints `x`/`z`; a partially unknown one prints `X` (any x bit) or `Z`.
+  Packed `%s` uses ASCII bytes without leading
   zero bytes; real `%s` rejects. `%p` is limited to scalar packed/string values,
   not aggregates. V §17.1.1.2; SV §21.2 **[1995/SV-2005]**.
 - 🟨 **Postponed output** — Strobe observes settled values after Active/Inactive/
