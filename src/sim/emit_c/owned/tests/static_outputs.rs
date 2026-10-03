@@ -115,6 +115,7 @@ fn static_output_call_has_no_copy_in_but_static_inout_does() {
             func: None,
             sampled: false,
             activation_label: None,
+            constants: None,
         };
         let mut frame = Frame::new(&ctx);
         let value = frame

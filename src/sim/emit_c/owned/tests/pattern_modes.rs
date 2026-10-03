@@ -15,6 +15,7 @@ fn recursive_pattern_checks_use_the_selected_comparator() {
             func: None,
             sampled: false,
             activation_label: None,
+            constants: None,
         };
         let mut frame = Frame::new(&ctx);
         let expression = IrExpr::new(

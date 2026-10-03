@@ -16,8 +16,11 @@ so descriptor data grows with `N × W`. Identically connected bits now share wid
 electrical groups and word-parallel resolution; contribution writes use contiguous
 part selects and descriptor loops for remaining groups.
 
-For [`continuous_contexts.sv`](../tests/fixtures/sim/continuation_20_23/continuous_contexts.sv),
-Linux release measurements at base `c260a74c` and after partitioning are:
+Example: [`continuous_contexts.sv`](../tests/fixtures/sim/continuation_20_23/continuous_contexts.sv)
+is 88 lines, with four `continuous_case` instances at `W` = 1, 7, 65 and 129.
+An earlier snapshot before table-driven storage and operand-traffic elision
+emitted about 7.1 MB and 96,000 lines. A separate Linux release comparison at
+base `c260a74c` and after range partitioning measured:
 
 | Metric | Before | After |
 | --- | ---: | ---: |
@@ -28,7 +31,15 @@ Linux release measurements at base `c260a74c` and after partitioning are:
 | Clean model build seconds | 18.089 | 3.063 |
 | Build and execution seconds | 49.994 | 3.967 |
 
-Timings are indicative, with eight build threads and a shared runtime cache.
+Current emission combines table-driven storage lifecycle work, eligible operand
+borrows and matching-cast elision with range-partitioned groups and contribution
+loops. Per-row contribution casts remain explicit because width/sign metadata
+can differ between rows; declared-view binding metadata still grows with `N × W`.
+The `sim_review_tasks20_23` test
+`continuous_arrays_keep_values_dependencies_and_static_pattern_topology` compiles
+this fixture in both optimizer modes.
+
+Timings above are indicative, with eight build threads and a shared runtime cache.
 The 64-element, 128-bit toggling-driver
 [`runtime.sv`](../tests/fixtures/sim/net_partition/runtime.sv) witness emits 64
 array groups instead of 8,192; its model shrinks from 9,188,411 to 807,091 bytes.

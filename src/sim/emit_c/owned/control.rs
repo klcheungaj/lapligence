@@ -8,7 +8,11 @@ impl Frame<'_, '_> {
         left: &IrExpr,
         right: &IrExpr,
     ) -> Result<Value, String> {
-        let a = self.expression(left)?;
+        let a = if operands::stable_expression(right) {
+            self.operand(left)?
+        } else {
+            self.expression(left)?
+        };
         let a = self.boolean_value(a);
         let result = self.reserve(1, false);
         let decisive = match op {
@@ -22,7 +26,7 @@ impl Frame<'_, '_> {
             result.code
         ));
         self.line("} else {");
-        let b = self.expression(right)?;
+        let b = self.operand(right)?;
         let b = self.boolean_value(b);
         let operation = match op {
             IrBinOp::LogAnd => "sv4_logand",
@@ -185,7 +189,11 @@ impl Frame<'_, '_> {
         element_default: Option<&IrConst>,
         structure_members: Option<&[IrConditionalMember]>,
     ) -> Result<Value, String> {
-        let selector = self.expression(selector)?;
+        let selector = if operands::stable_expression(left) && operands::stable_expression(right) {
+            self.operand(selector)?
+        } else {
+            self.expression(selector)?
+        };
         let result = if expr.width == 0 {
             self.value("0.0".to_owned(), 0, true)
         } else {
@@ -213,7 +221,7 @@ impl Frame<'_, '_> {
                 // but an ambiguous conditional with a real result yields 0.
                 self.line(format!("{} = 0.0;", result.code));
             } else if let Some(default) = element_default {
-                let default = self.value(emit_const(default), default.width, default.signed);
+                let default = self.constant(default, true);
                 self.line(format!(
                     "sv4_replace(&{}, sv4_array_conditional_merge({}, {}, {}));",
                     result.code, a.code, b.code, default.code
@@ -266,11 +274,7 @@ impl Frame<'_, '_> {
                 member.width,
                 false,
             );
-            let default = self.value(
-                emit_const(&member.default),
-                member.default.width,
-                member.default.signed,
-            );
+            let default = self.constant(&member.default, true);
             let merged = self.value(
                 format!(
                     "sv4_array_conditional_merge({}, {}, {})",
@@ -293,10 +297,16 @@ impl Frame<'_, '_> {
     fn mux_arm(&mut self, arm: Value, width: u32, signed: bool) -> Value {
         // Conditional operands use their common expression type, not an
         // assignment cast's independent source-signed extension rule.
+        if width != 0 {
+            if arm.fill.is_some() {
+                return self.convert(arm, width, signed, false, false);
+            }
+            if arm.width == width && arm.signed == signed {
+                return arm;
+            }
+        }
         let code = if width == 0 {
             arm.real()
-        } else if let Some(fill) = arm.fill {
-            format!("sv4_fill({fill}, {width}, {})", u8::from(signed))
         } else if arm.width == 0 {
             format!("sv4_from_real({}, {width}, {})", arm.code, u8::from(signed))
         } else {

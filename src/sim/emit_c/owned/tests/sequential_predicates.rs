@@ -13,6 +13,7 @@ fn sequential_predicate_emission_guards_every_clause_and_releases_owners() {
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     let call = IrExpr::new(
@@ -59,6 +60,7 @@ fn sequential_predicate_emission_normalizes_real_truth_without_rounding() {
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     let expr = predicate(vec![
@@ -83,6 +85,7 @@ fn sequential_predicate_ambiguous_real_mux_evaluates_both_arms_and_yields_zero()
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     let real = |value| IrExpr::new(IrExprKind::Const(IrConst::real(value)), 0, false, None);

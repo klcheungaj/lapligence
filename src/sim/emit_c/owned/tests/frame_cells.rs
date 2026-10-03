@@ -7,6 +7,7 @@ fn policy(model: &IrModel, statements: &[IrStmt]) -> super::super::frame_cells::
             func: None,
             sampled: false,
             activation_label: None,
+            constants: None,
         },
         statements,
     )

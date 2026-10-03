@@ -670,6 +670,18 @@ become accidental Cargo targets. Use domain-qualified name filters when necessar
 Fragment/embedding-order tests do not compile runtime fragments independently;
 facade compilation and generated-model execution are separate checks.
 
+The packed-value emitter traffic regressions run through the public CLI in both
+optimizer modes:
+
+```sh
+scripts/run-tests.sh --test-work-dir /build --cargo-profile quick --test sim_emit_value_traffic
+```
+
+Render tests in `sim::emit_c::owned::tests::value_traffic` cover borrow eligibility,
+matching/mismatched conversions, constant lifetimes and retained frame values.
+`runtime_value_storage/value_ownership_probe.c` checks destination aliases and
+allocation-free same-width arithmetic, including X/Z and 64/65-bit boundaries.
+
 Standalone compact-backend checks and microbenchmarks, including net/strength,
 real/time, formatting/index and facade adapter probes, are opt-in CMake targets;
 see [native value probes](runtime_value_storage/readme.md#standalone-compact-value-backend).

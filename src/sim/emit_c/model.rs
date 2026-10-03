@@ -101,7 +101,9 @@ fn render_bounded(
     }
     super::owned::model::check_model(execution.ir()).map_err(EmitError::new)?;
     let prepare_stage = crate::profile::Stage::new("render.prepare");
-    let (_, upper_bounds) = render_coroutine_functions(execution).map_err(EmitError::new)?;
+    let (_, upper_bounds) =
+        render_coroutine_functions(execution, &super::constants::PackedConstants::default())
+            .map_err(EmitError::new)?;
     let forced = upper_bounds
         .iter()
         .filter_map(|(function, size)| {
@@ -151,6 +153,7 @@ fn origin_location(origin: &crate::sim::semantic::Origin) -> String {
 
 fn render_coroutine_functions(
     execution: &ExecutionModel,
+    constants: &super::constants::PackedConstants,
 ) -> Result<(CoroutineArtifacts, CoroutineUpperBounds), String> {
     let model = execution.ir();
     let mut artifacts = BTreeMap::new();
@@ -162,6 +165,7 @@ fn render_coroutine_functions(
             func: Some(function),
             sampled: false,
             activation_label: None,
+            constants: Some(constants),
         };
         let (source, layout) = super::owned::model::coroutine_function(
             &ctx,
@@ -194,6 +198,7 @@ fn render_coroutine_functions(
 
 fn render_coroutine_processes(
     execution: &ExecutionModel,
+    constants: &super::constants::PackedConstants,
     upper_bounds: &BTreeMap<usize, usize>,
 ) -> Result<Vec<Option<CoroutineArtifact>>, String> {
     let model = execution.ir();
@@ -202,6 +207,7 @@ fn render_coroutine_processes(
         func: None,
         sampled: false,
         activation_label: None,
+        constants: Some(constants),
     };
     execution
         .processes()
@@ -240,6 +246,7 @@ fn render_coroutine_processes(
 
 fn render_coroutine_branches(
     execution: &ExecutionModel,
+    constants: &super::constants::PackedConstants,
     upper_bounds: &BTreeMap<usize, usize>,
 ) -> Result<BTreeMap<CoroutineId, CoroutineArtifact>, String> {
     fn pre_name(pre: &crate::sim::ir::IrPreFn) -> &str {
@@ -260,6 +267,7 @@ fn render_coroutine_branches(
         func: None,
         sampled: false,
         activation_label: None,
+        constants: Some(constants),
     };
     let mut artifacts = BTreeMap::new();
     for (function, definition) in model.funcs.iter().enumerate() {
@@ -520,9 +528,13 @@ fn render_model(
 ) -> Result<BoundedIdentifiers, String> {
     let model = execution.ir();
     let artifact_stage = crate::profile::Stage::new("render.artifacts");
-    let (mut coroutine_functions, frame_upper_bounds) = render_coroutine_functions(execution)?;
-    let mut coroutine_processes = render_coroutine_processes(execution, &frame_upper_bounds)?;
-    let mut coroutine_branches = render_coroutine_branches(execution, &frame_upper_bounds)?;
+    let constants = super::constants::PackedConstants::default();
+    let (mut coroutine_functions, frame_upper_bounds) =
+        render_coroutine_functions(execution, &constants)?;
+    let mut coroutine_processes =
+        render_coroutine_processes(execution, &constants, &frame_upper_bounds)?;
+    let mut coroutine_branches =
+        render_coroutine_branches(execution, &constants, &frame_upper_bounds)?;
     let frame_types = share_frame_types(
         execution,
         &mut coroutine_functions,
@@ -539,11 +551,12 @@ fn render_model(
                 func: Some(function),
                 sampled: false,
                 activation_label: None,
+                constants: Some(&constants),
             };
             plain_functions.insert(index, super::owned::model::function(&ctx, function)?);
         }
     }
-    let mut pca_tables = pca_batches::collect(model, &mut coroutine_processes)?;
+    let mut pca_tables = pca_batches::collect(model, &constants, &mut coroutine_processes)?;
     let net_tables = net_batches::collect(model, &coroutine_processes);
     pca_tables.declarations.push_str(&net_tables.declarations);
     pca_tables.operands.extend(net_tables.operands);
@@ -556,7 +569,10 @@ fn render_model(
         &mut coroutine_branches,
         &mut plain_functions,
         threshold,
-        &pca_tables.operands,
+        sharing::AdditionalOperands {
+            pca_tables: &pca_tables.operands,
+            constants: &constants,
+        },
     )?;
     drop(sharing_stage);
     let assemble_stage = crate::profile::Stage::new("render.assemble");
@@ -593,6 +609,7 @@ fn render_model(
     if !sharing.bodies.is_empty() || !pca_tables.operands.is_empty() {
         out.push_str("#if defined(__GNUC__) && !defined(__clang__)\n#define LLG_MODEL_SHARED __attribute__((noipa))\n#elif defined(__clang__)\n#define LLG_MODEL_SHARED __attribute__((noinline))\n#elif defined(_MSC_VER)\n#define LLG_MODEL_SHARED __declspec(noinline)\n#else\n#define LLG_MODEL_SHARED\n#endif\n");
     }
+    let constant_declarations_at = out.len();
     let mut entries = BTreeSet::new();
     for artifact in coroutine_functions
         .values()
@@ -788,6 +805,7 @@ fn render_model(
         func: None,
         sampled: false,
         activation_label: None,
+        constants: Some(&constants),
     };
     for (index, f) in model.funcs.iter().enumerate() {
         if super::owned::model::inline_template(f) {
@@ -834,10 +852,12 @@ fn render_model(
         }
     }
     out.push_str(&sharing.bodies);
-    out.push_str(&super::owned::assertions::callbacks(model)?);
+    out.push_str(&super::owned::assertions::callbacks(model, &constants)?);
     out.push_str(&super::owned::assertions::registrations(model)?);
-    super::owned::model::storage_lifecycle(model, &mut out)?;
+    super::owned::model::storage_lifecycle(model, &constants, &mut out)?;
+    out.push_str(&constants.lifecycle());
     out.push_str(&super::owned::model::main(execution, &sharing.spawns)?);
+    out.insert_str(constant_declarations_at, &constants.declarations());
     let external = model
         .funcs
         .iter()

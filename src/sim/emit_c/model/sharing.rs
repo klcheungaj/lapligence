@@ -285,6 +285,7 @@ fn normalize(
     name: &str,
     generated: bool,
     registry: &HashMap<String, Operand>,
+    constants: &HashMap<String, Operand>,
 ) -> Option<Normalized> {
     if source
         .lines()
@@ -342,8 +343,17 @@ fn normalize(
                 out.push_str(label);
                 continue;
             }
-            if let Some(candidate) = registry.get(word) {
-                let slot = if let Some(slot) = pointer_slots.get(word) {
+            if let Some(candidate) = registry
+                .get(word)
+                .or_else(|| generated.then(|| constants.get(word)).flatten())
+            {
+                let slot = if generated && !registry.contains_key(word) {
+                    // Immutable constant identity does not constrain sharing;
+                    // each occurrence can vary independently, like a literal.
+                    let slot = operands.len();
+                    operands.push(candidate.clone());
+                    slot
+                } else if let Some(slot) = pointer_slots.get(word) {
                     *slot
                 } else {
                     let slot = operands.len();
@@ -432,6 +442,11 @@ struct Candidate {
     plain: Option<usize>,
 }
 
+pub(super) struct AdditionalOperands<'a> {
+    pub pca_tables: &'a [(String, String, String)],
+    pub constants: &'a super::super::constants::PackedConstants,
+}
+
 fn push_candidate(
     mut candidate: Candidate,
     groups: &mut Vec<Vec<Candidate>>,
@@ -465,7 +480,7 @@ pub(super) fn share(
     branches: &mut BTreeMap<CoroutineId, CoroutineArtifact>,
     plain: &mut BTreeMap<usize, String>,
     min_instances: usize,
-    pca_tables: &[(String, String, String)],
+    additional: AdditionalOperands<'_>,
 ) -> Result<Sharing, String> {
     if min_instances == usize::MAX {
         return Ok(Sharing {
@@ -477,7 +492,16 @@ pub(super) fn share(
     }
     let model = execution.ir();
     let mut registry = registry(model, functions, branches);
-    for (name, ty, shape) in pca_tables {
+    let constants = additional
+        .constants
+        .operands()
+        .into_iter()
+        .map(|(name, width, signed)| {
+            let operand = Operand::pointer("const sv4_t", format!("{width}:{signed}"), &name);
+            (name, operand)
+        })
+        .collect::<HashMap<_, _>>();
+    for (name, ty, shape) in additional.pca_tables {
         registry.insert(
             name.clone(),
             Operand {
@@ -518,7 +542,9 @@ pub(super) fn share(
             continue;
         }
         let generated = artifact.display_name.contains('[');
-        if let Some(normalized) = normalize(&artifact.source, name, generated, &registry) {
+        if let Some(normalized) =
+            normalize(&artifact.source, name, generated, &registry, &constants)
+        {
             let shape = artifact.layout.render_typedef("llg_key_frame")?;
             let shape = rewrite_identifiers(&shape, |name| frame_names.get(name).cloned());
             let pca = if let CoroutineId::Process(index) = artifact.owner {
@@ -555,7 +581,8 @@ pub(super) fn share(
         if function.dpi.is_some() {
             continue;
         }
-        if let Some(normalized) = normalize(source, &function.c_name, false, &registry) {
+        if let Some(normalized) = normalize(source, &function.c_name, false, &registry, &constants)
+        {
             let key = format!(
                 "plain:{:?}:{:?}:{:?}:{}",
                 function.origin, function.formals, function.ret, normalized.source
@@ -752,6 +779,67 @@ pub(super) fn share(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn streaming_groups_preserve_typed_constant_occurrences() {
+        let constants = [
+            ("constant_a", "65:false"),
+            ("constant_b", "65:false"),
+            ("constant_signed", "65:true"),
+            ("constant_wide", "128:false"),
+        ]
+        .into_iter()
+        .map(|(name, shape)| {
+            (
+                name.to_owned(),
+                Operand::pointer("const sv4_t", shape.to_owned(), name),
+            )
+        })
+        .collect();
+        let registry = HashMap::new();
+        let mut groups = Vec::new();
+        let mut by_key = HashMap::new();
+        for (index, second) in [
+            "constant_a",
+            "constant_b",
+            "constant_signed",
+            "constant_wide",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let name = format!("p_{index}");
+            let source = format!("static void {name}(void) {{ sv4_add(constant_a, {second}); }}");
+            let ordinary = normalize(&source, &name, false, &registry, &constants).unwrap();
+            assert!(ordinary.operands.is_empty());
+            let normalized = normalize(&source, &name, true, &registry, &constants).unwrap();
+            assert_eq!(normalized.operands.len(), 2);
+            let key = normalized.source.clone();
+            push_candidate(
+                Candidate {
+                    owner: CoroutineId::Process(index),
+                    name,
+                    normalized,
+                    key,
+                    plain: None,
+                },
+                &mut groups,
+                &mut by_key,
+            );
+        }
+        assert_eq!(groups.len(), 3);
+        assert_eq!(groups[0].len(), 2);
+        assert!(!groups[0][0].normalized.source.is_empty());
+        assert!(groups[0][1].normalized.source.is_empty());
+        assert!(groups
+            .iter()
+            .flatten()
+            .all(|candidate| candidate.key.is_empty()));
+        assert_eq!(groups[0][0].normalized.operands[1].value, "&constant_a");
+        assert_eq!(groups[0][1].normalized.operands[1].value, "&constant_b");
+        assert_eq!(groups[1][0].normalized.operands[1].shape, "65:true");
+        assert_eq!(groups[2][0].normalized.operands[1].shape, "128:false");
+    }
 
     #[test]
     fn sharing_retains_one_normalized_body_per_exact_group() {

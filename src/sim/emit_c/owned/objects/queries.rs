@@ -23,7 +23,7 @@ impl Frame<'_, '_> {
             fill: None,
             real: None,
         };
-        self.value(emit_const(&constant), width, signed)
+        self.constant(&constant, false)
     }
 
     pub(in crate::sim::emit_c::owned) fn array_query(

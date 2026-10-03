@@ -12,6 +12,7 @@ fn render_model(model: &IrModel, parts: Vec<IrExpr>) -> (String, usize) {
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     let expr = IrExpr::new(

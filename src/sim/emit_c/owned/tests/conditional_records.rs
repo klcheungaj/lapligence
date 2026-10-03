@@ -78,6 +78,7 @@ fn cross_limb_structure_merge_owns_each_member_and_default() {
             func: None,
             sampled: false,
             activation_label: None,
+            constants: None,
         };
         let mut frame = Frame::new(&ctx);
         let expr = merge(width);
