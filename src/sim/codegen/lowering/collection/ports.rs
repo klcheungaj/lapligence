@@ -691,6 +691,158 @@ impl<'a> Codegen<'a> {
         })
     }
 
+    /// Storage an output port drives as an implied continuous assignment,
+    /// for the multiple-driver rule (SV 6.5). A constant row or slice of a
+    /// dense array drives only its cells; a runtime-selected actual drives
+    /// its longest static prefix, the whole array. A constant row or slice of
+    /// descriptor storage has no bounded cell set, so it is not registered
+    /// rather than reported as a false whole-array conflict.
+    pub(super) fn output_port_continuous_writes(
+        &self,
+        actual: NodeId,
+        writes: &HashSet<IrDependency>,
+    ) -> Option<HashSet<IrDependency>> {
+        let Some(selected) = self.port_array_actual(actual) else {
+            return Some(writes.clone());
+        };
+        let array = &selected.array;
+        let constant_prefix = selected
+            .prefix
+            .iter()
+            .map(|index| {
+                self.eval_bound_i128(*index)
+                    .ok()
+                    .and_then(|index| i32::try_from(index).ok())
+            })
+            .collect::<Option<Vec<_>>>();
+        let whole = selected.prefix.is_empty() && selected.coordinates.is_none();
+        if whole || constant_prefix.is_none() {
+            return Some(HashSet::from([IrDependency::ArrayContents(
+                self.reference_array(array.ir),
+            )]));
+        }
+        if self.model.arrays[array.ir].sparse() {
+            return None;
+        }
+        let cells = selected.coordinates.clone().unwrap_or_else(|| {
+            let prefix = constant_prefix.unwrap_or_default();
+            port_array_index_vectors(&selected.dims)
+                .into_iter()
+                .map(|suffix| prefix.iter().copied().chain(suffix).collect())
+                .collect()
+        });
+        cells
+            .into_iter()
+            .map(|cell| {
+                let indices = cell
+                    .into_iter()
+                    .map(|index| lhs_integer_expr(i128::from(index)))
+                    .collect::<Vec<_>>();
+                Self::array_constant_linear_index(array, &indices).map(|index| {
+                    IrDependency::ArrayElement {
+                        array: self.reference_array(array.ir),
+                        index,
+                    }
+                })
+            })
+            .collect()
+    }
+
+    /// Cell pairs for an inout port whose formal is a fixed net array. Each
+    /// entry pairs `(formal owner, formal cell, width)` with `(actual owner,
+    /// actual cell)` in left-to-left order (SV 23.3.3.5); whole arrays,
+    /// constant rows and constant slices are accepted. Returns `None` when
+    /// the formal is not a net array.
+    #[allow(clippy::type_complexity)]
+    pub(super) fn net_array_inout_pairs(
+        &self,
+        port: NodeId,
+        actual: NodeId,
+        formal: NodeId,
+    ) -> Result<Option<Vec<((NodeId, u64, u32), (NodeId, u64))>>, String> {
+        let Some(formal_array) = self.array_of(formal).filter(|array| array.is_net) else {
+            return Ok(None);
+        };
+        let error = |reason: &str| {
+            format!(
+                "inout net-array port `{}` {reason} at {}:{}:{}",
+                self.display_name(port),
+                self.node(port).file.as_deref().unwrap_or("<unknown>"),
+                self.node(port).line,
+                self.node(port).col,
+            )
+        };
+        let actual_array = self
+            .port_array_actual(actual)
+            .ok_or_else(|| error("requires a fixed net-array actual with constant selections"))?;
+        if !actual_array.array.is_net {
+            return Err(error("cannot connect a variable array (SV 23.3.3.3)"));
+        }
+        if actual_array.array.elem_width != formal_array.elem_width
+            || actual_array.dims.len() != formal_array.dims.len()
+            || actual_array
+                .dims
+                .iter()
+                .zip(&formal_array.dims)
+                .any(|(actual, formal)| actual.0.abs_diff(actual.1) != formal.0.abs_diff(formal.1))
+        {
+            return Err(error("has an incompatible actual shape"));
+        }
+        let actual_indices = if let Some(coordinates) = actual_array.coordinates {
+            coordinates
+        } else {
+            let prefix = actual_array
+                .prefix
+                .iter()
+                .map(|index| {
+                    self.eval_bound_i128(*index)
+                        .ok()
+                        .and_then(|index| i32::try_from(index).ok())
+                })
+                .collect::<Option<Vec<_>>>()
+                .ok_or_else(|| error("requires constant actual selectors"))?;
+            port_array_index_vectors(&actual_array.dims)
+                .into_iter()
+                .map(|suffix| prefix.iter().copied().chain(suffix).collect())
+                .collect()
+        };
+        let owner_of = |ir: usize| {
+            sorted_node_ids(&self.array_globals)
+                .into_iter()
+                .find(|owner| self.array_globals[owner].ir == ir)
+        };
+        let formal_owner =
+            owner_of(formal_array.ir).ok_or_else(|| error("has no formal storage"))?;
+        let actual_owner =
+            owner_of(actual_array.array.ir).ok_or_else(|| error("has no actual storage"))?;
+        let linear = |array: &ArrayInfo, indices: Vec<i32>| {
+            let indices = indices
+                .into_iter()
+                .map(|index| lhs_integer_expr(i128::from(index)))
+                .collect::<Vec<_>>();
+            Self::array_constant_linear_index(array, &indices)
+        };
+        let formal_indices = port_array_index_vectors(&formal_array.dims);
+        if formal_indices.len() != actual_indices.len() {
+            return Err(error("has an incompatible element count"));
+        }
+        formal_indices
+            .into_iter()
+            .zip(actual_indices)
+            .map(|(formal_index, actual_index)| {
+                let formal_cell = linear(formal_array, formal_index)
+                    .ok_or_else(|| error("has an invalid formal cell"))?;
+                let actual_cell = linear(&actual_array.array, actual_index)
+                    .ok_or_else(|| error("has an invalid actual cell"))?;
+                Ok((
+                    (formal_owner, formal_cell, formal_array.elem_width),
+                    (actual_owner, actual_cell),
+                ))
+            })
+            .collect::<Result<Vec<_>, String>>()
+            .map(Some)
+    }
+
     /// Type information for a fixed-array value, including expressions that
     /// do not have a collected storage array. Input value ports copy these
     /// expressions element by element, so their source shape must remain
@@ -813,6 +965,139 @@ impl<'a> Codegen<'a> {
         Ok(true)
     }
 
+    /// Link a fixed-array port as one implied continuous assignment
+    /// (SV 23.3.3.2) through the procedural fixed-array assignment lowering.
+    /// Descriptor-backed ports must not expand per cell, since that emits
+    /// code proportional to their logical extent: whole copies, selected
+    /// rows, converting casts, conditionals and calls use
+    /// `FixedArrayCopy`/`FixedValueAssign`, which snapshot the source before
+    /// publishing destination cells. Dense outputs into nested aggregate
+    /// members reuse the same assignment owner.
+    #[allow(clippy::too_many_arguments)]
+    fn emit_descriptor_port_link(
+        &mut self,
+        parent_path: &str,
+        child_path: &str,
+        port: NodeId,
+        direction: DbDirection,
+        actual: NodeId,
+        internal: NodeId,
+        child: usize,
+    ) -> Result<(), String> {
+        let (target, source) = if direction == DbDirection::Input {
+            (internal, actual)
+        } else {
+            (actual, internal)
+        };
+        let statement = self
+            .lower_p30_fixed_array_assignment(
+                parent_path,
+                target,
+                source,
+                true,
+                Operation::Assignment,
+            )?
+            .ok_or_else(|| {
+                format!(
+                    "fixed array port `{}` in `{child_path}` requires a fixed-array actual of the same shape",
+                    self.display_name(port)
+                )
+            })?;
+        let reads = if direction == DbDirection::Input {
+            self.collect_read_signals(parent_path, actual)?
+        } else {
+            let child_dependency = IrDependency::ArrayContents(self.reference_array(child));
+            let mut reads = vec![child_dependency.clone()];
+            let mut seen = HashSet::from([child_dependency]);
+            self.walk_lhs_select_reads(
+                parent_path,
+                actual,
+                &mut seen,
+                &mut HashSet::new(),
+                &mut reads,
+            )?;
+            reads
+        };
+        self.emit_link_process(parent_path, child_path, port, reads, statement);
+        Ok(())
+    }
+
+    /// A fixed output may target a nested aggregate member (for example
+    /// `s.rows[1].row`) whose storage is a set of aggregate leaves rather
+    /// than a collected array. The child cells are read as one packed value
+    /// in declaration order and published through the member lvalue, which
+    /// maps the leftmost child element to the leftmost member element.
+    fn emit_member_array_output_link(
+        &mut self,
+        parent_path: &str,
+        child_path: &str,
+        port: NodeId,
+        actual: NodeId,
+        child: &ArrayInfo,
+    ) -> Result<(), String> {
+        let lhs = match self.fixed_storage_lhs(parent_path, actual)? {
+            Some(lhs) => lhs,
+            None => self.lower_lhs(parent_path, actual)?,
+        };
+        let child_array = self.reference_array(child.ir);
+        let parts = port_array_index_vectors(&child.dims)
+            .into_iter()
+            .map(|indices| {
+                IrExpr::new(
+                    IrExprKind::ArrayRead {
+                        arr: child_array,
+                        indices: indices
+                            .into_iter()
+                            .map(|index| lhs_integer_expr(i128::from(index)))
+                            .collect(),
+                        elem_sel: IrElemSel::Whole,
+                    },
+                    child.elem_width,
+                    false,
+                    None,
+                )
+            })
+            .collect::<Vec<_>>();
+        let width = u32::try_from(parts.len())
+            .ok()
+            .and_then(|count| count.checked_mul(child.elem_width))
+            .filter(|width| *width <= LLG_MAX_WIDTH)
+            .ok_or_else(|| {
+                format!(
+                    "fixed array port `{}` exceeds the packed member link capacity in `{child_path}`",
+                    self.display_name(port)
+                )
+            })?;
+        let target_width = match &lhs {
+            IrLhs::Stream { width, .. } => Some(*width),
+            other => packed_lhs_width(&self.model, other),
+        };
+        if target_width != Some(width) {
+            return Err(format!(
+                "fixed array port `{}` has incompatible member destination width in `{child_path}`",
+                self.display_name(port)
+            ));
+        }
+        let rhs = IrExpr::new(IrExprKind::Concat { parts }, width, false, None);
+        let child_dependency = IrDependency::ArrayContents(child_array);
+        let mut reads = vec![child_dependency.clone()];
+        let mut seen = HashSet::from([child_dependency]);
+        self.walk_lhs_select_reads(
+            parent_path,
+            actual,
+            &mut seen,
+            &mut HashSet::new(),
+            &mut reads,
+        )?;
+        let statement = IrStmt::Assign {
+            rhs: apply_lhs_assignment_context(&self.model, &lhs, rhs),
+            lhs,
+            nba: false,
+        };
+        self.emit_link_process(parent_path, child_path, port, reads, statement);
+        Ok(())
+    }
+
     fn emit_array_port_link(
         &mut self,
         parent_path: &str,
@@ -823,6 +1108,22 @@ impl<'a> Codegen<'a> {
         internal: NodeId,
     ) -> Result<bool, String> {
         let child_array = self.array_of(internal).cloned();
+        if let Some(child) = child_array
+            .as_ref()
+            .filter(|child| self.model.arrays[child.ir].sparse())
+        {
+            let child = child.ir;
+            self.emit_descriptor_port_link(
+                parent_path,
+                child_path,
+                port,
+                direction,
+                actual,
+                internal,
+                child,
+            )?;
+            return Ok(true);
+        }
         if direction == DbDirection::Input {
             if let (Some(child_array), Some(actual_shape)) =
                 (child_array.clone(), self.fixed_array_port_shape(actual))
@@ -843,6 +1144,10 @@ impl<'a> Codegen<'a> {
         let actual_resolved = self.port_array_actual(actual);
         let (child_array, actual_array) = match (child_array, actual_resolved) {
             (None, None) => return Ok(false),
+            (Some(child), None) if direction == DbDirection::Output && !child.real => {
+                self.emit_member_array_output_link(parent_path, child_path, port, actual, &child)?;
+                return Ok(true);
+            }
             (Some(_), None) | (None, Some(_)) => {
                 return Err(format!(
                     "port `{}` connects a fixed array to a non-array actual in `{child_path}`",

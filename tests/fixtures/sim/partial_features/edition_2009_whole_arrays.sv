@@ -11,7 +11,7 @@ endmodule
 module tb;
     logic [7:0] a [0:1];
     logic [7:0] b [0:1];
-    logic [7:0] c [0:1];
+    logic [7:0] c [0:1], d [0:1];
     logic select;
     array_child u(a, b);
 
@@ -22,8 +22,8 @@ module tb;
         c[1] = 8'h78;
         select = 1'b1;
         #0;
-        b = select ? a : c;
-        $display("whole=%h %h equal=%b", b[0], b[1], b == a);
+        d = select ? a : c;
+        $display("whole=%h %h equal=%b", d[0], d[1], d == a);
         $finish;
     end
 endmodule
