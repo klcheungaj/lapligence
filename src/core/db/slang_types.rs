@@ -82,6 +82,15 @@ impl<'a> SlangTypeProjector<'a> {
         })
     }
 
+    pub fn packed_pattern_element(&self, type_id: u64) -> Result<Option<TypeDescriptor>, String> {
+        let ty = self.ty(type_id)?;
+        if ty.kind != TypeKind::PackedArray {
+            return Ok(None);
+        }
+        self.descriptor(self.element_type(ty, "packed array")?, &mut HashSet::new())
+            .map(Some)
+    }
+
     fn unpacked_element(&self, ty: &'a SlangType) -> Result<&'a SlangType, String> {
         let mut current = ty;
         let mut seen = HashSet::new();

@@ -55,7 +55,12 @@ diagnostic labels remain separate from C symbols. The
 - Replicated patterns expand every dimension/position, even shared expression IDs.
   Check positive count and extent before allocation; do not expand twice.
   Resolve keys as expressions and preserve type/default precedence without
-  assuming side-effect order. Capture a default once before fan-out.
+  assuming side-effect order. Type/default/replication evaluation multiplicity is
+  undefined by SV 10.9.1; a single captured default before fan-out is one allowed
+  choice. Descriptor patterns use lexical array snapshots rather than packed
+  concatenations, retain uniform sparse defaults and loop over nonuniform repeats.
+  Match packed keys against the owned immediate element type, preserving nominal
+  enum identity and non-nominal integral width/range/sign/state equivalence.
 - Lower array and direct unpacked-structure conditionals before flattening loses
   immediate boundaries. Use default-uninitialized values, not declaration member
   initializers. Capture selector once; known truth evaluates one arm, ambiguity

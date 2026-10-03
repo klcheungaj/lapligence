@@ -9,6 +9,7 @@ use crate::sim::ir::{
 mod assignments;
 mod callbacks;
 mod fixed_arrays;
+mod fixed_patterns;
 mod fixed_receiver;
 mod fixed_reductions;
 mod indexing;

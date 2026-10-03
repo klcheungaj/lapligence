@@ -256,7 +256,11 @@ recursive oversized calls, output/ref formals, functions with only oversized inp
 large nested record values, selected aggregate expressions, conditionals and general
 multi-segment/unaligned oversized streams still need descriptor call/view transport.
 Those paths retain explicit diagnostics or the separate packed payload limit.
-Extending them through per-cell source expansion would recreate the capacity cost.
+Oversized array-valued pattern items and positional pattern scatter through array
+rows/record members also need those selected aggregate views. Scalar descriptor
+patterns now use lexical snapshots with sparse defaults/exceptions or replication
+loops. Extending remaining transport through per-cell source expansion would
+recreate the capacity cost.
 
 Explicit waveform registration materializes every registered cell, so dumping a
 16M array has a proportional runtime memory/output cost despite bounded generated

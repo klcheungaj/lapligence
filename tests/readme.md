@@ -85,6 +85,12 @@ test(rtl_003::)'`. They cover selected module refs, fixed record rows, selector
 capture for blocking/NBA/mutation/copy-out and synchronous scanner ref views;
 representative cases also run after Db destruction at native O0/O3.
 
+RTL-004's fixed-pattern fixtures use `-E 'binary(sim_feature_completion) &
+test(rtl_004::)'`. They cover packed and record type keys, nested rows, selector
+snapshots, persistent NBA publication, undefined-multiplicity effects and sparse
+patterns at 16M cells. Representative fixtures run after Db destruction at O0/O3;
+source-size checks supplement public execution.
+
 ### Vendor patch preparation
 
 `vendor_patches.rs` checks clean/applied trees, no-Git archives (including archives
