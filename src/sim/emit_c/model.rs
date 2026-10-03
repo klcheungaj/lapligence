@@ -39,6 +39,7 @@ use dpi::{dpi_external_prototype, dpi_helpers, internal_return_type, render_dpi_
 mod processes;
 use processes::process_runtime_name;
 mod initialization;
+mod net_batches;
 mod pca_batches;
 mod sharing;
 
@@ -133,6 +134,7 @@ struct CoroutineArtifact {
     root: bool,
     shared_entry: Option<String>,
     pca_batches: Vec<super::statements::pca_batches::Batch>,
+    net_batches: Vec<super::owned::net_batches::NetBatch>,
 }
 
 type CoroutineArtifacts = BTreeMap<usize, CoroutineArtifact>;
@@ -183,6 +185,7 @@ fn render_coroutine_functions(
                 root: false,
                 shared_entry: None,
                 pca_batches: Vec::new(),
+                net_batches: Vec::new(),
             },
         );
     }
@@ -209,14 +212,15 @@ fn render_coroutine_processes(
             if process.kind() == IrProcessKind::Final {
                 return Ok(None);
             }
-            let (source, layout, pca_batches) = super::owned::model::coroutine_process(
-                &ctx,
-                process,
-                index,
-                executable,
-                execution.analysis(),
-                upper_bounds,
-            )?;
+            let (source, layout, pca_batches, net_batches) =
+                super::owned::model::coroutine_process(
+                    &ctx,
+                    process,
+                    index,
+                    executable,
+                    execution.analysis(),
+                    upper_bounds,
+                )?;
             Ok(Some(CoroutineArtifact {
                 source,
                 layout,
@@ -228,6 +232,7 @@ fn render_coroutine_processes(
                 root: true,
                 shared_entry: None,
                 pca_batches,
+                net_batches,
             }))
         })
         .collect()
@@ -284,6 +289,7 @@ fn render_coroutine_branches(
                     root: true,
                     shared_entry: None,
                     pca_batches: Vec::new(),
+                    net_batches: Vec::new(),
                 },
             );
         }
@@ -315,6 +321,7 @@ fn render_coroutine_branches(
                     root: true,
                     shared_entry: None,
                     pca_batches: Vec::new(),
+                    net_batches: Vec::new(),
                 },
             );
         }
@@ -536,7 +543,10 @@ fn render_model(
             plain_functions.insert(index, super::owned::model::function(&ctx, function)?);
         }
     }
-    let pca_tables = pca_batches::collect(model, &mut coroutine_processes)?;
+    let mut pca_tables = pca_batches::collect(model, &mut coroutine_processes)?;
+    let net_tables = net_batches::collect(model, &coroutine_processes);
+    pca_tables.declarations.push_str(&net_tables.declarations);
+    pca_tables.operands.extend(net_tables.operands);
     drop(artifact_stage);
     let sharing_stage = crate::profile::Stage::new("render.sharing");
     let sharing = sharing::share(

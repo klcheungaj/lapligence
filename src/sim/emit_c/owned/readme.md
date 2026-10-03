@@ -27,6 +27,11 @@ and payloads; escaping or unproven cells retain stable heap owners. Feature guar
 | `streaming.rs` | RHS snapshots, sequential selectors, bounds checks and publication. |
 | `tests.rs`, `tests/` | Structural, ownership-boundary and actual IR-to-C regressions. |
 
+Packed scanner targets through ref formals use synchronous borrowed views of the
+canonical descriptor and captured numeric selection plan. Typed declarations
+keep the view alive through argument setup; scanning does not retain the view
+beyond the call, and failed conversions leave the selected destination unchanged.
+
 ## Verification
 
 [Ownership validation](../../../../tests/readme.md#dynamic-ownership-validation)

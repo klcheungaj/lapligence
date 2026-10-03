@@ -1,13 +1,11 @@
 //! References.
 
 use super::*;
+use crate::sim::ir::IrPackedSelect;
 
 impl<'a> Codegen<'a> {
-    /// Resolve a module-reference signal to its final typed lvalue.  The
-    /// lvalue is intentionally composed only for legal direct selections;
-    /// an already-selected reference cannot be selected again unless its
-    /// target is a whole fixed-array element.  Rejecting ambiguous nested
-    /// selections is safer than silently changing which object is aliased.
+    /// Resolve module references to canonical storage with selection steps
+    /// relative to each immediate value, preserving intermediate bounds.
     pub(in super::super) fn reference_lhs(&self, lhs: IrLhs) -> Result<IrLhs, String> {
         fn resolve(
             cg: &Codegen<'_>,
@@ -21,7 +19,7 @@ impl<'a> Codegen<'a> {
                     signed,
                     two_state,
                 } => {
-                    let target = resolve(cg, *target, seen)?;
+                    let target = normalize_projection(resolve(cg, *target, seen)?)?;
                     if let IrLhs::PackedSelect {
                         target,
                         steps: mut prefix,
@@ -52,7 +50,7 @@ impl<'a> Codegen<'a> {
                     two_state,
                     location,
                 } => {
-                    let target = resolve(cg, *target, seen)?;
+                    let target = normalize_projection(resolve(cg, *target, seen)?)?;
                     match target {
                         IrLhs::TaggedSelect {
                             target,
@@ -108,7 +106,7 @@ impl<'a> Codegen<'a> {
                     if !seen.insert(index) {
                         return Err("cyclic reference port storage".to_owned());
                     }
-                    let resolved = resolve(cg, target, seen);
+                    let resolved = resolve(cg, target, seen).and_then(normalize_projection);
                     seen.remove(&index);
                     resolved
                 }
@@ -121,7 +119,7 @@ impl<'a> Codegen<'a> {
                     compose_reference_part(base, left, right, two_state)
                 }
                 IrLhs::IdxPart(index, base, width, selected_width, negative, two_state) => {
-                    let target = resolve(cg, IrLhs::Whole(index), seen)?;
+                    let target = normalize_projection(resolve(cg, IrLhs::Whole(index), seen)?)?;
                     match target {
                         IrLhs::PackedSelect {
                             target,
@@ -129,15 +127,7 @@ impl<'a> Codegen<'a> {
                             two_state: state,
                             ..
                         } => {
-                            let base = if negative {
-                                bin_expr(
-                                    IrBinOp::Sub,
-                                    base,
-                                    lhs_integer_expr(i128::from(selected_width) - 1),
-                                )
-                            } else {
-                                base
-                            };
+                            let base = indexed_projection(base, selected_width, negative)?.base;
                             steps.push(crate::sim::ir::IrPackedSelect {
                                 base,
                                 width: selected_width,
@@ -156,15 +146,7 @@ impl<'a> Codegen<'a> {
                             location,
                             ..
                         } => {
-                            let base = if negative {
-                                bin_expr(
-                                    IrBinOp::Sub,
-                                    base,
-                                    lhs_integer_expr(i128::from(selected_width) - 1),
-                                )
-                            } else {
-                                base
-                            };
+                            let base = indexed_projection(base, selected_width, negative)?.base;
                             steps.push(crate::sim::ir::IrTaggedSelectStep {
                                 selection: crate::sim::ir::IrPackedSelect {
                                     base,
@@ -202,17 +184,6 @@ impl<'a> Codegen<'a> {
                                 negative,
                             },
                         }),
-                        IrLhs::Part(index, left, right, _) => {
-                            let offset = if left >= right { right } else { left };
-                            Ok(IrLhs::IdxPart(
-                                index,
-                                bin_expr(IrBinOp::Add, lhs_integer_expr(offset as i128), base),
-                                width,
-                                selected_width,
-                                negative,
-                                two_state,
-                            ))
-                        }
                         _ => Err(
                             "nested indexed selection through a reference port is not supported"
                                 .to_owned(),
@@ -294,12 +265,110 @@ impl<'a> Codegen<'a> {
             }
         }
 
+        fn normalize_projection(lhs: IrLhs) -> Result<IrLhs, String> {
+            let (target, steps, two_state) = match lhs {
+                IrLhs::Bit(index, base, two_state) => (
+                    IrLhs::Whole(index),
+                    vec![IrPackedSelect { base, width: 1 }],
+                    two_state,
+                ),
+                IrLhs::Part(index, left, right, two_state) => (
+                    IrLhs::Whole(index),
+                    vec![IrPackedSelect {
+                        base: lhs_integer_expr(i128::from(left.min(right))),
+                        width: u32::try_from(left.abs_diff(right) + 1)
+                            .map_err(|_| "reference part width overflow")?,
+                    }],
+                    two_state,
+                ),
+                IrLhs::IdxPart(index, base, _, width, negative, two_state) => (
+                    IrLhs::Whole(index),
+                    vec![indexed_projection(base, width, negative)?],
+                    two_state,
+                ),
+                IrLhs::ArrayElem {
+                    arr,
+                    indices,
+                    elem_sel,
+                } => {
+                    let steps = match elem_sel {
+                        IrElemSel::Whole => {
+                            return Ok(IrLhs::ArrayElem {
+                                arr,
+                                indices,
+                                elem_sel: IrElemSel::Whole,
+                            })
+                        }
+                        IrElemSel::Bit(base) => vec![IrPackedSelect {
+                            base: *base,
+                            width: 1,
+                        }],
+                        IrElemSel::Part(left, right) => vec![IrPackedSelect {
+                            base: lhs_integer_expr(i128::from(left.min(right))),
+                            width: u32::try_from(left.abs_diff(right) + 1)
+                                .map_err(|_| "reference part width overflow")?,
+                        }],
+                        IrElemSel::Indexed {
+                            base,
+                            width,
+                            negative,
+                        } => {
+                            vec![indexed_projection(*base, width, negative)?]
+                        }
+                        IrElemSel::PackedChain(steps) => steps,
+                    };
+                    (
+                        IrLhs::ArrayElem {
+                            arr,
+                            indices,
+                            elem_sel: IrElemSel::Whole,
+                        },
+                        steps,
+                        false,
+                    )
+                }
+                other => return Ok(other),
+            };
+            Ok(IrLhs::PackedSelect {
+                target: Box::new(target),
+                steps,
+                signed: false,
+                two_state,
+            })
+        }
+
+        fn indexed_projection(
+            base: IrExpr,
+            width: u32,
+            negative: bool,
+        ) -> Result<IrPackedSelect, String> {
+            let base = if negative {
+                let offset = lhs_integer_expr(i128::from(width) - 1);
+                let arithmetic_width = base
+                    .width
+                    .max(offset.width)
+                    .checked_add(1)
+                    .filter(|width| *width <= LLG_MAX_WIDTH)
+                    .ok_or_else(|| {
+                        "reference selector arithmetic exceeds the supported limit".to_owned()
+                    })?;
+                bin_expr(
+                    IrBinOp::Sub,
+                    IrExpr::convert_to(base, arithmetic_width, true),
+                    IrExpr::convert_to(offset, arithmetic_width, true),
+                )
+            } else {
+                base
+            };
+            Ok(IrPackedSelect { base, width })
+        }
+
         fn compose_reference_bit(
             base: IrLhs,
             expression: IrExpr,
             two_state: bool,
         ) -> Result<IrLhs, String> {
-            match base {
+            match normalize_projection(base)? {
                 IrLhs::PackedSelect {
                     target,
                     mut steps,
@@ -341,14 +410,6 @@ impl<'a> Codegen<'a> {
                     })
                 }
                 IrLhs::Whole(index) => Ok(IrLhs::Bit(index, expression, two_state)),
-                IrLhs::Part(index, left, right, _) => {
-                    let offset = if left >= right { right } else { left };
-                    Ok(IrLhs::Bit(
-                        index,
-                        bin_expr(IrBinOp::Add, lhs_integer_expr(offset as i128), expression),
-                        two_state,
-                    ))
-                }
                 IrLhs::ArrayElem {
                     arr,
                     indices,
@@ -371,7 +432,7 @@ impl<'a> Codegen<'a> {
             right: i64,
             two_state: bool,
         ) -> Result<IrLhs, String> {
-            match base {
+            match normalize_projection(base)? {
                 IrLhs::PackedSelect {
                     target,
                     mut steps,
@@ -417,20 +478,6 @@ impl<'a> Codegen<'a> {
                     })
                 }
                 IrLhs::Whole(index) => Ok(IrLhs::Part(index, left, right, two_state)),
-                IrLhs::Part(index, base_left, base_right, _) => {
-                    let offset = if base_left >= base_right {
-                        base_right
-                    } else {
-                        base_left
-                    };
-                    let left = offset.checked_add(left).ok_or_else(|| {
-                        "nested reference-port part select bound overflows".to_owned()
-                    })?;
-                    let right = offset.checked_add(right).ok_or_else(|| {
-                        "nested reference-port part select bound overflows".to_owned()
-                    })?;
-                    Ok(IrLhs::Part(index, left, right, two_state))
-                }
                 IrLhs::ArrayElem {
                     arr,
                     indices,

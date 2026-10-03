@@ -48,7 +48,11 @@ Identical frame layouts (every instance of one process or task) share a single
 
 Large designs stay compact at model level too: plain static storage is
 initialized and destroyed through per-representation pointer tables and loops.
-Net contributions use one cell array per electrical group, with descriptor loops
+Electrical groups can span maximal identically connected bit ranges while
+waveform/VPI views retain declared shapes. Remaining structural contributions use
+ordered descriptor loops for captured RHS part selects, including distinct
+inertial handles for delayed rows. Short or disconnected gathers retain ordinary
+emission. Net contributions use one cell array per electrical group, with descriptor loops
 for defaults, index resets, alias binding and teardown. Net resolution and per-bit
 grouping are unchanged. Consecutive spawns, finals and waveform registrations run from constant
 argument tables in their original order.
