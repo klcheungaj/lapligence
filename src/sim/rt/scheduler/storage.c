@@ -205,7 +205,8 @@ typedef struct {
     llg_event_spec_t specs[LLG_WAIT_INLINE_SPECS];
     uint32_t width;
     int8_t is_signed;
-    uint64_t limbs[3u * LLG_WAIT_INLINE_LIMBS];
+    llg_sv4_vpi_word_t words[LLG_WAIT_INLINE_LIMBS];
+    uint64_t reserved; // Preserve the process record layout across this bridge migration.
 } llg_wait_inline_payload_t;
 
 typedef struct llg_wait {

@@ -11,7 +11,10 @@ The live legacy implementation in `value/` is the differential reference,
 alongside independent Python integer oracles and exhaustive small truth tables.
 
 The compact implementation lives in `src/sim/rt/value_gmp/`. G1 supplies storage,
-the V01 neutral bridge, core arithmetic/logic/comparison/mux, and V05/S1. It is
+the V01 neutral bridge, core arithmetic/logic/comparison/mux, and V05/S1.
+V05/S6–S9 add full net/strength/UDP/enum, real/time,
+formatting/index and header adapters; [the checklist](../value_gmp/facade_audit.md)
+records the remaining selection/reference integration. It is
 built standalone by `tests/runtime_value_storage/compact_value.cmake` with
 portable kernels and optionally GMP. It is not embedded in generated models.
 V07 owns selection in `llg_value.h`, source packaging and model integration;
@@ -216,3 +219,32 @@ equality, or embed numeric `sizeof(sv4_t)`/frame-offset constants. Ordinary C
 frame metadata must be selected and asserted by V07. V06 migrates representation
 consumers; V05 implements operation families; V08 audits retained owner graphs.
 Keep new feature work on legacy through these APIs while those tasks proceed.
+
+### Consumer primitives added by V06 (GMP implementation pending, V05)
+
+These additive legacy `static inline` operations replace consumer plane loops.
+They never allocate, resize, change sign, expose a payload view or publish a
+scheduler notification. The option-A backend can implement them on A words with
+implicit-zero B, promoting B only for incoming X/Z. Ordinary shape/state queries
+remain inline; bulk consumers must not substitute an out-of-line call per bit.
+
+| API | Contract |
+| --- | --- |
+| `llg_sv4_masked_merge(target, source, mask)` | Replace bits selected by the mask's known-one plane, preserving all other bits and target shape. Clip to the common word count; the mask must not select target padding. Inputs may exactly alias the destination. |
+| `llg_sv4_masked_same(a, b, mask)`, `llg_sv4_masked_copy(target, source, mask)` | Compare/copy only mask known-one positions in the common actual-width interval. Comparison accepts NULL mask for the entire interval. Copy supports exact aliases; unlike the legacy NBA word merge, partial words clip at the shorter operand's bit width. |
+| `llg_sv4_range_same(target, offset, source)` | Compare the source payload with a contiguous target interval. Caller validates that the full interval fits. Ignores sign. |
+| `llg_sv4_range_copy(target, offset, source)` | Write that interval without a temporary owner. Inputs are independent owners or exact self-copy at offset zero; fabricated overlapping descriptors remain unsupported. |
+| `llg_sv4_range_fill(target, low, count, state)` | Fill a clipped interval with a state in 0..3; avoid overflowing endpoints. |
+| `llg_sv4_mask_remove(target, removed)` | Clear selected known-one mask bits. Both inputs are known masks; exact aliases are supported. |
+| `llg_sv4_mul_add_known(value, factor, addend)`, `llg_sv4_negate_known(value)` | In-place unsigned modular arithmetic on a known payload. Factor/addend are uint32; width/sign stay fixed. Used by decimal scanners. |
+| `llg_sv4_append_digit(value, count, state, digit)` | Shift and append 1..4 bits modulo width. State 0 appends known digit bits, 2/3 append X/Z. No allocation for known digits in a known destination. |
+| `llg_sv4_two_state_inplace(value)`, `llg_sv4_mask_top(value)` | Clear unknown positions to zero, or clear top padding, preserving owner/shape/sign. |
+| `llg_sv4_export_vpi32(value, output, count, stride)`, `llg_sv4_import_vpi32(value, input, count, stride)` | Bulk external interleaved 32-bit aval/bval records, least significant first. First two record fields are four-byte integers at offsets 0/4; stride is at least 8. Copy with memcpy, never pointer-cast foreign records to backend storage. Exports zero-pad; imports clip and preserve untouched halves. Count zero permits NULL; otherwise buffers must hold count records without size overflow. VPI asserts its record layout. |
+| `llg_sv4_same_vpi_words(value, words, count)` | Compare a copied canonical A/B snapshot with zero padding, ignoring width/sign like `sv4_same`. Snapshot padding must be zero. |
+| `llg_sv4_export_text(value, width, output)` | Bulk MSB-first `01xz` text with zero extension to the requested width and a trailing NUL; output holds width+1 bytes. |
+
+`llg_sv4_plane_slice` is an internal bridge helper, not a feature API. Inline
+waits keep copied A/B words and explicit shape metadata; they never fabricate an
+`sv4_t` over that buffer. Publication retains its existing registered snapshots
+and synchronous borrow rules. Native `sizeof`/`_Alignof` remain valid; numeric
+emitter frame estimates and their selected-layout assertions are owned by V07.

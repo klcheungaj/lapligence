@@ -838,22 +838,7 @@ static void writer_time(writer_t* w, uint64_t now) {
 }
 
 static void sv4_text(const sv4_t* value, uint32_t width, char* out) {
-    for (uint32_t pos = 0; pos < width; pos++) {
-        uint32_t bit = width - 1u - pos;
-        // Registrations may request a wider view than the captured value. The
-        // legacy representation exposed zero padding there; never read past
-        // an exact-width allocation to provide that same zero extension.
-        if (bit >= value->width) {
-            out[pos] = '0';
-            continue;
-        }
-        uint64_t mask = UINT64_C(1) << (bit & 63u);
-        uint32_t limb = bit >> 6u;
-        if (value->x[limb] & mask) out[pos] = 'x';
-        else if (value->z[limb] & mask) out[pos] = 'z';
-        else out[pos] = (value->bits[limb] & mask) ? '1' : '0';
-    }
-    out[width] = 0;
+    llg_sv4_export_text(*value, width, out);
 }
 
 static void writer_sv4_aliases(writer_t* w, uint32_t first,
@@ -1076,12 +1061,11 @@ static void enqueue_simple(event_kind_t kind, uint64_t now, uint64_t arg) {
 // Capture an independent snapshot before publishing it to the writer thread.
 // The destination event is newly initialized and owns no previous snapshot.
 static int capture_sv4(wave_event_t* event, const sv4_t* value) {
-    if (value->width >= LLG_SUPPORTED_WIDTH_LIMIT) {
+    if (llg_sv4_width(*value) >= LLG_SUPPORTED_WIDTH_LIMIT) {
         wave_error("packed source width reaches supported limit");
         return 0;
     }
-    event->payload.sv4 = sv4_from_limbs(
-        value->bits, value->x, value->z, value->width, value->is_signed);
+    event->payload.sv4 = sv4_clone(value);
     return 1;
 }
 

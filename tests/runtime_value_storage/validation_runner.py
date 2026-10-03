@@ -11,7 +11,7 @@ BASE_TESTS = {
     "storage_reject_oom", "storage_reject_oom-copy", "value_ownership",
     "container_ownership", "four_state", "udp", "owner_allocation_plateau", "word_copy_oracle",
     "value_isolation", "container_isolation", "neutral_value_access",
-    "stream_preflight",
+    "consumer_value_bridge", "stream_preflight",
     "stream_reject_short",
     "stream_reject_multi-short",
     "stream_reject_negative-remaining",

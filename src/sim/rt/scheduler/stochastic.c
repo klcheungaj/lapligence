@@ -18,7 +18,7 @@ static void llg_q_set_status(sv4_t* status, int code) {
 
 static int llg_q_read_integer(sv4_t value, int64_t* result,
                               const char* operation, const char* argument) {
-    if (value.width == 0 || sv4_is_unknown(value) || !sv4_fits_i64(value)) {
+    if (llg_sv4_width(value) == 0 || sv4_is_unknown(value) || !sv4_fits_i64(value)) {
         fprintf(stderr,
                 "llg runtime fatal: %s %s must be a known integer "
                 "representable as int64_t\n",

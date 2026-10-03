@@ -37,7 +37,7 @@ static void llg_format_array(char* out, size_t cap, const char* fmt,
                 llg_append(out, cap, &len, '%');
             } else if ((c == 'd' || c == 'h' || c == 'b' || c == 'o' || c == 't') &&
                        argi < n) {
-                size_t tmp_cap = llg_format_scratch_size(args[argi].width, 0);
+                size_t tmp_cap = llg_format_scratch_size(llg_sv4_width(args[argi]), 0);
                 char* tmp = llg_checked_malloc(tmp_cap, 1, "packed format");
                 size_t tmp_len;
                 if (c == 't') {
@@ -77,7 +77,7 @@ static void llg_print_line(const char* line) {
 static void llg_print_array(const char* fmt, const sv4_t* args, int n) {
     size_t cap = strlen(fmt) + 1;
     for (int i = 0; i < n; ++i) {
-        size_t extra = (size_t)args[i].width + 2u;
+        size_t extra = (size_t)llg_sv4_width(args[i]) + 2u;
         if ((size_t)g.time_format.minimum_field_width > SIZE_MAX - extra)
             llg_fatal_allocation("formatted line", 1, SIZE_MAX);
         extra += (size_t)g.time_format.minimum_field_width;
@@ -193,8 +193,8 @@ static int llg_time_format_exponents(int* source, int* display) {
 // not pass through a host integer or floating-point type.
 static size_t llg_format_time_integer(sv4_t value, uint64_t source_unit_fs,
                                       char* raw, size_t cap) {
-    size_t decimal_cap = (size_t)value.width + 3u;
-    size_t scaled_cap = llg_format_scratch_size(value.width, 0);
+    size_t decimal_cap = (size_t)llg_sv4_width(value) + 3u;
+    size_t scaled_cap = llg_format_scratch_size(llg_sv4_width(value), 0);
     char* decimal = llg_checked_malloc(decimal_cap, 1, "time digits");
     char* scaled = llg_checked_malloc(scaled_cap, 1, "scaled time digits");
     sv4_to_dec_string(value, decimal, decimal_cap);
@@ -316,14 +316,14 @@ static size_t llg_format_time_real(double value, uint64_t source_unit_fs,
 
 static size_t llg_format_raw2(sv4_t value, char* raw, size_t cap) {
     size_t len = 0;
-    uint32_t words = (value.width + 63u) / 64u;
-    uint32_t last_bits = value.width % 64u;
+    uint32_t words = (llg_sv4_width(value) + 63u) / 64u;
+    uint32_t last_bits = llg_sv4_width(value) % 64u;
     if (last_bits == 0) last_bits = 64;
     for (uint32_t i = 0; i < words; i++) {
         // SFormat::formatRaw2 flattens X/Z to zero and emits the native
         // little-endian limb bytes, including the complete last 32-bit half
         // for values whose width is between 33 and 64 bits.
-        uint64_t bits = value.bits[i] & ~(value.x[i] | value.z[i]);
+        uint64_t bits = llg_sv4_word(value, i, LLG_SV4_BITS) & ~(llg_sv4_word(value, i, LLG_SV4_X) | llg_sv4_word(value, i, LLG_SV4_Z));
         size_t bytes = (i == words - 1 && last_bits <= 32) ? sizeof(uint32_t)
                                                             : sizeof(uint64_t);
         for (size_t j = 0; j < bytes && len < cap; j++)
@@ -334,12 +334,12 @@ static size_t llg_format_raw2(sv4_t value, char* raw, size_t cap) {
 
 static size_t llg_format_raw4(sv4_t value, char* raw, size_t cap) {
     size_t len = 0;
-    uint32_t words = (value.width + 63u) / 64u;
-    uint32_t last_bits = value.width % 64u;
+    uint32_t words = (llg_sv4_width(value) + 63u) / 64u;
+    uint32_t last_bits = llg_sv4_width(value) % 64u;
     if (last_bits == 0) last_bits = 64;
     for (uint32_t i = 0; i < words; i++) {
-        uint64_t unknown = value.x[i] | value.z[i];
-        uint64_t bits = value.bits[i];
+        uint64_t unknown = llg_sv4_word(value, i, LLG_SV4_X) | llg_sv4_word(value, i, LLG_SV4_Z);
+        uint64_t bits = llg_sv4_word(value, i, LLG_SV4_BITS);
         size_t halves = (i == words - 1 && last_bits <= 32) ? 1u : 2u;
         for (size_t half = 0; half < halves; half++) {
             // VPI's four-state encoding uses aval = known bits XOR unknown
@@ -372,17 +372,17 @@ static size_t llg_format_raw4(sv4_t value, char* raw, size_t cap) {
 
 static size_t llg_format_strength(sv4_t value, char* raw, size_t cap) {
     size_t len = 0;
-    for (uint32_t bit = value.width; bit > 0; bit--) {
+    for (uint32_t bit = llg_sv4_width(value); bit > 0; bit--) {
         uint32_t index = bit - 1;
         uint64_t mask = UINT64_C(1) << (index % 64u);
         uint32_t limb = index / 64u;
         const char* text;
-        if (value.x[limb] & mask)
+        if (llg_sv4_word(value, limb, LLG_SV4_X) & mask)
             text = "StX";
-        else if (value.z[limb] & mask)
+        else if (llg_sv4_word(value, limb, LLG_SV4_Z) & mask)
             text = "HiZ";
         else
-            text = value.bits[limb] & mask ? "St1" : "St0";
+            text = llg_sv4_word(value, limb, LLG_SV4_BITS) & mask ? "St1" : "St0";
         llg_append_text(raw, cap, &len, text, strlen(text));
         if (bit != 1) llg_append(raw, cap, &len, ' ');
     }
@@ -390,9 +390,9 @@ static size_t llg_format_strength(sv4_t value, char* raw, size_t cap) {
 }
 
 static size_t llg_format_char(sv4_t value, char* raw, size_t cap) {
-    if (cap == 0 || value.width == 0) return 0;
-    uint64_t unknown = value.x[0] | value.z[0];
-    raw[0] = (char)(unknown & 0xffu ? 0xffu : value.bits[0] & 0xffu);
+    if (cap == 0 || llg_sv4_width(value) == 0) return 0;
+    uint64_t unknown = llg_sv4_word(value, 0, LLG_SV4_X) | llg_sv4_word(value, 0, LLG_SV4_Z);
+    raw[0] = (char)(unknown & 0xffu ? 0xffu : llg_sv4_word(value, 0, LLG_SV4_BITS) & 0xffu);
     return 1;
 }
 
@@ -408,21 +408,21 @@ static sv4_t llg_string_to_display_packed(const llg_string_t* value) {
 }
 
 static size_t llg_format_pattern_packed(sv4_t value, char* raw, size_t cap) {
-    size_t digits_cap = (size_t)value.width + 3u;
+    size_t digits_cap = (size_t)llg_sv4_width(value) + 3u;
     char* digits = llg_checked_malloc(digits_cap, 1, "pattern digits");
     int has_unknown = sv4_is_unknown(value);
     int all_x = has_unknown;
     int all_z = has_unknown;
-    for (int i = 0; i < llg_sv4_nlimbs(value.width); i++) {
-        uint64_t mask = llg_sv4_limb_mask(value.width, i);
-        all_x &= (value.x[i] & mask) == mask;
-        all_z &= (value.z[i] & mask) == mask;
+    for (int i = 0; i < llg_sv4_nlimbs(llg_sv4_width(value)); i++) {
+        uint64_t mask = llg_sv4_limb_mask(llg_sv4_width(value), i);
+        all_x &= (llg_sv4_word(value, i, LLG_SV4_X) & mask) == mask;
+        all_z &= (llg_sv4_word(value, i, LLG_SV4_Z) & mask) == mask;
     }
     int base;
-    if ((value.width < 8u && !value.is_signed) ||
-        (has_unknown && value.width <= 64u && !all_x && !all_z)) {
+    if ((llg_sv4_width(value) < 8u && !llg_sv4_signed(value)) ||
+        (has_unknown && llg_sv4_width(value) <= 64u && !all_x && !all_z)) {
         base = 'b';
-    } else if (value.width <= 32u || value.is_signed || all_x || all_z) {
+    } else if (llg_sv4_width(value) <= 32u || llg_sv4_signed(value) || all_x || all_z) {
         base = 'd';
     } else {
         base = 'h';
@@ -431,7 +431,7 @@ static size_t llg_format_pattern_packed(sv4_t value, char* raw, size_t cap) {
     size_t digits_len = strlen(digits);
     size_t len = 0;
     const char* digit_text = digits;
-    int include_base = !(base == 'd' && value.width == 32u && value.is_signed && !has_unknown);
+    int include_base = !(base == 'd' && llg_sv4_width(value) == 32u && llg_sv4_signed(value) && !has_unknown);
     if (digits_len && digits[0] == '-') {
         llg_append(raw, cap, &len, '-');
         digit_text++;
@@ -439,8 +439,8 @@ static size_t llg_format_pattern_packed(sv4_t value, char* raw, size_t cap) {
     }
     if (include_base) {
         char prefix[64];
-        int written = snprintf(prefix, sizeof(prefix), "%u'%s%c", value.width,
-                               value.is_signed ? "s" : "", base);
+        int written = snprintf(prefix, sizeof(prefix), "%u'%s%c", llg_sv4_width(value),
+                               llg_sv4_signed(value) ? "s" : "", base);
         if (written > 0) llg_append_text(raw, cap, &len, prefix, (size_t)written);
     }
     llg_append_text(raw, cap, &len, digit_text, digits_len);
@@ -565,7 +565,7 @@ static size_t llg_format_typed(char* out, size_t cap, const char* fmt,
         }
         const llg_fmt_arg_t* arg = &args[argi++];
         size_t payload = 0;
-        if (arg->kind == LLG_FMT_PACKED) payload = (size_t)arg->value.packed.width * 4u;
+        if (arg->kind == LLG_FMT_PACKED) payload = (size_t)llg_sv4_width(arg->value.packed) * 4u;
         else if (arg->kind == LLG_FMT_STRING) {
             if (arg->value.string.len > SIZE_MAX / 8u)
                 llg_fatal_allocation("string display", arg->value.string.len, 8u);

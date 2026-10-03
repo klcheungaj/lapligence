@@ -189,3 +189,37 @@ void llg_gmp_sv4_kernel_div(uint64_t* result, const uint64_t* dividend, const ui
 }
 
 #endif
+
+/* Decimal digits, most significant first. The input is operation-local mutable
+ * magnitude storage; GMP's get_str may destroy it for non-power-of-two bases. */
+size_t llg_gmp_sv4_kernel_decimal(unsigned char* out, uint64_t* magnitude, size_t n) {
+#if LLG_SV4_GMP_KERNELS
+    if (n >= LLG_SV4_DECIMAL_GMP_THRESHOLD)
+        return mpn_get_str(out, 10, magnitude, (mp_size_t)n);
+#endif
+    size_t count = 0;
+    while (n) {
+        uint64_t rem = 0;
+        for (size_t i = n; i-- > 0;) {
+            uint64_t high = (rem << 32) | (magnitude[i] >> 32);
+            uint64_t low = ((high % UINT64_C(1000000000)) << 32) | (uint32_t)magnitude[i];
+            magnitude[i] = ((high / UINT64_C(1000000000)) << 32) | (low / UINT64_C(1000000000));
+            rem = low % UINT64_C(1000000000);
+        }
+        while (n && !magnitude[n - 1u])
+            --n;
+        unsigned digits = n ? 9u : 0u;
+        do {
+            out[count++] = (unsigned char)(rem % 10u);
+            rem /= 10u;
+            if (digits)
+                --digits;
+        } while (digits || rem);
+    }
+    for (size_t i = 0; i < count / 2u; ++i) {
+        unsigned char digit = out[i];
+        out[i] = out[count - 1u - i];
+        out[count - 1u - i] = digit;
+    }
+    return count;
+}

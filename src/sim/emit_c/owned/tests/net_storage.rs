@@ -169,24 +169,24 @@ fn net_storage_restarts_with_empty_cells_indexes_and_alias_lists() {
 int main(void) {
     for (int cycle = 0; cycle < 8; ++cycle) {
         if (llg_model_start(0, NULL)) return 1;
-        if (g_pull.resolved.width != 129 || !g_pull.resolved.is_signed ||
-            g_pull.resolved.bits[0] != UINT64_MAX ||
-            g_pull.resolved.bits[1] != UINT64_MAX || g_pull.resolved.bits[2] != 1) return 2;
+        if (llg_sv4_width(g_pull.resolved) != 129 || !llg_sv4_signed(g_pull.resolved) ||
+            llg_sv4_word(g_pull.resolved, 0, LLG_SV4_BITS) != UINT64_MAX ||
+            llg_sv4_word(g_pull.resolved, 1, LLG_SV4_BITS) != UINT64_MAX || llg_sv4_word(g_pull.resolved, 2, LLG_SV4_BITS) != 1) return 2;
         if (g_bit_0.n_aliases != 2 || g_bit_0.index_root != -1 ||
             g_bit_0.driver_index[0].active || g_bit_0.driver_index[1].active) return 3;
         if (g_bit_0.drivers[0] != &g_bit_0__cells[0] ||
             g_bit_0.drivers[1] != &g_bit_0__cells[1] ||
-            g_bit_0__cells[0].z[0] != 1 || g_bit_0__cells[1].z[0] != 1) return 4;
+            llg_sv4_word(g_bit_0__cells[0], 0, LLG_SV4_Z) != 1 || llg_sv4_word(g_bit_0__cells[1], 0, LLG_SV4_Z) != 1) return 4;
         sv4_t one = sv4_from_u64(1, 1, 0);
         llg_net_write(&g_bit_0, 1, one);
         sv4_destroy(&one);
-        if (g_bit_0.resolved.bits[0] != 1 || !g_bit_0.driver_index[1].active ||
-            G_array_0[2].bits[0] != 1 || llg_array_net_0_2.visible.bits[0] != 1) return 5;
+        if (llg_sv4_word(g_bit_0.resolved, 0, LLG_SV4_BITS) != 1 || !g_bit_0.driver_index[1].active ||
+            llg_sv4_word(G_array_0[2], 0, LLG_SV4_BITS) != 1 || llg_sv4_word(llg_array_net_0_2.visible, 0, LLG_SV4_BITS) != 1) return 5;
         if (llg_model_close()) return 6;
-        if (g_bit_0__cells[0].width || g_bit_0__cells[1].width ||
-            g_bit_0.resolved.width || g_pull.resolved.width ||
+        if (llg_sv4_width(g_bit_0__cells[0]) || llg_sv4_width(g_bit_0__cells[1]) ||
+            llg_sv4_width(g_bit_0.resolved) || llg_sv4_width(g_pull.resolved) ||
             g_bit_0.aliases || g_bit_0.n_aliases || g_bit_0.alias_capacity ||
-            llg_array_net_0_2.visible.width) return 7;
+            llg_sv4_width(llg_array_net_0_2.visible)) return 7;
     }
     return 0;
 }
