@@ -213,6 +213,23 @@ fn named_function_body<'a>(source: &'a str, function_name: &str) -> &'a str {
     &tail[..end]
 }
 
+fn assert_cli_fixture_path_contract(cli_helper: &str) {
+    let body = named_function_body(cli_helper, "fixture_path");
+    for required in [
+        "Path::new(env!(\"CARGO_MANIFEST_DIR\"))",
+        ".join(\"tests/fixtures/sim\")",
+        ".join(suite)",
+        "format!(\"{fixture}.sv\")",
+        ".join(name)",
+        "assert!(source.is_file()",
+    ] {
+        assert!(
+            body.contains(required),
+            "public-CLI fixture helper no longer guarantees checked fixture paths: {required}"
+        );
+    }
+}
+
 fn optimized_mode_loop_body(owner_body: &str) -> &'_ str {
     let header = "for optimized in [false, true] {";
     let start = owner_body
@@ -331,13 +348,11 @@ fn assert_manual_cli_contract(
 
     let cli_helper = fs::read_to_string(root.join("tests/support/sim_cli.rs"))
         .expect("read public-CLI invocation helper");
+    assert_cli_fixture_path_contract(&cli_helper);
     let invoke_body = named_function_body(&cli_helper, "invoke_with_env");
     for required in [
         "Command::new(env!(\"CARGO_BIN_EXE_llg\"))",
-        ".join(\"tests/fixtures/sim\")",
-        ".join(suite)",
-        ".join(format!(\"{fixture}.sv\"))",
-        "assert!(source.is_file()",
+        "let source = fixture_path(suite, fixture);",
         "if !optimized",
         "command.arg(\"--no-opt\")",
         "command.args(args)",
@@ -784,13 +799,11 @@ fn assert_storage_write_remainders_cli_contract(root: &Path, owner_body: &str, o
 
     let cli_helper = fs::read_to_string(root.join("tests/support/sim_cli.rs"))
         .expect("read public-CLI invocation helper");
+    assert_cli_fixture_path_contract(&cli_helper);
     let invoke_body = named_function_body(&cli_helper, "invoke_with_env");
     for required in [
         "Command::new(env!(\"CARGO_BIN_EXE_llg\"))",
-        ".join(\"tests/fixtures/sim\")",
-        ".join(suite)",
-        ".join(format!(\"{fixture}.sv\"))",
-        "assert!(source.is_file()",
+        "let source = fixture_path(suite, fixture);",
         "current_dir(directory.path())",
         "if !optimized",
         "command.arg(\"--no-opt\")",
@@ -858,13 +871,11 @@ fn assert_static_return_ref_actual_cli_contract(root: &Path, owner_body: &str, o
 
     let cli_helper = fs::read_to_string(root.join("tests/support/sim_cli.rs"))
         .expect("read public-CLI invocation helper");
+    assert_cli_fixture_path_contract(&cli_helper);
     let invoke_body = named_function_body(&cli_helper, "invoke_with_env");
     for required in [
         "Command::new(env!(\"CARGO_BIN_EXE_llg\"))",
-        ".join(\"tests/fixtures/sim\")",
-        ".join(suite)",
-        ".join(format!(\"{fixture}.sv\"))",
-        "assert!(source.is_file()",
+        "let source = fixture_path(suite, fixture);",
         "current_dir(directory.path())",
         "if !optimized",
         "command.arg(\"--no-opt\")",
