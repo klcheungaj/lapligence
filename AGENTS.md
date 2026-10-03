@@ -57,6 +57,9 @@ append nextest filters as needed). This opt-in flow isolates scratch per
 worktree/run, shares the runtime cache, and keeps Cargo/Slang builds on disk.
 Do not share mutable Cargo/CMake build trees or delete another active run's
 scratch. Follow [test storage and cleanup](tests/readme.md#parallel-worktrees).
+Optional `--sccache`/`--mold` runner flags and a sourced environment helper for
+plain Cargo are described in [development accelerators](tests/readme.md#optional-development-accelerators).
+Keep these tools opt-in; preserve configured rustflags and user Rust wrappers.
 
 The portable Rust patch preparer applies tracked `patches/slang/` before consuming
 native sources. Keep the documented upstream-base vendor gitlink; no

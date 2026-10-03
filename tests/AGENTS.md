@@ -136,6 +136,10 @@ inspection. Remove only inactive runs owned by your task; prune the shared
 runtime cache only when all users have stopped. Four runners at eight threads
 mean 32 concurrent tests, with no global quota or automatic cache eviction.
 See [the storage guide](readme.md#parallel-worktrees) for commands and limits.
+Optional Rust/native caches and the Linux GNU mold linker are documented in
+[development accelerators](readme.md#optional-development-accelerators).
+Runner flags `--sccache`/`--mold` share the plain-Cargo environment helper;
+leave them disabled unless requested and fail for missing requested tools.
 
 Run the complete [repository gate](readme.md#repository-gate), not fmt/check/clippy
 alone. [ci.yml](../.github/workflows/ci.yml) defines Ubuntu gates and five-platform
