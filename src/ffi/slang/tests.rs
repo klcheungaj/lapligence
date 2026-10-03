@@ -509,7 +509,7 @@ fn sequential_predicate_pattern_edge_decodes_and_unknown_roles_still_fail() {
 
 #[test]
 fn semantic_decode_reserves_exact_validated_record_counts() {
-    for count in [32, 512] {
+    for count in [33, 513] {
         let nodes = (0..count)
             .map(|index| {
                 let mut node = raw_semantic_node(1);
