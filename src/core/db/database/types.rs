@@ -260,6 +260,8 @@ pub enum AggregateKind {
     PackedUnion,
     UnpackedStruct,
     UnpackedUnion,
+    /// A packed or unpacked tagged union (SV 7.3.2); its members keep their
+    /// own descriptors, and its tag width covers every member index.
     TaggedUnion,
 }
 

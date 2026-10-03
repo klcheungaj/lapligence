@@ -510,7 +510,15 @@ impl<'a> Codegen<'a> {
         let total_width = tag_width
             .checked_add(payload_width)
             .ok_or_else(|| format!("tagged union width overflows in `{scope_path}`"))?;
-        if descriptor.info.width != Some(total_width) {
+        // Unpacked tagged unions have no frontend packed width; their storage
+        // uses the same finite tag-plus-payload layout as a packed union.
+        if descriptor
+            .info
+            .width
+            .filter(|width| *width != 0)
+            .or_else(|| Self::fixed_descriptor_width(&descriptor))
+            != Some(total_width)
+        {
             return Err(format!(
                 "tagged union `{}` is not a fixed packed value in `{scope_path}`",
                 descriptor.name

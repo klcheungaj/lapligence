@@ -1,4 +1,4 @@
-//! Characterization of Q02/Q03 undefined behavior; goldens are not conformance oracles.
+//! Characterization of Q02 unresolved-oracle behavior; goldens are not conformance oracles.
 
 use std::path::Path;
 use std::process::Command;
@@ -104,7 +104,3 @@ fixture!(q02_bad_address, "v");
 fixture!(q02_short_file, "v");
 fixture!(q02_long_file, "v");
 fixture!(q02_wakeup, "v");
-fixture!(q03_retag_blocking, "sv");
-fixture!(q03_retag_process, "sv");
-fixture!(q03_whole_vs_member, "sv");
-fixture!(q03_control, "sv");

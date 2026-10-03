@@ -15,6 +15,23 @@ fn supported_fixed_integral_value(descriptor: &TypeDescriptor) -> bool {
     ) && Codegen::fixed_descriptor_width(descriptor).is_some()
 }
 
+/// A whole-value wildcard or binding needs one packed owner for its source.
+/// A finite source beyond packed capacity has no descriptor pattern
+/// transport yet, so it is rejected with its size instead of being flattened.
+fn whole_pattern_source_error(descriptor: &TypeDescriptor, scope_path: &str) -> String {
+    match Codegen::fixed_descriptor_width_bits(descriptor) {
+        Some(width) if width > u64::from(LLG_MAX_WIDTH) => {
+            Codegen::fixed_descriptor_capacity_error(
+                &format!("conditional whole-value pattern source in `{scope_path}`"),
+                width,
+            )
+        }
+        _ => format!(
+            "conditional whole-value pattern requires a supported fixed value in `{scope_path}`"
+        ),
+    }
+}
+
 impl Codegen<'_> {
     pub(super) fn lower_conditional(
         &mut self,
@@ -92,9 +109,7 @@ impl Codegen<'_> {
                 format!("conditional whole-value pattern source type is missing in `{scope_path}`")
             })?;
             if Codegen::fixed_descriptor_width(descriptor).is_none() {
-                return Err(format!(
-                    "conditional whole-value pattern requires a supported fixed value in `{scope_path}`"
-                ));
+                return Err(whole_pattern_source_error(descriptor, scope_path));
             }
         }
         let value = self.lower_expr(scope_path, clause.expression)?;
@@ -181,9 +196,8 @@ impl Codegen<'_> {
             let descriptor = self.query_descriptor(expression).ok_or_else(|| {
                 format!("conditional whole-value pattern source type is missing in `{scope_path}`")
             })?;
-            let width = Codegen::fixed_descriptor_width(descriptor).ok_or_else(|| {
-                format!("conditional whole-value pattern requires a supported fixed value in `{scope_path}`")
-            })?;
+            let width = Codegen::fixed_descriptor_width(descriptor)
+                .ok_or_else(|| whole_pattern_source_error(descriptor, scope_path))?;
             if value.is_real() || value.width != width {
                 return Err(format!(
                     "conditional whole-value pattern source width disagrees with its type in `{scope_path}`"

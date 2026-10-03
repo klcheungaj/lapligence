@@ -283,6 +283,10 @@ definite true. Preserve explicit branches/pattern bindings and short-circuit
 unreachable constants; never replace with `&&`. Matching sources/selectors are
 captured once; filters use per-item bindings and first-match/default order.
 Tagged pattern checks use the enclosing case mode; ordinary member guards are exact.
+Packed and finite unpacked tagged unions are one packed owner (tag in the MSBs,
+members right-justified); records, unions and arrays nested in a member use the
+flattened fixed-value order. Member paths and their selects go through fixed
+projections so each step keeps its tag guard; never select payload bits unguarded.
 Recursive constant checks read each structure member in its own
 state domain, including two-state conversion inside a four-state packed record.
 Constant-pattern operands admit fixed integral atoms, packed structures and

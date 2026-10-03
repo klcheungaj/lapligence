@@ -54,6 +54,8 @@ typedef struct llg_nba {
     int is_string;
     llg_string_t* string_target;
     llg_string_t string_value;
+    // Owned copy of a tagged-member write's commit-time checks, or NULL.
+    llg_ref_view_t* tag_view;
 } llg_nba_t;
 
 typedef struct {
@@ -76,6 +78,7 @@ static void nba_destroy(llg_nba_t* nba) {
     sv4_destroy(&nba->value);
     sv4_destroy(&nba->mask);
     if (nba->is_string) llg_string_destroy(&nba->string_value);
+    free(nba->tag_view);
     value_scope_release(nba->target_scope);
     free(nba);
 }

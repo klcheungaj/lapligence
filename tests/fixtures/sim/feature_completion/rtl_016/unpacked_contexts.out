@@ -1,0 +1,9 @@
+count_of=-4
+static previous=1
+filled=0a 0b lo=2 code=99
+selected input=9a
+selected output lo=7 code=70
+selected ref=bb calls=1
+cells2=13 calls=3 holder=23
+relayed=c0 c1
+relayed=c2

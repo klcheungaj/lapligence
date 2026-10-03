@@ -1,0 +1,17 @@
+count=-3 widened=-3
+count_two_state=0
+raw=a5z
+raw_part=a51
+flags=1000
+offset=-300 negative=1
+record nibble=xxxx code=3c delta=-5
+record code=00 delta=-6
+bytes=10 20 xz
+bytes=f0 20 33
+pair=1001
+copy pair=1001
+conditional raw=123
+conditional count=9
+nested code=66
+nested nibble=a
+tail=9

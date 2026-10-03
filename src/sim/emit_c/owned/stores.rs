@@ -19,6 +19,18 @@ pub(super) struct Target {
     pub net: Option<(String, usize)>,
     pub sequence_local: bool,
     pub reference: Option<String>,
+    /// Active-tag checks a nonblocking tagged-member write repeats at commit.
+    pub tagged_commit: Option<TaggedCommit>,
+}
+
+/// Issue-time receiver plans for each tagged-member guard of one lvalue.
+/// SV 11.9 requires every member assignment to be consistent with the tag
+/// current when it is performed; a member NBA is performed at commit, so the
+/// scheduler re-checks these tags against the target's storage then.
+pub(super) struct TaggedCommit {
+    /// `(receiver plan local, tag width, member index, member name)`.
+    pub checks: Vec<(String, u32, u32, String)>,
+    pub location: String,
 }
 
 impl<'a, 'm> Frame<'a, 'm> {
@@ -331,6 +343,7 @@ impl<'a, 'm> Frame<'a, 'm> {
                     net: None,
                     sequence_local: false,
                     reference: Some(address),
+                    tagged_commit: None,
                 });
             }
             IrLhs::Stream { width, .. } => {
@@ -361,6 +374,7 @@ impl<'a, 'm> Frame<'a, 'm> {
                     net: None,
                     sequence_local: false,
                     reference: Some(pointer),
+                    tagged_commit: None,
                 });
             }
         };
@@ -383,12 +397,20 @@ impl<'a, 'm> Frame<'a, 'm> {
             net,
             sequence_local,
             reference: None,
+            tagged_commit: None,
         })
     }
 
     pub(super) fn release_target(&mut self, target: Target) {
         if let Some(Selection::Indexed(base, ..)) = target.selection {
             self.discard(base);
+        }
+        // Receiver plans are captured before the write kind is known; only a
+        // queued write reads them, so mark them used for blocking writes.
+        if let Some(tagged) = &target.tagged_commit {
+            for (receiver, ..) in &tagged.checks {
+                self.line(format!("(void){receiver};"));
+            }
         }
         for scope in target.reference_scopes.into_iter().rev() {
             self.line(format!("llg_value_scope_end({scope});"));
@@ -424,8 +446,21 @@ impl<'a, 'm> Frame<'a, 'm> {
             root_width,
             target.binding.signed,
         );
+        // Only direct packed storage can be a queued tagged-member target;
+        // reference roots reject nonblocking writes before reaching commit.
+        let commit_checks = target.reference.is_none() && target.net.is_none();
+        let mut checks = Vec::new();
         for step in steps {
             let index = self.expression(&step.selection.base)?;
+            if let (true, Some(guard)) = (commit_checks, &step.guard) {
+                let receiver = self.scalar("sv4_select_plan_t", plan.clone());
+                checks.push((
+                    receiver,
+                    guard.tag_width,
+                    guard.member_index,
+                    guard.member_name.clone(),
+                ));
+            }
             self.line(format!(
                 "sv4_select_plan_step(&{plan}, {}, {});",
                 index.code, step.selection.width
@@ -473,6 +508,12 @@ impl<'a, 'm> Frame<'a, 'm> {
         target.signed = signed;
         target.binding.two_state |= two_state;
         target.valid = valid;
+        if !checks.is_empty() {
+            target.tagged_commit = Some(TaggedCommit {
+                checks,
+                location: location.to_owned(),
+            });
+        }
         Ok(target)
     }
 
@@ -774,7 +815,28 @@ impl<'a, 'm> Frame<'a, 'm> {
             };
             self.line(call);
         } else if let Some(selection) = &target.selection {
-            if nba {
+            if let (true, Some(tagged), None) = (nba, &target.tagged_commit, &target.net) {
+                let (plan, reverse) = self.selection_plan(selection, binding.width);
+                let checks = tagged
+                    .checks
+                    .iter()
+                    .map(|(receiver, tag_width, member_index, member_name)| {
+                        format!(
+                            "{{ .receiver_plan = {receiver}, .tag_width = {tag_width}, .member_index = {member_index}, .member_name = {} }}",
+                            c_string_literal(member_name)
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                self.line(format!(
+                    "llg_nba_tagged_selected_after({}, {}, {plan}, {}, {ticks}, (const llg_ref_tag_check_t[]){{ {checks} }}, {}, {});",
+                    binding.address,
+                    value.code,
+                    u8::from(reverse),
+                    tagged.checks.len(),
+                    c_string_literal(&tagged.location)
+                ));
+            } else if nba {
                 let (plan, reverse) = self.selection_plan(selection, binding.width);
                 self.line(if let Some((name, slot)) = &target.net {
                     format!(
@@ -865,6 +927,7 @@ impl<'a, 'm> Frame<'a, 'm> {
             sequence_local: false,
             reference: None,
             reference_scopes: Vec::new(),
+            tagged_commit: None,
         };
         let value = match uninitialized {
             // A whole aggregate element read through an invalid index keeps

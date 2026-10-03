@@ -4,6 +4,26 @@ static int nba_due(llg_region_t region) {
     return g.nba_queues[region].head != NULL;
 }
 
+// SV 11.9 checks a member assignment against the tag current when it is
+// performed. A member NBA is performed here, so a blocking or other-process
+// retag after issue makes the queued member write a runtime error; the
+// write is dropped rather than storing one member's payload under another
+// member's tag (SV 7.3.2).
+static int nba_tag_commit_valid(const llg_ref_view_t* view, const sv4_t* target) {
+    size_t failed = 0;
+    if (llg_ref_view_valid(view, target, &failed)) return 1;
+    const char* member = "<unknown>";
+    if (failed < view->tag_check_count && view->tag_checks[failed].member_name)
+        member = view->tag_checks[failed].member_name;
+    llg_rt_mark_failed();
+    fprintf(stderr,
+            "llg: runtime error: nonblocking write to tagged-union member %s at %s "
+            "found an inactive tag at commit\n",
+            member, view->location ? view->location : "<unknown>");
+    fflush(stderr);
+    return 0;
+}
+
 static void apply_nba(llg_nba_t* next) {
     if (next->fixed_target) {
         fixed_array_apply(next->fixed_target, next->fixed_value);
@@ -25,6 +45,7 @@ static void apply_nba(llg_nba_t* next) {
             target = next->net_target->drivers[next->net_slot];
         } else if (llg_is_forced(target) || pca_active(target)) return;
         if (!target) return;
+        if (next->tag_view && !nba_tag_commit_valid(next->tag_view, target)) return;
         sv4_t value = (next->has_mask || next->has_range)
                           ? sv4_clone(target)
                           : sv4_clone(&next->value);

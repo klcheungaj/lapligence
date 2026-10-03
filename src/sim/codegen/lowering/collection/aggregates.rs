@@ -57,6 +57,18 @@ impl<'a> Codegen<'a> {
                     // from the same owned layout.
                     return Ok(false);
                 }
+                // A finite payload beyond packed capacity has no descriptor
+                // record transport yet; reject it instead of flattening.
+                if let Some(width) = self
+                    .query_descriptor(node)
+                    .and_then(Self::fixed_descriptor_width_bits)
+                    .filter(|width| *width > u64::from(LLG_MAX_WIDTH))
+                {
+                    return Err(Self::fixed_descriptor_capacity_error(
+                        &format!("tagged union `{}` in `{path}`", self.node(node).name),
+                        width,
+                    ));
+                }
                 return Err(format!(
                     "tagged union `{}` in `{path}` requires a fixed packed representation",
                     self.node(node).name
@@ -377,6 +389,7 @@ impl<'a> Codegen<'a> {
                     AggregateKind::PackedStruct
                         | AggregateKind::PackedUnion
                         | AggregateKind::UnpackedUnion
+                        | AggregateKind::TaggedUnion
                 ) =>
             {
                 let width =

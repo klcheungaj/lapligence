@@ -115,6 +115,45 @@ fn tagged_write_guards_track_comparison_owners() {
 }
 
 #[test]
+fn tagged_nonblocking_writes_queue_one_commit_check_per_guard() {
+    let model = model();
+    let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
+        model: &model,
+        func: None,
+        sampled: false,
+        activation_label: None,
+        constants: None,
+    };
+    let mut frame = Frame::new(&ctx);
+    let queued = frame.target(&target()).unwrap();
+    let value = frame.expression(&number(0x5a, 8)).unwrap();
+    frame.store(&queued, value, true, "0").unwrap();
+    frame.release_target(queued);
+    check_owners(&frame);
+    let source = frame.body();
+    let call = source
+        .lines()
+        .find(|line| line.contains("llg_nba_tagged_selected_after("))
+        .unwrap_or_else(|| panic!("{source}"));
+    // Each guard records its issue-time receiver plan, so the commit can
+    // re-read the tag of every nested union level from the target storage.
+    assert_eq!(call.matches(".receiver_plan = ").count(), 2, "{call}");
+    assert!(call.contains("\"member_9\""), "{call}");
+    assert!(call.contains("\"member_8\""), "{call}");
+    assert!(call.contains(", 2, \"tagged.sv:1:1\");"), "{call}");
+    assert!(!source.contains("llg_nba_selected_after("), "{source}");
+
+    // A blocking write is checked once, when it is performed.
+    let mut frame = Frame::new(&ctx);
+    let blocking = frame.target(&target()).unwrap();
+    let value = frame.expression(&number(0x5a, 8)).unwrap();
+    frame.store(&blocking, value, false, "0").unwrap();
+    frame.release_target(blocking);
+    assert!(!frame.body().contains("llg_nba_tagged_selected_after("));
+}
+
+#[test]
 fn generated_nested_tagged_guards_execute_with_owned_temporaries() {
     assert!(crate::sim::build::cmake_available(), "CMake is required");
     for optimized in [false, true] {

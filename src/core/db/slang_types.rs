@@ -324,7 +324,9 @@ impl<'a> SlangTypeProjector<'a> {
     ) -> Result<Option<AggregateLayout>, String> {
         let kind = match ty.kind {
             TypeKind::PackedStruct => AggregateKind::PackedStruct,
-            TypeKind::PackedUnion if ty.is_tagged => AggregateKind::TaggedUnion,
+            TypeKind::PackedUnion | TypeKind::UnpackedUnion if ty.is_tagged => {
+                AggregateKind::TaggedUnion
+            }
             TypeKind::PackedUnion => AggregateKind::PackedUnion,
             TypeKind::UnpackedStruct => AggregateKind::UnpackedStruct,
             TypeKind::UnpackedUnion => AggregateKind::UnpackedUnion,
@@ -874,6 +876,46 @@ mod tests {
             },
         };
         assert_eq!(fixed.fixed_size_bits(), Some(48));
+    }
+
+    #[test]
+    fn unpacked_tagged_unions_keep_their_tagged_layout() {
+        let byte = ty(0, TypeKind::Integral, 8);
+        let word = ty(1, TypeKind::Integral, 16);
+        let mut union = ty(2, TypeKind::UnpackedUnion, 0);
+        union.is_tagged = true;
+        union.member_count = 2;
+        let mut plain = ty(3, TypeKind::UnpackedUnion, 0);
+        plain.member_count = 2;
+        let types = [byte, word, union, plain];
+        let members = ["narrow", "wide"]
+            .into_iter()
+            .zip([0, 1])
+            .map(|(name, type_id)| TypeMember {
+                initializer_constant_id: None,
+                name: name.to_owned(),
+                type_id,
+                bit_offset: 0,
+                bit_width: 0,
+            })
+            .collect::<Vec<_>>();
+        let projector = SlangTypeProjector {
+            constants: &[],
+            types: types.iter().map(|ty| (ty.id, ty)).collect(),
+            ranges: &[],
+            members: &members,
+        };
+        let tagged = projector.project(2).expect("project tagged union");
+        let layout = tagged.aggregate_layout.expect("tagged layout");
+        assert_eq!(layout.kind, AggregateKind::TaggedUnion);
+        assert_eq!(layout.tag_bits(), Some(1));
+        // One tag bit above the widest member, as for a packed tagged union.
+        assert_eq!(tagged.descriptor.fixed_size_bits(), Some(17));
+        let plain = projector.project(3).expect("project untagged union");
+        assert_eq!(
+            plain.aggregate_layout.expect("untagged layout").kind,
+            AggregateKind::UnpackedUnion
+        );
     }
 
     #[test]

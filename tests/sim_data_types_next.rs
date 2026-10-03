@@ -247,39 +247,11 @@ datatype_case!(
     "syn_021_tagged_values"
 );
 
-#[test]
-fn tagged_unpacked_form_is_rejected_at_the_fixed_storage_boundary() {
-    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/sim/data_types_next")
-        .join("syn_021_tagged_unpacked_rejected.sv");
-    sim_harness::with_frontend_temp_cwd("data-types-next-tagged-rejection", |dir| {
-        let source = dir.join("syn_021_tagged_unpacked_rejected.sv");
-        std::fs::copy(&fixture, &source).map_err(|error| format!("copy fixture: {error}"))?;
-        let compiled = compile::compile_checked(&compile::CompileOpts {
-            files: vec![source.to_string_lossy().into_owned()],
-            top: Some("tb".to_owned()),
-            ..Default::default()
-        })
-        .map_err(|error| format!("compile: {error}"))?;
-        let database =
-            Db::from_slang(&compiled.snapshot).map_err(|error| format!("database: {error}"))?;
-        for (variant, options) in [
-            ("unoptimized", OptConfig::none()),
-            ("optimized", OptConfig::default()),
-        ] {
-            let error = sim::codegen::generate_from_db_with_opts(&database, &options)
-                .map(|_| "generated successfully".to_owned())
-                .unwrap_or_else(|error| error.to_string());
-            if !error.contains("requires fixed packed value members") {
-                return Err(format!(
-                    "{variant}: unpacked tagged union was not rejected: {error}"
-                ));
-            }
-        }
-        Ok(())
-    })
-    .expect("unpacked tagged union must remain outside finite packed storage");
-}
+datatype_case!(
+    tagged_unpacked_form_uses_finite_tagged_storage,
+    "syn_021_tagged_unpacked_values.sv",
+    "syn_021_tagged_unpacked_values"
+);
 datatype_case!(
     packed_streaming_slice_order,
     "packed_streaming.sv",

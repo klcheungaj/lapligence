@@ -277,7 +277,9 @@ See the [runtime retainer inventory](../rt/AGENTS.md#frame-resident-cells).
   value, release per-iteration owners, and bound slots by expression complexity,
   not element count. Include those slots in the explicit frame layout.
 - Tagged access checks register expected-tag/equality values, release them before
-  the C branch and preserve source diagnostics. Retag signed native projections
+  the C branch and preserve source diagnostics. A tagged-member NBA also passes
+  each guard's issue-time receiver plan to `llg_nba_tagged_selected_after`, so
+  the commit re-checks the tags (SV 11.9, Q03). Retag signed native projections
   in both valid and invalid cases. For `inside` array leaves, change the runtime
   value's signedness before wildcard comparison, not metadata alone.
 - Writable callback leaves must all be proven private. Never allow external refs,

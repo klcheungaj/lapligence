@@ -234,7 +234,10 @@ impl<'a> Codegen<'a> {
                     if name.is_empty() || !seen.insert(name.clone()) {
                         continue;
                     }
-                    let w = self.signal_width(path, name.as_str(), ty)?;
+                    let w = match self.unpacked_tagged_width(nid) {
+                        Some(width) => width,
+                        None => self.signal_width(path, name.as_str(), ty)?,
+                    };
                     let ir = self.model.signals.len();
                     let info = SignalInfo {
                         global: if is_real_kind(&ty.kind) {
@@ -431,6 +434,24 @@ impl<'a> Codegen<'a> {
         Ok(())
     }
 
+    /// Storage width of a finite unpacked tagged union. Like a packed tagged
+    /// union it is one packed owner: the tag in the most significant bits and
+    /// each member right-justified below it. The layout is internal because
+    /// unpacked unions are not bit-stream types (SV 7.3.2, 11.4.14).
+    pub(in super::super) fn unpacked_tagged_width(&self, node: NodeId) -> Option<u32> {
+        let descriptor = self.query_descriptor(node)?;
+        let TypeShape::Aggregate(layout) = &descriptor.shape else {
+            return None;
+        };
+        // Slang gives unpacked aggregates no integral width (absent or zero).
+        if layout.kind != AggregateKind::TaggedUnion
+            || descriptor.info.width.is_some_and(|width| width != 0)
+        {
+            return None;
+        }
+        Self::fixed_descriptor_width(descriptor)
+    }
+
     pub(super) fn signal_width(
         &self,
         path: &str,
@@ -538,7 +559,10 @@ impl<'a> Codegen<'a> {
                     if name.is_empty() || !gseen.insert(name.clone()) {
                         continue;
                     }
-                    let w = self.signal_width(&gs_path, &name, ty)?;
+                    let w = match self.unpacked_tagged_width(nid) {
+                        Some(width) => width,
+                        None => self.signal_width(&gs_path, &name, ty)?,
+                    };
                     let ir = self.model.signals.len();
                     let info = SignalInfo {
                         global: if is_real_kind(&ty.kind) {
