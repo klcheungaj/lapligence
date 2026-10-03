@@ -4212,8 +4212,11 @@ private:
     chargeRecord(capture.output, sizeof(LlgSlangLexicalToken));
     capture.output.lexical_tokens.push_back({
         capture.span(token.range()), kind,
-        kind == LLG_SLANG_LEXICAL_KEYWORD ? LLG_SLANG_LEXICAL_ROLE_KEYWORD
-                                         : LLG_SLANG_LEXICAL_ROLE_NONE,
+        // MSVC gives unnamed enums an int underlying type; narrowing to the
+        // uint32_t field must be explicit in brace initialization.
+        static_cast<uint32_t>(kind == LLG_SLANG_LEXICAL_KEYWORD
+                                  ? LLG_SLANG_LEXICAL_ROLE_KEYWORD
+                                  : LLG_SLANG_LEXICAL_ROLE_NONE),
         flags, 0, LLG_SLANG_INVALID_ID, storeString(capture.output, text)});
   }
 };
