@@ -458,6 +458,143 @@ fn checked_in_vcd_dumpvars_unlimited_preserves_identities_and_types() {
     }
 }
 
+/// Runs a waveform fixture with `--define` arguments and returns its VCD text.
+fn read_fixture_vcd_with_defines(
+    fixture: &str,
+    optimized: bool,
+    defines: &[&str],
+) -> (sim_harness::TempDir, String) {
+    let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/sim/waveform")
+        .join(format!("{fixture}.sv"));
+    let dir = sim_harness::TempDir::new(&format!("waveform-{fixture}"))
+        .unwrap_or_else(|error| panic!("{fixture}: {error}"));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_llg"));
+    command.current_dir(dir.path()).args(["--top", "tb"]);
+    for define in defines {
+        command.args(["--define", define]);
+    }
+    if !optimized {
+        command.arg("--no-opt");
+    }
+    command.arg(source);
+    let output = sim_harness::run_command(&mut command, Duration::from_secs(180))
+        .unwrap_or_else(|error| panic!("run {fixture}: {error}"));
+    assert!(
+        output.status.success(),
+        "{fixture}, optimized={optimized}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let diagnostics = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        diagnostics
+            .lines()
+            .all(|line| line.starts_with("Warning: ")),
+        "{fixture}, optimized={optimized} wrote runtime diagnostics: {diagnostics}"
+    );
+    let vcd = std::fs::read_to_string(dir.path().join("trace.vcd")).expect("read generated VCD");
+    (dir, vcd)
+}
+
+#[test]
+fn checked_in_vcd_wide_vectors_dump_full_width_value_changes() {
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let widths = [4095usize, 4096, 4097, 65536];
+    for optimized in [true, false] {
+        let (_dir, vcd) = read_fixture_vcd_with_defines("wide", optimized, &[]);
+        let declarations = vcd_declarations(&vcd);
+        // The record is `b<bits> <id>`; the oracle builds the bit text by hand.
+        let zeros = |width: usize| "0".repeat(width);
+        let ones = |width: usize| "1".repeat(width);
+        let mixed = |width: usize| format!("z{}x", "1".repeat(width - 2));
+        let mut records = Vec::new();
+        for line in vcd.lines() {
+            if let Some(rest) = line.strip_prefix('b') {
+                let (bits, id) = rest.split_once(' ').expect("vector record has an id");
+                records.push((id.to_owned(), bits.to_owned()));
+            }
+        }
+        for width in widths {
+            let name = format!("tb.w{width}");
+            let (kind, declared_width, id) = declarations
+                .get(&name)
+                .unwrap_or_else(|| panic!("{name} missing from catalog"));
+            assert_eq!(
+                (kind.as_str(), declared_width.as_str()),
+                ("wire", width.to_string().as_str())
+            );
+            let expected = [zeros(width), ones(width), mixed(width)];
+            let actual: Vec<&String> = records
+                .iter()
+                .filter(|(record_id, _)| record_id == id)
+                .map(|(_, bits)| bits)
+                .collect();
+            assert_eq!(
+                actual.len(),
+                expected.len(),
+                "{name}, optimized={optimized}: wrong number of value changes"
+            );
+            for (index, (got, want)) in actual.iter().zip(&expected).enumerate() {
+                assert!(
+                    got.as_str() == want.as_str(),
+                    "{name}, optimized={optimized}: value change {index} differs \
+                     (got {} bits, want {} bits)",
+                    got.len(),
+                    want.len()
+                );
+            }
+        }
+        assert!(vcd.contains("#1000\n") && vcd.contains("#2000\n"));
+        assert!(vcd.ends_with('\n'));
+    }
+}
+
+#[test]
+fn checked_in_vcd_byte_limit_applies_to_whole_wide_records() {
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    for optimized in [true, false] {
+        let (_dir, full) = read_fixture_vcd_with_defines("wide_limit", optimized, &[]);
+        // Offsets of the three 65536-bit records in the unlimited output.
+        let mut record_ends = Vec::new();
+        let mut record_starts = Vec::new();
+        let mut offset = 0usize;
+        for line in full.split_inclusive('\n') {
+            if line.starts_with('b') && line.len() > 65536 {
+                record_starts.push(offset);
+                record_ends.push(offset + line.len());
+            }
+            offset += line.len();
+        }
+        assert_eq!(
+            record_ends.len(),
+            3,
+            "unlimited output: {} bytes",
+            full.len()
+        );
+
+        // A limit exactly at the end of the second record keeps it whole and
+        // drops everything after it.
+        let exact = record_ends[1];
+        let define = format!("LIMIT={exact}");
+        let (_dir, limited) = read_fixture_vcd_with_defines("wide_limit", optimized, &[&define]);
+        assert_eq!(limited.len(), exact, "exact-fit limit");
+        assert_eq!(limited, full[..exact]);
+
+        // One byte less rejects the whole second record, not a prefix of it.
+        let define = format!("LIMIT={}", exact - 1);
+        let (_dir, limited) = read_fixture_vcd_with_defines("wide_limit", optimized, &[&define]);
+        assert!(limited.len() < exact, "limit exceeded: {}", limited.len());
+        assert_eq!(limited, full[..record_starts[1]], "partial record kept");
+        assert!(limited.ends_with('\n'));
+    }
+}
+
 #[test]
 fn checked_in_vcd_dumpvars_named_selection_is_lossless() {
     if !sim::build::cmake_available() {
