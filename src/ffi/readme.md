@@ -9,6 +9,10 @@ owned APIs to the rest of the library.
 | `process_memory.rs` | Platform process-memory counters and native resource limits. |
 | `secure_fs` | Handle-relative filesystem admission and identity/race protection. |
 
+Semantic node IDs are checked as contiguous arena indices before range-based
+reference validation. Decoded node and edge arenas reserve the validated record
+counts exactly; native ownership ends after all payloads have been copied.
+
 Snapshot data includes source/lexical provenance, typed semantic edges, UDP tables,
 sequence metadata and aggregate defaults. No native pointer or borrowed buffer
 escapes the safe interface. See [wrapper](../wrapper/readme.md),

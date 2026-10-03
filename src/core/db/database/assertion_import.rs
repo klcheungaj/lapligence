@@ -79,7 +79,7 @@ pub(super) fn assertion_expr_from_slang(
     snapshot: &SlangSnapshot,
     node: &SemanticNode,
     edges: &[crate::ffi::slang::SemanticEdge],
-    ids: &HashMap<u64, NodeId>,
+    ids: &SemanticIds,
 ) -> Result<NodeKind, DbError> {
     let first = |role| edge_target(ids, edges, role);
     let required = |role, name| {

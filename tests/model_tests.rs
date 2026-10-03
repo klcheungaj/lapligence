@@ -588,3 +588,44 @@ fn owned_snapshot_survives_native_compile_teardown() {
             .any(|parameter| parameter.name == "W"));
     });
 }
+
+#[test]
+fn dense_owned_import_rejects_malformed_ids_and_keeps_source_identity() {
+    let output = compile::compile_sources_checked(
+        &[compile::OwnedSource::compilation_unit(
+            "dense_import.sv",
+            "module top; logic [3:0] x = 4'bxz01; endmodule",
+        )],
+        &compile::CompileOpts {
+            top: Some("top".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let snapshot = output.snapshot;
+    let database = db::Db::from_slang(&snapshot).unwrap();
+    for malformed in [0, 1, 2] {
+        let mut invalid = snapshot.clone();
+        match malformed {
+            0 => invalid.semantic_nodes[1].id = invalid.semantic_nodes[0].id,
+            1 => invalid.semantic_nodes.swap(0, 1),
+            _ => invalid.semantic_nodes[0].id = u64::MAX,
+        }
+        assert!(db::Db::from_slang(&invalid).is_err());
+    }
+    for malformed in [0, 1, 2] {
+        let mut invalid = snapshot.clone();
+        match malformed {
+            0 => invalid.semantic_nodes[0].parent_id = Some(u64::MAX - 1),
+            1 => invalid.semantic_nodes[0].target_id = Some(u64::MAX - 1),
+            _ => invalid.semantic_edges[0].target_id = u64::MAX - 1,
+        }
+        assert!(db::Db::from_slang(&invalid).is_err());
+    }
+    drop(snapshot);
+    database.validate().unwrap();
+    assert_eq!(
+        database.source_text("dense_import.sv"),
+        Some("module top; logic [3:0] x = 4'bxz01; endmodule")
+    );
+}

@@ -5,6 +5,9 @@ retains declaration identity, source text/ranges, types, constants, dimensions,
 lifetimes, initialization, bindings, timing and unsupported-node metadata.
 A validated builder supports frontend-independent tests.
 
+Import validates the dense semantic ID domain and resolves IDs by checked arena
+index without retaining an identity hash map.
+
 Projection normalizes implicit instance bodies and expands concrete instance-array
 entries without losing source indices or explicit statement scopes. Packed ranges
 use declaration IDs rather than names. Typed references distinguish subroutine

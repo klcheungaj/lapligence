@@ -8,30 +8,10 @@ impl Db {
     /// This conversion never reads source files and retains no native owner.
     pub fn from_slang(snapshot: &SlangSnapshot) -> Result<Self, DbError> {
         let type_projector = SlangTypeProjector::new(snapshot)?;
-        let ids = snapshot
-            .semantic_nodes
-            .iter()
-            .enumerate()
-            .map(|(index, node)| (node.id, NodeId::from_index(index)))
-            .collect::<HashMap<_, _>>();
-        if ids.len() != snapshot.semantic_nodes.len() {
-            return Err(DbError::InvalidSnapshot(
-                "duplicate Slang semantic node id".to_owned(),
-            ));
-        }
-        if snapshot
-            .semantic_nodes
-            .iter()
-            .enumerate()
-            .any(|(index, node)| node.id != index as u64)
-        {
-            return Err(DbError::InvalidSnapshot(
-                "Slang semantic node ids are not contiguous arena indices".to_owned(),
-            ));
-        }
+        let ids = SemanticIds::new(&snapshot.semantic_nodes)?;
         let mut source_identities = HashMap::new();
         for semantic in &snapshot.semantic_nodes {
-            let id = ids[&semantic.id];
+            let id = NodeId::from_index(semantic.id as usize);
             for edge in semantic_edges(snapshot, semantic)? {
                 if edge.role == SemanticEdgeRole::SourceIdentity {
                     source_identities.insert(id, semantic_id(&ids, edge.target_id)?);
@@ -88,11 +68,11 @@ impl Db {
                         kind,
                         binding: semantic
                             .target_id
-                            .and_then(|target| ids.get(&target).copied())
+                            .and_then(|target| ids.get(&target))
                             .filter(|_| kind == ConditionalPatternKind::Binding),
                         tagged_member: semantic
                             .target_id
-                            .and_then(|target| ids.get(&target).copied())
+                            .and_then(|target| ids.get(&target))
                             .filter(|_| kind == ConditionalPatternKind::Tagged),
                         value_pattern: None,
                     },
@@ -216,7 +196,7 @@ impl Db {
                 semantic.kind == SemanticKind::Variable
                     && semantic.subkind == crate::ffi::slang::SEMANTIC_VARIABLE_ASSERTION_LOCAL
             })
-            .map(|semantic| ids[&semantic.id])
+            .map(|semantic| NodeId::from_index(semantic.id as usize))
             .collect();
         let assertion_formal_directions = snapshot
             .semantic_nodes
@@ -231,7 +211,12 @@ impl Db {
                         || semantic.is_inout
                         || semantic.is_ref)
             })
-            .map(|semantic| (ids[&semantic.id], direction_from_slang(semantic)))
+            .map(|semantic| {
+                (
+                    NodeId::from_index(semantic.id as usize),
+                    direction_from_slang(semantic),
+                )
+            })
             .collect();
         let mut implicit_nets = HashSet::new();
         let mut implicit_conversions = HashSet::new();
@@ -254,7 +239,7 @@ impl Db {
                     && semantic.auxiliary & crate::ffi::slang::SUBROUTINE_DPI_IMPORT != 0
             })
             .map(|semantic| {
-                let id = ids[&semantic.id];
+                let id = NodeId::from_index(semantic.id as usize);
                 let c_name = if semantic.definition_name.is_empty() {
                     semantic.name.clone()
                 } else {
@@ -272,7 +257,7 @@ impl Db {
             })
             .collect::<HashMap<_, _>>();
         for semantic in &snapshot.semantic_nodes {
-            let id = ids[&semantic.id];
+            let id = NodeId::from_index(semantic.id as usize);
             let edges = semantic_edges(snapshot, semantic)?;
             let mut children = Vec::new();
             for edge in edges {
@@ -455,7 +440,7 @@ impl Db {
                     .and_then(|parent| snapshot.semantic_nodes.get(parent as usize));
                 let block = semantic
                     .parent_id
-                    .and_then(|parent| ids.get(&parent).copied())
+                    .and_then(|parent| ids.get(&parent))
                     .filter(|_| {
                         parent_raw.is_some_and(|parent| {
                             parent.kind == SemanticKind::Scope
@@ -840,7 +825,7 @@ impl Db {
             if semantic.detail != "ClockVar" {
                 continue;
             }
-            let id = ids[&semantic.id];
+            let id = NodeId::from_index(semantic.id as usize);
             if clocking_vars.contains_key(&id) {
                 continue;
             }
@@ -929,37 +914,37 @@ impl Db {
             .semantic_nodes
             .iter()
             .filter(|node| node.kind == SemanticKind::Instance && node.is_top)
-            .map(|node| ids[&node.id])
+            .map(|node| NodeId::from_index(node.id as usize))
             .collect();
         let flat_modules: Vec<NodeId> = snapshot
             .semantic_nodes
             .iter()
             .filter(|node| node.kind == SemanticKind::Definition)
-            .map(|node| ids[&node.id])
+            .map(|node| NodeId::from_index(node.id as usize))
             .collect();
         let packages: Vec<NodeId> = snapshot
             .semantic_nodes
             .iter()
             .filter(|node| node.kind == SemanticKind::Package)
-            .map(|node| ids[&node.id])
+            .map(|node| NodeId::from_index(node.id as usize))
             .collect();
         let classes: Vec<NodeId> = snapshot
             .semantic_nodes
             .iter()
             .filter(|node| node.kind == SemanticKind::Class)
-            .map(|node| ids[&node.id])
+            .map(|node| NodeId::from_index(node.id as usize))
             .collect();
         let class_metadata = snapshot
             .semantic_nodes
             .iter()
             .filter(|node| node.kind == SemanticKind::Class)
             .map(|node| -> Result<(NodeId, ClassMetadata), DbError> {
-                let id = ids[&node.id];
+                let id = NodeId::from_index(node.id as usize);
                 Ok((
                     id,
                     ClassMetadata {
                         type_id: node.type_id.map(TypeId),
-                        base: node.target_id.and_then(|target| ids.get(&target).copied()),
+                        base: node.target_id.and_then(|target| ids.get(&target)),
                         base_constructor: edge_target(
                             &ids,
                             semantic_edges(snapshot, node)?,

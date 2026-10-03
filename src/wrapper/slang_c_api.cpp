@@ -229,11 +229,18 @@ struct LlgSlangError {
   bool is_static = false;
 };
 
+struct SnapshotStringHash {
+  using is_transparent = void;
+  size_t operator()(std::string_view value) const noexcept {
+    return std::hash<std::string_view>{}(value);
+  }
+};
+
 struct LlgSlangSnapshot {
   uint32_t flags = 0;
   uint64_t output_bytes = 0;
   uint64_t output_byte_limit = kDefaultMaxOutputBytes;
-  std::deque<std::string> strings;
+  std::unordered_set<std::string, SnapshotStringHash, std::equal_to<>> strings;
   std::vector<LlgSlangFile> files;
   std::vector<LlgSlangDiagnostic> diagnostics;
   std::vector<LlgSlangRelatedDiagnostic> related;
@@ -273,7 +280,10 @@ LlgSlangString storeString(LlgSlangSnapshot& snapshot, std::string_view value) {
     return {nullptr, 0};
   addChecked(snapshot.output_bytes, value.size(), snapshot.output_byte_limit,
              "export byte");
-  auto& stored = snapshot.strings.emplace_back(value);
+  auto found = snapshot.strings.find(value);
+  if (found == snapshot.strings.end())
+    found = snapshot.strings.emplace(value).first;
+  const auto& stored = *found;
   return {reinterpret_cast<const uint8_t*>(stored.data()),
           static_cast<uint64_t>(stored.size())};
 }
@@ -1175,7 +1185,10 @@ struct Capture {
       node.edge_count = pendingEdges[i].size();
       output.semantic_edges.insert(output.semantic_edges.end(),
                                    pendingEdges[i].begin(), pendingEdges[i].end());
+      std::vector<LlgSlangSemanticEdge>().swap(pendingEdges[i]);
     }
+    std::vector<std::vector<LlgSlangSemanticEdge>>().swap(pendingEdges);
+    indexedSemanticEdges.clear();
   }
 
   void sourceIdentity(const syntax::SyntaxNode* syntaxNode, uint64_t semanticId) {

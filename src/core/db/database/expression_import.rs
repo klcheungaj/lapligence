@@ -25,7 +25,7 @@ pub(super) fn expression_from_slang(
     type_projector: &SlangTypeProjector<'_>,
     node: &SemanticNode,
     edges: &[crate::ffi::slang::SemanticEdge],
-    ids: &HashMap<u64, NodeId>,
+    ids: &SemanticIds,
     ty: TypeInfo,
 ) -> Result<NodeKind, DbError> {
     let first = |role| edge_target(ids, edges, role);

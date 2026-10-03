@@ -506,3 +506,75 @@ fn sequential_predicate_pattern_edge_decodes_and_unknown_roles_still_fail() {
         SlangErrorKind::InvalidNativeData
     );
 }
+
+#[test]
+fn semantic_decode_reserves_exact_validated_record_counts() {
+    for count in [32, 512] {
+        let nodes = (0..count)
+            .map(|index| {
+                let mut node = raw_semantic_node(1);
+                node.id = index as u64;
+                node.edge_start = index as u64;
+                node
+            })
+            .collect::<Vec<_>>();
+        let edges = (0..count)
+            .map(|index| RawSemanticEdge {
+                role: 1,
+                index: 0,
+                target_id: index as u64,
+                sequence_delay_valid: 0,
+                sequence_delay_min: 0,
+                sequence_delay_max: 0,
+            })
+            .collect::<Vec<_>>();
+        let edges = decode_semantic_edges(&edges, &nodes).unwrap();
+        let decoded = decode_semantic_nodes(&nodes, &edges, &[], &[], 0).unwrap();
+        assert_eq!(edges.capacity(), count);
+        assert_eq!(decoded.capacity(), count);
+        assert_eq!(decoded.len(), count);
+        for (index, node) in decoded.iter().enumerate() {
+            assert_eq!(node.id, index as u64);
+            assert_eq!(edges[index].target_id, node.id);
+        }
+    }
+}
+
+#[test]
+fn dense_semantic_decode_rejects_malformed_ids_and_references() {
+    for ids in [[0, 0], [1, 0], [0, INVALID_ID], [0, 2]] {
+        let nodes = ids.map(|id| {
+            let mut node = raw_semantic_node(0);
+            node.id = id;
+            node
+        });
+        assert_eq!(
+            decode_semantic_edges(&[], &nodes).unwrap_err().kind(),
+            SlangErrorKind::InvalidNativeData
+        );
+        assert_eq!(
+            decode_semantic_nodes(&nodes, &[], &[], &[], 0)
+                .unwrap_err()
+                .kind(),
+            SlangErrorKind::InvalidNativeData
+        );
+    }
+    for dangling in [1, u64::MAX - 1] {
+        let mut node = raw_semantic_node(0);
+        node.parent_id = dangling;
+        assert!(decode_semantic_nodes(&[node], &[], &[], &[], 0).is_err());
+        node.parent_id = INVALID_ID;
+        node.target_id = dangling;
+        assert!(decode_semantic_nodes(&[node], &[], &[], &[], 0).is_err());
+        node.target_id = INVALID_ID;
+        let edge = RawSemanticEdge {
+            role: 1,
+            index: 0,
+            target_id: dangling,
+            sequence_delay_valid: 0,
+            sequence_delay_min: 0,
+            sequence_delay_max: 0,
+        };
+        assert!(decode_semantic_edges(&[edge], &[node]).is_err());
+    }
+}
