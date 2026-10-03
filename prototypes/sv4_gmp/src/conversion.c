@@ -38,6 +38,24 @@ void gmp4_set_bit(gmp4_t *value, uint64_t bit, unsigned state) {
     if (state >= 2) b |= mask;
     g4_put(value, limb, 0, a); g4_put(value, limb, 1, b);
 }
+void gmp4_set_word(gmp4_t *value, size_t word,
+                   uint64_t bits, uint64_t x, uint64_t z) {
+    if (word >= ((size_t)value->width + 63u) / 64u) return;
+    uint32_t remaining = value->width - (uint32_t)(word * 64u);
+    uint64_t mask = g4_mask64(remaining);
+    x &= mask;
+    z &= mask & ~x;
+    uint64_t b = x | z;
+    uint64_t a = (bits & mask & ~b) | x;
+    if (b) g4_promote(value);
+    size_t first = word * (64u / GMP_NUMB_BITS);
+    for (size_t i = 0; i < 64u / GMP_NUMB_BITS; ++i) {
+        if (first + i >= g4_count(value->width)) break;
+        unsigned shift = (unsigned)(i * GMP_NUMB_BITS);
+        g4_put(value, first + i, 0, (mp_limb_t)(a >> shift));
+        g4_put(value, first + i, 1, (mp_limb_t)(b >> shift));
+    }
+}
 int gmp4_is_unknown(gmp4_t value) {
     if (value.width <= 64) return value.data.small.b != 0;
     if (!value.data.wide.b) return 0;
