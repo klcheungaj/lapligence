@@ -529,6 +529,74 @@ g4_t llg_gmp_sv4_udp_eval(const uint8_t* rows, size_t row_count, size_t input_co
                            const g4_t* const* inputs);
 /* End V05/S6. */
 
+#ifndef LLG_SV4_DECIMAL_GMP_THRESHOLD
+#define LLG_SV4_DECIMAL_GMP_THRESHOLD 4u
+#endif
+/* V05/S8: low-bit scalar coercion versus exact host index conversion.
+ * Formatting borrows values and writes only a bounded NUL-terminated prefix. */
+int llg_gmp_sv4_fits_i64_wide(g4_t value);
+uint64_t llg_gmp_sv4_to_index_wide(g4_t value);
+void llg_gmp_sv4_to_dec_string_wide(g4_t value, char* buf, size_t cap);
+void llg_gmp_sv4_format(char fmt, g4_t value, char* buf, size_t cap);
+static inline int64_t llg_gmp_sv4_to_i64(g4_t value) {
+    uint64_t bits = llg_gmp_sv4_to_u64(value);
+    if (value.width && value.width < 64 && ((bits >> (value.width - 1u)) & 1u))
+        bits |= ~g4_mask(value.width);
+    return bits <= INT64_MAX ? (int64_t)bits : -1 - (int64_t)~bits;
+}
+static inline int llg_gmp_sv4_fits_i64(g4_t value) {
+    if (value.width > 64)
+        return llg_gmp_sv4_fits_i64_wide(value);
+    return !value.data.small.b &&
+           (value.is_signed || value.width < 64 || !(value.data.small.a >> 63));
+}
+static inline uint64_t llg_gmp_sv4_to_index(g4_t value) {
+    if (value.width > 64)
+        return llg_gmp_sv4_to_index_wide(value);
+    if (value.data.small.b || (value.is_signed && value.width &&
+        ((value.data.small.a >> (value.width - 1u)) & 1u)))
+        return UINT64_MAX;
+    return value.data.small.a;
+}
+static inline int llg_gmp_sv4_to_index_i64(g4_t value, int64_t* out) {
+    if (!out || !llg_gmp_sv4_fits_i64(value))
+        return 0;
+    *out = value.is_signed ? llg_gmp_sv4_to_i64(value) : (int64_t)llg_gmp_sv4_to_u64(value);
+    return 1;
+}
+static inline void llg_gmp_sv4_to_dec_string(g4_t value, char* buf, size_t cap) {
+    if (!cap)
+        return;
+    if (value.width > 64) {
+        llg_gmp_sv4_to_dec_string_wide(value, buf, cap);
+        return;
+    }
+    size_t len = 0;
+    if (value.data.small.b) {
+        buf[0] = cap > 1 ? 'x' : 0;
+        if (cap > 1)
+            buf[1] = 0;
+        return;
+    }
+    uint64_t bits = value.data.small.a;
+    int negative = value.is_signed && value.width && ((bits >> (value.width - 1u)) & 1u);
+    if (negative) {
+        bits = (UINT64_C(0) - bits) & g4_mask(value.width);
+        if (len + 1u < cap)
+            buf[len++] = '-';
+    }
+    char digits[20];
+    size_t count = 0;
+    do {
+        digits[count++] = (char)('0' + bits % 10u);
+        bits /= 10u;
+    } while (bits);
+    while (count && len + 1u < cap)
+        buf[len++] = digits[--count];
+    buf[len] = 0;
+}
+/* End V05/S8. */
+
 /* V05/S7: native real payloads and scheduler ticks never enter packed storage.
  * Casts round ties away from zero; rtoi truncates. X/Z bits contribute zero
  * to real inspectors. Nonfinite integer conversions yield X. */
@@ -692,6 +760,9 @@ static inline int llg_gmp_real_to_bool(double value) { return value != 0.0; }
 #define sv4_shortrealtobits llg_gmp_sv4_shortrealtobits
 #define sv4_to_real llg_gmp_sv4_to_real
 #define llg_real_to_bool llg_gmp_real_to_bool
+/* V05/S8 public names. */
+#define sv4_fits_i64 llg_gmp_sv4_fits_i64
+#define sv4_format llg_gmp_sv4_format
 #define sv4_to_dec_string llg_gmp_sv4_to_dec_string
 #define sv4_to_i64 llg_gmp_sv4_to_i64
 #define sv4_to_index llg_gmp_sv4_to_index
