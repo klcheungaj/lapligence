@@ -105,7 +105,7 @@ requirements above apply without repeating them for each suite.
 | --- | --- |
 | Frontend and owned models | `slang_frontend`, `slang_semantics`, `model_tests`: safe capture, diagnostics, types, bindings, initialization, complete delays and ownership after snapshot destruction. |
 | Datatypes | `sim_data_types`, `sim_data_types_extended`, `sim_data_type_edges`, `sim_data_types_next`, `sim_data_types_completion`; [mixed-type/net matrix](fixtures/sim/type_conformance/readme.md) for independent arithmetic, conversion and resolution oracles. |
-| Ports and nets | `sim_port_net_types`, `sim_net_resolution`, `sim_net_defaults`, `sim_net_decl`, `sim_inout`: directional collapse, independent drivers, strengths/defaults, aliases, selections and delayed publication. Port-type unit tests cover all 81 cells; frontend tests cover 49 resolved pairs. |
+| Ports and nets | `sim_port_net_types`, `sim_net_resolution`, `sim_net_defaults`, `sim_net_decl`, `sim_inout`: directional collapse, independent drivers, strengths/defaults, aliases, selections and delayed publication. [Electrical ranges](fixtures/sim/net_partition/readme.md), `sim_net_partition` and `generated_c_frame_lint::electrical_net_partition_fixtures` cover electrical runs across 1/7/64/65/129 bits, independent value oracles, delayed descriptor loops and declared shapes; `sim_waveform`/`sim_vpi` have generated-model net-view probes. Port-type unit tests cover all 81 cells; frontend tests cover 49 resolved pairs. |
 | Structural UDPs | `sim_udp`, [SYN-031 matrix](fixtures/sim/syn031_combinational_udp/readme.md): Verilog-2001 and SystemVerilog-2009 mux/parity tables, four-state inputs, `?`/`b`, unmatched rows, instance arrays, independent net drivers, delays, invalid port/row-width diagnostics and sequential/edge rejections in both optimizer modes. |
 | Practical RTL | [RTL composition](fixtures/sim/rtl_completion/readme.md), `sim_rtl_completion`: initialization, fixed values/references/unions, ports and array/interface/inout composition. |
 | Arrays and projections | `sim_fixed_array_reductions`, `sim_syn026_iterator_indices`, `sim_array_conditional_assignments`, `sim_fixed_ordering_review`, `sim_syn027_fixed_reverse`, `sim_syn028_fixed_sort`, `sim_group1_repairs`, `sim_group1_formal_repairs`: [reductions](fixtures/sim/fixed_array_reductions/readme.md), [iterator indices](fixtures/sim/syn026_iterator_indices/readme.md), [conditional assignments](fixtures/sim/array_conditional_assignments/readme.md), [fixed reverse](fixtures/sim/syn027_fixed_reverse/readme.md), fixed sort/rsort maps and permutation, activation isolation, signed member conversion, captured outputs and const/NBA negatives. |
@@ -679,5 +679,6 @@ allocation-free same-width arithmetic, including X/Z and 64/65-bit boundaries.
 Standalone compact-backend checks and microbenchmarks, including net/strength,
 real/time, formatting/index and facade adapter probes, are opt-in CMake targets;
 see [native value probes](runtime_value_storage/readme.md#standalone-compact-value-backend).
-They cover portable and optional GMP limb kernels independently of generated
+They cover core values and the S2/S3 shifts, reductions, case/wildcard and range
+families with portable and optional GMP limb kernels, independently of generated
 model selection and do not replace later HDL/model integration acceptance.
