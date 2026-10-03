@@ -196,6 +196,8 @@ impl IrNetGroup {
 /// A lowered unpacked array: flat `sv4_t` storage plus linearization data.
 #[derive(Clone, Debug, PartialEq)]
 pub struct IrArray {
+    /// Lexical activation storage, declared by `FixedArrayDeclare`.
+    pub(in crate::sim) activation: bool,
     /// Array cells that observe a canonical resolved net signal.
     pub(in crate::sim) net_elements: Vec<(u64, usize)>,
     /// Typed default for a fixed aggregate element, before declaration initialization.
@@ -260,6 +262,7 @@ impl IrArray {
         Ok(Self {
             c_name,
             hdl_name,
+            activation: false,
             net_elements: Vec::new(),
             element_default: None,
             elem_width,
@@ -270,6 +273,25 @@ impl IrArray {
             dims,
             total,
         })
+    }
+
+    pub(in crate::sim) fn sparse(&self) -> bool {
+        !self.real
+            && self.net_elements.is_empty()
+            && (self.activation
+                || self.total > LLG_DENSE_FIXED_ARRAY_CELLS
+                || self
+                    .total
+                    .checked_mul(u64::from(self.elem_width))
+                    .is_none_or(|width| width > u64::from(crate::sim::emit_c::LLG_MAX_WIDTH)))
+    }
+
+    pub(in crate::sim) fn cell_address(&self, index: &str) -> String {
+        if self.sparse() {
+            format!("llg_fixed_array_cell(&{}, {index})", self.c_name)
+        } else {
+            format!("&{}[{index}]", self.c_name)
+        }
     }
 
     pub fn c_name(&self) -> &str {

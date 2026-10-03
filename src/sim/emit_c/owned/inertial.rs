@@ -35,11 +35,19 @@ impl Frame<'_, '_> {
         // must not cancel a pending update to the previously selected element.
         let handle = if let IrLhs::ArrayElem { arr, .. } = lhs {
             let array = self.ctx.model.array(*arr);
-            self.line(format!(
-                "static llg_inertial_t* {driver}[{}] = {{0}};",
-                array.total
-            ));
-            format!("&{driver}[{} - {}]", target.binding.address, array.c_name)
+            if array.sparse() {
+                self.line(format!("static const char {driver} = 0;"));
+                format!(
+                    "llg_fixed_array_inertial({}, &{driver})",
+                    target.binding.address
+                )
+            } else {
+                self.line(format!(
+                    "static llg_inertial_t* {driver}[{}] = {{0}};",
+                    array.total
+                ));
+                format!("&{driver}[{} - {}]", target.binding.address, array.c_name)
+            }
         } else {
             self.line(format!("static llg_inertial_t* {driver} = NULL;"));
             format!("&{driver}")

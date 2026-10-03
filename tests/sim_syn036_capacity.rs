@@ -64,34 +64,23 @@ fn fixed_array_storage_accepts_the_cell_below_and_at_the_limit_in_both_editions(
 }
 
 #[test]
-fn fixed_array_storage_rejects_one_cell_above_the_selected_limit() {
+fn fixed_array_storage_accepts_the_former_65537_boundary() {
     for edition in ["2001", "2009"] {
-        sim_cli::reject_case_with_args(
-            SUITE,
-            "cell_limit",
-            "fixed-array storage has 65537 cells; selected cell-wise storage limit is 65536 cells",
+        sim_cli::run_case_with_args(SUITE, "cell_limit", "", "", &[], &["--edition", edition]);
+        sim_cli::run_case_with_args(
+            "review_bundle",
+            "r11_array_capacity_65537",
+            "PASS r11_array_capacity_65537\n",
+            "",
+            &[],
             &["--edition", edition],
         );
     }
 }
 
 #[test]
-fn review_bundle_capacity_probe_rejects_the_65537th_cell() {
-    sim_cli::reject_case_with_exact_stderr(
-        "review_bundle",
-        "r11_array_capacity_65537",
-        "llg: codegen error: array `memory` in `tb`: fixed-array storage has 65537 cells; selected cell-wise storage limit is 65536 cells\n",
-        &["--edition", "2009"],
-    );
-}
-
-#[test]
-fn fixed_value_formals_reject_flattened_payloads_above_packed_capacity() {
-    sim_cli::reject_case(
-        SUITE,
-        "aggregate_value_limit",
-        "fixed formal shape fixed value payload is 1114112 bits; packed value capacity is 1048575 bits",
-    );
+fn fixed_value_formals_use_nonflattened_transport_above_packed_capacity() {
+    sim_cli::run_case(SUITE, "aggregate_value_limit", "", "", &[]);
 }
 
 #[test]

@@ -195,6 +195,7 @@ fn reference_bit_targets_validate_shape_and_visit_the_index() {
 fn rejects_array_total_that_disagrees_with_dimensions() {
     let mut model = valid_model();
     model.arrays.push(IrArray {
+        activation: false,
         net_elements: Vec::new(),
         element_default: None,
         c_name: "memory".to_string(),
@@ -217,6 +218,7 @@ fn rejects_array_total_that_disagrees_with_dimensions() {
 fn rejects_array_storage_above_selected_cell_limit() {
     let mut model = valid_model();
     model.arrays.push(IrArray {
+        activation: false,
         net_elements: Vec::new(),
         element_default: None,
         c_name: "memory".to_string(),
@@ -1174,3 +1176,62 @@ fn activation_packed_selection_rejects_empty_plans_and_queued_local_writes() {
 }
 
 mod udp;
+
+#[test]
+fn nonflattened_fixed_operations_validate_shapes_and_activation_scopes() {
+    let mut model = valid_model();
+    model.arrays = vec![
+        IrArray::new("source".into(), "source".into(), 8, false, vec![(0, 4096)]).unwrap(),
+        IrArray::new("target".into(), "target".into(), 8, false, vec![(-5, 4091)]).unwrap(),
+    ];
+    let copy = IrStmt::FixedArrayCopy {
+        dst: 1,
+        src: 0,
+        nba: false,
+        slice: 0,
+    };
+    model.funcs.push(IrFunc::new(
+        "copy".into(),
+        None,
+        vec![],
+        vec![],
+        vec![],
+        vec![copy.clone()],
+    ));
+    model.validate().unwrap();
+    model.arrays[1].dims = vec![(0, 16), (0, 240)];
+    assert!(
+        model.validate().is_err(),
+        "equal cell count cannot erase rank"
+    );
+    model.arrays[1].dims = vec![(-5, 4091)];
+    model.arrays[0].activation = true;
+    assert!(
+        model.validate().is_err(),
+        "activation read before declaration"
+    );
+    model.funcs[0].body = vec![IrStmt::FixedArrayDeclare(0), copy.clone()];
+    model.validate().unwrap();
+    model.funcs[0].body = vec![
+        IrStmt::Block(vec![IrStmt::FixedArrayDeclare(0)]),
+        copy.clone(),
+    ];
+    assert!(model.validate().is_err(), "activation escaped its block");
+    model.arrays[0].activation = false;
+    model.funcs[0].body = vec![IrStmt::FixedArrayCopy {
+        dst: 1,
+        src: 0,
+        nba: false,
+        slice: 3,
+    }];
+    assert!(model.validate().is_err(), "unaligned descriptor stream");
+    model.funcs[0].body = vec![IrStmt::FixedArrayFill {
+        array: 1,
+        value: packed_const(0, 7),
+        nba: false,
+    }];
+    assert!(
+        model.validate().is_err(),
+        "fill width must match one element"
+    );
+}

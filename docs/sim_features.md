@@ -105,7 +105,7 @@ feature rows must still honor their explicit limits even when a selected-profile
 ledger is complete.
 
 The selected packed conditional policy converts Z/Z to X for an ambiguous
-condition (§7). The generated fixed-array ceiling is 65,536 cells ([resource
+condition (§7). The generated fixed-array ceiling is 16,777,216 cells ([resource
 limits](#resource-limits)), not unlimited language capacity. N12 admits literal/macro-generated
 configuration blocks in library maps under the formal grammar despite conflicting
 adjacent prose; this remains the owner's 2026-09-27 policy, not a claimed IEEE
@@ -161,17 +161,19 @@ supported.
 | Resource | Limit or behavior |
 | --- | --- |
 | Packed element or value | 1–1,048,575 bits inclusive; `LLG_SUPPORTED_WIDTH_LIMIT = 1 << 20` is exclusive. Each packed cell uses its actual width. |
-| Generated fixed unpacked array | At most 65,536 cells in the product of all dimensions (`LLG_MAX_FIXED_ARRAY_CELLS`). Extents/products are checked before allocation; an over-limit declaration receives a resource diagnostic. |
-| Fixed array used as a value, formal or stream | The complete flattened payload must fit 1,048,575 bits, independently of the cell-count limit. Direct rank-one reductions read cells individually and may exceed that flattened width. |
+| Generated fixed unpacked array | At most 16,777,216 cells in the product of all dimensions (`LLG_MAX_FIXED_ARRAY_CELLS`). Extents/products are checked before allocation; an over-limit declaration receives a resource diagnostic. |
+| Fixed array used as a value, formal or stream | Integral variable arrays use non-flattened whole copies, equality, rank-one default fills and single-array element-aligned streams. Automatic, nonrecursive functions returning such arrays admit whole-array inputs, automatic locals and owned returns. Other value contexts retain the 1,048,575-bit packed payload limit. Direct reductions read cells individually. |
 | Subroutine recursion | At most 256 active calls; a further call emits a recursion-limit diagnostic and returns the result type's default. |
 | Read-only helper inlining | At most 32 nested callback calls; deeper emission receives an explicit diagnostic. |
 | Scheduler region passes | Default 10,000,000 per time slot; `LLG_ZERO_LOOP_LIMIT` accepts a positive decimal `uint64`. Exhaustion diagnoses a zero-delay loop. |
 | Process back-edges | Default 10,000,000 per process; `LLG_PROCESS_STEP_LIMIT` overrides the `LLG_NONCONVERGENCE_LIMIT` alias. An explicitly set region limit also supplies the process limit when neither process variable is set. Both require positive decimal `uint64` values. |
 | Driver, alias, process, final, event-waiter, procedural-driver and force registries | Size to the design or grow with checked allocation; the former 16-driver and 256-alias ceilings do not apply. |
 
-**The 65,536-cell array limit does not meet the cited 16,777,216-element minimum
-in V §3.10 and SV §7.4.2.** Capacity rejection is not syntax coverage or
-minimum-capacity conformance. Zero/negative size operands are language errors;
+The required capacity lane executes 16,777,216-element storage in both editions
+and an SV whole-array copy at that capacity. Large integral variable arrays share
+an immutable default and materialize stable cells only for writes or registrations;
+source descriptors and whole-copy operations do not grow with the logical extent.
+This execution evidence does not qualify every net/native aggregate or value context. Zero/negative size operands are language errors;
 negative range labels are valid. Internal zero-width packed descriptors are empty; native
 real values use a separate representation.
 
@@ -215,7 +217,9 @@ Macros, includes and their edition-specific behavior are counted in §11.
   self-assignment retain logical coordinates. Whole-array values are SV-only;
   admitted fixed integral calls/ports, patterns and operators have the limits in
   §§3, 5, 7 and 9. Native/resizable elements, general real-array expressions,
-  and over-limit payloads remain restricted. Fixed integral record arrays also
+  and value contexts beyond the descriptor profile remain restricted. Whole
+  integral variable copies execute through 16,777,216 cells without packed
+  flattening. Fixed integral record arrays also
   retain recursive member selections and constant-selected electrical net views.
   V §3.10; SV §§7.4, 7.6 **[1995/SV-2005]**.
 - 🟨 **Initialization and lifetimes** — Scalar and fixed integral composite
@@ -456,8 +460,9 @@ Macros, includes and their edition-specific behavior are counted in §11.
   conversions are retained. Static task-local arrays and explicitly static arrays
   in automatic tasks retain per-declaration, per-instance storage through NBA
   publication; changed elements notify sensitive readers. Native/resizable and
-  over-limit values remain restricted; automatic-variable and
-  subroutine-reference-formal NBAs reject. SV §§7.6, 10.4.2, 13.3.2
+  other oversized value contexts remain restricted. Large whole-variable copies
+  and rank-one default fills use issue-time snapshots for blocking/NBA publication;
+  automatic-variable and subroutine-reference-formal NBAs reject. SV §§7.6, 10.4.2, 13.3.2
   **[SV-2005]**.
 - 🟨 **Assignment-pattern values** — Positional, member/integer-index, type and
   default keys support admitted fixed arrays/records. Explicit-index > type-key >
@@ -686,7 +691,11 @@ Macros, includes and their edition-specific behavior are counted in §11.
   SV §7.12 **[SV-2005]**.
 - 🟨 **Bit-stream casts and streaming** — Fixed arrays/nested records, selected
   rows/members, call results and admitted ref/const-ref projections preserve
-  state conversion and non-dividing/type slice sizes. Packed and bounded
+  state conversion and non-dividing/type slice sizes within packed capacity.
+  Oversized single-array streams support complete integral variable arrays with
+  slice sizes dividing the element width or containing whole elements; RHS
+  reversal snapshots overlapping arrays. Other oversized streams reject.
+  Packed and bounded
   dynamic/queue-element streams capture one RHS, then publish destinations in
   stream order with overlap-safe snapshots. A stream assigned to a wider fixed
   target is left-aligned and zero-filled on the right; oversize streams reject.

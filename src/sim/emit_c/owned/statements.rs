@@ -99,6 +99,53 @@ impl Frame<'_, '_> {
         match statement {
             IrStmt::Located { statement, .. } => return self.statement(statement),
             IrStmt::Nop => self.line(";"),
+            IrStmt::FixedArrayDeclare(index) => {
+                let array = self.ctx.model.array(*index);
+                let initial = array
+                    .element_default
+                    .as_ref()
+                    .map(emit_const)
+                    .unwrap_or_else(|| {
+                        super::super::expressions::packed_default(
+                            array.elem_width,
+                            array.signed,
+                            array.two_state,
+                        )
+                    });
+                let pointer = self.scalar("llg_fixed_array_t*", "(llg_fixed_array_t*)llg_value_scope_object(llg_value_scope_begin_object(sizeof(llg_fixed_array_t), llg_fixed_array_destroy))".to_owned());
+                self.line(format!(
+                    "llg_fixed_array_init({pointer}, {}ULL, {initial}, NULL);",
+                    array.total
+                ));
+                self.fixed_arrays.insert(*index, pointer);
+            }
+            IrStmt::FixedArrayFill { array, value, nba } => {
+                let address = self.fixed_array_address(*array)?;
+                let two_state = self.ctx.model.array(*array).two_state;
+                let value = self.expression(value)?;
+                self.line(format!(
+                    "llg_fixed_array_fill({address}, {}, {}, {});",
+                    value.code,
+                    u8::from(two_state),
+                    u8::from(*nba)
+                ));
+                self.discard(value);
+            }
+            IrStmt::FixedArrayCopy {
+                dst,
+                src,
+                nba,
+                slice,
+            } => {
+                let dst_address = self.fixed_array_address(*dst)?;
+                let src_address = self.fixed_array_address(*src)?;
+                let dst = self.ctx.model.array(*dst);
+                self.line(format!(
+                    "llg_fixed_array_stream_copy({dst_address}, {src_address}, {}, {}, {slice}u);",
+                    u8::from(dst.two_state),
+                    u8::from(*nba)
+                ));
+            }
             IrStmt::Container(operation) => self.container_statement(operation)?,
             IrStmt::StreamAssign {
                 source,

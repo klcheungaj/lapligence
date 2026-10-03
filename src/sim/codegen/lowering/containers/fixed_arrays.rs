@@ -571,6 +571,9 @@ impl<'a> Codegen<'a> {
     /// coordinates lets the existing guarded ArrayRead/ArrayElem IR preserve
     /// direction, notifications, force precedence, and two-state conversion.
     pub(super) fn p30_fixed_array_assignment_candidate(&self, node: NodeId) -> bool {
+        if self.array_of(node).is_some() {
+            return true;
+        }
         match self.kind(node) {
             NodeKind::Array { .. } | NodeKind::Expr(ExprKind::Ref { .. }) => {
                 self.array_of(node).is_some()
@@ -1694,7 +1697,7 @@ impl<'a> Codegen<'a> {
         Ok(IrStmt::Block(captures))
     }
 
-    pub(super) fn lower_p30_fixed_array_assignment(
+    pub(in super::super) fn lower_p30_fixed_array_assignment(
         &mut self,
         path: &str,
         lhs: NodeId,
@@ -1702,6 +1705,112 @@ impl<'a> Codegen<'a> {
         blocking: bool,
         op: Operation,
     ) -> Result<Option<IrStmt>, String> {
+        if blocking && op == Operation::Assignment {
+            if let Some(statement) = self.lower_nonflatten_call(path, rhs, lhs)? {
+                return Ok(Some(statement));
+            }
+        }
+        if let Some(dst) = self
+            .array_of(lhs)
+            .cloned()
+            .filter(|dst| self.model.arrays[dst.ir].sparse())
+        {
+            if let NodeKind::Expr(ExprKind::Streaming {
+                direction,
+                slice_size,
+                streams,
+            }) = self.kind(self.p30_unwrap_cast(rhs))
+            {
+                if let [stream] = streams.as_slice() {
+                    if stream.with_expr.is_none() {
+                        if let Some(src) = self.array_of(self.p30_unwrap_cast(stream.value)) {
+                            let slice = if *direction == DbStreamingDirection::LeftToRight {
+                                0
+                            } else {
+                                u32::try_from((*slice_size).max(1))
+                                    .map_err(|_| "fixed stream slice exceeds supported capacity")?
+                            };
+                            if self.model.arrays[src.ir].sparse()
+                                && dst.elem_width == src.elem_width
+                                && self.model.arrays[dst.ir].total
+                                    == self.model.arrays[src.ir].total
+                                && (slice == 0
+                                    || dst.elem_width.is_multiple_of(slice)
+                                    || slice.is_multiple_of(dst.elem_width))
+                            {
+                                return Ok(Some(IrStmt::FixedArrayCopy {
+                                    dst: dst.ir,
+                                    src: src.ir,
+                                    nba: !blocking,
+                                    slice,
+                                }));
+                            }
+                        }
+                    }
+                }
+                return Err(format!("non-flattened fixed stream in `{path}` requires one complete array and an element-aligned slice"));
+            }
+        }
+        if let (Some(dst), Some(src)) =
+            (self.array_of(lhs), self.array_of(self.p30_unwrap_cast(rhs)))
+        {
+            if self.model.arrays[dst.ir].sparse() && self.model.arrays[src.ir].sparse() {
+                if op != Operation::Assignment {
+                    return Err(format!(
+                        "compound fixed-array copy in `{path}` is unsupported"
+                    ));
+                }
+                let dst = dst.ir;
+                let src = src.ir;
+                let target = self
+                    .query_descriptor(lhs)
+                    .ok_or("missing fixed-array target descriptor")?;
+                let source = self
+                    .query_descriptor(rhs)
+                    .ok_or("missing fixed-array source descriptor")?;
+                self.p30_require_pattern_shape(path, target, source, "fixed-array copy")?;
+                return Ok(Some(IrStmt::FixedArrayCopy {
+                    dst,
+                    src,
+                    nba: !blocking,
+                    slice: 0,
+                }));
+            }
+        }
+        if let Some(array) = self
+            .array_of(lhs)
+            .cloned()
+            .filter(|array| self.model.arrays[array.ir].sparse())
+        {
+            if let Some(operands) =
+                self.assignment_pattern_operands(path, self.p30_unwrap_cast(rhs))?
+            {
+                if let [operand] = operands.as_slice() {
+                    if let NodeKind::Expr(ExprKind::TaggedPattern {
+                        key: Some(key),
+                        value: Some(value),
+                        ..
+                    }) = self.kind(*operand)
+                    {
+                        if key == "default" && array.dims.len() == 1 {
+                            let value = self.lower_expr(path, *value)?;
+                            let value = ir_to_storage(
+                                value,
+                                array.elem_width,
+                                array.signed,
+                                self.model.arrays[array.ir].two_state,
+                            )?;
+                            return Ok(Some(IrStmt::FixedArrayFill {
+                                array: array.ir,
+                                value,
+                                nba: !blocking,
+                            }));
+                        }
+                    }
+                }
+            }
+            return Err(format!("fixed-array value in `{path}` requires a non-flattened whole copy, supported stream, call or default pattern"));
+        }
         let mut captures = Vec::new();
         let mut captured_indices = HashMap::new();
         let Some(target) = self.p30_array_view(path, lhs, &mut captures, &mut captured_indices)?

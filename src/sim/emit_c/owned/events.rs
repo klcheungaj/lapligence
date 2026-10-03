@@ -94,7 +94,9 @@ impl Frame<'_, '_> {
             }
             IrDependency::ArrayElement { array, index } => {
                 let array = self.ctx.model.array(*array);
-                if array.real {
+                if array.sparse() {
+                    format!("{{ .sig = {} }}", array.cell_address(&index.to_string()))
+                } else if array.real {
                     format!("{{ .real = &{}[{index}] }}", array.c_name)
                 } else {
                     format!("{{ .sig = &{}_llg_element_deps[{index}] }}", array.c_name)
@@ -115,11 +117,17 @@ impl Frame<'_, '_> {
                         (binding.address.clone(), binding.address)
                     }
                     IrDependency::ArrayElement { array, index } => {
-                        let name = &self.ctx.model.array(*array).c_name;
-                        (
-                            format!("&{name}_llg_element_deps[{index}]"),
-                            format!("&{name}[{index}]"),
-                        )
+                        let array = self.ctx.model.array(*array);
+                        let name = &array.c_name;
+                        if array.sparse() {
+                            let cell = array.cell_address(&index.to_string());
+                            (cell.clone(), cell)
+                        } else {
+                            (
+                                format!("&{name}_llg_element_deps[{index}]"),
+                                format!("&{name}[{index}]"),
+                            )
+                        }
                     }
                     _ => return Err(pending("this packed-range dependency")),
                 };

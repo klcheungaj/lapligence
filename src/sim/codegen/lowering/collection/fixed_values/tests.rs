@@ -170,9 +170,9 @@ fn flattened_value_width_has_independent_below_at_and_above_boundaries() {
 fn dimension_products_are_checked_before_fixed_array_allocation() {
     assert_eq!(fixed_array_cell_count(&[(0, 65_534)]), Ok(65_535));
     assert_eq!(fixed_array_cell_count(&[(0, 65_535)]), Ok(65_536));
-    assert!(fixed_array_cell_count(&[(0, 65_536)])
-        .unwrap_err()
-        .contains("65537 cells"));
+    assert_eq!(fixed_array_cell_count(&[(0, 65_536)]), Ok(65_537));
+    assert_eq!(fixed_array_cell_count(&[(0, 16_777_215)]), Ok(16_777_216));
+    assert!(fixed_array_cell_count(&[(0, 16_777_216)]).is_err());
 
     let maximum_extent = (i32::MIN, i32::MAX);
     let error = fixed_array_cell_count(&[maximum_extent; 3]).unwrap_err();

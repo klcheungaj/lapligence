@@ -249,8 +249,21 @@ impl Frame<'_, '_> {
                         .map(|(l, r)| format!("{l}, {r}"))
                         .collect::<Vec<_>>()
                         .join(", ");
-                    format!("llg_file_read_array({descriptor}, {}, {}, {}, {}, {}ULL, (const int32_t[]){{ {dimensions} }}, {}, {}, {first}, {}, {count_code})",
-                            array.c_name, array.elem_width, u8::from(array.signed), u8::from(array.two_state), array.total, array.dims.len(), u8::from(start.is_some()), u8::from(count.is_some()))
+                    let runtime = if array.sparse() {
+                        "llg_fixed_file_read_array"
+                    } else {
+                        "llg_file_read_array"
+                    };
+                    let memory = if array.sparse() {
+                        self.fixed_array_address(match target {
+                            IrFileReadTarget::Array { array } => *array,
+                            _ => unreachable!(),
+                        })?
+                    } else {
+                        array.c_name.clone()
+                    };
+                    format!("{runtime}({descriptor}, {}, {}, {}, {}, {}ULL, (const int32_t[]){{ {dimensions} }}, {}, {}, {first}, {}, {count_code})",
+                            memory, array.elem_width, u8::from(array.signed), u8::from(array.two_state), array.total, array.dims.len(), u8::from(start.is_some()), u8::from(count.is_some()))
                 } else {
                     unreachable!("packed target has a reference")
                 };

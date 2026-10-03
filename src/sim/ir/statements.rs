@@ -257,6 +257,22 @@ pub enum IrStmt {
         start: Option<IrExpr>,
         finish: Option<IrExpr>,
     },
+    /// Non-flattened declaration-order copy of complete fixed integral arrays.
+    /// The runtime snapshots the source before publishing destination cells.
+    FixedArrayCopy {
+        dst: usize,
+        src: usize,
+        nba: bool,
+        slice: u32,
+    },
+    /// Create lexical non-flattened fixed storage with registered cleanup.
+    FixedArrayDeclare(usize),
+    /// Evaluate one default-pattern value and replace the complete array.
+    FixedArrayFill {
+        array: usize,
+        value: IrExpr,
+        nba: bool,
+    },
     Container(IrContainerStmt),
     /// A streaming assignment with one or more packed lvalues and at most one
     /// resizable packed-element target. The source is materialized before any

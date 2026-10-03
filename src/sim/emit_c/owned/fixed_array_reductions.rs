@@ -22,8 +22,16 @@ impl Frame<'_, '_> {
         ));
         let item = match (&reduction.source, &source) {
             (IrFixedArrayReductionSource::Array(array), None) => {
-                let array = self.ctx.model.array(*array);
-                let address = format!("&{}[{ordinal}]", array.c_name);
+                let array_index = *array;
+                let array = self.ctx.model.array(array_index);
+                let address = if array.sparse() {
+                    format!(
+                        "llg_fixed_array_peek({}, {ordinal})",
+                        self.fixed_array_address(array_index)?
+                    )
+                } else {
+                    array.cell_address(&ordinal)
+                };
                 if self.sampled_reads {
                     let value = self.reserve(reduction.element_width, reduction.element_signed);
                     self.line(format!("llg_sampled_copy({address}, &{});", value.code));

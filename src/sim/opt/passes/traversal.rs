@@ -380,6 +380,7 @@ fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
         IrStmt::DeclLocal {
             init: Some(init), ..
         } => walk_expr_mut(init, f),
+        IrStmt::FixedArrayFill { value, .. } => walk_expr_mut(value, f),
         IrStmt::Assign { lhs, rhs, .. }
         | IrStmt::DelayedAssign { lhs, rhs, .. }
         | IrStmt::ClockingDrive { lhs, rhs, .. }

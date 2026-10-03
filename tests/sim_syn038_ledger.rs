@@ -331,13 +331,24 @@ fn assert_manual_cli_contract(
 
     let cli_helper = fs::read_to_string(root.join("tests/support/sim_cli.rs"))
         .expect("read public-CLI invocation helper");
+    let fixture_body = named_function_body(&cli_helper, "fixture_path");
+    for required in [
+        ".join(\"tests/fixtures/sim\")",
+        ".join(suite)",
+        ".join(name)",
+        "format!(\"{fixture}.sv\")",
+        "assert!(source.is_file()",
+    ] {
+        assert!(
+            fixture_body.contains(required),
+            "{} fixture helper lost {required}",
+            witness.row_id
+        );
+    }
     let invoke_body = named_function_body(&cli_helper, "invoke_with_env");
     for required in [
         "Command::new(env!(\"CARGO_BIN_EXE_llg\"))",
-        ".join(\"tests/fixtures/sim\")",
-        ".join(suite)",
-        ".join(format!(\"{fixture}.sv\"))",
-        "assert!(source.is_file()",
+        "let source = fixture_path(suite, fixture);",
         "if !optimized",
         "command.arg(\"--no-opt\")",
         "command.args(args)",
@@ -784,13 +795,23 @@ fn assert_storage_write_remainders_cli_contract(root: &Path, owner_body: &str, o
 
     let cli_helper = fs::read_to_string(root.join("tests/support/sim_cli.rs"))
         .expect("read public-CLI invocation helper");
+    let fixture_body = named_function_body(&cli_helper, "fixture_path");
+    for required in [
+        ".join(\"tests/fixtures/sim\")",
+        ".join(suite)",
+        ".join(name)",
+        "format!(\"{fixture}.sv\")",
+        "assert!(source.is_file()",
+    ] {
+        assert!(
+            fixture_body.contains(required),
+            "fixture helper lost {required}"
+        );
+    }
     let invoke_body = named_function_body(&cli_helper, "invoke_with_env");
     for required in [
         "Command::new(env!(\"CARGO_BIN_EXE_llg\"))",
-        ".join(\"tests/fixtures/sim\")",
-        ".join(suite)",
-        ".join(format!(\"{fixture}.sv\"))",
-        "assert!(source.is_file()",
+        "let source = fixture_path(suite, fixture);",
         "current_dir(directory.path())",
         "if !optimized",
         "command.arg(\"--no-opt\")",
@@ -858,13 +879,23 @@ fn assert_static_return_ref_actual_cli_contract(root: &Path, owner_body: &str, o
 
     let cli_helper = fs::read_to_string(root.join("tests/support/sim_cli.rs"))
         .expect("read public-CLI invocation helper");
+    let fixture_body = named_function_body(&cli_helper, "fixture_path");
+    for required in [
+        ".join(\"tests/fixtures/sim\")",
+        ".join(suite)",
+        ".join(name)",
+        "format!(\"{fixture}.sv\")",
+        "assert!(source.is_file()",
+    ] {
+        assert!(
+            fixture_body.contains(required),
+            "fixture helper lost {required}"
+        );
+    }
     let invoke_body = named_function_body(&cli_helper, "invoke_with_env");
     for required in [
         "Command::new(env!(\"CARGO_BIN_EXE_llg\"))",
-        ".join(\"tests/fixtures/sim\")",
-        ".join(suite)",
-        ".join(format!(\"{fixture}.sv\"))",
-        "assert!(source.is_file()",
+        "let source = fixture_path(suite, fixture);",
         "current_dir(directory.path())",
         "if !optimized",
         "command.arg(\"--no-opt\")",
@@ -1421,8 +1452,10 @@ fn review_and_extended_links_name_real_owners_and_keep_open_cells_visible() {
     assert!(
         capacity.contains("65,536")
             && capacity.contains("16,777,216")
-            && capacity.contains("--run-ignored"),
-        "SYN-036 must disclose its deviation and separate resource lane"
+            && capacity.contains("--run-ignored")
+            && capacity.contains("required_capacity_lane_executes_large_value_copy")
+            && capacity.contains("normal"),
+        "capacity must distinguish the required minimum lane from historical ignored cases"
     );
     let capacity_tests =
         fs::read_to_string(root.join("tests/sim_syn036_capacity.rs")).expect("read SYN-036 owner");
