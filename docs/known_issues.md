@@ -306,6 +306,17 @@ binding, but the retained runtime-selector characterization has no adjudicated
 binding/rebinding oracle. Qualify that boundary before enabling runtime-selected
 connections. Static selected connections and nested packed projections execute.
 
+## Partly unknown hex and octal digits print lowercase
+
+`$display("%h", 8'b0101_010z)` prints `5z`, and a digit mixing X with known
+bits prints `x`. IEEE 1800-2009 §21.2.1.4 (and 1364-2001 §17.1.1.4) require a
+lowercase `x`/`z` only when every bit of the digit is unknown, and an uppercase
+`X`/`Z` for a partly unknown digit (X wins over Z). Both value backends'
+`sv4_format` and the runtime self-test encode the lowercase rule. Binary output
+and fully unknown digits are correct. RTL-006's arithmetic fixtures print
+partly unknown shift results in binary; fixing the digit rule belongs to the
+typed-formatting owner and needs a review of existing `%h`/`%o` goldens.
+
 ## Native stack frames grow with a statement's format-argument count
 
 **Status:** open; the host-stack bound is measured, not proven.

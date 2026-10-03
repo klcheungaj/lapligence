@@ -123,6 +123,8 @@ Precollect hierarchical actual dependencies per instance.
 Variable-continuous conflict analysis follows canonical intervals and counts
 ordinary assignments/declaration initialization, not force/release/deassign;
 keep disjoint writers legal and preserve original read sensitivities separately.
+A continuous site contributes only its target: writes by functions called from
+its right-hand side are procedural (SV 6.5) and stay in sensitivity writes.
 Hierarchical structural driver identity includes owner, source and group.
 
 ## Nets and procedural drivers

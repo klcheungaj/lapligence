@@ -605,9 +605,15 @@ Macros, includes and their edition-specific behavior are counted in §11.
 ## 7. Expressions & operators
 
 - 🟨 **Arithmetic** — `+ - * / % **` operate at actual packed widths below the
-  resource limit. Public 2001/2009 witnesses cover runtime signed and unsigned
-  operands at widths 7, 33 and 65, including unary signs, X/Z propagation and
-  division by zero in both optimizer modes. V §§4.1.5–4.1.6; SV §11.4
+  resource limit on the legacy and compact value backends (portable and GMP
+  kernels). Public 2001/2009 witnesses compare every pair of 13 boundary
+  operands (signed minima/maxima, -1, -3, patterns, X/Z) at widths 1, 31, 32,
+  63, 64, 65, 127, 128, 129, 8,128 and 8,129 with an independent limb oracle.
+  They cover zero divisors, both exponent signs (Table 11-4), oversized and
+  X/Z shift counts, mixed-width/mixed-sign assignment contexts and literal
+  operands folded by the optimizer, in both optimizer modes. Powers of 0, 1,
+  -1 and even bases finish early; other odd bases take one product per
+  exponent bit. V §§4.1.5–4.1.6, 4.4–4.5; SV §§11.4, 11.6–11.8
   **[1995/2001/SV-2009]**.
 - 🟦 **Bitwise, logical, reduction, shift and relational operators** — `& | ^ ~`,
   XNOR forms, `&& || !`, reduction AND/NAND/OR/NOR/XOR/XNOR, `<< >> <<< >>>`
@@ -664,8 +670,14 @@ Macros, includes and their edition-specific behavior are counted in §11.
 - 🟨 **Mutating operators** — Prefix/postfix `++/--` and `+= -= *= /= %= &= |= ^=`
   plus shift assignments capture an admitted whole/member/selected/fixed-array
   target once, perform one store and return the appropriate expression value,
-  including nested fixed module-ref projections. Packed state conversion and real targets are represented; non-lvalues and
-  unsupported aggregates/objects reject. SV §§11.4.1–11.4.2 **[SV-2005]**.
+  including nested fixed module-ref projections. Call-valued indices,
+  record/interface/hierarchical receivers and right-hand sides run once in
+  procedural code, automatic and static functions, and functions called from
+  continuous assignments and port expressions; widths, signs, X and overflow
+  follow the operator at the target's width. Packed state conversion and real
+  targets are represented; non-lvalues, continuous/port mutation expressions
+  and unsupported aggregates/objects (including call-valued class receivers)
+  reject. SV §§11.4.1–11.4.2 **[SV-2005]**.
 - 🟦 **Wildcard equality** — `==?`/`!=?` treat RHS X/Z as wildcards. Remaining
   LHS unknowns yield X unless a known mismatch decides the result; common-width
   and signed extension apply. SV §11.4.6 **[SV-2005]**.
@@ -748,8 +760,9 @@ Macros, includes and their edition-specific behavior are counted in §11.
 ## 8. Continuous assignments & structural
 
 - 🟦 **Continuous drivers** — Explicit, comma-form and net-declaration
-  assignments evaluate from RHS dependencies; constant RHSs run once.
-  V §6.1 **[1995]**.
+  assignments evaluate from RHS dependencies; constant RHSs run once. Writes by
+  functions called from the RHS are procedural, so only the assignment target
+  joins the SV §6.5 single-writer rule. V §6.1 **[1995]**.
 - 🟨 **Fixed-array continuous assignments** — Whole/selected fixed values,
   slices, conditionals, patterns and function returns capture one RHS per
   activation. Net arrays retain per-cell/per-bit contribution slots; static
@@ -907,7 +920,9 @@ Macros, includes and their edition-specific behavior are counted in §11.
   `%m`, `%l`, `%%` and admitted width/precision grammar retain packed X/Z,
   strengths, real and string values. Packed `%s` uses ASCII bytes without leading
   zero bytes; real `%s` rejects. `%p` is limited to scalar packed/string values,
-  not aggregates. V §17.1.1.2; SV §21.2 **[1995/SV-2005]**.
+  not aggregates. A partly unknown `%h`/`%o` digit prints lowercase `x`/`z`
+  rather than uppercase `X`/`Z` ([known issue](known_issues.md#partly-unknown-hex-and-octal-digits-print-lowercase)).
+  V §17.1.1.2; SV §21.2 **[1995/SV-2005]**.
 - 🟨 **Postponed output** — Strobe observes settled values after Active/Inactive/
   NBA iteration. One active monitor coalesces same-slot changes; registration and
   re-enable queue one report. Packed, real and string changes are supported;

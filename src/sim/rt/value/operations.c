@@ -1267,12 +1267,26 @@ sv4_t sv4_pow(sv4_t a, sv4_t b) {
         return sv4_from_u64(0, width, is_signed);
     }
 
+    // Results modulo 2^width: 1**e is 1 and an all-ones base (-1) needs only
+    // the exponent parity, so neither pays one product per exponent bit.
+    if (sv4_raw_nlimbs(&a) == 1 && a.bits[0] == 1) return sv4_from_u64(1, width, is_signed);
+    if (sv4_is_all_ones(a))
+        return (b.bits[0] & 1ULL) ? sv4_clone(&a) : sv4_from_u64(1, width, is_signed);
+
     sv4_t result = sv4_from_u64(1, width, is_signed);
     sv4_t base = sv4_clone(&a);
     int exponent_msb = sv4_msb(b);
     for (int bit = 0; bit <= exponent_msb; bit++) {
         if (sv4_lsb_bit(b, bit) == 1) sv4_replace(&result, sv4_mul(result, base));
-        if (bit != exponent_msb) sv4_replace(&base, sv4_mul(base, base));
+        if (bit != exponent_msb) {
+            sv4_replace(&base, sv4_mul(base, base));
+            // An even base squares to zero within log2(width) steps; the
+            // exponent's set top bit then multiplies the result by zero.
+            if (sv4_raw_nlimbs(&base) == 0) {
+                sv4_replace(&result, sv4_from_u64(0, width, is_signed));
+                break;
+            }
+        }
     }
     sv4_destroy(&base);
     return result;

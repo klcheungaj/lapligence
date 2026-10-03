@@ -123,6 +123,47 @@ fn continuous_variable_conflicts_are_owned_errors_but_overrides_are_not() {
     }
 }
 
+#[test]
+fn continuous_conflicts_consider_only_the_assignment_target() {
+    // SV 6.5 restricts the continuous assignment's own target. Writes made by
+    // a function called from its right-hand side are procedural statements,
+    // so they may share storage with other procedural writes.
+    let side_effect = "module tb;\n  int count, x, y;\n  function automatic int bump(int v);\n    count++;\n    return v + 1;\n  endfunction\n  assign y = bump(x);\n  initial count = 0;\nendmodule\n";
+    let target =
+        "module tb;\n  int count, x;\n  assign count = x;\n  initial count = 0;\nendmodule\n";
+    for (source, conflict) in [(side_effect, false), (target, true)] {
+        let database = {
+            let result = crate::core::compile::compile_sources_checked(
+                &[crate::core::compile::OwnedSource::compilation_unit(
+                    "target.sv",
+                    source,
+                )],
+                &crate::core::compile::CompileOpts {
+                    top: Some("tb".to_owned()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            Db::from_slang(&result.snapshot).unwrap()
+        };
+        database.validate().unwrap();
+        let semantic = crate::sim::semantic::SemanticModel::from_db(&database);
+        let mut cg = Codegen::new(&semantic);
+        cg.collect_design().unwrap();
+        cg.bind_reference_ports().unwrap();
+        cg.collect_timescales();
+        cg.build_net_groups().unwrap();
+        let result = cg.validate_process_semantics();
+        if conflict {
+            assert!(result
+                .unwrap_err()
+                .contains("has both a continuous assignment"));
+        } else {
+            result.expect("function side effects are procedural writes");
+        }
+    }
+}
+
 fn diagnostic_database(source: &str) -> Db {
     let compiled = crate::core::compile::compile_sources_checked(
         &[crate::core::compile::OwnedSource::compilation_unit(

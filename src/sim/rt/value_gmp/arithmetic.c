@@ -221,13 +221,14 @@ g4_t llg_gmp_sv4_pow_wide(g4_t a, g4_t b) {
         return llg_gmp_sv4_x(a.width, a.is_signed);
     size_t an = llg_gmp_sv4_words(a), bn = llg_gmp_sv4_words(b);
     const uint64_t *ap = g4_a(&a), *bp = g4_a(&b);
-    int zero = 1, one = an && ap[0] == 1, minus_one = a.is_signed && a.width;
+    int zero = 1, one = an && ap[0] == 1, all_ones = a.width != 0;
     for (size_t i = 0; i < an; ++i) {
         zero &= ap[i] == 0;
         if (i)
             one &= ap[i] == 0;
-        minus_one &= ap[i] == (i + 1 == an ? g4_topmask(a.width) : UINT64_MAX);
+        all_ones &= ap[i] == (i + 1 == an ? g4_topmask(a.width) : UINT64_MAX);
     }
+    int minus_one = a.is_signed && all_ones;
     int negative = b.is_signed && b.width && ((bp[bn - 1] >> ((b.width - 1) % 64)) & 1);
     if (negative) {
         if (zero)
@@ -239,6 +240,13 @@ g4_t llg_gmp_sv4_pow_wide(g4_t a, g4_t b) {
     }
     if (!an)
         return llg_gmp_sv4_zero(0, a.is_signed);
+    /* Modulo 2^width, 1**e is 1 and an all-ones base (-1) needs only the
+     * exponent parity, so neither pays one product per exponent bit. */
+    if (one)
+        return llg_gmp_sv4_from_u64(1, a.width, a.is_signed);
+    if (all_ones)
+        return bn && (bp[0] & 1) ? llg_gmp_sv4_clone(&a)
+                                 : llg_gmp_sv4_from_u64(1, a.width, a.is_signed);
     if (a.width <= 64) {
         uint64_t r = 1, base = ap[0];
         while (bn && bp[bn - 1] == 0)
@@ -258,7 +266,8 @@ g4_t llg_gmp_sv4_pow_wide(g4_t a, g4_t b) {
     memcpy(base, ap, an * 8u);
     while (bn && bp[bn - 1] == 0)
         --bn;
-    for (size_t i = 0; i < bn; ++i) {
+    int zeroed = 0;
+    for (size_t i = 0; i < bn && !zeroed; ++i) {
         uint64_t exponent = bp[i];
         unsigned limit = 64;
         if (i + 1 == bn) {
@@ -279,6 +288,15 @@ g4_t llg_gmp_sv4_pow_wide(g4_t a, g4_t b) {
                 llg_gmp_sv4_kernel_mul(temp, base, base, an);
                 temp[an - 1] &= g4_topmask(a.width);
                 memcpy(base, temp, an * 8u);
+                /* An even base squares to zero within log2(width) steps; the
+                 * exponent's set top bit then multiplies the result by zero. */
+                zeroed = 1;
+                for (size_t k = 0; k < an && zeroed; ++k)
+                    zeroed = base[k] == 0;
+                if (zeroed) {
+                    memset(r, 0, an * 8u);
+                    break;
+                }
             }
         }
     }

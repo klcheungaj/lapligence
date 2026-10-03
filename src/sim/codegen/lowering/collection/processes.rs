@@ -1060,13 +1060,30 @@ impl<'a> Codegen<'a> {
         // frontend reports this as a warning for some legal-looking forms;
         // allowing code generation would make the result depend on process
         // order, so reject overlapping sites at the owned semantic boundary.
-        let continuous = writers
-            .iter()
-            .filter(|writer| {
-                matches!(self.kind(writer.node), NodeKind::ContAssign { .. })
-                    && self.continuous_target_is_variable(writer.node)
-            })
-            .collect::<Vec<_>>();
+        // SV 6.5 restricts only the assignment's own target: writes made by
+        // functions called from its right-hand side are procedural
+        // statements, so they stay out of these conflict sets.
+        let mut continuous = Vec::new();
+        for writer in &writers {
+            if !matches!(self.kind(writer.node), NodeKind::ContAssign { .. })
+                || !self.continuous_target_is_variable(writer.node)
+            {
+                continue;
+            }
+            let Some(inst) = self.owning_inst(writer.node) else {
+                continue;
+            };
+            self.inst = inst;
+            let mut writes = HashSet::new();
+            if let Some(lhs) = self.node(writer.node).children.first().copied() {
+                self.add_process_lhs_write(lhs, &mut writes);
+            }
+            continuous.push(ProcessWriter {
+                node: writer.node,
+                label: writer.label.clone(),
+                writes,
+            });
+        }
         for (index, writer) in continuous.iter().enumerate() {
             for other in continuous.iter().skip(index + 1) {
                 if let Some(storage) = writer.writes.iter().find(|write| {
