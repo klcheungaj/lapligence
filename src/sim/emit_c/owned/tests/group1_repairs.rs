@@ -238,7 +238,7 @@ fn stream_checks_each_component_before_publication_using_the_actual_source_width
         )
         .unwrap();
     let source = frame.body();
-    assert!(source.contains(".width;"));
+    assert!(source.contains("llg_sv4_width("));
     assert_eq!(source.matches("llg_stream_require_bits(").count(), 2);
     let first_write_loop = source.find("for (size_t _llg_fs_offset_").unwrap();
     let first_check = source.find("llg_stream_require_bits(").unwrap();
