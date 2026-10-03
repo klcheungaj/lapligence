@@ -7,6 +7,9 @@ mod tests;
 
 type ArrayNetSelection = ((usize, u64), Vec<u32>);
 
+/// One structural driver of a net-array cell and its drive strengths.
+type CellSource = (NodeId, (u8, u8));
+
 impl Codegen<'_> {
     /// Return the fixed-array cells covered by a constant array lvalue.
     ///
@@ -404,32 +407,30 @@ impl Codegen<'_> {
     ) -> Result<(), String> {
         let mut endpoints = endpoints.into_iter().collect::<Vec<_>>();
         endpoints.sort_by_key(|(key, _)| *key);
-        for ((array, element), peers) in endpoints {
-            let owner = sorted_node_ids(&self.array_globals)
-                .into_iter()
-                .find(|owner| self.array_globals[owner].ir == array)
-                .ok_or("net-array owner is missing")?;
-            let mut sources = Vec::new();
-            for source in nodes {
-                let target = match self.kind(*source) {
-                    NodeKind::ContAssign { .. } => {
-                        let Some(target) = self.node(*source).children.first().copied() else {
-                            continue;
-                        };
-                        target
-                    }
-                    NodeKind::Port {
-                        direction: DbDirection::Output,
-                        high_expr: Some(target),
-                        ..
-                    } => *target,
-                    _ => continue,
-                };
-                let mut cells = Vec::new();
-                self.continuous_net_array_cells(target, &mut cells)?;
-                if !cells.contains(&(array, element)) {
-                    continue;
+        // Index structural sources by the cells they drive once. Scanning every
+        // source per cell made whole-array drivers quadratic in the cell count.
+        let mut cell_sources: HashMap<(usize, u64), Vec<CellSource>> = HashMap::new();
+        for source in nodes {
+            let target = match self.kind(*source) {
+                NodeKind::ContAssign { .. } => {
+                    let Some(target) = self.node(*source).children.first().copied() else {
+                        continue;
+                    };
+                    target
                 }
+                NodeKind::Port {
+                    direction: DbDirection::Output,
+                    high_expr: Some(target),
+                    ..
+                } => *target,
+                _ => continue,
+            };
+            let mut cells = Vec::new();
+            self.continuous_net_array_cells(target, &mut cells)?;
+            cells.sort_unstable();
+            cells.dedup();
+            for cell in cells {
+                let (array, _) = cell;
                 let strengths = match self.kind(*source) {
                     NodeKind::ContAssign {
                         strength0,
@@ -451,8 +452,19 @@ impl Codegen<'_> {
                     }
                     _ => unreachable!("structural source classified above"),
                 };
-                sources.push((*source, strengths));
+                cell_sources
+                    .entry(cell)
+                    .or_default()
+                    .push((*source, strengths));
             }
+        }
+        let mut owners = HashMap::new();
+        for owner in sorted_node_ids(&self.array_globals) {
+            owners.entry(self.array_globals[&owner].ir).or_insert(owner);
+        }
+        for ((array, element), peers) in endpoints {
+            let owner = *owners.get(&array).ok_or("net-array owner is missing")?;
+            let sources = cell_sources.remove(&(array, element)).unwrap_or_default();
             let mut bindings = Vec::with_capacity(peers.len());
             for (physical, peer) in peers.into_iter().enumerate() {
                 let physical =
