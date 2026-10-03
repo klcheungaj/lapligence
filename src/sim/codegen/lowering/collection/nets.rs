@@ -6,6 +6,40 @@ use super::*;
 #[cfg(test)]
 mod tests;
 
+/// The logical MSB-to-LSB bits of one alias lvalue.
+///
+/// A whole-net operand stays lazy: a constant bit or part select of a wide
+/// net reads only the selected positions instead of materializing every bit
+/// of the net per selection, which made per-bit continuous assignments to an
+/// N-bit net cost O(N) each.
+enum AliasBitView {
+    Bits(Vec<AliasBit>),
+    /// Position `p < width` is `alias_bit(net, left + p * step)`. Construction
+    /// proves every such label resolves (see [`Codegen::whole_net_alias_bits`]).
+    WholeNet {
+        net: NodeId,
+        left: i128,
+        step: i128,
+        width: u32,
+    },
+}
+
+// Counts `alias_bit` resolutions so tests can prove per-assignment alias work
+// does not grow with the width of the selected net.
+#[cfg(test)]
+thread_local! {
+    static ALIAS_BIT_RESOLUTIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+impl AliasBitView {
+    fn len(&self) -> usize {
+        match self {
+            Self::Bits(bits) => bits.len(),
+            Self::WholeNet { width, .. } => usize::try_from(*width).unwrap_or(usize::MAX),
+        }
+    }
+}
+
 impl<'a> Codegen<'a> {
     // ── Collapsed inout-net groups ────────────────────────────────────────
 
@@ -78,11 +112,7 @@ impl<'a> Codegen<'a> {
             }) => self.alias_base_net(alias, *target),
             NodeKind::Expr(ExprKind::HierPath { .. }) => self
                 .hier_path_signal(expression)
-                .and_then(|info| {
-                    sorted_node_ids(&self.sig_globals)
-                        .into_iter()
-                        .find(|target| self.sig_globals[target].ir == info.ir)
-                })
+                .and_then(|info| self.sig_global_for_ir(info.ir))
                 .ok_or_else(|| self.alias_error(alias, "has an unresolved hierarchical net")),
             NodeKind::Expr(ExprKind::Cast { operand, .. }) => self.alias_base_net(alias, *operand),
             NodeKind::Expr(ExprKind::Ref { target: None }) => {
@@ -93,9 +123,7 @@ impl<'a> Codegen<'a> {
     }
 
     fn alias_signal_target(&self, info: &SignalInfo) -> Option<NodeId> {
-        sorted_node_ids(&self.sig_globals)
-            .into_iter()
-            .find(|target| self.sig_globals[target].ir == info.ir)
+        self.sig_global_for_ir(info.ir)
     }
 
     fn alias_signal_bits(
@@ -128,6 +156,8 @@ impl<'a> Codegen<'a> {
     }
 
     fn alias_bit(&self, alias: NodeId, net: NodeId, label: i128) -> Result<AliasBit, String> {
+        #[cfg(test)]
+        ALIAS_BIT_RESOLUTIONS.with(|count| count.set(count.get() + 1));
         let bit = self
             .packed_relative_bound(net, label)?
             .try_into()
@@ -214,7 +244,7 @@ impl<'a> Codegen<'a> {
                 "has an unsupported multidimensional packed part-select",
             ));
         }
-        let bits = self.alias_expression_bits(alias, base)?;
+        let bits = self.alias_expression_bit_view(alias, base)?;
         let left_slot = self.packed_logical_slot(range, left)?;
         let right_slot = self.packed_logical_slot(range, right)?;
         if left_slot >= bits.len() || right_slot >= bits.len() {
@@ -222,18 +252,19 @@ impl<'a> Codegen<'a> {
         }
         let step = if left_slot <= right_slot { 1 } else { -1 };
         let width = left_slot.abs_diff(right_slot) + 1;
-        Ok(Some(
-            (0..width)
-                .map(|offset| {
-                    let position = if step > 0 {
-                        left_slot + offset
-                    } else {
-                        left_slot - offset
-                    };
-                    bits[position]
+        (0..width)
+            .map(|offset| {
+                let position = if step > 0 {
+                    left_slot + offset
+                } else {
+                    left_slot - offset
+                };
+                self.alias_view_bit(alias, &bits, position)?.ok_or_else(|| {
+                    self.alias_error(alias, "has a packed part-select outside its net")
                 })
-                .collect(),
-        ))
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map(Some)
     }
 
     fn alias_packed_indexed_bits(
@@ -256,7 +287,7 @@ impl<'a> Codegen<'a> {
                 "has an unsupported multidimensional packed indexed select",
             ));
         }
-        let bits = self.alias_expression_bits(alias, base)?;
+        let bits = self.alias_expression_bit_view(alias, base)?;
         let width = self.eval_bound_i128(width_expr)?;
         let width = usize::try_from(width)
             .ok()
@@ -288,9 +319,11 @@ impl<'a> Codegen<'a> {
                 .checked_add(i128::try_from(offset).unwrap_or(i128::MAX) * step)
                 .ok_or_else(|| self.alias_error(alias, "has an overflowing indexed part-select"))?;
             let position = self.packed_logical_slot(range, label)?;
-            let bit = bits.get(position).copied().ok_or_else(|| {
-                self.alias_error(alias, "has an indexed part-select outside its net")
-            })?;
+            let bit = self
+                .alias_view_bit(alias, &bits, position)?
+                .ok_or_else(|| {
+                    self.alias_error(alias, "has an indexed part-select outside its net")
+                })?;
             result.push(bit);
         }
         Ok(Some(result))
@@ -384,11 +417,88 @@ impl<'a> Codegen<'a> {
         alias: NodeId,
         expression: NodeId,
     ) -> Result<Vec<AliasBit>, String> {
+        match self.alias_expression_bit_view(alias, expression)? {
+            AliasBitView::Bits(bits) => Ok(bits),
+            AliasBitView::WholeNet {
+                net,
+                left,
+                step,
+                width,
+            } => (0..width)
+                .map(|offset| self.alias_bit(alias, net, left + i128::from(offset) * step))
+                .collect(),
+        }
+    }
+
+    /// Bit `position` of an alias bit view, or `None` past its end.
+    fn alias_view_bit(
+        &self,
+        alias: NodeId,
+        bits: &AliasBitView,
+        position: usize,
+    ) -> Result<Option<AliasBit>, String> {
+        match bits {
+            AliasBitView::Bits(bits) => Ok(bits.get(position).copied()),
+            AliasBitView::WholeNet {
+                net,
+                left,
+                step,
+                width,
+            } => match u32::try_from(position) {
+                Ok(offset) if offset < *width => self
+                    .alias_bit(alias, *net, left + i128::from(offset) * step)
+                    .map(Some),
+                _ => Ok(None),
+            },
+        }
+    }
+
+    /// Lazily describe every bit of a whole net in logical MSB-to-LSB order.
+    ///
+    /// `alias_bit` maps a label to a bit index that is affine in the label
+    /// (slope ±1), and it succeeds exactly when that index, and the
+    /// subtraction producing it, lie in an interval. Labels are affine in the
+    /// position too, so when the first and last positions resolve, every
+    /// position between them resolves. Otherwise the bits are materialized
+    /// eagerly so the first failing position reports the same error as before.
+    fn whole_net_alias_bits(
+        &self,
+        alias: NodeId,
+        net: NodeId,
+        left: i128,
+        step: i128,
+        width: u32,
+    ) -> Result<AliasBitView, String> {
+        let label = |offset: u32| left + i128::from(offset) * step;
+        let ends_resolve = width == 0
+            || (self.alias_bit(alias, net, label(0)).is_ok()
+                && self.alias_bit(alias, net, label(width - 1)).is_ok());
+        if ends_resolve {
+            return Ok(AliasBitView::WholeNet {
+                net,
+                left,
+                step,
+                width,
+            });
+        }
+        (0..width)
+            .map(|offset| self.alias_bit(alias, net, label(offset)))
+            .collect::<Result<Vec<_>, _>>()
+            .map(AliasBitView::Bits)
+    }
+
+    /// [`alias_expression_bits`](Self::alias_expression_bits) without
+    /// materializing whole-net operands.
+    fn alias_expression_bit_view(
+        &self,
+        alias: NodeId,
+        expression: NodeId,
+    ) -> Result<AliasBitView, String> {
         if let Some(bits) = self.alias_array_selection_bits(alias, expression)? {
-            return Ok(bits);
+            return Ok(AliasBitView::Bits(bits));
         }
         if let Some(bits) = self.alias_packed_projection_bits(alias, expression)? {
-            return Ok(bits);
+            return Ok(AliasBitView::Bits(bits));
         }
         let aggregate_path = self.unpacked_path_for_expr(expression).or_else(|| {
             self.unpacked_aggregate_info(expression)
@@ -405,13 +515,15 @@ impl<'a> Codegen<'a> {
             let width =
                 Self::fixed_descriptor_width(&member).ok_or("aggregate net alias has no width")?;
             let net = self.alias_base_net(alias, net)?;
-            return Ok((0..width)
-                .rev()
-                .map(|bit| AliasBit::Net {
-                    net,
-                    bit: offset + bit,
-                })
-                .collect());
+            return Ok(AliasBitView::Bits(
+                (0..width)
+                    .rev()
+                    .map(|bit| AliasBit::Net {
+                        net,
+                        bit: offset + bit,
+                    })
+                    .collect(),
+            ));
         }
         match self.kind(expression) {
             NodeKind::Net { .. }
@@ -428,17 +540,12 @@ impl<'a> Codegen<'a> {
                     .map(|range| (range.left, range.right))
                     .unwrap_or((i128::from(width - 1), 0));
                 let step = if left <= right { 1 } else { -1 };
-                (0..width)
-                    .map(|offset| {
-                        let label = left + i128::from(offset) * step;
-                        self.alias_bit(alias, net, label)
-                    })
-                    .collect()
+                self.whole_net_alias_bits(alias, net, left, step, width)
             }
             NodeKind::Expr(ExprKind::BitSelect { base, index }) => {
                 let net = self.alias_base_net(alias, *base)?;
                 let label = self.eval_bound_i128(*index)?;
-                Ok(vec![self.alias_bit(alias, net, label)?])
+                Ok(AliasBitView::Bits(vec![self.alias_bit(alias, net, label)?]))
             }
             NodeKind::Expr(ExprKind::PartSelect { base, left, right }) => {
                 let net = self.alias_base_net(alias, *base)?;
@@ -460,7 +567,8 @@ impl<'a> Codegen<'a> {
                             })?;
                         self.alias_bit(alias, net, label)
                     })
-                    .collect()
+                    .collect::<Result<Vec<_>, _>>()
+                    .map(AliasBitView::Bits)
             }
             NodeKind::Expr(ExprKind::IndexedPartSelect {
                 base,
@@ -510,7 +618,8 @@ impl<'a> Codegen<'a> {
                                 })?;
                         self.alias_bit(alias, net, label)
                     })
-                    .collect()
+                    .collect::<Result<Vec<_>, _>>()
+                    .map(AliasBitView::Bits)
             }
             NodeKind::Expr(ExprKind::Operation {
                 op: Operation::Concat,
@@ -526,7 +635,7 @@ impl<'a> Codegen<'a> {
                 for operand in operands {
                     result.extend(self.alias_expression_bits(alias, operand)?);
                 }
-                Ok(result)
+                Ok(AliasBitView::Bits(result))
             }
             NodeKind::Expr(ExprKind::Operation {
                 op: Operation::MultiConcat,
@@ -555,10 +664,10 @@ impl<'a> Codegen<'a> {
                 for _ in 0..count {
                     result.extend(pattern.iter().copied());
                 }
-                Ok(result)
+                Ok(AliasBitView::Bits(result))
             }
             NodeKind::Expr(ExprKind::Cast { operand, .. }) => {
-                self.alias_expression_bits(alias, *operand)
+                self.alias_expression_bit_view(alias, *operand)
             }
             _ => Err(self.alias_error(alias, "contains an unsupported alias lvalue expression")),
         }
@@ -1540,8 +1649,10 @@ impl<'a> Codegen<'a> {
                     continue;
                 };
                 let id = self.record_structural_driver(signal)?;
-                self.structural_driver_sites
-                    .insert((self.structural_site_owner(*member), *member, gidx), id);
+                self.insert_structural_driver_site(
+                    (self.structural_site_owner(*member), *member, gidx),
+                    id,
+                );
             }
             let sources = self.structural_site_sources(members)?;
             for (source, strengths) in sources {
@@ -1649,8 +1760,7 @@ impl<'a> Codegen<'a> {
         });
         let id = self.record_structural_driver(signal)?;
         if terminal == 0 {
-            self.structural_driver_sites
-                .insert((owner, source, group), id);
+            self.insert_structural_driver_site((owner, source, group), id);
         } else {
             self.structural_driver_terminal_sites
                 .insert((owner, source, group, terminal), id);
@@ -1694,11 +1804,12 @@ impl<'a> Codegen<'a> {
 
     pub(super) fn has_structural_driver(&self, source: NodeId) -> bool {
         let owner = self.structural_site_owner(source);
-        self.structural_driver_sites
-            .keys()
-            .any(|(candidate_owner, candidate, _)| {
-                *candidate_owner == owner && *candidate == source
-            })
+        self.structural_driver_sources.contains(&(owner, source))
+    }
+
+    fn insert_structural_driver_site(&mut self, key: (NodeId, NodeId, usize), id: DriverId) {
+        self.structural_driver_sources.insert((key.0, key.1));
+        self.structural_driver_sites.insert(key, id);
     }
 
     /// Return the concrete module instance that owns a structural source.
@@ -2118,8 +2229,10 @@ impl<'a> Codegen<'a> {
 
             if sites.is_empty() {
                 let id = self.record_structural_driver(info.ir)?;
-                self.structural_driver_sites
-                    .insert((self.structural_site_owner(net), net, group), id);
+                self.insert_structural_driver_site(
+                    (self.structural_site_owner(net), net, group),
+                    id,
+                );
             }
 
             for (source, strengths) in sites {

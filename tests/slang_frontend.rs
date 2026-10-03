@@ -670,3 +670,293 @@ fn existing_unadmitted_absolute_include_cannot_leak_into_elaboration() {
     std::fs::remove_file(&header).expect("remove external header");
     std::fs::remove_dir(&dir).expect("remove isolated test directory");
 }
+
+/// The `perf/corpus/many_processes.sv` register shape: `N` clocked processes
+/// plus `N` one-bit continuous assignments to one `N`-bit net.
+const MANY_REGISTER_PROCESSES: &str = r#"
+module many_registers #(parameter integer N = 1, parameter integer EDGES = 2);
+    logic clk = 0;
+    wire [N-1:0] d;
+    integer ones = 0;
+    integer d_ones = 0;
+    integer edge_index;
+    genvar i;
+    for (i = 0; i < N; i = i + 1) begin : workers
+        assign d[i] = i[0];
+        always @(posedge clk) begin
+            static logic q;
+            q <= d[i];
+            if (edge_index == EDGES - 1) begin
+                ones = ones + (q === 1'b1);
+                d_ones = d_ones + (d[i] === 1'b1);
+            end
+        end
+    end
+endmodule
+"#;
+
+fn many_register_options(processes: usize, limits: Limits) -> CompileOptions {
+    CompileOptions {
+        top_modules: vec!["many_registers".into()],
+        parameter_overrides: vec![slang::ParameterOverride {
+            name: "N".into(),
+            value: processes.to_string(),
+        }],
+        limits,
+        ..CompileOptions::default()
+    }
+}
+
+#[test]
+fn exhausted_export_budgets_name_their_limit() {
+    let sources = [Source::compilation_unit(
+        "many_registers.sv",
+        MANY_REGISTER_PROCESSES,
+    )];
+    for (limits, expected) in [
+        (
+            Limits {
+                max_output_bytes: 64 * 1024,
+                ..Limits::default()
+            },
+            "export byte limit exceeded (limit=65536,",
+        ),
+        (
+            Limits {
+                max_semantic_nodes: 100,
+                ..Limits::default()
+            },
+            "semantic node limit exceeded (limit=100)",
+        ),
+        (
+            Limits {
+                max_semantic_edges: 100,
+                ..Limits::default()
+            },
+            "semantic edge limit exceeded (limit=100)",
+        ),
+        (
+            Limits {
+                max_constants: 4,
+                ..Limits::default()
+            },
+            "constant limit exceeded (limit=4)",
+        ),
+    ] {
+        let options = many_register_options(64, limits);
+        let error = slang::compile(&request(&sources, &options))
+            .expect_err("64 processes exceed the tiny budget");
+        assert_eq!(error.kind(), SlangErrorKind::LimitExceeded);
+        assert!(error.message().contains(expected), "{}", error.message());
+    }
+}
+
+#[test]
+fn simulator_limits_use_the_native_record_ceilings_and_keep_default_limits() {
+    let simulator = Limits::simulator(slang::NATIVE_HARD_MAX_OUTPUT_BYTES);
+    assert_eq!(
+        simulator.max_semantic_nodes,
+        slang::NATIVE_HARD_MAX_SEMANTIC_NODES
+    );
+    assert_eq!(
+        simulator.max_semantic_edges,
+        slang::NATIVE_HARD_MAX_SEMANTIC_EDGES
+    );
+    assert_eq!(simulator.max_constants, slang::NATIVE_HARD_MAX_CONSTANTS);
+    // Interactive and library callers keep their established budgets.
+    let default = Limits::default();
+    assert_eq!(default.max_output_bytes, 256 * 1024 * 1024);
+    assert_eq!(default.max_semantic_nodes, 4_000_000);
+    assert_eq!(default.max_semantic_edges, 16_000_000);
+    assert_eq!(default.max_constants, 1_000_000);
+    assert_eq!(
+        Limits {
+            max_output_bytes: default.max_output_bytes,
+            max_semantic_nodes: default.max_semantic_nodes,
+            max_semantic_edges: default.max_semantic_edges,
+            max_constants: default.max_constants,
+            ..simulator
+        },
+        default
+    );
+
+    let sources = [Source::compilation_unit(
+        "many_registers.sv",
+        MANY_REGISTER_PROCESSES,
+    )];
+    let options = many_register_options(16, simulator);
+    let snapshot = compile_valid(&request(&sources, &options))
+        .expect("the native ceilings are accepted request limits");
+    assert!(!snapshot.semantic_nodes.is_empty());
+
+    let over_ceiling = Limits {
+        max_semantic_edges: slang::NATIVE_HARD_MAX_SEMANTIC_EDGES + 1,
+        ..simulator
+    };
+    let options = many_register_options(16, over_ceiling);
+    let error = slang::compile(&request(&sources, &options))
+        .expect_err("an edge budget above the native ceiling is rejected");
+    assert_eq!(error.kind(), SlangErrorKind::LimitExceeded);
+}
+
+/// Heavy (tens of seconds and several GiB in an optimized build): a design
+/// whose export exceeds both the former 256 MiB simulator budget and the
+/// former 512 MiB native export ceiling. Run with
+/// `scripts/run-tests.sh --test-work-dir /build --run-ignored only -E 'test(whole_design_over_the_former_export_budget)'`.
+#[test]
+#[ignore = "heavy: tens of seconds and several GiB; see the doc comment for the command"]
+fn whole_design_over_the_former_export_budget_compiles_with_simulator_limits() {
+    const PROCESSES: usize = 40_000;
+    const FORMER_NATIVE_EXPORT_CEILING: u64 = 512 * 1024 * 1024;
+    let sources = [Source::compilation_unit(
+        "many_registers.sv",
+        MANY_REGISTER_PROCESSES,
+    )];
+    let options = many_register_options(PROCESSES, Limits::default());
+    let error = slang::compile(&request(&sources, &options))
+        .expect_err("the default library budget still bounds the export");
+    assert_eq!(error.kind(), SlangErrorKind::LimitExceeded);
+    assert!(error.message().contains("export byte limit exceeded"));
+
+    let options = many_register_options(
+        PROCESSES,
+        Limits::simulator(slang::SIMULATOR_DEFAULT_MAX_OUTPUT_BYTES),
+    );
+    let snapshot = compile_valid(&request(&sources, &options))
+        .expect("the simulator budget admits the whole design");
+    // The fixed-size node and edge records alone exceed the former budget.
+    let record_bytes =
+        snapshot.semantic_nodes.len() as u64 * 192 + snapshot.semantic_edges.len() as u64 * 32;
+    assert!(
+        record_bytes > FORMER_NATIVE_EXPORT_CEILING,
+        "{record_bytes}"
+    );
+    let database = llg::core::db::Db::from_slang(&snapshot).expect("owned import");
+    database.validate().expect("valid owned database");
+}
+
+#[test]
+fn exhausted_export_string_budget_names_its_limit() {
+    let sources = [Source::compilation_unit(
+        "long_file_name.sv",
+        "module tb; endmodule",
+    )];
+    let options = CompileOptions {
+        top_modules: vec!["tb".into()],
+        limits: Limits {
+            // The ABI file record fits exactly; its nonempty name does not.
+            max_output_bytes: 32,
+            ..Limits::default()
+        },
+        ..CompileOptions::default()
+    };
+    let error = slang::compile(&request(&sources, &options)).expect_err("filename exceeds budget");
+    assert_eq!(error.kind(), SlangErrorKind::LimitExceeded);
+    assert!(
+        error
+            .message()
+            .contains("export byte limit exceeded (limit=32)"),
+        "{}",
+        error.message()
+    );
+}
+
+#[test]
+fn high_fanout_generate_edges_keep_child_order_across_the_index_threshold() {
+    for count in [31, 63, 64, 65, 256] {
+        let source = format!("module tb; for (genvar i=0; i<{count}; i++) begin : g logic value = i[0]; end endmodule");
+        let sources = [Source::compilation_unit("generate_edges.sv", &source)];
+        let options = CompileOptions {
+            top_modules: vec!["tb".into()],
+            ..Default::default()
+        };
+        let snapshot = compile_valid(&request(&sources, &options)).unwrap();
+        let array = snapshot
+            .semantic_nodes
+            .iter()
+            .find(|node| node.name == "g" && node.kind == slang::SemanticKind::GenerateScope)
+            .expect("generate array");
+        let edges = &snapshot.semantic_edges
+            [array.edge_start as usize..(array.edge_start + array.edge_count) as usize];
+        let blocks: Vec<_> = edges
+            .iter()
+            .filter(|edge| edge.role == slang::SemanticEdgeRole::Child)
+            .filter(|edge| {
+                snapshot.semantic_nodes[edge.target_id as usize].kind
+                    == slang::SemanticKind::GenerateScope
+            })
+            .collect();
+        assert_eq!(blocks.len(), count);
+        for (ordinal, edge) in blocks.iter().enumerate() {
+            let block = &snapshot.semantic_nodes[edge.target_id as usize];
+            assert_eq!(block.name, format!("g[{ordinal}]"));
+            assert_eq!(block.parent_id, Some(array.id));
+            assert_eq!(edge.index, blocks[0].index + ordinal as u32);
+        }
+        let database = llg::core::db::Db::from_slang(&snapshot).expect("owned import");
+        database.validate().expect("valid indexed capture");
+    }
+}
+
+#[test]
+fn high_fanout_operand_roles_and_repeated_pattern_ids_survive_index_mutation() {
+    const COUNT: usize = 128;
+    let repeated = vec!["scalar"; COUNT].join(",");
+    let source = format!("module tb; wire scalar; wire [{high}:0] result; logic [7:0] rows [1:0][0:{high}]; initial rows = '{{default: '{{default:1'b0}}}}; assign result = {{{repeated}}}; endmodule", high = COUNT-1);
+    let sources = [Source::compilation_unit("operand_edges.sv", &source)];
+    let options = CompileOptions {
+        top_modules: vec!["tb".into()],
+        ..Default::default()
+    };
+    let snapshot = compile_valid(&request(&sources, &options)).unwrap();
+    for operation in [
+        slang::SemanticOperation::Concat,
+        slang::SemanticOperation::AssignmentPattern,
+    ] {
+        let node = snapshot
+            .semantic_nodes
+            .iter()
+            .find(|node| {
+                node.operation == operation
+                    && (operation != slang::SemanticOperation::AssignmentPattern
+                        || node.detail == "SimpleAssignmentPattern")
+            })
+            .expect("high-fanout expression");
+        let edges = &snapshot.semantic_edges
+            [node.edge_start as usize..(node.edge_start + node.edge_count) as usize];
+        let operands: Vec<_> = edges
+            .iter()
+            .filter(|edge| edge.role == slang::SemanticEdgeRole::Operand)
+            .collect();
+        assert_eq!(operands.len(), COUNT, "{operation:?}");
+        for (ordinal, edge) in operands.iter().enumerate() {
+            assert_eq!(edge.index as usize, ordinal);
+        }
+        assert!(!edges
+            .iter()
+            .any(|edge| edge.role == slang::SemanticEdgeRole::Child));
+        if operation == slang::SemanticOperation::AssignmentPattern {
+            assert!(operands
+                .iter()
+                .all(|edge| edge.target_id == operands[0].target_id));
+        }
+    }
+    let database = llg::core::db::Db::from_slang(&snapshot).expect("owned import");
+    database.validate().expect("valid indexed operand capture");
+    let options = CompileOptions {
+        limits: Limits {
+            max_semantic_edges: 100,
+            ..Default::default()
+        },
+        ..options
+    };
+    let error = slang::compile(&request(&sources, &options))
+        .expect_err("high fanout still charges every edge");
+    assert!(
+        error
+            .message()
+            .contains("semantic edge limit exceeded (limit=100)"),
+        "{}",
+        error.message()
+    );
+}

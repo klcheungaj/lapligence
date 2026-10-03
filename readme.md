@@ -160,6 +160,10 @@ Common options:
 - `--lint-json [<path>]`: write a JSON lint report and exit.
 - `--lint-config <file>`: load rule settings from a TOML file.
 - `--gen-only`: generate C11 sources and `CMakeLists.txt` without building.
+- `--max-export-mib <MiB>`: bound frontend snapshot export for the elaborated
+  design (default 4096 MiB; range 1–16384). An exhausted budget reports its
+  effective limit. Export bytes cover captured records and strings, not total
+  process memory; use `LLG_MEMORY_LIMIT_MB` for the optional process-wide guard.
 - `--out-dir <dir>`: output root (default `build`). The model is written to
   `<dir>/sim/<design>`; its executable is `<dir>/sim/<design>/build/bin/sim`.
 - `--runtime-cache <dir>`: runtime archive cache (default

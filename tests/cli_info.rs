@@ -75,6 +75,7 @@ fn simulator_information_exits_without_compiling_or_installing_memory_limits() {
         "--cmake <program>",
         "--build-jobs <N>",
         "--model-opt-level <O0|O1|O2|O3|Os>",
+        "--max-export-mib <MiB>",
     ] {
         assert!(
             String::from_utf8_lossy(&output.stdout).contains(option),
@@ -114,6 +115,10 @@ fn simulator_missing_option_value_is_a_usage_error() {
         ("--cflags", "--cflags requires a flag string"),
         ("--cmake", "--cmake requires a program"),
         ("--build-jobs", "--build-jobs requires a positive integer"),
+        (
+            "--max-export-mib",
+            "--max-export-mib requires an integer from 1 to 16384",
+        ),
         (
             "--model-opt-level",
             "--model-opt-level requires O0, O1, O2, O3 or Os",
@@ -257,5 +262,27 @@ fn server_invalid_arguments_do_not_start_the_protocol() {
         assert_eq!(output.status.code(), Some(2), "{output:?}");
         assert!(output.stdout.is_empty(), "{output:?}");
         assert!(String::from_utf8_lossy(&output.stderr).contains("use --help"));
+    }
+}
+
+#[test]
+fn simulator_export_budget_rejects_invalid_values_and_accepts_boundaries() {
+    for value in ["0", "-1", "many", "", "16385", "18446744073709551615"] {
+        let output = invoke(env!("CARGO_BIN_EXE_llg"), &["--max-export-mib", value]);
+        assert_eq!(output.status.code(), Some(2), "{output:?}");
+        assert!(output.stdout.is_empty(), "{output:?}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr)
+                .contains("--max-export-mib requires an integer from 1 to 16384"),
+            "{output:?}"
+        );
+    }
+    for value in ["1", "4096", "16384"] {
+        let output = invoke(
+            env!("CARGO_BIN_EXE_llg"),
+            &["--max-export-mib", value, "--help"],
+        );
+        assert!(output.status.success(), "{output:?}");
+        assert!(output.stderr.is_empty(), "{output:?}");
     }
 }

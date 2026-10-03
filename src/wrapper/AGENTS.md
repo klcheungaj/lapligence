@@ -11,6 +11,20 @@ borrowed views, never individually freed; snapshots outlive temporary compilatio
 Keep [FFI](../ffi/AGENTS.md) layouts/errors/budgets aligned. `mimalloc_shim.c`
 redirects C malloc/free through GNU/LLD wrapping on musl.
 
+Native zero-request defaults remain 64 MiB export, 1M semantic nodes, 4M edges
+and 1M constants. Hard ceilings are 16 GiB export, 64M nodes, 256M edges and
+16M constants; reject edge requests above the ceiling before UDP work. Charge
+export records and strings before storing them, and name the effective exhausted
+budget in diagnostics. A larger export budget does not bound total Slang/Rust RSS.
+
+Capture's ordered pending edge vectors remain authoritative. Build role/index and
+child-target indexes only for parents with at least 64 charged edges. Keep cache
+positions aligned on append and role conversion; invalidate them when erases move
+positions or bulk operations replace roles. Child attachment keeps target dedup
+and the original next-child index, including gaps after role conversion. Avoid
+per-node index storage; many duplicate child positions can still make front
+removal linear in that target's duplicates.
+
 ## Capture
 
 - Consume only admitted cached buffers, never reopen paths or canonicalize through

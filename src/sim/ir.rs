@@ -590,18 +590,19 @@ impl IrModel {
     }
 
     /// `(function name, spawn label)` pairs in spawn order.
+    /// A spawn takes the label of the first process with its C name.
     pub fn spawn_list(&self) -> Vec<(&str, &str)> {
+        // Index first-by-name once; a per-spawn search over every process
+        // made this quadratic in the number of processes.
+        let mut labels = std::collections::HashMap::with_capacity(self.processes.len());
+        for process in &self.processes {
+            labels
+                .entry(process.c_name.as_str())
+                .or_insert(process.label.as_str());
+        }
         self.spawns
             .iter()
-            .map(|f| {
-                let label = self
-                    .processes
-                    .iter()
-                    .find(|p| p.c_name == *f)
-                    .map(|p| p.label.as_str())
-                    .unwrap_or("");
-                (f.as_str(), label)
-            })
+            .map(|f| (f.as_str(), labels.get(f.as_str()).copied().unwrap_or("")))
             .collect()
     }
 }

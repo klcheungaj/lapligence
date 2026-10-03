@@ -57,10 +57,22 @@ const MAX_INCLUDE_DIRS: usize = 4_096;
 const MAX_PARAMETER_OVERRIDES: usize = 4_096;
 const MAX_SYSTEM_SUBROUTINES: usize = 4_096;
 const MAX_CONFIG_BYTES: u64 = 4 * 1024 * 1024;
-// Keep this in sync with the native bridge's kHardMaxSemanticEdges. The Rust
-// decoder uses the caller's limit for UDP validation, so accepting a larger
-// value here would let it do more work than the native capture can produce.
-const NATIVE_HARD_MAX_SEMANTIC_EDGES: u64 = 16_000_000;
+// Keep these in sync with the native bridge's kHardMax* ceilings. The bridge
+// clamps larger requests to them; the Rust decoder uses the caller's edge limit
+// for UDP validation, so an edge budget above its ceiling is rejected instead.
+/// Native ceiling on exported bytes for one compilation (16 GiB).
+pub const NATIVE_HARD_MAX_OUTPUT_BYTES: u64 = 16 * 1024 * 1024 * 1024;
+/// Native ceiling on exported semantic nodes for one compilation.
+pub const NATIVE_HARD_MAX_SEMANTIC_NODES: u64 = 64_000_000;
+/// Native ceiling on exported semantic edges (and UDP rows).
+pub const NATIVE_HARD_MAX_SEMANTIC_EDGES: u64 = 256_000_000;
+/// Native ceiling on exported constants for one compilation.
+pub const NATIVE_HARD_MAX_CONSTANTS: u64 = 16_000_000;
+/// Default export byte budget of [`Limits::simulator`] (4 GiB). The frontend
+/// export grows linearly with the elaborated design, about 15 KiB per small
+/// `always` process plus its continuous assignment, so this admits roughly
+/// 250,000 such processes while still bounding a runaway elaboration.
+pub const SIMULATOR_DEFAULT_MAX_OUTPUT_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 
 /// One admitted in-memory SystemVerilog compilation unit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -242,6 +254,9 @@ impl str::FromStr for CompilationUnitMode {
 }
 
 /// Native and Rust-side capture limits for one compilation.
+///
+/// [`Limits::default`] suits interactive and library callers.
+/// [`Limits::simulator`] admits whole elaborated designs for batch simulation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Limits {
     pub max_sources: u64,
@@ -281,6 +296,24 @@ impl Default for Limits {
             max_type_ranges: 4_000_000,
             max_type_members: 4_000_000,
             max_constants: 1_000_000,
+        }
+    }
+}
+
+impl Limits {
+    /// Limits for capturing a whole elaborated design for simulation.
+    ///
+    /// The export byte budget `max_output_bytes` is the operative guard: every
+    /// exported node, edge and constant is charged against it, so the record
+    /// counts are set to their native ceilings and bounded by the bytes. Other
+    /// limits keep their [`Default`] values.
+    pub fn simulator(max_output_bytes: u64) -> Self {
+        Self {
+            max_output_bytes,
+            max_semantic_nodes: NATIVE_HARD_MAX_SEMANTIC_NODES,
+            max_semantic_edges: NATIVE_HARD_MAX_SEMANTIC_EDGES,
+            max_constants: NATIVE_HARD_MAX_CONSTANTS,
+            ..Self::default()
         }
     }
 }

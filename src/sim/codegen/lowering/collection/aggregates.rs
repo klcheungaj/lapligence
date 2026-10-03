@@ -84,7 +84,7 @@ impl<'a> Codegen<'a> {
                 &object_name,
                 (width, false, false),
             )?;
-            self.sig_globals.insert(node, signal.clone());
+            self.insert_sig_global(node, signal.clone());
             let mut ty = descriptor.info.clone();
             ty.width = Some(width);
             let leaf = AggregateMemberInfo {

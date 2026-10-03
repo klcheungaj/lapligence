@@ -42,7 +42,13 @@ remain on the calling thread; do not implement `Send` or `Sync`.
   compilation-unit lexical uses, including macro expansions.
 - Keep static `#[link]` metadata for wrapper, Slang and fmt. The library and every
   final musl target must retain the required native archives/wrapping.
-- Bound UDP semantic nodes/edges; reject an edge budget above 16 million. Each
+- Bound UDP semantic nodes/edges; reject an edge budget above the native ceiling
+  of 256 million. `Limits::default()` retains the library/interactive budgets
+  (256 MiB export, 4M semantic nodes, 16M edges, 1M constants).
+  `Limits::simulator(bytes)` uses the native record ceilings (64M nodes, 256M
+  edges, 16M constants), retaining all other default limits. Keep these ceilings
+  and the 16 GiB native export ceiling aligned with the wrapper; the simulator
+  driver chooses a separate 4 GiB export budget. Each
   row owns exactly one valid window. Wildcard indexing has snapshot-wide ceilings
   of 65,536 assignments and 8 MiB key bytes; check expanded bucket/key costs before
   allocation.

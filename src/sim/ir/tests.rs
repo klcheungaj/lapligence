@@ -100,3 +100,30 @@ fn fixed_array_constructor_checks_the_selected_cell_limit() {
         .detail()
         .contains("dimension product overflows u64"));
 }
+
+#[test]
+fn spawn_labels_come_from_the_first_process_with_each_name() {
+    use super::{IrModel, IrProcess, IrShape};
+    let mut model = IrModel::new("spawns".to_owned(), 1).unwrap();
+    for (name, label) in [("p_a", "first a"), ("p_b", "only b"), ("p_a", "second a")] {
+        model.processes.push(IrProcess::new(
+            name.to_owned(),
+            label.to_owned(),
+            IrShape::RunOnce,
+            Vec::new(),
+            Vec::new(),
+        ));
+    }
+    model.spawns = ["p_b", "p_a", "p_missing", "p_a"]
+        .map(str::to_owned)
+        .to_vec();
+    assert_eq!(
+        model.spawn_list(),
+        vec![
+            ("p_b", "only b"),
+            ("p_a", "first a"),
+            ("p_missing", ""),
+            ("p_a", "first a"),
+        ]
+    );
+}

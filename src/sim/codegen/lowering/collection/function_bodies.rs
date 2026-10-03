@@ -266,7 +266,7 @@ impl<'a> Codegen<'a> {
                 continue;
             }
             if let Some(info) = self.static_task_locals.get(&(inst, local)).cloned() {
-                self.sig_globals.insert(local, info.clone());
+                self.insert_sig_global(local, info.clone());
                 persistent.insert(local, info.clone());
                 static_local_signals.insert(local, info);
                 continue;
@@ -303,7 +303,7 @@ impl<'a> Codegen<'a> {
                 omit: false,
             });
             self.signals.push(info.clone());
-            self.sig_globals.insert(local, info.clone());
+            self.insert_sig_global(local, info.clone());
             persistent.insert(local, info.clone());
             static_local_signals.insert(local, info);
         }
@@ -359,7 +359,7 @@ impl<'a> Codegen<'a> {
                         omit: false,
                     });
                     self.signals.push(info.clone());
-                    self.sig_globals.insert(return_variable, info.clone());
+                    self.insert_sig_global(return_variable, info.clone());
                     persistent.insert(return_variable, info.clone());
                     persistent.insert(ft, info.clone());
                     Some(info)

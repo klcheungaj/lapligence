@@ -67,8 +67,12 @@ constexpr uint64_t kDefaultMaxInstances = 100000;
 constexpr uint64_t kHardMaxInstances = 1000000;
 constexpr uint64_t kDefaultMaxParameters = 500000;
 constexpr uint64_t kHardMaxParameters = 2000000;
+// Hard ceilings bound every caller, including ones that request more. The
+// export-related ceilings (constants, output bytes, semantic nodes/edges) admit
+// large whole designs; callers keep tighter requested budgets (the zero-request
+// defaults below are unchanged). Keep these in sync with the NATIVE_HARD_* constants in src/ffi/slang.rs.
 constexpr uint64_t kDefaultMaxConstants = 1000000;
-constexpr uint64_t kHardMaxConstants = 4000000;
+constexpr uint64_t kHardMaxConstants = 16000000;
 constexpr uint64_t kDefaultMaxTypes = 100000;
 constexpr uint64_t kHardMaxTypes = 1000000;
 constexpr uint64_t kDefaultMaxValueBits = 64 * 1024 * 1024;
@@ -76,7 +80,7 @@ constexpr uint64_t kHardMaxValueBits = 512 * 1024 * 1024;
 constexpr uint64_t kDefaultMaxRelatedDiagnostics = 80000;
 constexpr uint64_t kHardMaxRelatedDiagnostics = 800000;
 constexpr uint64_t kDefaultMaxOutputBytes = 64 * 1024 * 1024;
-constexpr uint64_t kHardMaxOutputBytes = 512 * 1024 * 1024;
+constexpr uint64_t kHardMaxOutputBytes = 16ull * 1024 * 1024 * 1024;
 
 // Named-event identity is carried by the terminal event type even when the
 // declaration adds one or more unpacked dimensions. Keep this test in the
@@ -105,9 +109,9 @@ bool isNamedEventType(const Type& type) {
   return false;
 }
 constexpr uint64_t kDefaultMaxSemanticNodes = 1000000;
-constexpr uint64_t kHardMaxSemanticNodes = 4000000;
+constexpr uint64_t kHardMaxSemanticNodes = 64000000;
 constexpr uint64_t kDefaultMaxSemanticEdges = 4000000;
-constexpr uint64_t kHardMaxSemanticEdges = 16000000;
+constexpr uint64_t kHardMaxSemanticEdges = 256000000;
 constexpr uint64_t kDefaultMaxLexicalTokens = 4000000;
 constexpr uint64_t kHardMaxLexicalTokens = 16000000;
 constexpr uint64_t kDefaultMaxTypeRanges = 1000000;
@@ -149,8 +153,17 @@ void addChecked(uint64_t& total, uint64_t amount, uint64_t limit,
                 const char* description) {
   if (amount > limit || total > limit - amount)
     throw BridgeFailure(LLG_SLANG_STATUS_LIMIT_EXCEEDED,
-                        std::string(description) + " limit exceeded");
+                        std::string(description) + " limit exceeded (limit=" +
+                            std::to_string(limit) + ")");
   total += amount;
+}
+
+// A capture budget failure that names the effective limit, so callers can
+// identify the exhausted budget and its effective ceiling.
+[[noreturn]] void throwCountLimit(const char* description, uint64_t limit) {
+  throw BridgeFailure(LLG_SLANG_STATUS_LIMIT_EXCEEDED,
+                      std::string(description) + " limit exceeded (limit=" +
+                          std::to_string(limit) + ")");
 }
 
 struct EditionPolicy {
@@ -238,7 +251,9 @@ void chargeRecord(LlgSlangSnapshot& snapshot, uint64_t bytes) {
   if (bytes > snapshot.output_byte_limit ||
       snapshot.output_bytes > snapshot.output_byte_limit - bytes) {
     throw BridgeFailure(LLG_SLANG_STATUS_LIMIT_EXCEEDED,
-        "export byte limit exceeded (bytes=" + std::to_string(snapshot.output_bytes) +
+        "export byte limit exceeded (limit=" +
+        std::to_string(snapshot.output_byte_limit) +
+        ", bytes=" + std::to_string(snapshot.output_bytes) +
         ", nodes=" + std::to_string(snapshot.semantic_nodes.size()) +
         ", types=" + std::to_string(snapshot.types.size()) +
         ", constants=" + std::to_string(snapshot.constants.size()) +
@@ -314,6 +329,23 @@ struct Capture {
       virtualInterfaceTypes;
   std::unordered_map<const void*, uint64_t> semanticIds;
   std::vector<std::vector<LlgSlangSemanticEdge>> pendingEdges;
+  // Small nodes retain cheap scans. Only high-fanout parents pay for indexes;
+  // positions refer to the authoritative ordered edge vector, never its memory.
+  static constexpr size_t kIndexedSemanticEdgeThreshold = 64;
+  static uint64_t semanticEdgeKey(uint32_t role, uint32_t index) {
+    return (static_cast<uint64_t>(role) << 32) | index;
+  }
+  struct SemanticEdgeIndex {
+    std::map<uint64_t, size_t> roles;
+    std::unordered_map<uint64_t, std::vector<size_t>> children;
+
+    void add(const LlgSlangSemanticEdge& edge, size_t position) {
+      roles.emplace(semanticEdgeKey(edge.role, edge.index), position);
+      if (edge.role == LLG_SLANG_EDGE_CHILD)
+        children[edge.target_id].push_back(position);
+    }
+  };
+  std::unordered_map<uint64_t, SemanticEdgeIndex> indexedSemanticEdges;
   std::vector<LexicalBinding> lexicalBindings;
   std::vector<LlgSlangSourceRange> connectionActualRanges;
   std::vector<GenvarLexicalScope> genvarLexicalScopes;
@@ -761,8 +793,7 @@ struct Capture {
 
   uint64_t constant(const ConstantValue& value) {
     if (output.constants.size() >= maxConstants())
-      throw BridgeFailure(LLG_SLANG_STATUS_LIMIT_EXCEEDED,
-                          "constant limit exceeded");
+      throwCountLimit("constant", maxConstants());
     chargeRecord(output, sizeof(LlgSlangConstant));
     const uint64_t id = output.constants.size();
     LlgSlangConstant result{};
@@ -908,8 +939,7 @@ struct Capture {
     if (auto it = semanticIds.find(identity); it != semanticIds.end())
       return it->second;
     if (output.semantic_nodes.size() >= maxSemanticNodes())
-      throw BridgeFailure(LLG_SLANG_STATUS_LIMIT_EXCEEDED,
-                          "semantic node limit exceeded");
+      throwCountLimit("semantic node", maxSemanticNodes());
     const uint64_t id = output.semantic_nodes.size();
     semanticIds.emplace(identity, id);
     pendingEdges.emplace_back();
@@ -925,8 +955,7 @@ struct Capture {
 
   uint64_t newSyntheticSemantic() {
     if (output.semantic_nodes.size() >= maxSemanticNodes())
-      throw BridgeFailure(LLG_SLANG_STATUS_LIMIT_EXCEEDED,
-                          "semantic node limit exceeded");
+      throwCountLimit("semantic node", maxSemanticNodes());
     const uint64_t id = output.semantic_nodes.size();
     pendingEdges.emplace_back();
     chargeRecord(output, sizeof(LlgSlangSemanticNode));
@@ -939,62 +968,131 @@ struct Capture {
     return id;
   }
 
+  SemanticEdgeIndex* semanticEdgeIndex(uint64_t source) {
+    const auto& edges = pendingEdges[static_cast<size_t>(source)];
+    if (edges.size() < kIndexedSemanticEdgeThreshold)
+      return nullptr;
+    auto [it, inserted] = indexedSemanticEdges.try_emplace(source);
+    if (inserted) {
+      for (size_t position = 0; position < edges.size(); position++)
+        it->second.add(edges[position], position);
+    }
+    return &it->second;
+  }
+
+  LlgSlangSemanticEdge* findSemanticEdge(uint64_t source, uint32_t role,
+                                        uint32_t index) {
+    auto& edges = pendingEdges[static_cast<size_t>(source)];
+    if (auto* lookup = semanticEdgeIndex(source)) {
+      const auto it = lookup->roles.find(semanticEdgeKey(role, index));
+      return it == lookup->roles.end() ? nullptr : &edges[it->second];
+    }
+    for (auto& edge : edges) {
+      if (edge.role == role && edge.index == index)
+        return &edge;
+    }
+    return nullptr;
+  }
+
+  LlgSlangSemanticEdge* findSemanticChild(uint64_t source, uint64_t target) {
+    auto& edges = pendingEdges[static_cast<size_t>(source)];
+    if (auto* lookup = semanticEdgeIndex(source)) {
+      const auto it = lookup->children.find(target);
+      return it == lookup->children.end() ? nullptr : &edges[it->second.front()];
+    }
+    for (auto& edge : edges) {
+      if (edge.role == LLG_SLANG_EDGE_CHILD && edge.target_id == target)
+        return &edge;
+    }
+    return nullptr;
+  }
+
+  uint32_t nextSemanticChildIndex(uint64_t source) {
+    if (auto* lookup = semanticEdgeIndex(source)) {
+      // Exclude UINT32_MAX, whose +1 wraps to zero in the original scan.
+      auto it = lookup->roles.lower_bound(
+          semanticEdgeKey(LLG_SLANG_EDGE_CHILD, UINT32_MAX));
+      if (it != lookup->roles.begin()) {
+        --it;
+        if ((it->first >> 32) == LLG_SLANG_EDGE_CHILD)
+          return static_cast<uint32_t>(it->first) + 1;
+      }
+      return 0;
+    }
+    uint32_t index = 0;
+    for (const auto& edge : pendingEdges[static_cast<size_t>(source)]) {
+      if (edge.role == LLG_SLANG_EDGE_CHILD)
+        index = std::max(index, edge.index + 1);
+    }
+    return index;
+  }
+
   void semanticEdge(uint64_t source, uint32_t role, uint64_t target,
                     uint32_t index = 0) {
     if (source == LLG_SLANG_INVALID_ID || target == LLG_SLANG_INVALID_ID)
       return;
-    for (const auto& edge : pendingEdges[static_cast<size_t>(source)]) {
-      if (edge.role != role || edge.index != index)
-        continue;
-      if (edge.target_id == target)
+    if (const auto* edge = findSemanticEdge(source, role, index)) {
+      if (edge->target_id == target)
         return;
       throw BridgeFailure(LLG_SLANG_STATUS_INTERNAL_ERROR,
                           "conflicting semantic edge role and index");
     }
     if (semanticEdgeCount >= maxSemanticEdges())
-      throw BridgeFailure(LLG_SLANG_STATUS_LIMIT_EXCEEDED,
-                          "semantic edge limit exceeded");
+      throwCountLimit("semantic edge", maxSemanticEdges());
     chargeRecord(output, sizeof(LlgSlangSemanticEdge));
-    pendingEdges[static_cast<size_t>(source)].push_back({role, index, target});
+    auto& edges = pendingEdges[static_cast<size_t>(source)];
+    edges.push_back({role, index, target});
+    if (auto it = indexedSemanticEdges.find(source);
+        it != indexedSemanticEdges.end())
+      it->second.add(edges.back(), edges.size() - 1);
     semanticEdgeCount++;
   }
 
-  void semanticChild(uint64_t parent, uint64_t child) {
-    uint32_t index = 0;
-    for (const auto& edge : pendingEdges[static_cast<size_t>(parent)]) {
-      if (edge.role == LLG_SLANG_EDGE_CHILD)
-        index = std::max(index, edge.index + 1);
-    }
-    semanticEdge(parent, LLG_SLANG_EDGE_CHILD, child, index);
+  void semanticChild(uint64_t parent, uint64_t child, bool deduplicate = false) {
+    if (deduplicate && findSemanticChild(parent, child))
+      return;
+    semanticEdge(parent, LLG_SLANG_EDGE_CHILD, child,
+                 nextSemanticChildIndex(parent));
   }
 
   void semanticRole(uint64_t source, const void* targetIdentity, uint32_t role,
                     uint32_t index = 0) {
     const uint64_t target = ensureSemantic(targetIdentity);
     auto& edges = pendingEdges[static_cast<size_t>(source)];
-    const auto existing = std::find_if(edges.begin(), edges.end(),
-        [=](const LlgSlangSemanticEdge& edge) {
-          return edge.role == role && edge.index == index;
-        });
-    if (existing != edges.end()) {
+    if (const auto* existing = findSemanticEdge(source, role, index)) {
       if (existing->target_id != target)
         throw BridgeFailure(LLG_SLANG_STATUS_INTERNAL_ERROR,
                             "conflicting semantic edge role and index");
+      if (!findSemanticChild(source, target))
+        return;
       const size_t oldSize = edges.size();
       edges.erase(std::remove_if(edges.begin(), edges.end(),
           [=](const LlgSlangSemanticEdge& edge) {
             return edge.role == LLG_SLANG_EDGE_CHILD &&
                    edge.target_id == target;
           }), edges.end());
+      if (oldSize != edges.size())
+        indexedSemanticEdges.erase(source);
       semanticEdgeCount -= oldSize - edges.size();
       return;
     }
-    for (auto& edge : edges) {
-      if (edge.target_id == target && edge.role == LLG_SLANG_EDGE_CHILD) {
-        edge.role = role;
-        edge.index = index;
-        return;
+    if (auto* edge = findSemanticChild(source, target)) {
+      if (auto it = indexedSemanticEdges.find(source);
+          it != indexedSemanticEdges.end()) {
+        auto& lookup = it->second;
+        lookup.roles.erase(semanticEdgeKey(edge->role, edge->index));
+        auto& positions = lookup.children.at(target);
+        const size_t position = positions.front();
+        if (role != LLG_SLANG_EDGE_CHILD) {
+          positions.erase(positions.begin());
+          if (positions.empty())
+            lookup.children.erase(target);
+        }
+        lookup.roles.emplace(semanticEdgeKey(role, index), position);
       }
+      edge->role = role;
+      edge->index = index;
+      return;
     }
     semanticEdge(source, role, target, index);
   }
@@ -1006,19 +1104,17 @@ struct Capture {
                             uint32_t role, uint32_t index,
                             const SequenceRange& range) {
     semanticRole(source, targetIdentity, role, index);
-    auto& edges = pendingEdges[static_cast<size_t>(source)];
-    auto it = std::find_if(edges.begin(), edges.end(), [=](const auto& edge) {
-      return edge.role == role && edge.index == index;
-    });
-    if (it == edges.end())
+    auto* edge = findSemanticEdge(source, role, index);
+    if (!edge)
       throw BridgeFailure(LLG_SLANG_STATUS_INTERNAL_ERROR,
                           "sequence edge metadata has no edge");
-    it->sequence_delay_min = range.min;
-    it->sequence_delay_max = range.max.value_or(LLG_SLANG_ASSERTION_RANGE_UNBOUNDED);
-    it->sequence_delay_valid = 1;
+    edge->sequence_delay_min = range.min;
+    edge->sequence_delay_max = range.max.value_or(LLG_SLANG_ASSERTION_RANGE_UNBOUNDED);
+    edge->sequence_delay_valid = 1;
   }
 
   void replaceChildRoles(uint64_t source, uint32_t role) {
+    indexedSemanticEdges.erase(source);
     uint32_t index = 0;
     for (auto& edge : pendingEdges[static_cast<size_t>(source)]) {
       if (edge.role == LLG_SLANG_EDGE_CHILD) {
@@ -1035,6 +1131,8 @@ struct Capture {
         [](const LlgSlangSemanticEdge& edge) {
           return edge.role == LLG_SLANG_EDGE_CHILD;
         }), edges.end());
+    if (oldSize != edges.size())
+      indexedSemanticEdges.erase(source);
     semanticEdgeCount -= oldSize - edges.size();
   }
 
@@ -2827,15 +2925,7 @@ private:
     auto& node = capture.output.semantic_nodes[static_cast<size_t>(id)];
     if (node.parent_id == LLG_SLANG_INVALID_ID)
       node.parent_id = parents.back();
-    uint32_t childIndex = 0;
-    for (const auto& edge :
-         capture.pendingEdges[static_cast<size_t>(parents.back())]) {
-      if (edge.role == LLG_SLANG_EDGE_CHILD && edge.target_id == id)
-        return;
-      if (edge.role == LLG_SLANG_EDGE_CHILD)
-        childIndex = std::max(childIndex, edge.index + 1);
-    }
-    capture.semanticEdge(parents.back(), LLG_SLANG_EDGE_CHILD, id, childIndex);
+    capture.semanticChild(parents.back(), id, true);
   }
 
   static uint32_t processKind(ProceduralBlockKind kind) {
