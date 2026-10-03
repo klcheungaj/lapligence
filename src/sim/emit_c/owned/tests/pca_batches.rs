@@ -175,7 +175,7 @@ fn computed_sources_and_dynamic_indices_are_ineligible() {
 }
 
 #[test]
-fn constant_indices_borrow_pool_beside_live_loop_values() {
+fn narrow_constant_indices_keep_owned_scratch_beside_live_loop_values() {
     let mut model = model(PCA_BATCH_MIN_ASSIGNMENTS);
     for statement in &mut model.processes[0].body {
         let IrStmt::PcaAssign { value, .. } = statement else {
@@ -204,8 +204,10 @@ fn constant_indices_borrow_pool_beside_live_loop_values() {
     }];
     let source = render(model);
     assert!(source.contains("llg_pca_batch_0(_llg_t + 1,"));
-    assert!(source.contains("llg_value_scope_begin(2)"));
-    assert!(source.contains("sv4_bit_select(_llg_t[0], sv4_to_index(llg_constant_"));
+    assert!(source.contains("llg_value_scope_begin(3)"));
+    assert!(source.contains("sv4_bit_select(_llg_t[0], sv4_to_index(_llg_t[1]))"));
+    assert!(source.contains("SV4_INIT(3ULL, 0ULL, 0ULL, 32, 0)"));
+    assert!(!source.contains("static sv4_t llg_constant_"));
 }
 
 #[test]
