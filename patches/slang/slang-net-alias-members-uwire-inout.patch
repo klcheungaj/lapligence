@@ -1,0 +1,113 @@
+diff --git a/source/analysis/DriverTracker.cpp b/source/analysis/DriverTracker.cpp
+--- a/source/analysis/DriverTracker.cpp
++++ b/source/analysis/DriverTracker.cpp
+@@ -52,6 +52,17 @@ void DriverTracker::add(AnalysisContext& context, DriverAlloc& driverAlloc,
+     if (expr->kind == ExpressionKind::Assignment)
+         expr = &expr->as<AssignmentExpression>().left();
+ 
++    // An inout connection collapses a uwire with the internal net instead of
++    // driving it (IEEE 1800-2009 23.3.3.6-23.3.3.7); the simulator counts the
++    // drivers of the collapsed network for the 6.6.2 single-driver rule.
++    if (direction == ArgumentDirection::InOut) {
++        auto sym = expr->getSymbolReference();
++        if (sym && sym->kind == SymbolKind::Net &&
++            sym->as<NetSymbol>().netType.netKind == NetType::UWire) {
++            return;
++        }
++    }
++
+     addDrivers(context, driverAlloc, *expr, DriverKind::Continuous, flags, containingSymbol);
+ }
+ 
+diff --git a/source/ast/expressions/MiscExpressions.cpp b/source/ast/expressions/MiscExpressions.cpp
+--- a/source/ast/expressions/MiscExpressions.cpp
++++ b/source/ast/expressions/MiscExpressions.cpp
+@@ -241,12 +241,10 @@ bool ValueExpressionBase::checkLValue(const ASTContext& context, const ValueSymb
+             return false;
+         }
+ 
+-        if (symbol.kind == SymbolKind::Net &&
+-            symbol.as<NetSymbol>().netType.netKind == NetType::UWire &&
+-            flags.has(AssignFlags::InOutPort)) {
+-            context.addDiag(diag::InOutUWireConn, varRange) << symbol.name;
+-            return false;
+-        }
++        // IEEE 1800-2009 6.6.2 and 23.3.3.6-23.3.3.7 permit a uwire net on
++        // the external side of an inout port: the collapsed net keeps the
++        // single-driver rule, and only pass-switch terminals are prohibited.
++        // The simulator checks drivers of the collapsed network.
+     }
+     else {
+         // Nets can't be assigned in procedural contexts.
+diff --git a/source/ast/symbols/InstanceSymbols.cpp b/source/ast/symbols/InstanceSymbols.cpp
+--- a/source/ast/symbols/InstanceSymbols.cpp
++++ b/source/ast/symbols/InstanceSymbols.cpp
+@@ -1760,8 +1760,18 @@ std::span<const Expression* const> PrimitiveInstanceSymbol::getPortConnections()
+                     ASTContext argCtx = context;
+                     argCtx.flags &= ~ASTFlags::DisallowUDNT;
+                     argCtx.flags |= ASTFlags::LAndRValue;
+-                    results.push_back(
+-                        &Expression::bindLValue(*conns[i], argCtx, AssignFlags::InOutPort));
++                    auto& terminal = Expression::bindLValue(*conns[i], argCtx,
++                                                            AssignFlags::InOutPort);
++                    // IEEE 1800-2009 6.6.2: a uwire net cannot connect to a
++                    // bidirectional pass-switch terminal. Module inout ports
++                    // collapse instead (23.3.3.6-23.3.3.7) and stay legal.
++                    if (auto sym = terminal.getSymbolReference();
++                        sym && sym->kind == SymbolKind::Net &&
++                        sym->as<NetSymbol>().netType.netKind == NetType::UWire) {
++                        context.addDiag(diag::InOutUWireConn, terminal.sourceRange)
++                            << sym->name;
++                    }
++                    results.push_back(&terminal);
+                 }
+                 else {
+                     results.push_back(
+diff --git a/source/ast/symbols/MemberSymbols.cpp b/source/ast/symbols/MemberSymbols.cpp
+--- a/source/ast/symbols/MemberSymbols.cpp
++++ b/source/ast/symbols/MemberSymbols.cpp
+@@ -2304,6 +2304,28 @@ struct NetAlias {
+     Compilation::AliasBitRange bounds;
+ };
+ 
++// A net_lvalue's constant_select may name members of a structure net
++// (IEEE 1800-2009 10.11, A.8.3 and A.8.5), so selects and member accesses
++// are traced to the referenced net rather than to the member itself.
++static const Expression& aliasRootExpression(const Expression& expr) {
++    const Expression* current = &expr;
++    while (true) {
++        switch (current->kind) {
++            case ExpressionKind::ElementSelect:
++                current = &current->as<ElementSelectExpression>().value();
++                break;
++            case ExpressionKind::RangeSelect:
++                current = &current->as<RangeSelectExpression>().value();
++                break;
++            case ExpressionKind::MemberAccess:
++                current = &current->as<MemberAccessExpression>().value();
++                break;
++            default:
++                return *current;
++        }
++    }
++}
++
+ struct NetAliasVisitor {
+     const ASTContext& context;
+     const NetType* commonNetType = nullptr;
+@@ -2322,7 +2344,14 @@ struct NetAliasVisitor {
+                 case ExpressionKind::MemberAccess:
+                 case ExpressionKind::ElementSelect:
+                 case ExpressionKind::RangeSelect: {
+-                    if (auto sym = expr.getSymbolReference()) {
++                    auto& root = aliasRootExpression(expr);
++                    if (root.kind == ExpressionKind::HierarchicalValue) {
++                        context.addDiag(diag::NetAliasHierarchical, expr.sourceRange);
++                        break;
++                    }
++                    auto sym = root.kind == ExpressionKind::NamedValue ? root.getSymbolReference()
++                                                                       : expr.getSymbolReference();
++                    if (sym) {
+                         if (sym->kind != SymbolKind::Net) {
+                             context.addDiag(diag::NetAliasNotANet, expr.sourceRange) << sym->name;
+                         }

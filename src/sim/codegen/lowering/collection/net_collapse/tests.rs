@@ -256,3 +256,111 @@ fn port_net_type_same_kind_uwire_alias_keeps_its_declaration_contract() {
     assert_eq!(plan.resolved(a).unwrap().kind, NetType::Uwire);
     assert_eq!(plan.component(a), plan.component(b));
 }
+
+/// Independent reading of the batch rule: winners from the transcribed table,
+/// reduced to types no other winner beats from both sides without a warning,
+/// then the first remaining type in column order.
+fn reference_batch(parent: NetType, children: &[NetType]) -> NetType {
+    let table = [
+        "EEEEEEEEE",
+        "IEeeeeeEE",
+        "IeEeeeeEE",
+        "IeeEEEeEE",
+        "IeeIEeeEE",
+        "IeeIeEeEE",
+        "IiiiiiEEE",
+        "IIIIIIIEe",
+        "IIIIIIIeE",
+    ];
+    let index = |kind: NetType| KINDS.iter().position(|other| *other == kind).unwrap();
+    let cell =
+        |internal: NetType, external: NetType| table[index(internal)].as_bytes()[index(external)];
+    let mut winners = children
+        .iter()
+        .map(|child| match cell(*child, parent) {
+            b'I' | b'i' => *child,
+            _ => parent,
+        })
+        .collect::<Vec<_>>();
+    winners.sort_by_key(|kind| index(*kind));
+    winners.dedup();
+    let beats = |a: NetType, b: NetType| cell(a, b) == b'I' && cell(b, a) == b'E';
+    *winners
+        .iter()
+        .find(|kind| !winners.iter().any(|other| beats(*other, **kind)))
+        .unwrap()
+}
+
+#[test]
+fn port_net_type_same_depth_batches_ignore_sibling_order() {
+    for parent in KINDS {
+        for first in KINDS {
+            for second in KINDS {
+                let expected = reference_batch(parent, &[first, second]);
+                let mut results = Vec::new();
+                for reversed in [false, true] {
+                    let mut plan = NetCollapsePlan::default();
+                    let top = add(&mut plan, 0, parent);
+                    let a = add(&mut plan, 1, first);
+                    let b = add(&mut plan, 2, second);
+                    let edges = if reversed {
+                        vec![(b, top), (a, top)]
+                    } else {
+                        vec![(a, top), (b, top)]
+                    };
+                    let (_, ties) = plan.port_batch(&edges).unwrap();
+                    let resolved = plan.resolved(top).unwrap().clone();
+                    assert_eq!(plan.resolved(a), Some(&resolved));
+                    assert_eq!(plan.resolved(b), Some(&resolved));
+                    results.push((resolved, ties.len()));
+                }
+                assert_eq!(results[0], results[1], "{parent:?} {first:?} {second:?}");
+                assert_eq!(
+                    results[0].0.kind, expected,
+                    "{parent:?} {first:?} {second:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn port_net_type_batch_tie_reports_candidates_and_joins_same_type_delays() {
+    let mut plan = NetCollapsePlan::default();
+    let top = add(&mut plan, 9, NetType::Wire);
+    let or_child = add(&mut plan, 3, NetType::Wor);
+    let and_first = add(&mut plan, 5, NetType::Wand);
+    let and_second = add(&mut plan, 4, NetType::Wand);
+    let (warnings, ties) = plan
+        .port_batch(&[(or_child, top), (and_first, top), (and_second, top)])
+        .unwrap();
+    assert!(warnings.is_empty());
+    assert_eq!(
+        ties,
+        vec![CollapseTie {
+            edge: 0,
+            candidates: vec![NetType::Wand, NetType::Wor],
+            selected: NetType::Wand,
+        }]
+    );
+    let resolved = plan.resolved(top).unwrap();
+    assert_eq!(resolved.kind, NetType::Wand);
+    assert_eq!(
+        resolved.delay_members,
+        vec![and_second.owner(), and_first.owner()]
+    );
+}
+
+#[test]
+fn port_net_type_batch_tracks_uwire_membership() {
+    let mut plan = NetCollapsePlan::default();
+    let top = add(&mut plan, 0, NetType::Uwire);
+    let child = add(&mut plan, 1, NetType::Wand);
+    let other = add(&mut plan, 2, NetType::Wire);
+    assert!(plan.any_uwire());
+    let (warnings, _) = plan.port_batch(&[(child, top)]).unwrap();
+    assert_eq!(warnings.len(), 1);
+    assert_eq!(plan.resolved(child).unwrap().kind, NetType::Uwire);
+    assert!(plan.contains_uwire(child));
+    assert!(!plan.contains_uwire(other));
+}

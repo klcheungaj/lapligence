@@ -215,8 +215,9 @@ Macros, includes and their edition-specific behavior are counted in §11.
 - 🟦 **Net declarations** — `wire`/`tri` share ordinary resolved-net behavior;
   declaration assignments are continuous drivers. `uwire` rejects overlapping
   drivers and supports whole/disjoint constant-selected drivers, undriven Z,
-  ordinary ports and same-type aliases without inout edges. The frontend rejects
-  `uwire` inouts. Wired/pull/supply nets and strengths are detailed in §8.
+  ordinary ports, same-type aliases and uwire actuals on inout ports, whose
+  collapsed net keeps one driver per bit. `inout uwire` formals and pass-switch
+  terminals reject. Wired/pull/supply nets and strengths are detailed in §8.
   V §§3.6–3.7; SV §6.6 **[1995/SV-2005]**.
 - 🟨 **Memories and fixed unpacked arrays** — Multidimensional storage, signed or
   reversed bounds, element selections, rows, slices, whole copies and overlapping
@@ -831,20 +832,27 @@ Macros, includes and their edition-specific behavior are counted in §11.
   function/task-output driver and charge/resistive contexts remain restricted.
   V §§3.4, 3.7, 6.1, 7.9–7.13; SV §10.3.4 **[1995]**.
 - 🟨 **Dissimilar inout collapse** — Admitted whole/selected/concatenated packed
-  and fixed net-array-cell connections use the directional port-type table. The
-  winning declaration supplies resolver, default and propagation delay, including
-  no delay. Parent links precede descendants; same-depth warning-only ties use
-  stable design order and produce located warnings. This is not an order-independent guarantee for every multiway conflict. `uwire` inouts, `trireg`,
-  new whole-array shapes and net-array declaration delays remain unsupported.
-  V §12.3.10 / Table 45; SV §23.3.3.7 / Table 23-1 **[1995]**.
+  and fixed net-array row/cell connections use the directional port-type table
+  through any depth. The winning declaration supplies resolver, default and
+  propagation delay, including no delay. Parent links precede descendants, and
+  each hierarchy depth is one batch independent of instance and port order:
+  edge winners reduce to the types no other winner strictly dominates, and a
+  same-depth warning-only tie selects the first in Table 23-1 column order with
+  a located warning. A uwire actual collapses with one driver per bit (SV
+  §6.6.2); `inout uwire` formals stay frontend-rejected. `trireg` (ADV-006),
+  pass switches (ADV-005) and net-array declaration delays (ADV-002) remain
+  unsupported; oversized net arrays still expand per cell (known issue).
+  V §12.3.10 / Table 45; SV §§23.3.3.6–23.3.3.7 / Table 23-1 **[1995]**.
 - 🟨 **True aliases** — Same-declared-net-type packed networks, fully indexed
-  fixed net-array elements and multidimensional/static indexed projections share
-  force/release, dependency and waveform identity. Ascending declarations with
-  `-:` selections preserve physical bit pairing. Dissimilar port rules do not
-  relax alias type rules. Self/duplicate/variable/incompatible aliases, dynamic
-  or forbidden cross-scope forms and unmapped writes reject. The pinned frontend
-  rejects direct packed-struct member selects in `alias`; admitted part-select
-  projections remain available. SV §10.11 **[SV-2005]**.
+  fixed net-array elements, multidimensional/static indexed projections and
+  constant member selects of packed and unpacked structure nets (a local
+  frontend patch admits the A.8.3/A.8.5 `constant_select` members) share
+  force/release, dependency and waveform identity, also across inout ports.
+  Ascending declarations with `+:`/`-:` selections preserve physical bit
+  pairing. Dissimilar port rules do not relax alias type rules.
+  Self/duplicate/overlapping/variable/incompatible/width-mismatched aliases,
+  runtime selects, hierarchical (cross-scope) references and unmapped writes
+  reject. Delayed alias drivers belong to ADV-002. SV §10.11 **[SV-2005]**.
 - 🟨 **Continuous, gate and net delays** — Constant single/rise-fall/turn-off
   delays schedule captured Active-region inertial updates for admitted whole,
   constant-selected and fixed-array-element drivers. Changed pending results

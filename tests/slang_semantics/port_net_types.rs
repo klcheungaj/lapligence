@@ -20,7 +20,7 @@ fn capture(name: &str, source: &str) -> Db {
 #[test]
 fn port_net_type_supported_pairs_select_the_table_resolver_after_snapshot_drop() {
     // All 49 pairs of currently implemented resolved-net classes. The pure policy includes the
-    // uwire/trireg rows, but those inout endpoints remain admission errors.
+    // uwire/trireg rows; uwire actuals are covered by RTL-011 and trireg remains rejected.
     let names = ["wire", "wand", "wor", "tri0", "tri1", "supply0", "supply1"];
     let resolvers = [
         "LLG_RESOLVE_WIRE",

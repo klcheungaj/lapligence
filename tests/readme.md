@@ -144,6 +144,17 @@ and after Db destruction; descriptor scatter also bounds generated model size.
 Negatives cover overlapping variable writers, runtime pattern-leaf selects and
 zero-time nonconvergence; delayed pattern drivers remain ADV-002's boundary.
 
+RTL-011's alias and inout-collapse fixtures use
+`-E 'binary(sim_feature_completion) & test(rtl_011::)'`, together with
+`binary(sim_port_net_types)` and `test(net_collapse::)`. Positive fixtures run in
+both optimizer modes on both backends (set `LLG_TEST_GMP_ROOT` for the GMP lane);
+warning-free ones except the waveform fixture also run after Db destruction.
+Collapse warnings carry absolute paths, so the module compares their text up to
+the location, and the permuted chain twin must print the same values and
+warnings. `alias_identity`
+also parses its VCD. Negatives cover uwire drivers, pass switches and inout
+formals and the alias legality rules.
+
 ### Vendor patch preparation
 
 `vendor_patches.rs` checks clean/applied trees, no-Git archives (including archives

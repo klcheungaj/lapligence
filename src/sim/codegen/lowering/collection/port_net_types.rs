@@ -171,10 +171,9 @@ impl Codegen<'_> {
                 }
             }
         }
-        // Parent connections precede descendant connections. Ties retain the
-        // owned design traversal order (ports/siblings in declaration order).
-        // The LRM table defines pairs, not a unique winner for an arbitrary
-        // multiway warning-only conflict; this order makes that choice stable.
+        // Parent connections precede descendant connections: each depth is
+        // one batch whose result is independent of instance and port order
+        // (`NetCollapsePlan::port_batch`).
         let mut ports = nodes
             .iter()
             .copied()
@@ -190,67 +189,80 @@ impl Codegen<'_> {
                     } if high.is_some() || high_expr.is_some()
                 )
             })
+            .map(|port| {
+                let mut depth = 0usize;
+                let mut owner = self.owning_inst(port);
+                while let Some(instance) = owner {
+                    depth += 1;
+                    owner = self.owning_inst(instance);
+                }
+                (depth, port)
+            })
             .collect::<Vec<_>>();
-        ports.sort_by_key(|port| {
-            let mut depth = 0usize;
-            let mut owner = self.owning_inst(*port);
-            while let Some(instance) = owner {
-                depth += 1;
-                owner = self.owning_inst(instance);
-            }
-            depth
-        });
+        ports.sort_by_key(|(depth, _)| *depth);
         let mut warnings = HashSet::new();
-        for port in ports {
-            let NodeKind::Port {
-                high,
-                low: Some(low),
-                high_expr,
-                ..
-            } = self.kind(port)
-            else {
-                return Err("inout type plan lost its port endpoints".into());
-            };
-            let points = self.inout_type_points(port, *high, *low, *high_expr, bit_nets)?;
-            for (internal, external) in points {
-                // The bundled frontend rejects uwire inouts. Keep that bound
-                // if an alternate owned database reaches lowering, without
-                // rejecting a same-type uwire alias that has no port edges.
-                if self.collapse_net_type(internal.owner())? == NetType::Uwire
-                    || self.collapse_net_type(external.owner())? == NetType::Uwire
-                {
-                    return Err(format!(
-                        "inout port `{}`: uwire endpoints remain unsupported at {}:{}:{}",
-                        self.display_name(port),
+        let mut level_start = 0;
+        while level_start < ports.len() {
+            let depth = ports[level_start].0;
+            let level_end = ports[level_start..]
+                .iter()
+                .position(|(other, _)| *other != depth)
+                .map_or(ports.len(), |offset| level_start + offset);
+            let mut edges = Vec::new();
+            let mut edge_ports = Vec::new();
+            for &(_, port) in &ports[level_start..level_end] {
+                let NodeKind::Port {
+                    high,
+                    low: Some(low),
+                    high_expr,
+                    ..
+                } = self.kind(port)
+                else {
+                    return Err("inout type plan lost its port endpoints".into());
+                };
+                let points = self.inout_type_points(port, *high, *low, *high_expr, bit_nets)?;
+                for (internal, external) in points {
+                    self.insert_collapse_point(&mut plan, internal)?;
+                    self.insert_collapse_point(&mut plan, external)?;
+                    // Diagnose a source-level warning cell even when another
+                    // path already joined the endpoints or changed a type.
+                    let internal_kind = self.collapse_net_type(internal.owner())?;
+                    let external_kind = self.collapse_net_type(external.owner())?;
+                    let choice = port_choice(internal_kind, external_kind)
+                        .ok_or("inout endpoint has no net-type table entry")?;
+                    if choice.warns() {
+                        let warning = CollapseWarning {
+                            internal: internal_kind,
+                            external: external_kind,
+                            selected: if choice.internal() {
+                                internal_kind
+                            } else {
+                                external_kind
+                            },
+                        };
+                        self.warn_port_collapse(port, warning, &mut warnings);
+                    }
+                    edges.push((internal, external));
+                    edge_ports.push(port);
+                }
+            }
+            let (edge_warnings, ties) = plan.port_batch(&edges)?;
+            for (edge, warning) in edge_warnings {
+                self.warn_port_collapse(edge_ports[edge], warning, &mut warnings);
+            }
+            let mut tied = HashSet::new();
+            for tie in ties {
+                let port = edge_ports[tie.edge];
+                if tied.insert((port, tie.candidates.clone())) {
+                    self.warnings.push(format!(
+                        "dissimilar inout port `{}`: same-depth connections choose {:?} among non-dominating {:?} by column order (IEEE 1800-2009 Table 23-1) at {}:{}:{}",
+                        self.display_name(port), tie.selected, tie.candidates,
                         self.node(port).file.as_deref().unwrap_or("<unknown>"),
-                        self.node(port).line,
-                        self.node(port).col,
+                        self.node(port).line, self.node(port).col,
                     ));
                 }
-                self.insert_collapse_point(&mut plan, internal)?;
-                self.insert_collapse_point(&mut plan, external)?;
-                // Diagnose a source-level warning cell even when another path
-                // already joined the endpoints or changed an effective type.
-                let internal_kind = self.collapse_net_type(internal.owner())?;
-                let external_kind = self.collapse_net_type(external.owner())?;
-                let choice = port_choice(internal_kind, external_kind)
-                    .ok_or("inout endpoint has no net-type table entry")?;
-                if choice.warns() {
-                    let warning = CollapseWarning {
-                        internal: internal_kind,
-                        external: external_kind,
-                        selected: if choice.internal() {
-                            internal_kind
-                        } else {
-                            external_kind
-                        },
-                    };
-                    self.warn_port_collapse(port, warning, &mut warnings);
-                }
-                if let Some(warning) = plan.port(internal, external)? {
-                    self.warn_port_collapse(port, warning, &mut warnings);
-                }
             }
+            level_start = level_end;
         }
         Ok(plan)
     }
