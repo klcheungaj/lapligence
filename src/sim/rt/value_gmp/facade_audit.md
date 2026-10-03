@@ -10,6 +10,7 @@ convert into legacy descriptors as a fallback.
 | `sv4_t`, ABI and exclusive width limit | `backend.h`; compact ABI 5, exact-width owners |
 | `SV4_EMPTY`, `SV4_INIT`, `SV4_C`, `SV4_S`, `SV4_X`, `SV4_Z`, `LLG_MASK` | Public aliases in `backend.h`; runtime constructors remain source-compatible. Additional `SV4_LITERAL` supports static initialization at <=64 bits. |
 | Storage, constructors, resize/cast, two-state, arithmetic/logic/equality, relations, div/mod/pow/clog2 | G1 header and storage/logic/arithmetic/kernel units |
+| EMIT-1 `sv4_add_into`, `sv4_sub_into`, `sv4_mul_into` | Inline small paths in `backend.h`, matching-width reuse in `arithmetic.c`; exact aliases, X/Z fill, sign/width parity and canonical B transitions implemented. |
 | Shifts, reductions, countones/onehot, wildcard/case modes, membership, logical implication/equivalence | `backend.h`, `shifts_reductions.c`, `comparison_membership.c`; inline small paths and direct word kernels |
 | Selection functions and plans | `selection_inline.h`, `selections.c`; clipped coordinate plans, alias snapshots and word range copies |
 | Stream/unstream, concat/repeat, array conditional | `selection_inline.h`, `assembly.c`; independent unsigned owners |
@@ -61,3 +62,24 @@ and unchanged sign/shape are covered. ELF counters check no scratch allocations,
 known writes from unknown sources without promotion, and one realloc for each
 required B promotion/removal. `compact_checks` builds all S1–S9 and consumer
 executables, including the S4/S5 targets.
+
+The V05d audit compares the live value header at `fbc2aa36` with G1 merge
+`ca2d4227`: the only added callable value APIs are EMIT-1 arithmetic destinations
+and the already implemented V06 consumer primitives. All 152 current callable
+`sv4_*`, `llg_sv4_*`, reference and real helper names have compact public aliases;
+this inventory accompanies semantic tests, rather than replacing them. RTL-002
+adds descriptor-backed array operations in the container runtime, built on
+public value operations (`sv4_cast`, two-state conversion, move, clone and
+comparison). They require backend-selected runtime integration in V07, rather
+than duplicate compact numeric operations. No V07 embedding/pending declaration
+list exists in this revision.
+
+`compact_destinations.cmake` adds exhaustive four-state <=4-bit mixed-width/sign
+oracles, live-legacy differential checks, initialized/empty/mismatched destinations,
+left/right/both aliases, surviving independent inputs/results, wide padding and
+canonical storage, and both sides of the full-product threshold. ELF allocation
+counters check allocation-free small and equal-width known add/sub, independent
+multiply reuse, alias result allocation and B promotion/removal. Benchmarks cover
+all three destination operations at 1/64/65/256/4096 bits, known/X/Z and each exact
+alias mode. These are standalone component witnesses; generated selection remains
+V07 work.
