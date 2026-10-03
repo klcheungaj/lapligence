@@ -1,5 +1,49 @@
 #include "internal.h"
 
+void llg_gmp_sv4_arithmetic_into_wide(g4_t* dst, g4_t a, g4_t b, unsigned op) {
+    uint32_t w = g4_maxw(a, b);
+    if (dst->width != w || a.width != w || b.width != w) {
+        llg_gmp_sv4_replace(dst, g4_binary(a, b, op));
+        return;
+    }
+    int unknown = llg_gmp_sv4_is_unknown(a) || llg_gmp_sv4_is_unknown(b);
+    int8_t sign = a.is_signed && b.is_signed;
+    size_t n = llg_gmp_sv4_words(*dst);
+    if (unknown) {
+        /* Inspect inputs before promotion can relocate an aliased payload. */
+        llg_gmp_sv4_promote(dst);
+        memset(dst->data.wide.a, 0xff, n * sizeof(uint64_t));
+        memset(dst->data.wide.b, 0xff, n * sizeof(uint64_t));
+    } else if (op <= 1) {
+        uint64_t carry = op == 1;
+        for (size_t i = 0; i < n; ++i) {
+            uint64_t x = a.data.wide.a[i], y = op == 1 ? ~b.data.wide.a[i] : b.data.wide.a[i];
+            uint64_t sum = x + y, result = sum + carry;
+            carry = (sum < x) | (result < sum);
+            dst->data.wide.a[i] = result;
+        }
+    } else {
+        /* The kernel revisits inputs and requires a disjoint output. */
+        if (dst->data.wide.a == a.data.wide.a || dst->data.wide.a == b.data.wide.a) {
+            llg_gmp_sv4_replace(dst, llg_gmp_sv4_mul(a, b));
+            return;
+        }
+        size_t product = g4_product_words(n);
+        if (product == n)
+            llg_gmp_sv4_kernel_mul(dst->data.wide.a, a.data.wide.a, b.data.wide.a, n);
+        else {
+            uint64_t* scratch = llg_gmp_sv4_alloc(product);
+            llg_gmp_sv4_kernel_mul(scratch, a.data.wide.a, b.data.wide.a, n);
+            memcpy(dst->data.wide.a, scratch, n * sizeof(uint64_t));
+            free(scratch);
+        }
+    }
+    if (!unknown && dst->data.wide.b)
+        memset(dst->data.wide.b, 0, n * sizeof(uint64_t));
+    dst->is_signed = sign;
+    llg_gmp_sv4_finish(dst);
+}
+
 static g4_t multiply(g4_t a, g4_t b) {
     uint32_t w = g4_maxw(a, b);
     int8_t s = a.is_signed && b.is_signed;
