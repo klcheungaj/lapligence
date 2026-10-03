@@ -3,6 +3,8 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <math.h>
+#include <string.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -527,6 +529,65 @@ g4_t llg_gmp_sv4_udp_eval(const uint8_t* rows, size_t row_count, size_t input_co
                            const g4_t* const* inputs);
 /* End V05/S6. */
 
+/* V05/S7: native real payloads and scheduler ticks never enter packed storage.
+ * Casts round ties away from zero; rtoi truncates. X/Z bits contribute zero
+ * to real inspectors. Nonfinite integer conversions yield X. */
+double llg_gmp_sv4_to_real_wide(g4_t value);
+g4_t llg_gmp_sv4_from_real_wide(double rounded, uint32_t width, int8_t sign);
+uint64_t llg_gmp_sv4_delay_ticks(g4_t value, uint64_t unit_ticks);
+uint64_t llg_gmp_sv4_real_delay_ticks(double value, uint64_t unit_ticks, uint64_t precision_ticks);
+static inline double llg_gmp_sv4_to_real(g4_t value) {
+    if (value.width > 64)
+        return llg_gmp_sv4_to_real_wide(value);
+    uint64_t bits = value.data.small.a & ~value.data.small.b;
+    int negative = value.is_signed && value.width && ((bits >> (value.width - 1u)) & 1u);
+    uint64_t magnitude = negative ? (UINT64_C(0) - bits) & g4_mask(value.width) : bits;
+    return negative ? -(double)magnitude : (double)magnitude;
+}
+static inline g4_t llg_gmp_sv4_from_real(double value, uint32_t width, int8_t sign) {
+    g4_width_check(width);
+    if (!isfinite(value))
+        return llg_gmp_sv4_x(width, sign);
+    double rounded = round(value);
+    if (width > 64)
+        return llg_gmp_sv4_from_real_wide(rounded, width, sign);
+    uint64_t bits = (uint64_t)fmod(fabs(rounded), 18446744073709551616.0);
+    if (signbit(rounded))
+        bits = UINT64_C(0) - bits;
+    return g4_small(bits, 0, width, sign);
+}
+static inline g4_t llg_gmp_sv4_rtoi(double value) {
+    if (!isfinite(value))
+        return llg_gmp_sv4_x(32, 1);
+    uint64_t bits = (uint64_t)fmod(fabs(trunc(value)), 4294967296.0);
+    return g4_small(signbit(value) ? UINT64_C(0) - bits : bits, 0, 32, 1);
+}
+static inline g4_t llg_gmp_sv4_realtobits(double value) {
+    uint64_t bits;
+    memcpy(&bits, &value, sizeof(bits));
+    return g4_small(bits, 0, 64, 0);
+}
+static inline double llg_gmp_sv4_bitstoreal(g4_t value) {
+    uint64_t bits = llg_gmp_sv4_to_u64(value);
+    double out;
+    memcpy(&out, &bits, sizeof(out));
+    return out;
+}
+static inline g4_t llg_gmp_sv4_shortrealtobits(double value) {
+    float rounded = (float)value;
+    uint32_t bits;
+    memcpy(&bits, &rounded, sizeof(bits));
+    return g4_small(bits, 0, 32, 0);
+}
+static inline double llg_gmp_sv4_bitstoshortreal(g4_t value) {
+    uint32_t bits = (uint32_t)llg_gmp_sv4_to_u64(value);
+    float out;
+    memcpy(&out, &bits, sizeof(out));
+    return (double)out;
+}
+static inline int llg_gmp_real_to_bool(double value) { return value != 0.0; }
+/* End V05/S7. */
+
 #ifdef __cplusplus
 }
 #endif
@@ -620,11 +681,17 @@ g4_t llg_gmp_sv4_udp_eval(const uint8_t* rows, size_t row_count, size_t input_co
 #define LLG_STRENGTH_PULL LLG_GMP_STRENGTH_PULL
 #define LLG_STRENGTH_STRONG LLG_GMP_STRENGTH_STRONG
 #define LLG_STRENGTH_SUPPLY LLG_GMP_STRENGTH_SUPPLY
+/* V05/S7 public names. */
+#define sv4_bitstoreal llg_gmp_sv4_bitstoreal
+#define sv4_bitstoshortreal llg_gmp_sv4_bitstoshortreal
+#define sv4_delay_ticks llg_gmp_sv4_delay_ticks
+#define sv4_from_real llg_gmp_sv4_from_real
+#define sv4_real_delay_ticks llg_gmp_sv4_real_delay_ticks
+#define sv4_realtobits llg_gmp_sv4_realtobits
+#define sv4_rtoi llg_gmp_sv4_rtoi
+#define sv4_shortrealtobits llg_gmp_sv4_shortrealtobits
 #define sv4_to_real llg_gmp_sv4_to_real
 #define llg_real_to_bool llg_gmp_real_to_bool
-/* V05/S8 public names. */
-#define sv4_fits_i64 llg_gmp_sv4_fits_i64
-#define sv4_format llg_gmp_sv4_format
 #define sv4_to_dec_string llg_gmp_sv4_to_dec_string
 #define sv4_to_i64 llg_gmp_sv4_to_i64
 #define sv4_to_index llg_gmp_sv4_to_index
