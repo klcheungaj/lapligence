@@ -12,7 +12,9 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
 use std::ffi::{OsStr, OsString};
-use std::fs::{File, Metadata, ReadDir};
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+use std::fs::ReadDir;
+use std::fs::{File, Metadata};
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
@@ -163,12 +165,18 @@ impl Iterator for SecureReadDir {
 }
 
 enum SecureReadDirInner {
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    Descriptor(platform::DirectoryStream),
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     Standard(ReadDir),
 }
 
 impl SecureReadDirInner {
     fn next(&mut self) -> Option<io::Result<OsString>> {
         match self {
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            Self::Descriptor(stream) => stream.next(),
+            #[cfg(not(any(target_os = "linux", target_os = "macos")))]
             Self::Standard(read_dir) => read_dir
                 .next()
                 .map(|entry| entry.map(|entry| entry.file_name())),
@@ -315,7 +323,9 @@ fn opened_from_file(
 
 #[cfg(unix)]
 mod platform {
-    use super::{File, FileIdentity, Metadata, Path, PathBuf, SecureReadDir, SecureReadDirInner};
+    use super::{
+        File, FileIdentity, Metadata, OsString, Path, PathBuf, SecureReadDir, SecureReadDirInner,
+    };
     use std::ffi::OsStr;
     use std::io;
     use std::os::fd::AsRawFd;
@@ -477,26 +487,116 @@ mod platform {
         Ok(unsafe { File::from_raw_fd(descriptor) })
     }
 
+    /// List a fresh `openat(".")` descriptor for the admitted directory, so
+    /// the admitted handle keeps its own offset. Path-based reopening through
+    /// `/dev/fd/N` is not portable: macOS checks the fdesc node itself and
+    /// rejects it as not a directory.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(super) fn read_dir(file: &File, _actual_path: &Path) -> io::Result<SecureReadDir> {
-        #[cfg(target_os = "linux")]
-        let read_dir = std::fs::read_dir(format!("/proc/self/fd/{}", file.as_raw_fd()))?;
-        // Opening `/dev/fd/N` on macOS duplicates N and shares its directory
-        // offset, unlike Linux procfs which opens a new description. List a
-        // fresh `openat(".")` descriptor so the admitted handle is untouched;
-        // the stream keeps its duplicate open after `fresh` is dropped.
-        #[cfg(target_os = "macos")]
-        let read_dir = {
-            let fresh = open_child(file, OsStr::new("."))?;
-            std::fs::read_dir(format!("/dev/fd/{}", fresh.as_raw_fd()))?
+        use std::os::fd::IntoRawFd;
+
+        let descriptor = open_child(file, OsStr::new("."))?.into_raw_fd();
+        let stream = unsafe {
+            // SAFETY: `descriptor` is an open directory descriptor owned here;
+            // on success the returned stream takes ownership of it.
+            libc::fdopendir(descriptor)
         };
-        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-        let read_dir: std::fs::ReadDir = return Err(io::Error::new(
+        let Some(stream) = std::ptr::NonNull::new(stream) else {
+            let error = io::Error::last_os_error();
+            // SAFETY: fdopendir failed, so `descriptor` is still owned here;
+            // the `File` closes it exactly once.
+            drop(unsafe { File::from_raw_fd(descriptor) });
+            return Err(error);
+        };
+        Ok(SecureReadDir {
+            inner: SecureReadDirInner::Descriptor(DirectoryStream {
+                stream,
+                finished: false,
+            }),
+        })
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    pub(super) fn read_dir(_file: &File, _actual_path: &Path) -> io::Result<SecureReadDir> {
+        Err(io::Error::new(
             io::ErrorKind::Unsupported,
             "secure directory handles are unavailable on this Unix target",
-        ));
-        Ok(SecureReadDir {
-            inner: SecureReadDirInner::Standard(read_dir),
-        })
+        ))
+    }
+
+    /// Owned `DIR*` from `fdopendir`, closed exactly once on drop.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub(super) struct DirectoryStream {
+        stream: std::ptr::NonNull<libc::DIR>,
+        finished: bool,
+    }
+
+    // SAFETY: the stream is owned exclusively by this value and is only used
+    // through `&mut self` or on drop; a DIR stream may move between threads.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    unsafe impl Send for DirectoryStream {}
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    impl DirectoryStream {
+        /// Next entry name, skipping `.` and `..` as `std::fs::ReadDir` does.
+        pub(super) fn next(&mut self) -> Option<io::Result<OsString>> {
+            while !self.finished {
+                // readdir signals both end and failure with NULL; only errno
+                // distinguishes them, so clear it first.
+                clear_errno();
+                let entry = unsafe {
+                    // SAFETY: `stream` is a live DIR* owned by `self`.
+                    libc::readdir(self.stream.as_ptr())
+                };
+                if entry.is_null() {
+                    self.finished = true;
+                    let error = io::Error::last_os_error();
+                    return match error.raw_os_error() {
+                        Some(0) | None => None,
+                        Some(_) => Some(Err(error)),
+                    };
+                }
+                let name = unsafe {
+                    // SAFETY: a non-null readdir result points to a dirent
+                    // whose `d_name` is NUL-terminated and stays valid until
+                    // the next readdir/closedir on this stream; the bytes are
+                    // copied before either happens.
+                    std::ffi::CStr::from_ptr((*entry).d_name.as_ptr())
+                }
+                .to_bytes();
+                if name != b"." && name != b".." {
+                    return Some(Ok(OsStr::from_bytes(name).to_os_string()));
+                }
+            }
+            None
+        }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    impl Drop for DirectoryStream {
+        fn drop(&mut self) {
+            // SAFETY: `stream` came from fdopendir, is owned by `self` and is
+            // closed only here, which also closes its descriptor.
+            unsafe {
+                libc::closedir(self.stream.as_ptr());
+            }
+        }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn clear_errno() {
+        // SAFETY: the errno accessor returns this thread's errno location,
+        // which is always valid to write.
+        unsafe {
+            #[cfg(target_os = "linux")]
+            {
+                *libc::__errno_location() = 0;
+            }
+            #[cfg(target_os = "macos")]
+            {
+                *libc::__error() = 0;
+            }
+        }
     }
 }
 
@@ -535,6 +635,30 @@ mod tests {
     }
 
     #[test]
+    fn directory_listing_skips_dot_entries_and_leaves_admitted_handle_reusable() {
+        fn assert_send<T: Send>() {}
+        assert_send::<SecureReadDir>();
+
+        let root = temporary_directory("read-dir");
+        std::fs::create_dir(root.join("rtl")).expect("create listed directory");
+        std::fs::write(root.join("cell.sv"), b"").expect("write listed file");
+        let opened = open_path(&root).expect("open listed directory");
+        // Each listing uses its own descriptor, so repeating it on the same
+        // admitted handle yields the same names.
+        for _ in 0..2 {
+            let mut names = opened
+                .read_dir()
+                .expect("list admitted directory")
+                .collect::<std::io::Result<Vec<_>>>()
+                .expect("read directory entries");
+            names.sort();
+            assert_eq!(names, [OsString::from("cell.sv"), OsString::from("rtl")]);
+        }
+
+        std::fs::remove_dir_all(root).expect("remove listed directory");
+    }
+
+    #[test]
     fn unlinked_handle_is_rejected() {
         let root = temporary_directory("unlinked");
         let path = root.join("source.sv");
@@ -554,8 +678,7 @@ mod tests {
 #[cfg(windows)]
 mod platform {
     use super::{
-        File, FileIdentity, Metadata, OsString, Path, PathBuf, ReadDir, SecureReadDir,
-        SecureReadDirInner,
+        File, FileIdentity, Metadata, OsString, Path, PathBuf, SecureReadDir, SecureReadDirInner,
     };
     use std::io;
     use std::mem::MaybeUninit;
