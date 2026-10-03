@@ -1,0 +1,4 @@
+original=0010:1ffffffffffffffff signed=-1
+copied=0011:1123456789abcdef0
+boundary=0123456789abcdef0 original=1ffffffffffffffff
+invalid=x kept=0011

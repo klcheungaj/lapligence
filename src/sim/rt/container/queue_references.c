@@ -92,7 +92,7 @@ int llg_queue_cell_write(void* ptr, sv4_t value) {
     if (!cell) llg_container_fatal("null retained queue reference");
     if (!cell->identity) return 0; // invalid actual, not a removed valid element
     if (cell->owner) return llg_queue_ref_write(cell->owner, cell->identity, value);
-    sv4_replace(&cell->value, llg_element_assign(value, cell->value.width,
-                                                cell->value.is_signed, cell->two_state));
+    sv4_replace(&cell->value, llg_element_assign(value, llg_sv4_width(cell->value),
+                                                llg_sv4_signed(cell->value), cell->two_state));
     return 1;
 }

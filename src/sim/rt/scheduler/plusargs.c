@@ -102,28 +102,15 @@ static int llg_plusarg_find(const llg_plusarg_format_t* format,
 }
 
 static void llg_plusarg_set_bit(sv4_t* value, uint32_t index, int state) {
-    if (!value || index >= value->width) return;
-    int limb = (int)(index >> 6);
-    uint64_t mask = 1ULL << (index & 63u);
-    value->bits[limb] &= ~mask;
-    value->x[limb] &= ~mask;
-    value->z[limb] &= ~mask;
-    if (state == 1) value->bits[limb] |= mask;
-    else if (state == 2) value->x[limb] |= mask;
-    else if (state == 3) value->z[limb] |= mask;
+    if (value) llg_sv4_set_state(value, index, (unsigned)state);
 }
 
 static void llg_plusarg_mask_top(sv4_t* value) {
-    if (!value || value->width == 0 || value->width % 64u == 0) return;
-    uint64_t mask = (1ULL << (value->width % 64u)) - 1ULL;
-    int limb = (int)(value->width / 64u);
-    value->bits[limb] &= mask;
-    value->x[limb] &= mask;
-    value->z[limb] &= mask;
+    if (value) llg_sv4_mask_top(value);
 }
 
 static void llg_plusarg_unknown(sv4_t* value) {
-    if (value) sv4_replace(value, sv4_x(value->width, value->is_signed));
+    if (value) sv4_replace(value, sv4_x(llg_sv4_width(*value), llg_sv4_signed(*value)));
 }
 
 static int llg_plusarg_digit(int c, int base) {
@@ -154,25 +141,11 @@ static int llg_plusarg_decimal(const char* text, size_t length, sv4_t* output) {
     if (!digits) return 0;
     if (unknown) { llg_plusarg_unknown(output); return 1; }
     // The enclosing parser supplies a zeroed, exact-destination-width owner.
-    uint32_t n = (output->width + 63u) / 64u;
     for (size_t i = start; i < length; ++i) {
         if (text[i] == '_') continue;
-        uint64_t carry = (uint64_t)(text[i] - '0');
-        for (uint32_t limb = 0; limb < n; ++limb) {
-            uint64_t low = (output->bits[limb] & UINT32_MAX) * 10u + carry;
-            uint64_t high = (output->bits[limb] >> 32) * 10u + (low >> 32);
-            output->bits[limb] = (high << 32) | (low & UINT32_MAX);
-            carry = high >> 32;
-        }
+        llg_sv4_mul_add_known(output, 10, (uint32_t)(text[i] - '0'));
     }
-    if (negative) {
-        uint64_t carry = 1;
-        for (uint32_t limb = 0; limb < n; ++limb) {
-            uint64_t inverted = ~output->bits[limb];
-            output->bits[limb] = inverted + carry;
-            carry = output->bits[limb] < inverted;
-        }
-    }
+    if (negative) llg_sv4_negate_known(output);
     llg_plusarg_mask_top(output);
     return 1;
 }
@@ -223,13 +196,7 @@ static int llg_plusarg_based(const char* text, size_t length, int base,
         return 1;
     }
     if (negative) {
-        uint64_t carry = 1;
-        for (int limb = 0; limb < (int)((output->width + 63u) / 64u); ++limb) {
-            uint64_t inverted = ~output->bits[limb];
-            uint64_t sum = inverted + carry;
-            carry = sum < inverted;
-            output->bits[limb] = sum;
-        }
+        llg_sv4_negate_known(output);
         llg_plusarg_mask_top(output);
     }
     return 1;
@@ -254,7 +221,7 @@ static int llg_plusarg_real_value(const char* text, size_t length,
 
 static int llg_plusarg_packed_value(const char* text, size_t length,
                                      char conversion, sv4_t* output) {
-    sv4_replace(output, sv4_zero(output->width, output->is_signed));
+    sv4_replace(output, sv4_zero(llg_sv4_width(*output), llg_sv4_signed(*output)));
     if (length == 0) return 1;
     switch (conversion) {
         case 'd': return llg_plusarg_decimal(text, length, output);
@@ -266,9 +233,9 @@ static int llg_plusarg_packed_value(const char* text, size_t length,
             // the argument, with zero extension on the left, just like an
             // integral assignment from a SystemVerilog string value.
             uint32_t bit = 0;
-            for (size_t i = length; i > 0 && bit < output->width; --i) {
+            for (size_t i = length; i > 0 && bit < llg_sv4_width(*output); --i) {
                 unsigned char byte = (unsigned char)text[i - 1];
-                for (int j = 0; j < 8 && bit + (uint32_t)j < output->width; ++j) {
+                for (int j = 0; j < 8 && bit + (uint32_t)j < llg_sv4_width(*output); ++j) {
                     llg_plusarg_set_bit(output, bit + (uint32_t)j,
                                         (byte >> j) & 1);
                 }
@@ -282,7 +249,7 @@ static int llg_plusarg_packed_value(const char* text, size_t length,
         case 'g': {
             double real = 0.0;
             if (!llg_plusarg_real_value(text, length, &real)) return 0;
-            sv4_replace(output, sv4_from_real(real, output->width, output->is_signed));
+            sv4_replace(output, sv4_from_real(real, llg_sv4_width(*output), llg_sv4_signed(*output)));
             return 1;
         }
         default: return 0;
@@ -291,11 +258,7 @@ static int llg_plusarg_packed_value(const char* text, size_t length,
 
 static void llg_plusarg_to_two_state(sv4_t* value) {
     if (!value) return;
-    for (int limb = 0; limb < (int)((value->width + 63u) / 64u); ++limb) {
-        value->bits[limb] &= ~(value->x[limb] | value->z[limb]);
-        value->x[limb] = 0;
-        value->z[limb] = 0;
-    }
+    llg_sv4_two_state_inplace(value);
 }
 
 int llg_test_plusargs(const char* pattern) {

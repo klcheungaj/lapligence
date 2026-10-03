@@ -157,42 +157,20 @@ static int wait_key_compare(const void* left, const void* right) {
     return (a > b) - (a < b);
 }
 
-// This descriptor borrows the wait's planes only for synchronous comparison.
-// It must never go through an owning value operation or escape the call.
-static sv4_t wait_inline_value(llg_wait_t* wait) {
-    llg_wait_inline_payload_t* single = &wait->payload.single;
-    sv4_t value = SV4_EMPTY;
-    value.width = single->width;
-    value.is_signed = single->is_signed;
-    if (value.width) {
-        value.bits = single->limbs;
-        value.x = single->limbs + LLG_WAIT_INLINE_LIMBS;
-        value.z = single->limbs + 2u * LLG_WAIT_INLINE_LIMBS;
-    }
-    return value;
-}
-
 static int wait_inline_fits(const sv4_t* value) {
-    return value->width <= 64u * LLG_WAIT_INLINE_LIMBS;
+    return llg_sv4_width(*value) <= 64u * LLG_WAIT_INLINE_LIMBS;
 }
 
 static void wait_inline_copy(llg_wait_t* wait, const sv4_t* value) {
     llg_wait_inline_payload_t* single = &wait->payload.single;
-    size_t bytes = ((size_t)value->width + 63u) / 64u * sizeof(uint64_t);
-    single->width = value->width;
-    single->is_signed = (int8_t)(value->is_signed != 0);
-    if (bytes) {
-        memcpy(single->limbs, value->bits, bytes);
-        memcpy(single->limbs + LLG_WAIT_INLINE_LIMBS, value->x, bytes);
-        memcpy(single->limbs + 2u * LLG_WAIT_INLINE_LIMBS, value->z, bytes);
-        if (value->width % 64u) {
-            size_t last = (size_t)value->width / 64u;
-            uint64_t mask = UINT64_MAX >> (64u - value->width % 64u);
-            single->limbs[last] &= mask;
-            single->limbs[LLG_WAIT_INLINE_LIMBS + last] &= mask;
-            single->limbs[2u * LLG_WAIT_INLINE_LIMBS + last] &= mask;
-        }
-    }
+    single->width = llg_sv4_width(*value);
+    single->is_signed = (int8_t)(llg_sv4_signed(*value) != 0);
+    llg_sv4_export_vpi_words(*value, 0, single->words, LLG_WAIT_INLINE_LIMBS);
+}
+
+static int wait_inline_same(llg_wait_t* wait, sv4_t value) {
+    return llg_sv4_same_vpi_words(value, wait->payload.single.words,
+                                 LLG_WAIT_INLINE_LIMBS);
 }
 
 static void wait_subscriptions_register(llg_wait_t* wait) {
