@@ -121,10 +121,10 @@ fn whole_array_continuous_assignments_keep_sources_cells_and_rhs_snapshots() {
         "rtl_completion",
         "syn_006_array_continuous",
         concat!(
-            "t1 net=a1,x2 var=a1,a2 cond=a1,xx\n",
+            "t1 net=a1,X2 var=a1,a2 cond=a1,xx\n",
             "t1 pattern=c1,c2 selected=zz,a2 split=a1,b2 bit=01,02 row=31,32 ",
             "func=e1,e3 calls=1\n",
-            "t2 net=x1,x2 var=a1,d2 cond=a1,d2\n",
+            "t2 net=X1,X2 var=a1,d2 cond=a1,d2\n",
             "t2 pattern=c1,c2 selected=zz,d2 split=a1,c2 bit=03,02 row=41,32 ",
             "func=e1,e4 calls=2\n",
         ),

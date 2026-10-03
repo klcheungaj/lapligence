@@ -628,15 +628,17 @@ endmodule
 "#;
 
     // Hand-simulation:
-    //   t=0  b=1; `a=#5 b` captures b==1 and suspends; src and y remain X.
-    //   t=5  a:=1; b=2; display "t=5 a=1 b=2 y=x"; src=1 wakes the CA
+    //   t=0  b=1; `a=#5 b` captures b==1 and suspends; src stays X, so the CA
+    //        commits y=4'b000x at t=2: partially unknown, which %0d prints `X`
+    //        (IEEE 1800-2009 21.2.1.4).
+    //   t=5  a:=1; b=2; display "t=5 a=1 b=2 y=X"; src=1 wakes the CA
     //        (captures 1 for propagation at t=7).
     //   t=7  CA commits the captured value 1.
     //   t=9  display y=1.
     //   t=11 display y=1.
     //
     // Expected stdout (both optimizer settings, byte-identical):
-    //   t=5 a=1 b=2 y=x
+    //   t=5 a=1 b=2 y=X
     //   t=9 y=1
     //   t=11 y=1
 
@@ -688,7 +690,7 @@ endmodule
     })
     .expect("delay parity setup");
 
-    let expected = "t=5000 a=1 b=2 y=x\nt=9000 y=1\nt=11000 y=1\n";
+    let expected = "t=5000 a=1 b=2 y=X\nt=9000 y=1\nt=11000 y=1\n";
     assert_eq!(on.expect("opt-on run"), expected);
     assert_eq!(off.expect("opt-off run"), expected);
 }

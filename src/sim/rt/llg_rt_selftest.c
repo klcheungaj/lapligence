@@ -417,7 +417,7 @@ static void test_sv4_ops(void) {
         sv4_format('h', test_temp(SV4_C(0xAB, 8)), buf, sizeof(buf));
         CHECK(strcmp(buf, "ab") == 0);
         sv4_format('h', test_temp(b4("1010x001")), buf, sizeof(buf));
-        CHECK(strcmp(buf, "ax") == 0);
+        CHECK(strcmp(buf, "aX") == 0);
         sv4_format('d', test_temp(SV4_C(18, 9)), buf, sizeof(buf));
         CHECK(strcmp(buf, "18") == 0);
         sv4_format('o', test_temp(SV4_C(18, 8)), buf, sizeof(buf));
@@ -429,21 +429,35 @@ static void test_sv4_ops(void) {
         CHECK(strcmp(buf, "10z1") == 0);
         sv4_format('b', test_temp(b4("10xz")), buf, sizeof(buf));
         CHECK(strcmp(buf, "10xz") == 0);
-        // %h: any X in a nibble -> 'x'; any Z but no X -> 'z'
+        // %h: all-X nibble -> 'x', all-Z -> 'z'; partial -> 'X'/'Z', X over Z
         sv4_format('h', test_temp(b4("zzzzxxxx")), buf, sizeof(buf));
         CHECK(strcmp(buf, "zx") == 0);
         sv4_format('h', test_temp(b4("zzzzzzzzxxxxxxxx")), buf, sizeof(buf));
         CHECK(strcmp(buf, "zzxx") == 0);
         sv4_format('h', test_temp(b4("zx01")), buf, sizeof(buf));
-        CHECK(strcmp(buf, "x") == 0); // X wins over Z in a mixed nibble
+        CHECK(strcmp(buf, "X") == 0); // X wins over Z in a mixed nibble
+        sv4_format('h', test_temp(b4("zz01")), buf, sizeof(buf));
+        CHECK(strcmp(buf, "Z") == 0);
+        sv4_format('h', test_temp(b4("zzxx")), buf, sizeof(buf));
+        CHECK(strcmp(buf, "X") == 0);
+        sv4_format('h', test_temp(b4("x")), buf, sizeof(buf));
+        CHECK(strcmp(buf, "x") == 0); // a short top digit counts only its own bits
         // %o: 3-bit groups, same rule
         sv4_format('o', test_temp(b4("1z0")), buf, sizeof(buf));
-        CHECK(strcmp(buf, "z") == 0);
+        CHECK(strcmp(buf, "Z") == 0);
         sv4_format('o', test_temp(b4("1x0")), buf, sizeof(buf));
-        CHECK(strcmp(buf, "x") == 0);
-        // %d prints 'x' for any X or Z
+        CHECK(strcmp(buf, "X") == 0);
+        sv4_format('o', test_temp(b4("zzz")), buf, sizeof(buf));
+        CHECK(strcmp(buf, "z") == 0);
+        // %d: x/z when every bit is unknown, X/Z (X first) when only some are
         sv4_format('d', test_temp(b4("10z1")), buf, sizeof(buf));
-        CHECK(strcmp(buf, "x") == 0);
+        CHECK(strcmp(buf, "Z") == 0);
+        sv4_format('d', test_temp(b4("10x1")), buf, sizeof(buf));
+        CHECK(strcmp(buf, "X") == 0);
+        sv4_format('d', test_temp(b4("zzzz")), buf, sizeof(buf));
+        CHECK(strcmp(buf, "z") == 0);
+        sv4_format('d', test_temp(b4("xzxz")), buf, sizeof(buf));
+        CHECK(strcmp(buf, "X") == 0);
     }
     // casez/casex wildcard matching (per-bit rules, LRM 12.5.1)
     {
@@ -612,11 +626,11 @@ static void test_sv4_wide(void) {
             "1111111011011100101110101001100001110110010101000011001000010000"
             "0000000100100011010001010110011110001001101010111100110111101111")
             == 0);
-        // bit 70 unknown -> the nibble covering bits 68..71 prints 'x'
+        // bit 70 unknown -> the nibble covering bits 68..71 prints 'X'
         uint64_t b[2] = { 0x0123456789ABCDEFULL, 0xFEDCBA9876543210ULL };
         uint64_t x[2] = { 0, 1ULL << 6 }, z[2] = { 0, 0 };
         sv4_format('h', test_temp(sv4_from_limbs(b, x, z, 128, 0)), buf, sizeof(buf));
-        CHECK(strcmp(buf, "fedcba98765432x00123456789abcdef") == 0);
+        CHECK(strcmp(buf, "fedcba98765432X00123456789abcdef") == 0);
         // %o of 128 bits: 43 digits, value 1 -> 42 zeros then '1'
         char expect_o[44];
         memset(expect_o, '0', 42);
@@ -1561,7 +1575,7 @@ static void test_llg_net(void) {
         llg_net_resolve(&net);
         char buf[64];
         sv4_format('h', net.resolved, buf, sizeof(buf));
-        CHECK(strcmp(buf, "0x") == 0);
+        CHECK(strcmp(buf, "0X") == 0);
         sv4_destroy(&net.resolved);
         sv4_destroy(&d1);
         sv4_destroy(&d0);
