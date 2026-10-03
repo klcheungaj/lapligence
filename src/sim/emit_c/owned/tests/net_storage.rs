@@ -200,3 +200,108 @@ int main(void) {
     assert!(result.stdout.is_empty(), "{result:?}");
     assert!(result.stderr.is_empty(), "{result:?}");
 }
+
+fn contribution_model(count: usize, delayed: bool) -> IrModel {
+    let mut model = IrModel::new("net_contributions".to_owned(), 129).unwrap();
+    let mut body = vec![IrStmt::DeclLocal {
+        name: "captured".to_owned(),
+        width: 129,
+        signed: false,
+        two_state: false,
+        init: Some(Box::new(number(1, 129))),
+    }];
+    for index in 0..count {
+        let group = model.net_groups.len();
+        let width = if index % 2 == 0 { 1 } else { 65 };
+        model.net_groups.push(
+            IrNetGroup::new(format!("g_part_{index}"), width, false, IrNetKind::Wire, 1).unwrap(),
+        );
+        let mut signal = IrSignal::new(
+            format!("g_part_{index}.resolved"),
+            None,
+            IrType::Packed {
+                width,
+                signed: false,
+                two_state: false,
+            },
+            None,
+        )
+        .unwrap();
+        signal.net_driver = Some((group, 0));
+        let target = model.signals.len();
+        model.signals.push(signal);
+        let rhs = IrExpr::new(
+            IrExprKind::PartSel {
+                base: Box::new(IrExpr::new(
+                    IrExprKind::LocalRead("captured".to_owned()),
+                    129,
+                    false,
+                    None,
+                )),
+                left: i64::from(width - 1),
+                right: 0,
+            },
+            width,
+            false,
+            None,
+        );
+        body.push(if delayed {
+            IrStmt::InertialAssign {
+                lhs: IrLhs::Whole(target),
+                rhs,
+                delay: IrTransitionDelay {
+                    rise: 2,
+                    fall: 3,
+                    turn_off: 4,
+                },
+            }
+        } else {
+            IrStmt::Assign {
+                lhs: IrLhs::Whole(target),
+                rhs,
+                nba: false,
+            }
+        });
+    }
+    model.processes.push(IrProcess::new(
+        "p_contribute".to_owned(),
+        "tb.assign".to_owned(),
+        IrShape::RunOnce,
+        Vec::new(),
+        body,
+    ));
+    model.spawns.push("p_contribute".to_owned());
+    model
+}
+
+#[test]
+fn many_electrical_contributions_have_constant_executable_work_shape() {
+    for count in [4, 41, 100] {
+        let source = render(contribution_model(count, false));
+        assert_eq!(
+            source
+                .matches("static const llg_net_drive_row_t llg_net_rows_")
+                .count(),
+            1
+        );
+        assert_eq!(source.matches("llg_net_write(").count(), 1);
+        assert_eq!(source.matches("sv4_part_select(").count(), 1);
+        assert_eq!(source.matches("for (; _llg_net_i_").count(), 1);
+        for index in 0..count {
+            let width = if index % 2 == 0 { 1 } else { 65 };
+            assert!(source.contains(&format!(
+                "{{ &g_part_{index}, 0, {}LL, 0LL, {width}, 0 }}",
+                width - 1
+            )));
+        }
+    }
+}
+
+#[test]
+fn delayed_electrical_contributions_keep_one_inertial_handle_per_row() {
+    let source = render(contribution_model(41, true));
+    assert_eq!(source.matches("llg_inertial_net(").count(), 1);
+    assert!(source.contains("[41] = {0};"));
+    assert!(source.contains("2ULL, 3ULL, 4ULL"));
+    assert_eq!(source.matches("for (; _llg_net_i_").count(), 1);
+}
