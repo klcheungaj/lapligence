@@ -450,8 +450,7 @@ endmodule
 }
 
 #[test]
-fn array_contribution_export_grows_by_ranges_instead_of_bit_operations() {
-    let mut sizes = Vec::new();
+fn array_contribution_work_grows_by_ranges_instead_of_bit_operations() {
     for width in [7, 129] {
         let source = format!("module tb; logic [{}:0] a = '0, b = '1; wire [{}:0] r[3]; for(genvar i=0;i<3;i++) begin assign r[i]=a; assign r[i]=b; end endmodule", width-1, width-1);
         let compiled = crate::core::compile::compile_sources_checked(
@@ -466,23 +465,38 @@ fn array_contribution_export_grows_by_ranges_instead_of_bit_operations() {
         )
         .unwrap();
         let database = Db::from_slang(&compiled.snapshot).unwrap();
-        let generated = crate::sim::codegen::generate_from_db_with_opts(
-            &database,
-            &crate::sim::opt::OptConfig::default(),
-        )
-        .unwrap();
-        assert_eq!(
-            generated
-                .model_c
-                .matches("static llg_net_t g_array_net_")
-                .count(),
-            3
-        );
-        assert_eq!(generated.model_c.matches("llg_net_write(").count(), 6);
-        sizes.push(generated.model_c.len());
+        let semantic = crate::sim::semantic::SemanticModel::from_db(&database);
+        let mut cg = Codegen::new(&semantic);
+        let tops = cg.collect_design().unwrap();
+        cg.bind_reference_ports().unwrap();
+        cg.collect_timescales();
+        cg.build_net_groups().unwrap();
+        for top in tops {
+            cg.emit_pass(top, Pass::Comb).unwrap();
+        }
+        assert_eq!(cg.model.net_groups.len(), 3);
+        assert!(cg.model.net_groups.iter().all(|group| group.width == width));
+        let mut contributions = HashSet::new();
+        let mut writes_per_group = vec![0; cg.model.net_groups.len()];
+        for statement in cg.model.processes.iter().flat_map(|process| &process.body) {
+            if let IrStmt::Assign {
+                lhs: IrLhs::Whole(signal),
+                rhs,
+                nba: false,
+            } = statement
+            {
+                let driver = cg.model.signals[*signal].net_driver.unwrap();
+                assert!(contributions.insert(driver), "each driver writes once");
+                writes_per_group[driver.0] += 1;
+                assert_eq!(rhs.width(), width);
+                assert!(matches!(
+                    rhs.kind(),
+                    IrExprKind::PartSel { left, right: 0, .. }
+                        if *left == i64::from(width - 1)
+                ));
+            }
+        }
+        assert_eq!(contributions.len(), 6);
+        assert_eq!(writes_per_group, [2, 2, 2]);
     }
-    assert!(
-        sizes[1] < sizes[0] * 3,
-        "declared bit metadata may grow, driver operations must not: {sizes:?}"
-    );
 }
