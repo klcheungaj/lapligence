@@ -311,3 +311,35 @@ fn delayed_electrical_contributions_keep_one_inertial_handle_per_row() {
     assert!(source.contains("2ULL, 3ULL, 4ULL"));
     assert_eq!(source.matches("for (; _llg_net_i_").count(), 1);
 }
+
+#[test]
+fn electrical_batch_casts_remain_explicit_for_heterogeneous_row_shapes() {
+    for delayed in [false, true] {
+        let mut model = contribution_model(4, delayed);
+        for index in [1, 2] {
+            model.net_groups[index].signed = true;
+            model.signals[index].ty = IrType::Packed {
+                width: model.net_groups[index].width,
+                signed: true,
+                two_state: false,
+            };
+        }
+        let rhs = match model.processes[0].body.last_mut().unwrap() {
+            IrStmt::Assign { rhs, .. } | IrStmt::InertialAssign { rhs, .. } => rhs,
+            _ => unreachable!(),
+        };
+        if let IrExprKind::PartSel { left, .. } = &mut rhs.kind {
+            *left = 63;
+            rhs.width = 64;
+        }
+        let source = render(model);
+        assert_eq!(source.matches("sv4_cast(").count(), 1);
+        assert_eq!(source.matches("].cast_width").count(), 1);
+        assert_eq!(source.matches("].cast_signed").count(), 1);
+        assert!(source.contains("{ &g_part_0, 0, 0LL, 0LL, 1, 0 }"));
+        assert!(source.contains("{ &g_part_1, 0, 64LL, 0LL, 65, 1 }"));
+        assert!(source.contains("{ &g_part_2, 0, 0LL, 0LL, 1, 1 }"));
+        assert!(source.contains("{ &g_part_3, 0, 63LL, 0LL, 65, 0 }"));
+        assert_eq!(source.matches("sv4_part_select(").count(), 1);
+    }
+}

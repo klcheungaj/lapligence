@@ -869,6 +869,7 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
                             func: ctx.func,
                             sampled: true,
                             activation_label: ctx.activation_label.clone(),
+                            constants: None,
                         };
                         let argument = render_expr_impl(&sampled_ctx, &call.argument)?;
                         RenderedExpr {

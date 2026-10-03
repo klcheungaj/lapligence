@@ -17,6 +17,8 @@ pub struct RenderedExpr {
 /// Render context: the model tables plus the enclosing C function when
 /// rendering a function body (formal reads resolve through it).
 pub struct RCtx<'m> {
+    /// Per-model immutable packed constants, registered during typed emission.
+    pub constants: Option<&'m super::constants::PackedConstants>,
     pub model: &'m IrModel,
     pub func: Option<&'m IrFunc>,
     /// Resolve signal reads through the runtime's Preponed snapshot. This is

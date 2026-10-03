@@ -206,9 +206,10 @@ endmodule
     let (stdout, _warnings, model) = run_sim(sv, "tb", "taskwait").expect("simulation should run");
     assert_eq!(stdout, "go set at 2000\ntask wait done at 2000\n");
     assert!(
-        model.contains("sv4_clone(&G_tb_go)") && model.contains("llg_arm_any_dependencies("),
-        "owned condition read and coroutine wait must both be emitted"
+        model.contains("sv4_to_bool(G_tb_go)") && model.contains("llg_arm_any_dependencies("),
+        "borrowed condition read and coroutine wait must both be emitted"
     );
+    assert!(!model.contains("sv4_clone(&G_tb_go)"));
     assert!(
         model.contains("fn_tb_wait_for"),
         "wait-bearing task must use its native C call inside the caller coroutine"

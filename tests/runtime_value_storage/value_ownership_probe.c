@@ -105,9 +105,63 @@ static void check_wide_and_strings(void) {
     }
 }
 
+static void check_arithmetic_destinations(void) {
+    const uint32_t widths[] = {1, 63, 64, 65, 128, 129, 257};
+    for (size_t i = 0; i < sizeof(widths) / sizeof(*widths); ++i) {
+        uint32_t width = widths[i];
+        sv4_t a = sv4_from_u64(5, width, 0);
+        sv4_t b = sv4_from_u64(3, width, 0);
+        sv4_t out = sv4_zero(width, 0);
+        size_t allocations = value_test_allocations();
+        uint64_t mask = width < 64 ? (UINT64_C(1) << width) - 1 : UINT64_MAX;
+        sv4_add_into(&a, a, b);
+        CHECK(sv4_to_u64(a) == (8 & mask));
+        sv4_sub_into(&b, a, b);
+        CHECK(sv4_to_u64(b) == (5 & mask));
+        sv4_add_into(&a, a, a);
+        CHECK(sv4_to_u64(a) == (16 & mask));
+        sv4_mul_into(&out, a, b);
+        CHECK(sv4_to_u64(out) == (80 & mask));
+        CHECK(value_test_allocations() == allocations);
+        sv4_mul_into(&a, a, b);
+        CHECK(sv4_to_u64(a) == (80 & mask));
+        llg_sv4_set_state(&b, 0, 3);
+        allocations = value_test_allocations();
+        sv4_add_into(&a, a, b);
+        for (uint32_t bit = 0; bit < width; ++bit) CHECK(llg_sv4_state(a, bit) == 2);
+        sv4_sub_into(&a, a, a);
+        sv4_mul_into(&a, a, a);
+        CHECK(value_test_allocations() == allocations);
+        sv4_destroy(&a);
+        sv4_destroy(&b);
+        sv4_destroy(&out);
+    }
+    sv4_t carry = sv4_fill(1, 128, 0);
+    sv4_t one = sv4_from_u64(1, 128, 0);
+    size_t allocations = value_test_allocations();
+    sv4_add_into(&carry, carry, one);
+    for (uint32_t bit = 0; bit < 128; ++bit) CHECK(llg_sv4_state(carry, bit) == 0);
+    sv4_sub_into(&carry, carry, one);
+    for (uint32_t bit = 0; bit < 128; ++bit) CHECK(llg_sv4_state(carry, bit) == 1);
+    CHECK(value_test_allocations() == allocations);
+    sv4_destroy(&carry);
+    sv4_destroy(&one);
+    sv4_t narrow = sv4_from_i64(-1, 64);
+    sv4_t wide = sv4_from_u64(2, 65, 1);
+    sv4_add_into(&narrow, narrow, wide);
+    CHECK(llg_sv4_width(narrow) == 65 && llg_sv4_signed(narrow));
+    CHECK(sv4_to_u64(narrow) == 1 && llg_sv4_state(narrow, 64) == 0);
+    sv4_sub_into(&narrow, narrow, wide);
+    CHECK(sv4_to_u64(narrow) == UINT64_MAX && llg_sv4_state(narrow, 64) == 1);
+    sv4_destroy(&narrow);
+    sv4_destroy(&wide);
+    CHECK(value_test_live() == 0);
+}
+
 int main(void) {
     CHECK(sizeof(sv4_t) < 64);
     check_operations();
+    check_arithmetic_destinations();
     check_selection_aliases();
     check_wide_and_strings();
     CHECK(value_test_live() == 0 && value_test_bytes() == 0);

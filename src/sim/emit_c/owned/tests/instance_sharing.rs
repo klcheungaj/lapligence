@@ -135,6 +135,32 @@ fn activation_and_disable_identities_are_record_operands() {
 }
 
 #[test]
+fn generated_pooled_constants_vary_per_site_without_splitting_shared_bodies() {
+    for width in [8, 65, 128] {
+        let mut model = instance_model(8);
+        for (index, process) in model.processes.iter_mut().enumerate() {
+            model.signals[index].ty = IrType::packed(width, false).unwrap();
+            process.label = format!("tb.u[{index}]");
+            process.body[1] = IrStmt::Assign {
+                lhs: IrLhs::Whole(index),
+                rhs: add(number(index as u64, width), number(0, width), width),
+                nba: false,
+            };
+        }
+        let source =
+            render_with_sharing_threshold(&ExecutionModel::lower(model).unwrap(), 4).unwrap();
+        assert_eq!(source.matches("LLG_CO_DISPATCH_BEGIN").count(), 1);
+        assert_eq!(source.matches("sv4_add_into(").count(), 1);
+        if width > 64 {
+            assert!(source.contains("const sv4_t* v"));
+            assert_eq!(source.matches("static sv4_t llg_constant_").count(), 8);
+        } else {
+            assert!(!source.contains("static sv4_t llg_constant_"));
+        }
+    }
+}
+
+#[test]
 fn module_paths_are_loaded_from_each_instances_record() {
     let mut model = instance_model(4);
     for (index, process) in model.processes.iter_mut().enumerate() {
