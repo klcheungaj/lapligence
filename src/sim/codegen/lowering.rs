@@ -362,6 +362,8 @@ pub struct CodegenOptions {
     pub optimization: crate::sim::opt::OptConfig,
     /// Stackless-coroutine analysis tunables.
     pub execution: crate::sim::execution::ExecutionAnalysisOptions,
+    /// Compile-time value descriptor and compact kernel selection.
+    pub value_config: crate::sim::value_backend::ValueConfig,
 }
 
 /// Lower an owned Slang semantic database with default optimizations.
@@ -529,7 +531,7 @@ fn generate_from_db_with_codegen_options_impl(
     crate::sim::opt::run(&mut execution, &options.optimization)
         .map_err(|error| error.to_string())?;
     execution.validate().map_err(|error| error.to_string())?;
-    let rendered = crate::sim::emit_c::render_with_symbols(&execution)?;
+    let rendered = crate::sim::emit_c::render_with_value_config(&execution, options.value_config)?;
     Ok(GeneratedModel {
         design_name: cg.design_name.clone(),
         model_c: rendered.source,

@@ -20,6 +20,7 @@ fn native_return_slot_precedes_argument_cleanup_mark() {
     function.ret_string = true;
     model.funcs.push(function);
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
@@ -63,6 +64,7 @@ fn string_formals_are_copied_into_registered_callee_owners() {
     model.funcs.push(function);
     let function = &model.funcs[0];
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: Some(function),
         sampled: false,
@@ -112,6 +114,7 @@ fn container_read_keeps_index_owner_until_after_runtime_call() {
         two_state: false,
     });
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
@@ -151,6 +154,7 @@ fn file_scan_uses_registered_source_and_typed_borrowed_target() {
     model.processes.clear();
     model.spawns.clear();
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
@@ -185,6 +189,7 @@ fn file_scan_uses_registered_source_and_typed_borrowed_target() {
 fn enum_navigation_releases_receiver_members_step_and_result() {
     let model = IrModel::new("enum_owners".to_owned(), 1).unwrap();
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
@@ -222,6 +227,7 @@ fn enum_navigation_releases_receiver_members_step_and_result() {
 fn native_read_only_callbacks_reject_random_state_mutation() {
     let model = IrModel::new("native_readonly".to_owned(), 1).unwrap();
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
@@ -243,6 +249,7 @@ fn generic_queue_queries_use_the_generic_runtime_layout() {
         maximum_elements: None,
     };
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,

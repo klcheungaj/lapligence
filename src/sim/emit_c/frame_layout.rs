@@ -53,6 +53,7 @@ struct Block {
 #[derive(Clone, Debug)]
 pub(super) struct FrameLayout {
     storage: FrameStorage,
+    value_backend: crate::sim::value_backend::ValueBackend,
     blocks: Vec<Block>,
     current: usize,
     names: BTreeSet<String>,
@@ -65,6 +66,7 @@ impl FrameLayout {
     pub(super) fn new(storage: FrameStorage) -> Self {
         Self {
             storage,
+            value_backend: crate::sim::value_backend::ValueBackend::Legacy,
             blocks: vec![Block::default()],
             current: 0,
             names: BTreeSet::new(),
@@ -72,6 +74,15 @@ impl FrameLayout {
             calls: Vec::new(),
             paths_finalized: false,
         }
+    }
+
+    pub(super) fn with_backend(
+        storage: FrameStorage,
+        backend: crate::sim::value_backend::ValueBackend,
+    ) -> Self {
+        let mut layout = Self::new(storage);
+        layout.value_backend = backend;
+        layout
     }
 
     pub(super) fn storage(&self) -> FrameStorage {
@@ -194,7 +205,7 @@ impl FrameLayout {
         if !self.names.insert(name.to_owned()) {
             return Err(format!("duplicate coroutine frame field `{name}`"));
         }
-        let (size, align) = lp64_layout(ty)?;
+        let (size, align) = lp64_layout(ty, self.value_backend)?;
         // The final path depends on whether sibling blocks retain any frame
         // storage. Defer constructing it until the whole block tree is known.
         self.accesses.insert(name.to_owned(), name.to_owned());
@@ -300,11 +311,24 @@ impl FrameLayout {
     /// anchored, independently of the mechanism selected by the first pass.
     /// Sibling C blocks contribute their maximum rather than their sum.
     pub(super) fn upper_bound(&self) -> Result<usize, String> {
+        self.upper_bound_with_header(8, 4)
+    }
+
+    /// Shared process bodies insert one LP64 instance-record pointer after `co`.
+    pub(super) fn shared_root_upper_bound(&self) -> Result<usize, String> {
+        self.upper_bound_with_header(16, 8)
+    }
+
+    fn upper_bound_with_header(
+        &self,
+        header_size: usize,
+        header_align: usize,
+    ) -> Result<usize, String> {
         if self.storage == FrameStorage::CStack {
             return Ok(0);
         }
         let storage = self.storage_map();
-        let (size, align) = self.flat_block_layout(0, 8, 4, &storage)?;
+        let (size, align) = self.flat_block_layout(0, header_size, header_align, &storage)?;
         align_up(size, align)
     }
 
@@ -576,10 +600,13 @@ fn align_up(value: usize, align: usize) -> Result<usize, String> {
 
 /// LP64 layouts of types that can be emitted as procedure-local storage.
 /// Aggregate runtime types are deliberately conservative upper bounds.
-fn lp64_layout(ty: &str) -> Result<(usize, usize), String> {
+fn lp64_layout(
+    ty: &str,
+    backend: crate::sim::value_backend::ValueBackend,
+) -> Result<(usize, usize), String> {
     let ty = ty.trim();
     if let Some(array) = ty.find('[') {
-        let (element_size, element_align) = lp64_layout(ty[..array].trim())?;
+        let (element_size, element_align) = lp64_layout(ty[..array].trim(), backend)?;
         let count = ty[array + 1..]
             .strip_suffix(']')
             .ok_or_else(|| format!("unsupported frame array type `{ty}`"))?
@@ -602,7 +629,14 @@ fn lp64_layout(ty: &str) -> Result<(usize, usize), String> {
         "uint16_t" | "int16_t" => (2, 2),
         "uint8_t" | "int8_t" | "char" => (1, 1),
         "double" => (8, 8),
-        "sv4_t" => (32, 8),
+        "sv4_t" => (
+            if backend == crate::sim::value_backend::ValueBackend::Compact {
+                24
+            } else {
+                32
+            },
+            8,
+        ),
         "llg_value_scope_t" => (80, 8),
         "llg_string_t" => (32, 8),
         "sv4_select_plan_t" => (20, 4),
@@ -612,7 +646,14 @@ fn lp64_layout(ty: &str) -> Result<(usize, usize), String> {
         "llg_wait_dependency_t" => (32, 8),
         "llg_expr_event_spec_t" => (104, 8),
         "llg_ref_t" => (112, 8),
-        "llg_vpi_arg_t" => (64, 8),
+        "llg_vpi_arg_t" => (
+            if backend == crate::sim::value_backend::ValueBackend::Compact {
+                56
+            } else {
+                64
+            },
+            8,
+        ),
         "llg_force_read_t"
         | "llg_force_part_t"
         | "llg_file_input_target_t"
@@ -628,8 +669,50 @@ mod tests {
     use super::*;
 
     #[test]
+    fn selected_descriptor_changes_frame_and_array_estimates() {
+        use crate::sim::value_backend::ValueBackend;
+        for (backend, value_size, vpi_size) in [
+            (ValueBackend::Legacy, 32, 64),
+            (ValueBackend::Compact, 24, 56),
+        ] {
+            assert_eq!(lp64_layout("sv4_t", backend).unwrap(), (value_size, 8));
+            assert_eq!(
+                lp64_layout("sv4_t[3]", backend).unwrap(),
+                (value_size * 3, 8)
+            );
+            assert_eq!(
+                lp64_layout("llg_vpi_arg_t", backend).unwrap(),
+                (vpi_size, 8)
+            );
+            let mut layout = FrameLayout::with_backend(FrameStorage::CoFrame, backend);
+            layout.declare_required("sv4_t[3]", "values").unwrap();
+            assert_eq!(layout.upper_bound().unwrap(), 8 + value_size * 3);
+            assert_eq!(
+                layout.shared_root_upper_bound().unwrap(),
+                16 + value_size * 3
+            );
+        }
+    }
+
+    #[test]
+    fn shared_root_header_aligns_scalar_payload_and_empty_frames() {
+        let mut layout = FrameLayout::new(FrameStorage::CoFrame);
+        assert_eq!(layout.shared_root_upper_bound().unwrap(), 16);
+        layout.declare_required("uint32_t", "scalar").unwrap();
+        assert_eq!(layout.upper_bound().unwrap(), 12);
+        assert_eq!(layout.shared_root_upper_bound().unwrap(), 24);
+    }
+
+    #[test]
     fn event_spec_layout_matches_the_lp64_runtime_contract() {
-        assert_eq!(lp64_layout("llg_event_spec_t").unwrap(), (16, 8));
+        assert_eq!(
+            lp64_layout(
+                "llg_event_spec_t",
+                crate::sim::value_backend::ValueBackend::Legacy
+            )
+            .unwrap(),
+            (16, 8)
+        );
     }
 
     #[test]

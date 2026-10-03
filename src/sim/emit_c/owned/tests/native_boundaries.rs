@@ -90,6 +90,7 @@ fn native_access_receiver_is_evaluated_once_at_the_use_site() {
         virtual_dispatch: false,
     };
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
@@ -122,6 +123,7 @@ fn invalid_native_access_tables_fail_before_emission() {
 fn semaphore_creation_and_queries_never_request_legacy_fragments() {
     let model = IrModel::new("sem".to_owned(), 1).unwrap();
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
@@ -165,6 +167,7 @@ fn reference_calls_register_descriptors_and_do_not_copy_back() {
         vec![],
     ));
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
@@ -218,6 +221,7 @@ fn const_ref_callback_reads_are_live_and_not_writable_calls() {
         }],
     ));
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
@@ -262,6 +266,7 @@ fn container_inside_uses_owned_items_and_ordinal_associative_reads() {
         initial_size: None,
     });
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
@@ -293,6 +298,7 @@ fn mixed_stream_publishes_each_component_before_selecting_the_next() {
         initial_size: None,
     });
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,

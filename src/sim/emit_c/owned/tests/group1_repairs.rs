@@ -50,6 +50,7 @@ fn callback_expansions_rename_all_internal_labels_and_gotos() {
         }],
     ));
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
@@ -113,6 +114,7 @@ fn real_callback_results_are_declared_in_the_callers_scope() {
             }],
         ));
         let ctx = RCtx {
+            value_backend: crate::sim::value_backend::ValueBackend::Legacy,
             model: &model,
             func: None,
             sampled: false,
@@ -150,6 +152,7 @@ fn stream_model() -> IrModel {
 fn fixed_stream_index_owners_use_registered_slots_and_are_destroyed() {
     let model = stream_model();
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
@@ -207,6 +210,7 @@ fn fixed_stream_index_owners_use_registered_slots_and_are_destroyed() {
 fn stream_checks_each_component_before_publication_using_the_actual_source_width() {
     let model = stream_model();
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,

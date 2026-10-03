@@ -355,3 +355,14 @@ fn run_generated_sim_in_dir(
 pub(crate) fn run_sim(sv: &str, top: &str, tag: &str) -> Result<String, String> {
     run_generated_sim(sv, top, tag).map(|run| run.stdout)
 }
+
+/// Write the selected value facade's nested dependencies for standalone probes.
+pub fn write_value_backend_sources(dir: &std::path::Path) {
+    for (name, source) in
+        llg::sim::rt::value_backend_sources(llg::sim::value_backend::ValueBackend::Legacy)
+    {
+        let path = dir.join(name);
+        std::fs::create_dir_all(path.parent().unwrap()).expect("create value source directory");
+        std::fs::write(path, source).expect("write value source dependency");
+    }
+}

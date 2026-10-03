@@ -1,3 +1,5 @@
+void llg_value_require_abi(void) {}
+
 // Exact-width storage ownership. Private fragment of llg_value.c.
 // No scheduler state, model-capacity dependency, or compiler extensions.
 

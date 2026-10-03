@@ -79,6 +79,7 @@ fn homogeneous_rows_share_one_helper_and_constant_size_loop() {
 fn short_runs_keep_exact_statement_emission() {
     let model = model(PCA_BATCH_MIN_ASSIGNMENTS - 1);
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,

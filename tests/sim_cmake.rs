@@ -209,7 +209,8 @@ fn generated_sources_keep_value_runtime_as_a_separate_translation_unit() {
     }
     let cmake = std::fs::read_to_string(dir.path().join("CMakeLists.txt")).unwrap();
     assert!(
-        cmake.contains("model.c llg_value.c llg_rng.c llg_co.c llg_rt.c llg_random.c llg_vpi.c")
+        cmake.contains("add_library(llg_runtime STATIC llg_value.c llg_rng.c llg_co.c llg_rt.c llg_random.c llg_vpi.c")
+            && cmake.contains("add_executable(sim model.c)")
     );
     assert!(cmake.contains("project(llg_sim_model C)"));
     assert!(!cmake.contains("project(llg_sim_model C ASM)"));

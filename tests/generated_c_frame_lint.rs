@@ -36,6 +36,14 @@ fn syntax_check(compiler: &str, model: &str, fixture: &Path, mode: &str) {
     if compiler == "gcc" {
         command.arg("-Werror=jump-misses-init");
     }
+    if mode.contains("compact") {
+        command.arg("-DLLG_SV4_USE_GMP=1");
+        command.arg(if mode.contains("gmp") {
+            "-DLLG_SV4_GMP_KERNELS=1"
+        } else {
+            "-DLLG_SV4_GMP_KERNELS=0"
+        });
+    }
     if mode.contains("debug") {
         command.arg("-DLLG_CO_DEBUG");
     }
@@ -235,4 +243,52 @@ fn debug_frame_overlay_fixtures() {
         .unwrap()
         .join()
         .unwrap();
+}
+
+#[test]
+fn compact_selected_frame_lint() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    for path in [
+        "tests/fixtures/sim/value_backends/implemented.sv",
+        "tests/fixtures/sim/instance_sharing/identities.sv",
+        "tests/fixtures/sim/net_resolution/mixed_biased_structural.sv",
+    ] {
+        let fixture = root.join(path);
+        let compiled = compile::compile_checked(&CompileOpts {
+            files: vec![fixture.to_string_lossy().into_owned()],
+            top: Some("tb".into()),
+            ..Default::default()
+        })
+        .unwrap();
+        let database = Db::from_slang(&compiled.snapshot).unwrap();
+        for (kernel, mode) in [
+            (
+                sim::value_backend::CompactKernel::Portable,
+                "compact-portable",
+            ),
+            (sim::value_backend::CompactKernel::Gmp, "compact-gmp"),
+        ] {
+            for optimization in [sim::opt::OptConfig::default(), sim::opt::OptConfig::none()] {
+                let model = sim::codegen::generate_from_db_with_codegen_options(
+                    &database,
+                    &sim::codegen::CodegenOptions {
+                        value_config: sim::value_backend::ValueConfig {
+                            backend: sim::value_backend::ValueBackend::Compact,
+                            kernel,
+                        },
+                        optimization,
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+                generated_c_lint::lint_generated_coroutine_c(&model.model_c).unwrap();
+                for compiler in ["gcc", "clang"]
+                    .into_iter()
+                    .filter(|compiler| compiler_available(compiler))
+                {
+                    syntax_check(compiler, &model.model_c, &fixture, mode);
+                }
+            }
+        }
+    }
 }

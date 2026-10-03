@@ -207,6 +207,7 @@ fn generated_runtime_backtrace_reports_the_resumed_wait_and_call_sites() {
                 &database,
                 &CodegenOptions {
                     optimization,
+                    value_config: Default::default(),
                     execution: ExecutionAnalysisOptions {
                         poll_depth_max,
                         ..Default::default()

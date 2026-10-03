@@ -67,7 +67,19 @@ pub fn render(execution: &ExecutionModel) -> Result<String, EmitError> {
 pub(crate) fn render_with_symbols(
     execution: &ExecutionModel,
 ) -> Result<BoundedIdentifiers, EmitError> {
-    render_bounded(execution, sharing::threshold().map_err(EmitError::new)?)
+    render_with_value_config(execution, crate::sim::value_backend::ValueConfig::default())
+}
+
+pub(crate) fn render_with_value_config(
+    execution: &ExecutionModel,
+    config: crate::sim::value_backend::ValueConfig,
+) -> Result<BoundedIdentifiers, EmitError> {
+    config.validate().map_err(EmitError::new)?;
+    render_bounded(
+        execution,
+        sharing::threshold().map_err(EmitError::new)?,
+        config,
+    )
 }
 
 #[cfg(test)]
@@ -75,12 +87,18 @@ pub(in crate::sim::emit_c) fn render_with_sharing_threshold(
     execution: &ExecutionModel,
     threshold: usize,
 ) -> Result<String, EmitError> {
-    Ok(render_bounded(execution, threshold)?.source)
+    Ok(render_bounded(
+        execution,
+        threshold,
+        crate::sim::value_backend::ValueConfig::default(),
+    )?
+    .source)
 }
 
 fn render_bounded(
     execution: &ExecutionModel,
     threshold: usize,
+    config: crate::sim::value_backend::ValueConfig,
 ) -> Result<BoundedIdentifiers, EmitError> {
     execution.validate().map_err(EmitError::InvalidIr)?;
     let capacity = execution
@@ -95,7 +113,8 @@ fn render_bounded(
     }
     super::owned::model::check_model(execution.ir()).map_err(EmitError::new)?;
     let mut execution = execution.clone();
-    let (_, upper_bounds) = render_coroutine_functions(&execution).map_err(EmitError::new)?;
+    let (_, upper_bounds) =
+        render_coroutine_functions(&execution, config.backend).map_err(EmitError::new)?;
     let forced = upper_bounds
         .iter()
         .filter_map(|(function, size)| {
@@ -106,7 +125,7 @@ fn render_bounded(
     execution
         .reanalyze_with_forced_arena_callees(&forced)
         .map_err(EmitError::InvalidIr)?;
-    render_model(&execution, threshold).map_err(EmitError::new)
+    render_model(&execution, threshold, config).map_err(EmitError::new)
 }
 
 struct CoroutineArtifact {
@@ -136,6 +155,7 @@ fn origin_location(origin: &crate::sim::semantic::Origin) -> String {
 
 fn render_coroutine_functions(
     execution: &ExecutionModel,
+    backend: crate::sim::value_backend::ValueBackend,
 ) -> Result<(CoroutineArtifacts, CoroutineUpperBounds), String> {
     let model = execution.ir();
     let mut artifacts = BTreeMap::new();
@@ -143,6 +163,7 @@ fn render_coroutine_functions(
     for &index in execution.analysis().callee_first_functions() {
         let function = &model.funcs[index];
         let ctx = RCtx {
+            value_backend: backend,
             model,
             func: Some(function),
             sampled: false,
@@ -178,10 +199,12 @@ fn render_coroutine_functions(
 
 fn render_coroutine_processes(
     execution: &ExecutionModel,
+    backend: crate::sim::value_backend::ValueBackend,
     upper_bounds: &BTreeMap<usize, usize>,
 ) -> Result<Vec<Option<CoroutineArtifact>>, String> {
     let model = execution.ir();
     let ctx = RCtx {
+        value_backend: backend,
         model,
         func: None,
         sampled: false,
@@ -222,6 +245,7 @@ fn render_coroutine_processes(
 
 fn render_coroutine_branches(
     execution: &ExecutionModel,
+    backend: crate::sim::value_backend::ValueBackend,
     upper_bounds: &BTreeMap<usize, usize>,
 ) -> Result<BTreeMap<CoroutineId, CoroutineArtifact>, String> {
     fn pre_name(pre: &crate::sim::ir::IrPreFn) -> &str {
@@ -238,6 +262,7 @@ fn render_coroutine_branches(
     }
     let model = execution.ir();
     let ctx = RCtx {
+        value_backend: backend,
         model,
         func: None,
         sampled: false,
@@ -319,11 +344,17 @@ fn render_coroutine_metadata(
         .ok_or_else(|| format!("missing coroutine sites for {:?}", artifact.owner))?;
     let mut ordered = sites.values().collect::<Vec<_>>();
     ordered.sort_by_key(|site| site.resume());
-    let mut out = format!(
+    let frame_upper_bound = if artifact.shared_entry.is_some() {
+        artifact.layout.shared_root_upper_bound()?
+    } else {
+        artifact.layout.upper_bound()?
+    };
+    let mut out = format!("#if UINTPTR_MAX == UINT64_MAX\n_Static_assert(sizeof({}) <= {frame_upper_bound}, \"coroutine frame exceeds selected layout estimate\");\n#endif\n", artifact.frame_type);
+    out.push_str(&format!(
         "static const llg_co_site_t {}_sites[{}] = {{\n    {{0}},\n",
         artifact.desc_name,
         ordered.len() + 1
-    );
+    ));
     for site in ordered {
         let call = artifact
             .layout
@@ -497,11 +528,15 @@ fn share_frame_types(
 fn render_model(
     execution: &ExecutionModel,
     threshold: usize,
+    config: crate::sim::value_backend::ValueConfig,
 ) -> Result<BoundedIdentifiers, String> {
     let model = execution.ir();
-    let (mut coroutine_functions, frame_upper_bounds) = render_coroutine_functions(execution)?;
-    let mut coroutine_processes = render_coroutine_processes(execution, &frame_upper_bounds)?;
-    let mut coroutine_branches = render_coroutine_branches(execution, &frame_upper_bounds)?;
+    let (mut coroutine_functions, frame_upper_bounds) =
+        render_coroutine_functions(execution, config.backend)?;
+    let mut coroutine_processes =
+        render_coroutine_processes(execution, config.backend, &frame_upper_bounds)?;
+    let mut coroutine_branches =
+        render_coroutine_branches(execution, config.backend, &frame_upper_bounds)?;
     let frame_types = share_frame_types(
         execution,
         &mut coroutine_functions,
@@ -514,6 +549,7 @@ fn render_model(
             && !coroutine_functions.contains_key(&index)
         {
             let ctx = RCtx {
+                value_backend: config.backend,
                 model,
                 func: Some(function),
                 sampled: false,
@@ -538,7 +574,12 @@ fn render_model(
     );
     out.push_str(&format!(
         "#define LLG_MODEL_VALUE_ABI {}\n",
-        super::VALUE_ABI_VERSION
+        config.backend.abi()
+    ));
+    out.push_str(&format!(
+        "#define LLG_MODEL_VALUE_BACKEND {}\n#define LLG_MODEL_COMPACT_KERNELS {}\n",
+        config.backend.selector(),
+        config.kernel.selector()
     ));
     out.push_str("#define LLG_MODEL_PROCESS_ABI 3\n");
     if model.waveform {
@@ -546,9 +587,11 @@ fn render_model(
     }
     out.push_str("#include \"llg_rt.h\"\n");
     out.push_str("#if LLG_MODEL_PROCESS_ABI != LLG_PROCESS_ABI_VERSION\n#error \"generated model process ABI does not match llg_rt.h\"\n#endif\n");
+    out.push_str("_Static_assert(LLG_MODEL_VALUE_BACKEND == LLG_SV4_USE_GMP, \"regenerate model: incompatible value backend\");\n_Static_assert(LLG_MODEL_COMPACT_KERNELS == LLG_SV4_GMP_KERNELS, \"regenerate model: incompatible compact kernels\");\n");
     out.push_str("#include \"llg_random.h\"\n");
     out.push_str("#include \"llg_vpi.h\"\n");
     out.push_str("_Static_assert(LLG_MODEL_VALUE_ABI == LLG_VALUE_ABI_VERSION, \"regenerate model: incompatible value ownership ABI\");\n");
+    out.push_str(&format!("#if UINTPTR_MAX == UINT64_MAX\n_Static_assert(sizeof(sv4_t) == {} && _Alignof(sv4_t) == 8, \"selected packed descriptor layout mismatch\");\n#endif\n", if config.backend == crate::sim::value_backend::ValueBackend::Compact { 24 } else { 32 }));
     if !model.containers.is_empty() {
         out.push_str("#include \"llg_container.h\"\n");
     }
@@ -749,6 +792,7 @@ fn render_model(
     render_virtual_interface_call_prototypes(model, &mut out);
     render_virtual_dispatch_bodies(model, &mut out);
     let ctx = RCtx {
+        value_backend: config.backend,
         model,
         func: None,
         sampled: false,

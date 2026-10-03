@@ -72,6 +72,7 @@ fn callback_member_writes_and_nested_reads_use_private_owners() {
         None,
     );
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
@@ -94,6 +95,7 @@ fn callback_member_writes_and_nested_reads_use_private_owners() {
 fn input_member_plan_resolves_the_materialized_input_cell() {
     let model = IrModel::new("formal_private".to_owned(), 1).unwrap();
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
@@ -127,6 +129,7 @@ fn packed_ref_member_updates_via_the_original_reference_descriptor() {
         vec![],
     ));
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: Some(&model.funcs[0]),
         sampled: false,
@@ -159,6 +162,7 @@ fn packed_ref_member_updates_via_the_original_reference_descriptor() {
 fn two_state_member_conversion_precedes_read_modify_write_selection() {
     let model = IrModel::new("formal_union".to_owned(), 1).unwrap();
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
@@ -179,6 +183,7 @@ fn two_state_member_conversion_precedes_read_modify_write_selection() {
 fn whole_signed_member_reads_restore_the_descriptor_sign() {
     let model = IrModel::new("formal_signed".to_owned(), 1).unwrap();
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,

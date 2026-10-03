@@ -43,6 +43,7 @@ fn value_runtime_compiles_and_runs_without_scheduler() {
     }
 
     let dir = sim_harness::TempDir::new("runtime-values").expect("create temp directory");
+    sim_harness::write_value_backend_sources(dir.path());
     let (header, implementation) = llg::sim::rt::value_sources();
     std::fs::write(dir.path().join("llg_value.h"), header).expect("write value header");
     std::fs::write(dir.path().join("llg_value.c"), implementation)
@@ -91,6 +92,7 @@ fn value_runtime_rejects_over_capacity_widths() {
     }
 
     let dir = sim_harness::TempDir::new("runtime-value-boundaries").expect("create temp directory");
+    sim_harness::write_value_backend_sources(dir.path());
     let (header, implementation) = llg::sim::rt::value_sources();
     std::fs::write(dir.path().join("llg_value.h"), header).expect("write value header");
     std::fs::write(dir.path().join("llg_value.c"), implementation)

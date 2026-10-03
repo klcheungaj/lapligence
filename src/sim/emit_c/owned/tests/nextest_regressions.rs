@@ -258,6 +258,7 @@ fn force_evaluator_owns_its_result_and_release_keeps_variable_value() {
 fn loop_budget_is_not_charged_for_the_final_false_condition() {
     let model = numeric_model();
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,

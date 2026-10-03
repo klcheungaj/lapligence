@@ -8,6 +8,7 @@ fn render(parts: Vec<IrExpr>) -> (String, usize) {
 
 fn render_model(model: &IrModel, parts: Vec<IrExpr>) -> (String, usize) {
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model,
         func: None,
         sampled: false,

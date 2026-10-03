@@ -16,6 +16,7 @@ fn render_assertion_predicate(
     sampled: bool,
 ) -> Result<String, String> {
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model,
         func: None,
         sampled,
@@ -63,6 +64,7 @@ fn render_assertion_sequence(
     sequence: &IrSequence,
 ) -> Result<String, String> {
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model,
         func: None,
         sampled: true,
@@ -240,6 +242,7 @@ pub(super) fn render_sampled_domain_callbacks(model: &IrModel) -> Result<String,
     let mut out = String::new();
     for (index, domain) in model.sampled_domains().iter().enumerate() {
         let ctx = RCtx {
+            value_backend: crate::sim::value_backend::ValueBackend::Legacy,
             model,
             func: None,
             sampled: true,

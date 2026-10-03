@@ -431,6 +431,7 @@ pub(in crate::sim::emit_c) fn storage_lifecycle(
     out.push_str(&tables.source);
     out.push_str(&format!("static void llg_model_storage_defaults(void) {{\n{initialize}}}\n\nstatic void llg_model_storage_destroy(void) {{\n{destroy}}}\n\n"));
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model,
         func: None,
         sampled: false,

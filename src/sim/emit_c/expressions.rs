@@ -857,6 +857,7 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
                 match call.kind {
                     IrSampledFunc::Sampled => {
                         let sampled_ctx = RCtx {
+                            value_backend: ctx.value_backend,
                             model: ctx.model,
                             func: ctx.func,
                             sampled: true,

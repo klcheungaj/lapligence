@@ -740,6 +740,7 @@ impl<'a> Codegen<'a> {
     #[allow(dead_code)] // retained for fragment callers pending the lowering migration
     pub(in super::super) fn render_ctx(&self) -> RCtx<'_> {
         RCtx {
+            value_backend: crate::sim::value_backend::ValueBackend::Legacy,
             model: &self.model,
             func: self.cur_fn_ir.map(|i| &self.model.funcs[i]),
             sampled: false,

@@ -141,6 +141,7 @@ fn numeric_model() -> IrModel {
 fn expressions_sequence_owners_and_reuse_slots() {
     let model = IrModel::new("test".to_owned(), 1).unwrap();
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
@@ -164,6 +165,7 @@ fn expressions_sequence_owners_and_reuse_slots() {
 fn conditional_fill_arms_are_owned_and_context_sized() {
     let model = IrModel::new("test".to_owned(), 1).unwrap();
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
@@ -232,6 +234,7 @@ fn unmigrated_opaque_expression_is_rejected_not_rendered() {
 fn declaration_calls_remain_rejected_outside_coroutine_context() {
     let model = numeric_model();
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
@@ -348,6 +351,7 @@ fn evaluator_callbacks_reject_side_effect_capable_calls() {
         },
     );
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,
@@ -387,6 +391,7 @@ fn event_array_indices_are_owned_and_invalid_handles_are_inert() {
         vec![0, 1],
     ));
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,

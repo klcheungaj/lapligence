@@ -517,6 +517,7 @@ mod tests {
             }],
         ));
         let ctx = RCtx {
+            value_backend: crate::sim::value_backend::ValueBackend::Legacy,
             model: &model,
             func: None,
             sampled: false,
@@ -561,6 +562,7 @@ mod tests {
             Vec::new(),
         ));
         let ctx = RCtx {
+            value_backend: crate::sim::value_backend::ValueBackend::Legacy,
             model: &model,
             func: None,
             sampled: false,

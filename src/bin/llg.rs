@@ -729,7 +729,21 @@ fn run(options: DriverOptions) -> i32 {
     } else {
         sim::opt::OptConfig::default()
     };
-    let generated = sim::codegen::generate_from_db_with_opts(&codegen_db, &optimization);
+    let value_config = match sim::value_backend::ValueConfig::from_env() {
+        Ok(config) => config,
+        Err(error) => {
+            eprintln!("llg: {error}");
+            return 1;
+        }
+    };
+    let generated = sim::codegen::generate_from_db_with_codegen_options(
+        &codegen_db,
+        &sim::codegen::CodegenOptions {
+            optimization,
+            value_config,
+            ..Default::default()
+        },
+    );
     let gen = match generated {
         Ok(g) => g,
         Err(e) => {
@@ -759,6 +773,8 @@ fn run(options: DriverOptions) -> i32 {
         let opts = sim::build::CmakeBuildOpts {
             dpi_libraries,
             model_opt_level,
+            value_config,
+            gmp_root: None,
             ..Default::default()
         };
         if let Err(e) = sim::build::generate_model_sources_with_opts(&out_dir, &model, &opts) {
@@ -784,6 +800,8 @@ fn run(options: DriverOptions) -> i32 {
         model_opt_level,
         cmake,
         build_jobs,
+        value_config,
+        gmp_root: None,
     };
     let exe = match sim::build::build_model_cmake_with_opts(&out_dir, &model, &opts) {
         Ok(e) => e,

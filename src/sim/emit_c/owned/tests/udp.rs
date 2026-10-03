@@ -35,6 +35,7 @@ fn udp_gate_body_is_constant_size_with_many_rows() {
         let model = udp_model(rows);
         model.validate_expr(&udp_expr(), None).unwrap();
         let ctx = RCtx {
+            value_backend: crate::sim::value_backend::ValueBackend::Legacy,
             model: &model,
             func: None,
             sampled: false,
@@ -144,6 +145,7 @@ fn udp_inputs_are_evaluated_once_in_order_even_for_wildcard_rows() {
     );
     model.validate_expr(&expr, None).unwrap();
     let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
         func: None,
         sampled: false,

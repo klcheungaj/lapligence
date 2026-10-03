@@ -1,3 +1,7 @@
+#if LLG_SV4_USE_GMP
+#include "../llg_value.h"
+void llg_value_require_abi(void) {}
+#endif
 #include "internal.h"
 #include <stdio.h>
 
