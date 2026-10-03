@@ -73,11 +73,10 @@ All platforms require:
 - A C and C++ compiler with the platform's standard build tools.
 - Python 3 for Slang's syntax and diagnostic generators.
 - `patch`, or Git with `git apply` support.
-- zlib development files (headers and library) wherever generated models that
-  use waveform tasks (`$dumpfile`, `$dumpvars`, `$dumpon`/`$dumpoff`,
-  `$dumpall`, `$dumpflush` or `$dumplimit`, for VCD or FST) are built. Their
-  CMake projects require it through `find_package(ZLIB)`. Building `llg` and
-  `llg_ls` does not need zlib, and models without waveform tasks do not link it.
+
+Waveform support needs no system zlib. `llg` embeds the zlib sources it needs
+from the `vendor/zlib` submodule (v1.3.2) and compiles them, with prefixed
+symbols, only into generated models that use waveform tasks.
 
 `Cargo.lock` pins the Rust dependency graph. Use Cargo's `--locked` option for
 reproducible builds and tests; the root commit's gitlink pins `vendor/slang`.
@@ -90,11 +89,8 @@ On Ubuntu or Debian, install the native prerequisites:
 
 ```sh
 sudo apt-get update
-sudo apt-get install build-essential cmake patch python3 zlib1g-dev
+sudo apt-get install build-essential cmake patch python3
 ```
-
-The zlib package is `zlib-devel` on Fedora, Rocky Linux and RHEL, and
-`zlib-dev` on Alpine, which also needs `zlib-static` for static links.
 
 Build both programs:
 
@@ -121,8 +117,7 @@ host user; repair root-owned output with
 ### macOS arm64
 
 - Install Xcode Command Line Tools: `xcode-select --install`.
-- Install CMake and Python 3 with your package manager. The Xcode SDK supplies
-  zlib.
+- Install CMake and Python 3 with your package manager.
 - Add and build the Rust target:
 
 ```sh
@@ -137,12 +132,6 @@ cargo build --locked --release --bin llg --bin llg_ls \
   workload and the Windows SDK.
 - Install CMake, Python 3, Git, and Rust 1.98.0.
 - Run the build from a matching MSVC Developer PowerShell.
-- Windows does not ship zlib. Models with waveform tasks need it; install it,
-  for example with `vcpkg install zlib:x64-windows-static-md`, and set
-  `ZLIB_ROOT` to the installed prefix (such as
-  `C:\vcpkg\installed\x64-windows-static-md`) before running `llg`, so
-  CMake's `find_package(ZLIB)` finds it. CI does not yet exercise waveform
-  models on Windows.
 
 Build for x86_64:
 
@@ -264,8 +253,7 @@ target/release/llg --gen-only --top hello hello.sv
 ```
 
 To generate waveforms, use `$dumpfile("trace.vcd")` or
-`$dumpfile("trace.fst")` with `$dumpvars` in the HDL source. Building such a
-model needs zlib; see [build prerequisites](#build-prerequisites).
+`$dumpfile("trace.fst")` with `$dumpvars` in the HDL source.
 
 ### Rerunning a built model
 

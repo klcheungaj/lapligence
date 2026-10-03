@@ -229,9 +229,23 @@ pub fn string_sources() -> (&'static str, &'static str) {
     (include_str!("llg_string.h"), include_str!("llg_string.c"))
 }
 
-/// Optional waveform runtime and the official GTKWave libfst writer snapshot.
-/// These are written and compiled only for models containing
-/// `#define LLG_WAVEFORM 1`.
+/// zlib v1.3.2 files from the `vendor/zlib` submodule that libfst needs
+/// (deflate/inflate, `compress2`/`uncompress` and the `gz*` stream API). They
+/// are written under `zlib/` and compiled into the waveform runtime with
+/// `Z_PREFIX`, so generated models need no system zlib and cannot clash with
+/// one linked by user DPI libraries.
+macro_rules! zlib_source {
+    ($name:literal) => {
+        (
+            concat!("zlib/", $name),
+            include_str!(concat!("../../../vendor/zlib/", $name)),
+        )
+    };
+}
+
+/// Optional waveform runtime, the official GTKWave libfst writer snapshot and
+/// the bundled zlib it uses. These are written and compiled only for models
+/// containing `#define LLG_WAVEFORM 1`.
 pub fn waveform_sources() -> &'static [(&'static str, &'static str)] {
     &[
         ("llg_wave.h", include_str!("llg_wave.h")),
@@ -245,6 +259,31 @@ pub fn waveform_sources() -> &'static [(&'static str, &'static str)] {
         ("fst_config.h", include_str!("gtkwave/fst_config.h")),
         ("fst_win_unistd.h", include_str!("gtkwave/fst_win_unistd.h")),
         ("wavealloca.h", include_str!("gtkwave/wavealloca.h")),
+        zlib_source!("zlib.h"),
+        zlib_source!("zconf.h"),
+        zlib_source!("zutil.h"),
+        zlib_source!("zutil.c"),
+        zlib_source!("adler32.c"),
+        zlib_source!("crc32.h"),
+        zlib_source!("crc32.c"),
+        zlib_source!("deflate.h"),
+        zlib_source!("deflate.c"),
+        zlib_source!("trees.h"),
+        zlib_source!("trees.c"),
+        zlib_source!("inflate.h"),
+        zlib_source!("inflate.c"),
+        zlib_source!("inffast.h"),
+        zlib_source!("inffast.c"),
+        zlib_source!("inffixed.h"),
+        zlib_source!("inftrees.h"),
+        zlib_source!("inftrees.c"),
+        zlib_source!("compress.c"),
+        zlib_source!("uncompr.c"),
+        zlib_source!("gzguts.h"),
+        zlib_source!("gzlib.c"),
+        zlib_source!("gzclose.c"),
+        zlib_source!("gzread.c"),
+        zlib_source!("gzwrite.c"),
     ]
 }
 
@@ -254,6 +293,13 @@ pub(crate) fn write_waveform_sources(
 ) -> Result<(), super::build::BuildError> {
     for (name, content) in waveform_sources() {
         let path = out_dir.join(name);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|source| super::build::BuildError::Io {
+                action: "create",
+                path: parent.to_path_buf(),
+                source,
+            })?;
+        }
         std::fs::write(&path, content).map_err(|source| super::build::BuildError::Io {
             action: "write",
             path,

@@ -30,7 +30,6 @@ FROM alpine:3.20 AS toolchain
 #   build-base   – gcc, g++, make, binutils (all target musl natively on Alpine)
 #   cmake        – CMake ≥ 3.20 is provided by Alpine 3.20
 #   python3      – required by Slang's syntax and diagnostic generators
-#   zlib-dev / zlib-static – generated FST waveform models link zlib statically
 #   curl         – used by the Rust installer
 #   patch        – applies vendored fixes even when submodule Git metadata is
 #                  unavailable through a bind mount
@@ -39,8 +38,6 @@ RUN apk add --no-cache \
         build-base \
         cmake \
         python3 \
-        zlib-dev \
-        zlib-static \
         libstdc++-dev \
         curl \
         linux-headers \

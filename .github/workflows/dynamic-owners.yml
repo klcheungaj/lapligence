@@ -51,10 +51,10 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake gcc clang zlib1g-dev
+          sudo apt-get install -y cmake gcc clang
       - name: macOS prerequisites
         if: runner.os == 'macOS'
-        run: brew install cmake zlib
+        run: brew install cmake
       - name: Validate the requested host components
         run: >-
           python tests/runtime_value_storage/validate.py
@@ -87,7 +87,7 @@ jobs:
       - name: Native prerequisites
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake g++ clang python3 zlib1g-dev
+          sudo apt-get install -y cmake g++ clang python3
       - name: Require Rust, emitted C, both HDL optimizer modes, and the full suite
         run: >-
           python3 tests/runtime_value_storage/validate.py --compiler gcc

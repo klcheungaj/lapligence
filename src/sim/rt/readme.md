@@ -33,6 +33,7 @@ exit or cancellation. All payload operations use the public value facade.
 | `llg_rt.h/.c`, `scheduler/` | IEEE region scheduling, processes, events, assignments, synchronization, assertions, I/O and VPI. |
 | `llg_wave.h/.c` | Optional asynchronous VCD/FST output with one producer/writer and flush/close barriers. |
 | `gtkwave/` | Pinned libfst, compression support and provenance; included only for waveform models. |
+| `vendor/zlib` (submodule) | zlib v1.3.2 sources libfst needs, embedded by `waveform_sources()` and written under `zlib/` only for waveform models. |
 | `llg_rt_selftest.c`, `llg_wave_selftest.c` | Value/scheduler checks and VCD/FST lifecycle/reader checks. |
 
 The scheduler keeps typed region queues, owned pending values and process origins.
@@ -124,7 +125,9 @@ fill fresh callee payloads and dead sibling overlays with `0xA5`, after releasin
 lexical owners and before new initialization. Completed frames are poisoned after
 common-return cleanup, covering early returns. Live parent fields and retained
 heap cells are preserved. Release builds omit these fills.
-Waveforms additionally need zlib and CMake Threads support.
+Waveforms additionally need CMake Threads support. They compile the bundled
+zlib with `Z_PREFIX` (and `Z_HAVE_UNISTD_H` outside Windows), so no system zlib
+is found or linked and user DPI libraries may link their own.
 
 The generated 256-call recursion guard remains the plain-function bound. On
 POSIX, startup warns when `RLIMIT_STACK` is below the named 8 MiB estimate for

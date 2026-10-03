@@ -204,15 +204,33 @@ fn optimization_setup(level: ModelOptLevel) -> String {
         .replace("{MSVC_OPT_FLAG}", level.msvc_flag())
 }
 
-const WAVE_CMAKE: &str = r#"find_package(Threads REQUIRED)
-find_package(ZLIB REQUIRED)
-target_link_libraries(sim PRIVATE Threads::Threads ZLIB::ZLIB)
+/// Compile the bundled zlib under `zlib/` into the waveform runtime. Its
+/// symbols are prefixed (`Z_PREFIX`), and `<unistd.h>` supplies the POSIX I/O
+/// used by the `gz*` API where zlib's own configure would have enabled it.
+macro_rules! runtime_zlib_cmake {
+    () => {
+        r#"target_include_directories(llg_runtime PRIVATE ${CMAKE_SOURCE_DIR}/zlib)
+target_compile_definitions(llg_runtime PRIVATE Z_PREFIX)
+if(NOT WIN32)
+  target_compile_definitions(llg_runtime PRIVATE Z_HAVE_UNISTD_H)
+endif()"#
+    };
+}
+
+const WAVE_CMAKE: &str = concat!(
+    r#"find_package(Threads REQUIRED)
+target_link_libraries(sim PRIVATE Threads::Threads)
 target_compile_definitions(sim PRIVATE LLG_WAVEFORM=1 FST_CONFIG_INCLUDE=\"fst_config.h\")
 if(NOT LLG_RUNTIME_LIBRARY)
-  target_compile_definitions(llg_runtime PRIVATE LLG_WAVEFORM=1 FST_CONFIG_INCLUDE=\"fst_config.h\")
-endif()"#;
-const RUNTIME_WAVE_DEFINITION: &str =
-    "target_compile_definitions(llg_runtime PRIVATE LLG_WAVEFORM=1 FST_CONFIG_INCLUDE=\\\"fst_config.h\\\")";
+target_compile_definitions(llg_runtime PRIVATE LLG_WAVEFORM=1 FST_CONFIG_INCLUDE=\"fst_config.h\")
+"#,
+    runtime_zlib_cmake!(),
+    "\nendif()"
+);
+const RUNTIME_WAVE_DEFINITION: &str = concat!(
+    "target_compile_definitions(llg_runtime PRIVATE LLG_WAVEFORM=1 FST_CONFIG_INCLUDE=\\\"fst_config.h\\\")\n",
+    runtime_zlib_cmake!()
+);
 
 const RUNTIME_CACHE_LOCK_TIMEOUT: Duration = Duration::from_secs(300);
 const RUNTIME_CACHE_LOCK_POLL: Duration = Duration::from_millis(25);
@@ -596,16 +614,27 @@ fn prune_stale_entries_for(
             .filter_map(|(name, _)| name.split('/').next()),
     );
     if waveform {
-        expected.extend(super::rt::waveform_sources().iter().map(|(name, _)| *name));
+        expected.extend(
+            super::rt::waveform_sources()
+                .iter()
+                .filter_map(|(name, _)| name.split('/').next()),
+        );
     }
     expected.extend(extra.iter().map(|(name, _)| *name));
     // Compare paths by component: on Windows the relative path of a
     // written `value/backend.h` is spelled `value\backend.h`.
+    let waveform_sources: &[(&str, &str)] = if waveform {
+        super::rt::waveform_sources()
+    } else {
+        &[]
+    };
     let nested = super::rt::value_backend_sources(backend)
         .iter()
+        .chain(waveform_sources)
+        .filter(|(name, _)| name.contains('/'))
         .map(|(name, _)| Path::new(*name))
         .collect::<Vec<_>>();
-    for directory in ["value", "value_gmp"] {
+    for directory in ["value", "value_gmp", "zlib"] {
         let mut paths = Vec::new();
         collect_paths(&out_dir.join(directory), &mut paths);
         for path in paths {
@@ -928,7 +957,12 @@ fn runtime_source_names_for(
             .filter(|name| name.ends_with(".c")),
     );
     if waveform {
-        sources.extend(["llg_wave.c", "fstapi.c", "fastlz.c", "lz4.c"]);
+        sources.extend(
+            super::rt::waveform_sources()
+                .iter()
+                .map(|(name, _)| *name)
+                .filter(|name| name.ends_with(".c")),
+        );
     }
     sources
 }
@@ -1450,11 +1484,20 @@ mod tests {
                 ..Default::default()
             };
             super::super::write_sim_sources(&directory, &[], config).unwrap();
-            prune_stale_entries_for(&directory, &[], false, backend);
-            for (name, _) in super::super::rt::value_backend_sources(backend) {
+            super::super::rt::write_waveform_sources(&directory).unwrap();
+            std::fs::write(directory.join("zlib/stale.c"), "stale").unwrap();
+            prune_stale_entries_for(&directory, &[], true, backend);
+            let written = super::super::rt::value_backend_sources(backend)
+                .iter()
+                .chain(super::super::rt::waveform_sources());
+            for (name, _) in written {
                 assert!(directory.join(name).is_file(), "{name} was pruned");
             }
             assert!(!directory.join("value/stale.h").exists());
+            assert!(!directory.join("zlib/stale.c").exists());
+            // Without waveform tasks the bundled zlib directory is stale.
+            prune_stale_entries_for(&directory, &[], false, backend);
+            assert!(!directory.join("zlib").exists());
             std::fs::remove_dir_all(&directory).unwrap();
         }
     }
@@ -1781,9 +1824,14 @@ mod tests {
                     String::from_utf8_lossy(&output.stderr)
                 ));
             }
+            let cmake = std::fs::read_to_string(dir.join("CMakeLists.txt"))
+                .map_err(|e| format!("read waveform CMakeLists.txt: {e}"))?;
+            if cmake.contains("find_package(ZLIB") || !dir.join("zlib/zlib.h").is_file() {
+                return Err("waveform models must build the bundled zlib".to_string());
+            }
             generate_model_sources(&dir, &[("plain.c", "int main(void) { return 0; }\n")])
                 .map_err(|error| error.to_string())?;
-            if dir.join("llg_wave.c").exists() {
+            if dir.join("llg_wave.c").exists() || dir.join("zlib").exists() {
                 return Err("ordinary source generation retained waveform files".to_string());
             }
             let cmake = std::fs::read_to_string(dir.join("CMakeLists.txt"))

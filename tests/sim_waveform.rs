@@ -584,7 +584,12 @@ fn fst_is_written_by_the_generated_model() {
         );
 
         for (name, source) in llg::sim::rt::waveform_sources() {
-            std::fs::write(dir.path().join(name), source)
+            let path = dir.path().join(name);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)
+                    .unwrap_or_else(|error| panic!("create FST reader source directory: {error}"));
+            }
+            std::fs::write(&path, source)
                 .unwrap_or_else(|error| panic!("write FST reader source {name}: {error}"));
         }
 
@@ -638,21 +643,28 @@ int main(void) {
         .or_else(|_| std::env::var("CC"))
         .unwrap_or_else(|_| "cc".to_string());
     let executable = dir.join("fst_probe");
+    // Link the bundled zlib exactly as generated waveform runtimes do.
+    let zlib_sources = llg::sim::rt::waveform_sources()
+        .iter()
+        .map(|(name, _)| *name)
+        .filter(|name| name.starts_with("zlib/") && name.ends_with(".c"));
     let compile = sim_harness::run_command(
         Command::new(&compiler)
             .current_dir(dir)
             .args([
                 "-std=c11",
                 "-DFST_CONFIG_INCLUDE=\"fst_config.h\"",
+                "-DZ_PREFIX",
+                "-DZ_HAVE_UNISTD_H",
                 "-I.",
+                "-Izlib",
                 "fst_probe.c",
                 "fstapi.c",
                 "fastlz.c",
                 "lz4.c",
-                "-lz",
-                "-lm",
-                "-o",
             ])
+            .args(zlib_sources)
+            .args(["-lm", "-o"])
             .arg(&executable),
         Duration::from_secs(60),
     )
