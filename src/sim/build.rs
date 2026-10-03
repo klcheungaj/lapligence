@@ -599,9 +599,11 @@ fn prune_stale_entries_for(
         expected.extend(super::rt::waveform_sources().iter().map(|(name, _)| *name));
     }
     expected.extend(extra.iter().map(|(name, _)| *name));
+    // Compare paths by component: on Windows the relative path of a
+    // written `value/backend.h` is spelled `value\backend.h`.
     let nested = super::rt::value_backend_sources(backend)
         .iter()
-        .map(|(name, _)| *name)
+        .map(|(name, _)| Path::new(*name))
         .collect::<Vec<_>>();
     for directory in ["value", "value_gmp"] {
         let mut paths = Vec::new();
@@ -610,9 +612,7 @@ fn prune_stale_entries_for(
             if path.is_file()
                 && path
                     .strip_prefix(out_dir)
-                    .ok()
-                    .and_then(Path::to_str)
-                    .is_some_and(|name| !nested.contains(&name))
+                    .is_ok_and(|relative| !nested.contains(&relative))
             {
                 let _ = std::fs::remove_file(path);
             }
@@ -1431,6 +1431,32 @@ mod tests {
         assert!(cached_runtime_library(&directory, &portable).is_none());
         assert!(cached_runtime_library(&directory, &legacy).is_some());
         std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn stale_pruning_keeps_written_nested_value_sources() {
+        use crate::sim::value_backend::{ValueBackend, ValueConfig};
+        for backend in [ValueBackend::Legacy, ValueBackend::Compact] {
+            let directory = std::env::temp_dir().join(format!(
+                "llg-prune-nested-{}-{}",
+                std::process::id(),
+                backend.abi()
+            ));
+            let _ = std::fs::remove_dir_all(&directory);
+            std::fs::create_dir_all(directory.join("value")).unwrap();
+            std::fs::write(directory.join("value/stale.h"), "stale").unwrap();
+            let config = ValueConfig {
+                backend,
+                ..Default::default()
+            };
+            super::super::write_sim_sources(&directory, &[], config).unwrap();
+            prune_stale_entries_for(&directory, &[], false, backend);
+            for (name, _) in super::super::rt::value_backend_sources(backend) {
+                assert!(directory.join(name).is_file(), "{name} was pruned");
+            }
+            assert!(!directory.join("value/stale.h").exists());
+            std::fs::remove_dir_all(&directory).unwrap();
+        }
     }
 
     #[test]
