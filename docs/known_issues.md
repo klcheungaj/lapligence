@@ -264,9 +264,10 @@ Integral variable arrays copy, compare, select rows, merge conditionals, stream
 (including multiple segments and unaligned slices), initialize and pass through
 input/output/inout/ref formals and returns of static, automatic and recursive
 functions without becoming one packed value. Array-valued pattern items and
-pattern-lvalue row scatter use the same views. Oversized unpacked records and
-arrays of records still have no descriptor layout and retain the packed payload
-limit. Descriptor pattern items and scatter targets whose rows are small dense
+pattern-lvalue row scatter use the same views. Oversized unpacked records,
+arrays of records and finite tagged unions still have no descriptor layout and
+retain the packed payload limit; so does the source of a whole-value `matches`
+wildcard or binding, which rejects with its size (RTL-016). Descriptor pattern items and scatter targets whose rows are small dense
 arrays inside an oversized source, `with` stream selections and nested oversized
 streams reject with explicit diagnostics. Extending those paths through per-cell
 source expansion would recreate the capacity cost.

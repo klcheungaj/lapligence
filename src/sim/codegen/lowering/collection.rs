@@ -76,9 +76,7 @@ fn lower_container_element(descriptor: &TypeDescriptor) -> Result<IrContainerEle
         TypeShape::Aggregate(layout)
             if matches!(
                 layout.kind,
-                AggregateKind::PackedStruct
-                    | AggregateKind::PackedUnion
-                    | AggregateKind::TaggedUnion
+                AggregateKind::PackedStruct | AggregateKind::PackedUnion
             ) && descriptor.info.width.is_some() =>
         {
             packed().ok_or_else(|| {
@@ -87,6 +85,22 @@ fn lower_container_element(descriptor: &TypeDescriptor) -> Result<IrContainerEle
                     descriptor.name
                 )
             })
+        }
+        // A finite unpacked tagged union is one packed tag-plus-payload owner,
+        // exactly like its packed counterpart.
+        TypeShape::Aggregate(layout) if layout.kind == AggregateKind::TaggedUnion => {
+            fixed_values::fixed_width(descriptor)
+                .map(|width| IrContainerElement::Packed {
+                    width,
+                    signed: descriptor.info.signed,
+                    two_state: descriptor.two_state,
+                })
+                .ok_or_else(|| {
+                    format!(
+                        "tagged union `{}` requires a fixed packed representation",
+                        descriptor.name
+                    )
+                })
         }
         TypeShape::Aggregate(layout) if layout.kind == AggregateKind::UnpackedUnion => {
             Ok(IrContainerElement::Union {

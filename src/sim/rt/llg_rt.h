@@ -1562,6 +1562,17 @@ void llg_string_nba_after(llg_string_t* target, llg_string_t value,
 void llg_nba_selected_after(sv4_t* target, sv4_t value,
                             sv4_select_plan_t plan, int reverse,
                             uint64_t ticks);
+// A tagged-member NBA (SV 11.9): the target and value are fixed at issue,
+// and the commit repeats each borrowed active-tag check against the target's
+// storage at that time. A failed check reports a source-addressed runtime
+// error and drops the write, so a retag between issue and commit can never
+// leave a payload of another member's type. `checks` and `location` are
+// copied/borrowed static literals; `checks` itself need not outlive the call.
+void llg_nba_tagged_selected_after(sv4_t* target, sv4_t value,
+                                   sv4_select_plan_t plan, int reverse,
+                                   uint64_t ticks,
+                                   const llg_ref_tag_check_t* checks,
+                                   size_t check_count, const char* location);
 // Merge only known-one mask positions into the target at commit time. This is
 // the general fallback; contiguous masks are narrowed internally.
 void llg_nba_masked(sv4_t* target, sv4_t value, sv4_t mask, uint64_t ticks);

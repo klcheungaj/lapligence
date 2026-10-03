@@ -20,6 +20,7 @@ static llg_nba_t* new_nba_in_region(uint64_t ticks, llg_region_t region) {
     n->is_string = 0;
     n->string_target = NULL;
     n->string_value = (llg_string_t){0};
+    n->tag_view = NULL;
     n->time = g.now + ticks;
     n->sequence = g.nba_sequence++;
     n->region = region;
@@ -413,6 +414,43 @@ void llg_nba_selected_after(sv4_t* target, sv4_t value,
     if (!target) return;
     llg_nba_t* n = new_nba(ticks);
     if (!n) return;
+    n->target = target;
+    n->target_scope = value_scope_retain_target(target);
+    nba_capture_range(n, llg_sv4_width(*target), value, plan, reverse);
+    enqueue_nba(n);
+}
+
+void llg_nba_tagged_selected_after(sv4_t* target, sv4_t value,
+                                   sv4_select_plan_t plan, int reverse,
+                                   uint64_t ticks,
+                                   const llg_ref_tag_check_t* checks,
+                                   size_t check_count, const char* location) {
+    if (!target) return;
+    if (!check_count || !checks) {
+        llg_nba_selected_after(target, value, plan, reverse, ticks);
+        return;
+    }
+    if (check_count > (SIZE_MAX - sizeof(llg_ref_view_t)) / sizeof(*checks)) {
+        fputs("llg: fatal: tagged nonblocking assignment check count overflow\n", stderr);
+        abort();
+    }
+    llg_nba_t* n = new_nba(ticks);
+    if (!n) return;
+    // One allocation holds the view header and its check array; the checks
+    // carry only plans, widths and static member-name literals.
+    llg_ref_view_t* view = (llg_ref_view_t*)llg_checked_malloc(
+        1, sizeof(llg_ref_view_t) + check_count * sizeof(*checks),
+        "tagged nonblocking assignment checks");
+    llg_ref_tag_check_t* copied = (llg_ref_tag_check_t*)(view + 1);
+    memcpy(copied, checks, check_count * sizeof(*checks));
+    *view = (llg_ref_view_t){
+        .parent = NULL,
+        .plan = plan,
+        .tag_check_count = check_count,
+        .tag_checks = copied,
+        .location = location,
+    };
+    n->tag_view = view;
     n->target = target;
     n->target_scope = value_scope_retain_target(target);
     nba_capture_range(n, llg_sv4_width(*target), value, plan, reverse);

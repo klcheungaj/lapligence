@@ -195,6 +195,8 @@ cancels its thread's originating program and returns harmlessly without such ori
 
 Future NBAs own values and retained destinations after issuers finish, and can
 advance time without a process waiter. Masked writes merge into current storage.
+Tagged-member NBAs own a copy of their tag checks and re-check the target's tags
+at commit; a mismatch reports a runtime error and stores nothing.
 Inertial sites own pending Active events: changed pending values cancel, unchanged
 values retain deadlines, return-to-current cancels without replacement. Reset
 model handles before freeing driver storage; reinitialization discards pending

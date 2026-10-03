@@ -15,8 +15,8 @@ Inventory:
   leaves the member uncovered (§§6.22.1, 10.9.2).
 - `syn_021_tagged_values.sv`: finite packed tagged-union tags and payloads,
   void/unequal members, nested values, fixed arrays, ports, zero-time function
-  returns, and inactive-member X reads. `syn_021_tagged_unpacked_rejected.sv`
-  keeps the nonpacked form as a single fixed-storage rejection.
+  returns, and inactive-member X reads. `syn_021_tagged_unpacked_values.sv`
+  stores the unpacked form with fixed payloads in the same finite layout.
 - `packed_streaming.sv`, `streaming_general.sv`, `inside_membership.sv`: packed
   and fixed/resizable-array stream order, non-divisible slices, static
   fixed-array and runtime resizable-array `with` selectors, X/Z preservation,

@@ -116,6 +116,13 @@ compilation-unit modes through `run_case_with_source_prefix`. Cross-scope
 initialization oracles are order-independent or follow a static read
 dependency; the Verilog-2001 race fixture asserts its allowed result set.
 
+RTL-016's tagged-union, pattern and Q03 fixtures use
+`-E 'binary(sim_feature_completion) & test(rtl_016::)'`. Positive fixtures and
+the run-time error fixtures run in both optimizer modes on both backends (set
+`LLG_TEST_GMP_ROOT` for the GMP lane). Run-time error fixtures print their
+results to stderr, compared exactly with the reports; the interprocess Q03 race
+asserts its allowed result set.
+
 ### Vendor patch preparation
 
 `vendor_patches.rs` checks clean/applied trees, no-Git archives (including archives
@@ -147,7 +154,7 @@ requirements above apply without repeating them for each suite.
 | Instance body sharing | `sim_instance_sharing`, [instance identities](fixtures/sim/instance_sharing/readme.md): shared module/task and generate bodies preserve `%m`, named events, external disable isolation and net contribution slots in both optimizer modes. Render tests cover thresholds, width/parameter splits, PCA sites and deterministic records; the frame lint recognizes shared entries and model-lifetime record addresses. |
 | Time and numeric services | `sim_delay`, `sim_time_literals`, `sim_time_values`, `sim_physical_time`, `sim_real`, `sim_real_conversions`, `sim_random`, `sim_random_streams`: exact units/rounding, overflow, real precision, Annex N vectors and child-stream isolation. |
 | I/O and observation | `sim_file_io`, `sim_memory_editions`, `sim_memory_views`, `sim_syn030_memory_views`, `sim_plusargs`, `sim_waveform`, `sim_vpi`, `sim_syn035_pla`; [SYN-030 memory views](fixtures/sim/syn030_memory_views/readme.md), checked signed `@` spellings/bounds in both editions and selected views in SV2009, [SYN-035 PLA exclusion](fixtures/sim/syn035_pla/readme.md), [file I/O](fixtures/sim/file_io/readme.md), [waveforms](fixtures/sim/waveform/readme.md), [partial features](fixtures/sim/partial_features/readme.md). |
-| Undefined behavior characterization | `sim_undefined_behavior` compares exact CLI stdout, stderr and status to checked-in [Q02/Q03 goldens](fixtures/sim/undefined_behavior/readme.md) in both optimizer modes and each legal edition. These are observations for later cross-simulator comparison, not independent conformance oracles. |
+| Undefined behavior characterization | `sim_undefined_behavior` compares exact CLI stdout, stderr and status to checked-in [Q02 goldens](fixtures/sim/undefined_behavior/readme.md) in both optimizer modes and each legal edition. These are observations for later cross-simulator comparison, not independent conformance oracles. |
 | Verification and native objects | `sim_classes`, `sim_virtual_interfaces`, `sim_dpi`, [concurrent assertions](fixtures/sim/concurrent_assertions/readme.md): nominal identity, dispatch/casts, interface bindings, scalar native ABI, sampled/sequence/property behavior and explicit rejection boundaries. |
 | Build and safeguards | `sim_cmake`, `cli_info`, `sim_memory_guard`, `support_harness`, `emit_decoupling`, `generated_c_determinism`: CMake/generator failures, source cleanup, early CLI exits, memory limits, timeout trees, CWD recovery, frontend-independent emission and byte-identical generated source trees across separate processes. |
 | Native components | `runtime_values`, `runtime_random`, `runtime_file_io`, `runtime_boundaries`, `runtime_value_storage`: direct runtime probes, independent of HDL lowering. |
@@ -198,9 +205,8 @@ emitter frame estimates and backend ABI selection.
   ref and stable-tag NBA contexts in 2009, with 2001 and invalid-constructor
   rejections. It also checks nested wrong-tag access and issue-time NBA targets.
   `sim_tagged_union_access` retains guard-owner stress; `sim_data_types_next`
-  retains void, nested and unsupported-unpacked controls. A valid target
-  retagged before commit has Q03 undefined-behavior characterization, not a
-  conformance oracle.
+  retains void, nested and unpacked-storage controls. RTL-016 owns unpacked
+  payloads, member selects and the resolved Q03 commit check.
 - [SYN-032 configurations](fixtures/sim/syn032_library_configs/readme.md) and
   [SYN-033 bind](fixtures/sim/syn033_structural_bind/readme.md) keep bounded library,
   configuration and structural composition separate from arbitrary verification

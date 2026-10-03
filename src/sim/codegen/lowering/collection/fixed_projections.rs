@@ -373,6 +373,31 @@ impl Codegen<'_> {
         Ok(Some(projection))
     }
 
+    /// A module or static signal holding a finite tagged union is one packed
+    /// owner. Member arrays inside it (`u.member[i]`) project from that
+    /// owner with the member's tag guard rather than from separate storage.
+    fn tagged_signal_root(&self, root: NodeId) -> Result<Option<Projection>, String> {
+        let (Some(signal), Some(descriptor)) = (self.signal_of(root), self.query_descriptor(root))
+        else {
+            return Ok(None);
+        };
+        if !matches!(&descriptor.shape, TypeShape::Aggregate(layout) if layout.kind == AggregateKind::TaggedUnion)
+        {
+            return Ok(None);
+        }
+        Ok(Some(Projection {
+            root: FixedRoot::Cell {
+                read: self.signal_read_expr(signal)?,
+                target: self.reference_lhs(IrLhs::Whole(signal.ir))?,
+            },
+            signed: descriptor.info.signed,
+            descriptor: descriptor.clone(),
+            steps: Vec::new(),
+            element_states: Vec::new(),
+            ref_legal: true,
+        }))
+    }
+
     fn fixed_projection(&mut self, path: &str, node: NodeId) -> Result<Option<Projection>, String> {
         if let Some(root) = self.fixed_root(path, node)? {
             return Ok(Some(root));
@@ -394,7 +419,7 @@ impl Codegen<'_> {
                                     if matches!(
                                         &descriptor.shape,
                                         TypeShape::Aggregate(layout)
-                                            if matches!(layout.kind, AggregateKind::PackedStruct | AggregateKind::PackedUnion)
+                                            if matches!(layout.kind, AggregateKind::PackedStruct | AggregateKind::PackedUnion | AggregateKind::TaggedUnion)
                                     ) =>
                                 {
                                     Some(Projection {
@@ -429,7 +454,11 @@ impl Codegen<'_> {
                 let indices = indices.clone();
                 let projection = if let Some((root, members)) = self.db.array_select_path(node) {
                     let members = members.to_vec();
-                    if let Some(mut projection) = self.fixed_projection(path, root)? {
+                    let root_projection = match self.fixed_projection(path, root)? {
+                        Some(projection) => Some(projection),
+                        None => self.tagged_signal_root(root)?,
+                    };
+                    if let Some(mut projection) = root_projection {
                         for member in members {
                             Self::fixed_member(&mut projection, &member)?;
                         }
@@ -745,7 +774,7 @@ impl Codegen<'_> {
                 .last()
                 .map(|step| step.selection.width)
                 .ok_or("tagged member access has no projection steps")?;
-            return Ok(Some(IrExpr::new(
+            let selected = IrExpr::new(
                 IrExprKind::TaggedSelect {
                     base: Box::new(value),
                     steps,
@@ -754,7 +783,14 @@ impl Codegen<'_> {
                 width,
                 projection.signed,
                 None,
-            )));
+            );
+            // An inactive-member read yields X; a two-state result type
+            // still converts it, as an ordinary two-state member read does.
+            return Ok(Some(if two_state(&projection.descriptor) {
+                IrExpr::to_two_state(selected)
+            } else {
+                selected
+            }));
         }
         let mut element_states = projection.element_states.into_iter().peekable();
         for (ordinal, (step, state, _tagged_guard)) in projection.steps.into_iter().enumerate() {

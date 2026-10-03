@@ -116,8 +116,9 @@ configuration blocks in library maps under the formal grammar despite conflictin
 adjacent prose; this remains the owner's 2026-09-27 policy, not a claimed IEEE
 correction. Per-library `-incdir` behavior is described in §3. Q01 mixed-state
 structure-pattern constants have a member-specific two-state conversion path.
-Q02 memory-file intersections and Q03 different-tag member-NBA retagging
-retain unresolved oracle questions. Q02 same-slot reader ordering follows the
+Q02 memory-file intersections retain unresolved oracle questions. Q03
+member-NBA retagging is resolved from SV §§4.9.4, 10.4.2, 7.3.2 and 11.9: the
+member write is checked against the tag at commit (§2). Q02 same-slot reader ordering follows the
 allowed scheduling interleavings (V §§5.4–5.5; SV §§4.6–4.7). Comparisons with
 other simulators are corroboration, not a normative resolution. Their
 [characterization fixtures](../tests/fixtures/sim/undefined_behavior/readme.md)
@@ -263,28 +264,31 @@ Macros, includes and their edition-specific behavior are counted in §11.
   union net members reject under SV §6.7. General native/resizable subroutine
   layouts and native aggregate slices remain restricted.
   SV §§6.7, 7.2–7.4 **[SV-2005]**.
-- 🟨 **Tagged unions** — Finite packed storage, construction and checked member
-  access support void, primitive, fixed-structure and nested-tag payloads in
-  module storage, static/automatic locals, value, constructor, port,
-  input/output/inout, const-ref/ref and stable-tag selected NBA contexts. Valid
-  reads restore the selected member's state/sign; inactive-tag reads and writes
-  produce source-addressed runtime errors. Dynamic/native payloads remain
-  restricted. Q03: SV §§4.9.4 and 10.4.2 fix the NBA target and RHS using
-  issue-time values; a wrong tag at issue still diagnoses if the variable is
-  retagged before commit. The selected successful NBAs keep the tag stable.
-  **Unresolved oracle (Q03):** When a member NBA has a valid tag at issue but
-  a blocking write retags the variable before commit, the commit-time tag
-  check, payload update and tag bits have no settled oracle in the supplied
-  SV §§4.9.4, 10.4.2, 7.3.2 and 11.9 text. This includes retagging to
-  another member, void or a different-width member, and a retag
-  from another process in the same slot. `q03_retag_blocking`,
-  `q03_retag_process`, `q03_whole_vs_member` and `q03_control` in
-  `sim_undefined_behavior` record current `llg` output, **not a conformance
-  claim**. Retagging to the same member preserves the access type; the
-  scheduled NBA still publishes its issue-time RHS (SV §§4.9.4, 10.4.2, 11.9).
-  Different-tag resolution requires a clause-based oracle; cross-simulator
-  comparison is corroboration. Pattern matching is
-  covered in §5.
+- 🟨 **Tagged unions** — Packed and unpacked tagged unions with fixed payloads
+  use one finite storage owner: the tag in the most significant bits and each
+  member right-justified below it. Construction and checked member access
+  support void, two-/four-state and signed integral, packed and unpacked
+  record, fixed unpacked array and nested-tag payloads in module storage,
+  static/automatic locals, records, unpacked arrays, value, constructor, port,
+  input/output/inout, const-ref/ref and NBA contexts, including bit, part,
+  indexed-part and element selects of a member with runtime selectors.
+  Selected active members are actuals for formals of the member type. Valid
+  reads restore the selected member's state/sign; inactive-member reads,
+  writes and selects produce source-addressed runtime errors, read X and
+  store nothing. Real/string/chandle and dynamic payloads (SIM-007) and
+  payloads beyond packed capacity reject with explicit diagnostics.
+  **Q03 (resolved):** SV §§4.9.4 and 10.4.2 fix an NBA's target and RHS at
+  issue and perform the member assignment at commit; SV §11.9 requires that
+  assignment to be consistent with the tag current then, and SV §7.3.2 never
+  stores one member's value under another member's tag. A wrong tag at issue
+  reports at issue. A valid issue whose member is inactive at commit (another
+  member, void, a narrower member, another nested tag, an earlier-committed
+  whole-variable NBA or another process's retag) reports `nonblocking write to
+  tagged-union member M ... found an inactive tag at commit` and leaves the
+  retagged value unchanged (owner policy for the post-error state); a
+  same-member or away-and-back retag publishes the issue-time RHS.
+  Interprocess races are tested as allowed result sets (SV §§4.6–4.7).
+  Pattern matching is covered in §5.
   SV §§7.3, 11.9, 12.6 **[SV-2005]**.
 - 🟨 **Strings** — Module/static/automatic byte strings support copies, casts,
   core methods, `atoreal/realtoa`, formatting, value/reference formals, copy-out,
@@ -531,11 +535,13 @@ Macros, includes and their edition-specific behavior are counted in §11.
   two-state member in a four-state packed record converts X/Z to zero before
   exact constant comparison (SV §§7.2.1, 12.6). Fixed arrays of structs can
   be bound as complete members; §12.6 defines no recursive array pattern form.
-  Finite tagged payload patterns check their tag before payload checks; `casez`
-  wildcards Z tag bits and `casex` wildcards X/Z tag bits. Whole tagged bindings
-  retain their type through later `&&&` clauses. Wrong tag names and non-tagged
-  sources reject. Whole dynamic/native wildcard and binding patterns, and
-  dynamic/native tagged payloads, remain restricted. SV §§7.3.2, 12.6
+  Finite tagged payload patterns, including unpacked record and array
+  payloads, check their tag before payload checks; `casez` wildcards Z tag
+  bits and `casex` wildcards X/Z tag bits, so an undefined tag matches only in
+  `casex`. Whole tagged bindings retain their type through later `&&&`
+  clauses. Wrong tag names and non-tagged sources reject. Whole dynamic/native
+  wildcard and binding patterns, dynamic/native tagged payloads and whole-value
+  sources beyond packed capacity remain restricted. SV §§7.3.2, 12.6
   **[SV-2005]**.
 - 🟦 **Qualified selection** — `unique`, `unique0`, `priority` diagnose no-match/
   multiple-match with source locations and default/else suppression. `case inside`
@@ -1310,7 +1316,7 @@ rows above remain the authority for scope and known gaps.
 | System tasks and memory I/O (§10) | [System tasks](../src/sim/codegen/lowering/statements/system_tasks.rs), [system functions](../src/sim/codegen/lowering/expressions/system_functions.rs), [runtime](../src/sim/rt/llg_rt.c) | [File I/O](../tests/sim_file_io.rs), [memory views](../tests/sim_memory_views.rs), [memory editions](../tests/sim_memory_editions.rs), [time reporting](../tests/sim_timescale.rs) |
 | Assertions, clocking and verification objects (§12) | [Immediate/deferred assertions](../src/sim/codegen/lowering/statements/assertions.rs), [concurrent assertions](../src/sim/codegen/lowering/assertions.rs), [clocking](../src/sim/codegen/lowering/clocking_context.rs), [class collection](../src/sim/codegen/lowering/collection/classes.rs) | [Concurrent assertions](../tests/sim_concurrent_assertions.rs), [deferred assertions](../tests/sim_partial_features/assertions.rs), [clocking](../tests/sim_partial_features/clocking.rs), [classes](../tests/sim_classes.rs), [virtual interfaces](../tests/sim_virtual_interfaces.rs) |
 | Foreign interfaces and observation (§§10, 12) | [Native access IR](../src/sim/ir/native_access.rs), [VPI runtime](../src/sim/rt/llg_vpi.c), [waveforms](../src/sim/rt/llg_wave.c) | [DPI](../tests/sim_dpi.rs), [VPI](../tests/sim_vpi.rs), [waveforms](../tests/sim_waveform.rs) |
-| Executable validation and cross-feature boundaries | [Semantic coverage](../src/sim/semantic.rs), [IR validation](../src/sim/ir/validate.rs), [whole-model emission](../src/sim/emit_c.rs) | [Optimizer comparison](../tests/sim_opt_differential.rs), [integrated profile](../tests/sim_syn039_acceptance.rs), [Q02/Q03 characterization](../tests/sim_undefined_behavior.rs) |
+| Executable validation and cross-feature boundaries | [Semantic coverage](../src/sim/semantic.rs), [IR validation](../src/sim/ir/validate.rs), [whole-model emission](../src/sim/emit_c.rs) | [Optimizer comparison](../tests/sim_opt_differential.rs), [integrated profile](../tests/sim_syn039_acceptance.rs), [Q02 characterization](../tests/sim_undefined_behavior.rs) |
 
 Source support must survive the **whole-model ownership emitter**, not only
 frontend/lowering checks. Legacy expression/statement fragment APIs deliberately

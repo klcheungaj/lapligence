@@ -1,8 +1,8 @@
-# Q02 and Q03 oracle characterizations
+# Q02 oracle characterizations
 
-These plain HDL sources and data files are for cross-simulator comparison. Each source has top module `tb`. No source asserts a result for Q02 or Q03. The `.llg.out`, `.llg.err` and `.llg.status` files record exact current `llg` stdout, stderr and exit status. They are **characterizations, not conformance oracles**. An unresolved oracle is not itself an IEEE undefined-behavior designation. The memory-load and tagged-assignment references are: IEEE 1364-2001 §17.2.8 and IEEE 1800-2009 §§21.4–21.4.3 for Q02; IEEE 1800-2009 §§4.9.4, 10.4.2, 7.3.2 and 11.9 for Q03. The prescribed warning/error categories and settled behavior described in `docs/sim_features.md` remain separate.
+These plain HDL sources and data files are for cross-simulator comparison. Each source has top module `tb`. No source asserts a result for Q02. The `.llg.out`, `.llg.err` and `.llg.status` files record exact current `llg` stdout, stderr and exit status. They are **characterizations, not conformance oracles**. An unresolved oracle is not itself an IEEE undefined-behavior designation. The memory-load references are IEEE 1364-2001 §17.2.8 and IEEE 1800-2009 §§21.4–21.4.3. The prescribed warning/error categories and settled behavior described in `docs/sim_features.md` remain separate.
 
-For Q02 wakeup traces, IEEE 1364-2001 §§5.4–5.5 and IEEE 1800-2009 §§4.6–4.7 allow independent Active-region readers and the loading process to interleave. Test that each reader follows its own triggering word update; do not require one total print order. Short-token/type/enum intersections remain unresolved separately. For Q03, same-member retagging preserves the member access type, and the scheduled NBA publishes its captured RHS (IEEE 1800-2009 §§4.9.4, 10.4.2, 11.9). Retagging to a different member, including void or a different-width member, retains an unresolved commit-time tag-check question. Cross-simulator output is corroboration, never the normative oracle.
+For Q02 wakeup traces, IEEE 1364-2001 §§5.4–5.5 and IEEE 1800-2009 §§4.6–4.7 allow independent Active-region readers and the loading process to interleave. Test that each reader follows its own triggering word update; do not require one total print order. Short-token/type/enum intersections remain unresolved separately. Cross-simulator output is corroboration, never the normative oracle. Q03 (tagged-member NBA retagging) is resolved from IEEE 1800-2009 §§4.9.4, 10.4.2, 7.3.2 and 11.9; its clause-derived conformance tests are in `../feature_completion/rtl_016/`.
 
 Run from this directory so the named `.mem` files are in the simulator's working directory. `.v` sources run in both Verilog-2001 and SystemVerilog-2009 modes; `.sv` sources require SystemVerilog-2009. All run with top `tb`. There are no include paths, defines, plusargs or simulator-specific HDL tasks.
 
@@ -22,10 +22,6 @@ Run from this directory so the named `.mem` files are in the simulator's working
 | `q02_short_file.v` | Too few words, unchanged trailing cells | `q02_short_file.mem` | 2001, 2009 |
 | `q02_long_file.v` | Too many words, bounded destination | `q02_long_file.mem` | 2001, 2009 |
 | `q02_wakeup.v` | Several readers of same/different words loaded in one slot, plus a separate same-slot event | `q02_wakeup.mem` | 2001, 2009 |
-| `q03_retag_blocking.sv` | Valid member NBA issue, then same-member, other-member, void and different-width blocking retags | none | 2009 |
-| `q03_retag_process.sv` | Another process retags after valid member NBA issue in the same slot | none | 2009 |
-| `q03_whole_vs_member.sv` | Whole tagged-variable NBA versus member NBA after retag | none | 2009 |
-| `q03_control.sv` | Valid member NBA with no intervening retag | none | 2009 |
 
 ## Exact `llg` invocations used for the goldens
 
@@ -83,14 +79,6 @@ The following are the concrete invocations used to capture each golden.
 | `q02_wakeup.2001.no-opt.llg` | `../../../../target/debug/llg --top tb --edition 2001 --no-opt q02_wakeup.v` |
 | `q02_wakeup.2009.opt.llg` | `../../../../target/debug/llg --top tb --edition 2009 q02_wakeup.v` |
 | `q02_wakeup.2009.no-opt.llg` | `../../../../target/debug/llg --top tb --edition 2009 --no-opt q02_wakeup.v` |
-| `q03_control.2009.opt.llg` | `../../../../target/debug/llg --top tb --edition 2009 q03_control.sv` |
-| `q03_control.2009.no-opt.llg` | `../../../../target/debug/llg --top tb --edition 2009 --no-opt q03_control.sv` |
-| `q03_retag_blocking.2009.opt.llg` | `../../../../target/debug/llg --top tb --edition 2009 q03_retag_blocking.sv` |
-| `q03_retag_blocking.2009.no-opt.llg` | `../../../../target/debug/llg --top tb --edition 2009 --no-opt q03_retag_blocking.sv` |
-| `q03_retag_process.2009.opt.llg` | `../../../../target/debug/llg --top tb --edition 2009 q03_retag_process.sv` |
-| `q03_retag_process.2009.no-opt.llg` | `../../../../target/debug/llg --top tb --edition 2009 --no-opt q03_retag_process.sv` |
-| `q03_whole_vs_member.2009.opt.llg` | `../../../../target/debug/llg --top tb --edition 2009 q03_whole_vs_member.sv` |
-| `q03_whole_vs_member.2009.no-opt.llg` | `../../../../target/debug/llg --top tb --edition 2009 --no-opt q03_whole_vs_member.sv` |
 
 ## Run on another simulator
 
@@ -100,4 +88,4 @@ Compile the selected source as top `tb` using the simulator's Verilog-2001 or Sy
 diff -u q02_short_hex.2001.opt.llg.out other.out
 ```
 
-Compare labelled `Q02.` and `Q03.` lines as well as diagnostics. Other simulators may format routine termination messages differently; retain their raw stderr for review rather than rewriting either simulator's output.
+Compare labelled `Q02.` lines as well as diagnostics. Other simulators may format routine termination messages differently; retain their raw stderr for review rather than rewriting either simulator's output.

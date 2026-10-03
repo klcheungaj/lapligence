@@ -1,0 +1,5 @@
+frame hits=3 result=5a calls=1
+case pair 01 02
+conditional=02 calls=2
+nested high 9
+empty

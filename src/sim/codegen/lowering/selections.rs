@@ -159,16 +159,13 @@ impl<'a> Codegen<'a> {
         };
         let mut steps = Vec::new();
         let mut checked = false;
+        let mut tagged_storage = false;
         for name in &parts[base_index + 1..] {
             let TypeShape::Aggregate(layout) = &descriptor.shape else {
                 return Ok(None);
             };
-            if !matches!(
-                layout.kind,
-                AggregateKind::PackedStruct
-                    | AggregateKind::PackedUnion
-                    | AggregateKind::TaggedUnion
-            ) {
+            tagged_storage |= layout.kind == AggregateKind::TaggedUnion;
+            if !Self::packed_storage_layout(layout.kind, tagged_storage) {
                 return Ok(None);
             }
             let index = layout
@@ -197,19 +194,12 @@ impl<'a> Codegen<'a> {
             } else {
                 None
             };
-            let offset = if matches!(
-                layout.kind,
-                AggregateKind::PackedUnion | AggregateKind::TaggedUnion
-            ) {
-                0
-            } else {
-                layout.members[index + 1..]
-                    .iter()
-                    .try_fold(0u32, |sum, following| {
-                        sum.checked_add(Self::fixed_descriptor_width(&following.descriptor)?)
-                    })
-                    .ok_or_else(|| "packed member displacement overflows".to_owned())?
-            };
+            let offset = Self::fixed_descriptor_path(
+                &descriptor,
+                &[AggregatePathPart::Member(name.clone())],
+            )
+            .map(|(_, offset)| offset)
+            .ok_or_else(|| "packed member displacement overflows".to_owned())?;
             steps.push(IrTaggedSelectStep {
                 selection: IrPackedSelect {
                     base: lhs_integer_expr(i128::from(offset)),
@@ -369,18 +359,29 @@ impl<'a> Codegen<'a> {
         ))
     }
 
+    /// Whether members of `kind` are bit ranges of one packed owner. Unpacked
+    /// records and unions nested in a tagged union share that union's
+    /// storage, using the flattened fixed-value member order.
+    pub(super) fn packed_storage_layout(kind: AggregateKind, tagged_storage: bool) -> bool {
+        match kind {
+            AggregateKind::PackedStruct
+            | AggregateKind::PackedUnion
+            | AggregateKind::TaggedUnion => true,
+            AggregateKind::UnpackedStruct | AggregateKind::UnpackedUnion => tagged_storage,
+        }
+    }
+
     pub(super) fn packed_member_layout(
         &self,
         target: NodeId,
         parts: &[String],
     ) -> Option<PackedMember> {
         let mut layout = self.db.aggregate_layout(target)?;
-        if !matches!(
-            layout.kind,
-            AggregateKind::PackedStruct | AggregateKind::PackedUnion | AggregateKind::TaggedUnion
-        ) {
+        let mut tagged_storage = layout.kind == AggregateKind::TaggedUnion;
+        if !Self::packed_storage_layout(layout.kind, tagged_storage) {
             return None;
         }
+        let mut descriptor = self.query_descriptor(target)?;
         let mut absolute_lsb = 0u32;
         let mut selected: Option<&AggregateMember> = None;
         for (part_index, member_name) in parts.iter().enumerate() {
@@ -389,7 +390,13 @@ impl<'a> Codegen<'a> {
                 .iter()
                 .position(|member| member.name == *member_name)?;
             let member = &layout.members[index];
-            let relative_lsb = if matches!(
+            let relative_lsb = if tagged_storage {
+                Self::fixed_descriptor_path(
+                    descriptor,
+                    &[AggregatePathPart::Member(member_name.clone())],
+                )?
+                .1
+            } else if matches!(
                 layout.kind,
                 AggregateKind::PackedUnion | AggregateKind::TaggedUnion
             ) {
@@ -403,15 +410,10 @@ impl<'a> Codegen<'a> {
             };
             absolute_lsb = absolute_lsb.checked_add(relative_lsb)?;
             selected = Some(member);
+            descriptor = &member.descriptor;
             match member.aggregate_layout() {
-                Some(nested)
-                    if matches!(
-                        nested.kind,
-                        AggregateKind::PackedStruct
-                            | AggregateKind::PackedUnion
-                            | AggregateKind::TaggedUnion
-                    ) =>
-                {
+                Some(nested) if Self::packed_storage_layout(nested.kind, tagged_storage) => {
+                    tagged_storage |= nested.kind == AggregateKind::TaggedUnion;
                     layout = nested;
                 }
                 _ if part_index + 1 == parts.len() => break,
@@ -422,7 +424,11 @@ impl<'a> Codegen<'a> {
         Some(PackedMember {
             name: member.name.clone(),
             lsb: absolute_lsb,
-            width: member.ty.width?,
+            width: member
+                .ty
+                .width
+                .filter(|_| !tagged_storage)
+                .or_else(|| Self::fixed_descriptor_width(&member.descriptor))?,
             signed: member.ty.signed,
             two_state: member.two_state,
             packed_ranges: member.packed_ranges.clone(),
