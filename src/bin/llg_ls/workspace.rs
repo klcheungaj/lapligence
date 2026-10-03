@@ -909,6 +909,8 @@ mod tests {
         );
     }
 
+    // Symlink creation uses the Unix API; Windows symlinks need privileges.
+    #[cfg(unix)]
     #[test]
     fn shadow_under_predicate_lexical_and_symlink_robust() {
         let root = TempRoot::new();
@@ -953,6 +955,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(root.path());
     }
 
+    #[cfg(unix)]
     #[test]
     fn shadow_under_predicate_requires_existing_base_for_canonical_match() {
         let root = TempRoot::new();

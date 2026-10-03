@@ -3555,7 +3555,8 @@ fn logical_map_include_dirs(
     Ok(directories)
 }
 
-#[cfg(test)]
+// Only the Unix-specific include replacement tests use this helper.
+#[cfg(all(test, unix))]
 fn resolve_include(
     including: &Path,
     target: &str,
