@@ -111,9 +111,10 @@ configuration blocks in library maps under the formal grammar despite conflictin
 adjacent prose; this remains the owner's 2026-09-27 policy, not a claimed IEEE
 correction. Per-library `-incdir` behavior is described in §3. Q01 mixed-state
 structure-pattern constants have a member-specific two-state conversion path.
-Q02 memory-file intersections/same-slot wake order and Q03 tagged-member NBA
-retagging retain the owner's provisional **undefined behavior pending
-cross-simulator resolution** disposition. Their
+Q02 memory-file intersections and Q03 different-tag member-NBA retagging
+retain unresolved oracle questions. Q02 same-slot reader ordering follows the
+allowed scheduling interleavings (V §§5.4–5.5; SV §§4.6–4.7). Comparisons with
+other simulators are corroboration, not a normative resolution. Their
 [characterization fixtures](../tests/fixtures/sim/undefined_behavior/readme.md)
 are not independent conformance oracles.
 
@@ -250,15 +251,18 @@ Macros, includes and their edition-specific behavior are counted in §11.
   restricted. Q03: SV §§4.9.4 and 10.4.2 fix the NBA target and RHS using
   issue-time values; a wrong tag at issue still diagnoses if the variable is
   retagged before commit. The selected successful NBAs keep the tag stable.
-  **Undefined behavior (Q03):** When a member NBA has a valid tag at issue but
+  **Unresolved oracle (Q03):** When a member NBA has a valid tag at issue but
   a blocking write retags the variable before commit, the commit-time tag
   check, payload update and tag bits have no settled oracle in the supplied
-  SV §§4.9.4, 10.4.2, 7.3.2 and 11.9 text. This includes retagging to the
-  same member, another member, void or a different-width member, and a retag
+  SV §§4.9.4, 10.4.2, 7.3.2 and 11.9 text. This includes retagging to
+  another member, void or a different-width member, and a retag
   from another process in the same slot. `q03_retag_blocking`,
   `q03_retag_process`, `q03_whole_vs_member` and `q03_control` in
   `sim_undefined_behavior` record current `llg` output, **not a conformance
-  claim**. Resolution awaits cross-simulator comparison. Pattern matching is
+  claim**. Retagging to the same member preserves the access type; the
+  scheduled NBA still publishes its issue-time RHS (SV §§4.9.4, 10.4.2, 11.9).
+  Different-tag resolution requires a clause-based oracle; cross-simulator
+  comparison is corroboration. Pattern matching is
   covered in §5.
   SV §§7.3, 11.9, 12.6 **[SV-2005]**.
 - 🟨 **Strings** — Module/static/automatic byte strings support copies, casts,
@@ -286,10 +290,11 @@ Macros, includes and their edition-specific behavior are counted in §11.
   SV §§7.5, 7.8, 7.10, 7.12 **[SV-2005]**.
 - 🟨 **Chandle** — Typed native-pointer null/copy/identity/Boolean operations,
   locals, admitted aggregate/class fields, mixed signatures, returns and
-  input/output/inout/ref/const-ref calls are present. Matching collected reference
-  ports share storage. Nonblocking object assignment, value-port links, packed
-  containment, arithmetic, general continuous assignment and non-string object
-  sensitivity remain unsupported.
+  input/output/inout/ref/const-ref calls are present. Nonblocking object
+  assignment remains unsupported. Chandle ports (including ref ports), packed
+  containment, arithmetic, continuous assignments and sensitivity/event
+  expressions are language-illegal under SV §6.14, rather than implementation
+  gaps. Other object sensitivity contexts remain partial.
   SV §6.14 **[SV-2005]**.
 
 ## 3. Modules, ports, parameters, hierarchy
@@ -336,12 +341,14 @@ Macros, includes and their edition-specific behavior are counted in §11.
   conversion followed by a four-state formal; contents and selectors establish
   dependencies. Fixed outputs admit whole arrays, constant rows/slices, aggregate
   values, nested member targets and instance-array distribution. Invalid output
-  expressions, chandle value links, uncollected layouts and runtime output/inout
-  rewiring reject. V §12.3; SV §§7.4.6, 23.2–23.3 **[1995/SV-2005]**.
+  expressions, language-illegal chandle ports (SV §6.14), uncollected layouts
+  and runtime output/inout rewiring reject. V §12.3;
+  SV §§7.4.6, 23.2–23.3 **[1995/SV-2005]**.
 - 🟨 **Reference and inout ports** — Matching packed/fixed-array references and
-  collected recursive aggregate/string/chandle leaves share storage. Admitted
-  module ref-port packed projections are distinct from subroutine ref-actual
-  legality (§9). Inequivalent shapes and runtime reference rewiring reject;
+  collected recursive aggregate/string leaves share storage. Chandle ports are
+  prohibited by SV §6.14. Admitted module ref-port packed projections are
+  distinct from subroutine ref-actual legality (§9). Inequivalent shapes and
+  runtime reference rewiring reject;
   nested selections must match the represented projections. The
   [reference-port lowerer](../src/sim/codegen/lowering/references.rs) still rejects
   unrepresented nested indexed/bit/part selections through an already selected
@@ -682,8 +689,9 @@ Macros, includes and their edition-specific behavior are counted in §11.
   destination is allowed. Mixed/resizable destinations and fixed destinations
   requiring a runtime `with` selector use a
   [blocking-only assignment path](../src/sim/codegen/lowering/containers/streaming.rs);
-  nonblocking and compound assignments on that path reject. This does not reject
-  every statically represented packed/fixed streaming NBA. Fixed-size cast
+  nonblocking assignments on that path reject. Compound streaming assignments
+  are outside the assignment grammar (SV §11.4.14.3, Annex A.6.2). This does not
+  reject every statically represented packed/fixed streaming NBA. Fixed-size cast
   mismatches, unpacked-union bit-stream casts, real/associative operands, native
   strings, recursive objects and unsupported reference combinations reject.
   SV §§6.24.3, 11.4.14 **[SV-2005]**.
@@ -903,11 +911,12 @@ Macros, includes and their edition-specific behavior are counted in §11.
   Public SV2009 coverage includes mixed-direction 3-D declarations, a runtime
   selected slice with explicit descending bounds, a 129-bit selected word, and
   settled per-leaf reader notification after a selected load.
-  **Undefined behavior (Q02):** The order in which same-slot readers wake
-  after one load writes several memory words is unresolved by the supplied
-  V §17.2.8 / SV §21.4 memory-load text. `q02_wakeup` in
+  **Allowed nondeterminism (Q02):** Same-slot readers may interleave under
+  V §§5.4–5.5 / SV §§4.6–4.7. Each read follows its triggering word update;
+  the memory-load clauses do not impose a total order between independent
+  readers or require the caller to print before them. `q02_wakeup` in
   `sim_undefined_behavior` records current `llg` order, **not a conformance
-  claim**; cross-simulator comparison is pending.
+  claim**; a conformance test must use these ordering constraints.
   V §17.2.8; SV §21.4 **[1995/SV-2005]**.
 
   Short words pad a leading X/Z with that state; known digits zero-extend.
@@ -916,16 +925,18 @@ Macros, includes and their edition-specific behavior are counted in §11.
   without undoing earlier writes. Two-state X/Z conversion occurs before enum
   range checking, without discarding high bits. Sparse addressed 2009 files omit
   the no-address short-file warning; 2001 count warnings remain, including excess
-  data from repeated in-range addresses. **Undefined behavior (Q02):** The
+  data from repeated in-range addresses. **Unresolved oracle (Q02):** The
   short X/Z token-extension intersections for binary and hex words of different
   widths, signed/two-state/enum destinations and selected views, plus malformed
   token handling, four-state enum numeric corners and diagnostic details beyond
   the prescribed warning/error categories, have no settled oracle in the
   supplied V §17.2.8 / SV §§21.4–21.4.3 text. The `q02_*` fixtures in
   `sim_undefined_behavior` record current `llg` values, diagnostics and status,
-  **not a conformance claim**; resolution awaits cross-simulator comparison.
-  Dynamic/queue/associative,
-  real/non-packed memories and fully indexed scalar memory-element targets reject.
+  **not a conformance claim**; resolution requires a clause-based oracle.
+  Dynamic arrays and queues of packed words (without resizing), and
+  integral-key associative memories, are legal under SV §21.4.1 but unsupported.
+  Real/non-packed words and fully indexed scalar targets are outside the
+  memory-load argument contract; string-key associative memories are prohibited.
 - 🟦 **Memory writers** — `$writememh/$writememb` emit consumable four-state words
   from admitted fixed-memory views in low-to-high row-major order. The same
   element/view restrictions apply; writers reject in 2001 mode.
@@ -935,6 +946,8 @@ Macros, includes and their edition-specific behavior are counted in §11.
   frontend's standard-name allowlist, but have no built-in simulator lowering or
   runtime implementation. File-based memory loading and `$sscanf` do not provide
   these routines; the generic VPI fallback requires an external registration.
+  These are optional informative services (V Annex C.13; SV Annex D.14), not
+  required language features.
 
 ### Time, control and utility services
 
@@ -946,7 +959,9 @@ Macros, includes and their edition-specific behavior are counted in §11.
   [system-task lowerer](../src/sim/codegen/lowering/statements/system_tasks.rs)
   emits the caller's timescale and label without reading that operand. Only the
   no-argument caller-scope behavior is represented correctly by this path.
-  `$timeformat` currently accepts zero or four arguments, not intermediate arities.
+  `$timeformat` accepts the documented zero-or-four-argument syntax
+  (V §17.3.2, Syntax 17-10; SV §20.4.2, Syntax 20-4). Intermediate arities
+  would be a convenience extension, not a required missing feature.
   The [timescale regressions](../tests/sim_timescale.rs) contain a no-argument
   witness, not proof of explicit-scope behavior.
   V §§17.3, 17.7; SV §20.4 **[1995/SV-2009]**.
@@ -969,8 +984,9 @@ Macros, includes and their edition-specific behavior are counted in §11.
 - 🟨 **Data/array queries** — `$typename/$isunbounded/$bits`,
   `$left/$right/$low/$high/$increment/$size/$dimensions/$unpacked_dimensions`
   use represented packed, fixed-array, dynamic/queue, associative-integral and
-  string metadata. Nested runtime dimensions and string/wildcard associative
-  bounds remain unsupported. SV §§20.6–20.7 **[SV-2005]**.
+  string metadata. Nested runtime dimensions remain unsupported. Associative
+  dimension bounds require integral index types; string/wildcard bounds are
+  prohibited by SV §20.7. SV §§20.6–20.7 **[SV-2005]**.
 - 🟦 **Bit and math helpers** — `$onehot/$onehot0/$countones/$isunknown` use
   packed X/Z-aware values and reject reals. `$clog2` and all 21 real functions
   mapped by SV Table 20-4 support admitted constant/runtime values, numeric
@@ -1090,8 +1106,9 @@ These are bounded implementations, not full verification-infrastructure support.
   [Input collection](../src/sim/codegen/lowering/clocking_context.rs) requires a
   collected packed signal: real-valued inputs and uncollected source expressions
   reject. Output/inout writes must use admitted nonblocking assignments; compound
-  writes reject. Dynamic skews, unsupported cross-clock forms and concatenated
-  clockvar lvalues rejected by the frontend remain excluded.
+  writes and concatenated clockvar lvalues are prohibited by SV §14.16. Skews
+  must be constant expressions (SV §14.4); runtime skews are language-illegal.
+  Unsupported cross-clock forms remain excluded.
   SV ch.14 **[SV-2005]**.
 - 🟨 **Process control** — `process::self/status/kill/suspend/resume/await`
   retain identity, wait conditions, descendant cleanup and terminal status.
@@ -1123,7 +1140,9 @@ These are bounded implementations, not full verification-infrastructure support.
   packed/string references have capture paths. Native-string value arguments,
   chandle arguments, output/inout copy-out, `$fatal`, `$finish` and `$stop`
   actions reject. A literal formatting string is not a captured native-string
-  value argument. Post-2009 `assert final` remains edition-gated and unsupported
+  value argument. Output/inout action formals and multi-statement action blocks
+  are prohibited by SV §16.4; their rejection is a legality boundary.
+  Post-2009 `assert final` remains edition-gated and unsupported
   by this lowerer. SV §16.4 **[SV-2009]**.
 
 🟨 **Concurrent assertions** support the following bounded forms (SV ch.16, Annex F):
@@ -1150,7 +1169,11 @@ rules; graph/lowering support alone is not executable acceptance.
 🟨 **Sampled functions** — `$sampled/$rose/$fell/$stable/$changed/$past` and
 2009 global-clock history/status forms support packed explicit/default edge
 domains, gated/initial history, Preponed reads and LSB/X/Z edge rules. Future global
-forms, complex clocks and real-valued sampling remain rejected. SV §§16.9.3–16.9.4,
+forms, complex clocks and real-valued sampling remain rejected. Future global
+functions are legal in SV2009 property/sequence contexts under §16.9.4, with
+global clocking, nonnesting and match-item restrictions and delayed assertion
+actions; their rejection is an implementation gap. Procedural and action-block
+uses remain illegal. SV §§16.9.3–16.9.4,
 20.13 **[SV-2005]**.
 
 ### Foreign interfaces and missing infrastructure
@@ -1158,13 +1181,17 @@ forms, complex clocks and real-valued sampling remain rejected. SV §§16.9.3–
 - 🟨 **DPI-C imports** — Bounded scalar bit/logic/reg, integral, real/shortreal,
   chandle/string signatures and explicit libraries retain owned outputs and
   borrowed inputs. Foreign string results are copied before aliased copy-out,
-  which checks cancellation. Exports, packed/open arrays, ref/event formals and
-  context callbacks are unsupported. SV ch.35 **[SV-2005]**.
+  which checks cancellation. Exports, packed/open arrays and context callbacks
+  are unsupported. DPI ref directions and event/class signature types are
+  prohibited by SV §§35.5.1.2, 35.5.6; they remain negative legality cases.
+  SV ch.35 **[SV-2005]**.
 - 🟨 **PLI/VPI bridge** — Generated metadata, registration,
   `compiletf/sizetf/calltf`, scalar/vector/real values, hierarchy lookup/iteration,
   plugin startup and start/end callbacks have paths; arguments use registered
   snapshots. Full `tf_/acc_/vpi_`, arbitrary properties/iterators/regions/control
-  and VPI calls from read-only evaluators remain unsupported.
+  remain unsupported. Registered packed/real system-function calls have direct
+  expression-evaluation paths; foreign calls nested in proven read-only HDL
+  helpers remain unsupported. Direct calls do not establish those helper paths.
   V ch.20–27 **[1995/2001]**.
 - ⬜ **Checkers** — Checker execution and checker bind are not implemented;
   module/interface structural bind and ordinary assertion instances do not imply
