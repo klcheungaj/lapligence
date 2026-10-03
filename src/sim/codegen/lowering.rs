@@ -413,10 +413,35 @@ pub fn generate_from_db_with_codegen_options(
     generate_from_db_with_codegen_options_impl(db, options).map_err(CodegenError::new)
 }
 
+/// Consume the database, releasing its semantic arenas before execution lowering
+/// and C rendering. Borrowing generation APIs remain available for model reuse.
+pub fn generate_from_owned_db_with_opts(
+    db: Db,
+    cfg: &crate::sim::opt::OptConfig,
+) -> Result<GeneratedModel, CodegenError> {
+    let options = CodegenOptions {
+        optimization: *cfg,
+        ..CodegenOptions::default()
+    };
+    let lowered = lower_model(&db).map_err(CodegenError::new)?;
+    drop(db);
+    finish_generation(lowered, &options).map_err(CodegenError::new)
+}
+
 fn generate_from_db_with_codegen_options_impl(
     db: &Db,
     options: &CodegenOptions,
 ) -> Result<GeneratedModel, String> {
+    finish_generation(lower_model(db)?, options)
+}
+
+struct LoweredModel {
+    model: IrModel,
+    design_name: String,
+    warnings: Vec<String>,
+}
+
+fn lower_model(db: &Db) -> Result<LoweredModel, String> {
     let semantic_stage = crate::profile::Stage::new("semantic");
     let semantic = crate::sim::semantic::SemanticModel::from_db(db);
     if let Err(issues) = semantic.validate_simulation() {
@@ -517,16 +542,37 @@ fn generate_from_db_with_codegen_options_impl(
     // t=0.
     let final_names = std::mem::take(&mut cg.final_procs);
     let assertion_action_procs = std::mem::take(&mut cg.assertion_action_procs);
-    model.spawns = model
-        .processes
-        .iter()
-        .map(|p| p.c_name.clone())
-        .filter(|n| !final_names.contains(n))
-        .filter(|n| !assertion_action_procs.contains(n))
-        .collect();
+    model.spawns = startup_spawns(
+        model
+            .processes
+            .iter()
+            .map(|process| process.c_name.as_str()),
+        &final_names,
+        &assertion_action_procs,
+    );
     model.final_spawns = final_names;
     model.validate().map_err(|error| error.to_string())?;
+    let design_name = std::mem::take(&mut cg.design_name);
+    let warnings = std::mem::take(&mut cg.warnings);
+    drop(cg);
+    drop(semantic);
     drop(lowering_stage);
+    Ok(LoweredModel {
+        model,
+        design_name,
+        warnings,
+    })
+}
+
+fn finish_generation(
+    lowered: LoweredModel,
+    options: &CodegenOptions,
+) -> Result<GeneratedModel, String> {
+    let LoweredModel {
+        model,
+        design_name,
+        warnings,
+    } = lowered;
     let execution_stage = crate::profile::Stage::new("execution");
     let mut execution =
         crate::sim::execution::ExecutionModel::lower_with_options(model, options.execution)
@@ -541,11 +587,39 @@ fn generate_from_db_with_codegen_options_impl(
     let rendered = crate::sim::emit_c::render_with_symbols(&execution)?;
     drop(render_stage);
     Ok(GeneratedModel {
-        design_name: cg.design_name.clone(),
+        design_name,
         model_c: rendered.source,
         symbols_tsv: rendered.symbols_tsv,
-        warnings: cg.warnings,
+        warnings,
     })
+}
+
+#[cfg(test)]
+thread_local! {
+    static SPAWN_FILTER_WORK: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+fn startup_spawns<'a>(
+    names: impl Iterator<Item = &'a str>,
+    finals: &[String],
+    assertion_actions: &HashSet<String>,
+) -> Vec<String> {
+    let finals = finals
+        .iter()
+        .map(|name| {
+            #[cfg(test)]
+            SPAWN_FILTER_WORK.with(|work| work.set(work.get() + 1));
+            name.as_str()
+        })
+        .collect::<HashSet<_>>();
+    names
+        .filter(|name| {
+            #[cfg(test)]
+            SPAWN_FILTER_WORK.with(|work| work.set(work.get() + 2));
+            !finals.contains(name) && !assertion_actions.contains(*name)
+        })
+        .map(str::to_owned)
+        .collect()
 }
 
 impl<'a> Codegen<'a> {
@@ -3005,5 +3079,29 @@ mod semantic_string_tests {
                 .unwrap(),
             "count=%0d"
         );
+    }
+}
+
+#[cfg(test)]
+mod startup_spawn_tests {
+    use super::*;
+
+    #[test]
+    fn startup_spawn_filter_work_scales_with_processes_and_finals() {
+        for count in [32, 512] {
+            let names = (0..count)
+                .map(|index| format!("p_{index}"))
+                .collect::<Vec<_>>();
+            let finals = names.iter().step_by(2).cloned().collect::<Vec<_>>();
+            let actions = HashSet::from([names[1].clone()]);
+            let before = SPAWN_FILTER_WORK.with(std::cell::Cell::get);
+            let spawns = startup_spawns(names.iter().map(String::as_str), &finals, &actions);
+            let work = SPAWN_FILTER_WORK.with(std::cell::Cell::get) - before;
+            assert_eq!(work, count * 2 + finals.len());
+            assert_eq!(
+                spawns,
+                names.iter().skip(3).step_by(2).cloned().collect::<Vec<_>>()
+            );
+        }
     }
 }

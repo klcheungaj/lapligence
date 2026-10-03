@@ -629,3 +629,34 @@ fn dense_owned_import_rejects_malformed_ids_and_keeps_source_identity() {
         Some("module top; logic [3:0] x = 4'bxz01; endmodule")
     );
 }
+
+#[test]
+fn consuming_generation_matches_borrowing_generation_in_both_optimizer_modes() {
+    let output = compile::compile_sources_checked(
+        &[compile::OwnedSource::compilation_unit(
+            "owned_generation.sv",
+            "module top; logic [3:0] x = 4'bxz01; initial #1 x = 4'b1zx0; endmodule",
+        )],
+        &compile::CompileOpts {
+            top: Some("top".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let database = db::Db::from_slang(&output.snapshot).unwrap();
+    for options in [
+        llg::sim::opt::OptConfig::default(),
+        llg::sim::opt::OptConfig::none(),
+    ] {
+        let borrowed = llg::sim::codegen::generate_from_db_with_opts(&database, &options).unwrap();
+        let consumed = llg::sim::codegen::generate_from_owned_db_with_opts(
+            db::Db::from_slang(&output.snapshot).unwrap(),
+            &options,
+        )
+        .unwrap();
+        assert_eq!(borrowed.model_c, consumed.model_c);
+        assert_eq!(borrowed.symbols_tsv, consumed.symbols_tsv);
+        assert_eq!(borrowed.design_name, consumed.design_name);
+        assert_eq!(borrowed.warnings, consumed.warnings);
+    }
+}

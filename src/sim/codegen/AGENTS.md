@@ -1,6 +1,8 @@
 # Simulator lowering
 
-Applies to `codegen.rs` and children. Read [pipeline](../AGENTS.md),
+Applies to `codegen.rs` and children. Consuming generation releases the DB after
+typed lowering; borrowing entry points support reuse. Release collection state
+before execution lowering and rendering. Read [pipeline](../AGENTS.md),
 [emitter](../emit_c/AGENTS.md) and [runtime](../rt/AGENTS.md) contracts.
 `lower_expr`/`lower_stmt`/`lower_lhs` produce typed IR only. Keep shared state in
 `lowering.rs`, responsibility-named children and the smallest existing visibility.

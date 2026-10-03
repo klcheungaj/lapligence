@@ -661,6 +661,7 @@ fn run(options: DriverOptions) -> i32 {
         }
     };
     drop(db_stage);
+    drop(out);
     if lint_mode {
         let model = llg::core::model::DesignModel::from_db(&codegen_db);
         let findings = llg::core::lint::lint_with_config(&codegen_db, &model, &lint_config);
@@ -734,7 +735,7 @@ fn run(options: DriverOptions) -> i32 {
     } else {
         sim::opt::OptConfig::default()
     };
-    let generated = sim::codegen::generate_from_db_with_opts(&codegen_db, &optimization);
+    let generated = sim::codegen::generate_from_owned_db_with_opts(codegen_db, &optimization);
     let gen = match generated {
         Ok(g) => g,
         Err(e) => {

@@ -78,6 +78,11 @@ pub(in crate::sim::emit_c) fn render_with_sharing_threshold(
     Ok(render_bounded(execution, threshold)?.source)
 }
 
+#[cfg(test)]
+thread_local! {
+    pub(in crate::sim::emit_c) static PREPARE_MODEL_CLONES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 fn render_bounded(
     execution: &ExecutionModel,
     threshold: usize,
@@ -95,8 +100,7 @@ fn render_bounded(
     }
     super::owned::model::check_model(execution.ir()).map_err(EmitError::new)?;
     let prepare_stage = crate::profile::Stage::new("render.prepare");
-    let mut execution = execution.clone();
-    let (_, upper_bounds) = render_coroutine_functions(&execution).map_err(EmitError::new)?;
+    let (_, upper_bounds) = render_coroutine_functions(execution).map_err(EmitError::new)?;
     let forced = upper_bounds
         .iter()
         .filter_map(|(function, size)| {
@@ -104,6 +108,13 @@ fn render_bounded(
                 .then_some(*function)
         })
         .collect::<BTreeSet<_>>();
+    if &forced == execution.analysis().forced_arena_callees() {
+        drop(prepare_stage);
+        return render_model(execution, threshold).map_err(EmitError::new);
+    }
+    #[cfg(test)]
+    PREPARE_MODEL_CLONES.with(|count| count.set(count.get() + 1));
+    let mut execution = execution.clone();
     execution
         .reanalyze_with_forced_arena_callees(&forced)
         .map_err(EmitError::InvalidIr)?;
