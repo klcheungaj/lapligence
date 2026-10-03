@@ -61,6 +61,40 @@ impl Codegen<'_> {
         Ok(Some(IrStmt::Block(captures)))
     }
 
+    /// Construct an assignment-pattern source directly into declared
+    /// activation storage `array` whose shape is `descriptor`. Item values are
+    /// captured before any cell is placed. Returns `None` for non-patterns.
+    pub(in super::super) fn lower_descriptor_pattern_into(
+        &mut self,
+        path: &str,
+        rhs: NodeId,
+        descriptor: &TypeDescriptor,
+        array: &ArrayInfo,
+    ) -> Result<Option<Vec<IrStmt>>, String> {
+        let node = self.p30_unwrap_cast(rhs);
+        if !matches!(
+            self.kind(node),
+            NodeKind::Expr(ExprKind::Operation {
+                op: Operation::AssignmentPattern | Operation::MultiAssignmentPattern,
+                ..
+            })
+        ) {
+            return Ok(None);
+        }
+        let plan = self.descriptor_pattern_plan(path, node, descriptor)?;
+        let mut statements = Vec::new();
+        let mut values = HashMap::new();
+        self.capture_descriptor_pattern_values(path, &plan, array, &mut values, &mut statements)?;
+        statements.extend(self.emit_descriptor_pattern_plan(
+            path,
+            array.ir,
+            &plan,
+            &values,
+            &[],
+        )?);
+        Ok(Some(statements))
+    }
+
     fn descriptor_pattern_plan(
         &self,
         path: &str,

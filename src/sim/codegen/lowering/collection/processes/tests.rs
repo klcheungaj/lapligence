@@ -450,3 +450,94 @@ fn real_edge_rejections_use_source_storage_names() {
         }
     }
 }
+
+fn lowered_continuous_model(source: &str) -> (Db, Vec<IrProcess>) {
+    let database = diagnostic_database(source);
+    database.validate().unwrap();
+    let processes = {
+        let semantic = crate::sim::semantic::SemanticModel::from_db(&database);
+        let mut cg = Codegen::new(&semantic);
+        let tops = cg.collect_design().unwrap();
+        cg.bind_reference_ports().unwrap();
+        cg.collect_timescales();
+        cg.build_net_groups().unwrap();
+        cg.validate_process_semantics().unwrap();
+        for top in tops {
+            cg.emit_pass(top, Pass::Comb).unwrap();
+        }
+        cg.model.processes.clone()
+    };
+    (database, processes)
+}
+
+fn wraps_feedback_loop(process: &IrProcess) -> bool {
+    process
+        .body
+        .iter()
+        .any(|statement| matches!(statement.unlocated(), IrStmt::While { .. }))
+}
+
+#[test]
+fn component_self_feedback_wraps_only_self_dependent_drivers() {
+    // SV 10.3.2: a continuous driver whose own write can change one of its
+    // operands repeats in place. Drivers that read only other storage keep
+    // the single-evaluation sensitivity loop.
+    let (_database, processes) = lowered_continuous_model(
+        "module tb;\n\
+         wire [3:0] a, b, c; alias a = b; logic go;\n\
+         logic [3:0] arr[0:1]; logic [3:0] v, w;\n\
+         assign c = go ? 4'd1 : 4'd0;\n\
+         assign a = go ? b + 4'd1 : 4'd0;\n\
+         assign arr = '{4'd1, arr[0]};\n\
+         assign v = w;\n\
+         endmodule",
+    );
+    let continuous = processes
+        .iter()
+        .filter(|process| process.label.ends_with(".assign"))
+        .collect::<Vec<_>>();
+    assert_eq!(continuous.len(), 4);
+    let wrapped = continuous
+        .iter()
+        .filter(|process| wraps_feedback_loop(process))
+        .count();
+    assert_eq!(wrapped, 2, "alias view and array cell feedback only");
+}
+
+#[test]
+fn component_constant_rows_are_precise_writer_projections() {
+    // SV 6.5: a constant row is its own longest static prefix, so a
+    // continuous row and a procedural write of another row do not overlap.
+    for (source, conflict) in [
+        (
+            "module tb; logic [3:0] m[0:1][0:2]; logic [3:0] x;\n\
+             assign m[0] = '{x, x, x}; initial m[1][0] = 4'h1; endmodule",
+            false,
+        ),
+        (
+            "module tb; logic [3:0] m[0:1][0:2]; logic [3:0] x;\n\
+             assign m[0] = '{x, x, x}; initial m[0][2] = 4'h1; endmodule",
+            true,
+        ),
+        (
+            "module tb; logic [3:0] m[0:1][0:2]; logic [3:0] x;\n\
+             assign m[1] = '{x, x, x}; initial m[0] = '{x, x, x}; endmodule",
+            false,
+        ),
+    ] {
+        let database = diagnostic_database(source);
+        let semantic = crate::sim::semantic::SemanticModel::from_db(&database);
+        let mut cg = Codegen::new(&semantic);
+        cg.collect_design().unwrap();
+        cg.bind_reference_ports().unwrap();
+        cg.collect_timescales();
+        cg.build_net_groups().unwrap();
+        let result = cg.validate_process_semantics();
+        if conflict {
+            let error = result.unwrap_err();
+            assert!(error.contains("`tb.m[0][2]`"), "{error}");
+        } else {
+            result.unwrap();
+        }
+    }
+}

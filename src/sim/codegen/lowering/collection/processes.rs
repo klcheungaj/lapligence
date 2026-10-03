@@ -6,6 +6,58 @@ use super::*;
 #[cfg(test)]
 mod tests;
 
+/// Per-site state while publishing positional-pattern continuous leaves.
+struct PatternContinuousRemap<'l> {
+    /// Leaf target nodes in emitted assignment order.
+    leaves: &'l [NodeId],
+    next_leaf: usize,
+    captures: usize,
+    /// Activation-local fixed arrays (oversized source snapshots).
+    local_arrays: HashSet<usize>,
+    /// Next contribution terminal per resolved group. Pattern leaves are
+    /// separate electrical contributions; sharing one slot would make a
+    /// later selected leaf erase an earlier one.
+    terminals: HashMap<usize, usize>,
+}
+
+/// Whether a lowered pattern statement only writes locals or activation
+/// arrays (`locals`), as source capture and construction do.
+fn pattern_statement_is_local(statement: &IrStmt, locals: &HashSet<usize>) -> bool {
+    let all = |statements: &[IrStmt]| {
+        statements
+            .iter()
+            .all(|statement| pattern_statement_is_local(statement, locals))
+    };
+    match statement.unlocated() {
+        IrStmt::DeclLocal { .. } => true,
+        IrStmt::Assign {
+            lhs: IrLhs::WholeRef { .. },
+            ..
+        } => true,
+        IrStmt::Assign {
+            lhs: IrLhs::ArrayElem { arr, .. },
+            ..
+        } => locals.contains(arr),
+        IrStmt::FixedArrayFill { array, .. } => locals.contains(array),
+        IrStmt::FixedValueAssign { dst, .. } => locals.contains(&dst.array),
+        IrStmt::FixedArrayCopy { dst, .. } => locals.contains(dst),
+        IrStmt::Block(statements) => !statements.is_empty() && all(statements),
+        IrStmt::For {
+            init, incr, body, ..
+        } => all(init) && all(incr) && all(body),
+        _ => false,
+    }
+}
+
+impl PatternContinuousRemap<'_> {
+    fn next_terminal(&mut self, group: usize) -> usize {
+        let terminal = self.terminals.entry(group).or_default();
+        let current = *terminal;
+        *terminal += 1;
+        current
+    }
+}
+
 impl<'a> Codegen<'a> {
     // ── PCA site pre-scan (two-phase discovery, phase 1) ─────────────────────
 
@@ -412,30 +464,39 @@ impl<'a> Codegen<'a> {
             PatternAssignmentKind::Continuous,
             Operation::Assignment,
         )? {
+            // Transition delays on pattern leaves need per-leaf inertial
+            // driver state; distributed delays are owned by ADV-002.
             if matches!(self.kind(ca), NodeKind::ContAssign { delay: Some(_), .. }) {
                 return Err(format!(
                     "delayed continuous assignment to a positional assignment-pattern LHS in `{path}` is not supported"
                 ));
             }
-            if alias_bindings.is_some() || self.pattern_lvalue_touches_true_net_alias(lhs) {
+            // Continuous targets are static (IEEE 1800-2009 Table 10-1): a
+            // runtime leaf selector would need retargeting, not a fixed driver.
+            if !self.net_lvalue_selects_are_constant(lhs) {
                 return Err(format!(
-                    "continuous assignment-pattern LHS on a true-net alias in `{path}` is not supported"
+                    "continuous assignment-pattern LHS in `{path}` requires constant select indices"
                 ));
             }
             // Remap even without a registered site so a resolved target that
             // site discovery missed fails closed instead of bypassing its net.
-            let mut captures = 0;
-            // Pattern leaves are separate electrical contributions. Sharing
-            // one slot would make a later selected leaf erase an earlier one.
-            let mut terminals = HashMap::new();
-            self.remap_pattern_continuous_targets(
-                &mut pattern_body,
-                ca,
-                &mut captures,
-                &mut terminals,
-            )?;
+            let leaves = self.positional_pattern_lvalue_targets(path, lhs)?;
+            let mut remap = PatternContinuousRemap {
+                leaves: &leaves,
+                next_leaf: 0,
+                captures: 0,
+                local_arrays: HashSet::new(),
+                terminals: HashMap::new(),
+            };
+            self.remap_pattern_continuous_targets(&mut pattern_body, ca, &mut remap)?;
+            if remap.next_leaf != leaves.len() {
+                return Err(format!(
+                    "continuous assignment-pattern lowering in `{path}` lost a target leaf"
+                ));
+            }
             let fn_name = self.new_fn_name(path, "ca");
             let sigs = self.collect_read_signals(path, rhs)?;
+            let body = self.wrap_continuous_self_feedback(ca, lhs, &sigs, vec![pattern_body])?;
             let shape = if sigs.is_empty() {
                 IrShape::RunOnce
             } else {
@@ -447,7 +508,7 @@ impl<'a> Codegen<'a> {
                 format!("{}.assign", self.source_path(path)),
                 shape,
                 Vec::new(),
-                vec![pattern_body],
+                body,
                 origin,
             ));
             return Ok(());
@@ -534,6 +595,13 @@ impl<'a> Codegen<'a> {
         };
         let fn_name = self.new_fn_name(path, "ca");
         let sigs = self.collect_read_signals(path, rhs)?;
+        // A delayed driver publishes in a later event, after its wait is
+        // armed, so only zero-delay drivers need the self-feedback loop.
+        let body = if scaled_delay.is_none() {
+            self.wrap_continuous_self_feedback(ca, lhs, &sigs, body)?
+        } else {
+            body
+        };
         let shape = if sigs.is_empty() {
             // Constant driver: evaluate once at t=0, then end (the value can
             // never change, so there is nothing to wait on).
@@ -557,76 +625,86 @@ impl<'a> Codegen<'a> {
         &mut self,
         statement: &mut IrStmt,
         source: NodeId,
-        captures: &mut usize,
-        terminals: &mut HashMap<usize, usize>,
+        remap: &mut PatternContinuousRemap<'_>,
     ) -> Result<(), String> {
+        // Source construction inside activation storage is not a target.
+        if pattern_statement_is_local(statement, &remap.local_arrays) {
+            return Ok(());
+        }
         match statement.unlocated_mut() {
             IrStmt::Block(statements) => {
                 for statement in statements {
-                    self.remap_pattern_continuous_targets(statement, source, captures, terminals)?;
+                    self.remap_pattern_continuous_targets(statement, source, remap)?;
                 }
                 Ok(())
             }
             IrStmt::DeclLocal { .. } => Ok(()),
-            IrStmt::Assign {
-                lhs: IrLhs::Whole(signal),
-                rhs,
-                ..
-            } if !self.model.signals[*signal].net_alias.is_empty() => {
-                // A net-array cell has one electrical group per bit. Capture
-                // the element value once, then contribute each bit through
-                // this source's own driver slot like a whole-array driver.
-                let IrType::Packed { width, .. } = self.model.signals[*signal].ty else {
-                    return Err("resolved assignment-pattern target is not packed".to_string());
-                };
-                let mut bindings = Vec::new();
-                self.append_signal_alias_bindings(*signal, width, &mut bindings, &mut 0)?;
-                let name = format!("_pattern_net_{}_{}", source.index(), captures);
-                *captures += 1;
-                let value = IrExpr::new(
-                    IrExprKind::LocalRead(name.clone()),
-                    rhs.width(),
-                    rhs.signed(),
-                    None,
-                );
-                let mut block = vec![IrStmt::DeclLocal {
-                    name,
-                    width: rhs.width(),
-                    signed: rhs.signed(),
-                    init: Some(Box::new(rhs.clone())),
-                    two_state: false,
-                }];
-                let mut groups = bindings
-                    .iter()
-                    .map(|(binding, _)| binding.group())
-                    .collect::<Vec<_>>();
-                groups.sort_unstable();
-                groups.dedup();
-                let mut alias_terminals = HashMap::new();
-                for group in groups {
-                    let terminal = *terminals.entry(group).or_default();
-                    terminals.insert(group, terminal + 1);
-                    self.ensure_structural_driver_terminal(source, group, terminal)?;
-                    alias_terminals.insert(group, terminal);
-                }
-                for (driver, value) in
-                    self.alias_driver_assignments(source, &bindings, &value, |group| {
-                        alias_terminals[&group]
-                    })?
-                {
-                    block.push(IrStmt::Assign {
-                        lhs: IrLhs::Whole(driver),
-                        rhs: value,
-                        nba: false,
-                    });
-                }
-                *statement = IrStmt::Block(block);
+            IrStmt::FixedArrayDeclare(array) => {
+                remap.local_arrays.insert(*array);
                 Ok(())
             }
-            IrStmt::Assign { lhs, .. } => {
+            // Oversized variable rows: a descriptor scatter never targets
+            // electrical net storage (net arrays are not descriptor-backed).
+            IrStmt::FixedValueAssign {
+                dst, nba: false, ..
+            } if self.model.arrays[dst.array].net_elements.is_empty() => {
+                remap.next_leaf += 1;
+                Ok(())
+            }
+            IrStmt::Assign { lhs, rhs, .. } => {
+                let leaf = *remap.leaves.get(remap.next_leaf).ok_or_else(|| {
+                    "continuous assignment-pattern lowering produced an extra target".to_string()
+                })?;
+                remap.next_leaf += 1;
+                if let Some(bindings) = self.alias_lvalue_bindings(source, leaf)? {
+                    // True-net alias views, net-array cells and their constant
+                    // selects contribute through canonical group bits. Capture
+                    // the leaf value once, then drive each touched group through
+                    // this leaf's own contribution slot.
+                    let name = format!("_pattern_net_{}_{}", source.index(), remap.captures);
+                    remap.captures += 1;
+                    let value = IrExpr::new(
+                        IrExprKind::LocalRead(name.clone()),
+                        rhs.width(),
+                        rhs.signed(),
+                        None,
+                    );
+                    let mut block = vec![IrStmt::DeclLocal {
+                        name,
+                        width: rhs.width(),
+                        signed: rhs.signed(),
+                        init: Some(Box::new(rhs.clone())),
+                        two_state: false,
+                    }];
+                    let mut groups = bindings
+                        .iter()
+                        .map(|(binding, _)| binding.group())
+                        .collect::<Vec<_>>();
+                    groups.sort_unstable();
+                    groups.dedup();
+                    let mut alias_terminals = HashMap::new();
+                    for group in groups {
+                        let terminal = remap.next_terminal(group);
+                        self.ensure_structural_driver_terminal(source, group, terminal)?;
+                        alias_terminals.insert(group, terminal);
+                    }
+                    for (driver, value) in
+                        self.alias_driver_assignments(source, &bindings, &value, |group| {
+                            alias_terminals[&group]
+                        })?
+                    {
+                        block.push(IrStmt::Assign {
+                            lhs: IrLhs::Whole(driver),
+                            rhs: value,
+                            nba: false,
+                        });
+                    }
+                    *statement = IrStmt::Block(block);
+                    return Ok(());
+                }
                 if self.lhs_selects_net_alias_signal(lhs) {
                     return Err(format!(
-                        "continuous assignment-pattern target within a resolved net-array element at {}:{}:{} is not supported",
+                        "continuous assignment-pattern target within a resolved net alias at {}:{}:{} has no electrical bit mapping",
                         self.node(source).file.as_deref().unwrap_or("<unknown>"),
                         self.node(source).line,
                         self.node(source).col,
@@ -635,8 +713,7 @@ impl<'a> Codegen<'a> {
                 let groups = self.structural_groups_for_lhs(lhs);
                 let mut selected_terminals = HashMap::new();
                 for group in groups {
-                    let terminal = *terminals.entry(group).or_default();
-                    terminals.insert(group, terminal + 1);
+                    let terminal = remap.next_terminal(group);
                     self.ensure_structural_driver_terminal(source, group, terminal)?;
                     selected_terminals.insert(group, terminal);
                 }
@@ -750,27 +827,6 @@ impl<'a> Codegen<'a> {
                 .any(|(part, _)| self.lhs_selects_net_alias_signal(part)),
             IrLhs::WholeRef { .. } | IrLhs::Ref { .. } | IrLhs::ArrayElem { .. } => false,
         }
-    }
-
-    fn pattern_lvalue_touches_true_net_alias(&self, node: NodeId) -> bool {
-        let signal = match self.kind(node) {
-            NodeKind::Net { .. } | NodeKind::Var { .. } => self.signal_of(node),
-            NodeKind::Expr(ExprKind::Ref {
-                target: Some(target),
-            }) => self.signal_of(*target),
-            NodeKind::Expr(ExprKind::HierPath { .. }) => self.hier_path_signal(node),
-            _ => None,
-        };
-        signal.is_some_and(|info| {
-            self.model
-                .signals
-                .get(info.ir)
-                .is_some_and(|signal| !signal.net_alias.is_empty())
-        }) || self
-            .node(node)
-            .children
-            .iter()
-            .any(|child| self.pattern_lvalue_touches_true_net_alias(*child))
     }
 
     /// Net lvalues admit only constant selects. This runs after `self.inst`
@@ -1417,7 +1473,18 @@ impl<'a> Codegen<'a> {
             NodeKind::Expr(ExprKind::Ref {
                 target: Some(target),
             }) => self.lhs_is_variable_storage(*target),
-            NodeKind::Expr(ExprKind::HierPath { .. }) => false,
+            // Member selects of unpacked/packed records and hierarchical
+            // references keep their declaration's storage class.
+            NodeKind::Expr(ExprKind::HierPath { refs, .. }) => {
+                if let Some((root, _)) = self.unpacked_path_for_expr(node) {
+                    return root != node && self.lhs_is_variable_storage(root);
+                }
+                refs.iter()
+                    .rev()
+                    .flatten()
+                    .next()
+                    .is_some_and(|target| *target != node && self.lhs_is_variable_storage(*target))
+            }
             NodeKind::Expr(
                 ExprKind::BitSelect { base, .. }
                 | ExprKind::PartSelect { base, .. }

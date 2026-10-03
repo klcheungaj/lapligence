@@ -69,12 +69,20 @@ diagnostic labels remain separate from C symbols. The
 - Positional-pattern assignment snapshots the RHS, freezes all destination
   selectors before any write, then scatters. Fixed bit-stream casts convert the
   complete RHS, including nested state-domain conversion, before scattering;
-  reference/inout identity is a separate contract.
+  reference/inout identity is a separate contract. Continuous pattern leaves
+  keep constant selects (runtime leaf selects reject) and each leaf is its own
+  contribution: alias views, net-array cells and their selected bits publish
+  through canonical alias bindings with a per-leaf terminal. Oversized sources,
+  including typed patterns, scatter descriptor rows for every assignment kind.
 
 ## Processes, dependencies and initialization
 
 Continuous assignments and comb/latch/implicit-sensitivity processes evaluate at
-zero, then wait on RHS/body reads, not their LHS base. Combinational sensitivity
+zero, then wait on RHS/body reads, not their LHS base. A zero-delay continuous
+driver whose target storage, or another view of the same alias network, is
+also an operand snapshots those operands and repeats in place while one
+changed (`collection/continuous_feedback.rs`); a nonconvergent loop stops at
+the process step limit. Combinational sensitivity
 includes called-function reads and excludes written storage; plain `@*` retains
 call-site behavior. Carry exact always-kind and typed writes through validation;
 writer, timing and flip-flop violations reject independently of lint. Ordinary
@@ -139,6 +147,9 @@ Precollect hierarchical actual dependencies per instance.
 
 Variable-continuous conflict analysis follows canonical intervals and counts
 ordinary assignments/declaration initialization, not force/release/deassign.
+Record and hierarchical member selects keep their declaration's storage class.
+Constant rows of at most `PRECISE_ROW_WRITE_CELLS` cells write only their
+cells for every writer; wider rows remain whole-array writes.
 Output ports connected to variables are continuous drivers: constant rows of
 dense arrays drive their cells, runtime selects drive the longest static prefix,
 and constant rows of descriptor storage are not registered (no bounded cell set);

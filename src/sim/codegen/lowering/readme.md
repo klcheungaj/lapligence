@@ -29,6 +29,14 @@ ranges, force targets and effective type/delay agree. The partitioner in
 whole vector nets keep their existing wide storage. Declared shapes remain
 separate bit bindings, and contributions select contiguous RHS ranges before
 resolution. New net topology belongs in the partitioner's source inventory.
+Net-array cell sources are indexed once per lowering, so whole-array drivers
+stay linear in the cell count.
+
+Continuous positional patterns publish each leaf as its own contribution,
+including leaves that name alias views, net-array cells or their selected bits.
+`collection/continuous_feedback.rs` repeats a zero-delay driver in place when
+its own write can change one of its operands; other drivers keep the plain
+sensitivity loop.
 
 Packed record member selections use the recursive descriptor and guarded typed
 selection steps, including runtime indexed part-selects. Fixed record net arrays

@@ -2108,8 +2108,13 @@ impl<'a> Codegen<'a> {
                         // through the HierPath site below. The source-text
                         // fallback only rejects an unresolved top-self path
                         // (no owned target) so it cannot silently drop a driver.
-                        if matches!(self.kind(lhs), NodeKind::Expr(ExprKind::HierPath { .. }))
-                            && self.hier_path_signal(lhs).is_none()
+                        // A member select of a local aggregate also has no
+                        // signal, but its owned path resolves to that aggregate.
+                        if matches!(
+                            self.kind(lhs),
+                            NodeKind::Expr(ExprKind::HierPath { refs, .. })
+                                if refs.iter().all(Option::is_none)
+                        ) && self.hier_path_signal(lhs).is_none()
                             && self.cont_assign_source_has_hier_lhs(*id, net)
                         {
                             return Err(format!(
