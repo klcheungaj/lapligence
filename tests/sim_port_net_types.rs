@@ -210,11 +210,13 @@ fn port_net_type_trireg_remains_explicitly_unsupported() {
 }
 
 #[test]
-fn port_net_type_preserves_frontend_uwire_actual_rejection() {
-    sim_cli::reject_case_with_args(
+fn port_net_type_admits_undriven_uwire_actual() {
+    sim_cli::run_case_with_args(
         "port_net_types",
-        "bad_uwire_external",
-        "cannot be connected to 'inout' port",
+        "uwire_external",
+        "uwire=z/z\n",
+        "",
+        &[],
         &["--edition", "2009"],
     );
 }

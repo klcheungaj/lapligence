@@ -7,7 +7,8 @@ reproduce it. Remove an entry when the fix lands.
 ## Declared net views retain per-bit lowering bindings
 
 **Status:** electrical groups, continuous writes and generated declared-view
-descriptors are range-based; the lowering-side binding list is still per bit.
+descriptors are range-based; the lowering-side alias graph and binding list
+are still per bit. RTL-011 judged the full fix out of its scope (see Cause).
 
 ### Symptom
 
@@ -43,6 +44,21 @@ union-find operate on `AliasBit` values, so declared views reach the emitter as
 per-bit `IrNetAliasBinding` lists that waveform, VPI, force and array-dependency
 lowering also consume bit by bit. Permuted mappings and opaque projections
 conservatively retain bit groups.
+
+The per-bit state is, in order: the alias union-find in
+[`nets.rs`](../src/sim/codegen/lowering/collection/nets.rs) (`AliasBit` parent,
+rank and membership maps for every bit of every alias-, selected-inout- or
+net-array-connected net), the net-type collapse points in
+[`net_collapse.rs`](../src/sim/codegen/lowering/collection/net_collapse.rs) for
+the same bits, the partitioner's per-bit connection map, and finally the
+`IrNetAliasBinding` list. Only the last is visible outside lowering, and it is
+the smallest: making it run-length alone would not change the `N × W` growth.
+A real fix replaces the bit union-find with an interval union-find over
+`(owner, element, bit range)` and has the type plan, partitioner, net-array
+publication, alias driver mapping, force targets and VPI/waveform views
+consume ranges; every one of these is shared with ordinary net lowering, so
+it needs its own task and full-suite qualification. Work stays linear in the
+number of bits: RTL-011's same-depth collapse batches are linear in edges.
 
 ### Intended direction
 
@@ -229,21 +245,6 @@ the baseline, including both optimizer modes for the representative fixtures.
 Use the command in the frontend memory entry with `LLG_CORPUS_N` set to
 5,000, 10,000, 20,000 and 40,000, and compare wall times.
 
-## Record member net aliases rejected by the frontend
-
-**Status:** open; alias grammar and frontend admission are owned by RTL-011.
-
-Slang rejects a member of a fixed record net as a non-net in an `alias` statement,
-although ordinary member continuous drivers and inout record connections work.
-For example, declare `typedef struct { logic [7:0] lane; } record_t;`,
-`wire record_t values[1:0];` and `wire [3:0] mirror;`, then use
-`alias values[0].lane[3:0] = mirror;`. Compilation reports that `lane` is not a
-net before owned capture. Audit IEEE 1800-2009 §10.11 and the net-lvalue grammar
-in §A.8.5, then apply a narrow tracked frontend patch for the legal forms; do
-not bypass checked compilation or treat frontend rejection as an illegal-type
-oracle. This admission gap prevents member alias identity tests from reaching
-the otherwise shared electrical projection path.
-
 ## Remaining non-flattened fixed-value contexts
 
 **Status:** open; RTL-002 and RTL-002b implement descriptor transport for
@@ -385,6 +386,14 @@ and a 65,537-cell net array is impractical to compile. Lowering is now linear
 in the cell count: driver sources are indexed by the cells they drive once,
 instead of rescanning every source for every cell (4,096 cells: 9.2 s to
 0.04 s of publication time on a quick build).
+
+A whole net-array inout port behaves the same way. For
+`child u(n)` with `inout wire [7:0] c [0:N-1]` and one driver on each side,
+`--gen-only` on a quick build took 1.8 s / 8.6 MB of `model.c` at 4,096 cells,
+7.2 s / 34.8 MB at 16,384 and 28.0 s / 140.5 MB at 65,537 (RTL-011
+measurement): linear, never flattened into one packed value, but still one
+electrical group per cell, because the partitioner extends runs only within
+one cell.
 
 The intended direction is a descriptor-backed net-array cell table with a
 loop over a contiguous RHS view, keeping per-cell resolution state but not
