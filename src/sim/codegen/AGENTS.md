@@ -152,6 +152,9 @@ with a group-bit offset; electrical width must never change an HDL storage shape
 Contribution projection gathers contiguous RHS runs with part selects and Z runs,
 then concatenates only disconnected runs. Conversion precedes projection. Array
 publication binds every bit to this partition and rejects a missing root.
+Record net-array member selections map declared cell coordinates and recursive
+member offsets through `array_net_selection` before this same partitioning;
+member boundaries split runs when their structural driver sites differ.
 
 Fixed net arrays, selected ports and interfaces share canonical bits; array
 publication notifies array dependencies. Keep the signal reverse index aligned

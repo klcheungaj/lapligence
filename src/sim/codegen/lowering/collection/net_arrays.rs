@@ -2,6 +2,9 @@
 use super::net_collapse::{NetCollapsePlan, NetPoint};
 use super::*;
 
+#[cfg(test)]
+mod tests;
+
 type ArrayNetSelection = ((usize, u64), Vec<u32>);
 
 impl Codegen<'_> {
@@ -165,17 +168,28 @@ impl Codegen<'_> {
 
     pub(super) fn array_net_target_parts(&self, node: NodeId) -> Option<(ArrayInfo, Vec<NodeId>)> {
         match self.kind(node) {
-            NodeKind::Array { .. }
-            | NodeKind::Expr(ExprKind::Ref { .. })
-            | NodeKind::Expr(ExprKind::HierPath { .. }) => self
+            NodeKind::Array { .. } | NodeKind::Expr(ExprKind::Ref { .. }) => self
                 .array_of(node)
                 .cloned()
                 .map(|array| (array, Vec::new())),
+            NodeKind::Expr(ExprKind::HierPath { refs, .. }) => self
+                .array_of(node)
+                .cloned()
+                .map(|array| (array, Vec::new()))
+                .or_else(|| {
+                    refs.iter()
+                        .flatten()
+                        .find_map(|root| self.array_net_target_parts(*root))
+                }),
             NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
                 if let Some(array) = self.array_of(*base).cloned() {
                     Some((array, indices.clone()))
                 } else {
-                    let (array, mut prior) = self.array_net_target_parts(*base)?;
+                    let root = self
+                        .db
+                        .array_select_path(node)
+                        .map_or(*base, |(root, _)| root);
+                    let (array, mut prior) = self.array_net_target_parts(root)?;
                     prior.extend(indices.iter().copied());
                     Some((array, prior))
                 }
@@ -220,7 +234,75 @@ impl Codegen<'_> {
                 .ok_or("net-array selection is out of bounds")?;
             Ok(bits[bits.len() - upper..bits.len() - lower].to_vec())
         };
+        let fixed_selection = |root: NodeId, path: &[AggregatePathPart]| {
+            let descriptor = self
+                .query_descriptor(root)
+                .ok_or("net-array member has no owned type")?;
+            let (member, offset) = super::fixed_values::fixed_path_descriptor(descriptor, path)
+                .ok_or("net-array member has no fixed layout")?;
+            let width = Self::fixed_descriptor_width(&member)
+                .ok_or("net-array member has no fixed width")?;
+            if let NodeKind::Expr(ExprKind::ArraySelect { base, indices }) = self.kind(root) {
+                if self
+                    .array_of(*base)
+                    .is_some_and(|array| indices.len() == array.dims.len())
+                {
+                    // A complete cell starts at bit zero. Materialize only the
+                    // member's bits, rather than the whole record per member.
+                    let end = offset
+                        .checked_add(width)
+                        .ok_or("net-array member width overflow")?;
+                    if end
+                        > Self::fixed_descriptor_width(descriptor)
+                            .ok_or("net-array cell has no fixed width")?
+                    {
+                        return Err("net-array member is outside its cell".into());
+                    }
+                    return Ok((offset..end).rev().collect());
+                }
+            }
+            let (_, bits) = self
+                .array_net_selection(root)?
+                .ok_or("net-array member has no base selection")?;
+            select(bits, i128::from(offset), width)
+        };
         let bits = match self.kind(node) {
+            NodeKind::Expr(ExprKind::HierPath { parts, refs }) => {
+                let (position, root) = refs
+                    .iter()
+                    .enumerate()
+                    .find_map(|(position, root)| {
+                        root.filter(|root| self.array_net_endpoint(*root).is_some())
+                            .map(|root| (position, root))
+                    })
+                    .ok_or("net-array member has no selected element")?;
+                let path = parts[position + 1..]
+                    .iter()
+                    .cloned()
+                    .map(AggregatePathPart::Member)
+                    .collect::<Vec<_>>();
+                fixed_selection(root, &path)?
+            }
+            NodeKind::Expr(ExprKind::ArraySelect { base, indices })
+                if self.array_of(*base).is_none() =>
+            {
+                let (root, members) = self
+                    .db
+                    .array_select_path(node)
+                    .map_or((*base, &[][..]), |(root, members)| (root, members));
+                let mut path = members
+                    .iter()
+                    .cloned()
+                    .map(AggregatePathPart::Member)
+                    .collect::<Vec<_>>();
+                for index in indices {
+                    path.push(AggregatePathPart::Index(
+                        i32::try_from(self.eval_bound_i128(*index)?)
+                            .map_err(|_| "net-array member index is out of bounds")?,
+                    ));
+                }
+                fixed_selection(root, &path)?
+            }
             NodeKind::Expr(ExprKind::ArraySelect { base, indices })
                 if self.array_of(*base).is_some() =>
             {

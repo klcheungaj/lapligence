@@ -36,8 +36,8 @@ with their types. Use ordinary module declarations in binary targets, not
 
 ## C runtime source organization
 
-The value, scheduler and container implementations use **private source fragments
-of one translation unit each**, not independently linked modules:
+The legacy value, scheduler and container implementations use **private source
+fragments of one translation unit each**, not independently linked modules:
 
 - [`llg_value.c`](../src/sim/rt/llg_value.c) includes
   [`llg_value_prelude.c`](../src/sim/rt/llg_value_prelude.c) and
@@ -53,7 +53,14 @@ of one translation unit each**, not independently linked modules:
   [`container/`](../src/sim/rt/container/) domains for value descriptors,
   dynamic arrays, queues, pinned queue references and associative arrays.
 
-The facades preserve declaration order and private `static` state. The prelude
+The standalone compact value backend in
+[`value_gmp/`](../src/sim/rt/value_gmp/) has its own header and separately compiled
+storage, logic, arithmetic and limb-kernel units. Its optional GMP dependency
+is confined to the limb kernel. Native probes in `tests/runtime_value_storage/`
+link it beside live legacy for differential checks; production selection and
+embedding remain separate integration work.
+
+The legacy facades preserve declaration order and private `static` state. The prelude
 files stay beside the public headers so direct source-tree inclusion retains
 header-relative lookup. Do not compile a fragment separately, add fragments to
 CMake source lists, or export scheduler globals to connect them.

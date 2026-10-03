@@ -27,6 +27,14 @@ whole vector nets keep their existing wide storage. Declared shapes remain
 separate bit bindings, and contributions select contiguous RHS ranges before
 resolution. New net topology belongs in the partitioner's source inventory.
 
+Packed record member selections use the recursive descriptor and guarded typed
+selection steps, including runtime indexed part-selects. Fixed record net arrays
+map member paths and declared coordinates to canonical electrical bits before
+range partitioning and driver planning; member selection materializes the selected
+interval rather than the complete cell. Net admission excludes recursively nested
+unpacked unions in the SystemVerilog-2009 profile. These paths reuse the existing
+storage, validation, dependency and owned-emission operations.
+
 See [lowering overview](../readme.md),
 [execution model](../../execution/readme.md),
 [feature boundaries](../../../../docs/sim_features.md) and
