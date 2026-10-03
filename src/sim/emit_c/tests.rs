@@ -264,7 +264,7 @@ fn indexed_read_uses_its_elaborated_extent() {
     .unwrap();
     assert_eq!(model.expression_capacity(&expression, None).unwrap(), 96);
     let rendered = render_expression_model(model, expression);
-    assert!(rendered.contains("sv4_idx_part_select_value("));
+    assert!(rendered.contains("sv4_idx_part_select_value_to("));
     assert!(rendered.contains(", 96, 0)"));
     assert!(!rendered.contains("sv4_checked_width"));
 }
@@ -297,9 +297,9 @@ fn selected_net_driver_preserves_member_state_conversion() {
     };
     add_test_process(&mut model, statement);
     let rendered = render(&model).unwrap();
-    assert!(rendered.contains("SV4_INIT(0ULL, 15ULL, 0ULL, 4, 0)"));
-    let fill = rendered.find("SV4_INIT(0ULL, 15ULL, 0ULL, 4, 0)").unwrap();
-    let conversion = rendered.find("sv4_to_two_state(").unwrap();
+    assert!(rendered.contains(", 0ULL, 15ULL, 0ULL, 4, 0);"));
+    let fill = rendered.find(", 0ULL, 15ULL, 0ULL, 4, 0);").unwrap();
+    let conversion = rendered.find("sv4_to_two_state_to(").unwrap();
     let write = rendered
         .find("llg_net_write_selected(&net, 0, _llg_t[")
         .unwrap();
@@ -435,7 +435,7 @@ fn output_temporary_uses_its_declared_formal_after_c_argument_reordering() {
     assert!(
         process
             .lines()
-            .any(|line| line.contains("sv4_replace(_llg_local_") && line.contains("sv4_x(16, 1)")),
+            .any(|line| line.contains("sv4_x_to(_llg_local_") && line.contains(", 16, 1);")),
         "{process}"
     );
     assert!(process.contains("mixed("));
@@ -507,7 +507,8 @@ fn captured_fork_emits_owned_frame_lifecycle() {
     assert!(rendered.contains("llg_fork_with_frame(&p_capture_branch_desc,"));
     assert!(!rendered.contains("llg_fork_with_frame(&p_capture_branch_desc, p_capture_branch"));
     assert!(
-        rendered.contains("llg_frame_read_value(llg_proc_frame(LLG_CO_OWNER(ch, llg_proc_t)), 0u)")
+        rendered.contains("llg_frame_read_value_to(")
+            && rendered.contains(", llg_proc_frame(LLG_CO_OWNER(ch, llg_proc_t)), 0u);")
     );
     assert!(rendered.lines().any(
         |line| line.contains("llg_frame_release(_llg_capture_frame_")
@@ -515,7 +516,7 @@ fn captured_fork_emits_owned_frame_lifecycle() {
     ));
     assert!(rendered
         .lines()
-        .any(|line| line.contains("sv4_replace(_llg_local_")));
+        .any(|line| line.contains("llg_frame_read_value_to(_llg_local_")));
 }
 
 #[test]
@@ -581,7 +582,7 @@ fn evaluated_event_emits_owned_context_and_contextual_callback() {
 
     let rendered = render(&model).unwrap();
     assert!(rendered.contains("static void p_eval(sv4_t* out, void* context)"));
-    assert!(rendered.contains("llg_frame_read_value((const llg_frame_t*)context, 0u)"));
+    assert!(rendered.contains(", (const llg_frame_t*)context, 0u);"));
     assert!(rendered.contains("sv4_move(&out[0], &_llg_t["));
     assert!(rendered.contains("llg_frame_new(1ULL)"));
     assert!(rendered

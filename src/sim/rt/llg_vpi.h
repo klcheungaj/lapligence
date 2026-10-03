@@ -75,4 +75,12 @@ int llg_vpi_failed(void);
 }
 #endif
 
+/* Destination-passing forms of the packed-returning calls above, used by
+ * generated code (see value/destinations.h). `X_to(dst, ...)` replaces the
+ * initialized owner at dst with exactly the result `X(...)` would return. Packed
+ * arguments are borrowed by address; string arguments are consumed through
+ * their address and left empty, like the returning forms' by-value strings. */
+void llg_vpi_call_function_to(sv4_t* dst, const char* name, llg_vpi_arg_t* args, int arg_count, uint32_t fallback_width, int8_t fallback_signed);
+void llg_vpi_call_function_site_to(sv4_t* dst, uint64_t site, const char* name, llg_vpi_arg_t* args, int count, uint32_t fallback_width, int8_t fallback_signed);
+
 #endif /* LLG_VPI_H */

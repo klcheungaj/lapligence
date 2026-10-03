@@ -51,10 +51,10 @@ impl Frame<'_, '_> {
                     .unwrap_or(self.ctx.model.design_name())
             )
         );
-        if self.layout.storage() == FrameStorage::CoFrame {
-            self.line(format!("if (LLG_CO_UNLIKELY({call})) return LLG_CO_EXIT;"));
-        } else {
+        if self.plain_exits() {
             self.line(format!("if (LLG_CO_UNLIKELY({call})) goto _llg_return;"));
+        } else {
+            self.line(format!("if (LLG_CO_UNLIKELY({call})) return LLG_CO_EXIT;"));
         }
     }
     pub(super) fn condition(&mut self, expr: &IrExpr) -> Result<String, String> {
@@ -335,10 +335,10 @@ impl Frame<'_, '_> {
                     count.width,
                     false,
                 );
-                self.line(format!(
-                    "sv4_replace(&{}, sv4_sub({}, {}));",
-                    count.code, count.code, one.code
-                ));
+                self.assign(
+                    &format!("&{}", count.code),
+                    &format!("sv4_sub({}, {})", count.code, one.code),
+                );
                 self.discard(one);
                 self.line("}");
                 self.discard(count);
@@ -866,10 +866,10 @@ impl Frame<'_, '_> {
         )
         .contains(&crate::sim::execution::ExecutionEffect::Terminate)
         {
-            if self.layout.storage() == FrameStorage::CoFrame {
-                self.line("LLG_CO_EXIT_CHECK(ch);");
-            } else {
+            if self.plain_exits() {
                 self.line("if (LLG_CO_UNLIKELY(llg_rt_exiting())) goto _llg_return;");
+            } else {
+                self.line("LLG_CO_EXIT_CHECK(ch);");
             }
         }
         if straight_line_statement(statement) {

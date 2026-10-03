@@ -64,7 +64,7 @@ fn homogeneous_rows_share_one_helper_and_constant_size_loop() {
             1
         );
         assert_eq!(source.matches("for (; _llg_pca_i_").count(), 1);
-        assert_eq!(source.matches("sv4_clone(row->source)").count(), 1);
+        assert_eq!(source.matches(", row->source);").count(), 1);
         assert_eq!(source.matches("llg_pca_assign(row->target").count(), 1);
         assert_eq!(source.matches("sv4_destroy(&_llg_t[0])").count(), 1);
         for index in 0..count {
@@ -206,8 +206,8 @@ fn narrow_constant_indices_keep_owned_scratch_beside_live_loop_values() {
     let source = render(model);
     assert!(source.contains("llg_pca_batch_0(_llg_t + 1,"));
     assert!(source.contains("llg_value_scope_begin(3)"));
-    assert!(source.contains("sv4_bit_select(_llg_t[0], sv4_to_index(_llg_t[1]))"));
-    assert!(source.contains("SV4_INIT(3ULL, 0ULL, 0ULL, 32, 0)"));
+    assert!(source.contains("sv4_bit_select_to(&_llg_t[0], &_llg_t[0], sv4_to_index(_llg_t[1]));"));
+    assert!(source.contains(", 3ULL, 0ULL, 0ULL, 32, 0);"));
     assert!(!source.contains("static sv4_t llg_constant_"));
 }
 
@@ -226,7 +226,7 @@ fn real_rows_have_typed_addresses_and_no_packed_temporary() {
     assert!(source.contains("const double* source; double* target;"));
     assert!(source.contains("llg_pca_assign_d(row->target"));
     assert!(source.contains("llg_pca_batch_0(NULL,"));
-    assert!(!source.contains("sv4_clone(row->source)"));
+    assert!(!source.contains(", row->source);"));
 }
 
 #[test]
@@ -281,8 +281,8 @@ fn mixed_selections_casts_and_widths_split_shapes() {
         3
     );
     assert_eq!(source.matches("for (; _llg_pca_i_").count(), 3);
-    assert!(source.contains("sv4_part_select(_llg_t[0], 6, 3)"));
-    assert!(source.contains("sv4_to_two_state(_llg_t[0])"));
+    assert!(source.contains("sv4_part_select_to(&_llg_t[0], &_llg_t[0], 6, 3);"));
+    assert!(source.contains("sv4_to_two_state_to(&_llg_t[0], &_llg_t[0]);"));
 }
 
 #[test]

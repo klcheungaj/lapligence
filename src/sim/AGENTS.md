@@ -69,7 +69,10 @@ extents, not the width expression's integer storage size.
 
 Coroutine storage is explicit POD frame data. Count typed expression storage and
 embedded callee slots in `FrameLayout`; sibling blocks overlay and recursive or
-oversized callees use the chain arena. There is no generated coroutine-stack
+oversized callees use the chain arena. Recursive synchronous subprograms
+(`execution/recursion.rs`) are also coroutines run by a synchronous driver from
+their unchanged plain entry, so recursion depth uses arena memory, never native
+stack. There is no generated coroutine-stack
 estimate or `LLG_MODEL_STACK_VALUES`. Values allocate by their own widths; never
 restore model-maximum arrays. `LLG_MODEL_VALUE_ABI` must match
 `LLG_VALUE_ABI_VERSION`, and generated models declare process ABI 3.

@@ -76,7 +76,17 @@ impl Frame<'_, '_> {
     }
     pub(super) fn native_value(&mut self, kind: NativeKind, code: String) -> NativeValue {
         let value = self.native_reserve(kind);
-        self.line(format!("{} = {code};", value.code()));
+        if kind == NativeKind::String {
+            // Reserved objects are zero-initialized empty strings.
+            if code != "(llg_string_t){0}" {
+                self.line(super::super::destinations::assign_string(
+                    &value.address,
+                    &code,
+                ));
+            }
+        } else {
+            self.line(format!("{} = {code};", value.code()));
+        }
         value
     }
     pub(super) fn native_discard(&mut self, value: NativeValue) {

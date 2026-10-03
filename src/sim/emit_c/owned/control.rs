@@ -21,10 +21,10 @@ impl Frame<'_, '_> {
         };
         let known = u8::from(op != IrBinOp::LogAnd);
         self.line(format!("if ({decisive}) {{"));
-        self.line(format!(
-            "sv4_replace(&{}, sv4_from_u64({known}, 1, 0));",
-            result.code
-        ));
+        self.assign(
+            &format!("&{}", result.code),
+            &format!("sv4_from_u64({known}, 1, 0)"),
+        );
         self.line("} else {");
         let b = self.operand(right)?;
         let b = self.boolean_value(b);
@@ -33,10 +33,10 @@ impl Frame<'_, '_> {
             IrBinOp::LogOr => "sv4_logor",
             _ => "sv4_logimpl",
         };
-        self.line(format!(
-            "sv4_replace(&{}, {operation}({}, {}));",
-            result.code, a.code, b.code
-        ));
+        self.assign(
+            &format!("&{}", result.code),
+            &format!("{operation}({}, {})", a.code, b.code),
+        );
         self.discard(b);
         self.line("}");
         self.discard(a);
@@ -222,18 +222,21 @@ impl Frame<'_, '_> {
                 self.line(format!("{} = 0.0;", result.code));
             } else if let Some(default) = element_default {
                 let default = self.constant(default, true);
-                self.line(format!(
-                    "sv4_replace(&{}, sv4_array_conditional_merge({}, {}, {}));",
-                    result.code, a.code, b.code, default.code
-                ));
+                self.assign(
+                    &format!("&{}", result.code),
+                    &format!(
+                        "sv4_array_conditional_merge({}, {}, {})",
+                        a.code, b.code, default.code
+                    ),
+                );
                 self.discard(default);
             } else if let Some(members) = structure_members {
                 self.structure_merge(&result, &a, &b, members);
             } else {
-                self.line(format!(
-                    "sv4_replace(&{}, sv4_mux({}, {}, {}));",
-                    result.code, selector.code, a.code, b.code
-                ));
+                self.assign(
+                    &format!("&{}", result.code),
+                    &format!("sv4_mux({}, {}, {})", selector.code, a.code, b.code),
+                );
             }
             self.discard(a);
             self.discard(b);
@@ -252,10 +255,10 @@ impl Frame<'_, '_> {
     ) {
         // `result` is a fresh slot. Initialize its storage before the
         // per-member part-select writes populate the complete payload.
-        self.line(format!(
-            "sv4_replace(&{}, sv4_zero({}, 0));",
-            result.code, result.width
-        ));
+        self.assign(
+            &format!("&{}", result.code),
+            &format!("sv4_zero({}, 0)", result.width),
+        );
         for member in members {
             let high = member.offset + member.width - 1;
             let left_member = self.value(
@@ -386,10 +389,10 @@ impl Frame<'_, '_> {
                                 format!("{operation}({}, {})", source.code, endpoint.code)
                             };
                             let check = self.replace(endpoint, code, 1, false);
-                            self.line(format!(
-                                "sv4_replace(&{}, sv4_logand({}, {}));",
-                                matched.code, matched.code, check.code
-                            ));
+                            self.assign(
+                                &format!("&{}", matched.code),
+                                &format!("sv4_logand({}, {})", matched.code, check.code),
+                            );
                             self.discard(check);
                         }
                     }
@@ -438,10 +441,10 @@ impl Frame<'_, '_> {
                         format!("sv4_wild_eq({}, {})", source.code, item.code)
                     };
                     let check = self.replace(item, code, 1, false);
-                    self.line(format!(
-                        "sv4_replace(&{}, sv4_logor({}, {}));",
-                        matched.code, matched.code, check.code
-                    ));
+                    self.assign(
+                        &format!("&{}", matched.code),
+                        &format!("sv4_logor({}, {})", matched.code, check.code),
+                    );
                     self.discard(check);
                     if let Some(key) = key {
                         self.discard(key);
@@ -475,10 +478,10 @@ impl Frame<'_, '_> {
                             format!("sv4_wild_eq({}, {})", source.code, item.code)
                         };
                         let check = self.replace(item, code, 1, false);
-                        self.line(format!(
-                            "sv4_replace(&{}, sv4_logor({}, {}));",
-                            matched.code, matched.code, check.code
-                        ));
+                        self.assign(
+                            &format!("&{}", matched.code),
+                            &format!("sv4_logor({}, {})", matched.code, check.code),
+                        );
                         self.discard(check);
                         self.line("}");
                     }
@@ -486,10 +489,10 @@ impl Frame<'_, '_> {
                     matched
                 }
             };
-            self.line(format!(
-                "sv4_replace(&{}, sv4_logor({}, {}));",
-                result.code, result.code, matched.code
-            ));
+            self.assign(
+                &format!("&{}", result.code),
+                &format!("sv4_logor({}, {})", result.code, matched.code),
+            );
             self.discard(matched);
             self.line("}");
         }

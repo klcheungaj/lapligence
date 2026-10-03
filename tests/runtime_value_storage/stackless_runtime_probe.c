@@ -380,7 +380,72 @@ static void check_arena_counters(void) {
     CHECK(after_cleanup.cached_bytes == 0);
 }
 
+/* A recursive non-suspending coroutine run by the synchronous driver, as
+ * generated for recursive subprograms: each level is an arena anchor, so the
+ * native stack does not grow with the depth. One level also starts a nested
+ * driver from plain C, as a call into another recursive component does. */
+typedef struct {
+    llg_co_frame_t co;
+    unsigned n;
+    unsigned* result;
+    unsigned inner;
+    llg_co_anchor_t* slot;
+} sync_count_frame_t;
+LLG_CO_ANCHORED_OK(sync_count_frame_t);
+
+enum { SYNC_DEPTH = 200000u, SYNC_NESTED_AT = 1000u, SYNC_NESTED_DEPTH = 300u };
+static const llg_co_desc_t sync_count_desc;
+static unsigned count_synchronously(unsigned n);
+
+static llg_co_status_t sync_count(llg_co_frame_t* co, llg_co_chain_t* ch) {
+    sync_count_frame_t* F = (sync_count_frame_t*)co;
+    LLG_CO_DISPATCH_BEGIN(co)
+    LLG_CO_RESUME_CASE(1)
+    LLG_CO_DISPATCH_END(co)
+    if (F->n == 0) {
+        *F->result = 0;
+        return LLG_CO_DONE;
+    }
+    LLG_CO_ARENA_ENTER(ch, &sync_count_desc, F->slot);
+    {
+        sync_count_frame_t* callee =
+            (sync_count_frame_t*)LLG_CO_ANCHOR_FRAME(F->slot);
+        callee->n = F->n - 1;
+        callee->result = &F->inner;
+    }
+    LLG_CO_CALL_ARENA(co, ch, 1, &sync_count_desc, F->slot);
+    if (F->n == SYNC_NESTED_AT)
+        CHECK(count_synchronously(SYNC_NESTED_DEPTH) == SYNC_NESTED_DEPTH);
+    *F->result = F->inner + 1;
+    return LLG_CO_DONE;
+}
+
+static const llg_co_desc_t sync_count_desc = {
+    sync_count, "sync count", sizeof(sync_count_frame_t), NULL, 0, 0};
+
+static unsigned count_synchronously(unsigned n) {
+    llg_co_sync_t sync;
+    unsigned result = ~0u;
+    sync_count_frame_t* frame =
+        (sync_count_frame_t*)llg_co_sync_begin(&sync, &sync_count_desc, NULL);
+    CHECK(frame->co.state == 0);
+    frame->n = n;
+    frame->result = &result;
+    CHECK(llg_co_sync_run(&sync) == LLG_CO_DONE);
+    CHECK(sync.chain.arena.head == NULL);
+    CHECK(sync.chain.resume == NULL);
+    return result;
+}
+
+static void check_synchronous_driver(void) {
+    llg_rt_init();
+    CHECK(count_synchronously(0) == 0);
+    CHECK(count_synchronously(SYNC_DEPTH) == SYNC_DEPTH);
+    llg_rt_cleanup();
+}
+
 int main(void) {
+    check_synchronous_driver();
     check_deep_cancellation();
     check_join_none_boundaries();
     check_stop_paths();

@@ -209,7 +209,7 @@ endmodule
         model.contains("sv4_to_bool(G_tb_go)") && model.contains("llg_arm_any_dependencies("),
         "borrowed condition read and coroutine wait must both be emitted"
     );
-    assert!(!model.contains("sv4_clone(&G_tb_go)"));
+    assert!(!model.contains(", &G_tb_go);"));
     assert!(
         model.contains("fn_tb_wait_for"),
         "wait-bearing task must use its native C call inside the caller coroutine"

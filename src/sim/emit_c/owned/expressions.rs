@@ -535,14 +535,12 @@ impl Frame<'_, '_> {
             };
             format!("{function}({}, {})", a.code, b.code)
         };
-        let into = match op {
-            IrBinOp::Add => Some("sv4_add_into"),
-            IrBinOp::Sub => Some("sv4_sub_into"),
-            IrBinOp::Mul => Some("sv4_mul_into"),
-            _ => None,
-        }
-        .filter(|_| a.width != 0 && b.width != 0);
-        let result = if let Some(function) = into {
+        // Add/sub/mul reuse a same-width destination payload, so their result
+        // is written into an operand's own slot whenever one is owned.
+        let into = matches!(op, IrBinOp::Add | IrBinOp::Sub | IrBinOp::Mul)
+            && a.width != 0
+            && b.width != 0;
+        let result = if into {
             let mut destination = if a.slot.is_some() {
                 self.reserve_reused(&a, expr.width, expr.signed)
             } else if b.slot.is_some() {
@@ -550,10 +548,7 @@ impl Frame<'_, '_> {
             } else {
                 self.reserve(expr.width, expr.signed)
             };
-            self.line(format!(
-                "{function}(&{}, {}, {});",
-                destination.code, a.code, b.code
-            ));
+            self.assign(&format!("&{}", destination.code), &code);
             destination.fill = None;
             if destination.slot != a.slot {
                 self.discard(a);

@@ -31,7 +31,10 @@ use std::fmt;
 
 use crate::sim::ir::{IrJoinKind, IrModel, IrObjectStmt, IrPreFn, IrProcessControl, IrStmt};
 
-use super::{effects_for_statements, ExecutionEffect, ExecutionProcess, ExecutionTerminator};
+use super::recursion::RecursionAnalysis;
+use super::{
+    effects_for_statements, CallTarget, ExecutionEffect, ExecutionProcess, ExecutionTerminator,
+};
 
 /// Default crossover for direct polling, matching `LLG_CO_POLL_DEPTH_MAX`.
 pub const DEFAULT_POLL_DEPTH_MAX: usize = 3;
@@ -173,6 +176,7 @@ pub struct ExecutionAnalysis {
     callee_first: Vec<usize>,
     function_depths: Vec<Option<usize>>,
     sites: BTreeMap<CoroutineId, BTreeMap<OperationPath, SuspensionSite>>,
+    recursion: RecursionAnalysis,
 }
 
 impl ExecutionAnalysis {
@@ -371,6 +375,7 @@ impl ExecutionAnalysis {
             sites.insert(owner, numbered);
         }
 
+        let recursion = RecursionAnalysis::analyze(ir, &coroutine_functions);
         Ok(Self {
             options,
             forced_arena_callees: forced_arena_callees.clone(),
@@ -378,6 +383,7 @@ impl ExecutionAnalysis {
             callee_first,
             function_depths,
             sites,
+            recursion,
         })
     }
 
@@ -419,6 +425,33 @@ impl ExecutionAnalysis {
 
     pub fn site(&self, owner: CoroutineId, path: &OperationPath) -> Option<&SuspensionSite> {
         self.sites.get(&owner)?.get(path)
+    }
+
+    /// Cyclic synchronous call-graph component of `function`, if it is
+    /// recursive (see `execution::recursion`).
+    pub fn recursive_component(&self, function: usize) -> Option<usize> {
+        self.recursion.component(function)
+    }
+
+    /// Whether `function` is also emitted as a synchronous-driver coroutine.
+    pub fn is_recursive_function(&self, function: usize) -> bool {
+        self.recursion.component(function).is_some()
+    }
+
+    /// Whether a call from `caller` to `target` is an arena call: `caller`
+    /// is recursive and some implementation of `target` shares its component.
+    pub fn is_recursive_call(&self, ir: &IrModel, caller: usize, target: &CallTarget) -> bool {
+        self.recursion.recursive_call(ir, caller, target)
+    }
+
+    /// Class virtual slots with an arena-dispatch helper.
+    pub fn recursive_dispatch_slots(&self) -> &BTreeSet<usize> {
+        self.recursion.dispatch_slots()
+    }
+
+    /// Virtual-interface methods with an arena-dispatch helper.
+    pub fn recursive_interface_methods(&self) -> &BTreeSet<(usize, usize)> {
+        self.recursion.interface_methods()
     }
 }
 
@@ -715,7 +748,7 @@ fn suspendable_graph(
     graph
 }
 
-fn strongly_connected_components(
+pub(super) fn strongly_connected_components(
     functions: &BTreeSet<usize>,
     graph: &BTreeMap<usize, BTreeSet<usize>>,
 ) -> Vec<Vec<usize>> {

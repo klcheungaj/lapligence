@@ -58,7 +58,22 @@ descriptors and layout assertions all name the shared type. Each storage-bearing
 callees occupy ordinary members of its deterministic `union callsN`, anchored
 callees use `LLG_CO_ANCHORED(T)`,
 and recursive or oversized callees use `ch->arena`. Descriptor
-offsets use the complete nested member path. Compute conservative LP64 upper
+offsets use the complete nested member path.
+
+Recursive synchronous subprograms (`ExecutionAnalysis::is_recursive_function`)
+render twice from the same body: `<fn>_co` in a `Frame::new_recursive` frame and
+the plain-ABI entry `<fn>`, which copies its parameters into an arena frame from
+`llg_co_sync_begin` and runs `llg_co_sync_run`. Every caller outside the
+component, including dispatchers and DPI exports, keeps calling `<fn>`. The
+coroutine keeps plain-function exits (`llg_rt_exiting`, budget and
+cancellation `goto _llg_return`, `llg_current()` for `self`), numbers its
+resume points as it emits arena calls, and writes its result through the
+`_llg_result` frame pointer at `_llg_return`; the guard writes the result
+default. Arena call sites store by-value packed descriptors, `depth + 1` and a
+destination that survives the resume (temporary slot, reserved native object or
+frame scalar). Dynamic calls use per-slot/method helpers returning an anchor for
+a recursive implementation and NULL after a plain call or dispatch failure.
+Compute conservative LP64 upper
 bounds with every embedded call charged its 16-byte anchor prefix and sibling
 blocks contributing their maximum rather than their sum; the named
 `ExecutionAnalysisOptions::embed_limit` tunable defaults to 16 KiB and forces
@@ -137,11 +152,18 @@ context fill. Two-state coercion remains explicit. VPI callback results first
 normalize to their declared HDL width/sign: registration
 may choose a different runtime shape, and the call arguments specify fallbacks.
 Reuse an owned operand's descriptor for a fresh result, choosing the later owner
-when the earlier operand is borrowed. Add/sub/mul use the additive `sv4_*_into`
-contract; other operations
-install their independent return with `sv4_replace`. Runtime arithmetic may reuse
-same-width payloads; multiply must preserve aliased inputs until completion.
-No HDL destination is mutated before scheduler publication.
+when the earlier operand is borrowed. Install every packed or string result
+through `emit_c::destinations` (`Frame::assign`, `assign_string`, `move_string`):
+it renders the runtime's destination form `op_to(&dst, &a, &b, ...)`, so neither
+a returned descriptor nor a by-value operand needs a per-call-site stack
+temporary, and a generated frame does not grow with its body length
+(`tests/sim_stack_bounds.rs`). Register a new value-returning runtime call there
+together with its `_to` declaration; unregistered producers fall back to
+`sv4_replace`. Non-coroutine functions return packed results through a trailing
+`sv4_t* _llg_result` and borrow packed inputs as `const sv4_t*`. Wide constant
+limbs used by startup code live in file-scope tables, not compound literals.
+Runtime arithmetic may reuse same-width payloads; multiply must preserve aliased
+inputs until completion. No HDL destination is mutated before scheduler publication.
 
 Each model's `PackedConstants` registry deduplicates canonical packed constructors
 by width, signedness and all three planes, including expanded fills. Procedures

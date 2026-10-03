@@ -1533,3 +1533,11 @@ PLI_INT32 vpi_control(PLI_INT32 operation, ...) {
             return 0;
     }
 }
+
+/* Destination-passing `_to` forms, see value/destinations.h. */
+void llg_vpi_call_function_to(sv4_t* dst, const char* name, llg_vpi_arg_t* args, int arg_count, uint32_t fallback_width, int8_t fallback_signed) {
+    sv4_replace(dst, llg_vpi_call_function(name, args, arg_count, fallback_width, fallback_signed));
+}
+void llg_vpi_call_function_site_to(sv4_t* dst, uint64_t site, const char* name, llg_vpi_arg_t* args, int count, uint32_t fallback_width, int8_t fallback_signed) {
+    sv4_replace(dst, llg_vpi_call_function_site(site, name, args, count, fallback_width, fallback_signed));
+}

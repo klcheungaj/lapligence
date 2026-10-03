@@ -90,6 +90,7 @@ pub fn runtime_sources() -> (&'static str, &'static str) {
             include_str!("scheduler/monitors.c"),
             include_str!("scheduler/scheduler.c"),
             include_str!("scheduler/output.c"),
+            include_str!("scheduler/destinations.c"),
         ),
     )
 }
@@ -117,8 +118,12 @@ pub fn value_sources_for(
             include_str!("value/selection_plan.c"),
             include_str!("value/udp.c"),
             include_str!("value/references.c"),
+            include_str!("value/destinations.c"),
         ),
-        super::value_backend::ValueBackend::Compact => "#include \"llg_value.h\"\n",
+        super::value_backend::ValueBackend::Compact => concat!(
+            "#include \"llg_value.h\"\n",
+            include_str!("value/destinations.c"),
+        ),
     };
     (include_str!("llg_value.h"), source)
 }
@@ -135,9 +140,11 @@ pub fn value_backend_sources(
                 include_str!("value/consumer_bridge.h"),
             ),
             ("value/bridge.h", include_str!("value/bridge.h")),
+            ("value/destinations.h", include_str!("value/destinations.h")),
         ],
         super::value_backend::ValueBackend::Compact => &[
             ("value/bridge.h", include_str!("value/bridge.h")),
+            ("value/destinations.h", include_str!("value/destinations.h")),
             ("value_gmp/backend.h", include_str!("value_gmp/backend.h")),
             (
                 "value_gmp/reference_types.h",
@@ -220,6 +227,7 @@ pub fn container_sources() -> (&'static str, &'static str) {
             include_str!("container/associative_arrays.c"),
             include_str!("container/associative_values.c"),
             include_str!("container/associative_value_queries.c"),
+            include_str!("container/destinations.c"),
         ),
     )
 }

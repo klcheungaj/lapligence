@@ -656,6 +656,50 @@ int llg_assoc_prev_string(const llg_assoc_t* array, const void* current,
                           size_t current_length, const unsigned char** key,
                           size_t* key_length);
 
+/* Destination-passing forms of the packed-returning calls above, used by
+ * generated code (see value/destinations.h). `X_to(dst, ...)` replaces the
+ * initialized owner at dst with exactly the result `X(...)` would return. Packed
+ * arguments are borrowed by address; string arguments are consumed through
+ * their address and left empty, like the returning forms' by-value strings. */
+void llg_dyn_value_get_nested_to(sv4_t* dst, const llg_dyn_value_array_t* array, const sv4_t* indices, size_t count);
+void llg_fixed_stream_source_to(sv4_t* dst, const sv4_t* values, int64_t declaration_left, int64_t declaration_right, uint32_t element_width, int element_two_state, int selector_kind, const sv4_t* first, const sv4_t* second);
+void llg_stream_to_fixed_to(sv4_t* dst, const sv4_t* value, uint32_t width, int is_signed);
+void llg_queue_value_get_to(sv4_t* dst, const llg_queue_value_array_t* queue, const sv4_t* index);
+void llg_queue_value_get_nested_to(sv4_t* dst, const llg_queue_value_array_t* queue, const sv4_t* indices, size_t count);
+void llg_dyn_stream_to(sv4_t* dst, const llg_dyn_array_t* array, uint32_t slice, int right_to_left, int selector_kind, const sv4_t* first, const sv4_t* second);
+void llg_dyn_get_to(sv4_t* dst, const llg_dyn_array_t* array, const sv4_t* index);
+void llg_dyn_reduce_to(sv4_t* dst, const llg_dyn_array_t* array, int operation);
+void llg_dyn_reduce_with_to(sv4_t* dst, const llg_dyn_array_t* array, int operation, uint32_t result_width, int8_t result_signed, int result_two_state, llg_container_eval_fn eval, void* context);
+void llg_queue_stream_to(sv4_t* dst, const llg_queue_t* queue, uint32_t slice, int right_to_left, int selector_kind, const sv4_t* first, const sv4_t* second);
+void llg_queue_get_to(sv4_t* dst, const llg_queue_t* queue, const sv4_t* index);
+void llg_queue_pop_front_to(sv4_t* dst, llg_queue_t* queue);
+void llg_queue_pop_back_to(sv4_t* dst, llg_queue_t* queue);
+void llg_queue_front_to(sv4_t* dst, const llg_queue_t* queue);
+void llg_queue_back_to(sv4_t* dst, const llg_queue_t* queue);
+void llg_queue_reduce_to(sv4_t* dst, const llg_queue_t* queue, int operation);
+void llg_queue_reduce_with_to(sv4_t* dst, const llg_queue_t* queue, int operation, uint32_t result_width, int8_t result_signed, int result_two_state, llg_container_eval_fn eval, void* context);
+void llg_queue_cell_read_to(sv4_t* dst, const void* cell);
+void llg_queue_ref_read_to(sv4_t* dst, const llg_queue_t* queue, uint64_t identity);
+void llg_assoc_value_get_integral_to(sv4_t* dst, const llg_assoc_value_t* array, const sv4_t* key);
+void llg_assoc_value_get_nested_integral_to(sv4_t* dst, const llg_assoc_value_t* array, const sv4_t* indices, size_t count);
+void llg_assoc_value_at_to(sv4_t* dst, const llg_assoc_t* array, size_t index);
+void llg_assoc_reduce_to(sv4_t* dst, const llg_assoc_t* array, int operation);
+void llg_assoc_reduce_with_to(sv4_t* dst, const llg_assoc_t* array, int operation, uint32_t result_width, int8_t result_signed, int result_two_state, llg_container_eval_fn eval, void* context);
+void llg_assoc_get_integral_to(sv4_t* dst, const llg_assoc_t* array, const sv4_t* key);
+void llg_assoc_get_string_to(sv4_t* dst, const llg_assoc_t* array, const void* key, size_t key_length);
+
+/* String destination forms: `X_to(dst, ...)` replaces the expression owner at
+ * dst (destroyed first; it must carry no change callback) with the string
+ * `X(...)` would return. Argument conventions match the packed forms above. */
+void llg_dyn_value_get_string_to(llg_string_t* dst, const llg_dyn_value_array_t* array, const sv4_t* index);
+void llg_dyn_value_get_nested_string_to(llg_string_t* dst, const llg_dyn_value_array_t* array, const sv4_t* indices, size_t count);
+void llg_queue_value_get_string_to(llg_string_t* dst, const llg_queue_value_array_t* queue, const sv4_t* index);
+void llg_queue_value_get_nested_string_to(llg_string_t* dst, const llg_queue_value_array_t* queue, const sv4_t* indices, size_t count);
+void llg_assoc_value_get_integral_string_to(llg_string_t* dst, const llg_assoc_value_t* array, const sv4_t* key);
+void llg_assoc_value_get_nested_integral_string_to(llg_string_t* dst, const llg_assoc_value_t* array, const sv4_t* indices, size_t count);
+void llg_assoc_value_get_string_to(llg_string_t* dst, const llg_assoc_value_t* array, const void* key, size_t key_length);
+void llg_assoc_value_get_string_string_to(llg_string_t* dst, const llg_assoc_value_t* array, const void* key, size_t key_length);
+
 #ifdef __cplusplus
 }
 #endif

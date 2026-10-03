@@ -46,7 +46,7 @@ impl Frame<'_, '_> {
             ));
             self.line("#endif");
         }
-        let fields = super::super::model::owned_func_param_fields(function);
+        let fields = super::super::model::owned_frame_param_fields(function);
         if fields.len() != parameters.len() {
             return Err("coroutine call argument layout mismatch".to_owned());
         }
@@ -72,6 +72,102 @@ impl Frame<'_, '_> {
             }
         }
         Ok(())
+    }
+
+    /// Arena call from a recursive subprogram's coroutine into its own
+    /// component. `parameters` are the callee's plain parameters in order,
+    /// with packed inputs as by-value descriptors for a static callee frame.
+    /// The result destination is caller storage that survives the resume: a
+    /// temporary slot, a reserved native object or a frame-resident scalar.
+    fn recursive_call(
+        &mut self,
+        function: &IrFunc,
+        target: crate::sim::execution::CallTarget,
+        parameters: Vec<String>,
+        native_result: Option<NativeValue>,
+    ) -> Result<Option<CallValue>, String> {
+        use crate::sim::execution::CallTarget;
+        let (result, destination) = if let Some(value) = native_result {
+            let destination = value.address.clone();
+            (Some(CallValue::Native(value)), Some(destination))
+        } else if let Some(ty) = function.ret {
+            if ty.width() == 0 {
+                let name = self.scalar("double", "0.0".to_owned());
+                let destination = format!("&{name}");
+                (
+                    Some(CallValue::Numeric(Value {
+                        code: name,
+                        width: 0,
+                        signed: ty.signed(),
+                        fill: None,
+                        slot: None,
+                        borrowed_address: None,
+                    })),
+                    Some(destination),
+                )
+            } else {
+                let value = self.reserve(ty.width(), ty.signed());
+                let destination = format!("&{}", value.code);
+                (Some(CallValue::Numeric(value)), Some(destination))
+            }
+        } else {
+            (None, None)
+        };
+        let storage = self.declare("llg_co_anchor_t*", "arena_call", "NULL".to_owned());
+        match target {
+            CallTarget::Static(callee) => {
+                let name = &self.ctx.model.func(callee).c_name;
+                let descriptor = format!("{name}_co_desc");
+                let child = format!("(*({name}_co_frame_t*)LLG_CO_ANCHOR_FRAME({storage}))");
+                self.line(format!("LLG_CO_ARENA_ENTER(ch, &{descriptor}, {storage});"));
+                let fields = super::super::model::owned_frame_param_fields(function);
+                if fields.len() != parameters.len() {
+                    return Err("recursive call argument layout mismatch".to_owned());
+                }
+                for ((_, field), value) in fields.iter().zip(&parameters) {
+                    self.line(format!("{child}.{field} = {value};"));
+                }
+                if let Some(destination) = destination {
+                    self.line(format!("{child}._llg_result = {destination};"));
+                }
+                let resume = self.next_recursive_resume();
+                self.line(format!(
+                    "LLG_CO_CALL_ARENA(co, ch, {resume}, &{descriptor}, {storage});"
+                ));
+                // A synchronous resume never yields to the scheduler, so only a
+                // callee that may disable makes this a cancellation point, as
+                // for a plain call (see `call_target`).
+                if !self.callee_may_disable(callee) {
+                    self.cancellation_points -= 1;
+                }
+            }
+            CallTarget::Virtual(_) | CallTarget::Interface(..) => {
+                let helper = match target {
+                    CallTarget::Interface(interface, method) => {
+                        format!("llg_vif_co_enter_{interface}_{method}")
+                    }
+                    _ => format!(
+                        "llg_class_co_enter_{}",
+                        function
+                            .virtual_slot
+                            .ok_or_else(|| "virtual call has no slot".to_owned())?
+                    ),
+                };
+                let mut arguments = vec!["ch".to_owned()];
+                arguments.extend(parameters);
+                arguments.extend(destination);
+                self.line(format!("{storage} = {helper}({});", arguments.join(", ")));
+                // A null anchor means the selected implementation already ran
+                // as a plain call (or dispatch failed and wrote the default).
+                self.line(format!("if ({storage}) {{"));
+                let resume = self.next_recursive_resume();
+                self.line(format!(
+                    "LLG_CO_CALL_ARENA(co, ch, {resume}, {storage}->desc, {storage});"
+                ));
+                self.line("}");
+            }
+        }
+        Ok(result)
     }
 
     #[cfg_attr(not(test), allow(dead_code))] // test-only entry point for owned-call boundary tests
@@ -144,6 +240,22 @@ impl Frame<'_, '_> {
         {
             self.line("llg_ref_scope_begin_owned();");
         }
+        // Coroutine frames hold argument descriptors; plain functions borrow
+        // packed inputs by address (see `model::functions::func_param_fields`).
+        let coroutine = self.coroutine_functions.contains(&f);
+        // A recursive coroutine enters its own component through the chain
+        // arena (see `execution::recursion`): statically with the callee's
+        // frame, dynamically through an arena-dispatch helper taking the
+        // plain parameters.
+        let recursive_target =
+            crate::sim::execution::CallTarget::of_call(f, virtual_dispatch, virtual_call);
+        let recursive = !coroutine && self.recursive_targets.contains(&recursive_target);
+        let by_value_inputs = coroutine
+            || (recursive
+                && matches!(
+                    recursive_target,
+                    crate::sim::execution::CallTarget::Static(_)
+                ));
         let mut owners = Vec::new();
         let mut copyouts = Vec::new();
         let mut native_owners = Vec::new();
@@ -249,7 +361,11 @@ impl Frame<'_, '_> {
                                 automatic: true,
                             },
                         );
-                    parameters.push(value.code.clone());
+                    parameters.push(if by_value_inputs || value.width == 0 {
+                        value.code.clone()
+                    } else {
+                        format!("&{}", value.code)
+                    });
                     owners.push(value);
                 }
                 IrCallArg::StringVal(expression) => {
@@ -289,7 +405,7 @@ impl Frame<'_, '_> {
                     let storage = if let Some(address) = storage_addr {
                         let storage = self.native_address(address, NativeKind::String)?;
                         self.line(format!(
-                            "llg_string_move({}, llg_string_clone({}));",
+                            "llg_string_assign({}, {});",
                             storage.address, temporary.address
                         ));
                         storage
@@ -382,15 +498,24 @@ impl Frame<'_, '_> {
         }
         parameters.push(depth.code().to_owned());
         let call_mark = self.cancellation_mark();
-        let coroutine = self.coroutine_functions.contains(&f);
         let result = if coroutine {
             self.coroutine_call(f, &function, &parameters)?;
             None
+        } else if recursive {
+            self.recursive_call(&function, recursive_target, parameters, native_result)?
         } else {
             let invocation = format!("{callee}({})", parameters.join(", "));
             let result = if let Some(value) = native_result {
                 self.line(format!("{} = {invocation};", value.code()));
                 Some(CallValue::Native(value))
+            } else if super::super::model::owned_packed_result(&function) {
+                // The callee replaces this initialized slot through its
+                // trailing `_llg_result` destination parameter.
+                let ty = function.ret.expect("packed result has a type");
+                let value = self.reserve(ty.width(), ty.signed());
+                parameters.push(format!("&{}", value.code));
+                self.line(format!("{callee}({});", parameters.join(", ")));
+                Some(CallValue::Numeric(value))
             } else if let Some(ty) = function.ret {
                 Some(CallValue::Numeric(self.value(
                     invocation,
@@ -431,7 +556,7 @@ impl Frame<'_, '_> {
         }
         for (target, storage) in string_copyouts {
             self.line(format!(
-                "llg_string_move({}, llg_string_clone({}));",
+                "llg_string_assign({}, {});",
                 target.address, storage.address
             ));
         }

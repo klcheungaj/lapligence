@@ -5,9 +5,9 @@ use crate::sim::ir::{IrPatternCheck, IrPatternExpr, IrPatternMatchKind};
 #[test]
 fn recursive_pattern_checks_use_the_selected_comparator() {
     for (mode, comparator) in [
-        (IrPatternMatchKind::Exact, "sv4_case_eq("),
-        (IrPatternMatchKind::Casez, "sv4_casez_eq("),
-        (IrPatternMatchKind::Casex, "sv4_casex_eq("),
+        (IrPatternMatchKind::Exact, "sv4_case_eq_to("),
+        (IrPatternMatchKind::Casez, "sv4_casez_eq_to("),
+        (IrPatternMatchKind::Casex, "sv4_casex_eq_to("),
     ] {
         let model = IrModel::new("pattern_modes".to_owned(), 1).unwrap();
         let ctx = RCtx {

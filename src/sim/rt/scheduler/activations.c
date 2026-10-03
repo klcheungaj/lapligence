@@ -9,13 +9,15 @@ static void activation_retain(llg_activation_t* activation) {
 }
 
 static void activation_release(llg_activation_t* activation) {
-    if (!activation) return;
-    if (activation->refs == 0) {
-        fprintf(stderr, "llg: named activation reference count underflow\n");
-        abort();
-    }
-    activation->refs--;
-    if (activation->refs == 0) {
+    // Iterative: the parent chain follows lexical and call nesting, so its
+    // length depends on the design and must not consume native stack.
+    while (activation) {
+        if (activation->refs == 0) {
+            fprintf(stderr, "llg: named activation reference count underflow\n");
+            abort();
+        }
+        activation->refs--;
+        if (activation->refs != 0) return;
         // A detached activation can remain the owner of a join_none group.
         // Keep its lexical ancestry alive until that last owner reference is
         // released so a later disable of an active outer scope still finds
@@ -23,7 +25,7 @@ static void activation_release(llg_activation_t* activation) {
         llg_activation_t* parent = activation->parent;
         activation->parent = NULL;
         free(activation);
-        activation_release(parent);
+        activation = parent;
     }
 }
 

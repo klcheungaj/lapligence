@@ -104,6 +104,50 @@ pub(crate) fn emit_const(c: &IrConst) -> String {
     }
 }
 
+/// Move the limb arrays of a multi-limb [`emit_const`] constructor to
+/// file-scope `static const` tables named `{name}_bits`/`_x`/`_z`, appending
+/// their definitions to `tables`, and return the constructor that reads them.
+/// All-zero X/Z planes become `NULL` (zero-filled by `sv4_from_limbs`).
+///
+/// Compound-literal limb arrays have automatic storage, so a startup function
+/// initializing many wide constants would otherwise hold every array in its
+/// native frame at once (several hundred KiB for one maximum-width constant).
+/// Any other constructor is returned unchanged.
+pub(crate) fn hoist_const_limbs(constructor: &str, name: &str, tables: &mut String) -> String {
+    let Some(rest) = constructor.strip_prefix("sv4_from_limbs(") else {
+        return constructor.to_owned();
+    };
+    let mut planes = Vec::with_capacity(3);
+    let mut rest = rest;
+    for _ in 0..3 {
+        let Some(after) = rest.strip_prefix("(uint64_t[]){") else {
+            return constructor.to_owned();
+        };
+        let Some(end) = after.find('}') else {
+            return constructor.to_owned();
+        };
+        planes.push(&after[..end]);
+        rest = after[end + 1..].trim_start_matches(',').trim_start();
+    }
+    let Some(shape) = rest.strip_suffix(')') else {
+        return constructor.to_owned();
+    };
+    let mut arguments = Vec::with_capacity(3);
+    for (plane, suffix) in planes.iter().zip(["bits", "x", "z"]) {
+        let zero = plane
+            .split(',')
+            .all(|limb| limb.trim() == "0ULL" || limb.trim().is_empty());
+        if zero && suffix != "bits" {
+            arguments.push("NULL".to_owned());
+            continue;
+        }
+        let table = format!("{name}_{suffix}");
+        tables.push_str(&format!("static const uint64_t {table}[] = {{{plane}}};\n"));
+        arguments.push(table);
+    }
+    format!("sv4_from_limbs({}, {shape})", arguments.join(", "))
+}
+
 /// Render a constant converted to an explicit `(width, signed)` vector target:
 /// real payloads go through `sv4_from_real` (at most 64 bits), everything else
 /// through the value-preserving `sv4_cast` keyed on the constant's own
@@ -263,12 +307,19 @@ impl PackedConstants {
         let entries = self.entries.borrow();
         let mut ordered = entries.iter().collect::<Vec<_>>();
         ordered.sort_by_key(|(_, (index, _, _))| *index);
-        let mut out = String::from("static void llg_model_constants_init(void) {\n");
+        let mut tables = String::new();
+        let mut init = String::new();
         for (constructor, (index, _, _)) in &ordered {
-            out.push_str(&format!(
-                "    sv4_replace(&llg_constant_{index}, {constructor});\n"
+            let constructor =
+                hoist_const_limbs(constructor, &format!("llg_constant_{index}"), &mut tables);
+            init.push_str(&format!(
+                "    {}\n",
+                super::destinations::assign(&format!("&llg_constant_{index}"), &constructor)
             ));
         }
+        let mut out = tables;
+        out.push_str("static void llg_model_constants_init(void) {\n");
+        out.push_str(&init);
         out.push_str("}\nstatic void llg_model_constants_destroy(void) {\n");
         for (_, (index, _, _)) in &ordered {
             out.push_str(&format!("    sv4_destroy(&llg_constant_{index});\n"));

@@ -35,4 +35,5 @@
 #include "value/backend.h"
 #endif
 #include "value/bridge.h"
+#include "value/destinations.h"
 #endif

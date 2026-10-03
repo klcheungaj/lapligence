@@ -87,7 +87,7 @@ fn callback_member_writes_and_nested_reads_use_private_owners() {
     }
     assert!(model.signals.is_empty());
     assert_eq!(frame.body().matches("sv4_select_plan_set(").count(), 2);
-    assert!(!frame.body().contains("sv4_clone(&a0)"));
+    assert!(find_copy(frame.body(), "&a0").is_none());
     assert!(!frame.body().contains("llg_ba("));
     assert!(frame.slots.iter().all(|used| !used));
 }
@@ -113,7 +113,7 @@ fn input_member_plan_resolves_the_materialized_input_cell() {
     let value = frame.expression(&number(0x5a, 8)).unwrap();
     frame.store(&target, value, false, "0").unwrap();
     frame.release_target(target);
-    assert!(!frame.body().contains("sv4_clone(&a0)"));
+    assert!(find_copy(frame.body(), "&a0").is_none());
     assert!(frame.slots.iter().all(|used| !used));
 }
 
@@ -153,11 +153,11 @@ fn packed_ref_member_updates_via_the_original_reference_descriptor() {
     frame.release_target(target);
     // Ref descriptors can be tagged views, so the generated read must retain
     // the runtime's checked dispatch while still using the original r0 view.
-    assert!(frame.body().contains("llg_rt_ref_read(r0)"));
+    assert!(frame.body().contains("llg_rt_ref_read_to(") && frame.body().contains(", r0);"));
     assert!(!frame.body().contains("llg_ref_read(r0)"));
     assert!(frame.body().contains("llg_ref_write_masked(r0,"));
     assert!(frame.body().contains("sv4_select_plan_set("));
-    assert!(!frame.body().contains("sv4_clone(&r0)"));
+    assert!(find_copy(frame.body(), "&r0").is_none());
     assert!(frame.slots.iter().all(|used| !used));
 }
 
@@ -179,7 +179,9 @@ fn two_state_member_conversion_precedes_read_modify_write_selection() {
     frame.discard(read);
     frame.release_target(target);
     let body = frame.body();
-    assert!(body.find("sv4_to_two_state(").unwrap() < body.find("sv4_select_plan_read(").unwrap());
+    assert!(
+        body.find("sv4_to_two_state_to(").unwrap() < body.find("sv4_select_plan_read_to(").unwrap()
+    );
     assert!(frame.slots.iter().all(|used| !used));
 }
 
@@ -205,6 +207,6 @@ fn whole_signed_member_reads_restore_the_descriptor_sign() {
     assert!(read.signed);
     frame.discard(read);
     frame.release_target(target);
-    assert!(frame.body().contains("sv4_cast("));
+    assert!(frame.body().contains("sv4_cast_to("));
     assert!(frame.slots.iter().all(|used| !used));
 }

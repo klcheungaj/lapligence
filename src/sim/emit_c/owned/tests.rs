@@ -41,6 +41,21 @@ mod tagged_signed;
 mod toolchain;
 mod value_traffic;
 
+/// Byte offset of the destination-passing clone of `source` (an address
+/// expression): `sv4_copy(<destination>, <source>);`.
+fn find_copy(body: &str, source: &str) -> Option<usize> {
+    let suffix = format!(", {source});");
+    let mut offset = 0;
+    for line in body.split_inclusive('\n') {
+        let statement = line.trim();
+        if statement.starts_with("sv4_copy(") && statement.ends_with(&suffix) {
+            return Some(offset + line.len() - line.trim_start().len());
+        }
+        offset += line.len();
+    }
+    None
+}
+
 fn number(value: u64, width: u32) -> IrExpr {
     let count = width.div_ceil(64) as usize;
     let mut bits = vec![0; count];
@@ -187,8 +202,8 @@ fn conditional_fill_arms_are_owned_and_context_sized() {
     );
     let result = frame.expression(&expression).unwrap();
     frame.discard(result);
-    assert!(frame.body().contains("sv4_fill(1, 65, 0)"));
-    assert!(frame.body().contains("sv4_mux("));
+    assert!(frame.body().contains("sv4_fill_to(&_llg_t[2], 1, 65, 0);"));
+    assert!(frame.body().contains("sv4_mux_to("));
     assert!(frame.body().contains("sv4_move("));
     assert!(!frame.body().contains("({"));
 }
@@ -199,7 +214,7 @@ fn model_has_dynamic_start_close_and_no_width_abi() {
     let source = super::super::model::render(&execution).unwrap();
     assert!(source.contains("#define LLG_MODEL_VALUE_ABI 4"));
     assert!(source.contains("sv4_t G_value = SV4_EMPTY;"));
-    assert!(source.contains("sv4_t _llg_returned = sv4_clone("));
+    assert!(source.contains("sv4_copy(_llg_result, "));
     assert!(source.contains("int llg_model_start("));
     assert!(source.contains("if (llg_rt_is_suspended()) return 2;"));
     assert!(source.contains("llg_rt_cleanup();\n    llg_model_storage_destroy();"));

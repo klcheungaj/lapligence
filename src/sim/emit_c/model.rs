@@ -33,7 +33,7 @@ use storage::{render_signal_decls, render_static_local_decls};
 mod vpi;
 use vpi::{render_vpi_compile_calls, render_vpi_metadata};
 mod functions;
-use functions::{block_stmts_of, func_params, func_prototype};
+use functions::{block_stmts_of, func_params, func_prototype, packed_result};
 mod dpi;
 use dpi::{dpi_external_prototype, dpi_helpers, internal_return_type, render_dpi_thunk};
 mod processes;
@@ -41,6 +41,7 @@ use processes::process_runtime_name;
 mod initialization;
 mod net_batches;
 mod pca_batches;
+mod recursion;
 mod sharing;
 
 /// The recursion depth guard shared by emitted functions and DPI thunks.
@@ -51,6 +52,33 @@ pub(super) fn owned_func_params(function: &IrFunc) -> String {
 }
 pub(super) fn owned_func_param_fields(function: &IrFunc) -> Vec<(String, String)> {
     functions::func_param_fields(function)
+}
+/// Coroutine argument fields; see `functions::frame_param_fields`.
+pub(super) fn owned_frame_param_fields(function: &IrFunc) -> Vec<(String, String)> {
+    functions::frame_param_fields(function)
+}
+/// C return type of a non-coroutine function (`void` for packed results).
+pub(super) fn owned_function_return_type(function: &IrFunc) -> &'static str {
+    function_return_type(function)
+}
+/// The `_llg_result` frame field of a recursive subprogram's coroutine: a
+/// pointer to the caller's initialized result storage, or `None` for void.
+pub(super) fn recursive_result_field(function: &IrFunc) -> Option<(String, String)> {
+    let ty = if function.ret_string {
+        "llg_string_t*"
+    } else if function.ret_chandle {
+        "void**"
+    } else {
+        match function.ret {
+            Some(IrType::Real { .. }) => "double*",
+            Some(_) => "sv4_t*",
+            None => return None,
+        }
+    };
+    Some((ty.to_owned(), "_llg_result".to_owned()))
+}
+pub(super) fn owned_packed_result(function: &IrFunc) -> bool {
+    functions::packed_result(function)
 }
 pub(super) fn owned_dpi_thunk(function: &IrFunc) -> Result<String, String> {
     render_dpi_thunk(function)
@@ -158,6 +186,9 @@ struct CoroutineArtifact {
     shared_entry: Option<String>,
     pca_batches: Vec<super::statements::pca_batches::Batch>,
     net_batches: Vec<super::owned::net_batches::NetBatch>,
+    /// Resume points of a recursive subprogram's coroutine, numbered during
+    /// emission; other coroutines take their sites from the analysis.
+    recursive_sites: Option<usize>,
 }
 
 type CoroutineArtifacts = BTreeMap<usize, CoroutineArtifact>;
@@ -213,10 +244,55 @@ fn render_coroutine_functions(
                 shared_entry: None,
                 pca_batches: Vec::new(),
                 net_batches: Vec::new(),
+                recursive_sites: None,
             },
         );
     }
     Ok((artifacts, upper_bounds))
+}
+
+/// Coroutines of recursive subprograms (see `execution::recursion`). Each
+/// source holds `<fn>_co` and the plain-ABI entry `<fn>` that drives it.
+fn render_recursive_functions(
+    execution: &ExecutionModel,
+    backend: crate::sim::value_backend::ValueBackend,
+    constants: &super::constants::PackedConstants,
+) -> Result<CoroutineArtifacts, String> {
+    let model = execution.ir();
+    let mut artifacts = BTreeMap::new();
+    for (index, function) in model.funcs.iter().enumerate() {
+        if !execution.analysis().is_recursive_function(index) {
+            continue;
+        }
+        let ctx = RCtx {
+            value_backend: backend,
+            model,
+            func: Some(function),
+            sampled: false,
+            activation_label: None,
+            constants: Some(constants),
+        };
+        let (source, layout, sites) =
+            super::owned::model::recursive_function(&ctx, function, index, execution.analysis())?;
+        artifacts.insert(
+            index,
+            CoroutineArtifact {
+                source,
+                layout,
+                frame_type: format!("{}_co_frame_t", function.c_name),
+                desc_name: format!("{}_co_desc", function.c_name),
+                display_name: function.diagnostic_name().to_owned(),
+                location: origin_location(function.origin()),
+                owner: CoroutineId::Function(index),
+                root: false,
+                shared_entry: None,
+                pca_batches: Vec::new(),
+                net_batches: Vec::new(),
+                recursive_sites: Some(sites),
+            },
+        );
+    }
+    Ok(artifacts)
 }
 
 fn render_coroutine_processes(
@@ -264,6 +340,7 @@ fn render_coroutine_processes(
                 shared_entry: None,
                 pca_batches,
                 net_batches,
+                recursive_sites: None,
             }))
         })
         .collect()
@@ -325,6 +402,7 @@ fn render_coroutine_branches(
                     shared_entry: None,
                     pca_batches: Vec::new(),
                     net_batches: Vec::new(),
+                    recursive_sites: None,
                 },
             );
         }
@@ -357,6 +435,7 @@ fn render_coroutine_branches(
                     shared_entry: None,
                     pca_batches: Vec::new(),
                     net_batches: Vec::new(),
+                    recursive_sites: None,
                 },
             );
         }
@@ -369,6 +448,9 @@ fn render_coroutine_metadata(
     analysis: &ExecutionAnalysis,
     model: &IrModel,
 ) -> Result<String, String> {
+    if let Some(count) = artifact.recursive_sites {
+        return render_recursive_metadata(artifact, count);
+    }
     let sites = analysis
         .sites(artifact.owner)
         .ok_or_else(|| format!("missing coroutine sites for {:?}", artifact.owner))?;
@@ -431,6 +513,40 @@ fn render_coroutine_metadata(
     Ok(out)
 }
 
+/// Descriptor of a recursive subprogram's coroutine. Its resume points are
+/// arena calls, which backtraces follow through the anchor chain, so every
+/// site records no static callee.
+fn render_recursive_metadata(artifact: &CoroutineArtifact, count: usize) -> Result<String, String> {
+    let mut out = format!(
+        "#if UINTPTR_MAX == UINT64_MAX\n_Static_assert(sizeof({}) <= {}, \"coroutine frame exceeds selected layout estimate\");\n#endif\n",
+        artifact.frame_type,
+        artifact.layout.upper_bound()?
+    );
+    let location = c_string_literal(&artifact.location);
+    out.push_str(&format!(
+        "static const llg_co_site_t {}_sites[{}] = {{\n    {{0}},\n",
+        artifact.desc_name,
+        count + 1
+    ));
+    for _ in 0..count {
+        out.push_str(&format!("    {{ NULL, 0, 0, {location} }},\n"));
+    }
+    out.push_str("};\n");
+    let entry = artifact
+        .desc_name
+        .strip_suffix("_desc")
+        .ok_or_else(|| format!("invalid coroutine descriptor name {}", artifact.desc_name))?;
+    out.push_str(&format!(
+        "static const llg_co_desc_t {} = {{ {entry}, {}, sizeof({}), {}_sites, {}, 0 }};\n",
+        artifact.desc_name,
+        c_string_literal(&artifact.display_name),
+        artifact.frame_type,
+        artifact.desc_name,
+        count + 1
+    ));
+    Ok(out)
+}
+
 /// One frame typedef shared by every coroutine whose layout it describes.
 struct SharedFrameType {
     name: String,
@@ -454,6 +570,7 @@ struct SharedFrameType {
 fn share_frame_types(
     execution: &ExecutionModel,
     functions: &mut CoroutineArtifacts,
+    recursive: &mut CoroutineArtifacts,
     processes: &mut [Option<CoroutineArtifact>],
     branches: &mut BTreeMap<CoroutineId, CoroutineArtifact>,
 ) -> Result<Vec<SharedFrameType>, String> {
@@ -470,6 +587,8 @@ fn share_frame_types(
         }
     }
     ordered.extend(by_index.into_values());
+    // Recursive coroutines embed no callee frames; any order is callee-first.
+    ordered.extend(recursive.values_mut());
     ordered.extend(processes.iter_mut().flatten());
     ordered.extend(branches.values_mut());
 
@@ -569,9 +688,12 @@ fn render_model(
         render_coroutine_processes(execution, config.backend, &constants, &frame_upper_bounds)?;
     let mut coroutine_branches =
         render_coroutine_branches(execution, config.backend, &constants, &frame_upper_bounds)?;
+    let mut recursive_functions =
+        render_recursive_functions(execution, config.backend, &constants)?;
     let frame_types = share_frame_types(
         execution,
         &mut coroutine_functions,
+        &mut recursive_functions,
         &mut coroutine_processes,
         &mut coroutine_branches,
     )?;
@@ -579,6 +701,7 @@ fn render_model(
     for (index, function) in model.funcs.iter().enumerate() {
         if !super::owned::model::inline_template(function)
             && !coroutine_functions.contains_key(&index)
+            && !recursive_functions.contains_key(&index)
         {
             let ctx = RCtx {
                 value_backend: config.backend,
@@ -655,6 +778,7 @@ fn render_model(
     let mut entries = BTreeSet::new();
     for artifact in coroutine_functions
         .values()
+        .chain(recursive_functions.values())
         .chain(coroutine_branches.values())
         .chain(coroutine_processes.iter().filter_map(Option::as_ref))
     {
@@ -685,6 +809,13 @@ fn render_model(
     let mut coroutine_metadata = String::new();
     for &index in execution.analysis().callee_first_functions() {
         let artifact = &coroutine_functions[&index];
+        coroutine_metadata.push_str(&render_coroutine_metadata(
+            artifact,
+            execution.analysis(),
+            model,
+        )?);
+    }
+    for artifact in recursive_functions.values() {
         coroutine_metadata.push_str(&render_coroutine_metadata(
             artifact,
             execution.analysis(),
@@ -842,6 +973,7 @@ fn render_model(
     render_virtual_dispatch_prototypes(model, &mut out);
     render_virtual_interface_call_prototypes(model, &mut out);
     render_virtual_dispatch_bodies(model, &mut out);
+    recursion::render_arena_dispatch(execution, &recursive_functions, &mut out);
     let ctx = RCtx {
         value_backend: config.backend,
         model,
@@ -866,6 +998,8 @@ fn render_model(
             }
         }
         if let Some(artifact) = coroutine_functions.get(&index) {
+            out.push_str(&artifact.source);
+        } else if let Some(artifact) = recursive_functions.get(&index) {
             out.push_str(&artifact.source);
         } else {
             out.push_str(&plain_functions[&index]);

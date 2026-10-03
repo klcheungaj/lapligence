@@ -4,6 +4,9 @@ pub(in crate::sim::emit_c) fn key_adapters() -> &'static str {
      \x20   sv4_t result = llg_assoc_get_string(array, key.data, key.len);\n\
      \x20   return result;\n\
      }\n\
+     static void llg_owned_assoc_get_string_to(sv4_t *dst, const llg_assoc_t *array, llg_string_t key) {\n\
+     \x20   llg_assoc_get_string_to(dst, array, key.data, key.len);\n\
+     }\n\
      static int llg_owned_assoc_exists_string(const llg_assoc_t *array, llg_string_t key) {\n\
      \x20   int result = llg_assoc_exists_string(array, key.data, key.len);\n\
      \x20   return result;\n\

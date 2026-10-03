@@ -174,6 +174,7 @@ holds for inline values: mutation of a result must never mutate an input.
 | Existing selected writes | Borrow RHS; snapshot exact/overlapping selected aliases before modifying the target. |
 | Neutral setters/imports | Mutate only an initialized owner, keep width/address/sign, publish no scheduler notifications. Inputs are scalar copies or external buffers, never private payload aliases. |
 | `sv4_add_into`, `sv4_sub_into`, `sv4_mul_into` | Borrow by-value operands; replace an initialized destination with the independent arithmetic result. Exact destination/operand aliases, including both operands, are supported. Same result width/sign/X behavior as the returning operation. No scheduler publication or caller scratch. Added by EMIT-1; implemented in both backends. |
+| `sv4_<op>_to` destination forms (`value/destinations.h`) | `sv4_<op>_to(dst, operands..., scalars...)` equals `sv4_replace(dst, sv4_<op>(*operands..., scalars...))`: packed operands are borrowed by `const sv4_t*`, dst is an initialized owner and may alias any operand. Generated code uses only these forms (plus `sv4_copy` for clones), so no returned or by-value descriptor needs a per-call-site stack temporary. `value/destinations.c` composes the selected backend's public operations, so both backends share one exact definition; add/sub/mul forward to their `_into` reuse paths. Additive: value ABI 4/5 unchanged. |
 
 Plain struct assignment is permitted only as a synchronous transient borrow or
 an explicit transfer with the previous owner reset. A borrow must not be

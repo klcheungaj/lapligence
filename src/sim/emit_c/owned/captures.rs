@@ -249,11 +249,10 @@ impl Frame<'_, '_> {
                 storage.slot()
             ));
         } else {
-            self.line(format!(
-                "sv4_replace({}, llg_frame_read_value({source}, {}u));",
-                binding.address,
-                storage.slot()
-            ));
+            self.assign(
+                &binding.address,
+                &format!("llg_frame_read_value({source}, {}u)", storage.slot()),
+            );
         }
         Ok(())
     }

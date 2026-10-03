@@ -288,7 +288,7 @@ fn many_electrical_contributions_have_constant_executable_work_shape() {
             1
         );
         assert_eq!(source.matches("llg_net_write(").count(), 1);
-        assert_eq!(source.matches("sv4_part_select(").count(), 1);
+        assert_eq!(source.matches("sv4_part_select_to(").count(), 1);
         assert_eq!(source.matches("for (; _llg_net_i_").count(), 1);
         for index in 0..count {
             let width = if index % 2 == 0 { 1 } else { 65 };
@@ -333,13 +333,13 @@ fn electrical_batch_casts_remain_explicit_for_heterogeneous_row_shapes() {
             rhs.width = 64;
         }
         let source = render(model);
-        assert_eq!(source.matches("sv4_cast(").count(), 1);
+        assert_eq!(source.matches("sv4_cast_to(").count(), 1);
         assert_eq!(source.matches("].cast_width").count(), 1);
         assert_eq!(source.matches("].cast_signed").count(), 1);
         assert!(source.contains("{ &g_part_0, 0, 0LL, 0LL, 1, 0 }"));
         assert!(source.contains("{ &g_part_1, 0, 64LL, 0LL, 65, 1 }"));
         assert!(source.contains("{ &g_part_2, 0, 0LL, 0LL, 1, 1 }"));
         assert!(source.contains("{ &g_part_3, 0, 63LL, 0LL, 65, 0 }"));
-        assert_eq!(source.matches("sv4_part_select(").count(), 1);
+        assert_eq!(source.matches("sv4_part_select_to(").count(), 1);
     }
 }

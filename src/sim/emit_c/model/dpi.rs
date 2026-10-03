@@ -119,9 +119,8 @@ pub(super) fn internal_return_type(f: &IrFunc) -> &'static str {
         "void *"
     } else if matches!(f.ret, Some(IrType::Real { .. })) {
         "double"
-    } else if f.ret.is_some() {
-        "sv4_t"
     } else {
+        // Packed results use the `_llg_result` destination parameter.
         "void"
     }
 }
@@ -184,15 +183,18 @@ static sv4_t llg_dpi_sv4_from_logic(svLogic value, int8_t is_signed) {\n\
     case sv_z: return sv4_fill(3, 1, is_signed);\n\
     default: return sv4_from_u64((uint64_t)(value & 1u), 1, is_signed);\n\
     }\n\
+}\n\
+static void llg_dpi_sv4_from_logic_to(sv4_t* dst, svLogic value, int8_t is_signed) {\n\
+    sv4_replace(dst, llg_dpi_sv4_from_logic(value, is_signed));\n\
 }\n\n"
 }
 
 fn dpi_input_expr(form: &crate::sim::ir::IrFormal, idx: usize) -> Result<String, String> {
     Ok(match dpi_scalar(form)? {
-        DpiScalar::Bit => format!("llg_dpi_bit_from_sv4(a{idx})"),
-        DpiScalar::Logic => format!("llg_dpi_logic_from_sv4(a{idx})"),
+        DpiScalar::Bit => format!("llg_dpi_bit_from_sv4(*a{idx})"),
+        DpiScalar::Logic => format!("llg_dpi_logic_from_sv4(*a{idx})"),
         DpiScalar::Int { signed, .. } => format!(
-            "({})sv4_to_{}(a{idx})",
+            "({})sv4_to_{}(*a{idx})",
             dpi_scalar_c_type(dpi_scalar(form)?),
             if signed { "i64" } else { "u64" }
         ),
@@ -272,6 +274,11 @@ pub(super) fn render_dpi_thunk(f: &IrFunc) -> Result<String, String> {
         "return (llg_string_t){0};".to_owned()
     } else if f.ret_chandle {
         "return NULL;".to_owned()
+    } else if packed_result(f) {
+        format!(
+            "{} return;",
+            super::super::destinations::assign("_llg_result", &f.ret_x())
+        )
     } else if f.ret.is_some() {
         format!("return {};", f.ret_x())
     } else {
@@ -344,7 +351,8 @@ pub(super) fn render_dpi_thunk(f: &IrFunc) -> Result<String, String> {
                 formal.signed,
             )?;
             out.push_str(&format!(
-                "    sv4_replace(&_dpi_values[{index}], {value});\n"
+                "    {}\n",
+                super::super::destinations::assign(&format!("&_dpi_values[{index}]"), &value)
             ));
         }
     }
@@ -360,7 +368,8 @@ pub(super) fn render_dpi_thunk(f: &IrFunc) -> Result<String, String> {
                 f.ret.as_ref().is_some_and(IrType::signed),
             )?;
             out.push_str(&format!(
-                "    sv4_replace(&_dpi_values[{result_slot}], {value});\n"
+                "    {}\n",
+                super::super::destinations::assign(&format!("&_dpi_values[{result_slot}]"), &value)
             ));
         }
     }
@@ -375,7 +384,7 @@ pub(super) fn render_dpi_thunk(f: &IrFunc) -> Result<String, String> {
         out.push_str("    if (llg_activation_cancelled()) goto _dpi_return;\n");
         let statement = match dpi_scalar(formal)? {
             DpiScalar::String => {
-                format!("llg_string_move(o{index}, llg_string_take(_dpi_s{index}));")
+                format!("llg_string_move_take(o{index}, _dpi_s{index});")
             }
             DpiScalar::Chandle => format!("*o{index} = _dpi_o{index};"),
             DpiScalar::Real { .. } => format!("llg_ba_d(o{index}, (double)_dpi_o{index});"),
@@ -393,9 +402,14 @@ pub(super) fn render_dpi_thunk(f: &IrFunc) -> Result<String, String> {
         }
         Some(DpiScalar::Chandle) => Some("void* _dpi_result = _dpi_ret;".to_owned()),
         Some(DpiScalar::Real { .. }) => Some("double _dpi_result = (double)_dpi_ret;".to_owned()),
-        Some(_) => Some(format!(
-            "sv4_t _dpi_result = SV4_EMPTY; sv4_move(&_dpi_result, &_dpi_values[{result_slot}]);"
-        )),
+        Some(_) => {
+            // Packed results move into the caller's `_llg_result` before the
+            // thunk's scope ends.
+            out.push_str(&format!(
+                "    sv4_move(_llg_result, &_dpi_values[{result_slot}]);\n"
+            ));
+            None
+        }
         None => None,
     };
     if let Some(result) = &result {

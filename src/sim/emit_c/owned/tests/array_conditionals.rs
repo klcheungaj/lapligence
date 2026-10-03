@@ -32,12 +32,12 @@ fn array_conditional_emits_branch_local_captures_and_default_owner() {
     let body = frame.body();
     assert!(body.contains("} else if (!"));
     let branch = body.rfind("} else {").unwrap();
-    let merge = body.find("sv4_array_conditional_merge(").unwrap();
+    let merge = body.find("sv4_array_conditional_merge_to(").unwrap();
     assert!(branch < merge);
-    assert_eq!(body.matches("sv4_array_conditional_merge(").count(), 1);
-    assert!(!body.contains("sv4_mux("));
+    assert_eq!(body.matches("sv4_array_conditional_merge_to(").count(), 1);
+    assert!(!body.contains("sv4_mux_to("));
     assert!(body[..branch].contains("sv4_move("));
-    assert!(!body[branch..merge].contains("sv4_resize("));
+    assert!(!body[branch..merge].contains("sv4_resize_to("));
     assert!(body[merge..].matches("sv4_destroy(").count() >= 4);
     assert!(frame.slots.iter().all(|live| !live));
     assert!(!body.contains("({"));
@@ -86,10 +86,10 @@ fn structure_conditional_emits_each_member_boundary_and_default_owner() {
     let value = frame.expression(&expr).unwrap();
     frame.discard(value);
     let body = frame.body();
-    assert_eq!(body.matches("sv4_array_conditional_merge(").count(), 3);
+    assert_eq!(body.matches("sv4_array_conditional_merge_to(").count(), 3);
     assert!(body.matches("sv4_part_select_set(").count() >= 3);
-    assert!(body.contains("sv4_zero(13, 0)"));
-    assert!(!body.contains("sv4_mux("));
+    assert!(body.contains(", 13, 0);"));
+    assert!(!body.contains("sv4_mux_to("));
     assert!(frame.slots.iter().all(|live| !live));
     assert!(!body.contains("({"));
 }

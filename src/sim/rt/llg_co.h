@@ -530,6 +530,40 @@ size_t llg_co_backtrace(const llg_co_chain_t* ch, llg_co_visit_fn visit,
         if (LLG_CO_UNLIKELY((ch)->exiting)) return LLG_CO_EXIT; \
     } while (0)
 
+/* ── Synchronous driver ──────────────────────────────────────────────────
+ * Runs one coroutine that never suspends to completion from ordinary C code.
+ * Generated models lower recursive (non-suspending) subprograms to such
+ * coroutines: their recursive calls are LLG_CO_CALL_ARENA anchors, so the
+ * native stack holds this driver and the innermost frame's call only, for
+ * any recursion depth.
+ *
+ * The driver is a private chain, normally on the caller's stack, whose root
+ * is a small trampoline frame. The callee frame lives in the chain arena:
+ * llg_co_sync_begin returns it with state 0 for the caller to fill with the
+ * arguments, and llg_co_sync_run enters it as an anchor and returns once the
+ * root finished, with the arena empty. Drivers nest (a coroutine may call
+ * ordinary C that starts another driver); each has its own chain and arena.
+ * `owner` is stored in the chain unchanged. The callee must not return
+ * PENDING; that is reported through LLG_CO_BAD_STATE. */
+#define llg_co_sync_begin LLG_CO_SYM(llg_co_sync_begin, LLG_CO_ABI_VERSION)
+#define llg_co_sync_run LLG_CO_SYM(llg_co_sync_run, LLG_CO_ABI_VERSION)
+
+typedef struct llg_co_sync_root {
+    llg_co_frame_t co;
+    const llg_co_desc_t* desc;
+    llg_co_anchor_t* slot;
+} llg_co_sync_root_t;
+
+typedef struct llg_co_sync {
+    llg_co_chain_t chain;
+    llg_co_sync_root_t root; /* LLG_CO_ROOT(&chain): immediately follows it */
+} llg_co_sync_t;
+
+void* llg_co_sync_begin(llg_co_sync_t* sync, const llg_co_desc_t* desc,
+                        void* owner);
+/* DONE, or EXIT when a frame returned EXIT (the arena is then released). */
+llg_co_status_t llg_co_sync_run(llg_co_sync_t* sync);
+
 #ifdef __cplusplus
 }
 #endif

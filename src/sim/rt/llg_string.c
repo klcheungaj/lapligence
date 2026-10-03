@@ -276,3 +276,52 @@ void llg_string_realtoa(llg_string_t *target, double value) {
         string_fail("real conversion length changed");
     llg_string_move(target, result);
 }
+
+/* Destination-passing `_to` forms, see value/destinations.h. */
+void llg_string_to_packed_to(sv4_t* dst, llg_string_t* value, uint32_t width, int is_signed) {
+    sv4_replace(dst, llg_string_to_packed(llg_string_take(value), width, is_signed));
+}
+void llg_string_len_to(sv4_t* dst, llg_string_t* value) {
+    sv4_replace(dst, llg_string_len(llg_string_take(value)));
+}
+void llg_string_getc_to(sv4_t* dst, llg_string_t* value, const sv4_t* index) {
+    sv4_replace(dst, llg_string_getc(llg_string_take(value), *index));
+}
+void llg_string_compare_to(sv4_t* dst, llg_string_t* a, llg_string_t* b, int ignore_case) {
+    sv4_replace(dst, llg_string_compare(llg_string_take(a), llg_string_take(b), ignore_case));
+}
+void llg_string_atoi_to(sv4_t* dst, llg_string_t* value, unsigned base) {
+    sv4_replace(dst, llg_string_atoi(llg_string_take(value), base));
+}
+
+void llg_string_replace(llg_string_t *dst, llg_string_t value) {
+    llg_string_destroy(dst);
+    *dst = value;
+}
+void llg_string_move_take(llg_string_t *target, llg_string_t *source) {
+    llg_string_move(target, llg_string_take(source));
+}
+void llg_string_assign(llg_string_t *target, const llg_string_t *source) {
+    llg_string_move(target, llg_string_clone(source));
+}
+void llg_string_bytes_to(llg_string_t* dst, const char* bytes, size_t len) {
+    llg_string_replace(dst, llg_string_bytes(bytes, len));
+}
+void llg_string_clone_to(llg_string_t* dst, const llg_string_t* value) {
+    llg_string_replace(dst, llg_string_clone(value));
+}
+void llg_string_concat_to(llg_string_t* dst, llg_string_t* a, llg_string_t* b) {
+    llg_string_replace(dst, llg_string_concat(llg_string_take(a), llg_string_take(b)));
+}
+void llg_string_repeat_to(llg_string_t* dst, llg_string_t* value, const sv4_t* count) {
+    llg_string_replace(dst, llg_string_repeat(llg_string_take(value), *count));
+}
+void llg_string_case_to(llg_string_t* dst, llg_string_t* value, int upper) {
+    llg_string_replace(dst, llg_string_case(llg_string_take(value), upper));
+}
+void llg_string_substr_to(llg_string_t* dst, llg_string_t* value, const sv4_t* first, const sv4_t* last) {
+    llg_string_replace(dst, llg_string_substr(llg_string_take(value), *first, *last));
+}
+void llg_string_from_packed_to(llg_string_t* dst, const sv4_t* value) {
+    llg_string_replace(dst, llg_string_from_packed(*value));
+}

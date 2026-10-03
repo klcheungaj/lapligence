@@ -101,6 +101,44 @@ llg_co_status_t llg_co_anchor_resume(llg_co_frame_t* root, llg_co_chain_t* ch) {
     }
 }
 
+_Static_assert(offsetof(llg_co_sync_t, root) == sizeof(llg_co_chain_t),
+               "the synchronous root frame must be LLG_CO_ROOT of its chain");
+
+/* Root of a synchronous driver: one arena anchor call, then done. The callee
+ * frame was pushed and filled before the chain first ran. */
+static llg_co_status_t llg_co_sync_root_fn(llg_co_frame_t* co,
+                                           llg_co_chain_t* ch) {
+    llg_co_sync_root_t* F = (llg_co_sync_root_t*)co;
+    LLG_CO_DISPATCH_BEGIN(co)
+    LLG_CO_RESUME_CASE(1)
+    LLG_CO_DISPATCH_END(co)
+    LLG_CO_CALL_ARENA(co, ch, 1, F->desc, F->slot);
+    return LLG_CO_DONE;
+}
+
+static const llg_co_desc_t llg_co_sync_root_desc = {
+    llg_co_sync_root_fn, "<synchronous call>", sizeof(llg_co_sync_root_t),
+    NULL, 0, 0};
+
+void* llg_co_sync_begin(llg_co_sync_t* sync, const llg_co_desc_t* desc,
+                        void* owner) {
+    llg_co_chain_t* ch = &sync->chain;
+    llg_co_start(ch, &llg_co_sync_root_desc, owner);
+    sync->root.desc = desc;
+    LLG_CO_ARENA_ENTER(ch, desc, sync->root.slot);
+    return LLG_CO_ANCHOR_FRAME(sync->root.slot);
+}
+
+llg_co_status_t llg_co_sync_run(llg_co_sync_t* sync) {
+    llg_co_status_t s = llg_co_run(&sync->chain);
+    if (LLG_CO_UNLIKELY(s == LLG_CO_PENDING))
+        LLG_CO_BAD_STATE(LLG_CO_ROOT(&sync->chain),
+                         "llg_co_sync_run: synchronous callee suspended");
+    if (LLG_CO_UNLIKELY(s != LLG_CO_DONE))
+        llg_co_arena_release(&sync->chain.arena);
+    return s;
+}
+
 size_t llg_co_backtrace(const llg_co_chain_t* ch, llg_co_visit_fn visit,
                         void* user) {
     size_t n = 0;

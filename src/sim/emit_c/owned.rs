@@ -177,6 +177,15 @@ pub(super) struct Frame<'a, 'm> {
     pca_batches: Vec<super::statements::pca_batches::Batch>,
     cell_eligibility: frame_cells::CellEligibility,
     stack_cells: String,
+    /// Calls of a recursive subprogram's coroutine that enter the chain
+    /// arena (see `execution::recursion`); empty for every other frame.
+    recursive_targets: BTreeSet<crate::sim::execution::CallTarget>,
+    /// A recursive subprogram's coroutine, run by a synchronous driver: it
+    /// keeps plain-function exit semantics and numbers its resume points
+    /// (all arena calls) during emission.
+    synchronous: bool,
+    /// `_llg_frame_base`, `_llg_temp_scope` and `_llg_t` are frame fields.
+    scope_fields: bool,
 }
 
 fn pending(feature: &str) -> String {
@@ -213,22 +222,67 @@ impl<'a, 'm> Frame<'a, 'm> {
         frame.resume_numbers = sites.iter().map(|site| site.resume).collect();
         frame.pending_sites = sites.into();
         if !frame.resume_numbers.is_empty() {
-            for (ty, name) in [
-                ("llg_value_scope_t*", "_llg_frame_base"),
-                ("llg_value_scope_t*", "_llg_temp_scope"),
-                ("sv4_t*", "_llg_t"),
-            ] {
-                frame.layout.declare(ty, name)?;
-            }
-            // `_llg_temp_scope` is only ever written, so it has nothing to cache.
-            for (ty, name) in [
-                ("llg_value_scope_t*", "_llg_frame_base"),
-                ("sv4_t*", "_llg_t"),
-            ] {
-                frame.cached_fields.register(ty, name, true);
-            }
+            frame.declare_scope_fields()?;
         }
         Ok(frame)
+    }
+
+    /// Frame for the coroutine of recursive subprogram `function`. Its resume
+    /// points are exactly its arena calls, numbered as they are emitted.
+    pub(super) fn new_recursive(
+        ctx: &'a RCtx<'m>,
+        analysis: &ExecutionAnalysis,
+        function: usize,
+    ) -> Result<Self, String> {
+        let mut frame = Self::with_storage(ctx, FrameStorage::CoFrame);
+        frame.coroutine_functions = (0..ctx.model.funcs.len())
+            .filter(|function| analysis.is_coroutine_function(*function))
+            .collect();
+        frame.recursive_targets =
+            crate::sim::execution::direct_call_targets(ctx.model, &ctx.model.func(function).body)
+                .into_iter()
+                .filter(|target| analysis.is_recursive_call(ctx.model, function, target))
+                .collect();
+        frame.synchronous = true;
+        frame.declare_scope_fields()?;
+        Ok(frame)
+    }
+
+    fn declare_scope_fields(&mut self) -> Result<(), String> {
+        for (ty, name) in [
+            ("llg_value_scope_t*", "_llg_frame_base"),
+            ("llg_value_scope_t*", "_llg_temp_scope"),
+            ("sv4_t*", "_llg_t"),
+        ] {
+            self.layout.declare(ty, name)?;
+        }
+        // `_llg_temp_scope` is only ever written, so it has nothing to cache.
+        for (ty, name) in [
+            ("llg_value_scope_t*", "_llg_frame_base"),
+            ("sv4_t*", "_llg_t"),
+        ] {
+            self.cached_fields.register(ty, name, true);
+        }
+        self.scope_fields = true;
+        Ok(())
+    }
+
+    /// Allocate the next resume number of a synchronous coroutine.
+    fn next_recursive_resume(&mut self) -> u32 {
+        let resume = u32::try_from(self.resume_numbers.len() + 1).unwrap_or(u32::MAX);
+        self.resume_numbers.push(resume);
+        resume
+    }
+
+    /// Number of resume points of a finished synchronous coroutine.
+    pub(super) fn recursive_sites(&self) -> usize {
+        self.resume_numbers.len()
+    }
+
+    /// Whether this frame exits like a plain function (`goto _llg_return`
+    /// after termination) rather than by returning `LLG_CO_EXIT`.
+    fn plain_exits(&self) -> bool {
+        self.layout.storage() == FrameStorage::CStack || self.synchronous
     }
 
     fn with_storage(ctx: &'a RCtx<'m>, storage: FrameStorage) -> Self {
@@ -276,6 +330,9 @@ impl<'a, 'm> Frame<'a, 'm> {
             pca_batches: Vec::new(),
             cell_eligibility: frame_cells::CellEligibility::default(),
             stack_cells: String::new(),
+            recursive_targets: BTreeSet::new(),
+            synchronous: false,
+            scope_fields: false,
         }
     }
     fn line(&mut self, text: impl AsRef<str>) {
@@ -488,11 +545,13 @@ impl<'a, 'm> Frame<'a, 'm> {
                 let ident = &text[start..index];
                 let member_access = start > 0 && matches!(bytes[start - 1], b'.' | b'>');
                 if ident == "self" && !member_access {
-                    out.push_str(if self.layout.storage() == FrameStorage::CoFrame {
-                        "LLG_CO_OWNER(ch, llg_proc_t)"
-                    } else {
-                        "llg_current()"
-                    });
+                    out.push_str(
+                        if self.layout.storage() == FrameStorage::CoFrame && !self.synchronous {
+                            "LLG_CO_OWNER(ch, llg_proc_t)"
+                        } else {
+                            "llg_current()"
+                        },
+                    );
                 } else if let Some(access) = self
                     .layout
                     .field_access(ident)
@@ -767,8 +826,14 @@ impl<'a, 'm> Frame<'a, 'm> {
             };
         }
         let value = self.reserve(width, signed);
-        self.line(format!("sv4_replace(&{}, {code});", value.code));
+        self.assign(&format!("&{}", value.code), &code);
         value
+    }
+    /// Replace the initialized packed owner at `destination` (an address
+    /// expression) with `producer`'s fresh result, in destination-passing
+    /// form when the producer has one (see `emit_c::destinations`).
+    fn assign(&mut self, destination: &str, producer: &str) {
+        self.line(super::destinations::assign(destination, producer));
     }
     fn discard(&mut self, value: Value) {
         if let Some(slot) = value.slot {
@@ -780,7 +845,7 @@ impl<'a, 'm> Frame<'a, 'm> {
     }
     fn replace(&mut self, mut value: Value, code: String, width: u32, signed: bool) -> Value {
         if value.slot.is_some() && width != 0 {
-            self.line(format!("sv4_replace(&{}, {code});", value.code));
+            self.assign(&format!("&{}", value.code), &code);
             value.width = width;
             value.signed = signed;
             value.fill = None;
@@ -970,10 +1035,10 @@ impl<'a, 'm> Frame<'a, 'm> {
         };
         // Make the default visible to self-referential initializers.
         if width != 0 {
-            self.line(format!(
-                "sv4_replace({address}, {});",
-                super::expressions::packed_default(width, signed, two_state)
-            ));
+            self.assign(
+                &address,
+                &super::expressions::packed_default(width, signed, two_state),
+            );
         }
         self.bindings
             .last_mut()
@@ -992,7 +1057,7 @@ impl<'a, 'm> Frame<'a, 'm> {
         Ok(())
     }
     pub(super) fn prologue(&self) -> String {
-        if self.layout.storage() == FrameStorage::CoFrame && !self.resume_numbers.is_empty() {
+        if self.layout.storage() == FrameStorage::CoFrame && self.scope_fields {
             format!("    F->_llg_frame_base = llg_value_scope_mark();\n    F->_llg_temp_scope = llg_value_scope_begin({});\n    F->_llg_t = llg_value_scope_values(F->_llg_temp_scope);\n    (void)F->_llg_t;\n", self.slots.len())
         } else {
             format!("{}{}    llg_value_scope_t* _llg_frame_base = llg_value_scope_mark();\n    llg_value_scope_t* _llg_temp_scope = llg_value_scope_begin({});\n    sv4_t* _llg_t = llg_value_scope_values(_llg_temp_scope);\n    (void)_llg_t;\n", self.stack_cells, if self.layout.storage() == FrameStorage::CoFrame { "    (void)F;\n    (void)ch;\n" } else { "" }, self.slots.len())

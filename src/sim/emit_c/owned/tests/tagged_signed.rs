@@ -64,7 +64,7 @@ fn tagged_member_retags_after_the_invalid_access_branch() {
                 result.code,
                 u8::from(signed)
             )));
-            assert_eq!(frame.body().contains("sv4_to_two_state("), two_state);
+            assert_eq!(frame.body().contains("sv4_to_two_state_to("), two_state);
             frame.discard(result);
             assert!(frame.slots.iter().all(|used| !used));
         }

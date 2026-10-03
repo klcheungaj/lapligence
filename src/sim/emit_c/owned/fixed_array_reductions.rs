@@ -110,10 +110,10 @@ impl Frame<'_, '_> {
             IrContainerReduction::BitOr => "sv4_or",
             IrContainerReduction::BitXor => "sv4_xor",
         };
-        self.line(format!(
-            "sv4_replace(&{}, {operation}({}, {}));",
-            result.code, result.code, mapped.code,
-        ));
+        self.assign(
+            &format!("&{}", result.code),
+            &format!("{operation}({}, {})", result.code, mapped.code),
+        );
         self.line("}");
         self.discard(mapped);
         self.discard(index);
