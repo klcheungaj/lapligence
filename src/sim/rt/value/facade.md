@@ -35,8 +35,9 @@ aliased, or converted through legacy. A differential executable may link both
 libraries, but a generated model must select exactly one descriptor ABI.
 
 `LLG_SV4_GMP_KERNELS=0/1` is an independent compile-time choice inside the compact
-backend. It changes only wide mul/div/mod/pow kernels. All other operations use
-plain C word loops. `<gmp.h>` appears only in `value_gmp/kernels.c`; GMP must use
+backend. It changes wide mul/div/mod/pow and thresholded decimal conversion kernels.
+All other operations use plain C word loops. `<gmp.h>` appears only in
+`value_gmp/kernels.c`; GMP must use
 64-bit nail-free limbs compatible with `uint64_t`. Portable kernels require no
 GMP headers or library. The multiplication full-product threshold is the named
 `LLG_SV4_MUL_FULL_THRESHOLD` (128 words by default, about 8192 bits). Below it,

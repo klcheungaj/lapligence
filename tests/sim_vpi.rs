@@ -253,3 +253,33 @@ fn vpi_array_metadata_validates_packed_and_real_element_shapes() {
     })
     .expect("VPI array metadata validation");
 }
+
+#[test]
+fn vpi_partitioned_net_arrays_keep_declared_shapes_and_values() {
+    sim_harness::with_frontend_temp_cwd("vpi-partitioned-nets", |dir| {
+        let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/sim/waveform/partitioned_nets.sv");
+        let compiled = compile::compile_checked(&compile::CompileOpts {
+            files: vec![source.to_string_lossy().into_owned()],
+            top: Some("tb".to_owned()),
+            ..Default::default()
+        })
+        .map_err(|error| error.to_string())?;
+        let database =
+            llg::core::db::Db::from_slang(&compiled.snapshot).map_err(|error| error.to_string())?;
+        for options in [sim::opt::OptConfig::default(), sim::opt::OptConfig::none()] {
+            let generated = sim::codegen::generate_from_db_with_opts(&database, &options)
+                .map_err(|error| error.to_string())?;
+            let executable =
+                sim::build::build_model_cmake(dir, &[("model.c", generated.model_c.as_str())])
+                    .map_err(|error| error.to_string())?;
+            let plugin = compile_plugin(dir, "vpi_partitioned_nets.c");
+            let output = run_plugin(dir, &executable, &plugin);
+            assert!(output.status.success(), "{output:?}");
+            assert_eq!(output.stdout, b"vpi partitioned net shapes ok\n");
+            assert!(output.stderr.is_empty(), "{output:?}");
+        }
+        Ok(())
+    })
+    .expect("VPI electrical range shapes");
+}

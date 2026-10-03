@@ -192,17 +192,15 @@ cmake -S tests/runtime_value_storage -B /build/llg-compact-gcc \
   -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=gcc \
   -DLLG_STORAGE_TEST_WAVEFORMS=OFF -DLLG_STORAGE_TEST_COMPACT=ON \
   -DLLG_GMP_ROOT=/path/to/gmp-install
-cmake --build /build/llg-compact-gcc --parallel 6 --target \
-  compact_portable_probe compact_gmp_probe \
-  compact_oracle_portable compact_oracle_gmp compact_oracle_legacy \
-  compact_portable_allocation_probe compact_gmp_allocation_probe \
-  compact_portable_benchmark compact_gmp_benchmark
+cmake --build /build/llg-compact-gcc --parallel 6 --target compact_checks
 ctest --test-dir /build/llg-compact-gcc -R '^compact_' --output-on-failure --parallel 6
 /build/llg-compact-gcc/compact_gmp_benchmark
 ```
 
-Omit `LLG_GMP_ROOT` and GMP targets for a dependency-free portable build. Use a
-separate build directory with `-DCMAKE_C_COMPILER=clang` for Clang, or add
+The `compact_checks` target builds every enabled compact probe (S1–S3 and
+S6–S9); S4/S5 remain pending. Omit `LLG_GMP_ROOT` for a dependency-free
+portable build. Use a separate build directory with
+`-DCMAKE_C_COMPILER=clang` for Clang, or add
 `-DLLG_STORAGE_TEST_SANITIZERS=ON` for GCC ASan/UBSan. Allocation counter targets
 use linker wrapping on ELF Unix hosts. Checks remain active under `NDEBUG`.
 The Python harness communicates through standalone executables so a non-PIC
@@ -279,7 +277,8 @@ ctest --test-dir /build/llg-compact-gcc -R '^compact_' --output-on-failure --par
 The adapter benchmark measures seven alternating-order samples at 1/64/65/256/
 4096 bits, known and X/Z, including fresh owned results and scalar/text inspection.
 Bit reinterpretation and rtoi have their fixed 64/32-bit result widths; real delay
-is a native scalar. Packed delay uses a representable low-limb input. Checked-width timing uses valid
+is a native scalar. Packed delay uses a representable low-limb input.
+Checked-width timing uses valid
 known inputs; its X/Z rejection is exercised by the failure probes. No model
 selection, scheduler adoption or native non-Linux qualification is implied.
 

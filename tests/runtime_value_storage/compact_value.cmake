@@ -76,3 +76,19 @@ if(LLG_STORAGE_TEST_COMPACT)
 endif()
 
 include("${CMAKE_CURRENT_SOURCE_DIR}/compact_adapters.cmake")
+
+if(LLG_STORAGE_TEST_COMPACT)
+  add_custom_target(compact_checks DEPENDS compact_v05a_checks
+    compact_legacy_facade_adapters compact_adapters_oracle_legacy)
+  foreach(mode IN LISTS compact_modes)
+    add_dependencies(compact_checks
+      compact_${mode}_net_adapters compact_${mode}_real_time
+      compact_${mode}_format_index compact_${mode}_facade_adapters
+      compact_adapters_oracle_${mode} compact_${mode}_adapters_benchmark
+      compact_${mode}_selection_probe compact_${mode}_selection_facade
+      compact_${mode}_selection_benchmark)
+    if(UNIX AND NOT APPLE)
+      add_dependencies(compact_checks compact_${mode}_selection_allocations)
+    endif()
+  endforeach()
+endif()

@@ -355,11 +355,12 @@ Macros, includes and their edition-specific behavior are counted in §11.
   collected recursive aggregate/string leaves share storage. Chandle ports are
   prohibited by SV §6.14. Admitted module ref-port packed projections are
   distinct from subroutine ref-actual legality (§9). Inequivalent shapes and
-  runtime reference rewiring reject;
-  nested selections must match the represented projections. The
-  [reference-port lowerer](../src/sim/codegen/lowering/references.rs) still rejects
-  unrepresented nested indexed/bit/part selections through an already selected
-  reference. Dissimilar resolved-net inouts follow §8. SV §23.2.2 **[SV-2005]**.
+  runtime reference rewiring reject. Fixed bit/part/indexed selections through
+  selected module refs retain each intermediate boundary, including packed
+  members below fixed-array rows. Blocking writes, mutations, NBA issue-time
+  capture and call copy-out use the checked projection. Runtime-selected ref
+  connections remain an unsupported binding boundary with unresolved rebinding
+  semantics. Dissimilar resolved-net inouts follow §8. SV §23.2.2 **[SV-2005]**.
 - 🟨 **Libraries and configurations** — Explicit `--libmap`, repeatable
   `--libfile [library=]path`, `--library-order`, `--default-library`, top
   `module:config`, default `liblist`, cell/instance `use`, nested configurations
@@ -636,8 +637,8 @@ Macros, includes and their edition-specific behavior are counted in §11.
   SV §6.24 **[SV-2005]**.
 - 🟨 **Mutating operators** — Prefix/postfix `++/--` and `+= -= *= /= %= &= |= ^=`
   plus shift assignments capture an admitted whole/member/selected/fixed-array
-  target once, perform one store and return the appropriate expression value.
-  Packed state conversion and real targets are represented; non-lvalues and
+  target once, perform one store and return the appropriate expression value,
+  including nested fixed module-ref projections. Packed state conversion and real targets are represented; non-lvalues and
   unsupported aggregates/objects reject. SV §§11.4.1–11.4.2 **[SV-2005]**.
 - 🟦 **Wildcard equality** — `==?`/`!=?` treat RHS X/Z as wildcards. Remaining
   LHS unknowns yield X unless a known mismatch decides the result; common-width
@@ -817,8 +818,9 @@ Macros, includes and their edition-specific behavior are counted in §11.
   integral arrays/records/unions, admitted unpacked members/elements and retained
   packed queue cells. Removal/reallocation preserves a queue reference's original
   detached cell. String/chandle references use native storage. General native/
-  resizable aggregates, non-packed queue references, reference-formal NBAs and
-  selected-reference file targets remain restricted. Subroutine actuals must be
+  resizable aggregates, non-packed queue references and reference-formal NBAs
+  remain restricted. Fixed packed scanner destinations retain checked selected
+  views through ref formals. Subroutine actuals must be
   eligible variables, not function/reduction/conditional/cast/pattern temporaries;
   packed bit/part actuals rejected by the frontend are not legalized by internal
   projections. SV §13.5.2 **[SV-2005]**.
@@ -887,8 +889,8 @@ Macros, includes and their edition-specific behavior are counted in §11.
 
 - 🟨 **Scanning/character/line input** — `$fscanf/$sscanf/$fgets/$fgetc/$ungetc`
   retain input/format values, admitted packed/selected/string/real destinations,
-  EOF, byte and X/Z behavior. Selected sub-accesses through ref formals and
-  general aggregate targets reject. V §17.2.4; SV §21.3.4 **[2001/SV-2005]**.
+  EOF, byte and X/Z behavior. Fixed packed scanner sub-accesses through ref
+  formals preserve checked selection plans; general aggregate targets reject. V §17.2.4; SV §21.3.4 **[2001/SV-2005]**.
 - 🟨 **Binary input** — `$fread` supports admitted packed/memory targets with
   bounded start/count. Rank-one memories advance from lowest to highest HDL
   address in either declaration direction. Packed reads accept and ignore

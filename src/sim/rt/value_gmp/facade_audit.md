@@ -40,3 +40,10 @@ text prefixes, exact real-to-integer rounding/truncation and bit reinterpretatio
 Packed-to-real additionally preserves the legacy limb rounding order; its
 mathematical oracle admits at most one double ULP for finite large integers.
 Native component evidence does not establish generated model/backend selection.
+
+The S2/S3 family probes exhaust four-state inputs through four bits, including
+unequal widths and signs, and inclusive range triples with all sign combinations.
+Independent Python state/integer vectors and live-legacy differential checks cover
+wide and maximum widths, unknown/high shift counts, canonical B removal and
+independent owners in both kernel configurations. `compact_v05a_checks` builds
+these probes alongside the G1 core checks.
