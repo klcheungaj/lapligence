@@ -141,13 +141,8 @@ void llg_ref_write_masked(llg_ref_t* ref, sv4_t value, sv4_t mask) {
         llg_ref_write_masked(view->parent, values[2], values[3]);
     } else if (sv4_to_bool(values[1])) {
         sv4_replace(&values[2], llg_ref_read(ref));
-        if (values[2].width != ref->width) abort();
-        for (uint32_t i = 0; i < (ref->width + 63u) / 64u; i++) {
-            const uint64_t bits = values[1].bits[i];
-            values[2].bits[i] = (values[2].bits[i] & ~bits) | (values[0].bits[i] & bits);
-            values[2].x[i] = (values[2].x[i] & ~bits) | (values[0].x[i] & bits);
-            values[2].z[i] = (values[2].z[i] & ~bits) | (values[0].z[i] & bits);
-        }
+        if (llg_sv4_width(values[2]) != ref->width) abort();
+        llg_sv4_masked_merge(&values[2], values[0], values[1]);
         llg_ref_write(ref, values[2]);
     }
 cleanup:
@@ -195,8 +190,8 @@ void llg_ref_nba_masked(llg_ref_t* ref, sv4_t value, sv4_t mask, uint64_t ticks)
             if (ref->index == UINT64_MAX || ref->index >= ref->array_size) goto cleanup;
             target = &ref->base[ref->index];
         } else if ((llg_ref_kind_t)ref->kind != LLG_REF_WHOLE) {
-            values[2] = sv4_zero(target->width, target->is_signed);
-            values[3] = sv4_zero(target->width, 0);
+            values[2] = sv4_zero(llg_sv4_width(*target), llg_sv4_signed(*target));
+            values[3] = sv4_zero(llg_sv4_width(*target), 0);
             switch ((llg_ref_kind_t)ref->kind) {
             case LLG_REF_BIT:
                 sv4_bit_select_set(&values[2], ref->index, values[0]);

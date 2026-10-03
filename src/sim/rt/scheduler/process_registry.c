@@ -203,7 +203,7 @@ static llg_rng_state_t* llg_process_rng(void) {
 }
 
 static int llg_rng_argument(sv4_t value, uint32_t* result) {
-    if (sv4_is_unknown(value) || value.width == 0) return 0;
+    if (sv4_is_unknown(value) || llg_sv4_width(value) == 0) return 0;
     *result = (uint32_t)sv4_to_u64(value);
     return 1;
 }

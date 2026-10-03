@@ -410,8 +410,8 @@ llg_co_arm_t llg_arm_expressions(llg_proc_t* self,
 
 uint64_t llg_repeat_count(sv4_t value) {
     sv4_t count = sv4_repeat_count(value);
-    for (int i = 1; i < llg_sv4_nlimbs(count.width); i++) {
-        if (count.bits[i]) {
+    for (int i = 1; i < llg_sv4_nlimbs(llg_sv4_width(count)); i++) {
+        if (llg_sv4_word(count, i, LLG_SV4_BITS)) {
             fprintf(stderr,
                     "llg runtime fatal: nonblocking repeat count exceeds 64 bits\n");
             abort();
