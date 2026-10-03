@@ -776,27 +776,49 @@ impl<'a> Codegen<'a> {
     /// Unlike a combinational process sensitivity list, a force evaluator is
     /// driven by the runtime's typed dependency table, so real reads are
     /// observable without requiring a packed wait source.
+    /// Split a force RHS read set into whole-signal names and fixed-array
+    /// dependencies; the latter re-run the evaluator through the array's
+    /// element or contents change marker. Native containers and objects
+    /// have no force dependency contract.
     pub(in super::super) fn collect_force_read_signals(
         &self,
         scope_path: &str,
         root: NodeId,
-    ) -> Result<Vec<String>, String> {
-        let dependencies = self.collect_read_dependencies(scope_path, root, true)?;
-        dependencies
-            .into_iter()
-            .map(|dependency| match dependency {
-                IrDependency::Scalar(name) | IrDependency::Real(name) => Ok(name),
-                IrDependency::PackedRange { storage, .. } => storage.scalar_name().map(str::to_owned)
-                    .ok_or_else(|| format!("array dependencies cannot yet drive force evaluators in `{scope_path}`")),
-                IrDependency::ArrayElement { .. }
-                | IrDependency::ArrayContents(_)
-                | IrDependency::ContainerContents(_)
+    ) -> Result<(Vec<String>, Vec<IrDependency>), String> {
+        let mut names = Vec::new();
+        let mut arrays = Vec::new();
+        for dependency in self.collect_read_dependencies(scope_path, root, true)? {
+            match dependency {
+                IrDependency::Scalar(name) | IrDependency::Real(name) => names.push(name),
+                IrDependency::PackedRange { storage, .. } => match *storage {
+                    IrDependency::Scalar(name) => names.push(name),
+                    element @ IrDependency::ArrayElement { .. } => {
+                        if !arrays.contains(&element) {
+                            arrays.push(element);
+                        }
+                    }
+                    _ => {
+                        return Err(format!(
+                            "this selected dependency cannot drive a force evaluator in `{scope_path}`"
+                        ))
+                    }
+                },
+                dependency @ (IrDependency::ArrayElement { .. }
+                | IrDependency::ArrayContents(_)) => {
+                    if !arrays.contains(&dependency) {
+                        arrays.push(dependency);
+                    }
+                }
+                IrDependency::ContainerContents(_)
                 | IrDependency::ContainerShape(_)
-                | IrDependency::Object(_) => Err(format!(
-                    "array/container dependencies cannot yet drive force evaluators in `{scope_path}`"
-                )),
-            })
-            .collect()
+                | IrDependency::Object(_) => {
+                    return Err(format!(
+                        "container/object dependencies cannot yet drive force evaluators in `{scope_path}`"
+                    ))
+                }
+            }
+        }
+        Ok((names, arrays))
     }
 
     fn collect_read_dependencies(
@@ -1297,6 +1319,7 @@ impl<'a> Codegen<'a> {
                 }
                 if include_function_bodies && visited.insert(ft) {
                     if let Some(body) = self.func_body(ft) {
+                        let first = out.len();
                         self.walk_read_signals_bound(
                             scope_path,
                             body,
@@ -1306,6 +1329,13 @@ impl<'a> Codegen<'a> {
                             include_function_bodies,
                             &callee_bindings,
                         )?;
+                        // The callee's lexical activation arrays (descriptor
+                        // formals, locals and results) exist only during one
+                        // call and publish no change marker; their contents
+                        // derive from actuals that are tracked themselves.
+                        let mut callee = out.split_off(first);
+                        callee.retain(|dependency| !self.activation_dependency(dependency));
+                        out.extend(callee);
                     }
                     visited.remove(&ft);
                 }
@@ -1559,6 +1589,20 @@ impl<'a> Codegen<'a> {
             }
             _ => {}
         }
+    }
+
+    fn activation_dependency(&self, dependency: &IrDependency) -> bool {
+        let array = match dependency {
+            IrDependency::ArrayContents(array) | IrDependency::ArrayElement { array, .. } => *array,
+            IrDependency::PackedRange { storage, .. } => {
+                return self.activation_dependency(storage);
+            }
+            _ => return false,
+        };
+        self.model
+            .arrays
+            .get(array)
+            .is_some_and(|array| array.activation)
     }
 
     fn add_dependency(

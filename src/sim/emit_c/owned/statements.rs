@@ -235,9 +235,13 @@ impl Frame<'_, '_> {
                 self.line(format!("llg_pca_deassign{suffix}(&{});", signal.c_name));
             }
             IrStmt::Force {
-                lhs, eval, reads, ..
-            } => self.force_task(lhs, Some(eval), reads)?,
-            IrStmt::Release { lhs } => self.force_task(lhs, None, &[])?,
+                lhs,
+                eval,
+                reads,
+                dependencies,
+                ..
+            } => self.force_task(lhs, Some(eval), reads, dependencies)?,
+            IrStmt::Release { lhs } => self.force_task(lhs, None, &[], &[])?,
             IrStmt::Memory { .. } => self.memory_task(statement)?,
             IrStmt::MonitorSet { .. } => self.monitor_task(statement)?,
             IrStmt::MonitorEnable(enabled) => {

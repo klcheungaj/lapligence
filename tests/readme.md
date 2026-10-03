@@ -96,6 +96,12 @@ RTL-005's fixed equality, conditional and cast fixtures use
 both optimizer modes on the legacy and compact backends (`run_case_backend_parity`)
 and after Db destruction; descriptor casts also bound generated model size.
 
+RTL-007's zero-time call and evaluator fixtures use
+`-E 'binary(sim_feature_completion) & test(rtl_007::)'`. Positive fixtures run in
+both optimizer modes on both backends (set `LLG_TEST_GMP_ROOT` for the GMP
+kernel lane); stateful event helpers assert the documented process-evaluation
+policy and check evaluation counters only as lower bounds.
+
 ### Vendor patch preparation
 
 `vendor_patches.rs` checks clean/applied trees, no-Git archives (including archives

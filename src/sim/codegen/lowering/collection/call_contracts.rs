@@ -22,14 +22,50 @@ pub(in super::super) struct CallShape {
     pub(in super::super) static_refs: Vec<usize>,
 }
 
+/// Where an evaluated event expression is computed.
+///
+/// `Callback` expressions are re-evaluated by the runtime inside the write
+/// that changed one of their dependencies, so their helpers must be
+/// read-only. `Process` expressions are legal zero-time helpers whose
+/// effects are visible (writes to external or persistent storage, static
+/// result state) or whose formals use descriptor transport: the waiting
+/// process evaluates them itself, at arm time and after each dependency
+/// change, with ordinary call semantics. The `String` keeps the read-only
+/// rejection reason for contexts that only have the callback form.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(in super::super) enum EventEvaluation {
+    Callback,
+    Process(String),
+}
+
 impl<'a> Codegen<'a> {
     pub(in super::super) fn check_event_expression_effects(
         &self,
         expression: NodeId,
         scope_path: &str,
     ) -> Result<(), String> {
+        match self.classify_event_expression(expression, scope_path)? {
+            EventEvaluation::Callback => Ok(()),
+            EventEvaluation::Process(reason) => Err(reason),
+        }
+    }
+
+    /// Classify an evaluated event expression. Forms that are not legal
+    /// zero-time read contexts at all (tasks, timing, unsummarized system or
+    /// method calls, writable formals) still reject; effects that only rule
+    /// out the read-only callback select process evaluation.
+    pub(in super::super) fn classify_event_expression(
+        &self,
+        expression: NodeId,
+        scope_path: &str,
+    ) -> Result<EventEvaluation, String> {
         let mut visited = HashSet::new();
-        self.check_event_node(expression, scope_path, &mut visited, None)
+        let mut process = None;
+        self.check_event_node(expression, scope_path, &mut visited, None, &mut process)?;
+        Ok(match process {
+            Some(reason) => EventEvaluation::Process(reason),
+            None => EventEvaluation::Callback,
+        })
     }
 
     fn check_event_node(
@@ -38,11 +74,19 @@ impl<'a> Codegen<'a> {
         scope_path: &str,
         visited_functions: &mut HashSet<NodeId>,
         function: Option<NodeId>,
+        process: &mut Option<String>,
     ) -> Result<(), String> {
         let rejected = |reason: &str| {
             Err(format!(
                 "function calls in evaluated event controls are not supported in `{scope_path}`: {reason}"
             ))
+        };
+        let needs_process = |process: &mut Option<String>, reason: &str| {
+            process.get_or_insert_with(|| {
+                format!(
+                    "function calls in evaluated event controls are not supported in `{scope_path}`: {reason}"
+                )
+            });
         };
         match self.kind(node) {
             NodeKind::FuncCall {
@@ -96,11 +140,23 @@ impl<'a> Codegen<'a> {
                         }
                     ) && !self.static_return_is_callback_independent(body, ft)
                     {
-                        return rejected(
+                        needs_process(
+                            process,
                             "static function return is read or is not assigned on every path",
                         );
                     }
-                    self.check_event_node(body, scope_path, visited_functions, Some(ft))?;
+                    if self.nonflatten_function(ft)
+                        || self
+                            .func_formals(ft)
+                            .iter()
+                            .any(|(formal, _)| self.nonflatten_function(*formal))
+                    {
+                        needs_process(
+                            process,
+                            "descriptor-transported fixed-array formals or result",
+                        );
+                    }
+                    self.check_event_node(body, scope_path, visited_functions, Some(ft), process)?;
                 }
             }
             NodeKind::SysCall { name } => {
@@ -144,7 +200,10 @@ impl<'a> Codegen<'a> {
                     )
                 })?;
                 if !self.event_local_write_allowed(function, lhs) {
-                    return rejected("function body writes external or persistent storage");
+                    needs_process(
+                        process,
+                        "function body writes external or persistent storage",
+                    );
                 }
             }
             NodeKind::Expr(ExprKind::Operation {
@@ -168,13 +227,16 @@ impl<'a> Codegen<'a> {
                     )
                 })?;
                 if !self.event_local_write_allowed(function, lhs) {
-                    return rejected("function body writes external or persistent storage");
+                    needs_process(
+                        process,
+                        "function body writes external or persistent storage",
+                    );
                 }
             }
             _ => {}
         }
         for child in &self.node(node).children {
-            self.check_event_node(*child, scope_path, visited_functions, function)?;
+            self.check_event_node(*child, scope_path, visited_functions, function, process)?;
         }
         Ok(())
     }

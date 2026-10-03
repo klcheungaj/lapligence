@@ -993,8 +993,20 @@ fn render_stmt_scoped(
             target.instance()
         ),
         IrStmt::Force {
-            lhs, eval, reads, ..
-        } => render_force(ctx, lhs, eval, reads)?,
+            lhs,
+            eval,
+            reads,
+            dependencies,
+            ..
+        } => {
+            if !dependencies.is_empty() {
+                return Err(
+                    "array-dependent force evaluators require owned whole-model emission"
+                        .to_owned(),
+                );
+            }
+            render_force(ctx, lhs, eval, reads)?
+        }
         IrStmt::Release { lhs } => render_release(ctx, lhs)?,
         IrStmt::Display {
             fmt, args, newline, ..

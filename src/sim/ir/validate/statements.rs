@@ -1056,8 +1056,36 @@ impl Validator<'_> {
                 }
             }
             IrStmt::Force {
-                lhs, value, reads, ..
+                lhs,
+                value,
+                reads,
+                dependencies,
+                ..
             } => {
+                for (index, dependency) in dependencies.iter().enumerate() {
+                    let array = match dependency {
+                        IrDependency::ArrayElement { array, .. }
+                        | IrDependency::ArrayContents(array) => *array,
+                        _ => {
+                            return self.fail(
+                                format!("{path}.dependencies[{index}]"),
+                                "force dependency must name fixed-array storage",
+                            )
+                        }
+                    };
+                    if !self.valid_dependency(dependency)
+                        || self
+                            .model
+                            .arrays
+                            .get(array)
+                            .is_some_and(|array| array.activation)
+                    {
+                        return self.fail(
+                            format!("{path}.dependencies[{index}]"),
+                            "force dependency has no persistent change marker",
+                        );
+                    }
+                }
                 self.validate_lhs(lhs, formals, &format!("{path}.lhs"))?;
                 self.validate_expr(value, formals, &format!("{path}.value"))?;
                 let target_width = self.lhs_packed_width(lhs);

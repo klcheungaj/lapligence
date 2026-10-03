@@ -1,4 +1,4 @@
-// SYN-011 read-only callback policy must reject persistent return mutation.
+// Persistent static return mutation is legal (SV 13.4.2); the waiting process evaluates it.
 module tb;
   bit toggle;
   integer changes;

@@ -13,6 +13,7 @@ module tb;
     changes = 0;
     #1 toggle = 1;
     #1 toggle = 0;
-    #1 $fatal(1, "stateful callback was incorrectly admitted");
+    #1 $display("PERSISTENT_RESULT changes=%0d", changes);
+    $finish(0);
   end
 endmodule

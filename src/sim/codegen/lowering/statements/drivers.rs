@@ -1,5 +1,6 @@
 //! Drivers.
 
+use super::super::collection::EventEvaluation;
 use super::*;
 
 impl EmitCtx<'_, '_> {
@@ -33,6 +34,18 @@ impl EmitCtx<'_, '_> {
             return Err(format!(
                 "force RHS in `{diagnostic_path}` cannot capture activation storage `{}`",
                 self.cg.node(target).name
+            ));
+        }
+        // A force evaluator is re-run by the runtime inside the write that
+        // changed its source, so its helpers must be read-only callbacks.
+        if let Ok(EventEvaluation::Process(reason)) =
+            self.cg.classify_event_expression(rhs, &diagnostic_path)
+        {
+            return Err(format!(
+                "force RHS in `{diagnostic_path}` is not a read-only evaluator: {}",
+                reason
+                    .rsplit_once(": ")
+                    .map_or(reason.as_str(), |(_, detail)| detail)
             ));
         }
         let lh = self
@@ -79,7 +92,8 @@ impl EmitCtx<'_, '_> {
             value: value.clone(),
             real: target_real,
         });
-        let read_names = self.cg.collect_force_read_signals(&diagnostic_path, rhs)?;
+        let (read_names, dependencies) =
+            self.cg.collect_force_read_signals(&diagnostic_path, rhs)?;
         let mut reads = Vec::with_capacity(read_names.len());
         for name in read_names {
             let index = self
@@ -114,6 +128,7 @@ impl EmitCtx<'_, '_> {
             value,
             eval,
             reads,
+            dependencies,
         })
     }
 

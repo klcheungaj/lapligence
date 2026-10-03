@@ -549,6 +549,9 @@ pub enum IrStmt {
         value: IrExpr,
         eval: String,
         reads: Vec<usize>,
+        /// Fixed-array element/contents dependencies. Their change markers
+        /// re-run the evaluator exactly like `reads`.
+        dependencies: Vec<IrDependency>,
     },
     /// `release lhs;`
     Release {

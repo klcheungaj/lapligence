@@ -1,5 +1,6 @@
 //! Events.
 
+use super::super::collection::EventEvaluation;
 use super::*;
 
 impl EmitCtx<'_, '_> {
@@ -16,8 +17,43 @@ impl EmitCtx<'_, '_> {
             _ => unreachable!("non-event-control passed to lower_event_control"),
         };
         let body = body.ok_or_else(|| "event_control without body".to_string())?;
+        let mut out = if !implicit && self.event_specs_need_process(specs) {
+            self.lower_process_evaluated_event(h, specs)?
+        } else {
+            vec![self.lower_event_wait(specs, implicit, body)?]
+        };
+        self.saw_wait = true;
+        // The body may be a `Stmt(Empty)` placeholder for a bare
+        // `@(posedge clk);`; skip it.
+        if !matches!(self.cg.kind(body), NodeKind::Stmt(StmtKind::Empty)) {
+            // A sampled-value call without its fourth clocking argument may
+            // use a process's single direct edge control. Keep this context
+            // only while lowering the controlled body; nested controls save
+            // and restore their own inferred domain.
+            let previous_clock = self.cg.sampled_clock;
+            if let Some(clock) = self
+                .cg
+                .lower_sampled_clock_spec(&self.path, specs)
+                .ok()
+                .flatten()
+            {
+                self.cg.sampled_clock = Some(clock);
+            }
+            let body_result = self.lower_stmt(body);
+            self.cg.sampled_clock = previous_clock;
+            out.extend(body_result?);
+        }
+        Ok(out)
+    }
+
+    fn lower_event_wait(
+        &mut self,
+        specs: &[EventSpec],
+        implicit: bool,
+        body: NodeId,
+    ) -> Result<IrStmt, String> {
         let spec_pairs = self.lower_event_specs(specs)?;
-        let wait = if implicit || spec_pairs.is_empty() {
+        Ok(if implicit || spec_pairs.is_empty() {
             // @* / always_comb without explicit sensitivity, or a condition
             // that produced no specs: wait on the body's read set.
             let reads = if implicit && self.process_kind == Some(AlwaysKind::Always) {
@@ -44,30 +80,230 @@ impl EmitCtx<'_, '_> {
             }
         } else {
             IrStmt::WaitEvents { specs: spec_pairs }
-        };
-        self.saw_wait = true;
-        let mut out = vec![wait];
-        // The body may be a `Stmt(Empty)` placeholder for a bare
-        // `@(posedge clk);`; skip it.
-        if !matches!(self.cg.kind(body), NodeKind::Stmt(StmtKind::Empty)) {
-            // A sampled-value call without its fourth clocking argument may
-            // use a process's single direct edge control. Keep this context
-            // only while lowering the controlled body; nested controls save
-            // and restore their own inferred domain.
-            let previous_clock = self.cg.sampled_clock;
-            if let Some(clock) = self
-                .cg
-                .lower_sampled_clock_spec(&self.path, specs)
-                .ok()
-                .flatten()
-            {
-                self.cg.sampled_clock = Some(clock);
+        })
+    }
+
+    /// Whether an explicit event control evaluates a helper that is a legal
+    /// zero-time function but not a read-only runtime callback. Expressions
+    /// that fail classification outright keep the ordinary path, which
+    /// reports the same diagnostic.
+    fn event_specs_need_process(&self, specs: &[EventSpec]) -> bool {
+        specs.iter().any(|spec| match spec {
+            EventSpec::Qualified { event, condition } => {
+                self.event_specs_need_process(std::slice::from_ref(event))
+                    || self.expression_needs_process(*condition)
             }
-            let body_result = self.lower_stmt(body);
-            self.cg.sampled_clock = previous_clock;
-            out.extend(body_result?);
+            EventSpec::Named(_) => false,
+            EventSpec::AnyChange { sig } | EventSpec::Edge { sig, .. } => {
+                self.expression_needs_process(*sig)
+            }
+        })
+    }
+
+    fn expression_needs_process(&self, expression: NodeId) -> bool {
+        matches!(
+            self.cg.classify_event_expression(expression, &self.path),
+            Ok(EventEvaluation::Process(_))
+        )
+    }
+
+    /// Lower `@(…)` whose expression needs process evaluation (see
+    /// [`EventEvaluation`]). The waiting process evaluates every source once
+    /// when the control is reached, then suspends on the union of their read
+    /// sets; after each wake it re-evaluates every source and resumes only
+    /// when one detects its change (SV 9.4.2: a changed operand with an
+    /// unchanged result is no event; edges use the least significant bit).
+    /// Qualifiers are evaluated only for a detected change. The number of
+    /// helper evaluations is unspecified by the language; this form performs
+    /// one per source at arm time and one per source per wake.
+    fn lower_process_evaluated_event(
+        &mut self,
+        h: NodeId,
+        specs: &[EventSpec],
+    ) -> Result<Vec<IrStmt>, String> {
+        fn flatten(
+            spec: &EventSpec,
+            condition: Option<NodeId>,
+            out: &mut Vec<(NodeId, IrEdge, Option<NodeId>)>,
+        ) -> Result<(), ()> {
+            match spec {
+                EventSpec::Qualified { event, condition } => flatten(event, Some(*condition), out),
+                EventSpec::Named(_) => Err(()),
+                EventSpec::AnyChange { sig } => {
+                    out.push((*sig, IrEdge::Any, condition));
+                    Ok(())
+                }
+                EventSpec::Edge { sig, posedge } => {
+                    out.push((
+                        *sig,
+                        if *posedge {
+                            IrEdge::Posedge
+                        } else {
+                            IrEdge::Negedge
+                        },
+                        condition,
+                    ));
+                    Ok(())
+                }
+            }
         }
-        Ok(out)
+        let path = self.cg.source_path(&self.path);
+        let mut sources = Vec::new();
+        for spec in specs {
+            flatten(spec, None, &mut sources).map_err(|()| {
+                format!(
+                    "named events cannot share an event control with a process-evaluated helper expression in `{path}`"
+                )
+            })?;
+        }
+        let bit = |value: u64, x: u64, z: u64| -> Result<IrExpr, String> {
+            let constant = IrConst::packed(vec![value], vec![x], vec![z], 1, false, None)
+                .map_err(|error| error.to_string())?;
+            Ok(IrExpr::new(IrExprKind::Const(constant), 1, false, None))
+        };
+        let (zero, one, unknown_x, unknown_z) =
+            (bit(0, 0, 0)?, bit(1, 0, 0)?, bit(0, 1, 0)?, bit(0, 0, 1)?);
+        let binary = |op: IrBinOp, a: IrExpr, b: IrExpr| {
+            IrExpr::new(
+                IrExprKind::Bin {
+                    op,
+                    a: Box::new(a),
+                    b: Box::new(b),
+                },
+                1,
+                false,
+                None,
+            )
+        };
+        let local = |name: &str, width: u32, signed: bool| {
+            IrExpr::new(IrExprKind::LocalRead(name.to_owned()), width, signed, None)
+        };
+        let target = |name: &str, width: u32, signed: bool, two_state: bool| IrLhs::WholeRef {
+            addr: format!("&{name}"),
+            width,
+            signed,
+            two_state,
+            shortreal: false,
+        };
+        let hit = format!("_llg_evh{}", h.0);
+        let mut sens = Vec::new();
+        let mut arm = Vec::new();
+        let mut current = Vec::new();
+        let mut detect = Vec::new();
+        let mut advance = Vec::new();
+        for (index, (expression, edge, condition)) in sources.into_iter().enumerate() {
+            if self.cg.event_target_of(expression).is_some() {
+                return Err(format!(
+                    "named events cannot share an event control with a process-evaluated helper expression in `{path}`"
+                ));
+            }
+            let value = self.cg.lower_expr(&self.path, expression)?;
+            if value.is_real() {
+                return Err(format!(
+                    "real-valued event expressions with process-evaluated helpers are not supported in `{path}`"
+                ));
+            }
+            let value = if edge == IrEdge::Any {
+                value
+            } else {
+                IrExpr::convert_to(value, 1, false)
+            };
+            let (width, signed) = (value.width, value.signed);
+            for dependency in self.cg.collect_read_signals(&self.path, expression)? {
+                if !sens.contains(&dependency) {
+                    sens.push(dependency);
+                }
+            }
+            let last = format!("_llg_evl{}_{index}", h.0);
+            let next = format!("_llg_evn{}_{index}", h.0);
+            arm.push(IrStmt::DeclLocal {
+                name: last.clone(),
+                width,
+                signed,
+                init: Some(Box::new(value.clone())),
+                two_state: false,
+            });
+            current.push(IrStmt::DeclLocal {
+                name: next.clone(),
+                width,
+                signed,
+                init: Some(Box::new(value)),
+                two_state: false,
+            });
+            let (old, new) = (local(&last, width, signed), local(&next, width, signed));
+            let changed = match edge {
+                IrEdge::Any => binary(IrBinOp::CaseNeq, old, new),
+                IrEdge::Posedge | IrEdge::Negedge => {
+                    let (from, to) = if edge == IrEdge::Posedge {
+                        (zero.clone(), one.clone())
+                    } else {
+                        (one.clone(), zero.clone())
+                    };
+                    let unknown = binary(
+                        IrBinOp::LogOr,
+                        binary(IrBinOp::CaseEq, old.clone(), unknown_x.clone()),
+                        binary(IrBinOp::CaseEq, old.clone(), unknown_z.clone()),
+                    );
+                    binary(
+                        IrBinOp::LogOr,
+                        binary(
+                            IrBinOp::LogAnd,
+                            binary(IrBinOp::CaseEq, old, from.clone()),
+                            binary(IrBinOp::CaseNeq, new.clone(), from),
+                        ),
+                        binary(IrBinOp::LogAnd, unknown, binary(IrBinOp::CaseEq, new, to)),
+                    )
+                }
+            };
+            let found = IrStmt::Assign {
+                lhs: target(&hit, 1, false, true),
+                rhs: one.clone(),
+                nba: false,
+            };
+            let then_ = match condition {
+                Some(condition) => vec![IrStmt::If {
+                    cond: self.cg.lower_expr(&self.path, condition)?,
+                    then_: vec![found],
+                    els: None,
+                    check: IrUniquePriorityCheck::None,
+                }],
+                None => vec![found],
+            };
+            detect.push(IrStmt::If {
+                cond: changed,
+                then_,
+                els: None,
+                check: IrUniquePriorityCheck::None,
+            });
+            advance.push(IrStmt::Assign {
+                lhs: target(&last, width, signed, false),
+                rhs: local(&next, width, signed),
+                nba: false,
+            });
+        }
+        arm.push(IrStmt::DeclLocal {
+            name: hit.clone(),
+            width: 1,
+            signed: false,
+            init: Some(Box::new(zero)),
+            two_state: true,
+        });
+        let mut iteration = current;
+        iteration.extend(detect);
+        iteration.extend(advance);
+        arm.push(IrStmt::While {
+            cond: IrExpr::new(
+                IrExprKind::Un {
+                    op: IrUnOp::LogNot,
+                    a: Box::new(local(&hit, 1, false)),
+                },
+                1,
+                false,
+                None,
+            ),
+            body: vec![IrStmt::WaitAny { sens }, IrStmt::Block(iteration)],
+        });
+        Ok(vec![IrStmt::Block(arm)])
     }
 
     pub(super) fn wait_body(&mut self, h: NodeId) -> Result<Vec<IrStmt>, String> {

@@ -97,6 +97,9 @@ fn render_with_frame(
             real,
         } => {
             frame.read_only_callback = true;
+            // Inlined helper loops leave through `_llg_return`; keep every
+            // expression temporary in a block that closes before that label.
+            frame.line("{");
             let value = frame.expression(value)?;
             if *real {
                 frame.line(format!("*out = {};", value.real()));
@@ -107,6 +110,7 @@ fn render_with_frame(
                 frame.line(format!("sv4_move(out, &{});", value.code));
             }
             frame.discard(value);
+            frame.line("}");
             frame.line("if (0) goto _llg_return;");
             frame.line("_llg_return: ;");
             frame.line("llg_value_scopes_end_since(_llg_frame_base);");
@@ -127,6 +131,7 @@ fn render_with_frame(
         } => {
             frame.read_only_callback = true;
             frame.line("(void)out; (void)context;");
+            frame.line("{");
             let values = frame.formatted_arguments(args, *time_unit_fs)?;
             // Arguments have all been evaluated before this ownership transfer;
             // no callback or user expression can abandon a partial out buffer.
@@ -134,6 +139,7 @@ fn render_with_frame(
                 frame.line(format!("out[{index}] = {values}[{index}];"));
                 frame.line(format!("{values}[{index}] = (llg_fmt_arg_t){{0}};"));
             }
+            frame.line("}");
             frame.line("if (0) goto _llg_return;");
             frame.line("_llg_return: ;");
             frame.line("llg_value_scopes_end_since(_llg_frame_base);");
@@ -159,6 +165,7 @@ fn render_with_frame(
             }
             frame.line("(void)out; (void)context;");
             bind_context(&mut frame, context.as_ref())?;
+            frame.line("{");
             // Compute first, publish second: no unregistered partial output
             // survives a nonlocal exit while evaluating a later argument.
             let mut values = Vec::new();
@@ -173,6 +180,7 @@ fn render_with_frame(
                 frame.line(format!("sv4_move(&out[{index}], &{});", value.code));
                 frame.discard(value);
             }
+            frame.line("}");
             frame.line("if (0) goto _llg_return;");
             frame.line("_llg_return: ;");
             frame.line("llg_value_scopes_end_since(_llg_frame_base);");
@@ -198,9 +206,11 @@ fn render_with_frame(
             frame.read_only_callback = true;
             frame.line("(void)context;");
             bind_context(&mut frame, context.as_ref())?;
+            frame.line("{");
             let value = frame.expression(value)?;
             frame.line(format!("*out = {};", value.real()));
             frame.discard(value);
+            frame.line("}");
             frame.line("if (0) goto _llg_return;");
             frame.line("_llg_return: ;");
             frame.line("llg_value_scopes_end_since(_llg_frame_base);");

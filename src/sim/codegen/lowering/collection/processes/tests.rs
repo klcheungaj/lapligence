@@ -123,6 +123,66 @@ fn continuous_variable_conflicts_are_owned_errors_but_overrides_are_not() {
     }
 }
 
+#[test]
+fn writes_inside_continuously_called_functions_are_procedural() {
+    // SV 6.5: only the left-hand side is a continuous driver. A write made by
+    // a function the right-hand side calls is a procedural assignment, so it
+    // may share storage with other procedural writers but not with a
+    // continuous driver.
+    for (source, conflict) in [
+        (
+            "module tb; logic [7:0] x, y; int cnt = 0;\n\
+             function automatic logic [7:0] f(input logic [7:0] v); cnt++; return v; endfunction\n\
+             assign y = f(x); initial cnt = 5; endmodule",
+            false,
+        ),
+        (
+            "module tb; logic [7:0] x, y, z; int cnt;\n\
+             function automatic logic [7:0] f(input logic [7:0] v); cnt++; return v; endfunction\n\
+             assign y = f(x); assign z = f(x); endmodule",
+            false,
+        ),
+        (
+            "module tb; logic [7:0] x, y; int cnt;\n\
+             function automatic logic [7:0] f(input logic [7:0] v); cnt++; return v; endfunction\n\
+             assign cnt = 0; assign y = f(x); endmodule",
+            true,
+        ),
+    ] {
+        let database = {
+            let result = crate::core::compile::compile_sources_checked(
+                &[crate::core::compile::OwnedSource::compilation_unit(
+                    "called_writes.sv",
+                    source,
+                )],
+                &crate::core::compile::CompileOpts {
+                    top: Some("tb".to_owned()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            Db::from_slang(&result.snapshot).unwrap()
+        };
+        let semantic = crate::sim::semantic::SemanticModel::from_db(&database);
+        let mut cg = Codegen::new(&semantic);
+        cg.collect_design().unwrap();
+        cg.bind_reference_ports().unwrap();
+        cg.collect_timescales();
+        cg.build_net_groups().unwrap();
+        let result = cg.validate_process_semantics();
+        if conflict {
+            let error = result.unwrap_err();
+            assert!(
+                error.contains("has both a continuous assignment"),
+                "{error}"
+            );
+            assert!(error.contains("(called function)"), "{error}");
+        } else {
+            result.unwrap();
+        }
+    }
+}
+
 fn diagnostic_database(source: &str) -> Db {
     let compiled = crate::core::compile::compile_sources_checked(
         &[crate::core::compile::OwnedSource::compilation_unit(
