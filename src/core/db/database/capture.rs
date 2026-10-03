@@ -228,6 +228,7 @@ impl Db {
         let mut packed_members = HashMap::new();
         let mut aggregate_layouts = HashMap::new();
         let mut type_descriptors = HashMap::new();
+        let mut packed_pattern_elements = HashMap::new();
         let mut enum_types = HashMap::new();
         let mut packed_dimensions = HashMap::new();
         let mut clocking_blocks = HashMap::new();
@@ -633,6 +634,19 @@ impl Db {
             let (file, line, col, end_line, end_col) = source_positions.position(semantic)?;
             let mut kind =
                 node_kind_from_slang(snapshot, &type_projector, semantic, edges, &ids, type_info)?;
+            if matches!(
+                &kind,
+                NodeKind::Expr(ExprKind::Operation {
+                    op: Operation::AssignmentPattern | Operation::MultiAssignmentPattern,
+                    ..
+                })
+            ) {
+                if let Some(type_id) = semantic.type_id {
+                    if let Some(element) = type_projector.packed_pattern_element(type_id)? {
+                        packed_pattern_elements.insert(id, element);
+                    }
+                }
+            }
             if semantic.kind == SemanticKind::Net {
                 if let Some(delay) = driver_delay(snapshot, &ids, edges)? {
                     net_delays.insert(id, delay);
@@ -990,6 +1004,7 @@ impl Db {
             packed_members,
             aggregate_layouts,
             type_descriptors,
+            packed_pattern_elements,
             enum_types,
             packed_dimensions,
             two_state_types,

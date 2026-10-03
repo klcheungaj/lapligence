@@ -1026,6 +1026,9 @@ impl<'a> Codegen<'a> {
     }
 
     fn p30_pattern_element_descriptor(&self, node: NodeId) -> Option<TypeDescriptor> {
+        if let Some(element) = self.db.packed_pattern_element(node) {
+            return Some(element.clone());
+        }
         let descriptor = self.query_descriptor(node)?;
         let TypeShape::FixedArray {
             dimensions,
@@ -1782,32 +1785,15 @@ impl<'a> Codegen<'a> {
             .cloned()
             .filter(|array| self.model.arrays[array.ir].sparse())
         {
-            if let Some(operands) =
-                self.assignment_pattern_operands(path, self.p30_unwrap_cast(rhs))?
+            if op != Operation::Assignment {
+                return Err(format!(
+                    "compound descriptor pattern assignment in `{path}` is unsupported"
+                ));
+            }
+            if let Some(statement) =
+                self.lower_descriptor_pattern(path, lhs, rhs, &array, !blocking)?
             {
-                if let [operand] = operands.as_slice() {
-                    if let NodeKind::Expr(ExprKind::TaggedPattern {
-                        key: Some(key),
-                        value: Some(value),
-                        ..
-                    }) = self.kind(*operand)
-                    {
-                        if key == "default" && array.dims.len() == 1 {
-                            let value = self.lower_expr(path, *value)?;
-                            let value = ir_to_storage(
-                                value,
-                                array.elem_width,
-                                array.signed,
-                                self.model.arrays[array.ir].two_state,
-                            )?;
-                            return Ok(Some(IrStmt::FixedArrayFill {
-                                array: array.ir,
-                                value,
-                                nba: !blocking,
-                            }));
-                        }
-                    }
-                }
+                return Ok(Some(statement));
             }
             return Err(format!("fixed-array value in `{path}` requires a non-flattened whole copy, supported stream, call or default pattern"));
         }

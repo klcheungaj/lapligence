@@ -215,6 +215,7 @@ pub struct Db {
     aggregate_layouts: HashMap<NodeId, AggregateLayout>,
     /// Complete recursive type descriptors keyed by the declared object.
     type_descriptors: HashMap<NodeId, TypeDescriptor>,
+    packed_pattern_elements: HashMap<NodeId, TypeDescriptor>,
     /// Ordered enum members keyed by Slang's canonical type identity.
     enum_types: HashMap<TypeId, EnumTypeMetadata>,
     /// Ordered ranges of multidimensional packed declarations.
@@ -289,6 +290,7 @@ impl Db {
             packed_members: HashMap::new(),
             aggregate_layouts: HashMap::new(),
             type_descriptors: HashMap::new(),
+            packed_pattern_elements: HashMap::new(),
             enum_types: HashMap::new(),
             packed_dimensions: HashMap::new(),
             two_state_types: HashSet::new(),
@@ -350,6 +352,7 @@ impl Db {
             packed_members: HashMap::new(),
             aggregate_layouts: HashMap::new(),
             type_descriptors: HashMap::new(),
+            packed_pattern_elements: HashMap::new(),
             enum_types: HashMap::new(),
             packed_dimensions: HashMap::new(),
             two_state_types: HashSet::new(),
@@ -696,6 +699,11 @@ impl Db {
     /// declaration, when Slang supplied a type record for it.
     pub fn type_descriptor(&self, id: NodeId) -> Option<&TypeDescriptor> {
         self.type_descriptors.get(&id)
+    }
+
+    /// Immediate packed-array element type for an assignment pattern.
+    pub fn packed_pattern_element(&self, id: NodeId) -> Option<&TypeDescriptor> {
+        self.packed_pattern_elements.get(&id)
     }
 
     /// Return the owned declaration-order member table for an enum type.
