@@ -2,7 +2,8 @@
 
 This standalone C11 backend reserves value ABI 5 and implements storage/ownership,
 core arithmetic, bitwise/logical operators, equality/relations, integral mux,
-div/mod/pow/clog2, selections/captured plans, packed reference reads,
+div/mod/pow/clog2, shifts/reductions, case modes, directional wildcard equality,
+range membership, selections/captured plans, packed reference reads,
 concatenation, replication, streaming, array conditional merge,
 net/strength/UDP/enum, real/time and formatting/scalar/index adapters.
 Production models still use the legacy backend.
@@ -42,7 +43,7 @@ use nine-digit chunks; GMP `mpn_get_str` is used at/above the named
 borrowed input or exports GMP types. X wins over Z in radix groups; any X/Z
 prints `x` in decimal.
 
-Storage, logic and arithmetic are separate translation units. `kernels.c` alone
+Operations have separate translation units. `kernels.c` alone
 includes GMP when `LLG_SV4_GMP_KERNELS=1`; portable mode has no GMP dependency.
 GMP requires compatible 64-bit nail-free limbs. Wide multiplication computes the
 low half directly below `LLG_SV4_MUL_FULL_THRESHOLD` (128 words by default). At or
@@ -69,9 +70,26 @@ assignment padding/truncation remains the caller's conversion before/after them.
 Array conditionals compare each immediate element with logical equality and use
 the supplied default for differing or X/Z-containing elements (SV2009 11.4.11).
 
-Historical G1 missing-operation inventory (S4/S5 names below are now implemented):
+Shifts treat counts as unsigned, return X for any unknown count, and check all
+count words before narrowing. Arithmetic right shift repeats the sign-bit state,
+including X/Z; every result keeps the left operand's width/sign. Reductions use
+controlling known bits and otherwise propagate X; countones/onehot ignore X/Z.
+Casez/casex helpers zero-extend their already-normalized caller inputs. Wildcard
+equality ignores X/Z only on the right, extending signs only when both operands
+are signed. Range membership combines inclusive pairwise comparisons with
+four-state logical AND; frontend expression sizing stays with the caller.
 
-`sv4_array_conditional_merge`, `sv4_ashl`, `sv4_ashr`, `sv4_bit_select`, `sv4_bit_select_set`, `sv4_casex_eq`, `sv4_casez_eq`, `sv4_concat`, `sv4_countones`, `sv4_idx_part_select`, `sv4_idx_part_select_set`, `sv4_idx_part_select_set_value`, `sv4_idx_part_select_value`, `sv4_inside_range`, `sv4_logequiv`, `sv4_logimpl`, `sv4_onehot`, `sv4_part_select`, `sv4_part_select_set`, `sv4_reduce_and`, `sv4_reduce_nand`, `sv4_reduce_nor`, `sv4_reduce_or`, `sv4_reduce_xnor`, `sv4_reduce_xor`, `sv4_repeat`, `sv4_repeat_count`, `sv4_select_plan_bit`, `sv4_select_plan_indexed`, `sv4_select_plan_init`, `sv4_select_plan_part`, `sv4_select_plan_read`, `sv4_select_plan_set`, `sv4_select_plan_slice`, `sv4_select_plan_step`, `sv4_shl`, `sv4_shr`, `sv4_stream`, `sv4_unstream`, `sv4_wild_eq`, `sv4_wild_neq`.
+Known equal-width wide add/sub and bitwise operations write an uninitialized
+result allocation directly from the two planes. The inline facade passes private
+plane pointers to this kernel, avoiding descriptor copies and the normalization
+path. All words are written and padding masked before publication. Equality uses
+a direct memcmp for equal-width known inputs; clone allocates without zeroing
+before memcpy. Wide constant-state fills also write and mask their allocation
+directly; nonempty X/Z fills need no zero-B scan. The inline arithmetic facade
+returns these all-X results before copying descriptors to the generic kernel.
+Copy reuse already uses a
+direct memcpy.
+
 
 `sv4_checked_width`, `llg_real_to_bool`, `llg_ref_read`/`llg_ref_view_valid`
 and source-compatible owner-free reference/selection types are implemented.

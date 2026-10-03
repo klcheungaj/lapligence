@@ -12,7 +12,7 @@ Rust-emitted model, HDL, parity, sanitizer or native-platform acceptance.
 ## Standalone compact backend
 
 `value_gmp/backend.h` reserves ABI 5 and supplies G1, the V01 bridge and
-V05/S4–S9 selections, references, assembly and adapters. See
+V05/S1–S9 selections, references, assembly and adapters. See
 `value_gmp/facade_audit.md` for the remaining surface.
 It is not selected or embedded by production yet; V07 owns that
 integration. Build its separate translation units through

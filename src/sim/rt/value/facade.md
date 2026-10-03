@@ -11,7 +11,7 @@ The live legacy implementation in `value/` is the differential reference,
 alongside independent Python integer oracles and exhaustive small truth tables.
 
 The compact implementation lives in `src/sim/rt/value_gmp/`. G1 supplies storage,
-the V01 neutral bridge, core arithmetic/logic/comparison/mux, and V05/S1.
+the V01 neutral bridge, core arithmetic/logic/comparison/mux, and V05/S1–S3.
 V05/S4–S9 add selections, captured plans, packed reference reads, streams,
 concatenation, replication, array conditionals, net/strength/UDP/enum, real/time
 and formatting/index adapters. [The checklist](../value_gmp/facade_audit.md)
@@ -87,8 +87,16 @@ nonzero requested sign means signed. The bridge setter normalizes it to 0/1.
 
 Division truncates the quotient toward zero, remainder has the dividend sign,
 zero divisor yields X, and minimum signed value divided by -1 wraps modulo
-width. Shifts must check unknown, huge and at/above-width counts before calling
-GMP kernels. These requirements belong to V05, not a claim of prototype coverage.
+width. Shifts retain the left operand's width/sign, interpret counts as unsigned
+regardless of count sign, and check X/Z and all high count words before narrowing.
+Logical shifts and arithmetic left shift fill zero; signed arithmetic right shift
+repeats the MSB state, including X/Z. Oversized counts fill the entire result.
+Reductions honor controlling known bits; countones and onehot ignore X/Z.
+Casez/casex helpers zero-extend inputs, with case-expression normalization left
+to the caller. Casez ignores Z on either side; casex ignores X/Z on either side.
+Wildcard equality ignores X/Z only on the right and otherwise uses the binary
+width/sign rules. Inclusive range membership combines pairwise >= and <= with
+four-state AND. All of these operations return independent owners.
 Strengths, net modes, driver identity, scheduling and two-state declaration
 policy belong to containing objects, not the packed numeric descriptor. A
 currently known four-state variable must still accept a later X/Z write.

@@ -44,7 +44,7 @@ capabilities; check the exact inventory rather than assuming a fixed count.
 | Probe / group | Contract |
 | --- | --- |
 | `consumer_bridge_probe.c` | Allocation-free masked/range compare/copy/fill at unaligned offsets and 0/31/32/63/64/65/129/257-bit boundaries; foreign 32-bit record strides, partial imports, copied A/B snapshots, zero-extended text and modular digit parsing. |
-| `neutral_access_probe.c` | Neutral shape/state/word/range mutation at 0..1,048,575 bits; literal Rust/DPI/VPI encodings, source-sign cast versus requested-sign resize, two-state coercion and independent/self-alias owner operations. The prototype compiles this same client against its two selectors. |
+| `neutral_access_probe.c` | Neutral shape/state/word/range mutation at 0..1,048,575 bits; literal Rust/DPI/VPI encodings, source-sign cast versus requested-sign resize, two-state coercion and independent/self-alias owner operations. The standalone compact probes exercise its V01 bridge independently. |
 | `storage_probe.c` | Exact contiguous planes, masking, independent clone/copy/move, repeated destruction, 10,000 replacements, zero/exclusive widths and failure-atomic OOM. Fatal cases require specific diagnostics. |
 | `stream_preflight_probe.c` | INT64 endpoints, declared bounds/traversal, unknown selectors, source-size rejection including later short segments, and zero remaining packed owners. |
 | `array_conditional_probe.c` | Immediate-element equality/defaults versus packed mux, mixed X/zero defaults, aliased inputs, boundary/max widths, independent results, 10,000 replacements and malformed shapes. |
@@ -280,3 +280,26 @@ Bit reinterpretation and rtoi have their fixed 64/32-bit result widths; real del
 is a native scalar. Packed delay uses a representable low-limb input. Checked-width timing uses valid
 known inputs; its X/Z rejection is exercised by the failure probes. No model
 selection, scheduler adoption or native non-Linux qualification is implied.
+
+
+The S2/S3 family probes are enabled by the same compact option. Build their
+separate targets before selecting all compact CTests:
+
+```sh
+cmake --build /build/llg-compact-gcc --parallel 6 --target compact_v05a_checks
+ctest --test-dir /build/llg-compact-gcc -R '^compact_.*families_' \
+  --output-on-failure --parallel 6
+/build/llg-compact-gcc/compact_portable_families_benchmark
+```
+
+The family harness exhausts four-state binary inputs of every width through four,
+including unequal widths and all signs, and every same-width range triple through
+four with all eight sign combinations. Wide checks cover the G1 width list and
+maximum admitted width, count limb boundaries, high/unknown count words,
+result independence, destination-as-operand replacement and canonical payloads.
+Python supplies separate integer/state vectors for every family operation.
+The counter probe checks allocation-free small operations and wide predicates,
+independent zero-count shifts and B removal when all unknown bits shift out.
+Family benchmarks emit seven-sample fresh-result medians/ranges for all 20 call
+variants, including both onehot modes, known and X/Z at 1..4096 bits. Their
+comparison operands are independent equal values so case scans execute fully.

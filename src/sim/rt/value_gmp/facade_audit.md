@@ -10,7 +10,7 @@ convert into legacy descriptors as a fallback.
 | `sv4_t`, ABI and exclusive width limit | `backend.h`; compact ABI 5, exact-width owners |
 | `SV4_EMPTY`, `SV4_INIT`, `SV4_C`, `SV4_S`, `SV4_X`, `SV4_Z`, `LLG_MASK` | Public aliases in `backend.h`; runtime constructors remain source-compatible. Additional `SV4_LITERAL` supports static initialization at <=64 bits. |
 | Storage, constructors, resize/cast, two-state, arithmetic/logic/equality, relations, div/mod/pow/clog2 | G1 header and storage/logic/arithmetic/kernel units |
-| Shifts, reductions, countones/onehot, wildcard/case modes, membership, logical implication/equivalence | V05/S2–S3 |
+| Shifts, reductions, countones/onehot, wildcard/case modes, membership, logical implication/equivalence | `backend.h`, `shifts_reductions.c`, `comparison_membership.c`; inline small paths and direct word kernels |
 | Selection functions and plans | `selection_inline.h`, `selections.c`; clipped coordinate plans, alias snapshots and word range copies |
 | Stream/unstream, concat/repeat, array conditional | `selection_inline.h`, `assembly.c`; independent unsigned owners |
 | Enum, full/range resolution, strength resolution, UDP | `net_adapters.c`; word-parallel endpoints, no per-bit resolution |
