@@ -700,7 +700,15 @@ fn sync_directory(directory: &Dir) -> io::Result<()> {
     Ok(fsync(&readable)?)
 }
 
-#[cfg(not(unix))]
+// FlushFileBuffers needs a writable handle, but cap-std opens directories
+// read-only. NTFS journals the rename itself and the staged contents were
+// flushed before it, so there is no separate directory flush on Windows.
+#[cfg(windows)]
+fn sync_directory(_directory: &Dir) -> io::Result<()> {
+    Ok(())
+}
+
+#[cfg(not(any(unix, windows)))]
 fn sync_directory(directory: &Dir) -> io::Result<()> {
     directory.try_clone()?.into_std_file().sync_all()
 }
@@ -1237,6 +1245,13 @@ fn ensure_private_staging_file(
             "{label} {context} {} is a hard link; refusing to write through a shared staging file",
             name.display()
         )));
+    }
+    // Windows stages with share mode 0: while the staging handle is open no
+    // other handle can be opened for data access or deletion, so the name
+    // cannot be renamed or replaced. Re-opening it by path would itself fail
+    // with a sharing violation.
+    if cfg!(windows) {
+        return Ok(());
     }
     let observed = open_regular_file(directory, name, label, context)?;
     let observed_metadata = observed.metadata().map_err(|error| {
