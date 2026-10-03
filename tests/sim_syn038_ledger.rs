@@ -298,6 +298,7 @@ fn assert_public_cli_fixture_contract(cli_helper: &str, row_id: &str) {
         ".join(\"tests/fixtures/sim\")",
         ".join(suite)",
         ".join(name)",
+        "Path::new(fixture).extension().and_then(|ext| ext.to_str())",
         "Some(\"v\" | \"sv\")",
         "fixture.to_owned()",
         "format!(\"{fixture}.sv\")",
@@ -333,6 +334,10 @@ fn public_cli_fixture_contract_rejects_path_mode_and_argument_drift() {
     assert_public_cli_fixture_contract(helper, "mutation control");
     for (original, replacement) in [
         (".join(suite)", r#".join("other")"#),
+        (
+            "Path::new(fixture).extension().and_then(|ext| ext.to_str())",
+            "None",
+        ),
         (
             "let source = fixture_path(suite, fixture);",
             r#"let source = fixture_path("other", fixture);"#,
@@ -1172,6 +1177,7 @@ fn assert_sim_cli_oracle_contract(root: &Path) {
         helper.contains("assert_eq!(warnings, expected_warnings"),
         "public-CLI case helper must compare the exact lowering-warning set"
     );
+    assert_public_cli_fixture_contract(&helper, "public-CLI oracle");
     let rejection_helper = named_function_body(&helper, "reject_case_with_args");
     for required in [
         "for optimized in [false, true]",

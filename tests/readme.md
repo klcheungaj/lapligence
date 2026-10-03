@@ -85,6 +85,12 @@ test(rtl_003::)'`. They cover selected module refs, fixed record rows, selector
 capture for blocking/NBA/mutation/copy-out and synchronous scanner ref views;
 representative cases also run after Db destruction at native O0/O3.
 
+RTL-004's fixed-pattern fixtures use `-E 'binary(sim_feature_completion) &
+test(rtl_004::)'`. They cover packed and record type keys, nested rows, selector
+snapshots, persistent NBA publication, undefined-multiplicity effects and sparse
+patterns at 16M cells. Representative fixtures run after Db destruction at O0/O3;
+source-size checks supplement public execution.
+
 ### Vendor patch preparation
 
 `vendor_patches.rs` checks clean/applied trees, no-Git archives (including archives
@@ -663,6 +669,18 @@ Domain modules below LSP/integration facades use explicit crate paths and must n
 become accidental Cargo targets. Use domain-qualified name filters when necessary.
 Fragment/embedding-order tests do not compile runtime fragments independently;
 facade compilation and generated-model execution are separate checks.
+
+The packed-value emitter traffic regressions run through the public CLI in both
+optimizer modes:
+
+```sh
+scripts/run-tests.sh --test-work-dir /build --cargo-profile quick --test sim_emit_value_traffic
+```
+
+Render tests in `sim::emit_c::owned::tests::value_traffic` cover borrow eligibility,
+matching/mismatched conversions, constant lifetimes and retained frame values.
+`runtime_value_storage/value_ownership_probe.c` checks destination aliases and
+allocation-free same-width arithmetic, including X/Z and 64/65-bit boundaries.
 
 Standalone compact-backend checks and microbenchmarks, including net/strength,
 real/time, formatting/index and facade adapter probes, are opt-in CMake targets;

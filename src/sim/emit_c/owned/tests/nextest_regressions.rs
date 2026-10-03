@@ -263,6 +263,7 @@ fn loop_budget_is_not_charged_for_the_final_false_condition() {
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     frame

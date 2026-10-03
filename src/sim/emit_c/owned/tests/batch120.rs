@@ -12,6 +12,7 @@ fn pure_callback_inlines_owned_formals_without_native_writes() {
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     frame.read_only_callback = true;
@@ -30,7 +31,7 @@ fn pure_callback_inlines_owned_formals_without_native_writes() {
     frame.discard(value);
     assert!(frame.slots.iter().all(|used| !used));
     assert!(frame.formal_overrides.is_empty());
-    assert!(frame.body().contains("sv4_add("));
+    assert!(frame.body().contains("sv4_add_into("));
     assert!(!frame.body().contains("f_increment("));
     assert!(!frame.body().contains("llg_ba("));
 }
@@ -48,6 +49,7 @@ fn persistent_local_functions_remain_rejected_in_read_only_callbacks() {
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     frame.read_only_callback = true;
@@ -89,6 +91,7 @@ fn static_formal_copies_are_private_in_read_only_callbacks() {
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     frame.read_only_callback = true;
@@ -106,7 +109,7 @@ fn static_formal_copies_are_private_in_read_only_callbacks() {
     let value = frame.expression(&call).unwrap();
     frame.discard(value);
     assert!(!frame.body().contains("llg_ba(&G_value"));
-    assert!(frame.body().contains("sv4_add("));
+    assert!(frame.body().contains("sv4_add_into("));
 }
 
 #[test]
@@ -119,6 +122,7 @@ fn static_callback_returns_require_a_lowering_proof() {
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     frame.read_only_callback = true;
@@ -149,6 +153,7 @@ fn streaming_prepares_all_values_before_any_publication() {
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     let rhs = frame.expression(&number(7, 130)).unwrap();
@@ -181,6 +186,7 @@ fn inline_event_capture_keeps_identity_and_respects_lexical_scope() {
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     frame.begin_block(&[]);
@@ -213,6 +219,7 @@ fn inline_expanded_templates_are_not_callable() {
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     let call = IrCallExpr::new(0, vec![IrCallArg::Val(number(3, 65))], IrDepth::PROC, false);
@@ -242,6 +249,7 @@ fn input_event_formals_pass_the_object_identity_by_value() {
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     let call = IrCallExpr::new(
@@ -266,6 +274,7 @@ fn sampled_expression_uses_snapshot_reads_then_restores_live_reads() {
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     let read = IrExpr::new(IrExprKind::SigRead(0), 65, false, None);
@@ -303,7 +312,12 @@ fn alias_lifecycle_initializes_visible_owners_and_resets_bindings() {
         group_bit: 0,
     });
     let mut source = String::new();
-    model::storage_lifecycle(&model, &mut source).unwrap();
+    model::storage_lifecycle(
+        &model,
+        &super::super::super::constants::PackedConstants::default(),
+        &mut source,
+    )
+    .unwrap();
     assert!(source.contains("&llg_net_alias_0,"));
     assert!(source.contains("sv4_copy(&alias->visible, alias->storage)"));
     assert!(source.contains("sv4_destroy(&llg_storage_0[_llg_n]->visible)"));
@@ -323,6 +337,7 @@ fn qualified_case_compares_candidates_before_running_selected_body() {
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     let items = vec![
@@ -363,6 +378,7 @@ fn clocking_drive_passes_registered_payload_to_the_runtime() {
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     frame
@@ -388,6 +404,7 @@ fn vpi_arguments_are_borrowed_from_registered_owners() {
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     let value = frame

@@ -19,6 +19,8 @@ pub struct RenderedExpr {
 pub struct RCtx<'m> {
     /// Selected packed descriptor for coroutine layout estimates.
     pub value_backend: crate::sim::value_backend::ValueBackend,
+    /// Per-model immutable packed constants, registered during typed emission.
+    pub constants: Option<&'m super::constants::PackedConstants>,
     pub model: &'m IrModel,
     pub func: Option<&'m IrFunc>,
     /// Resolve signal reads through the runtime's Preponed snapshot. This is

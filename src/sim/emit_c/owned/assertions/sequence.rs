@@ -3,6 +3,7 @@ use super::*;
 
 pub(super) fn render(
     model: &IrModel,
+    constants: &super::super::super::constants::PackedConstants,
     index: usize,
     role: &str,
     sequence: &IrSequence,
@@ -13,6 +14,7 @@ pub(super) fn render(
         func: None,
         sampled: true,
         activation_label: None,
+        constants: Some(constants),
     };
     let mut frame = callback_frame(&ctx);
     bind_sequence(&mut frame, sequence);

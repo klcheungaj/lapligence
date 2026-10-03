@@ -312,6 +312,10 @@ void sv4_to_dec_string(sv4_t v, char* buf, size_t cap);
 // unknown bit makes arithmetic results all-X; 0 dominates AND and 1 dominates
 // OR per bit; a shift with unknown amount yields all-X.
 
+/* Borrow operands and replace initialized dst; exact operand aliases supported. */
+void sv4_add_into(sv4_t* dst, sv4_t a, sv4_t b);
+void sv4_sub_into(sv4_t* dst, sv4_t a, sv4_t b);
+void sv4_mul_into(sv4_t* dst, sv4_t a, sv4_t b);
 sv4_t sv4_add(sv4_t a, sv4_t b);
 sv4_t sv4_sub(sv4_t a, sv4_t b);
 sv4_t sv4_mul(sv4_t a, sv4_t b);

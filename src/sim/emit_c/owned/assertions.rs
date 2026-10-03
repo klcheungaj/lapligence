@@ -41,6 +41,7 @@ fn bind_sequence(frame: &mut Frame<'_, '_>, sequence: &IrSequence) {
 
 fn predicate(
     model: &IrModel,
+    constants: &super::super::constants::PackedConstants,
     index: usize,
     role: &str,
     expression: &IrExpr,
@@ -52,6 +53,7 @@ fn predicate(
         func: None,
         sampled,
         activation_label: None,
+        constants: Some(constants),
     };
     let mut frame = callback_frame(&ctx);
     let value = frame.expression(expression)?;
@@ -72,13 +74,19 @@ fn predicate(
     ))
 }
 
-fn sampled_value(model: &IrModel, name: &str, expression: &IrExpr) -> Result<String, String> {
+fn sampled_value(
+    model: &IrModel,
+    constants: &super::super::constants::PackedConstants,
+    name: &str,
+    expression: &IrExpr,
+) -> Result<String, String> {
     let ctx = RCtx {
         value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model,
         func: None,
         sampled: true,
         activation_label: None,
+        constants: Some(constants),
     };
     let mut frame = callback_frame(&ctx);
     let value = frame.expression(expression)?;
@@ -97,17 +105,22 @@ fn sampled_value(model: &IrModel, name: &str, expression: &IrExpr) -> Result<Str
     ))
 }
 
-pub(in crate::sim::emit_c) fn callbacks(model: &IrModel) -> Result<String, String> {
+pub(in crate::sim::emit_c) fn callbacks(
+    model: &IrModel,
+    constants: &super::super::constants::PackedConstants,
+) -> Result<String, String> {
     let mut out = String::new();
     for (index, domain) in model.sampled_domains().iter().enumerate() {
         out.push_str(&sampled_value(
             model,
+            constants,
             &sampled_domain_callback_name(index, "value"),
             &domain.sample,
         )?);
         if let Some(gate) = &domain.gate {
             out.push_str(&sampled_value(
                 model,
+                constants,
                 &sampled_domain_callback_name(index, "gate"),
                 gate,
             )?);
@@ -120,7 +133,9 @@ pub(in crate::sim::emit_c) fn callbacks(model: &IrModel) -> Result<String, Strin
             ("abort", assertion.abort_condition(), assertion.abort_sync()),
         ] {
             if let Some(expression) = expression {
-                out.push_str(&predicate(model, index, role, expression, sampled)?);
+                out.push_str(&predicate(
+                    model, constants, index, role, expression, sampled,
+                )?);
             }
         }
         for (role, graph) in [
@@ -128,7 +143,7 @@ pub(in crate::sim::emit_c) fn callbacks(model: &IrModel) -> Result<String, Strin
             ("consequent", assertion.consequent_sequence()),
         ] {
             if let Some(graph) = graph {
-                out.push_str(&sequence::render(model, index, role, graph)?);
+                out.push_str(&sequence::render(model, constants, index, role, graph)?);
             }
         }
     }

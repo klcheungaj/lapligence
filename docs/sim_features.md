@@ -467,7 +467,8 @@ Macros, includes and their edition-specific behavior are counted in §11.
   in automatic tasks retain per-declaration, per-instance storage through NBA
   publication; changed elements notify sensitive readers. Native/resizable and
   other oversized value contexts remain restricted. Large whole-variable copies
-  and rank-one default fills use issue-time snapshots for blocking/NBA publication;
+  and descriptor-backed scalar patterns use issue-time snapshots for blocking/NBA
+  publication, including sparse index keys, type keys and nonuniform repeats;
   automatic-variable and subroutine-reference-formal NBAs reject. SV §§7.6, 10.4.2, 13.3.2
   **[SV-2005]**.
 - 🟨 **Assignment-pattern values** — Positional, member/integer-index, type and
@@ -476,14 +477,17 @@ Macros, includes and their edition-specific behavior are counted in §11.
   defaults are retained; semantic duplicate indices and uncovered elements reject.
   Array-valued items supply subarray cells in declaration order and evaluate once;
   only scalar fill values broadcast. Repeated operand positions remain distinct.
-  Packed structures retain their type keys; ordinary packed-vector type-key
-  matching outside the described paths remains restricted. Type/default values
-  do not have a qualified side-effect evaluation count.
+  Packed vectors/arrays and structures match their immediate declared element/member
+  types, including equivalent non-nominal integral types. Descriptor-backed patterns
+  retain sparse defaults and snapshot exceptions without a packed payload. Oversized
+  array-valued items still need selected-view transport. Type/default evaluation
+  multiplicity is undefined; value tests do not prescribe invocation counts.
   SV §§10.9.1–10.9.2 **[SV-2005]**.
 - 🟨 **Replicated patterns** — Constant counts expand fixed integral arrays,
   nested rows and aggregates in syntactic order. Zero/negative counts, incompatible
-  shapes and unsupported native/resizable values reject. No source side-effect
-  evaluation count is promised for replication. SV §10.9.1 **[SV-2005]**.
+  shapes and unsupported native/resizable values reject in the admitted nonempty
+  fixed slice. Descriptor arrays use sparse fills or loops, with bounded generated
+  source for repeated syntax. Replication side-effect multiplicity is undefined. SV §10.9.1 **[SV-2005]**.
 - 🟨 **Positional pattern lvalues** — Plain/typed fixed arrays, packed arrays and
   packed/unpacked records deconstruct into nested/selected destinations. Capture
   the RHS and every destination coordinate before scatter writes; earlier stores

@@ -41,6 +41,7 @@ if(LLG_STORAGE_TEST_COMPACT)
     include("${CMAKE_CURRENT_SOURCE_DIR}/compact_selection.cmake")
     include(compact_families.cmake)
     include(compact_consumers.cmake)
+    include(compact_destinations.cmake)
     add_executable(compact_${mode}_probe compact_probe.c)
     target_link_libraries(compact_${mode}_probe PRIVATE compact_${mode} compact_legacy)
     strict_c(compact_${mode}_probe)
@@ -89,9 +90,12 @@ if(LLG_STORAGE_TEST_COMPACT)
       compact_${mode}_selection_probe compact_${mode}_selection_facade
       compact_${mode}_selection_benchmark compact_${mode}_consumers_probe
       compact_${mode}_consumers_facade)
+    add_dependencies(compact_checks compact_${mode}_destinations_probe
+      compact_${mode}_destinations_facade compact_${mode}_destinations_benchmark)
     if(UNIX AND NOT APPLE)
       add_dependencies(compact_checks compact_${mode}_selection_allocations
         compact_${mode}_consumers_allocations)
+      add_dependencies(compact_checks compact_${mode}_destinations_allocations)
     endif()
   endforeach()
 endif()

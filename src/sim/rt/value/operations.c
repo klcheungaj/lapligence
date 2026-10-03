@@ -938,15 +938,11 @@ sv4_t sv4_sub(sv4_t a, sv4_t b) {
     return r;
 }
 
-sv4_t sv4_mul(sv4_t a, sv4_t b) {
-    uint32_t w = sv4_maxw(a, b);
+static void sv4_mul_result(sv4_t* r, sv4_t a, sv4_t b) {
+    uint32_t w = r->width;
     int8_t s = a.is_signed && b.is_signed;
-    if (sv4_is_unknown(a) || sv4_is_unknown(b)) return sv4_x(w, s);
     int nl = sv4_nlimbs(w);
-    // Schoolbook product modulo 2^w.  Terms at limb nl and above cannot affect
-    // the truncated result, so avoid allocating or computing them.
-    sv4_t r = sv4_zero(w, s);
-    uint64_t* acc = r.bits;
+    uint64_t* acc = r->bits;
     for (int i = 0; i < nl; i++) {
         for (int j = 0; j < nl - i; j++) {
             uint64_t plo, phi;
@@ -973,10 +969,92 @@ sv4_t sv4_mul(sv4_t a, sv4_t b) {
             }
         }
     }
-    if (nl > 0) r.bits[nl - 1] &= sv4_limb_mask(w, nl - 1);
-    r.width = w;
-    r.is_signed = s;
+    if (nl > 0) r->bits[nl - 1] &= sv4_limb_mask(w, nl - 1);
+}
+
+sv4_t sv4_mul(sv4_t a, sv4_t b) {
+    uint32_t w = sv4_maxw(a, b);
+    int8_t s = a.is_signed && b.is_signed;
+    if (sv4_is_unknown(a) || sv4_is_unknown(b)) return sv4_x(w, s);
+    sv4_t r = sv4_zero(w, s);
+    sv4_mul_result(&r, a, b);
     return r;
+}
+
+static int sv4_arithmetic_reuse(sv4_t* dst, sv4_t a, sv4_t b) {
+    return dst->width == a.width && a.width == b.width;
+}
+
+static void sv4_arithmetic_planes(sv4_t* dst, int unknown, int8_t sign) {
+    int limbs = sv4_nlimbs(dst->width);
+    for (int i = 0; i < limbs; ++i) {
+        dst->x[i] = unknown ? sv4_limb_mask(dst->width, i) : 0;
+        dst->z[i] = 0;
+        if (unknown) dst->bits[i] = 0;
+    }
+    dst->is_signed = sign;
+}
+
+void sv4_add_into(sv4_t* dst, sv4_t a, sv4_t b) {
+    if (!sv4_arithmetic_reuse(dst, a, b)) {
+        sv4_replace(dst, sv4_add(a, b));
+        return;
+    }
+    int unknown = sv4_is_unknown(a) || sv4_is_unknown(b);
+    int8_t sign = a.is_signed && b.is_signed;
+    if (!unknown) {
+        uint64_t carry = 0;
+        int limbs = sv4_nlimbs(a.width);
+        for (int i = 0; i < limbs; ++i) {
+            uint64_t left = a.bits[i], right = b.bits[i];
+            uint64_t sum = left + right;
+            uint64_t result = sum + carry;
+            carry = (sum < left) || (result < sum);
+            dst->bits[i] = result & sv4_limb_mask(a.width, i);
+        }
+    }
+    sv4_arithmetic_planes(dst, unknown, sign);
+}
+
+void sv4_sub_into(sv4_t* dst, sv4_t a, sv4_t b) {
+    if (!sv4_arithmetic_reuse(dst, a, b)) {
+        sv4_replace(dst, sv4_sub(a, b));
+        return;
+    }
+    int unknown = sv4_is_unknown(a) || sv4_is_unknown(b);
+    int8_t sign = a.is_signed && b.is_signed;
+    if (!unknown) {
+        uint64_t borrow = 0;
+        int limbs = sv4_nlimbs(a.width);
+        for (int i = 0; i < limbs; ++i) {
+            uint64_t left = a.bits[i], right = b.bits[i];
+            uint64_t subtrahend = right + borrow;
+            borrow = (subtrahend < right) || (left < subtrahend);
+            dst->bits[i] = (left - subtrahend) & sv4_limb_mask(a.width, i);
+        }
+    }
+    sv4_arithmetic_planes(dst, unknown, sign);
+}
+
+void sv4_mul_into(sv4_t* dst, sv4_t a, sv4_t b) {
+    if (!sv4_arithmetic_reuse(dst, a, b)) {
+        sv4_replace(dst, sv4_mul(a, b));
+        return;
+    }
+    int unknown = sv4_is_unknown(a) || sv4_is_unknown(b);
+    int8_t sign = a.is_signed && b.is_signed;
+    if (!unknown) {
+        /* Multiplication revisits input limbs; preserve aliased inputs until
+           the complete product has been evaluated. */
+        if (dst->bits == a.bits || dst->bits == b.bits) {
+            sv4_replace(dst, sv4_mul(a, b));
+            return;
+        }
+        size_t limbs = (size_t)sv4_nlimbs(dst->width);
+        if (limbs) memset(dst->bits, 0, limbs * sizeof(uint64_t));
+        sv4_mul_result(dst, a, b);
+    }
+    sv4_arithmetic_planes(dst, unknown, sign);
 }
 
 static int sv4_raw_nlimbs(const sv4_t* v) {

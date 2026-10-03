@@ -337,3 +337,32 @@ compact allocation behavior; legacy always retains three allocated planes.
 Build `compact_checks` using the compact configure command above. For a focused
 run use `ctest --test-dir /build/llg-compact-gcc -R '^compact_.*consumers_'
 --output-on-failure --parallel 6`. Generated selection and HDL parity are covered by `sim_value_backends`.
+
+### Compact arithmetic destinations (V05d)
+
+`compact_destinations.cmake` is included in `compact_checks`. The probes exhaust
+four-state operands through four bits, every width/sign combination, empty and
+initialized destinations, and left/right/both operand aliases. Independent small
+integer/state expectations and live legacy comparisons check all three operations.
+Wide checks include 64/65-bit transitions, partial limbs, full-product threshold
+boundaries, maximum-width add/sub and unknown multiplication, independent owner
+lifetimes and canonical B removal. ELF counters verify storage reuse, no
+allocations for equal-width known add/sub, alias multiplication allocation, and
+required B promotion/removal. Public aliases compile in a standalone client.
+
+After the compact configure/build commands above, focused checks and benchmarks
+use the assigned concurrency budget (four threads in this example):
+
+```sh
+ctest --test-dir /build/llg-compact-gcc -R '^compact_.*destinations_' \
+  --output-on-failure --parallel 4
+/build/llg-compact-gcc/compact_portable_destinations_benchmark
+/build/llg-compact-gcc/compact_gmp_destinations_benchmark
+```
+
+The benchmark reports seven alternating-order sample medians/ranges for add/sub/
+mul destinations at 1/64/65/256/4096 bits, with known, X and Z inputs, independent
+destinations and left/right/both aliases. Operands/destinations are initialized
+outside timing; aliased results feed subsequent iterations. Wide X/Z alias rows
+become all-X after the first iteration. Payload bytes describe input storage;
+there is no generated-model performance claim.

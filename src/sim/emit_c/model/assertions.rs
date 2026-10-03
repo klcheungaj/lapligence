@@ -21,6 +21,7 @@ fn render_assertion_predicate(
         func: None,
         sampled,
         activation_label: None,
+        constants: None,
     };
     let rendered = super::super::expressions::render_expr_impl(&ctx, expression)?;
     if rendered.width == 0 {
@@ -69,6 +70,7 @@ fn render_assertion_sequence(
         func: None,
         sampled: true,
         activation_label: None,
+        constants: None,
     };
     let atom_name = assertion_sequence_atom_name(index, role);
     let mut out = String::new();
@@ -247,6 +249,7 @@ pub(super) fn render_sampled_domain_callbacks(model: &IrModel) -> Result<String,
             func: None,
             sampled: true,
             activation_label: None,
+            constants: None,
         };
         let value = super::super::expressions::render_expr_impl(&ctx, &domain.sample)?;
         if value.width == 0 {

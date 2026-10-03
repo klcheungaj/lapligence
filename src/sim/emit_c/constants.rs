@@ -224,3 +224,56 @@ pub(crate) fn emit_all_known_init(width: u32, signed: bool, ones: bool) -> Strin
         signed as u8
     )
 }
+
+/// Packed owners shared by call-scoped constant borrows in one generated model.
+#[derive(Default)]
+pub struct PackedConstants {
+    entries: std::cell::RefCell<std::collections::BTreeMap<String, (usize, u32, bool)>>,
+}
+
+impl PackedConstants {
+    pub(super) fn intern(&self, constructor: String, width: u32, signed: bool) -> String {
+        let mut entries = self.entries.borrow_mut();
+        let next = entries.len();
+        let index = entries
+            .entry(constructor)
+            .or_insert((next, width, signed))
+            .0;
+        format!("llg_constant_{index}")
+    }
+
+    pub(super) fn operands(&self) -> Vec<(String, u32, bool)> {
+        self.entries
+            .borrow()
+            .values()
+            .map(|(index, width, signed)| (format!("llg_constant_{index}"), *width, *signed))
+            .collect()
+    }
+
+    pub(super) fn declarations(&self) -> String {
+        let mut out = String::new();
+        for index in 0..self.entries.borrow().len() {
+            out.push_str(&format!("static sv4_t llg_constant_{index} = SV4_EMPTY;\n"));
+        }
+        out.push_str("static void llg_model_constants_init(void);\nstatic void llg_model_constants_destroy(void);\n");
+        out
+    }
+
+    pub(super) fn lifecycle(&self) -> String {
+        let entries = self.entries.borrow();
+        let mut ordered = entries.iter().collect::<Vec<_>>();
+        ordered.sort_by_key(|(_, (index, _, _))| *index);
+        let mut out = String::from("static void llg_model_constants_init(void) {\n");
+        for (constructor, (index, _, _)) in &ordered {
+            out.push_str(&format!(
+                "    sv4_replace(&llg_constant_{index}, {constructor});\n"
+            ));
+        }
+        out.push_str("}\nstatic void llg_model_constants_destroy(void) {\n");
+        for (_, (index, _, _)) in &ordered {
+            out.push_str(&format!("    sv4_destroy(&llg_constant_{index});\n"));
+        }
+        out.push_str("}\n");
+        out
+    }
+}

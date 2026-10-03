@@ -54,6 +54,22 @@ fn build_model(
     source: &str,
     system_subroutines: &[&str],
 ) -> PathBuf {
+    build_model_with_opts(
+        dir,
+        source_name,
+        source,
+        system_subroutines,
+        &sim::opt::OptConfig::default(),
+    )
+}
+
+fn build_model_with_opts(
+    dir: &Path,
+    source_name: &str,
+    source: &str,
+    system_subroutines: &[&str],
+    optimization: &sim::opt::OptConfig,
+) -> PathBuf {
     let source_path = dir.join(source_name);
     fs::write(&source_path, source).expect("write VPI HDL fixture");
     let compiled = compile::compile_checked(&compile::CompileOpts {
@@ -72,6 +88,7 @@ fn build_model(
     let generated = sim::codegen::generate_from_db_with_codegen_options(
         &database,
         &sim::codegen::CodegenOptions {
+            optimization: *optimization,
             value_config,
             ..Default::default()
         },
@@ -101,32 +118,35 @@ fn vpi_plugin_registers_tasks_functions_and_walks_hierarchy() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    sim_harness::with_frontend_temp_cwd("vpi-positive", |dir| {
-        let executable = build_model(
-            dir,
-            "vpi_basic.sv",
-            &fixture("vpi_basic.sv"),
-            &[
-                "task $vpi_probe(input logic value)",
-                "function logic [4:0] $vpi_sized(input logic value)",
-                "function real $vpi_real()",
-            ],
-        );
-        let plugin = compile_plugin(dir, "vpi_plugin.c");
-        let output = run_plugin(dir, &executable, &plugin);
-        assert!(output.status.success(), "VPI simulation failed: {output:?}");
-        assert_eq!(
-            String::from_utf8_lossy(&output.stdout),
-            "compile-arg=3\ncompile-args=1\nsized-compile-arg=3\nsized-compile-args=1\nreal-compile-args=0\nvpi-start=0:0\nlookup=1/1 parent=tb vars=3\nmetadata=1\nnegative=LLG_VPI_UNSUPPORTED\nstale=LLG_VPI_HANDLE\nhdl=1/17/2.5\nvpi-end\n"
-        );
-        assert!(
-            output.stderr.is_empty(),
-            "unexpected VPI stderr: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        Ok(())
-    })
-    .expect("VPI positive fixture should complete");
+    for optimization in [sim::opt::OptConfig::default(), sim::opt::OptConfig::none()] {
+        sim_harness::with_frontend_temp_cwd("vpi-positive", |dir| {
+            let executable = build_model_with_opts(
+                dir,
+                "vpi_basic.sv",
+                &fixture("vpi_basic.sv"),
+                &[
+                    "task $vpi_probe(input logic value)",
+                    "function logic [4:0] $vpi_sized(input logic value)",
+                    "function real $vpi_real()",
+                ],
+                &optimization,
+            );
+            let plugin = compile_plugin(dir, "vpi_plugin.c");
+            let output = run_plugin(dir, &executable, &plugin);
+            assert!(output.status.success(), "VPI simulation failed: {output:?}");
+            assert_eq!(
+                String::from_utf8_lossy(&output.stdout),
+                "compile-arg=3\ncompile-args=1\nsized-compile-arg=3\nsized-compile-args=1\nreal-compile-args=0\nvpi-start=0:0\nlookup=1/1 parent=tb vars=3\nmetadata=1\nnegative=LLG_VPI_UNSUPPORTED\nstale=LLG_VPI_HANDLE\nhdl=1/17/2.5\nvpi-end\n"
+            );
+            assert!(
+                output.stderr.is_empty(),
+                "unexpected VPI stderr: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            Ok(())
+        })
+        .expect("VPI positive fixture should complete");
+    }
 }
 
 #[test]

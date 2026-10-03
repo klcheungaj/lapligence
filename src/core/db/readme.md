@@ -14,7 +14,9 @@ fixed cache per queried file.
 
 Projection normalizes implicit instance bodies and expands concrete instance-array
 entries without losing source indices or explicit statement scopes. Packed ranges
-use declaration IDs rather than names. Typed references distinguish subroutine
+use declaration IDs rather than names. Assignment-pattern nodes also retain their immediate packed element descriptor,
+including canonical identity and ranges, for type-key matching after snapshot
+destruction. Typed references distinguish subroutine
 bodies, indexed pattern keys, event qualifiers and ordered conditional clauses.
 Concrete loop-generate blocks use the array name and source index as one
 hierarchical segment (`rows[0]`), so bound children retain standard paths after

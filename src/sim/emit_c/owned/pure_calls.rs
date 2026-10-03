@@ -522,6 +522,7 @@ mod tests {
             func: None,
             sampled: false,
             activation_label: None,
+            constants: None,
         };
         let mut frame = Frame::new(&ctx);
         frame.read_only_callback = true;
@@ -567,6 +568,7 @@ mod tests {
             func: None,
             sampled: false,
             activation_label: None,
+            constants: None,
         };
         let call = IrCallExpr::new(0, Vec::new(), IrDepth::PROC, false);
         for already_nested in [30, 31] {

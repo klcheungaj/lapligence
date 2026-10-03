@@ -115,6 +115,7 @@ fn callback_composite_writes_release_owners_without_publication() {
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     frame.read_only_callback = true;

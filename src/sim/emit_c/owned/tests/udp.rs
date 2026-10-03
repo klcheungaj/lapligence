@@ -40,6 +40,7 @@ fn udp_gate_body_is_constant_size_with_many_rows() {
             func: None,
             sampled: false,
             activation_label: None,
+            constants: None,
         };
         let mut frame = Frame::new(&ctx);
         let result = frame.expression(&udp_expr()).unwrap();
@@ -150,6 +151,7 @@ fn udp_inputs_are_evaluated_once_in_order_even_for_wildcard_rows() {
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     let result = frame.expression(&expr).unwrap();

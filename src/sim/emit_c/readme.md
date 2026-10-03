@@ -57,10 +57,12 @@ initialized and destroyed through per-representation pointer tables and loops.
 Electrical groups can span maximal identically connected bit ranges while
 waveform/VPI views retain declared shapes. Remaining structural contributions use
 ordered descriptor loops for captured RHS part selects, including distinct
-inertial handles for delayed rows. Short or disconnected gathers retain ordinary
-emission. Net contributions use one cell array per electrical group, with descriptor loops
-for defaults, index resets, alias binding and teardown. Net resolution and per-bit
-grouping are unchanged. Consecutive spawns, finals and waveform registrations run from constant
+inertial handles for delayed rows. Every row retains its width/sign cast;
+ordinary expression elision does not assume that all rows share a shape.
+Short or disconnected gathers retain ordinary emission. Net contributions use one cell array per electrical group, with descriptor loops
+for defaults, index resets, alias binding and teardown. Net resolution preserves
+electrical bit correspondence and driver semantics. Consecutive spawns, finals
+and waveform registrations run from constant
 argument tables in their original order.
 Consecutive compatible procedural `assign` statements also use immutable row
 tables and one model-local typed helper per shape. Each row reads its source at
@@ -95,3 +97,12 @@ remain per instance. `LLG_SHARE_MIN_INSTANCES` selects the minimum class size
 unrepresented differences or local static driver storage remain separate.
 The default leaves pairs and triples independent, reserving record and hidden-call
 overhead for classes with a larger reduction in repeated code.
+
+Packed arithmetic borrows signal/local operands when subsequent evaluation cannot
+write or suspend, pools wide constants for each model lifetime, and skips
+matching width/sign conversions. One-limb literals
+use the existing initializer directly. General expression results and data retained
+through selectors, calls or suspension stay owned. Arithmetic results reuse an
+owned operand slot; add/subtract can reuse its same-width payload, while aliased
+multiplication keeps an independent result. Borrowed inputs and retained results
+follow the [runtime ownership contract](../rt/value/ownership.md).

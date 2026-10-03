@@ -25,6 +25,7 @@ fn native_return_slot_precedes_argument_cleanup_mark() {
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     let result = frame
@@ -69,6 +70,7 @@ fn string_formals_are_copied_into_registered_callee_owners() {
         func: Some(function),
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let source = super::super::model::function(&ctx, function).unwrap();
     assert!(source.contains("llg_string_clone(&a0)"));
@@ -99,7 +101,12 @@ fn native_model_lifecycle_uses_typed_notification_and_release() {
         initial: None,
     });
     let mut source = String::new();
-    super::super::model::storage_lifecycle(&model, &mut source).unwrap();
+    super::super::model::storage_lifecycle(
+        &model,
+        &super::super::super::constants::PackedConstants::default(),
+        &mut source,
+    )
+    .unwrap();
     assert!(source.contains("G_text.notify = llg_dependency_changed"));
     assert!(source.contains("G_text.dependency = &G_text_llg_dep"));
     assert!(source.contains("llg_string_destroy(&G_text)"));
@@ -119,6 +126,7 @@ fn container_read_keeps_index_owner_until_after_runtime_call() {
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     let expression = IrExpr::new(
@@ -159,6 +167,7 @@ fn file_scan_uses_registered_source_and_typed_borrowed_target() {
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     let input = IrFileInput::ScanString {
@@ -194,6 +203,7 @@ fn enum_navigation_releases_receiver_members_step_and_result() {
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     let expression = IrExpr::new(
@@ -232,6 +242,7 @@ fn native_read_only_callbacks_reject_random_state_mutation() {
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     frame.read_only_callback = true;
@@ -254,6 +265,7 @@ fn generic_queue_queries_use_the_generic_runtime_layout() {
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     let query = IrArrayQuery {

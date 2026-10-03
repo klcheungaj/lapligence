@@ -969,6 +969,7 @@ fn render_stmt_scoped(
                 func: ctx.func,
                 sampled: ctx.sampled,
                 activation_label: Some(exit.clone()),
+                constants: None,
             };
             let mut labels = HashSet::new();
             enclosed_labels(body, &mut labels);

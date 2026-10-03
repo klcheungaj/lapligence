@@ -42,6 +42,7 @@ fn packed_selection_owners_are_released_and_nba_captures_a_narrow_range() {
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     let target = frame.target(&lhs()).unwrap();
@@ -73,6 +74,7 @@ fn packed_selection_reads_default_the_parent_before_applying_inner_bounds() {
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     let target = frame.target(&lhs()).unwrap();
@@ -95,6 +97,7 @@ fn packed_selection_input_uses_a_synchronous_plan_descriptor() {
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     let result = frame

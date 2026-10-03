@@ -745,6 +745,7 @@ impl<'a> Codegen<'a> {
             func: self.cur_fn_ir.map(|i| &self.model.funcs[i]),
             sampled: false,
             activation_label: None,
+            constants: None,
         }
     }
 

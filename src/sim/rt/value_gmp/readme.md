@@ -1,7 +1,7 @@
 # Compact packed values
 
 This C11 backend uses value ABI 5 and implements storage/ownership,
-core arithmetic, bitwise/logical operators, equality/relations, integral mux,
+core arithmetic and initialized arithmetic destinations, bitwise/logical operators, equality/relations, integral mux,
 div/mod/pow/clog2, shifts/reductions, case modes, directional wildcard equality,
 range membership, selections/captured plans, packed reference reads,
 concatenation, replication, streaming, array conditional merge,
@@ -125,3 +125,11 @@ assembly, consumer bridges, kernels, net adapters, real/time and formatting/inde
 `llg_value.c` is a facade-only unit for compact; its reference implementation is
 `value_gmp/references.c`. S2–S5 and consumer helpers use portable word loops with
 either kernel selection.
+
+EMIT-1 arithmetic destinations are implemented in `backend.h` and `arithmetic.c`.
+Small results stay inline. Equal-width known add/sub reuse destination storage,
+including exact aliases, without allocation. Independent equal-width multiply
+writes through the existing limb kernel, using scratch only for a full GMP
+product; known aliases compute a fresh owner before replacement. Unknown results
+fill X after inspecting inputs, promoting B only when needed; known replacement
+results remove B. Mismatched widths retain returning-operation extension rules.

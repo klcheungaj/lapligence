@@ -25,6 +25,7 @@ fn forwarded_reference_resolution_uses_the_formal_descriptor() {
         func: Some(&model.funcs[0]),
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let frame = Frame::new(&ctx);
     assert_eq!(frame.reference_address("r0").unwrap(), "r0");
@@ -41,6 +42,7 @@ fn reference_bit_write_passes_one_captured_native_index() {
         func: Some(&model.funcs[0]),
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     let lhs = IrLhs::Ref {
@@ -76,6 +78,7 @@ fn addressable_real_local_is_heap_backed_and_lexically_owned() {
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let mut frame = Frame::new(&ctx);
     frame.begin_block(&[]);
@@ -137,6 +140,7 @@ fn owned_memory_emitter_uses_enum_entry_count_for_c_array_bound() {
         func: None,
         sampled: false,
         activation_label: None,
+        constants: None,
     };
     let statement = IrStmt::Memory {
         write: false,
