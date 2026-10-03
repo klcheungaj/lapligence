@@ -35,6 +35,7 @@ pub(super) mod model;
 pub(super) mod native;
 mod native_access;
 mod native_tasks;
+pub(super) mod net_batches;
 mod objects;
 pub(super) mod pca_batches;
 mod pure_calls;
@@ -167,6 +168,7 @@ pub(super) struct Frame<'a, 'm> {
     frame_upper_bounds: BTreeMap<usize, usize>,
     coroutine_functions: BTreeSet<usize>,
     cached_fields: cached_fields::CachedFields,
+    net_batches: Vec<net_batches::NetBatch>,
     pca_owner: Option<String>,
     pca_batches: Vec<super::statements::pca_batches::Batch>,
     cell_eligibility: frame_cells::CellEligibility,
@@ -264,6 +266,7 @@ impl<'a, 'm> Frame<'a, 'm> {
             frame_upper_bounds: BTreeMap::new(),
             coroutine_functions: BTreeSet::new(),
             cached_fields: cached_fields::CachedFields::default(),
+            net_batches: Vec::new(),
             pca_owner: None,
             pca_batches: Vec::new(),
             cell_eligibility: frame_cells::CellEligibility::default(),

@@ -181,16 +181,27 @@ fn port_net_type_expression_only_actual_joins_all_electrical_bits() {
         for options in [OptConfig::none(), OptConfig::default()] {
             let model = codegen::generate_from_db_with_opts(&database, &options)
                 .unwrap_or_else(|error| panic!("{name}: {error}"));
-            let wired_bits = model
+            // Partitioning may combine adjacent connected bits. Count their
+            // electrical widths, rather than assuming one group per bit.
+            let wired_width: u32 = model
                 .model_c
                 .lines()
                 .filter(|line| {
                     line.starts_with("static llg_net_t ") && line.contains("LLG_RESOLVE_WAND")
                 })
-                .collect::<Vec<_>>();
+                .map(|line| {
+                    line.split_once(".width = ")
+                        .expect("net group width")
+                        .1
+                        .split_once(',')
+                        .expect("width field delimiter")
+                        .0
+                        .parse::<u32>()
+                        .expect("electrical width")
+                })
+                .sum();
             assert_eq!(
-                wired_bits.len(),
-                4,
+                wired_width, 4,
                 "{name}: every connected bit must be wired-AND"
             );
             assert!(model.warnings.is_empty(), "{name}: {:?}", model.warnings);

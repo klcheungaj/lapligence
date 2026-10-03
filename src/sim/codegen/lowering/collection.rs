@@ -31,6 +31,7 @@ mod lvalues;
 mod names;
 mod net_arrays;
 mod net_collapse;
+mod net_partition;
 mod nets;
 mod packed_elements;
 pub(super) mod packed_formals;

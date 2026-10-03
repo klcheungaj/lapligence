@@ -753,3 +753,38 @@ fn run_time_output_settings_redirect_one_built_model() {
         assert!(two.join("note.txt").is_file() && two.join("mem.hex").is_file());
     }
 }
+
+#[test]
+fn vcd_partitioned_nets_preserve_declared_shapes_and_values() {
+    for optimized in [true, false] {
+        let (_dir, vcd) = read_fixture_vcd("partitioned_nets", optimized);
+        let declarations = assert_vcd_names(
+            &vcd,
+            &["tb.a", "tb.b", "tb.peer", "tb.r$5B$2D1$5D", "tb.r$5B0$5D"],
+        );
+        for name in ["tb.peer", "tb.r$5B$2D1$5D", "tb.r$5B0$5D"] {
+            assert_eq!(declarations[name].1, "129");
+        }
+        for name in ["tb.peer", "tb.r$5B$2D1$5D"] {
+            let id = &declarations[name].2;
+            for value in [
+                "x".repeat(129),
+                "1".repeat(129),
+                (0..129)
+                    .rev()
+                    .map(|bit| if bit == 64 { '1' } else { 'x' })
+                    .collect(),
+            ] {
+                assert!(
+                    vcd.contains(&format!("b{value} {id}")),
+                    "missing value for {name}: {vcd}"
+                );
+            }
+        }
+        assert!(vcd.contains(&format!(
+            "b{} {}",
+            "0".repeat(129),
+            declarations["tb.r$5B0$5D"].2
+        )));
+    }
+}

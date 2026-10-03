@@ -69,7 +69,7 @@ fn port_net_type_aliases() {
     sim_cli::run_case_with_args(
         "port_net_types",
         "aliases",
-        "aliases=1000/1000/0010\nchanged=1010/1010/1010\nfloat=zzzz/zzzz/zzzz\n",
+        "aliases=1000/1000/0010\nchanged=1010/1010/1010\nzero_parent=0000/0000/0000\nzero_child=0000/0000/0000\nfloat=zzzz/zzzz/zzzz\n",
         "",
         &[],
         &["--edition", "2009"],

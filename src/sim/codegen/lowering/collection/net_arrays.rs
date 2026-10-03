@@ -1,4 +1,4 @@
-//! Fixed net-array cells share canonical electrical bits with connected ports.
+//! Fixed net-array views bind to the shared electrical range partition.
 use super::net_collapse::{NetCollapsePlan, NetPoint};
 use super::*;
 
@@ -409,53 +409,49 @@ impl Codegen<'_> {
                 .into_iter()
                 .find(|owner| self.array_globals[owner].ir == array)
                 .ok_or("net-array owner is missing")?;
-            let kind = self
-                .db
-                .array_meta(owner)
-                .and_then(|meta| meta.net_type())
-                .and_then(Self::ir_net_kind)
-                .ok_or("net-array kind cannot be resolved")?;
             let mut sources = Vec::new();
             for source in nodes {
-                let (target, strengths) = match self.kind(*source) {
-                    NodeKind::ContAssign {
-                        strength0,
-                        strength1,
-                        ..
-                    } => {
+                let target = match self.kind(*source) {
+                    NodeKind::ContAssign { .. } => {
                         let Some(target) = self.node(*source).children.first().copied() else {
                             continue;
                         };
-                        (
-                            target,
-                            continuous_assignment_strengths_for_width(
-                                *strength0,
-                                *strength1,
-                                &self.model.arrays[array].hdl_name,
-                                self.model.arrays[array].elem_width,
-                            )?,
-                        )
+                        target
                     }
                     NodeKind::Port {
                         direction: DbDirection::Output,
                         high_expr: Some(target),
-                        strength0,
-                        strength1,
-                        low,
                         ..
-                    } => (
-                        *target,
-                        self.effective_port_driver_strengths(
-                            *source, *strength0, *strength1, *low,
-                        )?,
-                    ),
+                    } => *target,
                     _ => continue,
                 };
                 let mut cells = Vec::new();
                 self.continuous_net_array_cells(target, &mut cells)?;
-                if cells.contains(&(array, element)) {
-                    sources.push((*source, strengths));
+                if !cells.contains(&(array, element)) {
+                    continue;
                 }
+                let strengths = match self.kind(*source) {
+                    NodeKind::ContAssign {
+                        strength0,
+                        strength1,
+                        ..
+                    } => continuous_assignment_strengths_for_width(
+                        *strength0,
+                        *strength1,
+                        &self.model.arrays[array].hdl_name,
+                        self.model.arrays[array].elem_width,
+                    )?,
+                    NodeKind::Port {
+                        strength0,
+                        strength1,
+                        low,
+                        ..
+                    } => {
+                        self.effective_port_driver_strengths(*source, *strength0, *strength1, *low)?
+                    }
+                    _ => unreachable!("structural source classified above"),
+                };
+                sources.push((*source, strengths));
             }
             let mut bindings = Vec::with_capacity(peers.len());
             for (physical, peer) in peers.into_iter().enumerate() {
@@ -508,22 +504,7 @@ impl Codegen<'_> {
                         ..binding.clone()
                     });
                 } else {
-                    let group = self.model.net_groups.len();
-                    self.model.net_groups.push(crate::sim::ir::IrNetGroup {
-                        c_name: format!("g_array_net_{array}_{element}_{physical}"),
-                        width: 1,
-                        signed: false,
-                        kind,
-                        n_drivers: usize::from(sources.is_empty()),
-                        driver_strengths: vec![(6, 6); usize::from(sources.is_empty())],
-                        propagation_delay: None,
-                    });
-                    bindings.push(IrNetAliasBinding {
-                        group,
-                        slot: 0,
-                        signal_bit: physical,
-                        group_bit: 0,
-                    });
+                    return Err("net-array bit has no electrical partition".into());
                 }
             }
             let index = self.model.signals.len();

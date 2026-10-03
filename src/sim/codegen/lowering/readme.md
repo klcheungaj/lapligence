@@ -20,13 +20,20 @@ reference identity and static/automatic initialization. Static fixed-array
 locals use one persistent signal per declaration and instance, shared by
 subroutine writes, delayed NBAs and hierarchical fixed selections.
 
+Electrical storage uses maximal adjacent runs whose member mappings, driver
+ranges, force targets and effective type/delay agree. The partitioner in
+`collection/net_partition.rs` serves arrays and scalar/vector alias networks;
+whole vector nets keep their existing wide storage. Declared shapes remain
+separate bit bindings, and contributions select contiguous RHS ranges before
+resolution. New net topology belongs in the partitioner's source inventory.
+
 Packed record member selections use the recursive descriptor and guarded typed
 selection steps, including runtime indexed part-selects. Fixed record net arrays
 map member paths and declared coordinates to canonical electrical bits before
-driver planning; member selection materializes the selected interval rather than
-the complete cell. Net admission excludes recursively nested unpacked unions in
-the SystemVerilog-2009 profile. These paths reuse the existing storage, validation,
-dependency and owned-emission operations.
+range partitioning and driver planning; member selection materializes the selected
+interval rather than the complete cell. Net admission excludes recursively nested
+unpacked unions in the SystemVerilog-2009 profile. These paths reuse the existing
+storage, validation, dependency and owned-emission operations.
 
 Selected module references normalize to canonical storage plus ordered packed
 selection steps. Composing bit, part and indexed selections preserves each
