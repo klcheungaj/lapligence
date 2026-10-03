@@ -1233,8 +1233,9 @@ struct Codegen<'a> {
     /// attach to the owning process/function only after its body is complete.
     pending_container_pre_fns: Vec<crate::sim::ir::IrPreFn>,
     /// Fixed-array declaration assignments whose RHS is not a static constant
-    /// pattern. These become run-once initialization processes after every
-    /// array and container has been collected.
+    /// pattern, lowered after every array and container has been collected.
+    /// They join the static initialization schedule (descriptor storage in
+    /// Verilog-2001 keeps an active-region initialization process).
     array_initializers: Vec<(NodeId, NodeId)>,
     /// All lowered named events, in collection order (deterministic emission).
     events: Vec<EventInfo>,
@@ -1262,6 +1263,15 @@ struct Codegen<'a> {
     /// bound child/interface signal storage is available. Each tuple is
     /// `(declaration, initializer, owning instance, resolved storage)`.
     deferred_declaration_inits: Vec<(NodeId, NodeId, NodeId, SignalInfo)>,
+    /// Static declaration initializers whose typed transport is a statement
+    /// (descriptor-backed fixed arrays), as `(declaration, body)`.
+    declaration_statements: Vec<(u32, IrStmt)>,
+    /// Declaration identity -> collection-time declaration order, the
+    /// tie-break of the static initialization schedule.
+    initializer_order: HashMap<u32, usize>,
+    /// Declaration identity -> source initializer expressions, whose reads
+    /// order the static initialization schedule.
+    initializer_sources: HashMap<u32, Vec<NodeId>>,
     /// ContAssign arena nodes already collected as scalar variable
     /// declaration initializers; skipped at emission. True-net declaration
     /// assignments remain event-driven continuous-assignment processes.
@@ -1482,6 +1492,9 @@ impl<'a> Codegen<'a> {
             var_inits: Vec::new(),
             declaration_inits: Vec::new(),
             deferred_declaration_inits: Vec::new(),
+            declaration_statements: Vec::new(),
+            initializer_order: HashMap::new(),
+            initializer_sources: HashMap::new(),
             scope_array_names: HashMap::new(),
             param_vals: HashMap::new(),
             scope_sig_names: HashMap::new(),

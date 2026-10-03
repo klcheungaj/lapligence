@@ -146,6 +146,9 @@ pub(super) fn render_main(execution: &ExecutionModel) -> Result<String, String> 
                     emit_const(value)
                 ));
             }
+            IrInitStep::Execute { .. } => {
+                return Err("statement declaration initializers require the owned emitter".into());
+            }
             IrInitStep::Initialize(initialization) => {
                 if initialization.phase() != crate::sim::ir::IrInitPhase::BeforeProcesses {
                     continue;

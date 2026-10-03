@@ -2,6 +2,8 @@
 
 use super::*;
 
+mod order;
+
 impl<'a> Codegen<'a> {
     fn declaration_init_phase(&self) -> IrInitPhase {
         if self.db.edition() == LanguageEdition::SystemVerilog2009 {
@@ -24,7 +26,7 @@ impl<'a> Codegen<'a> {
     /// declaration. The owned database keeps every instance clone distinct;
     /// package declarations are one shared environment, while module and
     /// interface declarations use their concrete elaborated instance.
-    fn owner_instance(&self, node: NodeId) -> Option<NodeId> {
+    pub(super) fn owner_instance(&self, node: NodeId) -> Option<NodeId> {
         let mut current = Some(node);
         while let Some(id) = current {
             if matches!(self.kind(id), NodeKind::ModuleInst { .. })
@@ -68,6 +70,7 @@ impl<'a> Codegen<'a> {
         real: bool,
     ) -> Result<IrInitialization, String> {
         let value = self.lower_expr(path, initializer)?;
+        self.record_initializer_source(declaration, initializer);
         let value = if real {
             value
         } else {
@@ -151,12 +154,31 @@ impl<'a> Codegen<'a> {
                 value: c.clone(),
             });
         }
-        model.init_steps.extend(
-            self.declaration_inits
-                .iter()
-                .cloned()
-                .map(IrInitStep::Initialize),
-        );
+        // Value and statement initializers share one schedule: each runs
+        // after the static declarations it reads (SV §§6.21, 10.5).
+        let declarations = self
+            .declaration_inits
+            .iter()
+            .map(IrInitialization::declaration)
+            .chain(
+                self.declaration_statements
+                    .iter()
+                    .map(|(declaration, _)| *declaration),
+            )
+            .collect::<Vec<_>>();
+        let values = self.declaration_inits.len();
+        for entry in self.initializer_schedule(&declarations) {
+            model.init_steps.push(match entry.checked_sub(values) {
+                None => IrInitStep::Initialize(self.declaration_inits[entry].clone()),
+                Some(statement) => {
+                    let (declaration, body) = &self.declaration_statements[statement];
+                    IrInitStep::Execute {
+                        declaration: *declaration,
+                        body: Box::new(body.clone()),
+                    }
+                }
+            });
+        }
         for (net, slot, c) in &self.net_inits {
             let group = model
                 .net_groups

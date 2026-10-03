@@ -629,6 +629,7 @@ impl<'a> Codegen<'a> {
             Some(eid) => match self.array_init_consts(path, name, eid) {
                 Ok(values) => Some(values),
                 Err(_) => {
+                    self.reserve_initializer_order(node);
                     self.array_initializers.push((node, eid));
                     None
                 }

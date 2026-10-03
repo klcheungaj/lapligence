@@ -190,6 +190,9 @@ pub(super) fn mark_unused_storage(model: &mut IrModel, execution: Option<&[Execu
                     crate::sim::ir::IrInitTarget::StaticLocal { .. } => {}
                 }
             }
+            crate::sim::ir::IrInitStep::Execute { body, .. } => {
+                collect_stmt_rw(body, model, &mut rw);
+            }
             _ => {}
         }
     }

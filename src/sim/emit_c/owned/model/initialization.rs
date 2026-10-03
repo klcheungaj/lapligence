@@ -637,6 +637,16 @@ fn initialization_step(frame: &mut Frame<'_, '_>, step: &IrInitStep) -> Result<(
             ));
             frame.discard(value);
         }
+        IrInitStep::Execute { body, .. } => {
+            // The model initialization frame is an ordinary C function, not
+            // a coroutine, so a suspending body cannot be represented here.
+            if crate::sim::execution::effects_for_statements(model, std::slice::from_ref(body))
+                .contains(&crate::sim::execution::ExecutionEffect::Suspend)
+            {
+                return Err("static declaration initializer cannot suspend".to_owned());
+            }
+            frame.statement(body)?;
+        }
         IrInitStep::Initialize(initialization) => {
             if initialization.phase() != IrInitPhase::BeforeProcesses {
                 return Ok(());

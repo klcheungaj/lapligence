@@ -46,6 +46,10 @@ selected views; frontend-illegal packed bit/part reference actuals remain reject
 
 `IrInitialization` retains declaration identity, lifetime, origin, execution
 phase, and checked persistent targets for static scalar/fixed composites.
+`IrInitStep::Execute` carries a static declaration initializer whose typed
+transport is a statement (descriptor-backed fixed arrays); it runs in the
+before-process initialization frame, must not suspend, and is validated,
+traversed and counted as storage reads/writes like process statements.
 Automatic initialization stays activation-local; static locals are not lazily
 initialized on first call.
 

@@ -7,7 +7,8 @@ impl<'a> Codegen<'a> {
         let initializers = std::mem::take(&mut self.array_initializers);
         let mut descriptor_processes = Vec::new();
         for (declaration, initializer) in initializers {
-            let inst = self.owning_inst(declaration).ok_or_else(|| {
+            // Package and `$unit` declarations own their storage directly.
+            let inst = self.owner_instance(declaration).ok_or_else(|| {
                 format!(
                     "fixed initializer for `{}` has no owning instance",
                     self.node(declaration).name
@@ -34,6 +35,15 @@ impl<'a> Codegen<'a> {
                         Operation::Assignment,
                     )?
                     .ok_or("descriptor initializer has no array assignment")?;
+                // SystemVerilog static initialization precedes every process
+                // (SV §10.5) and joins the declaration schedule; Verilog keeps
+                // its active-region initialization process.
+                if self.db.edition() == LanguageEdition::SystemVerilog2009 {
+                    self.record_initializer_source(declaration, initializer);
+                    let identity = self.declaration_identity(declaration)?;
+                    self.declaration_statements.push((identity, body));
+                    continue;
+                }
                 let index = descriptor_processes.len();
                 descriptor_processes.push(IrProcess::new_with_origin(
                     format!(
