@@ -188,7 +188,9 @@ runs the full `cargo nextest run --all-features --cargo-profile release` suite
 before packaging. Linux builds executables and test binaries only in the
 static-musl Alpine container, then runs those binaries in place on Ubuntu 24.04
 and Rocky Linux 9 containers through nextest binaries/cargo metadata, with the
-checkout at `/workspace` so compile-time paths resolve.
+checkout at `/workspace` so compile-time paths resolve. Observed platform
+differences and their portable fixes are in
+[shared source policies](../src/AGENTS.md#platform-differences).
 
 Lint/sanitizer jobs disable Rust debug info/incremental compilation and strip native
 frontend debug sections while retaining debug assertions/overflow checks. Preserve

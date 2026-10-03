@@ -58,6 +58,45 @@ memory separately.
 - Update defaults, diagnostics, tests and owning guides together for any changed
   environment variable, configuration key, limit or fallback.
 
+## Platform differences
+
+Observed in CI and native builds; keep code portable across all of them. Resolve
+or compare paths the way [secure_fs](ffi/secure_fs.rs) does, never by string.
+
+- macOS `/var`, `/tmp` and `/etc` are symlinks into `/private`, and `temp_dir()`
+  is `/var/folders/...`. Handle-derived paths are resolved, so compare resolved
+  spellings: resolve user roots (include directories, dump targets) once at entry
+  with `secure_fs::open_path(..).actual_path()`. Linux hits the same mismatch for
+  symlinked project directories. Reproduce macOS by pointing `TMPDIR` at a
+  symlinked directory. Never send resolved paths back to LSP clients in place of
+  their URI spelling; symlinked LSP workspace roots still miss feature lookups.
+- macOS `/dev/fd/N` entries are fdesc device nodes, not symlinks: `readlink` fails
+  with EINVAL, `opendir` with ENOTDIR, and opening one duplicates N with a shared
+  offset. Use `fcntl(F_GETPATH)` and `fdopendir` on a fresh `openat(".")`. Linux
+  `/proc/self/fd/N` is a real link whose reopen creates a new description.
+- Windows `canonicalize` returns verbatim `\\?\D:\...` paths; `Path::starts_with`
+  treats that prefix and `D:` as different. Handle paths strip it, so compare
+  canonical with canonical, and canonicalize test temporary paths on Unix only.
+- Windows relative paths use `\`: compare `Path` components, never strings
+  containing `/`.
+- Windows share mode 0 blocks other opens of that file, including from this
+  process (os error 32). `FlushFileBuffers` needs a writable handle, so directory
+  sync through cap-std's read-only directory handles fails; skip it there.
+- `std::os::windows::fs::MetadataExt::number_of_links`/`file_index` are unstable
+  (`windows_by_handle`); use cap-std `MetadataExt` on an open handle. Gate
+  `std::os::unix` users, including symlink tests, with `#[cfg(unix)]`.
+- MSVC C mode lacks `max_align_t` (use `llg_co_max_align_t`). MSVC gives unnamed
+  enums an `int` underlying type where GCC/Clang choose `unsigned`, so brace
+  initializing a `uint32_t` from an enum ternary is narrowing (C2397); cast.
+  MSVC's `<chrono>` warning C4530 without `/EHsc` is harmless.
+- Without zlib's configure step `Z_HAVE_UNISTD_H` is unset, so its `gz*` code
+  calls undeclared `read`/`write`/`lseek`/`close`, which GCC 14 and Clang reject;
+  the bundled zlib defines it outside Windows.
+- Linux CI builds only in static-musl Alpine; glibc Ubuntu/Rocky containers run
+  those binaries. Minimal images lack clang, which `generated_c_frame_lint`
+  requires alongside gcc; install test tools explicitly. zlib is bundled, never
+  a system package.
+
 ## Pipeline profiling
 
 `profile.rs` emits opt-in `llg-profile begin/end` stderr markers when
