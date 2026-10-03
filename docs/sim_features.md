@@ -509,9 +509,10 @@ Macros, includes and their edition-specific behavior are counted in §11.
   packed/unpacked records deconstruct into nested/selected destinations. Capture
   the RHS and every destination coordinate before scatter writes; earlier stores
   cannot redirect later targets. Blocking and legal persistent NBA targets are
-  represented; static net targets retain per-element resolution. Keyed/default/
-  replicated lvalues, constants, mismatches and illegal NBA targets reject.
-  Oversized array sources scatter whole descriptor rows into array targets.
+  represented; continuous net, net-array and true-alias leaves retain per-leaf
+  resolution. Keyed/default/replicated lvalues, constants, mismatches and
+  illegal NBA targets reject. Oversized array and typed-pattern sources scatter
+  whole descriptor rows into array targets, including continuous targets.
   SV §10.9 **[SV-2005]**.
 - 🟦 **Sequential Boolean predicates** — `&&&` in `if` and `?:` evaluates reached
   clauses once, left to right. Only definite true advances; false or X/Z stops.
@@ -791,17 +792,21 @@ Macros, includes and their edition-specific behavior are counted in §11.
   with procedural writers but not with a continuous driver. V §6.1 **[1995]**.
 - 🟨 **Fixed-array continuous assignments** — Whole/selected fixed values,
   slices, conditionals, patterns and function returns capture one RHS per
-  activation. Net arrays retain per-cell/per-bit contribution slots; static
-  positional net patterns drive only named elements, including selected bits
-  with an independent competing net driver and a changing runtime RHS.
-  Variable storage permits
-  one overlapping continuous writer and separate disjoint cells. Overlapping
-  ordinary procedural writes or declaration initializers reject; force/release/
-  deassign are not ordinary writers for this check.
+  activation. Net arrays retain per-cell/per-bit contribution slots. Each
+  positional pattern leaf is its own contribution to a net, unpacked-structure
+  net or member, net-array cell or selected bits, or true-net alias view,
+  beside competing drivers and a changing runtime RHS; leaves need constant
+  selects. Oversized sources, including typed patterns, scatter descriptor rows.
+  A zero-delay driver whose write changes one of its own operands re-evaluates
+  until it settles; nonconvergence stops at the process step limit. Variable
+  storage permits one continuous writer per longest static prefix (member,
+  packed-member range, cell, constant row of up to 256 cells, hierarchical
+  variable). Overlapping continuous, ordinary procedural or declaration-
+  initializer writers reject; force/release/deassign are not ordinary writers.
   [Continuous-process lowering](../src/sim/codegen/lowering/collection/processes.rs)
-  rejects delayed positional assignment-pattern lvalues and pattern lvalues
-  touching true-net aliases. Dynamic topology, net-array declaration delays and
-  unsupported aggregate shapes remain restricted.
+  rejects delayed positional-pattern drivers, which with net-array declaration
+  delays belong to ADV-002. Dynamic topology remains restricted, and wider
+  constant rows conservatively count as whole-array writers.
   SV §§6.5–6.7, 7.6, 10.3 **[SV-2005]**.
 - 🟨 **Resolution and strengths** — Continuous, gate, port and admitted
   hierarchical/fixed-array drivers retain independent contributions. `wire/tri`,

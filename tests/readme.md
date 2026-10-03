@@ -123,6 +123,13 @@ destruction; descriptor ports also bound generated model size. Negatives cover
 assignability, ref shape, variable inout, runtime ref/net/inout selects and
 output-target writer conflicts.
 
+RTL-010's continuous topology fixtures use
+`-E 'binary(sim_feature_completion) & test(rtl_010::)'`. Positive fixtures run in
+both optimizer modes on both backends (set `LLG_TEST_GMP_ROOT` for the GMP lane)
+and after Db destruction; descriptor scatter also bounds generated model size.
+Negatives cover overlapping variable writers, runtime pattern-leaf selects and
+zero-time nonconvergence; delayed pattern drivers remain ADV-002's boundary.
+
 ### Vendor patch preparation
 
 `vendor_patches.rs` checks clean/applied trees, no-Git archives (including archives
