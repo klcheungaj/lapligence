@@ -151,11 +151,13 @@ fn lsp_stdio_bursty_edits_debounce_into_bounded_fresh_analyses() {
 //
 // The server must IGNORE watched-file events that originate under its own
 // shadow base — including paths that only match after symlink resolution —
-// so an idle server stays idle regardless of where TMPDIR points.
+// so an idle server stays idle regardless of where TMPDIR points.  The
+// scenario needs a TMPDIR symlink and absolute Unix paths, so it is Unix-only.
 
 /// Spawn the server with lifecycle logging redirected to `log_file` and the
 /// process TMPDIR set to `tmpdir` (so the shadow base nests under the watched
 /// globs of a workspace, reproducing the self-write feedback layout).
+#[cfg(unix)]
 fn spawn_with_log_file_and_tmpdir(cwd: &Path, log_file: &Path, tmpdir: &Path) -> LspProcess {
     LspProcess::spawn_configured(cwd, |command| {
         command
@@ -168,6 +170,7 @@ fn spawn_with_log_file_and_tmpdir(cwd: &Path, log_file: &Path, tmpdir: &Path) ->
 /// The deterministic shadow base dir the running server created under
 /// `real_tmp` (`llg-<pid>-<rand>`), found by listing the temp tree.  `None`
 /// when the server has not yet staged anything.
+#[cfg(unix)]
 fn shadow_base_dir(real_tmp: &Path) -> Option<PathBuf> {
     fs::read_dir(real_tmp)
         .ok()?
@@ -180,6 +183,7 @@ fn shadow_base_dir(real_tmp: &Path) -> Option<PathBuf> {
         })
 }
 
+#[cfg(unix)]
 #[test]
 fn lsp_stdio_ignores_own_shadow_writes_so_idle_stays_idle() {
     // Build a workspace whose shadow base falls under the registered watcher
