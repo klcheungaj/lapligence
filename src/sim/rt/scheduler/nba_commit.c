@@ -29,20 +29,11 @@ static void apply_nba(llg_nba_t* next) {
                           ? sv4_clone(target)
                           : sv4_clone(&next->value);
         if (next->has_mask) {
-            uint32_t n = (value.width + 63u) / 64u;
-            uint32_t mn = (next->mask.width + 63u) / 64u;
-            uint32_t vn = (next->value.width + 63u) / 64u;
-            for (uint32_t i = 0; i < n; ++i) {
-                uint64_t mask = i < mn && i < vn ? next->mask.bits[i] : 0;
-                if (!mask) continue;
-                value.bits[i] = (value.bits[i] & ~mask) | (next->value.bits[i] & mask);
-                value.x[i] = (value.x[i] & ~mask) | (next->value.x[i] & mask);
-                value.z[i] = (value.z[i] & ~mask) | (next->value.z[i] & mask);
-            }
+            llg_sv4_masked_merge(&value, next->value, next->mask);
         } else if (next->has_range) {
             if (next->range_width) {
                 sv4_select_plan_t plan = {
-                    value.width, next->range_width, next->range_offset, 0,
+                    llg_sv4_width(value), next->range_width, next->range_offset, 0,
                     next->range_width,
                 };
                 sv4_select_plan_set(&value, &plan, next->value);

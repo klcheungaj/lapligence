@@ -183,15 +183,7 @@ static int llg_scan_numeric(llg_scan_input_t* input, char conversion, size_t lim
 }
 
 static void llg_scan_set_bit(sv4_t* value, uint32_t bit, int state) {
-    if (bit >= value->width) return;
-    uint32_t limb = bit / 64u;
-    uint64_t mask = 1ULL << (bit % 64u);
-    value->bits[limb] &= ~mask;
-    value->x[limb] &= ~mask;
-    value->z[limb] &= ~mask;
-    if (state == 1) value->bits[limb] |= mask;
-    else if (state == 2) value->x[limb] |= mask;
-    else if (state == 3) value->z[limb] |= mask;
+    llg_sv4_set_state(value, bit, (unsigned)state);
 }
 
 static int llg_scan_unknown(unsigned char value) {
@@ -237,14 +229,7 @@ static int llg_scan_integer(const unsigned char* bytes, size_t length,
         for (size_t i = begin; i < length; i++) {
             if (bytes[i] == '_') continue;
             unsigned digit = (unsigned)llg_scan_digit(bytes[i], base);
-            uint64_t carry = digit;
-            uint32_t limbs = (width + 63u) / 64u;
-            for (uint32_t limb = 0; limb < limbs; limb++) {
-                uint64_t low = (result->bits[limb] & UINT32_MAX) * 10u + carry;
-                uint64_t high = (result->bits[limb] >> 32) * 10u + (low >> 32);
-                result->bits[limb] = (high << 32) | (low & UINT32_MAX);
-                carry = high >> 32;
-            }
+            llg_sv4_mul_add_known(result, 10, digit);
         }
     } else {
         uint32_t bits_per_digit = base == 16u ? 4u : base == 8u ? 3u : 1u;
@@ -529,7 +514,7 @@ static int fixed_file_read_array(uint32_t descriptor, sv4_t* values, llg_fixed_a
             read++;
         }
         if (!read) { sv4_destroy(&value); break; }
-        value.is_signed = (int8_t)elem_signed;
+        llg_sv4_set_signed(&value, (int8_t)elem_signed);
         if (elem_two_state) sv4_replace(&value, sv4_to_two_state(value));
         llg_value_scope_t* value_scope = llg_value_scope_begin(1);
         sv4_t* owned = llg_value_scope_values(value_scope);
@@ -562,9 +547,9 @@ static char* llg_typed_line_alloc(const char* fmt, llg_fmt_arg_t* args, int n,
     for (int i = 0; i < n; i++) {
         size_t extra = 64u;
         if (args[i].kind == LLG_FMT_PACKED) {
-            if (args[i].value.packed.width > (SIZE_MAX - extra) / 8u)
+            if (llg_sv4_width(args[i].value.packed) > (SIZE_MAX - extra) / 8u)
                 llg_fatal_allocation("typed formatted line", 1, SIZE_MAX);
-            extra += (size_t)args[i].value.packed.width * 8u;
+            extra += (size_t)llg_sv4_width(args[i].value.packed) * 8u;
         }
         if (args[i].kind == LLG_FMT_STRING) {
             if (args[i].value.string.len > SIZE_MAX - extra)

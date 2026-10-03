@@ -35,13 +35,8 @@ static sv4_t b4(const char* s) { // MSB-first bit string with 0/1/x/z
     for (int i = 0; i < n; i++) {
         int lsb = n - 1 - i;
         char c = s[i];
-        if (c == 'x') {
-            v.x[0] |= 1ULL << lsb;
-        } else if (c == 'z') {
-            v.z[0] |= 1ULL << lsb;
-        } else if (c == '1') {
-            v.bits[0] |= 1ULL << lsb;
-        }
+        llg_sv4_set_state(&v, (uint64_t)lsb,
+                          c == 'x' ? 2u : c == 'z' ? 3u : c == '1' ? 1u : 0u);
     }
     return v;
 }
@@ -61,8 +56,8 @@ static sv4_t w128(uint64_t lo, uint64_t hi) {
 }
 
 static int w_same(sv4_t a, uint64_t lo, uint64_t hi) {
-    return a.width == 128 && !sv4_is_unknown(a) && a.bits[0] == lo &&
-           a.bits[1] == hi;
+    return llg_sv4_width(a) == 128 && !sv4_is_unknown(a) && llg_sv4_word(a, 0, LLG_SV4_BITS) == lo &&
+           llg_sv4_word(a, 1, LLG_SV4_BITS) == hi;
 }
 
 // Test-only expression owners keep the original nested value vectors readable.
@@ -112,7 +107,7 @@ static void test_sv4_ops(void) {
     CHECK(sv4_to_real(test_temp(b4("1x01"))) == 9.0);
     {
         sv4_t minus_one = test_temp(w128(UINT64_MAX, UINT64_MAX));
-        minus_one.is_signed = 1;
+        llg_sv4_set_signed(&minus_one, 1);
         CHECK(sv4_to_real(minus_one) == -1.0);
     }
     CHECK(sv4_to_i64(test_temp(sv4_from_real(2.5, 32, 1))) == 3);
@@ -131,12 +126,12 @@ static void test_sv4_ops(void) {
     // signed add: 4'b1111 + 4'b0001 = 4'b0000
     {
         sv4_t a = test_temp(b4("1111"));
-        a.is_signed = 1;
+        llg_sv4_set_signed(&a, 1);
         sv4_t b = test_temp(b4("0001"));
-        b.is_signed = 1;
+        llg_sv4_set_signed(&b, 1);
         sv4_t r = test_temp(sv4_add(a, b));
         CHECK(sv4_same(r, test_temp(b4("0000"))));
-        CHECK(r.is_signed == 1);
+        CHECK(llg_sv4_signed(r) == 1);
     }
     // sub
     CHECK(sv4_same(test_temp(sv4_sub(test_temp(b4("1010")), test_temp(b4("0011")))), test_temp(b4("0111"))));
@@ -150,34 +145,34 @@ static void test_sv4_ops(void) {
     // Signedness and common-width coercion apply to all binary arithmetic.
     {
         sv4_t signed_narrow = test_temp(b4("1111")); // -1 in four bits
-        signed_narrow.is_signed = 1;
+        llg_sv4_set_signed(&signed_narrow, 1);
         sv4_t signed_wide = test_temp(SV4_S(1, 8));
         CHECK(sv4_same(test_temp(sv4_add(signed_narrow, signed_wide)), test_temp(SV4_C(0, 8))));
         CHECK(sv4_same(test_temp(sv4_sub(signed_narrow, signed_wide)), test_temp(SV4_S(0xfe, 8))));
         CHECK(sv4_same(test_temp(sv4_mul(signed_narrow, signed_wide)), test_temp(SV4_S(0xff, 8))));
-        CHECK(test_temp(sv4_add(signed_narrow, signed_wide)).is_signed == 1);
-        CHECK(test_temp(sv4_sub(signed_narrow, signed_wide)).is_signed == 1);
-        CHECK(test_temp(sv4_mul(signed_narrow, signed_wide)).is_signed == 1);
+        CHECK(llg_sv4_signed(test_temp(sv4_add(signed_narrow, signed_wide))) == 1);
+        CHECK(llg_sv4_signed(test_temp(sv4_sub(signed_narrow, signed_wide))) == 1);
+        CHECK(llg_sv4_signed(test_temp(sv4_mul(signed_narrow, signed_wide))) == 1);
         CHECK(sv4_to_i64(test_temp(sv4_div(signed_narrow, signed_wide))) == -1);
         CHECK(sv4_to_i64(test_temp(sv4_mod(signed_narrow, signed_wide))) == 0);
-        CHECK(test_temp(sv4_div(signed_narrow, signed_wide)).is_signed == 1);
+        CHECK(llg_sv4_signed(test_temp(sv4_div(signed_narrow, signed_wide))) == 1);
 
         sv4_t unsigned_wide = test_temp(SV4_C(1, 8));
         CHECK(sv4_same(test_temp(sv4_add(signed_narrow, unsigned_wide)), test_temp(SV4_C(16, 8))));
         CHECK(sv4_same(test_temp(sv4_sub(signed_narrow, unsigned_wide)), test_temp(SV4_C(14, 8))));
         CHECK(sv4_same(test_temp(sv4_mul(signed_narrow, unsigned_wide)), test_temp(SV4_C(15, 8))));
-        CHECK(test_temp(sv4_add(signed_narrow, unsigned_wide)).is_signed == 0);
-        CHECK(test_temp(sv4_sub(signed_narrow, unsigned_wide)).is_signed == 0);
-        CHECK(test_temp(sv4_mul(signed_narrow, unsigned_wide)).is_signed == 0);
+        CHECK(llg_sv4_signed(test_temp(sv4_add(signed_narrow, unsigned_wide))) == 0);
+        CHECK(llg_sv4_signed(test_temp(sv4_sub(signed_narrow, unsigned_wide))) == 0);
+        CHECK(llg_sv4_signed(test_temp(sv4_mul(signed_narrow, unsigned_wide))) == 0);
         CHECK(sv4_to_u64(test_temp(sv4_div(signed_narrow, unsigned_wide))) == 15);
         CHECK(sv4_to_u64(test_temp(sv4_mod(signed_narrow, unsigned_wide))) == 0);
-        CHECK(test_temp(sv4_div(signed_narrow, unsigned_wide)).is_signed == 0);
+        CHECK(llg_sv4_signed(test_temp(sv4_div(signed_narrow, unsigned_wide))) == 0);
     }
     // Mixed signed/unsigned -7 / 2 is unsigned (32'hffff_fff9 / 2).
     CHECK(sv4_to_u64(test_temp(sv4_div(test_temp(SV4_S((uint64_t)(int64_t)-7, 32)), test_temp(SV4_C(2, 32))))) ==
           2147483644ULL);
     CHECK(sv4_to_u64(test_temp(sv4_mod(test_temp(SV4_S((uint64_t)(int64_t)-7, 32)), test_temp(SV4_C(2, 32))))) == 1);
-    CHECK(test_temp(sv4_div(test_temp(SV4_S((uint64_t)(int64_t)-7, 32)), test_temp(SV4_C(2, 32)))).is_signed == 0);
+    CHECK(llg_sv4_signed(test_temp(sv4_div(test_temp(SV4_S((uint64_t)(int64_t)-7, 32)), test_temp(SV4_C(2, 32))))) == 0);
     // Avoid the host C overflow for the fixed-width INT64_MIN / -1 result.
     {
         sv4_t min = test_temp(SV4_S(1ULL << 63, 64));
@@ -200,12 +195,12 @@ static void test_sv4_ops(void) {
     CHECK(sv4_same(test_temp(sv4_shl(test_temp(b4("0001")), test_temp(b4("0x01")))), test_temp(SV4_X(4))));
     {
         sv4_t a = test_temp(b4("10000000"));
-        a.is_signed = 1;
+        llg_sv4_set_signed(&a, 1);
         CHECK(sv4_same(test_temp(sv4_ashr(a, test_temp(SV4_C(4, 8)))), test_temp(b4("11111000"))));
     }
     {
         sv4_t z = test_temp(b4("z001"));
-        z.is_signed = 1;
+        llg_sv4_set_signed(&z, 1);
         CHECK(sv4_same(test_temp(sv4_ashr(z, test_temp(SV4_C(1, 4)))), test_temp(b4("zz00"))));
         CHECK(sv4_same(test_temp(sv4_ashr(test_temp(b4("z001")), test_temp(SV4_C(1, 4)))), test_temp(b4("0z00"))));
         CHECK(sv4_same(test_temp(sv4_ashr(z, test_temp(SV4_C(4, 4)))), test_temp(b4("zzzz"))));
@@ -228,16 +223,16 @@ static void test_sv4_ops(void) {
     // operands are signed; all comparison results remain 1-bit unsigned.
     {
         sv4_t signed_narrow = test_temp(b4("1111"));
-        signed_narrow.is_signed = 1;
+        llg_sv4_set_signed(&signed_narrow, 1);
         sv4_t signed_wide = test_temp(SV4_S(0, 8));
         CHECK(u(test_temp(sv4_lt(signed_narrow, signed_wide))) == 1);
         CHECK(u(test_temp(sv4_eq(signed_narrow, signed_wide))) == 0);
-        CHECK(test_temp(sv4_lt(signed_narrow, signed_wide)).is_signed == 0);
+        CHECK(llg_sv4_signed(test_temp(sv4_lt(signed_narrow, signed_wide))) == 0);
         sv4_t unsigned_wide = test_temp(SV4_C(0, 8));
         CHECK(u(test_temp(sv4_lt(signed_narrow, unsigned_wide))) == 0);
         CHECK(u(test_temp(sv4_gt(signed_narrow, unsigned_wide))) == 1);
         sv4_t signed_case_wide = test_temp(b4("zzzzz001"));
-        signed_case_wide.is_signed = 1;
+        llg_sv4_set_signed(&signed_case_wide, 1);
         CHECK(u(test_temp(sv4_case_eq(test_temp(sv4_from_limbs(
                    (uint64_t[]){1}, NULL, (uint64_t[]){8}, 4, 1)),
                    signed_case_wide))) == 1);
@@ -303,21 +298,21 @@ static void test_sv4_ops(void) {
     // Bitwise operands are resized to max width using a common signed type.
     {
         sv4_t signed_narrow = test_temp(b4("1111"));
-        signed_narrow.is_signed = 1;
+        llg_sv4_set_signed(&signed_narrow, 1);
         CHECK(sv4_same(test_temp(sv4_and(signed_narrow, test_temp(SV4_C(0xf0, 8)))), test_temp(b4("00000000"))));
         CHECK(sv4_same(test_temp(sv4_or(signed_narrow, test_temp(SV4_C(0, 8)))), test_temp(b4("00001111"))));
         CHECK(sv4_same(test_temp(sv4_xor(signed_narrow, test_temp(SV4_C(0, 8)))), test_temp(b4("00001111"))));
         CHECK(sv4_same(test_temp(sv4_xnor(signed_narrow, test_temp(SV4_C(0, 8)))), test_temp(b4("11110000"))));
-        CHECK(test_temp(sv4_or(signed_narrow, test_temp(SV4_S(0, 8)))).is_signed == 1);
+        CHECK(llg_sv4_signed(test_temp(sv4_or(signed_narrow, test_temp(SV4_S(0, 8))))) == 1);
         CHECK(sv4_same(test_temp(sv4_or(signed_narrow, test_temp(SV4_S(0, 8)))), test_temp(b4("11111111"))));
         sv4_t x = test_temp(b4("x001"));
-        x.is_signed = 1;
+        llg_sv4_set_signed(&x, 1);
         CHECK(sv4_same(test_temp(sv4_or(x, test_temp(SV4_S(0, 8)))), test_temp(b4("xxxxx001"))));
     }
     // unary minus
     {
         sv4_t a = test_temp(b4("0010"));
-        a.is_signed = 1;
+        llg_sv4_set_signed(&a, 1);
         CHECK(sv4_same(test_temp(sv4_neg(a)), test_temp(b4("1110"))));
     }
     CHECK(sv4_same(test_temp(sv4_neg(test_temp(b4("0011")))), test_temp(b4("1101"))));
@@ -329,7 +324,7 @@ static void test_sv4_ops(void) {
     {
         sv4_t signed_base = test_temp(SV4_S((uint64_t)(int64_t)-2, 4));
         sv4_t r = test_temp(sv4_pow(signed_base, test_temp(SV4_C(3, 8))));
-        CHECK(sv4_same(r, test_temp(SV4_S(8, 4))) && r.is_signed == 1);
+        CHECK(sv4_same(r, test_temp(SV4_S(8, 4))) && llg_sv4_signed(r) == 1);
         CHECK(sv4_same(test_temp(sv4_pow(test_temp(SV4_S(2, 4)), test_temp(SV4_S(UINT64_MAX, 8)))), test_temp(SV4_S(0, 4))));
     }
     // clog2
@@ -342,14 +337,14 @@ static void test_sv4_ops(void) {
     // resize sign/zero/fill
     {
         sv4_t s = test_temp(b4("1000"));
-        s.is_signed = 1;
+        llg_sv4_set_signed(&s, 1);
         CHECK(sv4_same(test_temp(sv4_resize(s, 8, 1)), test_temp(b4("11111000"))));
         CHECK(sv4_same(test_temp(sv4_resize(s, 8, 0)), test_temp(b4("00001000"))));
         sv4_t x = test_temp(b4("x00"));
-        x.is_signed = 1;
+        llg_sv4_set_signed(&x, 1);
         CHECK(sv4_same(test_temp(sv4_resize(x, 6, 1)), test_temp(b4("xxxx00"))));
         sv4_t z = test_temp(b4("z00"));
-        z.is_signed = 1;
+        llg_sv4_set_signed(&z, 1);
         CHECK(sv4_same(test_temp(sv4_resize(z, 6, 1)), test_temp(b4("zzzz00"))));
         CHECK(sv4_same(test_temp(sv4_resize(test_temp(b4("1001")), 2, 0)), test_temp(b4("01"))));
         CHECK(u(test_temp(sv4_resize(test_temp(SV4_C(7, 4)), 8, 0))) == 7);
@@ -360,7 +355,7 @@ static void test_sv4_ops(void) {
     // (LRM 1800-2009 §6.24.1 / §10.7)
     {
         sv4_t s = test_temp(b4("1000"));
-        s.is_signed = 1;
+        llg_sv4_set_signed(&s, 1);
         sv4_t ffu = test_temp(SV4_C(0xff, 8)); // unsigned 255
         CHECK(u(test_temp(sv4_cast(ffu, 16, 1))) == 255);   // int'(8'hFF) == 255
         CHECK(sv4_same(test_temp(sv4_cast(s, 8, 1)), test_temp(b4("11111000"))));      // sign-ext kept
@@ -380,10 +375,10 @@ static void test_sv4_ops(void) {
     CHECK(sv4_same(test_temp(sv4_mux(test_temp(b4("z")), test_temp(b4("z")), test_temp(b4("z")))), test_temp(b4("x"))));
     {
         sv4_t signed_narrow = test_temp(b4("1111"));
-        signed_narrow.is_signed = 1;
+        llg_sv4_set_signed(&signed_narrow, 1);
         CHECK(sv4_same(test_temp(sv4_mux(test_temp(b4("1")), signed_narrow, test_temp(SV4_C(0, 8)))),
                        test_temp(b4("00001111"))));
-        CHECK(test_temp(sv4_mux(test_temp(b4("1")), signed_narrow, test_temp(SV4_C(0, 8)))).is_signed == 0);
+        CHECK(llg_sv4_signed(test_temp(sv4_mux(test_temp(b4("1")), signed_narrow, test_temp(SV4_C(0, 8))))) == 0);
         CHECK(sv4_same(test_temp(sv4_mux(test_temp(b4("x")), signed_narrow, test_temp(SV4_C(0, 8)))),
                        test_temp(b4("0000xxxx"))));
         CHECK(sv4_same(test_temp(sv4_mux(test_temp(b4("1x")), test_temp(b4("1010")), test_temp(b4("1000")))),
@@ -396,7 +391,7 @@ static void test_sv4_ops(void) {
     CHECK(sv4_same(test_temp(sv4_part_select(test_temp(b4("10100101")), 2, 5)), test_temp(b4("1001"))));
     {
         sv4_t out = test_temp(sv4_part_select(test_temp(b4("10100101")), 4294967297LL, 4294967296LL));
-        CHECK(out.width == 2 && sv4_is_unknown(out));
+        CHECK(llg_sv4_width(out) == 2 && sv4_is_unknown(out));
     }
     CHECK(u(test_temp(sv4_idx_part_select(test_temp(b4("10100101")), 2, 3, 0))) == 1); // [2 +: 3] = 001
     CHECK(u(test_temp(sv4_idx_part_select(test_temp(b4("10100101")), 5, 3, 1))) == 4); // [5 -: 3] = 100
@@ -501,9 +496,9 @@ static void test_sv4_wide(void) {
     // Mixed-width signed operands must be resized before wide-limb arithmetic.
     {
         sv4_t narrow = test_temp(b4("1111")); // -1 in four bits
-        narrow.is_signed = 1;
+        llg_sv4_set_signed(&narrow, 1);
         sv4_t wide_one = test_temp(w128(1, 0));
-        wide_one.is_signed = 1;
+        llg_sv4_set_signed(&wide_one, 1);
         CHECK(w_same(test_temp(sv4_add(narrow, wide_one)), 0, 0));
         CHECK(w_same(test_temp(sv4_sub(narrow, wide_one)), ~0ULL - 1, ~0ULL));
         CHECK(w_same(test_temp(sv4_mul(narrow, wide_one)), ~0ULL, ~0ULL));
@@ -539,9 +534,9 @@ static void test_sv4_wide(void) {
     // signed 128-bit compare: -2^127 < 0
     {
         sv4_t a = test_temp(w128(0, 0x8000000000000000ULL));
-        a.is_signed = 1;
+        llg_sv4_set_signed(&a, 1);
         sv4_t b = test_temp(w128(0, 0));
-        b.is_signed = 1;
+        llg_sv4_set_signed(&b, 1);
         CHECK(u(test_temp(sv4_lt(a, b))) == 1);
         CHECK(u(test_temp(sv4_gt(b, a))) == 1);
     }
@@ -549,8 +544,8 @@ static void test_sv4_wide(void) {
     {
         sv4_t v = test_temp(sv4_from_u64(1ULL << 63, 100, 0));
         sv4_t r = test_temp(sv4_shl(v, test_temp(SV4_C(1, 8))));
-        CHECK(r.width == 100 && !sv4_is_unknown(r));
-        CHECK(r.bits[0] == 0 && r.bits[1] == 1); // bit 64
+        CHECK(llg_sv4_width(r) == 100 && !sv4_is_unknown(r));
+        CHECK(llg_sv4_word(r, 0, LLG_SV4_BITS) == 0 && llg_sv4_word(r, 1, LLG_SV4_BITS) == 1); // bit 64
         CHECK(sv4_same(test_temp(sv4_shr(r, test_temp(SV4_C(1, 8)))), v));
         CHECK(u(test_temp(sv4_shl(v, test_temp(SV4_C(100, 8))))) == 0); // amount == width -> 0
         CHECK(!sv4_is_unknown(test_temp(sv4_shl(v, test_temp(SV4_C(100, 8))))));
@@ -559,7 +554,7 @@ static void test_sv4_wide(void) {
         uint64_t vx[2] = { 0, 0 }, vz[2] = { 0, 0 };
         sv4_t neg = test_temp(sv4_from_limbs(vb, vx, vz, 100, 1));
         sv4_t ar = test_temp(sv4_ashr(neg, test_temp(SV4_C(5, 8))));
-        CHECK(!sv4_is_unknown(ar) && ar.bits[1] == (63ULL << 30) && ar.bits[0] == 0);
+        CHECK(!sv4_is_unknown(ar) && llg_sv4_word(ar, 1, LLG_SV4_BITS) == (63ULL << 30) && llg_sv4_word(ar, 0, LLG_SV4_BITS) == 0);
         // shift amount unknown -> all-X
         CHECK(isx(test_temp(sv4_shl(v, test_temp(SV4_X(8))))));
     }
@@ -568,9 +563,9 @@ static void test_sv4_wide(void) {
     // repeat: 128-bit pattern twice -> 256 bits; maximum-width requests remain valid
     {
         sv4_t r = test_temp(sv4_repeat(test_temp(w128(0x1111111111111111ULL, 0x2222222222222222ULL)), 2));
-        CHECK(r.width == 256);
-        CHECK(r.bits[0] == 0x1111111111111111ULL && r.bits[1] == 0x2222222222222222ULL);
-        CHECK(r.bits[2] == 0x1111111111111111ULL && r.bits[3] == 0x2222222222222222ULL);
+        CHECK(llg_sv4_width(r) == 256);
+        CHECK(llg_sv4_word(r, 0, LLG_SV4_BITS) == 0x1111111111111111ULL && llg_sv4_word(r, 1, LLG_SV4_BITS) == 0x2222222222222222ULL);
+        CHECK(llg_sv4_word(r, 2, LLG_SV4_BITS) == 0x1111111111111111ULL && llg_sv4_word(r, 3, LLG_SV4_BITS) == 0x2222222222222222ULL);
         sv4_t boundary_repeat = test_temp(sv4_repeat(test_temp(SV4_C(1, 1)), (LLG_SUPPORTED_WIDTH_LIMIT - 2u)));
         CHECK(sv4_same(boundary_repeat, test_temp(sv4_fill(1, (LLG_SUPPORTED_WIDTH_LIMIT - 2u), 0))));
         sv4_t half = test_temp(sv4_fill(1, (LLG_SUPPORTED_WIDTH_LIMIT - 2u) / 2, 0));
@@ -591,20 +586,20 @@ static void test_sv4_wide(void) {
     {
         sv4_t s = test_temp(SV4_S(0x8000000000000000ULL, 64));
         sv4_t r = test_temp(sv4_resize(s, 128, 1));
-        CHECK(r.bits[0] == 0x8000000000000000ULL && r.bits[1] == ~0ULL);
+        CHECK(llg_sv4_word(r, 0, LLG_SV4_BITS) == 0x8000000000000000ULL && llg_sv4_word(r, 1, LLG_SV4_BITS) == ~0ULL);
         CHECK(!sv4_is_unknown(r));
-        CHECK(test_temp(sv4_resize(s, 128, 0)).bits[1] == 0);
+        CHECK(llg_sv4_word(test_temp(sv4_resize(s, 128, 0)), 1, LLG_SV4_BITS) == 0);
     }
     // shrink 128 -> 64 keeps the low limb
     {
         sv4_t r = test_temp(sv4_resize(test_temp(w128(0xF, 0x123456789ULL)), 64, 0));
-        CHECK(r.width == 64 && !sv4_is_unknown(r) && r.bits[0] == 0xF);
+        CHECK(llg_sv4_width(r) == 64 && !sv4_is_unknown(r) && llg_sv4_word(r, 0, LLG_SV4_BITS) == 0xF);
     }
     // resize preserves unknown bits
     {
         uint64_t b[2] = { 0x7, 0 }, x[2] = { 0x8, 0 }, z[2] = { 0, 0 };
         sv4_t r = test_temp(sv4_resize(test_temp(sv4_from_limbs(b, x, z, 128, 0)), 64, 0));
-        CHECK(sv4_is_unknown(r) && r.x[0] == 0x8);
+        CHECK(sv4_is_unknown(r) && llg_sv4_word(r, 0, LLG_SV4_X) == 0x8);
     }
     // %b / %h of a 128-bit value (exact strings)
     {
@@ -647,12 +642,12 @@ static void test_sv4_wide(void) {
         CHECK(sv4_same(test_temp(sv4_mux(test_temp(SV4_C(1, 1)), a, b)), a));
         CHECK(sv4_same(test_temp(sv4_mux(test_temp(SV4_C(0, 1)), a, b)), b));
         sv4_t mx = test_temp(sv4_mux(test_temp(SV4_X(1)), a, b));
-        CHECK(sv4_is_unknown(mx) && mx.width == 128);
+        CHECK(sv4_is_unknown(mx) && llg_sv4_width(mx) == 128);
         CHECK(sv4_same(test_temp(sv4_mux(test_temp(SV4_X(1)), a, a)), a));
         sv4_t az = test_temp(SV4_Z(128));
         sv4_t mz = test_temp(sv4_mux(test_temp(SV4_X(1)), az, az));
-        CHECK(mz.width == 128 && mz.x[0] == UINT64_MAX && mz.x[1] == UINT64_MAX &&
-              mz.z[0] == 0 && mz.z[1] == 0);
+        CHECK(llg_sv4_width(mz) == 128 && llg_sv4_word(mz, 0, LLG_SV4_X) == UINT64_MAX && llg_sv4_word(mz, 1, LLG_SV4_X) == UINT64_MAX &&
+              llg_sv4_word(mz, 0, LLG_SV4_Z) == 0 && llg_sv4_word(mz, 1, LLG_SV4_Z) == 0);
     }
     // sv4_same across limbs (bits and xz in the high limb)
     {
@@ -858,10 +853,10 @@ static void check_vector_table(void) {
                     "FAIL vector %d (op %d): got %016llx/%016llx/%016llx w=%u, "
                     "expected %016llx/%016llx/%016llx w=%u\n",
                     i, v->op,
-                    (unsigned long long)got.bits[0], (unsigned long long)got.x[0],
-                    (unsigned long long)got.z[0], (unsigned)got.width,
-                    (unsigned long long)exp.bits[0], (unsigned long long)exp.x[0],
-                    (unsigned long long)exp.z[0], (unsigned)exp.width);
+                    (unsigned long long)llg_sv4_word(got, 0, LLG_SV4_BITS), (unsigned long long)llg_sv4_word(got, 0, LLG_SV4_X),
+                    (unsigned long long)llg_sv4_word(got, 0, LLG_SV4_Z), (unsigned)llg_sv4_width(got),
+                    (unsigned long long)llg_sv4_word(exp, 0, LLG_SV4_BITS), (unsigned long long)llg_sv4_word(exp, 0, LLG_SV4_X),
+                    (unsigned long long)llg_sv4_word(exp, 0, LLG_SV4_Z), (unsigned)llg_sv4_width(exp));
             failures++;
         }
     }

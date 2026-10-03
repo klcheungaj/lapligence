@@ -4,6 +4,10 @@ The C++ wrapper compiles admitted source buffers and exports an owned flat snaps
 through C ABI v8. C++ lifetime management stays behind the boundary; Rust copies
 and validates the result before releasing its owner.
 
+Snapshot strings are interned in stable native storage. Export charging still
+counts every string view, so admission limits retain their logical byte contract.
+Pending edge storage is released as each ordered final window is copied.
+
 Capture preserves typed declarations, values, dimensions, source/lexical data,
 instance topology, references, diagnostics and ordered expression edges. Library-unit
 recovery supplies bounded declaration/navigation data without claiming executable

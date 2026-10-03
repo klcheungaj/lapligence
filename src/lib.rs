@@ -11,4 +11,6 @@
 pub mod core;
 pub mod ffi;
 pub mod memory_limit;
+#[doc(hidden)]
+pub mod profile;
 pub mod sim;

@@ -47,7 +47,7 @@ void llg_dependency_bind_real(double* target, sv4_t* dependency) {
 
 void llg_dependency_changed(sv4_t* dependency) {
     if (!dependency) return;
-    uint64_t bit = dependency->width ? dependency->bits[0] & 1u : 0;
+    uint64_t bit = llg_sv4_word(*dependency, 0, LLG_SV4_BITS) & 1u;
     /* Native strings and containers publish through this marker. A subscriber
      * may terminate the writer without returning through this function. */
     llg_value_scope_t* scope = llg_value_scope_begin(1);
@@ -67,10 +67,21 @@ void llg_dependency_notify(sv4_t* contents, sv4_t* shape, int change) {
 static int ev_matches(sv4_t old, sv4_t new, int kind) {
     if (kind == LLG_EV_ANY) return !sv4_same(old, new);
     // Edge controls use only the LSB. Read without allocating one-bit values.
-    int a = !old.width || ((old.x[0] | old.z[0]) & 1u)
-        ? 2 : (int)(old.bits[0] & 1u);
-    int b = !new.width || ((new.x[0] | new.z[0]) & 1u)
-        ? 2 : (int)(new.bits[0] & 1u);
+    unsigned a = llg_sv4_state(old, 0);
+    unsigned b = llg_sv4_state(new, 0);
+    if (a == 3) a = 2;
+    if (b == 3) b = 2;
+    return kind == LLG_EV_POSEDGE ? (a == 0 && b != 0) || (a == 2 && b == 1)
+                                  : (a == 1 && b != 1) || (a == 2 && b == 0);
+}
+
+static int ev_inline_matches(llg_wait_t* wait, sv4_t value, int kind) {
+    if (kind == LLG_EV_ANY) return !wait_inline_same(wait, value);
+    const llg_wait_inline_payload_t* single = &wait->payload.single;
+    unsigned a = !single->width || (single->words[0].bval & 1u)
+        ? 2u : (unsigned)(single->words[0].aval & 1u);
+    unsigned b = llg_sv4_state(value, 0);
+    if (b == 3) b = 2;
     return kind == LLG_EV_POSEDGE ? (a == 0 && b != 0) || (a == 2 && b == 1)
                                   : (a == 1 && b != 1) || (a == 2 && b == 0);
 }
@@ -584,8 +595,7 @@ static void sig_publish_changed(sv4_t* target, sv4_t old, sv4_t value,
         if (w->kind == W_EVENTS_INLINE) {
             llg_wait_inline_payload_t* single = &w->payload.single;
             if (single->specs[0].sig == target) {
-                wake = ev_matches(wait_inline_value(w), *target,
-                                  single->specs[0].kind);
+                wake = ev_inline_matches(w, *target, single->specs[0].kind);
                 if (!wake) {
                     if (wait_inline_fits(target)) wait_inline_copy(w, target);
                     else wait_inline_promote(w, target);
@@ -593,7 +603,7 @@ static void sig_publish_changed(sv4_t* target, sv4_t old, sv4_t value,
             }
         } else if (w->kind == W_LEVEL_INLINE) {
             if (w->payload.single.specs[0].sig == target &&
-                sv4_same(*target, wait_inline_value(w))) wake = 1;
+                wait_inline_same(w, *target)) wake = 1;
         } else if (w->kind == W_EVENTS) {
             llg_wait_expression_payload_t* payload = &w->payload.expression;
             for (int i = 0; i < payload->n; i++) {
@@ -649,7 +659,7 @@ static void sig_publish_changed(sv4_t* target, sv4_t old, sv4_t value,
 
 static void sig_write(sv4_t* target, sv4_t value) {
     if (!region_can_mutate("signal write")) return;
-    if (target->width == value.width && sv4_same(*target, value)) return;
+    if (llg_sv4_width(*target) == llg_sv4_width(value) && sv4_same(*target, value)) return;
     // Callbacks can finish/disable the writer without returning through here.
     // Heap-backed registered owners survive both suspension and stack discard.
     llg_value_scope_t* target_pin = value_target_pin(target);
@@ -667,44 +677,12 @@ static void sig_write(sv4_t* target, sv4_t value) {
 
 static int sig_range_same(const sv4_t* target, uint32_t offset,
                           const sv4_t* value) {
-    for (uint32_t bit = 0; bit < value->width; bit++) {
-        uint32_t target_bit = offset + bit;
-        uint64_t target_mask = UINT64_C(1) << (target_bit % 64u);
-        uint64_t value_mask = UINT64_C(1) << (bit % 64u);
-        uint32_t target_limb = target_bit / 64u;
-        uint32_t value_limb = bit / 64u;
-        if (!!(target->bits[target_limb] & target_mask) !=
-                !!(value->bits[value_limb] & value_mask) ||
-            !!(target->x[target_limb] & target_mask) !=
-                !!(value->x[value_limb] & value_mask) ||
-            !!(target->z[target_limb] & target_mask) !=
-                !!(value->z[value_limb] & value_mask))
-            return 0;
-    }
-    return 1;
+    return llg_sv4_range_same(*target, offset, *value);
 }
 
 static void sig_range_copy(sv4_t* target, uint32_t offset,
                            const sv4_t* value) {
-    for (uint32_t bit = 0; bit < value->width; bit++) {
-        uint32_t target_bit = offset + bit;
-        uint64_t target_mask = UINT64_C(1) << (target_bit % 64u);
-        uint64_t value_mask = UINT64_C(1) << (bit % 64u);
-        uint32_t target_limb = target_bit / 64u;
-        uint32_t value_limb = bit / 64u;
-        target->bits[target_limb] =
-            (target->bits[target_limb] & ~target_mask) |
-            ((value->bits[value_limb] & value_mask)
-             ? target_mask : UINT64_C(0));
-        target->x[target_limb] =
-            (target->x[target_limb] & ~target_mask) |
-            ((value->x[value_limb] & value_mask)
-             ? target_mask : UINT64_C(0));
-        target->z[target_limb] =
-            (target->z[target_limb] & ~target_mask) |
-            ((value->z[value_limb] & value_mask)
-             ? target_mask : UINT64_C(0));
-    }
+    llg_sv4_range_copy(target, offset, *value);
 }
 
 // Publish a changed slice without cloning the full packed signal. Waiters
@@ -715,11 +693,11 @@ static int sig_write_ranges(sv4_t* target,
                             uint32_t second_offset, sv4_t second,
                             int has_second) {
     if (!region_can_mutate("signal write")) return 0;
-    if (!first.width || first_offset > target->width ||
-        first.width > target->width - first_offset ||
+    if (!llg_sv4_width(first) || first_offset > llg_sv4_width(*target) ||
+        llg_sv4_width(first) > llg_sv4_width(*target) - first_offset ||
         (has_second &&
-         (!second.width || second_offset > target->width ||
-          second.width > target->width - second_offset))) {
+         (!llg_sv4_width(second) || second_offset > llg_sv4_width(*target) ||
+          llg_sv4_width(second) > llg_sv4_width(*target) - second_offset))) {
         fputs("llg: fatal: invalid signal write range\n", stderr);
         abort();
     }
@@ -747,7 +725,7 @@ static int sig_write_ranges(sv4_t* target,
     sv4_copy(&edges[2], target);
     sv4_t published = edges[2];
 #else
-    sv4_t published = *target;
+    sv4_t published = SV4_EMPTY;
 #endif
     sig_publish_changed(target, edges[0], edges[1], published);
     llg_value_scope_end(snapshots);

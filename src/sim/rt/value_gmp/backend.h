@@ -3,6 +3,8 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <math.h>
+#include <string.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -57,6 +59,9 @@ g4_t llg_gmp_sv4_from_limbs_wide(const uint64_t* bits, const uint64_t* x, const 
 g4_t llg_gmp_sv4_convert_wide(g4_t value, uint32_t width, int8_t sign, int extend);
 g4_t llg_gmp_sv4_two_state_wide(g4_t value);
 g4_t llg_gmp_sv4_binary_wide(g4_t a, g4_t b, unsigned op);
+/* Private wide kernel: canonical known planes, equal width >64, op != 2. */
+g4_t llg_gmp_sv4_binary_known_equal(const uint64_t* a, const uint64_t* b, uint32_t width,
+                                    int8_t sign, unsigned op);
 g4_t llg_gmp_sv4_unary_wide(g4_t value, int bitwise);
 g4_t llg_gmp_sv4_compare_wide(g4_t a, g4_t b, unsigned op);
 g4_t llg_gmp_sv4_mux_wide(g4_t a, g4_t b);
@@ -203,8 +208,13 @@ static inline int llg_gmp_sv4_to_bool(g4_t v) { return g4_truth(v) == 1; }
 static inline g4_t g4_binary(g4_t a, g4_t b, unsigned op) {
     uint32_t w = g4_maxw(a, b);
     int8_t s = a.is_signed && b.is_signed;
-    if (w > 64)
+    if (w > 64) {
+        if (op <= 2 && (llg_gmp_sv4_is_unknown(a) || llg_gmp_sv4_is_unknown(b)))
+            return llg_gmp_sv4_x(w, s);
+        if (op != 2 && a.width == b.width && !a.data.wide.b && !b.data.wide.b)
+            return llg_gmp_sv4_binary_known_equal(a.data.wide.a, b.data.wide.a, w, s, op);
         return llg_gmp_sv4_binary_wide(a, b, op);
+    }
     uint64_t aa = g4_extend(a.data.small.a, a.width, w, s),
              ab = g4_extend(a.data.small.b, a.width, w, s);
     uint64_t ba = g4_extend(b.data.small.a, b.width, w, s),
@@ -448,6 +458,118 @@ static inline g4_t llg_gmp_sv4_neq(g4_t a, g4_t b) {
 static inline g4_t llg_gmp_sv4_case_neq(g4_t a, g4_t b) {
     return llg_gmp_sv4_lognot(llg_gmp_sv4_case_eq(a, b));
 }
+/* V05/S2: shifts and reductions. Counts are unsigned bit patterns. */
+g4_t llg_gmp_sv4_shift_wide(g4_t value, g4_t count, int right, int arithmetic);
+g4_t llg_gmp_sv4_reduce_wide(g4_t value, unsigned op);
+g4_t llg_gmp_sv4_countones_wide(g4_t value);
+g4_t llg_gmp_sv4_onehot_wide(g4_t value, int allow_zero);
+static inline unsigned g4_popcount(uint64_t x) {
+    x -= (x >> 1) & UINT64_C(0x5555555555555555);
+    x = (x & UINT64_C(0x3333333333333333)) + ((x >> 2) & UINT64_C(0x3333333333333333));
+    x = (x + (x >> 4)) & UINT64_C(0x0f0f0f0f0f0f0f0f);
+    return (unsigned)((x * UINT64_C(0x0101010101010101)) >> 56);
+}
+static inline g4_t g4_shift(g4_t v, g4_t count, int right, int arithmetic) {
+    if (v.width > 64 || count.width > 64)
+        return llg_gmp_sv4_shift_wide(v, count, right, arithmetic);
+    if (count.data.small.b)
+        return llg_gmp_sv4_x(v.width, v.is_signed);
+    uint64_t sh = count.data.small.a;
+    uint64_t a = v.data.small.a, b = v.data.small.b;
+    unsigned top = v.width ? v.width - 1u : 0;
+    uint64_t fill_a =
+        right && arithmetic && v.is_signed && v.width && ((a >> top) & 1) ? UINT64_MAX : 0;
+    uint64_t fill_b =
+        right && arithmetic && v.is_signed && v.width && ((b >> top) & 1) ? UINT64_MAX : 0;
+    if (sh >= v.width)
+        return g4_small(fill_a, fill_b, v.width, v.is_signed);
+    if (!sh)
+        return v;
+    if (right) {
+        uint64_t pad = ~g4_mask(v.width - (uint32_t)sh);
+        return g4_small((a >> sh) | (fill_a & pad), (b >> sh) | (fill_b & pad), v.width,
+                        v.is_signed);
+    }
+    return g4_small(a << sh, b << sh, v.width, v.is_signed);
+}
+static inline g4_t llg_gmp_sv4_shl(g4_t a, g4_t b) { return g4_shift(a, b, 0, 0); }
+static inline g4_t llg_gmp_sv4_shr(g4_t a, g4_t b) { return g4_shift(a, b, 1, 0); }
+static inline g4_t llg_gmp_sv4_ashl(g4_t a, g4_t b) { return g4_shift(a, b, 0, 1); }
+static inline g4_t llg_gmp_sv4_ashr(g4_t a, g4_t b) { return g4_shift(a, b, 1, 1); }
+static inline g4_t g4_reduce(g4_t v, unsigned op) {
+    if (v.width > 64)
+        return llg_gmp_sv4_reduce_wide(v, op);
+    uint64_t a = v.data.small.a, b = v.data.small.b;
+    unsigned kind = op % 3u;
+    int t;
+    if (kind == 0)
+        t = (~a & ~b & g4_mask(v.width)) ? 0 : b ? 2 : 1;
+    else if (kind == 1)
+        t = (a & ~b) ? 1 : b ? 2 : 0;
+    else
+        t = b ? 2 : (int)(g4_popcount(a) & 1u);
+    return g4_predicate(op >= 3 && t != 2 ? !t : t);
+}
+static inline g4_t llg_gmp_sv4_reduce_and(g4_t v) { return g4_reduce(v, 0); }
+static inline g4_t llg_gmp_sv4_reduce_or(g4_t v) { return g4_reduce(v, 1); }
+static inline g4_t llg_gmp_sv4_reduce_xor(g4_t v) { return g4_reduce(v, 2); }
+static inline g4_t llg_gmp_sv4_reduce_nand(g4_t v) { return g4_reduce(v, 3); }
+static inline g4_t llg_gmp_sv4_reduce_nor(g4_t v) { return g4_reduce(v, 4); }
+static inline g4_t llg_gmp_sv4_reduce_xnor(g4_t v) { return g4_reduce(v, 5); }
+static inline g4_t llg_gmp_sv4_countones(g4_t v) {
+    return v.width > 64 ? llg_gmp_sv4_countones_wide(v)
+                        : g4_small(g4_popcount(v.data.small.a & ~v.data.small.b), 0, 32, 1);
+}
+static inline g4_t llg_gmp_sv4_onehot(g4_t v, int allow_zero) {
+    if (v.width > 64)
+        return llg_gmp_sv4_onehot_wide(v, allow_zero);
+    uint64_t ones = v.data.small.a & ~v.data.small.b;
+    return g4_predicate(ones ? !(ones & (ones - 1u)) : allow_zero != 0);
+}
+/* End V05/S2. */
+
+/* V05/S3: case modes, directional wildcards and range membership. */
+g4_t llg_gmp_sv4_match_wide(g4_t a, g4_t b, unsigned mode);
+static inline g4_t g4_match(g4_t a, g4_t b, unsigned mode) {
+    if (g4_maxw(a, b) > 64)
+        return llg_gmp_sv4_match_wide(a, b, mode);
+    uint32_t w = g4_maxw(a, b);
+    int sign = mode == 2 && a.is_signed && b.is_signed;
+    uint64_t aa = g4_extend(a.data.small.a, a.width, w, sign);
+    uint64_t ab = g4_extend(a.data.small.b, a.width, w, sign);
+    uint64_t ba = g4_extend(b.data.small.a, b.width, w, sign);
+    uint64_t bb = g4_extend(b.data.small.b, b.width, w, sign);
+    if (mode == 0)
+        return g4_predicate(!((aa ^ ba) & ~(ab | bb)));
+    if (mode == 1) {
+        uint64_t care = ~((~aa & ab) | (~ba & bb)) & g4_mask(w);
+        return g4_predicate(!(((aa ^ ba) | (ab ^ bb)) & care));
+    }
+    uint64_t care = ~bb & g4_mask(w);
+    if ((aa ^ ba) & ~ab & care)
+        return g4_predicate(0);
+    return g4_predicate(ab & care ? 2 : 1);
+}
+static inline g4_t llg_gmp_sv4_casex_eq(g4_t a, g4_t b) { return g4_match(a, b, 0); }
+static inline g4_t llg_gmp_sv4_casez_eq(g4_t a, g4_t b) { return g4_match(a, b, 1); }
+static inline g4_t llg_gmp_sv4_wild_eq(g4_t a, g4_t b) { return g4_match(a, b, 2); }
+static inline g4_t llg_gmp_sv4_wild_neq(g4_t a, g4_t b) {
+    return llg_gmp_sv4_lognot(llg_gmp_sv4_wild_eq(a, b));
+}
+static inline g4_t llg_gmp_sv4_logimpl(g4_t a, g4_t b) {
+    int x = g4_truth(a), y = g4_truth(b);
+    return g4_predicate(x == 0 || y == 1 ? 1 : x == 1 && y == 0 ? 0 : 2);
+}
+static inline g4_t llg_gmp_sv4_logequiv(g4_t a, g4_t b) {
+    int x = g4_truth(a), y = g4_truth(b);
+    return g4_predicate(x == 2 || y == 2 ? 2 : x == y);
+}
+static inline g4_t llg_gmp_sv4_inside_range(g4_t value, g4_t low, g4_t high) {
+    g4_t ge = llg_gmp_sv4_ge(value, low), le = llg_gmp_sv4_le(value, high);
+    return llg_gmp_sv4_logand(ge, le);
+}
+/* End V05/S3. */
+
 static inline void llg_gmp_sv4_export_vpi_words(g4_t v, size_t first, llg_gmp_sv4_vpi_word_t* out,
                                                 size_t count) {
     if (v.width > 64) {
@@ -500,12 +622,200 @@ static inline void llg_gmp_sv4_import_words(g4_t* v, size_t first, const llg_gmp
         llg_gmp_sv4_set_word(v, 0, in[0].bits, in[0].x, in[0].z);
 }
 
+/* V05/S6: net metadata remains outside packed storage. Inputs borrow;
+ * returned values own. UDP rows and scalar inputs are validated by lowering. */
+enum {
+    LLG_GMP_RESOLVE_WIRE = 0, LLG_GMP_RESOLVE_WAND = 1, LLG_GMP_RESOLVE_WOR = 2,
+    LLG_GMP_RESOLVE_TRI0 = 3, LLG_GMP_RESOLVE_TRI1 = 4,
+    LLG_GMP_RESOLVE_SUPPLY0 = 5, LLG_GMP_RESOLVE_SUPPLY1 = 6
+};
+enum {
+    LLG_GMP_STRENGTH_HIGHZ = 0, LLG_GMP_STRENGTH_SMALL = 1, LLG_GMP_STRENGTH_MEDIUM = 2,
+    LLG_GMP_STRENGTH_WEAK = 3, LLG_GMP_STRENGTH_LARGE = 4, LLG_GMP_STRENGTH_PULL = 5,
+    LLG_GMP_STRENGTH_STRONG = 6, LLG_GMP_STRENGTH_SUPPLY = 7
+};
+g4_t llg_gmp_sv4_enum_navigate(g4_t current, g4_t step, const g4_t* values,
+                                uint32_t count, g4_t default_value, int direction);
+g4_t llg_gmp_sv4_resolve(const g4_t* const* drivers, int count, uint32_t width,
+                          int8_t sign, int mode);
+g4_t llg_gmp_sv4_resolve_strengths(const g4_t* const* drivers, const uint8_t* strength0,
+                                    const uint8_t* strength1, int count, uint32_t width,
+                                    int8_t sign, int mode);
+g4_t llg_gmp_sv4_resolve_strengths_range(const g4_t* const* drivers, const uint8_t* strength0,
+                                          const uint8_t* strength1, const int* indices, int count,
+                                          uint32_t source_width, uint32_t offset, uint32_t width,
+                                          int8_t sign, int mode);
+g4_t llg_gmp_sv4_udp_eval(const uint8_t* rows, size_t row_count, size_t input_count,
+                           const g4_t* const* inputs);
+/* End V05/S6. */
+
+#ifndef LLG_SV4_DECIMAL_GMP_THRESHOLD
+#define LLG_SV4_DECIMAL_GMP_THRESHOLD 4u
+#endif
+/* V05/S8: low-bit scalar coercion versus exact host index conversion.
+ * Formatting borrows values and writes only a bounded NUL-terminated prefix. */
+int llg_gmp_sv4_fits_i64_wide(g4_t value);
+uint64_t llg_gmp_sv4_to_index_wide(g4_t value);
+void llg_gmp_sv4_to_dec_string_wide(g4_t value, char* buf, size_t cap);
+void llg_gmp_sv4_format(char fmt, g4_t value, char* buf, size_t cap);
+static inline int64_t llg_gmp_sv4_to_i64(g4_t value) {
+    uint64_t bits = llg_gmp_sv4_to_u64(value);
+    if (value.width && value.width < 64 && ((bits >> (value.width - 1u)) & 1u))
+        bits |= ~g4_mask(value.width);
+    return bits <= INT64_MAX ? (int64_t)bits : -1 - (int64_t)~bits;
+}
+static inline int llg_gmp_sv4_fits_i64(g4_t value) {
+    if (value.width > 64)
+        return llg_gmp_sv4_fits_i64_wide(value);
+    return !value.data.small.b &&
+           (value.is_signed || value.width < 64 || !(value.data.small.a >> 63));
+}
+static inline uint64_t llg_gmp_sv4_to_index(g4_t value) {
+    if (value.width > 64)
+        return llg_gmp_sv4_to_index_wide(value);
+    if (value.data.small.b || (value.is_signed && value.width &&
+        ((value.data.small.a >> (value.width - 1u)) & 1u)))
+        return UINT64_MAX;
+    return value.data.small.a;
+}
+static inline int llg_gmp_sv4_to_index_i64(g4_t value, int64_t* out) {
+    if (!out || !llg_gmp_sv4_fits_i64(value))
+        return 0;
+    *out = value.is_signed ? llg_gmp_sv4_to_i64(value) : (int64_t)llg_gmp_sv4_to_u64(value);
+    return 1;
+}
+static inline void llg_gmp_sv4_to_dec_string(g4_t value, char* buf, size_t cap) {
+    if (!cap)
+        return;
+    if (value.width > 64) {
+        llg_gmp_sv4_to_dec_string_wide(value, buf, cap);
+        return;
+    }
+    size_t len = 0;
+    if (value.data.small.b) {
+        buf[0] = cap > 1 ? 'x' : 0;
+        if (cap > 1)
+            buf[1] = 0;
+        return;
+    }
+    uint64_t bits = value.data.small.a;
+    int negative = value.is_signed && value.width && ((bits >> (value.width - 1u)) & 1u);
+    if (negative) {
+        bits = (UINT64_C(0) - bits) & g4_mask(value.width);
+        if (len + 1u < cap)
+            buf[len++] = '-';
+    }
+    char digits[20];
+    size_t count = 0;
+    do {
+        digits[count++] = (char)('0' + bits % 10u);
+        bits /= 10u;
+    } while (bits);
+    while (count && len + 1u < cap)
+        buf[len++] = digits[--count];
+    buf[len] = 0;
+}
+/* End V05/S8. */
+
+/* V05/S7: native real payloads and scheduler ticks never enter packed storage.
+ * Casts round ties away from zero; rtoi truncates. X/Z bits contribute zero
+ * to real inspectors. Nonfinite integer conversions yield X. */
+double llg_gmp_sv4_to_real_wide(g4_t value);
+g4_t llg_gmp_sv4_from_real_wide(double rounded, uint32_t width, int8_t sign);
+uint64_t llg_gmp_sv4_delay_ticks(g4_t value, uint64_t unit_ticks);
+uint64_t llg_gmp_sv4_real_delay_ticks(double value, uint64_t unit_ticks, uint64_t precision_ticks);
+static inline double llg_gmp_sv4_to_real(g4_t value) {
+    if (value.width > 64)
+        return llg_gmp_sv4_to_real_wide(value);
+    uint64_t bits = value.data.small.a & ~value.data.small.b;
+    int negative = value.is_signed && value.width && ((bits >> (value.width - 1u)) & 1u);
+    uint64_t magnitude = negative ? (UINT64_C(0) - bits) & g4_mask(value.width) : bits;
+    return negative ? -(double)magnitude : (double)magnitude;
+}
+static inline g4_t llg_gmp_sv4_from_real(double value, uint32_t width, int8_t sign) {
+    g4_width_check(width);
+    if (!isfinite(value))
+        return llg_gmp_sv4_x(width, sign);
+    double rounded = round(value);
+    if (width > 64)
+        return llg_gmp_sv4_from_real_wide(rounded, width, sign);
+    uint64_t bits = (uint64_t)fmod(fabs(rounded), 18446744073709551616.0);
+    if (signbit(rounded))
+        bits = UINT64_C(0) - bits;
+    return g4_small(bits, 0, width, sign);
+}
+static inline g4_t llg_gmp_sv4_rtoi(double value) {
+    if (!isfinite(value))
+        return llg_gmp_sv4_x(32, 1);
+    uint64_t bits = (uint64_t)fmod(fabs(trunc(value)), 4294967296.0);
+    return g4_small(signbit(value) ? UINT64_C(0) - bits : bits, 0, 32, 1);
+}
+static inline g4_t llg_gmp_sv4_realtobits(double value) {
+    uint64_t bits;
+    memcpy(&bits, &value, sizeof(bits));
+    return g4_small(bits, 0, 64, 0);
+}
+static inline double llg_gmp_sv4_bitstoreal(g4_t value) {
+    uint64_t bits = llg_gmp_sv4_to_u64(value);
+    double out;
+    memcpy(&out, &bits, sizeof(out));
+    return out;
+}
+static inline g4_t llg_gmp_sv4_shortrealtobits(double value) {
+    float rounded = (float)value;
+    uint32_t bits;
+    memcpy(&bits, &rounded, sizeof(bits));
+    return g4_small(bits, 0, 32, 0);
+}
+static inline double llg_gmp_sv4_bitstoshortreal(g4_t value) {
+    uint32_t bits = (uint32_t)llg_gmp_sv4_to_u64(value);
+    float out;
+    memcpy(&out, &bits, sizeof(out));
+    return (double)out;
+}
+static inline int llg_gmp_real_to_bool(double value) { return value != 0.0; }
+/* End V05/S7. */
+
+/* V05/S9: checked widths and owner-free facade helper types. */
+static inline uint32_t llg_gmp_sv4_checked_width(g4_t value) {
+    if (llg_gmp_sv4_is_unknown(value) || (value.is_signed && value.width &&
+        llg_gmp_sv4_state(value, value.width - 1u) == 1u))
+        llg_gmp_sv4_fail("invalid dynamic packed width");
+    uint64_t width = llg_gmp_sv4_to_index(value);
+    if (width >= LLG_GMP_SUPPORTED_WIDTH_LIMIT)
+        llg_gmp_sv4_fail("width reaches exclusive limit");
+    return (uint32_t)width;
+}
+#include "reference_types.h"
+/* End V05/S9. */
+
 #ifdef __cplusplus
 }
 #endif
 
 /* Standalone facade. V07 owns selection through llg_value.h. */
 #ifdef LLG_SV4_GMP_PUBLIC_NAMES
+/* V05/S2 and S3 public names. */
+#define sv4_ashl llg_gmp_sv4_ashl
+#define sv4_ashr llg_gmp_sv4_ashr
+#define sv4_shl llg_gmp_sv4_shl
+#define sv4_shr llg_gmp_sv4_shr
+#define sv4_countones llg_gmp_sv4_countones
+#define sv4_onehot llg_gmp_sv4_onehot
+#define sv4_reduce_and llg_gmp_sv4_reduce_and
+#define sv4_reduce_nand llg_gmp_sv4_reduce_nand
+#define sv4_reduce_nor llg_gmp_sv4_reduce_nor
+#define sv4_reduce_or llg_gmp_sv4_reduce_or
+#define sv4_reduce_xnor llg_gmp_sv4_reduce_xnor
+#define sv4_reduce_xor llg_gmp_sv4_reduce_xor
+#define sv4_casex_eq llg_gmp_sv4_casex_eq
+#define sv4_casez_eq llg_gmp_sv4_casez_eq
+#define sv4_inside_range llg_gmp_sv4_inside_range
+#define sv4_logequiv llg_gmp_sv4_logequiv
+#define sv4_logimpl llg_gmp_sv4_logimpl
+#define sv4_wild_eq llg_gmp_sv4_wild_eq
+#define sv4_wild_neq llg_gmp_sv4_wild_neq
+/* End V05/S2 and S3 public names. */
 #define sv4_add llg_gmp_sv4_add
 #define sv4_and llg_gmp_sv4_and
 #define sv4_assign llg_gmp_sv4_assign
@@ -572,6 +882,65 @@ static inline void llg_gmp_sv4_import_words(g4_t* v, size_t first, const llg_gmp
 #define sv4_xnor llg_gmp_sv4_xnor
 #define sv4_xor llg_gmp_sv4_xor
 #define sv4_zero llg_gmp_sv4_zero
+/* V05/S6 public names. */
+#define sv4_enum_navigate llg_gmp_sv4_enum_navigate
+#define sv4_resolve llg_gmp_sv4_resolve
+#define sv4_resolve_strengths llg_gmp_sv4_resolve_strengths
+#define sv4_resolve_strengths_range llg_gmp_sv4_resolve_strengths_range
+#define sv4_udp_eval llg_gmp_sv4_udp_eval
+#define LLG_RESOLVE_WIRE LLG_GMP_RESOLVE_WIRE
+#define LLG_RESOLVE_WAND LLG_GMP_RESOLVE_WAND
+#define LLG_RESOLVE_WOR LLG_GMP_RESOLVE_WOR
+#define LLG_RESOLVE_TRI0 LLG_GMP_RESOLVE_TRI0
+#define LLG_RESOLVE_TRI1 LLG_GMP_RESOLVE_TRI1
+#define LLG_RESOLVE_SUPPLY0 LLG_GMP_RESOLVE_SUPPLY0
+#define LLG_RESOLVE_SUPPLY1 LLG_GMP_RESOLVE_SUPPLY1
+#define LLG_STRENGTH_HIGHZ LLG_GMP_STRENGTH_HIGHZ
+#define LLG_STRENGTH_SMALL LLG_GMP_STRENGTH_SMALL
+#define LLG_STRENGTH_MEDIUM LLG_GMP_STRENGTH_MEDIUM
+#define LLG_STRENGTH_WEAK LLG_GMP_STRENGTH_WEAK
+#define LLG_STRENGTH_LARGE LLG_GMP_STRENGTH_LARGE
+#define LLG_STRENGTH_PULL LLG_GMP_STRENGTH_PULL
+#define LLG_STRENGTH_STRONG LLG_GMP_STRENGTH_STRONG
+#define LLG_STRENGTH_SUPPLY LLG_GMP_STRENGTH_SUPPLY
+/* V05/S7 public names. */
+#define sv4_bitstoreal llg_gmp_sv4_bitstoreal
+#define sv4_bitstoshortreal llg_gmp_sv4_bitstoshortreal
+#define sv4_delay_ticks llg_gmp_sv4_delay_ticks
+#define sv4_from_real llg_gmp_sv4_from_real
+#define sv4_real_delay_ticks llg_gmp_sv4_real_delay_ticks
+#define sv4_realtobits llg_gmp_sv4_realtobits
+#define sv4_rtoi llg_gmp_sv4_rtoi
+#define sv4_shortrealtobits llg_gmp_sv4_shortrealtobits
+#define sv4_to_real llg_gmp_sv4_to_real
+#define llg_real_to_bool llg_gmp_real_to_bool
+/* V05/S8 public names. */
+#define sv4_fits_i64 llg_gmp_sv4_fits_i64
+#define sv4_format llg_gmp_sv4_format
+#define sv4_to_dec_string llg_gmp_sv4_to_dec_string
+#define sv4_to_i64 llg_gmp_sv4_to_i64
+#define sv4_to_index llg_gmp_sv4_to_index
+#define sv4_to_index_i64 llg_gmp_sv4_to_index_i64
+/* V05/S9 public names. */
+#define sv4_checked_width llg_gmp_sv4_checked_width
+#define llg_queue_ref_read_fn llg_gmp_queue_ref_read_fn
+#define llg_queue_ref_write_fn llg_gmp_queue_ref_write_fn
+#define llg_ref_kind_t llg_gmp_ref_kind_t
+#define llg_ref_t llg_gmp_ref_t
+#define llg_ref_composite_t llg_gmp_ref_composite_t
+#define llg_ref_tag_check_t llg_gmp_ref_tag_check_t
+#define llg_ref_view_t llg_gmp_ref_view_t
+#define sv4_select_plan_t llg_gmp_sv4_select_plan_t
+#define LLG_REF_WHOLE LLG_GMP_REF_WHOLE
+#define LLG_REF_BIT LLG_GMP_REF_BIT
+#define LLG_REF_PART LLG_GMP_REF_PART
+#define LLG_REF_INDEXED LLG_GMP_REF_INDEXED
+#define LLG_REF_ARRAY LLG_GMP_REF_ARRAY
+#define LLG_REF_QUEUE LLG_GMP_REF_QUEUE
+#define LLG_REF_PACKED_PLAN LLG_GMP_REF_PACKED_PLAN
+#define LLG_REF_COMPOSITE LLG_GMP_REF_COMPOSITE
+#define LLG_REF_VIEW LLG_GMP_REF_VIEW
+#define LLG_REF_TAGGED_VIEW LLG_GMP_REF_TAGGED_VIEW
 #define sv4_t llg_gmp_sv4_t
 #define llg_sv4_word_t llg_gmp_sv4_word_t
 #define llg_sv4_vpi_word_t llg_gmp_sv4_vpi_word_t

@@ -58,7 +58,7 @@ fn tagged_member_retags_after_the_invalid_access_branch() {
             let result = frame.expression(&member(signed, two_state)).unwrap();
             assert_eq!(result.signed, signed);
             assert!(frame.body().ends_with(&format!(
-                "    }}\n    {}.is_signed = {};\n",
+                "    }}\n    llg_sv4_set_signed(&{}, {});\n",
                 result.code,
                 u8::from(signed)
             )));

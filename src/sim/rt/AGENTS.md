@@ -11,12 +11,13 @@ Rust-emitted model, HDL, parity, sanitizer or native-platform acceptance.
 
 ## Standalone compact backend
 
-`value_gmp/backend.h` reserves ABI 5 and supplies the G1 operation subset and
-V01 bridge. It is not selected or embedded by production yet; V07 owns that
-integration. Build its separate translation units through
+`value_gmp/backend.h` reserves ABI 5 and supplies the G1 core, V01 bridge,
+V05/S1–S3 operations and V05/S6–S9 adapters. See `value_gmp/facade_audit.md`
+for the remaining surface. It is not selected or embedded by production yet;
+V07 owns that integration. Build its separate translation units through
 `tests/runtime_value_storage/compact_value.cmake`. Plain C kernels are always
-available; `LLG_SV4_GMP_KERNELS=1` accelerates only wide mul/div/mod/pow. Include
-GMP only in `kernels.c`, require compatible 64-bit nail-free limbs, and keep all
+available; `LLG_SV4_GMP_KERNELS=1` accelerates wide mul/div/mod/pow and decimal
+conversion. Include GMP only in `kernels.c`, require compatible 64-bit nail-free limbs, and keep all
 other operations on direct word loops. The header inlines <=64-bit operations
 and supports static constants through `LLG_GMP_SV4_LITERAL`.
 

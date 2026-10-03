@@ -1,6 +1,8 @@
 # Simulator lowering
 
-Applies to `codegen.rs` and children. Read [pipeline](../AGENTS.md),
+Applies to `codegen.rs` and children. Consuming generation releases the DB after
+typed lowering; borrowing entry points support reuse. Release collection state
+before execution lowering and rendering. Read [pipeline](../AGENTS.md),
 [emitter](../emit_c/AGENTS.md) and [runtime](../rt/AGENTS.md) contracts.
 `lower_expr`/`lower_stmt`/`lower_lhs` produce typed IR only. Keep shared state in
 `lowering.rs`, responsibility-named children and the smallest existing visibility.
@@ -139,6 +141,22 @@ strength-bearing, not unconditional values. Preserve scalar strengths; explicit
 vector continuous strengths reject. Reject trireg before storage collection,
 including undriven arrays, and dynamic net selectors. Keep disjoint constant
 uwire selections legal; overlapping drivers reject.
+
+`collection/net_partition.rs` forms maximal affine runs of canonical electrical
+roots for fixed arrays and selected/aliased scalar or vector nets. Adjacent
+positions must have the same declared members, structural source/terminal sites,
+force/release membership and resolved net type/delay owners; each member and
+source offset advances by one. Reversed/permuted or opaque projections retain
+bit groups. Include driver ranges before partitioning, and extend that source
+inventory for new topology forms. Ordinary whole vector groups already resolve
+word-parallel and retain their existing path. Keep per-bit declared-view bindings
+with a group-bit offset; electrical width must never change an HDL storage shape.
+Contribution projection gathers contiguous RHS runs with part selects and Z runs,
+then concatenates only disconnected runs. Conversion precedes projection. Array
+publication binds every bit to this partition and rejects a missing root.
+Record net-array member selections map declared cell coordinates and recursive
+member offsets through `array_net_selection` before this same partitioning;
+member boundaries split runs when their structural driver sites differ.
 
 Fixed net arrays, selected ports and interfaces share canonical bits; array
 publication notifies array dependencies. Keep the signal reverse index aligned

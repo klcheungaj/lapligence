@@ -3,6 +3,11 @@
 The emitter consumes validated execution IR and renders standalone models with
 ordered setup, evaluation and cleanup. It has no frontend dependency.
 
+Rendering borrows the execution model when the computed arena-callee set matches
+its current analysis, and copies it only when reanalysis changes that set. Exact
+body sharing groups candidates as they arrive, retaining one normalized body and
+one comparison key per group while preserving member and group order.
+
 `owned/` handles expressions, typed lvalues, calls, captures, native services and
 registered temporary/local scopes. Its model layer emits persistent storage,
 initialization, procedures and the start/advance/close embedding API. A suspended
@@ -49,7 +54,11 @@ Identical frame layouts (every instance of one process or task) share a single
 
 Large designs stay compact at model level too: plain static storage is
 initialized and destroyed through per-representation pointer tables and loops.
-Net contributions use one cell array per electrical group, with descriptor loops
+Electrical groups can span maximal identically connected bit ranges while
+waveform/VPI views retain declared shapes. Remaining structural contributions use
+ordered descriptor loops for captured RHS part selects, including distinct
+inertial handles for delayed rows. Short or disconnected gathers retain ordinary
+emission. Net contributions use one cell array per electrical group, with descriptor loops
 for defaults, index resets, alias binding and teardown. Net resolution and per-bit
 grouping are unchanged. Consecutive spawns, finals and waveform registrations run from constant
 argument tables in their original order.

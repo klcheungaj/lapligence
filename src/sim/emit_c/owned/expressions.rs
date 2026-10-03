@@ -434,7 +434,7 @@ impl Frame<'_, '_> {
         // read must restore its own signedness on the valid path too; changing
         // only Value metadata leaves later native casts zero-extending it.
         self.line(format!(
-            "{}.is_signed = {};",
+            "llg_sv4_set_signed(&{}, {});",
             result.code,
             u8::from(expr.signed)
         ));

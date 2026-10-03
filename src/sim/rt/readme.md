@@ -78,16 +78,17 @@ at most five rounded summary words. These internal layouts keep process ABI 3;
 runtime-content hashing invalidates older cached archives.
 
 `LLG_WAIT_INLINE_SPECS` is one and `LLG_WAIT_INLINE_LIMBS` is one (64 bits per
-plane). Single packed any/edge waits and level targets through 64 bits copy their
-spec and all bits/X/Z planes into the wait payload, alongside one subscription.
+word). Single packed any/edge waits and level targets through 64 bits copy their
+spec and neutral A/B words into the wait payload, alongside one subscription.
 Timed queue links share that union, keeping waits at 128 bytes and processes at
 424 bytes. A single named-event wait copies its resolved object into an inline
 list slot. Wide, multiple, mixed, expression and dependency waits keep owned heap
 storage. Source rows and named-event tables still allocate on first use/growth;
 there is no per-wait allocation for the inline paths after that shared storage is
-available. Inline descriptors are temporary borrowed views used only in synchronous
-comparisons, never owning values. Native signal-width growth promotes a live edge
-wait to heap storage while preserving its subscription's exact list position.
+available. Inline snapshots are copied words used only in synchronous
+comparisons; no packed descriptor is fabricated over their storage. Native
+signal-width growth promotes a live edge wait to heap storage while preserving
+its subscription's exact list position.
 Wake, cancellation and teardown unlink subscriptions before clearing the payload.
 
 Stop/resume retains a live context; close releases observers/queues before model

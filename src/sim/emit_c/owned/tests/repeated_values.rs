@@ -140,7 +140,7 @@ fn repeated_concat_below_threshold_keeps_expanded_operations() {
     for _ in 0..count {
         expected.push_str("    sv4_replace(&_llg_t[1], SV4_INIT(165ULL, 0ULL, 0ULL, 8, 0));\n    sv4_replace(&_llg_t[0], sv4_concat(_llg_t[0], _llg_t[1]));\n    sv4_destroy(&_llg_t[1]);\n");
     }
-    expected.push_str("    _llg_t[0].is_signed = 0;\n    sv4_destroy(&_llg_t[0]);\n");
+    expected.push_str("    llg_sv4_set_signed(&_llg_t[0], 0);\n    sv4_destroy(&_llg_t[0]);\n");
     assert_eq!(body, expected);
     assert_eq!(slots, 2);
 }

@@ -1,0 +1,8 @@
+blocking 1 01
+mutating 2 02
+nba 3 03
+copyout 4 0b
+postfix 5 0 1b
+prefix 6 2 2b
+snapshot 6 2c
+root 02c0

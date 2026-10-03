@@ -19,6 +19,11 @@ module tb;
         #1 $display("aliases=%b/%b/%b", a, b, u0.p);
         d = 4'hf;
         #1 $display("changed=%b/%b/%b", a, b, u0.p);
+        // Opposite known drivers must resolve to zero on every connected bit.
+        other = 4'h0; d = 4'hf;
+        #1 $display("zero_parent=%b/%b/%b", a, b, u0.p);
+        other = 4'hf; d = 4'h0;
+        #1 $display("zero_child=%b/%b/%b", a, b, u0.p);
         d = 4'hz; other = 4'hz;
         #1 $display("float=%b/%b/%b", a, b, u0.p);
         $finish(0);

@@ -169,24 +169,24 @@ fn net_storage_restarts_with_empty_cells_indexes_and_alias_lists() {
 int main(void) {
     for (int cycle = 0; cycle < 8; ++cycle) {
         if (llg_model_start(0, NULL)) return 1;
-        if (g_pull.resolved.width != 129 || !g_pull.resolved.is_signed ||
-            g_pull.resolved.bits[0] != UINT64_MAX ||
-            g_pull.resolved.bits[1] != UINT64_MAX || g_pull.resolved.bits[2] != 1) return 2;
+        if (llg_sv4_width(g_pull.resolved) != 129 || !llg_sv4_signed(g_pull.resolved) ||
+            llg_sv4_word(g_pull.resolved, 0, LLG_SV4_BITS) != UINT64_MAX ||
+            llg_sv4_word(g_pull.resolved, 1, LLG_SV4_BITS) != UINT64_MAX || llg_sv4_word(g_pull.resolved, 2, LLG_SV4_BITS) != 1) return 2;
         if (g_bit_0.n_aliases != 2 || g_bit_0.index_root != -1 ||
             g_bit_0.driver_index[0].active || g_bit_0.driver_index[1].active) return 3;
         if (g_bit_0.drivers[0] != &g_bit_0__cells[0] ||
             g_bit_0.drivers[1] != &g_bit_0__cells[1] ||
-            g_bit_0__cells[0].z[0] != 1 || g_bit_0__cells[1].z[0] != 1) return 4;
+            llg_sv4_word(g_bit_0__cells[0], 0, LLG_SV4_Z) != 1 || llg_sv4_word(g_bit_0__cells[1], 0, LLG_SV4_Z) != 1) return 4;
         sv4_t one = sv4_from_u64(1, 1, 0);
         llg_net_write(&g_bit_0, 1, one);
         sv4_destroy(&one);
-        if (g_bit_0.resolved.bits[0] != 1 || !g_bit_0.driver_index[1].active ||
-            G_array_0[2].bits[0] != 1 || llg_array_net_0_2.visible.bits[0] != 1) return 5;
+        if (llg_sv4_word(g_bit_0.resolved, 0, LLG_SV4_BITS) != 1 || !g_bit_0.driver_index[1].active ||
+            llg_sv4_word(G_array_0[2], 0, LLG_SV4_BITS) != 1 || llg_sv4_word(llg_array_net_0_2.visible, 0, LLG_SV4_BITS) != 1) return 5;
         if (llg_model_close()) return 6;
-        if (g_bit_0__cells[0].width || g_bit_0__cells[1].width ||
-            g_bit_0.resolved.width || g_pull.resolved.width ||
+        if (llg_sv4_width(g_bit_0__cells[0]) || llg_sv4_width(g_bit_0__cells[1]) ||
+            llg_sv4_width(g_bit_0.resolved) || llg_sv4_width(g_pull.resolved) ||
             g_bit_0.aliases || g_bit_0.n_aliases || g_bit_0.alias_capacity ||
-            llg_array_net_0_2.visible.width) return 7;
+            llg_sv4_width(llg_array_net_0_2.visible)) return 7;
     }
     return 0;
 }
@@ -199,4 +199,115 @@ int main(void) {
     assert!(result.status.success(), "{result:?}");
     assert!(result.stdout.is_empty(), "{result:?}");
     assert!(result.stderr.is_empty(), "{result:?}");
+}
+
+fn contribution_model(count: usize, delayed: bool) -> IrModel {
+    let mut model = IrModel::new("net_contributions".to_owned(), 129).unwrap();
+    let mut body = vec![IrStmt::DeclLocal {
+        name: "captured".to_owned(),
+        width: 129,
+        signed: false,
+        two_state: false,
+        init: Some(Box::new(number(1, 129))),
+    }];
+    for index in 0..count {
+        let group = model.net_groups.len();
+        let width = if index % 2 == 0 { 1 } else { 65 };
+        model.net_groups.push(
+            IrNetGroup::new(format!("g_part_{index}"), width, false, IrNetKind::Wire, 1).unwrap(),
+        );
+        let mut signal = IrSignal::new(
+            format!("g_part_{index}.resolved"),
+            None,
+            IrType::Packed {
+                width,
+                signed: false,
+                two_state: false,
+            },
+            None,
+        )
+        .unwrap();
+        signal.net_driver = Some((group, 0));
+        let target = model.signals.len();
+        model.signals.push(signal);
+        let rhs = IrExpr::new(
+            IrExprKind::PartSel {
+                base: Box::new(IrExpr::new(
+                    IrExprKind::LocalRead("captured".to_owned()),
+                    129,
+                    false,
+                    None,
+                )),
+                left: i64::from(width - 1),
+                right: 0,
+            },
+            width,
+            false,
+            None,
+        );
+        body.push(if delayed {
+            IrStmt::InertialAssign {
+                lhs: IrLhs::Whole(target),
+                rhs,
+                delay: IrTransitionDelay {
+                    rise: 2,
+                    fall: 3,
+                    turn_off: 4,
+                },
+            }
+        } else {
+            IrStmt::Assign {
+                lhs: IrLhs::Whole(target),
+                rhs,
+                nba: false,
+            }
+        });
+    }
+    model.processes.push(IrProcess::new(
+        "p_contribute".to_owned(),
+        "tb.assign".to_owned(),
+        IrShape::RunOnce,
+        Vec::new(),
+        body,
+    ));
+    model.spawns.push("p_contribute".to_owned());
+    model
+}
+
+#[test]
+fn many_electrical_contributions_have_constant_executable_work_shape() {
+    for count in [4, 41, 100] {
+        let source = render(contribution_model(count, false));
+        assert!(source.contains("uint32_t cast_width; uint8_t cast_signed;"));
+        assert_eq!(source.matches("].cast_width").count(), 1);
+        assert_eq!(source.matches("].cast_signed").count(), 1);
+        assert_eq!(
+            source
+                .matches("static const llg_net_drive_row_t llg_net_rows_")
+                .count(),
+            1
+        );
+        assert_eq!(source.matches("llg_net_write(").count(), 1);
+        assert_eq!(source.matches("sv4_part_select(").count(), 1);
+        assert_eq!(source.matches("for (; _llg_net_i_").count(), 1);
+        for index in 0..count {
+            let width = if index % 2 == 0 { 1 } else { 65 };
+            assert!(source.contains(&format!(
+                "{{ &g_part_{index}, 0, {}LL, 0LL, {width}, 0 }}",
+                width - 1
+            )));
+        }
+    }
+}
+
+#[test]
+fn delayed_electrical_contributions_keep_one_inertial_handle_per_row() {
+    let source = render(contribution_model(41, true));
+    assert!(source.contains("uint32_t cast_width; uint8_t cast_signed;"));
+    assert_eq!(source.matches("].cast_width").count(), 1);
+    assert_eq!(source.matches("].cast_signed").count(), 1);
+    assert_eq!(source.matches("llg_inertial_net(").count(), 1);
+    assert!(source.contains("[41] = {0};"));
+    assert!(source.contains("2ULL, 3ULL, 4ULL"));
+    assert_eq!(source.matches("for (; _llg_net_i_").count(), 1);
 }

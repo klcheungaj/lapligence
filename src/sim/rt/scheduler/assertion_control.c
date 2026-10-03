@@ -190,7 +190,7 @@ static int assertion_control_failure(const char* reason) {
 }
 
 static int assertion_control_arg(const sv4_t* value, uint64_t* result) {
-    if (!value || value->width == 0 || value->width > 64 ||
+    if (!value || llg_sv4_width(*value) == 0 || llg_sv4_width(*value) > 64 ||
         sv4_is_unknown(*value))
         return 0;
     *result = sv4_to_u64(*value);

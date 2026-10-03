@@ -154,13 +154,13 @@ sv4_t llg_sampled_domain_past(uint64_t identity, uint64_t ticks) {
 }
 
 static int sampled_domain_lsb_one(sv4_t value) {
-    if (value.width == 0 || value.x[0] & 1ULL || value.z[0] & 1ULL) return 0;
-    return (value.bits[0] & 1ULL) != 0;
+    if (llg_sv4_width(value) == 0 || llg_sv4_word(value, 0, LLG_SV4_X) & 1ULL || llg_sv4_word(value, 0, LLG_SV4_Z) & 1ULL) return 0;
+    return (llg_sv4_word(value, 0, LLG_SV4_BITS) & 1ULL) != 0;
 }
 
 static int sampled_domain_lsb_zero(sv4_t value) {
-    if (value.width == 0 || value.x[0] & 1ULL || value.z[0] & 1ULL) return 0;
-    return (value.bits[0] & 1ULL) == 0;
+    if (llg_sv4_width(value) == 0 || llg_sv4_word(value, 0, LLG_SV4_X) & 1ULL || llg_sv4_word(value, 0, LLG_SV4_Z) & 1ULL) return 0;
+    return (llg_sv4_word(value, 0, LLG_SV4_BITS) & 1ULL) == 0;
 }
 
 int llg_sampled_domain_status(uint64_t identity, int kind) {

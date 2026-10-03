@@ -58,8 +58,13 @@ g4_t llg_gmp_sv4_compare_wide(g4_t a, g4_t b, unsigned op) {
     if (op >= 2 && (llg_gmp_sv4_is_unknown(a) || llg_gmp_sv4_is_unknown(b)))
         return g4_predicate(2);
     if (a.width == b.width &&
-        (op == 1 || (!llg_gmp_sv4_is_unknown(a) && !llg_gmp_sv4_is_unknown(b) && op == 0)))
-        return g4_predicate(llg_gmp_sv4_same_wide(a, b));
+        (op == 1 || (!llg_gmp_sv4_is_unknown(a) && !llg_gmp_sv4_is_unknown(b) && op == 0))) {
+        size_t bytes = llg_gmp_sv4_words(a) * sizeof(uint64_t);
+        if (memcmp(a.data.wide.a, b.data.wide.a, bytes))
+            return g4_predicate(0);
+        const uint64_t *ab = a.data.wide.b, *bb = b.data.wide.b;
+        return g4_predicate(ab && bb ? !memcmp(ab, bb, bytes) : ab == bb);
+    }
     g4_span x = g4_span_of(&a, s), y = g4_span_of(&b, s);
     size_t n = ((size_t)w + 63) / 64;
     int unknown = 0, c = 0;

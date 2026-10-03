@@ -73,7 +73,7 @@ mod references;
 use references::{
     array_select_from_slang, canonical_reference_target, edge_target, edge_target_at, edge_targets,
     expression_reference_target, hierarchical_reference_target, member_path_from_slang,
-    resolved_edge_target, semantic_edges, semantic_id,
+    resolved_edge_target, semantic_edges, semantic_id, SemanticIds,
 };
 mod clocking;
 use clocking::{
@@ -98,6 +98,7 @@ use statement_import::{event_specs, is_named_event_expression, statement_from_sl
 mod expression_import;
 use expression_import::{
     enclosing_scope_name, expression_from_slang, semantic_full_name, source_position,
+    SourcePositions,
 };
 
 mod capture;

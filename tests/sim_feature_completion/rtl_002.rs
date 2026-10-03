@@ -159,3 +159,19 @@ fn descriptor_waveform_registration_preserves_escaped_names() {
 fn delayed_selected_cells_keep_independent_site_handles() {
     sim_cli::run_case(SUITE, "inertial", "PASS rtl002 inertial\n", "", &[]);
 }
+
+#[test]
+fn descriptor_selected_refs_and_partitioned_nets_compose() {
+    sim_cli::run_case(
+        SUITE,
+        "integration_views",
+        "PASS rtl002 integration views\n",
+        "",
+        &[],
+    );
+    sim_cli::run_case_after_db_drop(
+        SUITE,
+        "integration_views",
+        "PASS rtl002 integration views\n",
+    );
+}

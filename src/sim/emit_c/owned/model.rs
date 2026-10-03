@@ -11,11 +11,13 @@ type ProcessBody = (
     String,
     Option<super::super::frame_layout::FrameLayout>,
     Vec<super::super::statements::pca_batches::Batch>,
+    Vec<super::net_batches::NetBatch>,
 );
 type CoroutineProcessBody = (
     String,
     super::super::frame_layout::FrameLayout,
     Vec<super::super::statements::pca_batches::Batch>,
+    Vec<super::net_batches::NetBatch>,
 );
 
 mod callbacks;
@@ -377,11 +379,13 @@ pub(in crate::sim::emit_c) fn coroutine_process(
         frame_upper_bounds,
     )?;
     frame.pca_owner = Some(process.c_name.clone());
-    let (source, layout, batches) = render_process(ctx, process, execution, frame, true)?;
+    let (source, layout, batches, net_batches) =
+        render_process(ctx, process, execution, frame, true)?;
     Ok((
         source,
         layout.ok_or_else(|| "coroutine process has no frame layout".to_owned())?,
         batches,
+        net_batches,
     ))
 }
 
@@ -390,7 +394,7 @@ pub(in crate::sim::emit_c) fn process(
     process: &IrProcess,
     execution: &ExecutionProcess,
 ) -> Result<String, String> {
-    render_process(ctx, process, execution, Frame::new(ctx), false).map(|(source, _, _)| source)
+    render_process(ctx, process, execution, Frame::new(ctx), false).map(|(source, _, _, _)| source)
 }
 
 fn render_process(
@@ -464,6 +468,7 @@ fn render_process(
     let dispatch = frame.dispatch();
     let macro_epilogue = frame.macro_epilogue();
     let batches = std::mem::take(&mut frame.pca_batches);
+    let net_batches = std::mem::take(&mut frame.net_batches);
     let (body, layout, cached_locals) = if coroutine {
         let finished = frame.into_coframe()?;
         (finished.body, Some(finished.layout), finished.cached_locals)
@@ -488,7 +493,7 @@ fn render_process(
             "void"
         },
     );
-    Ok((source, layout, batches))
+    Ok((source, layout, batches, net_batches))
 }
 
 pub(in crate::sim::emit_c) fn pre_function(

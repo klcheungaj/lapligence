@@ -35,10 +35,43 @@ impl Frame<'_, '_> {
             return Err("file input selected width disagrees with its type".to_owned());
         }
         if let Some(reference) = &target.reference {
-            if target.selection.is_some() {
-                return Err(pending("selected reference file destinations"));
-            }
-            return Ok((reference.clone(), target));
+            let Some(selection) = &target.selection else {
+                return Ok((reference.clone(), target));
+            };
+            let root_width = target.binding.width;
+            let plan = match selection {
+                Selection::PackedChain(plan, _) => plan.clone(),
+                Selection::Bit(index) => self.scalar(
+                    "sv4_select_plan_t",
+                    format!("sv4_select_plan_bit({root_width}, {index})"),
+                ),
+                Selection::Part(left, right) => self.scalar(
+                    "sv4_select_plan_t",
+                    format!("sv4_select_plan_part({root_width}, {left}LL, {right}LL)"),
+                ),
+                Selection::Indexed(base, width, negative) => self.scalar(
+                    "sv4_select_plan_t",
+                    format!(
+                        "sv4_select_plan_indexed({root_width}, {}, {width}, {})",
+                        base.code,
+                        u8::from(*negative)
+                    ),
+                ),
+            };
+            // Scanners borrow the view synchronously; its copied numeric plan
+            // and canonical parent stay in typed frame storage across setup.
+            let view = self.declare(
+                "llg_ref_view_t",
+                "input_view",
+                format!("{{ .parent = (llg_ref_t*){reference}, .plan = {plan}, .tag_check_count = 0, .tag_checks = NULL, .location = NULL }}"),
+            );
+            let reference = self.declare(
+                "llg_ref_t",
+                "input_reference",
+                format!("{{ .kind = LLG_REF_VIEW, .width = {width}, .is_signed = {}, .two_state = {}, .retained = &{view} }}",
+                    u8::from(signed), u8::from(two_state)),
+            );
+            return Ok((format!("&{reference}"), target));
         }
         let selection = match &target.selection {
             None => ".kind = LLG_REF_WHOLE".to_owned(),

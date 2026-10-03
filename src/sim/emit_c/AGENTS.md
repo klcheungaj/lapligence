@@ -366,6 +366,25 @@ paths. Tables are typed instance-record operands, so shared processes load their
 own rows; resolved-net sources still address C14 storage normally. No runtime or
 coroutine ABI changes are involved.
 
+## Electrical contribution batches
+
+`owned/net_batches.rs` batches consecutive whole structural writes of part selects
+from an identical captured local/conversion expression. Tables record net, slot,
+source bounds and target width/sign. `NET_BATCH_MIN_ASSIGNMENTS` is the named
+minimum (4); descriptor cast metadata uses `cast_width` / `cast_signed` fields,
+distinct from packed-value representation fields. Lexical/execution boundaries,
+different sources/delays and other operations end a run. One resume-free loop
+uses registered temporary owners and `Frame::declare` for its index, preserves
+publication order and destroys each
+row's values. Evaluate the captured base once; only local reads and numeric
+conversion/resize wrappers qualify. No signal reads or side effects are hoisted.
+Delayed batches keep one static inertial handle per original contribution and
+retain the complete transition tuple. Descriptor tables are typed instance
+operands for body sharing; delayed bodies retain the existing static-storage
+exclusion. Short or disconnected gathers use ordinary statement emission.
+Electrical widths can vary within a table; declared HDL, waveform and VPI shapes
+remain their original bit-binding views. The runtime/value ABI is unchanged.
+
 ## Instance body sharing
 
 `model/sharing.rs` groups compiler-owned emitted bodies by source location,
