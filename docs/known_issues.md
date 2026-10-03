@@ -297,3 +297,71 @@ canonical storage cell. IEEE 1800-2009 §23.3.3.2 describes hierarchical referen
 binding, but the retained runtime-selector characterization has no adjudicated
 binding/rebinding oracle. Qualify that boundary before enabling runtime-selected
 connections. Static selected connections and nested packed projections execute.
+
+## Native stack frames grow with a statement's format-argument count
+
+**Status:** open; the host-stack bound is measured, not proven.
+
+### Symptom
+
+A `$display`-style statement with many arguments needs a native frame that grows
+with its argument count. A 512-argument `$display` needs 159 KiB of stack at
+clang `-O0`, so the 640 KiB `LLG_HOST_STACK_ESTIMATE_BYTES` is a measured bound
+over the tested shapes rather than a proven one: a statement with enough
+arguments, or several such statements on one call chain, can exceed it.
+
+### Cause
+
+The emitter declares each statement's format argument array
+(`llg_fmt_arg_t _llg_format_args_N[argc]`) and its temporaries as automatic
+variables of the generated function, so they live on the native stack for the
+whole statement and their size is proportional to `argc`. Constant-size frames
+and arena-backed recursion bound everything else; these arrays are the remaining
+argument-count-dependent stack use.
+
+### Intended direction
+
+Move the argument arrays and their temporaries into heap-backed value scopes
+(the same ownership used for other statement temporaries), so the native frame
+stays constant-size regardless of `argc`. Then re-derive the host-stack estimate
+from the constant frame sizes and keep `tests/generated_c_frame_lint.rs` covering
+the new shape.
+
+### Reproduce
+
+Generate a design whose `initial` block calls `$display` with 512 integer
+arguments (for example `$display("%0d ... %0d", a0, ..., a511);`), build the
+model with clang at `-O0` (`--cc clang --cflags -O0`) and measure the frame size
+of the generated process function, for instance with `-fstack-usage` or
+`-Wframe-larger-than=`. The frame is about 159 KiB; halving `argc` roughly
+halves it.
+
+## Queue and dynamic-array `sort`/`rsort` are quadratic and re-evaluate `with` keys
+
+**Status:** open.
+
+### Symptom
+
+Sorting 20,000 integers with `sort()` on a queue or dynamic array takes 9.3 s
+at gcc `-O3`. A `with (expr)` key expression is evaluated again on every
+comparison, so side effects and cost multiply with the comparison count.
+
+### Cause
+
+`llg_method_reorder` in [`container/methods.c`](../src/sim/rt/container/methods.c)
+implements `sort` and `rsort` as insertion sorts that evaluate the `with` key
+inside the comparison. That is O(n^2) comparisons and O(n^2) key evaluations.
+
+### Intended direction
+
+Use an O(n log n) sort (for example a stable merge sort) that evaluates each
+element's key exactly once into a key array, then sorts element indices by those
+keys, with bounded native stack depth and no per-comparison allocation. Keep the
+existing ordering rules for ties and four-state keys, and re-check the key
+evaluation order against the LRM.
+
+### Reproduce
+
+Fill a `int q[$]` or dynamic array with 20,000 pseudo-random values, call
+`q.sort();` (and `q.sort with (item);`), and time the simulation with a model
+built at gcc `-O3`. Doubling the size roughly quadruples the time.

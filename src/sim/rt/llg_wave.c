@@ -453,6 +453,28 @@ static int writer_bytes(writer_t* w, const char* bytes, size_t len) {
     return 1;
 }
 
+/* Writes "<prefix><bits> <id>\n" as one record without a width-scaled
+ * buffer: the whole record is checked against the byte limit first, so a
+ * limit never leaves a truncated value change, then the pieces go straight
+ * to the stream. */
+static int writer_value_record(writer_t* w, const char* prefix, size_t prefix_len,
+                               const char* bits, size_t bits_len,
+                               const char* id) {
+    size_t id_len = strlen(id);
+    size_t total = prefix_len + bits_len + (bits_len ? 1u : 0u) + id_len + 1u;
+    if (!w->file || w->limit_reached) return 0;
+    if (w->byte_limit &&
+        (w->bytes_written > w->byte_limit ||
+         total > w->byte_limit - w->bytes_written)) {
+        w->limit_reached = 1;
+        return 0;
+    }
+    return writer_bytes(w, prefix, prefix_len) &&
+           writer_bytes(w, bits, bits_len) &&
+           (!bits_len || writer_bytes(w, " ", 1u)) &&
+           writer_bytes(w, id, id_len) && writer_bytes(w, "\n", 1u);
+}
+
 static int writer_printf(writer_t* w, const char* fmt, ...) {
     char buf[4096];
     va_list ap;
@@ -865,8 +887,8 @@ static void writer_sv4_aliases(writer_t* w, uint32_t first,
         if (w->format == FORMAT_VCD) {
             char id[8];
             compact_id(i, id);
-            if (reg->width == 1u) writer_printf(w, "%c%s\n", bits[0], id);
-            else writer_printf(w, "b%s %s\n", bits, id);
+            if (reg->width == 1u) writer_value_record(w, bits, 1u, "", 0u, id);
+            else writer_value_record(w, "b", 1u, bits, reg->width, id);
             break; // aliases share the same VCD identifier
         }
         fstWriterEmitValueChange(w->fst, w->fst_handles[i], bits);

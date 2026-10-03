@@ -14,6 +14,10 @@ These file-backed designs cover the ordinary Verilog waveform tasks in IEEE
   identity while sharing one waveform value identifier.
 - `true_net_alias.sv` checks that both names of a true net alias receive the
   resolved driver value in the VCD catalog.
+- `wide.sv` dumps 4095-, 4096-, 4097- and 65536-bit vectors (zeros, ones, and
+  `z`/`x` end bits) and checks every value-change record at full width.
+- `wide_limit.sv` is built with `--define LIMIT=<bytes>` and checks that a
+  `$dumplimit` boundary keeps or rejects a 65536-bit record as a whole.
 - `fst.sv` is the FST counterpart for the generated-model reader probe.
 - `output_redirect.sv` writes a waveform, a `$fopen` file and `$writememh`
   output and reads `$readmemh` input, so one built model can be rerun with
