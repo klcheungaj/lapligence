@@ -43,6 +43,7 @@ capabilities; check the exact inventory rather than assuming a fixed count.
 
 | Probe / group | Contract |
 | --- | --- |
+| `consumer_bridge_probe.c` | Allocation-free masked/range compare/copy/fill at unaligned offsets and 0/31/32/63/64/65/129/257-bit boundaries; foreign 32-bit record strides, partial imports, copied A/B snapshots, zero-extended text and modular digit parsing. |
 | `neutral_access_probe.c` | Neutral shape/state/word/range mutation at 0..1,048,575 bits; literal Rust/DPI/VPI encodings, source-sign cast versus requested-sign resize, two-state coercion and independent/self-alias owner operations. The standalone compact probes exercise its V01 bridge independently. |
 | `storage_probe.c` | Exact contiguous planes, masking, independent clone/copy/move, repeated destruction, 10,000 replacements, zero/exclusive widths and failure-atomic OOM. Fatal cases require specific diagnostics. |
 | `stream_preflight_probe.c` | INT64 endpoints, declared bounds/traversal, unknown selectors, source-size rejection including later short segments, and zero remaining packed owners. |
@@ -191,17 +192,15 @@ cmake -S tests/runtime_value_storage -B /build/llg-compact-gcc \
   -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=gcc \
   -DLLG_STORAGE_TEST_WAVEFORMS=OFF -DLLG_STORAGE_TEST_COMPACT=ON \
   -DLLG_GMP_ROOT=/path/to/gmp-install
-cmake --build /build/llg-compact-gcc --parallel 6 --target \
-  compact_portable_probe compact_gmp_probe \
-  compact_oracle_portable compact_oracle_gmp compact_oracle_legacy \
-  compact_portable_allocation_probe compact_gmp_allocation_probe \
-  compact_portable_benchmark compact_gmp_benchmark
+cmake --build /build/llg-compact-gcc --parallel 6 --target compact_checks
 ctest --test-dir /build/llg-compact-gcc -R '^compact_' --output-on-failure --parallel 6
 /build/llg-compact-gcc/compact_gmp_benchmark
 ```
 
-Omit `LLG_GMP_ROOT` and GMP targets for a dependency-free portable build. Use a
-separate build directory with `-DCMAKE_C_COMPILER=clang` for Clang, or add
+The `compact_checks` target builds every enabled compact probe (S1–S3 and
+S6–S9); S4/S5 remain pending. Omit `LLG_GMP_ROOT` for a dependency-free
+portable build. Use a separate build directory with
+`-DCMAKE_C_COMPILER=clang` for Clang, or add
 `-DLLG_STORAGE_TEST_SANITIZERS=ON` for GCC ASan/UBSan. Allocation counter targets
 use linker wrapping on ELF Unix hosts. Checks remain active under `NDEBUG`.
 The Python harness communicates through standalone executables so a non-PIC
@@ -213,9 +212,8 @@ destination reuse, including X/Z operands and 65-bit multiplication. Copy reuse
 uses `sv4_copy`; arithmetic reuse uses the emitter's replace-of-fresh-result
 pattern. These are indicative microbenchmarks, with no whole-model claim.
 
-
-The S2/S3 family probes are enabled by the same compact option. Build their
-separate targets before selecting all compact CTests:
+The S2/S3 family probes are enabled by the same compact option. Their separate
+target is available for focused runs:
 
 ```sh
 cmake --build /build/llg-compact-gcc --parallel 6 --target compact_v05a_checks
@@ -235,3 +233,35 @@ independent zero-count shifts and B removal when all unknown bits shift out.
 Family benchmarks emit seven-sample fresh-result medians/ranges for all 20 call
 variants, including both onehot modes, known and X/Z at 1..4096 bits. Their
 comparison operands are independent equal values so case scans execute fully.
+
+The S6–S9 adapter probes add exhaustive two-driver strength endpoints, all UDP
+mask/state combinations, enum order/defaults, full/unaligned-range resolution,
+real/time conversion and failure cases, bounded radix/decimal formatting, exact
+host indices, checked widths and source-compatible macro/reference types.
+`compact_adapters_oracle.py` checks numeric/text results against Python integers,
+rational rounding and struct bit conversions in both backends. Large finite
+packed-to-real results permit at most one double ULP; exact bit reinterpretation
+and real-to-integer conversion have exact expectations.
+
+Build the additional targets in either configured compact build directory:
+
+```sh
+cmake --build /build/llg-compact-gcc --parallel 6 --target \
+  compact_portable_net_adapters compact_gmp_net_adapters \
+  compact_portable_real_time compact_gmp_real_time \
+  compact_portable_format_index compact_gmp_format_index \
+  compact_portable_facade_adapters compact_gmp_facade_adapters \
+  compact_legacy_facade_adapters compact_adapters_oracle_legacy \
+  compact_adapters_oracle_portable compact_adapters_oracle_gmp \
+  compact_portable_adapters_benchmark compact_gmp_adapters_benchmark
+ctest --test-dir /build/llg-compact-gcc -R '^compact_' --output-on-failure --parallel 6
+/build/llg-compact-gcc/compact_gmp_adapters_benchmark
+```
+
+The adapter benchmark measures seven alternating-order samples at 1/64/65/256/
+4096 bits, known and X/Z, including fresh owned results and scalar/text inspection.
+Bit reinterpretation and rtoi have their fixed 64/32-bit result widths; real delay
+is a native scalar. Packed delay uses a representable low-limb input.
+Checked-width timing uses valid
+known inputs; its X/Z rejection is exercised by the failure probes. No model
+selection, scheduler adoption or native non-Linux qualification is implied.

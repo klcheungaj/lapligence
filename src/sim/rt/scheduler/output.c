@@ -17,7 +17,7 @@ static void llg_vprint(const char* fmt, va_list ap, int newline) {
                 fputc('%', stdout);
             } else if (c == 't') {
                 sv4_t v = va_arg(ap, sv4_t);
-                size_t tmp_cap = llg_format_scratch_size(v.width, 0);
+                size_t tmp_cap = llg_format_scratch_size(llg_sv4_width(v), 0);
                 char* tmp = llg_checked_malloc(tmp_cap, 1, "time output");
                 size_t len = llg_format_time_integer(v, g.design_precision_fs,
                                                       tmp, tmp_cap);
@@ -36,7 +36,7 @@ static void llg_vprint(const char* fmt, va_list ap, int newline) {
             } else if (c == 'd' || c == 'h' || c == 'b' || c == 'o') {
                 sv4_t v = va_arg(ap, sv4_t);
                 // One complete packed value, including a possible minus sign.
-                size_t tmp_cap = (size_t)v.width + 3u;
+                size_t tmp_cap = (size_t)llg_sv4_width(v) + 3u;
                 char* tmp = llg_checked_malloc(tmp_cap, 1, "packed output");
                 sv4_format(c, v, tmp, tmp_cap);
                 fputs(tmp, stdout);

@@ -233,8 +233,8 @@ llg_co_arm_t llg_arm_any_dependencies(llg_proc_t* self,
         payload->dependencies[i] = deps[i];
         if (deps[i].width) {
             sv4_t* value = deps[i].value ? deps[i].value : deps[i].sig;
-            if (!value || deps[i].real || deps[i].lsb >= value->width ||
-                deps[i].width > value->width - deps[i].lsb) {
+            if (!value || deps[i].real || deps[i].lsb >= llg_sv4_width(*value) ||
+                deps[i].width > llg_sv4_width(*value) - deps[i].lsb) {
                 fprintf(stderr, "llg: invalid packed-prefix wait dependency\n"); abort();
             }
             payload->last[i] = sv4_part_select(

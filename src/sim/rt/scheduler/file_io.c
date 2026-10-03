@@ -82,7 +82,7 @@ static int llg_file_single_ordinary(uint32_t descriptor, llg_file_slot_t** out) 
 
 uint32_t llg_file_descriptor(sv4_t value) {
     // A descriptor is a 32-bit bit pattern, not a nonnegative signed integer.
-    if (value.width == 0 || value.width > 32 || sv4_is_unknown(value)) {
+    if (llg_sv4_width(value) == 0 || llg_sv4_width(value) > 32 || sv4_is_unknown(value)) {
         llg_file_global_failure("file descriptor is not a known 32-bit value");
         return 0;
     }
@@ -241,7 +241,7 @@ int llg_file_seek(uint32_t descriptor, sv4_t offset, sv4_t operation) {
     int64_t signed_offset;
     if (!llg_file_single_ordinary(descriptor, &slot) ||
         !sv4_to_index_i64(offset, &signed_offset) || sv4_is_unknown(operation) ||
-        operation.width == 0 || sv4_to_u64(operation) > 2u) {
+        llg_sv4_width(operation) == 0 || sv4_to_u64(operation) > 2u) {
         llg_file_global_failure("invalid file seek arguments");
         return -1;
     }

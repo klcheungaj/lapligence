@@ -3,7 +3,8 @@
 This standalone C11 backend reserves value ABI 5 and implements storage/ownership,
 core arithmetic, bitwise/logical operators, equality/relations, integral mux,
 div/mod/pow/clog2, shifts/reductions, case modes, directional wildcard equality,
-and range membership. Production models still use the legacy backend.
+range membership, net/strength/UDP/enum adapters, real/time conversions and
+formatting/scalar/index adapters. Production models still use the legacy backend.
 
 `backend.h` supplies inline operations for widths through 64 and a static
 `LLG_GMP_SV4_LITERAL(bits,x,z,width,sign)` initializer for those widths. Define
@@ -17,6 +18,28 @@ exists. Writes/results automatically drop zero B. All words are 64-bit with zero
 padding; A/B uses 0=00, 1=10, X=11, Z=01. Bulk copied VPI words expose this logical
 encoding without exporting private pointers. Constructors canonicalize old-plane
 input, including X priority on overlap.
+
+`net_adapters.c` resolves full nets and unaligned ranges with word masks,
+including both X strength endpoints, wired ties and implicit pull/supply sources.
+UDP inputs normalize Z to X and rows match in declaration order. Enum navigation
+clones declaration-ordered members (last duplicate wins) or the supplied default.
+Strength and net metadata remain outside packed storage.
+
+`real_time.c` keeps native doubles and scheduler ticks distinct from packed
+values. Integer casts round half away from zero; rtoi truncates. Nonfinite
+integer conversions yield X, while delay conversion rejects nonfinite/negative
+real values and checked tick overflow. Bit conversions preserve IEEE payloads;
+X/Z contributes zero on reads. Packed-to-real follows legacy's high-to-low limb
+rounding without allocating a magnitude. Wide real-to-packed places the rounded
+binary significand directly and wraps at the requested width.
+
+`format_index.c` provides exact host index checks, word-parallel wide signed
+representability, bounded formatting prefixes and independent decimal magnitude
+scratch. Small decimal conversion allocates nothing. Portable decimal kernels
+use nine-digit chunks; GMP `mpn_get_str` is used at/above the named
+`LLG_SV4_DECIMAL_GMP_THRESHOLD` (four significant limbs). Neither path changes
+borrowed input or exports GMP types. X wins over Z in radix groups; any X/Z
+prints `x` in decimal.
 
 Storage, logic, arithmetic, shifts/reductions and comparison/membership are
 separate translation units. `kernels.c` alone
@@ -57,7 +80,9 @@ direct memcpy.
 
 Remaining public `sv4_*` operations at this revision:
 
-`sv4_array_conditional_merge`, `sv4_bit_select`, `sv4_bit_select_set`, `sv4_bitstoreal`, `sv4_bitstoshortreal`, `sv4_checked_width`, `sv4_concat`, `sv4_delay_ticks`, `sv4_enum_navigate`, `sv4_fits_i64`, `sv4_format`, `sv4_from_real`, `sv4_idx_part_select`, `sv4_idx_part_select_set`, `sv4_idx_part_select_set_value`, `sv4_idx_part_select_value`, `sv4_part_select`, `sv4_part_select_set`, `sv4_real_delay_ticks`, `sv4_realtobits`, `sv4_repeat`, `sv4_repeat_count`, `sv4_resolve`, `sv4_resolve_strengths`, `sv4_resolve_strengths_range`, `sv4_rtoi`, `sv4_select_plan_bit`, `sv4_select_plan_indexed`, `sv4_select_plan_init`, `sv4_select_plan_part`, `sv4_select_plan_read`, `sv4_select_plan_set`, `sv4_select_plan_slice`, `sv4_select_plan_step`, `sv4_shortrealtobits`, `sv4_stream`, `sv4_to_dec_string`, `sv4_to_i64`, `sv4_to_index`, `sv4_to_index_i64`, `sv4_to_real`, `sv4_udp_eval`, `sv4_unstream`.
+`sv4_array_conditional_merge`, `sv4_bit_select`, `sv4_bit_select_set`, `sv4_concat`, `sv4_idx_part_select`, `sv4_idx_part_select_set`, `sv4_idx_part_select_set_value`, `sv4_idx_part_select_value`, `sv4_part_select`, `sv4_part_select_set`, `sv4_repeat`, `sv4_repeat_count`, `sv4_select_plan_bit`, `sv4_select_plan_indexed`, `sv4_select_plan_init`, `sv4_select_plan_part`, `sv4_select_plan_read`, `sv4_select_plan_set`, `sv4_select_plan_slice`, `sv4_select_plan_step`, `sv4_stream`, `sv4_unstream`.
 
-The packed-dependent `llg_ref_view_valid` and `llg_ref_read`, the shared scalar
-`llg_real_to_bool`, and owner-free reference/selection types also await V05/V07.
+`sv4_checked_width`, `llg_real_to_bool` and source-compatible owner-free
+reference/selection types are implemented. The [facade checklist](facade_audit.md)
+accounts for every macro, helper type, constant and public operation, including
+the shared `llg_ref_read` / `llg_ref_view_valid` assembly remaining for V07.

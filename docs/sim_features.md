@@ -200,8 +200,10 @@ Macros, includes and their edition-specific behavior are counted in §11.
   values. V §§3.2–3.3, 3.8–3.9 **[1995/2001]**.
 - 🟨 **SystemVerilog integral storage** — Four-state `logic`, two-state `bit`,
   `byte`, `shortint`, `int` and `longint` retain widths/signs; two-state
-  assignments and casts convert X/Z to zero. Unsupported aggregate/net-member
-  contexts remain restricted. SV §§6.9, 6.11 **[SV-2005]**.
+  assignments and casts convert X/Z to zero, including selected packed-record
+  members. Fixed record nets preserve four-state member storage; two-state or
+  native net members reject under SV §6.7. Native/resizable aggregate contexts
+  retain their separate limits below. SV §§6.9, 6.11 **[SV-2005]**.
 - 🟦 **Net declarations** — `wire`/`tri` share ordinary resolved-net behavior;
   declaration assignments are continuous drivers. `uwire` rejects overlapping
   drivers and supports whole/disjoint constant-selected drivers, undriven Z,
@@ -213,7 +215,8 @@ Macros, includes and their edition-specific behavior are counted in §11.
   self-assignment retain logical coordinates. Whole-array values are SV-only;
   admitted fixed integral calls/ports, patterns and operators have the limits in
   §§3, 5, 7 and 9. Native/resizable elements, general real-array expressions,
-  unsupported layouts and over-limit payloads remain restricted.
+  and over-limit payloads remain restricted. Fixed integral record arrays also
+  retain recursive member selections and constant-selected electrical net views.
   V §3.10; SV §§7.4, 7.6 **[1995/SV-2005]**.
 - 🟨 **Initialization and lifetimes** — Scalar and fixed integral composite
   initializers, including zero-time calls, run before 2009 processes; 2001 keeps
@@ -239,9 +242,13 @@ Macros, includes and their edition-specific behavior are counted in §11.
   equal-width union views overlap. Recursive fixed unpacked records/arrays
   support initialization, deep copy and represented packed/real/string/chandle
   leaves. Unequal-width unpacked untagged unions use the maximum packed-member
-  extent; unequal-width packed unions reject. General native/resizable subroutine
-  layouts, declaration/net combinations and arbitrary slices remain restricted.
-  SV §§7.2–7.4 **[SV-2005]**.
+  extent; unequal-width packed unions reject. Fixed integral record copies,
+  array slices and packed member selects retain owned layouts and declared
+  bounds. Four-state packed records and recursive fixed unpacked records/arrays
+  admit nets, selected continuous contributions and inout connections. Unpacked
+  union net members reject under SV §6.7. General native/resizable subroutine
+  layouts and native aggregate slices remain restricted.
+  SV §§6.7, 7.2–7.4 **[SV-2005]**.
 - 🟨 **Tagged unions** — Finite packed storage, construction and checked member
   access support void, primitive, fixed-structure and nested-tag payloads in
   module storage, static/automatic locals, value, constructor, port,

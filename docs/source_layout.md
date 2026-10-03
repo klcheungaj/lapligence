@@ -55,8 +55,10 @@ fragments of one translation unit each**, not independently linked modules:
 
 The standalone compact value backend in
 [`value_gmp/`](../src/sim/rt/value_gmp/) has its own header and separately compiled
-storage, logic, arithmetic, shifts/reductions, comparison/membership and
-limb-kernel units. Its optional GMP dependency is confined to the limb kernel. Native probes in `tests/runtime_value_storage/`
+storage, logic, arithmetic, shifts/reductions, comparison/membership, net
+adapters, real/time, formatting/index and limb-kernel units. Its optional GMP
+dependency is confined to the limb kernel. Native probes in
+`tests/runtime_value_storage/`
 link it beside live legacy for differential checks; production selection and
 embedding remain separate integration work.
 

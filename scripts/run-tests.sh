@@ -20,6 +20,14 @@ nextest_args=()
 
 while (($# > 0)); do
     case $1 in
+        --sccache)
+            export LLG_SCCACHE=1
+            shift
+            ;;
+        --mold)
+            export LLG_MOLD=1
+            shift
+            ;;
         --test-work-dir)
             if (($# < 2)) || [[ -z $2 || $2 == --* ]]; then
                 echo 'error: --test-work-dir requires an existing directory' >&2
@@ -38,7 +46,13 @@ while (($# > 0)); do
             ;;
         -h|--help)
             cat <<'EOF'
-Usage: scripts/run-tests.sh [--test-work-dir PATH] [nextest run options]
+Usage: scripts/run-tests.sh [--test-work-dir PATH] [--sccache] [--mold] [nextest run options]
+
+--sccache            Use sccache for Rust unless RUSTC_WRAPPER is already set.
+--mold               Use mold for the Linux GNU host linker, preserving rustflags.
+                     These also accept LLG_SCCACHE=1 and LLG_MOLD=1. Missing
+                     requested tools fail before Cargo starts. See dev-env.sh
+                     for plain Cargo and tests/readme.md for native launchers.
 
 --test-work-dir PATH  Root for temporary test files, generated simulator builds
                       and a shared runtime cache. Must exist and permit execution.
@@ -74,6 +88,7 @@ if [[ -n $test_work_root ]]; then
 fi
 
 cd -- "$repo_root"
+source "$repo_root/scripts/dev-env.sh"
 
 if ! cargo nextest --version >/dev/null 2>&1; then
     echo "error: cargo-nextest is required; install it with:" >&2
