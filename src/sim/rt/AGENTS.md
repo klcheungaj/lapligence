@@ -102,8 +102,18 @@ borrowed waiter/source/callback addresses require the caller's lifetime proof.
 Generated processes execute through `llg_co` frames, descriptors, anchors and
 arenas. Keep `llg_co` free of globals and TLS.
 Frames are POD; callers own embedded callee frames and the prefixes of anchored
-callees. Cancellation drains runtime-owned scopes and releases arenas without
-resuming coroutine code. No C local may remain live across a resume point. Place
+callees. Under `LLG_CO_DEBUG`, root storage and newly acquired embedded/arena
+callee payloads use `LLG_CO_POISON_BYTE` (`0xA5`) before initialization/argument
+transfer. The emitter poisons dead sibling-overlay structs after scope owners
+are drained, including nonlocal named-block exits and loop breaks. Common-return
+cleanup precedes completed-frame payload poisoning, covering early returns.
+Flattened scopes sharing live parent storage are excluded. Retained fork/ref/NBA cells stay heap-backed;
+poisoning their dead frame pointers never touches retained payloads. Never poison
+registered owners before destruction or a suspended frame. The byte pattern
+makes stale reads observable; it is not a general read trap. Poison macros emit
+nothing in release; llg_co ABI 1 and process ABI 3 remain unchanged.
+Cancellation drains runtime-owned scopes and releases arenas without resuming
+coroutine code. No C local may remain live across a resume point. Place
 root frames immediately after their `llg_proc_t` record at `LLG_CO_ROOT(ch)`,
 without forced padding or alignment. Place
 anchored frames at `LLG_CO_ANCHOR_FRAME(anchor)` and preserve the corresponding

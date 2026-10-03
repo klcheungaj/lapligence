@@ -280,6 +280,7 @@ fn render_function(
     frame.line("_llg_return: ;");
     if coroutine {
         frame.line("llg_value_scopes_end_since(_llg_frame_base);");
+        frame.poison_completed_frame();
         frame.line("return LLG_CO_DONE;");
     } else if function.ret_string || function.ret_chandle {
         let kind = if function.ret_string {
@@ -454,6 +455,7 @@ fn render_process(
     frame.line("_llg_return: ;");
     frame.line("llg_value_scopes_end_since(_llg_frame_base);");
     if coroutine {
+        frame.poison_completed_frame();
         frame.line("return LLG_CO_DONE;");
     } else {
         frame.line("return;");

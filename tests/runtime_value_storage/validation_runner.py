@@ -51,7 +51,8 @@ def verify_inventory(inventory: dict, capabilities: dict) -> list[str]:
             expected.add("waveform_original_selftest")
         expected.update(("stackless_runtime_boundaries", "coroutine_scale_release", "coroutine_scale_debug",
                          "fork_group_scale_release", "fork_group_scale_debug",
-                         "coroutine_debug_fresh_poison", "coroutine_debug_cancelled_arena_reuse"))
+                         "coroutine_debug_fresh_poison", "coroutine_debug_cancelled_arena_reuse",
+                         "coroutine_poison_release", "coroutine_poison_debug"))
         expected.update(f"coroutine_mixed_mode_{debug}_{arena}"
                         for debug in (0, 1) for arena in (0, 1))
         expected.update(f"coroutine_debug_reject_{mode}" for mode in

@@ -25,6 +25,18 @@ so common-return unwinding can access them after an inner block has been left.
 body. `FrameLayout` records that exact tree, then flattens every chain with only
 one storage-bearing child into one struct level. Only two or more storage-bearing
 sibling blocks create deterministic `uN.bK` overlays; empty blocks emit nothing.
+Under `LLG_CO_DEBUG`, poison each actual sibling-overlay struct on normal exit
+and after owner unwind on a nonlocal named-block jump. Loop-break poisoning
+must break before rereading the dead condition field; use the debug-only loop
+exit macro. Poison completed frame payloads after common-return scope cleanup
+to cover early returns. Resolve these sites only
+after layout flattening: a flattened child cannot poison a struct containing
+still-live parent fields. Lexical scope destruction precedes poisoning; escaped
+fork/ref/NBA owners remain in their existing retained heap cells. Callee payload
+poisoning precedes argument transfer and declaration initialization for both
+embedded call mechanisms and arena acquisition. Preserve headers/anchor prefixes
+and the populated-frame CALL macro contract. Emit all added statements inside
+`#ifdef LLG_CO_DEBUG`; release emission and frame layouts stay unchanged.
 Parent storage remains live and typed declarations still bind to the active raw
 block before finalized paths rewrite the generated body. Do not emit a
 coroutine-body structural brace outside that path or retain an overlaid field

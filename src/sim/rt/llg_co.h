@@ -56,6 +56,9 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#ifdef LLG_CO_DEBUG
+#include <string.h>
+#endif
 #include <stdlib.h>
 
 #ifdef __cplusplus
@@ -183,7 +186,21 @@ struct llg_co_desc {
 #define LLG_CO_BAD_STATE(co, fn) llg_co_bad_state((co), (fn))
 #endif
 
+/* Poison only dead storage, after registered owners have been drained. Fresh
+ * callee payloads are poisoned before arguments and declaration initialization;
+ * CALL macros accept populated frames and never overwrite their payloads.
+ * This exposes stale bytes in diagnostics; it does not trap arbitrary reads. */
+#define LLG_CO_POISON_BYTE 0xA5
 #ifdef LLG_CO_DEBUG
+#define LLG_CO_DEBUG_POISON(storage, bytes) \
+    memset((storage), LLG_CO_POISON_BYTE, (bytes))
+/* Used as a statement inside a generated loop, without a do/while wrapper:
+ * the break must leave that loop before it can reread poisoned condition data. */
+#define LLG_CO_DEBUG_POISON_LOOP_EXIT(condition, storage, bytes) \
+    if (condition) { LLG_CO_DEBUG_POISON(storage, bytes); break; }
+#define LLG_CO_DEBUG_POISON_FRAME(frame, bytes) \
+    LLG_CO_DEBUG_POISON((char*)(frame) + sizeof(llg_co_frame_t), \
+                        (bytes) - sizeof(llg_co_frame_t))
 #define LLG_CO_DBG_ENTER_(f)                                                \
     do {                                                                    \
         if ((f)->flags == LLG_CO_FRAME_LIVE) LLG_CO_BAD_STATE(f, __func__); \
@@ -196,6 +213,9 @@ struct llg_co_desc {
 #define LLG_CO_DBG_DONE_(f) ((f)->flags = 0)
 #define LLG_CO_DBG_FRESH_(f) ((f)->flags = 0)
 #else
+#define LLG_CO_DEBUG_POISON_LOOP_EXIT(condition, storage, bytes)
+#define LLG_CO_DEBUG_POISON(storage, bytes)
+#define LLG_CO_DEBUG_POISON_FRAME(frame, bytes)
 #define LLG_CO_DBG_ENTER_(f) ((f)->flags = 0)
 #define LLG_CO_DBG_LIVE_(f) ((void)0)
 #define LLG_CO_DBG_DONE_(f) ((void)0)
@@ -479,6 +499,7 @@ size_t llg_co_backtrace(const llg_co_chain_t* ch, llg_co_visit_fn visit,
         size_t llg_co_z_ = sizeof(llg_co_anchor_t) + (dsc)->frame_size;        \
         (slot) = (llg_co_anchor_t*)llg_co_arena_push(&(ch)->arena, llg_co_z_); \
         if (LLG_CO_UNLIKELY(!(slot))) LLG_CO_OOM(llg_co_z_);                   \
+        LLG_CO_DEBUG_POISON_FRAME(LLG_CO_ANCHOR_FRAME(slot), (dsc)->frame_size); \
         /* A cancelled activation can leave a LIVE tag in a cached chunk. */ \
         LLG_CO_DBG_FRESH_(LLG_CO_ANCHOR_FRAME(slot));                         \
     } while (0)
