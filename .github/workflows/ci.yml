@@ -200,18 +200,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: Linux x86_64
-            runner: ubuntu-24.04
-            platform: linux
-            arch: x86_64
-            package_arch: x64
-            target: x86_64-unknown-linux-musl
-          - name: Linux arm64
-            runner: ubuntu-24.04-arm
-            platform: linux
-            arch: arm64
-            package_arch: arm64
-            target: aarch64-unknown-linux-musl
           - name: Windows x86_64
             runner: windows-2025
             platform: windows
@@ -245,13 +233,11 @@ jobs:
           submodules: recursive
 
       - name: Install Rust target
-        if: matrix.platform != 'linux'
         uses: dtolnay/rust-toolchain@1.98.0
         with:
           targets: ${{ matrix.target }}
 
       - uses: Swatinem/rust-cache@v2
-        if: matrix.platform != 'linux'
         with:
           shared-key: release-${{ matrix.target }}
           # Native build trees across the matrix can exceed the cache budget.
@@ -261,20 +247,11 @@ jobs:
 
       # Slang's syntax and diagnostic generators execute during its CMake build.
       - uses: actions/setup-python@v7
-        if: matrix.platform != 'linux'
         with:
           python-version: "3.12"
           architecture: ${{ matrix.python_arch }}
 
       - uses: taiki-e/install-action@nextest
-        if: matrix.platform != 'linux'
-
-      - name: Install Linux verification tools
-        if: matrix.platform == 'linux'
-        shell: bash
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y binutils file
 
       - name: Select MSVC target tools
         if: matrix.platform == 'windows'
@@ -282,43 +259,10 @@ jobs:
         with:
           arch: ${{ matrix.msvc_arch }}
 
-      - name: Phase 1 llg_co compile gate with GCC, Clang, or AppleClang
-        if: matrix.platform != 'windows'
+      - name: Phase 1 llg_co compile gate with AppleClang
+        if: matrix.platform == 'macos'
         shell: bash
-        run: |
-          set -euo pipefail
-          gate_dir=$(mktemp -d)
-          trap 'rm -rf "$gate_dir"' EXIT
-          if [[ "${{ matrix.platform }}" == macos ]]; then
-            compilers=(clang)
-          else
-            compilers=(gcc clang)
-          fi
-          for compiler in "${compilers[@]}"; do
-            command -v "$compiler"
-            jump_flag=()
-            if [[ "$compiler" == gcc ]]; then
-              jump_flag=(-Werror=jump-misses-init)
-            fi
-            for variant in plain debug host debug-host; do
-              definitions=()
-              case "$variant" in
-                debug) definitions=(-DLLG_CO_DEBUG) ;;
-                host) definitions=(-DLLG_CO_HOST_ALLOC) ;;
-                debug-host) definitions=(-DLLG_CO_DEBUG -DLLG_CO_HOST_ALLOC) ;;
-              esac
-              "$compiler" -std=c11 -Wall -Wextra -Wpedantic -Werror -Wunused-function \
-                "${jump_flag[@]}" "${definitions[@]}" -Isrc/sim/rt -c \
-                src/sim/rt/llg_co.c -o "$gate_dir/$compiler-$variant-library.o"
-              "$compiler" -std=c11 -Wall -Wextra -Wpedantic -Werror -Wunused-function \
-                "${jump_flag[@]}" "${definitions[@]}" -Isrc/sim/rt -c \
-                tests/runtime_value_storage/llg_co_include_only.c \
-                -o "$gate_dir/$compiler-$variant-include.o"
-            done
-            "$compiler" -std=c11 -O2 -Wall -Wno-unused-function \
-              -Isrc/sim/rt -c src/sim/rt/llg_rt.c \
-              -o "$gate_dir/$compiler-runtime.o"
-          done
+        run: scripts/llg-co-compile-gate.sh clang
 
       - name: Phase 1 llg_co compile gate with MSVC C11
         if: matrix.platform == 'windows'
@@ -342,62 +286,7 @@ jobs:
               if ($LASTEXITCODE -ne 0) { throw "include-only $($variant.Name) compile failed" }
           }
 
-      # The official Alpine Rust image follows the native runner architecture.
-      # It supplies a musl C/C++ toolchain and static system archives without
-      # QEMU or a separately downloaded cross compiler.
-      # Linux builds only on Alpine: static musl executables plus the
-      # release-profile test binaries, which the Ubuntu and Rocky steps below
-      # run in place. The checkout stays mounted at /workspace in every
-      # container because tests embed compile-time paths
-      # (CARGO_MANIFEST_DIR, CARGO_BIN_EXE_*).
-      - name: Build static musl executables and release test binaries
-        id: musl_build
-        if: matrix.platform == 'linux'
-        shell: bash
-        run: |
-          mkdir -p "$RUNNER_TEMP/cargo-registry"
-          docker run --rm \
-            --volume "$GITHUB_WORKSPACE:/workspace" \
-            --volume "$RUNNER_TEMP/cargo-registry:/usr/local/cargo/registry" \
-            --workdir /workspace \
-            --env CMAKE_GENERATOR=Ninja \
-            --env LLG_TARGET="${{ matrix.target }}" \
-            rust:1.98.0-alpine sh -euxc '
-              apk add --no-cache build-base cmake curl git linux-headers ninja python3
-              git config --global --add safe.directory /workspace
-              git config --global --add safe.directory /workspace/vendor/slang
-              rustup target add "$LLG_TARGET"
-              export CC=gcc CXX=g++
-              case "$LLG_TARGET" in
-                x86_64-unknown-linux-musl)
-                  export CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=gcc
-                  nextest_platform=linux-musl
-                  ;;
-                aarch64-unknown-linux-musl)
-                  export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=gcc
-                  nextest_platform=linux-arm-musl
-                  ;;
-                *)
-                  echo "unsupported native Linux target: $LLG_TARGET" >&2
-                  exit 1
-                  ;;
-              esac
-              cargo build --locked --release --bin llg_ls --bin llg --target "$LLG_TARGET"
-              # A small test harness exposes accidental dynamic libc links
-              # that larger frontend binaries can mask by pulling libc.a first.
-              cargo test --locked --release --test cli_info --target "$LLG_TARGET" -- --list --format terse
-              # The static musl nextest binary also runs on the glibc hosts.
-              reuse=target/nextest-reuse
-              mkdir -p "$reuse"
-              curl -LsSf "https://get.nexte.st/latest/$nextest_platform" | tar -xzf - -C "$reuse"
-              "$reuse/cargo-nextest" nextest list --locked --all-features --cargo-profile release \
-                --target "$LLG_TARGET" --list-type binaries-only --message-format json \
-                > "$reuse/binaries.json"
-              cargo metadata --locked --all-features --format-version 1 > "$reuse/cargo-metadata.json"
-            '
-
       - name: Build release executables
-        if: matrix.platform != 'linux'
         run: cargo build --locked --release --bin llg_ls --bin llg --target ${{ matrix.target }}
 
       - name: Build and run generated model with MSVC
@@ -422,25 +311,6 @@ jobs:
           $modelOutput = (& $sim | Out-String).Trim()
           if ($LASTEXITCODE -ne 0) { throw "generated simulator failed with $LASTEXITCODE" }
           if ($modelOutput -ne "1007") { throw "unexpected generated-model output: $modelOutput" }
-
-      - name: Verify Linux architecture and fully static linkage
-        if: matrix.platform == 'linux'
-        shell: bash
-        run: |
-          scripts/verify-linux-release.sh "${{ matrix.arch }}" \
-            "target/${{ matrix.target }}/release/llg_ls" \
-            "target/${{ matrix.target }}/release/llg"
-
-      - name: Smoke-test Linux executable
-        if: matrix.platform == 'linux'
-        shell: bash
-        run: |
-          executable="target/${{ matrix.target }}/release/llg"
-          set +e
-          "$executable"
-          status=$?
-          set -e
-          test "$status" -eq 2
 
       - name: Verify Windows architecture and static runtime linkage
         if: matrix.platform == 'windows'
@@ -484,49 +354,7 @@ jobs:
       # The whole suite runs against each release target in the release
       # profile, reusing the release build above. --no-fail-fast reports every
       # failing test in one run; any failure still blocks packaging.
-      # Linux runs the static musl test binaries from the Alpine build on
-      # glibc distributions; neither needs a Rust toolchain. Rocky also runs
-      # when Ubuntu fails so both results are reported.
-      - name: Test release musl binaries on Ubuntu 24.04
-        if: matrix.platform == 'linux' && !cancelled() && steps.musl_build.outcome == 'success'
-        shell: bash
-        run: |
-          docker run --rm \
-            --volume "$GITHUB_WORKSPACE:/workspace" \
-            --workdir /workspace \
-            --env NEXTEST_PROFILE \
-            ubuntu:24.04 sh -euxc '
-              export DEBIAN_FRONTEND=noninteractive
-              apt-get update
-              apt-get install -y --no-install-recommends \
-                build-essential clang cmake git procps python3
-              reuse=target/nextest-reuse
-              "$reuse/cargo-nextest" nextest run --no-fail-fast \
-                --binaries-metadata "$reuse/binaries.json" \
-                --cargo-metadata "$reuse/cargo-metadata.json" \
-                --workspace-remap /workspace
-            '
-
-      - name: Test release musl binaries on Rocky Linux 9
-        if: matrix.platform == 'linux' && !cancelled() && steps.musl_build.outcome == 'success'
-        shell: bash
-        run: |
-          docker run --rm \
-            --volume "$GITHUB_WORKSPACE:/workspace" \
-            --workdir /workspace \
-            --env NEXTEST_PROFILE \
-            rockylinux/rockylinux:9 sh -euxc '
-              dnf install -y --setopt=install_weak_deps=False \
-                clang cmake gcc gcc-c++ git make procps-ng python3 util-linux
-              reuse=target/nextest-reuse
-              "$reuse/cargo-nextest" nextest run --no-fail-fast \
-                --binaries-metadata "$reuse/binaries.json" \
-                --cargo-metadata "$reuse/cargo-metadata.json" \
-                --workspace-remap /workspace
-            '
-
       - name: Run full nextest suite in release mode
-        if: matrix.platform != 'linux'
         run: >-
           cargo nextest run --locked --all-features --cargo-profile release --no-fail-fast
           --target ${{ matrix.target }}
@@ -539,8 +367,8 @@ jobs:
           df -h
           du -sh target || true
 
-      - name: Package Unix executables
-        if: github.event_name == 'release' && matrix.platform != 'windows'
+      - name: Package macOS executables
+        if: github.event_name == 'release' && matrix.platform == 'macos'
         shell: bash
         run: |
           version=${GITHUB_REF_NAME#v}
@@ -584,10 +412,233 @@ jobs:
             dist/*.zip
             dist/*.sha256
 
+  linux-build:
+    if: github.event_name != 'schedule'
+    name: Linux ${{ matrix.arch }} build (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+            package_arch: x64
+            target: x86_64-unknown-linux-musl
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            package_arch: arm64
+            target: aarch64-unknown-linux-musl
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Install Linux verification tools
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y binutils file
+
+      - name: Phase 1 llg_co compile gate with GCC and Clang
+        shell: bash
+        run: scripts/llg-co-compile-gate.sh gcc clang
+
+      # The official Alpine Rust image follows the native runner architecture.
+      # It supplies a musl C/C++ toolchain and static system archives without
+      # QEMU or a separately downloaded cross compiler. It builds the static
+      # musl executables and archives the release-profile test binaries for
+      # the linux-test jobs. The checkout is mounted at /workspace here and in
+      # every test container because tests embed compile-time paths
+      # (CARGO_MANIFEST_DIR, CARGO_BIN_EXE_*).
+      - name: Build static musl executables and release test archive
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/cargo-registry"
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE:/workspace" \
+            --volume "$RUNNER_TEMP/cargo-registry:/usr/local/cargo/registry" \
+            --workdir /workspace \
+            --env CMAKE_GENERATOR=Ninja \
+            --env LLG_TARGET="${{ matrix.target }}" \
+            rust:1.98.0-alpine sh -euxc '
+              apk add --no-cache build-base cmake curl git linux-headers ninja python3
+              git config --global --add safe.directory /workspace
+              git config --global --add safe.directory /workspace/vendor/slang
+              rustup target add "$LLG_TARGET"
+              export CC=gcc CXX=g++
+              case "$LLG_TARGET" in
+                x86_64-unknown-linux-musl)
+                  export CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=gcc
+                  nextest_platform=linux-musl
+                  ;;
+                aarch64-unknown-linux-musl)
+                  export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=gcc
+                  nextest_platform=linux-arm-musl
+                  ;;
+                *)
+                  echo "unsupported native Linux target: $LLG_TARGET" >&2
+                  exit 1
+                  ;;
+              esac
+              cargo build --locked --release --bin llg_ls --bin llg --target "$LLG_TARGET"
+              # A small test harness exposes accidental dynamic libc links
+              # that larger frontend binaries can mask by pulling libc.a first.
+              cargo test --locked --release --test cli_info --target "$LLG_TARGET" -- --list --format terse
+              nextest=target/nextest-bin
+              mkdir -p "$nextest"
+              curl -LsSf "https://get.nexte.st/latest/$nextest_platform" | tar -xzf - -C "$nextest"
+              "$nextest/cargo-nextest" nextest archive --locked --all-features --cargo-profile release \
+                --target "$LLG_TARGET" --archive-file target/nextest-archive.tar.zst
+            '
+
+      - name: Upload release test archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: nextest-archive-${{ matrix.target }}
+          if-no-files-found: error
+          # The archive is already zstd-compressed.
+          compression-level: 0
+          retention-days: 1
+          path: target/nextest-archive.tar.zst
+
+      - name: Verify Linux architecture and fully static linkage
+        shell: bash
+        run: |
+          scripts/verify-linux-release.sh "${{ matrix.arch }}" \
+            "target/${{ matrix.target }}/release/llg_ls" \
+            "target/${{ matrix.target }}/release/llg"
+
+      - name: Smoke-test Linux executable
+        shell: bash
+        run: |
+          executable="target/${{ matrix.target }}/release/llg"
+          set +e
+          "$executable"
+          status=$?
+          set -e
+          test "$status" -eq 2
+
+      - name: Report runner resources
+        if: always()
+        shell: bash
+        run: |
+          echo "logical CPUs: $(nproc)"
+          df -h
+          du -sh target || true
+
+      - name: Package Linux executables
+        if: github.event_name == 'release'
+        shell: bash
+        run: |
+          version=${GITHUB_REF_NAME#v}
+          archive="lapligence-$version-linux-${{ matrix.package_arch }}.tar.gz"
+          mkdir -p dist/package
+          install -m 755 "target/${{ matrix.target }}/release/llg_ls" dist/package/llg_ls
+          install -m 755 "target/${{ matrix.target }}/release/llg" dist/package/llg
+          install -m 644 LICENSE readme.md dist/package/
+          tar -C dist/package -czf "dist/$archive" llg_ls llg LICENSE readme.md
+          (cd dist && sha256sum "$archive" > "$archive.sha256")
+
+      - name: Upload packaged executables
+        if: github.event_name == 'release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: lapligence-linux-${{ matrix.package_arch }}
+          if-no-files-found: error
+          # Packaged archives are already compressed; expire downloads promptly.
+          compression-level: 0
+          retention-days: 1
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256
+
+  # Each distribution runs the full release-profile suite from the static musl
+  # test archive on its own runner, in parallel with the other distribution
+  # and the other platform builds. Neither needs a Rust toolchain; the release
+  # job requires every combination to pass.
+  linux-test:
+    if: github.event_name != 'schedule'
+    name: Linux ${{ matrix.arch }} test on ${{ matrix.distro }}
+    needs: linux-build
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86_64, arm64]
+        distro: [ubuntu-24.04, rocky-9]
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+            nextest_platform: linux-musl
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+            nextest_platform: linux-arm-musl
+          - distro: ubuntu-24.04
+            image: ubuntu:24.04
+            install: >-
+              export DEBIAN_FRONTEND=noninteractive &&
+              apt-get update &&
+              apt-get install -y --no-install-recommends
+              build-essential clang cmake git procps python3
+          - distro: rocky-9
+            image: rockylinux/rockylinux:9
+            install: >-
+              dnf install -y --setopt=install_weak_deps=False
+              clang cmake gcc gcc-c++ git make procps-ng python3 util-linux
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Download release test archive
+        uses: actions/download-artifact@v4
+        with:
+          name: nextest-archive-${{ matrix.target }}
+          path: ${{ runner.temp }}/nextest-archive
+
+      # The static musl nextest binary also runs on the glibc distributions.
+      - name: Install nextest
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/nextest-bin"
+          curl -LsSf "https://get.nexte.st/latest/${{ matrix.nextest_platform }}" \
+            | tar -xzf - -C "$RUNNER_TEMP/nextest-bin"
+
+      # Extracting into /workspace restores target/ at the build container's
+      # compile-time paths.
+      - name: Run release suite
+        shell: bash
+        run: |
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE:/workspace" \
+            --volume "$RUNNER_TEMP/nextest-archive:/nextest-archive:ro" \
+            --volume "$RUNNER_TEMP/nextest-bin:/nextest-bin:ro" \
+            --workdir /workspace \
+            --env NEXTEST_PROFILE \
+            --env LLG_INSTALL="${{ matrix.install }}" \
+            "${{ matrix.image }}" sh -euxc '
+              eval "$LLG_INSTALL"
+              /nextest-bin/cargo-nextest nextest run --no-fail-fast \
+                --archive-file /nextest-archive/nextest-archive.tar.zst \
+                --workspace-remap /workspace --extract-to /workspace
+            '
+
+      - name: Report runner resources
+        if: always()
+        shell: bash
+        run: |
+          echo "logical CPUs: $(nproc)"
+          df -h
+          free -h
+
   release:
     name: Attach packages to GitHub release
     if: github.event_name == 'release'
-    needs: [lint, generated-runtime-sanitizers, dependency-audit, build]
+    needs: [lint, generated-runtime-sanitizers, dependency-audit, build, linux-build, linux-test]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:

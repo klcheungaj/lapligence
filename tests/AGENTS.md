@@ -185,10 +185,12 @@ alone. [ci.yml](../.github/workflows/ci.yml) defines Ubuntu gates and five-platf
 builds on master pushes, manual dispatch and published Releases (including
 prereleases), not draft saves or standalone tag pushes. Each matrix target also
 runs the full `cargo nextest run --all-features --cargo-profile release` suite
-before packaging. Linux builds executables and test binaries only in the
-static-musl Alpine container, then runs those binaries in place on Ubuntu 24.04
-and Rocky Linux 9 containers through nextest binaries/cargo metadata, with the
-checkout at `/workspace` so compile-time paths resolve. Observed platform
+before release. Linux builds executables and a `cargo nextest archive` of the
+test binaries only in the static-musl Alpine container (`linux-build`); parallel
+`linux-test` jobs run that archive on Ubuntu 24.04 and Rocky Linux 9 containers
+per architecture, extracting it with the checkout at `/workspace` so
+compile-time paths resolve. CI selects the `ci` nextest profile (one test per
+logical CPU). Observed platform
 differences and their portable fixes are in
 [shared source policies](../src/AGENTS.md#platform-differences).
 
