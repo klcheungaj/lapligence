@@ -167,7 +167,7 @@ supported.
 | --- | --- |
 | Packed element or value | 1–1,048,575 bits inclusive; `LLG_SUPPORTED_WIDTH_LIMIT = 1 << 20` is exclusive. Each packed cell uses its actual width. |
 | Generated fixed unpacked array | At most 16,777,216 cells in the product of all dimensions (`LLG_MAX_FIXED_ARRAY_CELLS`). Extents/products are checked before allocation; an over-limit declaration receives a resource diagnostic. |
-| Fixed array used as a value, formal or stream | Integral variable arrays use non-flattened whole copies, equality, rank-one default fills and single-array element-aligned streams. Automatic, nonrecursive functions returning such arrays admit whole-array inputs, automatic locals and owned returns. Other value contexts retain the 1,048,575-bit packed payload limit. Direct reductions read cells individually. |
+| Fixed array used as a value, formal or stream | Integral variable arrays use non-flattened descriptor transport: whole and selected-row copies, equality, conditionals (element-wise merge for an ambiguous selector), default fills, declaration initializers, array-valued pattern items, pattern-lvalue row scatter and multi-segment/unaligned streams. Static, automatic and recursive functions pass such arrays through input, output, inout and ref formals and return them. Oversized records and arrays of records retain the 1,048,575-bit packed payload limit. Direct reductions read cells individually. |
 | Subroutine recursion | At most 256 active calls; a further call emits a recursion-limit diagnostic and returns the result type's default. |
 | Read-only helper inlining | At most 32 nested callback calls; deeper emission receives an explicit diagnostic. |
 | Scheduler region passes | Default 10,000,000 per time slot; `LLG_ZERO_LOOP_LIMIT` accepts a positive decimal `uint64`. Exhaustion diagnoses a zero-delay loop. |
@@ -222,9 +222,9 @@ Macros, includes and their edition-specific behavior are counted in §11.
   self-assignment retain logical coordinates. Whole-array values are SV-only;
   admitted fixed integral calls/ports, patterns and operators have the limits in
   §§3, 5, 7 and 9. Native/resizable elements, general real-array expressions,
-  and value contexts beyond the descriptor profile remain restricted. Whole
-  integral variable copies execute through 16,777,216 cells without packed
-  flattening. Fixed integral record arrays also
+  and oversized records remain restricted. Integral arrays through
+  16,777,216 cells copy, compare, select rows, pass through formals and stream
+  without packed flattening. Fixed integral record arrays also
   retain recursive member selections and constant-selected electrical net views.
   V §3.10; SV §§7.4, 7.6 **[1995/SV-2005]**.
 - 🟨 **Initialization and lifetimes** — Scalar and fixed integral composite
@@ -479,8 +479,9 @@ Macros, includes and their edition-specific behavior are counted in §11.
   only scalar fill values broadcast. Repeated operand positions remain distinct.
   Packed vectors/arrays and structures match their immediate declared element/member
   types, including equivalent non-nominal integral types. Descriptor-backed patterns
-  retain sparse defaults and snapshot exceptions without a packed payload. Oversized
-  array-valued items still need selected-view transport. Type/default evaluation
+  retain sparse defaults and snapshot exceptions without a packed payload; their
+  oversized array-valued items are captured once into descriptor snapshots and
+  copied as rows, and oversized declaration initializers use the same transport. Type/default evaluation
   multiplicity is undefined; value tests do not prescribe invocation counts.
   SV §§10.9.1–10.9.2 **[SV-2005]**.
 - 🟨 **Replicated patterns** — Constant counts expand fixed integral arrays,
@@ -494,6 +495,7 @@ Macros, includes and their edition-specific behavior are counted in §11.
   cannot redirect later targets. Blocking and legal persistent NBA targets are
   represented; static net targets retain per-element resolution. Keyed/default/
   replicated lvalues, constants, mismatches and illegal NBA targets reject.
+  Oversized array sources scatter whole descriptor rows into array targets.
   SV §10.9 **[SV-2005]**.
 - 🟦 **Sequential Boolean predicates** — `&&&` in `if` and `?:` evaluates reached
   clauses once, left to right. Only definite true advances; false or X/Z stops.
@@ -702,9 +704,10 @@ Macros, includes and their edition-specific behavior are counted in §11.
 - 🟨 **Bit-stream casts and streaming** — Fixed arrays/nested records, selected
   rows/members, call results and admitted ref/const-ref projections preserve
   state conversion and non-dividing/type slice sizes within packed capacity.
-  Oversized single-array streams support complete integral variable arrays with
-  slice sizes dividing the element width or containing whole elements; RHS
-  reversal snapshots overlapping arrays. Other oversized streams reject.
+  Oversized streams of integral arrays, selected rows and call results support
+  multiple segments and unaligned slice sizes through a lazily read stream image;
+  the RHS is snapshotted before publication. `with` selections and nested oversized
+  streams reject.
   Packed and bounded
   dynamic/queue-element streams capture one RHS, then publish destinations in
   stream order with overlap-safe snapshots. A stream assigned to a wider fixed

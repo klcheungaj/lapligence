@@ -236,6 +236,13 @@ impl Validator<'_> {
                     return self.fail(path, "signal type disagrees with expression type");
                 }
             }
+            IrExprKind::FixedValueCompare { left, right, .. } => {
+                let left = self.validate_fixed_value(left, formals, path)?;
+                let right = self.validate_fixed_value(right, formals, path)?;
+                if left != right || expr.width != 1 || expr.signed || expr.fill.is_some() {
+                    return self.fail(path, "incompatible fixed comparison shape");
+                }
+            }
             IrExprKind::FixedArrayCompare { left, right, .. } => {
                 self.validate_fixed_activation(*left, path)?;
                 self.validate_fixed_activation(*right, path)?;

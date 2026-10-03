@@ -259,6 +259,12 @@ comparison without changing their owned descriptors.
 casts, descends arrays to singulars (not struct members), evaluates selector and
 scalar/range endpoints once, and uses wildcard equality/inclusive comparisons.
 
+Integral fixed arrays beyond packed capacity lower to `IrFixedValue` operands
+(views, calls, conditionals, streams) and `FixedValueAssign`; never expand them
+per cell or flatten them into one packed value. Descriptor formals carry their
+storage in `IrFormal::fixed_array`; returns use a trailing output formal. Pattern
+items and scatter sources are captured once into lexical snapshots before writes.
+
 Streams retain typed direction, slice size, operand order, unsigned result and
 component LHS widths. Snapshot RHS once. Runtime fixed-array `with` selectors are
 one-dimensional only, not multidimensional arrays or decorated nested concats;

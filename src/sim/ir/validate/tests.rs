@@ -1235,3 +1235,71 @@ fn nonflattened_fixed_operations_validate_shapes_and_activation_scopes() {
         "fill width must match one element"
     );
 }
+
+#[test]
+fn descriptor_value_assignment_requires_matching_descriptor_shape() {
+    let mut model = valid_model();
+    let rows = |c_name: &str, dims: Vec<(i32, i32)>, total: u64| IrArray {
+        activation: false,
+        net_elements: Vec::new(),
+        element_default: None,
+        c_name: c_name.to_string(),
+        hdl_name: c_name.to_string(),
+        elem_width: 17,
+        signed: false,
+        two_state: false,
+        real: false,
+        shortreal: false,
+        dims,
+        total,
+    };
+    model
+        .arrays
+        .push(rows("pair", vec![(0, 1), (0, 65536)], 131_074));
+    model.arrays.push(rows("row", vec![(0, 65536)], 65_537));
+    model.arrays.push(rows("short", vec![(0, 65535)], 65_536));
+    let whole = |array: usize, dims: Vec<(i32, i32)>, total: u64| IrMemoryView {
+        array,
+        origin: 0,
+        selectors: Vec::new(),
+        sliced: false,
+        strides: vec![1; dims.len()],
+        dims,
+        total,
+    };
+    let selected_row = IrMemoryView {
+        array: 0,
+        origin: 0,
+        selectors: vec![IrMemorySelector {
+            dimension: 0,
+            left: 0,
+            right: 1,
+            stride: 65_537,
+            value: packed_const(1, 32),
+        }],
+        sliced: false,
+        dims: vec![(0, 65536)],
+        strides: vec![1],
+        total: 65_537,
+    };
+    let assign = |dst: IrMemoryView, src: IrMemoryView| IrStmt::FixedValueAssign {
+        dst,
+        src: Box::new(IrFixedValue::Array(src)),
+        nba: false,
+    };
+    model
+        .validate_stmt(
+            &assign(selected_row.clone(), whole(1, vec![(0, 65536)], 65_537)),
+            None,
+        )
+        .expect("a whole row copies into a selected descriptor row");
+    let error = model
+        .validate_stmt(
+            &assign(selected_row, whole(2, vec![(0, 65535)], 65_536)),
+            None,
+        )
+        .expect_err("a shorter source must not copy into a selected row");
+    assert!(error
+        .detail()
+        .contains("incompatible descriptor assignment"));
+}

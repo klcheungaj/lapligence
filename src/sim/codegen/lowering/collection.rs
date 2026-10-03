@@ -23,6 +23,7 @@ mod fixed_calls;
 mod fixed_defaults;
 mod fixed_patterns;
 mod fixed_projections;
+mod fixed_transport;
 mod fixed_values;
 mod function_bodies;
 mod gates;

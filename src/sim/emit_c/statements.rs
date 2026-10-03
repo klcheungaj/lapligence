@@ -326,7 +326,7 @@ fn render_stmt_scoped(
             start.as_ref(),
             finish.as_ref(),
         )?,
-        IrStmt::FixedArrayDeclare(_) | IrStmt::FixedArrayCopy { .. } | IrStmt::FixedArrayFill { .. } => return Err("fixed-array copies require owned whole-model emission".to_owned()),
+        IrStmt::FixedValueAssign { .. } | IrStmt::FixedArrayDeclare(_) | IrStmt::FixedArrayCopy { .. } | IrStmt::FixedArrayFill { .. } => return Err("fixed-array copies require owned whole-model emission".to_owned()),
         IrStmt::Container(operation) => super::containers::statement(ctx, operation)?,
         IrStmt::StreamAssign {
             source,
@@ -1295,7 +1295,7 @@ fn render_stmt_scoped(
                     IrCallArg::ChandleVal(value) => {
                         call_args.push(super::objects::chandle(ctx, value)?)
                     }
-                    IrCallArg::EventVal(_) => {
+                    IrCallArg::FixedValue(_) | IrCallArg::FixedArray(_) | IrCallArg::EventVal(_) => {
                         return Err("event argument requires the ownership emitter".to_string());
                     }
                     IrCallArg::ChandleAddr(addr) | IrCallArg::ChandleRefAddr(addr) => {

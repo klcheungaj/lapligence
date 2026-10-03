@@ -18,7 +18,12 @@ pub(super) fn func_param_fields(f: &IrFunc) -> Vec<(String, String)> {
         params.push(("void *".to_owned(), "_this".to_owned()));
     }
     for (idx, form) in f.formals.iter().enumerate() {
-        if form.is_ref() {
+        if form.fixed_array.is_some() && form.is_address() {
+            params.push((
+                "llg_fixed_array_t*".to_owned(),
+                format!("{}{idx}", if form.is_ref() { "r" } else { "o" }),
+            ));
+        } else if form.is_ref() {
             if form.string {
                 let qualifier = if form.is_const_ref() { "const " } else { "" };
                 params.push((format!("{qualifier}llg_string_t*"), format!("r{idx}")));
@@ -54,7 +59,9 @@ pub(super) fn func_param_fields(f: &IrFunc) -> Vec<(String, String)> {
     for (idx, form) in f.formals.iter().enumerate() {
         if !form.is_address() {
             params.push((
-                (if form.string {
+                (if form.fixed_array.is_some() {
+                    "llg_fixed_array_t*"
+                } else if form.string {
                     "llg_string_t"
                 } else if form.event {
                     "llg_event_t"

@@ -350,7 +350,7 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
                         IrCallArg::RefAddr { .. } | IrCallArg::StringRefAddr { .. } => {}
                         IrCallArg::StringVal(_)
                         | IrCallArg::ChandleVal(_)
-                        | IrCallArg::EventVal(_)
+                        | IrCallArg::FixedValue(_) | IrCallArg::FixedArray(_) | IrCallArg::EventVal(_)
                         | IrCallArg::ChandleAddr(_)
                         | IrCallArg::ChandleRefAddr(_)
                         | IrCallArg::OutAddr(_)

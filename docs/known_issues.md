@@ -257,33 +257,35 @@ the otherwise shared electrical projection path.
 
 ## Remaining non-flattened fixed-value contexts
 
-**Status:** open; RTL-002 raises storage capacity and implements the initial
-integral-array descriptor profile.
+**Status:** open; RTL-002 and RTL-002b implement descriptor transport for
+integral fixed arrays.
 
-Whole integral variable arrays now copy, compare, fill and stream without becoming
-one packed value. Automatic nonrecursive functions returning oversized arrays use
-lexical descriptor activations for whole inputs, locals and results. Static or
-recursive oversized calls, output/ref formals, functions with only oversized inputs,
-large nested record values, selected aggregate expressions, conditionals and general
-multi-segment/unaligned oversized streams still need descriptor call/view transport.
-Those paths retain explicit diagnostics or the separate packed payload limit.
-Oversized array-valued pattern items and positional pattern scatter through array
-rows/record members also need those selected aggregate views. Oversized declaration
-initializers still need typed descriptor initialization rather than packed transport
-or per-cell constant expansion. Scalar descriptor
-patterns now use lexical snapshots with sparse defaults/exceptions or replication
-loops. Extending remaining transport through per-cell source expansion would
-recreate the capacity cost.
+Integral variable arrays copy, compare, select rows, merge conditionals, stream
+(including multiple segments and unaligned slices), initialize and pass through
+input/output/inout/ref formals and returns of static, automatic and recursive
+functions without becoming one packed value. Array-valued pattern items and
+pattern-lvalue row scatter use the same views. Oversized unpacked records and
+arrays of records still have no descriptor layout and retain the packed payload
+limit. Descriptor pattern items and scatter targets whose rows are small dense
+arrays inside an oversized source, `with` stream selections and nested oversized
+streams reject with explicit diagnostics. Extending those paths through per-cell
+source expansion would recreate the capacity cost.
+
+Each call or view operand currently takes its own snapshot, so a whole-array
+input argument or selected source is copied once more than necessary; the cost
+is proportional to materialized cells, not to the logical extent. Stream and
+ambiguous-conditional results are lazy images that keep their captured sources
+alive; the first read of an untouched cell materializes it from those sources.
 
 Explicit waveform registration materializes every registered cell, so dumping a
 16M array has a proportional runtime memory/output cost despite bounded generated
 source. Sparse cells also remain materialized after becoming default again, because
 queued updates and selected observers require stable descriptor addresses.
 
-Fixed-copy preparation checks allocations and captures the source before writes.
-The existing per-signal observer publication path can allocate while publishing;
-a transaction-wide preflight for that path remains necessary before claiming
-failure atomicity for all callback allocation failures.
+Fixed-copy publication prepares every destination cell, range and change record
+before the first value becomes visible, and runs observer callbacks only after
+the complete image is committed. Callback-side allocation can still fail after
+that commit; allocation failure is fatal, so no partial image is observed.
 
 
 ## Runtime-selected module reference connections have no qualified binding oracle

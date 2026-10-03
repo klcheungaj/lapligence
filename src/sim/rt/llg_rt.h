@@ -52,12 +52,17 @@
 #include "llg_rng.h"
 
 typedef struct llg_fixed_cell llg_fixed_cell_t;
-typedef struct {
+typedef struct llg_fixed_image llg_fixed_image_t;
+typedef struct llg_fixed_range llg_fixed_range_t;
+typedef struct llg_fixed_array {
     uint64_t total;
     size_t count, capacity;
     llg_fixed_cell_t **buckets, *cells;
     sv4_t initial;
     sv4_t* contents;
+    struct llg_fixed_array* owner;
+    uint64_t origin;
+    llg_fixed_range_t* ranges;
 } llg_fixed_array_t;
 
 
@@ -85,6 +90,9 @@ extern "C" {
  * copy snapshots its entire source before publishing any destination. */
 void llg_fixed_array_init(llg_fixed_array_t*, uint64_t, sv4_t, sv4_t*);
 void llg_fixed_array_reset(llg_fixed_array_t*, sv4_t);
+void llg_fixed_array_view_init(llg_fixed_array_t*, llg_fixed_array_t*, uint64_t, uint64_t, int);
+void llg_fixed_array_stream_segments(llg_fixed_array_t*, const llg_fixed_array_t* const*, size_t, int, int, uint32_t);
+void llg_fixed_array_merge(llg_fixed_array_t*, const llg_fixed_array_t*, const llg_fixed_array_t*, uint64_t, int);
 const sv4_t* llg_fixed_array_peek(const llg_fixed_array_t*, uint64_t);
 sv4_t* llg_fixed_array_cell(llg_fixed_array_t*, uint64_t);
 void llg_fixed_array_destroy(void*);

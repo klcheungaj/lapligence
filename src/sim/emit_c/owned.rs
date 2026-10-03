@@ -25,6 +25,7 @@ mod event_waits;
 mod events;
 mod expressions;
 mod fixed_array_reductions;
+mod fixed_values;
 mod force;
 mod formatting;
 mod frame_cells;

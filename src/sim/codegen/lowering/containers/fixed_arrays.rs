@@ -76,6 +76,13 @@ impl<'a> Codegen<'a> {
 
         let mut targets = Vec::new();
         self.p30_collect_pattern_lvalue_targets(path, pattern, &target_descriptor, &mut targets)?;
+        if kind != PatternAssignmentKind::Continuous {
+            if let Some(statement) =
+                self.lower_descriptor_pattern_scatter(path, rhs, &targets, !blocking)?
+            {
+                return Ok(Some(statement));
+            }
+        }
         let mut lowered_targets = Vec::with_capacity(targets.len());
         let mut target_widths = Vec::with_capacity(targets.len());
         for (target, descriptor) in targets {
@@ -1708,6 +1715,20 @@ impl<'a> Codegen<'a> {
         blocking: bool,
         op: Operation,
     ) -> Result<Option<IrStmt>, String> {
+        if op == Operation::Assignment {
+            if let Ok(dst) = self.fixed_memory_view(path, lhs) {
+                if self.model.arrays[dst.array].sparse()
+                    && self.descriptor_value_transport(path, &dst, rhs, blocking)?
+                {
+                    let src = self.lower_fixed_value(path, rhs)?;
+                    return Ok(Some(IrStmt::FixedValueAssign {
+                        dst,
+                        src: Box::new(src),
+                        nba: !blocking,
+                    }));
+                }
+            }
+        }
         if blocking && op == Operation::Assignment {
             if let Some(statement) = self.lower_nonflatten_call(path, rhs, lhs)? {
                 return Ok(Some(statement));

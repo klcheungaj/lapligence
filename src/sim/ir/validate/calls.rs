@@ -161,7 +161,59 @@ impl Validator<'_> {
             .chain(callee.formals.iter().filter(|formal| !formal.is_address()));
         for (idx, (arg, formal)) in args.iter().zip(parameter_order).enumerate() {
             let arg_path = format!("{path}.args[{idx}]");
+            if formal.fixed_array.is_some()
+                && !matches!(arg, IrCallArg::FixedArray(_) | IrCallArg::FixedValue(_))
+            {
+                return self.fail(&arg_path, "descriptor formal requires descriptor operand");
+            }
             match arg {
+                IrCallArg::FixedValue(value) => {
+                    let bits = self.validate_fixed_value(value, formals, &arg_path)?;
+                    let expected = formal
+                        .fixed_array
+                        .and_then(|array| self.model.arrays.get(array))
+                        .ok_or_else(|| {
+                            IrValidationError::new(
+                                &arg_path,
+                                "fixed operand requires descriptor formal",
+                            )
+                        })?;
+                    if bits != expected.total * u64::from(expected.elem_width)
+                        || (formal.is_ref() && !matches!(value.as_ref(), IrFixedValue::Array(_)))
+                    {
+                        return self.fail(
+                            &arg_path,
+                            "fixed argument shape or reference identity mismatch",
+                        );
+                    }
+                }
+                IrCallArg::FixedArray(array) => {
+                    self.validate_fixed_activation(*array, &arg_path)?;
+                    let actual = self.model.arrays.get(*array).ok_or_else(|| {
+                        IrValidationError::new(&arg_path, "invalid descriptor argument")
+                    })?;
+                    let expected = formal
+                        .fixed_array
+                        .and_then(|array| self.model.arrays.get(array))
+                        .ok_or_else(|| {
+                            IrValidationError::new(
+                                &arg_path,
+                                "descriptor argument requires descriptor formal",
+                            )
+                        })?;
+                    if !actual.sparse()
+                        || actual.total != expected.total
+                        || actual.elem_width != expected.elem_width
+                        || actual
+                            .dims
+                            .iter()
+                            .map(|(l, r)| l.abs_diff(*r))
+                            .ne(expected.dims.iter().map(|(l, r)| l.abs_diff(*r)))
+                    {
+                        return self.fail(&arg_path, "descriptor argument shape mismatch");
+                    }
+                }
+
                 IrCallArg::Val(_) if formal.is_address() => {
                     return self.fail(arg_path, "address formal requires an address argument");
                 }

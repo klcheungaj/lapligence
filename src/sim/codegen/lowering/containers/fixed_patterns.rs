@@ -7,6 +7,8 @@ const DESCRIPTOR_PATTERN_DEFAULT_MIN_OCCURRENCES: usize = 2;
 #[derive(Clone)]
 enum FixedPatternPlan {
     Value(NodeId),
+    /// An array-valued item copied through descriptor view transport.
+    Array(NodeId),
     Rows {
         bounds: (i32, i32),
         default: Option<Box<Self>>,
@@ -80,19 +82,13 @@ impl Codegen<'_> {
             ..
         }) = self.kind(node)
         else {
-            if self
-                .query_descriptor(node)
-                .is_some_and(|source| matches!(source.shape, TypeShape::FixedArray { .. }))
-            {
-                return Err(format!("array-valued descriptor pattern item in `{path}` requires aggregate view transport"));
-            }
-            return Ok(FixedPatternPlan::Value(node));
+            return Ok(FixedPatternPlan::Array(node));
         };
         if !matches!(
             op,
             Operation::AssignmentPattern | Operation::MultiAssignmentPattern
         ) {
-            return Ok(FixedPatternPlan::Value(node));
+            return Ok(FixedPatternPlan::Array(node));
         }
         let bounds = dimensions
             .first()
@@ -260,10 +256,26 @@ impl Codegen<'_> {
         path: &str,
         plan: &FixedPatternPlan,
         array: &ArrayInfo,
-        values: &mut HashMap<NodeId, IrExpr>,
+        values: &mut HashMap<NodeId, PatternCapture>,
         captures: &mut Vec<IrStmt>,
     ) -> Result<(), String> {
         match plan {
+            FixedPatternPlan::Array(node) => {
+                if let std::collections::hash_map::Entry::Vacant(entry) = values.entry(*node) {
+                    // Each item is evaluated once into a lexical snapshot before
+                    // any placement, so calls and overlapping sources keep their
+                    // pre-assignment values even when a default repeats the item.
+                    let snapshot = self.fixed_activation_array(*node)?;
+                    let source = self.lower_fixed_value(path, *node)?;
+                    captures.push(IrStmt::FixedArrayDeclare(snapshot.ir));
+                    captures.push(IrStmt::FixedValueAssign {
+                        dst: self.fixed_view_at(snapshot.ir, &[]),
+                        src: Box::new(source),
+                        nba: false,
+                    });
+                    entry.insert(PatternCapture::Array(snapshot.ir));
+                }
+            }
             FixedPatternPlan::Value(node) => {
                 if let std::collections::hash_map::Entry::Vacant(entry) = values.entry(*node) {
                     let value = self.lower_expr(path, *node)?;
@@ -282,12 +294,12 @@ impl Codegen<'_> {
                         two_state: false,
                         init: Some(Box::new(value)),
                     });
-                    entry.insert(IrExpr::new(
+                    entry.insert(PatternCapture::Value(IrExpr::new(
                         IrExprKind::LocalRead(name),
                         width,
                         signed,
                         None,
-                    ));
+                    )));
                 }
             }
             FixedPatternPlan::Rows {
@@ -309,14 +321,52 @@ impl Codegen<'_> {
         path: &str,
         array: usize,
         plan: &FixedPatternPlan,
-        values: &HashMap<NodeId, IrExpr>,
+        values: &HashMap<NodeId, PatternCapture>,
         coordinates: &[IrExpr],
     ) -> Result<Vec<IrStmt>, String> {
         match plan {
+            FixedPatternPlan::Array(node) => {
+                let PatternCapture::Array(source) = values[node] else {
+                    return Err("array pattern item was captured as a packed value".into());
+                };
+                let target = &self.model.arrays[array];
+                let remaining = target.dims[coordinates.len()..]
+                    .iter()
+                    .try_fold(1u64, |total, (left, right)| {
+                        total.checked_mul(u64::from(left.abs_diff(*right)) + 1)
+                    })
+                    .ok_or("descriptor pattern extent overflows")?;
+                let item = self.model.arrays[source].total;
+                if remaining == item && coordinates.len() < target.dims.len() {
+                    return Ok(vec![IrStmt::FixedValueAssign {
+                        dst: self.fixed_view_at(array, coordinates),
+                        src: Box::new(crate::sim::ir::IrFixedValue::Array(
+                            self.fixed_view_at(source, &[]),
+                        )),
+                        nba: false,
+                    }]);
+                }
+                if remaining < item || coordinates.len() + 1 >= target.dims.len() {
+                    return Err(format!(
+                        "array-valued descriptor pattern item shape mismatch in `{path}`"
+                    ));
+                }
+                let bounds = target.dims[coordinates.len()];
+                let name = self.new_fn_name(path, "pattern_index");
+                let offset = IrExpr::new(IrExprKind::LocalRead(name.clone()), 64, true, None);
+                let mut next = coordinates.to_vec();
+                next.push(pattern_coordinate(bounds, offset));
+                let body = self.emit_descriptor_pattern_plan(path, array, plan, values, &next)?;
+                Ok(pattern_loop(
+                    name,
+                    i64::from(bounds.0).abs_diff(i64::from(bounds.1)) + 1,
+                    body,
+                ))
+            }
             FixedPatternPlan::Value(node) if coordinates.is_empty() => {
                 Ok(vec![IrStmt::FixedArrayFill {
                     array,
-                    value: values[node].clone(),
+                    value: values[node].packed()?,
                     nba: false,
                 }])
             }
@@ -328,7 +378,7 @@ impl Codegen<'_> {
                             indices: coordinates.to_vec(),
                             elem_sel: IrElemSel::Whole,
                         },
-                        rhs: values[node].clone(),
+                        rhs: values[node].packed()?,
                         nba: false,
                     }]);
                 }
@@ -408,6 +458,21 @@ impl Codegen<'_> {
                 }
                 Ok(statements)
             }
+        }
+    }
+}
+
+#[derive(Clone)]
+enum PatternCapture {
+    Value(IrExpr),
+    Array(usize),
+}
+
+impl PatternCapture {
+    fn packed(&self) -> Result<IrExpr, String> {
+        match self {
+            Self::Value(value) => Ok(value.clone()),
+            Self::Array(_) => Err("packed pattern item was captured as an array".into()),
         }
     }
 }

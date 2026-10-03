@@ -23,13 +23,11 @@ impl<'a> Codegen<'a> {
                 is_task, automatic, ..
             } = self.kind(*c)
             {
-                if self.nonflatten_function(*c) {
-                    continue;
-                }
                 if !self.func_names.contains_key(c) {
                     continue;
                 }
                 let automatic = *automatic;
+                self.prepare_fixed_function(*c, automatic)?;
                 let dpi = self.db.dpi_import(*c).cloned();
                 let (is_task_f, function_ret, formals) = if dpi.is_some() {
                     let is_task = match self.kind(*c) {
@@ -48,7 +46,7 @@ impl<'a> Codegen<'a> {
                 } else {
                     function_ret
                 };
-                let formals_ir: Vec<IrFormal> = formals
+                let mut formals_ir: Vec<IrFormal> = formals
                     .iter()
                     .map(|(io, is_out)| -> Result<IrFormal, String> {
                         match self.kind(*io) {
@@ -74,11 +72,23 @@ impl<'a> Codegen<'a> {
                                 Ok(IrFormal {
                                     is_out: *is_out,
                                     mode,
-                                    fixed_shape: self.fixed_formal_shape(*io)?,
-                                    fixed_default: self.fixed_default_literal(*io),
+                                    fixed_array: self.fixed_formal_array(*io),
+                                    fixed_shape: if self.fixed_formal_array(*io).is_some() {
+                                        None
+                                    } else {
+                                        self.fixed_formal_shape(*io)?
+                                    },
+                                    fixed_default: if self.fixed_formal_array(*io).is_some() {
+                                        None
+                                    } else {
+                                        self.fixed_default_literal(*io)
+                                    },
                                     const_ref: *const_ref,
                                     ref_static: *ref_static,
-                                    width: if is_handle_kind(&ty.kind) || is_real_kind(&ty.kind) {
+                                    width: if self.fixed_formal_array(*io).is_some()
+                                        || is_handle_kind(&ty.kind)
+                                        || is_real_kind(&ty.kind)
+                                    {
                                         0
                                     } else if dpi.is_some() {
                                         ty.width.unwrap_or(0)
@@ -112,10 +122,17 @@ impl<'a> Codegen<'a> {
                         ));
                     }
                 }
+                if let Some(array) = self.fixed_formal_array(*c) {
+                    let mut formal =
+                        IrFormal::new(true, 1, false).map_err(|error| error.to_string())?;
+                    formal.width = 0;
+                    formal.fixed_array = Some(array);
+                    formals_ir.push(formal);
+                }
                 let has_wait = *is_task && dpi.is_none() && self.task_has_wait(*c, inst);
                 if !automatic && dpi.is_none() {
                     for (idx, ((io, _), formal)) in formals.iter().zip(&formals_ir).enumerate() {
-                        if formal.is_ref() {
+                        if formal.is_ref() || formal.fixed_array.is_some() {
                             continue;
                         }
                         if formal.chandle || formal.event {
@@ -427,9 +444,6 @@ impl<'a> Codegen<'a> {
                     // evaluator containing an unbound FormalRead.
                     continue;
                 }
-                if self.nonflatten_function(*c) {
-                    continue;
-                }
                 let path = self.instance_path_of(inst);
                 self.emit_func_task(&path, inst, *c)?;
             }
@@ -628,6 +642,7 @@ impl<'a> Codegen<'a> {
             .find(|child| matches!(self.kind(*child), NodeKind::Var { .. }))
             .is_some_and(|return_var| self.db.is_two_state_type(return_var));
         let ret = match ret {
+            Some(_) if self.nonflatten_function(ft) => None,
             Some(ty) if matches!(ty.kind.as_str(), "chandle" | "class" | "string") => None,
             Some(ty) => {
                 if is_real_kind(&ty.kind) {

@@ -13,6 +13,7 @@ mod events;
 mod expressions;
 mod file_input;
 mod fixed_array_reductions;
+mod fixed_values;
 mod initialization;
 mod lvalues;
 mod statements;

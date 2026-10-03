@@ -781,6 +781,9 @@ impl<'a> Codegen<'a> {
                             info.ir, node.full_name
                         ));
                     };
+                    if array.hdl_name.is_empty() {
+                        continue;
+                    }
                     let full_name = array.hdl_name.clone();
                     let name = components(&full_name)
                         .last()
@@ -1088,7 +1091,6 @@ struct Codegen<'a> {
     model: IrModel,
     /// Model index of the function whose body is currently being emitted
     /// (`None` outside function bodies); formal reads resolve through it.
-    nonflatten_calls: Vec<NodeId>,
     cur_fn_ir: Option<usize>,
     /// FuncTask arena node → call-site resolution metadata (model index,
     /// signature).  Emitted functions only; registered by the prototype walk.
@@ -1420,7 +1422,6 @@ impl<'a> Codegen<'a> {
             warnings: Vec::new(),
             model: IrModel::new(String::new(), Timescale::DEFAULT.precision_fs)
                 .expect("the default timescale has non-zero precision"),
-            nonflatten_calls: Vec::new(),
             cur_fn_ir: None,
             func_meta: HashMap::new(),
             dpi_signatures: HashMap::new(),

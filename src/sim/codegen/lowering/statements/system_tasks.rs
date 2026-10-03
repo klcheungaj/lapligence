@@ -177,7 +177,11 @@ impl EmitCtx<'_, '_> {
     /// Capture a fixed memory view. SystemVerilog permits constant or runtime
     /// higher-dimension indices and a constant slice on the lowest specified
     /// dimension. At least one unpacked dimension remains addressable.
-    fn lower_memory_view(&mut self, name: &str, node: NodeId) -> Result<IrMemoryView, String> {
+    pub(in super::super) fn lower_memory_view(
+        &mut self,
+        name: &str,
+        node: NodeId,
+    ) -> Result<IrMemoryView, String> {
         let (base, selectors, slice) = self.memory_view_base(name, node)?;
         let array = self.cg.array_of(base).cloned().ok_or_else(|| {
             if self.cg.container_of(node).is_some() {
@@ -315,6 +319,9 @@ impl EmitCtx<'_, '_> {
         name: &str,
         node: NodeId,
     ) -> Result<(NodeId, Vec<NodeId>, Option<MemorySliceNodes>), String> {
+        if self.cg.array_of(node).is_some() {
+            return Ok((node, Vec::new(), None));
+        }
         match self.cg.kind(node) {
             NodeKind::Array { .. } => Ok((node, Vec::new(), None)),
             NodeKind::Expr(ExprKind::Ref {
@@ -325,6 +332,18 @@ impl EmitCtx<'_, '_> {
                 } else {
                     self.memory_view_base(name, *target)
                 }
+            }
+            NodeKind::Expr(ExprKind::BitSelect { base, index })
+                if self.cg.query_descriptor(*base).is_some_and(|descriptor| {
+                    matches!(descriptor.shape, TypeShape::FixedArray { .. })
+                }) =>
+            {
+                let (root, mut selectors, slice) = self.memory_view_base(name, *base)?;
+                if slice.is_some() {
+                    return Err("fixed slice cannot be followed by an index".into());
+                }
+                selectors.push(*index);
+                Ok((root, selectors, None))
             }
             NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
                 let (root, mut selectors, slice) = self.memory_view_base(name, *base)?;
