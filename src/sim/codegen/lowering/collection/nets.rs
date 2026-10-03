@@ -935,9 +935,8 @@ impl<'a> Codegen<'a> {
             })?;
             Ok::<_, String>(width.max(bit_width))
         })?;
-        // Alias drivers project a captured RHS one bit at a time, so perform
-        // the assignment conversion before selecting mapped bits. This keeps
-        // both padding and truncation consistent with the ordinary path.
+        // Convert before gathering ranges so padding and truncation match
+        // the ordinary assignment path.
         let rhs = if target_width != rhs.width() {
             IrExpr::convert_to(rhs.clone(), target_width, rhs.signed())
         } else {
@@ -984,33 +983,45 @@ impl<'a> Codegen<'a> {
                     )
                 })?;
             let width = self.model.net_group(group).width;
-            let mut parts = Vec::with_capacity(width as usize);
-            for group_bit in (0..width).rev() {
-                let Some((_, rhs_bit)) = members
-                    .iter()
-                    .find(|(binding, _)| binding.group_bit() == group_bit)
-                else {
-                    parts.push(const_z_expr(1));
-                    continue;
-                };
-                if *rhs_bit >= rhs.width() {
-                    return Err(format!(
-                        "continuous assignment `{}` has an alias RHS bit outside its width at {}:{}:{}",
-                        self.display_name(source),
-                        self.node(source).file.as_deref().unwrap_or("<unknown>"),
-                        self.node(source).line,
-                        self.node(source).col,
-                    ));
+            let mapped = members
+                .iter()
+                .map(|(binding, position)| (binding.group_bit(), rhs.width() - 1 - *position))
+                .collect::<HashMap<_, _>>();
+            let mut parts = Vec::new();
+            let mut remaining = width;
+            while remaining != 0 {
+                let high = remaining - 1;
+                let source_high = mapped.get(&high).copied();
+                let mut low = high;
+                while low != 0 {
+                    let next = mapped.get(&(low - 1)).copied();
+                    let compatible = match (source_high, next) {
+                        (None, None) => true,
+                        (Some(start), Some(next)) => {
+                            start.checked_sub(high - low + 1) == Some(next)
+                        }
+                        _ => false,
+                    };
+                    if !compatible {
+                        break;
+                    }
+                    low -= 1;
                 }
-                parts.push(IrExpr::new(
-                    IrExprKind::BitSel {
-                        base: Box::new(rhs.clone()),
-                        idx: Box::new(lhs_integer_expr(i128::from(rhs.width() - 1 - *rhs_bit))),
-                    },
-                    1,
-                    false,
-                    None,
-                ));
+                let span = high - low + 1;
+                parts.push(match source_high {
+                    None => const_z_expr(span),
+                    Some(source_high) => IrExpr::new(
+                        IrExprKind::PartSel {
+                            base: Box::new(rhs.clone()),
+                            left: i64::from(source_high),
+                            right: i64::from(source_high - (span - 1)),
+                        },
+                        span,
+                        false,
+                        None,
+                    ),
+                });
+                remaining = low;
             }
             let value = if parts.len() == 1 {
                 parts.pop().expect("one alias group bit")
@@ -1336,6 +1347,26 @@ impl<'a> Codegen<'a> {
             }
         }
 
+        // Include unconnected array bits in the same partitioner as aliases.
+        // Their singleton roots can form wide electrical runs too.
+        for ((array, element), peers) in &array_endpoints {
+            let owner = self
+                .array_globals
+                .iter()
+                .find_map(|(owner, info)| (info.ir == *array).then_some(*owner))
+                .ok_or("net-array owner is missing")?;
+            for (bit, peer) in peers.iter().enumerate() {
+                if peer.is_none() {
+                    let point = AliasBit::Array {
+                        owner,
+                        element: *element,
+                        bit: bit as u32,
+                    };
+                    alias_bits.insert(point);
+                    alias_find(&mut alias_parent, point);
+                }
+            }
+        }
         let type_plan = self.build_port_net_type_plan(&nodes, &alias_nets, &alias_bits)?;
 
         let mut alias_buckets: HashMap<AliasBit, Vec<AliasBit>> = HashMap::new();
@@ -1359,7 +1390,10 @@ impl<'a> Codegen<'a> {
         });
         let mut array_alias_bindings: HashMap<(usize, u64), Vec<IrNetAliasBinding>> =
             HashMap::new();
-        for bits in alias_groups {
+        let alias_runs = self.partition_electrical_bits(alias_groups, &nodes, &type_plan)?;
+        for run in alias_runs {
+            let width = run.len() as u32;
+            let bits = run.iter().flatten().copied().collect::<Vec<_>>();
             let member_key = |bit: AliasBit| match bit {
                 AliasBit::Net { net, .. } => (net, None),
                 AliasBit::Array { owner, element, .. } => (owner, Some(element)),
@@ -1396,10 +1430,11 @@ impl<'a> Codegen<'a> {
             let resolved_type = type_plan
                 .resolved(point)
                 .ok_or("selected net group has no type-collapse plan")?;
-            if bits
-                .iter()
-                .any(|bit| type_plan.component(bit.point()) != type_plan.component(point))
-            {
+            if run.iter().any(|column| {
+                column.iter().any(|bit| {
+                    type_plan.component(bit.point()) != type_plan.component(column[0].point())
+                })
+            }) {
                 return Err("selected net storage and type-collapse components disagree".into());
             }
             let kind = Self::ir_net_kind(resolved_type.kind)
@@ -1416,22 +1451,34 @@ impl<'a> Codegen<'a> {
                     self.node(first_owner).col,
                 ));
             }
-            let name = format!("g_net_{}", self.model.net_groups.len());
+            let name = match first_bit {
+                AliasBit::Array {
+                    owner,
+                    element,
+                    bit,
+                } if members.len() == 1 => {
+                    let array = self.array_globals[&owner].ir;
+                    format!("g_array_net_{array}_{element}_{bit}")
+                }
+                _ => format!("g_net_{}", self.model.net_groups.len()),
+            };
             let gidx = self.model.net_groups.len();
             let propagation_delay =
                 self.net_propagation_delay_for_members(&resolved_type.delay_members, &shown)?;
             self.model.net_groups.push(crate::sim::ir::IrNetGroup {
                 c_name: name.clone(),
-                // One union-find root is one electrical bit, regardless of
-                // how many source-net bits name that same identity.
-                width: 1,
+                width,
                 signed: first_signed,
                 kind,
                 n_drivers: members.len(),
                 driver_strengths: vec![(6, 6); members.len()],
                 propagation_delay,
             });
-            for bit in &bits {
+            for (group_bit, bit) in run
+                .iter()
+                .enumerate()
+                .flat_map(|(index, bits)| bits.iter().map(move |bit| (index as u32, bit)))
+            {
                 let key = member_key(*bit);
                 let slot = members
                     .iter()
@@ -1441,7 +1488,7 @@ impl<'a> Codegen<'a> {
                     group: gidx,
                     slot,
                     signal_bit: bit.bit(),
-                    group_bit: 0,
+                    group_bit,
                 };
                 match *bit {
                     AliasBit::Net { net, .. } => {
@@ -1868,9 +1915,8 @@ impl<'a> Codegen<'a> {
                     };
                     if self.nested_member_target(lhs, &member_set).is_some() {
                         let width = self
-                            .sig_globals
-                            .get(&members[0])
-                            .map(|info| info.width)
+                            .query_descriptor(lhs)
+                            .and_then(|descriptor| descriptor.info.width)
                             .unwrap_or(1);
                         let strengths = continuous_assignment_strengths_for_width(
                             *strength0,

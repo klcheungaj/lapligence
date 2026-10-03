@@ -20,6 +20,13 @@ reference identity and static/automatic initialization. Static fixed-array
 locals use one persistent signal per declaration and instance, shared by
 subroutine writes, delayed NBAs and hierarchical fixed selections.
 
+Electrical storage uses maximal adjacent runs whose member mappings, driver
+ranges, force targets and effective type/delay agree. The partitioner in
+`collection/net_partition.rs` serves arrays and scalar/vector alias networks;
+whole vector nets keep their existing wide storage. Declared shapes remain
+separate bit bindings, and contributions select contiguous RHS ranges before
+resolution. New net topology belongs in the partitioner's source inventory.
+
 See [lowering overview](../readme.md),
 [execution model](../../execution/readme.md),
 [feature boundaries](../../../../docs/sim_features.md) and

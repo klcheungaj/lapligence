@@ -382,3 +382,107 @@ fn lazy_alias_view_keeps_the_first_eager_error_for_invalid_ranges() {
     let actual = cg.whole_net_alias_bits(net, net, 0, 1, 9).err().unwrap();
     assert_eq!(actual, expected);
 }
+
+fn partition_model(source: &str) -> IrModel {
+    let compiled = crate::core::compile::compile_sources_checked(
+        &[crate::core::compile::OwnedSource::compilation_unit(
+            "partition.sv",
+            source,
+        )],
+        &crate::core::compile::CompileOpts {
+            top: Some("tb".to_owned()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let database = Db::from_slang(&compiled.snapshot).unwrap();
+    let semantic = crate::sim::semantic::SemanticModel::from_db(&database);
+    let mut cg = Codegen::new(&semantic);
+    cg.collect_design().unwrap();
+    cg.bind_reference_ports().unwrap();
+    cg.collect_timescales();
+    cg.build_net_groups().unwrap();
+    cg.model
+}
+
+#[test]
+fn identically_connected_array_elements_have_one_wide_group() {
+    for width in [1, 7, 64, 65, 129] {
+        let model = partition_model(&format!(
+            "module tb; wire [{0}:0] r[3]; assign r = '{{default:'0}}; assign r = '{{default:'1}}; endmodule", width - 1));
+        assert_eq!(model.net_groups.len(), 3);
+        assert!(model.net_groups.iter().all(|group| group.width == width));
+    }
+}
+
+#[test]
+fn electrical_runs_split_at_driver_and_force_boundaries() {
+    let model = partition_model(
+        r#"
+module tb;
+    wire [128:0] r[1];
+    wire [128:0] peer;
+    alias peer = r[0];
+    assign r[0] = '0;
+    assign peer[96:32] = '1;
+    initial begin force peer[64] = 1'b1; #1; release peer[64]; end
+endmodule
+"#,
+    );
+    let mut widths = model
+        .net_groups
+        .iter()
+        .map(|group| group.width)
+        .collect::<Vec<_>>();
+    widths.sort_unstable();
+    assert_eq!(widths, [1, 32, 32, 32, 32]);
+    for group in &model.net_groups {
+        assert_eq!(
+            group.width as usize * 2,
+            model
+                .signals
+                .iter()
+                .flat_map(|signal| &signal.net_alias)
+                .filter(|binding| model.net_groups[binding.group].c_name == group.c_name)
+                .count()
+        );
+    }
+}
+
+#[test]
+fn array_contribution_export_grows_by_ranges_instead_of_bit_operations() {
+    let mut sizes = Vec::new();
+    for width in [7, 129] {
+        let source = format!("module tb; logic [{}:0] a = '0, b = '1; wire [{}:0] r[3]; for(genvar i=0;i<3;i++) begin assign r[i]=a; assign r[i]=b; end endmodule", width-1, width-1);
+        let compiled = crate::core::compile::compile_sources_checked(
+            &[crate::core::compile::OwnedSource::compilation_unit(
+                "array_scale.sv",
+                source,
+            )],
+            &crate::core::compile::CompileOpts {
+                top: Some("tb".to_owned()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let database = Db::from_slang(&compiled.snapshot).unwrap();
+        let generated = crate::sim::codegen::generate_from_db_with_opts(
+            &database,
+            &crate::sim::opt::OptConfig::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            generated
+                .model_c
+                .matches("static llg_net_t g_array_net_")
+                .count(),
+            3
+        );
+        assert_eq!(generated.model_c.matches("llg_net_write(").count(), 6);
+        sizes.push(generated.model_c.len());
+    }
+    assert!(
+        sizes[1] < sizes[0] * 3,
+        "declared bit metadata may grow, driver operations must not: {sizes:?}"
+    );
+}

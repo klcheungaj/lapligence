@@ -140,6 +140,19 @@ vector continuous strengths reject. Reject trireg before storage collection,
 including undriven arrays, and dynamic net selectors. Keep disjoint constant
 uwire selections legal; overlapping drivers reject.
 
+`collection/net_partition.rs` forms maximal affine runs of canonical electrical
+roots for fixed arrays and selected/aliased scalar or vector nets. Adjacent
+positions must have the same declared members, structural source/terminal sites,
+force/release membership and resolved net type/delay owners; each member and
+source offset advances by one. Reversed/permuted or opaque projections retain
+bit groups. Include driver ranges before partitioning, and extend that source
+inventory for new topology forms. Ordinary whole vector groups already resolve
+word-parallel and retain their existing path. Keep per-bit declared-view bindings
+with a group-bit offset; electrical width must never change an HDL storage shape.
+Contribution projection gathers contiguous RHS runs with part selects and Z runs,
+then concatenates only disconnected runs. Conversion precedes projection. Array
+publication binds every bit to this partition and rejects a missing root.
+
 Fixed net arrays, selected ports and interfaces share canonical bits; array
 publication notifies array dependencies. Keep the signal reverse index aligned
 with every insertion and rebuild it after port canonicalization. Alias whole-net
