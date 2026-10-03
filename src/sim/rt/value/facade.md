@@ -237,8 +237,10 @@ plane pointers, fabricate borrowed descriptors over arrays, use encoded-byte
 equality, or embed numeric `sizeof(sv4_t)`/frame-offset constants. Ordinary C
 `sizeof`/`_Alignof` of the selected type is allowed in native layout code; emitted
 frame metadata follows the selected descriptor and asserts its 64-bit-host layout. V06 migrates representation
-consumers; V05 implements operation families; V08 audits retained owner graphs.
-Keep new feature work on legacy through these APIs while those tasks proceed.
+consumers; V05 implements operation families; V08 audits retained owner graphs
+([audit](../value_gmp/facade_audit.md)). Native runtime probes follow the same
+rule, so they build and run with either backend. Keep new feature work on legacy
+through these APIs while those tasks proceed.
 
 ### Arithmetic destinations added by EMIT-1 (implemented in both backends)
 

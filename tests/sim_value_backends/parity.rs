@@ -236,3 +236,38 @@ fn compact_parity_rtl_004_scatter_and_descriptors() {
         sim_cli::run_case_backend_parity("feature_completion/rtl_004", fixture, expected, &[], &[]);
     }
 }
+
+/// V08 owner integration: retained scheduler snapshots, container and mailbox
+/// payloads, recursive activations on the chain arena, canceled waits and
+/// sampled/clocking/inertial captures, each crossing the inline/wide and
+/// known/X-Z boundaries. The fixtures check their values against literals
+/// computed independently of the simulator.
+fn owner_integration_parity(fixture: &str) {
+    sim_cli::run_case_backend_parity(
+        "sv4_gmp_integration",
+        fixture,
+        &format!("PASS {fixture}\n"),
+        &[],
+        &[],
+    );
+}
+
+#[test]
+fn compact_parity_owner_scheduler_snapshots() {
+    owner_integration_parity("scheduler_snapshots");
+}
+
+#[test]
+fn compact_parity_owner_containers_and_mailboxes() {
+    owner_integration_parity("container_owners");
+}
+
+#[test]
+fn compact_parity_owner_activations() {
+    owner_integration_parity("activation_owners");
+}
+
+#[test]
+fn compact_parity_owner_sampled_captures() {
+    owner_integration_parity("sampled_owners");
+}
