@@ -1409,6 +1409,8 @@ impl<'a> Codegen<'a> {
             }
         }
         let type_plan = self.build_port_net_type_plan(&nodes, &alias_nets, &alias_bits)?;
+        let mut uwire_drivers: HashMap<usize, std::collections::BTreeMap<usize, NodeId>> =
+            HashMap::new();
 
         let mut alias_buckets: HashMap<AliasBit, Vec<AliasBit>> = HashMap::new();
         let mut alias_bits = alias_bits.into_iter().collect::<Vec<_>>();
@@ -1559,6 +1561,8 @@ impl<'a> Codegen<'a> {
                 .filter_map(|(member, element)| element.is_none().then_some(*member))
                 .collect::<Vec<_>>();
             let sources = self.structural_site_sources(&normal_members)?;
+            let fallback = run.iter().flatten().copied().collect::<Vec<_>>();
+            self.note_uwire_drivers(&type_plan, &fallback, &sources, &mut uwire_drivers);
             for (source, strengths) in sources {
                 let signal = self.add_structural_driver(gidx, source, strengths)?;
                 if matches!(self.kind(source), NodeKind::ContAssign { .. }) {
@@ -1743,6 +1747,18 @@ impl<'a> Codegen<'a> {
                 );
             }
             let sources = self.structural_site_sources(members)?;
+            if let Some(component) = type_plan
+                .contains_uwire(point)
+                .then(|| type_plan.component(point))
+                .flatten()
+            {
+                for (source, _) in &sources {
+                    uwire_drivers
+                        .entry(component)
+                        .or_default()
+                        .insert(source.index(), *source);
+                }
+            }
             for (source, strengths) in sources {
                 let signal = self.add_structural_driver(gidx, source, strengths)?;
                 if matches!(self.kind(source), NodeKind::ContAssign { .. }) {
@@ -1766,8 +1782,125 @@ impl<'a> Codegen<'a> {
         }
         self.scalar_inits = keep;
         self.build_wired_net_groups(&nodes)?;
-        self.publish_array_net_cells(array_endpoints, &nodes, &type_plan, array_alias_bindings)?;
-        Ok(())
+        self.publish_array_net_cells(
+            array_endpoints,
+            &nodes,
+            &type_plan,
+            array_alias_bindings,
+            &mut uwire_drivers,
+        )?;
+        self.check_uwire_drivers(&uwire_drivers)
+    }
+
+    /// Record which uwire bit networks each structural source drives, so
+    /// disjoint selected drivers stay legal. A target whose bits cannot be
+    /// mapped counts against every uwire network among `fallback`.
+    pub(super) fn note_uwire_drivers(
+        &self,
+        type_plan: &super::net_collapse::NetCollapsePlan,
+        fallback: &[AliasBit],
+        sources: &[(NodeId, (u8, u8))],
+        drivers: &mut HashMap<usize, std::collections::BTreeMap<usize, NodeId>>,
+    ) {
+        if !type_plan.any_uwire() {
+            return;
+        }
+        let uwire = fallback
+            .iter()
+            .filter(|bit| type_plan.contains_uwire(bit.point()))
+            .filter_map(|bit| type_plan.component(bit.point()))
+            .collect::<HashSet<_>>();
+        if uwire.is_empty() {
+            return;
+        }
+        for (source, _) in sources {
+            for target in self.structural_source_targets(*source) {
+                match self.alias_expression_bits(*source, target) {
+                    Ok(bits) => {
+                        for component in bits
+                            .iter()
+                            .filter(|bit| type_plan.contains_uwire(bit.point()))
+                            .filter_map(|bit| type_plan.component(bit.point()))
+                        {
+                            drivers
+                                .entry(component)
+                                .or_default()
+                                .insert(source.index(), *source);
+                        }
+                    }
+                    Err(_) => {
+                        for component in &uwire {
+                            drivers
+                                .entry(*component)
+                                .or_default()
+                                .insert(source.index(), *source);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// IEEE 1800-2009 6.6.2: a uwire collapsed through ports with other nets
+    /// still allows one driver for each bit of the simulated net.
+    fn check_uwire_drivers(
+        &self,
+        drivers: &HashMap<usize, std::collections::BTreeMap<usize, NodeId>>,
+    ) -> Result<(), String> {
+        let mut violations = drivers
+            .values()
+            .filter(|sources| sources.len() > 1)
+            .collect::<Vec<_>>();
+        violations.sort_by_key(|sources| sources.keys().copied().collect::<Vec<_>>());
+        let Some(sources) = violations.first() else {
+            return Ok(());
+        };
+        let names = sources
+            .values()
+            .map(|source| {
+                format!(
+                    "{}:{}:{}",
+                    self.node(*source).file.as_deref().unwrap_or("<unknown>"),
+                    self.node(*source).line,
+                    self.node(*source).col,
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        Err(format!(
+            "a collapsed uwire net has {} drivers; uwire allows one (IEEE 1800-2009 6.6.2): {names}",
+            sources.len()
+        ))
+    }
+
+    /// LHS/terminal expressions through which a structural source drives.
+    fn structural_source_targets(&self, source: NodeId) -> Vec<NodeId> {
+        match self.kind(source) {
+            NodeKind::ContAssign { .. } => self
+                .node(source)
+                .children
+                .first()
+                .copied()
+                .into_iter()
+                .collect(),
+            NodeKind::Gate { terms, .. } => terms
+                .iter()
+                .filter(|term| matches!(term.direction, DbDirection::Output | DbDirection::Inout))
+                .map(|term| term.expr)
+                .collect(),
+            NodeKind::Port {
+                direction,
+                high,
+                low,
+                high_expr,
+                ..
+            } => match direction {
+                DbDirection::Input => low.iter().copied().collect(),
+                DbDirection::Output => high_expr.or(*high).into_iter().collect(),
+                _ => Vec::new(),
+            },
+            _ => Vec::new(),
+        }
     }
 
     pub(super) fn add_structural_driver(

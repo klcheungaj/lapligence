@@ -404,6 +404,7 @@ impl Codegen<'_> {
         nodes: &[NodeId],
         type_plan: &NetCollapsePlan,
         array_alias_bindings: HashMap<(usize, u64), Vec<IrNetAliasBinding>>,
+        uwire_drivers: &mut HashMap<usize, std::collections::BTreeMap<usize, NodeId>>,
     ) -> Result<(), String> {
         let mut endpoints = endpoints.into_iter().collect::<Vec<_>>();
         endpoints.sort_by_key(|(key, _)| *key);
@@ -465,6 +466,16 @@ impl Codegen<'_> {
         for ((array, element), peers) in endpoints {
             let owner = *owners.get(&array).ok_or("net-array owner is missing")?;
             let sources = cell_sources.remove(&(array, element)).unwrap_or_default();
+            if type_plan.any_uwire() && !sources.is_empty() {
+                let cell = (0..self.model.arrays[array].elem_width)
+                    .map(|bit| AliasBit::Array {
+                        owner,
+                        element,
+                        bit,
+                    })
+                    .collect::<Vec<_>>();
+                self.note_uwire_drivers(type_plan, &cell, &sources, uwire_drivers);
+            }
             let mut bindings = Vec::with_capacity(peers.len());
             for (physical, peer) in peers.into_iter().enumerate() {
                 let physical =

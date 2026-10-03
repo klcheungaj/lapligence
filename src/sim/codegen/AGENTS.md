@@ -162,6 +162,14 @@ Collapse inout nets to canonical electrical storage; emit no value-copy link.
 Input/output links feeding a group retain their own structural driver sites.
 Resolve net-type/delay selection through `net_collapse`/`port_net_types` before
 storage union; same-net-type alias checks precede more permissive port rules.
+Parent connections precede descendants, and each hierarchy depth collapses as
+one `port_batch` against pre-batch types, so instance/port order never selects
+a type: winners reduce to the non-dominated set, a warning-only tie takes the
+first Table 23-1 column with a located warning, and every winning declaration
+of that type owns the delay. A uwire in a collapsed network keeps one
+structural driver per bit network (`note_uwire_drivers`, conservative for
+unmapped targets); the frontend patch stops counting the inout connection
+itself as a uwire driver.
 Whole connections keep declaration-level metadata; selected connections map
 physical electrical bits. Reject incompatible/non-net members and unsupported
 resolution/sensitivity, never recover an unresolved driver from source text.
