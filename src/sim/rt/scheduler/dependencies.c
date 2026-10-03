@@ -6,6 +6,7 @@
 
 static void force_dependency_changed(sv4_t* sig, double* real, int is_real);
 static void sig_write(sv4_t* target, sv4_t value);
+static void fixed_array_changed(sv4_t* target);
 static int pca_real_active(double* target);
 
 void llg_dependency_bind(sv4_t* target, sv4_t* dependency) {
@@ -642,6 +643,7 @@ static void sig_publish_changed(sv4_t* target, sv4_t old, sv4_t value,
          binding; binding = binding->next) {
         if (binding->target == target) llg_dependency_changed(binding->dependency);
     }
+    fixed_array_changed(target);
     force_dependency_changed(target, NULL, 0);
 }
 

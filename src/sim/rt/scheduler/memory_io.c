@@ -449,7 +449,7 @@ static sv4_t llg_memory_word_cast(sv4_t word, uint32_t width, int8_t is_signed) 
     return result;
 }
 
-void llg_memory_read_view(llg_string_t path, sv4_t* memory, uint64_t total,
+static void fixed_memory_read_view(llg_string_t path, sv4_t* memory, llg_fixed_array_t* fixed, uint64_t total,
                           uint32_t elem_width, int8_t elem_signed, int8_t two_state,
                           const int32_t* dims, int n_dims,
                           const uint64_t* strides, uint64_t origin,
@@ -563,7 +563,7 @@ void llg_memory_read_view(llg_string_t path, sv4_t* memory, uint64_t total,
                     free(filename);
                     return;
                 }
-                llg_ba(&memory[index], converted);
+                llg_ba(fixed ? llg_fixed_array_cell(fixed, index) : &memory[index], converted);
                 sv4_destroy(&converted);
                 written++;
             }
@@ -593,7 +593,7 @@ void llg_memory_read_view(llg_string_t path, sv4_t* memory, uint64_t total,
     free(filename);
 }
 
-void llg_memory_write_view(llg_string_t path, sv4_t* memory, uint64_t total,
+static void fixed_memory_write_view(llg_string_t path, sv4_t* memory, llg_fixed_array_t* fixed, uint64_t total,
                            uint32_t elem_width, int8_t elem_signed, int8_t two_state,
                            const int32_t* dims, int n_dims,
                            const uint64_t* strides, uint64_t origin,
@@ -636,7 +636,7 @@ void llg_memory_write_view(llg_string_t path, sv4_t* memory, uint64_t total,
                 warned_extra = 1;
             }
         } else {
-            sv4_format(radix == 2 ? 'b' : 'h', memory[index], digits, capacity);
+            sv4_format(radix == 2 ? 'b' : 'h', *(fixed ? llg_fixed_array_peek(fixed, index) : &memory[index]), digits, capacity);
             if (fputs(digits, stream) == EOF || fputc('\n', stream) == EOF) {
                 llg_memory_warning(filename, "write failed");
                 break;
@@ -693,4 +693,42 @@ static void llg_file_cleanup(void) {
     llg_files_initialized = 0;
     llg_file_global_error = 0;
     llg_file_global_message[0] = 0;
+}
+
+void llg_memory_read_view(llg_string_t path, sv4_t* memory, uint64_t total,
+                          uint32_t elem_width, int8_t elem_signed, int8_t two_state,
+                          const int32_t* dims, int n_dims,
+                          const uint64_t* strides, uint64_t origin,
+                          uint64_t view_total, sv4_t start, sv4_t finish,
+                          int has_start, int has_finish, int addressing_policy,
+                          const sv4_t* enum_values, uint32_t enum_count, int radix) {
+    fixed_memory_read_view(path, memory, NULL, total, elem_width, elem_signed, two_state, dims, n_dims, strides, origin, view_total, start, finish, has_start, has_finish, addressing_policy, enum_values, enum_count, radix);
+}
+void llg_fixed_memory_read_view(llg_string_t path, llg_fixed_array_t* memory, uint64_t total,
+                          uint32_t elem_width, int8_t elem_signed, int8_t two_state,
+                          const int32_t* dims, int n_dims,
+                          const uint64_t* strides, uint64_t origin,
+                          uint64_t view_total, sv4_t start, sv4_t finish,
+                          int has_start, int has_finish, int addressing_policy,
+                          const sv4_t* enum_values, uint32_t enum_count, int radix) {
+    fixed_memory_read_view(path, NULL, memory, total, elem_width, elem_signed, two_state, dims, n_dims, strides, origin, view_total, start, finish, has_start, has_finish, addressing_policy, enum_values, enum_count, radix);
+}
+
+void llg_memory_write_view(llg_string_t path, sv4_t* memory, uint64_t total,
+                           uint32_t elem_width, int8_t elem_signed, int8_t two_state,
+                           const int32_t* dims, int n_dims,
+                           const uint64_t* strides, uint64_t origin,
+                           uint64_t view_total, sv4_t start, sv4_t finish,
+                           int has_start, int has_finish, int addressing_policy,
+                           const sv4_t* enum_values, uint32_t enum_count, int radix) {
+    fixed_memory_write_view(path, memory, NULL, total, elem_width, elem_signed, two_state, dims, n_dims, strides, origin, view_total, start, finish, has_start, has_finish, addressing_policy, enum_values, enum_count, radix);
+}
+void llg_fixed_memory_write_view(llg_string_t path, llg_fixed_array_t* memory, uint64_t total,
+                           uint32_t elem_width, int8_t elem_signed, int8_t two_state,
+                           const int32_t* dims, int n_dims,
+                           const uint64_t* strides, uint64_t origin,
+                           uint64_t view_total, sv4_t start, sv4_t finish,
+                           int has_start, int has_finish, int addressing_policy,
+                           const sv4_t* enum_values, uint32_t enum_count, int radix) {
+    fixed_memory_write_view(path, NULL, memory, total, elem_width, elem_signed, two_state, dims, n_dims, strides, origin, view_total, start, finish, has_start, has_finish, addressing_policy, enum_values, enum_count, radix);
 }

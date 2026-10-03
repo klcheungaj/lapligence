@@ -5,7 +5,9 @@ static int nba_due(llg_region_t region) {
 }
 
 static void apply_nba(llg_nba_t* next) {
-    if (next->is_event) {
+    if (next->fixed_target) {
+        fixed_array_apply(next->fixed_target, next->fixed_value);
+    } else if (next->is_event) {
         event_trigger_object(next->event_target);
     } else if (next->is_string) {
         if (next->string_target) {

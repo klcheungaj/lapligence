@@ -12,6 +12,14 @@ coroutine frames or frame-less functions' C scopes. Escaping and unproven cells
 keep heap owners. [Retainer and lifetime rules](AGENTS.md#frame-resident-cells)
 cover exact-pointer indexing, final history removal and zero-resume exits.
 
+Fixed integral variable arrays above the dense threshold use
+`scheduler/fixed_arrays.c`: one owned default, indexed stable exceptions and a
+contents dependency. Reads borrow defaults without allocating cells. Whole copies
+capture only exceptions plus the default; an NBA owns one descriptor snapshot.
+Selected observers materialize stable cells. Model arrays are destroyed after
+scheduler cleanup; lexical descriptors are registered objects drained on scope
+exit or cancellation. All payload operations use the public value facade.
+
 ## Components
 
 | Source pair / directory | Responsibility |

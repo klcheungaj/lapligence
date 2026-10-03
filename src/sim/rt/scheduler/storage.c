@@ -32,6 +32,7 @@ typedef struct llg_nba {
     struct llg_nba* owner_next;
     struct llg_nba* owner_prev;
     sv4_t* target;
+    llg_fixed_array_t *fixed_target, *fixed_value;
     llg_value_scope_t* target_scope;
     llg_net_t* net_target;
     int net_slot;
@@ -68,6 +69,10 @@ typedef struct llg_nba_bucket {
 
 static void nba_destroy(llg_nba_t* nba) {
     if (!nba) return;
+    if (nba->fixed_value) {
+        llg_fixed_array_destroy(nba->fixed_value);
+        free(nba->fixed_value);
+    }
     sv4_destroy(&nba->value);
     sv4_destroy(&nba->mask);
     if (nba->is_string) llg_string_destroy(&nba->string_value);
