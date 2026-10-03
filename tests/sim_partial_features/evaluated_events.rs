@@ -64,10 +64,12 @@ fn static_helpers_keep_fixed_array_and_qualified_values_private() {
 }
 
 #[test]
-fn stateful_static_helpers_keep_their_persistent_return_rejection() {
-    super::sim_cli::reject_case(
+fn stateful_static_helpers_are_process_evaluated() {
+    super::sim_cli::run_case(
         "syn011_rtl_helper_events",
         "stateful_static",
-        "static function return is read or is not assigned on every path",
+        "stateful_static changes=1\n",
+        "",
+        &[],
     );
 }

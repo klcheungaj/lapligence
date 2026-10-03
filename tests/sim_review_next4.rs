@@ -43,19 +43,19 @@ fn tagged_member_reads_preserve_runtime_signedness() {
 }
 
 #[test]
-fn abrupt_loop_exits_cannot_hide_a_stateful_static_callback() {
-    sim_cli::reject_case_with_args(
-        "review_bundle",
-        "n02_static_do_break_event",
-        "static function return is read or is not assigned on every path",
-        &["--edition", "2009"],
-    );
-    sim_cli::reject_case_with_args(
-        "review_bundle",
-        "n02_static_do_continue_event",
-        "static function return is read or is not assigned on every path",
-        &["--edition", "2009"],
-    );
+fn abrupt_loop_exits_keep_a_stateful_static_result_process_evaluated() {
+    // The jump bypasses the result write, so the persistent value is
+    // retained after `toggle` returns to zero: one detected change.
+    for fixture in ["n02_static_do_break_event", "n02_static_do_continue_event"] {
+        sim_cli::run_case_with_args(
+            "review_bundle",
+            fixture,
+            "PERSISTENT_RESULT changes=1\n",
+            "",
+            &[],
+            &["--edition", "2009"],
+        );
+    }
 }
 
 #[test]

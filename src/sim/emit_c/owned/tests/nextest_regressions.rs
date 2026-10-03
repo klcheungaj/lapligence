@@ -239,6 +239,7 @@ fn force_evaluator_owns_its_result_and_release_keeps_variable_value() {
             value: number(42, 65),
             eval: "force_value".to_owned(),
             reads: vec![],
+            dependencies: vec![],
         },
         IrStmt::Assign {
             lhs: IrLhs::Whole(0),

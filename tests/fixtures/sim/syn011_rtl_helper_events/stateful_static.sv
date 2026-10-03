@@ -1,7 +1,7 @@
 // llg-test-fixture: tests/fixtures/sim/syn011_rtl_helper_events/stateful_static.sv
 // IEEE 1800-2009 §§9.4.2 and 13.4.2: a static function whose return
-// variable is read before assignment retains state and is not a read-only
-// evaluated event helper.
+// variable is read before assignment retains state; the waiting process
+// evaluates it, so the first changed result is one detected event.
 module tb;
     logic trigger;
     int changes;

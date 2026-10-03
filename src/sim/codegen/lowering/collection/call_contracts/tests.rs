@@ -100,7 +100,101 @@ fn composite_helper_targets_are_all_private_or_rejected_at_source() {
         let result = cg.check_event_expression_effects(call, "tb");
         if allowed { result.unwrap(); }
         else { assert!(result.unwrap_err().contains("writes external or persistent storage")); }
+        // Visible writes rule out only the read-only callback; the waiting
+        // process can still evaluate the legal helper.
+        match cg.classify_event_expression(call, "tb").unwrap() {
+            EventEvaluation::Callback => assert!(allowed, "{name}"),
+            EventEvaluation::Process(reason) => {
+                assert!(!allowed, "{name}");
+                assert!(reason.contains("writes external or persistent storage"), "{reason}");
+            }
+        }
     }
+}
+
+#[test]
+fn stateful_and_descriptor_helpers_select_process_evaluation() {
+    let source = r#"
+module tb;
+    localparam int N = 65537;
+    typedef logic [16:0] big_t [0:N-1];
+    big_t big;
+    logic [7:0] a;
+    function logic [7:0] retained(input logic [7:0] v);
+        if (v[0]) retained = v;
+    endfunction
+    function automatic logic [16:0] lead(input big_t v);
+        return v[0];
+    endfunction
+    function automatic logic [7:0] noisy(input logic [7:0] v);
+        $display("noisy");
+        return v;
+    endfunction
+    function automatic logic [7:0] clean(input logic [7:0] v);
+        logic [7:0] t;
+        t = v + 1;
+        return t;
+    endfunction
+    initial begin
+        @(retained(a));
+        @(lead(big));
+        @(clean(a));
+        @(noisy(a));
+    end
+endmodule
+"#;
+    let database = {
+        let output = crate::core::compile::compile_sources_checked(
+            &[crate::core::compile::OwnedSource::compilation_unit(
+                "classify.sv",
+                source,
+            )],
+            &crate::core::compile::CompileOpts {
+                top: Some("tb".to_owned()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        Db::from_slang(&output.snapshot).unwrap()
+    };
+    let semantic = crate::sim::semantic::SemanticModel::from_db(&database);
+    let mut cg = Codegen::new(&semantic);
+    let tops = cg.collect_design().unwrap();
+    cg.bind_reference_ports().unwrap();
+    for top in tops {
+        cg.emit_func_prototypes(top).unwrap();
+    }
+    let call = |cg: &Codegen<'_>, name: &str| {
+        database.node_ids().find(|node| {
+        matches!(cg.kind(*node), NodeKind::FuncCall { name: callee, .. } if callee == name)
+    }).unwrap()
+    };
+    let (retained, lead, clean, noisy) = (
+        call(&cg, "retained"),
+        call(&cg, "lead"),
+        call(&cg, "clean"),
+        call(&cg, "noisy"),
+    );
+    if let Some(instance) = cg.owning_inst(retained) {
+        cg.inst = instance;
+    }
+    assert!(matches!(
+        cg.classify_event_expression(retained, "tb").unwrap(),
+        EventEvaluation::Process(reason) if reason.contains("static function return")
+    ));
+    assert!(matches!(
+        cg.classify_event_expression(lead, "tb").unwrap(),
+        EventEvaluation::Process(reason) if reason.contains("descriptor-transported")
+    ));
+    assert_eq!(
+        cg.classify_event_expression(clean, "tb").unwrap(),
+        EventEvaluation::Callback
+    );
+    // A helper form without an effect summary still rejects outright.
+    assert!(cg
+        .classify_event_expression(noisy, "tb")
+        .unwrap_err()
+        .contains("has no pure effect summary"));
 }
 
 #[test]

@@ -306,6 +306,23 @@ binding, but the retained runtime-selector characterization has no adjudicated
 binding/rebinding oracle. Qualify that boundary before enabling runtime-selected
 connections. Static selected connections and nested packed projections execute.
 
+## Effectful helpers in runtime-callback evaluators
+
+**Status:** open; RTL-007 admits them in blocking event controls and continuous
+assignments.
+
+A legal zero-time helper with visible writes, persistent static state or
+descriptor-array formals is evaluated by the waiting process for a blocking
+`@(...)`, which keeps the runtime's change-time callbacks read-only. Force
+sources, monitor/strobe arguments, intra-assignment and nonblocking event
+controls are evaluated by the runtime inside another write, so such a helper
+there still rejects (`force RHS ... is not a read-only evaluator`). An event
+control that combines such a helper with a named event, or whose value is real,
+also rejects: a process-side loop cannot observe which named event fired, and
+real changes would need bitwise comparison IR. The intended direction is a
+deferred-publication evaluator context (queue the helper's writes until the
+outer publication finishes) rather than per-site special cases.
+
 ## Native stack frames grow with a statement's format-argument count
 
 **Status:** open; the host-stack bound is measured, not proven.

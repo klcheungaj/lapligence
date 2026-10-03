@@ -1,18 +1,24 @@
 use super::run_case;
 
 #[test]
-fn event_callbacks_reject_function_side_effects_before_emission() {
-    for fixture in ["event_effectful_expression", "event_effectful_condition"] {
-        super::reject_case(fixture, "function calls in evaluated event controls");
-    }
+fn effectful_event_expressions_and_qualifiers_are_process_evaluated() {
+    // A constant result never triggers even though the helper keeps writing.
+    run_case(
+        "event_effectful_expression",
+        "result unchanged evaluated=1 clk=x\n",
+    );
+    // A qualifier runs once, when its edge is detected.
+    run_case("event_effectful_condition", "qualified calls=1 clk=0\n");
 }
 
 #[test]
-fn effectful_event_helpers_keep_a_distinct_impure_rejection() {
-    super::sim_cli::reject_case(
+fn effectful_event_helpers_publish_their_visible_writes() {
+    super::sim_cli::run_case(
         "feature_completion/g1_06",
         "effects_impure_helper",
-        "function body writes external or persistent storage",
+        "unchanged evaluated=1\n",
+        "",
+        &[],
     );
 }
 

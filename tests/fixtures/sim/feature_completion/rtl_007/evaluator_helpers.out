@@ -1,0 +1,8 @@
+continuous 3 1 2 2 6 9
+force 11 3c
+event_or 2000
+event_named 3000
+event_max 30 5000
+continuous 2 1 2 245 8 30
+force 32 ff
+released 32

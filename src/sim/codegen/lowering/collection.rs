@@ -12,6 +12,7 @@ use std::collections::BTreeSet;
 mod aggregates;
 mod arguments;
 mod call_contracts;
+pub(super) use call_contracts::EventEvaluation;
 mod calls;
 mod captures;
 mod classes;

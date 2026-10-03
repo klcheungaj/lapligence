@@ -4,32 +4,42 @@ mod sim_cli;
 #[path = "support/sim.rs"]
 mod sim_harness;
 
+// Stateful static results are legal event helpers (SV 9.4.2, 13.4.2) but
+// not read-only callbacks: the waiting process evaluates them once when the
+// control is reached and once per dependency change. Each fixture's first
+// changed result is the only detected event.
 #[test]
-fn stateful_static_return_mutations_are_not_event_callbacks() {
-    sim_cli::reject_case_with_args(
+fn stateful_static_return_mutations_are_process_evaluated_events() {
+    sim_cli::run_case_with_args(
         "review_bundle",
         "r03_static_return_mutation",
-        "static function return is read or is not assigned on every path",
+        "ACCEPTED_STATEFUL_CALLBACK changes=1\n",
+        "llg: $finish at time 2000 at tb:14:5\n",
+        &[],
         &["--edition", "2009"],
     );
 }
 
 #[test]
-fn read_modify_write_return_access_is_classified_as_a_read() {
-    sim_cli::reject_case_with_args(
+fn read_modify_write_return_access_is_process_evaluated() {
+    sim_cli::run_case_with_args(
         "review_bundle",
         "r03_static_return_read_modify_write",
-        "static function return is read or is not assigned on every path",
+        "ACCEPTED_READ_MODIFY_WRITE changes=1\n",
+        "llg: $finish at time 2000 at tb:16:5\n",
+        &[],
         &["--edition", "2009"],
     );
 }
 
 #[test]
-fn partially_assigned_static_returns_are_not_event_callbacks() {
-    sim_cli::reject_case_with_args(
+fn partially_assigned_static_returns_keep_their_persistent_result() {
+    sim_cli::run_case_with_args(
         "review_bundle",
         "r03_static_partial_return",
-        "static function return is read or is not assigned on every path",
+        "ACCEPTED_PERSISTENT_RESULT changes=1\n",
+        "llg: $finish at time 3000 at tb:15:5\n",
+        &[],
         &["--edition", "2009"],
     );
 }
