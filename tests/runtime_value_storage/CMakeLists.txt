@@ -508,3 +508,5 @@ set_tests_properties(owner_allocation_plateau PROPERTIES TIMEOUT 60)
 
 file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/ownership-capabilities.json"
   CONTENT "{\"schema\":\"llg.owner-probes/v1\",\"waveforms\":${LLG_TEST_HAS_WAVEFORMS},\"scheduler\":${LLG_TEST_HAS_SCHEDULER},\"coroutines\":${LLG_TEST_HAS_COROUTINES},\"sanitizers\":${LLG_TEST_HAS_SANITIZERS}}\n")
+
+include(compact_value.cmake)

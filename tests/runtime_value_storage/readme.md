@@ -177,3 +177,38 @@ validation before they certify their platforms; Linux results do not substitute 
 The flat checker verifies fragment order and strict facade C11 compilation, accepts
 GCC/Clang and cl/clang-cl with optional `--without-scheduler`, requires the current
 ABI to compile and the stale ABI to fail. Linux execution does not validate MSVC.
+
+## Standalone compact value backend
+
+The optional compact probes build `src/sim/rt/value_gmp/` separately from model
+embedding. They link the live legacy backend for differential comparison and use
+independent exhaustive <=4-bit state tables and Python integer vectors. Checks
+include canonical B removal, exact payload bytes, ownership/aliasing, max width,
+exclusive-limit rejection and allocation counts. Public headers remain GMP-free.
+
+```sh
+cmake -S tests/runtime_value_storage -B /build/llg-compact-gcc \
+  -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=gcc \
+  -DLLG_STORAGE_TEST_WAVEFORMS=OFF -DLLG_STORAGE_TEST_COMPACT=ON \
+  -DLLG_GMP_ROOT=/path/to/gmp-install
+cmake --build /build/llg-compact-gcc --parallel 6 --target \
+  compact_portable_probe compact_gmp_probe \
+  compact_oracle_portable compact_oracle_gmp compact_oracle_legacy \
+  compact_portable_allocation_probe compact_gmp_allocation_probe \
+  compact_portable_benchmark compact_gmp_benchmark
+ctest --test-dir /build/llg-compact-gcc -R '^compact_' --output-on-failure --parallel 6
+/build/llg-compact-gcc/compact_gmp_benchmark
+```
+
+Omit `LLG_GMP_ROOT` and GMP targets for a dependency-free portable build. Use a
+separate build directory with `-DCMAKE_C_COMPILER=clang` for Clang, or add
+`-DLLG_STORAGE_TEST_SANITIZERS=ON` for GCC ASan/UBSan. Allocation counter targets
+use linker wrapping on ELF Unix hosts. Checks remain active under `NDEBUG`.
+The Python harness communicates through standalone executables so a non-PIC
+static GMP archive is sufficient. Each oracle executable returns copied logical
+words, shape/sign and owned payload bytes, never a backend descriptor.
+
+Benchmarks emit seven-sample medians and ranges for fresh results and initialized
+destination reuse, including X/Z operands and 65-bit multiplication. Copy reuse
+uses `sv4_copy`; arithmetic reuse uses the emitter's replace-of-fresh-result
+pattern. These are indicative microbenchmarks, with no whole-model claim.

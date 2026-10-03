@@ -7,40 +7,41 @@ contract, even though C needs their definition to embed addressable cells.
 
 ## Production layout and staged selection
 
-The legacy implementation remains in `value/` and remains selectable. Its
-independent, immutable regression reference is `prototypes/sv4_gmp/golden/`;
-never regenerate that snapshot from production. Production header drift is
-reported separately by the golden verifier.
+The live legacy implementation in `value/` is the differential reference,
+alongside independent Python integer oracles and exhaustive small truth tables.
 
-The production GMP implementation will live in `src/sim/rt/value_gmp/`.
-V02-V05 populate storage, ownership, operations and conversions there. V07
-splits the legacy definition/declarations into `value/backend.h` and makes
-`llg_value.h` include **exactly one** of `value/backend.h` and
-`value_gmp/backend.h`, followed by the selected neutral bridge. Shared
-owner-free reference/selection types, callbacks, enums and constants remain
-available through the facade with the same source signatures.
+The compact implementation lives in `src/sim/rt/value_gmp/`. G1 supplies storage,
+the V01 neutral bridge, core arithmetic/logic/comparison/mux, and V05/S1. It is
+built standalone by `tests/runtime_value_storage/compact_value.cmake` with
+portable kernels and optionally GMP. It is not embedded in generated models.
+V07 owns selection in `llg_value.h`, source packaging and model integration;
+the production header currently accepts only legacy `LLG_SV4_USE_GMP=0`.
+V07 will include exactly one of `value/backend.h` and `value_gmp/backend.h`;
+the selector must accept only literal tokens `0` and `1`, default to `0`, and
+reject every other token. Owner-free reference/selection types, callbacks and
+enums stay available through the facade. Packed-dependent `llg_ref_*` helpers
+use the backend prefix; the scalar `llg_real_to_bool` may remain shared.
 
-`LLG_SV4_USE_GMP` accepts the literal tokens `0` and `1`, defaults to `0`,
-and rejects every other token. Public operation aliases are preprocessor
-aliases, not wrappers: legacy `sv4_add` calls the existing `sv4_add` symbol;
-production GMP `sv4_add` calls `llg_gmp_sv4_add`. Apply the same prefix to all
-GMP `sv4_*` operations and packed-dependent `llg_ref_*` helpers; the pure
-scalar `llg_real_to_bool` helper may remain shared. Missing GMP operations
-must have no legacy declaration/alias or fallback. Backend symbol sets must
-remain disjoint. A client linked to only the wrong library fails to link.
-Never intentionally link both backend libraries into one generated model.
+The standalone header defines `llg_gmp_sv4_t` and `llg_gmp_sv4_*` operations.
+Defining `LLG_SV4_GMP_PUBLIC_NAMES` before including `value_gmp/backend.h` maps
+`sv4_t`, implemented `sv4_*` operations, and `llg_sv4_*` accessors directly to
+those names. Small operations are `static inline`; wide paths call prefixed
+out-of-line implementation symbols. No unimplemented operation is declared,
+aliased, or converted through legacy. A differential executable may link both
+libraries, but a generated model must select exactly one descriptor ABI.
 
-V01 adds the legacy bridge without splitting the embedded header or changing
-runtime packaging. The production header accepts `0` and explicitly rejects
-`1` as unavailable, rather than silently selecting legacy. Both selector modes
-are exercised in the prototype facade: its GMP symbols retain the experimental
-`gmp4_*` prefix. This is an executable dispatch witness, not production GMP
-integration. Its 37 mapped operations do not establish coverage of the entire
-109-operation production API or the three `llg_*` helpers. The declaration,
-macro and type audit is `prototypes/sv4_gmp/tools/generate_api_coverage.py`.
+`LLG_SV4_GMP_KERNELS=0/1` is an independent compile-time choice inside the compact
+backend. It changes only wide mul/div/mod/pow kernels. All other operations use
+plain C word loops. `<gmp.h>` appears only in `value_gmp/kernels.c`; GMP must use
+64-bit nail-free limbs compatible with `uint64_t`. Portable kernels require no
+GMP headers or library. The multiplication full-product threshold is the named
+`LLG_SV4_MUL_FULL_THRESHOLD` (128 words by default, about 8192 bits). Below it,
+the result receives only its low words, with no separate scratch allocation.
+Above it, the result allocation includes a temporary product tail, which is
+removed before returning. Mixed-width add/sub allocate only the result.
 
 Legacy production retains value ABI **4**. Reserve value ABI **5** for the
-production GMP descriptor; prototype ABI **1** is experimental. V07 owns
+compact descriptor. V07 owns
 embedding, CMake, backend/ABI/limb cache keys, frame layout, foreign-module
 fences and all-translation-unit definitions. Configuration alone is not ABI
 support. Regenerate model and runtime together; never cast a descriptor across
@@ -106,13 +107,19 @@ reinterpret `mp_limb_t*` or assume a foreign vector has the same layout.
 Legacy live planes require disjoint X/Z and zero top padding. Constructors
 `sv4_from_limbs`/`sv4_from_masks` historically copy otherwise irrelevant bits
 under unknown masks; callers should supply canonical masks. New bridge imports
-canonicalize them and give X priority if X/Z overlap. Do not change an existing
-constructor's invalid-input behavior as part of an adapter migration.
+canonicalize them and give X priority if X/Z overlap. Legacy constructors
+retain this historical behavior. Compact constructors
+canonicalize unknown positions and give X priority on overlap; noncanonical
+legacy payloads are outside cross-backend parity. Neutral imports canonicalize
+in both backends.
 
 GMP stores `bits=A&~B`, `x=A&B`, `z=~A&B`; import is
 `A=(bits&~(x|z))|x`, `B=x|z`. Widths 1..64 use inline words; wider storage uses
-exact-width 32- or 64-bit `mp_limb_t` arrays with zero nails. B can be absent for
-a currently known payload; that does not alter its HDL declaration type.
+exact-width `uint64_t` arrays. B is present exactly while there is at least one
+X/Z bit and is dropped automatically after results/writes become known. Known
+wide payloads use `8*ceil(width/64)` bytes; X/Z payloads use twice that. There is
+no retained-zero-B state or public compaction API. Payload state does not alter
+the HDL declaration type.
 
 Rust `core::value::ValueData::Vector` stores `value_words` V and
 `unknown_words` U: legacy `bits=V&~U`, `x=U&~V`, `z=U&V`; GMP `A=V^U`, `B=U`.
@@ -137,7 +144,7 @@ holds for inline values: mutation of a result must never mutate an input.
 
 | Operation | Contract and supported aliasing |
 | --- | --- |
-| Constructors, `SV4_C/S/X/Z/INIT` | Fresh owner. Raw input arrays borrow for the call. These macros are runtime calls, not static literals. `SV4_EMPTY` is the static initializer. |
+| Constructors, `SV4_C/S/X/Z/INIT` | Fresh owner. Raw input arrays borrow for the call. Legacy macros are runtime constructors. Compact macros inline without allocation at <=64 bits; `SV4_LITERAL(bits,x,z,width,sign)` / `LLG_GMP_SV4_LITERAL` additionally support static <=64-bit initialization. `SV4_EMPTY` initializes empty cells. |
 | `sv4_clone` | Deep independent copy; input remains live. |
 | `sv4_copy`, `sv4_assign` | Replace an initialized destination with a deep copy. Exact self-copy/self-assignment is supported. Allocate before releasing old storage. |
 | `sv4_move` | Release destination, transfer ownership, reset source to empty. Exact self-move is a no-op. |
@@ -145,7 +152,6 @@ holds for inline values: mutation of a result must never mutate an input.
 | `sv4_destroy`, `sv4_destroy_array` | Release owners and reset to empty; repeated destruction of an empty owner is safe. |
 | Existing selected writes | Borrow RHS; snapshot exact/overlapping selected aliases before modifying the target. |
 | Neutral setters/imports | Mutate only an initialized owner, keep width/address/sign, publish no scheduler notifications. Inputs are scalar copies or external buffers, never private payload aliases. |
-| Explicit GMP `*_into` workspace operations | Exact destination/operand aliases are supported when documented. Scratch is caller-owned, thread-confined, separately accounted, and cannot overlap value payloads. |
 
 Plain struct assignment is permitted only as a synchronous transient borrow or
 an explicit transfer with the previous owner reset. A borrow must not be
@@ -156,7 +162,7 @@ owners; no implicit reference counting or arena lifetime excuses a leaked copy.
 
 Cell identity is the address of the containing initialized descriptor or the
 existing stable reference/container cell identity, **never** the payload pointer.
-Replacement, promotion and compaction can relocate payloads. Queued NBA, force,
+Replacement, promotion and automatic B removal can relocate payloads. Queued NBA, force,
 clocking, history, monitor, VPI and waveform users must capture independent values
 and retain their destination cell through existing scope/pin rules. Do not move
 the cell itself while a descriptor/reference retains its address. Scope unwind
@@ -166,8 +172,9 @@ and publication obligations remain in the ownership guide.
 
 Legacy implementations are `static inline`; shape queries and in-range plane
 loads reduce to the original field operations. No backend dispatch is involved.
-GMP declarations/implementations are exercised through the prototype; production
-V02/V03 provide the equivalent bridge with the reserved production symbol prefix.
+The compact header provides equivalent inline small paths and prefixed wide
+implementations, including bulk A/B imports/exports. Both bridges are tested
+standalone; later V06 additions are separate from this V01 surface.
 
 | API | Use and limits |
 | --- | --- |
