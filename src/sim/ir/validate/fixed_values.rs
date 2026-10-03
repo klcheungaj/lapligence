@@ -118,10 +118,9 @@ impl Validator<'_> {
         let Some(last) = view.strides.iter().zip(&view.dims).try_fold(
             view.origin,
             |offset, (stride, (left, right))| {
-                let extent = (i64::from(*left) - i64::from(*right))
-                    .unsigned_abs()
-                    .checked_sub(1)?;
-                offset.checked_add(stride.checked_mul(extent)?)
+                // The last element lies `distance` strides past the first.
+                let distance = (i64::from(*left) - i64::from(*right)).unsigned_abs();
+                offset.checked_add(stride.checked_mul(distance)?)
             },
         ) else {
             return self.fail(path, "memory task view exceeds its array");

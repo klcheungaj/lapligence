@@ -453,6 +453,30 @@ impl<'a> Codegen<'a> {
         Ok(writes)
     }
 
+    /// Whether evaluating `reader` can observe storage written through any
+    /// of the lvalue nodes in `targets`. A target whose writes cannot be
+    /// represented as storage dependencies is treated as overlapping.
+    pub(in super::super) fn reads_overlap_lvalue_writes(
+        &self,
+        scope_path: &str,
+        reader: NodeId,
+        targets: &[NodeId],
+    ) -> Result<bool, String> {
+        let mut writes = HashSet::new();
+        for target in targets {
+            let mut target_writes = HashSet::new();
+            self.add_process_lhs_write_bound(*target, &mut target_writes, &HashMap::new());
+            if target_writes.is_empty() {
+                return Ok(true);
+            }
+            writes.extend(target_writes);
+        }
+        let reads = self.collect_read_signals(scope_path, reader)?;
+        Ok(reads
+            .iter()
+            .any(|read| writes.iter().any(|write| self.same_storage(read, write))))
+    }
+
     /// Ordinary procedural assignments conflict with a continuous variable
     /// driver. Force/release are overrides, not competing assignments (SV 6.5).
     pub(super) fn collect_continuous_conflict_writes(

@@ -321,12 +321,19 @@ remain owned across callbacks.
 ## Streaming and event captures
 
 Snapshot a stream RHS before unpacking. Evaluate/check/publish targets in stream
-order; later selectors may read preceding unpacked fields. Check available source
-size before each component's writes, retaining valid in-range writes on bounds
-error. Fixed selectors follow declared storage order; dynamic containers use
-ascending storage indices. Registered loop indices are destroyed each iteration.
-StreamToFixed left-aligns/zero-fills and diagnoses oversized inputs. Composite
-call/ref targets retain exact layout descriptors.
+order; later blocking `>>` selectors may read preceding unpacked fields. A `<<`
+unpack without a resizable target resolves every fixed selector first, consumes
+that many leftmost source bits and reorders only those. Nonblocking streams have
+fixed targets only, evaluate selectors at issue and queue each element. Check
+available source size before each component's writes, retaining valid in-range
+writes on bounds error. Fixed selectors follow declared storage order; dynamic
+containers use ascending storage indices. Registered loop indices are destroyed
+each iteration. Image-represented fixed targets (refs, locals, members, rows) take
+one read-modify-write when blocking and per-element selected stores when queued;
+out-of-range source elements stream the element's default-uninitialized value,
+and descriptor sources read cells through `peek`. StreamToFixed left-aligns/
+zero-fills and diagnoses oversized inputs. Composite call/ref targets retain exact
+layout descriptors.
 
 Evaluate capture values before publishing frames. Synchronous joined forks may
 alias registered parent numeric cells until every branch completes. Register all

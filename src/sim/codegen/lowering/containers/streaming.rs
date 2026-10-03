@@ -147,10 +147,30 @@ impl<'a> Codegen<'a> {
         }
     }
 
-    /// Lower a streaming assignment whose target contains both ordinary
-    /// packed lvalues and one packed-element resizable container. The source
-    /// is kept as one packed value and the emitter consumes its materialized
-    /// stream in target order, so all source reads happen before any writes.
+    /// Declared bounds of a one-dimensional fixed `with` target, from model
+    /// array storage or the operand's image shape.
+    fn fixed_with_bounds(&self, path: &str, value: NodeId) -> Result<Option<(i32, i32)>, String> {
+        if let Some(array) = self.array_of(value) {
+            return Ok(match array.dims.as_slice() {
+                [bounds] => Some(*bounds),
+                _ => None,
+            });
+        }
+        if self.container_of(value).is_some() {
+            return Ok(None);
+        }
+        Ok(self
+            .fixed_image_shape(path, value)?
+            .map(|shape| shape.bounds))
+    }
+
+    /// Lower a streaming assignment whose target contains a packed-element
+    /// resizable container or a fixed array selected by a `with` range that
+    /// is runtime-valued or partly outside its bounds. The source is kept as
+    /// one packed value and the emitter consumes its materialized stream in
+    /// target order, so all source reads happen before any writes. A
+    /// nonblocking form (fixed targets only) evaluates every selector at
+    /// issue and queues each element write.
     pub(super) fn lower_stream_mixed_assignment(
         &mut self,
         path: &str,
@@ -167,27 +187,28 @@ impl<'a> Codegen<'a> {
         else {
             return Ok(None);
         };
+        let streams = streams.clone();
+        let (direction, slice_size) = (*direction, *slice_size);
         let mut needs_mixed = false;
-        for stream in streams {
+        let mut has_container = false;
+        for stream in &streams {
             if self.stream_target_contains_container(stream.value) {
                 needs_mixed = true;
+                has_container = true;
                 break;
             }
             if let Some(with_node) = stream.with_expr {
-                if self.array_of(stream.value).is_some()
-                    && self
-                        .static_stream_selector_indices(path, with_node)?
-                        .is_none()
-                {
-                    needs_mixed = true;
-                    break;
+                if let Some(bounds) = self.fixed_with_bounds(path, stream.value)? {
+                    if !self.static_with_in_bounds(path, with_node, bounds)? {
+                        needs_mixed = true;
+                    }
                 }
             }
         }
         if !needs_mixed {
             return Ok(None);
         }
-        if !blocking {
+        if !blocking && has_container {
             return Err(format!(
                 "nonblocking assignment to a streaming container target in `{path}` is not supported"
             ));
@@ -198,19 +219,13 @@ impl<'a> Codegen<'a> {
             ));
         }
 
-        let streams = streams.clone();
+        let reversed_fixed = direction == DbStreamingDirection::RightToLeft && !has_container;
         let mut targets = Vec::new();
+        // Lvalue nodes of the targets already unpacked, for the selector
+        // dependence check below.
+        let mut earlier = Vec::new();
         let mut container_count = 0usize;
         for stream in streams {
-            if stream.with_expr.is_some()
-                && self.array_of(stream.value).is_none()
-                && self.container_of(stream.value).is_none()
-            {
-                return Err(format!(
-                    "streaming `with` selector requires a packed-element array target in `{path}`"
-                ));
-            }
-
             // Slang normally stores streaming operands directly in `streams`,
             // but an explicit nested concatenation is still legal. Flatten it
             // while retaining the language order used by normal assignment.
@@ -239,28 +254,51 @@ impl<'a> Codegen<'a> {
                 }
 
                 if let Some(with_node) = stream.with_expr {
-                    if let Some(array) = self.array_of(value).cloned() {
-                        if array.real {
-                            return Err(format!(
-                                "real array streaming assignment target is not supported in `{path}`"
-                            ));
-                        }
-                        if self
-                            .static_stream_selector_indices(path, with_node)?
-                            .is_none()
-                        {
-                            if array.dims.len() != 1 {
+                    if let Some(bounds) = self.fixed_with_bounds(path, value)? {
+                        if !self.static_with_in_bounds(path, with_node, bounds)? {
+                            // SV 11.4.14.4: a later selector observes values
+                            // unpacked to its left. A queued unpack has not
+                            // published them, and a `<<` unpack must size its
+                            // consumed source before reordering it, so either
+                            // form rejects that dependence.
+                            if (!blocking || reversed_fixed)
+                                && self.reads_overlap_lvalue_writes(path, with_node, &earlier)?
+                            {
+                                let form = if blocking {
+                                    "right-to-left"
+                                } else {
+                                    "nonblocking"
+                                };
                                 return Err(format!(
-                                    "runtime `with` selector on a multidimensional fixed streaming target is not supported in `{path}`"
+                                    "{form} streaming `with` selector reads a target unpacked earlier by the same assignment in `{path}`"
                                 ));
                             }
                             let selector = self.lower_stream_selector(path, with_node)?;
-                            targets.push(IrStreamTarget::FixedSelector {
-                                array: array.ir,
-                                selector,
-                            });
+                            if let Some(array) = self.array_of(value).cloned() {
+                                if array.real {
+                                    return Err(format!(
+                                        "real array streaming assignment target is not supported in `{path}`"
+                                    ));
+                                }
+                                targets.push(IrStreamTarget::FixedSelector {
+                                    array: array.ir,
+                                    selector,
+                                });
+                            } else {
+                                let (target, shape) = self.fixed_image_target(path, value)?;
+                                targets.push(IrStreamTarget::FixedImageSelector {
+                                    target: Box::new(target),
+                                    bounds: shape.bounds,
+                                    element_width: shape.element_width,
+                                    two_state: shape.two_state,
+                                    selector,
+                                });
+                            }
+                            earlier.push(value);
                             continue;
                         }
+                    } else if self.array_of(value).is_some() {
+                        return Err(Self::multidimensional_with_error(path));
                     }
                 }
 
@@ -276,6 +314,7 @@ impl<'a> Codegen<'a> {
                         })?;
                         targets.push(IrStreamTarget::Packed { lhs: part, width });
                     }
+                    earlier.push(value);
                     continue;
                 }
 
@@ -310,6 +349,7 @@ impl<'a> Codegen<'a> {
                         container: container.ir,
                         selector,
                     });
+                    earlier.push(value);
                     continue;
                 }
 
@@ -320,7 +360,7 @@ impl<'a> Codegen<'a> {
                 }
                 if stream.with_expr.is_some() {
                     return Err(format!(
-                        "streaming `with` selector requires a packed-element array target in `{path}`"
+                        "streaming `with` selector requires a one-dimensional unpacked array target in `{path}`"
                     ));
                 }
                 if matches!(self.kind(value), NodeKind::Expr(ExprKind::Streaming { .. })) {
@@ -334,6 +374,7 @@ impl<'a> Codegen<'a> {
                     format!("streaming assignment target must be a packed lvalue in `{path}`")
                 })?;
                 targets.push(IrStreamTarget::Packed { lhs: part, width });
+                earlier.push(value);
             }
         }
         if targets.is_empty() {
@@ -346,10 +387,10 @@ impl<'a> Codegen<'a> {
                 "real source is not legal for a streaming assignment in `{path}`"
             ));
         }
-        let slice = if *slice_size == 0 {
+        let slice = if slice_size == 0 {
             1
         } else {
-            u32::try_from(*slice_size)
+            u32::try_from(slice_size)
                 .map_err(|_| format!("streaming slice size is too large in `{path}`"))?
         };
         Ok(Some(IrStmt::StreamAssign {
@@ -360,6 +401,7 @@ impl<'a> Codegen<'a> {
                 DbStreamingDirection::RightToLeft => IrStreamDirection::RightToLeft,
             },
             targets,
+            nba: !blocking,
         }))
     }
 

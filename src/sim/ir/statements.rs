@@ -282,12 +282,15 @@ pub enum IrStmt {
     Container(IrContainerStmt),
     /// A streaming assignment with one or more packed lvalues and at most one
     /// resizable packed-element target. The source is materialized before any
-    /// destination writes, preserving overlap semantics.
+    /// destination writes, preserving overlap semantics. A nonblocking form
+    /// evaluates the source and every selector at issue and queues each
+    /// fixed destination write; it never has a resizable target.
     StreamAssign {
         source: IrExpr,
         slice: u32,
         direction: IrStreamDirection,
         targets: Vec<IrStreamTarget>,
+        nba: bool,
     },
     Object(IrObjectStmt),
     /// A system plusarg query used in statement position. The expression is

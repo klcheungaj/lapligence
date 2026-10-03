@@ -350,6 +350,20 @@ impl Frame<'_, '_> {
             IrExprKind::FixedStream { array, selector } => {
                 self.fixed_stream_source(*array, selector, expr)?
             }
+            IrExprKind::FixedImageStream {
+                image,
+                bounds,
+                element_width,
+                fallback,
+                selector,
+            } => self.fixed_image_stream_source(
+                image,
+                *bounds,
+                *element_width,
+                fallback,
+                selector,
+                expr,
+            )?,
             IrExprKind::Mutation(mutation) => self.mutation(mutation, expr)?,
             IrExprKind::Container(operation) => self.container_expression(operation, expr)?,
             IrExprKind::ObjectQuery(query) => self.object_query(query, expr)?,

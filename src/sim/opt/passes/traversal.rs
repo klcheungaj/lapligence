@@ -150,6 +150,16 @@ fn walk_expr_mut(e: &mut IrExpr, f: &mut impl FnMut(&mut IrExpr)) {
         }
         IrExprKind::Stream { value, .. } => walk_expr_mut(value, f),
         IrExprKind::FixedStream { selector, .. } => walk_stream_selector_mut(selector, f),
+        IrExprKind::FixedImageStream {
+            image,
+            fallback,
+            selector,
+            ..
+        } => {
+            walk_expr_mut(image, f);
+            walk_expr_mut(fallback, f);
+            walk_stream_selector_mut(selector, f);
+        }
         IrExprKind::Inside { value, items } => {
             walk_expr_mut(value, f);
             for item in items {
@@ -369,6 +379,12 @@ fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
                         }
                     }
                     IrStreamTarget::FixedSelector { selector, .. } => {
+                        walk_stream_selector_mut(selector, f);
+                    }
+                    IrStreamTarget::FixedImageSelector {
+                        target, selector, ..
+                    } => {
+                        walk_lhs_mut(target, f);
                         walk_stream_selector_mut(selector, f);
                     }
                 }

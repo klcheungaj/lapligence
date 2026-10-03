@@ -123,6 +123,13 @@ destruction; descriptor ports also bound generated model size. Negatives cover
 assignability, ref shape, variable inout, runtime ref/net/inout selects and
 output-target writer conflicts.
 
+RTL-015's bit-stream and streaming fixtures use
+`-E 'binary(sim_feature_completion) & test(rtl_015::)'`. Positive fixtures run in
+both optimizer modes on both backends (set `LLG_TEST_GMP_ROOT` for the GMP lane),
+most also after Db destruction; expectations are independent bit-string
+derivations. `target_bounds` prints its results to stderr, compared exactly with
+the run-time bounds reports.
+
 RTL-016's tagged-union, pattern and Q03 fixtures use
 `-E 'binary(sim_feature_completion) & test(rtl_016::)'`. Positive fixtures and
 the run-time error fixtures run in both optimizer modes on both backends (set

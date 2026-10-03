@@ -145,7 +145,8 @@ impl Frame<'_, '_> {
                 slice,
                 direction,
                 targets,
-            } => self.stream_assignment(source, *slice, *direction, targets)?,
+                nba,
+            } => self.stream_assignment(source, *slice, *direction, targets, *nba)?,
             IrStmt::Object(operation) => self.object_statement(operation)?,
             IrStmt::DeclString { name, init } => {
                 let binding = self.native_local(name, super::native::NativeKind::String);

@@ -1,0 +1,20 @@
+asc_plus 1213140000000000
+asc_minus 1112000000000000
+asc_range 1314150000000000
+asc_index 1300000000000000
+desc_plus 2423220000000000
+desc_minus 2322210000000000
+rl4 4131223200000000
+rl3 6812000000000000
+asc_past 0001010000010101xxxxxxxxxxxxxxxx
+two_past a2a3000000000000
+mix_past 00010010001101000000xxxx
+once 1112000000000000 1
+tgt_lr a1 00 b2 c3 00
+tgt_desc 25 24 d1 d2 d3 20
+tgt_dep 3 ab cd ef 00
+tgt_rl4 65 00 00 43 21
+tgt_left f0 00 fe ca 21
+big_src xxxxbeefcafexxxx
+big_past xxxxxxxxxxxxxxxx
+big_tgt xxxx 0123 abcd

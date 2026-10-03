@@ -2285,6 +2285,20 @@ struct EmitCtx<'c, 'a> {
     in_final: bool,
 }
 
+/// Shape of an image-represented fixed array `with` operand.
+struct FixedImageShape {
+    bounds: (i32, i32),
+    element_width: u32,
+    /// Element state domain; meaningful when `uniform`.
+    two_state: bool,
+    /// The element has one state domain, so a packed element write applies
+    /// the right conversion. Unpacked aggregate elements with mixed domains
+    /// are not uniform.
+    uniform: bool,
+    /// Element default-uninitialized value for out-of-bounds source indices.
+    fallback: IrConst,
+}
+
 /// Lowered LHS of an assignment.
 #[derive(Clone)]
 enum Lhs {

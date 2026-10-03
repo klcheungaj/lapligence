@@ -258,6 +258,34 @@ static int fixed_compare_leaf(const sv4_t* left, const sv4_t* right, int case_eq
     return state;
 }
 
+/* Runtime `with` source over descriptor storage: reads each selected cell
+ * through `peek`, so untouched cells are not materialized by the stream. */
+sv4_t llg_fixed_array_stream_source(const llg_fixed_array_t* array,
+                                    int64_t declaration_left, int64_t declaration_right,
+                                    uint32_t element_width, sv4_t fallback,
+                                    int selector_kind, sv4_t first, sv4_t second) {
+    int64_t left;
+    int64_t right;
+    size_t count;
+    llg_fixed_stream_bounds(selector_kind, first, second, declaration_left,
+                            declaration_right, &left, &right, &count);
+    uint32_t width = count ? llg_fixed_stream_width(selector_kind, first, second, element_width) : 0;
+    if (!width) {
+        sv4_t empty = SV4_EMPTY;
+        return empty;
+    }
+    sv4_t packed = sv4_zero(width, 0);
+    uint32_t cursor = width;
+    for (size_t i = 0; i < count; ++i) {
+        int64_t offset = llg_fixed_stream_storage_offset(
+            declaration_left, declaration_right, llg_fixed_stream_index_at(left, right, i));
+        sv4_part_select_set(&packed, (int64_t)cursor - 1, (int64_t)(cursor - element_width),
+                            offset < 0 ? fallback : *llg_fixed_array_peek(array, (uint64_t)offset));
+        cursor -= element_width;
+    }
+    return packed;
+}
+
 sv4_t llg_fixed_array_compare(const llg_fixed_array_t* left,
                              const llg_fixed_array_t* right, int case_eq, int negate) {
     if (left->total != right->total) fixed_bad_state("fixed comparison shape mismatch");

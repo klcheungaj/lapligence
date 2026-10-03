@@ -1,0 +1,36 @@
+slice3 b1b7
+slice5 2ddb
+slice7 cbb6
+byte 44332211
+shortint 33441122
+type7 cbb6
+d_lr a1b2c3d4
+d_rl8 d4c3b2a1
+d_rl3 8b996532
+u_rl12 56723401
+d_set f7 be 54 d1
+u_set d1 54 be f7
+o_lr a9e52da9
+o_rl4 9ad25e9a
+o_set 1e f7 9d 28 9
+cast_n f c 8
+cast_back fedcba98
+cast_o 04 8d 15 4e 1
+cast_t 5 5 0 7 4
+mixed_lr 6 00f fee42
+mixed_rl5 5 01c f7c78
+wide_u d154bef70000
+wide_rl4 c1a000000000
+left_lr de
+left_rl8 bb aa
+left_rl4 21
+two 1000000110000011100000011000001100000000
+four 00111x0zzx0110xz00111x0zzx0110xz
+swap 34 12
+rev 04 03 02 01
+inner 04 02 03 01
+arg bef7d154
+out_arg ca fe f00d
+port 55bf
+port_lvalue cd ab
+port_with xx ab cd xx

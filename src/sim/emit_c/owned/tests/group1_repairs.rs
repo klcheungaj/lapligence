@@ -177,6 +177,7 @@ fn fixed_stream_index_owners_use_registered_slots_and_are_destroyed() {
             1,
             IrStreamDirection::LeftToRight,
             &targets,
+            false,
         )
         .unwrap();
     let source = frame.body();
@@ -243,6 +244,7 @@ fn stream_checks_each_component_before_publication_using_the_actual_source_width
             1,
             IrStreamDirection::LeftToRight,
             &targets,
+            false,
         )
         .unwrap();
     let source = frame.body();

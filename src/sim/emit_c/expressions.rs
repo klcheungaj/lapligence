@@ -441,7 +441,7 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
                 fill: None,
             }
         }
-        IrExprKind::FixedStream { .. } => {
+        IrExprKind::FixedStream { .. } | IrExprKind::FixedImageStream { .. } => {
             return Err(
                 "fixed-array runtime streaming sources require whole-model emission".to_owned(),
             );

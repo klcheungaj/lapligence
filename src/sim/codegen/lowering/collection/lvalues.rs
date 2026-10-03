@@ -131,7 +131,12 @@ impl<'a> Codegen<'a> {
         with_node: Option<NodeId>,
     ) -> Result<Option<Vec<Lhs>>, String> {
         let Some(array) = self.array_of(value).cloned() else {
-            return Ok(None);
+            return match with_node {
+                Some(with_node) if self.container_of(value).is_none() => {
+                    self.fixed_image_lhs_parts(path, value, with_node).map(Some)
+                }
+                _ => Ok(None),
+            };
         };
         if array.real {
             return Err(format!(
@@ -143,13 +148,12 @@ impl<'a> Codegen<'a> {
         }
         let selected = match with_node {
             Some(with_node) => {
+                if !self.static_with_in_bounds(path, with_node, array.dims[0])? {
+                    return Err(Self::fixed_with_target_error(path));
+                }
                 let indices = self
                     .static_stream_selector_indices(path, with_node)?
-                    .ok_or_else(|| {
-                        format!(
-                            "runtime `with` selector on a fixed streaming target is not supported in `{path}`"
-                        )
-                    })?;
+                    .unwrap_or_default();
                 Self::fixed_stream_storage_order(&array, &indices)
             }
             None => {
@@ -191,6 +195,82 @@ impl<'a> Codegen<'a> {
             return Err(format!("empty fixed streaming target in `{path}`"));
         }
         Ok(Some(parts))
+    }
+
+    /// A runtime or partly out-of-bounds `with` range on a fixed target is
+    /// only represented by a direct streaming assignment statement, which
+    /// checks the bounds at runtime (SV 11.4.14.4).
+    pub(in super::super) fn fixed_with_target_error(path: &str) -> String {
+        format!(
+            "streaming `with` target whose range is runtime-valued or outside the array bounds requires a direct streaming assignment in `{path}`"
+        )
+    }
+
+    /// The whole packed lvalue of an image-represented fixed array target
+    /// and its shape. Elements must share one state domain so that a packed
+    /// element write applies the declared conversion.
+    pub(in super::super) fn fixed_image_target(
+        &mut self,
+        path: &str,
+        value: NodeId,
+    ) -> Result<(IrLhs, FixedImageShape), String> {
+        let shape = self.fixed_image_shape(path, value)?.ok_or_else(|| {
+            format!(
+                "streaming `with` selector requires a one-dimensional unpacked array target in `{path}`"
+            )
+        })?;
+        if !shape.uniform {
+            return Err(format!(
+                "streaming `with` target elements mixing two-state and four-state members are not supported in `{path}`"
+            ));
+        }
+        let whole = self.analyze_lhs(path, value)?;
+        let whole = self.lhs_to_ir(whole)?;
+        let count = u64::from(shape.bounds.0.abs_diff(shape.bounds.1)) + 1;
+        if packed_lhs_width(&self.model, &whole).map(u64::from)
+            != Some(count * u64::from(shape.element_width))
+        {
+            return Err(format!(
+                "streaming `with` target has no packed lvalue of its declared shape in `{path}`"
+            ));
+        }
+        Ok((whole, shape))
+    }
+
+    /// Unpack a constant in-bounds `with` range of an image-represented
+    /// fixed array into one packed element target per selected index, in
+    /// declaration (storage) order.
+    fn fixed_image_lhs_parts(
+        &mut self,
+        path: &str,
+        value: NodeId,
+        with_node: NodeId,
+    ) -> Result<Vec<Lhs>, String> {
+        let (whole, shape) = self.fixed_image_target(path, value)?;
+        if !self.static_with_in_bounds(path, with_node, shape.bounds)? {
+            return Err(Self::fixed_with_target_error(path));
+        }
+        let mut indices = self
+            .static_stream_selector_indices(path, with_node)?
+            .unwrap_or_default();
+        let (left, right) = shape.bounds;
+        if left > right {
+            indices.reverse();
+        }
+        let count = i128::from(left.abs_diff(right)) + 1;
+        let width = i128::from(shape.element_width);
+        Ok(indices
+            .into_iter()
+            .map(|index| {
+                let offset = (index - i128::from(left)).abs();
+                Lhs::Canonical(IrLhs::fixed_image_element(
+                    &whole,
+                    lhs_integer_expr((count - 1 - offset) * width),
+                    shape.element_width,
+                    shape.two_state,
+                ))
+            })
+            .collect())
     }
 
     pub(in super::super) fn analyze_lhs(&mut self, path: &str, lhs: NodeId) -> Result<Lhs, String> {
