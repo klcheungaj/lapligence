@@ -73,45 +73,6 @@ llg --gen-only --top tb --edition 2009 --out-dir <dir> \
 grep -c '^static llg_net_t g_array_net_' <dir>/sim/*/model.c
 ```
 
-## Wide-value concatenation and part-selects copy one bit at a time
-
-**Status:** open; deferred.
-
-### Symptom
-
-Simulation time of designs that concatenate or part-select wide packed values
-grows with the number of bits copied, not with the number of 64-bit words. In
-the `wide-values-default` configuration of
-[`perf/scripts/corpus.sh`](../perf/scripts/corpus.sh) (128 tasks on
-4,096-bit values), `sv4_lsb_bit` and `sv4_lsb_bit_set` take about 79% of the
-simulation's CPU samples.
-
-### Cause
-
-[`sv4_concat`](../src/sim/rt/value/operations.c) and the packed selection-plan
-read, slice and write paths in
-[`value/selection_plan.c`](../src/sim/rt/value/selection_plan.c) copy each bit
-with `sv4_lsb_bit` and `sv4_lsb_bit_set`. That is two calls and a limb lookup
-per bit for value, X and Z planes, where a contiguous range could move up to
-64 bits per step.
-
-### Intended direction
-
-Copy contiguous ranges with word-level shift-and-mask operations over the
-value, X and Z limbs. Keep a bit loop only for reversed slices. The
-four-state value suites and the `wide-values` corpus stdout hashes are the
-oracles; add a differential test across widths, offsets and limb boundaries.
-
-### Reproduce
-
-```sh
-perf/scripts/corpus.sh --sim-bin <llg> --size standard --mode default --runs 1 \
-    --scratch-dir <scratch> --output-dir <out>
-```
-
-Profile `wide-values-default` with the sampler described in
-[`perf/README.md`](../perf/README.md).
-
 ## High frontend memory use during Slang wrapper capture and import
 
 **Status:** open; memory reduction deferred.

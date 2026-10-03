@@ -4,6 +4,9 @@ Generated models compile this runtime separately from Rust. Exact-width values u
 unique ownership (ABI 4); registered scopes and retained destinations support
 suspension, cancellation and queued publication. See
 [value ownership](value/ownership.md) for the allocation contract.
+Contiguous packed copies use masked limb transfers across value/X/Z planes;
+selection clipping and alias snapshots preserve partial-range and overlap behavior.
+Reversed packed ranges retain bit-wise traversal.
 Proven non-escaping locals register caller-owned scope nodes and cells in
 coroutine frames or frame-less functions' C scopes. Escaping and unproven cells
 keep heap owners. [Retainer and lifetime rules](AGENTS.md#frame-resident-cells)

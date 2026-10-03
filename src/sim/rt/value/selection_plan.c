@@ -105,9 +105,7 @@ sv4_t sv4_select_plan_read(sv4_t source, const sv4_select_plan_t* plan) {
         abort();
     }
     sv4_t result = sv4_x(plan->width, 0);
-    for (uint32_t i = 0; i < plan->count; ++i)
-        sv4_lsb_bit_set(&result, (int)(plan->value_lsb + i),
-                       sv4_lsb_bit(source, (int)(plan->storage_lsb + i)));
+    sv4_copy_bits(&result, plan->value_lsb, source, plan->storage_lsb, plan->count);
     return result;
 }
 
@@ -119,6 +117,10 @@ sv4_t sv4_select_plan_slice(sv4_t source, const sv4_select_plan_t* plan,
         abort();
     }
     sv4_t result = sv4_zero(plan->count, 0);
+    if (!reverse) {
+        sv4_copy_bits(&result, 0, source, plan->value_lsb, plan->count);
+        return result;
+    }
     for (uint32_t i = 0; i < plan->count; ++i) {
         uint32_t logical = plan->value_lsb + i;
         uint32_t source_bit = reverse ? plan->width - 1 - logical : logical;
@@ -139,8 +141,6 @@ void sv4_select_plan_set(sv4_t* destination, const sv4_select_plan_t* plan, sv4_
         snapshot = sv4_clone(&source);
         source = snapshot; // Borrow the snapshot until the update completes.
     }
-    for (uint32_t i = 0; i < plan->count; ++i)
-        sv4_lsb_bit_set(destination, (int)(plan->storage_lsb + i),
-                       sv4_lsb_bit(source, (int)(plan->value_lsb + i)));
+    sv4_copy_bits(destination, plan->storage_lsb, source, plan->value_lsb, plan->count);
     sv4_destroy(&snapshot);
 }
