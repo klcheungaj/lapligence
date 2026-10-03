@@ -12,6 +12,9 @@ alongside independent Python integer oracles and exhaustive small truth tables.
 
 The compact implementation lives in `src/sim/rt/value_gmp/`. G1 supplies storage,
 the V01 neutral bridge, core arithmetic/logic/comparison/mux, and V05/S1. It is
+extended by V05 S4/S5 selections, reference reads, streams, concatenation,
+replication and array-conditionals. Those families also provide the owner-free
+reference/selection types through standalone aliases. The backend is
 built standalone by `tests/runtime_value_storage/compact_value.cmake` with
 portable kernels and optionally GMP. It is not embedded in generated models.
 V07 owns selection in `llg_value.h`, source packaging and model integration;

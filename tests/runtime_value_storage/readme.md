@@ -212,3 +212,39 @@ Benchmarks emit seven-sample medians and ranges for fresh results and initialize
 destination reuse, including X/Z operands and 65-bit multiplication. Copy reuse
 uses `sv4_copy`; arithmetic reuse uses the emitter's replace-of-fresh-result
 pattern. These are indicative microbenchmarks, with no whole-model claim.
+
+### Compact selections and assembly (V05 S4/S5)
+
+`compact_selection.cmake` adds isolated targets for captured selection plans,
+reference reads, concatenation, replication, streams and array conditional merge.
+The probe exhausts all <=4-bit source state patterns, all four-state pairs of
+4-bit array payloads, small signed/unsigned bases, and <=3-bit concatenation
+pairs. Independent per-position/element oracles accompany live legacy comparison
+over the G1 width list through the exclusive limit minus one. Tests include
+intermediate clipping, invalid prefixes, reversed ranges, empty intervals,
+overlapping writes, independent owners surviving source mutation/destruction,
+X/Z/default element semantics and unsigned result shape. Native source graphs
+cover every reference kind and both queue callback routes.
+
+Use the preceding compact configure command, then:
+
+```sh
+cmake --build /build/llg-compact-gcc --parallel 6 --target \
+  compact_portable_selection_probe compact_gmp_selection_probe \
+  compact_portable_selection_allocations compact_gmp_selection_allocations \
+  compact_portable_selection_facade compact_gmp_selection_facade \
+  compact_portable_selection_benchmark compact_gmp_selection_benchmark
+ctest --test-dir /build/llg-compact-gcc \
+  -R '^compact_(portable|gmp)_(selections|selection_)' --output-on-failure --parallel 6
+/build/llg-compact-gcc/compact_portable_selection_benchmark
+/build/llg-compact-gcc/compact_gmp_selection_benchmark
+```
+
+Rejection tests exercise overflow/limit sizes, zero streaming slice, invalid plan
+shapes/storage/source widths and invalid array shape. ELF allocation counters
+check no B promotion for known selected subranges of unknown sources, one
+promotion on X/Z writes, automatic B removal and allocation-free small paths.
+The standalone public-name probe exercises reference/selection aliases.
+Benchmarks report seven-sample medians/ranges at 1, 64, 65, 256 and 4096 bits,
+known and X/Z, with fresh results; write rows include cloning the fresh target.
+These remain component measurements, without generated-model or HDL claims.

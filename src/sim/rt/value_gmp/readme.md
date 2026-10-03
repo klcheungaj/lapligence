@@ -2,7 +2,9 @@
 
 This standalone C11 backend reserves value ABI 5 and implements storage/ownership,
 core arithmetic, bitwise/logical operators, equality/relations, integral mux,
-and div/mod/pow/clog2. Production models still use the legacy backend.
+and div/mod/pow/clog2. V05 S4/S5 adds selections/captured plans, packed reference
+reads, concatenation, replication, streaming and array-conditional merge.
+Production models still use the legacy backend.
 
 `backend.h` supplies inline operations for widths through 64 and a static
 `LLG_GMP_SV4_LITERAL(bits,x,z,width,sign)` initializer for those widths. Define
@@ -33,9 +35,21 @@ kernels against live legacy and independent integer/state oracles. Generated
 selection, packaging, frame layouts, caches and containing-owner integration
 remain later work. Missing operations have no legacy conversion fallback.
 
-Remaining public `sv4_*` operations at this revision:
+S4/S5 uses `selections.c`, `references.c` and `assembly.c`, with shared private
+word-range copies in `ranges.h` and inline <=64-bit paths in
+`selection_inline.h`. Captured plans retain intermediate clipping and source
+coordinates; reference graphs borrow stable cells and callback/graph storage.
+Every result owns independently. Selected aliases snapshot before writes; known
+selected intervals do not promote B even if another source interval contains X/Z.
+Only reversed bit order uses bit loops. `sv4_stream`/`sv4_unstream` preserve width;
+assignment padding/truncation remains the caller's conversion before/after them.
+Array conditionals compare each immediate element with logical equality and use
+the supplied default for differing or X/Z-containing elements (SV2009 11.4.11).
+
+Historical G1 missing-operation inventory (S4/S5 names below are now implemented):
 
 `sv4_array_conditional_merge`, `sv4_ashl`, `sv4_ashr`, `sv4_bit_select`, `sv4_bit_select_set`, `sv4_bitstoreal`, `sv4_bitstoshortreal`, `sv4_casex_eq`, `sv4_casez_eq`, `sv4_checked_width`, `sv4_concat`, `sv4_countones`, `sv4_delay_ticks`, `sv4_enum_navigate`, `sv4_fits_i64`, `sv4_format`, `sv4_from_real`, `sv4_idx_part_select`, `sv4_idx_part_select_set`, `sv4_idx_part_select_set_value`, `sv4_idx_part_select_value`, `sv4_inside_range`, `sv4_logequiv`, `sv4_logimpl`, `sv4_onehot`, `sv4_part_select`, `sv4_part_select_set`, `sv4_real_delay_ticks`, `sv4_realtobits`, `sv4_reduce_and`, `sv4_reduce_nand`, `sv4_reduce_nor`, `sv4_reduce_or`, `sv4_reduce_xnor`, `sv4_reduce_xor`, `sv4_repeat`, `sv4_repeat_count`, `sv4_resolve`, `sv4_resolve_strengths`, `sv4_resolve_strengths_range`, `sv4_rtoi`, `sv4_select_plan_bit`, `sv4_select_plan_indexed`, `sv4_select_plan_init`, `sv4_select_plan_part`, `sv4_select_plan_read`, `sv4_select_plan_set`, `sv4_select_plan_slice`, `sv4_select_plan_step`, `sv4_shl`, `sv4_shortrealtobits`, `sv4_shr`, `sv4_stream`, `sv4_to_dec_string`, `sv4_to_i64`, `sv4_to_index`, `sv4_to_index_i64`, `sv4_to_real`, `sv4_udp_eval`, `sv4_unstream`, `sv4_wild_eq`, `sv4_wild_neq`.
 
-The packed-dependent `llg_ref_view_valid` and `llg_ref_read`, the shared scalar
-`llg_real_to_bool`, and owner-free reference/selection types also await V05/V07.
+S4 also supplies prefixed `llg_ref_view_valid`/`llg_ref_read` and all owner-free
+reference/selection types through standalone public-name aliases. The shared
+scalar `llg_real_to_bool` and production selection still await their V05/V07 owners.
