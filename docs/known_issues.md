@@ -169,7 +169,7 @@ the measured frontend peak, rather than the exported byte count.
 
 ### Reproduce
 
-After building the export-size fix, run:
+Run:
 
 ```sh
 /usr/bin/time -v llg --gen-only --max-export-mib 4096 \
@@ -181,3 +181,87 @@ After building the export-size fix, run:
 Read maximum resident set size from `time`; lower the process count to 20,000
 for the smaller comparison. The export budget counts captured data, not the
 bytes of generated `model.c`.
+
+## Frontend and C generation time grow superlinearly with design size
+
+**Status:** open; deferred.
+
+### Symptom
+
+Doubling the number of processes more than doubles `llg --gen-only` time. In
+Linux x86-64 release measurements of `many_processes_registers_config` with
+two clock edges (shared host, medians):
+
+| Register processes | 5,000 | 10,000 | 20,000 | 40,000 |
+| --- | --- | --- | --- | --- |
+| Total generation | 5.7 s | 11.7 s | 26.4 s | 69.4 s |
+| Frontend compile and copy | 0.97 s | 2.01 s | 5.66 s | 19.16 s |
+| Lowering and C generation | 3.30 s | 6.38 s | 13.41 s | 29.18 s |
+| of which C rendering | 1.53 s | 3.12 s | 6.80 s | 14.79 s |
+
+Per doubling, total time grows 2.0×, 2.3× and 2.6×. The frontend is the
+fastest-growing stage (3.4× from 20k to 40k).
+
+### Cause
+
+Not yet isolated. The repeated full scans previously found in lowering
+(alias bit expansion, signal-global and structural-driver lookups, spawn
+labels) and in the wrapper's edge lookups have been removed, and the lowering
+combinational pass is now linear. The remaining growth sits in Slang
+compilation/elaboration, wrapper capture and the owned copy, and in C
+rendering; it may also include allocator and cache effects at these heap
+sizes (see the frontend memory entry above).
+
+### Intended direction
+
+Profile each stage at 20k and 40k with release binaries, separating Slang
+elaboration from wrapper capture and the Rust copy, and look for remaining
+per-item work that scales with design size. Generated `model.c` must stay
+byte-identical; the export-size scaling tests in
+`src/sim/codegen/lowering/collection/nets/tests.rs` are the pattern for
+work-count regression tests.
+
+### Reproduce
+
+Use the command in the frontend memory entry with `LLG_CORPUS_N` set to
+5,000, 10,000, 20,000 and 40,000, and compare wall times.
+
+## Debug builds do not poison dead frame overlays or frame payloads
+
+**Status:** open; optional follow-up.
+
+### Symptom
+
+`LLG_CO_DEBUG` builds detect corrupted frame liveness, re-entry of live
+frames, invalid dispatch states and debug/release link mismatches. They do
+not detect a read of storage whose lifetime has ended:
+
+- a block-scoped variable read after its block exits, from a frame overlay
+  that a sibling block now reuses;
+- uninitialized payload of an embedded or arena-allocated callee frame.
+
+Such a read returns stale data instead of aborting. Fresh process and fork
+root frames are filled with `0xA5`, which makes uninitialized root reads
+visible in output but is not a detector.
+
+### Cause
+
+The design's debug poisoning of overlay blocks at block exit, and of embedded
+and arena frame payloads at allocation, was not implemented. Emitter and
+runtime tests cover overlay placement and frame lifetime directly, so no known
+defect depends on it.
+
+### Intended direction
+
+Under `LLG_CO_DEBUG` only, fill an overlay block's bytes at block exit and
+embedded/arena payloads at acquisition with a poison pattern. Add native
+probes that read poisoned storage, and run the `LLG_CFLAGS=-DLLG_CO_DEBUG`
+suite and sanitizers. Release output must not change.
+
+### Reproduce
+
+No failing design is known. Root frames are poisoned under `LLG_CO_DEBUG` in
+[`process_waits.c`](../src/sim/rt/scheduler/process_waits.c) and
+[`forks.c`](../src/sim/rt/scheduler/forks.c); block exits and embedded/arena
+frame acquisition in [`llg_co.h`](../src/sim/rt/llg_co.h) have no
+equivalent.
