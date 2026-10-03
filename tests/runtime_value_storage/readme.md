@@ -84,9 +84,12 @@ value rejection modes, `packed_selection_nba`, `packed_selection_input`,
 `packed_formal_owner_contracts`, both fixed-fold/predicate modes and memory_image.
 Do not silently omit tests or count native cases as accepted HDL features.
 
-Fresh-root poisoning fills payload bytes with `0xA5`; it does not itself trap
-an arbitrary uninitialized payload read. Embedded/arena payloads and dead
-overlay blocks are not poisoned. Header liveness and dispatch checks catch the
+Debug poisoning fills fresh root and embedded/arena callee payloads and dead
+sibling overlays with `LLG_CO_POISON_BYTE` (`0xA5`); it does not itself trap an
+arbitrary uninitialized payload read. `coroutine_poison_probe.c` reads those
+bytes and checks that release macros preserve seeded storage and callee headers.
+Generated overlay exits drain owners before poisoning; flattened parent storage
+and retained heap owners remain live. Header liveness and dispatch checks catch the
 explicit corruptions above. The standalone anchor-loop bad-state handler prints
 the function/state; the scheduler's handler additionally prints an HDL backtrace.
 Chunk counters count system allocations and cache hits, not value/wait allocations

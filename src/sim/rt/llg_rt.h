@@ -993,6 +993,10 @@ void llg_monitor_set(int on);
 // process function obtains `self` with LLG_CO_OWNER(ch, llg_proc_t); the
 // runtime addresses the root as LLG_CO_ROOT(&p->chain). Arena/recursive/large
 // callees use `ch->arena` through LLG_CO_ARENA_ENTER/LLG_CO_CALL_ARENA.
+// LLG_CO_DEBUG fills fresh root/callee payloads with LLG_CO_POISON_BYTE before
+// initialization. Generated sibling overlays are poisoned after lexical owner
+// cleanup; retained heap cells and live parent fields are preserved. Poison is
+// observable stale-byte data, not a read trap, and adds no release operations.
 llg_proc_t* llg_spawn(const llg_co_desc_t* desc, const char* name);
 // Spawn a non-program process directly into an explicit execution region.
 // Ordinary initial/always, continuous and link processes use this or

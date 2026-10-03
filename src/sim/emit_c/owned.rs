@@ -135,6 +135,7 @@ pub(super) struct Frame<'a, 'm> {
     formal_overrides: Vec<Vec<Binding>>,
     callback_signal_overrides: Vec<HashMap<usize, usize>>,
     marks: Vec<String>,
+    mark_blocks: Vec<usize>,
     labels: Vec<HashMap<String, bool>>,
     temp_roots: Vec<Vec<bool>>,
     return_address: Option<String>,
@@ -236,6 +237,7 @@ impl<'a, 'm> Frame<'a, 'm> {
             formal_overrides: Vec::new(),
             callback_signal_overrides: Vec::new(),
             marks: Vec::new(),
+            mark_blocks: Vec::new(),
             labels: Vec::new(),
             temp_roots: Vec::new(),
             return_address: None,
@@ -276,8 +278,13 @@ impl<'a, 'm> Frame<'a, 'm> {
                 self.resume_probe = false;
             }
         }
-        if self.layout.storage() == FrameStorage::CoFrame {
-            self.track_frame_blocks(text);
+        let exits = if self.layout.storage() == FrameStorage::CoFrame {
+            self.track_frame_blocks(text)
+        } else {
+            Vec::new()
+        };
+        for block in exits {
+            self.poison_block(block);
         }
         let rewritten = (self.layout.storage() == FrameStorage::CStack)
             .then(|| self.rewrite_frame_accesses(text));
@@ -337,7 +344,8 @@ impl<'a, 'm> Frame<'a, 'm> {
     /// compound-literal braces are balanced too, but do not create frame
     /// blocks. This single text path makes a missing block event an error
     /// rather than silently producing a layout that differs from the C body.
-    fn track_frame_blocks(&mut self, text: &str) {
+    fn track_frame_blocks(&mut self, text: &str) -> Vec<usize> {
+        let mut exits = Vec::new();
         let bytes = text.as_bytes();
         let mut index = 0;
         let mut segment_start = 0;
@@ -393,6 +401,7 @@ impl<'a, 'm> Frame<'a, 'm> {
                 b'}' => {
                     match self.brace_kinds.pop() {
                         Some(true) => {
+                            exits.push(self.layout.current_block());
                             self.cached_fields.close_block();
                             if let Err(error) = self.layout.end_block() {
                                 self.structural_error.get_or_insert(error);
@@ -410,6 +419,30 @@ impl<'a, 'm> Frame<'a, 'm> {
                 _ => {}
             }
             index += 1;
+        }
+        exits
+    }
+
+    fn poison_block(&mut self, block: usize) {
+        if self.layout.storage() == FrameStorage::CoFrame {
+            self.code
+                .push_str(&format!("/*__llg_poison_block_{block}__*/\n"));
+        }
+    }
+
+    fn poison_loop_exit(&mut self, condition: &str) {
+        if self.layout.storage() == FrameStorage::CoFrame {
+            let block = self.layout.current_block();
+            self.code
+                .push_str(&format!("/*__llg_poison_block_{block}__*/{condition}\n"));
+        }
+    }
+
+    fn poison_completed_frame(&mut self) {
+        if self.layout.storage() == FrameStorage::CoFrame {
+            self.line("#ifdef LLG_CO_DEBUG");
+            self.line("LLG_CO_DEBUG_POISON_FRAME(F, sizeof(*F));");
+            self.line("#endif");
         }
     }
 
@@ -973,6 +1006,33 @@ impl<'a, 'm> Frame<'a, 'm> {
                     .code
                     .replace(&format!("F->{original}"), &format!("F->{flattened}"));
             }
+            let overlays = self.layout.overlay_paths();
+            let mut poisoned = String::with_capacity(self.code.len());
+            for line in self.code.split_inclusive('\n') {
+                if let Some(block) = line.strip_prefix("/*__llg_poison_block_") {
+                    let (block, condition) = block
+                        .split_once("__*/")
+                        .ok_or_else(|| "invalid deferred overlay poison".to_owned())?;
+                    let block = block
+                        .parse::<usize>()
+                        .map_err(|_| "invalid deferred overlay poison block".to_owned())?;
+                    if let Some(path) = overlays.get(&block) {
+                        let operation = if condition.trim().is_empty() {
+                            format!("LLG_CO_DEBUG_POISON(&F->{path}, sizeof(F->{path}));")
+                        } else {
+                            format!(
+                                "LLG_CO_DEBUG_POISON_LOOP_EXIT({}, &F->{path}, sizeof(F->{path}));",
+                                condition.trim()
+                            )
+                        };
+                        poisoned
+                            .push_str(&format!("#ifdef LLG_CO_DEBUG\n    {operation}\n#endif\n"));
+                    }
+                } else {
+                    poisoned.push_str(line);
+                }
+            }
+            self.code = poisoned;
             let layout = &self.layout;
             self.cached_fields
                 .decide(&self.code, |name| layout.field_access(name).is_some());

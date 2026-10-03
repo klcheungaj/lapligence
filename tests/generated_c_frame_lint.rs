@@ -36,6 +36,9 @@ fn syntax_check(compiler: &str, model: &str, fixture: &Path, mode: &str) {
     if compiler == "gcc" {
         command.arg("-Werror=jump-misses-init");
     }
+    if mode.contains("debug") {
+        command.arg("-DLLG_CO_DEBUG");
+    }
     let mut child = command
         .args(["-fsyntax-only", "-"])
         .arg(format!("-I{}", root.join("src/sim/rt").display()))
@@ -193,4 +196,43 @@ fn fixture_sweep_4() {
 #[test]
 fn fixture_sweep_5() {
     run_shard(5);
+}
+
+#[test]
+fn debug_frame_overlay_fixtures() {
+    std::thread::Builder::new()
+        .name("debug-frame-overlays".to_owned())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(|| {
+            let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+            for fixture in [
+                "nested_control_flow",
+                "nested_timing_calls",
+                "copyback_once_cancel",
+                "deep_cancellation",
+            ] {
+                let path = root
+                    .join("tests/fixtures/sim/coroutine_semantics")
+                    .join(format!("{fixture}.sv"));
+                let compiled = compile::compile_checked(&CompileOpts {
+                    files: vec![path.to_string_lossy().into_owned()],
+                    ..Default::default()
+                })
+                .expect("compile overlay fixture");
+                let database = Db::from_slang(&compiled.snapshot).unwrap();
+                for options in [sim::opt::OptConfig::default(), sim::opt::OptConfig::none()] {
+                    let model =
+                        sim::codegen::generate_from_db_with_opts(&database, &options).unwrap();
+                    generated_c_lint::lint_generated_coroutine_c(&model.model_c).unwrap();
+                    for compiler in ["gcc", "clang"] {
+                        assert!(compiler_available(compiler), "missing {compiler}");
+                        syntax_check(compiler, &model.model_c, &path, "release");
+                        syntax_check(compiler, &model.model_c, &path, "debug");
+                    }
+                }
+            }
+        })
+        .unwrap()
+        .join()
+        .unwrap();
 }

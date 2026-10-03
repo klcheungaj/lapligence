@@ -1,0 +1,570 @@
+{
+  "scope": "Legacy sv4_* function-name inventory only; not all llg_* helpers, type declarations or language features",
+  "implemented": 37,
+  "total": 110,
+  "functions": [
+    {
+      "legacy_name": "sv4_add",
+      "status": "implemented",
+      "new_symbol": "gmp4_add"
+    },
+    {
+      "legacy_name": "sv4_and",
+      "status": "implemented",
+      "new_symbol": "gmp4_and"
+    },
+    {
+      "legacy_name": "sv4_array_conditional_merge",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_ashl",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_ashr",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_assign",
+      "status": "implemented",
+      "new_symbol": "gmp4_assign"
+    },
+    {
+      "legacy_name": "sv4_bit_select",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_bit_select_set",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_bitneg",
+      "status": "implemented",
+      "new_symbol": "gmp4_bitneg"
+    },
+    {
+      "legacy_name": "sv4_bitstoreal",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_bitstoshortreal",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_bytes",
+      "status": "implemented",
+      "new_symbol": "gmp4_bytes"
+    },
+    {
+      "legacy_name": "sv4_case_eq",
+      "status": "implemented",
+      "new_symbol": "gmp4_case_eq"
+    },
+    {
+      "legacy_name": "sv4_case_neq",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_casex_eq",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_casez_eq",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_cast",
+      "status": "implemented",
+      "new_symbol": "gmp4_cast"
+    },
+    {
+      "legacy_name": "sv4_checked_width",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_clog2",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_clone",
+      "status": "implemented",
+      "new_symbol": "gmp4_clone"
+    },
+    {
+      "legacy_name": "sv4_concat",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_copy",
+      "status": "implemented",
+      "new_symbol": "gmp4_copy"
+    },
+    {
+      "legacy_name": "sv4_countones",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_delay_ticks",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_destroy",
+      "status": "implemented",
+      "new_symbol": "gmp4_destroy"
+    },
+    {
+      "legacy_name": "sv4_destroy_array",
+      "status": "implemented",
+      "new_symbol": "gmp4_destroy_array"
+    },
+    {
+      "legacy_name": "sv4_div",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_enum_navigate",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_eq",
+      "status": "implemented",
+      "new_symbol": "gmp4_eq"
+    },
+    {
+      "legacy_name": "sv4_fill",
+      "status": "implemented",
+      "new_symbol": "gmp4_fill"
+    },
+    {
+      "legacy_name": "sv4_fits_i64",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_format",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_from_i64",
+      "status": "implemented",
+      "new_symbol": "gmp4_from_i64"
+    },
+    {
+      "legacy_name": "sv4_from_limbs",
+      "status": "implemented",
+      "new_symbol": "gmp4_from_limbs"
+    },
+    {
+      "legacy_name": "sv4_from_masks",
+      "status": "implemented",
+      "new_symbol": "gmp4_from_masks"
+    },
+    {
+      "legacy_name": "sv4_from_real",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_from_u64",
+      "status": "implemented",
+      "new_symbol": "gmp4_from_u64"
+    },
+    {
+      "legacy_name": "sv4_ge",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_gt",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_idx_part_select",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_idx_part_select_set",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_idx_part_select_set_value",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_idx_part_select_value",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_inside_range",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_is_unknown",
+      "status": "implemented",
+      "new_symbol": "gmp4_is_unknown"
+    },
+    {
+      "legacy_name": "sv4_le",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_logand",
+      "status": "implemented",
+      "new_symbol": "gmp4_logand"
+    },
+    {
+      "legacy_name": "sv4_logequiv",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_logimpl",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_lognot",
+      "status": "implemented",
+      "new_symbol": "gmp4_lognot"
+    },
+    {
+      "legacy_name": "sv4_logor",
+      "status": "implemented",
+      "new_symbol": "gmp4_logor"
+    },
+    {
+      "legacy_name": "sv4_lt",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_mod",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_move",
+      "status": "implemented",
+      "new_symbol": "gmp4_move"
+    },
+    {
+      "legacy_name": "sv4_mul",
+      "status": "implemented",
+      "new_symbol": "gmp4_mul"
+    },
+    {
+      "legacy_name": "sv4_mux",
+      "status": "implemented",
+      "new_symbol": "gmp4_mux"
+    },
+    {
+      "legacy_name": "sv4_neg",
+      "status": "implemented",
+      "new_symbol": "gmp4_neg"
+    },
+    {
+      "legacy_name": "sv4_neq",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_onehot",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_or",
+      "status": "implemented",
+      "new_symbol": "gmp4_or"
+    },
+    {
+      "legacy_name": "sv4_part_select",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_part_select_set",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_pow",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_real_delay_ticks",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_realtobits",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_reduce_and",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_reduce_nand",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_reduce_nor",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_reduce_or",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_reduce_xnor",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_reduce_xor",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_repeat",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_repeat_count",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_replace",
+      "status": "implemented",
+      "new_symbol": "gmp4_replace"
+    },
+    {
+      "legacy_name": "sv4_resize",
+      "status": "implemented",
+      "new_symbol": "gmp4_resize"
+    },
+    {
+      "legacy_name": "sv4_resolve",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_resolve_strengths",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_resolve_strengths_range",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_rtoi",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_same",
+      "status": "implemented",
+      "new_symbol": "gmp4_same"
+    },
+    {
+      "legacy_name": "sv4_select_plan_bit",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_select_plan_indexed",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_select_plan_init",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_select_plan_part",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_select_plan_read",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_select_plan_set",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_select_plan_slice",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_select_plan_step",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_shl",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_shortrealtobits",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_shr",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_stream",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_sub",
+      "status": "implemented",
+      "new_symbol": "gmp4_sub"
+    },
+    {
+      "legacy_name": "sv4_t",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_to_bool",
+      "status": "implemented",
+      "new_symbol": "gmp4_to_bool"
+    },
+    {
+      "legacy_name": "sv4_to_dec_string",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_to_i64",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_to_index",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_to_index_i64",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_to_real",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_to_two_state",
+      "status": "implemented",
+      "new_symbol": "gmp4_to_two_state"
+    },
+    {
+      "legacy_name": "sv4_to_u64",
+      "status": "implemented",
+      "new_symbol": "gmp4_to_u64"
+    },
+    {
+      "legacy_name": "sv4_udp_eval",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_unstream",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_wild_eq",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_wild_neq",
+      "status": "not_implemented",
+      "new_symbol": null
+    },
+    {
+      "legacy_name": "sv4_x",
+      "status": "implemented",
+      "new_symbol": "gmp4_x"
+    },
+    {
+      "legacy_name": "sv4_xnor",
+      "status": "implemented",
+      "new_symbol": "gmp4_xnor"
+    },
+    {
+      "legacy_name": "sv4_xor",
+      "status": "implemented",
+      "new_symbol": "gmp4_xor"
+    },
+    {
+      "legacy_name": "sv4_zero",
+      "status": "implemented",
+      "new_symbol": "gmp4_zero"
+    }
+  ],
+  "separate_prototype_helpers": [
+    "gmp4_get_bit",
+    "gmp4_set_bit",
+    "gmp4_word",
+    "gmp4_compact",
+    "gmp4_add_into",
+    "gmp4_mul_into",
+    "gmp4_workspace_destroy",
+    "gmp4_workspace_bytes",
+    "gmp4_resolve_wire",
+    "llg_sv4_cell_*",
+    "llg_sv4_wire_resolve"
+  ]
+}

@@ -109,7 +109,11 @@ models define `LLG_MODEL_PROCESS_ABI` and initialize through
 Debug initialization and coroutine symbols have separate `_debug` link names,
 so debug/release model/runtime mixing fails before execution. Arena acquisition
 clears stale debug liveness tags left by cancelled cached activations; embedded
-frame reuse still requires the previous activation to have ended.
+frame reuse still requires the previous activation to have ended. Debug builds
+fill fresh callee payloads and dead sibling overlays with `0xA5`, after releasing
+lexical owners and before new initialization. Completed frames are poisoned after
+common-return cleanup, covering early returns. Live parent fields and retained
+heap cells are preserved. Release builds omit these fills.
 Waveforms additionally need zlib and CMake Threads support.
 
 The generated 256-call recursion guard remains the plain-function bound. On
