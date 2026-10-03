@@ -19,6 +19,24 @@ impl Frame<'_, '_> {
             }
         }
         let result = match &expr.kind {
+            IrExprKind::FixedArrayCompare {
+                left,
+                right,
+                case,
+                negate,
+            } => {
+                let left = self.fixed_array_address(*left)?;
+                let right = self.fixed_array_address(*right)?;
+                self.value(
+                    format!(
+                        "llg_fixed_array_compare({left}, {right}, {}, {})",
+                        u8::from(*case),
+                        u8::from(*negate)
+                    ),
+                    1,
+                    false,
+                )
+            }
             IrExprKind::FixedArrayReduce(reduction) => self.fixed_array_reduce(reduction, expr)?,
             IrExprKind::Const(constant) => {
                 let mut value = self.value(emit_const(constant), constant.width, constant.signed);

@@ -182,9 +182,9 @@ emitter frame estimates and backend ABI selection.
   modes, then checks elaborated names and parameters after snapshot destruction;
   unknown/illegal targets, duplicate names and out-of-scope actuals reject.
 - [SYN-036 capacity](fixtures/sim/syn036_capacity/readme.md) separates syntax from
-  resource limits. Public cases cover below/at/above 65,536 cells and the
+  resource limits. Public cases cover the former 65,536-cell boundary and the
   exclusive 1,048,576-bit packed boundary in both editions and optimizer modes;
-  2009 fixed-value formals cover the separate flattened payload bound. Nested
+  2009 fixed-value formals also cover descriptor transport beyond packed capacity. Nested
   values, cell-wise reductions, recursion and checked dimension products/strides retain
   separate controls. Run the large generated models in the dedicated resource lane:
   `scripts/run-tests.sh --test-work-dir /build --test-threads 10 --test sim_syn036_capacity --run-ignored only`.
@@ -670,3 +670,19 @@ see [native value probes](runtime_value_storage/readme.md#standalone-compact-val
 They cover core values and the S2/S3 shifts, reductions, case/wildcard and range
 families with portable and optional GMP limb kernels, independently of generated
 model selection and do not replace later HDL/model integration acceptance.
+
+### Required RTL-002 capacity lane
+
+This normal suite executes 16,777,216-cell storage, a multidimensional product at
+that capacity, whole copies, equality, issue-time NBA snapshots, automatic value
+calls, streams, selected dependencies and memory-file services. It also retains
+separate packed-width and language-illegal witnesses. Run with the launch's thread
+budget (six in this example):
+
+```sh
+CARGO_BUILD_JOBS=6 CMAKE_BUILD_PARALLEL_LEVEL=6 scripts/run-tests.sh --test-work-dir /build --cargo-profile quick --test sim_feature_completion -E 'test(rtl_002)' --test-threads 6 --no-tests fail
+```
+
+The source-size case compares 65,537 and 16,777,216 cells. Native
+`fixed_array_storage_probe.c` checks repeated descriptor copies, stable cells,
+queued snapshot cleanup and zero remaining value owners.

@@ -51,6 +51,16 @@
 #include "llg_string.h"
 #include "llg_rng.h"
 
+typedef struct llg_fixed_cell llg_fixed_cell_t;
+typedef struct {
+    uint64_t total;
+    size_t count, capacity;
+    llg_fixed_cell_t **buckets, *cells;
+    sv4_t initial;
+    sv4_t* contents;
+} llg_fixed_array_t;
+
+
 #ifndef LLG_ZERO_LOOP_LIMIT
 #define LLG_ZERO_LOOP_LIMIT 10000000ULL
 #endif
@@ -69,6 +79,19 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/* init/reset consume a fresh default; peek borrows until the next mutation.
+ * cell remains stable until array destruction. Destroy globals after runtime cleanup.
+ * copy snapshots its entire source before publishing any destination. */
+void llg_fixed_array_init(llg_fixed_array_t*, uint64_t, sv4_t, sv4_t*);
+void llg_fixed_array_reset(llg_fixed_array_t*, sv4_t);
+const sv4_t* llg_fixed_array_peek(const llg_fixed_array_t*, uint64_t);
+sv4_t* llg_fixed_array_cell(llg_fixed_array_t*, uint64_t);
+void llg_fixed_array_destroy(void*);
+void llg_fixed_array_copy(llg_fixed_array_t*, const llg_fixed_array_t*, int, int);
+void llg_fixed_array_fill(llg_fixed_array_t*, sv4_t, int, int);
+void llg_fixed_array_stream_copy(llg_fixed_array_t*, const llg_fixed_array_t*, int, int, uint32_t);
+sv4_t llg_fixed_array_compare(const llg_fixed_array_t*, const llg_fixed_array_t*, int, int);
 
 // Keep the library and every model translation unit on the host-allocation
 // declaration contract. CMake supplies the same definition when compiling
@@ -197,6 +220,7 @@ typedef struct {
 // demand; `alias_capacity` tracks its allocation.
 
 typedef struct llg_inertial llg_inertial_t;
+llg_inertial_t** llg_fixed_array_inertial(sv4_t*, const void*);
 typedef struct llg_net llg_net_t;
 typedef struct llg_net_driver_index llg_net_driver_index_t;
 typedef struct llg_net_alias_part llg_net_alias_part_t;
@@ -902,7 +926,21 @@ void llg_memory_read_view(llg_string_t path, sv4_t* memory, uint64_t total,
                           uint64_t view_total, sv4_t start, sv4_t finish,
                           int has_start, int has_finish, int addressing_policy,
                           const sv4_t* enum_values, uint32_t enum_count, int radix);
+void llg_fixed_memory_read_view(llg_string_t path, llg_fixed_array_t* memory, uint64_t total,
+                          uint32_t elem_width, int8_t elem_signed, int8_t two_state,
+                          const int32_t* dims, int n_dims,
+                          const uint64_t* strides, uint64_t origin,
+                          uint64_t view_total, sv4_t start, sv4_t finish,
+                          int has_start, int has_finish, int addressing_policy,
+                          const sv4_t* enum_values, uint32_t enum_count, int radix);
 void llg_memory_write_view(llg_string_t path, sv4_t* memory, uint64_t total,
+                           uint32_t elem_width, int8_t elem_signed, int8_t two_state,
+                           const int32_t* dims, int n_dims,
+                           const uint64_t* strides, uint64_t origin,
+                           uint64_t view_total, sv4_t start, sv4_t finish,
+                           int has_start, int has_finish, int addressing_policy,
+                           const sv4_t* enum_values, uint32_t enum_count, int radix);
+void llg_fixed_memory_write_view(llg_string_t path, llg_fixed_array_t* memory, uint64_t total,
                            uint32_t elem_width, int8_t elem_signed, int8_t two_state,
                            const int32_t* dims, int n_dims,
                            const uint64_t* strides, uint64_t origin,
@@ -940,6 +978,10 @@ int llg_string_scanf(const char* source, size_t source_length,
                      const llg_file_input_target_t* targets, int target_count);
 int llg_file_read_packed(uint32_t descriptor, llg_ref_t* target);
 int llg_file_read_array(uint32_t descriptor, sv4_t* values, uint32_t elem_width,
+                        int elem_signed, int elem_two_state, uint64_t total,
+                        const int32_t* dimensions, int dimension_count,
+                        int has_start, sv4_t start, int has_count, sv4_t count);
+int llg_fixed_file_read_array(uint32_t descriptor, llg_fixed_array_t* values, uint32_t elem_width,
                         int elem_signed, int elem_two_state, uint64_t total,
                         const int32_t* dimensions, int dimension_count,
                         int has_start, sv4_t start, int has_count, sv4_t count);

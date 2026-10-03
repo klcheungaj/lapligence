@@ -182,6 +182,7 @@ fn waveform_model_emits_controls_hierarchy_and_final_time_close() {
         propagation_delay: None,
     }];
     model.arrays = vec![IrArray {
+        activation: false,
         net_elements: Vec::new(),
         element_default: None,
         c_name: "G_top_mem".to_string(),
@@ -245,4 +246,39 @@ fn waveform_model_emits_controls_hierarchy_and_final_time_close() {
         wave_close < teardown,
         "wave writer must finish before model values are destroyed"
     );
+}
+
+#[test]
+fn sparse_array_reads_fail_closed_in_legacy_fragments() {
+    let mut model = IrModel::new("top".into(), 1).unwrap();
+    model.arrays.push(
+        IrArray::new(
+            "large".into(),
+            "top.large".into(),
+            8,
+            false,
+            vec![(0, 4096)],
+        )
+        .unwrap(),
+    );
+    let read = IrExpr::new(
+        IrExprKind::ArrayRead {
+            arr: 0,
+            indices: vec![packed_const(0)],
+            elem_sel: crate::sim::ir::IrElemSel::Whole,
+        },
+        8,
+        false,
+        None,
+    );
+    let context = RCtx {
+        model: &model,
+        func: None,
+        sampled: false,
+        activation_label: None,
+    };
+    let error = crate::sim::emit_c::expressions::render_expr_impl(&context, &read)
+        .err()
+        .expect("descriptor fragment must reject");
+    assert!(error.to_string().contains("owned whole-model"));
 }

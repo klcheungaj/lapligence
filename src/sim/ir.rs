@@ -99,12 +99,15 @@ pub const LLG_MAX_NET_DRIVERS: usize = i32::MAX as usize;
 pub const LLG_MAX_VPI_ARGS: usize = 256;
 /// Maximum number of cells in one generated fixed unpacked array.
 ///
-/// Fixed arrays are emitted as owned cell storage and are traversed cell by
-/// cell by the direct reduction path. This is a generated-model resource
+/// Large integral variable arrays use lazy stable cells and an owned default;
+/// direct reductions still traverse logical cells. This is a generated-model resource
 /// ceiling, not a language or packed-value width limit. Lowering and IR
 /// validation check the dimension product before cell tables or C declarations
 /// are created.
-pub const LLG_MAX_FIXED_ARRAY_CELLS: u64 = 1 << 16;
+pub const LLG_MAX_FIXED_ARRAY_CELLS: u64 = 1 << 24;
+
+/// Integral variable arrays above this count use lazy, stable cell storage.
+pub const LLG_DENSE_FIXED_ARRAY_CELLS: u64 = 4096;
 
 fn validate_width(path: &str, width: u32) -> Result<(), IrValidationError> {
     if width != 0 {

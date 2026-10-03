@@ -8,10 +8,28 @@ impl Validator<'_> {
             model,
             max_width: Cell::new(0),
             reduction_bindings: RefCell::new(Vec::new()),
+            fixed_activations: RefCell::new(Vec::new()),
             chandle_return: Cell::new(None),
             string_return: Cell::new(None),
             function: Cell::new(None),
         }
+    }
+
+    pub(super) fn validate_fixed_activation(&self, index: usize, path: &str) -> ValidationResult {
+        if self
+            .model
+            .arrays
+            .get(index)
+            .is_some_and(|array| array.activation)
+            && !self
+                .fixed_activations
+                .borrow()
+                .iter()
+                .any(|scope| scope.contains(&index))
+        {
+            return self.fail(path, "fixed activation is outside its declaration scope");
+        }
+        Ok(())
     }
 
     pub(super) fn valid_dependency(&self, dependency: &IrDependency) -> bool {

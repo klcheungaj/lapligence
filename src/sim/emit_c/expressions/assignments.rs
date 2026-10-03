@@ -176,6 +176,9 @@ pub(in super::super) fn render_assign(
     } = lh
     {
         let ai = ctx.model.array(*arr);
+        if ai.sparse() {
+            return Err("fixed-array descriptor writes require owned whole-model emission".into());
+        }
         if ai.real {
             if !matches!(elem_sel, IrElemSel::Whole) {
                 return Err("select on a real array element is not supported".to_string());

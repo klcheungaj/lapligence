@@ -1077,6 +1077,7 @@ struct Codegen<'a> {
     model: IrModel,
     /// Model index of the function whose body is currently being emitted
     /// (`None` outside function bodies); formal reads resolve through it.
+    nonflatten_calls: Vec<NodeId>,
     cur_fn_ir: Option<usize>,
     /// FuncTask arena node → call-site resolution metadata (model index,
     /// signature).  Emitted functions only; registered by the prototype walk.
@@ -1408,6 +1409,7 @@ impl<'a> Codegen<'a> {
             warnings: Vec::new(),
             model: IrModel::new(String::new(), Timescale::DEFAULT.precision_fs)
                 .expect("the default timescale has non-zero precision"),
+            nonflatten_calls: Vec::new(),
             cur_fn_ir: None,
             func_meta: HashMap::new(),
             dpi_signatures: HashMap::new(),
@@ -1552,6 +1554,9 @@ impl<'a> Codegen<'a> {
     /// Lowered info for an Array arena node (or a Ref resolving to one), if
     /// the array was collected.
     fn array_of(&self, node: NodeId) -> Option<&ArrayInfo> {
+        if let Some(array) = self.array_globals.get(&node) {
+            return Some(array);
+        }
         match self.kind(node) {
             NodeKind::Array { .. } => self.array_globals.get(&node),
             NodeKind::Expr(ExprKind::Ref { target }) => {
@@ -2078,7 +2083,7 @@ enum ProcessTarget {
 /// Context for emitting a function/task definition body (or an inlined task
 /// body at a call site): formals mapped to their C expressions, locals to C
 /// locals, and the return variable.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 struct FuncCtx {
     /// The Verilog function/task name.
     name: String,

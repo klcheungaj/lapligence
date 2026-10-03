@@ -575,7 +575,9 @@ fn collect_effects(
             IrStmt::InertialAssign { .. } => {
                 effects.push(ExecutionEffect::EnqueueUpdate(ScheduleRegion::Active))
             }
-            IrStmt::Assign { nba: true, .. }
+            IrStmt::FixedArrayFill { nba: true, .. }
+            | IrStmt::FixedArrayCopy { nba: true, .. }
+            | IrStmt::Assign { nba: true, .. }
             | IrStmt::DelayedAssign { .. }
             | IrStmt::DelayedStringAssign { .. } => effects.push(ExecutionEffect::EnqueueUpdate(
                 ScheduleRegion::NonblockingAssign,
@@ -583,7 +585,10 @@ fn collect_effects(
             IrStmt::ClockingDrive { .. } => effects.push(ExecutionEffect::EnqueueUpdate(
                 ScheduleRegion::ReNonblockingAssign,
             )),
-            IrStmt::Assign { nba: false, .. }
+            IrStmt::FixedArrayDeclare(_)
+            | IrStmt::FixedArrayFill { nba: false, .. }
+            | IrStmt::FixedArrayCopy { nba: false, .. }
+            | IrStmt::Assign { nba: false, .. }
             | IrStmt::EventAssign { .. }
             | IrStmt::EventCapture { .. }
             | IrStmt::PcaAssign { .. }
@@ -909,6 +914,9 @@ fn collect_statement_expression_effects(
         } => collect_expression_effects(ir, init, effects, visited_calls),
         IrStmt::ClockingCycleWait { count, .. } => {
             collect_expression_effects(ir, count, effects, visited_calls)
+        }
+        IrStmt::FixedArrayFill { value, .. } => {
+            collect_expression_effects(ir, value, effects, visited_calls)
         }
         IrStmt::Assign { lhs, rhs, .. }
         | IrStmt::DelayedAssign { lhs, rhs, .. }
@@ -1640,6 +1648,7 @@ fn collect_expression_effects(
         | IrExprKind::FormalRead(_)
         | IrExprKind::Fill(_)
         | IrExprKind::EventTriggered(_)
+        | IrExprKind::FixedArrayCompare { .. }
         | IrExprKind::Verbatim { .. } => {}
     }
 }

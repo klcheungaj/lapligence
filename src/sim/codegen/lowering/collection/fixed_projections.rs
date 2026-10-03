@@ -38,6 +38,13 @@ impl Codegen<'_> {
             _ => node,
         };
         let root = self.canonical_func_target(node).unwrap_or(node);
+        if self
+            .array_globals
+            .get(&root)
+            .is_some_and(|array| self.model.arrays[array.ir].activation)
+        {
+            return Ok(None);
+        }
         let Some(function) = self.func.as_ref() else {
             return Ok(None);
         };
