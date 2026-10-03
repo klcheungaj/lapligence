@@ -214,9 +214,17 @@ fn generated_sources_keep_value_runtime_as_a_separate_translation_unit() {
     );
     assert!(cmake.contains("project(llg_sim_model C)"));
     assert!(!cmake.contains("project(llg_sim_model C ASM)"));
-    assert!(cmake.contains("set(LLG_HOST_STACK_ESTIMATE_BYTES 8388608 CACHE STRING"));
+    // The CMake estimate must match the runtime header's 640 KiB default.
+    assert!(cmake.contains("set(LLG_HOST_STACK_ESTIMATE_BYTES 655360 CACHE STRING"));
+    let (runtime_header, _) = sim::rt::runtime_sources();
     assert!(
-        cmake.contains("target_link_options(sim PRIVATE /STACK:${LLG_HOST_STACK_ESTIMATE_BYTES})")
+        runtime_header.contains("#define LLG_HOST_STACK_MEASURED_BYTES (367u * 1024u)")
+            && runtime_header
+                .contains("#define LLG_HOST_STACK_FOREIGN_HEADROOM_BYTES (256u * 1024u)")
+    );
+    assert!(cmake.contains("set(LLG_HOST_STACK_RESERVE_BYTES 1048576)"));
+    assert!(
+        cmake.contains("target_link_options(sim PRIVATE /STACK:${LLG_HOST_STACK_RESERVE_BYTES})")
     );
     assert!(cmake.contains(
         "set_source_files_properties(llg_co.c PROPERTIES COMPILE_DEFINITIONS LLG_CO_HOST_ALLOC=1)"

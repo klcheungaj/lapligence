@@ -220,11 +220,21 @@ fn low_posix_stack_limit_warns_before_simulation() {
         String::from_utf8_lossy(&output.stderr).into_owned()
     };
 
-    let stderr = run_with_stack_kib(1024);
+    // The default estimate is 640 KiB (`LLG_HOST_STACK_ESTIMATE_BYTES`); a
+    // limit equal to it is quiet and the next lower KiB step warns.
+    for kib in [512, 639] {
+        let stderr = run_with_stack_kib(kib);
+        assert!(
+            stderr.contains(&format!("host stack limit is {} bytes", kib * 1024))
+                && stderr.contains("at least 655360 bytes")
+                && stderr.contains("256-call depth guard"),
+            "missing low-stack warning at {kib} KiB: {stderr}"
+        );
+    }
+    let stderr = run_with_stack_kib(640);
     assert!(
-        stderr.contains("host stack limit is 1048576 bytes")
-            && stderr.contains("256-call recursion guard"),
-        "missing low-stack warning: {stderr}"
+        !stderr.contains("host stack limit"),
+        "stack limit equal to the estimate warned: {stderr}"
     );
 
     // macOS reports its default 8 MiB main-thread stack as 8176 KiB after

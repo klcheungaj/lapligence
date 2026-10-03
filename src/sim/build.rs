@@ -91,9 +91,17 @@ else()
 endif()
 set_target_properties(sim PROPERTIES ENABLE_EXPORTS ON)
 {MODEL_SOURCE_OPTIONS}if(MSVC)
-  set(LLG_HOST_STACK_ESTIMATE_BYTES 8388608 CACHE STRING
-      "Host stack reserved for scheduler, one polled coroutine segment, and recursion guard")
-  target_link_options(sim PRIVATE /STACK:${LLG_HOST_STACK_ESTIMATE_BYTES})
+  # The estimate matches LLG_HOST_STACK_ESTIMATE_BYTES in llg_rt.h. /STACK only
+  # reserves address space, and it is also the default size of threads created
+  # with size 0 (the waveform writer) and the stack user DPI code expects, so
+  # never reserve less than the 1 MiB Windows default.
+  set(LLG_HOST_STACK_ESTIMATE_BYTES 655360 CACHE STRING
+      "Estimated host stack for scheduler, one polled coroutine segment, depth guard, runtime helpers and DPI/libc headroom")
+  set(LLG_HOST_STACK_RESERVE_BYTES 1048576)
+  if(LLG_HOST_STACK_ESTIMATE_BYTES GREATER LLG_HOST_STACK_RESERVE_BYTES)
+    set(LLG_HOST_STACK_RESERVE_BYTES ${LLG_HOST_STACK_ESTIMATE_BYTES})
+  endif()
+  target_link_options(sim PRIVATE /STACK:${LLG_HOST_STACK_RESERVE_BYTES})
 else()
   target_link_libraries(sim PRIVATE m)
   if(UNIX AND NOT APPLE)

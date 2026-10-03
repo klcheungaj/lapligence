@@ -134,11 +134,14 @@ Waveforms additionally need CMake Threads support. They compile the bundled
 zlib with `Z_PREFIX` (and `Z_HAVE_UNISTD_H` outside Windows), so no system zlib
 is found or linked and user DPI libraries may link their own.
 
-The generated 256-call recursion guard remains the plain-function bound. On
-POSIX, startup warns when `RLIMIT_STACK` is below the named 8 MiB estimate for
-the scheduler, one polled segment and that guard, less a 64 KiB allowance for
-the guard page macOS subtracts from its default 8 MiB stack. Generated MSVC
-projects reserve the same default with `/STACK`.
+The generated 256-call guard remains the plain-function bound. On POSIX,
+startup warns when `RLIMIT_STACK` is below the named 640 KiB estimate: 367 KiB
+measured for the scheduler, one polled segment, a guard-deep function chain and
+the runtime helpers, plus 256 KiB of headroom for user DPI/VPI C code and libc,
+which share the stack and cannot be bounded by the runtime. Default 8 MiB
+stacks, including the 8176 KiB macOS reports, stay quiet. Generated MSVC
+projects reserve the larger of the estimate and the 1 MiB Windows default with
+`/STACK`.
 
 ## Validation and limits
 
