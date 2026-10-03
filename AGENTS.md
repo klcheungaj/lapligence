@@ -59,7 +59,10 @@ Do not share mutable Cargo/CMake build trees or delete another active run's
 scratch. Follow [test storage and cleanup](tests/readme.md#parallel-worktrees).
 Optional `--sccache`/`--mold` runner flags and a sourced environment helper for
 plain Cargo are described in [development accelerators](tests/readme.md#optional-development-accelerators).
-Keep these tools opt-in; preserve configured rustflags and user Rust wrappers.
+Agents should enable installed accelerators from the repository root with
+`export LLG_SCCACHE=1 LLG_MOLD=1; source scripts/dev-env.sh`; omit unavailable tools'
+variables and use mold only on a Linux GNU host. Keep these tools opt-in and never
+required; preserve configured rustflags and user Rust wrappers.
 
 The portable Rust patch preparer applies tracked `patches/slang/` before consuming
 native sources. Keep the documented upstream-base vendor gitlink; no
