@@ -346,6 +346,79 @@ tree at `target/quick/`, including its own dependencies and incremental state.
 Budget disk for both. The worktree runner keeps both on disk and uses the same
 isolated scratch and compatible runtime cache for either profile.
 
+### Optional development accelerators
+
+All accelerators are opt-in. With no settings, Cargo and the test runner keep
+their existing compiler, linker and wrapper defaults; no extra tools are required.
+Install the requested tools on `PATH` before opting in. A missing tool is an error.
+
+```sh
+# Rust cache and Linux GNU host linker for this test invocation:
+CARGO_BUILD_JOBS=4 scripts/run-tests.sh --test-work-dir /build \
+  --cargo-profile quick --test-threads 4 --test sim_function --sccache --mold
+
+# Plain cargo build/test/nextest in this Bash shell (source from repository root):
+export LLG_SCCACHE=1 LLG_MOLD=1; source scripts/dev-env.sh
+cargo build --locked --profile quick --bin llg
+```
+
+The runner also accepts `LLG_SCCACHE=1` and `LLG_MOLD=1` directly. Plain Cargo
+needs the sourced helper; these variables alone cannot configure Cargo's linker
+or Rust wrapper. Sourcing validates all requested tools before exporting settings.
+An existing nonempty `RUSTC_WRAPPER` wins. The tracked sccache wrapper sets
+`TMPDIR=/tmp` only in cache/compiler subprocesses, so the server's Unix socket
+fits even when the test runner uses a long scratch path. Tests keep their own
+`TMPDIR`; existing sccache cache/server settings are preserved.
+Sccache cannot cache Rust's incremental compilation or final executable linking.
+For cache reuse of workspace library objects across cleans, optionally set
+`CARGO_INCREMENTAL=0`; the helper leaves Cargo's incremental setting unchanged.
+
+Mold uses `CARGO_TARGET_<GNU_HOST_TRIPLE>_LINKER` and the tracked wrapper's
+`cc -fuse-ld=mold`. It leaves `RUSTFLAGS` and `.cargo/config.toml` unchanged,
+including Linux `split-debuginfo=unpacked`. A conflicting explicit host linker
+is an error; clear it before opting in. `LLG_MOLD_CC=clang` selects another
+compiler driver. Only the Linux GNU host triple is changed; musl and other
+cross targets retain their configured linkers, and opting in on a non-GNU host
+fails. Generated-model linkers retain their defaults.
+`LLG_MOLD_THREADS=4` limits mold's internal threads on a busy host; unset uses
+mold's own default. Cargo and nextest concurrency remain separate settings.
+
+Native caching is independent of the Rust opt-in:
+
+```sh
+# Slang and its wrapper, through root build.rs (1/on/true still select ccache):
+export LLG_CCACHE=sccache  # or ccache; 0/off/false disable
+
+# Generated models through the existing compiler option/environment:
+export LLG_CC="$PWD/scripts/sccache-cc.sh"  # uses LLG_SCCACHE_CC, otherwise cc
+# Or select a launcher for an individual model:
+target/quick/llg --launcher "$PWD/scripts/sccache.sh" --top tb design.sv
+# ccache works through the same --launcher option: --launcher ccache
+```
+
+`LLG_CCACHE` now rejects invalid values or a missing requested executable instead
+of continuing uncached. Changing the launcher reconfigures the native CMake cache
+while retaining objects. The Unix Slang sccache launcher and both model examples
+use the short-TMPDIR wrapper. Sourcing the helper checks `LLG_CCACHE` too; choose it
+before sourcing if you want that early check for plain Cargo.
+`LLG_SCCACHE_CC=clang` changes the generated-model wrapper's underlying compiler;
+it uses a separate variable because CMake can set `CC` to the wrapper itself.
+
+Settings exported into a shell remain until unset or the shell exits. To return
+to defaults, unset `LLG_SCCACHE`, `LLG_MOLD`, the helper-installed `RUSTC_WRAPPER`
+and `CARGO_TARGET_<GNU_HOST_TRIPLE>_LINKER`; unset `LLG_CCACHE`/`LLG_CC` if selected.
+Use a fresh shell if you need to restore earlier user overrides.
+
+Script regression checks (fake tools; no Rust/native build required):
+
+```sh
+python3 -m unittest discover -s scripts -p test_dev_env.py
+python3 -m unittest discover -s scripts -p test_run_tests.py
+```
+
+Native launcher selection and CMake cache-state regressions run with
+`scripts/run-tests.sh --cargo-profile quick --test compiler_cache`.
+
 ### Test build storage
 
 #### Parallel worktrees

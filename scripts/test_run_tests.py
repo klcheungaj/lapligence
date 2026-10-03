@@ -19,7 +19,8 @@ import time
 if sys.argv[1:] == ["nextest", "--version"]:
     sys.exit(0)
 keys = ["TMPDIR", "LLG_TEST_BUILD_DIR", "LLG_RUNTIME_CACHE_DIR",
-        "CARGO_TARGET_DIR", "CARGO_BUILD_BUILD_DIR"]
+        "CARGO_TARGET_DIR", "CARGO_BUILD_BUILD_DIR", "RUSTC_WRAPPER",
+        "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER", "RUSTFLAGS"]
 report = {key: os.environ.get(key) for key in keys}
 report["args"] = sys.argv[1:]
 report["cwd"] = os.getcwd()
@@ -55,14 +56,17 @@ class RunTestsTests(unittest.TestCase):
         cargo.chmod(0o755)
         self.env = os.environ.copy()
         for key in ["TMPDIR", "LLG_TEST_BUILD_DIR", "LLG_RUNTIME_CACHE_DIR",
-                    "CARGO_TARGET_DIR", "CARGO_BUILD_BUILD_DIR"]:
+                    "CARGO_TARGET_DIR", "CARGO_BUILD_BUILD_DIR", "LLG_SCCACHE",
+                    "LLG_MOLD", "LLG_CCACHE", "RUSTC_WRAPPER",
+                    "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER"]:
             self.env.pop(key, None)
         self.env["PATH"] = str(self.bin) + os.pathsep + self.env["PATH"]
 
     def worktree(self, name):
         root = self.root / name
         (root / "scripts").mkdir(parents=True)
-        shutil.copy2(RUNNER, root / "scripts/run-tests.sh")
+        for name in ["run-tests.sh", "dev-env.sh", "sccache.sh", "mold-linker.sh"]:
+            shutil.copy2(RUNNER.parent / name, root / "scripts" / name)
         return root
 
     def invoke(self, worktree, name, args, extra_env=None):
@@ -88,7 +92,27 @@ class RunTestsTests(unittest.TestCase):
         self.assertEqual(report["args"], ["nextest", "run", "--locked", *args])
         for key, value in settings.items():
             self.assertEqual(report[key], value)
+        self.assertIsNone(report["RUSTC_WRAPPER"])
+        self.assertIsNone(report["CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER"])
         self.assertEqual(list(self.storage.iterdir()), [])
+
+    def test_accelerators_set_tools_and_consume_only_runner_flags(self):
+        worktree = self.worktree("accelerators")
+        for name, body in {
+            "sccache": "exit 0", "mold": "exit 0",
+            "rustc": "echo 'host: x86_64-unknown-linux-gnu'",
+        }.items():
+            tool = self.bin / name
+            tool.write_text("#!/bin/sh\n" + body + "\n")
+            tool.chmod(0o755)
+        args = ["--test", "sim_function", "--sccache", "--mold"]
+        result, report = self.invoke(worktree, "accelerators", args, {"RUSTFLAGS": "keep-me"})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(report["args"], ["nextest", "run", "--locked", "--test", "sim_function"])
+        self.assertEqual(report["RUSTC_WRAPPER"], str(worktree / "scripts/sccache.sh"))
+        self.assertEqual(report["CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER"],
+                         str(worktree / "scripts/mold-linker.sh"))
+        self.assertEqual(report["RUSTFLAGS"], "keep-me")
 
     def test_parallel_worktrees_share_only_runtime_cache(self):
         worktrees = [self.worktree(f"agent {index}") for index in range(4)]
