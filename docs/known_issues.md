@@ -75,23 +75,30 @@ grep -c '^static llg_net_t g_array_net_' <dir>/sim/*/model.c
 
 ## High frontend memory use during Slang wrapper capture and import
 
-**Status:** open; memory reduction deferred.
+**Status:** open; retained representations reduced, large typed-lowering peak remains.
 
 ### Symptom
 
-Large elaborated designs require substantially more frontend process memory
-than the size of their exported semantic data. In Linux x86-64 release
-measurements of `many_processes_registers_config` with two clock edges:
+Large elaborated designs still require substantially more generation memory
+than their charged export data. Linux x86-64 release measurements on 2026-10-02–03
+use `many_processes_registers_config`, two clock edges and three runs per point.
+Before is `c260a74c` with diagnostic stage markers; after includes the retained-copy
+fixes. GNU time peak RSS medians:
 
-| Register processes | Exported records and strings | Generation peak RSS |
+| Processes | Before peak RSS | After peak RSS |
 | --- | --- | --- |
-| 20,000 | 320,406,270 B (about 306 MiB) | about 3.28 GiB |
-| 40,000 | 640,766,270 B (about 611 MiB) | about 6.54 GiB |
+| 5,000 | 0.88 GiB | 0.53 GiB |
+| 10,000 | 1.71 GiB | 1.04 GiB |
+| 20,000 | 3.40 GiB | 2.07 GiB |
+| 40,000 | 6.77 GiB | 4.12 GiB |
 
-These are whole-process peaks across compilation, capture, owned import and
-C generation. They do not isolate the C++ wrapper's share and are not
-generated-simulator runtime memory measurements. Export size is approximately
-linear for this corpus; other design shapes can have different costs.
+At 20k/40k the logical export remains about 306/611 MiB (320,406,270 /
+640,766,270 charged bytes). Whole-process peak RSS falls about 39%; the peak
+moves from rendering to typed lowering. At 40k sampled rendering RSS falls from
+about 6.77 GiB to about 2.54 GiB. The earlier measurements of 3.28/6.54 GiB
+were from a different run and remain historical context, not a stage profile.
+These are generation-process peaks, not generated-simulator runtime memory.
+Export size is approximately linear for this corpus; other shapes can differ.
 
 ### Cause
 
@@ -103,12 +110,26 @@ corpus, each small register process contributes roughly 60 semantic nodes,
 exclude container capacity, indexing overhead and Slang's own allocations.
 
 The [safe FFI decoder](../src/ffi/slang.rs) copies native snapshot data into
-owned Rust data before destroying the native owner. The
-[driver](../src/bin/llg.rs) then imports the Rust snapshot into the owned DB
-and builds semantic/execution IR. These stages have overlapping
-representations; the native compilation, native snapshot and later Rust IR
-are not all retained together. A stage-by-stage allocation profile is still
-needed to quantify each contributor.
+owned Rust data before destroying the native owner. Dense semantic IDs now use
+checked arena lookups, and decoded node/edge vectors reserve their validated
+record counts exactly. Native strings share stable interned storage; logical
+export charging still counts each occurrence. Finalizing ordered edges releases
+their pending storage.
+
+The [driver](../src/bin/llg.rs) releases the decoded snapshot after the single
+owned DB import. Consuming generation releases the DB after typed lowering,
+and collection state ends once the typed model owns its data. The
+[renderer](../src/sim/emit_c/model.rs) borrows unchanged execution analysis and
+retains one normalized body/key per exact sharing group. These changes remove
+copies previously live throughout rendering. Borrowing library generation APIs
+retain their caller's DB for reuse.
+
+Typed lowering still overlaps the DB, semantic model, collection indexes and
+typed IR. Native compilation and snapshot overlap during capture, and native
+and Rust snapshots overlap during checked decoding. Owned strings, exact
+constant payloads and source/identity records remain substantial. Sampled
+stage RSS includes all live representations and allocator-retained pages;
+it is not an exclusive allocation total for that stage.
 
 `export byte limit exceeded` originates in llg's wrapper capture budget.
 Raising that budget admits larger exports but does not reduce their memory
@@ -117,9 +138,8 @@ budget, a record-count ceiling or available process memory.
 
 ### Intended direction
 
-Profile peak allocations by stage, then reduce retained copies and export
-overhead: intern repeated constant/string payloads, evaluate compact records
-or simulator-specific capture, and investigate chunked capture/import.
+Reduce the remaining typed-lowering overlap and evaluate compact owned records,
+shared exact constant/string payloads and chunked capture/import.
 Preserve checked C ABI ownership and the single owned DB import; consumers
 must not traverse native ASTs independently. Verify exact values, source
 identity and diagnostics as well as generated-model behavior.
@@ -139,48 +159,85 @@ Run:
     --out-dir <dir> perf/corpus/many_processes.sv
 ```
 
-Read maximum resident set size from `time`; lower the process count to 20,000
-for the smaller comparison. The export budget counts captured data, not the
-bytes of generated `model.c`.
+Read maximum resident set size from `time`. Use 5k/10k/20k/40k processes, at
+least three runs per point, release binaries and medians. The Linux runner
+`python3 perf/scripts/frontend_scale.py <release-binary> <evidence-dir>` records
+GNU time, stage markers, sampled RSS and generated-C hashes, running points
+serially. See [profiling](../perf/README.md#frontend-stage-scaling). The export
+budget counts captured data, not the bytes of generated `model.c`.
 
 ## Frontend and C generation time grow superlinearly with design size
 
-**Status:** open; deferred.
+**Status:** open; dominant quadratic work isolated inside Slang driver analysis.
 
 ### Symptom
 
-Doubling the number of processes more than doubles `llg --gen-only` time. In
-Linux x86-64 release measurements of `many_processes_registers_config` with
-two clock edges (shared host, medians):
+Doubling process count more than doubles Slang analysis work. The historical
+release timings were 5.7/11.7/26.4/69.4 seconds at 5k/10k/20k/40k, with frontend
+compile/copy growing 3.4× at the last doubling. The new release measurements on
+2026-10-02–03 use three runs per point and the same two-edge corpus:
 
-| Register processes | 5,000 | 10,000 | 20,000 | 40,000 |
-| --- | --- | --- | --- | --- |
-| Total generation | 5.7 s | 11.7 s | 26.4 s | 69.4 s |
-| Frontend compile and copy | 0.97 s | 2.01 s | 5.66 s | 19.16 s |
-| Lowering and C generation | 3.30 s | 6.38 s | 13.41 s | 29.18 s |
-| of which C rendering | 1.53 s | 3.12 s | 6.80 s | 14.79 s |
+| Processes | Before wall s (range) | After wall s (range) | Before / after peak GiB |
+| --- | --- | --- | --- |
+| 5,000 | 12.73 (10.47–12.92) | 32.64 (30.60–43.71) | 0.879 / 0.527 |
+| 10,000 | 20.41 (18.03–20.68) | 65.95 (64.18–80.25) | 1.708 / 1.041 |
+| 20,000 | 39.08 (34.83–44.84) | 169.44 (95.77–196.61) | 3.397 / 2.066 |
+| 40,000 | 79.69 (74.16–97.56) | 206.90 (182.91–431.97) | 6.773 / 4.120 |
 
-Per doubling, total time grows 2.0×, 2.3× and 2.6×. The frontend is the
-fastest-growing stage (3.4× from 20k to 40k).
+| Stage (seconds) | 10k before / after | 20k before / after | 40k before / after |
+| --- | --- | --- | --- |
+| Frontend compile/copy | 4.42 / 18.20 | 9.89 / 35.76 | 26.74 / 140.74 |
+| Slang driver/unused analysis | 1.17 / 7.79 | 4.46 / 22.89 | 17.83 / 128.12 |
+| Wrapper capture/finalization | 1.37 / 4.89 | 2.23 / 9.05 | 3.89 / 5.54 |
+| FFI decode/copy | 0.86 / 2.39 | 1.87 / 1.49 | 2.98 / 1.82 |
+| Owned DB import | 3.13 / 7.32 | 6.02 / 21.15 | 10.59 / 11.12 |
+| Typed lowering | 3.29 / 15.46 | 5.85 / 28.46 | 11.12 / 27.30 |
+| C rendering | 4.95 / 14.46 | 9.35 / 36.06 | 19.11 / 35.16 |
+
+Stage rows overlap and their medians must not be summed. Host contention varied
+substantially between the baseline and final measurements; these wall times do
+not establish a stable total speedup or a code-induced regression. A subsequent
+unchanged-base 40k native-call control (stopped before DB import/rendering)
+took 686.00 seconds, of which Slang analysis took 645.72 seconds. The baseline
+analysis progression (about 1.17/4.46/17.83 seconds at 10k/20k/40k) and
+source/CPU sampling isolate quadratic driver overlap work. Repeat timing on an
+isolated host for a stable before/after speed comparison. The memory reduction
+in the preceding entry persists across the measured points.
 
 ### Cause
 
-Not yet isolated. The repeated full scans previously found in lowering
-(alias bit expansion, signal-global and structural-driver lookups, spawn
-labels) and in the wrapper's edge lookups have been removed, and the lowering
-combinational pass is now linear. The remaining growth sits in Slang
-compilation/elaboration, wrapper capture and the owned copy, and in C
-rendering; it may also include allocator and cache effects at these heap
-sizes (see the frontend memory entry above).
+Slang's `analysis::DriverTracker::addDriver` scans all prior overlapping drivers
+before insertion into its interval map. This corpus updates shared `ones` and
+`d_ones` counters from every ordinary `always` process. These procedural drivers
+normally permit each other, but the overlap loop still visits their quadratic
+number of pairs. A release 40k CPU sample attributed 42.2% to `addDriver` and
+8.9% to the interval map's `overlap_iterator::treeFind`. Diagnostic elaboration
+and wrapper capture scale much closer to the exported record count.
+
+Project changes remove redundant dense-ID hashing and geometric growth of
+fallibly decoded vectors, release intermediate owned representations, avoid an
+unchanged execution-model clone, and stream exact body-sharing groups. Source
+positions now index files once and use lazy UTF-8-aligned byte checkpoints
+and a bounded offset cache. This removes repeated whole-prefix scans when both
+source bytes and node count grow. Startup spawn filtering indexes final names
+once instead of scanning them for each process. Work/capacity/retention
+regressions cover these paths. The corpus has few finals; its measured quadratic
+contributor is Slang's overlap analysis.
+Large allocation volumes, generated text size and cache/allocator effects still
+affect lowering and rendering; shared-host wall times vary substantially.
 
 ### Intended direction
 
-Profile each stage at 20k and 40k with release binaries, separating Slang
-elaboration from wrapper capture and the Rust copy, and look for remaining
-per-item work that scales with design size. Generated `model.c` must stay
-byte-identical; the export-size scaling tests in
-`src/sim/codegen/lowering/collection/nets/tests.rs` are the pattern for
-work-count regression tests.
+An upstream Slang change is warranted: summarize or partition interval drivers
+by categories that can conflict, so compatible ordinary procedural drivers do
+not enumerate one another. Preserve mixed continuous/procedural, port,
+single-driver procedure, initializer, uwire and user-defined net diagnostics,
+including their ordering and source identity. This needs upstream analysis
+regressions; no vendored patch is applied for this investigation.
+
+Keep generated `model.c` byte-identical when changing generation algorithms.
+The measured corpus and representative sharing/four-state/net fixtures match
+the baseline, including both optimizer modes for the representative fixtures.
 
 ### Reproduce
 
