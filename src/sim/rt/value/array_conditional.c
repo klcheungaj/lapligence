@@ -21,11 +21,8 @@ sv4_t sv4_array_conditional_merge(sv4_t a, sv4_t b, sv4_t element_default) {
                 break;
             }
         }
-        for (uint32_t i = 0; i < stride; ++i) {
-            int digit = equal ? sv4_lsb_bit(a, (int)(offset + i))
-                              : sv4_lsb_bit(element_default, (int)i);
-            sv4_lsb_bit_set(&result, (int)(offset + i), digit);
-        }
+        sv4_copy_bits(&result, offset, equal ? a : element_default,
+                      equal ? offset : 0, stride);
     }
     return result;
 }

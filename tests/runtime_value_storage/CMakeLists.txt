@@ -94,6 +94,12 @@ foreach(probe IN ITEMS value_isolation container_isolation)
   set_tests_properties(${probe} PROPERTIES TIMEOUT 60)
 endforeach()
 
+add_executable(word_copy_probe word_copy_probe.c)
+target_link_libraries(word_copy_probe PRIVATE tracked_value)
+strict_c(word_copy_probe)
+add_test(NAME word_copy_oracle COMMAND word_copy_probe)
+set_tests_properties(word_copy_oracle PROPERTIES TIMEOUT 60)
+
 add_executable(sequential_predicate_probe sequential_predicate_probe.c)
 target_link_libraries(sequential_predicate_probe PRIVATE tracked_value)
 strict_c(sequential_predicate_probe)
