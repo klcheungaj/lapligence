@@ -11,7 +11,7 @@ Rust-emitted model, HDL, parity, sanitizer or native-platform acceptance.
 
 ## Standalone compact backend
 
-`value_gmp/backend.h` reserves ABI 5 and supplies the G1 operation subset and
+`value_gmp/backend.h` reserves ABI 5 and supplies the G1 core, V05/S1-S3 operations and
 V01 bridge. It is not selected or embedded by production yet; V07 owns that
 integration. Build its separate translation units through
 `tests/runtime_value_storage/compact_value.cmake`. Plain C kernels are always

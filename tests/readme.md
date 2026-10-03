@@ -581,5 +581,6 @@ facade compilation and generated-model execution are separate checks.
 
 Standalone compact-backend checks and microbenchmarks are opt-in CMake targets;
 see [native value probes](runtime_value_storage/readme.md#standalone-compact-value-backend).
-They cover portable and optional GMP limb kernels independently of generated
+They cover core values and the S2/S3 shifts, reductions, case/wildcard and range
+families with portable and optional GMP limb kernels, independently of generated
 model selection and do not replace later HDL/model integration acceptance.

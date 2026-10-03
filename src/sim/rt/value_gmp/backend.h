@@ -456,6 +456,118 @@ static inline g4_t llg_gmp_sv4_neq(g4_t a, g4_t b) {
 static inline g4_t llg_gmp_sv4_case_neq(g4_t a, g4_t b) {
     return llg_gmp_sv4_lognot(llg_gmp_sv4_case_eq(a, b));
 }
+/* V05/S2: shifts and reductions. Counts are unsigned bit patterns. */
+g4_t llg_gmp_sv4_shift_wide(g4_t value, g4_t count, int right, int arithmetic);
+g4_t llg_gmp_sv4_reduce_wide(g4_t value, unsigned op);
+g4_t llg_gmp_sv4_countones_wide(g4_t value);
+g4_t llg_gmp_sv4_onehot_wide(g4_t value, int allow_zero);
+static inline unsigned g4_popcount(uint64_t x) {
+    x -= (x >> 1) & UINT64_C(0x5555555555555555);
+    x = (x & UINT64_C(0x3333333333333333)) + ((x >> 2) & UINT64_C(0x3333333333333333));
+    x = (x + (x >> 4)) & UINT64_C(0x0f0f0f0f0f0f0f0f);
+    return (unsigned)((x * UINT64_C(0x0101010101010101)) >> 56);
+}
+static inline g4_t g4_shift(g4_t v, g4_t count, int right, int arithmetic) {
+    if (v.width > 64 || count.width > 64)
+        return llg_gmp_sv4_shift_wide(v, count, right, arithmetic);
+    if (count.data.small.b)
+        return llg_gmp_sv4_x(v.width, v.is_signed);
+    uint64_t sh = count.data.small.a;
+    uint64_t a = v.data.small.a, b = v.data.small.b;
+    unsigned top = v.width ? v.width - 1u : 0;
+    uint64_t fill_a =
+        right && arithmetic && v.is_signed && v.width && ((a >> top) & 1) ? UINT64_MAX : 0;
+    uint64_t fill_b =
+        right && arithmetic && v.is_signed && v.width && ((b >> top) & 1) ? UINT64_MAX : 0;
+    if (sh >= v.width)
+        return g4_small(fill_a, fill_b, v.width, v.is_signed);
+    if (!sh)
+        return v;
+    if (right) {
+        uint64_t pad = ~g4_mask(v.width - (uint32_t)sh);
+        return g4_small((a >> sh) | (fill_a & pad), (b >> sh) | (fill_b & pad), v.width,
+                        v.is_signed);
+    }
+    return g4_small(a << sh, b << sh, v.width, v.is_signed);
+}
+static inline g4_t llg_gmp_sv4_shl(g4_t a, g4_t b) { return g4_shift(a, b, 0, 0); }
+static inline g4_t llg_gmp_sv4_shr(g4_t a, g4_t b) { return g4_shift(a, b, 1, 0); }
+static inline g4_t llg_gmp_sv4_ashl(g4_t a, g4_t b) { return g4_shift(a, b, 0, 1); }
+static inline g4_t llg_gmp_sv4_ashr(g4_t a, g4_t b) { return g4_shift(a, b, 1, 1); }
+static inline g4_t g4_reduce(g4_t v, unsigned op) {
+    if (v.width > 64)
+        return llg_gmp_sv4_reduce_wide(v, op);
+    uint64_t a = v.data.small.a, b = v.data.small.b;
+    unsigned kind = op % 3u;
+    int t;
+    if (kind == 0)
+        t = (~a & ~b & g4_mask(v.width)) ? 0 : b ? 2 : 1;
+    else if (kind == 1)
+        t = (a & ~b) ? 1 : b ? 2 : 0;
+    else
+        t = b ? 2 : (int)(g4_popcount(a) & 1u);
+    return g4_predicate(op >= 3 && t != 2 ? !t : t);
+}
+static inline g4_t llg_gmp_sv4_reduce_and(g4_t v) { return g4_reduce(v, 0); }
+static inline g4_t llg_gmp_sv4_reduce_or(g4_t v) { return g4_reduce(v, 1); }
+static inline g4_t llg_gmp_sv4_reduce_xor(g4_t v) { return g4_reduce(v, 2); }
+static inline g4_t llg_gmp_sv4_reduce_nand(g4_t v) { return g4_reduce(v, 3); }
+static inline g4_t llg_gmp_sv4_reduce_nor(g4_t v) { return g4_reduce(v, 4); }
+static inline g4_t llg_gmp_sv4_reduce_xnor(g4_t v) { return g4_reduce(v, 5); }
+static inline g4_t llg_gmp_sv4_countones(g4_t v) {
+    return v.width > 64 ? llg_gmp_sv4_countones_wide(v)
+                        : g4_small(g4_popcount(v.data.small.a & ~v.data.small.b), 0, 32, 1);
+}
+static inline g4_t llg_gmp_sv4_onehot(g4_t v, int allow_zero) {
+    if (v.width > 64)
+        return llg_gmp_sv4_onehot_wide(v, allow_zero);
+    uint64_t ones = v.data.small.a & ~v.data.small.b;
+    return g4_predicate(ones ? !(ones & (ones - 1u)) : allow_zero != 0);
+}
+/* End V05/S2. */
+
+/* V05/S3: case modes, directional wildcards and range membership. */
+g4_t llg_gmp_sv4_match_wide(g4_t a, g4_t b, unsigned mode);
+static inline g4_t g4_match(g4_t a, g4_t b, unsigned mode) {
+    if (g4_maxw(a, b) > 64)
+        return llg_gmp_sv4_match_wide(a, b, mode);
+    uint32_t w = g4_maxw(a, b);
+    int sign = mode == 2 && a.is_signed && b.is_signed;
+    uint64_t aa = g4_extend(a.data.small.a, a.width, w, sign);
+    uint64_t ab = g4_extend(a.data.small.b, a.width, w, sign);
+    uint64_t ba = g4_extend(b.data.small.a, b.width, w, sign);
+    uint64_t bb = g4_extend(b.data.small.b, b.width, w, sign);
+    if (mode == 0)
+        return g4_predicate(!((aa ^ ba) & ~(ab | bb)));
+    if (mode == 1) {
+        uint64_t care = ~((~aa & ab) | (~ba & bb)) & g4_mask(w);
+        return g4_predicate(!(((aa ^ ba) | (ab ^ bb)) & care));
+    }
+    uint64_t care = ~bb & g4_mask(w);
+    if ((aa ^ ba) & ~ab & care)
+        return g4_predicate(0);
+    return g4_predicate(ab & care ? 2 : 1);
+}
+static inline g4_t llg_gmp_sv4_casex_eq(g4_t a, g4_t b) { return g4_match(a, b, 0); }
+static inline g4_t llg_gmp_sv4_casez_eq(g4_t a, g4_t b) { return g4_match(a, b, 1); }
+static inline g4_t llg_gmp_sv4_wild_eq(g4_t a, g4_t b) { return g4_match(a, b, 2); }
+static inline g4_t llg_gmp_sv4_wild_neq(g4_t a, g4_t b) {
+    return llg_gmp_sv4_lognot(llg_gmp_sv4_wild_eq(a, b));
+}
+static inline g4_t llg_gmp_sv4_logimpl(g4_t a, g4_t b) {
+    int x = g4_truth(a), y = g4_truth(b);
+    return g4_predicate(x == 0 || y == 1 ? 1 : x == 1 && y == 0 ? 0 : 2);
+}
+static inline g4_t llg_gmp_sv4_logequiv(g4_t a, g4_t b) {
+    int x = g4_truth(a), y = g4_truth(b);
+    return g4_predicate(x == 2 || y == 2 ? 2 : x == y);
+}
+static inline g4_t llg_gmp_sv4_inside_range(g4_t value, g4_t low, g4_t high) {
+    g4_t ge = llg_gmp_sv4_ge(value, low), le = llg_gmp_sv4_le(value, high);
+    return llg_gmp_sv4_logand(ge, le);
+}
+/* End V05/S3. */
+
 static inline void llg_gmp_sv4_export_vpi_words(g4_t v, size_t first, llg_gmp_sv4_vpi_word_t* out,
                                                 size_t count) {
     if (v.width > 64) {
@@ -514,6 +626,27 @@ static inline void llg_gmp_sv4_import_words(g4_t* v, size_t first, const llg_gmp
 
 /* Standalone facade. V07 owns selection through llg_value.h. */
 #ifdef LLG_SV4_GMP_PUBLIC_NAMES
+/* V05/S2 and S3 public names. */
+#define sv4_ashl llg_gmp_sv4_ashl
+#define sv4_ashr llg_gmp_sv4_ashr
+#define sv4_shl llg_gmp_sv4_shl
+#define sv4_shr llg_gmp_sv4_shr
+#define sv4_countones llg_gmp_sv4_countones
+#define sv4_onehot llg_gmp_sv4_onehot
+#define sv4_reduce_and llg_gmp_sv4_reduce_and
+#define sv4_reduce_nand llg_gmp_sv4_reduce_nand
+#define sv4_reduce_nor llg_gmp_sv4_reduce_nor
+#define sv4_reduce_or llg_gmp_sv4_reduce_or
+#define sv4_reduce_xnor llg_gmp_sv4_reduce_xnor
+#define sv4_reduce_xor llg_gmp_sv4_reduce_xor
+#define sv4_casex_eq llg_gmp_sv4_casex_eq
+#define sv4_casez_eq llg_gmp_sv4_casez_eq
+#define sv4_inside_range llg_gmp_sv4_inside_range
+#define sv4_logequiv llg_gmp_sv4_logequiv
+#define sv4_logimpl llg_gmp_sv4_logimpl
+#define sv4_wild_eq llg_gmp_sv4_wild_eq
+#define sv4_wild_neq llg_gmp_sv4_wild_neq
+/* End V05/S2 and S3 public names. */
 #define sv4_add llg_gmp_sv4_add
 #define sv4_and llg_gmp_sv4_and
 #define sv4_assign llg_gmp_sv4_assign
