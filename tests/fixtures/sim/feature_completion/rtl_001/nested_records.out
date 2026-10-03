@@ -1,0 +1,4 @@
+defaults=xxxx:xx:00
+original=-2:11:22:00
+copied=-2:11:aa:00 other=3
+slice=-2:22 untouched=aa
