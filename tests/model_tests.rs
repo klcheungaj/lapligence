@@ -476,6 +476,10 @@ fn compile_diagnostics() {
         let bad = std::env::temp_dir().join(format!("llg_bad_syntax_{}.sv", std::process::id()));
         std::fs::write(&bad, "module bad;\n  wire w;\n  assign w = ;\nendmodule\n")
             .expect("write bad file");
+        // Diagnostics name files by their resolved path (macOS /var/... is
+        // /private/var/...); Windows canonicalization adds a verbatim prefix.
+        #[cfg(unix)]
+        let bad = bad.canonicalize().expect("resolve bad file");
         let bad_path = bad.to_string_lossy().into_owned();
 
         let opts = compile::CompileOpts {

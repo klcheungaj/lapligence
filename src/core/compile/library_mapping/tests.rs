@@ -155,8 +155,11 @@ impl Directory {
         std::fs::write(path.join("rtl/cell.sv"), "body").expect("source bytes");
         // Disk admission names files by their resolved handle path, while
         // in-memory maps resolve lexically; macOS reports /var/... as
-        // /private/var/..., so use the resolved spelling for both.
-        Self(path.canonicalize().expect("canonical temporary directory"))
+        // /private/var/..., so use the resolved spelling for both. Windows
+        // canonicalization adds a verbatim prefix that handle paths omit.
+        #[cfg(unix)]
+        let path = path.canonicalize().expect("canonical temporary directory");
+        Self(path)
     }
 }
 impl Drop for Directory {

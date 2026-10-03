@@ -666,7 +666,15 @@ pub fn compile(opts: &CompileOpts) -> Result<CompileOut, StartupError> {
         })?;
         library_owned.push(LibrarySource::new(name, text, library));
     }
-    let mut library_include_dirs = opts.library_include_dirs.clone();
+    let include_dirs = resolve_path_include_dirs(&opts.include_dirs);
+    let mut library_include_dirs = opts
+        .library_include_dirs
+        .iter()
+        .map(|dir| LibraryIncludeDir {
+            library: dir.library.clone(),
+            path: resolve_path_include_dir(&dir.path),
+        })
+        .collect::<Vec<_>>();
     let mut library_map_work = LibraryMapWorkBudget::with_allocation_limit(
         MAX_LIBRARY_MAP_WORK,
         effective_source_byte_limit(opts.limits),
@@ -716,7 +724,7 @@ pub fn compile(opts: &CompileOpts) -> Result<CompileOut, StartupError> {
             &root.name,
             &root.text,
             opts,
-            &opts.include_dirs,
+            &include_dirs,
             &mut macros,
             root_target.as_ref(),
             &mut admitted_targets,
@@ -731,7 +739,7 @@ pub fn compile(opts: &CompileOpts) -> Result<CompileOut, StartupError> {
     }
     for root in library_owned.clone() {
         let mut library_macros = macro_environment_from_defines(&opts.defines);
-        let mut include_dirs = opts.include_dirs.clone();
+        let mut include_dirs = include_dirs.clone();
         include_dirs.extend(
             library_include_dirs
                 .iter()
@@ -767,6 +775,7 @@ pub fn compile(opts: &CompileOpts) -> Result<CompileOut, StartupError> {
         &owned,
         &[],
         &library_owned,
+        &include_dirs,
         &library_include_dirs,
         map_originals,
         &mut library_map_work,
@@ -858,6 +867,7 @@ pub fn compile_sources(
         &owned,
         &[],
         &library_owned,
+        &opts.include_dirs,
         &library_include_dirs,
         map_originals,
         &mut library_map_work,
@@ -914,10 +924,12 @@ fn preflight_options(opts: &CompileOpts) -> Result<(), StartupError> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn compile_source_groups(
     first: &[OwnedSource],
     second: &[OwnedSource],
     library_sources: &[LibrarySource],
+    include_dirs: &[String],
     library_include_dirs: &[LibraryIncludeDir],
     map_originals: Vec<OwnedSource>,
     map_work: &mut LibraryMapWorkBudget,
@@ -949,8 +961,7 @@ fn compile_source_groups(
             .map(|value| parse_define(value))
             .collect(),
         top_modules: opts.top.iter().cloned().collect(),
-        include_dirs: opts
-            .include_dirs
+        include_dirs: include_dirs
             .iter()
             .map(|dir| normalize_include_dir(dir))
             .collect(),
@@ -3432,6 +3443,26 @@ fn absolute_path(path: &Path) -> Result<AdmittedTarget, StartupError> {
         })
 }
 
+/// Resolve path-mode include directories to the handle-derived spelling that
+/// names admitted headers. Slang's cache-only include lookups otherwise miss
+/// headers reached through a symlinked directory (macOS reports /var/... as
+/// /private/var/...). Missing or non-directory entries stay as written; they
+/// admit nothing either way.
+fn resolve_path_include_dirs(include_dirs: &[String]) -> Vec<String> {
+    include_dirs
+        .iter()
+        .map(|dir| resolve_path_include_dir(dir))
+        .collect()
+}
+
+fn resolve_path_include_dir(dir: &str) -> String {
+    secure_fs::open_path(Path::new(&normalize_include_dir(dir)))
+        .ok()
+        .filter(|opened| opened.is_dir())
+        .map(|opened| opened.actual_path().to_string_lossy().into_owned())
+        .unwrap_or_else(|| dir.to_owned())
+}
+
 fn normalize_include_dir(value: &str) -> String {
     let path = Path::new(value);
     if path.is_absolute() {
@@ -5296,6 +5327,36 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["axb/source.sv"]
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn macro_include_resolves_through_a_symlinked_include_directory() {
+        let real = temporary_path("symlinked-include-real");
+        let link = temporary_path("symlinked-include-link");
+        std::fs::create_dir_all(real.join("include")).expect("create real include root");
+        std::fs::write(real.join("include/selected.svh"), "`define WIDTH 9\n")
+            .expect("write selected header");
+        std::fs::write(
+            real.join("top.sv"),
+            "`include `HEADER\nmodule top; wire [`WIDTH-1:0] data; endmodule\n",
+        )
+        .expect("write top source");
+        std::os::unix::fs::symlink(&real, &link).expect("link project root");
+
+        // Rust admits the header under its resolved path; Slang must look it
+        // up through the same spelling of the symlinked include directory.
+        let out = compile(&CompileOpts {
+            files: vec![link.join("top.sv").to_string_lossy().into_owned()],
+            include_dirs: vec![link.join("include").to_string_lossy().into_owned()],
+            defines: vec![r#"HEADER="selected.svh""#.to_owned()],
+            ..CompileOpts::default()
+        })
+        .expect("compile through symlinked include directory");
+        assert!(out.ok(), "diagnostics: {:?}", out.diagnostics);
+
+        std::fs::remove_file(&link).expect("remove project link");
+        std::fs::remove_dir_all(&real).expect("remove real project");
     }
 
     #[test]

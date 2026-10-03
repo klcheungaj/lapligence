@@ -54,6 +54,12 @@ impl TempDir {
         let path = root.join(format!("llg-{prefix}-{}-{nonce}-{id}", std::process::id()));
         std::fs::create_dir(&path)
             .map_err(|error| format!("create temp dir {}: {error}", path.display()))?;
+        // Tools report resolved paths (macOS /var/... is /private/var/...);
+        // Windows canonicalization adds a verbatim prefix they omit.
+        #[cfg(unix)]
+        let path = path
+            .canonicalize()
+            .map_err(|error| format!("resolve temp dir {}: {error}", path.display()))?;
         Ok(Self { path })
     }
 

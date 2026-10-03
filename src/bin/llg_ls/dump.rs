@@ -132,7 +132,15 @@ fn normalize(path: &Path) -> Option<PathBuf> {
     } else {
         std::env::current_dir().ok()?.join(path)
     };
-    workspace::normalize_absolute_path(&absolute)
+    let lexical = workspace::normalize_absolute_path(&absolute)?;
+    // Compilation names admitted files by their resolved handle path, so
+    // resolve the dump target the same way; rows then stay relative to the
+    // root when it is reached through a symlink (macOS /var -> /private/var).
+    Some(
+        llg::ffi::secure_fs::open_path(&lexical)
+            .map(|opened| opened.actual_path().to_path_buf())
+            .unwrap_or(lexical),
+    )
 }
 
 /// Directory holding `file`, or its parent when no ancestor ships a config.
