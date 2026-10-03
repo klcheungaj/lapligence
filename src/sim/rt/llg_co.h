@@ -236,12 +236,26 @@ struct llg_co_desc {
  * re-acquire at a call boundary a free-list operation and keeps the
  * allocation counters.
  */
+/* MSVC declares max_align_t only in its C++ library, not in C11 mode. The
+ * union spans the fundamental types and matches MSVC's C++ definition
+ * (double, 8-byte aligned) on every MSVC target. */
+#if defined(_MSC_VER) && !defined(__clang__)
+typedef union llg_co_max_align {
+    long long ll;
+    long double ld;
+    void* p;
+    void (*fn)(void);
+} llg_co_max_align_t;
+#else
+typedef max_align_t llg_co_max_align_t;
+#endif
+
 typedef struct llg_co_chunk llg_co_chunk_t;
 struct llg_co_chunk {
     llg_co_chunk_t* prev;
     size_t size; /* usable bytes in data[] */
     size_t used;
-    max_align_t data[];
+    llg_co_max_align_t data[];
 };
 
 typedef struct llg_co_arena {
@@ -266,7 +280,7 @@ void llg_co_host_chunk_free(void* chunk, size_t bytes);
 #endif
 
 #define LLG_CO_ALIGN_UP(n) \
-    (((n) + (_Alignof(max_align_t) - 1)) & ~(size_t)(_Alignof(max_align_t) - 1))
+    (((n) + (_Alignof(llg_co_max_align_t) - 1)) & ~(size_t)(_Alignof(llg_co_max_align_t) - 1))
 
 #define llg_co_arena_grow LLG_CO_SYM(llg_co_arena_grow, LLG_CO_ABI_VERSION)
 #define llg_co_arena_retire LLG_CO_SYM(llg_co_arena_retire, LLG_CO_ABI_VERSION)
