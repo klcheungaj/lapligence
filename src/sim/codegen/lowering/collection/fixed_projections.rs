@@ -366,7 +366,35 @@ impl Codegen<'_> {
                     let Some(root) = root else {
                         continue;
                     };
-                    let Some(mut projection) = self.fixed_projection(path, *root)? else {
+                    let projection = self.fixed_projection(path, *root)?;
+                    let projection = match projection {
+                        Some(projection) => Some(projection),
+                        None if index + 1 < parts.len() => {
+                            match (self.signal_of(*root), self.query_descriptor(*root)) {
+                                (Some(signal), Some(descriptor))
+                                    if matches!(
+                                        &descriptor.shape,
+                                        TypeShape::Aggregate(layout)
+                                            if matches!(layout.kind, AggregateKind::PackedStruct | AggregateKind::PackedUnion)
+                                    ) =>
+                                {
+                                    Some(Projection {
+                                        root: FixedRoot::Cell {
+                                            read: self.signal_read_expr(signal)?,
+                                            target: self.reference_lhs(IrLhs::Whole(signal.ir))?,
+                                        },
+                                        signed: descriptor.info.signed,
+                                        descriptor: descriptor.clone(),
+                                        steps: Vec::new(),
+                                        ref_legal: true,
+                                    })
+                                }
+                                _ => None,
+                            }
+                        }
+                        None => None,
+                    };
+                    let Some(mut projection) = projection else {
                         continue;
                     };
                     for member in &parts[index + 1..] {
