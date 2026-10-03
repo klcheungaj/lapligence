@@ -1,11 +1,102 @@
 //! File-based simulator acceptance tests through the public executable.
 #![allow(dead_code)]
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::time::Duration;
 
 use super::sim_harness;
+
+fn fixture_path(suite: &str, fixture: &str) -> PathBuf {
+    let name = if matches!(
+        Path::new(fixture).extension().and_then(|ext| ext.to_str()),
+        Some("v" | "sv")
+    ) {
+        fixture.to_owned()
+    } else {
+        format!("{fixture}.sv")
+    };
+    let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/sim")
+        .join(suite)
+        .join(name);
+    assert!(source.is_file(), "missing fixture: {}", source.display());
+    source
+}
+
+/// Execute a checked fixture after destroying the frontend snapshot and owned Db.
+/// Generation validates semantic and execution IR before owned whole-model emission.
+/// This supplements, rather than replaces, public CLI acceptance of the same fixture.
+pub(crate) fn run_case_after_db_drop(suite: &str, fixture: &str, expected: &str) {
+    use llg::core::{compile, db::Db};
+    use llg::sim::{build, codegen, opt::OptConfig};
+
+    assert!(
+        build::cmake_available(),
+        "owned execution tests require CMake"
+    );
+    let source = fixture_path(suite, fixture);
+    let source_text = std::fs::read_to_string(&source).expect("read checked fixture");
+    let models = sim_harness::with_frontend_temp_cwd("owned-feature", |_| {
+        let compiled = compile::compile_checked(&compile::CompileOpts {
+            files: vec![source.to_string_lossy().into_owned()],
+            top: Some("tb".to_owned()),
+            ..Default::default()
+        })
+        .map_err(|error| format!("compile: {error}"))?;
+        let database =
+            Db::from_slang(&compiled.snapshot).map_err(|error| format!("database: {error}"))?;
+        drop(compiled);
+        let captured_path = database
+            .nodes()
+            .iter()
+            .filter(|node| node.line > 0)
+            .filter_map(|node| node.file.as_deref())
+            .find(|file| Path::new(file).file_name() == source.file_name())
+            .expect("owned source location survives snapshot destruction");
+        assert_eq!(
+            database.source_text(captured_path),
+            Some(source_text.as_str())
+        );
+        let mut models = Vec::new();
+        for optimized in [false, true] {
+            let options = if optimized {
+                OptConfig::default()
+            } else {
+                OptConfig::none()
+            };
+            let model = codegen::generate_from_db_with_opts(&database, &options)
+                .map_err(|error| format!("codegen: {error}"))?;
+            assert!(
+                model.warnings.is_empty(),
+                "unexpected warnings: {:?}",
+                model.warnings
+            );
+            models.push((optimized, model));
+        }
+        drop(database);
+        Ok(models)
+    })
+    .expect("checked compilation and validated owned emission");
+    for (optimized, model) in models {
+        for level in [build::ModelOptLevel::O0, build::ModelOptLevel::O3] {
+            let directory =
+                sim_harness::TempDir::new("owned-feature-model").expect("model directory");
+            let options = build::CmakeBuildOpts {
+                model_opt_level: level,
+                ..Default::default()
+            };
+            let executable =
+                build::build_model_cmake_with_opts(directory.path(), &model.sources(), &options)
+                    .expect("build owned generated model");
+            let output =
+                sim_harness::run_executable_output(&executable).expect("execute owned model");
+            let label =
+                format!("{suite}/{fixture}, Db dropped, optimized={optimized}, native={level:?}");
+            assert_case_output(output, &label, expected, "", &[]);
+        }
+    }
+}
 
 fn invoke_with_args(suite: &str, fixture: &str, optimized: bool, args: &[&str]) -> Output {
     invoke_with_env(suite, fixture, optimized, args, &[], &[])
@@ -32,18 +123,10 @@ fn invoke_with_source_prefix_and_runtime_args(
     args: &[&str],
     runtime_args: &[&str],
 ) -> Output {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/sim")
-        .join(suite);
-    let source = root.join(format!("{fixture}.sv"));
-    assert!(source.is_file(), "missing fixture: {}", source.display());
+    let source = fixture_path(suite, fixture);
     let prefix_paths: Vec<_> = prefix
         .iter()
-        .map(|stem| {
-            let path = root.join(format!("{stem}.sv"));
-            assert!(path.is_file(), "missing fixture: {}", path.display());
-            path
-        })
+        .map(|stem| fixture_path(suite, stem))
         .collect();
     let directory = sim_harness::TempDir::new(fixture).expect("CLI test directory");
     let mut command = Command::new(env!("CARGO_BIN_EXE_llg"));
@@ -74,11 +157,7 @@ fn invoke_with_files(
     args: &[&str],
     files: &[(&str, &str)],
 ) -> Output {
-    let source = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/sim")
-        .join(suite)
-        .join(format!("{fixture}.sv"));
-    assert!(source.is_file(), "missing fixture: {}", source.display());
+    let source = fixture_path(suite, fixture);
     let directory = sim_harness::TempDir::new(fixture).expect("CLI test directory");
     for (name, contents) in files {
         std::fs::write(directory.path().join(name), contents)
@@ -106,11 +185,7 @@ pub(crate) fn invoke_with_env(
     envs: &[(&str, &str)],
     remove_env: &[&str],
 ) -> Output {
-    let source = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/sim")
-        .join(suite)
-        .join(format!("{fixture}.sv"));
-    assert!(source.is_file(), "missing fixture: {}", source.display());
+    let source = fixture_path(suite, fixture);
     let directory = sim_harness::TempDir::new(fixture).expect("CLI test directory");
     let mut command = Command::new(env!("CARGO_BIN_EXE_llg"));
     command.current_dir(directory.path()).args(["--top", "tb"]);
@@ -138,11 +213,7 @@ fn invoke_with_runtime_args(
     args: &[&str],
     runtime_args: &[&str],
 ) -> Output {
-    let source = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/sim")
-        .join(suite)
-        .join(format!("{fixture}.sv"));
-    assert!(source.is_file(), "missing fixture: {}", source.display());
+    let source = fixture_path(suite, fixture);
     let directory = sim_harness::TempDir::new(fixture).expect("CLI test directory");
     let mut command = Command::new(env!("CARGO_BIN_EXE_llg"));
     command.current_dir(directory.path()).args(["--top", "tb"]);

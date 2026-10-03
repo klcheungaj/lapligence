@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
+import posixpath
 import re
 import subprocess
 from typing import Iterable
@@ -74,7 +75,7 @@ STRING = r'"([^"\n]+)"'
 ATOM = r'(?:"[^"\n]+"|[A-Z][A-Z0-9_]*)'
 
 
-def source_references(text: str, source: str) -> set[Reference]:
+def source_references(text: str, source: str, *, public_cli_only: bool = False) -> set[Reference]:
     text = without_comments(text)
     constants = dict(re.findall(r'const\s+(\w+)\s*:\s*&str\s*=\s*' + STRING, text))
     refs: set[Reference] = set()
@@ -88,9 +89,14 @@ def source_references(text: str, source: str) -> set[Reference]:
         refs.add(Reference(path, source, text.count("\n", 0, position) + 1))
 
     for m in re.finditer(r'sim_cli::\w+\(\s*(' + ATOM + r')\s*,\s*(' + ATOM + r')', text):
+        helper = m[0].split("(", 1)[0].removeprefix("sim_cli::")
+        if public_cli_only and (helper == "run_case_after_db_drop"
+                                or not helper.startswith(("run_case", "reject_case"))):
+            continue
         suite, stem = atom(m[1]), atom(m[2])
         if suite is not None and stem is not None:
-            add(f"tests/fixtures/sim/{suite}/{stem}.sv", m.start())
+            name = stem if Path(stem).suffix in (".v", ".sv") else f"{stem}.sv"
+            add(f"tests/fixtures/sim/{suite}/{name}", m.start())
 
     for m in re.finditer(
         r'sim_cli::run_case_with_source_prefix\(\s*'
@@ -108,7 +114,16 @@ def source_references(text: str, source: str) -> set[Reference]:
         for stem_match in re.finditer(ATOM, m[3]):
             stem = atom(stem_match[0])
             if suite is not None and stem is not None:
-                add(f"tests/fixtures/sim/{suite}/{stem}.sv", m.start())
+                name = stem if Path(stem).suffix in (".v", ".sv") else f"{stem}.sv"
+                add(f"tests/fixtures/sim/{suite}/{name}", m.start())
+
+    if public_cli_only:
+        return refs
+
+    for m in re.finditer(r'include_str!\(\s*' + STRING + r'\s*\)', text):
+        path = posixpath.normpath(str(PurePosixPath(source).parent / m[1]))
+        if path.startswith("tests/fixtures/"):
+            add(path, m.start())
 
 
     joins = list(re.finditer(r'\.join\(\s*' + STRING + r'\s*\)', text))
@@ -147,6 +162,75 @@ def missing(root: Path, refs: Iterable[Reference], tracked: set[str] | None = No
     return errors
 
 
+def test_bodies(text: str) -> list[str]:
+    text = without_comments(text)
+    masked = re.sub(r'r(#+)?".*?"\1|"(?:\\.|[^"\\])*"',
+                    lambda m: " " * len(m[0]), text, flags=re.DOTALL)
+    bodies = []
+    for match in re.finditer(r'#\[test\]\s*fn\s+\w+\s*\([^)]*\)\s*\{', masked):
+        start, depth, end = match.end(), 1, match.end()
+        while end < len(masked) and depth:
+            depth += (masked[end] == "{") - (masked[end] == "}")
+            end += 1
+        if depth == 0:
+            bodies.append(text[start:end - 1])
+    return bodies
+
+
+def feature_completion_errors(root: Path, tracked: set[str] | None = None) -> list[str]:
+    fixture_root = root / "tests/fixtures/sim/feature_completion"
+    directories = sorted(path for path in fixture_root.iterdir() if path.is_dir()
+                         and not re.fullmatch(r"g1_\d+", path.name)) if fixture_root.is_dir() else []
+    suite = "tests/sim_feature_completion.rs"
+    if not directories and not (root / suite).is_file():
+        return []
+    errors = []
+    if not (root / suite).is_file():
+        return [f"missing declared feature suite: {suite}"]
+    facade = without_comments((root / suite).read_text(encoding="utf-8"))
+    if re.search(r'#\[\s*(?:ignore|cfg|cfg_attr)\b', facade):
+        errors.append(f"{suite}: feature modules must not be disabled or conditional")
+    declarations = set(re.findall(
+        r'#\[path\s*=\s*"sim_feature_completion/(\w+)\.rs"\]\s*mod\s+\1\s*;', facade))
+    if not declarations:
+        errors.append(f"{suite}: zero declared feature modules")
+    if tracked is not None and suite not in tracked:
+        errors.append(f"untracked {suite}")
+    for directory in directories:
+        task = directory.name
+        if not re.fullmatch(r"(?:fnd|rtl|sim|adv)_\d{3}", task):
+            errors.append(f"{directory.relative_to(root)}: use an ASCII task slug (e.g. rtl_001)")
+        source = f"tests/sim_feature_completion/{task}.rs"
+        if task not in declarations or not (root / source).is_file():
+            errors.append(f"{task}: missing explicit module declaration or file: {source}")
+            continue
+        if tracked is not None and source not in tracked:
+            errors.append(f"untracked {source}")
+        text = without_comments((root / source).read_text(encoding="utf-8"))
+        if re.search(r'#\[\s*(?:ignore|cfg|cfg_attr)\b', text):
+            errors.append(f"{source}: feature tests must not be disabled or conditional")
+        bodies = test_bodies(text)
+        if not bodies:
+            errors.append(f"{source}: zero declared feature tests")
+        constants = "\n".join(re.findall(r'const\s+\w+\s*:\s*&str\s*=\s*"[^"\n]*"\s*;', text))
+        referenced = {ref.path for body in bodies
+                      for ref in source_references(constants + "\n" + body, source,
+                                                   public_cli_only=True)}
+        fixtures = sorted(path for path in directory.rglob("*")
+                          if path.suffix in (".v", ".sv"))
+        if not fixtures:
+            errors.append(f"{task}: zero HDL fixtures")
+        for fixture in fixtures:
+            path = fixture.relative_to(root).as_posix()
+            if not fixture.name.isascii():
+                errors.append(f"{path}: fixture name must be ASCII")
+            if path not in referenced:
+                errors.append(f"{path}: not referenced by a declared feature test through public sim_cli")
+    for task in sorted(declarations - {directory.name for directory in directories}):
+        errors.append(f"{task}: declared feature module has no fixture directory")
+    return errors
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1])
@@ -164,7 +248,7 @@ def main() -> int:
             output = subprocess.run(["git", "-C", str(root), "ls-files", "-z"],
                                     check=True, capture_output=True)
             tracked = set(output.stdout.decode("utf-8").split("\0"))
-        errors = missing(root, refs, tracked)
+        errors = missing(root, refs, tracked) + feature_completion_errors(root, tracked)
     except (OSError, ValueError, subprocess.CalledProcessError) as exc:
         parser.error(str(exc))
     for error in errors:
