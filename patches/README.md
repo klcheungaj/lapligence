@@ -42,6 +42,7 @@ admission.
 | `slang/slang-package-wildcard-export.patch` | Lazy finite wildcard re-exports, with ambiguous names diagnosed. |
 | `slang/slang-conditional-z-merge.patch` | Selected packed conditional policy: definite true selects one arm despite other X/Z predicate bits; unpacked constants retain matching immediate members and default mismatches by member type, not initializer. Nested members default whole. Local edition policy, not an upstream erratum. |
 | `slang/slang-output-port-runtime-select.patch` | Output ports connected to variables admit runtime selects as implied continuous assignments (SV 23.3.3.2); net and inout lvalues keep constant selects. |
+| `slang/slang-net-alias-members-uwire-inout.patch` | Net aliases may name constant member selects of structure nets (SV 10.11, A.8.3/A.8.5). A uwire net may connect to a module inout port and that connection is not counted as a uwire driver (SV 6.6.2, 23.3.3.6–23.3.3.7); the simulator checks the collapsed net's drivers. Pass-switch terminals and `inout uwire` formals stay rejected. |
 
 ## Updating patches
 
