@@ -239,7 +239,23 @@ pub(in crate::sim::emit_c) fn main(
                 },
             });
         }
-        for array in &model.arrays {
+        for array in model.arrays.iter().filter(|array| !array.activation) {
+            if array.sparse() {
+                tables.render(&registrations, &mut out);
+                registrations.clear();
+                let mut format = array.hdl_name.replace('%', "%%");
+                let mut coordinates = Vec::new();
+                let mut stride = array.total;
+                for (left, right) in &array.dims {
+                    let extent = i64::from(*left).abs_diff(i64::from(*right)) + 1;
+                    stride /= extent;
+                    format.push_str("[%lld]");
+                    coordinates.push(format!("(long long)((int64_t){left} {} (int64_t)((_llg_n / {stride}ULL) % {extent}ULL))", if left >= right { "-" } else { "+" }));
+                }
+                let capacity = array.hdl_name.len() + array.dims.len() * 14 + 1;
+                out.push_str(&format!("    for (uint64_t _llg_n = 0; _llg_n < {}ULL; ++_llg_n) {{ char _llg_name[{capacity}]; snprintf(_llg_name, sizeof(_llg_name), {}, {}); if (llg_wave_register_sv4(_llg_name, {}, {}u) != 0) goto start_failed; }}\n", array.total, c_string_literal(&format), coordinates.join(", "), array.cell_address("_llg_n"), array.elem_width));
+                continue;
+            }
             for index in 0..array.total {
                 let name = array
                     .waveform_element_name(index)

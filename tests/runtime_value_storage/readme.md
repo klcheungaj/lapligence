@@ -82,6 +82,7 @@ capabilities; check the exact inventory rather than assuming a fixed count.
 | `word_copy_probe.c` | Independent per-bit reference for concat/repeat, shifts, stream/unstream, part/indexed selections and selection-plan read/slice/set at 1/7/63/64/65/127/128/129/1023/4096 bits; unaligned offsets, every limb boundary, X/Z, reversed/clipped ranges, aliased writes, raw-mask normalization and zero owners. |
 | `packed_selection_probe.c`, `packed_selection_scheduler_probe.c` | Independent per-bit oracle for 7,056 two-step chains plus third refinement, aliasing/X/wide indices, limb endpoints, NBA masks and synchronous scanner targets; scheduler cases do not switch stacks. |
 | `packed_formal_probe.c` | 4,096 private-input mutations without caller changes, immediate ref publication, two-state member conversion and neighboring-field preservation; sanitizer-safe. |
+| `fixed_array_storage_probe.c` | 16M logical cells without untouched owners; repeated independent/two-state copies, stable addresses, NBA issue-time snapshots/cancellation, aligned stream ordering and zero teardown owners. |
 | `fixed_array_reduction_probe.c` | Five folds, first-element X/Z seeding, signed/widened maps, nested values/declared indices and 65/129-bit owners; 200,000 separate eight-bit cells without flattening and exact cleanup. |
 | `sequential_predicate_probe.c` | 64 truth/prefix combinations, 129-bit and real truth, packed/array merge differences; 10,000 ownership cycles, bounded peaks and zero skipped-clause allocations. |
 | `memory_image_probe.c` | Eight exact-output modes at 1/7/8/65/129 bits, signedness, X/Z padding, numeric extension/truncation, original-width two-state enum overflow, sparse files and equivalent signed address spellings; no stack switches. |
@@ -203,8 +204,8 @@ ctest --test-dir /build/llg-compact-gcc -R '^compact_' --output-on-failure --par
 /build/llg-compact-gcc/compact_gmp_benchmark
 ```
 
-The `compact_checks` target builds every enabled compact probe (S1–S3 and
-S6–S9); S4/S5 remain pending. Omit `LLG_GMP_ROOT` for a dependency-free
+The `compact_checks` target builds every enabled compact probe (S1–S9 and
+V06 consumer bridges). Omit `LLG_GMP_ROOT` for a dependency-free
 portable build. Use a separate build directory with
 `-DCMAKE_C_COMPILER=clang` for Clang, or add
 `-DLLG_STORAGE_TEST_SANITIZERS=ON` for GCC ASan/UBSan. Allocation counter targets
@@ -218,27 +219,43 @@ destination reuse, including X/Z operands and 65-bit multiplication. Copy reuse
 uses `sv4_copy`; arithmetic reuse uses the emitter's replace-of-fresh-result
 pattern. These are indicative microbenchmarks, with no whole-model claim.
 
-The S2/S3 family probes are enabled by the same compact option. Their separate
-target is available for focused runs:
+### Compact selections and assembly (V05 S4/S5)
+
+`compact_selection.cmake` adds isolated targets for captured selection plans,
+reference reads, concatenation, replication, streams and array conditional merge.
+The probe exhausts all <=4-bit source state patterns, all four-state pairs of
+4-bit array payloads, small signed/unsigned bases, and <=3-bit concatenation
+pairs. Independent per-position/element oracles accompany live legacy comparison
+over the G1 width list through the exclusive limit minus one. Tests include
+intermediate clipping, invalid prefixes, reversed ranges, empty intervals,
+overlapping writes, independent owners surviving source mutation/destruction,
+X/Z/default element semantics and unsigned result shape. Native source graphs
+cover every reference kind and both queue callback routes.
+
+Use the preceding compact configure command, then:
 
 ```sh
-cmake --build /build/llg-compact-gcc --parallel 6 --target compact_v05a_checks
-ctest --test-dir /build/llg-compact-gcc -R '^compact_.*families_' \
-  --output-on-failure --parallel 6
-/build/llg-compact-gcc/compact_portable_families_benchmark
+cmake --build /build/llg-compact-gcc --parallel 6 --target \
+  compact_portable_selection_probe compact_gmp_selection_probe \
+  compact_portable_selection_allocations compact_gmp_selection_allocations \
+  compact_portable_selection_facade compact_gmp_selection_facade \
+  compact_portable_selection_benchmark compact_gmp_selection_benchmark
+ctest --test-dir /build/llg-compact-gcc \
+  -R '^compact_(portable|gmp)_(selections|selection_)' --output-on-failure --parallel 6
+/build/llg-compact-gcc/compact_portable_selection_benchmark
+/build/llg-compact-gcc/compact_gmp_selection_benchmark
 ```
 
-The family harness exhausts four-state binary inputs of every width through four,
-including unequal widths and all signs, and every same-width range triple through
-four with all eight sign combinations. Wide checks cover the G1 width list and
-maximum admitted width, count limb boundaries, high/unknown count words,
-result independence, destination-as-operand replacement and canonical payloads.
-Python supplies separate integer/state vectors for every family operation.
-The counter probe checks allocation-free small operations and wide predicates,
-independent zero-count shifts and B removal when all unknown bits shift out.
-Family benchmarks emit seven-sample fresh-result medians/ranges for all 20 call
-variants, including both onehot modes, known and X/Z at 1..4096 bits. Their
-comparison operands are independent equal values so case scans execute fully.
+Rejection tests exercise overflow/limit sizes, zero streaming slice, invalid plan
+shapes/storage/source widths and invalid array shape. ELF allocation counters
+check no B promotion for known selected subranges of unknown sources, one
+promotion on X/Z writes, automatic B removal and allocation-free small paths.
+The standalone public-name probe exercises reference/selection aliases.
+Word-boundary probes sweep reversed reads and aliased writes at every bit
+alignment, streaming slices 1 through 130, and empty-source/destination writes.
+Benchmarks report seven-sample medians/ranges at 1, 64, 65, 256 and 4096 bits,
+known and X/Z, with fresh results; write rows include cloning the fresh target.
+These remain component measurements, without generated-model or HDL claims.
 
 The S6–S9 adapter probes add exhaustive two-driver strength endpoints, all UDP
 mask/state combinations, enum order/defaults, full/unaligned-range resolution,
@@ -271,3 +288,46 @@ is a native scalar. Packed delay uses a representable low-limb input.
 Checked-width timing uses valid
 known inputs; its X/Z rejection is exercised by the failure probes. No model
 selection, scheduler adoption or native non-Linux qualification is implied.
+
+
+The S2/S3 family probes are enabled by the same compact option. Build their
+separate targets before selecting all compact CTests:
+
+```sh
+cmake --build /build/llg-compact-gcc --parallel 6 --target compact_v05a_checks
+ctest --test-dir /build/llg-compact-gcc -R '^compact_.*families_' \
+  --output-on-failure --parallel 6
+/build/llg-compact-gcc/compact_portable_families_benchmark
+```
+
+The family harness exhausts four-state binary inputs of every width through four,
+including unequal widths and all signs, and every same-width range triple through
+four with all eight sign combinations. Wide checks cover the G1 width list and
+maximum admitted width, count limb boundaries, high/unknown count words,
+result independence, destination-as-operand replacement and canonical payloads.
+Python supplies separate integer/state vectors for every family operation.
+The counter probe checks allocation-free small operations and wide predicates,
+independent zero-count shifts and B removal when all unknown bits shift out.
+Family benchmarks emit seven-sample fresh-result medians/ranges for all 20 call
+variants, including both onehot modes, known and X/Z at 1..4096 bits. Their
+comparison operands are independent equal values so case scans execute fully.
+
+### Compact V06 consumer bridges (V05d)
+
+`compact_consumers.cmake` adds small exhaustive and wide differential probes, a
+public-name client and ELF allocation counters for each kernel configuration.
+Masks/payloads exhaust all four-state pairs through three bits; ranges and digit
+appends exhaust four-state payloads through four, and known modular arithmetic
+exhausts eight-bit payloads with small factors/addends. Independent per-position
+and binary arithmetic oracles check ordering, clipping and modulo-width carries.
+Wide cases include every G1 width through 1048575, all word alignments of the
+logical-plane slice loader, UINT32_MAX clipping, source/destination/mask aliases,
+unaligned VPI32 records with stride 8/9/13, odd/partial imports, padding and copied
+A/B snapshots, and exact `01xz` text with zero extension and output sentinels.
+Known/read paths use no scratch allocation; X/Z writes require at most one B
+promotion, and removing the last unknown requires one shrink. This describes
+compact allocation behavior; legacy always retains three allocated planes.
+
+Build `compact_checks` using the compact configure command above. For a focused
+run use `ctest --test-dir /build/llg-compact-gcc -R '^compact_.*consumers_'
+--output-on-failure --parallel 6`. Generated model selection remains V07 work.

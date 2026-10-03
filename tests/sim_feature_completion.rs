@@ -11,6 +11,9 @@ mod fnd_003;
 #[path = "sim_feature_completion/rtl_001.rs"]
 mod rtl_001;
 
+#[path = "sim_feature_completion/rtl_002.rs"]
+mod rtl_002;
+
 #[path = "sim_feature_completion/rtl_003.rs"]
 mod rtl_003;
 

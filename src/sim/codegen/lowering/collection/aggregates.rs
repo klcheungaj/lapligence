@@ -637,6 +637,7 @@ impl<'a> Codegen<'a> {
         };
         let ir = self.model.arrays.len();
         self.model.arrays.push(crate::sim::ir::IrArray {
+            activation: false,
             net_elements: Vec::new(),
             element_default: self.query_descriptor(node).and_then(|descriptor| {
                 match &descriptor.shape {

@@ -292,7 +292,7 @@ pub(in crate::sim::emit_c) fn storage_lifecycle(
     initialize.push_str(&native_init);
     initialize.push_str(&std::mem::take(&mut fixed_defaults));
     destroy.push_str(&native_destroy);
-    for array in &model.arrays {
+    for array in model.arrays.iter().filter(|array| !array.activation) {
         defaults(
             &mut initialize,
             &mut destroy,
@@ -301,6 +301,28 @@ pub(in crate::sim::emit_c) fn storage_lifecycle(
             false,
             true,
         );
+        if array.sparse() {
+            let value = array
+                .element_default
+                .as_ref()
+                .map(emit_const)
+                .unwrap_or_else(|| {
+                    super::super::super::expressions::packed_default(
+                        array.elem_width,
+                        array.signed,
+                        array.two_state,
+                    )
+                });
+            initialize.push_str(&format!(
+                "    llg_fixed_array_init(&{}, {}ULL, {value}, &{}_llg_contents_dep);\n",
+                array.c_name, array.total, array.c_name
+            ));
+            destroy.push_str(&format!(
+                "    llg_fixed_array_destroy(&{});\n",
+                array.c_name
+            ));
+            continue;
+        }
         initialize.push_str(&format!(
             "    for (uint64_t _i = 0; _i < {}ULL; ++_i) {{\n",
             array.total
@@ -527,6 +549,13 @@ fn initialization_step(frame: &mut Frame<'_, '_>, step: &IrInitStep) -> Result<(
                     array.two_state,
                 )
             };
+            if array.sparse() {
+                frame.line(format!(
+                    "llg_fixed_array_reset(&{}, {value});",
+                    array.c_name
+                ));
+                return Ok(());
+            }
             frame.line(format!(
                 "for (uint64_t _i = 0; _i < {}ULL; ++_i) {{",
                 array.total
@@ -568,7 +597,7 @@ fn initialization_step(frame: &mut Frame<'_, '_>, step: &IrInitStep) -> Result<(
         IrInitStep::SetArrayElem { arr, index, value } => {
             let array = model.array(*arr);
             let target = Binding {
-                address: format!("&{}[{index}]", array.c_name),
+                address: array.cell_address(&index.to_string()),
                 width: if array.real { 0 } else { array.elem_width },
                 signed: array.signed,
                 two_state: array.two_state,

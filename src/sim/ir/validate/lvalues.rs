@@ -229,6 +229,7 @@ impl Validator<'_> {
                 indices,
                 elem_sel,
             } => {
+                self.validate_fixed_activation(*arr, path)?;
                 let array = self.model.arrays.get(*arr).ok_or_else(|| {
                     IrValidationError::new(path, format!("array index {arr} is out of bounds"))
                 })?;

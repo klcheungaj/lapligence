@@ -23,6 +23,9 @@ impl<'a> Codegen<'a> {
                 is_task, automatic, ..
             } = self.kind(*c)
             {
+                if self.nonflatten_function(*c) {
+                    continue;
+                }
                 if !self.func_names.contains_key(c) {
                     continue;
                 }
@@ -422,6 +425,9 @@ impl<'a> Codegen<'a> {
                 {
                     // Calls take the inline path; do not build a detached
                     // evaluator containing an unbound FormalRead.
+                    continue;
+                }
+                if self.nonflatten_function(*c) {
                     continue;
                 }
                 let path = self.instance_path_of(inst);

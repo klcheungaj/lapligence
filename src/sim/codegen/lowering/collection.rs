@@ -19,6 +19,7 @@ mod constants;
 mod dependencies;
 mod design;
 mod events;
+mod fixed_calls;
 mod fixed_defaults;
 mod fixed_patterns;
 mod fixed_projections;

@@ -59,6 +59,28 @@ impl<'a> Codegen<'a> {
         {
             return self.lower_mutation_expression(scope_path, otype, operands, assignment);
         }
+        if matches!(
+            otype,
+            Operation::Equal | Operation::NotEqual | Operation::CaseEqual | Operation::CaseNotEqual
+        ) {
+            if let (Some(left), Some(right)) =
+                (self.array_of(operands[0]), self.array_of(operands[1]))
+            {
+                if self.model.arrays[left.ir].sparse() && self.model.arrays[right.ir].sparse() {
+                    return Ok(IrExpr::new(
+                        IrExprKind::FixedArrayCompare {
+                            left: left.ir,
+                            right: right.ir,
+                            case: matches!(otype, Operation::CaseEqual | Operation::CaseNotEqual),
+                            negate: matches!(otype, Operation::NotEqual | Operation::CaseNotEqual),
+                        },
+                        1,
+                        false,
+                        None,
+                    ));
+                }
+            }
+        }
         macro_rules! op {
             ($i:expr) => {
                 self.lower_expr(scope_path, operands[$i])?

@@ -7,6 +7,34 @@ impl EmitCtx<'_, '_> {
         &mut self,
         declaration: NodeId,
     ) -> Result<Vec<IrStmt>, String> {
+        if let Some(array) = self
+            .cg
+            .array_globals
+            .get(&declaration)
+            .cloned()
+            .filter(|array| self.cg.model.arrays[array.ir].activation)
+        {
+            let mut statements = vec![IrStmt::FixedArrayDeclare(array.ir)];
+            if let Some(value) = self.cg.db.var_initializer(declaration).or_else(|| {
+                self.cg
+                    .db
+                    .array_meta(declaration)
+                    .and_then(|meta| meta.init)
+            }) {
+                statements.push(
+                    self.cg
+                        .lower_p30_fixed_array_assignment(
+                            &self.path,
+                            declaration,
+                            value,
+                            true,
+                            Operation::Assignment,
+                        )?
+                        .ok_or("fixed local initializer has no array assignment")?,
+                );
+            }
+            return Ok(statements);
+        }
         if self.func.is_some() {
             return match self.cg.db.variable_lifetime(declaration) {
                 VariableLifetime::Static => Ok(Vec::new()),

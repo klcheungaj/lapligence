@@ -1066,6 +1066,13 @@ impl<'a> Codegen<'a> {
             return Ok(());
         }
         if let NodeKind::Var { ty } | NodeKind::Array { ty } = self.kind(node) {
+            if self
+                .array_globals
+                .get(&node)
+                .is_some_and(|array| self.model.arrays[array.ir].activation)
+            {
+                return Ok(());
+            }
             self.explicit_local_lifetime(node)?;
             if is_handle_kind(&ty.kind) {
                 chandle_locals.entry(node).or_insert_with(|| {

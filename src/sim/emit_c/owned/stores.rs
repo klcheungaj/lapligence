@@ -22,6 +22,18 @@ pub(super) struct Target {
 }
 
 impl<'a, 'm> Frame<'a, 'm> {
+    pub(super) fn fixed_array_address(&self, index: usize) -> Result<String, String> {
+        let array = self.ctx.model.array(index);
+        if array.activation {
+            self.fixed_arrays
+                .get(&index)
+                .cloned()
+                .ok_or_else(|| "fixed array used before lexical declaration".to_owned())
+        } else {
+            Ok(format!("&{}", array.c_name))
+        }
+    }
+
     fn index(&mut self, expr: &IrExpr) -> Result<String, String> {
         let value = self.expression(expr)?;
         let result = self.scalar("uint64_t", format!("sv4_to_index({})", value.code));
@@ -33,7 +45,9 @@ impl<'a, 'm> Frame<'a, 'm> {
         &mut self,
         array: usize,
         indices: &[IrExpr],
+        writable: bool,
     ) -> Result<(Binding, String), String> {
+        let array_index = array;
         let array = self.ctx.model.array(array);
         if indices.len() != array.dims.len() {
             return Err("array index rank mismatch".to_owned());
@@ -76,8 +90,29 @@ impl<'a, 'm> Frame<'a, 'm> {
             conditions.join(" && ")
         };
         let pointer = self.scalar(
-            if array.real { "double*" } else { "sv4_t*" },
-            format!("({valid}) ? &{}[{linear}] : NULL", array.c_name),
+            if array.real {
+                "double*"
+            } else if writable {
+                "sv4_t*"
+            } else {
+                "const sv4_t*"
+            },
+            format!(
+                "({valid}) ? {} : NULL",
+                if array.sparse() {
+                    format!(
+                        "{}({}, {linear})",
+                        if writable {
+                            "llg_fixed_array_cell"
+                        } else {
+                            "llg_fixed_array_peek"
+                        },
+                        self.fixed_array_address(array_index)?
+                    )
+                } else {
+                    array.cell_address(&linear)
+                }
+            ),
         );
         Ok((
             Binding {
@@ -232,7 +267,7 @@ impl<'a, 'm> Frame<'a, 'm> {
                 indices,
                 elem_sel,
             } => {
-                let (binding, valid) = self.array_cell(*arr, indices)?;
+                let (binding, valid) = self.array_cell(*arr, indices, true)?;
                 let selection = self.selection(elem_sel, binding.width)?;
                 (binding, valid, selection, None)
             }
@@ -772,12 +807,27 @@ impl<'a, 'm> Frame<'a, 'm> {
         selection: &IrElemSel,
         _expr: &IrExpr,
     ) -> Result<Value, String> {
-        let lhs = IrLhs::ArrayElem {
-            arr: array,
-            indices: indices.to_vec(),
-            elem_sel: selection.clone(),
+        let (binding, valid) = self.array_cell(array, indices, false)?;
+        let selection = self.selection(selection, binding.width)?;
+        let (width, signed) = match &selection {
+            None => (binding.width, binding.signed),
+            Some(Selection::Bit(_)) => (1, false),
+            Some(Selection::Part(left, right)) => ((left.abs_diff(*right) + 1) as u32, false),
+            Some(Selection::Indexed(_, width, _)) | Some(Selection::PackedChain(_, width)) => {
+                (*width, false)
+            }
         };
-        let target = self.target(&lhs)?;
+        let target = Target {
+            binding,
+            valid,
+            selection,
+            width,
+            signed,
+            net: None,
+            sequence_local: false,
+            reference: None,
+            reference_scopes: Vec::new(),
+        };
         let value = self.read_target(&target);
         self.release_target(target);
         Ok(value)

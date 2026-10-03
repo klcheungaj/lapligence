@@ -236,6 +236,26 @@ impl Validator<'_> {
                     return self.fail(path, "signal type disagrees with expression type");
                 }
             }
+            IrExprKind::FixedArrayCompare { left, right, .. } => {
+                self.validate_fixed_activation(*left, path)?;
+                self.validate_fixed_activation(*right, path)?;
+                let left = self.model.arrays.get(*left).ok_or_else(|| {
+                    IrValidationError::new(path, "invalid fixed compare left array")
+                })?;
+                let right = self.model.arrays.get(*right).ok_or_else(|| {
+                    IrValidationError::new(path, "invalid fixed compare right array")
+                })?;
+                if !left.sparse()
+                    || !right.sparse()
+                    || left.total != right.total
+                    || left.elem_width != right.elem_width
+                    || expr.width != 1
+                    || expr.signed
+                    || expr.fill.is_some()
+                {
+                    return self.fail(path, "incompatible non-flattened fixed comparison shape");
+                }
+            }
             IrExprKind::FixedArrayReduce(reduction) => {
                 self.validate_fixed_array_reduction(reduction, expr, formals, path)?;
             }
@@ -850,6 +870,7 @@ impl Validator<'_> {
                 indices,
                 elem_sel,
             } => {
+                self.validate_fixed_activation(*arr, path)?;
                 let array = self.model.arrays.get(*arr).ok_or_else(|| {
                     IrValidationError::new(path, format!("array index {arr} is out of bounds"))
                 })?;

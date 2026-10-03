@@ -79,6 +79,13 @@ impl IrEnumQuery {
 /// the whole expression lives on the enclosing [`IrExpr`].
 #[derive(Clone, Debug, PartialEq)]
 pub enum IrExprKind {
+    /// Compare non-flattened fixed array storage with four-state leaf semantics.
+    FixedArrayCompare {
+        left: usize,
+        right: usize,
+        case: bool,
+        negate: bool,
+    },
     Container(Box<IrContainerExpr>),
     /// A fixed unpacked-array reduction with a lexically bound iterator.
     FixedArrayReduce(Box<IrFixedArrayReduction>),

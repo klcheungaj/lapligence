@@ -1437,8 +1437,10 @@ fn review_and_extended_links_name_real_owners_and_keep_open_cells_visible() {
     assert!(
         capacity.contains("65,536")
             && capacity.contains("16,777,216")
-            && capacity.contains("--run-ignored"),
-        "SYN-036 must disclose its deviation and separate resource lane"
+            && capacity.contains("--run-ignored")
+            && capacity.contains("required_capacity_lane_executes_large_value_copy")
+            && capacity.contains("normal"),
+        "capacity must distinguish the required minimum lane from historical ignored cases"
     );
     let capacity_tests =
         fs::read_to_string(root.join("tests/sim_syn036_capacity.rs")).expect("read SYN-036 owner");

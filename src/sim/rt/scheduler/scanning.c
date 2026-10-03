@@ -460,12 +460,12 @@ int llg_file_read_packed(uint32_t descriptor, llg_ref_t* target) {
     return read;
 }
 
-int llg_file_read_array(uint32_t descriptor, sv4_t* values, uint32_t elem_width,
+static int fixed_file_read_array(uint32_t descriptor, sv4_t* values, llg_fixed_array_t* fixed, uint32_t elem_width,
                         int elem_signed, int elem_two_state, uint64_t total,
                         const int32_t* dimensions, int dimension_count,
                         int has_start, sv4_t start, int has_count, sv4_t count) {
     llg_file_slot_t* slot;
-    if (!values || total == 0 || elem_width == 0 || !dimensions || dimension_count <= 0 ||
+    if ((!values && !fixed) || total == 0 || elem_width == 0 || !dimensions || dimension_count <= 0 ||
         !llg_file_single_ordinary(descriptor, &slot)) return 0;
     /* IEEE 1364-2001 17.2.4.4 / 1800-2009 21.3.4.4: a memory
        is read from its lowest address toward its highest, not in declaration
@@ -503,7 +503,7 @@ int llg_file_read_array(uint32_t descriptor, sv4_t* values, uint32_t elem_width,
     int result = 0;
     for (uint64_t element = 0; element < requested; element++) {
         uint64_t position = reverse_storage ? offset - element : offset + element;
-        sv4_t value = sv4_clone(&values[position]);
+        sv4_t value = sv4_clone(fixed ? llg_fixed_array_peek(fixed, position) : &values[position]);
         int read = 0;
         for (size_t index = 0; index < bytes_per_element; index++) {
             unsigned char byte;
@@ -519,7 +519,7 @@ int llg_file_read_array(uint32_t descriptor, sv4_t* values, uint32_t elem_width,
         llg_value_scope_t* value_scope = llg_value_scope_begin(1);
         sv4_t* owned = llg_value_scope_values(value_scope);
         owned[0] = value;
-        llg_ba(&values[position], owned[0]);
+        llg_ba(fixed ? llg_fixed_array_cell(fixed, position) : &values[position], owned[0]);
         llg_value_scope_end(value_scope);
         result += read;
         if ((size_t)read < bytes_per_element) break;
@@ -612,4 +612,18 @@ void llg_file_display_typed(uint32_t descriptor, const char* fmt,
                             int newline) {
     llg_print_typed_to(descriptor, fmt, args, n, scope, newline);
     llg_fmt_args_destroy(args, n);
+}
+
+int llg_file_read_array(uint32_t descriptor, sv4_t* values, uint32_t elem_width,
+                        int elem_signed, int elem_two_state, uint64_t total,
+                        const int32_t* dimensions, int dimension_count,
+                        int has_start, sv4_t start, int has_count, sv4_t count) {
+    return fixed_file_read_array(descriptor, values, NULL, elem_width, elem_signed, elem_two_state, total, dimensions, dimension_count, has_start, start, has_count, count);
+}
+
+int llg_fixed_file_read_array(uint32_t descriptor, llg_fixed_array_t* values, uint32_t elem_width,
+                        int elem_signed, int elem_two_state, uint64_t total,
+                        const int32_t* dimensions, int dimension_count,
+                        int has_start, sv4_t start, int has_count, sv4_t count) {
+    return fixed_file_read_array(descriptor, NULL, values, elem_width, elem_signed, elem_two_state, total, dimensions, dimension_count, has_start, start, has_count, count);
 }

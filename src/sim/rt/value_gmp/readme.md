@@ -3,8 +3,12 @@
 This standalone C11 backend reserves value ABI 5 and implements storage/ownership,
 core arithmetic, bitwise/logical operators, equality/relations, integral mux,
 div/mod/pow/clog2, shifts/reductions, case modes, directional wildcard equality,
-range membership, net/strength/UDP/enum adapters, real/time conversions and
-formatting/scalar/index adapters. Production models still use the legacy backend.
+range membership, selections/captured plans, packed reference reads,
+concatenation, replication, streaming, array conditional merge,
+net/strength/UDP/enum, real/time and formatting/scalar/index adapters.
+V06 consumer primitives are implemented on native A/B words in
+`consumer_bridge.c`, with inline small scanner mutations in `consumer_inline.h`.
+Production models still use the legacy backend.
 
 `backend.h` supplies inline operations for widths through 64 and a static
 `LLG_GMP_SV4_LITERAL(bits,x,z,width,sign)` initializer for those widths. Define
@@ -41,8 +45,7 @@ use nine-digit chunks; GMP `mpn_get_str` is used at/above the named
 borrowed input or exports GMP types. X wins over Z in radix groups; any X/Z
 prints `x` in decimal.
 
-Storage, logic, arithmetic, shifts/reductions and comparison/membership are
-separate translation units. `kernels.c` alone
+Operations have separate translation units. `kernels.c` alone
 includes GMP when `LLG_SV4_GMP_KERNELS=1`; portable mode has no GMP dependency.
 GMP requires compatible 64-bit nail-free limbs. Wide multiplication computes the
 low half directly below `LLG_SV4_MUL_FULL_THRESHOLD` (128 words by default). At or
@@ -57,6 +60,19 @@ truncated squaring. There is no global/TLS workspace or allocator-hook policy.
 kernels against live legacy and independent integer/state oracles. Generated
 selection, packaging, frame layouts, caches and containing-owner integration
 remain later work. Missing operations have no legacy conversion fallback.
+
+S4/S5 uses `selections.c`, `references.c` and `assembly.c`, with shared private
+word-range copies in `ranges.h` and inline <=64-bit paths in
+`selection_inline.h`. Captured plans retain intermediate clipping and source
+coordinates; reference graphs borrow stable cells and callback/graph storage.
+Every result owns independently. Selected aliases snapshot before writes; known
+selected intervals do not promote B even if another source interval contains X/Z.
+Reversed intervals use fixed 64-bit bit permutations and shifted range copies.
+Streams gather slices into destination words before storing each word once.
+`sv4_stream`/`sv4_unstream` preserve width;
+assignment padding/truncation remains the caller's conversion before/after them.
+Array conditionals compare each immediate element with logical equality and use
+the supplied default for differing or X/Z-containing elements (SV2009 11.4.11).
 
 Shifts treat counts as unsigned, return X for any unknown count, and check all
 count words before narrowing. Arithmetic right shift repeats the sign-bit state,
@@ -78,11 +94,18 @@ returns these all-X results before copying descriptors to the generic kernel.
 Copy reuse already uses a
 direct memcpy.
 
-Remaining public `sv4_*` operations at this revision:
 
-`sv4_array_conditional_merge`, `sv4_bit_select`, `sv4_bit_select_set`, `sv4_concat`, `sv4_idx_part_select`, `sv4_idx_part_select_set`, `sv4_idx_part_select_set_value`, `sv4_idx_part_select_value`, `sv4_part_select`, `sv4_part_select_set`, `sv4_repeat`, `sv4_repeat_count`, `sv4_select_plan_bit`, `sv4_select_plan_indexed`, `sv4_select_plan_init`, `sv4_select_plan_part`, `sv4_select_plan_read`, `sv4_select_plan_set`, `sv4_select_plan_slice`, `sv4_select_plan_step`, `sv4_stream`, `sv4_unstream`.
+`sv4_checked_width`, `llg_real_to_bool`, `llg_ref_read`/`llg_ref_view_valid`
+and source-compatible owner-free reference/selection types are implemented.
+The [facade checklist](facade_audit.md) records operations, helpers and the
+remaining V07 integration surface.
 
-`sv4_checked_width`, `llg_real_to_bool` and source-compatible owner-free
-reference/selection types are implemented. The [facade checklist](facade_audit.md)
-accounts for every macro, helper type, constant and public operation, including
-the shared `llg_ref_read` / `llg_ref_view_valid` assembly remaining for V07.
+Consumer mutations preserve width, sign and owner identity without scratch
+values. Known writes allocate nothing. Masked/range writes inspect only selected
+source bits before promoting B; a canonical mutation removes an all-zero B once.
+External VPI32 records use memcpy for alignment and foreign-type safety, clip
+imports, preserve untouched halves and ignore padding X/Z. Copied wait snapshots
+use native A/B export and comparison; waveform text loads each A/B word once.
+The complete standalone build target is `compact_checks`; its consumer probes
+include independent state/arithmetic oracles, differential checks and allocation
+counters.

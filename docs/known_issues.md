@@ -255,6 +255,30 @@ not bypass checked compilation or treat frontend rejection as an illegal-type
 oracle. This admission gap prevents member alias identity tests from reaching
 the otherwise shared electrical projection path.
 
+## Remaining non-flattened fixed-value contexts
+
+**Status:** open; RTL-002 raises storage capacity and implements the initial
+integral-array descriptor profile.
+
+Whole integral variable arrays now copy, compare, fill and stream without becoming
+one packed value. Automatic nonrecursive functions returning oversized arrays use
+lexical descriptor activations for whole inputs, locals and results. Static or
+recursive oversized calls, output/ref formals, functions with only oversized inputs,
+large nested record values, selected aggregate expressions, conditionals and general
+multi-segment/unaligned oversized streams still need descriptor call/view transport.
+Those paths retain explicit diagnostics or the separate packed payload limit.
+Extending them through per-cell source expansion would recreate the capacity cost.
+
+Explicit waveform registration materializes every registered cell, so dumping a
+16M array has a proportional runtime memory/output cost despite bounded generated
+source. Sparse cells also remain materialized after becoming default again, because
+queued updates and selected observers require stable descriptor addresses.
+
+Fixed-copy preparation checks allocations and captures the source before writes.
+The existing per-signal observer publication path can allocate while publishing;
+a transaction-wide preflight for that path remains necessary before claiming
+failure atomicity for all callback allocation failures.
+
 
 ## Runtime-selected module reference connections have no qualified binding oracle
 
