@@ -3,6 +3,8 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <math.h>
+#include <string.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -500,6 +502,173 @@ static inline void llg_gmp_sv4_import_words(g4_t* v, size_t first, const llg_gmp
         llg_gmp_sv4_set_word(v, 0, in[0].bits, in[0].x, in[0].z);
 }
 
+/* V05/S6: net metadata remains outside packed storage. Inputs borrow;
+ * returned values own. UDP rows and scalar inputs are validated by lowering. */
+enum {
+    LLG_GMP_RESOLVE_WIRE = 0, LLG_GMP_RESOLVE_WAND = 1, LLG_GMP_RESOLVE_WOR = 2,
+    LLG_GMP_RESOLVE_TRI0 = 3, LLG_GMP_RESOLVE_TRI1 = 4,
+    LLG_GMP_RESOLVE_SUPPLY0 = 5, LLG_GMP_RESOLVE_SUPPLY1 = 6
+};
+enum {
+    LLG_GMP_STRENGTH_HIGHZ = 0, LLG_GMP_STRENGTH_SMALL = 1, LLG_GMP_STRENGTH_MEDIUM = 2,
+    LLG_GMP_STRENGTH_WEAK = 3, LLG_GMP_STRENGTH_LARGE = 4, LLG_GMP_STRENGTH_PULL = 5,
+    LLG_GMP_STRENGTH_STRONG = 6, LLG_GMP_STRENGTH_SUPPLY = 7
+};
+g4_t llg_gmp_sv4_enum_navigate(g4_t current, g4_t step, const g4_t* values,
+                                uint32_t count, g4_t default_value, int direction);
+g4_t llg_gmp_sv4_resolve(const g4_t* const* drivers, int count, uint32_t width,
+                          int8_t sign, int mode);
+g4_t llg_gmp_sv4_resolve_strengths(const g4_t* const* drivers, const uint8_t* strength0,
+                                    const uint8_t* strength1, int count, uint32_t width,
+                                    int8_t sign, int mode);
+g4_t llg_gmp_sv4_resolve_strengths_range(const g4_t* const* drivers, const uint8_t* strength0,
+                                          const uint8_t* strength1, const int* indices, int count,
+                                          uint32_t source_width, uint32_t offset, uint32_t width,
+                                          int8_t sign, int mode);
+g4_t llg_gmp_sv4_udp_eval(const uint8_t* rows, size_t row_count, size_t input_count,
+                           const g4_t* const* inputs);
+/* End V05/S6. */
+
+#ifndef LLG_SV4_DECIMAL_GMP_THRESHOLD
+#define LLG_SV4_DECIMAL_GMP_THRESHOLD 4u
+#endif
+/* V05/S8: low-bit scalar coercion versus exact host index conversion.
+ * Formatting borrows values and writes only a bounded NUL-terminated prefix. */
+int llg_gmp_sv4_fits_i64_wide(g4_t value);
+uint64_t llg_gmp_sv4_to_index_wide(g4_t value);
+void llg_gmp_sv4_to_dec_string_wide(g4_t value, char* buf, size_t cap);
+void llg_gmp_sv4_format(char fmt, g4_t value, char* buf, size_t cap);
+static inline int64_t llg_gmp_sv4_to_i64(g4_t value) {
+    uint64_t bits = llg_gmp_sv4_to_u64(value);
+    if (value.width && value.width < 64 && ((bits >> (value.width - 1u)) & 1u))
+        bits |= ~g4_mask(value.width);
+    return bits <= INT64_MAX ? (int64_t)bits : -1 - (int64_t)~bits;
+}
+static inline int llg_gmp_sv4_fits_i64(g4_t value) {
+    if (value.width > 64)
+        return llg_gmp_sv4_fits_i64_wide(value);
+    return !value.data.small.b &&
+           (value.is_signed || value.width < 64 || !(value.data.small.a >> 63));
+}
+static inline uint64_t llg_gmp_sv4_to_index(g4_t value) {
+    if (value.width > 64)
+        return llg_gmp_sv4_to_index_wide(value);
+    if (value.data.small.b || (value.is_signed && value.width &&
+        ((value.data.small.a >> (value.width - 1u)) & 1u)))
+        return UINT64_MAX;
+    return value.data.small.a;
+}
+static inline int llg_gmp_sv4_to_index_i64(g4_t value, int64_t* out) {
+    if (!out || !llg_gmp_sv4_fits_i64(value))
+        return 0;
+    *out = value.is_signed ? llg_gmp_sv4_to_i64(value) : (int64_t)llg_gmp_sv4_to_u64(value);
+    return 1;
+}
+static inline void llg_gmp_sv4_to_dec_string(g4_t value, char* buf, size_t cap) {
+    if (!cap)
+        return;
+    if (value.width > 64) {
+        llg_gmp_sv4_to_dec_string_wide(value, buf, cap);
+        return;
+    }
+    size_t len = 0;
+    if (value.data.small.b) {
+        buf[0] = cap > 1 ? 'x' : 0;
+        if (cap > 1)
+            buf[1] = 0;
+        return;
+    }
+    uint64_t bits = value.data.small.a;
+    int negative = value.is_signed && value.width && ((bits >> (value.width - 1u)) & 1u);
+    if (negative) {
+        bits = (UINT64_C(0) - bits) & g4_mask(value.width);
+        if (len + 1u < cap)
+            buf[len++] = '-';
+    }
+    char digits[20];
+    size_t count = 0;
+    do {
+        digits[count++] = (char)('0' + bits % 10u);
+        bits /= 10u;
+    } while (bits);
+    while (count && len + 1u < cap)
+        buf[len++] = digits[--count];
+    buf[len] = 0;
+}
+/* End V05/S8. */
+
+/* V05/S7: native real payloads and scheduler ticks never enter packed storage.
+ * Casts round ties away from zero; rtoi truncates. X/Z bits contribute zero
+ * to real inspectors. Nonfinite integer conversions yield X. */
+double llg_gmp_sv4_to_real_wide(g4_t value);
+g4_t llg_gmp_sv4_from_real_wide(double rounded, uint32_t width, int8_t sign);
+uint64_t llg_gmp_sv4_delay_ticks(g4_t value, uint64_t unit_ticks);
+uint64_t llg_gmp_sv4_real_delay_ticks(double value, uint64_t unit_ticks, uint64_t precision_ticks);
+static inline double llg_gmp_sv4_to_real(g4_t value) {
+    if (value.width > 64)
+        return llg_gmp_sv4_to_real_wide(value);
+    uint64_t bits = value.data.small.a & ~value.data.small.b;
+    int negative = value.is_signed && value.width && ((bits >> (value.width - 1u)) & 1u);
+    uint64_t magnitude = negative ? (UINT64_C(0) - bits) & g4_mask(value.width) : bits;
+    return negative ? -(double)magnitude : (double)magnitude;
+}
+static inline g4_t llg_gmp_sv4_from_real(double value, uint32_t width, int8_t sign) {
+    g4_width_check(width);
+    if (!isfinite(value))
+        return llg_gmp_sv4_x(width, sign);
+    double rounded = round(value);
+    if (width > 64)
+        return llg_gmp_sv4_from_real_wide(rounded, width, sign);
+    uint64_t bits = (uint64_t)fmod(fabs(rounded), 18446744073709551616.0);
+    if (signbit(rounded))
+        bits = UINT64_C(0) - bits;
+    return g4_small(bits, 0, width, sign);
+}
+static inline g4_t llg_gmp_sv4_rtoi(double value) {
+    if (!isfinite(value))
+        return llg_gmp_sv4_x(32, 1);
+    uint64_t bits = (uint64_t)fmod(fabs(trunc(value)), 4294967296.0);
+    return g4_small(signbit(value) ? UINT64_C(0) - bits : bits, 0, 32, 1);
+}
+static inline g4_t llg_gmp_sv4_realtobits(double value) {
+    uint64_t bits;
+    memcpy(&bits, &value, sizeof(bits));
+    return g4_small(bits, 0, 64, 0);
+}
+static inline double llg_gmp_sv4_bitstoreal(g4_t value) {
+    uint64_t bits = llg_gmp_sv4_to_u64(value);
+    double out;
+    memcpy(&out, &bits, sizeof(out));
+    return out;
+}
+static inline g4_t llg_gmp_sv4_shortrealtobits(double value) {
+    float rounded = (float)value;
+    uint32_t bits;
+    memcpy(&bits, &rounded, sizeof(bits));
+    return g4_small(bits, 0, 32, 0);
+}
+static inline double llg_gmp_sv4_bitstoshortreal(g4_t value) {
+    uint32_t bits = (uint32_t)llg_gmp_sv4_to_u64(value);
+    float out;
+    memcpy(&out, &bits, sizeof(out));
+    return (double)out;
+}
+static inline int llg_gmp_real_to_bool(double value) { return value != 0.0; }
+/* End V05/S7. */
+
+/* V05/S9: checked widths and owner-free facade helper types. */
+static inline uint32_t llg_gmp_sv4_checked_width(g4_t value) {
+    if (llg_gmp_sv4_is_unknown(value) || (value.is_signed && value.width &&
+        llg_gmp_sv4_state(value, value.width - 1u) == 1u))
+        llg_gmp_sv4_fail("invalid dynamic packed width");
+    uint64_t width = llg_gmp_sv4_to_index(value);
+    if (width >= LLG_GMP_SUPPORTED_WIDTH_LIMIT)
+        llg_gmp_sv4_fail("width reaches exclusive limit");
+    return (uint32_t)width;
+}
+#include "reference_types.h"
+/* End V05/S9. */
+
 #ifdef __cplusplus
 }
 #endif
@@ -572,6 +741,65 @@ static inline void llg_gmp_sv4_import_words(g4_t* v, size_t first, const llg_gmp
 #define sv4_xnor llg_gmp_sv4_xnor
 #define sv4_xor llg_gmp_sv4_xor
 #define sv4_zero llg_gmp_sv4_zero
+/* V05/S6 public names. */
+#define sv4_enum_navigate llg_gmp_sv4_enum_navigate
+#define sv4_resolve llg_gmp_sv4_resolve
+#define sv4_resolve_strengths llg_gmp_sv4_resolve_strengths
+#define sv4_resolve_strengths_range llg_gmp_sv4_resolve_strengths_range
+#define sv4_udp_eval llg_gmp_sv4_udp_eval
+#define LLG_RESOLVE_WIRE LLG_GMP_RESOLVE_WIRE
+#define LLG_RESOLVE_WAND LLG_GMP_RESOLVE_WAND
+#define LLG_RESOLVE_WOR LLG_GMP_RESOLVE_WOR
+#define LLG_RESOLVE_TRI0 LLG_GMP_RESOLVE_TRI0
+#define LLG_RESOLVE_TRI1 LLG_GMP_RESOLVE_TRI1
+#define LLG_RESOLVE_SUPPLY0 LLG_GMP_RESOLVE_SUPPLY0
+#define LLG_RESOLVE_SUPPLY1 LLG_GMP_RESOLVE_SUPPLY1
+#define LLG_STRENGTH_HIGHZ LLG_GMP_STRENGTH_HIGHZ
+#define LLG_STRENGTH_SMALL LLG_GMP_STRENGTH_SMALL
+#define LLG_STRENGTH_MEDIUM LLG_GMP_STRENGTH_MEDIUM
+#define LLG_STRENGTH_WEAK LLG_GMP_STRENGTH_WEAK
+#define LLG_STRENGTH_LARGE LLG_GMP_STRENGTH_LARGE
+#define LLG_STRENGTH_PULL LLG_GMP_STRENGTH_PULL
+#define LLG_STRENGTH_STRONG LLG_GMP_STRENGTH_STRONG
+#define LLG_STRENGTH_SUPPLY LLG_GMP_STRENGTH_SUPPLY
+/* V05/S7 public names. */
+#define sv4_bitstoreal llg_gmp_sv4_bitstoreal
+#define sv4_bitstoshortreal llg_gmp_sv4_bitstoshortreal
+#define sv4_delay_ticks llg_gmp_sv4_delay_ticks
+#define sv4_from_real llg_gmp_sv4_from_real
+#define sv4_real_delay_ticks llg_gmp_sv4_real_delay_ticks
+#define sv4_realtobits llg_gmp_sv4_realtobits
+#define sv4_rtoi llg_gmp_sv4_rtoi
+#define sv4_shortrealtobits llg_gmp_sv4_shortrealtobits
+#define sv4_to_real llg_gmp_sv4_to_real
+#define llg_real_to_bool llg_gmp_real_to_bool
+/* V05/S8 public names. */
+#define sv4_fits_i64 llg_gmp_sv4_fits_i64
+#define sv4_format llg_gmp_sv4_format
+#define sv4_to_dec_string llg_gmp_sv4_to_dec_string
+#define sv4_to_i64 llg_gmp_sv4_to_i64
+#define sv4_to_index llg_gmp_sv4_to_index
+#define sv4_to_index_i64 llg_gmp_sv4_to_index_i64
+/* V05/S9 public names. */
+#define sv4_checked_width llg_gmp_sv4_checked_width
+#define llg_queue_ref_read_fn llg_gmp_queue_ref_read_fn
+#define llg_queue_ref_write_fn llg_gmp_queue_ref_write_fn
+#define llg_ref_kind_t llg_gmp_ref_kind_t
+#define llg_ref_t llg_gmp_ref_t
+#define llg_ref_composite_t llg_gmp_ref_composite_t
+#define llg_ref_tag_check_t llg_gmp_ref_tag_check_t
+#define llg_ref_view_t llg_gmp_ref_view_t
+#define sv4_select_plan_t llg_gmp_sv4_select_plan_t
+#define LLG_REF_WHOLE LLG_GMP_REF_WHOLE
+#define LLG_REF_BIT LLG_GMP_REF_BIT
+#define LLG_REF_PART LLG_GMP_REF_PART
+#define LLG_REF_INDEXED LLG_GMP_REF_INDEXED
+#define LLG_REF_ARRAY LLG_GMP_REF_ARRAY
+#define LLG_REF_QUEUE LLG_GMP_REF_QUEUE
+#define LLG_REF_PACKED_PLAN LLG_GMP_REF_PACKED_PLAN
+#define LLG_REF_COMPOSITE LLG_GMP_REF_COMPOSITE
+#define LLG_REF_VIEW LLG_GMP_REF_VIEW
+#define LLG_REF_TAGGED_VIEW LLG_GMP_REF_TAGGED_VIEW
 #define sv4_t llg_gmp_sv4_t
 #define llg_sv4_word_t llg_gmp_sv4_word_t
 #define llg_sv4_vpi_word_t llg_gmp_sv4_vpi_word_t

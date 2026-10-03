@@ -40,6 +40,8 @@ void llg_gmp_sv4_extend_value(g4_t* out, g4_t input, int sign);
 void llg_gmp_sv4_kernel_mul(uint64_t* out, const uint64_t* a, const uint64_t* b, size_t n);
 void llg_gmp_sv4_kernel_div(uint64_t* out, const uint64_t* a, const uint64_t* b, size_t n,
                             int remainder);
+/* The caller supplies ceil(width*log10(2))+2 digit bytes and nonzero magnitude. */
+size_t llg_gmp_sv4_kernel_decimal(unsigned char* out, uint64_t* magnitude, size_t n);
 typedef struct {
     const uint64_t *a, *b;
     size_t full;

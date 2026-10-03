@@ -11,7 +11,10 @@ The live legacy implementation in `value/` is the differential reference,
 alongside independent Python integer oracles and exhaustive small truth tables.
 
 The compact implementation lives in `src/sim/rt/value_gmp/`. G1 supplies storage,
-the V01 neutral bridge, core arithmetic/logic/comparison/mux, and V05/S1. It is
+the V01 neutral bridge, core arithmetic/logic/comparison/mux, and V05/S1.
+V05/S6–S9 add full net/strength/UDP/enum, real/time,
+formatting/index and header adapters; [the checklist](../value_gmp/facade_audit.md)
+records the remaining selection/reference integration. It is
 built standalone by `tests/runtime_value_storage/compact_value.cmake` with
 portable kernels and optionally GMP. It is not embedded in generated models.
 V07 owns selection in `llg_value.h`, source packaging and model integration;
