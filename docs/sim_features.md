@@ -62,12 +62,12 @@ References: **V** = IEEE 1364-2001; **SV** = IEEE 1800-2009. Revision tags retai
 | 7. Expressions/operators | 4 | 13 | 0 | 0 | 0 | 17 |
 | 8. Continuous/structural | 3 | 6 | 3 | 0 | 0 | 12 |
 | 9. Functions/tasks | 1 | 5 | 1 | 0 | 0 | 7 |
-| 10. System tasks/functions | 9 | 11 | 3 | 0 | 0 | 23 |
+| 10. System tasks/functions | 10 | 10 | 3 | 0 | 0 | 23 |
 | 11. Compiler directives | 5 | 2 | 0 | 0 | 0 | 7 |
 | 12. Verification/foreign interfaces | 1 | 12 | 0 | 3 | 0 | 16 |
-| **Total** | **43** | **82** | **7** | **3** | **1** | **136** |
+| **Total** | **44** | **81** | **7** | **3** | **1** | **136** |
 
-**126 rows have some source implementation; 82 of those remain partial and one
+**126 rows have some source implementation; 81 of those remain partial and one
 is accepted.** The accepted row (`always_ff` and writer rules) carries
 post-change HDL execution evidence from RTL-013 and RTL-099; other rows have no
 row-level acceptance promotion yet, which does not mean they lack passing tests.
@@ -1171,20 +1171,25 @@ Macros, includes and their edition-specific behavior are counted in §11.
 
 ### Time, control and utility services
 
-- 🟨 **Time reporting** — `$time` rounds to the calling module's unit (exact
-  halves upward); `$stime` then returns its low 32 bits; `$realtime` retains
-  fractions. Design-wide `$timeformat` units/precision/suffix/minimum width and
-  `%t` integral/real conversions are represented. **`$printtimescale(scope)`
-  does not honor its scope operand**: the
-  [system-task lowerer](../src/sim/codegen/lowering/statements/system_tasks.rs)
-  emits the caller's timescale and label without reading that operand. Only the
-  no-argument caller-scope behavior is represented correctly by this path.
-  `$timeformat` accepts the documented zero-or-four-argument syntax
-  (V §17.3.2, Syntax 17-10; SV §20.4.2, Syntax 20-4). Intermediate arities
-  would be a convenience extension, not a required missing feature.
-  The [timescale regressions](../tests/sim_timescale.rs) contain a no-argument
-  witness, not proof of explicit-scope behavior.
-  V §§17.3, 17.7; SV §20.4 **[1995/SV-2009]**.
+- 🟦 **Time reporting** — `$time` rounds to the unit of the scope containing
+  the call (exact halves upward); `$stime` then returns its low 32 bits;
+  `$realtime` retains fractions. That scope is the module, interface or program
+  instance, package, `$unit` or class-declaring scope, never the caller of a
+  subroutine; package and `$unit` code also contributes its precision to the
+  design tick. `$printtimescale` prints `Time scale of (name) is unit /
+  precision` for the named module, interface or program instance (including
+  instance-array elements) or `$unit`, and without an operand for the
+  module, package or `$unit` containing the call. A `$root` operand is
+  rejected. `$timeformat` accepts the documented zero-or-four-argument syntax
+  (V §17.3.2, Syntax 17-10; SV §20.4.2, Syntax 20-4); arguments are evaluated
+  when the call runs, the suffix is copied, the zero-argument form restores the
+  Table 20-3 defaults, and out-of-range units fail at run time. Intermediate
+  arities are an extension, not a required missing feature, and stay
+  rejected. `%t` converts integral values exactly (beyond 64 bits) and real
+  values in double precision; formatting never moves scheduled events.
+  Interactive delay units are not modeled (no interactive mode). See the
+  [SIM-002 fixtures](../tests/fixtures/sim/feature_completion/sim_002/readme.md).
+  V §§17.3, 17.7; SV §§20.3–20.4 **[1995/SV-2009]**.
 - 🟦 **Finish and severity** — `$finish` is nonreturning with default diagnostic
   level 1; `$fatal/$error/$warning/$info` format messages once in source order
   with source/scope context. Fatal terminates through the final-block handoff;
@@ -1274,8 +1279,8 @@ Macros, includes and their edition-specific behavior are counted in §11.
   within admitted source/include roots. Missing, dynamic and unauthorized paths
   fail admission. V §§19.3–19.5; SV §§22.4–22.6,
   22.11, 22.13–22.14 **[2001/SV-2009]**.
-- 🟦 **`` `timescale ``** — Resolved module/declaration inheritance scales delays
-  and time reporting; local `timeunit/timeprecision` and rounding are covered in
+- 🟦 **`` `timescale ``** — Resolved module, package, `$unit` and class
+  declaration inheritance scales delays and time reporting; local `timeunit/timeprecision` and rounding are covered in
   §§1 and 6. V §19.8 **[1995]**.
 - 🟦 **`` `default_nettype `` / `` `resetall ``** — Control implicit-net admission
   and reset later directive state; `none` rejects undeclared nets, `wire`

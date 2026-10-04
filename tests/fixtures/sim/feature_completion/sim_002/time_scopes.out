@@ -1,0 +1,11 @@
+tb time=12 stime=12 realtime=12.345678 t=12000000
+unit time=123457 realtime=123456.78
+tb: pkg time=1 stime=1 realtime=1.235 t=12345678
+child: pkg time=1 stime=1 realtime=1.235 t=12345678
+bus time=12346 stime=12346 realtime=12345.678
+child time=123 realtime=123.457 t=12345678
+pkg class time=1 realtime=1.235
+tb class time=12 realtime=12.345678
+pkg value t=120000000
+after package delay realtime=27.345678 t=27345678
+after child delay realtime=27.445678 t=27445678
