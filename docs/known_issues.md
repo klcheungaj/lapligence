@@ -355,6 +355,43 @@ container formals/locals (SIM-006) reuse the same descriptors and root registry.
 
 `tests/fixtures/sim/feature_completion/sim_003/neg_native_*.sv`.
 
+## Real references and real-array expressions outside stable storage
+
+**Status:** open; SIM-005 implements real/shortreal references to stable
+storage and real fixed arrays across subroutine boundaries.
+
+### Symptom
+
+These legal forms reject with explicit diagnostics: a `ref` actual that is an
+element of a real queue, dynamic array or associative array
+(`ref actual ... names a real resizable-container element`); a real-array call
+operand, equality or conditional arm that is a function call inside an
+expression other than a whole-array assignment or another real-array input
+(assign it to a variable first); a conditional real-array arm or row selector
+that is not a plain variable read or constant; keyed (`with`) `min/max/unique`
+and `sort/rsort` over real elements; and element-wise real-array expressions
+above 4,096 elements (`REAL_ARRAY_ELEMENTWISE_LIMIT`). Whole-array storage
+operands of any size pass by block copy.
+
+### Cause
+
+A real reference is the actual's `double*`, which a container reallocation
+would invalidate; retained element cells need the pinning contract of
+SIM-008. Real-array values that are not storage are lowered to one numeric
+expression per element, evaluated where they are used, so operands that would
+need a snapshot statement inside an expression are rejected rather than
+evaluated twice.
+
+### Intended direction
+
+SIM-008 adds retained real container cells behind the same reference formal
+ABI; a real-array value descriptor would let expression operands and larger
+element-wise expressions run as cell loops.
+
+### Reproduce
+
+`tests/fixtures/sim/feature_completion/sim_005/neg_real_queue_ref.sv`.
+
 ## Streaming `with` targets outside the direct assignment path
 
 **Status:** open; RTL-015 represents runtime and partly out-of-bounds fixed

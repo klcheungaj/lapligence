@@ -390,6 +390,12 @@ endpoint transfers that capture every source leaf before the first write.
 Module-level native records keep per-member lowering; reject run-time native
 indices, native ref formals, NBAs and fork capture explicitly rather than
 flattening or copying shallowly.
+Reals stay numeric (SIM-005): real `ref` formals bind the actual's cell
+(`collection/arguments.rs`), real fixed-array formals/results/locals are real
+`IrArray` storage (`collection/real_arrays.rs`), and non-storage real-array
+values lower to per-element expressions (`containers/real_array_values.rs`,
+bounded by `REAL_ARRAY_ELEMENTWISE_LIMIT`). Never encode a real as packed bits
+except as the exact 64-bit image a sampled history transports.
 
 An invalid index reads the element type's uninitialized default (SV 7.4.6), not
 an all-X payload: mixed-state aggregate elements keep two-state leaves at zero

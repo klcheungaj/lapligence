@@ -162,6 +162,13 @@ hosts). Component checks are `native_value_descriptors_probe.c` in
 `runtime_value_storage` and the `sim::ir::validate::tests::native_values` unit
 tests.
 
+SIM-005's real reference, real-array and real-sampling fixtures use
+`-E 'binary(sim_feature_completion) & test(sim_005::)'`. Positive fixtures run
+in both optimizer modes on every backend (set `LLG_TEST_GMP_ROOT` for the GMP
+lane) and, except the numeric-extremes fixture (which also runs at model
+`-O0`/`-O3`), after Db destruction. Component checks are the
+`sim::ir::validate::tests::real_values` unit tests.
+
 RTL-016's tagged-union, pattern and Q03 fixtures use
 `-E 'binary(sim_feature_completion) & test(rtl_016::)'`. Positive fixtures and
 the run-time error fixtures run in both optimizer modes on both backends (set
