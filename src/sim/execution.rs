@@ -2937,6 +2937,7 @@ mod tests {
             let output = Command::new(&executable)
                 .current_dir(&dir)
                 .output()
+                .map(crate::sim::build::model_output_to_lf)
                 .map_err(|error| format!("run {}: {error}", executable.display()))?;
             if !output.status.success() {
                 return Err(format!(

@@ -36,7 +36,7 @@ fn qualified_string_case_inside_keeps_first_match_and_qualifiers() {
         .join("tests/fixtures/sim/feature_completion/g1_21/qualified_string_inside.sv");
     let warning = format!(
         "unique violation at {}:32:9: no matching item",
-        source.display()
+        sim_harness::source_display(&source)
     );
     sim_cli::run_case(
         "feature_completion/g1_21",

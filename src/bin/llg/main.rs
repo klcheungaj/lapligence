@@ -4,18 +4,18 @@
 //!
 //! ```text
 //! llg [generate options] [build options] [<file.sv>...] [-- <plusargs>...]
-//! generate: --config <file>  --top <module[:config]>  --edition <2001|2009>  --compilation-units <separate|merged>  --include-dir <path>  --define <NAME[=VALUE]>  --param-override <NAME=VALUE>  --define-system-task <prototype>  --libmap <file>  --libfile [<library>=]<file>  --library-order <library>[,<library>...]  --default-library <library>  --lint  --no-lint  --lint-json [<path>]  --lint-config <file>  --gen-only  --no-gen-only  --no-opt  --opt  --stop-policy <resume|exit>  --max-export-mib <MiB>
+//! generate: --config <file>  --clear <list>  --top <module[:config]>  --edition <2001|2009>  --compilation-units <separate|merged>  --include-dir <path>  --define <NAME[=VALUE]>  --param-override <NAME=VALUE>  --define-system-task <prototype>  --libmap <file>  --libfile [<library>=]<file>  --library-order <library>[,<library>...]  --default-library <library>  --lint  --no-lint  --lint-json [<path>]  --lint-config <file>  --gen-only  --no-gen-only  --no-opt  --opt  --stop-policy <resume|exit>  --max-export-mib <MiB>
 //! build:    --generator <backend>  --launcher <program>  --dpi-lib <path>...  --cc <program>  --cflags <flags>  --model-opt-level <O0|O1|O2|O3|Os>  --cmake <program>  --build-jobs <N>
 //! output:   --out-dir <dir>  --runtime-cache <dir>
 //! ```
 //!
-//! Configuration: `llg.toml` in the current directory (or the file named by
-//! `--config`, which must exist) supplies defaults for the options above; see
-//! `docs/config.md` and `settings.rs` for the key list and the precedence
-//! (command line > config file > environment > built-in default; a repeatable
-//! option on the command line replaces the file's whole list; files named on
-//! the command line replace the file's sources). With no arguments and no
-//! `llg.toml` the driver prints usage and exits 2.
+//! Configuration: the file named by `--config` (which must exist) supplies
+//! defaults for the options above; `llg` never discovers `llg.toml` on its own.
+//! See `docs/config.md` and `settings.rs` for the key list and the precedence
+//! (command line > environment > config file > built-in default). A repeatable
+//! option on the command line appends to the file's list, and `--clear <list>`
+//! discards the file's list first. With no arguments the driver prints usage
+//! and exits 2.
 //!
 //! `--lint` runs the shared linter (`core::lint`) over the compiled design
 //! after elaboration and before codegen: each finding prints to stderr as
@@ -49,18 +49,23 @@
 //!   into `<out-dir>/sim/<design>` (`--out-dir`, default `build`) and
 //!   automatically configures + builds them with CMake
 //!   (`sim::build::build_model_cmake_with_opts`). Each tool option wins over
-//!   its environment fallback: `--cmake` > `$LLG_CMAKE` > `cmake`;
-//!   `--cc` > `$LLG_CC` > `$CC` > `cc`; `--cflags` > `$LLG_CFLAGS`.
+//!   its environment fallback, which wins over the config file:
+//!   `--cmake` > `$LLG_CMAKE` > `build.cmake` > `cmake`;
+//!   `--cc` > `$LLG_CC` > `$CC` > `build.cc` > `cc`;
+//!   `--cflags` > `$LLG_CFLAGS` > `build.cflags`.
 //! - `--model-opt-level <O0|O1|O2|O3|Os>` selects model and runtime C
 //!   optimization. Extra flags follow it and can override it. Release adds
 //!   only NDEBUG. Source-only projects retain the selected level.
 //! - The runtime archive cache is `--runtime-cache` >
-//!   `$LLG_RUNTIME_CACHE_DIR` > `<out-dir>/llg-runtime-cache`.
+//!   `$LLG_RUNTIME_CACHE_DIR` > `output.runtime_cache` >
+//!   `<out-dir>/llg-runtime-cache`.
 //! - `--build-jobs <N>` sets the `cmake --build --parallel` job count for the
 //!   runtime archive and the model: `--build-jobs` >
-//!   `$CMAKE_BUILD_PARALLEL_LEVEL` (positive integer) > available parallelism.
+//!   `$CMAKE_BUILD_PARALLEL_LEVEL` (positive integer) > `build.jobs` >
+//!   available parallelism.
 //! - `--generator <backend>` selects cmake's generator backend (`-G`,
-//!   e.g. `Ninja`, `"Unix Makefiles"`); it overrides `$CMAKE_GENERATOR`.
+//!   e.g. `Ninja`, `"Unix Makefiles"`); it overrides `$CMAKE_GENERATOR`,
+//!   which overrides `build.generator`.
 //! - `--launcher <program>` selects `CMAKE_C_COMPILER_LAUNCHER` (for example,
 //!   `ccache` or `sccache`). No launcher is selected by default.
 //!   Tool invocation options are ignored with a warning under `--gen-only`.
@@ -103,15 +108,16 @@ fn main() -> std::process::ExitCode {
 fn start(args: Vec<String>) -> Result<DriverOptions, i32> {
     let no_arguments = args.is_empty();
     let cli = cli::parse_args(args)?;
-    let config = settings::load_config(cli.config_path.as_deref()).map_err(config_failure)?;
-    if no_arguments && config.is_none() {
+    if no_arguments {
         eprintln!("{}", cli::USAGE);
         return Err(2);
     }
-    let options = settings::resolve(cli, config.as_ref()).map_err(config_failure)?;
+    let config = settings::load_config(cli.config_path.as_deref()).map_err(config_failure)?;
+    let options = settings::resolve(cli, &settings::Env::from_process(), config.as_ref())
+        .map_err(config_failure)?;
     if options.files.is_empty() {
         eprintln!(
-            "llg: no source files given (name them on the command line or in llg.toml \
+            "llg: no source files given (name them on the command line or in a --config file's \
              `sources.files`/`sources.directories`)"
         );
         return Err(2);
@@ -411,10 +417,9 @@ fn run(options: DriverOptions) -> i32 {
     }
 
     // 5. Build the model with CMake (the only supported builder).
-    // The cache follows --out-dir unless the flag or environment moves it.
-    let runtime_cache_dir = runtime_cache
-        .or_else(sim::build::runtime_cache_dir_from_env)
-        .unwrap_or_else(|| out_root.join("llg-runtime-cache"));
+    // The cache follows --out-dir unless the flag, the environment or the
+    // config file (resolved in `settings`) moves it.
+    let runtime_cache_dir = runtime_cache.unwrap_or_else(|| out_root.join("llg-runtime-cache"));
     let opts = sim::build::CmakeBuildOpts {
         generator,
         dpi_libraries,
@@ -450,7 +455,17 @@ fn run(options: DriverOptions) -> i32 {
             return 1;
         }
     };
-    status.code().unwrap_or(1)
+    model_exit_code(status.code())
+}
+
+/// The driver status for a model run. A model that exits normally with a
+/// status in the portable 0-255 range reports it unchanged. Termination by a
+/// signal (`None` on Unix) or any status outside that range becomes 1: a
+/// Windows crash status such as 0xC0000409, which `abort()` produces through
+/// the C runtime's fast-fail, would otherwise be truncated to an unrelated
+/// low byte (9) by `ExitCode`.
+fn model_exit_code(code: Option<i32>) -> i32 {
+    code.filter(|code| u8::try_from(*code).is_ok()).unwrap_or(1)
 }
 
 /// Directory name for the generated model (the design name, sanitized).
@@ -474,6 +489,18 @@ fn gen_name(gen: &sim::codegen::GeneratedModel) -> String {
 mod tests {
     use super::*;
     use crate::cli::parse_args;
+
+    #[test]
+    fn model_exit_codes_keep_byte_statuses_and_map_crashes_to_one() {
+        assert_eq!(model_exit_code(Some(0)), 0);
+        assert_eq!(model_exit_code(Some(1)), 1);
+        assert_eq!(model_exit_code(Some(255)), 255);
+        assert_eq!(model_exit_code(None), 1);
+        assert_eq!(model_exit_code(Some(-1)), 1);
+        assert_eq!(model_exit_code(Some(256)), 1);
+        // STATUS_STACK_BUFFER_OVERRUN from abort() on Windows.
+        assert_eq!(model_exit_code(Some(0xC000_0409_u32 as i32)), 1);
+    }
 
     #[test]
     fn export_budget_defaults_to_the_simulator_policy() {

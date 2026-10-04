@@ -111,12 +111,19 @@ impl Drop for TempDir {
     }
 }
 
+/// Runs `llg`; the model's console output keeps the host's native newline,
+/// so captured text is normalized to the LF the expectations use.
 fn run_llg(dir: &Path, args: &[&str]) -> std::process::Output {
-    Command::new(SIM_BIN)
+    let output = Command::new(SIM_BIN)
         .args(args)
         .current_dir(dir)
         .output()
-        .expect("llg should start")
+        .expect("llg should start");
+    std::process::Output {
+        status: output.status,
+        stdout: llg::ffi::platform::native_text_to_lf(output.stdout),
+        stderr: llg::ffi::platform::native_text_to_lf(output.stderr),
+    }
 }
 
 fn stderr(out: &std::process::Output) -> String {

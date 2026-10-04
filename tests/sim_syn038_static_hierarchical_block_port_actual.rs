@@ -107,7 +107,7 @@ fn unqualified_static_block_local_port_actual_is_rejected_by_frontend_and_cli() 
     );
 
     let fixture_path = Path::new(env!("CARGO_MANIFEST_DIR")).join(UNQUALIFIED_FIXTURE);
-    let path = fixture_path.display();
+    let path = sim_harness::source_display(&fixture_path);
     let expected_stderr = format!(
         "Error: {path}:7:19 use of undeclared identifier 'static_value'\n\
 Warning: {path}:3:31 unused port signal 'value'\n\
