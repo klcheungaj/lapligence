@@ -50,8 +50,5 @@ fn runtime_delay_overflow_and_nonfinite_values_fail_explicitly() {
     ] {
         reject_case(fixture, "delay exceeds the 64-bit tick range");
     }
-    reject_case(
-        "dynamic_delay_nonfinite",
-        "real delay must be finite and nonnegative",
-    );
+    reject_case("dynamic_delay_nonfinite", "real delay must be finite");
 }

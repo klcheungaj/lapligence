@@ -177,7 +177,12 @@ Use typed queues for all IEEE regions and PLI control points: Preponed, Active,
 Inactive, Pre-NBA/NBA/Post-NBA, Pre-Observed/Observed/Post-Observed,
 Reactive/Re-Inactive/Pre-Re-NBA/Re-NBA/Post-Re-NBA, Pre-Postponed/Postponed.
 Iterate design/reactive work to a fixed point before postponed output; Reactive
-callbacks may enqueue another design iteration. `#0` enters Inactive/Re-Inactive;
+callbacks may enqueue another design iteration. The reactive set drains completely
+before design work re-enters, and an assertion clock edge produced by the reactive
+set returns the slot through Observed (SV 4.5, 24.3.1). Region callbacks scheduled
+with `llg_schedule_region_callback_id` can be cancelled while queued; their
+identity carries the runtime lifetime, so cancels from an earlier run are stale
+no-ops. `#0` enters Inactive/Re-Inactive;
 NBA/Re-NBA preserve issue order. Preponed/Observed/Postponed views are immutable;
 illegal writes or read-only scheduling fail controllably.
 

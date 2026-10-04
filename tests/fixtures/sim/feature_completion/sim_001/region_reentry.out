@@ -1,0 +1,12 @@
+A active a=1
+A woke a=1
+A inactive a=1
+A inactive2 a=1
+A woke a=2
+R reactive b=1
+R re-inactive b=1
+R re-inactive2 b=1
+A from reactive b=2
+A inactive after reactive c=0
+A t=12 a=2 b=2 c=12
+R t=15 b=2 c=12

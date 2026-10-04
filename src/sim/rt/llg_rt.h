@@ -1563,6 +1563,23 @@ int llg_schedule_region_callback_after(llg_region_t region,
 // llg_schedule_region_callback.
 int llg_register_pli_callback(llg_region_t region,
                               llg_region_callback_fn callback, void* data);
+// Identity of one queued callback: the runtime lifetime (bumped by every
+// llg_rt_cleanup) and the issue sequence within it. Callers may keep it
+// after the callback runs; a later cancel is then rejected as stale.
+typedef struct {
+    uint64_t generation;
+    uint64_t sequence;
+} llg_region_callback_id_t;
+// llg_schedule_region_callback_after that also reports the callback's
+// identity in `*id` (which may be NULL) for llg_cancel_region_callback.
+int llg_schedule_region_callback_id(llg_region_t region,
+                                    llg_region_callback_fn callback,
+                                    void* data, uint64_t ticks,
+                                    llg_region_callback_id_t* id);
+// Remove a still-queued callback without calling it. Returns 1 when removed;
+// 0 when it already ran or was cancelled, or when `id` belongs to an earlier
+// runtime lifetime. `data` stays caller-owned either way.
+int llg_cancel_region_callback(llg_region_callback_id_t id);
 
 // Register a signal for a copied, immutable value sampled at the beginning of
 // each time slot. The returned pointer is runtime-owned and valid until the
