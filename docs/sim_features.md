@@ -448,18 +448,29 @@ Macros, includes and their edition-specific behavior are counted in §11.
   Self-disable is not an early return. Finite local named-block exits are
   represented; broader cross-process, recursive, native and shared-capture
   cancellation remains partial. V ch.11 **[1995]**.
-- 🟨 **`always_comb` / `always_latch`** — Execute at time zero; include transitive
-  function reads and exclude written expressions. Fixed arrays, record members,
-  conditional arms, sequential predicates and aggregate input links contribute
-  dependencies. Unchanged results do not notify downstream readers; a closed
-  latch retains its value. Blocking timing and forks reject; delayed NBAs are not
-  rejected merely for their delay. Broader dynamic/native aggregate and object
-  contexts remain partial. SV §§9.2.2.2–9.2.2.3 **[SV-2005]**.
+- 🟨 **`always_comb` / `always_latch`** — Execute once at time zero after every
+  initial and always procedure has started; include transitive function reads
+  and exclude written expressions. Fixed arrays (including 65,537-cell
+  descriptor arrays, by contents marker rather than per cell), nested record and
+  packed members, constant/runtime selectors, conditional arms, sequential
+  predicates, ref ports (nested, to members and cells), string variables and
+  string record members, and aggregate input links contribute dependencies.
+  Unchanged results do not notify downstream readers; a closed latch retains
+  its value. Branches pruned by the optimizer keep their wake sources. Blocking
+  timing and forks reject; delayed NBAs are not rejected merely for their delay.
+  Non-string object and dynamic/native aggregate contexts remain partial
+  (SIM-013). SV §§9.2.2.2–9.2.2.3 **[SV-2005]**.
 - 🟨 **`always_ff` and writer rules** — Requires one event control and rejects
-  blocking timing, forks and extra overlapping writers. Blocking data assignments
-  and delayed NBAs are legal. Data changes alone do not wake it. Disjoint array
-  cells/record or packed members remain separate writers; overlapping procedural,
-  positional-pattern and continuous writes are diagnosed within admitted storage.
+  blocking timing (also in called tasks), forks and extra overlapping writers.
+  Blocking data assignments, timing-free calls, delayed NBAs, event triggers and
+  force/release are legal. Data changes alone do not wake it, including `iff`
+  qualifiers and asynchronous-reset or-lists. Disjoint array cells, rows of any
+  width (one interval per row), record or packed members and ref-port targets
+  remain separate writers; overlapping procedural, called-function,
+  hierarchical, ref-port, positional-pattern, output-port and continuous writes
+  are diagnosed within admitted storage. Force/release and procedural
+  `assign`/`deassign` are overrides, not competing writers. Constant slices of
+  descriptor arrays bound to output ports are not registered as writers.
   SV §9.2.2.4 **[SV-2005]**.
 - 🟦 **Final blocks** — Run once after scheduler exit (`$finish`, deadlock or no
   future events), observing committed values and end time. Timing controls,
@@ -598,11 +609,13 @@ Macros, includes and their edition-specific behavior are counted in §11.
   tick overflow reject. Continuous/gate delays are separately bounded in §8.
   V §9.7.1; SV §§3.14, 5.8 **[1995/SV-2005]**.
 - 🟨 **Implicit sensitivity** — `@*`/`@(*)` use call-site body reads, unlike
-  `always_comb`'s transitive function reads. Fixed-array elements/contents,
-  container contents/shape and string markers wake admitted readers after copies,
-  mutations or resizing. Non-string object and unrepresented nested dependencies
-  remain restricted; these are dependency-collection limits, not full
-  implicit-sensitivity support. V §9.7.5 **[2001]**.
+  `always_comb`'s transitive function reads. Fixed-array elements/contents
+  (including descriptor arrays), nested record members, ref-port targets,
+  container contents/shape, and string variables and string record members wake
+  admitted readers after copies, mutations or resizing. Non-string object
+  (chandle/class handle) dependencies remain restricted (SIM-013); these are
+  dependency-collection limits, not full implicit-sensitivity support.
+  V §9.7.5 **[2001]**.
 - 🟨 **Evaluated events** — Packed/scalar-real any-change expressions, packed LSB
   edges, trigger-time `iff`, numeric activation captures and atomic mixed named-event lists are represented. Sensitivity follows operands and eligible helpers,
   not unrelated body reads. Helpers with visible writes, persistent static state
@@ -810,17 +823,17 @@ Macros, includes and their edition-specific behavior are counted in §11.
   positional pattern leaf is its own contribution to a net, unpacked-structure
   net or member, net-array cell or selected bits, or true-net alias view,
   beside competing drivers and a changing runtime RHS; leaves need constant
-  selects. Oversized sources, including typed patterns, scatter descriptor rows.
-  A zero-delay driver whose write changes one of its own operands re-evaluates
+  selects. Oversized sources, including typed patterns, scatter descriptor rows;
+  zero-delay drivers of whole descriptor arrays or constant descriptor rows copy
+  through the fixed-array owner without flattening. A zero-delay driver whose write changes one of its own operands re-evaluates
   until it settles; nonconvergence stops at the process step limit. Variable
   storage permits one continuous writer per longest static prefix (member,
-  packed-member range, cell, constant row of up to 256 cells, hierarchical
+  packed-member range, cell, constant row of any width, hierarchical
   variable). Overlapping continuous, ordinary procedural or declaration-
   initializer writers reject; force/release/deassign are not ordinary writers.
   [Continuous-process lowering](../src/sim/codegen/lowering/collection/processes.rs)
   rejects delayed positional-pattern drivers, which with net-array declaration
-  delays belong to ADV-002. Dynamic topology remains restricted, and wider
-  constant rows conservatively count as whole-array writers.
+  delays belong to ADV-002. Dynamic topology remains restricted.
   SV §§6.5–6.7, 7.6, 10.3 **[SV-2005]**.
 - 🟨 **Resolution and strengths** — Continuous, gate, port and admitted
   hierarchical/fixed-array drivers retain independent contributions. `wire/tri`,

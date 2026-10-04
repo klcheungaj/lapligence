@@ -155,6 +155,15 @@ warnings. `alias_identity`
 also parses its VCD. Negatives cover uwire drivers, pass switches and inout
 formals and the alias legality rules.
 
+RTL-013's sensitivity and always-writer fixtures use
+`-E 'binary(sim_feature_completion) & test(rtl_013::)'`. Positive fixtures run in
+both optimizer modes on both backends (set `LLG_TEST_GMP_ROOT` for the GMP lane),
+most also after Db destruction; wake counters compare changes after the first
+sample, and descriptor processes also bound generated model size. Negatives
+cover timing, forks and event-control counts in always_comb/always_latch/
+always_ff and overlapping member, cell, wide-row, ref-port, hierarchical and
+called-function writers.
+
 ### Vendor patch preparation
 
 `vendor_patches.rs` checks clean/applied trees, no-Git archives (including archives

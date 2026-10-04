@@ -375,27 +375,6 @@ of the generated process function, for instance with `-fstack-usage` or
 `-Wframe-larger-than=`. The frame is about 159 KiB; halving `argc` roughly
 halves it.
 
-## Wide constant rows count as whole-array writers
-
-**Status:** open; RTL-010 made bounded rows precise.
-
-The SV 6.5 single-writer check records a constant row of at most
-`PRECISE_ROW_WRITE_CELLS` (256) cells in
-[`collection/dependencies.rs`](../src/sim/codegen/lowering/collection/dependencies.rs)
-as its individual cells, so `assign m[0] = ...;` and `initial m[1][0] = ...;`
-are disjoint. A wider row, such as one 65,537-cell row of a descriptor-backed
-two-dimensional array, is still recorded as the whole array. A legal design
-that continuously drives one wide row and writes another row procedurally (or
-from a second continuous assignment or output port) is therefore rejected as
-an overlapping writer. Enumerating wider rows would make the pairwise writer
-check quadratic in row size.
-
-The intended direction is an interval projection for array writes, compared by
-`(array, first cell, count)`, so any row is one record regardless of width.
-
-Reproduce with `typedef logic [7:0] row_t[65537]; row_t two[2];`,
-`assign two[0] = src;` and `initial two[1][0] = 8'h1;`.
-
 ## Oversized net arrays emit per-cell electrical code
 
 **Status:** open; RTL-010 removed the quadratic net-array driver discovery.
@@ -421,3 +400,17 @@ one cell.
 The intended direction is a descriptor-backed net-array cell table with a
 loop over a contiguous RHS view, keeping per-cell resolution state but not
 per-cell generated code.
+
+## Release does not restore a variable's continuous driver
+
+**Status:** open; found by RTL-013, owned by the force/release feature.
+
+IEEE 1800-2009 10.6.2: releasing a variable that is also driven by a continuous
+assignment re-establishes that assignment. The generated model keeps the forced
+value instead, both in ordinary `always` and in `always_ff`, until the
+continuous driver's operands next change. Nets are not affected: a released
+net recomputes its resolution immediately.
+
+Reproduce with `logic [7:0] r, src; assign r = src;`, a process that runs
+`force r = 8'haa;` and later `release r;`, and a `$display` of `r` after the
+release without changing `src`; the model prints `aa` instead of `src`.

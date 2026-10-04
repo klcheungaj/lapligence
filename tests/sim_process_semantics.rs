@@ -166,10 +166,12 @@ fn comb_transitive_function_reads_include_array_and_member_leaves() {
     sim_cli::run_case(
         "feature_completion/g1_20",
         "comb_transitive_reads",
-        "t1 mem=1 member=2 reads=2/2\n\
-         t2 mem=5 member=2 reads=3/2\n\
-         t3 mem=5 member=7 reads=3/3\n\
-         t4 mem=5 member=7 reads=4/3\n",
+        // SV 9.2.2.2.1: the time-zero evaluation follows the start of every
+        // initial procedure, so it already sees the initial values.
+        "t1 mem=1 member=2 reads=1/1\n\
+         t2 mem=5 member=2 reads=2/1\n\
+         t3 mem=5 member=7 reads=2/2\n\
+         t4 mem=5 member=7 reads=3/2\n",
         "",
         &[],
     );

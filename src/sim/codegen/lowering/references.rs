@@ -497,6 +497,76 @@ impl<'a> Codegen<'a> {
         resolve(self, lhs, &mut HashSet::new())
     }
 
+    /// Bind a constant selection of a plain concatenation target, such as a
+    /// member of an unpacked record whose leaves are separate signals, to
+    /// the one leaf that holds it. Reads, writes, writer ownership and
+    /// sensitivity then use that leaf's canonical storage instead of an
+    /// unnamed projection of the whole record.
+    pub(in super::super) fn collapse_concat_reference(&self, lhs: IrLhs) -> IrLhs {
+        let IrLhs::PackedSelect {
+            target,
+            steps,
+            two_state,
+            ..
+        } = &lhs
+        else {
+            return lhs;
+        };
+        let IrLhs::Stream {
+            parts,
+            slice: 1,
+            direction: IrStreamDirection::LeftToRight,
+            ..
+        } = target.as_ref()
+        else {
+            return lhs;
+        };
+        let mut lsb = 0u64;
+        for step in steps {
+            let Some(base) =
+                Self::ir_constant_i128(&step.base).and_then(|base| u64::try_from(base).ok())
+            else {
+                return lhs;
+            };
+            lsb = lsb.saturating_add(base);
+        }
+        let Some(width) = steps.last().map(|step| u64::from(step.width)) else {
+            return lhs;
+        };
+        // Concatenation parts are listed MSB first; offsets count from the LSB.
+        let mut offset = 0u64;
+        for (part, part_width) in parts.iter().rev() {
+            let part_width = u64::from(*part_width);
+            if lsb >= offset && lsb.saturating_add(width) <= offset + part_width {
+                let (index, low, state) = match part {
+                    IrLhs::Whole(index) => (*index, lsb - offset, *two_state),
+                    IrLhs::Part(index, left, right, state) => {
+                        let Ok(base) = u64::try_from((*left).min(*right)) else {
+                            return lhs;
+                        };
+                        (*index, base + lsb - offset, *state || *two_state)
+                    }
+                    _ => return lhs,
+                };
+                let full = self
+                    .model
+                    .signals
+                    .get(index)
+                    .is_some_and(|signal| u64::from(signal.ty.width()) == width);
+                if low == 0 && full {
+                    return IrLhs::Whole(index);
+                }
+                let (Ok(left), Ok(right)) = (i64::try_from(low + width - 1), i64::try_from(low))
+                else {
+                    return lhs;
+                };
+                return IrLhs::Part(index, left, right, state);
+            }
+            offset += part_width;
+        }
+        lhs
+    }
+
     pub(in super::super) fn reference_lhs_type(&self, lhs: &IrLhs) -> Option<IrType> {
         match lhs {
             IrLhs::PackedSelect {

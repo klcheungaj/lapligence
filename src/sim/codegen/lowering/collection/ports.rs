@@ -70,7 +70,7 @@ impl<'a> Codegen<'a> {
                         self.display_name(port)
                     )
                 })?;
-                let target = self.reference_lhs(target)?;
+                let target = self.collapse_concat_reference(self.reference_lhs(target)?);
                 let Some(target_ty) = self.reference_lhs_type(&target) else {
                     return Err(format!(
                         "reference port `{}` requires a typed variable actual",
@@ -694,9 +694,10 @@ impl<'a> Codegen<'a> {
     /// Storage an output port drives as an implied continuous assignment,
     /// for the multiple-driver rule (SV 6.5). A constant row or slice of a
     /// dense array drives only its cells; a runtime-selected actual drives
-    /// its longest static prefix, the whole array. A constant row or slice of
-    /// descriptor storage has no bounded cell set, so it is not registered
-    /// rather than reported as a false whole-array conflict.
+    /// its longest static prefix, the whole array. A constant row of
+    /// descriptor storage is one cell interval; a constant slice of it has
+    /// no contiguous projection and is not registered rather than reported
+    /// as a false whole-array conflict.
     pub(super) fn output_port_continuous_writes(
         &self,
         actual: NodeId,
@@ -722,7 +723,15 @@ impl<'a> Codegen<'a> {
             )]));
         }
         if self.model.arrays[array.ir].sparse() {
-            return None;
+            // A constant row of descriptor storage is one cell interval; a
+            // constant slice has no contiguous projection and stays
+            // unregistered rather than a false whole-array conflict.
+            if selected.coordinates.is_some() {
+                return None;
+            }
+            let (first, count) = self.constant_row_cells(array, &selected.prefix)?;
+            let row = self.array_row_write(self.reference_array(array.ir), first, count)?;
+            return Some(HashSet::from([row]));
         }
         let cells = selected.coordinates.clone().unwrap_or_else(|| {
             let prefix = constant_prefix.unwrap_or_default();

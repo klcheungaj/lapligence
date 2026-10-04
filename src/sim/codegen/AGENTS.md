@@ -83,8 +83,12 @@ driver whose target storage, or another view of the same alias network, is
 also an operand snapshots those operands and repeats in place while one
 changed (`collection/continuous_feedback.rs`); a nonconvergent loop stops at
 the process step limit. Combinational sensitivity
-includes called-function reads and excludes written storage; plain `@*` retains
-call-site behavior. Carry exact always-kind and typed writes through validation;
+includes called-function reads and excludes written storage (a whole-array
+read keeps its one contents marker above `PRECISE_EXCLUSION_CELLS` cells); plain
+`@*` retains call-site behavior. String variables and string record members
+contribute their change marker. always_comb/always_latch spawn after every
+other startup process so their time-zero evaluation follows the start of all
+initial and always procedures (SV 9.2.2.2.1). Carry exact always-kind and typed writes through validation;
 writer, timing and flip-flop violations reject independently of lint. Ordinary
 `always` remains a procedural loop with cooperative, source-located back-edge
 budgets, not a comb/run-once replacement.
@@ -140,7 +144,9 @@ port resolves to its same-named interface member. Connection indices must be
 elaborated constants (including genvars), except a variable output target: it is
 an implied continuous assignment (SV 23.3.3.2) whose link re-evaluates its
 selectors, and the local Slang patch admits only that form. Ref, net and inout
-connections keep constant selects. Descriptor-backed fixed-array ports and
+connections keep constant selects. A ref actual that selects one leaf of a
+record lowered as a concatenation binds to that leaf
+(`collapse_concat_reference`), never to an unnamed projection. Descriptor-backed fixed-array ports and
 nested member-array outputs reuse the procedural fixed-array assignment owner
 (`FixedArrayCopy`/`FixedValueAssign`); never expand a descriptor port per cell.
 Precollect hierarchical actual dependencies per instance.
@@ -149,11 +155,20 @@ Variable-continuous conflict analysis follows canonical intervals and counts
 ordinary assignments/declaration initialization, not force/release/deassign.
 Record and hierarchical member selects keep their declaration's storage class.
 Constant rows of at most `PRECISE_ROW_WRITE_CELLS` cells write only their
-cells for every writer; wider rows remain whole-array writes.
+cells for every writer; a wider row is one flattened cell interval (a
+writer-analysis `PackedRange` over `ArrayContents` that `ir_process_writes`
+widens before the IR), so the pairwise check costs one record per row.
 Output ports connected to variables are continuous drivers: constant rows of
 dense arrays drive their cells, runtime selects drive the longest static prefix,
-and constant rows of descriptor storage are not registered (no bounded cell set);
-keep disjoint writers legal and preserve original read sensitivities separately.
+constant rows of descriptor storage drive one cell interval and constant
+descriptor slices are not registered (no contiguous projection); keep disjoint
+writers legal and preserve original read sensitivities separately. Zero-delay
+continuous drivers of whole descriptor arrays or constant descriptor rows use
+the fixed-array assignment owner, never a flattened packed driver.
+The always-family single-writer rule counts ordinary assignments only;
+force/release and procedural `assign`/`deassign` are overrides another
+process may apply. always_ff admits event triggers and these overrides; only
+event-control count, blocking timing and forks are restricted.
 Hierarchical structural driver identity includes owner, source and group.
 
 ## Nets and procedural drivers

@@ -262,8 +262,6 @@ struct ProcessContractScan {
     event_controls: Vec<NodeId>,
     fork_controls: Vec<NodeId>,
     blocking_timing_controls: Vec<NodeId>,
-    disallowed_assignments: Vec<NodeId>,
-    event_triggers: Vec<NodeId>,
 }
 
 #[derive(Clone)]
