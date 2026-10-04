@@ -2309,6 +2309,13 @@ public:
     }
 
     parents.push_back(id);
+    // Slang's visitor does not descend into a modport port expression
+    // `.p(expr)`. Capture it under the port so the low-connection role
+    // below names a fully captured expression rather than a placeholder.
+    if constexpr (std::same_as<T, ModportPortSymbol>) {
+      if (const Expression* connection = symbol.getConnectionExpr())
+        connection->visit(*this);
+    }
     if constexpr (std::same_as<T, UninstantiatedDefSymbol>) {
       for (const auto* parameter : symbol.paramExpressions)
         parameter->visit(*this);

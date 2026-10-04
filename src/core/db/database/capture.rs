@@ -939,6 +939,19 @@ impl Db {
             })
             .map(|(index, semantic)| (NodeId::from_index(index), direction_from_slang(semantic)))
             .collect();
+        // The port expression is a low connection edge, which the child
+        // projection above excludes: it is not executable on its own, only
+        // through references to the port.
+        let mut modport_expressions = HashMap::new();
+        for semantic in &snapshot.semantic_nodes {
+            if semantic.kind != SemanticKind::Modport || semantic.detail != "ModportPort" {
+                continue;
+            }
+            let edges = semantic_edges(snapshot, semantic)?;
+            if let Some(expression) = edge_target(&ids, edges, SemanticEdgeRole::LowConnection)? {
+                modport_expressions.insert(NodeId::from_index(semantic.id as usize), expression);
+            }
+        }
         let mut virtual_interface_targets = HashMap::new();
         for &variable in vars_init.keys() {
             if let Some(instance) = virtual_interface_instance_from_slang(snapshot, &ids, variable)?
@@ -1083,6 +1096,7 @@ impl Db {
             clocking_blocks,
             clocking_vars,
             modport_directions,
+            modport_expressions,
             virtual_interface_targets,
             dpi_imports,
             implicit_nets,

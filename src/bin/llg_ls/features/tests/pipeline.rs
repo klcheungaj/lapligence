@@ -498,3 +498,59 @@ fn analyze_leaves_source_tree_and_cwd_unchanged() {
 
     let _ = std::fs::remove_dir_all(fixture);
 }
+
+/// Modport expression ports (SV 25.5.4): the captured port expression is a
+/// reference to the interface member, and a use of the port resolves to its
+/// modport declaration.
+#[test]
+fn analyze_full_pipeline_modport_expression_ports() {
+    let _guards = analysis_guards();
+    let dir = resolved_temp_dir(&format!("llg_modport_expr_{}", std::process::id()));
+    let orig_cwd = std::env::current_dir().expect("current dir");
+    let _restore = TempDirGuard {
+        dir: dir.clone(),
+        orig: orig_cwd,
+    };
+    std::env::set_current_dir(&dir).expect("chdir to temp dir");
+    let sv = dir.join("modport_expr.sv");
+    std::fs::write(
+        &sv,
+        "interface bus_if;\n\
+         \x20 logic [7:0] data;\n\
+         \x20 modport lo (input .nib(data[3:0]));\n\
+         endinterface\n\
+         module rd(bus_if.lo b, output logic [3:0] y);\n\
+         \x20 assign y = b.nib;\n\
+         endmodule\n\
+         module top;\n\
+         \x20 bus_if bi();\n\
+         \x20 logic [3:0] y;\n\
+         \x20 rd r(bi, y);\n\
+         endmodule\n",
+    )
+    .expect("write design");
+    let path = sv.to_string_lossy().into_owned();
+    let opts = CompileOpts {
+        files: vec![path.clone()],
+        top: None,
+        ..Default::default()
+    };
+    let a = analyze(&opts);
+    assert!(
+        !a.diagnostics.iter().any(|d| matches!(
+            d.severity,
+            Severity::Fatal | Severity::Syntax | Severity::Error
+        )),
+        "unexpected diagnostics: {:?}",
+        a.diagnostics
+    );
+    // `data` is declared at 1:14 and read inside `.nib(data[3:0])` at 2:25.
+    let refs = references_at(&a, &path, 1, 14);
+    assert!(
+        refs.iter().any(|l| l.range.start == Position::new(2, 25)),
+        "port expression reference missing: {refs:?}"
+    );
+    // `b.nib` (5:15) names the modport port declared on line 2.
+    let loc = definition_at(&a, &path, 5, 15).expect("definition of b.nib");
+    assert_eq!(loc.range.start.line, 2, "loc: {loc:?}");
+}

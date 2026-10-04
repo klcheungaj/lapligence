@@ -1655,6 +1655,9 @@ impl<'a> Codegen<'a> {
     }
 
     fn lhs_is_variable_storage(&self, node: NodeId) -> bool {
+        if let Some(expression) = self.modport_expression_target(node) {
+            return self.lhs_is_variable_storage(expression);
+        }
         if let Some(array) = self.array_of(node) {
             return !array.is_net;
         }

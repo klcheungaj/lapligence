@@ -2263,20 +2263,11 @@ impl<'a> Codegen<'a> {
             .filter_map(|id| match self.kind(*id) {
                 NodeKind::Net { net_type, .. } => match net_type {
                     NetType::Wire | NetType::Tri | NetType::Uwire | NetType::Logic => {
-                        let in_interface = self.node(*id).parent.is_some_and(|parent| {
-                            matches!(
-                                self.kind(parent),
-                                NodeKind::ModuleInst {
-                                    is_interface: true,
-                                    ..
-                                }
-                            )
-                        });
                         let already_collapsed = self
                             .sig_globals
                             .get(id)
                             .is_some_and(|info| self.model.signals[info.ir].net_driver.is_some());
-                        (!in_interface && !already_collapsed && !grouped_members.contains(id))
+                        (!already_collapsed && !grouped_members.contains(id))
                             .then_some((*id, crate::sim::ir::IrNetKind::Wire))
                     }
                     NetType::Wand | NetType::TriAnd => (!grouped_members.contains(id))
@@ -2619,6 +2610,9 @@ impl<'a> Codegen<'a> {
     /// signal, or through a packed select. Dynamic select validation is kept
     /// separate so the same classifier can be used by all driver scans.
     fn member_write_kind(&self, lhs: NodeId, member_set: &HashSet<NodeId>) -> MemberWrite {
+        if let Some(expression) = self.modport_expression_target(lhs) {
+            return self.member_write_kind(expression, member_set);
+        }
         match self.kind(lhs) {
             NodeKind::Net { .. } if member_set.contains(&lhs) => MemberWrite::Whole,
             NodeKind::Expr(ExprKind::Ref { target }) => match target {
@@ -2643,6 +2637,9 @@ impl<'a> Codegen<'a> {
 
     /// The member (if any) a select chain or ref ultimately writes to.
     fn member_write_base(&self, node: NodeId, member_set: &HashSet<NodeId>) -> Option<NodeId> {
+        if let Some(expression) = self.modport_expression_target(node) {
+            return self.nested_member_target(expression, member_set);
+        }
         match self.kind(node) {
             NodeKind::Net { .. } if member_set.contains(&node) => Some(node),
             NodeKind::Expr(ExprKind::Ref { target }) => target.as_ref().and_then(|target| {

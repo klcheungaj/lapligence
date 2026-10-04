@@ -715,3 +715,30 @@ path, not a file, and stay physical. Adding a logical field to `Diag` would
 change its 57 struct-literal construction sites. Reproduce:
 `tests/fixtures/sim/feature_completion/rtl_019/macro_error.sv` with a
 `` `line `` directive before the macro use.
+
+## Modport expression ports through virtual interfaces
+
+**Status:** open (RTL-102 deferral).
+
+A modport expression port `.p(expr)` (SV 25.5.4) executes through static
+interface ports and hierarchical references, but a virtual interface handle
+has runtime member slots only for interface storage, so `vif.p` rejects with
+"modport expression port `p` is not supported through virtual interface view".
+Supporting it needs a per-descriptor evaluator (and, for outputs, a writer)
+for each expression port, selected by the bound instance at run time.
+
+Reproduce with `interface i; logic [7:0] a; modport m(input .p(a[3:0]));
+endinterface`, `virtual i.m v = inst;` and `$display("%h", v.p);`.
+
+## Range selects of multidimensional packed values select bits
+
+**Status:** open (found during RTL-102).
+
+A part-select across the outer dimension of a multidimensional packed value,
+such as `w[3:2]` for `logic [3:0][7:0] w`, selects bits 3..2 instead of the
+16-bit elements 3..2: reads return the wrong bits and writes update the wrong
+ones. Single-element selects (`w[2]`, `w[2][3:0]`) are correct. A modport
+expression port over such a range (`.p(w[3:2])`) inherits the error.
+
+Reproduce with `logic [3:0][7:0] w; logic [15:0] y;`, `w = 32'h44332211;
+y = w[3:2]; $display("%h", y);` (prints `0000`; the LRM result is `4433`).
