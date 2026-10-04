@@ -140,8 +140,9 @@ fn decode_named(tokens: &SemanticTokens) -> Vec<(u32, u32, u32, String)> {
 #[test]
 fn semantic_tokens_color_module_typedef_and_parameter_words_like_cpp() {
     let _guards = analysis_guards();
-    let fixture = std::env::temp_dir().join(format!("llg_cpptypes_{}", std::process::id()));
-    std::fs::create_dir_all(&fixture).expect("create fixture tree");
+    // Path-mode compile names sources by their resolved path (macOS `/var` is
+    // `/private/var`), so the request must use the resolved spelling too.
+    let fixture = resolved_temp_dir(&format!("llg_cpptypes_{}", std::process::id()));
     let sv = fixture.join("cpp_types.sv");
     let source = "package pkg;\n  typedef logic [7:0] byte_t;\nendpackage\nmodule leaf #(parameter int W = 1)(input pkg::byte_t a);\nendmodule\nmodule top;\n  localparam int L = 2;\n  typedef logic [3:0] nib_t;\n  nib_t n;\n  leaf u0 (.a(8'd0));\n  leaf #(.W(L)) u1 (.a(nib_t'(1)));\n  defparam u0.W = 3;\nendmodule\n";
     std::fs::write(&sv, source).expect("write design");
