@@ -1,0 +1,1368 @@
+//! Descriptor-backed native aggregate subroutine storage (SIM-003).
+//!
+//! An unpacked record without a packed payload (it has string, chandle or
+//! real leaves, or is wider than packed transport) is one runtime value with
+//! its own recursive descriptor when it is a subroutine formal, result or
+//! local. Module records keep their declaration-owned leaf storage; values
+//! cross between the two representations leaf by leaf, never through packed
+//! vectors or `IrFixedValue`.
+use super::super::expressions::AggregateSelection;
+use super::*;
+use crate::sim::ir::{
+    native_item_count, validate_native_type, IrNativeAccessKind, IrNativeLeafExpr,
+    IrNativeLeafValue, IrNativeValue, IrObjectQuery,
+};
+
+/// Largest number of leaves of one native record. Leaf-wise transfers to and
+/// from flattened module storage emit one operation per leaf, so larger
+/// records are rejected rather than expanded.
+pub(in super::super) const NATIVE_VALUE_MAX_LEAVES: usize = 4096;
+
+/// One side of a leaf-wise native transfer.
+#[derive(Clone)]
+pub(in super::super) enum NativeEndpoint {
+    /// Descriptor-backed value with an item-path prefix.
+    Value {
+        value: usize,
+        prefix: Vec<AggregatePathPart>,
+    },
+    /// Declaration-owned module record leaves below a path prefix.
+    Module(AggregateSelection),
+}
+
+/// One captured leaf value of a transfer.
+enum LeafValue {
+    Packed(IrExpr),
+    Real(IrExpr),
+    String(IrStringExpr),
+    Chandle(IrChandleExpr),
+}
+
+impl LeafValue {
+    fn into_leaf_expr(self) -> IrNativeLeafExpr {
+        match self {
+            LeafValue::Packed(value) => IrNativeLeafExpr::Packed(value),
+            LeafValue::Real(value) => IrNativeLeafExpr::Real(value),
+            LeafValue::String(value) => IrNativeLeafExpr::String(value),
+            LeafValue::Chandle(value) => IrNativeLeafExpr::Chandle(value),
+        }
+    }
+}
+
+fn leaf_ty(element: &IrContainerElement) -> Result<IrClassFieldType, String> {
+    match element {
+        IrContainerElement::Packed {
+            width,
+            signed,
+            two_state,
+        } => Ok(IrClassFieldType::Packed {
+            width: *width,
+            signed: *signed,
+            two_state: *two_state,
+        }),
+        IrContainerElement::Real { shortreal } => Ok(IrClassFieldType::Real {
+            shortreal: *shortreal,
+        }),
+        IrContainerElement::String => Ok(IrClassFieldType::String),
+        IrContainerElement::Chandle => Ok(IrClassFieldType::Chandle),
+        _ => Err("native record leaf has no scalar representation".to_owned()),
+    }
+}
+
+fn collect_native_leaves(
+    descriptor: &TypeDescriptor,
+    element: &IrContainerElement,
+    path: &mut Vec<AggregatePathPart>,
+    items: &mut Vec<u32>,
+    leaves: &mut Vec<NativeLeaf>,
+) -> Result<(), String> {
+    match (element, &descriptor.shape) {
+        (IrContainerElement::Aggregate { members, .. }, TypeShape::Aggregate(layout)) => {
+            if members.len() != layout.members.len() {
+                return Err("native record layout disagrees with its descriptor".to_owned());
+            }
+            for (index, (member, item)) in layout.members.iter().zip(members).enumerate() {
+                if member.initializer.is_some() {
+                    return Err(format!(
+                        "member default of `{}` in native subroutine storage is not supported",
+                        member.name
+                    ));
+                }
+                path.push(AggregatePathPart::Member(member.name.clone()));
+                items.push(u32::try_from(index).map_err(|_| "native record is too wide")?);
+                collect_native_leaves(&member.descriptor, &item.element, path, items, leaves)?;
+                items.pop();
+                path.pop();
+            }
+            Ok(())
+        }
+        (
+            IrContainerElement::FixedArray {
+                dimensions,
+                element: item,
+            },
+            TypeShape::FixedArray {
+                element: item_descriptor,
+                ..
+            },
+        ) => {
+            let count = native_item_count(element).ok_or("native fixed array is too large")?;
+            if count > NATIVE_VALUE_MAX_LEAVES as u64 {
+                return Err(format!(
+                    "native record array member has {count} elements; at most {NATIVE_VALUE_MAX_LEAVES} leaves are supported"
+                ));
+            }
+            for flat in 0..count {
+                // Left dimensions vary slowest; each index is the declared one.
+                let mut remainder = flat;
+                let mut indices = vec![0i32; dimensions.len()];
+                for (slot, (left, right)) in dimensions.iter().enumerate().rev() {
+                    let extent = i64::from(*left).abs_diff(i64::from(*right)) + 1;
+                    let offset = i64::try_from(remainder % extent).map_err(|_| "index")?;
+                    remainder /= extent;
+                    let declared = if left <= right {
+                        i64::from(*left) + offset
+                    } else {
+                        i64::from(*left) - offset
+                    };
+                    indices[slot] = i32::try_from(declared).map_err(|_| "native index overflow")?;
+                }
+                let depth = path.len();
+                path.extend(indices.into_iter().map(AggregatePathPart::Index));
+                items.push(u32::try_from(flat).map_err(|_| "native array is too large")?);
+                collect_native_leaves(item_descriptor, item, path, items, leaves)?;
+                items.pop();
+                path.truncate(depth);
+            }
+            Ok(())
+        }
+        (leaf, _) => {
+            leaves.push(NativeLeaf {
+                path: path.clone(),
+                items: items.clone(),
+                ty: leaf_ty(leaf)?,
+            });
+            if leaves.len() > NATIVE_VALUE_MAX_LEAVES {
+                return Err(format!(
+                    "native record has more than {NATIVE_VALUE_MAX_LEAVES} leaves"
+                ));
+            }
+            Ok(())
+        }
+    }
+}
+
+impl Codegen<'_> {
+    /// The native value type of a declaration, or `None` when the existing
+    /// packed, fixed-array or leaf storage represents it.
+    pub(in super::super) fn native_value_type(&self, node: NodeId) -> Option<IrContainerElement> {
+        let descriptor = self.query_descriptor(node)?;
+        let TypeShape::Aggregate(layout) = &descriptor.shape else {
+            return None;
+        };
+        if layout.kind != AggregateKind::UnpackedStruct
+            || Self::fixed_descriptor_width(descriptor).is_some()
+        {
+            return None;
+        }
+        let element = lower_container_element(descriptor).ok()?;
+        validate_native_type(&element, "native").ok()?;
+        Some(element)
+    }
+
+    /// Intern the type and leaf layout of a native declaration.
+    pub(in super::super) fn native_layout(
+        &mut self,
+        node: NodeId,
+    ) -> Result<Option<NativeLayout>, String> {
+        if let Some(layout) = self.native_layouts.get(&node) {
+            return Ok(Some(layout.clone()));
+        }
+        let Some(element) = self.native_value_type(node) else {
+            return Ok(None);
+        };
+        let descriptor = self
+            .query_descriptor(node)
+            .cloned()
+            .ok_or("native declaration has no type descriptor")?;
+        let mut leaves = Vec::new();
+        collect_native_leaves(
+            &descriptor,
+            &element,
+            &mut Vec::new(),
+            &mut Vec::new(),
+            &mut leaves,
+        )
+        .map_err(|error| format!("{error} (`{}`)", self.node(node).name))?;
+        let ty = match self
+            .model
+            .native_types
+            .iter()
+            .position(|existing| *existing == element)
+        {
+            Some(ty) => ty,
+            None => {
+                self.model.native_types.push(element);
+                self.model.native_types.len() - 1
+            }
+        };
+        let layout = NativeLayout {
+            ty,
+            descriptor,
+            leaves,
+        };
+        self.native_layouts.insert(node, layout.clone());
+        Ok(Some(layout))
+    }
+
+    /// Storage for one native declaration of one instance. Automatic storage
+    /// is a lexical activation; static storage persists for the model.
+    fn native_storage_for(
+        &mut self,
+        inst: NodeId,
+        node: NodeId,
+        automatic: bool,
+    ) -> Result<Option<usize>, String> {
+        if let Some(value) = self.native_storage.get(&(inst, node)) {
+            return Ok(Some(*value));
+        }
+        let Some(layout) = self.native_layout(node)? else {
+            return Ok(None);
+        };
+        let index = self.model.native_values.len();
+        self.model.native_values.push(IrNativeValue {
+            c_name: format!("S_llg_native_{index}"),
+            ty: layout.ty,
+            activation: automatic,
+        });
+        self.native_storage.insert((inst, node), index);
+        Ok(Some(index))
+    }
+
+    /// A fresh lexical value of the same type as `node`, for caller-side
+    /// transfers. The caller declares it with `NativeValueDeclare`.
+    pub(in super::super) fn native_temporary(&mut self, node: NodeId) -> Result<usize, String> {
+        let layout = self
+            .native_layout(node)?
+            .ok_or("native temporary requires a native record type")?;
+        let index = self.model.native_values.len();
+        self.model.native_values.push(IrNativeValue {
+            c_name: format!("S_llg_native_{index}"),
+            ty: layout.ty,
+            activation: true,
+        });
+        self.native_value_layouts.insert(index, node);
+        Ok(index)
+    }
+
+    /// A fresh lexical value with the type and layout of native value `like`.
+    pub(in super::super) fn native_temporary_like(&mut self, like: usize) -> Result<usize, String> {
+        let node = *self
+            .native_value_layouts
+            .get(&like)
+            .ok_or("native value has no declaration layout")?;
+        self.native_temporary(node)
+    }
+
+    /// Whether a function result uses descriptor-backed native storage.
+    pub(in super::super) fn native_return(&self, function: NodeId) -> bool {
+        matches!(self.kind(function), NodeKind::FuncTask { ret: Some(_), .. })
+            && self.native_value_type(function).is_some()
+    }
+
+    fn native_function_nodes(&self, function: NodeId, output: &mut Vec<NodeId>) {
+        output.extend(
+            self.func_formals(function)
+                .into_iter()
+                .map(|(formal, _)| formal),
+        );
+        if self.native_return(function) {
+            output.push(function);
+        }
+        if let Some(body) = self.func_body(function) {
+            self.native_body_locals(body, output);
+        }
+    }
+
+    fn native_body_locals(&self, node: NodeId, output: &mut Vec<NodeId>) {
+        if matches!(self.kind(node), NodeKind::Var { .. }) && self.native_value_type(node).is_some()
+        {
+            output.push(node);
+            return;
+        }
+        for child in &self.node(node).children {
+            self.native_body_locals(*child, output);
+        }
+    }
+
+    /// Allocate native storage for the formals, result and locals of one
+    /// subroutine instance. Static subroutines keep persistent storage.
+    pub(in super::super) fn prepare_native_function(
+        &mut self,
+        inst: NodeId,
+        function: NodeId,
+        automatic: bool,
+    ) -> Result<(), String> {
+        let mut nodes = Vec::new();
+        self.native_function_nodes(function, &mut nodes);
+        for node in nodes {
+            let lifetime = match self.kind(node) {
+                NodeKind::FuncArg { direction, .. } => {
+                    if *direction == DbDirection::Ref && self.native_value_type(node).is_some() {
+                        return Err(format!(
+                            "ref formal `{}` of native record type is not supported",
+                            self.node(node).name
+                        ));
+                    }
+                    automatic
+                }
+                NodeKind::FuncTask { .. } => automatic,
+                _ => self.db.variable_lifetime(node) == VariableLifetime::Automatic,
+            };
+            if let Some(value) = self.native_storage_for(inst, node, lifetime)? {
+                self.native_value_layouts.insert(value, node);
+            }
+        }
+        Ok(())
+    }
+
+    /// Bind the native declarations of the subroutine instance being lowered.
+    pub(in super::super) fn bind_native_function(&mut self, inst: NodeId, function: NodeId) {
+        let mut nodes = Vec::new();
+        self.native_function_nodes(function, &mut nodes);
+        self.native_roots = nodes
+            .into_iter()
+            .filter_map(|node| {
+                self.native_storage
+                    .get(&(inst, node))
+                    .map(|value| (node, *value))
+            })
+            .collect();
+    }
+
+    /// Callee storage of a native formal or result in one instance.
+    pub(in super::super) fn native_formal_storage(
+        &self,
+        inst: NodeId,
+        node: NodeId,
+    ) -> Option<usize> {
+        self.native_storage.get(&(inst, node)).copied()
+    }
+
+    /// Whether `node` declares a native formal, result or local.
+    pub(in super::super) fn is_native_declaration(&self, node: NodeId) -> bool {
+        self.native_layouts.contains_key(&node)
+    }
+
+    fn native_layout_of_value(&self, value: usize) -> Result<&NativeLayout, String> {
+        self.native_value_layouts
+            .get(&value)
+            .and_then(|node| self.native_layouts.get(node))
+            .ok_or_else(|| "native value has no layout".to_owned())
+    }
+
+    /// Resolve an expression rooted at a bound native declaration to its
+    /// value and constant member/index path. `Err` marks a selection rooted
+    /// at a native value that has no constant path.
+    pub(in super::super) fn native_path_of(
+        &self,
+        node: NodeId,
+    ) -> Result<Option<(usize, Vec<AggregatePathPart>)>, String> {
+        match self.kind(node) {
+            NodeKind::Expr(ExprKind::Ref {
+                target: Some(target),
+            }) => Ok(self
+                .native_roots
+                .get(target)
+                .map(|value| (*value, Vec::new()))),
+            NodeKind::Var { .. } | NodeKind::FuncArg { .. } | NodeKind::FuncTask { .. } => Ok(self
+                .native_roots
+                .get(&node)
+                .map(|value| (*value, Vec::new()))),
+            NodeKind::Expr(ExprKind::HierPath { parts, refs }) => {
+                let Some((index, value)) = refs.iter().enumerate().find_map(|(index, target)| {
+                    target.and_then(|target| self.native_roots.get(&target).map(|v| (index, *v)))
+                }) else {
+                    return Ok(None);
+                };
+                Ok(Some((
+                    value,
+                    parts
+                        .iter()
+                        .skip(index + 1)
+                        .cloned()
+                        .map(AggregatePathPart::Member)
+                        .collect(),
+                )))
+            }
+            NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
+                // The frontend can name a record member array by a detached
+                // array node; the captured select path then gives its owner.
+                let rooted = match self.db.array_select_path(node) {
+                    Some((owner, members)) => self.native_roots.get(&owner).map(|value| {
+                        (
+                            *value,
+                            members
+                                .iter()
+                                .cloned()
+                                .map(AggregatePathPart::Member)
+                                .collect::<Vec<_>>(),
+                        )
+                    }),
+                    None => self.native_path_of(*base)?,
+                };
+                let Some((value, mut path)) = rooted else {
+                    return Ok(None);
+                };
+                for index in indices {
+                    let index = self
+                        .eval_bound_i128(*index)
+                        .ok()
+                        .and_then(|index| i32::try_from(index).ok())
+                        .ok_or_else(|| {
+                            "runtime index into a native record array member is not supported"
+                                .to_owned()
+                        })?;
+                    path.push(AggregatePathPart::Index(index));
+                }
+                Ok(Some((value, path)))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    /// The leaf selected by a native-rooted expression, if it is one leaf.
+    pub(in super::super) fn native_leaf_of(
+        &self,
+        node: NodeId,
+    ) -> Result<Option<(usize, NativeLeaf)>, String> {
+        let Some((value, path)) = self.native_path_of(node)? else {
+            return Ok(None);
+        };
+        let layout = self.native_layout_of_value(value)?;
+        if let Some(leaf) = layout.leaves.iter().find(|leaf| leaf.path == path) {
+            return Ok(Some((value, leaf.clone())));
+        }
+        if layout
+            .leaves
+            .iter()
+            .any(|leaf| leaf.path.starts_with(&path))
+        {
+            return Ok(None);
+        }
+        Err(format!(
+            "native record selection `{}` does not name a member",
+            aggregate_path_suffix(&path)
+        ))
+    }
+
+    /// Model-level access name of one native leaf, shared by all uses.
+    pub(in super::super) fn native_leaf_symbol(
+        &mut self,
+        value: usize,
+        leaf: &NativeLeaf,
+    ) -> String {
+        if let Some(name) = self.native_leaf_symbols.get(&(value, leaf.items.clone())) {
+            return name.clone();
+        }
+        let name = format!("_llg_access_{}", self.model.native_accesses.len());
+        self.model
+            .native_accesses
+            .push(crate::sim::ir::IrNativeAccess {
+                name: name.clone(),
+                receiver: IrChandleExpr::Null,
+                kind: IrNativeAccessKind::ValueItem { value, ty: leaf.ty },
+                site: None,
+                item_path: leaf.items.clone(),
+                function: None,
+            });
+        self.native_leaf_symbols
+            .insert((value, leaf.items.clone()), name.clone());
+        name
+    }
+
+    fn native_leaf_read(&mut self, value: usize, leaf: &NativeLeaf) -> LeafValue {
+        let name = self.native_leaf_symbol(value, leaf);
+        match leaf.ty {
+            IrClassFieldType::Packed { width, signed, .. } => LeafValue::Packed(IrExpr::new(
+                IrExprKind::LocalRead(name),
+                width,
+                signed,
+                None,
+            )),
+            IrClassFieldType::Real { .. } => {
+                LeafValue::Real(IrExpr::new(IrExprKind::LocalRead(name), 0, false, None))
+            }
+            IrClassFieldType::String => LeafValue::String(IrStringExpr::LocalRead(name)),
+            IrClassFieldType::Chandle => LeafValue::Chandle(IrChandleExpr::LocalRead(name)),
+        }
+    }
+
+    fn native_leaf_lhs(&mut self, value: usize, leaf: &NativeLeaf) -> IrLhs {
+        let name = self.native_leaf_symbol(value, leaf);
+        let (width, signed, two_state, shortreal) = match leaf.ty {
+            IrClassFieldType::Packed {
+                width,
+                signed,
+                two_state,
+            } => (width, signed, two_state, false),
+            IrClassFieldType::Real { shortreal } => (0, false, false, shortreal),
+            _ => (0, false, false, false),
+        };
+        IrLhs::WholeRef {
+            addr: format!("&{name}"),
+            width,
+            signed,
+            two_state,
+            shortreal,
+        }
+    }
+
+    /// Packed or real read of a native leaf; `None` for other expressions.
+    pub(in super::super) fn native_leaf_expr(
+        &mut self,
+        node: NodeId,
+    ) -> Result<Option<IrExpr>, String> {
+        let Some((value, leaf)) = self.native_leaf_of(node)? else {
+            return Ok(None);
+        };
+        Ok(match self.native_leaf_read(value, &leaf) {
+            LeafValue::Packed(value) | LeafValue::Real(value) => Some(value),
+            _ => None,
+        })
+    }
+
+    /// Packed or real target of a native leaf; `None` for other lvalues.
+    pub(in super::super) fn native_leaf_target(
+        &mut self,
+        node: NodeId,
+    ) -> Result<Option<IrLhs>, String> {
+        let Some((value, leaf)) = self.native_leaf_of(node)? else {
+            return Ok(None);
+        };
+        Ok(matches!(
+            leaf.ty,
+            IrClassFieldType::Packed { .. } | IrClassFieldType::Real { .. }
+        )
+        .then(|| self.native_leaf_lhs(value, &leaf)))
+    }
+
+    /// Access name of a native string or chandle leaf, for reads and writes.
+    pub(in super::super) fn native_object_leaf(
+        &mut self,
+        node: NodeId,
+        string: bool,
+    ) -> Result<Option<String>, String> {
+        let Some((value, leaf)) = self.native_leaf_of(node)? else {
+            return Ok(None);
+        };
+        let matches = if string {
+            leaf.ty == IrClassFieldType::String
+        } else {
+            leaf.ty == IrClassFieldType::Chandle
+        };
+        Ok(matches.then(|| self.native_leaf_symbol(value, &leaf)))
+    }
+
+    /// Kind test used by expression classification (no IR is created).
+    pub(in super::super) fn native_leaf_kind(&self, node: NodeId) -> Option<IrClassFieldType> {
+        self.native_leaf_of(node)
+            .ok()
+            .flatten()
+            .map(|(_, leaf)| leaf.ty)
+    }
+
+    /// Whether an lvalue writes native subroutine storage.
+    pub(in super::super) fn native_target(&self, node: NodeId) -> bool {
+        matches!(self.native_path_of(node), Ok(Some(_)) | Err(_))
+    }
+
+    // ── Whole-value transfers ───────────────────────────────────────────
+
+    /// A whole native value or native/module record selection.
+    pub(in super::super) fn native_endpoint(
+        &self,
+        node: NodeId,
+    ) -> Result<Option<(NativeEndpoint, TypeDescriptor)>, String> {
+        if let Some((value, prefix)) = self.native_path_of(node)? {
+            let layout = self.native_layout_of_value(value)?;
+            let descriptor = Self::descriptor_at_path(&layout.descriptor, &prefix)
+                .ok_or("native record selection has no type")?;
+            if !matches!(
+                descriptor.shape,
+                TypeShape::Aggregate(_) | TypeShape::FixedArray { .. }
+            ) {
+                return Ok(None);
+            }
+            return Ok(Some((NativeEndpoint::Value { value, prefix }, descriptor)));
+        }
+        Ok(self.resolve_unpacked_aggregate(node).map(|selection| {
+            let descriptor = selection.descriptor.clone();
+            (NativeEndpoint::Module(selection), descriptor)
+        }))
+    }
+
+    fn endpoint_leaves(
+        &self,
+        endpoint: &NativeEndpoint,
+    ) -> Result<Vec<(Vec<AggregatePathPart>, NativeEndpointLeaf)>, String> {
+        match endpoint {
+            NativeEndpoint::Value { value, prefix } => Ok(self
+                .native_layout_of_value(*value)?
+                .leaves
+                .iter()
+                .filter(|leaf| leaf.path.starts_with(prefix))
+                .map(|leaf| {
+                    (
+                        leaf.path[prefix.len()..].to_vec(),
+                        NativeEndpointLeaf::Value(*value, leaf.clone()),
+                    )
+                })
+                .collect()),
+            NativeEndpoint::Module(selection) => Ok(selection
+                .storage
+                .leaves
+                .iter()
+                .filter(|leaf| leaf.path.starts_with(&selection.prefix))
+                .map(|leaf| {
+                    (
+                        leaf.path[selection.prefix.len()..].to_vec(),
+                        NativeEndpointLeaf::Module(leaf.clone()),
+                    )
+                })
+                .collect()),
+        }
+    }
+
+    fn endpoint_leaf_read(&mut self, leaf: &NativeEndpointLeaf) -> Result<LeafValue, String> {
+        match leaf {
+            NativeEndpointLeaf::Value(value, leaf) => Ok(self.native_leaf_read(*value, leaf)),
+            NativeEndpointLeaf::Module(leaf) => {
+                if let Some(object) = leaf.object {
+                    let object = self.reference_object(object);
+                    return Ok(match self.model.objects[object].ty {
+                        IrObjectType::String => LeafValue::String(IrStringExpr::Read(object)),
+                        IrObjectType::Chandle | IrObjectType::Semaphore => {
+                            LeafValue::Chandle(IrChandleExpr::Read(object))
+                        }
+                        IrObjectType::Process => {
+                            return Err("process record members cannot be copied".to_owned())
+                        }
+                    });
+                }
+                let value = self.aggregate_leaf_read(leaf)?;
+                Ok(if value.is_real() {
+                    LeafValue::Real(value)
+                } else {
+                    LeafValue::Packed(value)
+                })
+            }
+        }
+    }
+
+    fn endpoint_leaf_write(
+        &mut self,
+        leaf: &NativeEndpointLeaf,
+        value: LeafValue,
+    ) -> Result<IrStmt, String> {
+        match (leaf, value) {
+            (NativeEndpointLeaf::Value(native, leaf), LeafValue::String(value)) => {
+                let name = self.native_leaf_symbol(*native, leaf);
+                Ok(IrStmt::Object(IrObjectStmt::StringAssignLocal(name, value)))
+            }
+            (NativeEndpointLeaf::Value(native, leaf), LeafValue::Chandle(value)) => {
+                let name = self.native_leaf_symbol(*native, leaf);
+                Ok(IrStmt::Object(IrObjectStmt::ChandleAssignLocal(
+                    name, value,
+                )))
+            }
+            (
+                NativeEndpointLeaf::Value(native, leaf),
+                LeafValue::Packed(value) | LeafValue::Real(value),
+            ) => {
+                let lhs = self.native_leaf_lhs(*native, leaf);
+                Ok(IrStmt::Assign {
+                    rhs: apply_lhs_assignment_context(&self.model, &lhs, value),
+                    lhs,
+                    nba: false,
+                })
+            }
+            (NativeEndpointLeaf::Module(leaf), LeafValue::String(value)) => {
+                let object =
+                    self.reference_object(leaf.object.ok_or("string leaf has no storage")?);
+                Ok(IrStmt::Object(IrObjectStmt::StringAssign(object, value)))
+            }
+            (NativeEndpointLeaf::Module(leaf), LeafValue::Chandle(value)) => {
+                let object =
+                    self.reference_object(leaf.object.ok_or("chandle leaf has no storage")?);
+                Ok(IrStmt::Object(IrObjectStmt::ChandleAssign(object, value)))
+            }
+            (
+                NativeEndpointLeaf::Module(leaf),
+                LeafValue::Packed(value) | LeafValue::Real(value),
+            ) => {
+                let lhs = self.aggregate_leaf_lhs(leaf)?;
+                Ok(IrStmt::Assign {
+                    rhs: apply_lhs_assignment_context(&self.model, &lhs, value),
+                    lhs,
+                    nba: false,
+                })
+            }
+        }
+    }
+
+    /// Copy `source` into `target` leaf by leaf. Every source leaf is
+    /// captured before the first write, so overlapping selections copy the
+    /// original value.
+    pub(in super::super) fn native_transfer(
+        &mut self,
+        path: &str,
+        target: &NativeEndpoint,
+        source: &NativeEndpoint,
+    ) -> Result<IrStmt, String> {
+        if let (
+            NativeEndpoint::Value {
+                value: dst,
+                prefix: dst_prefix,
+            },
+            NativeEndpoint::Value {
+                value: src,
+                prefix: src_prefix,
+            },
+        ) = (target, source)
+        {
+            if dst_prefix.is_empty()
+                && src_prefix.is_empty()
+                && self.model.native_values[*dst].ty == self.model.native_values[*src].ty
+            {
+                return Ok(IrStmt::NativeValueCopy {
+                    dst: *dst,
+                    src: *src,
+                });
+            }
+        }
+        let targets = self.endpoint_leaves(target)?;
+        let sources = self.endpoint_leaves(source)?;
+        if targets.len() != sources.len()
+            || targets.is_empty()
+            || targets
+                .iter()
+                .zip(&sources)
+                .any(|((left, _), (right, _))| left != right)
+        {
+            return Err(format!(
+                "native record transfer has incompatible leaf layouts in `{path}`"
+            ));
+        }
+        let mut captures = Vec::with_capacity(sources.len());
+        let mut writes = Vec::with_capacity(targets.len());
+        for (position, ((_, target), (_, source))) in targets.iter().zip(&sources).enumerate() {
+            let value = self.endpoint_leaf_read(source)?;
+            let name = format!("_llg_native_copy_{}_{position}", self.native_copy_sequence);
+            let captured = match value {
+                LeafValue::String(value) => {
+                    captures.push(IrStmt::DeclString {
+                        name: name.clone(),
+                        init: Some(value),
+                    });
+                    LeafValue::String(IrStringExpr::LocalRead(name))
+                }
+                LeafValue::Chandle(value) => {
+                    captures.push(IrStmt::Object(IrObjectStmt::ChandleDeclareLocal(
+                        name.clone(),
+                        Some(value),
+                    )));
+                    LeafValue::Chandle(IrChandleExpr::LocalRead(name))
+                }
+                LeafValue::Packed(value) | LeafValue::Real(value) => {
+                    let (width, signed) = (value.width, value.signed);
+                    captures.push(IrStmt::DeclLocal {
+                        name: name.clone(),
+                        width,
+                        signed,
+                        two_state: false,
+                        init: Some(Box::new(value)),
+                    });
+                    let read = IrExpr::new(IrExprKind::LocalRead(name), width, signed, None);
+                    if width == 0 {
+                        LeafValue::Real(read)
+                    } else {
+                        LeafValue::Packed(read)
+                    }
+                }
+            };
+            writes.push(self.endpoint_leaf_write(target, captured)?);
+        }
+        self.native_copy_sequence += 1;
+        captures.extend(writes);
+        Ok(IrStmt::Block(captures))
+    }
+}
+
+impl Codegen<'_> {
+    /// Capture one source expression as a typed leaf value.
+    fn native_leaf_source(
+        &mut self,
+        path: &str,
+        ty: IrClassFieldType,
+        node: NodeId,
+    ) -> Result<LeafValue, String> {
+        Ok(match ty {
+            IrClassFieldType::String => LeafValue::String(self.lower_string(path, node)?),
+            IrClassFieldType::Chandle => LeafValue::Chandle(self.lower_chandle(path, node)?),
+            // The leaf write applies the assignment conversion.
+            IrClassFieldType::Real { .. } | IrClassFieldType::Packed { .. } => {
+                let value = self.lower_expr(path, node)?;
+                if value.is_real() {
+                    LeafValue::Real(value)
+                } else {
+                    LeafValue::Packed(value)
+                }
+            }
+        })
+    }
+
+    /// Assign a pattern to a native value: every leaf value is evaluated and
+    /// captured before the first write.
+    fn native_pattern_into(
+        &mut self,
+        path: &str,
+        value: usize,
+        prefix: &[AggregatePathPart],
+        descriptor: &TypeDescriptor,
+        rhs: NodeId,
+    ) -> Result<Option<IrStmt>, String> {
+        let pattern = self.unwrap_assignment_pattern_cast(rhs);
+        if self.assignment_pattern_operands(path, pattern)?.is_none() {
+            return Ok(None);
+        }
+        let mut values = Vec::new();
+        self.aggregate_descriptor_pattern_values(path, rhs, descriptor, prefix, &mut values)?;
+        let leaves = self.native_layout_of_value(value)?.leaves.clone();
+        let mut captures = Vec::new();
+        let mut writes = Vec::new();
+        for (position, (member_path, node)) in values.into_iter().enumerate() {
+            let Some(leaf) = leaves.iter().find(|leaf| leaf.path == member_path) else {
+                // A whole nested record or subarray value.
+                let (source, _) = self.native_endpoint(node)?.ok_or_else(|| {
+                    format!(
+                        "native record pattern member `{}` in `{path}` has no record value",
+                        aggregate_path_suffix(&member_path)
+                    )
+                })?;
+                let target = NativeEndpoint::Value {
+                    value,
+                    prefix: member_path,
+                };
+                writes.push(self.native_transfer(path, &target, &source)?);
+                continue;
+            };
+            let source = self.native_leaf_source(path, leaf.ty, node)?;
+            let name = format!(
+                "_llg_native_pattern_{}_{position}",
+                self.native_copy_sequence
+            );
+            let captured = match source {
+                LeafValue::String(source) => {
+                    captures.push(IrStmt::DeclString {
+                        name: name.clone(),
+                        init: Some(source),
+                    });
+                    LeafValue::String(IrStringExpr::LocalRead(name))
+                }
+                LeafValue::Chandle(source) => {
+                    captures.push(IrStmt::Object(IrObjectStmt::ChandleDeclareLocal(
+                        name.clone(),
+                        Some(source),
+                    )));
+                    LeafValue::Chandle(IrChandleExpr::LocalRead(name))
+                }
+                LeafValue::Packed(source) | LeafValue::Real(source) => {
+                    let (width, signed) = (source.width, source.signed);
+                    captures.push(IrStmt::DeclLocal {
+                        name: name.clone(),
+                        width,
+                        signed,
+                        two_state: false,
+                        init: Some(Box::new(source)),
+                    });
+                    let read = IrExpr::new(IrExprKind::LocalRead(name), width, signed, None);
+                    if width == 0 {
+                        LeafValue::Real(read)
+                    } else {
+                        LeafValue::Packed(read)
+                    }
+                }
+            };
+            writes.push(
+                self.endpoint_leaf_write(
+                    &NativeEndpointLeaf::Value(value, leaf.clone()),
+                    captured,
+                )?,
+            );
+        }
+        self.native_copy_sequence += 1;
+        captures.extend(writes);
+        Ok(Some(IrStmt::Block(captures)))
+    }
+
+    /// Store a call to a native-result function into `target`. A whole
+    /// native value of the result type receives the result directly.
+    fn native_call_into(
+        &mut self,
+        path: &str,
+        rhs: NodeId,
+        target: &NativeEndpoint,
+    ) -> Result<Option<IrStmt>, String> {
+        let call = self.p30_unwrap_cast(rhs);
+        let (name, callee) = match self.kind(call) {
+            NodeKind::FuncCall { name, callee, .. } | NodeKind::MethodCall { name, callee, .. } => {
+                (name.clone(), *callee)
+            }
+            _ => return Ok(None),
+        };
+        let function = match self.kind(call) {
+            NodeKind::FuncCall { .. } => {
+                self.resolve_callee_env(self.inst, &name, false, callee)?.0
+            }
+            _ => match callee {
+                Some(function) => function,
+                None => return Ok(None),
+            },
+        };
+        if !self.native_return(function) {
+            return Ok(None);
+        }
+        let mut statements = Vec::new();
+        let result_type = self
+            .native_layout(function)?
+            .ok_or("native result has no layout")?
+            .ty;
+        let direct = match target {
+            NativeEndpoint::Value { value, prefix }
+                if prefix.is_empty() && self.model.native_values[*value].ty == result_type =>
+            {
+                Some(*value)
+            }
+            _ => None,
+        };
+        let result = match direct {
+            Some(value) => value,
+            None => {
+                let temporary = self.native_temporary(function)?;
+                statements.push(IrStmt::NativeValueDeclare(temporary));
+                temporary
+            }
+        };
+        let saved = self.native_call_prelude.replace((Vec::new(), Vec::new()));
+        let expression = self.lower_func_call_expr(path, call, &name, callee);
+        let (prelude, epilogue) =
+            std::mem::replace(&mut self.native_call_prelude, saved).unwrap_or_default();
+        let expression = expression?;
+        let IrExprKind::CallFn(expression) = expression.kind else {
+            return Err("native result call did not lower to a typed call".into());
+        };
+        let mut args = expression.args;
+        let outputs = self.model.funcs[expression.f]
+            .formals
+            .iter()
+            .filter(|formal| formal.is_address())
+            .count();
+        args.insert(outputs - 1, IrCallArg::NativeValue(result));
+        let mut call = IrCall::new(expression.f, args, expression.depth, Vec::new(), Vec::new());
+        call.receiver = expression.receiver;
+        call.virtual_dispatch = expression.virtual_dispatch;
+        call.virtual_call = expression.virtual_call;
+        statements.extend(prelude);
+        statements.push(IrStmt::Call(call));
+        statements.extend(epilogue);
+        if direct.is_none() {
+            statements.push(self.native_transfer(
+                path,
+                target,
+                &NativeEndpoint::Value {
+                    value: result,
+                    prefix: Vec::new(),
+                },
+            )?);
+        }
+        Ok(Some(IrStmt::Block(statements)))
+    }
+
+    /// Assign any legal source to a native or module record endpoint.
+    pub(in super::super) fn native_assign_into(
+        &mut self,
+        path: &str,
+        target: &NativeEndpoint,
+        descriptor: &TypeDescriptor,
+        rhs: NodeId,
+    ) -> Result<IrStmt, String> {
+        if let Some(statement) = self.native_call_into(path, rhs, target)? {
+            return Ok(statement);
+        }
+        if let NativeEndpoint::Value { value, prefix } = target {
+            if let Some(statement) =
+                self.native_pattern_into(path, *value, prefix, descriptor, rhs)?
+            {
+                return Ok(statement);
+            }
+        }
+        let source = self.p30_unwrap_cast(rhs);
+        let (source, _) = self
+            .native_endpoint(source)?
+            .ok_or_else(|| format!("native record assignment in `{path}` has no record source"))?;
+        self.native_transfer(path, target, &source)
+    }
+
+    /// Whether `node` is a call whose result is a native record.
+    fn native_call_node(&self, node: NodeId) -> bool {
+        let call = self.p30_unwrap_cast(node);
+        match self.kind(call) {
+            NodeKind::FuncCall { name, callee, .. } => self
+                .resolve_callee_env(self.inst, name, false, *callee)
+                .is_ok_and(|(function, _)| self.native_return(function)),
+            NodeKind::MethodCall { callee, .. } => {
+                callee.is_some_and(|function| self.native_return(function))
+            }
+            _ => false,
+        }
+    }
+
+    /// Lower a record assignment that reads or writes native subroutine
+    /// storage or a native-result call; other record assignments keep their
+    /// leaf lowering.
+    pub(in super::super) fn lower_native_value_assignment(
+        &mut self,
+        path: &str,
+        lhs: NodeId,
+        rhs: NodeId,
+        nba: bool,
+        op: Operation,
+    ) -> Result<Option<IrStmt>, String> {
+        let lhs_native = self.native_path_of(lhs)?.is_some();
+        let rhs_native = self
+            .native_path_of(self.p30_unwrap_cast(rhs))
+            .ok()
+            .flatten()
+            .is_some()
+            || self.native_call_node(rhs);
+        if !lhs_native && !rhs_native {
+            return Ok(None);
+        }
+        let Some((target, descriptor)) = self.native_endpoint(lhs)? else {
+            return Ok(None);
+        };
+        if nba {
+            return Err(format!(
+                "nonblocking assignment of a native record value in `{path}` is not supported"
+            ));
+        }
+        if op != Operation::Assignment {
+            return Err(format!(
+                "compound assignment of a native record value in `{path}` is not supported"
+            ));
+        }
+        self.native_assign_into(path, &target, &descriptor, rhs)
+            .map(Some)
+    }
+
+    /// Caller operand of a native formal. A whole native value of the formal
+    /// type passes directly (the callee receives its own copy); any other
+    /// actual uses a lexical temporary filled before the call and, for
+    /// outputs and inouts, copied back after it.
+    pub(in super::super) fn native_call_argument(
+        &mut self,
+        path: &str,
+        formal: NodeId,
+        actual: NodeId,
+        before: &mut Vec<IrStmt>,
+        after: &mut Vec<IrStmt>,
+    ) -> Result<IrCallArg, String> {
+        let layout = self
+            .native_layout(formal)?
+            .ok_or("native formal has no layout")?;
+        let direction = match self.kind(formal) {
+            NodeKind::FuncArg { direction, .. } => *direction,
+            _ => return Err("native formal is not a subroutine argument".to_owned()),
+        };
+        let source = self.p30_unwrap_cast(actual);
+        if let Some((value, prefix)) = self.native_path_of(source)? {
+            if prefix.is_empty() && self.model.native_values[value].ty == layout.ty {
+                return Ok(IrCallArg::NativeValue(value));
+            }
+        }
+        if direction == DbDirection::Input {
+            if let Some(leaves) = self.native_input_leaves(path, &layout, actual)? {
+                return Ok(IrCallArg::NativeLeaves {
+                    ty: layout.ty,
+                    leaves,
+                });
+            }
+        }
+        let temporary = self.native_temporary(formal)?;
+        let endpoint = NativeEndpoint::Value {
+            value: temporary,
+            prefix: Vec::new(),
+        };
+        before.push(IrStmt::NativeValueDeclare(temporary));
+        if matches!(direction, DbDirection::Input | DbDirection::Inout) {
+            before.push(self.native_assign_into(path, &endpoint, &layout.descriptor, actual)?);
+        }
+        if matches!(direction, DbDirection::Output | DbDirection::Inout) {
+            let (target, _) = self.native_endpoint(actual)?.ok_or_else(|| {
+                format!(
+                    "output actual of native record formal `{}` in `{path}` is not a record variable",
+                    self.node(formal).name
+                )
+            })?;
+            after.push(self.native_transfer(path, &target, &endpoint)?);
+        }
+        Ok(IrCallArg::NativeValue(temporary))
+    }
+
+    /// Leaf values of an input actual that is a record selection or an
+    /// assignment pattern, evaluated by the callee-value construction at the
+    /// call itself. `None` for sources that need statement temporaries.
+    fn native_input_leaves(
+        &mut self,
+        path: &str,
+        layout: &NativeLayout,
+        actual: NodeId,
+    ) -> Result<Option<Vec<IrNativeLeafValue>>, String> {
+        let mut leaves = Vec::new();
+        let pattern = self.unwrap_assignment_pattern_cast(actual);
+        if self.assignment_pattern_operands(path, pattern)?.is_some() {
+            let mut values = Vec::new();
+            self.aggregate_descriptor_pattern_values(
+                path,
+                actual,
+                &layout.descriptor,
+                &[],
+                &mut values,
+            )?;
+            for (member_path, node) in values {
+                if let Some(leaf) = layout.leaves.iter().find(|leaf| leaf.path == member_path) {
+                    let value = self.native_leaf_source(path, leaf.ty, node)?;
+                    leaves.push(IrNativeLeafValue {
+                        items: leaf.items.clone(),
+                        value: value.into_leaf_expr(),
+                    });
+                    continue;
+                }
+                let Some((source, _)) = self.native_endpoint(self.p30_unwrap_cast(node))? else {
+                    return Ok(None);
+                };
+                self.native_endpoint_leaves(path, layout, &member_path, &source, &mut leaves)?;
+            }
+            return Ok(Some(leaves));
+        }
+        if self.native_call_node(actual) {
+            return Ok(None);
+        }
+        let Some((source, _)) = self.native_endpoint(self.p30_unwrap_cast(actual))? else {
+            return Ok(None);
+        };
+        self.native_endpoint_leaves(path, layout, &[], &source, &mut leaves)?;
+        Ok(Some(leaves))
+    }
+
+    /// Append reads of every leaf of `source` as values for the leaves of
+    /// `layout` below `prefix`, matched by relative member/index path.
+    fn native_endpoint_leaves(
+        &mut self,
+        path: &str,
+        layout: &NativeLayout,
+        prefix: &[AggregatePathPart],
+        source: &NativeEndpoint,
+        leaves: &mut Vec<IrNativeLeafValue>,
+    ) -> Result<(), String> {
+        let sources = self.endpoint_leaves(source)?;
+        let targets: Vec<_> = layout
+            .leaves
+            .iter()
+            .filter(|leaf| leaf.path.starts_with(prefix))
+            .collect();
+        if targets.len() != sources.len()
+            || targets
+                .iter()
+                .zip(&sources)
+                .any(|(target, (relative, _))| target.path[prefix.len()..] != relative[..])
+        {
+            return Err(format!(
+                "native record argument has an incompatible leaf layout in `{path}`"
+            ));
+        }
+        for (target, (_, source)) in targets.into_iter().zip(sources) {
+            let value = self.endpoint_leaf_read(&source)?;
+            leaves.push(IrNativeLeafValue {
+                items: target.items.clone(),
+                value: value.into_leaf_expr(),
+            });
+        }
+        Ok(())
+    }
+
+    /// Member-wise `==`/`!=`/`===`/`!==` when either record operand is
+    /// native subroutine storage. Packed leaves keep four-state comparison,
+    /// reals compare numerically, strings by contents and chandles by
+    /// identity; the conjunction propagates unknown packed results.
+    pub(in super::super) fn lower_native_comparison(
+        &mut self,
+        path: &str,
+        op: Operation,
+        operands: &[NodeId],
+    ) -> Result<Option<IrExpr>, String> {
+        if !matches!(
+            op,
+            Operation::Equal | Operation::NotEqual | Operation::CaseEqual | Operation::CaseNotEqual
+        ) {
+            return Ok(None);
+        }
+        let [left, right] = operands else {
+            return Ok(None);
+        };
+        let (left, right) = (self.p30_unwrap_cast(*left), self.p30_unwrap_cast(*right));
+        if self.native_path_of(left)?.is_none() && self.native_path_of(right)?.is_none() {
+            return Ok(None);
+        }
+        let (Some((left, _)), Some((right, _))) =
+            (self.native_endpoint(left)?, self.native_endpoint(right)?)
+        else {
+            return Err(format!(
+                "native record comparison in `{path}` needs record variables on both sides"
+            ));
+        };
+        let left = self.endpoint_leaves(&left)?;
+        let right = self.endpoint_leaves(&right)?;
+        if left.len() != right.len()
+            || left.is_empty()
+            || left.iter().zip(&right).any(|((a, _), (b, _))| a != b)
+        {
+            return Err(format!(
+                "native record comparison in `{path}` has incompatible leaf layouts"
+            ));
+        }
+        let case = matches!(op, Operation::CaseEqual | Operation::CaseNotEqual);
+        let mut equality: Option<IrExpr> = None;
+        for ((_, left), (_, right)) in left.iter().zip(&right) {
+            let leaf_equal = match (
+                self.endpoint_leaf_read(left)?,
+                self.endpoint_leaf_read(right)?,
+            ) {
+                (LeafValue::String(a), LeafValue::String(b)) => {
+                    let compare = IrExpr::new(
+                        IrExprKind::ObjectQuery(Box::new(IrObjectQuery::StringCompare(
+                            a, b, false,
+                        ))),
+                        32,
+                        true,
+                        None,
+                    );
+                    let zero = IrExpr::new(
+                        IrExprKind::Const(
+                            IrConst::packed(vec![0], vec![], vec![], 32, true, None)
+                                .map_err(|error| error.to_string())?,
+                        ),
+                        32,
+                        true,
+                        None,
+                    );
+                    cmp_expr_ir(IrBinOp::Eq, compare, zero)
+                }
+                (LeafValue::Chandle(a), LeafValue::Chandle(b)) => IrExpr::new(
+                    IrExprKind::ObjectQuery(Box::new(IrObjectQuery::ChandleEq(a, b))),
+                    1,
+                    false,
+                    None,
+                ),
+                (
+                    LeafValue::Packed(a) | LeafValue::Real(a),
+                    LeafValue::Packed(b) | LeafValue::Real(b),
+                ) => {
+                    if case && !a.is_real() && !b.is_real() {
+                        cmp_expr_ir(IrBinOp::CaseEq, a, b)
+                    } else if case {
+                        return Err(format!(
+                            "case equality on real record member in `{path}` is not supported"
+                        ));
+                    } else {
+                        common_cmp_expr_ir(IrBinOp::Eq, a, b, path)?
+                    }
+                }
+                _ => {
+                    return Err(format!(
+                        "native record comparison in `{path}` has mismatched member kinds"
+                    ))
+                }
+            };
+            equality = Some(match equality {
+                Some(previous) => cmp_expr_ir(IrBinOp::LogAnd, previous, leaf_equal),
+                None => leaf_equal,
+            });
+        }
+        let equality = equality.ok_or("native record comparison has no leaves")?;
+        Ok(Some(
+            if matches!(op, Operation::NotEqual | Operation::CaseNotEqual) {
+                IrExpr::new(
+                    IrExprKind::Un {
+                        op: IrUnOp::LogNot,
+                        a: Box::new(equality),
+                    },
+                    1,
+                    false,
+                    None,
+                )
+            } else {
+                equality
+            },
+        ))
+    }
+
+    /// Native operand of an expression call. Statement-level callers open a
+    /// prelude for temporaries; elsewhere only native values pass directly.
+    pub(in super::super) fn native_expression_argument(
+        &mut self,
+        path: &str,
+        formal: NodeId,
+        actual: NodeId,
+    ) -> Result<IrCallArg, String> {
+        let Some((mut before, mut after)) = self.native_call_prelude.take() else {
+            let layout = self
+                .native_layout(formal)?
+                .ok_or("native formal has no layout")?;
+            if let Some((value, prefix)) = self.native_path_of(self.p30_unwrap_cast(actual))? {
+                if prefix.is_empty() && self.model.native_values[value].ty == layout.ty {
+                    return Ok(IrCallArg::NativeValue(value));
+                }
+            }
+            if matches!(
+                self.kind(formal),
+                NodeKind::FuncArg {
+                    direction: DbDirection::Input,
+                    ..
+                }
+            ) {
+                if let Some(leaves) = self.native_input_leaves(path, &layout, actual)? {
+                    return Ok(IrCallArg::NativeLeaves {
+                        ty: layout.ty,
+                        leaves,
+                    });
+                }
+            }
+            return Err(format!(
+                "native record argument for `{}` in `{path}` must be a subroutine record variable unless the call is a whole statement or assignment",
+                self.node(formal).name
+            ));
+        };
+        let argument = self.native_call_argument(path, formal, actual, &mut before, &mut after);
+        self.native_call_prelude = Some((before, after));
+        argument
+    }
+}
+
+/// One leaf of a transfer endpoint.
+#[derive(Clone)]
+pub(in super::super) enum NativeEndpointLeaf {
+    Value(usize, NativeLeaf),
+    Module(AggregateMemberInfo),
+}

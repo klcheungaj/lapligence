@@ -327,7 +327,7 @@ fn render_stmt_scoped(
             start.as_ref(),
             finish.as_ref(),
         )?,
-        IrStmt::FixedValueAssign { .. } | IrStmt::FixedArrayDeclare(_) | IrStmt::FixedArrayCopy { .. } | IrStmt::FixedArrayFill { .. } | IrStmt::FixedArrayOrder(_) => return Err("fixed-array copies require owned whole-model emission".to_owned()),
+        IrStmt::FixedValueAssign { .. } | IrStmt::FixedArrayDeclare(_) | IrStmt::NativeValueDeclare(_) | IrStmt::NativeValueCopy { .. } | IrStmt::FixedArrayCopy { .. } | IrStmt::FixedArrayFill { .. } | IrStmt::FixedArrayOrder(_) => return Err("fixed-array copies require owned whole-model emission".to_owned()),
         IrStmt::Container(operation) => super::containers::statement(ctx, operation)?,
         IrStmt::StreamAssign { nba: true, .. } => {
             return Err("nonblocking streaming assignments require whole-model emission".to_owned())
@@ -1318,7 +1318,7 @@ fn render_stmt_scoped(
                     IrCallArg::ChandleVal(value) => {
                         call_args.push(super::objects::chandle(ctx, value)?)
                     }
-                    IrCallArg::FixedValue(_) | IrCallArg::FixedArray(_) | IrCallArg::EventVal(_) => {
+                    IrCallArg::FixedValue(_) | IrCallArg::FixedArray(_) | IrCallArg::NativeValue(_) | IrCallArg::NativeLeaves { .. } | IrCallArg::EventVal(_) => {
                         return Err("event argument requires the ownership emitter".to_string());
                     }
                     IrCallArg::ChandleAddr(addr) | IrCallArg::ChandleRefAddr(addr) => {

@@ -260,6 +260,7 @@ impl Frame<'_, '_> {
         let mut copyouts = Vec::new();
         let mut native_owners = Vec::new();
         let mut fixed_copyouts = Vec::new();
+        let mut native_copyouts = Vec::new();
         let mut string_copyouts = Vec::new();
         // The IR stores arguments in the C ABI order (addresses, inputs).
         // Evaluate this explicit order, never nested C argument expressions.
@@ -310,6 +311,28 @@ impl Frame<'_, '_> {
                         }
                         parameters.push(storage);
                     }
+                }
+                IrCallArg::NativeValue(value) => {
+                    // Every native formal gets a fresh callee value: inputs
+                    // and inouts copy the actual in, outputs and results are
+                    // copied back after the callee returns.
+                    let actual = self.native_value_address(*value)?;
+                    let callee = formal
+                        .native_value
+                        .ok_or("native operand requires a native-value formal")?;
+                    let storage = self.new_native_value(self.ctx.model.native_values[callee].ty);
+                    if matches!(formal.mode, IrFormalMode::Input | IrFormalMode::Inout) {
+                        self.line(format!("llg_native_value_copy({storage}, {actual});"));
+                    }
+                    if formal.is_out {
+                        native_copyouts.push((actual, storage.clone()));
+                    }
+                    parameters.push(storage);
+                }
+                IrCallArg::NativeLeaves { ty, leaves } => {
+                    let storage = self.new_native_value(*ty);
+                    self.native_leaves_into(&storage, *ty, leaves)?;
+                    parameters.push(storage);
                 }
                 IrCallArg::FixedArray(array) => {
                     let actual = self.fixed_array_address(*array)?;
@@ -553,6 +576,9 @@ impl Frame<'_, '_> {
                 "llg_fixed_array_copy({target}, {storage}, {}, 0);",
                 u8::from(two_state)
             ));
+        }
+        for (target, storage) in native_copyouts {
+            self.line(format!("llg_native_value_copy({target}, {storage});"));
         }
         for (target, storage) in string_copyouts {
             self.line(format!(

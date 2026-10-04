@@ -4,6 +4,7 @@ use super::super::containers::PatternAssignmentKind;
 use super::*;
 
 mod copies;
+pub(in crate::sim::codegen::lowering) use copies::AggregateSelection;
 
 impl<'a> Codegen<'a> {
     /// Lower an assignment LHS: the pre-IR [`Self::analyze_lhs`] decisions
@@ -176,6 +177,9 @@ impl<'a> Codegen<'a> {
         nba: bool,
         op: Operation,
     ) -> Result<Option<IrStmt>, String> {
+        if let Some(statement) = self.lower_native_value_assignment(path, lhs, rhs, nba, op)? {
+            return Ok(Some(statement));
+        }
         let kind = if nba {
             PatternAssignmentKind::Nonblocking
         } else {
@@ -749,7 +753,7 @@ impl<'a> Codegen<'a> {
     /// Walk a recursive type descriptor by an aggregate path.  Atom and
     /// handle leaves have no further shape, so a path that descends past them
     /// is not a pattern destination.
-    fn descriptor_at_path(
+    pub(in crate::sim::codegen::lowering) fn descriptor_at_path(
         descriptor: &TypeDescriptor,
         path: &[AggregatePathPart],
     ) -> Option<TypeDescriptor> {
@@ -1199,7 +1203,10 @@ impl<'a> Codegen<'a> {
         }
     }
 
-    fn unwrap_assignment_pattern_cast(&self, node: NodeId) -> NodeId {
+    pub(in crate::sim::codegen::lowering) fn unwrap_assignment_pattern_cast(
+        &self,
+        node: NodeId,
+    ) -> NodeId {
         let mut operand = node;
         while let NodeKind::Expr(ExprKind::Cast { operand: next, .. }) = self.kind(operand) {
             operand = *next;

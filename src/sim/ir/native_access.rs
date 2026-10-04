@@ -7,14 +7,29 @@ pub struct IrNativeAccess {
     pub(in crate::sim) receiver: IrChandleExpr,
     pub(in crate::sim) kind: IrNativeAccessKind,
     pub(in crate::sim) site: Option<String>,
+    /// Item indices from a [`IrNativeAccessKind::ValueItem`] root to its leaf;
+    /// empty for other kinds.
+    pub(in crate::sim) item_path: Vec<u32>,
     /// Context of formal reads in the receiver expression.
     pub(in crate::sim) function: Option<usize>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IrNativeAccessKind {
-    ClassField { class: usize, field: usize },
-    InterfaceMember { interface: usize, member: usize },
+    ClassField {
+        class: usize,
+        field: usize,
+    },
+    InterfaceMember {
+        interface: usize,
+        member: usize,
+    },
+    /// One leaf of a descriptor-backed native value. The receiver is unused
+    /// (`Null`); the value slot is resolved from the enclosing frame.
+    ValueItem {
+        value: usize,
+        ty: IrClassFieldType,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]

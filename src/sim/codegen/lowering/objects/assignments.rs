@@ -73,6 +73,11 @@ impl Codegen<'_> {
         if chandle_target.is_none() {
             chandle_target = self.semaphore_lvalue_target(path, object_node)?;
         }
+        if chandle_target.is_none() {
+            chandle_target = self
+                .native_object_leaf(object_node, false)?
+                .map(ChandleTarget::Local);
+        }
         let string_target = self.func.as_ref().and_then(|function| {
             target_node
                 .and_then(|target| function.string_write.get(&target).cloned())

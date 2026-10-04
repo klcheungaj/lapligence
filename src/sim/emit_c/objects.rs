@@ -313,6 +313,8 @@ pub(super) fn chandle(ctx: &RCtx<'_>, value: &IrChandleExpr) -> Result<String, S
                     }
                     IrCallArg::FixedValue(_)
                     | IrCallArg::FixedArray(_)
+                    | IrCallArg::NativeValue(_)
+                    | IrCallArg::NativeLeaves { .. }
                     | IrCallArg::EventVal(_) => {
                         Err("event argument requires the ownership emitter".to_owned())
                     }
@@ -977,7 +979,11 @@ fn render_typed_call(
             } => storage_addr.clone().unwrap_or_else(|| format!("&{name}")),
             IrCallArg::ChandleVal(value) => super::objects::chandle(ctx, value)?,
             IrCallArg::ChandleAddr(addr) | IrCallArg::ChandleRefAddr(addr) => addr.clone(),
-            IrCallArg::FixedValue(_) | IrCallArg::FixedArray(_) | IrCallArg::EventVal(_) => {
+            IrCallArg::FixedValue(_)
+            | IrCallArg::FixedArray(_)
+            | IrCallArg::NativeValue(_)
+            | IrCallArg::NativeLeaves { .. }
+            | IrCallArg::EventVal(_) => {
                 return Err("event argument requires the ownership emitter".to_owned())
             }
         };

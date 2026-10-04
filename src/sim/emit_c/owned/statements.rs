@@ -103,6 +103,15 @@ impl Frame<'_, '_> {
                 let pointer = self.new_fixed_array(*index)?;
                 self.fixed_arrays.insert(*index, pointer);
             }
+            IrStmt::NativeValueDeclare(index) => {
+                let pointer = self.new_native_value(self.ctx.model.native_values[*index].ty);
+                self.native_values.insert(*index, pointer);
+            }
+            IrStmt::NativeValueCopy { dst, src } => {
+                let target = self.native_value_address(*dst)?;
+                let source = self.native_value_address(*src)?;
+                self.line(format!("llg_native_value_copy({target}, {source});"));
+            }
             IrStmt::FixedValueAssign { dst, src, nba } => {
                 let source = self.fixed_value(src, dst.array, dst.total)?;
                 let target = self.fixed_view(dst)?;

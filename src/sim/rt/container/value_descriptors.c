@@ -37,9 +37,24 @@ static void llg_value_drop(llg_value_t* value) {
     memset(&value->value, 0, sizeof(value->value));
 }
 
-static void llg_value_default(llg_value_t* value,
-                              const llg_value_desc_t* desc) {
-    llg_value_drop(value);
+/* Descriptor item arrays use a checked, non-fatal allocation so that one
+ * construction can be abandoned before it publishes anything. Probes may
+ * define LLG_VALUE_ITEMS_MALLOC to inject an allocation failure. */
+#ifndef LLG_VALUE_ITEMS_MALLOC
+#define LLG_VALUE_ITEMS_MALLOC malloc
+#endif
+
+static void* llg_value_try_items(size_t count, size_t item_size) {
+    if (count == 0 || count > SIZE_MAX / item_size) return NULL;
+    void* items = LLG_VALUE_ITEMS_MALLOC(count * item_size);
+    if (items) memset(items, 0, count * item_size);
+    return items;
+}
+
+/* Construct the default value of `desc` into an empty `value`. On failure the
+ * partially built value is released, `value` stays empty and 0 is returned. */
+static int llg_value_try_default(llg_value_t* value,
+                                 const llg_value_desc_t* desc) {
     memset(&value->value, 0, sizeof(value->value));
     value->desc = desc;
     switch (desc->kind) {
@@ -47,37 +62,51 @@ static void llg_value_default(llg_value_t* value,
             value->value.packed = desc->packed_two_state
                 ? sv4_from_u64(0, desc->packed_width, desc->packed_signed)
                 : sv4_x(desc->packed_width, desc->packed_signed);
-            break;
+            return 1;
         case LLG_VALUE_REAL:
             value->value.real = 0.0;
-            break;
+            return 1;
         case LLG_VALUE_STRING:
             value->value.string = (llg_string_t){0};
-            break;
+            return 1;
         case LLG_VALUE_AGGREGATE:
         case LLG_VALUE_FIXED_ARRAY:
             if (desc->item_count) {
-                value->value.items = llg_alloc_items(
+                value->value.items = llg_value_try_items(
                     desc->item_count, sizeof(*value->value.items));
-                memset(value->value.items, 0,
-                       desc->item_count * sizeof(*value->value.items));
-                for (size_t i = 0; i < desc->item_count; ++i)
-                    llg_value_default(&value->value.items[i],
-                                      llg_value_item_desc(desc, i));
+                if (!value->value.items) {
+                    value->desc = NULL;
+                    return 0;
+                }
+                for (size_t i = 0; i < desc->item_count; ++i) {
+                    if (!llg_value_try_default(&value->value.items[i],
+                                               llg_value_item_desc(desc, i))) {
+                        llg_value_drop(value);
+                        return 0;
+                    }
+                }
             }
-            break;
+            return 1;
         case LLG_VALUE_CONTAINER:
             /* A nested dynamic array has the standard null-handle default. */
             value->value.container = NULL;
-            break;
+            return 1;
         case LLG_VALUE_CHANDLE:
         case LLG_VALUE_EVENT:
         case LLG_VALUE_OPAQUE:
             value->value.handle = NULL;
-            break;
+            return 1;
         default:
             llg_container_fatal("invalid recursive container value kind");
+            return 0;
     }
+}
+
+static void llg_value_default(llg_value_t* value,
+                              const llg_value_desc_t* desc) {
+    llg_value_drop(value);
+    if (!llg_value_try_default(value, desc))
+        llg_container_fatal("container allocation failed");
 }
 
 static int llg_value_desc_compatible(const llg_value_desc_t* dst,
@@ -115,19 +144,19 @@ static int llg_value_real_same(double left, double right) {
     return left_bits == right_bits;
 }
 
-static void llg_value_copy(llg_value_t*, const llg_value_desc_t*,
-                           const llg_value_t*);
-
-static void llg_value_construct_copy(llg_value_t* target,
-                           const llg_value_desc_t* target_desc,
-                           const llg_value_t* source) {
+/* Construct a converted deep copy of `source` into an empty `target`. Value
+ * leaves are cloned, identity handles are shared and borrowed chandles are
+ * copied without taking ownership. On failure nothing is published: the
+ * partial copy is released, `target` stays empty and 0 is returned. */
+static int llg_value_try_construct_copy(llg_value_t* target,
+                                        const llg_value_desc_t* target_desc,
+                                        const llg_value_t* source) {
     memset(&target->value, 0, sizeof(target->value));
-    target->desc = target_desc;
+    target->desc = NULL;
     const llg_value_desc_t* source_desc = source ? source->desc : NULL;
-    if (!source || !source_desc) {
-        llg_value_default(target, target_desc);
-        return;
-    }
+    if (!source || !source_desc)
+        return llg_value_try_default(target, target_desc);
+    target->desc = target_desc;
     switch (target_desc->kind) {
         case LLG_VALUE_PACKED: {
             sv4_t value = source_desc->kind == LLG_VALUE_PACKED
@@ -137,31 +166,33 @@ static void llg_value_construct_copy(llg_value_t* target,
             if (target_desc->packed_two_state)
                 sv4_replace(&value, sv4_to_two_state(value));
             sv4_move(&target->value.packed, &value);
-            break;
+            return 1;
         }
         case LLG_VALUE_REAL:
             target->value.real = llg_value_real_convert(
                 target_desc, source_desc->kind == LLG_VALUE_REAL
                 ? source->value.real
                 : sv4_to_real(source->value.packed));
-            break;
+            return 1;
         case LLG_VALUE_STRING:
             target->value.string = source_desc->kind == LLG_VALUE_STRING
                 ? llg_string_clone(&source->value.string)
                 : (llg_string_t){0};
-            break;
+            return 1;
         case LLG_VALUE_CHANDLE:
         case LLG_VALUE_EVENT:
         case LLG_VALUE_OPAQUE:
             target->value.handle = source->value.handle;
-            break;
+            return 1;
         case LLG_VALUE_AGGREGATE:
         case LLG_VALUE_FIXED_ARRAY:
             if (target_desc->item_count) {
-                target->value.items = llg_alloc_items(
+                target->value.items = llg_value_try_items(
                     target_desc->item_count, sizeof(*target->value.items));
-                memset(target->value.items, 0,
-                       target_desc->item_count * sizeof(*target->value.items));
+                if (!target->value.items) {
+                    target->desc = NULL;
+                    return 0;
+                }
                 for (size_t i = 0; i < target_desc->item_count; ++i) {
                     const llg_value_desc_t* item =
                         llg_value_item_desc(target_desc, i);
@@ -169,35 +200,54 @@ static void llg_value_construct_copy(llg_value_t* target,
                         source->value.items && i < source_desc->item_count
                             ? &source->value.items[i]
                             : NULL;
-                    llg_value_copy(&target->value.items[i], item, source_item);
+                    if (!llg_value_try_construct_copy(&target->value.items[i],
+                                                      item, source_item)) {
+                        llg_value_drop(target);
+                        return 0;
+                    }
                 }
             }
-            break;
+            return 1;
         case LLG_VALUE_CONTAINER:
             if (source_desc->kind == LLG_VALUE_CONTAINER &&
                 source->value.container) {
-                target->value.container = llg_alloc_items(1, sizeof(*target->value.container));
-                memset(target->value.container, 0,
-                       sizeof(*target->value.container));
+                target->value.container = llg_value_try_items(
+                    1, sizeof(*target->value.container));
+                if (!target->value.container) {
+                    target->desc = NULL;
+                    return 0;
+                }
                 llg_dyn_value_init(target->value.container,
                                    target_desc->element);
                 llg_dyn_value_copy(target->value.container,
                                    source->value.container);
             }
-            break;
+            return 1;
         default:
             llg_container_fatal("invalid recursive container value kind");
+            return 0;
     }
+}
+
+/* Replace `target` with a converted deep copy of `source`. The replacement is
+ * complete before the old value is dropped, so `source` may alias `target` or
+ * one of its descendants and a failed construction leaves `target` intact. */
+static int llg_value_try_copy(llg_value_t* target,
+                              const llg_value_desc_t* target_desc,
+                              const llg_value_t* source) {
+    llg_value_t replacement = {0};
+    if (!llg_value_try_construct_copy(&replacement, target_desc, source))
+        return 0;
+    llg_value_drop(target);
+    *target = replacement; // exclusive ownership transfer, not a copy
+    return 1;
 }
 
 static void llg_value_copy(llg_value_t* target,
                            const llg_value_desc_t* target_desc,
                            const llg_value_t* source) {
-    // Construct before dropping target: source can be target or its descendant.
-    llg_value_t replacement = {0};
-    llg_value_construct_copy(&replacement, target_desc, source);
-    llg_value_drop(target);
-    *target = replacement; // exclusive ownership transfer, not a copy
+    if (!llg_value_try_copy(target, target_desc, source))
+        llg_container_fatal("container allocation failed");
 }
 
 static int llg_value_equal(const llg_value_t* a, const llg_value_t* b) {
@@ -251,4 +301,139 @@ static int llg_value_equal_after_conversion(
     int equal = llg_value_equal(target, &converted);
     llg_value_drop(&converted);
     return equal;
+}
+
+/* ---- Descriptor contract (SIM-003) ------------------------------------- */
+
+int llg_value_desc_copy_policy(const llg_value_desc_t* desc) {
+    switch (desc ? desc->kind : 0xffu) {
+        case LLG_VALUE_PACKED:
+        case LLG_VALUE_REAL:
+        case LLG_VALUE_STRING:
+        case LLG_VALUE_AGGREGATE:
+        case LLG_VALUE_FIXED_ARRAY:
+        case LLG_VALUE_CONTAINER:
+            return LLG_VALUE_COPY_DEEP;
+        case LLG_VALUE_EVENT:
+        case LLG_VALUE_OPAQUE:
+            return LLG_VALUE_COPY_IDENTITY;
+        case LLG_VALUE_CHANDLE:
+            return LLG_VALUE_COPY_BORROWED;
+        default:
+            return -1;
+    }
+}
+
+/* `path` holds the descriptors on the current descent; a descriptor that
+ * reappears there is a cycle. Recursion is bounded by the same depth. */
+static int llg_value_desc_valid_at(const llg_value_desc_t* desc,
+                                   const llg_value_desc_t** path,
+                                   size_t depth) {
+    if (!desc || depth >= LLG_VALUE_DESC_MAX_DEPTH) return 0;
+    for (size_t i = 0; i < depth; ++i)
+        if (path[i] == desc) return 0;
+    path[depth] = desc;
+    switch (desc->kind) {
+        case LLG_VALUE_PACKED:
+            return desc->packed_width != 0 &&
+                   desc->packed_width < LLG_SUPPORTED_WIDTH_LIMIT &&
+                   desc->item_count == 0 && !desc->element &&
+                   !desc->members && desc->member_count == 0;
+        case LLG_VALUE_REAL:
+        case LLG_VALUE_STRING:
+        case LLG_VALUE_CHANDLE:
+        case LLG_VALUE_EVENT:
+        case LLG_VALUE_OPAQUE:
+            return desc->item_count == 0 && !desc->element &&
+                   !desc->members && desc->member_count == 0;
+        case LLG_VALUE_AGGREGATE:
+            if (desc->type_id == 0 || desc->member_count == 0 ||
+                !desc->members || desc->element ||
+                desc->item_count != desc->member_count ||
+                desc->item_count > SIZE_MAX / sizeof(llg_value_t))
+                return 0;
+            for (size_t i = 0; i < desc->member_count; ++i)
+                if (!llg_value_desc_valid_at(desc->members[i].value, path,
+                                             depth + 1))
+                    return 0;
+            return 1;
+        case LLG_VALUE_FIXED_ARRAY:
+            return desc->item_count != 0 &&
+                   desc->item_count <= SIZE_MAX / sizeof(llg_value_t) &&
+                   !desc->members && desc->member_count == 0 &&
+                   llg_value_desc_valid_at(desc->element, path, depth + 1);
+        case LLG_VALUE_CONTAINER:
+            return desc->item_count == 0 && !desc->members &&
+                   desc->member_count == 0 &&
+                   llg_value_desc_valid_at(desc->element, path, depth + 1);
+        default:
+            return 0;
+    }
+}
+
+int llg_value_desc_valid(const llg_value_desc_t* desc) {
+    const llg_value_desc_t* path[LLG_VALUE_DESC_MAX_DEPTH];
+    return llg_value_desc_valid_at(desc, path, 0);
+}
+
+void llg_value_desc_check(const llg_value_desc_t* desc, const char* label) {
+    if (llg_value_desc_valid(desc)) return;
+    fprintf(stderr, "llg container fatal: invalid value descriptor for %s\n",
+            label ? label : "<unnamed>");
+    abort();
+}
+
+static void llg_value_trace_at(const llg_value_t* value,
+                               llg_value_visit_fn visit, void* context) {
+    if (!value || !value->desc) return;
+    const llg_value_desc_t* desc = value->desc;
+    switch (desc->kind) {
+        case LLG_VALUE_EVENT:
+        case LLG_VALUE_OPAQUE:
+            if (value->value.handle)
+                visit((void* const*)&value->value.handle, desc, context);
+            break;
+        case LLG_VALUE_AGGREGATE:
+        case LLG_VALUE_FIXED_ARRAY:
+            if (value->value.items)
+                for (size_t i = 0; i < desc->item_count; ++i)
+                    llg_value_trace_at(&value->value.items[i], visit, context);
+            break;
+        case LLG_VALUE_CONTAINER:
+            if (value->value.container)
+                for (size_t i = 0; i < value->value.container->size; ++i)
+                    llg_value_trace_at(&value->value.container->data[i], visit,
+                                       context);
+            break;
+        default:
+            break;
+    }
+}
+
+void llg_value_trace(const llg_value_t* value, llg_value_visit_fn visit,
+                     void* context) {
+    if (visit) llg_value_trace_at(value, visit, context);
+}
+
+void llg_native_value_init(llg_value_t* value, const llg_value_desc_t* desc) {
+    if (!value || !desc)
+        llg_container_fatal("missing native value descriptor");
+    if (!llg_value_try_default(value, desc))
+        llg_container_fatal("container allocation failed");
+}
+
+void llg_native_value_destroy(void* value) {
+    llg_value_drop((llg_value_t*)value);
+}
+
+int llg_native_value_try_copy(llg_value_t* dst, const llg_value_t* src) {
+    if (!dst || !dst->desc || !src || !src->desc ||
+        !llg_value_desc_compatible(dst->desc, src->desc))
+        llg_container_fatal("incompatible native value copy");
+    return llg_value_try_copy(dst, dst->desc, src);
+}
+
+void llg_native_value_copy(llg_value_t* dst, const llg_value_t* src) {
+    if (!llg_native_value_try_copy(dst, src))
+        llg_container_fatal("container allocation failed");
 }

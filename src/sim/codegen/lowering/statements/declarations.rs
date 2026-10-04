@@ -7,6 +7,40 @@ impl EmitCtx<'_, '_> {
         &mut self,
         declaration: NodeId,
     ) -> Result<Vec<IrStmt>, String> {
+        if let Some(value) = self
+            .func
+            .is_some()
+            .then(|| self.cg.native_roots.get(&declaration).copied())
+            .flatten()
+        {
+            // Native record locals: automatic storage is a lexical value
+            // initialized at each entry; static storage persists.
+            if !self.cg.model.native_values[value].activation {
+                if self.cg.db.var_initializer(declaration).is_some() {
+                    return Err(format!(
+                        "initializer of static native record local `{}` in `{}` is not supported",
+                        self.cg.node(declaration).name,
+                        self.path
+                    ));
+                }
+                return Ok(Vec::new());
+            }
+            let mut statements = vec![IrStmt::NativeValueDeclare(value)];
+            if let Some(initializer) = self.cg.db.var_initializer(declaration) {
+                statements.push(
+                    self.cg
+                        .lower_native_value_assignment(
+                            &self.path,
+                            declaration,
+                            initializer,
+                            false,
+                            Operation::Assignment,
+                        )?
+                        .ok_or("native local initializer has no record assignment")?,
+                );
+            }
+            return Ok(statements);
+        }
         // Procedural-block descriptor arrays: static storage is persistent
         // and initializes once in the static schedule (SV §6.21); automatic
         // storage is a lexical activation initialized at each entry.

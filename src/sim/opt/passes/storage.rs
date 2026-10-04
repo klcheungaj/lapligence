@@ -763,6 +763,11 @@ fn collect_call_rw(call: &crate::sim::ir::IrCall, model: &IrModel, rw: &mut Rw) 
             IrCallArg::StringVal(value) => {
                 value.expressions(&mut |expression| collect_expr_reads(expression, model, rw));
             }
+            IrCallArg::NativeLeaves { leaves, .. } => {
+                for leaf in leaves {
+                    leaf.expressions(&mut |expression| collect_expr_reads(expression, model, rw));
+                }
+            }
             IrCallArg::OutAddr(addr) => {
                 // `&G_sig` / `G_sig`: a passed output/inout actual both reads
                 // and writes its target (function-scope names never match).
@@ -825,6 +830,7 @@ fn collect_call_rw(call: &crate::sim::ir::IrCall, model: &IrModel, rw: &mut Rw) 
             }
             IrCallArg::ChandleVal(_)
             | IrCallArg::FixedArray(_)
+            | IrCallArg::NativeValue(_)
             | IrCallArg::EventVal(_)
             | IrCallArg::ChandleAddr(_)
             | IrCallArg::ChandleRefAddr(_) => {}
@@ -1246,6 +1252,11 @@ fn collect_call_rw_readonly(function: usize, args: &[IrCallArg], model: &IrModel
             IrCallArg::StringVal(value) => {
                 value.expressions(&mut |expression| collect_expr_reads(expression, model, rw));
             }
+            IrCallArg::NativeLeaves { leaves, .. } => {
+                for leaf in leaves {
+                    leaf.expressions(&mut |expression| collect_expr_reads(expression, model, rw));
+                }
+            }
             IrCallArg::OutAddr(addr) => {
                 let name = addr.trim_start_matches('&');
                 if let Some(i) = model.signals.iter().position(|sg| sg.c_name == name) {
@@ -1300,6 +1311,7 @@ fn collect_call_rw_readonly(function: usize, args: &[IrCallArg], model: &IrModel
             }
             IrCallArg::ChandleVal(_)
             | IrCallArg::FixedArray(_)
+            | IrCallArg::NativeValue(_)
             | IrCallArg::EventVal(_)
             | IrCallArg::ChandleAddr(_)
             | IrCallArg::ChandleRefAddr(_) => {}

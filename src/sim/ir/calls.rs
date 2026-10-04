@@ -10,6 +10,17 @@ pub enum IrCallArg {
     /// Fixed descriptor operand; passing mode belongs to the callee formal.
     FixedArray(usize),
     FixedValue(Box<IrFixedValue>),
+    /// Caller-owned native value passed by address to a native-value formal.
+    /// Inputs receive a fresh caller copy; outputs and results are written
+    /// in place and copied back by the caller after return.
+    NativeValue(usize),
+    /// Input native-value formal of type `ty` (index into the model's native
+    /// types) built from leaf values evaluated in order at the call; leaves
+    /// not listed keep their typed default.
+    NativeLeaves {
+        ty: usize,
+        leaves: Vec<super::IrNativeLeafValue>,
+    },
     /// Input formal value, captured once before the next input is evaluated.
     /// Later defaults can read its call-local binding from `call_argument_name`.
     Val(IrExpr),

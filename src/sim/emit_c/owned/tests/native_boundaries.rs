@@ -31,6 +31,7 @@ fn class_model() -> IrModel {
         receiver: IrChandleExpr::Read(0),
         kind: IrNativeAccessKind::ClassField { class: 0, field: 0 },
         site: None,
+        item_path: Vec::new(),
         function: None,
     });
     model.class_allocations.push(IrClassAllocation {

@@ -237,6 +237,9 @@ impl Codegen<'_> {
         ) {
             return true;
         }
+        if self.native_leaf_kind(node) == Some(IrClassFieldType::String) {
+            return true;
+        }
         let target = match self.kind(node) {
             NodeKind::Expr(ExprKind::Ref { target }) => *target,
             _ => Some(node),
@@ -335,6 +338,9 @@ impl Codegen<'_> {
         if self.class_field_target(node).is_some_and(
             |field| matches!(self.kind(field), NodeKind::Var { ty } if is_handle_kind(&ty.kind)),
         ) {
+            return true;
+        }
+        if self.native_leaf_kind(node) == Some(IrClassFieldType::Chandle) {
             return true;
         }
         if self.is_mailbox_expr(path, node) {

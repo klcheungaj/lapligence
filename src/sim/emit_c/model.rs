@@ -856,6 +856,7 @@ fn render_model(
     for container in &model.containers {
         out.push_str(&super::containers::declaration_and_init(container)?.0);
     }
+    out.push_str(&super::owned::native_values::native_type_tables(model)?.0);
     for object in &model.objects {
         if object.ty == crate::sim::ir::IrObjectType::String {
             out.push_str(&format!(

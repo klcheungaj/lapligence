@@ -301,6 +301,16 @@ fn render_function(
         frame.return_address = Some("&_ret".to_owned());
     }
     for (index, formal) in function.formals.iter().enumerate() {
+        if let Some(value) = formal.native_value {
+            let parameter = format!("{}{index}", if formal.is_out { "o" } else { "a" });
+            if ctx.model.native_values[value].activation {
+                frame.native_values.insert(value, parameter);
+            } else if matches!(formal.mode, IrFormalMode::Input | IrFormalMode::Inout) {
+                let address = frame.native_value_address(value)?;
+                frame.line(format!("llg_native_value_copy({address}, {parameter});"));
+            }
+            continue;
+        }
         if let Some(array) = formal.fixed_array {
             let parameter = format!(
                 "{}{index}",
@@ -391,6 +401,13 @@ fn render_function(
     frame.line("goto _llg_return;");
     frame.line("_llg_return: ;");
     for (index, formal) in function.formals.iter().enumerate() {
+        if let Some(value) = formal
+            .native_value
+            .filter(|value| !ctx.model.native_values[*value].activation && formal.is_out)
+        {
+            let address = frame.native_value_address(value)?;
+            frame.line(format!("llg_native_value_copy(o{index}, {address});"));
+        }
         if let Some(array) = formal
             .fixed_array
             .filter(|array| !ctx.model.array(*array).activation && formal.is_out)

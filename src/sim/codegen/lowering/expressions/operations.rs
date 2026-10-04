@@ -59,6 +59,9 @@ impl<'a> Codegen<'a> {
         {
             return self.lower_mutation_expression(scope_path, otype, operands, assignment);
         }
+        if let Some(value) = self.lower_native_comparison(scope_path, otype, operands)? {
+            return Ok(value);
+        }
         if matches!(
             otype,
             Operation::Equal | Operation::NotEqual | Operation::CaseEqual | Operation::CaseNotEqual

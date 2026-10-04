@@ -14,6 +14,16 @@ impl Frame<'_, '_> {
         else {
             return Ok(None);
         };
+        if let IrNativeAccessKind::ValueItem { value, ty } = access.kind {
+            let address = self.native_value_leaf(value, &access.item_path, ty)?;
+            let c_type = match ty {
+                IrClassFieldType::Packed { .. } => "sv4_t*",
+                IrClassFieldType::Real { .. } => "double*",
+                IrClassFieldType::String => "llg_string_t*",
+                IrClassFieldType::Chandle => "void**",
+            };
+            return Ok(Some((self.scalar(c_type, address), ty)));
+        }
         if self.access_stack.iter().any(|active| active == name) || self.access_stack.len() >= 256 {
             return Err("cyclic or excessively deep native storage access".to_owned());
         }
@@ -50,6 +60,7 @@ impl Frame<'_, '_> {
                     },
                 )
             }
+            IrNativeAccessKind::ValueItem { .. } => unreachable!("value items resolve above"),
         };
         let c_type = match ty {
             IrClassFieldType::Packed { .. } => "sv4_t*",

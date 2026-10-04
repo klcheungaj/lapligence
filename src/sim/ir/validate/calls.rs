@@ -166,7 +166,37 @@ impl Validator<'_> {
             {
                 return self.fail(&arg_path, "descriptor formal requires descriptor operand");
             }
+            if formal.native_value.is_some()
+                != matches!(
+                    arg,
+                    IrCallArg::NativeValue(_) | IrCallArg::NativeLeaves { .. }
+                )
+            {
+                return self.fail(&arg_path, "native-value formal and operand must match");
+            }
             match arg {
+                IrCallArg::NativeLeaves { ty, leaves } => {
+                    let expected = formal
+                        .native_value
+                        .and_then(|value| self.model.native_values.get(value));
+                    if formal.is_address() || expected.is_none_or(|expected| expected.ty != *ty) {
+                        return self
+                            .fail(&arg_path, "native leaf operand requires an input formal");
+                    }
+                    self.validate_native_leaf_values(*ty, leaves, formals, &arg_path)?;
+                }
+                IrCallArg::NativeValue(value) => {
+                    self.validate_native_value_use(*value, &arg_path)?;
+                    let expected = formal
+                        .native_value
+                        .and_then(|value| self.model.native_values.get(value));
+                    if expected
+                        .is_none_or(|expected| expected.ty != self.model.native_values[*value].ty)
+                        || formal.is_ref()
+                    {
+                        return self.fail(&arg_path, "native argument type mismatch");
+                    }
+                }
                 IrCallArg::FixedValue(value) => {
                     let bits = self.validate_fixed_value(value, formals, &arg_path)?;
                     let expected = formal

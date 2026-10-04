@@ -37,6 +37,7 @@ pub(super) mod model;
 pub(super) mod native;
 mod native_access;
 mod native_tasks;
+pub(super) mod native_values;
 pub(super) mod net_batches;
 mod objects;
 mod operands;
@@ -144,6 +145,8 @@ pub(super) struct Frame<'a, 'm> {
     ctx: &'a RCtx<'m>,
     code: String,
     fixed_arrays: HashMap<usize, String>,
+    /// Activation native values bound in this frame (`llg_value_t*` expressions).
+    native_values: HashMap<usize, String>,
     slots: Vec<bool>,
     next_name: usize,
     bindings: Vec<HashMap<String, Binding>>,
@@ -302,6 +305,7 @@ impl<'a, 'm> Frame<'a, 'm> {
             ctx,
             code: String::new(),
             fixed_arrays: HashMap::new(),
+            native_values: HashMap::new(),
             slots: Vec::new(),
             next_name: 0,
             bindings: vec![HashMap::new()],

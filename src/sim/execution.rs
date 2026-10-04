@@ -1320,7 +1320,23 @@ fn collect_argument_effects(
         IrCallArg::FixedValue(value) => {
             collect_fixed_value_effects(ir, value, effects, visited_calls)
         }
-        IrCallArg::FixedArray(_) | IrCallArg::EventVal(_) => {}
+        IrCallArg::FixedArray(_) | IrCallArg::NativeValue(_) | IrCallArg::EventVal(_) => {}
+        IrCallArg::NativeLeaves { leaves, .. } => {
+            for leaf in leaves {
+                match &leaf.value {
+                    crate::sim::ir::IrNativeLeafExpr::Packed(value)
+                    | crate::sim::ir::IrNativeLeafExpr::Real(value) => {
+                        collect_expression_effects(ir, value, effects, visited_calls)
+                    }
+                    crate::sim::ir::IrNativeLeafExpr::String(value) => {
+                        collect_string_effects(ir, value, effects, visited_calls)
+                    }
+                    crate::sim::ir::IrNativeLeafExpr::Chandle(value) => {
+                        collect_chandle_effects(ir, value, effects, visited_calls)
+                    }
+                }
+            }
+        }
         IrCallArg::OutAddr(address)
         | IrCallArg::StringOutAddr(address)
         | IrCallArg::ChandleAddr(address)

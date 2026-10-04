@@ -113,6 +113,16 @@ impl EmitCtx<'_, '_> {
                 None => expand = true,
             }
         }
+        if expand
+            && formals
+                .iter()
+                .any(|(formal, _)| self.cg.is_native_declaration(*formal))
+        {
+            return Err(format!(
+                "task `{name}` with native record formals needs caller-environment expansion, which is not supported in `{}`",
+                self.path
+            ));
+        }
         if expand {
             return self.lower_task_inline(
                 ft,
@@ -213,6 +223,21 @@ impl EmitCtx<'_, '_> {
         let mut before = Vec::new();
         let mut after = Vec::new();
         for (idx, (io, is_out)) in formals.iter().enumerate() {
+            if self.cg.is_native_declaration(*io) {
+                let argument = self.cg.native_call_argument(
+                    &self.path,
+                    *io,
+                    bound[idx].expr,
+                    &mut before,
+                    &mut after,
+                )?;
+                if *is_out {
+                    out_args.push(argument);
+                } else {
+                    in_args.push(argument);
+                }
+                continue;
+            }
             if self.cg.fixed_formal_array(*io).is_some() {
                 let argument = IrCallArg::FixedValue(Box::new(
                     self.cg.lower_fixed_value(&self.path, bound[idx].expr)?,
@@ -403,7 +428,7 @@ impl EmitCtx<'_, '_> {
             out_args.push(IrCallArg::OutAddr(format!("&{tname}")));
         }
         for (idx, (io, is_out)) in formals.iter().enumerate() {
-            if self.cg.fixed_formal_array(*io).is_some() {
+            if self.cg.fixed_formal_array(*io).is_some() || self.cg.is_native_declaration(*io) {
                 continue;
             }
             let is_ref = matches!(
@@ -451,6 +476,18 @@ impl EmitCtx<'_, '_> {
                     in_args.push(IrCallArg::Val(ir));
                 }
             }
+        }
+        if let Some(result) = self.cg.model.funcs[fidx]
+            .formals
+            .last()
+            .and_then(|formal| formal.native_value)
+            .filter(|_| self.cg.model.funcs[fidx].formals.len() > formals.len())
+        {
+            // A native result discarded by a statement call still needs
+            // caller-owned result storage.
+            let temporary = self.cg.native_temporary_like(result)?;
+            before.push(IrStmt::NativeValueDeclare(temporary));
+            out_args.push(IrCallArg::NativeValue(temporary));
         }
         out_args.extend(in_args);
         let depth = parse_depth(&self.depth_arg);
@@ -1256,6 +1293,29 @@ impl EmitCtx<'_, '_> {
     /// is a bare return.  Inside an inlined task body it jumps to the done
     /// label.
     pub(super) fn lower_return(&mut self, value: Option<NodeId>) -> Result<IrStmt, String> {
+        if let Some(result) = self
+            .func
+            .as_ref()
+            .and_then(|function| function.ret_node)
+            .filter(|node| self.cg.native_return(*node) && self.inline.is_none())
+        {
+            let mut statements = Vec::new();
+            if let Some(value) = value {
+                statements.push(
+                    self.cg
+                        .lower_native_value_assignment(
+                            &self.path,
+                            result,
+                            value,
+                            false,
+                            Operation::Assignment,
+                        )?
+                        .ok_or("native return has no record assignment")?,
+                );
+            }
+            statements.push(IrStmt::Return { value: None });
+            return Ok(IrStmt::Block(statements));
+        }
         if let Some(result) = self
             .func
             .as_ref()

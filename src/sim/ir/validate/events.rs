@@ -48,9 +48,11 @@ impl Validator<'_> {
         path: &str,
     ) -> ValidationResult {
         self.fixed_activations.borrow_mut().push(HashSet::new());
+        self.native_activations.borrow_mut().push(HashSet::new());
         let result = stmts.iter().enumerate().try_for_each(|(idx, stmt)| {
             self.validate_stmt(stmt, formals, &format!("{path}[{idx}]"))
         });
+        self.native_activations.borrow_mut().pop();
         self.fixed_activations.borrow_mut().pop();
         result
     }
