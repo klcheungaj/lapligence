@@ -97,7 +97,19 @@ or compare paths the way [secure_fs](ffi/secure_fs.rs) does, never by string.
   treats that prefix and `D:` as different. Handle paths strip it, so compare
   canonical with canonical, and canonicalize test temporary paths on Unix only.
 - Windows relative paths use `\`: compare `Path` components, never strings
-  containing `/`.
+  containing `/`. Diagnostics and runtime reports name a source by its resolved
+  native spelling (handle-derived); tests build expected text with
+  `ffi::platform::canonicalize`, not `join("tests/fixtures/...")`, which keeps
+  a literal `/` on Windows. `Url::path` is `/C:/...` there; compare
+  `Url::to_file_path` or `Url::from_file_path` results instead.
+- Windows text-mode consoles and files write CRLF. Captured child output goes
+  through `ffi::platform::native_text_to_lf` before comparison with LF oracles.
+- Windows `abort()` ends a process with an NTSTATUS such as 0xC0000409, which an
+  `ExitCode` byte would truncate (to 9); `llg` maps statuses outside 0-255, like
+  Unix signals, to 1.
+- MSVC `/W4` rejects shadowed locals, parameters and globals (C4456/C4457/C4459)
+  under `/WX`; GCC/Clang only report them with `-Wshadow`, which the runtime
+  storage probes enable.
 - Windows share mode 0 blocks other opens of that file, including from this
   process (os error 32). `FlushFileBuffers` needs a writable handle, so directory
   sync through cap-std's read-only directory handles fails; skip it there.
