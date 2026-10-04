@@ -37,6 +37,8 @@ fn emit_rerun_if_changed() {
         "src/wrapper/slang/CMakeLists.txt",
         "src/wrapper/slang_c_api.cpp",
         "src/wrapper/slang_c_api.h",
+        "src/wrapper/slang_platform.cpp",
+        "src/wrapper/slang_platform.hpp",
         "scripts/sccache.sh",
         "build_support/compiler_cache.rs",
         "build_support/host_platform.rs",

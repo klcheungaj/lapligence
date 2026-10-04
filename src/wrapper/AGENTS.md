@@ -20,6 +20,8 @@ export records and strings before storing them, and name the effective exhausted
 budget in diagnostics. A larger export budget does not bound total Slang/Rust RSS.
 On glibc, a successful compile calls `malloc_trim(0)` after compilation teardown
 so freed frontend pages are not resident while Rust copies the snapshot.
+Platform conditionals live only in `slang_platform.hpp/.cpp`; the C ABI file
+calls its neutral functions.
 
 Capture's ordered pending edge vectors remain authoritative. Build role/index and
 child-target indexes only for parents with at least 64 charged edges. Keep cache

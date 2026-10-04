@@ -8,9 +8,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
-#if defined(__GLIBC__)
-#include <malloc.h>
-#endif
 #include <deque>
 #include <exception>
 #include <filesystem>
@@ -26,6 +23,8 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+
+#include "slang_platform.hpp"
 
 #include "slang/analysis/AnalysisManager.h"
 #include "slang/ast/ASTVisitor.h"
@@ -5054,13 +5053,11 @@ extern "C" uint32_t llg_slang_compile(const LlgSlangCompileRequest* request,
 
   try {
     *out_snapshot = compileImpl(*request).release();
-#if defined(__GLIBC__)
     // The compilation, syntax trees and capture indexes are destroyed by
     // now. glibc keeps their freed pages resident inside its heap, where the
     // caller's subsequent large owned copy of the snapshot cannot reuse
     // them; return them to the system before that copy is made.
-    malloc_trim(0);
-#endif
+    llg::wrapper::platform::releaseFreedHeapPages();
     return LLG_SLANG_STATUS_OK;
   }
   catch (const BridgeFailure& error) {

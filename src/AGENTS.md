@@ -71,6 +71,7 @@ their neutral interface:
   build-support modules because build scripts cannot use the crate.
 - Generated-model C runtime: `src/sim/rt/llg_compiler.h`, `llg_platform.h` and
   `llg_platform_native.h` (see [runtime](sim/rt/AGENTS.md#platform-layer)).
+- C++ wrapper: `src/wrapper/slang_platform.hpp/.cpp`.
 
 Tests may branch on the platform only where they assert platform-specific
 behaviour (symlinks, permissions). Add a layer function instead of a new
