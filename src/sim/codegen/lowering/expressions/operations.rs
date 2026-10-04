@@ -275,7 +275,7 @@ impl<'a> Codegen<'a> {
                 let b = op!(1);
                 if a.is_real() || b.is_real() {
                     return Err(format!(
-                        "case equality on real value in `{scope_path}` is not supported"
+                        "case equality on a real operand in `{scope_path}` is illegal (SV 11.3.1, Table 11-1)"
                     ));
                 }
                 common_cmp_expr_ir(IrBinOp::CaseEq, a, b, scope_path)
@@ -290,7 +290,7 @@ impl<'a> Codegen<'a> {
                 let b = op!(1);
                 if a.is_real() || b.is_real() {
                     return Err(format!(
-                        "case equality on real value in `{scope_path}` is not supported"
+                        "case equality on a real operand in `{scope_path}` is illegal (SV 11.3.1, Table 11-1)"
                     ));
                 }
                 common_cmp_expr_ir(IrBinOp::CaseNeq, a, b, scope_path)

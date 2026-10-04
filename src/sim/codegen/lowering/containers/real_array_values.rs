@@ -43,7 +43,7 @@ impl Codegen<'_> {
         };
         if matches!(operation, Operation::CaseEqual | Operation::CaseNotEqual) {
             return Err(format!(
-                "case equality over real arrays is illegal in `{path}` (SV 11.4.5)"
+                "case equality on a real operand in `{path}` is illegal (SV 11.3.1, Table 11-1)"
             ));
         }
         let left = self.real_array_values(path, operands[0], &dims)?;

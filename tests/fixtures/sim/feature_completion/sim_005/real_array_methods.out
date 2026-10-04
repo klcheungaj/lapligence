@@ -1,0 +1,20 @@
+sort -2.00 -2.00 0.50 1.50 4.25
+rsort 4.25 1.50 0.50 -2.00 -2.00
+reverse -2.00 -2.00 0.50 1.50 4.25
+changes 1
+short 3dcccccd 3e4ccccd 3e99999a
+rows 3.0 4.0 2.0 1.0
+nan 1.0 3.0 1 -1.0 2.0
+find 2 3.0 2.0
+find_index 5 1 5
+first 1.0 last_index 3
+min 1 8000000000000000
+max 3.0
+unique 4 0 1 2 4
+qsort -0.0 0.0 2.0 3.0
+qreverse 0.0 3.0
+dsort -1.00 0.25 0.50 2.00
+dfind 2 0.50
+nanmin -3.0
+nanunique 4
+empty 0
