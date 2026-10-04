@@ -322,6 +322,33 @@ impl<'a, 'm> Frame<'a, 'm> {
                     return Err("cannot write a const reference".to_owned());
                 }
                 let address = self.reference_address(addr)?;
+                if *width == 0 {
+                    // A real reference is the actual's `double` cell: the
+                    // ordinary real store publishes and notifies through it.
+                    if bit.is_some() {
+                        return Err("a real reference has no bit selection".to_owned());
+                    }
+                    let shortreal = self.real_reference_is_short(addr)?;
+                    return Ok(Target {
+                        reference_scopes: Vec::new(),
+                        binding: Binding {
+                            address,
+                            width: 0,
+                            signed: false,
+                            two_state: false,
+                            shortreal,
+                            automatic: false,
+                        },
+                        valid: "1".to_owned(),
+                        width: 0,
+                        signed: false,
+                        selection: None,
+                        net: None,
+                        sequence_local: false,
+                        reference: None,
+                        tagged_commit: None,
+                    });
+                }
                 let selection = bit
                     .as_ref()
                     .map(|index| self.index(index).map(Selection::Bit))

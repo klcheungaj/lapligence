@@ -130,7 +130,10 @@ impl Frame<'_, '_> {
                     .formals
                     .get(*index)
                     .ok_or_else(|| "invalid formal index".to_owned())?;
-                if formal.is_ref() {
+                if formal.is_ref() && formal.real {
+                    // The referenced cell already holds a rounded shortreal.
+                    self.value(format!("(*r{index})"), 0, false)
+                } else if formal.is_ref() {
                     // A forwarded descriptor may be a checked tagged view, so
                     // runtime reads must preserve its tag diagnostic path.
                     self.value(

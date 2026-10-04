@@ -357,6 +357,12 @@ impl Validator<'_> {
                         return self
                             .fail(arg_path, "output/inout formal requires an output address");
                     }
+                    if formal.real {
+                        self.validate_real_ref_actual(
+                            lhs, read, *width, *const_ref, formal, formals, &arg_path,
+                        )?;
+                        continue;
+                    }
                     if addr.is_empty() {
                         return self.fail(arg_path, "reference address must not be empty");
                     }
@@ -447,6 +453,67 @@ impl Validator<'_> {
             }
         }
         Ok(())
+    }
+
+    /// A real reference operand names one real storage cell: a real signal,
+    /// real local/formal storage, a whole real array element, or a forwarded
+    /// real reference formal of the enclosing function.
+    #[allow(clippy::too_many_arguments)]
+    fn validate_real_ref_actual(
+        &self,
+        lhs: &IrLhs,
+        read: &IrExpr,
+        width: u32,
+        const_ref: bool,
+        formal: &IrFormal,
+        formals: &[IrFormal],
+        path: &str,
+    ) -> ValidationResult {
+        if width != 0 || !read.is_real() {
+            return self.fail(path, "real reference operand must carry a real value");
+        }
+        if const_ref && !formal.const_ref {
+            return self.fail(path, "const reference cannot bind to a writable ref formal");
+        }
+        let real_storage = match lhs {
+            IrLhs::Whole(signal) => self
+                .model
+                .signals
+                .get(*signal)
+                .is_some_and(|signal| matches!(signal.ty, IrType::Real { .. })),
+            IrLhs::WholeRef { width: 0, .. } => true,
+            IrLhs::ArrayElem {
+                arr,
+                elem_sel: IrElemSel::Whole,
+                ..
+            } => self.model.arrays.get(*arr).is_some_and(|array| array.real),
+            IrLhs::Ref {
+                addr,
+                width: 0,
+                bit: None,
+                const_ref: actual_const,
+                ..
+            } => {
+                if *actual_const && !formal.const_ref {
+                    return self.fail(path, "const reference cannot bind to a writable ref formal");
+                }
+                // A const real reference is not an assignment target, so it is
+                // checked here rather than through `validate_lhs`.
+                return match super::lvalues::real_ref_formal(formals, addr) {
+                    Some(_) => self.validate_expr(read, formals, &format!("{path}.read")),
+                    None => self.fail(path, "forwarded real reference names no real ref formal"),
+                };
+            }
+            _ => false,
+        };
+        if !real_storage {
+            return self.fail(
+                path,
+                "real reference operand requires real variable storage",
+            );
+        }
+        self.validate_lhs(lhs, formals, &format!("{path}.lhs"))?;
+        self.validate_expr(read, formals, &format!("{path}.read"))
     }
 
     fn validate_ref_actual_lhs(

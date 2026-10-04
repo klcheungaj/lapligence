@@ -76,6 +76,11 @@ pub(super) fn frame_param_fields(f: &IrFunc) -> Vec<(String, String)> {
                     "void **"
                 };
                 params.push((ty.to_owned(), format!("r{idx}")));
+            } else if form.real {
+                // A real reference borrows the actual's numeric cell; writes
+                // publish through `llg_ba_d` on that address.
+                let qualifier = if form.is_const_ref() { "const " } else { "" };
+                params.push((format!("{qualifier}double*"), format!("r{idx}")));
             } else {
                 let qualifier = if form.is_const_ref() { "const " } else { "" };
                 params.push((format!("{qualifier}llg_ref_t*"), format!("r{idx}")));

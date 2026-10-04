@@ -236,7 +236,7 @@ impl Frame<'_, '_> {
         // This covers normal return, named disable and nonlocal process exit.
         if args
             .iter()
-            .any(|arg| matches!(arg, IrCallArg::RefAddr { .. }))
+            .any(|arg| matches!(arg, IrCallArg::RefAddr { width, .. } if *width != 0))
         {
             self.line("llg_ref_scope_begin_owned();");
         }
@@ -541,6 +541,10 @@ impl Frame<'_, '_> {
                     two_state,
                     ..
                 } => {
+                    if formal.real {
+                        parameters.push(self.real_reference_argument(lhs)?);
+                        continue;
+                    }
                     parameters
                         .push(self.reference_argument(lhs, read, *width, *signed, *two_state)?);
                 }
