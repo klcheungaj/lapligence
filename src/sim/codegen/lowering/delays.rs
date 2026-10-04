@@ -172,8 +172,9 @@ impl<'a> Codegen<'a> {
         }
     }
 
-    /// Resolved timescale of the nearest owning module instance. Slang has
-    /// already applied compilation-unit and declaration inheritance.
+    /// Resolved timescale of the nearest owning module instance, package,
+    /// compilation unit or class (its declaring scope's). Slang has already applied compilation-unit and
+    /// declaration inheritance.
     pub(super) fn timescale_of_node(&self, node: NodeId) -> Timescale {
         let mut current = Some(node);
         while let Some(id) = current {
@@ -188,9 +189,42 @@ impl<'a> Codegen<'a> {
                     precision_fs: time_exponent_to_fs(*timeprecision),
                 };
             }
+            // Package, `$unit` and class code scales time by its own
+            // declaration scope (SV 3.14.2.3), never by the caller. Class
+            // nodes are detached from their declaring scope, so the Db
+            // records the scale they inherited.
+            if self.is_runtime_environment(id) || matches!(self.kind(id), NodeKind::ClassDef) {
+                return self.db.declaration_time_scale(id).map_or(
+                    Timescale::DEFAULT,
+                    |(unit, precision)| Timescale {
+                        unit_fs: time_exponent_to_fs(unit),
+                        precision_fs: time_exponent_to_fs(precision),
+                    },
+                );
+            }
             current = self.node(id).parent;
         }
         Timescale::DEFAULT
+    }
+
+    /// Hierarchical name of the module instance, package or `$unit` whose
+    /// time scale [`Self::timescale_of_node`] reports for `node`. Class
+    /// nodes have no owned declaring scope, so they yield `None`.
+    pub(super) fn timescale_scope_label(&self, node: NodeId) -> Option<String> {
+        let mut current = Some(node);
+        while let Some(id) = current {
+            match self.kind(id) {
+                NodeKind::ModuleInst { .. } => {
+                    let path = self.instance_path_of(id);
+                    return Some(self.display_path(&path).to_owned());
+                }
+                NodeKind::ClassDef => return None,
+                _ if self.is_compilation_unit(id) => return Some("$unit".to_owned()),
+                _ if self.is_runtime_environment(id) => return Some(self.namespace_path(id)),
+                _ => current = self.node(id).parent,
+            }
+        }
+        None
     }
 
     /// Retain a signed marker present in a legacy textual literal payload.
@@ -233,10 +267,34 @@ impl<'a> Codegen<'a> {
         for m in self.db.flat_modules() {
             self.walk_files(*m);
         }
+        // Package and `$unit` subroutines and classes run at their own
+        // namespace precision, so the tick must resolve it. Namespaces that
+        // declare no code cannot observe or schedule time and leave the
+        // tick (and the default `$timeformat` units) coarser.
+        for namespace in self
+            .db
+            .node_ids()
+            .filter(|id| self.is_runtime_environment(*id))
+            .collect::<Vec<_>>()
+        {
+            if self.namespace_has_code(namespace) {
+                let ts = self.timescale_of_node(namespace);
+                self.design_precision_fs = self.design_precision_fs.min(ts.precision_fs);
+            }
+        }
         if self.design_precision_fs == u64::MAX {
             // No source files at all (should not happen for a real design).
             self.design_precision_fs = Timescale::DEFAULT.precision_fs;
         }
         self.model.precision_fs = self.design_precision_fs;
+    }
+
+    fn namespace_has_code(&self, namespace: NodeId) -> bool {
+        self.node(namespace).children.iter().any(|child| {
+            matches!(
+                self.kind(*child),
+                NodeKind::FuncTask { .. } | NodeKind::ClassDef
+            )
+        })
     }
 }

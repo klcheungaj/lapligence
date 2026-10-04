@@ -1,0 +1,3 @@
+/workspaces/agent_workspace/lapligence-wt/sim-002/tests/fixtures/sim/feature_completion/sim_002/build/llg-runtime-cache/owned-v4-wave0-c5bebee07c9141a1-v4-b0-k0-portable/build/CMakeFiles/llg_runtime.dir
+/workspaces/agent_workspace/lapligence-wt/sim-002/tests/fixtures/sim/feature_completion/sim_002/build/llg-runtime-cache/owned-v4-wave0-c5bebee07c9141a1-v4-b0-k0-portable/build/CMakeFiles/edit_cache.dir
+/workspaces/agent_workspace/lapligence-wt/sim-002/tests/fixtures/sim/feature_completion/sim_002/build/llg-runtime-cache/owned-v4-wave0-c5bebee07c9141a1-v4-b0-k0-portable/build/CMakeFiles/rebuild_cache.dir
