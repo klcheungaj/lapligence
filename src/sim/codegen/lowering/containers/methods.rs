@@ -552,79 +552,42 @@ impl<'a> Codegen<'a> {
                 if descending { "rsort" } else { "sort" },
             )?;
             let array = self.reference_array(view.array.ir);
-            let initial_statement_count = statements.len();
-            for first in 0..count {
-                for second in (first + 1)..count {
-                    let mut pair = Vec::new();
-                    let first_value = fixed_array_group_read(
-                        path,
-                        array,
-                        &groups[first],
-                        view.array.elem_width,
-                        element_width,
-                        immediate.info.signed,
-                        element.info.signed,
-                    )?;
-                    let second_value = fixed_array_group_read(
-                        path,
-                        array,
-                        &groups[second],
-                        view.array.elem_width,
-                        element_width,
-                        immediate.info.signed,
-                        element.info.signed,
-                    )?;
-                    let first_index = sort_index_expr(left, right, first)?;
-                    let second_index = sort_index_expr(left, right, second)?;
-                    let (first_value, first_key) = self.lower_fixed_sort_capture(
-                        path,
-                        iterator,
-                        with_node,
-                        &immediate,
-                        (left, right),
-                        first_value,
-                        first_index,
-                        &mut pair,
-                    )?;
-                    let (second_value, second_key) = self.lower_fixed_sort_capture(
-                        path,
-                        iterator,
-                        with_node,
-                        &immediate,
-                        (left, right),
-                        second_value,
-                        second_index,
-                        &mut pair,
-                    )?;
-                    let first_from_second = fixed_array_group_writes(
-                        &self.model,
-                        array,
-                        &groups[first],
-                        view.array.elem_width,
-                        element_width,
-                        element.as_ref(),
-                        second_value.clone(),
-                    )?;
-                    let second_from_first = fixed_array_group_writes(
-                        &self.model,
-                        array,
-                        &groups[second],
-                        view.array.elem_width,
-                        element_width,
-                        element.as_ref(),
-                        first_value.clone(),
-                    )?;
-                    pair.push(fixed_sort_swap(
-                        descending,
-                        first_key,
-                        second_key,
-                        first_from_second,
-                        second_from_first,
-                    ));
-                    statements.push(IrStmt::Block(pair));
-                }
+            // Each element and key is captured once from its original
+            // position, so `item.index` names the element's own index.
+            let mut captured = Vec::with_capacity(count);
+            for (position, cells) in groups.iter().enumerate() {
+                let value = fixed_array_group_read(
+                    path,
+                    array,
+                    cells,
+                    view.array.elem_width,
+                    element_width,
+                    immediate.info.signed,
+                    element.info.signed,
+                )?;
+                captured.push(self.lower_fixed_sort_capture(
+                    path,
+                    iterator,
+                    with_node,
+                    &immediate,
+                    (left, right),
+                    value,
+                    sort_index_expr(left, right, position)?,
+                    &mut statements,
+                )?);
             }
-            debug_assert_eq!(comparisons, statements.len() - initial_statement_count);
+            statements.extend(fixed_sort_schedule(&captured, descending, &immediate)?);
+            for (cells, (value, _)) in groups.iter().zip(&captured) {
+                statements.extend(fixed_array_group_writes(
+                    &self.model,
+                    array,
+                    cells,
+                    view.array.elem_width,
+                    element_width,
+                    element.as_ref(),
+                    value.clone(),
+                )?);
+            }
             return Ok(Some(IrStmt::Block(statements)));
         }
 
@@ -641,71 +604,36 @@ impl<'a> Codegen<'a> {
             if descending { "rsort" } else { "sort" },
             &mut statements,
         )?;
-        let initial_statement_count = statements.len();
-        for first in 0..count {
-            for second in (first + 1)..count {
-                let mut pair = Vec::new();
-                let first_offset = sort_offset(first, count, element_width, path)?;
-                let second_offset = sort_offset(second, count, element_width, path)?;
-                let first_value = fixed_reverse_slice(&source, first_offset, element_width);
-                let second_value = fixed_reverse_slice(&source, second_offset, element_width);
-                let first_index = sort_index_expr(left, right, first)?;
-                let second_index = sort_index_expr(left, right, second)?;
-                let (first_value, first_key) = self.lower_fixed_sort_capture(
-                    path,
-                    iterator,
-                    with_node,
-                    &immediate,
-                    (left, right),
-                    first_value,
-                    first_index,
-                    &mut pair,
-                )?;
-                let (second_value, second_key) = self.lower_fixed_sort_capture(
-                    path,
-                    iterator,
-                    with_node,
-                    &immediate,
-                    (left, right),
-                    second_value,
-                    second_index,
-                    &mut pair,
-                )?;
-                let first_lhs = append_fixed_reverse_selection(
-                    target.clone(),
-                    first_offset,
-                    element_width,
-                    immediate.info.signed,
-                    immediate.two_state,
-                );
-                let second_lhs = append_fixed_reverse_selection(
-                    target.clone(),
-                    second_offset,
-                    element_width,
-                    immediate.info.signed,
-                    immediate.two_state,
-                );
-                let first_from_second = vec![IrStmt::Assign {
-                    lhs: first_lhs.clone(),
-                    rhs: apply_lhs_assignment_context(&self.model, &first_lhs, second_value),
-                    nba: false,
-                }];
-                let second_from_first = vec![IrStmt::Assign {
-                    lhs: second_lhs.clone(),
-                    rhs: apply_lhs_assignment_context(&self.model, &second_lhs, first_value),
-                    nba: false,
-                }];
-                pair.push(fixed_sort_swap(
-                    descending,
-                    first_key,
-                    second_key,
-                    first_from_second,
-                    second_from_first,
-                ));
-                statements.push(IrStmt::Block(pair));
-            }
+        let mut captured = Vec::with_capacity(count);
+        for position in 0..count {
+            let offset = sort_offset(position, count, element_width, path)?;
+            let value = fixed_reverse_slice(&source, offset, element_width);
+            captured.push(self.lower_fixed_sort_capture(
+                path,
+                iterator,
+                with_node,
+                &immediate,
+                (left, right),
+                value,
+                sort_index_expr(left, right, position)?,
+                &mut statements,
+            )?);
         }
-        debug_assert_eq!(comparisons, statements.len() - initial_statement_count);
+        statements.extend(fixed_sort_schedule(&captured, descending, &immediate)?);
+        for (position, (value, _)) in captured.iter().enumerate() {
+            let lhs = append_fixed_reverse_selection(
+                target.clone(),
+                sort_offset(position, count, element_width, path)?,
+                element_width,
+                immediate.info.signed,
+                immediate.two_state,
+            );
+            statements.push(IrStmt::Assign {
+                rhs: apply_lhs_assignment_context(&self.model, &lhs, value.clone()),
+                lhs,
+                nba: false,
+            });
+        }
         Ok(Some(IrStmt::Block(statements)))
     }
 
@@ -947,32 +875,84 @@ fn sort_offset(offset: usize, count: usize, width: u32, path: &str) -> Result<u3
         .ok_or_else(|| format!("fixed-array sort offset overflows in `{path}`"))
 }
 
-fn fixed_sort_swap(
+/// Straight-line compare-exchange over captured element and key locals. The
+/// stored elements are written once afterwards from the final locals.
+fn fixed_sort_schedule(
+    captured: &[(IrExpr, IrExpr)],
     descending: bool,
-    first_key: IrExpr,
-    second_key: IrExpr,
-    first_writeback: Vec<IrStmt>,
-    second_writeback: Vec<IrStmt>,
-) -> IrStmt {
-    let condition = IrExpr::new(
-        IrExprKind::Bin {
-            op: if descending { IrBinOp::Lt } else { IrBinOp::Gt },
-            a: Box::new(first_key),
-            b: Box::new(second_key),
-        },
-        1,
-        false,
-        None,
-    );
-    IrStmt::If {
-        cond: condition,
-        then_: first_writeback
-            .into_iter()
-            .chain(second_writeback)
-            .collect(),
-        els: None,
-        check: IrUniquePriorityCheck::None,
+    immediate: &TypeDescriptor,
+) -> Result<Vec<IrStmt>, String> {
+    let local = |expr: &IrExpr| match &expr.kind {
+        IrExprKind::LocalRead(name) => Ok(name.clone()),
+        _ => Err("fixed-array sort capture is not a local".to_owned()),
+    };
+    let swap = |first: &IrExpr,
+                second: &IrExpr,
+                pair: usize,
+                two_state: bool|
+     -> Result<Vec<IrStmt>, String> {
+        let lhs = |expr: &IrExpr| -> Result<IrLhs, String> {
+            Ok(IrLhs::WholeRef {
+                addr: format!("&{}", local(expr)?),
+                width: expr.width,
+                signed: expr.signed,
+                two_state,
+                shortreal: false,
+            })
+        };
+        let saved = format!("{}_swap_{pair}", local(first)?);
+        Ok(vec![IrStmt::Block(vec![
+            IrStmt::DeclLocal {
+                name: saved.clone(),
+                width: first.width,
+                signed: first.signed,
+                init: Some(Box::new(first.clone())),
+                two_state,
+            },
+            IrStmt::Assign {
+                lhs: lhs(first)?,
+                rhs: second.clone(),
+                nba: false,
+            },
+            IrStmt::Assign {
+                lhs: lhs(second)?,
+                rhs: IrExpr::new(
+                    IrExprKind::LocalRead(saved),
+                    first.width,
+                    first.signed,
+                    None,
+                ),
+                nba: false,
+            },
+        ])])
+    };
+    let mut statements = Vec::new();
+    for first in 0..captured.len() {
+        for second in (first + 1)..captured.len() {
+            let (first_value, first_key) = &captured[first];
+            let (second_value, second_key) = &captured[second];
+            let mut exchange = swap(first_value, second_value, second, immediate.two_state)?;
+            if first_key != first_value {
+                exchange.extend(swap(first_key, second_key, second, false)?);
+            }
+            statements.push(IrStmt::If {
+                cond: IrExpr::new(
+                    IrExprKind::Bin {
+                        op: if descending { IrBinOp::Lt } else { IrBinOp::Gt },
+                        a: Box::new(first_key.clone()),
+                        b: Box::new(second_key.clone()),
+                    },
+                    1,
+                    false,
+                    None,
+                ),
+                then_: exchange,
+                els: None,
+                check: IrUniquePriorityCheck::None,
+            });
+        }
     }
+    Ok(statements)
 }
 
 fn fixed_reverse_slice(value: &IrExpr, offset: u32, width: u32) -> IrExpr {

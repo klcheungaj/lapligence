@@ -81,6 +81,26 @@ impl Codegen<'_> {
         Ok(Some((array, cells)))
     }
 
+    /// Whether a receiver's storage root is a `const ref` formal (13.5.2).
+    fn const_ref_receiver(&self, node: NodeId) -> bool {
+        match self.kind(node) {
+            NodeKind::Expr(
+                ExprKind::ArraySelect { base, .. } | ExprKind::BitSelect { base, .. },
+            ) => self.const_ref_receiver(*base),
+            NodeKind::Expr(ExprKind::Ref {
+                target: Some(target),
+            }) => matches!(
+                self.kind(*target),
+                NodeKind::FuncArg {
+                    direction: DbDirection::Ref,
+                    const_ref: true,
+                    ..
+                }
+            ),
+            _ => false,
+        }
+    }
+
     /// Lower `reverse`, `sort` or `rsort` of stored cells into one in-place
     /// cell-wise operation when the receiver names storage whose elements
     /// match `immediate`. Small dense selections keep the straight-line form.
@@ -98,6 +118,11 @@ impl Codegen<'_> {
         let Some((array, cells)) = self.fixed_array_cells(path, receiver)? else {
             return Ok(None);
         };
+        if self.const_ref_receiver(receiver) {
+            return Err(format!(
+                "fixed-array ordering in `{path}` would modify a const ref formal; its receiver is not writable"
+            ));
+        }
         let storage = &self.model.arrays[cells.array];
         if array.real || !storage.net_elements.is_empty() {
             return Ok(None);

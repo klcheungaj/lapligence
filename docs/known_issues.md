@@ -264,6 +264,17 @@ diagnostics; constant in-bounds `with` ranges stream as sliced views (RTL-015).
 Extending those paths through per-cell source expansion would recreate the
 capacity cost.
 
+Fixed-array `reverse`/`sort`/`rsort`, selected-row reductions and `inside`
+over stored cells (descriptor arrays, selected rows and dense arrays above 16
+elements) run as one cell-wise loop (RTL-014). A sort `with` key reads each
+element as one item value, so a key over rows wider than the packed limit
+rejects with a diagnostic; reductions whose item is such a row and value
+receivers without stored cells (oversized call results, casts and slices) keep
+the payload limit. Small automatic arrays and non-ref formals are packed values
+and keep the straight-line compare-exchange schedule, which is quadratic and
+bounded by its comparison limit. A sort keeps one key per element and
+materializes every descriptor cell it moves.
+
 Casts between descriptor-backed arrays reshape and apply two-state conversion as
 descriptor values. Arrays above the dense-cell threshold but within the packed
 limit still flatten outside equality and descriptor-destination assignment: a

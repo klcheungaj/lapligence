@@ -50,6 +50,9 @@ mod rtl_012;
 #[path = "sim_feature_completion/rtl_013.rs"]
 mod rtl_013;
 
+#[path = "sim_feature_completion/rtl_014.rs"]
+mod rtl_014;
+
 #[path = "sim_feature_completion/rtl_015.rs"]
 mod rtl_015;
 

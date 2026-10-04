@@ -305,8 +305,12 @@ peel one unpacked dimension at a time. Preserve named/default iterator identity,
 signed 32-bit declared indices, enclosing reads and restored bindings even on
 failure. Reject iterator writes, illegal dimensions, unmapped nonintegral rows or
 nonintegral maps. Seed with the first mapped element to preserve singleton Z.
-Reverse freezes receiver coordinates once; sort rereads that live receiver at
-fixed coordinates for swaps, including singleton-selector side effects.
+Reverse freezes receiver coordinates once; sort captures every element and key
+once from its original position (`item.index` is the element's own index), then
+writes each position. Receivers that name stored cells (descriptor arrays,
+selected rows, dense arrays above `FIXED_CELL_UNROLL_LIMIT`) lower to one
+`IrStmt::FixedArrayOrder`; selected-row reductions and `inside` items over stored
+cells use `IrFixedArrayCells`. Never expand those receivers per element.
 
 ## Events, predicates and streams
 

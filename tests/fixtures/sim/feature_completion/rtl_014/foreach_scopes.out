@@ -1,0 +1,10 @@
+n=72 m[-1][2]=10011001 m[1][0]=10011001
+omitted=18
+s[0]=5a
+3 2 1 0 -1 -2 
+formal=33
+nested=24
+row -1 sum=1
+row 0 sum=5
+row 1 sum=7
+index=19

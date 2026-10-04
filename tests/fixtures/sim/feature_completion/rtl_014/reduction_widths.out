@@ -1,0 +1,14 @@
+sum4=4
+sum32=84
+product4=0
+xor=00000008
+and=0000 or=1111
+singleton=zzzz
+and=zzzz or=zzzz xor=zzzz product=zzzz
+pair=xxxx
+signed8=107
+signed32=-149
+record=-30
+unpacked=120
+row6=14 row32=590
+unselected=000000
