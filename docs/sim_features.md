@@ -392,8 +392,12 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   lexical package references remain distinct. SV §26 **[SV-2005]**.
 - 🟦 **Interfaces and modports** — Concrete storage, instance-local processes,
   parameterized interfaces, member references and modport views are represented.
-  `.name` and `.*` connection shorthands retain their resolved links. Runtime
-  virtual handles are covered in §12. SV §§23.3.2, 25.3, 25.5 **[SV-2005]**.
+  `.name` and `.*` connection shorthands retain their resolved links. Modport
+  expression ports `.p(expr)` read, write and wake through their expression
+  (part-selects, concatenation lvalues, constant and runtime element selects,
+  inout drivers of interface nets that resolve with other drivers); illegal
+  targets and writer conflicts reject. Runtime virtual handles are covered in
+  §12. SV §§23.3.2, 25.3, 25.5 **[SV-2005]**.
 - 🟦 **Extern and nested modules** — Parameterized declarations/matching bodies,
   same-scope enclosing parameter references, distinct enclosing-instance
   specializations and independently scoped same-named definitions work in both
@@ -1361,7 +1365,8 @@ These are bounded implementations, not full verification-infrastructure support.
   class/formal/fixed-array and bounded dynamic/queue storage. Packed member access,
   delay-free methods, null/type checks and clocking-input samples are present.
   Timed tasks, event-formal dispatch, dynamic clocking output/inout dispatch,
-  associative/nested layouts and broader polymorphic/capture forms reject.
+  modport expression ports, associative/nested layouts and broader
+  polymorphic/capture forms reject.
   SV §§25.5, 25.7, 25.9–25.10 **[SV-2009]**.
 - 🟨 **Programs** — Initials launch in Reactive; `#0`/NBA stay in the reactive
   set. `$exit` cancels only its program-initial origin and is ignored outside
