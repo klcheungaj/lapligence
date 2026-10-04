@@ -159,7 +159,7 @@ impl<'a> Codegen<'a> {
             .collect()
     }
 
-    pub(super) fn is_compilation_unit(&self, id: NodeId) -> bool {
+    pub(in super::super) fn is_compilation_unit(&self, id: NodeId) -> bool {
         matches!(self.kind(id), NodeKind::Stmt(StmtKind::Begin))
             && self.db.semantic_detail(id) == Some("CompilationUnit")
     }

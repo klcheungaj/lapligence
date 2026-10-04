@@ -710,8 +710,8 @@ pub enum IrStmt {
         verbosity: u8,
         location: String,
     },
-    /// `$printtimescale` for a module whose unit/precision and instance path
-    /// label were captured at lowering.
+    /// `$printtimescale` for the instance, package or `$unit` whose
+    /// unit/precision and hierarchical label were resolved at lowering.
     PrintTimescale {
         unit_fs: u64,
         precision_fs: u64,
