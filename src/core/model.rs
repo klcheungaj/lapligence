@@ -369,7 +369,7 @@ fn instance_from_db(db: &db::Db, id: NodeId) -> InstanceModel {
     let full_name = if node.full_name.is_empty() {
         name.clone()
     } else {
-        node.full_name.clone()
+        node.full_name.to_string()
     };
     let file = node.file().map(str::to_owned);
     let line = node.line;
@@ -740,9 +740,9 @@ fn gen_scope_from_db(db: &db::Db, scope_id: NodeId, array: Option<NodeId>) -> Ge
             scope.name.clone()
         },
         full_name: if scope.full_name.is_empty() {
-            fallback.map_or_else(String::new, |node| node.full_name.clone())
+            fallback.map_or_else(String::new, |node| node.full_name.to_string())
         } else {
-            scope.full_name.clone()
+            scope.full_name.to_string()
         },
         params,
         children,

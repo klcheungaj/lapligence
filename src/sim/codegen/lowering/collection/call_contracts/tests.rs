@@ -51,7 +51,7 @@ fn arithmetic_assignment_flags_are_not_mistaken_for_reads() {
                 children,
                 parent: None,
                 name: String::new(),
-                full_name: String::new(),
+                full_name: "".into(),
                 file: None,
                 line: 0,
                 col: 0,

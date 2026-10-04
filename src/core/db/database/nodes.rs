@@ -9,7 +9,8 @@ pub struct Node {
     pub children: Vec<NodeId>,
     pub parent: Option<NodeId>,
     pub name: String,
-    pub full_name: String,
+    /// Hierarchical name. Unnamed nodes share their enclosing scope's name.
+    pub full_name: std::sync::Arc<str>,
     /// Admitted source file name, shared by every node located in that file.
     pub file: Option<std::sync::Arc<str>>,
     pub line: u32,
@@ -327,6 +328,6 @@ mod tests {
     fn node_records_stay_compact() {
         assert!(std::mem::size_of::<ExprKind>() <= 112);
         assert!(std::mem::size_of::<NodeKind>() <= 112);
-        assert!(std::mem::size_of::<Node>() <= 224);
+        assert!(std::mem::size_of::<Node>() <= 216);
     }
 }

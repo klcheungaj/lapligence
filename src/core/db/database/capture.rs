@@ -21,6 +21,9 @@ impl Db {
         }
 
         let mut nodes = Vec::with_capacity(snapshot.semantic_nodes.len());
+        // Placeholder until hierarchical names are assigned after the node
+        // loop; one shared value avoids a temporary allocation per node.
+        let unnamed: std::sync::Arc<str> = std::sync::Arc::from("");
         let overridden_parameters = snapshot
             .semantic_nodes
             .iter()
@@ -842,7 +845,7 @@ impl Db {
                 children,
                 parent,
                 name,
-                full_name: String::new(),
+                full_name: std::sync::Arc::clone(&unnamed),
                 file,
                 line,
                 col,
@@ -907,10 +910,7 @@ impl Db {
             }
         }
 
-        for index in 0..nodes.len() {
-            let full_name = semantic_full_name(&nodes, NodeId::from_index(index))?;
-            nodes[index].full_name = full_name;
-        }
+        assign_semantic_full_names(&mut nodes)?;
         let mut elaborated_type_ranges = Vec::new();
         for (index, semantic) in snapshot.semantic_nodes.iter().enumerate() {
             let id = NodeId::from_index(index);
@@ -943,7 +943,7 @@ impl Db {
                 continue;
             }
             let instance = enclosing_scope_name(&nodes, id)
-                .unwrap_or_else(|| nodes[id.index()].full_name.clone());
+                .unwrap_or_else(|| nodes[id.index()].full_name.to_string());
             if !instance.is_empty() {
                 elaborated_type_ranges.push(type_projector.elaborated_ranges(
                     id,

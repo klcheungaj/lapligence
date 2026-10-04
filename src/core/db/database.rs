@@ -97,7 +97,7 @@ mod statement_import;
 use statement_import::{event_specs, is_named_event_expression, statement_from_slang};
 mod expression_import;
 use expression_import::{
-    enclosing_scope_name, expression_from_slang, semantic_full_name, source_position,
+    assign_semantic_full_names, enclosing_scope_name, expression_from_slang, source_position,
     SourcePositions,
 };
 

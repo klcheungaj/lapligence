@@ -1803,7 +1803,7 @@ mod tests {
             children,
             parent,
             name: String::new(),
-            full_name: String::new(),
+            full_name: "".into(),
             file: Some("test.sv".into()),
             line: 1,
             col: 1,
