@@ -183,6 +183,13 @@ static void insert_region_callback(llg_region_callback_t* entry) {
 int llg_schedule_region_callback_after(llg_region_t region,
                                        llg_region_callback_fn callback,
                                        void* data, uint64_t ticks) {
+    return llg_schedule_region_callback_id(region, callback, data, ticks, NULL);
+}
+
+int llg_schedule_region_callback_id(llg_region_t region,
+                                    llg_region_callback_fn callback,
+                                    void* data, uint64_t ticks,
+                                    llg_region_callback_id_t* id) {
     if (!callback || !callback_region_allowed(region, ticks)) return 0;
     if (ticks > UINT64_MAX - g.now || g.callback_sequence == UINT64_MAX) {
         fprintf(stderr, "llg: fatal: region callback time or sequence overflow\n");
@@ -196,8 +203,25 @@ int llg_schedule_region_callback_after(llg_region_t region,
     entry->callback = callback;
     entry->data = data;
     entry->next = NULL;
+    if (id) {
+        id->generation = llg_event_generation;
+        id->sequence = entry->sequence;
+    }
     insert_region_callback(entry);
     return 1;
+}
+
+int llg_cancel_region_callback(llg_region_callback_id_t id) {
+    if (id.generation != llg_event_generation) return 0;
+    for (llg_region_callback_t** slot = &g.callbacks; *slot;
+         slot = &(*slot)->next) {
+        if ((*slot)->sequence != id.sequence) continue;
+        llg_region_callback_t* entry = *slot;
+        *slot = entry->next;
+        free(entry);
+        return 1;
+    }
+    return 0;
 }
 
 int llg_schedule_region_callback(llg_region_t region,

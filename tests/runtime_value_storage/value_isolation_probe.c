@@ -408,6 +408,10 @@ static int check_delay_conversion(void) {
     CHECK(sv4_real_delay_ticks(0.25, 1000, 100) == 300);
     CHECK(sv4_real_delay_ticks(0.049, 1000, 100) == 0);
     CHECK(sv4_real_delay_ticks(0.05, 1000, 100) == 100);
+    CHECK(sv4_real_delay_ticks(-0.04, 1000, 100) == 0);
+    CHECK(sv4_real_delay_ticks(-1.0, 1, 1) == UINT64_MAX);
+    CHECK(sv4_real_delay_ticks(-0.25, 10, 1) == UINT64_MAX - 2u);
+    CHECK(sv4_real_delay_ticks(-0x1p63, 1, 1) == UINT64_C(1) << 63);
     return 0;
 }
 
