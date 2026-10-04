@@ -127,6 +127,13 @@ destruction; descriptor ports also bound generated model size. Negatives cover
 assignability, ref shape, variable inout, runtime ref/net/inout selects and
 output-target writer conflicts.
 
+RTL-102's modport expression-port fixtures use
+`-E 'binary(sim_feature_completion) & test(rtl_102::)'`. Positive fixtures run in
+both optimizer modes on every backend (set `LLG_TEST_GMP_ROOT` for the GMP lane)
+and after Db destruction. Negatives cover non-lvalue outputs, input writes,
+non-constant selectors, writer conflicts through expression ports and the
+deferred virtual-interface access.
+
 RTL-015's bit-stream and streaming fixtures use
 `-E 'binary(sim_feature_completion) & test(rtl_015::)'`. Positive fixtures run in
 both optimizer modes on both backends (set `LLG_TEST_GMP_ROOT` for the GMP lane),

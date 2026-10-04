@@ -327,12 +327,63 @@ impl<'a> Codegen<'a> {
             let range = *ranges.get(dimension).ok_or_else(invalid)?;
             let extent = range.left.abs_diff(range.right) + 1;
             let stride = width / extent;
-            let slot = cg.packed_range_slot(range, cg.eval_bound_i128(index)?, "port")?;
+            let value = cg.eval_bound_i128(index).map_err(|_| {
+                format!(
+                    "runtime selection of a multidimensional modport port in `{path}` is not supported"
+                )
+            })?;
+            let slot = cg.packed_range_slot(range, value, "port")?;
             lsb += slot * stride;
             width = stride;
             dimension += 1;
             Ok(())
         };
+        // One runtime selector of a multidimensional value picks a whole
+        // element: scale its normalized slot by the element width.
+        let runtime_element = match self.kind(node) {
+            NodeKind::Expr(ExprKind::BitSelect { index, .. }) => Some(*index),
+            NodeKind::Expr(ExprKind::ArraySelect { indices, .. }) if indices.len() == 1 => {
+                Some(indices[0])
+            }
+            _ => None,
+        }
+        .filter(|index| ranges.len() > 1 && self.eval_bound_i128(*index).is_err());
+        if let Some(index) = runtime_element {
+            let range = ranges[0];
+            let stride = u32::try_from(width / (range.left.abs_diff(range.right) + 1))
+                .map_err(|_| invalid())?;
+            let index = self.lower_expr(path, index)?;
+            let right = lhs_integer_expr(range.right);
+            let multiply_bits = u32::BITS - stride.saturating_sub(1).leading_zeros();
+            let arithmetic_width = index
+                .width
+                .max(right.width)
+                .checked_add(2)
+                .and_then(|width| width.checked_add(multiply_bits))
+                .filter(|width| *width <= LLG_MAX_WIDTH)
+                .ok_or_else(|| {
+                    "packed selection index arithmetic exceeds the supported limit".to_owned()
+                })?;
+            let index = IrExpr::convert_to(index, arithmetic_width, true);
+            let right = IrExpr::convert_to(right, arithmetic_width, true);
+            let relative = if range.left < range.right {
+                bin_expr(IrBinOp::Sub, right, index)
+            } else {
+                bin_expr(IrBinOp::Sub, index, right)
+            };
+            let offset = bin_expr(
+                IrBinOp::Mul,
+                relative,
+                IrExpr::convert_to(lhs_integer_expr(i128::from(stride)), arithmetic_width, true),
+            );
+            return Ok(Some((
+                base,
+                crate::sim::ir::IrPackedSelect {
+                    base: offset,
+                    width: stride,
+                },
+            )));
+        }
         let step = match self.kind(node) {
             NodeKind::Expr(ExprKind::ArraySelect { indices, .. }) => {
                 for index in indices.clone() {
