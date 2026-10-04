@@ -485,6 +485,7 @@ fn unauthorized_library_and_include_paths_reject() {
     sim_cli::reject_case(
         SUITE,
         "include_escape",
-        "'../../../../../Cargo.toml': No such file or directory",
+        // The OS reason that follows is host text (its case differs on MSVC).
+        "'../../../../../Cargo.toml': ",
     );
 }

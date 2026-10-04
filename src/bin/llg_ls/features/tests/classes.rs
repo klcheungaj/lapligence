@@ -28,7 +28,7 @@ fn class_analysis() -> Analysis {
     };
     let counter = ClassDef {
         name: "Counter".to_owned(),
-        file: Some("/x/c.sv".to_owned()),
+        file: Some(hp("/x/c.sv").to_owned()),
         line: 1,
         col: 1,
         methods: vec![
@@ -36,7 +36,7 @@ fn class_analysis() -> Analysis {
                 name: "new".to_owned(),
                 is_task: false,
                 automatic: false,
-                file: Some("/x/c.sv".to_owned()),
+                file: Some(hp("/x/c.sv").to_owned()),
                 line: 3,
                 col: 3,
                 ret: None,
@@ -48,7 +48,7 @@ fn class_analysis() -> Analysis {
                 name: "get".to_owned(),
                 is_task: false,
                 automatic: false,
-                file: Some("/x/c.sv".to_owned()),
+                file: Some(hp("/x/c.sv").to_owned()),
                 line: 6,
                 col: 3,
                 ret: Some(int_ty()),
@@ -72,7 +72,7 @@ fn class_analysis() -> Analysis {
         classes: vec![counter],
     };
     let tokens = vec![FileTokens {
-        path: "/x/c.sv".to_owned(),
+        path: hp("/x/c.sv").to_owned(),
         nodes: vec![
             TokenInfo {
                 line: 1,
@@ -81,7 +81,7 @@ fn class_analysis() -> Analysis {
                 end_col: 14,
                 kind: tokens::TOKEN_SLANG_CLASS + tokens::TOKEN_DECLARATION_OFFSET,
                 name: Some("Counter".to_owned()),
-                file: "/x/c.sv".to_owned(),
+                file: hp("/x/c.sv").to_owned(),
             },
             TokenInfo {
                 line: 2,
@@ -90,7 +90,7 @@ fn class_analysis() -> Analysis {
                 end_col: 12,
                 kind: tokens::TOKEN_SLANG_VARIABLE + tokens::TOKEN_DECLARATION_OFFSET,
                 name: Some("count".to_owned()),
-                file: "/x/c.sv".to_owned(),
+                file: hp("/x/c.sv").to_owned(),
             },
             TokenInfo {
                 line: 3,
@@ -99,7 +99,7 @@ fn class_analysis() -> Analysis {
                 end_col: 16,
                 kind: tokens::TOKEN_SLANG_METHOD + tokens::TOKEN_DECLARATION_OFFSET,
                 name: Some("new".to_owned()),
-                file: "/x/c.sv".to_owned(),
+                file: hp("/x/c.sv").to_owned(),
             },
             TokenInfo {
                 line: 6,
@@ -108,7 +108,7 @@ fn class_analysis() -> Analysis {
                 end_col: 19,
                 kind: tokens::TOKEN_SLANG_METHOD + tokens::TOKEN_DECLARATION_OFFSET,
                 name: Some("get".to_owned()),
-                file: "/x/c.sv".to_owned(),
+                file: hp("/x/c.sv").to_owned(),
             },
         ],
     }];
@@ -119,7 +119,7 @@ fn class_analysis() -> Analysis {
 fn hover_on_class_name_shows_members() {
     let a = class_analysis();
     // `Counter` at 1-based (1,7) → 0-based (0,6).
-    let hover = hover_at(&a, "/x/c.sv", 0, 6).expect("hover on class name");
+    let hover = hover_at(&a, hp("/x/c.sv"), 0, 6).expect("hover on class name");
     let value = match hover.contents {
         HoverContents::Markup(m) => m.value,
         _ => panic!("expected markup hover"),
@@ -133,7 +133,7 @@ fn hover_on_class_name_shows_members() {
 fn hover_on_class_method_shows_signature() {
     let a = class_analysis();
     // `function int get()` at 1-based (6,3) → 0-based (5,2).
-    let hover = hover_at(&a, "/x/c.sv", 5, 2).expect("hover on get decl");
+    let hover = hover_at(&a, hp("/x/c.sv"), 5, 2).expect("hover on get decl");
     let value = match hover.contents {
         HoverContents::Markup(m) => m.value,
         _ => panic!("expected markup hover"),
@@ -141,7 +141,7 @@ fn hover_on_class_method_shows_signature() {
     assert!(value.contains("function int get()"), "value: {value}");
     // Hover on the method *name* (0-based (5,15)) falls back to the
     // parse-tree token and still shows the signature.
-    let hover = hover_at(&a, "/x/c.sv", 5, 15).expect("hover on get name");
+    let hover = hover_at(&a, hp("/x/c.sv"), 5, 15).expect("hover on get name");
     let value = match hover.contents {
         HoverContents::Markup(m) => m.value,
         _ => panic!("expected markup hover"),
@@ -152,7 +152,7 @@ fn hover_on_class_method_shows_signature() {
 #[test]
 fn document_symbols_include_class_with_members() {
     let a = class_analysis();
-    let syms = document_symbols(&a, "/x/c.sv");
+    let syms = document_symbols(&a, hp("/x/c.sv"));
     let cls = syms
         .iter()
         .find(|s| s.name == "Counter")
@@ -177,7 +177,7 @@ fn document_symbols_include_class_with_members() {
 #[test]
 fn completion_after_class_scope_prefix_offers_members() {
     let a = class_analysis();
-    let items = completion_at(&a, "/x/c.sv", 0, 9, "Counter::");
+    let items = completion_at(&a, hp("/x/c.sv"), 0, 9, "Counter::");
     let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
     assert!(labels.contains(&"new"), "items: {labels:?}");
     assert!(labels.contains(&"get"), "items: {labels:?}");
@@ -195,12 +195,12 @@ fn completion_after_class_scope_prefix_offers_members() {
         "count must be a variable: {items:?}"
     );
     // Prefix filtering applies after `::`.
-    let items = completion_at(&a, "/x/c.sv", 0, 10, "Counter::g");
+    let items = completion_at(&a, hp("/x/c.sv"), 0, 10, "Counter::g");
     let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
     assert!(labels.contains(&"get"), "items: {labels:?}");
     assert!(!labels.contains(&"count"), "items: {labels:?}");
     // Unknown classes offer nothing.
-    let items = completion_at(&a, "/x/c.sv", 0, 8, "Nope::");
+    let items = completion_at(&a, hp("/x/c.sv"), 0, 8, "Nope::");
     assert!(items.is_empty(), "items: {items:?}");
 }
 

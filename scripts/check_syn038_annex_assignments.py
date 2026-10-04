@@ -69,7 +69,7 @@ def load_inventory_module():
 def load_reference_names(path: Path) -> dict:
     if not path.is_file():
         fail(f"required frozen reference-name snapshot is missing: {path}")
-    return json.loads(path.read_text())
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def ledger_rows(ledger: str) -> dict[str, list[str]]:
@@ -114,7 +114,7 @@ def check_evidence(name: str, evidence: object, disposition: str, ledger: str, p
     source_path = ROOT / file
     if not file.startswith("tests/") or not source_path.is_file():
         fail(f"{name} has no real evidence test file")
-    source = source_path.read_text()
+    source = source_path.read_text(encoding="utf-8")
     marker = f"fn {function}("
     if marker in source:
         body = source.split(marker, 1)[1].split("\n#[test]", 1)[0]
@@ -174,7 +174,7 @@ def check_manifest(manifest: dict, ledger: str, inventory, pdf_root: Path | None
         for name, ids in sections.items()
     ):
         fail("reference-name snapshot has invalid sections")
-    product_docs = (ROOT / "docs/sim_features.md").read_text()
+    product_docs = (ROOT / "docs/sim_features.md").read_text(encoding="utf-8")
     addendum_names = set(sections)
     if addendum_names != set(source_names["ADDENDUM"]):
         fail("reference-name snapshot differs from assignment source names")
@@ -326,8 +326,8 @@ def main() -> None:
     parser.add_argument("--pdf-root", type=Path)
     parser.add_argument("--reference-addendum", type=Path)
     args = parser.parse_args()
-    manifest = json.loads((ROOT / "tests/syn038_annex_assignments.json").read_text())
-    ledger = (ROOT / "tests/syn038_coverage_ledger.md").read_text()
+    manifest = json.loads((ROOT / "tests/syn038_annex_assignments.json").read_text(encoding="utf-8"))
+    ledger = (ROOT / "tests/syn038_coverage_ledger.md").read_text(encoding="utf-8")
     counts = check_manifest(manifest, ledger, load_inventory_module(), args.pdf_root,
                             args.reference_addendum)
     print(f"SYN-038 Annex assignments: {sum(counts.values())} names, " + ", ".join(f"{name}={counts[name]}" for name in sorted(counts)))

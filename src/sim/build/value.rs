@@ -24,7 +24,7 @@ fn gmp_input(opts: &CmakeBuildOpts) -> Result<Option<GmpInput>, BuildError> {
                 "compact GMP kernels require GMP_ROOT (include/gmp.h and lib/libgmp)".into(),
             )
         })?;
-    let root = root.canonicalize().map_err(|error| {
+    let root = crate::ffi::platform::canonicalize(&root).map_err(|error| {
         BuildError::InvalidValueConfig(format!("invalid GMP_ROOT {}: {error}", root.display()))
     })?;
     let header = root.join("include/gmp.h");
@@ -48,7 +48,7 @@ fn gmp_input(opts: &CmakeBuildOpts) -> Result<Option<GmpInput>, BuildError> {
     })?;
     let mut hash = 0xcbf29ce484222325u64;
     for path in [&header, &library] {
-        let canonical = path.canonicalize().map_err(|error| {
+        let canonical = crate::ffi::platform::canonicalize(path).map_err(|error| {
             BuildError::InvalidValueConfig(format!("missing GMP input {}: {error}", path.display()))
         })?;
         if !canonical.starts_with(&root) {

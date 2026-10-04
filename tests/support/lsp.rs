@@ -1,5 +1,5 @@
 use std::io::{self, BufRead, BufReader, Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::thread;
@@ -447,16 +447,19 @@ impl Drop for LspProcess {
     }
 }
 
+/// The `file:` URI an editor sends for `path` (`file:///C:/...` on Windows).
 pub(crate) fn file_uri(path: &Path) -> String {
-    let mut uri = String::from("file://");
-    for byte in path.to_string_lossy().bytes() {
-        if byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'-' | b'_' | b'.' | b'~' | b':') {
-            uri.push(byte as char);
-        } else {
-            uri.push_str(&format!("%{byte:02X}"));
-        }
-    }
-    uri
+    tower_lsp::lsp_types::Url::from_file_path(path)
+        .unwrap_or_else(|()| panic!("{} is not an absolute file path", path.display()))
+        .to_string()
+}
+
+/// The local path a `file:` URI names; the inverse of [`file_uri`].
+pub(crate) fn uri_path(uri: &str) -> Option<PathBuf> {
+    tower_lsp::lsp_types::Url::parse(uri)
+        .ok()?
+        .to_file_path()
+        .ok()
 }
 
 /// The default client-to-server initialization payload: protocol v1 with no

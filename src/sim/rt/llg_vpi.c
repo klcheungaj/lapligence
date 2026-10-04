@@ -7,11 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#if defined(_WIN32)
-#include <windows.h>
-#else
-#include <dlfcn.h>
-#endif
+#include "llg_platform_native.h"
 
 #define LLG_VPI_MAX_OBJECTS 16384
 #define LLG_VPI_MAX_REGISTRATIONS 256
@@ -109,11 +105,7 @@ typedef struct {
     char error_code[64];
     char error_file[256];
     char error_product[32];
-#if defined(_WIN32)
-    HMODULE plugin_handles[16];
-#else
-    void* plugin_handles[16];
-#endif
+    llg_dl_t plugin_handles[16];
     int plugin_count;
     llg_vpi_call_t* active_call;
     llg_vpi_callsite_t* callsites;
@@ -430,30 +422,20 @@ static int load_one_plugin(const char* path) {
         vpi_set_error(vpiPLI, vpiError, "LLG_VPI_PLUGIN", "empty or excessive VPI plugin path");
         return 0;
     }
-#if defined(_WIN32)
-    HMODULE module = LoadLibraryA(path);
+    llg_dl_t module = llg_dl_open(path);
     if (!module) {
-        vpi_set_errorf(vpiPLI, vpiError, "LLG_VPI_PLUGIN", "cannot load VPI plugin `%s`", path);
+        const char* loader_error = llg_dl_error();
+        if (loader_error)
+            vpi_set_errorf(vpiPLI, vpiError, "LLG_VPI_PLUGIN", "cannot load VPI plugin `%s`: %s",
+                           path, loader_error);
+        else
+            vpi_set_errorf(vpiPLI, vpiError, "LLG_VPI_PLUGIN", "cannot load VPI plugin `%s`", path);
         return 0;
     }
-    void (**startup)(void) = (void (**)(void))GetProcAddress(module, "vlog_startup_routines");
-#else
-    void* module = dlopen(path, RTLD_NOW | RTLD_GLOBAL);
-    if (!module) {
-        const char* loader_error = dlerror();
-        vpi_set_errorf(vpiPLI, vpiError, "LLG_VPI_PLUGIN", "cannot load VPI plugin `%s`: %s", path,
-                       loader_error ? loader_error : "unknown loader error");
-        return 0;
-    }
-    void (**startup)(void) = (void (**)(void))dlsym(module, "vlog_startup_routines");
-#endif
+    void (**startup)(void) = (void (**)(void))llg_dl_symbol(module, "vlog_startup_routines");
     if (!startup) {
         vpi_set_errorf(vpiPLI, vpiError, "LLG_VPI_PLUGIN", "VPI plugin `%s` exports no startup table", path);
-#if defined(_WIN32)
-        FreeLibrary(module);
-#else
-        dlclose(module);
-#endif
+        llg_dl_close(module);
         return 0;
     }
     g_vpi.plugin_handles[g_vpi.plugin_count++] = module;
@@ -468,11 +450,7 @@ static int load_one_plugin(const char* path) {
     if (!terminated) {
         --g_vpi.plugin_count;
         vpi_set_error(vpiPLI, vpiError, "LLG_VPI_PLUGIN", "VPI startup table exceeds 1024 entries");
-#if defined(_WIN32)
-        FreeLibrary(module);
-#else
-        dlclose(module);
-#endif
+        llg_dl_close(module);
         return 0;
     }
     g_vpi.startup_loaded = 1;
@@ -497,11 +475,7 @@ int llg_vpi_startup(void) {
         memcpy(buffer, paths, length + 1);
         char* cursor = buffer;
         while (cursor && *cursor) {
-#if defined(_WIN32)
-            char* next = strchr(cursor, ';');
-#else
-            char* next = strchr(cursor, ':');
-#endif
+            char* next = strchr(cursor, LLG_PATH_LIST_SEPARATOR);
             if (next) *next++ = '\0';
             if (!load_one_plugin(cursor)) return 0;
             cursor = next;
@@ -1492,11 +1466,7 @@ void llg_vpi_shutdown(void) {
     }
     free(g_vpi.value_vector);
     free(g_vpi.value_text);
-#if defined(_WIN32)
-    for (int i = 0; i < g_vpi.plugin_count; ++i) FreeLibrary(g_vpi.plugin_handles[i]);
-#else
-    for (int i = 0; i < g_vpi.plugin_count; ++i) dlclose(g_vpi.plugin_handles[i]);
-#endif
+    for (int i = 0; i < g_vpi.plugin_count; ++i) llg_dl_close(g_vpi.plugin_handles[i]);
     memset(&g_vpi, 0, sizeof(g_vpi));
 }
 

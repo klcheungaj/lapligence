@@ -294,6 +294,7 @@ pub fn rename(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_paths::host_path as hp;
     use llg::core::model::{DesignModel, Direction, InstanceModel, ModuleDef, PortModel, TypeInfo};
     use llg::core::tokens::{self, FileTokens, TokenInfo};
 
@@ -366,7 +367,7 @@ mod tests {
                 // the index, so it must not become a rename target.
                 (3, 1, 900_001, "module"),
             ],
-            "/x/ren.sv",
+            hp("/x/ren.sv"),
         );
         let top_file = mk(
             vec![
@@ -384,7 +385,7 @@ mod tests {
                     "u0",
                 ),
             ],
-            "/x/top.sv",
+            hp("/x/top.sv"),
         );
 
         let port = |name: &str, dir: Direction| PortModel {
@@ -403,7 +404,7 @@ mod tests {
                 name: "tb".to_owned(),
                 def_name: "m".to_owned(),
                 full_name: "tb".to_owned(),
-                file: Some("/x/ren.sv".to_owned()),
+                file: Some(hp("/x/ren.sv").to_owned()),
                 line: 9,
                 col: 1,
                 ports: vec![
@@ -419,7 +420,7 @@ mod tests {
             modules: vec![
                 ModuleDef {
                     name: "m".to_owned(),
-                    file: Some("/x/ren.sv".to_owned()),
+                    file: Some(hp("/x/ren.sv").to_owned()),
                     line: 1,
                     col: 8,
                     end_line: 3,
@@ -427,7 +428,7 @@ mod tests {
                 },
                 ModuleDef {
                     name: "top".to_owned(),
-                    file: Some("/x/top.sv".to_owned()),
+                    file: Some(hp("/x/top.sv").to_owned()),
                     line: 4,
                     col: 8,
                     end_line: 6,
@@ -484,7 +485,7 @@ mod tests {
     fn prepare_rename_returns_range_and_placeholder_on_declaration() {
         let a = prefix_analysis();
         let (range, placeholder) =
-            prepare_rename(&a, "/x/ren.sv", 0, 23).expect("port decl is renamable");
+            prepare_rename(&a, hp("/x/ren.sv"), 0, 23).expect("port decl is renamable");
         assert_eq!(placeholder, "data");
         assert_eq!(range.start, Position::new(0, 21));
         assert_eq!(range.end, Position::new(0, 25));
@@ -494,7 +495,7 @@ mod tests {
     fn prepare_rename_works_from_a_reference_site() {
         let a = prefix_analysis();
         let (_, placeholder) =
-            prepare_rename(&a, "/x/ren.sv", 1, 22).expect("ref site is renamable");
+            prepare_rename(&a, hp("/x/ren.sv"), 1, 22).expect("ref site is renamable");
         assert_eq!(placeholder, "data");
     }
 
@@ -502,22 +503,22 @@ mod tests {
     fn prepare_rename_rejects_keywords_and_unindexed_positions() {
         let a = prefix_analysis();
         // The keyword token itself.
-        assert!(prepare_rename(&a, "/x/ren.sv", 2, 3).is_none());
+        assert!(prepare_rename(&a, hp("/x/ren.sv"), 2, 3).is_none());
         // Anywhere off-symbol.
-        assert!(prepare_rename(&a, "/x/ren.sv", 20, 0).is_none());
+        assert!(prepare_rename(&a, hp("/x/ren.sv"), 20, 0).is_none());
     }
 
     #[test]
     fn rename_replaces_exactly_the_identifier_spans_across_files() {
         let a = prefix_analysis();
         // Rename the PORT `data` from its declaration.
-        let edit = rename(&a, "/x/ren.sv", 0, 21, "din")
+        let edit = rename(&a, hp("/x/ren.sv"), 0, 21, "din")
             .expect("valid name")
             .expect("occurrences exist");
         let changes = edit.changes.expect("plain changes map");
 
         let ren_edits = changes
-            .get(&Url::from_file_path("/x/ren.sv").unwrap())
+            .get(&Url::from_file_path(hp("/x/ren.sv")).unwrap())
             .expect("edits in /x/ren.sv");
         assert_eq!(ren_edits.len(), 2, "decl + one use in ren.sv");
         assert_eq!(
@@ -533,7 +534,7 @@ mod tests {
         }
 
         // Prefix-collision safety: `data_out` keeps its own occurrences.
-        let top_edits = changes.get(&Url::from_file_path("/x/top.sv").unwrap());
+        let top_edits = changes.get(&Url::from_file_path(hp("/x/top.sv")).unwrap());
         assert!(top_edits.is_none(), "renaming `data` must not touch top.sv");
     }
 
@@ -542,12 +543,12 @@ mod tests {
         let a = prefix_analysis();
         // Same request from the USE site of `data` (line 1): the `data_out`
         // use on the very same line must stay untouched.
-        let edit = rename(&a, "/x/ren.sv", 1, 22, "din")
+        let edit = rename(&a, hp("/x/ren.sv"), 1, 22, "din")
             .expect("valid name")
             .expect("occurrences exist");
         let changes = edit.changes.unwrap();
         let edits = changes
-            .get(&Url::from_file_path("/x/ren.sv").unwrap())
+            .get(&Url::from_file_path(hp("/x/ren.sv")).unwrap())
             .unwrap();
         for edit in edits {
             let start = edit.range.start;
@@ -562,13 +563,13 @@ mod tests {
     #[test]
     fn rename_of_module_covers_instantiation_type_names() {
         let a = prefix_analysis();
-        let edit = rename(&a, "/x/ren.sv", 0, 7, "m2")
+        let edit = rename(&a, hp("/x/ren.sv"), 0, 7, "m2")
             .expect("valid name")
             .expect("module occurrences exist");
         let changes = edit.changes.unwrap();
 
         let ren_edits = changes
-            .get(&Url::from_file_path("/x/ren.sv").unwrap())
+            .get(&Url::from_file_path(hp("/x/ren.sv")).unwrap())
             .expect("module decl edit");
         assert_eq!(ren_edits.len(), 1);
         assert_eq!(
@@ -577,7 +578,7 @@ mod tests {
         );
 
         let top_edits = changes
-            .get(&Url::from_file_path("/x/top.sv").unwrap())
+            .get(&Url::from_file_path(hp("/x/top.sv")).unwrap())
             .expect("type-name ref edit");
         assert_eq!(top_edits.len(), 1);
         assert_eq!(
@@ -590,7 +591,7 @@ mod tests {
     fn rename_rejects_invalid_new_names() {
         let a = prefix_analysis();
         for bad in ["1abc", "a-b", "", "clk#"] {
-            let err = rename(&a, "/x/ren.sv", 0, 21, bad).expect_err(bad);
+            let err = rename(&a, hp("/x/ren.sv"), 0, 21, bad).expect_err(bad);
             assert!(
                 err.to_string().contains(bad),
                 "error should name the offender: {err}"
@@ -602,7 +603,7 @@ mod tests {
     fn rename_rejects_keywords_with_a_clear_error() {
         let a = prefix_analysis();
         for keyword in ["module", "always_comb", "wire", "default"] {
-            let err = rename(&a, "/x/ren.sv", 0, 21, keyword).expect_err(keyword);
+            let err = rename(&a, hp("/x/ren.sv"), 0, 21, keyword).expect_err(keyword);
             assert!(
                 err.to_string().contains("is a SystemVerilog keyword"),
                 "error should say why: {err}"
@@ -619,7 +620,7 @@ mod tests {
         let a = prefix_analysis();
         // Keyword position: Ok(None).
         assert!(matches!(
-            rename(&a, "/x/ren.sv", 2, 3, "whatever"),
+            rename(&a, hp("/x/ren.sv"), 2, 3, "whatever"),
             Ok(None)
         ));
     }

@@ -101,7 +101,7 @@ def main():
             if path.suffix not in suffixes:
                 continue
             relative = path.relative_to(ROOT / 'src/sim')
-            if folder == 'rt' and (relative.parts[1] in ('value', 'value_gmp', 'gtkwave') or
+            if folder == 'rt' and (relative.parts[1] in ('value', 'value_gmp') or
                                    path.name.startswith('llg_value')):
                 continue
             scanned += 1

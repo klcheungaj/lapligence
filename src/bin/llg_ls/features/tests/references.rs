@@ -5,7 +5,7 @@ use super::*;
 #[test]
 fn references_include_declaration() {
     let a = sample_analysis();
-    let refs = references_at(&a, "/x/top.sv", 0, 4);
+    let refs = references_at(&a, hp("/x/top.sv"), 0, 4);
     assert!(refs
         .iter()
         .any(|l| l.range.start.line == 0 && l.range.start.character == 4));
@@ -14,16 +14,16 @@ fn references_include_declaration() {
 #[test]
 fn references_options_include_declaration_preserves_existing_results() {
     let a = cross_file_analysis();
-    let existing = references_at(&a, "/x/a.sv", 0, 7);
-    let with_option = references_at_with_options(&a, "/x/a.sv", 0, 7, true);
+    let existing = references_at(&a, hp("/x/a.sv"), 0, 7);
+    let with_option = references_at_with_options(&a, hp("/x/a.sv"), 0, 7, true);
 
     assert_eq!(with_option, existing);
     assert!(with_option.iter().any(|location| {
-        location.uri == Url::from_file_path("/x/a.sv").unwrap()
+        location.uri == Url::from_file_path(hp("/x/a.sv")).unwrap()
             && location.range.start == Position::new(0, 7)
     }));
     assert!(with_option.iter().any(|location| {
-        location.uri == Url::from_file_path("/x/b.sv").unwrap()
+        location.uri == Url::from_file_path(hp("/x/b.sv")).unwrap()
             && location.range.start == Position::new(0, 12)
     }));
 }
@@ -31,14 +31,14 @@ fn references_options_include_declaration_preserves_existing_results() {
 #[test]
 fn references_options_exclude_indexed_declaration() {
     let a = cross_file_analysis();
-    let refs = references_at_with_options(&a, "/x/a.sv", 0, 7, false);
+    let refs = references_at_with_options(&a, hp("/x/a.sv"), 0, 7, false);
 
     assert!(!refs.iter().any(|location| {
-        location.uri == Url::from_file_path("/x/a.sv").unwrap()
+        location.uri == Url::from_file_path(hp("/x/a.sv")).unwrap()
             && location.range.start == Position::new(0, 7)
     }));
     assert!(refs.iter().any(|location| {
-        location.uri == Url::from_file_path("/x/b.sv").unwrap()
+        location.uri == Url::from_file_path(hp("/x/b.sv")).unwrap()
             && location.range.start == Position::new(0, 12)
     }));
 }
@@ -52,13 +52,13 @@ fn references_options_filter_explicit_slang_declaration() {
         end_col: 7,
         kind: ty,
         name: Some("thing".to_owned()),
-        file: "/x/fallback.sv".to_owned(),
+        file: hp("/x/fallback.sv").to_owned(),
     };
     let a = Analysis::new(
         Vec::new(),
         empty_design(),
         vec![FileTokens {
-            path: "/x/fallback.sv".to_owned(),
+            path: hp("/x/fallback.sv").to_owned(),
             nodes: vec![
                 node(
                     1,
@@ -72,10 +72,10 @@ fn references_options_filter_explicit_slang_declaration() {
 
     assert!(a
         .index
-        .entry_at("/x/fallback.sv", 0, 0)
+        .entry_at(hp("/x/fallback.sv"), 0, 0)
         .is_some_and(|entry| entry.is_decl));
-    let with_declaration = references_at_with_options(&a, "/x/fallback.sv", 0, 0, true);
-    let without_declaration = references_at_with_options(&a, "/x/fallback.sv", 0, 0, false);
+    let with_declaration = references_at_with_options(&a, hp("/x/fallback.sv"), 0, 0, true);
+    let without_declaration = references_at_with_options(&a, hp("/x/fallback.sv"), 0, 0, false);
 
     assert_eq!(with_declaration.len(), 2);
     assert_eq!(without_declaration.len(), 1);

@@ -5,6 +5,8 @@
 
 use std::path::{Path, PathBuf};
 
+#[path = "build_support/host_platform.rs"]
+mod host_platform;
 #[path = "build_support/vendor_patches.rs"]
 mod vendor_patches;
 
@@ -35,8 +37,11 @@ fn emit_rerun_if_changed() {
         "src/wrapper/slang/CMakeLists.txt",
         "src/wrapper/slang_c_api.cpp",
         "src/wrapper/slang_c_api.h",
+        "src/wrapper/slang_platform.cpp",
+        "src/wrapper/slang_platform.hpp",
         "scripts/sccache.sh",
         "build_support/compiler_cache.rs",
+        "build_support/host_platform.rs",
         "vendor/slang/CMakeLists.txt",
         "vendor/slang/cmake",
         "vendor/slang/external",
@@ -413,5 +418,10 @@ fn main() {
     vendor_patches::emit_rerun_if_changed(&manifest_dir);
     vendor_patches::apply_all(&manifest_dir)
         .unwrap_or_else(|error| panic!("vendor patch preparation failed: {error}"));
+    let out_dir = PathBuf::from(
+        std::env::var_os("OUT_DIR").expect("Cargo must set OUT_DIR for the build script"),
+    );
+    vendor_patches::render_libfst(&manifest_dir, &out_dir.join("libfst"))
+        .unwrap_or_else(|error| panic!("libfst patch preparation failed: {error}"));
     build_slang(&manifest_dir);
 }

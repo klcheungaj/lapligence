@@ -52,7 +52,7 @@ FetchContent_Declare(
 
 add_subdirectory("${LLG_SLANG_SOURCE_DIR}" slang)
 
-add_library(llg_slang_wrapper STATIC ../slang_c_api.cpp)
+add_library(llg_slang_wrapper STATIC ../slang_c_api.cpp ../slang_platform.cpp)
 target_include_directories(llg_slang_wrapper PUBLIC ..)
 target_link_libraries(llg_slang_wrapper PRIVATE slang::slang)
 target_compile_features(llg_slang_wrapper PRIVATE cxx_std_20)

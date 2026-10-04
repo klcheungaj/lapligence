@@ -5,8 +5,8 @@ use super::*;
 #[test]
 fn definition_on_instance_resolves_to_module_def() {
     let a = sample_analysis();
-    let loc = definition_at(&a, "/x/top.sv", 0, 19).expect("definition of u0");
-    assert_eq!(loc.uri, Url::from_file_path("/x/top.sv").unwrap());
+    let loc = definition_at(&a, hp("/x/top.sv"), 0, 19).expect("definition of u0");
+    assert_eq!(loc.uri, Url::from_file_path(hp("/x/top.sv")).unwrap());
     assert_eq!(loc.range.start.line, 0);
     assert_eq!(loc.range.start.character, 7); // module m at col 8 → 0-based 7
 }
@@ -14,7 +14,7 @@ fn definition_on_instance_resolves_to_module_def() {
 #[test]
 fn definition_on_module_name_resolves_in_place() {
     let a = sample_analysis();
-    let loc = definition_at(&a, "/x/top.sv", 0, 7).expect("definition of m");
+    let loc = definition_at(&a, hp("/x/top.sv"), 0, 7).expect("definition of m");
     assert_eq!(loc.range.start.line, 0);
     assert_eq!(loc.range.start.character, 7);
 }
@@ -26,11 +26,11 @@ fn definition_at_bound_position_serves_the_semantic_binding_target() {
     // over the index (which would resolve the instance to /x/top.sv).
     let mut bindings: RefBindings = HashMap::new();
     bindings.insert(
-        ("/x/top.sv".to_owned(), 0, 19),
+        (hp("/x/top.sv").to_owned(), 0, 19),
         DeclTarget {
             name: "u0".to_owned(),
             kind: "module".to_owned(),
-            file: "/x/bound.sv".to_owned(),
+            file: hp("/x/bound.sv").to_owned(),
             line0: 4,
             col0: 2,
             via_label: false,
@@ -38,8 +38,8 @@ fn definition_at_bound_position_serves_the_semantic_binding_target() {
         },
     );
     let a = sample_analysis_with_bindings(bindings);
-    let loc = definition_at(&a, "/x/top.sv", 0, 19).expect("binding-precise definition");
-    assert_eq!(loc.uri, Url::from_file_path("/x/bound.sv").unwrap());
+    let loc = definition_at(&a, hp("/x/top.sv"), 0, 19).expect("binding-precise definition");
+    assert_eq!(loc.uri, Url::from_file_path(hp("/x/bound.sv")).unwrap());
     assert_eq!(loc.range.start, Position::new(4, 2));
     // Same identifier-width range convention as `entry_location`: the
     // range spans exactly the target name.
@@ -51,8 +51,8 @@ fn definition_at_unbound_position_falls_back_to_index_resolution() {
     let a = sample_analysis_with_bindings(HashMap::new());
     // (0,19) is the `u0` instance declaration; with no binding for the
     // position the index resolves the instance to its module definition.
-    let loc = definition_at(&a, "/x/top.sv", 0, 19).expect("fallback definition");
-    assert_eq!(loc.uri, Url::from_file_path("/x/top.sv").unwrap());
+    let loc = definition_at(&a, hp("/x/top.sv"), 0, 19).expect("fallback definition");
+    assert_eq!(loc.uri, Url::from_file_path(hp("/x/top.sv")).unwrap());
     assert_eq!(loc.range.start, Position::new(0, 7));
 }
 
@@ -64,11 +64,11 @@ fn port_labels_join_ref_bindings_in_new_with_outcome() {
     // declarations in /x/a.sv.
     let clk = a
         .ref_bindings
-        .get(&("/x/b.sv".to_owned(), 1, 3))
+        .get(&(hp("/x/b.sv").to_owned(), 1, 3))
         .expect("clk label binding");
     assert_eq!(clk.name, "clk");
     assert_eq!(clk.kind, "port");
-    assert_eq!(clk.file, "/x/a.sv");
+    assert_eq!(clk.file, hp("/x/a.sv"));
     assert_eq!((clk.line0, clk.col0), (0, 23));
     assert!(
         clk.via_label,
@@ -76,14 +76,14 @@ fn port_labels_join_ref_bindings_in_new_with_outcome() {
     );
     let o = a
         .ref_bindings
-        .get(&("/x/b.sv".to_owned(), 2, 3))
+        .get(&(hp("/x/b.sv").to_owned(), 2, 3))
         .expect("o label binding");
     assert_eq!(o.name, "o");
     assert_eq!(o.kind, "port");
-    assert_eq!(o.file, "/x/a.sv");
+    assert_eq!(o.file, hp("/x/a.sv"));
     // Definition at the bound label positions serves the folded targets.
-    let loc = definition_at(&a, "/x/b.sv", 1, 3).expect("definition of .clk label");
-    assert_eq!(loc.uri, Url::from_file_path("/x/a.sv").unwrap());
+    let loc = definition_at(&a, hp("/x/b.sv"), 1, 3).expect("definition of .clk label");
+    assert_eq!(loc.uri, Url::from_file_path(hp("/x/a.sv")).unwrap());
     assert_eq!(loc.range.start, Position::new(0, 23), "loc: {loc:?}");
 }
 
@@ -95,7 +95,7 @@ fn merged_ref_bindings_prefers_semantic_targets_on_collision() {
     index.decls.push(SymEntry {
         name: "clk".to_owned(),
         kind: SymKind::Port,
-        file: "/x/child.sv".to_owned(),
+        file: hp("/x/child.sv").to_owned(),
         line: 3,
         col: 4,
         end_line: 3,
@@ -104,19 +104,21 @@ fn merged_ref_bindings_prefers_semantic_targets_on_collision() {
         scope: None,
         detail: None,
     });
-    index.port_labels.insert(("/x/top.sv".to_owned(), 8, 9), 0);
     index
         .port_labels
-        .insert(("/x/top.sv".to_owned(), 10, 11), 0);
+        .insert((hp("/x/top.sv").to_owned(), 8, 9), 0);
+    index
+        .port_labels
+        .insert((hp("/x/top.sv").to_owned(), 10, 11), 0);
 
     let mut semantic: RefBindings = HashMap::new();
     // Overlaps the (8,9) port-label entry with a different target...
     semantic.insert(
-        ("/x/top.sv".to_owned(), 8, 9),
+        (hp("/x/top.sv").to_owned(), 8, 9),
         DeclTarget {
             name: "clk".to_owned(),
             kind: "net".to_owned(),
-            file: "/x/elab.sv".to_owned(),
+            file: hp("/x/elab.sv").to_owned(),
             line0: 6,
             col0: 1,
             via_label: false,
@@ -125,11 +127,11 @@ fn merged_ref_bindings_prefers_semantic_targets_on_collision() {
     );
     // ...and adds a position the label heuristic never saw.
     semantic.insert(
-        ("/x/top.sv".to_owned(), 20, 21),
+        (hp("/x/top.sv").to_owned(), 20, 21),
         DeclTarget {
             name: "rst".to_owned(),
             kind: "net".to_owned(),
-            file: "/x/elab.sv".to_owned(),
+            file: hp("/x/elab.sv").to_owned(),
             line0: 12,
             col0: 2,
             via_label: false,
@@ -145,20 +147,20 @@ fn merged_ref_bindings_prefers_semantic_targets_on_collision() {
     );
     assert_eq!(
         merged
-            .get(&("/x/top.sv".to_owned(), 8, 9))
+            .get(&(hp("/x/top.sv").to_owned(), 8, 9))
             .map(|t| t.file.as_str()),
-        Some("/x/elab.sv"),
+        Some(hp("/x/elab.sv")),
         "semantic binding must win on collision"
     );
     let label_only = merged
-        .get(&("/x/top.sv".to_owned(), 10, 11))
+        .get(&(hp("/x/top.sv").to_owned(), 10, 11))
         .expect("disjoint port-label entry survives");
     assert_eq!(
         (label_only.file.as_str(), label_only.line0, label_only.col0),
-        ("/x/child.sv", 3, 4)
+        (hp("/x/child.sv"), 3, 4)
     );
     let semantic_only = merged
-        .get(&("/x/top.sv".to_owned(), 20, 21))
+        .get(&(hp("/x/top.sv").to_owned(), 20, 21))
         .expect("semantic-only entry survives");
     assert_eq!(semantic_only.name, "rst");
 }
@@ -176,7 +178,7 @@ fn connection_pairs_bind_actuals_to_the_parent_scope_declaration() {
     index.decls.push(SymEntry {
         name: "clk".to_owned(),
         kind: SymKind::Port,
-        file: "/x/child.sv".to_owned(),
+        file: hp("/x/child.sv").to_owned(),
         line: 3,
         col: 4,
         end_line: 3,
@@ -189,7 +191,7 @@ fn connection_pairs_bind_actuals_to_the_parent_scope_declaration() {
     index.decls.push(SymEntry {
         name: "wa".to_owned(),
         kind: SymKind::Net,
-        file: "/x/top.sv".to_owned(),
+        file: hp("/x/top.sv").to_owned(),
         line: 1,
         col: 2,
         end_line: 1,
@@ -202,7 +204,7 @@ fn connection_pairs_bind_actuals_to_the_parent_scope_declaration() {
     index.decls.push(SymEntry {
         name: "wa".to_owned(),
         kind: SymKind::Net,
-        file: "/x/top.sv".to_owned(),
+        file: hp("/x/top.sv").to_owned(),
         line: 6,
         col: 2,
         end_line: 6,
@@ -211,7 +213,9 @@ fn connection_pairs_bind_actuals_to_the_parent_scope_declaration() {
         scope: Some("parent".to_owned()),
         detail: None,
     });
-    index.port_labels.insert(("/x/top.sv".to_owned(), 8, 9), 0);
+    index
+        .port_labels
+        .insert((hp("/x/top.sv").to_owned(), 8, 9), 0);
 
     let model = DesignModel {
         design_name: "top".to_owned(),
@@ -219,7 +223,7 @@ fn connection_pairs_bind_actuals_to_the_parent_scope_declaration() {
         modules: vec![
             ModuleDef {
                 name: "other".to_owned(),
-                file: Some("/x/top.sv".to_owned()),
+                file: Some(hp("/x/top.sv").to_owned()),
                 line: 1,
                 col: 1,
                 end_line: 3,
@@ -227,7 +231,7 @@ fn connection_pairs_bind_actuals_to_the_parent_scope_declaration() {
             },
             ModuleDef {
                 name: "parent".to_owned(),
-                file: Some("/x/top.sv".to_owned()),
+                file: Some(hp("/x/top.sv").to_owned()),
                 line: 5,
                 col: 1,
                 end_line: 20,
@@ -241,7 +245,7 @@ fn connection_pairs_bind_actuals_to_the_parent_scope_declaration() {
     let connections = ConnectionInputs {
         parse_decls: None,
         pairs: vec![NamedPortConn {
-            file: "/x/top.sv".to_owned(),
+            file: hp("/x/top.sv").to_owned(),
             label: (9, 10),
             label_name: "clk".to_owned(),
             kind: ConnKind::Port,
@@ -254,20 +258,20 @@ fn connection_pairs_bind_actuals_to_the_parent_scope_declaration() {
     };
     let merged = merged_ref_bindings(&index, &model, HashMap::new(), &connections);
     let label = merged
-        .get(&("/x/top.sv".to_owned(), 8, 9))
+        .get(&(hp("/x/top.sv").to_owned(), 8, 9))
         .expect("label binding");
     assert_eq!(
         (label.file.as_str(), label.line0, label.col0),
-        ("/x/child.sv", 3, 4),
+        (hp("/x/child.sv"), 3, 4),
         "the label must still navigate to the CHILD port"
     );
     assert!(label.via_label && !label.via_connection);
     let actual = merged
-        .get(&("/x/top.sv".to_owned(), 8, 12))
+        .get(&(hp("/x/top.sv").to_owned(), 8, 12))
         .expect("actual binding");
     assert_eq!(
         (actual.file.as_str(), actual.line0, actual.col0),
-        ("/x/top.sv", 6, 2),
+        (hp("/x/top.sv"), 6, 2),
         "the actual must navigate to its parent-scope declaration"
     );
     assert_eq!(actual.name, "wa");
@@ -283,7 +287,7 @@ fn connection_actual_fold_never_overrides_an_explicit_binding() {
     index.decls.push(SymEntry {
         name: "wa".to_owned(),
         kind: SymKind::Net,
-        file: "/x/top.sv".to_owned(),
+        file: hp("/x/top.sv").to_owned(),
         line: 1,
         col: 2,
         end_line: 1,
@@ -295,7 +299,7 @@ fn connection_actual_fold_never_overrides_an_explicit_binding() {
     index.decls.push(SymEntry {
         name: "clk".to_owned(),
         kind: SymKind::Port,
-        file: "/x/child.sv".to_owned(),
+        file: hp("/x/child.sv").to_owned(),
         line: 3,
         col: 4,
         end_line: 3,
@@ -304,15 +308,17 @@ fn connection_actual_fold_never_overrides_an_explicit_binding() {
         scope: None,
         detail: None,
     });
-    index.port_labels.insert(("/x/top.sv".to_owned(), 8, 9), 0);
+    index
+        .port_labels
+        .insert((hp("/x/top.sv").to_owned(), 8, 9), 0);
 
     let mut semantic: RefBindings = HashMap::new();
     semantic.insert(
-        ("/x/top.sv".to_owned(), 8, 12),
+        (hp("/x/top.sv").to_owned(), 8, 12),
         DeclTarget {
             name: "wa".to_owned(),
             kind: "net".to_owned(),
-            file: "/x/elab.sv".to_owned(),
+            file: hp("/x/elab.sv").to_owned(),
             line0: 6,
             col0: 1,
             via_label: false,
@@ -323,7 +329,7 @@ fn connection_actual_fold_never_overrides_an_explicit_binding() {
     let connections = ConnectionInputs {
         parse_decls: None,
         pairs: vec![NamedPortConn {
-            file: "/x/top.sv".to_owned(),
+            file: hp("/x/top.sv").to_owned(),
             label: (9, 10),
             label_name: "clk".to_owned(),
             kind: ConnKind::Port,
@@ -336,11 +342,11 @@ fn connection_actual_fold_never_overrides_an_explicit_binding() {
     };
     let merged = merged_ref_bindings(&index, &empty_design(), semantic, &connections);
     let kept = merged
-        .get(&("/x/top.sv".to_owned(), 8, 12))
+        .get(&(hp("/x/top.sv").to_owned(), 8, 12))
         .expect("pre-existing binding survives");
     assert_eq!(
         (kept.file.as_str(), kept.line0, kept.col0),
-        ("/x/elab.sv", 6, 1),
+        (hp("/x/elab.sv"), 6, 1),
         "existing explicit binding must win at the actual position"
     );
     assert!(!kept.via_connection);
@@ -354,7 +360,7 @@ fn connection_actual_without_parent_scope_candidate_stays_unbound() {
     index.decls.push(SymEntry {
         name: "clk".to_owned(),
         kind: SymKind::Port,
-        file: "/x/child.sv".to_owned(),
+        file: hp("/x/child.sv").to_owned(),
         line: 3,
         col: 4,
         end_line: 3,
@@ -363,12 +369,14 @@ fn connection_actual_without_parent_scope_candidate_stays_unbound() {
         scope: None,
         detail: None,
     });
-    index.port_labels.insert(("/x/top.sv".to_owned(), 8, 9), 0);
+    index
+        .port_labels
+        .insert((hp("/x/top.sv").to_owned(), 8, 9), 0);
 
     let connections = ConnectionInputs {
         parse_decls: None,
         pairs: vec![NamedPortConn {
-            file: "/x/top.sv".to_owned(),
+            file: hp("/x/top.sv").to_owned(),
             label: (9, 10),
             label_name: "clk".to_owned(),
             kind: ConnKind::Port,
@@ -380,8 +388,8 @@ fn connection_actual_without_parent_scope_candidate_stays_unbound() {
         ..ConnectionInputs::default()
     };
     let merged = merged_ref_bindings(&index, &empty_design(), HashMap::new(), &connections);
-    assert!(!merged.contains_key(&("/x/top.sv".to_owned(), 8, 12)));
-    assert!(merged.contains_key(&("/x/top.sv".to_owned(), 8, 9)));
+    assert!(!merged.contains_key(&(hp("/x/top.sv").to_owned(), 8, 12)));
+    assert!(merged.contains_key(&(hp("/x/top.sv").to_owned(), 8, 9)));
 }
 
 #[test]
@@ -400,38 +408,38 @@ fn port_label_synthesizes_missing_port_decl() {
         file: file.to_owned(),
     };
     let a_file = FileTokens {
-        path: "/x/a.sv".to_owned(),
+        path: hp("/x/a.sv").to_owned(),
         nodes: vec![node(
             1,
             8,
             tokens::TOKEN_SLANG_MODULE + tokens::TOKEN_DECLARATION_OFFSET,
             "m",
-            "/x/a.sv",
+            hp("/x/a.sv"),
         )],
     };
     let b_file = FileTokens {
-        path: "/x/b.sv".to_owned(),
+        path: hp("/x/b.sv").to_owned(),
         nodes: vec![
-            node(1, 13, tokens::TOKEN_SLANG_MODULE, "m", "/x/b.sv"),
+            node(1, 13, tokens::TOKEN_SLANG_MODULE, "m", hp("/x/b.sv")),
             node(
                 1,
                 15,
                 tokens::TOKEN_SLANG_IDENTIFIER + tokens::TOKEN_DECLARATION_OFFSET,
                 "u0",
-                "/x/b.sv",
+                hp("/x/b.sv"),
             ),
             node(
                 1,
                 19,
                 tokens::TOKEN_SLANG_PORT_CONNECTION_LABEL,
                 "clk",
-                "/x/b.sv",
+                hp("/x/b.sv"),
             ),
         ],
     };
     let module_m = ModuleDef {
         name: "m".to_owned(),
-        file: Some("/x/a.sv".to_owned()),
+        file: Some(hp("/x/a.sv").to_owned()),
         line: 1,
         col: 8,
         end_line: 1,
@@ -441,7 +449,7 @@ fn port_label_synthesizes_missing_port_decl() {
         name: "u0".to_owned(),
         def_name: "m".to_owned(),
         full_name: "top.u0".to_owned(),
-        file: Some("/x/b.sv".to_owned()),
+        file: Some(hp("/x/b.sv").to_owned()),
         line: 1,
         col: 15,
         ports: vec![PortModel {
@@ -464,7 +472,7 @@ fn port_label_synthesizes_missing_port_decl() {
         name: "top".to_owned(),
         def_name: "top".to_owned(),
         full_name: "top".to_owned(),
-        file: Some("/x/b.sv".to_owned()),
+        file: Some(hp("/x/b.sv").to_owned()),
         line: 1,
         col: 1,
         ports: Vec::new(),
@@ -482,8 +490,8 @@ fn port_label_synthesizes_missing_port_decl() {
         classes: Vec::new(),
     };
     let a = Analysis::new(Vec::new(), model, vec![a_file, b_file], Vec::new());
-    let loc = definition_at(&a, "/x/b.sv", 0, 18).expect("definition of .clk label");
-    assert_eq!(loc.uri, Url::from_file_path("/x/a.sv").unwrap());
+    let loc = definition_at(&a, hp("/x/b.sv"), 0, 18).expect("definition of .clk label");
+    assert_eq!(loc.uri, Url::from_file_path(hp("/x/a.sv")).unwrap());
     // module m at 1-based col 8 (0-based 7) + name len 1 + port index 0.
     assert_eq!(loc.range.start, Position::new(0, 8));
 }
@@ -493,6 +501,6 @@ fn index_is_built_by_analyze() {
     let a = empty_analysis();
     assert!(a.index.decls.is_empty());
     assert!(a.index.refs.is_empty());
-    assert!(a.index.entry_at("/nope.sv", 0, 0).is_none());
-    assert!(a.index.decls_in_file("/nope.sv").is_empty());
+    assert!(a.index.entry_at(hp("/nope.sv"), 0, 0).is_none());
+    assert!(a.index.decls_in_file(hp("/nope.sv")).is_empty());
 }

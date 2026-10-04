@@ -28,8 +28,8 @@ for key in ["TMPDIR", "LLG_TEST_BUILD_DIR", "LLG_RUNTIME_CACHE_DIR"]:
     if report[key]:
         directory = Path(report[key])
         directory.mkdir(parents=True, exist_ok=True)
-        (directory / "artifact").write_text("keep until run completes")
-Path(os.environ["LLG_RUNNER_REPORT"]).write_text(json.dumps(report))
+        (directory / "artifact").write_text("keep until run completes", encoding="utf-8")
+Path(os.environ["LLG_RUNNER_REPORT"]).write_text(json.dumps(report), encoding="utf-8")
 if "LLG_RUNNER_BARRIER" in os.environ:
     barrier = Path(os.environ["LLG_RUNNER_BARRIER"])
     (barrier / str(os.getpid())).touch()
@@ -52,7 +52,7 @@ class RunTestsTests(unittest.TestCase):
         self.bin = self.root / "bin"
         self.bin.mkdir()
         cargo = self.bin / "cargo"
-        cargo.write_text(FAKE_CARGO)
+        cargo.write_text(FAKE_CARGO, encoding="utf-8")
         cargo.chmod(0o755)
         self.env = os.environ.copy()
         for key in ["TMPDIR", "LLG_TEST_BUILD_DIR", "LLG_RUNTIME_CACHE_DIR",
@@ -77,7 +77,7 @@ class RunTestsTests(unittest.TestCase):
             ["bash", str(worktree / "scripts/run-tests.sh"), *args],
             cwd=self.root, env=env, capture_output=True, text=True, timeout=20,
         )
-        return result, json.loads(report.read_text()) if report.exists() else None
+        return result, json.loads(report.read_text(encoding="utf-8")) if report.exists() else None
 
     def test_default_preserves_environment_and_arguments(self):
         worktree = self.worktree("default")
@@ -103,7 +103,7 @@ class RunTestsTests(unittest.TestCase):
             "rustc": "echo 'host: x86_64-unknown-linux-gnu'",
         }.items():
             tool = self.bin / name
-            tool.write_text("#!/bin/sh\n" + body + "\n")
+            tool.write_text("#!/bin/sh\n" + body + "\n", encoding="utf-8")
             tool.chmod(0o755)
         args = ["--test", "sim_function", "--sccache", "--mold"]
         result, report = self.invoke(worktree, "accelerators", args, {"RUSTFLAGS": "keep-me"})
@@ -120,7 +120,7 @@ class RunTestsTests(unittest.TestCase):
         barrier = self.root / "barrier"
         barrier.mkdir()
         sentinel = self.storage / "unrelated"
-        sentinel.write_text("preserve")
+        sentinel.write_text("preserve", encoding="utf-8")
         args = ["--test-work-dir", "ram scratch", "--test-threads", "8"]
         with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
             tasks = [executor.submit(self.invoke, worktree, f"parallel-{index}", args, {
@@ -147,7 +147,7 @@ class RunTestsTests(unittest.TestCase):
         self.assertEqual(scratch[0].parent, scratch[4].parent)
         self.assertEqual(caches, {str(self.storage / "lapligence/runtime-cache")})
         self.assertTrue((Path(caches.pop()) / "artifact").is_file())
-        self.assertEqual(sentinel.read_text(), "preserve")
+        self.assertEqual(sentinel.read_text(encoding="utf-8"), "preserve")
 
     def test_failure_retains_only_its_run_and_preserves_exit_status(self):
         worktree = self.worktree("failure")

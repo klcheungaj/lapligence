@@ -60,15 +60,15 @@ static void check_queue_transfers(void) {
             queue_push(&event);
             CHECK(event.kind == EV_FILE && probe_is_empty(event.payload.sv4));
             CHECK(storage_test_allocated() == allocated);
-            uint64_t head = atomic_u64_load(&g_wave.head);
+            uint64_t head = llg_atomic_u64_load(&g_wave.head);
             CHECK(llg_sv4_width(g_wave.queue[(head - 1u) % LLG_WAVE_QUEUE_CAP].payload.sv4)
                   == 65);
             set_value(&source, 1, 0);
         }
-        CHECK(atomic_u64_load(&g_wave.head) - atomic_u64_load(&g_wave.tail)
+        CHECK(llg_atomic_u64_load(&g_wave.head) - llg_atomic_u64_load(&g_wave.tail)
               == LLG_WAVE_QUEUE_CAP);
         for (uint32_t i = 0; i < LLG_WAVE_QUEUE_CAP; i++) {
-            uint64_t tail = atomic_u64_load(&g_wave.tail);
+            uint64_t tail = llg_atomic_u64_load(&g_wave.tail);
             wave_event_t event = queue_pop();
             CHECK(g_wave.queue[tail % LLG_WAVE_QUEUE_CAP].kind == EV_FILE);
             CHECK(probe_is_empty(g_wave.queue[tail % LLG_WAVE_QUEUE_CAP].payload.sv4));

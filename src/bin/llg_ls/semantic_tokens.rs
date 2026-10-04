@@ -233,6 +233,7 @@ fn token_type_for(kind: i32) -> Option<(u32, u32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_paths::host_path as hp;
     use llg::core::compile::{self, CompileOpts, OwnedSource};
 
     /// Absolute zero-based line, column, text and token type of one encoded token.
@@ -283,7 +284,7 @@ mod tests {
     /// Token streams of one source under every capture profile that serves tokens.
     fn profiles(source: &str) -> Vec<(String, Vec<Decoded>)> {
         let mut out = Vec::new();
-        let parsed = compile::parse_source("/virtual/top.sv", source, &[]).unwrap();
+        let parsed = compile::parse_source(hp("/virtual/top.sv"), source, &[]).unwrap();
         out.push((
             "isolated".to_owned(),
             decode(source, &parsed.tokens[0].nodes),
@@ -291,11 +292,11 @@ mod tests {
         for library_units in [false, true] {
             let compiled = compile::compile(&CompileOpts {
                 library_units,
-                sources: vec![OwnedSource::compilation_unit("/virtual/top.sv", source)],
+                sources: vec![OwnedSource::compilation_unit(hp("/virtual/top.sv"), source)],
                 ..Default::default()
             })
             .unwrap();
-            let files = from_slang_snapshot(&compiled.snapshot, &[("/virtual/top.sv", source)]);
+            let files = from_slang_snapshot(&compiled.snapshot, &[(hp("/virtual/top.sv"), source)]);
             out.push((
                 format!("library_units={library_units}"),
                 decode(source, &files[0].nodes),
@@ -310,11 +311,11 @@ mod tests {
         for library_units in [false, true] {
             let out = compile::compile(&CompileOpts {
                 library_units,
-                sources: vec![OwnedSource::compilation_unit("/virtual/top.sv", source)],
+                sources: vec![OwnedSource::compilation_unit(hp("/virtual/top.sv"), source)],
                 ..Default::default()
             })
             .unwrap();
-            let files = from_slang_snapshot(&out.snapshot, &[("/virtual/top.sv", source)]);
+            let files = from_slang_snapshot(&out.snapshot, &[(hp("/virtual/top.sv"), source)]);
             for node in &files[0].nodes {
                 if matches!(node.name.as_deref(), Some("WIDTH" | "LIMIT" | "DEPTH")) {
                     let (kind, modifiers) = token_type_for(node.kind).unwrap();
@@ -328,7 +329,7 @@ mod tests {
     #[test]
     fn type_and_direction_keywords_use_type_highlighting() {
         let source = "module top(input logic signed [3:0] a, output wire b, inout tri c);\ninteger count; real value; string label;\nassign b = a[0];\nendmodule";
-        let parsed = compile::parse_source("/virtual/top.sv", source, &[]).unwrap();
+        let parsed = compile::parse_source(hp("/virtual/top.sv"), source, &[]).unwrap();
         let nodes = &parsed.tokens[0].nodes;
         let encoded = encode(nodes);
         assert_eq!(encoded.data.len(), nodes.len());
@@ -350,11 +351,11 @@ mod tests {
         for library_units in [false, true] {
             let out = compile::compile(&CompileOpts {
                 library_units,
-                sources: vec![OwnedSource::compilation_unit("/virtual/top.sv", source)],
+                sources: vec![OwnedSource::compilation_unit(hp("/virtual/top.sv"), source)],
                 ..Default::default()
             })
             .unwrap();
-            let files = from_slang_snapshot(&out.snapshot, &[("/virtual/top.sv", source)]);
+            let files = from_slang_snapshot(&out.snapshot, &[(hp("/virtual/top.sv"), source)]);
             let arguments: Vec<_> = files[0]
                 .nodes
                 .iter()
@@ -372,7 +373,7 @@ mod tests {
     #[test]
     fn isolated_parameter_actuals_keep_readonly_highlighting_without_the_child_module() {
         let source = "module top; parameter int WIDTH = 8; localparam int LIMIT = 4;\nmissing #(.WIDTH(WIDTH), .LIMIT(LIMIT)) child(.data(LIMIT));\nendmodule";
-        let parsed = compile::parse_source("/virtual/top.sv", source, &[]).unwrap();
+        let parsed = compile::parse_source(hp("/virtual/top.sv"), source, &[]).unwrap();
         let parameters: Vec<_> = parsed.tokens[0]
             .nodes
             .iter()
@@ -392,11 +393,11 @@ mod tests {
         for library_units in [false, true] {
             let out = compile::compile(&CompileOpts {
                 library_units,
-                sources: vec![OwnedSource::compilation_unit("/virtual/top.sv", source)],
+                sources: vec![OwnedSource::compilation_unit(hp("/virtual/top.sv"), source)],
                 ..Default::default()
             })
             .unwrap();
-            let files = from_slang_snapshot(&out.snapshot, &[("/virtual/top.sv", source)]);
+            let files = from_slang_snapshot(&out.snapshot, &[(hp("/virtual/top.sv"), source)]);
             let locals: Vec<_> = files[0]
                 .nodes
                 .iter()

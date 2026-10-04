@@ -26,6 +26,8 @@ mod workspace;
 // compiled only for tests.
 #[cfg(test)]
 mod conditional_conformance;
+#[cfg(test)]
+mod test_paths;
 
 mod transport;
 

@@ -370,7 +370,7 @@ static void fixed_ranges_destroy(llg_fixed_range_t* range) {
 }
 
 static sv4_t fixed_convert(sv4_t value, uint32_t width, int sign, int two_state) {
-    sv4_t result = sv4_cast(value, width, sign);
+    sv4_t result = sv4_cast(value, width, (int8_t)sign);
     if (two_state) sv4_replace(&result, sv4_to_two_state(result));
     return result;
 }

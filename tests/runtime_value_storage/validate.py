@@ -24,7 +24,7 @@ def audit_capacity() -> dict:
     limit_array = re.compile(r"\[[^\]\n]*\bLLG_SUPPORTED_WIDTH_LIMIT\b")
     files, findings = [], []
     for path in sorted(runtime.rglob("*")):
-        if path.suffix not in (".c", ".h") or path.name in excluded or "gtkwave" in path.parts:
+        if path.suffix not in (".c", ".h") or path.name in excluded:
             continue
         files.append(str(path.relative_to(ROOT)))
         for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
@@ -32,7 +32,7 @@ def audit_capacity() -> dict:
                 findings.append(f"{path.relative_to(ROOT)}:{number}: {line.strip()}")
     if not files or findings:
         raise ValueError("active-runtime capacity audit failed: " + "; ".join(findings))
-    return {"files_scanned": files, "excluded": sorted(excluded) + ["gtkwave (third party)"],
+    return {"files_scanned": files, "excluded": sorted(excluded),
             "limitation": "Lexical check only; not a proof of ownership or arbitrary array bounds."}
 
 

@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs;
-use std::io::{self, Read, Write};
+use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -12,17 +12,12 @@ use cap_fs_ext::{DirExt, FollowSymlinks, MetadataExt as CapMetadataExt, OpenOpti
 use cap_std::ambient_authority;
 use cap_std::fs::{Dir, OpenOptions as CapOpenOptions};
 
-#[cfg(target_os = "linux")]
-use cap_std::fs::OpenOptionsExt as CapOpenOptionsExt;
-
-#[cfg(windows)]
-use std::os::windows::fs::MetadataExt;
-
-#[cfg(windows)]
-use cap_std::fs::OpenOptionsExt as CapOpenOptionsExt;
+use super::host_platform::{self, hard_link_count, is_reparse_point, sync_directory, PublishError};
 
 const SLANG_BASE_REVISION: &str = "7ddf4059f79eff508dd486eb42fd650cdf320d52";
 const FILE_MANIFEST: &str = "files.sha256";
+const LIBFST_SOURCE: &str = "vendor/libfst";
+const LIBFST_PATCHES: &str = "patches/libfst";
 const RETIRED_MANIFEST: &str = "retired-files.sha256";
 const SLANG_RETIRED_ENTRIES: &[(&str, &str)] = &[(
     "source/numeric/SVInt.cpp",
@@ -172,23 +167,48 @@ struct RetiredManifest {
 
 /// Emit Cargo dependencies for repository-owned patches. Directory dependencies
 /// cover additions/removals; individual patch files make the relevant inputs
-/// explicit in Cargo diagnostics.
+/// explicit in Cargo diagnostics. The tracked libfst tree is an input of its
+/// rendered copy, so its files are listed too.
 pub fn emit_rerun_if_changed(manifest_dir: &Path) {
-    let directory = manifest_dir.join("patches/slang");
-    println!("cargo:rerun-if-changed={}", directory.display());
-    for metadata in [FILE_MANIFEST, RETIRED_MANIFEST] {
-        let path = directory.join(metadata);
-        println!("cargo:rerun-if-changed={}", path.display());
+    for patches in ["patches/slang", LIBFST_PATCHES] {
+        let directory = manifest_dir.join(patches);
+        println!("cargo:rerun-if-changed={}", directory.display());
+        for metadata in [FILE_MANIFEST, RETIRED_MANIFEST] {
+            let path = directory.join(metadata);
+            println!("cargo:rerun-if-changed={}", path.display());
+        }
+        emit_directory_files(&directory, Some("patch"));
     }
-    let Ok(entries) = fs::read_dir(&directory) else {
+    let libfst = manifest_dir.join(LIBFST_SOURCE);
+    println!("cargo:rerun-if-changed={}", libfst.display());
+    emit_directory_files(&libfst, None);
+}
+
+fn emit_directory_files(directory: &Path, extension: Option<&str>) {
+    let Ok(entries) = fs::read_dir(directory) else {
         return;
     };
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.extension().and_then(|extension| extension.to_str()) == Some("patch") {
+        if extension.is_none_or(|wanted| {
+            path.extension().and_then(|extension| extension.to_str()) == Some(wanted)
+        }) {
             println!("cargo:rerun-if-changed={}", path.display());
         }
     }
+}
+
+/// Render the pristine upstream libfst snapshot in `vendor/libfst` with the
+/// tracked `patches/libfst` changes into `output`. The runtime embeds the
+/// rendered files; the tracked vendor files are never rewritten.
+pub fn render_libfst(manifest_dir: &Path, output: &Path) -> Result<(), PatchError> {
+    render_tracked_directory(
+        "libfst",
+        manifest_dir,
+        &manifest_dir.join(LIBFST_SOURCE),
+        &manifest_dir.join(LIBFST_PATCHES),
+        output,
+    )
 }
 
 /// Apply every repository-owned vendor patch, accepting only an entirely
@@ -218,6 +238,40 @@ fn apply_directory_with_base(
     expected_base: Option<&str>,
 ) -> Result<(), PatchError> {
     let repository = canonical_repository(label, project_root, repository)?;
+    let plans = plan_directory(
+        label,
+        &repository,
+        patches_dir,
+        VendorCheckout::Git { expected_base },
+    )?;
+    if tree_state(label, &repository, &plans)? == PatchState::Applied {
+        return Ok(());
+    }
+    for plan in plans {
+        for write in plan.writes {
+            apply_write(label, &repository, &plan.path, write)?;
+        }
+    }
+    Ok(())
+}
+
+/// How a vendor tree is versioned, which decides the checkout validation.
+#[derive(Debug, Clone, Copy)]
+enum VendorCheckout<'a> {
+    /// A Git submodule pinned at `expected_base` (when given).
+    Git { expected_base: Option<&'a str> },
+    /// Plain files tracked by the parent repository. Every patch target is
+    /// still authenticated by its exact clean/applied digest.
+    Tracked,
+}
+
+/// Parse, authenticate and plan every patch of one vendor tree.
+fn plan_directory(
+    label: &str,
+    repository: &Path,
+    patches_dir: &Path,
+    checkout: VendorCheckout<'_>,
+) -> Result<Vec<PatchPlan>, PatchError> {
     let entries = fs::read_dir(patches_dir).map_err(|error| {
         PatchError::new(format!(
             "cannot read {label} patch directory {}: {error}",
@@ -260,13 +314,15 @@ fn apply_directory_with_base(
         specs.push(spec);
     }
     manifest.validate_paths(label, &expected_paths, &retired.entries)?;
-    validate_retired_files(label, &repository, &retired)?;
-    validate_git_checkout(label, &repository, expected_base, &expected_paths)?;
+    validate_retired_files(label, repository, &retired)?;
+    if let VendorCheckout::Git { expected_base } = checkout {
+        validate_git_checkout(label, repository, expected_base, &expected_paths)?;
+    }
 
     let mut plans = Vec::with_capacity(specs.len());
     let mut targets = BTreeSet::new();
     for spec in specs {
-        let plan = plan_patch(label, &repository, spec, &manifest)?;
+        let plan = plan_patch(label, repository, spec, &manifest)?;
         for write in &plan.writes {
             if !targets.insert(write.path.clone()) {
                 return Err(PatchError::new(format!(
@@ -278,28 +334,120 @@ fn apply_directory_with_base(
         }
         plans.push(plan);
     }
+    Ok(plans)
+}
 
-    let all_clean = plans.iter().all(|plan| plan.state == PatchState::Clean);
-    let all_applied = plans.iter().all(|plan| plan.state == PatchState::Applied);
-    if all_applied {
-        return Ok(());
+/// Accept only an entirely clean or an entirely applied tree.
+fn tree_state(
+    label: &str,
+    repository: &Path,
+    plans: &[PatchPlan],
+) -> Result<PatchState, PatchError> {
+    if plans.iter().all(|plan| plan.state == PatchState::Applied) {
+        return Ok(PatchState::Applied);
     }
-    if !all_clean {
-        let states = plans
-            .iter()
-            .map(|plan| format!("{}={:?}", plan.path.display(), plan.state))
-            .collect::<Vec<_>>()
-            .join(", ");
-        return Err(PatchError::new(format!(
-            "{label} vendor checkout {} is partially applied or mismatched ({states}); check out the documented base revision, or restore the complete applied state",
-            repository.display()
-        )));
+    if plans.iter().all(|plan| plan.state == PatchState::Clean) {
+        return Ok(PatchState::Clean);
     }
+    let states = plans
+        .iter()
+        .map(|plan| format!("{}={:?}", plan.path.display(), plan.state))
+        .collect::<Vec<_>>()
+        .join(", ");
+    Err(PatchError::new(format!(
+        "{label} vendor checkout {} is partially applied or mismatched ({states}); check out the documented base revision, or restore the complete applied state",
+        repository.display()
+    )))
+}
 
+/// Render a vendor tree tracked by this repository into `output` with its
+/// patches applied, leaving the tracked (pristine upstream) files untouched.
+///
+/// The tree's regular files are copied flat; patch targets come from the
+/// authenticated rendering. A tree that already carries the complete applied
+/// content is copied as is; a partial or mismatched tree is rejected. Files
+/// are rewritten only when their content changes, so unchanged inputs do not
+/// invalidate downstream builds.
+pub fn render_tracked_directory(
+    label: &str,
+    project_root: &Path,
+    source: &Path,
+    patches_dir: &Path,
+    output: &Path,
+) -> Result<(), PatchError> {
+    let source = canonical_repository(label, project_root, source)?;
+    let plans = plan_directory(label, &source, patches_dir, VendorCheckout::Tracked)?;
+    tree_state(label, &source, &plans)?;
+    let mut rendered = BTreeMap::new();
     for plan in plans {
         for write in plan.writes {
-            apply_write(label, &repository, &plan.path, write)?;
+            if canonical_digest(write.contents.as_bytes()) != write.applied {
+                return Err(PatchError::new(format!(
+                    "vendor patch {} rendered {} with a digest different from the authenticated applied manifest; the patch input was modified",
+                    plan.path.display(),
+                    write.relative.display()
+                )));
+            }
+            rendered.insert(write.relative, write.contents.into_bytes());
         }
+    }
+    fs::create_dir_all(output).map_err(|error| {
+        PatchError::new(format!(
+            "cannot create {label} rendered source directory {}: {error}",
+            output.display()
+        ))
+    })?;
+    let entries = fs::read_dir(&source).map_err(|error| {
+        PatchError::new(format!(
+            "cannot read {label} vendor tree {}: {error}",
+            source.display()
+        ))
+    })?;
+    let mut names = entries
+        .filter_map(Result::ok)
+        .map(|entry| PathBuf::from(entry.file_name()))
+        .collect::<Vec<_>>();
+    names.sort();
+    for name in names {
+        let path = source.join(&name);
+        let metadata = fs::symlink_metadata(&path).map_err(|error| {
+            PatchError::new(format!(
+                "cannot inspect {label} vendor file {}: {error}",
+                path.display()
+            ))
+        })?;
+        if metadata.is_dir() {
+            continue;
+        }
+        let contents = match rendered.remove(&name) {
+            Some(contents) => contents,
+            None => {
+                let path = safe_vendor_target_path(label, &source, &name, "vendor file")?;
+                fs::read(&path).map_err(|error| {
+                    PatchError::new(format!(
+                        "cannot read {label} vendor file {}: {error}",
+                        path.display()
+                    ))
+                })?
+            }
+        };
+        let target = output.join(&name);
+        if fs::read(&target).ok().as_deref() == Some(contents.as_slice()) {
+            continue;
+        }
+        fs::write(&target, &contents).map_err(|error| {
+            PatchError::new(format!(
+                "cannot write rendered {label} source {}: {error}",
+                target.display()
+            ))
+        })?;
+    }
+    if let Some(missing) = rendered.keys().next() {
+        return Err(PatchError::new(format!(
+            "{label} patch target {} is not a file directly inside {}",
+            missing.display(),
+            source.display()
+        )));
     }
     Ok(())
 }
@@ -684,35 +832,6 @@ where
     result
 }
 
-#[cfg(unix)]
-fn sync_directory(directory: &Dir) -> io::Result<()> {
-    use rustix::fs::{fsync, openat, Mode, OFlags};
-
-    // cap-std uses O_PATH for directory capabilities on Linux. Re-open the
-    // directory through that capability with a normal directory descriptor so
-    // fsync is available, without resolving the path through ambient state.
-    let readable = openat(
-        directory,
-        ".",
-        OFlags::RDONLY | OFlags::DIRECTORY,
-        Mode::empty(),
-    )?;
-    Ok(fsync(&readable)?)
-}
-
-// FlushFileBuffers needs a writable handle, but cap-std opens directories
-// read-only. NTFS journals the rename itself and the staged contents were
-// flushed before it, so there is no separate directory flush on Windows.
-#[cfg(windows)]
-fn sync_directory(_directory: &Dir) -> io::Result<()> {
-    Ok(())
-}
-
-#[cfg(not(any(unix, windows)))]
-fn sync_directory(directory: &Dir) -> io::Result<()> {
-    directory.try_clone()?.into_std_file().sync_all()
-}
-
 fn temporary_name() -> PathBuf {
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -725,7 +844,6 @@ fn temporary_name() -> PathBuf {
     ))
 }
 
-#[cfg(target_os = "linux")]
 fn create_staged_file(
     parent: &Dir,
     label: &str,
@@ -733,59 +851,41 @@ fn create_staged_file(
 ) -> Result<StagedFile, PatchError> {
     let name = temporary_name();
 
-    // Linux's O_TMPFILE creates an inode without a directory entry. This is
-    // the only point at which the staged contents are written, so keeping the
-    // inode anonymous closes the hard-link window between an identity check
-    // and write(2). It is published later with linkat(AT_EMPTY_PATH) after
-    // the repository capabilities have been checked again.
-    use rustix::fs::OFlags;
-
-    let mut options = CapOpenOptions::new();
-    options
-        .read(true)
-        .write(true)
-        .follow(FollowSymlinks::No)
-        .custom_flags((OFlags::TMPFILE | OFlags::DIRECTORY).bits() as i32);
-    let file = parent.open_with(".", &options).map_err(|error| {
-        PatchError::new(format!(
-            "{label} cannot create an anonymous staging file for vendor patch {}: {error}; the filesystem must support anonymous temporary files",
-            patch_path.display()
-        ))
-    })?;
-    let metadata = file.metadata().map_err(|error| {
-        PatchError::new(format!(
-            "{label} cannot inspect anonymous staging file for vendor patch {}: {error}",
-            patch_path.display()
-        ))
-    })?;
-    if metadata.nlink() != 0 {
-        return Err(PatchError::new(format!(
-            "{label} anonymous staging file {} has an unexpected directory link; refusing to write",
-            name.display()
-        )));
+    // Where the host has anonymous files this is the only point at which the
+    // staged contents are written; see host_platform::open_anonymous_file.
+    if let Some(file) = host_platform::open_anonymous_file(parent) {
+        let file = file.map_err(|error| {
+            PatchError::new(format!(
+                "{label} cannot create an anonymous staging file for vendor patch {}: {error}; the filesystem must support anonymous temporary files",
+                patch_path.display()
+            ))
+        })?;
+        let metadata = file.metadata().map_err(|error| {
+            PatchError::new(format!(
+                "{label} cannot inspect anonymous staging file for vendor patch {}: {error}",
+                patch_path.display()
+            ))
+        })?;
+        if metadata.nlink() != 0 {
+            return Err(PatchError::new(format!(
+                "{label} anonymous staging file {} has an unexpected directory link; refusing to write",
+                name.display()
+            )));
+        }
+        return Ok(StagedFile {
+            file: Some(file),
+            name,
+            anonymous: true,
+        });
     }
-    Ok(StagedFile {
-        file: Some(file),
-        name,
-        anonymous: true,
-    })
-}
 
-#[cfg(not(target_os = "linux"))]
-fn create_staged_file(
-    parent: &Dir,
-    label: &str,
-    patch_path: &Path,
-) -> Result<StagedFile, PatchError> {
-    let name = temporary_name();
     let mut options = CapOpenOptions::new();
     options
         .read(true)
         .write(true)
         .create_new(true)
         .follow(FollowSymlinks::No);
-    #[cfg(windows)]
-    options.share_mode(0);
+    host_platform::lock_named_staging_file(&mut options);
     let file = parent.open_with(&name, &options).map_err(|error| {
         PatchError::new(format!(
             "{label} cannot stage vendor patch {} in {}: {error}",
@@ -821,57 +921,26 @@ fn ensure_anonymous_staging_file(
     Ok(())
 }
 
-#[cfg(unix)]
 fn publish_anonymous_staging_file(
     parent: &Dir,
     file: &cap_std::fs::File,
     name: &Path,
     label: &str,
 ) -> Result<(), PatchError> {
-    use std::os::fd::AsRawFd;
-
-    use rustix::fs::{linkat, AtFlags, CWD};
-
-    // Linux and the BSDs which expose AT_EMPTY_PATH can link the open inode
-    // directly. Some kernels/filesystems reject that form without the
-    // CAP_DAC_READ_SEARCH capability, so retain the descriptor-relative procfs
-    // form as a safe fallback.
-    #[cfg(any(target_os = "freebsd", target_os = "fuchsia", target_os = "linux"))]
-    match linkat(file, "", parent, name, AtFlags::EMPTY_PATH) {
-        Ok(()) => return Ok(()),
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-            return Err(PatchError::new(format!(
-                "{label} staging destination {} already exists; refusing to replace it",
-                name.display()
-            )))
-        }
-        Err(_) => {}
-    }
-
-    let descriptor_path = if cfg!(any(target_os = "macos", target_os = "ios")) {
-        PathBuf::from("/dev/fd").join(file.as_raw_fd().to_string())
-    } else {
-        PathBuf::from("/proc/self/fd").join(file.as_raw_fd().to_string())
-    };
-    linkat(CWD, &descriptor_path, parent, name, AtFlags::SYMLINK_FOLLOW).map_err(|error| {
-        PatchError::new(format!(
+    host_platform::publish_anonymous_file(parent, file, name).map_err(|error| match error {
+        PublishError::AlreadyExists => PatchError::new(format!(
+            "{label} staging destination {} already exists; refusing to replace it",
+            name.display()
+        )),
+        PublishError::Failed(error) => PatchError::new(format!(
             "{label} cannot publish detached staging file {}: {error}",
             name.display()
-        ))
+        )),
+        PublishError::Unsupported => PatchError::new(format!(
+            "{label} cannot publish anonymous staging file {}; platform does not provide a safe link operation",
+            name.display()
+        )),
     })
-}
-
-#[cfg(not(unix))]
-fn publish_anonymous_staging_file(
-    _parent: &Dir,
-    _file: &cap_std::fs::File,
-    name: &Path,
-    label: &str,
-) -> Result<(), PatchError> {
-    Err(PatchError::new(format!(
-        "{label} cannot publish anonymous staging file {}; platform does not provide a safe link operation",
-        name.display()
-    )))
 }
 
 fn ensure_published_staging_file(
@@ -1250,7 +1319,7 @@ fn ensure_private_staging_file(
     // other handle can be opened for data access or deletion, so the name
     // cannot be renamed or replaced. Re-opening it by path would itself fail
     // with a sharing violation.
-    if cfg!(windows) {
+    if host_platform::named_staging_file_is_locked() {
         return Ok(());
     }
     let observed = open_regular_file(directory, name, label, context)?;
@@ -1388,43 +1457,6 @@ fn reject_link_metadata(
         )));
     }
     Ok(())
-}
-
-fn is_reparse_point(metadata: &fs::Metadata) -> bool {
-    #[cfg(windows)]
-    {
-        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
-        metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = metadata;
-        false
-    }
-}
-
-fn hard_link_count(path: &Path, metadata: &fs::Metadata) -> Option<u64> {
-    #[cfg(unix)]
-    {
-        let _ = path;
-        Some(std::os::unix::fs::MetadataExt::nlink(metadata))
-    }
-    #[cfg(windows)]
-    {
-        // Path metadata carries no link count on Windows, and std's
-        // `number_of_links` is unstable (`windows_by_handle`). cap-std reads
-        // it from an open handle. An unopenable file reports no count here;
-        // the handle-relative replacement still rejects shared targets.
-        let _ = metadata;
-        let file = fs::File::open(path).ok()?;
-        let metadata = cap_std::fs::Metadata::from_file(&file).ok()?;
-        Some(CapMetadataExt::nlink(&metadata))
-    }
-    #[cfg(not(any(unix, windows)))]
-    {
-        let _ = (path, metadata);
-        None
-    }
 }
 
 fn validate_git_checkout(
@@ -3124,5 +3156,114 @@ mod tests {
             );
             fs::remove_dir_all(root).expect("remove temporary patch tree");
         }
+    }
+
+    const BETA_PATCH: &str = "diff --git a/beta.txt b/beta.txt\n--- a/beta.txt\n+++ b/beta.txt\n@@ -1 +1 @@\n-before\n+after\n";
+
+    fn tracked_tree(alpha: &str, beta: &str) -> (PathBuf, PathBuf, PathBuf) {
+        let root = temporary_tree();
+        let source = root.join("vendor");
+        let patches = root.join("patches");
+        fs::create_dir_all(&source).expect("create tracked vendor tree");
+        fs::write(source.join("alpha.txt"), alpha).expect("write alpha");
+        fs::write(source.join("beta.txt"), beta).expect("write beta");
+        fs::write(source.join("notes.md"), "unpatched\n").expect("write unpatched file");
+        fs::write(patches.join("alpha.patch"), PATCH).expect("write alpha patch");
+        fs::write(patches.join("beta.patch"), BETA_PATCH).expect("write beta patch");
+        fs::write(
+            patches.join(FILE_MANIFEST),
+            format!(
+                "alpha.txt {} {}\nbeta.txt {} {}\n",
+                digest_text("one\nold\n"),
+                digest_text("one\nnew\n"),
+                digest_text("before\n"),
+                digest_text("after\n")
+            ),
+        )
+        .expect("write manifest");
+        (root, source, patches)
+    }
+
+    #[test]
+    fn tracked_tree_renders_patched_copy_and_keeps_sources_pristine() {
+        for (alpha, beta) in [("one\nold\n", "before\n"), ("one\nnew\n", "after\n")] {
+            let (root, source, patches) = tracked_tree(alpha, beta);
+            let output = root.join("out");
+            render_tracked_directory("test", &root, &source, &patches, &output)
+                .expect("clean or applied tree renders");
+            assert_eq!(
+                fs::read_to_string(output.join("alpha.txt")).unwrap(),
+                "one\nnew\n"
+            );
+            assert_eq!(
+                fs::read_to_string(output.join("beta.txt")).unwrap(),
+                "after\n"
+            );
+            assert_eq!(
+                fs::read_to_string(output.join("notes.md")).unwrap(),
+                "unpatched\n"
+            );
+            assert_eq!(fs::read_to_string(source.join("alpha.txt")).unwrap(), alpha);
+            assert_eq!(fs::read_to_string(source.join("beta.txt")).unwrap(), beta);
+            render_tracked_directory("test", &root, &source, &patches, &output)
+                .expect("rendering is repeatable");
+            fs::remove_dir_all(root).expect("remove temporary patch tree");
+        }
+    }
+
+    #[test]
+    fn tracked_tree_partial_or_mismatched_content_is_rejected() {
+        for (alpha, beta, expected) in [
+            ("one\nnew\n", "before\n", "partially applied or mismatched"),
+            (
+                "one\nold\n",
+                "edited\n",
+                "does not match its exact clean or applied content",
+            ),
+        ] {
+            let (root, source, patches) = tracked_tree(alpha, beta);
+            let output = root.join("out");
+            let error = render_tracked_directory("test", &root, &source, &patches, &output)
+                .expect_err("partial or mismatched tree must fail");
+            assert!(error.to_string().contains(expected), "{error}");
+            assert!(!output.exists(), "nothing is rendered from a rejected tree");
+            fs::remove_dir_all(root).expect("remove temporary patch tree");
+        }
+    }
+
+    /// The checked-in snapshot is pristine upstream and the tracked patch
+    /// renders the authenticated applied content, including the MSVC paths.
+    #[test]
+    fn repository_libfst_snapshot_is_clean_and_renders_the_tracked_patch() {
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let root = temporary_tree();
+        let output = root.join("libfst");
+        render_libfst(&manifest_dir, &output).expect("repository libfst renders");
+        let source = manifest_dir.join(LIBFST_SOURCE);
+        let plans = plan_directory(
+            "libfst",
+            &source,
+            &manifest_dir.join(LIBFST_PATCHES),
+            VendorCheckout::Tracked,
+        )
+        .expect("libfst patches plan");
+        assert_eq!(
+            tree_state("libfst", &source, &plans).expect("libfst tree state"),
+            PatchState::Clean,
+            "vendor/libfst must hold the pristine upstream snapshot"
+        );
+        let fstapi = fs::read_to_string(output.join("fstapi.c")).expect("rendered fstapi.c");
+        assert!(fstapi.contains("#define FST_BREAK_SIZE_MAX              (1UL << 20)"));
+        assert!(fstapi.contains("defined(_MSC_VER)"));
+        for name in [
+            "fstapi.h",
+            "fastlz.c",
+            "lz4.c",
+            "fst_config.h",
+            "wavealloca.h",
+        ] {
+            assert!(output.join(name).is_file(), "{name} is rendered");
+        }
+        fs::remove_dir_all(root).expect("remove temporary patch tree");
     }
 }

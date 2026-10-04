@@ -4,6 +4,7 @@ use crate::features::{
     ModuleGraphGenerateScope, ModuleGraphInstance, ModuleGraphLocation, ModuleGraphPackedRange,
     ModuleGraphParameter, ModuleGraphPort, ModuleGraphSignal,
 };
+use crate::test_paths::host_path as hp;
 use llg::core::elab::Value;
 
 fn ty(kind: &str, width: Option<u32>) -> TypeInfo {
@@ -20,7 +21,7 @@ fn instance(name: &str, full_name: &str, def_name: &str) -> InstanceModel {
         name: name.to_owned(),
         def_name: def_name.to_owned(),
         full_name: full_name.to_owned(),
-        file: Some("/workspace/top.sv".to_owned()),
+        file: Some(hp("/workspace/top.sv").to_owned()),
         line: 1,
         col: 1,
         ports: Vec::new(),
@@ -36,7 +37,7 @@ fn source_instance(name: &str, module_type: &str, line: u32) -> ModuleGraphInsta
     ModuleGraphInstance {
         name: name.to_owned(),
         module_type: module_type.to_owned(),
-        file: Some("/workspace/top.sv".to_owned()),
+        file: Some(hp("/workspace/top.sv").to_owned()),
         line,
         col: 3,
     }
@@ -200,7 +201,7 @@ fn snapshot_keeps_multiple_tops_and_recursive_stable_ids() {
         modules: vec![
             ModuleDef {
                 name: "top".to_owned(),
-                file: Some("/workspace/top.sv".to_owned()),
+                file: Some(hp("/workspace/top.sv").to_owned()),
                 line: 1,
                 col: 8,
                 end_line: 8,
@@ -208,7 +209,7 @@ fn snapshot_keeps_multiple_tops_and_recursive_stable_ids() {
             },
             ModuleDef {
                 name: "child".to_owned(),
-                file: Some("/workspace/child.sv".to_owned()),
+                file: Some(hp("/workspace/child.sv").to_owned()),
                 line: 1,
                 col: 8,
                 end_line: 3,
@@ -216,7 +217,7 @@ fn snapshot_keeps_multiple_tops_and_recursive_stable_ids() {
             },
             ModuleDef {
                 name: "second".to_owned(),
-                file: Some("/workspace/second.sv".to_owned()),
+                file: Some(hp("/workspace/second.sv").to_owned()),
                 line: 1,
                 col: 8,
                 end_line: 2,
@@ -227,15 +228,15 @@ fn snapshot_keeps_multiple_tops_and_recursive_stable_ids() {
         classes: Vec::new(),
     };
 
-    let first = snapshot("/workspace", &model);
-    let second = snapshot("/workspace", &model);
+    let first = snapshot(hp("/workspace"), &model);
+    let second = snapshot(hp("/workspace"), &model);
     assert_eq!(first, second);
     let reordered = DesignModel {
         top_instances: model.top_instances.iter().cloned().rev().collect(),
         modules: model.modules.iter().cloned().rev().collect(),
         ..model.clone()
     };
-    assert_eq!(first, snapshot("/workspace", &reordered));
+    assert_eq!(first, snapshot(hp("/workspace"), &reordered));
     assert_eq!(first.roots.len(), 2);
     let top_root = first
         .roots
@@ -308,7 +309,7 @@ fn syntax_fallback_modules_are_useful_without_instance_data() {
         top_instances: Vec::new(),
         modules: vec![ModuleDef {
             name: "broken".to_owned(),
-            file: Some("/workspace/broken.sv".to_owned()),
+            file: Some(hp("/workspace/broken.sv").to_owned()),
             line: 2,
             col: 8,
             end_line: 2,
@@ -331,18 +332,18 @@ fn syntax_fallback_modules_are_useful_without_instance_data() {
 fn source_graph_excludes_instantiated_definitions_from_roots() {
     let top = source_definition(
         "top",
-        "/workspace/top.sv",
+        hp("/workspace/top.sv"),
         1,
         vec![source_instance("u_child", "child", 4)],
     );
     let child = source_definition(
         "child",
-        "/workspace/child.sv",
+        hp("/workspace/child.sv"),
         1,
         vec![source_instance("u_leaf", "leaf", 5)],
     );
-    let leaf = source_definition("leaf", "/workspace/leaf.sv", 1, Vec::new());
-    let unrelated = source_definition("unrelated", "/workspace/unrelated.sv", 1, Vec::new());
+    let leaf = source_definition("leaf", hp("/workspace/leaf.sv"), 1, Vec::new());
+    let unrelated = source_definition("unrelated", hp("/workspace/unrelated.sv"), 1, Vec::new());
     let analysis = graph_analysis(vec![top, child, leaf, unrelated], Vec::new(), None);
 
     let result = snapshot_analysis("root", &analysis, identity_source);
@@ -374,17 +375,17 @@ fn source_graph_excludes_instantiated_definitions_from_roots() {
 fn small_recursive_source_hierarchy_still_expands_normally() {
     let top = source_definition(
         "top",
-        "/workspace/top.sv",
+        hp("/workspace/top.sv"),
         1,
         vec![source_instance("u_child", "child", 4)],
     );
     let child = source_definition(
         "child",
-        "/workspace/child.sv",
+        hp("/workspace/child.sv"),
         1,
         vec![source_instance("u_leaf", "leaf", 5)],
     );
-    let leaf = source_definition("leaf", "/workspace/leaf.sv", 1, Vec::new());
+    let leaf = source_definition("leaf", hp("/workspace/leaf.sv"), 1, Vec::new());
     let analysis = graph_analysis(vec![top, child, leaf], Vec::new(), None);
 
     let result = snapshot_analysis("root", &analysis, identity_source);
@@ -404,8 +405,8 @@ fn small_recursive_source_hierarchy_still_expands_normally() {
 
 #[test]
 fn graph_budget_counts_generate_wrappers_across_two_roots() {
-    let mut first = source_definition("first", "/workspace/first.sv", 1, Vec::new());
-    let mut second = source_definition("second", "/workspace/second.sv", 1, Vec::new());
+    let mut first = source_definition("first", hp("/workspace/first.sv"), 1, Vec::new());
+    let mut second = source_definition("second", hp("/workspace/second.sv"), 1, Vec::new());
     for index in 0..(MAX_INSTANCE_NODES / 2) {
         first.generated_scopes.push(ModuleGraphGenerateScope {
             name: format!("first_gen_{index}"),
@@ -537,18 +538,18 @@ fn deep_graph_and_compatibility_chains_stop_before_the_stack_grows_unbounded() {
 fn configured_top_does_not_promote_nested_occurrence() {
     let parent = source_definition(
         "parent",
-        "/workspace/parent.sv",
+        hp("/workspace/parent.sv"),
         1,
         vec![source_instance("u_top", "top", 4)],
     );
     let top = source_definition(
         "top",
-        "/workspace/top.sv",
+        hp("/workspace/top.sv"),
         1,
         vec![source_instance("u_leaf", "leaf", 4)],
     );
-    let leaf = source_definition("leaf", "/workspace/leaf.sv", 1, Vec::new());
-    let unrelated = source_definition("unrelated", "/workspace/unrelated.sv", 1, Vec::new());
+    let leaf = source_definition("leaf", hp("/workspace/leaf.sv"), 1, Vec::new());
+    let unrelated = source_definition("unrelated", hp("/workspace/unrelated.sv"), 1, Vec::new());
     let analysis = graph_analysis(vec![parent, top, leaf, unrelated], Vec::new(), Some("top"));
 
     let result = snapshot_analysis("root", &analysis, identity_source);
@@ -574,17 +575,17 @@ fn configured_top_does_not_promote_nested_occurrence() {
 fn configured_nested_top_uses_unique_elaborated_source_occurrence() {
     let parent = source_definition(
         "parent",
-        "/workspace/parent.sv",
+        hp("/workspace/parent.sv"),
         1,
         vec![source_instance("u_child", "child", 4)],
     );
-    let mut child = source_definition("child", "/workspace/child.sv", 1, Vec::new());
+    let mut child = source_definition("child", hp("/workspace/child.sv"), 1, Vec::new());
     child.ports.push(ModuleGraphPort {
         name: "data".to_owned(),
         direction: Direction::Input,
         ty: ty("logic", None),
         detail: None,
-        location: Some(source_location("/workspace/child.sv", 1, 24, 4)),
+        location: Some(source_location(hp("/workspace/child.sv"), 1, 24, 4)),
         display_type: Some("logic [WIDTH-1:0]".to_owned()),
         display_shape: ModuleGraphTypeShape {
             packed_dimensions: 1,
@@ -596,7 +597,7 @@ fn configured_nested_top_uses_unique_elaborated_source_occurrence() {
         ty: ty("int", Some(32)),
         local: false,
         detail: None,
-        location: Some(source_location("/workspace/child.sv", 2, 10, 5)),
+        location: Some(source_location(hp("/workspace/child.sv"), 2, 10, 5)),
         display_type: Some("int".to_owned()),
         display_shape: ModuleGraphTypeShape::default(),
     });
@@ -605,7 +606,7 @@ fn configured_nested_top_uses_unique_elaborated_source_occurrence() {
         kind: "wire".to_owned(),
         ty: ty("logic", None),
         detail: None,
-        location: Some(source_location("/workspace/child.sv", 3, 22, 7)),
+        location: Some(source_location(hp("/workspace/child.sv"), 3, 22, 7)),
         display_type: Some("logic [WIDTH-1:0]".to_owned()),
         display_shape: ModuleGraphTypeShape {
             packed_dimensions: 1,
@@ -614,7 +615,7 @@ fn configured_nested_top_uses_unique_elaborated_source_occurrence() {
     });
 
     let mut configured = instance("child", "work@child", "child");
-    configured.file = Some("/workspace/child.sv".to_owned());
+    configured.file = Some(hp("/workspace/child.sv").to_owned());
     configured.ports.push(PortModel {
         name: "data".to_owned(),
         direction: Direction::Input,
@@ -672,11 +673,11 @@ fn configured_nested_top_uses_unique_elaborated_source_occurrence() {
 fn configured_top_exact_match_beats_earlier_unmatched_same_type() {
     let parent = source_definition(
         "parent",
-        "/workspace/parent.sv",
+        hp("/workspace/parent.sv"),
         1,
         vec![source_instance("u_child", "child", 4)],
     );
-    let mut child = source_definition("child", "/workspace/child.sv", 1, Vec::new());
+    let mut child = source_definition("child", hp("/workspace/child.sv"), 1, Vec::new());
     child.params.push(ModuleGraphParameter {
         name: "WIDTH".to_owned(),
         ty: ty("int", Some(32)),
@@ -765,14 +766,14 @@ fn configured_top_exact_match_beats_earlier_unmatched_same_type() {
 fn configured_top_does_not_guess_between_same_type_source_occurrences() {
     let parent = source_definition(
         "parent",
-        "/workspace/parent.sv",
+        hp("/workspace/parent.sv"),
         1,
         vec![
             source_instance("u_first", "child", 4),
             source_instance("u_second", "child", 8),
         ],
     );
-    let mut child = source_definition("child", "/workspace/child.sv", 1, Vec::new());
+    let mut child = source_definition("child", hp("/workspace/child.sv"), 1, Vec::new());
     child.ports.push(ModuleGraphPort {
         name: "data".to_owned(),
         direction: Direction::Input,
@@ -784,7 +785,7 @@ fn configured_top_does_not_guess_between_same_type_source_occurrences() {
     });
 
     let mut exact = instance("u_first", "work@parent.u_first", "child");
-    exact.file = Some("/workspace/top.sv".to_owned());
+    exact.file = Some(hp("/workspace/top.sv").to_owned());
     exact.line = 4;
     exact.col = 3;
     exact.ports.push(PortModel {
@@ -794,7 +795,7 @@ fn configured_top_does_not_guess_between_same_type_source_occurrences() {
     });
 
     let mut unmatched = instance("retained_child", "work@retained_child", "child");
-    unmatched.file = Some("/workspace/child.sv".to_owned());
+    unmatched.file = Some(hp("/workspace/child.sv").to_owned());
     unmatched.ports.push(PortModel {
         name: "data".to_owned(),
         direction: Direction::Input,
@@ -831,7 +832,7 @@ fn configured_top_does_not_guess_between_same_type_source_occurrences() {
 
 #[test]
 fn response_budget_preserves_a_hierarchy_root_before_large_module_content() {
-    let mut definition = source_definition("large", "/workspace/large.sv", 1, Vec::new());
+    let mut definition = source_definition("large", hp("/workspace/large.sv"), 1, Vec::new());
     definition.signals = (0..(MAX_INSTANCE_NODES * 2))
         .map(|index| ModuleGraphSignal {
             name: format!("signal_{index}"),
@@ -864,7 +865,7 @@ fn response_budget_preserves_a_hierarchy_root_before_large_module_content() {
 
 #[test]
 fn fair_catalog_keeps_a_real_entry_after_hierarchy_content_exhaustion() {
-    let mut definition = source_definition("large", "/workspace/large.sv", 1, Vec::new());
+    let mut definition = source_definition("large", hp("/workspace/large.sv"), 1, Vec::new());
     definition.signals = (0..(MAX_INSTANCE_NODES * 2))
         .map(|index| ModuleGraphSignal {
             name: format!("signal_{index}"),
@@ -896,7 +897,7 @@ fn fair_catalog_keeps_a_real_entry_after_hierarchy_content_exhaustion() {
 
 #[test]
 fn fair_catalog_keeps_later_workspace_entries_after_earlier_hierarchy_exhaustion() {
-    let mut first_definition = source_definition("first", "/workspace/first.sv", 1, Vec::new());
+    let mut first_definition = source_definition("first", hp("/workspace/first.sv"), 1, Vec::new());
     first_definition.signals = (0..(MAX_INSTANCE_NODES * 2))
         .map(|index| ModuleGraphSignal {
             name: format!("signal_{index}"),
@@ -912,7 +913,7 @@ fn fair_catalog_keeps_later_workspace_entries_after_earlier_hierarchy_exhaustion
     let second_analysis = graph_analysis(
         vec![source_definition(
             "second",
-            "/workspace/second.sv",
+            hp("/workspace/second.sv"),
             1,
             Vec::new(),
         )],
@@ -945,7 +946,7 @@ fn fair_catalog_keeps_later_workspace_entries_after_earlier_hierarchy_exhaustion
 
 #[test]
 fn fair_budget_accounts_hierarchy_and_catalog_nodes_within_global_cap() {
-    let mut first_definition = source_definition("first", "/workspace/first.sv", 1, Vec::new());
+    let mut first_definition = source_definition("first", hp("/workspace/first.sv"), 1, Vec::new());
     first_definition.signals = (0..(MAX_INSTANCE_NODES * 2))
         .map(|index| ModuleGraphSignal {
             name: format!("signal_{index}"),
@@ -1017,7 +1018,7 @@ fn response_budget_keeps_a_huge_root_catalog_bounded_and_visible() {
 
 #[test]
 fn response_budget_keeps_later_workspace_roots_after_catalog_truncation() {
-    let mut first_definition = source_definition("first", "/workspace/first.sv", 1, Vec::new());
+    let mut first_definition = source_definition("first", hp("/workspace/first.sv"), 1, Vec::new());
     first_definition.signals = (0..(MAX_INSTANCE_NODES * 2))
         .map(|index| ModuleGraphSignal {
             name: format!("signal_{index}"),
@@ -1034,11 +1035,16 @@ fn response_budget_keeps_later_workspace_roots_after_catalog_truncation() {
         vec![
             source_definition(
                 "second",
-                "/workspace/second.sv",
+                hp("/workspace/second.sv"),
                 1,
                 vec![source_instance("u_leaf", "second_leaf", 2)],
             ),
-            source_definition("second_leaf", "/workspace/second_leaf.sv", 1, Vec::new()),
+            source_definition(
+                "second_leaf",
+                hp("/workspace/second_leaf.sv"),
+                1,
+                Vec::new(),
+            ),
         ],
         Vec::new(),
         None,
@@ -1108,7 +1114,7 @@ fn exhausted_cycle_leaves_stay_accounted_and_preserve_later_workspace_root() {
     let first_analysis = graph_analysis(
         vec![source_definition(
             "cycle",
-            "/workspace/cycle.sv",
+            hp("/workspace/cycle.sv"),
             1,
             cycle_children,
         )],
@@ -1118,7 +1124,7 @@ fn exhausted_cycle_leaves_stay_accounted_and_preserve_later_workspace_root() {
     let second_analysis = graph_analysis(
         vec![source_definition(
             "second",
-            "/workspace/second.sv",
+            hp("/workspace/second.sv"),
             1,
             Vec::new(),
         )],
@@ -1146,7 +1152,7 @@ fn exhausted_cycle_leaves_stay_accounted_and_preserve_later_workspace_root() {
 
 #[test]
 fn omitted_generate_scope_marks_parent_at_regular_budget_boundary() {
-    let mut definition = source_definition("top", "/workspace/top.sv", 1, Vec::new());
+    let mut definition = source_definition("top", hp("/workspace/top.sv"), 1, Vec::new());
     let ordinary_content_slots =
         MAX_INSTANCE_NODES - GRAPH_TERMINAL_SLOTS - GUARANTEED_HIERARCHY_ROOT_SLOTS - 2 - 1;
     definition.signals = (0..ordinary_content_slots)
@@ -1184,7 +1190,12 @@ fn omitted_generate_scope_marks_parent_at_regular_budget_boundary() {
 #[test]
 fn depth_limited_scope_merge_is_explicit_without_a_marker_slot() {
     let analysis = graph_analysis(
-        vec![source_definition("top", "/workspace/top.sv", 1, Vec::new())],
+        vec![source_definition(
+            "top",
+            hp("/workspace/top.sv"),
+            1,
+            Vec::new(),
+        )],
         Vec::new(),
         None,
     );
@@ -1193,7 +1204,7 @@ fn depth_limited_scope_merge_is_explicit_without_a_marker_slot() {
     let lookup = SourceElaborationLookup::new(&catalog, &[], &represented);
     let source = ModuleGraphGenerateScope {
         name: "nested".to_owned(),
-        file: Some("/workspace/top.sv".to_owned()),
+        file: Some(hp("/workspace/top.sv").to_owned()),
         line: 2,
         col: 1,
         children: Vec::new(),
@@ -1233,8 +1244,8 @@ fn depth_limited_scope_merge_is_explicit_without_a_marker_slot() {
 fn generated_scope_marks_omitted_siblings_without_an_available_marker() {
     let analysis = graph_analysis(
         vec![
-            source_definition("top", "/workspace/top.sv", 1, Vec::new()),
-            source_definition("leaf", "/workspace/leaf.sv", 1, Vec::new()),
+            source_definition("top", hp("/workspace/top.sv"), 1, Vec::new()),
+            source_definition("leaf", hp("/workspace/leaf.sv"), 1, Vec::new()),
         ],
         Vec::new(),
         None,
@@ -1290,8 +1301,8 @@ fn generated_scope_marks_omitted_siblings_without_an_available_marker() {
 fn merged_generated_scope_marks_siblings_without_an_available_marker() {
     let analysis = graph_analysis(
         vec![
-            source_definition("top", "/workspace/top.sv", 1, Vec::new()),
-            source_definition("leaf", "/workspace/leaf.sv", 1, Vec::new()),
+            source_definition("top", hp("/workspace/top.sv"), 1, Vec::new()),
+            source_definition("leaf", hp("/workspace/leaf.sv"), 1, Vec::new()),
         ],
         Vec::new(),
         None,
@@ -1300,7 +1311,7 @@ fn merged_generated_scope_marks_siblings_without_an_available_marker() {
     let lookup = SourceElaborationLookup::new(&catalog, &[], &HashSet::new());
     let source = ModuleGraphGenerateScope {
         name: "g".to_owned(),
-        file: Some("/workspace/top.sv".to_owned()),
+        file: Some(hp("/workspace/top.sv").to_owned()),
         line: 2,
         col: 1,
         children: vec![
@@ -1364,8 +1375,8 @@ fn one_slot_workspace_catalog_marks_the_real_prefix_when_truncated() {
     // Arrange
     let analysis = graph_analysis(
         vec![
-            source_definition("first", "/workspace/first.sv", 1, Vec::new()),
-            source_definition("second", "/workspace/second.sv", 1, Vec::new()),
+            source_definition("first", hp("/workspace/first.sv"), 1, Vec::new()),
+            source_definition("second", hp("/workspace/second.sv"), 1, Vec::new()),
         ],
         Vec::new(),
         None,
@@ -1391,7 +1402,7 @@ fn one_slot_workspace_catalog_leaves_a_complete_definition_unmarked() {
     let analysis = graph_analysis(
         vec![source_definition(
             "only",
-            "/workspace/only.sv",
+            hp("/workspace/only.sv"),
             1,
             Vec::new(),
         )],
@@ -1447,7 +1458,7 @@ fn oversized_first_workspace_cannot_consume_later_workspace_catalog_or_root_quot
     let second_analysis = graph_analysis(
         vec![source_definition(
             "second",
-            "/workspace/second.sv",
+            hp("/workspace/second.sv"),
             1,
             Vec::new(),
         )],
@@ -1535,13 +1546,13 @@ fn response_budget_keeps_catalog_and_hierarchy_bounded_across_analysis_roots() {
 fn rootless_source_cycle_has_one_bounded_cycle_root() {
     let first = source_definition(
         "first",
-        "/workspace/first.sv",
+        hp("/workspace/first.sv"),
         1,
         vec![source_instance("u_second", "second", 2)],
     );
     let second = source_definition(
         "second",
-        "/workspace/second.sv",
+        hp("/workspace/second.sv"),
         1,
         vec![source_instance("u_first", "first", 2)],
     );
@@ -1569,10 +1580,10 @@ fn rootless_source_cycle_has_one_bounded_cycle_root() {
 
 #[test]
 fn self_cycle_is_visible_beside_an_ordinary_zero_incoming_root() {
-    let ordinary = source_definition("ordinary", "/workspace/ordinary.sv", 1, Vec::new());
+    let ordinary = source_definition("ordinary", hp("/workspace/ordinary.sv"), 1, Vec::new());
     let self_cycle = source_definition(
         "self_cycle",
-        "/workspace/self_cycle.sv",
+        hp("/workspace/self_cycle.sv"),
         1,
         vec![source_instance("self", "self_cycle", 2)],
     );
@@ -1597,13 +1608,13 @@ fn self_cycle_is_visible_beside_an_ordinary_zero_incoming_root() {
 
 #[test]
 fn declaration_fallback_emits_typed_contents_and_filters_port_backing_signals() {
-    let mut definition = source_definition("decl_top", "/workspace/decl.sv", 2, Vec::new());
+    let mut definition = source_definition("decl_top", hp("/workspace/decl.sv"), 2, Vec::new());
     definition.ports.push(ModuleGraphPort {
         name: "clk".to_owned(),
         direction: Direction::Input,
         ty: ty("logic", Some(1)),
         detail: Some("input logic clk".to_owned()),
-        location: Some(source_location("/workspace/decl.sv", 2, 25, 3)),
+        location: Some(source_location(hp("/workspace/decl.sv"), 2, 25, 3)),
         display_type: None,
         display_shape: ModuleGraphTypeShape::default(),
     });
@@ -1612,7 +1623,7 @@ fn declaration_fallback_emits_typed_contents_and_filters_port_backing_signals() 
         ty: ty("int", Some(32)),
         local: false,
         detail: Some("parameter int WIDTH = 8".to_owned()),
-        location: Some(source_location("/workspace/decl.sv", 1, 24, 5)),
+        location: Some(source_location(hp("/workspace/decl.sv"), 1, 24, 5)),
         display_type: None,
         display_shape: ModuleGraphTypeShape::default(),
     });
@@ -1631,7 +1642,7 @@ fn declaration_fallback_emits_typed_contents_and_filters_port_backing_signals() 
             kind: "wire".to_owned(),
             ty: ty("logic", Some(8)),
             detail: Some("wire logic [7:0] payload".to_owned()),
-            location: Some(source_location("/workspace/decl.sv", 3, 23, 7)),
+            location: Some(source_location(hp("/workspace/decl.sv"), 3, 23, 7)),
             display_type: Some("logic [7:0]".to_owned()),
             display_shape: ModuleGraphTypeShape::default(),
         },
@@ -1640,7 +1651,7 @@ fn declaration_fallback_emits_typed_contents_and_filters_port_backing_signals() 
             kind: "tri".to_owned(),
             ty: ty("logic", Some(4)),
             detail: Some("tri [3:0] tri_bus".to_owned()),
-            location: Some(source_location("/workspace/decl.sv", 4, 14, 7)),
+            location: Some(source_location(hp("/workspace/decl.sv"), 4, 14, 7)),
             display_type: None,
             display_shape: ModuleGraphTypeShape::default(),
         },
@@ -1702,9 +1713,9 @@ fn declaration_fallback_emits_typed_contents_and_filters_port_backing_signals() 
 #[test]
 fn elaborated_contents_keep_exact_values_types_and_port_filtering() {
     let mut top = instance("top", "work@top", "top");
-    top.file = Some("/workspace/top.sv".to_owned());
+    top.file = Some(hp("/workspace/top.sv").to_owned());
     let mut child = instance("u_child", "work@top.u_child", "child");
-    child.file = Some("/workspace/child.sv".to_owned());
+    child.file = Some(hp("/workspace/child.sv").to_owned());
     child.line = 7;
     child.col = 5;
     child.ports.push(PortModel {
@@ -1735,11 +1746,11 @@ fn elaborated_contents_keep_exact_values_types_and_port_filtering() {
         vec![
             source_definition(
                 "top",
-                "/workspace/top.sv",
+                hp("/workspace/top.sv"),
                 1,
                 vec![source_instance("u_child", "child", 7)],
             ),
-            source_definition("child", "/workspace/child.sv", 1, Vec::new()),
+            source_definition("child", hp("/workspace/child.sv"), 1, Vec::new()),
         ],
         vec![top],
         None,
@@ -1768,10 +1779,10 @@ fn elaborated_contents_keep_exact_values_types_and_port_filtering() {
 #[test]
 fn elaborated_types_resolve_parameters_for_nested_instances() {
     let mut top = instance("top", "work@top", "top");
-    top.file = Some("/workspace/top.sv".to_owned());
+    top.file = Some(hp("/workspace/top.sv").to_owned());
 
     let mut child = instance("u_child", "work@top.u_child", "child");
-    child.file = Some("/workspace/child.sv".to_owned());
+    child.file = Some(hp("/workspace/child.sv").to_owned());
     child.params.push(ParamModel {
         name: "WIDTH".to_owned(),
         value: Some(Val::Bits(Value::from_u64(8, 32, false))),
@@ -1790,7 +1801,7 @@ fn elaborated_types_resolve_parameters_for_nested_instances() {
     });
 
     let mut leaf = instance("u_leaf", "work@top.u_child.u_leaf", "leaf");
-    leaf.file = Some("/workspace/leaf.sv".to_owned());
+    leaf.file = Some(hp("/workspace/leaf.sv").to_owned());
     leaf.params.push(ParamModel {
         name: "WIDTH".to_owned(),
         value: Some(Val::Bits(Value::from_u64(3, 32, false))),
@@ -1807,13 +1818,13 @@ fn elaborated_types_resolve_parameters_for_nested_instances() {
 
     let source_top = source_definition(
         "top",
-        "/workspace/top.sv",
+        hp("/workspace/top.sv"),
         1,
         vec![source_instance("u_child", "child", 3)],
     );
     let mut source_child = source_definition(
         "child",
-        "/workspace/child.sv",
+        hp("/workspace/child.sv"),
         1,
         vec![source_instance("u_leaf", "leaf", 3)],
     );
@@ -1822,7 +1833,7 @@ fn elaborated_types_resolve_parameters_for_nested_instances() {
         direction: Direction::Input,
         ty: ty("logic", None),
         detail: None,
-        location: Some(source_location("/workspace/child.sv", 1, 45, 4)),
+        location: Some(source_location(hp("/workspace/child.sv"), 1, 45, 4)),
         display_type: Some("logic [WIDTH-1:0]".to_owned()),
         display_shape: ModuleGraphTypeShape {
             packed_dimensions: 1,
@@ -1834,7 +1845,7 @@ fn elaborated_types_resolve_parameters_for_nested_instances() {
         ty: ty("int", Some(32)),
         local: false,
         detail: None,
-        location: Some(source_location("/workspace/child.sv", 1, 29, 5)),
+        location: Some(source_location(hp("/workspace/child.sv"), 1, 29, 5)),
         display_type: Some("int".to_owned()),
         display_shape: ModuleGraphTypeShape::default(),
     });
@@ -1843,20 +1854,20 @@ fn elaborated_types_resolve_parameters_for_nested_instances() {
         kind: "wire".to_owned(),
         ty: ty("logic", None),
         detail: None,
-        location: Some(source_location("/workspace/child.sv", 2, 22, 7)),
+        location: Some(source_location(hp("/workspace/child.sv"), 2, 22, 7)),
         display_type: Some("logic [WIDTH-1:0]".to_owned()),
         display_shape: ModuleGraphTypeShape {
             packed_dimensions: 1,
             unpacked_dimensions: 0,
         },
     });
-    let mut source_leaf = source_definition("leaf", "/workspace/leaf.sv", 1, Vec::new());
+    let mut source_leaf = source_definition("leaf", hp("/workspace/leaf.sv"), 1, Vec::new());
     source_leaf.signals.push(ModuleGraphSignal {
         name: "leaf_payload".to_owned(),
         kind: "wire".to_owned(),
         ty: ty("logic", None),
         detail: None,
-        location: Some(source_location("/workspace/leaf.sv", 2, 22, 12)),
+        location: Some(source_location(hp("/workspace/leaf.sv"), 2, 22, 12)),
         display_type: Some("logic [WIDTH-1:0]".to_owned()),
         display_shape: ModuleGraphTypeShape {
             packed_dimensions: 1,
@@ -1908,7 +1919,7 @@ fn elaborated_types_resolve_parameters_for_nested_instances() {
 
 #[test]
 fn unresolved_symbolic_width_is_retained_without_guessing() {
-    let mut definition = source_definition("symbolic", "/workspace/symbolic.sv", 1, Vec::new());
+    let mut definition = source_definition("symbolic", hp("/workspace/symbolic.sv"), 1, Vec::new());
     definition.signals.push(ModuleGraphSignal {
         name: "payload".to_owned(),
         kind: "wire".to_owned(),
@@ -2059,23 +2070,23 @@ fn elaborated_and_source_generate_scopes_are_deduplicated_with_nested_wrappers()
         children: vec![instance("u_leaf", "top.g[0].u_leaf", "leaf")],
     });
 
-    let mut source_top = source_definition("top", "/workspace/top.sv", 1, Vec::new());
+    let mut source_top = source_definition("top", hp("/workspace/top.sv"), 1, Vec::new());
     source_top.generated_scopes.push(ModuleGraphGenerateScope {
         name: "g".to_owned(),
-        file: Some("/workspace/top.sv".to_owned()),
+        file: Some(hp("/workspace/top.sv").to_owned()),
         line: 4,
         col: 3,
         children: vec![source_instance("u_leaf", "leaf", 5)],
         nested: vec![ModuleGraphGenerateScope {
             name: "inner".to_owned(),
-            file: Some("/workspace/top.sv".to_owned()),
+            file: Some(hp("/workspace/top.sv").to_owned()),
             line: 6,
             col: 5,
             children: vec![source_instance("u_nested", "leaf", 7)],
             nested: Vec::new(),
         }],
     });
-    let leaf = source_definition("leaf", "/workspace/leaf.sv", 1, Vec::new());
+    let leaf = source_definition("leaf", hp("/workspace/leaf.sv"), 1, Vec::new());
     let analysis = graph_analysis(vec![source_top, leaf], vec![top], None);
 
     let result = snapshot_analysis("root", &analysis, identity_source);
@@ -2099,12 +2110,12 @@ fn elaborated_and_source_generate_scopes_are_deduplicated_with_nested_wrappers()
 fn duplicate_definition_name_is_an_explicit_unexpanded_ambiguous_leaf() {
     let parent = source_definition(
         "parent",
-        "/workspace/parent.sv",
+        hp("/workspace/parent.sv"),
         1,
         vec![source_instance("u_dup", "dup", 4)],
     );
-    let first = source_definition("dup", "/workspace/one.sv", 1, Vec::new());
-    let second = source_definition("dup", "/workspace/two.sv", 1, Vec::new());
+    let first = source_definition("dup", hp("/workspace/one.sv"), 1, Vec::new());
+    let second = source_definition("dup", hp("/workspace/two.sv"), 1, Vec::new());
     let analysis = graph_analysis(vec![parent, first, second], Vec::new(), None);
 
     let result = snapshot_analysis("root", &analysis, identity_source);
@@ -2132,19 +2143,19 @@ fn duplicate_definition_name_is_an_explicit_unexpanded_ambiguous_leaf() {
 fn cycles_and_named_generate_boundaries_are_safe() {
     let mut top = source_definition(
         "top",
-        "/workspace/top.sv",
+        hp("/workspace/top.sv"),
         1,
         vec![source_instance("u_a", "a", 3)],
     );
     top.generated_scopes.push(ModuleGraphGenerateScope {
         name: "gen_block".to_owned(),
-        file: Some("/workspace/top.sv".to_owned()),
+        file: Some(hp("/workspace/top.sv").to_owned()),
         line: 5,
         col: 3,
         children: vec![source_instance("u_leaf", "leaf", 6)],
         nested: vec![ModuleGraphGenerateScope {
             name: "inner_block".to_owned(),
-            file: Some("/workspace/top.sv".to_owned()),
+            file: Some(hp("/workspace/top.sv").to_owned()),
             line: 7,
             col: 5,
             children: vec![source_instance("u_nested", "leaf", 8)],
@@ -2153,17 +2164,17 @@ fn cycles_and_named_generate_boundaries_are_safe() {
     });
     let a = source_definition(
         "a",
-        "/workspace/a.sv",
+        hp("/workspace/a.sv"),
         1,
         vec![source_instance("u_b", "b", 3)],
     );
     let b = source_definition(
         "b",
-        "/workspace/b.sv",
+        hp("/workspace/b.sv"),
         1,
         vec![source_instance("u_a_again", "a", 3)],
     );
-    let leaf = source_definition("leaf", "/workspace/leaf.sv", 1, Vec::new());
+    let leaf = source_definition("leaf", hp("/workspace/leaf.sv"), 1, Vec::new());
     let analysis = graph_analysis(vec![top, a, b, leaf], Vec::new(), None);
 
     let result = snapshot_analysis("root", &analysis, identity_source);
@@ -2190,7 +2201,7 @@ fn cycles_and_named_generate_boundaries_are_safe() {
 
 #[test]
 fn expansion_budget_bounds_flat_source_fanout_to_one_marker() {
-    let mut top = source_definition("top", "/workspace/top.sv", 1, Vec::new());
+    let mut top = source_definition("top", hp("/workspace/top.sv"), 1, Vec::new());
     for index in 0..(MAX_INSTANCE_NODES * 2) {
         top.children.push(source_instance(
             &format!("u_{index}"),
@@ -2198,7 +2209,7 @@ fn expansion_budget_bounds_flat_source_fanout_to_one_marker() {
             index as u32 + 2,
         ));
     }
-    let leaf = source_definition("leaf", "/workspace/leaf.sv", 1, Vec::new());
+    let leaf = source_definition("leaf", hp("/workspace/leaf.sv"), 1, Vec::new());
     let analysis = graph_analysis(vec![top, leaf], Vec::new(), None);
 
     let result = snapshot_analysis("root", &analysis, identity_source);
@@ -2229,7 +2240,7 @@ fn compatibility_snapshot_bounds_flat_fanout_to_one_marker() {
         modules: vec![
             ModuleDef {
                 name: "top".to_owned(),
-                file: Some("/workspace/top.sv".to_owned()),
+                file: Some(hp("/workspace/top.sv").to_owned()),
                 line: 1,
                 col: 1,
                 end_line: 2,
@@ -2237,7 +2248,7 @@ fn compatibility_snapshot_bounds_flat_fanout_to_one_marker() {
             },
             ModuleDef {
                 name: "leaf".to_owned(),
-                file: Some("/workspace/leaf.sv".to_owned()),
+                file: Some(hp("/workspace/leaf.sv").to_owned()),
                 line: 1,
                 col: 1,
                 end_line: 2,
@@ -2259,11 +2270,11 @@ fn compatibility_snapshot_bounds_flat_fanout_to_one_marker() {
 fn cycle_at_budget_boundary_keeps_cycle_flag_and_one_remainder_marker() {
     let parent = source_definition(
         "parent",
-        "/workspace/parent.sv",
+        hp("/workspace/parent.sv"),
         1,
         vec![source_instance("u_top", "top", 2)],
     );
-    let mut top = source_definition("top", "/workspace/top.sv", 1, Vec::new());
+    let mut top = source_definition("top", hp("/workspace/top.sv"), 1, Vec::new());
     // Hierarchy roots are serialized before module records. Leave enough
     // ordinary slots to place the cycle at the boundary, then include two
     // trailing siblings so the third becomes the one explicit remainder
@@ -2295,7 +2306,7 @@ fn cycle_at_budget_boundary_keeps_cycle_flag_and_one_remainder_marker() {
         "leaf",
         MAX_INSTANCE_NODES as u32 + 5,
     ));
-    let leaf = source_definition("leaf", "/workspace/leaf.sv", 1, Vec::new());
+    let leaf = source_definition("leaf", hp("/workspace/leaf.sv"), 1, Vec::new());
     let analysis = graph_analysis(vec![parent, top, leaf], Vec::new(), Some("top"));
 
     let result = snapshot_analysis("root", &analysis, identity_source);
@@ -2322,7 +2333,7 @@ fn cycle_at_budget_boundary_keeps_cycle_flag_and_one_remainder_marker() {
 fn graph_snapshot_json_has_deterministic_ids_and_camel_case_optional_fields() {
     let mut first_definition = source_definition(
         "top",
-        "/workspace/top.sv",
+        hp("/workspace/top.sv"),
         1,
         vec![source_instance("u_child", "child", 4)],
     );
@@ -2335,7 +2346,7 @@ fn graph_snapshot_json_has_deterministic_ids_and_camel_case_optional_fields() {
         display_type: None,
         display_shape: ModuleGraphTypeShape::default(),
     });
-    let second_definition = source_definition("child", "/workspace/child.sv", 1, Vec::new());
+    let second_definition = source_definition("child", hp("/workspace/child.sv"), 1, Vec::new());
     let first = graph_analysis(
         vec![first_definition.clone(), second_definition.clone()],
         Vec::new(),
@@ -2350,7 +2361,7 @@ fn graph_snapshot_json_has_deterministic_ids_and_camel_case_optional_fields() {
     let root = &first_json["roots"][0];
     assert!(root["id"]
         .as_str()
-        .is_some_and(|id| id.contains("/workspace/top.sv")));
+        .is_some_and(|id| id.contains(hp("/workspace/top.sv"))));
     assert_eq!(root["contentSource"], "declaration");
     assert!(root.get("content_source").is_none());
     assert!(root.get("isAmbiguous").is_none());

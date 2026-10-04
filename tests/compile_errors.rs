@@ -17,11 +17,9 @@ impl TempDir {
             std::env::temp_dir().join(format!("llg-compile-errors-{}-{id}", std::process::id()));
         fs::create_dir_all(&path).expect("create compile-errors temp directory");
         // Diagnostics name files by their resolved path (macOS /var/... is
-        // /private/var/...); Windows canonicalization adds a verbatim prefix.
-        #[cfg(unix)]
-        let path = path
-            .canonicalize()
-            .expect("resolve compile-errors temp directory");
+        // /private/var/...; Windows expands 8.3 short names).
+        let path =
+            llg::ffi::platform::canonicalize(&path).expect("resolve compile-errors temp directory");
         Self(path)
     }
 

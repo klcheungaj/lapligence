@@ -6,10 +6,14 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stddef.h>
-#include <stdatomic.h>
+#include "llg_platform.h"
 
+// MSVC's C mode has no max_align_t; these members cover the fundamental
+// alignments the value module allocates for.
 typedef union {
-    max_align_t alignment;
+    long double long_double_alignment;
+    void* pointer_alignment;
+    uint64_t u64_alignment;
     size_t bytes;
 } allocation_header_t;
 static size_t live_allocations;
@@ -19,12 +23,12 @@ static size_t peak_bytes;
 static size_t peak_allocations;
 // Model storage is produced on the simulation thread; waveform snapshots may
 // be destroyed concurrently by the writer. Keep multi-counter updates coherent.
-static atomic_flag counter_lock = ATOMIC_FLAG_INIT;
+static llg_atomic_int_t counter_lock;
 static void lock_counters(void) {
-    while (atomic_flag_test_and_set_explicit(&counter_lock, memory_order_acquire)) {}
+    while (!llg_atomic_int_cas(&counter_lock, 0, 1)) {}
 }
 static void unlock_counters(void) {
-    atomic_flag_clear_explicit(&counter_lock, memory_order_release);
+    llg_atomic_int_store(&counter_lock, 0);
 }
 static size_t read_counter(const size_t* counter) {
     lock_counters();

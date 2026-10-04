@@ -92,6 +92,9 @@ impl TempDir {
     fn new(tag: &str) -> Self {
         let path = std::env::temp_dir().join(format!("llg_lint_cli_{tag}_{}", std::process::id()));
         std::fs::create_dir_all(&path).expect("create temp dir");
+        // Diagnostics name the resolved source path (macOS /private/var,
+        // Windows long names instead of 8.3 short names).
+        let path = llg::ffi::platform::canonicalize(&path).expect("resolve temp dir");
         TempDir { path }
     }
 
@@ -457,7 +460,7 @@ fn cli_lint_json_exposes_control_rules_and_honors_config() {
         assert!(
             diag["file"]
                 .as_str()
-                .is_some_and(|file| file.ends_with("/design.sv")),
+                .is_some_and(|file| std::path::Path::new(file).ends_with("design.sv")),
             "{rule} should retain the real source path: {baseline_report}"
         );
     }
