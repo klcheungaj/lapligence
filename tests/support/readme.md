@@ -19,3 +19,6 @@ that acceptance with checked compilation, validated whole-model generation after
 snapshot destruction, and execution after Db destruction at native O0/O3. Its
 expected output remains the caller's independent fixture oracle. Missing tools
 fail mandatory acceptance; see [feature completion slices](../readme.md#feature-completion-slices).
+
+`c_compiler.rs` identifies real GNU GCC (macOS `gcc` is Apple Clang) so GCC-only
+diagnostics are requested only from GCC.
