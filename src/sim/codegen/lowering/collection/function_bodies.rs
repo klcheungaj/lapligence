@@ -470,12 +470,12 @@ impl<'a> Codegen<'a> {
                     {
                         chandle_read.insert(*io, IrChandleExpr::Read(object));
                         chandle_write.insert(*io, ChandleTarget::Object(object));
-                        static_input_copies.push(IrStmt::Object(
+                        static_input_copies.push(IrStmt::Object(Box::new(
                             crate::sim::ir::IrObjectStmt::ChandleAssign(
                                 object,
                                 IrChandleExpr::FormalRead(idx),
                             ),
-                        ));
+                        )));
                         continue;
                     }
                 }
@@ -524,9 +524,8 @@ impl<'a> Codegen<'a> {
                     string_write.insert(*io, name.clone());
                     string_addr.insert(*io, name);
                     if !*is_out {
-                        static_input_copies.push(IrStmt::Object(IrObjectStmt::StringAssign(
-                            object,
-                            IrStringExpr::FormalRead(idx),
+                        static_input_copies.push(IrStmt::Object(Box::new(
+                            IrObjectStmt::StringAssign(object, IrStringExpr::FormalRead(idx)),
                         )));
                     }
                 } else {

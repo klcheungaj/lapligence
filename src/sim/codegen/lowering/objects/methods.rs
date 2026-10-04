@@ -34,19 +34,19 @@ impl Codegen<'_> {
             }
             let target = self.lower_process(path, receiver)?;
             return match name.as_str() {
-                "kill" => Ok(IrStmt::Object(IrObjectStmt::ProcessControl {
+                "kill" => Ok(IrStmt::Object(Box::new(IrObjectStmt::ProcessControl {
                     op: IrProcessControl::Kill,
                     target,
-                })),
-                "suspend" => Ok(IrStmt::Object(IrObjectStmt::ProcessControl {
+                }))),
+                "suspend" => Ok(IrStmt::Object(Box::new(IrObjectStmt::ProcessControl {
                     op: IrProcessControl::Suspend,
                     target,
-                })),
-                "resume" => Ok(IrStmt::Object(IrObjectStmt::ProcessControl {
+                }))),
+                "resume" => Ok(IrStmt::Object(Box::new(IrObjectStmt::ProcessControl {
                     op: IrProcessControl::Resume,
                     target,
-                })),
-                "await" => Ok(IrStmt::Object(IrObjectStmt::ProcessAwait(target))),
+                }))),
+                "await" => Ok(IrStmt::Object(Box::new(IrObjectStmt::ProcessAwait(target)))),
                 _ => Err(format!("unsupported process method: {name}")),
             };
         }
@@ -85,8 +85,12 @@ impl Codegen<'_> {
             };
             let receiver = self.lower_chandle(path, receiver)?;
             return match name.as_str() {
-                "put" => Ok(IrStmt::Object(IrObjectStmt::SemaphorePut(receiver, keys))),
-                "get" => Ok(IrStmt::Object(IrObjectStmt::SemaphoreGet(receiver, keys))),
+                "put" => Ok(IrStmt::Object(Box::new(IrObjectStmt::SemaphorePut(
+                    receiver, keys,
+                )))),
+                "get" => Ok(IrStmt::Object(Box::new(IrObjectStmt::SemaphoreGet(
+                    receiver, keys,
+                )))),
                 _ => Err(format!("unsupported semaphore method: {name}")),
             };
         }
@@ -196,6 +200,6 @@ impl Codegen<'_> {
                 ))
             }
         };
-        Ok(IrStmt::Object(operation))
+        Ok(IrStmt::Object(Box::new(operation)))
     }
 }

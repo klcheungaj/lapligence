@@ -1,6 +1,7 @@
 //! Expression import.
 
 use super::*;
+use std::sync::Arc;
 
 fn source_spelling(snapshot: &SlangSnapshot, node: &SemanticNode) -> Option<String> {
     // The bridge exports the expanded token for time literals. Never guess a
@@ -256,13 +257,13 @@ pub(super) fn expression_from_slang(
                     DbError::InvalidSnapshot("assignment pattern type key has no type".into())
                 })?;
                 let projection = type_projector.project(type_id)?;
-                Some(AssignmentPatternKeyType {
+                Some(Box::new(AssignmentPatternKeyType {
                     type_id: projection.descriptor.id,
                     descriptor: projection.descriptor,
                     ty: projection.type_info,
                     two_state: projection.two_state,
                     packed_ranges: projection.packed_dimensions,
-                })
+                }))
             } else {
                 None
             };
@@ -501,8 +502,13 @@ impl<'a> SourceLines<'a> {
     }
 }
 
+/// Shared file name plus one-based start line/column and end line/column.
+pub(super) type SourcePosition = (Option<Arc<str>>, u32, u32, u32, u32);
+
 struct SourcePositionFile<'a> {
     file: &'a crate::ffi::slang::File,
+    /// One shared name per file; every node located in it clones the handle.
+    name: Option<Arc<str>>,
     lines: Option<SourceLines<'a>>,
 }
 
@@ -514,17 +520,16 @@ impl<'a> SourcePositions<'a> {
     pub(super) fn new(snapshot: &'a SlangSnapshot) -> Self {
         let mut files = HashMap::with_capacity(snapshot.files.len());
         for file in &snapshot.files {
-            files
-                .entry(file.id)
-                .or_insert(SourcePositionFile { file, lines: None });
+            files.entry(file.id).or_insert(SourcePositionFile {
+                file,
+                name: None,
+                lines: None,
+            });
         }
         Self { files }
     }
 
-    pub(super) fn position(
-        &mut self,
-        node: &SemanticNode,
-    ) -> Result<(Option<String>, u32, u32, u32, u32), DbError> {
+    pub(super) fn position(&mut self, node: &SemanticNode) -> Result<SourcePosition, DbError> {
         let Some(range) = node.range else {
             return Ok((None, 0, 0, 0, 0));
         };
@@ -541,8 +546,11 @@ impl<'a> SourcePositions<'a> {
             .get_or_insert_with(|| SourceLines::new(&file.file.text));
         let (line, column) = lines.position(start)?;
         let (end_line, end_column) = lines.position(end)?;
+        let name = file
+            .name
+            .get_or_insert_with(|| std::sync::Arc::from(file.file.name.as_str()));
         Ok((
-            Some(file.file.name.clone()),
+            Some(std::sync::Arc::clone(name)),
             line,
             column,
             end_line,
@@ -554,41 +562,81 @@ impl<'a> SourcePositions<'a> {
 pub(super) fn source_position(
     snapshot: &SlangSnapshot,
     node: &SemanticNode,
-) -> Result<(Option<String>, u32, u32, u32, u32), DbError> {
+) -> Result<SourcePosition, DbError> {
     SourcePositions::new(snapshot).position(node)
 }
 
-pub(super) fn semantic_full_name(nodes: &[Node], id: NodeId) -> Result<String, DbError> {
-    let mut parts = Vec::new();
-    let mut current = Some(id);
-    let mut visited = HashSet::new();
-    while let Some(node_id) = current {
-        if !visited.insert(node_id) {
-            return Err(DbError::InvalidSnapshot(
-                "Slang semantic parent links contain a cycle".into(),
-            ));
+/// Assign every node its hierarchical name.
+///
+/// A node's name is its ancestors' names joined with its own. The concrete
+/// loop block already carries the array name and index, so a generate-scope
+/// array contributes no extra segment to its descendants (SV 27.4), although
+/// its own name still names it. Unnamed nodes (most expressions and
+/// statements) share their enclosing scope's name rather than owning a copy.
+pub(super) fn assign_semantic_full_names(nodes: &mut [Node]) -> Result<(), DbError> {
+    const PENDING: u8 = 1;
+    const DONE: u8 = 2;
+    let empty: Arc<str> = Arc::from("");
+    let mut state = vec![0u8; nodes.len()];
+    let mut chain = Vec::new();
+    for start in 0..nodes.len() {
+        let mut current = Some(NodeId::from_index(start));
+        while let Some(node_id) = current {
+            let index = node_id.index();
+            let node = nodes.get(index).ok_or_else(|| {
+                DbError::InvalidSnapshot("Slang semantic parent is outside the node arena".into())
+            })?;
+            match state[index] {
+                DONE => break,
+                PENDING => {
+                    return Err(DbError::InvalidSnapshot(
+                        "Slang semantic parent links contain a cycle".into(),
+                    ));
+                }
+                _ => {}
+            }
+            state[index] = PENDING;
+            chain.push(index);
+            current = node.parent;
         }
-        let node = nodes.get(node_id.index()).ok_or_else(|| {
-            DbError::InvalidSnapshot("Slang semantic parent is outside the node arena".into())
-        })?;
-        // The concrete loop block already carries the array name and index.
-        // Its container remains addressable on its own but is not an extra
-        // segment in a concrete hierarchical path (SV 27.4).
-        if !node.name.is_empty()
-            && (node_id == id || !matches!(node.kind(), NodeKind::GenScopeArray))
-        {
-            parts.push(node.name.as_str());
+        // Parents are named before their children; only generate-scope
+        // arrays, which contribute nothing to descendants, are skipped.
+        while let Some(index) = chain.pop() {
+            let mut prefix = nodes[index].parent;
+            while let Some(parent) = prefix {
+                let parent = &nodes[parent.index()];
+                if !matches!(parent.kind(), NodeKind::GenScopeArray) {
+                    break;
+                }
+                prefix = parent.parent;
+            }
+            let prefix = prefix.map_or_else(
+                || empty.clone(),
+                |parent| nodes[parent.index()].full_name.clone(),
+            );
+            let node = &nodes[index];
+            let name = if node.name.is_empty() {
+                prefix
+            } else if prefix.is_empty() {
+                Arc::from(node.name.as_str())
+            } else {
+                let mut name = String::with_capacity(prefix.len() + 1 + node.name.len());
+                name.push_str(&prefix);
+                name.push('.');
+                name.push_str(&node.name);
+                Arc::from(name)
+            };
+            nodes[index].full_name = name;
+            state[index] = DONE;
         }
-        current = node.parent;
     }
-    parts.reverse();
-    Ok(parts.join("."))
+    Ok(())
 }
 
 pub(super) fn enclosing_scope_name(nodes: &[Node], id: NodeId) -> Option<String> {
     let parent = nodes.get(id.index())?.parent?;
     let full_name = &nodes.get(parent.index())?.full_name;
-    (!full_name.is_empty()).then(|| full_name.clone())
+    (!full_name.is_empty()).then(|| full_name.to_string())
 }
 
 #[cfg(test)]
@@ -662,6 +710,91 @@ mod source_position_tests {
         assert_eq!(lines.position(text.len()).unwrap(), (2, 5));
     }
 
+    /// Independent per-node walk used as the reference for shared names.
+    fn reference_full_name(nodes: &[Node], id: NodeId) -> String {
+        let mut parts = Vec::new();
+        let mut current = Some(id);
+        while let Some(node_id) = current {
+            let node = &nodes[node_id.index()];
+            if !node.name.is_empty()
+                && (node_id == id || !matches!(node.kind(), NodeKind::GenScopeArray))
+            {
+                parts.push(node.name.as_str());
+            }
+            current = node.parent;
+        }
+        parts.reverse();
+        parts.join(".")
+    }
+
+    #[test]
+    fn full_names_match_per_node_walk_and_share_unnamed_scopes() {
+        let source = "module leaf; logic v; endmodule \
+            module top; for (genvar i = 0; i < 3; i++) begin : g \
+            logic [1:0] x; leaf u(); always @(x) begin x = x + 2'd1; end end \
+            initial begin : named logic t; t = 1'b0; end endmodule";
+        let output = crate::core::compile::compile_sources_checked(
+            &[crate::core::compile::OwnedSource::compilation_unit(
+                "full_names.sv",
+                source,
+            )],
+            &crate::core::compile::CompileOpts {
+                top: Some("top".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let db = Db::from_slang(&output.snapshot).unwrap();
+        let nodes = db.nodes();
+        let mut shared = 0;
+        for (index, node) in nodes.iter().enumerate() {
+            let id = NodeId::from_index(index);
+            assert_eq!(&*node.full_name, reference_full_name(nodes, id));
+            if let Some(parent) = node.parent {
+                let parent = &nodes[parent.index()];
+                if node.name.is_empty() && !matches!(parent.kind(), NodeKind::GenScopeArray) {
+                    assert!(Arc::ptr_eq(&node.full_name, &parent.full_name));
+                    shared += 1;
+                }
+            }
+        }
+        assert!(shared > 0);
+        assert!(nodes.iter().any(|node| &*node.full_name == "top.g[1].u.v"));
+        assert!(nodes.iter().any(|node| &*node.full_name == "top.named.t"));
+    }
+
+    #[test]
+    fn full_names_reject_parent_cycles_and_unknown_parents() {
+        let node = |name: &str, parent: Option<u32>| Node {
+            kind: NodeKind::GenScope,
+            children: Vec::new(),
+            parent: parent.map(NodeId),
+            name: name.into(),
+            full_name: "".into(),
+            file: None,
+            line: 0,
+            col: 0,
+            end_line: 0,
+            end_col: 0,
+        };
+        let cycle = vec![node("a", Some(1)), node("b", Some(0))];
+        let mut cycle = cycle;
+        assert!(assign_semantic_full_names(&mut cycle).is_err());
+        let unknown = vec![node("a", Some(7))];
+        let mut unknown = unknown;
+        assert!(assign_semantic_full_names(&mut unknown).is_err());
+        let chain = vec![node("a", None), node("", Some(0)), node("c", Some(1))];
+        let mut chain = chain;
+        assign_semantic_full_names(&mut chain).unwrap();
+        assert_eq!(
+            chain
+                .iter()
+                .map(|node| &*node.full_name)
+                .collect::<Vec<_>>(),
+            ["a", "a", "a.c"]
+        );
+    }
+
     #[test]
     fn owned_import_builds_each_source_index_once() {
         let source =
@@ -686,5 +819,14 @@ mod source_position_tests {
         drop(output);
         db.validate().unwrap();
         assert_eq!(db.source_text("indexed_source.sv"), Some(source));
+        let mut located = db.nodes().iter().filter_map(|node| node.file.as_ref());
+        let first = located.next().expect("located node");
+        assert_eq!(&**first, "indexed_source.sv");
+        let mut count = 1;
+        for name in located {
+            assert!(std::sync::Arc::ptr_eq(first, name));
+            count += 1;
+        }
+        assert!(count > 32);
     }
 }

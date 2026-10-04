@@ -517,7 +517,7 @@ impl<'a> Codegen<'a> {
                         ));
                     }
                 };
-                assignments.push(IrStmt::Object(operation));
+                assignments.push(IrStmt::Object(Box::new(operation)));
                 continue;
             }
             let lhs = self.aggregate_leaf_lhs(left)?;
@@ -715,7 +715,7 @@ impl<'a> Codegen<'a> {
                         ));
                     }
                 };
-                assignments.push(IrStmt::Object(operation));
+                assignments.push(IrStmt::Object(Box::new(operation)));
                 continue;
             }
             let lhs = self.aggregate_leaf_lhs(left)?;
@@ -1399,7 +1399,7 @@ impl<'a> Codegen<'a> {
                     "array assignment pattern key `{key}` has no matching index or type in `{path}`"
                 ));
             };
-            type_values.push((key_type.clone(), value));
+            type_values.push(((**key_type).clone(), value));
         }
 
         let mut resolved = Vec::with_capacity(count);
@@ -1474,16 +1474,23 @@ impl<'a> Codegen<'a> {
             },
             Lhs::Canonical(lhs) => self.reference_lhs(lhs)?,
             Lhs::Bit(info, index, two_state) => {
-                self.reference_lhs(IrLhs::Bit(info.ir, index, two_state))?
+                self.reference_lhs(IrLhs::Bit(info.ir, Box::new(index), two_state))?
             }
             Lhs::Part(info, left, right, two_state) => {
                 let (left, right, _) =
                     checked_select_bounds(left, right, "assignment part select")?;
                 self.reference_lhs(IrLhs::Part(info.ir, left, right, two_state))?
             }
-            Lhs::IdxPart(info, base, width_expr, width, neg, two_state) => self.reference_lhs(
-                IrLhs::IdxPart(info.ir, base, width_expr, width, neg, two_state),
-            )?,
+            Lhs::IdxPart(info, base, width_expr, width, neg, two_state) => {
+                self.reference_lhs(IrLhs::IdxPart(
+                    info.ir,
+                    Box::new(base),
+                    Box::new(width_expr),
+                    width,
+                    neg,
+                    two_state,
+                ))?
+            }
             Lhs::ArrayElem(ae) => self.reference_lhs(IrLhs::ArrayElem {
                 arr: self.reference_array(ae.arr.ir),
                 indices: ae.indices,

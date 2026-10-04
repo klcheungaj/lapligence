@@ -861,7 +861,7 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
                 fill: None,
             }
         }
-        IrExprKind::SysFunc(f) => match f {
+        IrExprKind::SysFunc(f) => match &**f {
             IrSysFunc::TestPlusArgs { pattern } => render_test_plusargs(ctx, pattern)?,
             IrSysFunc::Sampled(call) => {
                 use crate::sim::ir::IrSampledFunc;

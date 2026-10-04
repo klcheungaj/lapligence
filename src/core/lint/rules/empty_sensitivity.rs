@@ -55,13 +55,18 @@ impl LintRule for EmptyImplicitSensitivityRule {
             let line = node.line.max(1);
             let col = node.col.max(1);
             let message = "always @* writes signals but has no resolved signal reads".to_string();
-            if !diagnostics_seen.insert((node.file.clone(), line, col, message.clone())) {
+            if !diagnostics_seen.insert((
+                node.file().map(str::to_owned),
+                line,
+                col,
+                message.clone(),
+            )) {
                 continue;
             }
             out.push(LintDiag {
                 rule: self.id().to_string(),
                 severity: LintSeverity::Warning,
-                file: node.file.clone(),
+                file: node.file().map(str::to_owned),
                 line,
                 col,
                 message,

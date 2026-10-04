@@ -58,11 +58,13 @@ impl<'a> Codegen<'a> {
                         "nested container assignment in {path} requires a dynamic array"
                     ));
                 }
-                return Ok(Some(IrStmt::Container(IrContainerStmt::SetContainer {
-                    container,
-                    indices,
-                    source: source.ir,
-                })));
+                return Ok(Some(IrStmt::Container(Box::new(
+                    IrContainerStmt::SetContainer {
+                        container,
+                        indices,
+                        source: source.ir,
+                    },
+                ))));
             }
             if source_indices.len() > 1 {
                 if !blocking {
@@ -127,7 +129,7 @@ impl<'a> Codegen<'a> {
                         ))
                     }
                 };
-                return Ok(Some(IrStmt::Container(operation)));
+                return Ok(Some(IrStmt::Container(Box::new(operation))));
             }
         }
         let selected = match self.kind(lhs) {
@@ -165,11 +167,13 @@ impl<'a> Codegen<'a> {
                         "nested container assignment in {path} requires a dynamic array"
                     ));
                 }
-                return Ok(Some(IrStmt::Container(IrContainerStmt::SetContainer {
-                    container: container.ir,
-                    indices: vec![self.lower_container_index(path, index)?],
-                    source: source.ir,
-                })));
+                return Ok(Some(IrStmt::Container(Box::new(
+                    IrContainerStmt::SetContainer {
+                        container: container.ir,
+                        indices: vec![self.lower_container_index(path, index)?],
+                        source: source.ir,
+                    },
+                ))));
             }
             let operation = match self.model.containers[container.ir].kind {
                 IrContainerKind::Associative {
@@ -263,7 +267,7 @@ impl<'a> Codegen<'a> {
                     }
                 }
             };
-            return Ok(Some(IrStmt::Container(operation)));
+            return Ok(Some(IrStmt::Container(Box::new(operation))));
         }
 
         let Some(dst) = self.container_of(lhs) else {
@@ -294,7 +298,7 @@ impl<'a> Codegen<'a> {
             )?));
         }
         if let Some(operation) = self.container_method_result(path, dst.ir, rhs)? {
-            return Ok(Some(IrStmt::Container(operation)));
+            return Ok(Some(IrStmt::Container(Box::new(operation))));
         }
         let new_array = match self.kind(rhs) {
             NodeKind::Expr(ExprKind::NewArray { size, initializer }) => Some((*size, *initializer)),
@@ -322,21 +326,25 @@ impl<'a> Codegen<'a> {
                         })
                 })
                 .transpose()?;
-            return Ok(Some(IrStmt::Container(IrContainerStmt::DynamicNew {
-                container: dst.ir,
-                size,
-                initializer,
-            })));
+            return Ok(Some(IrStmt::Container(Box::new(
+                IrContainerStmt::DynamicNew {
+                    container: dst.ir,
+                    size,
+                    initializer,
+                },
+            ))));
         }
         if matches!(
             self.model.containers[dst.ir].kind,
             IrContainerKind::Queue { .. }
         ) {
             if let Some(sources) = self.lower_queue_sources(path, rhs)? {
-                return Ok(Some(IrStmt::Container(IrContainerStmt::QueueAssign {
-                    container: dst.ir,
-                    sources,
-                })));
+                return Ok(Some(IrStmt::Container(Box::new(
+                    IrContainerStmt::QueueAssign {
+                        container: dst.ir,
+                        sources,
+                    },
+                ))));
             }
         }
         let src = self.container_of(rhs).ok_or_else(|| {
@@ -345,9 +353,9 @@ impl<'a> Codegen<'a> {
                 self.kind(rhs)
             )
         })?;
-        Ok(Some(IrStmt::Container(IrContainerStmt::Copy {
+        Ok(Some(IrStmt::Container(Box::new(IrContainerStmt::Copy {
             dst: dst.ir,
             src: src.ir,
-        })))
+        }))))
     }
 }

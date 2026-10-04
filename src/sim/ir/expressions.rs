@@ -355,7 +355,9 @@ pub enum IrExprKind {
         op: IrRealUnOp,
         a: Box<IrExpr>,
     },
-    SysFunc(IrSysFunc),
+    /// Boxed: system-function payloads are far larger than ordinary
+    /// expression kinds, and every IR expression would otherwise pay for them.
+    SysFunc(Box<IrSysFunc>),
 }
 
 /// One checked member of a recursive conditional pattern.

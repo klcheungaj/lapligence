@@ -46,7 +46,9 @@ pub enum ExprKind {
     /// One keyed operand inside an assignment pattern (`'{member: value}`).
     TaggedPattern {
         key: Option<String>,
-        key_type: Option<AssignmentPatternKeyType>,
+        /// Boxed because few patterns carry a type key and its descriptor is
+        /// much larger than the other expression kinds.
+        key_type: Option<Box<AssignmentPatternKeyType>>,
         /// Owned expression for a constant array index key. The spelling in
         /// `key` is retained for display and diagnostics only.
         index_key: Option<NodeId>,

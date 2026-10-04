@@ -1022,7 +1022,7 @@ impl<'a> Codegen<'a> {
                     "fixed unpacked-array pattern key `{key}` has no matching index or type in `{path}`"
                 ));
             };
-            type_values.push((key_type.clone(), value));
+            type_values.push(((**key_type).clone(), value));
         }
         (0..count)
             .map(|offset| {

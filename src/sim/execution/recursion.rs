@@ -133,7 +133,13 @@ mod tests {
     };
 
     fn call(callee: usize) -> IrStmt {
-        IrStmt::Call(IrCall::new(callee, vec![], IrDepth::FUNC, vec![], vec![]))
+        IrStmt::Call(Box::new(IrCall::new(
+            callee,
+            vec![],
+            IrDepth::FUNC,
+            vec![],
+            vec![],
+        )))
     }
 
     /// A value-returning function whose body is `return <call>` for each
@@ -180,7 +186,15 @@ mod tests {
     fn lower(funcs: Vec<IrFunc>, roots: &[usize]) -> ExecutionModel {
         let body = roots
             .iter()
-            .map(|callee| IrStmt::Call(IrCall::new(*callee, vec![], IrDepth::PROC, vec![], vec![])))
+            .map(|callee| {
+                IrStmt::Call(Box::new(IrCall::new(
+                    *callee,
+                    vec![],
+                    IrDepth::PROC,
+                    vec![],
+                    vec![],
+                )))
+            })
             .collect();
         let process = IrProcess::new("p0".into(), "top.p".into(), IrShape::RunOnce, vec![], body);
         let ir = IrModel::from_parts(

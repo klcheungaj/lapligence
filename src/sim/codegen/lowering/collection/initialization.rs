@@ -495,7 +495,7 @@ impl<'a> Codegen<'a> {
                     "aggregate assignment pattern key `{key}` has no matching member or type in `{path}`"
                 ));
             };
-            type_values.push((key.to_owned(), key_type.clone(), value));
+            type_values.push((key.to_owned(), (**key_type).clone(), value));
         }
 
         let resolved = layout

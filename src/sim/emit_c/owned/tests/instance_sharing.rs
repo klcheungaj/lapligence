@@ -202,7 +202,7 @@ fn compatible_pca_sites_share_across_distinct_source_locations() {
         );
         let process = &mut model.processes[index];
         process.origin = crate::sim::semantic::Origin::Source {
-            path: "pca.sv".to_owned(),
+            path: "pca.sv".into(),
             line: index as u32 + 1,
             column: 1,
             end_line: index as u32 + 1,

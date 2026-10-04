@@ -33,7 +33,7 @@ impl LintRule for ImplicitNetRule {
             out.push(LintDiag {
                 rule: "implicit-net".to_string(),
                 severity: LintSeverity::Warning,
-                file: node.file.clone(),
+                file: node.file().map(str::to_owned),
                 line: node.line,
                 col: node.col,
                 message: format!(

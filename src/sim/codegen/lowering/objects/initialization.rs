@@ -27,7 +27,9 @@ impl Codegen<'_> {
                 label,
                 IrShape::RunOnce,
                 Vec::new(),
-                vec![IrStmt::Object(IrObjectStmt::ChandleAssign(object, value))],
+                vec![IrStmt::Object(Box::new(IrObjectStmt::ChandleAssign(
+                    object, value,
+                )))],
                 self.origin(object_node),
             ));
         }
@@ -60,7 +62,9 @@ impl Codegen<'_> {
                 label,
                 IrShape::RunOnce,
                 Vec::new(),
-                vec![IrStmt::Object(IrObjectStmt::ChandleAssign(object, value))],
+                vec![IrStmt::Object(Box::new(IrObjectStmt::ChandleAssign(
+                    object, value,
+                )))],
                 self.origin(object_node),
             ));
         }
@@ -96,7 +100,9 @@ impl Codegen<'_> {
                 label,
                 IrShape::RunOnce,
                 Vec::new(),
-                vec![IrStmt::Object(IrObjectStmt::MailboxAssign(object, value))],
+                vec![IrStmt::Object(Box::new(IrObjectStmt::MailboxAssign(
+                    object, value,
+                )))],
                 self.origin(object_node),
             ));
         }

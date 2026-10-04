@@ -12,6 +12,12 @@ cache. Queries scan at most one checkpoint interval and preserve byte columns
 and UTF-8 boundary validation, with memory bounded by source bytes plus a small
 fixed cache per queried file.
 
+Per-node storage is kept proportional to distinct metadata: nodes share one
+type descriptor per frontend type record, one native detail spelling per
+distinct value, one file name per admitted file and, for unnamed nodes, their
+enclosing scope's hierarchical name. Rare large node payloads are boxed;
+`node_records_stay_compact` bounds the per-node record size.
+
 Each node keeps its physical file, line and column, which remain the
 diagnostic identity. `SourceMap` keeps the `` `line`` mappings separately,
 per physical file name, built once from the snapshot's sorted records with one

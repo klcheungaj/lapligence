@@ -252,7 +252,7 @@ impl CellEligibility {
                 &call.args,
                 call.virtual_dispatch || call.virtual_call.is_some() || call.receiver.is_some(),
             ),
-            IrExprKind::SysFunc(function) => match function {
+            IrExprKind::SysFunc(function) => match &**function {
                 IrSysFunc::Time { .. } | IrSysFunc::Realtime { .. } => {}
                 IrSysFunc::Clog2(a)
                 | IrSysFunc::Bits(a)
@@ -339,11 +339,12 @@ impl CellEligibility {
                     self.string(ctx, init);
                 }
             }
-            IrStmt::Object(
+            IrStmt::Object(object) => match &**object {
                 IrObjectStmt::StringAssign(_, value)
                 | IrObjectStmt::StringAssignLocal(_, value)
-                | IrObjectStmt::StringPrint(value),
-            ) => self.string(ctx, value),
+                | IrObjectStmt::StringPrint(value) => self.string(ctx, value),
+                _ => self.proven = false,
+            },
             IrStmt::Block(body)
             | IrStmt::Forever { body }
             | IrStmt::ActivationScope { body, .. } => self.body(ctx, body),

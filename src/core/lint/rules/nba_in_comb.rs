@@ -48,7 +48,7 @@ impl LintRule for NbaInCombRule {
                 out.push(LintDiag {
                     rule: "nba-in-always_comb".to_string(),
                     severity: LintSeverity::Warning,
-                    file: node.file.clone(),
+                    file: node.file().map(str::to_owned),
                     line: node.line,
                     col: node.col,
                     message: format!("nonblocking assignment in combinational process `{path}`"),

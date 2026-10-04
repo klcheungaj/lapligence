@@ -989,7 +989,7 @@ impl Validator<'_> {
                     return self.fail(path, "verbatim payload type disagrees with expression type");
                 }
             }
-            IrExprKind::SysFunc(sys) => match sys {
+            IrExprKind::SysFunc(sys) => match &**sys {
                 IrSysFunc::TestPlusArgs { pattern } => {
                     self.validate_plusarg_text(pattern, formals, &format!("{path}.pattern"))?;
                     if (expr.width, expr.signed) != (32, true) {

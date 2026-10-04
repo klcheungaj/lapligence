@@ -60,7 +60,7 @@ impl LintRule for MixedAssignRule {
             out.push(LintDiag {
                 rule: "mixed-assignments".to_string(),
                 severity: LintSeverity::Error,
-                file: node.file.clone(),
+                file: node.file().map(str::to_owned),
                 line: node.line,
                 col: node.col,
                 message: format!(
