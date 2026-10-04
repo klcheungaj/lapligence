@@ -759,9 +759,9 @@ fn render_model(
     out.push_str("#include \"llg_vpi.h\"\n");
     out.push_str("_Static_assert(LLG_MODEL_VALUE_ABI == LLG_VALUE_ABI_VERSION, \"regenerate model: incompatible value ownership ABI\");\n");
     out.push_str(&format!("#if UINTPTR_MAX == UINT64_MAX\n_Static_assert(sizeof(sv4_t) == {} && _Alignof(sv4_t) == 8, \"selected packed descriptor layout mismatch\");\n#endif\n", if config.backend == crate::sim::value_backend::ValueBackend::Compact { 24 } else { 32 }));
-    if !model.containers.is_empty() {
-        out.push_str("#include \"llg_container.h\"\n");
-    }
+    // Fixed-array sorting shares the container sort workspace, so every model
+    // declares the always-linked container runtime.
+    out.push_str("#include \"llg_container.h\"\n");
     out.push_str("#include \"llg_string.h\"\n");
     if model.funcs.iter().any(|func| func.dpi_import().is_some()) {
         out.push_str("#include \"svdpi.h\"\n");

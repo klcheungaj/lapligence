@@ -706,6 +706,9 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
         IrStmt::RandomStateSet { state } => {
             state.expressions(&mut |child| collect_expr_reads(child, model, rw))
         }
+        IrStmt::FixedArrayOrder(order) => {
+            order.expressions(&mut |child| collect_expr_reads(child, model, rw))
+        }
         IrStmt::FixedValueAssign { dst, src, .. } => {
             src.expressions(&mut |child| collect_expr_reads(child, model, rw));
             // Descriptor operand calls can write through address formals.
@@ -1051,6 +1054,9 @@ fn collect_children_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
                         }
                     }
                     IrInsideItem::Container { .. } => {}
+                    IrInsideItem::Cells(cells) => {
+                        cells.expressions(&mut |child| collect_expr_reads(child, model, rw))
+                    }
                     IrInsideItem::FixedArray { value, .. } => collect_expr_reads(value, model, rw),
                 }
             }

@@ -102,6 +102,7 @@ fn ident_children(e: &mut IrExpr) {
                         }
                     }
                     IrInsideItem::Container { .. } => {}
+                    IrInsideItem::Cells(cells) => cells.expressions_mut(&mut ident_expr),
                     IrInsideItem::FixedArray { value, .. } => ident_expr(value),
                 }
             }

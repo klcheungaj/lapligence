@@ -57,6 +57,21 @@ impl Validator<'_> {
                     return self.fail(path, "fixed-array reduction source storage shape mismatch");
                 }
             }
+            IrFixedArrayReductionSource::Cells(cells) => {
+                let shape = self.validate_fixed_array_cells(
+                    cells,
+                    formals,
+                    &format!("{path}.cells"),
+                    false,
+                )?;
+                let array = &self.model.arrays[cells.array];
+                if shape.element_cells != 1
+                    || (shape.left, shape.right) != (reduction.left, reduction.right)
+                    || array.elem_width != reduction.element_width
+                {
+                    return self.fail(path, "fixed-array reduction source storage shape mismatch");
+                }
+            }
             IrFixedArrayReductionSource::Value(source) => {
                 self.validate_expr(source, formals, &format!("{path}.source"))?;
                 if source.is_real()

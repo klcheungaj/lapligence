@@ -10,7 +10,11 @@ impl Frame<'_, '_> {
     ) -> Result<Value, String> {
         let source = match &reduction.source {
             IrFixedArrayReductionSource::Value(value) => Some(self.expression(value)?),
-            IrFixedArrayReductionSource::Array(_) => None,
+            IrFixedArrayReductionSource::Array(_) | IrFixedArrayReductionSource::Cells(_) => None,
+        };
+        let cells = match &reduction.source {
+            IrFixedArrayReductionSource::Cells(cells) => Some(self.fixed_cells_view(cells)?),
+            _ => None,
         };
         let result = self.reserve(expr.width, expr.signed);
         let (ordinal, ordinal_declaration) = self.loop_variable("uint64_t", "reduction_ordinal");
@@ -43,6 +47,14 @@ impl Frame<'_, '_> {
                         reduction.element_signed,
                     )
                 }
+            }
+            (IrFixedArrayReductionSource::Cells(storage), None) => {
+                let view = cells
+                    .as_ref()
+                    .ok_or_else(|| "fixed-array reduction view was not captured".to_owned())?;
+                let linear = format!("({} + {ordinal})", view.base);
+                let valid = view.valid.clone();
+                self.fixed_cell_read(storage.array, &valid, &linear)?
             }
             (IrFixedArrayReductionSource::Value(_), Some(source)) => {
                 let width = reduction.element_width;

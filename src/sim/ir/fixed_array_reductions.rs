@@ -9,6 +9,9 @@ pub enum IrFixedArrayReductionSource {
     /// Whole one-dimensional model storage. Read cells in declaration order;
     /// the total array payload need not fit in one packed runtime value.
     Array(usize),
+    /// The last dimension of stored cells below a selected prefix, such as a
+    /// row of a descriptor-backed array; read cell by cell.
+    Cells(IrFixedArrayCells),
     /// A declaration-order payload (activation, slice, row, record member or
     /// function result). Evaluate and capture this expression exactly once.
     Value(Box<IrExpr>),
@@ -48,15 +51,19 @@ impl IrFixedArrayReduction {
     }
 
     pub(in crate::sim) fn expressions(&self, visit: &mut impl FnMut(&IrExpr)) {
-        if let IrFixedArrayReductionSource::Value(value) = &self.source {
-            visit(value);
+        match &self.source {
+            IrFixedArrayReductionSource::Value(value) => visit(value),
+            IrFixedArrayReductionSource::Cells(cells) => cells.expressions(visit),
+            IrFixedArrayReductionSource::Array(_) => {}
         }
         visit(&self.value);
     }
 
     pub(in crate::sim) fn expressions_mut(&mut self, visit: &mut impl FnMut(&mut IrExpr)) {
-        if let IrFixedArrayReductionSource::Value(value) = &mut self.source {
-            visit(value);
+        match &mut self.source {
+            IrFixedArrayReductionSource::Value(value) => visit(value),
+            IrFixedArrayReductionSource::Cells(cells) => cells.expressions_mut(visit),
+            IrFixedArrayReductionSource::Array(_) => {}
         }
         visit(&mut self.value);
     }

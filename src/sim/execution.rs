@@ -685,6 +685,7 @@ fn collect_effects(
                 ScheduleRegion::ReNonblockingAssign,
             )),
             IrStmt::FixedValueAssign { nba: false, .. }
+            | IrStmt::FixedArrayOrder(_)
             | IrStmt::FixedArrayDeclare(_)
             | IrStmt::FixedArrayFill { nba: false, .. }
             | IrStmt::FixedArrayCopy { nba: false, .. }
@@ -1037,6 +1038,9 @@ fn collect_statement_expression_effects(
         IrStmt::FixedArrayFill { value, .. } => {
             collect_expression_effects(ir, value, effects, visited_calls)
         }
+        IrStmt::FixedArrayOrder(order) => order.expressions(&mut |child| {
+            collect_expression_effects(ir, child, effects, visited_calls)
+        }),
         IrStmt::Assign { lhs, rhs, .. }
         | IrStmt::DelayedAssign { lhs, rhs, .. }
         | IrStmt::ClockingDrive { lhs, rhs, .. }
@@ -1532,6 +1536,9 @@ fn collect_expression_effects(
                         }
                     }
                     IrInsideItem::Container { .. } => {}
+                    IrInsideItem::Cells(cells) => cells.expressions(&mut |child| {
+                        collect_expression_effects(ir, child, effects, visited_calls)
+                    }),
                     IrInsideItem::FixedArray { value, .. } => {
                         collect_expression_effects(ir, value, effects, visited_calls)
                     }

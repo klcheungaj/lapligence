@@ -867,6 +867,14 @@ impl Validator<'_> {
                                 );
                             }
                         }
+                        IrInsideItem::Cells(cells) => {
+                            self.validate_fixed_array_cells(
+                                cells,
+                                formals,
+                                &format!("{path}.items[{idx}]"),
+                                true,
+                            )?;
+                        }
                         IrInsideItem::FixedArray { value, elements } => {
                             self.validate_expr(
                                 value,

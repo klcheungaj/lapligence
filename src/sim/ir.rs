@@ -47,6 +47,9 @@ pub use constants::IrConst;
 mod fixed_values;
 pub use fixed_values::IrFixedValue;
 
+mod fixed_array_cells;
+pub(in crate::sim) use fixed_array_cells::FixedArrayCellShape;
+pub use fixed_array_cells::{IrFixedArrayCells, IrFixedArrayOrder, IrFixedArrayOrderMethod};
 mod fixed_array_reductions;
 pub use fixed_array_reductions::{IrFixedArrayReduction, IrFixedArrayReductionSource};
 mod udp;

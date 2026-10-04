@@ -112,6 +112,7 @@ impl Frame<'_, '_> {
                     u8::from(*nba)
                 ));
             }
+            IrStmt::FixedArrayOrder(order) => self.fixed_array_order(order)?,
             IrStmt::FixedArrayFill { array, value, nba } => {
                 let address = self.fixed_array_address(*array)?;
                 let two_state = self.ctx.model.array(*array).two_state;

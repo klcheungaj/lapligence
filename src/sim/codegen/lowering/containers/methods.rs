@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::core::db::AggregateLayout;
-use crate::sim::ir::{IrBinOp, IrModel, IrPackedSelect};
+use crate::sim::ir::{IrBinOp, IrFixedArrayOrderMethod, IrModel, IrPackedSelect};
 
 const MAX_FIXED_SORT_COMPARISONS: usize = 1 << 20;
 
@@ -284,9 +284,6 @@ impl<'a> Codegen<'a> {
                 ..descriptor.clone()
             }
         };
-        let element_width = Self::fixed_descriptor_width(&immediate).ok_or_else(|| {
-            format!("array method `reverse` in `{path}` requires a supported fixed element")
-        })?;
         let count = usize::try_from(i64::from(left).abs_diff(i64::from(right)) + 1)
             .map_err(|_| format!("array method `reverse` in `{path}` has too many elements"))?;
 
@@ -303,6 +300,20 @@ impl<'a> Codegen<'a> {
             ));
         }
 
+        if let Some(statement) = self.lower_fixed_array_order_cells(
+            path,
+            call,
+            receiver,
+            IrFixedArrayOrderMethod::Reverse,
+            &immediate,
+            (left, right),
+            None,
+        )? {
+            return Ok(Some(statement));
+        }
+        let element_width = Self::fixed_descriptor_width(&immediate).ok_or_else(|| {
+            format!("array method `reverse` in `{path}` requires a supported fixed element")
+        })?;
         let mut statements = Vec::new();
         let mut captured_indices = HashMap::new();
         if let Some(view) =
@@ -485,15 +496,6 @@ impl<'a> Codegen<'a> {
         })?;
         let count = usize::try_from(i64::from(left).abs_diff(i64::from(right)) + 1)
             .map_err(|_| format!("fixed-array sort in `{path}` has too many elements"))?;
-        let comparisons = count
-            .checked_mul(count.saturating_sub(1))
-            .and_then(|value| value.checked_div(2))
-            .ok_or_else(|| format!("fixed-array sort in `{path}` has too many comparisons"))?;
-        if comparisons > MAX_FIXED_SORT_COMPARISONS {
-            return Err(format!(
-                "fixed-array sort in `{path}` exceeds the finite comparison schedule limit"
-            ));
-        }
         if with_node.is_none()
             && !self
                 .container_method_arguments(path, call, receiver)?
@@ -501,6 +503,32 @@ impl<'a> Codegen<'a> {
         {
             return Err(format!(
                 "fixed-array sort in `{path}` has unexpected arguments"
+            ));
+        }
+        if let Some(statement) = self.lower_fixed_array_order_cells(
+            path,
+            call,
+            receiver,
+            if descending {
+                IrFixedArrayOrderMethod::RSort
+            } else {
+                IrFixedArrayOrderMethod::Sort
+            },
+            &immediate,
+            (left, right),
+            with_node,
+        )? {
+            return Ok(Some(statement));
+        }
+        // Receivers without stored cells (activation values and formals) use
+        // a straight-line compare-exchange schedule over a captured value.
+        let comparisons = count
+            .checked_mul(count.saturating_sub(1))
+            .and_then(|value| value.checked_div(2))
+            .ok_or_else(|| format!("fixed-array sort in `{path}` has too many comparisons"))?;
+        if comparisons > MAX_FIXED_SORT_COMPARISONS {
+            return Err(format!(
+                "fixed-array sort in `{path}` exceeds the finite comparison schedule limit"
             ));
         }
         let iterator = if with_node.is_some() {

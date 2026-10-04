@@ -73,6 +73,25 @@ impl Codegen<'_> {
         } else {
             None
         };
+        // A selected last-dimension row of stored cells is read in place,
+        // so oversized descriptor rows never become one packed value.
+        let cells = if direct.is_none()
+            && matches!(
+                self.kind(receiver),
+                NodeKind::Expr(ExprKind::ArraySelect { .. } | ExprKind::BitSelect { .. })
+            ) {
+            self.fixed_array_cells(path, receiver)?
+                .filter(|(array, cells)| {
+                    !array.real
+                        && array.elem_width == element_width
+                        && cells.shape(&self.model).is_some_and(|shape| {
+                            shape.element_cells == 1 && (shape.left, shape.right) == (left, right)
+                        })
+                })
+                .map(|(_, cells)| cells)
+        } else {
+            None
+        };
         let source = if let Some(array) = direct {
             if self.model.arrays[array].total != count {
                 return Err(format!(
@@ -80,6 +99,8 @@ impl Codegen<'_> {
                 ));
             }
             IrFixedArrayReductionSource::Array(array)
+        } else if let Some(cells) = cells {
+            IrFixedArrayReductionSource::Cells(cells)
         } else {
             let width = Self::fixed_descriptor_width(&descriptor).ok_or_else(|| {
                 Self::fixed_descriptor_width_bits(&descriptor)
