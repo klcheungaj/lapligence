@@ -184,8 +184,8 @@ warning-free ones except the waveform fixture also run after Db destruction.
 Collapse warnings carry absolute paths, so the module compares their text up to
 the location, and the permuted chain twin must print the same values and
 warnings. `alias_identity`
-also parses its VCD. Negatives cover uwire drivers, pass switches and inout
-formals and the alias legality rules.
+also parses its VCD. Negatives cover uwire drivers, pass switches and the alias
+legality rules; the `inout uwire` formal is positive since RTL-105.
 
 SIM-001's region and procedural-time fixtures use
 `-E 'binary(sim_feature_completion) & test(sim_001::)'` with
@@ -243,6 +243,15 @@ They pin the output-port writer rule for constant slices of descriptor-backed
 arrays: disjoint procedural writers execute in both optimizer modes on both
 backends (set `LLG_TEST_GMP_ROOT` for the GMP lane) and after Db destruction,
 and procedural, second-port and always_ff writers overlapping a slice reject.
+
+RTL-105's frontend-admission fixtures use
+`-E 'binary(sim_feature_completion) & test(rtl_105::)'`: `inout uwire` formals,
+concatenated uwire inout actuals and runtime-selected continuous assignments to
+variables run in both optimizer modes on both backends (set `LLG_TEST_GMP_ROOT`
+for the GMP lane) and after Db destruction; collapsed uwire driver conflicts,
+net and gate-terminal runtime selects and writers inside a runtime select's
+longest static prefix reject. The legality ruling is in the
+[fixture readme](fixtures/sim/feature_completion/rtl_105/readme.md).
 
 ### Vendor patch preparation
 

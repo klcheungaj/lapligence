@@ -1,8 +1,38 @@
 diff --git a/source/ast/symbols/PortSymbols.cpp b/source/ast/symbols/PortSymbols.cpp
-index 1eb90a82e..65a641da1 100644
+index 1eb90a82e..be093f625 100644
 --- a/source/ast/symbols/PortSymbols.cpp
 +++ b/source/ast/symbols/PortSymbols.cpp
-@@ -1832,6 +1832,15 @@ const Expression* PortConnection::getExpression() const {
+@@ -253,13 +253,12 @@ private:
+         port->setAttributes(scope, attrs);
+ 
+         if (!port->name.empty()) {
++            // IEEE 1800-2009 6.6.2 and 23.3.3.6-23.3.3.7 do not forbid an
++            // inout uwire port: the collapsed net keeps the single-driver
++            // rule, which the simulator checks across the port network.
+             if (port->direction == ArgumentDirection::InOut && !netType) {
+                 scope.addDiag(diag::InOutPortCannotBeVariable, port->location) << port->name;
+             }
+-            else if (port->direction == ArgumentDirection::InOut &&
+-                     netType->netKind == NetType::UWire) {
+-                scope.addDiag(diag::InOutUWirePort, port->location) << port->name;
+-            }
+             else if (port->direction == ArgumentDirection::Ref && netType) {
+                 scope.addDiag(diag::RefPortMustBeVariable, port->location) << port->name;
+             }
+@@ -607,10 +606,8 @@ private:
+         if (info.direction == ArgumentDirection::Ref && isNet)
+             scope.addDiag(diag::RefPortMustBeVariable, declLoc) << name;
+ 
+-        if (info.direction == ArgumentDirection::InOut && isNet &&
+-            info.internalSymbol->as<NetSymbol>().netType.netKind == NetType::UWire) {
+-            scope.addDiag(diag::InOutUWirePort, declLoc) << name;
+-        }
++        // A non-ANSI inout uwire port is admitted for the same reason as
++        // the ANSI form above (IEEE 1800-2009 6.6.2, 23.3.3.6-23.3.3.7).
+ 
+         if ((info.direction != ArgumentDirection::Out || isNet) && decl.initializer)
+             scope.addDiag(diag::DisallowedPortDefault, decl.initializer->sourceRange());
+@@ -1832,6 +1829,15 @@ const Expression* PortConnection::getExpression() const {
          if (!connectedSymbol) {
              if (port.kind == SymbolKind::MultiPort)
                  expr = &Expression::bind(*exprSyntax, context);
@@ -18,3 +48,51 @@ index 1eb90a82e..65a641da1 100644
              else
                  expr = &Expression::bindArgument(*type, direction, {}, *exprSyntax, context);
              return expr;
+diff --git a/tests/unittests/ast/PortTests.cpp b/tests/unittests/ast/PortTests.cpp
+index 08f60f4bf..55233cee7 100644
+--- a/tests/unittests/ast/PortTests.cpp
++++ b/tests/unittests/ast/PortTests.cpp
+@@ -1409,7 +1409,10 @@ endmodule
+     CHECK(diags[1].code == diag::RefPortUnconnected);
+ }
+ 
+-TEST_CASE("inout uwire port errors") {
++TEST_CASE("inout uwire ports and connections") {
++    // IEEE 1800-2009 6.6.2 and 23.3.3.6-23.3.3.7 forbid neither an inout
++    // uwire formal nor a uwire actual on a module inout port; the collapsed
++    // net keeps the single-driver rule. Pass-switch terminals stay illegal.
+     auto tree = SyntaxTree::fromText(R"(
+ module m(a);
+     inout uwire a;
+@@ -1427,9 +1430,15 @@ module q(a);
+     inout a;
+ endmodule
+ 
++module s(inout uwire a);
++    wire b;
++    tran t(a, b);
++endmodule
++
+ module top;
+-    uwire a;
++    uwire a, b, c;
+     q q1(a);
++    q q2({b, c});
+ endmodule
+ )");
+ 
+@@ -1437,11 +1446,9 @@ endmodule
+     compilation.addSyntaxTree(tree);
+ 
+     auto& diags = compilation.getAllDiagnostics();
+-    REQUIRE(diags.size() == 4);
+-    CHECK(diags[0].code == diag::InOutUWirePort);
+-    CHECK(diags[1].code == diag::InOutUWirePort);
+-    CHECK(diags[2].code == diag::PortConcatInOut);
+-    CHECK(diags[3].code == diag::InOutUWireConn);
++    REQUIRE(diags.size() == 2);
++    CHECK(diags[0].code == diag::PortConcatInOut);
++    CHECK(diags[1].code == diag::InOutUWireConn);
+ }
+ 
+ TEST_CASE("Interconnect ports") {
