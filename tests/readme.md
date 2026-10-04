@@ -162,6 +162,12 @@ hosts). Component checks are `native_value_descriptors_probe.c` in
 `runtime_value_storage` and the `sim::ir::validate::tests::native_values` unit
 tests.
 
+SIM-004's native assignment, link and conditional fixtures use
+`-E 'binary(sim_feature_completion) & test(sim_004::)'`. Positive fixtures run in
+both optimizer modes on every backend (set `LLG_TEST_GMP_ROOT` for the GMP lane);
+single-file ones also run after Db destruction, and the chandle fixture builds
+its companion C file into a DPI library (Unix hosts).
+
 RTL-016's tagged-union, pattern and Q03 fixtures use
 `-E 'binary(sim_feature_completion) & test(rtl_016::)'`. Positive fixtures and
 the run-time error fixtures run in both optimizer modes on both backends (set
