@@ -69,7 +69,7 @@ impl LintRule for UnusedSignalRule {
                 out.push(LintDiag {
                     rule: "unused-signal".to_string(),
                     severity: LintSeverity::Warning,
-                    file: node.file.clone(),
+                    file: node.file().map(str::to_owned),
                     line: node.line,
                     col: node.col,
                     message,

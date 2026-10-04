@@ -9,8 +9,10 @@ pub struct Node {
     pub children: Vec<NodeId>,
     pub parent: Option<NodeId>,
     pub name: String,
-    pub full_name: String,
-    pub file: Option<String>,
+    /// Hierarchical name. Unnamed nodes share their enclosing scope's name.
+    pub full_name: std::sync::Arc<str>,
+    /// Admitted source file name, shared by every node located in that file.
+    pub file: Option<std::sync::Arc<str>>,
     pub line: u32,
     pub col: u32,
     pub end_line: u32,
@@ -311,5 +313,21 @@ impl PatternCaseItem {
 
     pub const fn body(&self) -> NodeId {
         self.body
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The arena holds one `Node` per semantic record, so a single oversized
+    /// variant multiplies across every node of a large design. Rare large
+    /// payloads must stay boxed.
+    #[test]
+    #[cfg(target_pointer_width = "64")]
+    fn node_records_stay_compact() {
+        assert!(std::mem::size_of::<ExprKind>() <= 112);
+        assert!(std::mem::size_of::<NodeKind>() <= 112);
+        assert!(std::mem::size_of::<Node>() <= 216);
     }
 }

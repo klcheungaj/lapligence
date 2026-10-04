@@ -858,7 +858,7 @@ impl<'a> Codegen<'a> {
         match lhs {
             IrLhs::Whole(signal) => Ok((lhs, Some(read_signal(signal)?))),
             IrLhs::Bit(signal, index, two_state) => {
-                let index = capture(index)?;
+                let index = capture(*index)?;
                 let read = IrExpr::new(
                     IrExprKind::BitSel {
                         base: Box::new(read_signal(signal)?),
@@ -868,7 +868,7 @@ impl<'a> Codegen<'a> {
                     false,
                     None,
                 );
-                Ok((IrLhs::Bit(signal, index, two_state), Some(read)))
+                Ok((IrLhs::Bit(signal, Box::new(index), two_state), Some(read)))
             }
             IrLhs::Part(signal, left, right, two_state) => {
                 let width = left
@@ -889,8 +889,8 @@ impl<'a> Codegen<'a> {
                 Ok((IrLhs::Part(signal, left, right, two_state), Some(read)))
             }
             IrLhs::IdxPart(signal, base, width_expr, width, negative, two_state) => {
-                let base = capture(base)?;
-                let width_expr = capture(width_expr)?;
+                let base = capture(*base)?;
+                let width_expr = capture(*width_expr)?;
                 let read = IrExpr::new(
                     IrExprKind::IdxPartSel {
                         base: Box::new(read_signal(signal)?),
@@ -903,7 +903,14 @@ impl<'a> Codegen<'a> {
                     None,
                 );
                 Ok((
-                    IrLhs::IdxPart(signal, base, width_expr, width, negative, two_state),
+                    IrLhs::IdxPart(
+                        signal,
+                        Box::new(base),
+                        Box::new(width_expr),
+                        width,
+                        negative,
+                        two_state,
+                    ),
                     Some(read),
                 ))
             }

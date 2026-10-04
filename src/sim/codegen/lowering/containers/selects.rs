@@ -309,22 +309,22 @@ impl Codegen<'_> {
             None,
         );
         block.push(IrStmt::Container(match store_keys {
-            ElementKeys::String(key) => IrContainerStmt::SetString {
+            ElementKeys::String(key) => Box::new(IrContainerStmt::SetString {
                 container,
                 key,
                 value,
-            },
+            }),
             ElementKeys::Integral(indices) => match <[IrExpr; 1]>::try_from(indices) {
-                Ok([index]) => IrContainerStmt::Set {
+                Ok([index]) => Box::new(IrContainerStmt::Set {
                     container,
                     index,
                     value,
-                },
-                Err(indices) => IrContainerStmt::SetNested {
+                }),
+                Err(indices) => Box::new(IrContainerStmt::SetNested {
                     container,
                     indices,
                     value,
-                },
+                }),
             },
         }));
         Ok(Some(IrStmt::Block(block)))

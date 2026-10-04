@@ -250,7 +250,7 @@ impl<'a> Codegen<'a> {
                 let pattern =
                     self.lower_plusarg_text(scope_path, *pattern, "$test$plusargs pattern")?;
                 Ok(IrExpr::new(
-                    IrExprKind::SysFunc(IrSysFunc::TestPlusArgs { pattern }),
+                    IrExprKind::SysFunc(Box::new(IrSysFunc::TestPlusArgs { pattern })),
                     32,
                     true,
                     None,
@@ -277,7 +277,7 @@ impl<'a> Codegen<'a> {
                 };
                 let target = self.lower_plusarg_target(scope_path, destination)?;
                 Ok(IrExpr::new(
-                    IrExprKind::SysFunc(IrSysFunc::ValuePlusArgs { format, target }),
+                    IrExprKind::SysFunc(Box::new(IrSysFunc::ValuePlusArgs { format, target })),
                     32,
                     true,
                     None,

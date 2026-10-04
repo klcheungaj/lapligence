@@ -121,10 +121,10 @@ impl<'a> Codegen<'a> {
             ));
             cursor = right;
         }
-        statements.push(IrStmt::Container(IrContainerStmt::AssignValues {
+        statements.push(IrStmt::Container(Box::new(IrContainerStmt::AssignValues {
             container: dst.ir,
             values,
-        }));
+        })));
         Ok(Some(IrStmt::Block(statements)))
     }
 
@@ -481,15 +481,17 @@ impl<'a> Codegen<'a> {
             u32::try_from(*slice_size)
                 .map_err(|_| format!("streaming slice size is too large in `{path}`"))?
         };
-        Ok(Some(IrStmt::Container(IrContainerStmt::StreamAssign {
-            container: container.ir,
-            source,
-            slice,
-            direction: match direction {
-                DbStreamingDirection::LeftToRight => IrStreamDirection::LeftToRight,
-                DbStreamingDirection::RightToLeft => IrStreamDirection::RightToLeft,
+        Ok(Some(IrStmt::Container(Box::new(
+            IrContainerStmt::StreamAssign {
+                container: container.ir,
+                source,
+                slice,
+                direction: match direction {
+                    DbStreamingDirection::LeftToRight => IrStreamDirection::LeftToRight,
+                    DbStreamingDirection::RightToLeft => IrStreamDirection::RightToLeft,
+                },
+                selector,
             },
-            selector,
-        })))
+        ))))
     }
 }

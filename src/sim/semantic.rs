@@ -27,7 +27,8 @@ impl OriginId {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Origin {
     Source {
-        path: String,
+        /// Shared with the owned DB node; many origins name the same file.
+        path: std::sync::Arc<str>,
         line: u32,
         column: u32,
         end_line: u32,
@@ -146,9 +147,9 @@ impl<'db> SemanticModel<'db> {
         let origins =
             db.nodes()
                 .iter()
-                .map(|node| match node.file() {
+                .map(|node| match &node.file {
                     Some(path) => Origin::Source {
-                        path: path.to_owned(),
+                        path: std::sync::Arc::clone(path),
                         line: node.line(),
                         column: node.column(),
                         end_line: node.end_line(),
@@ -1802,7 +1803,7 @@ mod tests {
             children,
             parent,
             name: String::new(),
-            full_name: String::new(),
+            full_name: "".into(),
             file: Some("test.sv".into()),
             line: 1,
             col: 1,
@@ -2331,6 +2332,21 @@ mod tests {
             model.origins()[issues[0].origin.index()],
             Origin::Source { .. }
         ));
+    }
+
+    #[test]
+    fn source_origins_share_their_node_file_name() {
+        let db =
+            Db::from_test_nodes("top", vec![top(vec![])], vec![NodeId(0)], HashMap::new()).unwrap();
+        let model = SemanticModel::from_db(&db);
+        let Origin::Source { path, .. } = &model.origins()[0] else {
+            panic!("located node must have a source origin");
+        };
+        assert!(std::sync::Arc::ptr_eq(
+            path,
+            db.node(NodeId(0)).file.as_ref().unwrap()
+        ));
+        assert_eq!(model.origins()[0].location(), "test.sv:1:1");
     }
 
     fn dump_scope_nodes(name: &str, arguments: Vec<NodeId>, extra_use: bool) -> Vec<Node> {

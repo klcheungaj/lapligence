@@ -214,6 +214,10 @@ impl IrActivationTarget {
 
 /// One statement. Wait shapes carry their lowering-time read sets
 /// (`sens`/`reads`); those lists are never recomputed afterwards.
+///
+/// Every statement slot and `Located` box is sized by the largest variant,
+/// so rare or optional payloads larger than an ordinary assignment or `if`
+/// are boxed.
 #[derive(Clone, Debug, PartialEq)]
 pub enum IrStmt {
     /// Source provenance for one operation, without an added lexical scope.
@@ -250,12 +254,12 @@ pub enum IrStmt {
     Memory {
         write: bool,
         path: IrStringExpr,
-        view: IrMemoryView,
+        view: Box<IrMemoryView>,
         radix: IrMemoryRadix,
         addressing: IrMemoryAddressingPolicy,
         enum_values: Option<Vec<IrConst>>,
-        start: Option<IrExpr>,
-        finish: Option<IrExpr>,
+        start: Option<Box<IrExpr>>,
+        finish: Option<Box<IrExpr>>,
     },
     /// Non-flattened declaration-order copy of complete fixed integral arrays.
     /// The runtime snapshots the source before publishing destination cells.
@@ -282,7 +286,7 @@ pub enum IrStmt {
         value: IrExpr,
         nba: bool,
     },
-    Container(IrContainerStmt),
+    Container(Box<IrContainerStmt>),
     /// A streaming assignment with one or more packed lvalues and at most one
     /// resizable packed-element target. The source is materialized before any
     /// destination writes, preserving overlap semantics. A nonblocking form
@@ -295,7 +299,7 @@ pub enum IrStmt {
         targets: Vec<IrStreamTarget>,
         nba: bool,
     },
-    Object(IrObjectStmt),
+    Object(Box<IrObjectStmt>),
     /// A system plusarg query used in statement position. The expression is
     /// retained so `$value$plusargs` still performs its destination write.
     PlusArg(IrExpr),
@@ -479,9 +483,9 @@ pub enum IrStmt {
     /// scheduler teardown, so the issuing process may finish immediately.
     NonblockingEventAssignWhen {
         lhs: IrLhs,
-        rhs: IrExpr,
+        rhs: Box<IrExpr>,
         specs: Vec<(IrWaitSrc, IrEdge)>,
-        repeat: Option<IrExpr>,
+        repeat: Option<Box<IrExpr>>,
         action: String,
         frame: FrameId,
         captures: Vec<IrCapture>,
@@ -552,7 +556,7 @@ pub enum IrStmt {
     /// dependency changes.
     Force {
         lhs: IrLhs,
-        value: IrExpr,
+        value: Box<IrExpr>,
         eval: String,
         reads: Vec<usize>,
         /// Fixed-array element/contents dependencies. Their change markers
@@ -623,7 +627,7 @@ pub enum IrStmt {
     /// owned semantic node identity reserved for future assertion APIs.
     ImmediateAssertion {
         kind: IrImmediateAssertionKind,
-        condition: IrExpr,
+        condition: Box<IrExpr>,
         if_true: Option<Vec<IrStmt>>,
         if_false: Option<Vec<IrStmt>>,
         label: String,
@@ -638,8 +642,8 @@ pub enum IrStmt {
     DeferredImmediateAssertion {
         kind: IrImmediateAssertionKind,
         condition: IrExpr,
-        if_true: Option<IrDeferredAction>,
-        if_false: Option<IrDeferredAction>,
+        if_true: Option<Box<IrDeferredAction>>,
+        if_false: Option<Box<IrDeferredAction>>,
         label: String,
         location: String,
         scope: String,
@@ -661,13 +665,13 @@ pub enum IrStmt {
         /// HDL hierarchy used by `%m`; never a generated C identifier.
         scope: String,
         /// `None` targets stdout; `Some` is a descriptor/MCD expression.
-        descriptor: Option<IrExpr>,
+        descriptor: Option<Box<IrExpr>>,
     },
     /// `$fclose`, `$fflush`, and `$rewind`; an omitted descriptor is accepted
     /// only by `$fflush` and means all open streams.
     FileControl {
         op: IrFileOp,
-        descriptor: Option<IrExpr>,
+        descriptor: Option<Box<IrExpr>>,
     },
     /// `$monitoron` (true) / `$monitoroff` (false).
     MonitorEnable(bool),
@@ -717,13 +721,13 @@ pub enum IrStmt {
     /// Arguments are evaluated at execution time in the owning process; the
     /// runtime stores the resulting design-wide formatting state.
     TimeFormat {
-        units: IrExpr,
-        precision: IrExpr,
+        units: Box<IrExpr>,
+        precision: Box<IrExpr>,
         suffix: IrStringExpr,
-        minimum_field_width: IrExpr,
+        minimum_field_width: Box<IrExpr>,
     },
     /// Statement-position function/task call (delay-free callees).
-    Call(IrCall),
+    Call(Box<IrCall>),
     /// `return [value];` inside a C function/task body.  The backend applies
     /// the enclosing function's return conversion (fill/real/resize chain)
     /// and spells `_ret` for value returns.
@@ -850,5 +854,21 @@ impl IrStmt {
             Self::NonblockingEventTrigger { ticks: None, .. } => None,
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod size_tests {
+    use super::*;
+
+    /// Statement vectors and `Located` boxes are sized by the largest IR
+    /// variant, and large designs hold many of them during lowering. Rare or
+    /// optional payloads must stay boxed so ordinary statements stay small.
+    #[test]
+    #[cfg(target_pointer_width = "64")]
+    fn ir_records_stay_compact() {
+        assert!(std::mem::size_of::<IrExpr>() <= 104);
+        assert!(std::mem::size_of::<IrLhs>() <= 64);
+        assert!(std::mem::size_of::<IrStmt>() <= 224);
     }
 }

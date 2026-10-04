@@ -70,13 +70,13 @@ fn debug_embedded_callee_poison_precedes_argument_transfer() {
     model.funcs[0].ret = None;
     model.funcs[0].is_task = true;
     model.funcs[0].body = vec![delay()];
-    model.processes[0].body = vec![IrStmt::Call(IrCall::new(
+    model.processes[0].body = vec![IrStmt::Call(Box::new(IrCall::new(
         0,
         vec![IrCallArg::Val(number(23, 65))],
         IrDepth::PROC,
         Vec::new(),
         Vec::new(),
-    ))];
+    )))];
     let source =
         super::super::super::model::render(&ExecutionModel::lower(model).unwrap()).unwrap();
     let poison = source.find("LLG_CO_DEBUG_POISON_FRAME(&F->").unwrap();

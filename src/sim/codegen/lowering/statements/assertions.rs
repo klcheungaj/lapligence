@@ -58,8 +58,8 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
             return Ok(vec![IrStmt::DeferredImmediateAssertion {
                 kind,
                 condition,
-                if_true,
-                if_false,
+                if_true: if_true.map(Box::new),
+                if_false: if_false.map(Box::new),
                 label: label.clone(),
                 location: self.finish_location(h),
                 scope: self.cg.display_path(&self.path).to_owned(),
@@ -74,7 +74,7 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
             .transpose()?;
         Ok(vec![IrStmt::ImmediateAssertion {
             kind,
-            condition,
+            condition: Box::new(condition),
             if_true,
             if_false,
             label: label.clone(),
@@ -338,7 +338,7 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
             }
             IrStmt::FileControl { op, descriptor } => Ok(IrStmt::FileControl {
                 op,
-                descriptor: descriptor.map(capture),
+                descriptor: descriptor.map(|descriptor| Box::new(capture(*descriptor))),
             }),
             IrStmt::WaveLimit(value) => Ok(IrStmt::WaveLimit(capture(value))),
             IrStmt::Call(mut call) => {

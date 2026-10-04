@@ -166,12 +166,12 @@ impl EmitCtx<'_, '_> {
         Ok(IrStmt::Memory {
             write,
             path,
-            view,
+            view: Box::new(view),
             radix,
             addressing,
             enum_values,
-            start,
-            finish,
+            start: start.map(Box::new),
+            finish: finish.map(Box::new),
         })
     }
 
@@ -862,7 +862,7 @@ impl EmitCtx<'_, '_> {
                         reads,
                         default_radix,
                         scope: self.cg.display_path(&self.path).to_owned(),
-                        descriptor,
+                        descriptor: descriptor.map(Box::new),
                     }]);
                 }
             }
@@ -983,7 +983,10 @@ impl EmitCtx<'_, '_> {
                         self.path
                     ));
                 }
-                Ok(vec![IrStmt::FileControl { op, descriptor }])
+                Ok(vec![IrStmt::FileControl {
+                    op,
+                    descriptor: descriptor.map(Box::new),
+                }])
             }
             "$monitoron" => Ok(vec![IrStmt::MonitorEnable(true)]),
             "$monitoroff" => Ok(vec![IrStmt::MonitorEnable(false)]),
@@ -1136,10 +1139,10 @@ impl EmitCtx<'_, '_> {
                     }
                 }
                 Ok(vec![IrStmt::TimeFormat {
-                    units,
-                    precision,
+                    units: Box::new(units),
+                    precision: Box::new(precision),
                     suffix,
-                    minimum_field_width,
+                    minimum_field_width: Box::new(minimum_field_width),
                 }])
             }
             "$displayon" | "$displayoff" => {

@@ -61,7 +61,7 @@ impl LintRule for CaseDefaultMissingRule {
             out.push(LintDiag {
                 rule: "case-default-missing".to_string(),
                 severity: LintSeverity::Warning,
-                file: node.file.clone(),
+                file: node.file().map(str::to_owned),
                 line: node.line,
                 col: node.col,
                 message: format!(

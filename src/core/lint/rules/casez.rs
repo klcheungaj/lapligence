@@ -66,7 +66,7 @@ fn check_case(db: &Db, case: NodeId, out: &mut Vec<LintDiag>) {
     let at = |message: String| LintDiag {
         rule: "casez-misuse".to_string(),
         severity: LintSeverity::Warning,
-        file: node.file.clone(),
+        file: node.file().map(str::to_owned),
         line: node.line,
         col: node.col,
         message,
