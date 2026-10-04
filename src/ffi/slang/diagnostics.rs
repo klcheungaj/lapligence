@@ -1,62 +1,56 @@
-//! Diagnostics.
+//! Diagnostic record receivers.
 
 use super::*;
 
 pub(super) fn decode_related(
-    raw: &[RawRelatedDiagnostic],
+    item: &RawRelatedDiagnostic,
     files: &[File],
-) -> Result<Vec<RelatedDiagnostic>, SlangError> {
-    raw.iter()
-        .map(|item| {
-            Ok(RelatedDiagnostic {
-                range: decode_range(item.range, files)?,
-                // SAFETY: native strings borrow from the live snapshot.
-                message: unsafe { copy_string(item.message, "related diagnostic message")? },
-            })
-        })
-        .collect()
+) -> Result<RelatedDiagnostic, SlangError> {
+    Ok(RelatedDiagnostic {
+        range: decode_range(item.range, files)?,
+        // SAFETY: stream records and their strings are valid for the callback
+        // that delivered them.
+        message: unsafe { copy_string(item.message, "related diagnostic message")? },
+    })
 }
 
-pub(super) fn decode_diagnostics(
-    raw: &[RawDiagnostic],
+pub(super) fn decode_diagnostic(
+    item: &RawDiagnostic,
     related: &[RelatedDiagnostic],
     files: &[File],
-) -> Result<Vec<Diagnostic>, SlangError> {
-    raw.iter()
-        .map(|item| {
-            let related_range = checked_window(
-                item.related_start,
-                item.related_count,
-                related.len(),
-                "diagnostic related records",
-            )?;
-            Ok(Diagnostic {
-                provider: match item.provider {
-                    1 => DiagnosticProvider::Compilation,
-                    2 => DiagnosticProvider::Analysis,
-                    _ => return Err(invalid_native("diagnostic has an unknown provider")),
-                },
-                severity: match item.severity {
-                    0 => DiagnosticSeverity::Ignored,
-                    1 => DiagnosticSeverity::Note,
-                    2 => DiagnosticSeverity::Warning,
-                    3 => DiagnosticSeverity::Error,
-                    4 => DiagnosticSeverity::Fatal,
-                    _ => return Err(invalid_native("diagnostic has an unknown severity")),
-                },
-                subsystem: decode_diagnostic_subsystem(item.subsystem)?,
-                code: item.code,
-                // SAFETY: native strings borrow from the live snapshot.
-                name: unsafe { copy_string(item.name, "diagnostic name")? },
-                // SAFETY: native strings borrow from the live snapshot.
-                option_name: unsafe { copy_string(item.option_name, "diagnostic option name")? },
-                // SAFETY: native strings borrow from the live snapshot.
-                message: unsafe { copy_string(item.message, "diagnostic message")? },
-                primary: decode_range(item.primary, files)?,
-                related: related[related_range].to_vec(),
-            })
-        })
-        .collect()
+) -> Result<Diagnostic, SlangError> {
+    let related_range = checked_window(
+        item.related_start,
+        item.related_count,
+        related.len(),
+        "diagnostic related records",
+    )?;
+    Ok(Diagnostic {
+        provider: match item.provider {
+            1 => DiagnosticProvider::Compilation,
+            2 => DiagnosticProvider::Analysis,
+            _ => return Err(invalid_native("diagnostic has an unknown provider")),
+        },
+        severity: match item.severity {
+            0 => DiagnosticSeverity::Ignored,
+            1 => DiagnosticSeverity::Note,
+            2 => DiagnosticSeverity::Warning,
+            3 => DiagnosticSeverity::Error,
+            4 => DiagnosticSeverity::Fatal,
+            _ => return Err(invalid_native("diagnostic has an unknown severity")),
+        },
+        subsystem: decode_diagnostic_subsystem(item.subsystem)?,
+        code: item.code,
+        // SAFETY: stream records and their strings are valid for the callback
+        // that delivered them.
+        name: unsafe { copy_string(item.name, "diagnostic name")? },
+        // SAFETY: as above.
+        option_name: unsafe { copy_string(item.option_name, "diagnostic option name")? },
+        // SAFETY: as above.
+        message: unsafe { copy_string(item.message, "diagnostic message")? },
+        primary: decode_range(item.primary, files)?,
+        related: related[related_range].to_vec(),
+    })
 }
 
 fn decode_diagnostic_subsystem(raw: u32) -> Result<DiagnosticSubsystem, SlangError> {

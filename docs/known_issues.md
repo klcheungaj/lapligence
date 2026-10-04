@@ -86,61 +86,54 @@ wc -lc <dir>/sim/*/model.c
 
 ## High frontend memory use during Slang wrapper capture and import
 
-**Status:** open; compacted owned records bring the 40k peak within 2.7× of
-the charged export.
+**Status:** open, narrowed; capture streams into Rust and C rendering now sets
+the generation peak for this corpus.
 
 ### Symptom
 
 Large elaborated designs still require more generation memory than their
 charged export data. Linux x86-64 release measurements on 2026-10-04 use
 `many_processes_registers_config`, two clock edges and three interleaved runs
-per point. Before is `af5f1820`; after includes the record compaction below.
-GNU time peak RSS medians:
+per point. Before is `b75dfc3f` (whole native snapshot, then decode); after
+streams the capture into the receiver (`cb15fb64`). GNU time peak RSS
+medians:
 
 | Processes | Before peak RSS | After peak RSS |
 | --- | --- | --- |
-| 5,000 | 0.52 GiB | 0.23 GiB |
-| 10,000 | 1.03 GiB | 0.42 GiB |
-| 20,000 | 2.04 GiB | 0.82 GiB |
-| 40,000 | 4.06 GiB | 1.60 GiB |
+| 5,000 | 0.228 GiB | 0.208 GiB |
+| 10,000 | 0.416 GiB | 0.399 GiB |
+| 20,000 | 0.819 GiB | 0.783 GiB |
+| 40,000 | 1.603 GiB | 1.558 GiB |
 
-At 20k/40k the logical export remains about 306/611 MiB (320,406,270 /
-640,766,270 charged bytes). Generated `model.c` is byte-identical. The stages
-are now balanced: at 40k the sampled RSS is about 1.36 GiB in native capture,
-1.58 GiB in FFI decode, 1.60 GiB in DB import, 1.49 GiB in typed lowering and
-1.55 GiB in C rendering (before: 1.36/1.75/3.13/4.06/2.46 GiB). The earlier
-2026-10-02–03 series (6.77 → 4.12 GiB at 40k) predates these changes. These
-are generation-process peaks, not generated-simulator runtime memory. Export
-size is approximately linear for this corpus; other shapes can differ.
+At 20k/40k the logical export remains about 306/611 MiB. Generated `model.c`
+is byte-identical. Sampled stage RSS at 40k: native capture 1.25 GiB (before
+1.37), stream/decode 1.29 GiB (before 1.58), DB import 1.51 GiB (before 1.60),
+typed lowering 1.51 GiB and C rendering 1.56 GiB. These are
+generation-process peaks, not generated-simulator runtime memory. Export size
+is approximately linear for this corpus; other shapes can differ.
 
 ### Cause
 
-The [C++ wrapper](../src/wrapper/slang_c_api.cpp) materializes a complete
-`LlgSlangSnapshot` while Slang's compilation is still live. For this corpus,
-each small register process contributes roughly 60 semantic nodes, 90 edges
-and 12 constants: about 16 KB of charged export data. Charged bytes exclude
-container capacity, indexing overhead and Slang's own allocations. On glibc the
-wrapper returns freed compilation pages after teardown, so they are no longer
-resident while Rust copies the snapshot.
+The [C++ wrapper](../src/wrapper/slang_c_api.cpp) must finish capture while
+Slang's compilation is live: it back-patches placeholder nodes, edge roles,
+type windows, overridden parameters and lexical bindings. For this corpus each
+small register process contributes roughly 60 semantic nodes, 90 edges and 12
+constants (about 16 KB of charged export). After capture the compilation is
+destroyed and the glibc heap trimmed; the wrapper then streams each table to
+the [Rust receiver](../src/ffi/slang/stream.rs) and frees it once delivered
+(semantic nodes chunk by chunk), so native and Rust copies overlap only per
+table. The receiver interns node names and kind spellings.
 
-The [safe FFI decoder](../src/ffi/slang.rs) copies the native snapshot into
-owned Rust records (272 bytes per semantic node plus strings) before
-destroying the native owner, so both copies overlap during decoding. The
-owned snapshot and the [DB](../src/core/db/readme.md) then overlap during the
-single owned import. DB nodes share type descriptors, native detail
-spellings, file names and unnamed nodes' hierarchical names, and box rare
-large payloads (216 bytes per node). The simulator's semantic origins share
-file names, and typed IR boxes rare payloads (`IrStmt` 224, `IrExpr` 104,
-`IrLhs` 64 bytes). The driver releases the snapshot after import; consuming
-generation releases the DB after typed lowering. Borrowing library generation
-APIs retain their caller's DB for reuse.
+[`Db::from_slang`](../src/core/db/readme.md) needs random access to the whole
+node set (child flattening, array-select chains, full names), so the receiver
+stages the owned snapshot (272 bytes per semantic node) and the snapshot and DB
+overlap during import. The driver releases the snapshot after import and
+consuming generation releases the DB after typed lowering.
 
-Remaining overlap: Slang compilation and the native snapshot during capture;
-native and Rust snapshots during decoding; the Rust snapshot and DB during
-import; the DB, semantic origins and typed IR during lowering; execution IR,
-rendered artifacts and the assembled model text during rendering. Per-node
-records (snapshot node, DB node, origin and IR statements) remain the
-dominant cost. Sampled stage RSS includes all live representations and
+Remaining overlap: Slang compilation and the capture tables during capture;
+the staged snapshot and DB during import; the DB, semantic origins and typed IR
+during lowering; execution IR, rendered artifacts and the assembled model text
+during rendering. Sampled stage RSS includes all live representations and
 allocator-retained pages; it is not an exclusive allocation total for that
 stage.
 
@@ -151,10 +144,9 @@ budget, a record-count ceiling or available process memory.
 
 ### Intended direction
 
-Compact the owned snapshot node (flag bits, shared strings) or import it
-incrementally so the Rust snapshot and DB overlap less; compact DB nodes
-further (side tables for rare kind payloads); and avoid holding rendered
-artifacts and the assembled model text together.
+Shrink the staged node further (flag bits, sentinel IDs) or import nodes
+incrementally; compact DB nodes further (side tables for rare kind payloads);
+and avoid holding rendered artifacts and the assembled model text together.
 Preserve checked C ABI ownership and the single owned DB import; consumers
 must not traverse native ASTs independently. Verify exact values, source
 identity and diagnostics as well as generated-model behavior.

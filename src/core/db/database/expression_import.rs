@@ -8,7 +8,7 @@ fn source_spelling(snapshot: &SlangSnapshot, node: &SemanticNode) -> Option<Stri
     // macro's replacement by scanning raw source: inactive branches, undef,
     // includes, and function-like macros make that semantically incorrect.
     if node.kind == SemanticKind::Expression && node.subkind == 85 && !node.name.is_empty() {
-        return Some(node.name.clone());
+        return Some(node.name.to_string());
     }
     let range = node.range?;
     let file = snapshot
@@ -274,7 +274,7 @@ pub(super) fn expression_from_slang(
                 .and_then(|constant| snapshot.constants.get(constant as usize))
                 .map(|constant| value_data_from_slang(&constant.value));
             ExprKind::TaggedPattern {
-                key: (!node.name.is_empty()).then(|| node.name.clone()),
+                key: (!node.name.is_empty()).then(|| node.name.to_string()),
                 key_type,
                 index_key,
                 index_value,
@@ -282,7 +282,7 @@ pub(super) fn expression_from_slang(
             }
         }
         SEMANTIC_EXPR_TAGGED_UNION => ExprKind::TaggedUnion {
-            member: node.name.clone(),
+            member: node.name.to_string(),
             value: first(SemanticEdgeRole::Body)?,
         },
         69 if matches!(

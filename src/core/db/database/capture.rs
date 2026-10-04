@@ -302,9 +302,9 @@ impl Db {
             .map(|semantic| {
                 let id = NodeId::from_index(semantic.id as usize);
                 let c_name = if semantic.definition_name.is_empty() {
-                    semantic.name.clone()
+                    semantic.name.to_string()
                 } else {
-                    semantic.definition_name.clone()
+                    semantic.definition_name.to_string()
                 };
                 (
                     id,
@@ -665,7 +665,7 @@ impl Db {
                             })
                             .members
                             .push(EnumMember {
-                                name: semantic.name.clone(),
+                                name: semantic.name.to_string(),
                                 value: Val::Bits(value),
                             });
                     }
@@ -865,7 +865,7 @@ impl Db {
                     .target_id
                     .and_then(|target| ids.get(&target))
                     .and_then(|target| snapshot.semantic_nodes.get(target.index()))
-                    .map(|target| target.name.clone())
+                    .map(|target| target.name.to_string())
                     .unwrap_or_default()
             };
             let name = if semantic.name.is_empty()
@@ -875,7 +875,7 @@ impl Db {
             {
                 target_name()
             } else {
-                semantic.name.clone()
+                semantic.name.to_string()
             };
             nodes.push(Node {
                 kind,
@@ -985,7 +985,7 @@ impl Db {
                 elaborated_type_ranges.push(type_projector.elaborated_ranges(
                     id,
                     instance,
-                    semantic.name.clone(),
+                    semantic.name.to_string(),
                     type_id,
                 )?);
             }

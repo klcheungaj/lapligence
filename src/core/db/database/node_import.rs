@@ -15,9 +15,9 @@ pub(super) fn node_kind_from_slang(
         SemanticKind::Instance if node.subkind == 193 => NodeKind::InstanceArray,
         SemanticKind::Instance | SemanticKind::Definition => NodeKind::ModuleInst {
             def_name: if node.definition_name.is_empty() {
-                node.name.clone()
+                node.name.to_string()
             } else {
-                node.definition_name.clone()
+                node.definition_name.to_string()
             },
             is_top: node.is_top,
             is_interface: node.definition_kind == Some(SemanticDefinitionKind::Interface),
@@ -58,7 +58,7 @@ pub(super) fn node_kind_from_slang(
                 .ok_or_else(|| {
                     DbError::InvalidSnapshot("interface connection has no target".into())
                 })?,
-            modport: node.name.clone(),
+            modport: node.name.to_string(),
         },
         SemanticKind::Net => NodeKind::Net {
             ty,
@@ -236,15 +236,15 @@ pub(super) fn node_kind_from_slang(
         }
         SemanticKind::AssertionExpr => assertion_expr_from_slang(snapshot, node, edges, ids)?,
         SemanticKind::SystemCall => NodeKind::SysCall {
-            name: node.name.clone(),
+            name: node.name.to_string(),
         },
         SemanticKind::MethodCall => NodeKind::MethodCall {
-            name: node.name.clone(),
+            name: node.name.to_string(),
             receiver: first(SemanticEdgeRole::Receiver)?,
             callee: first(SemanticEdgeRole::Callee)?,
         },
         SemanticKind::FunctionCall => NodeKind::FuncCall {
-            name: node.name.clone(),
+            name: node.name.to_string(),
             is_task: node.is_task,
             is_super: node.auxiliary & crate::ffi::slang::CALL_SUPER != 0,
             callee: first(SemanticEdgeRole::Callee)?,

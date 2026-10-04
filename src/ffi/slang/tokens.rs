@@ -1,45 +1,43 @@
-//! Tokens.
+//! Lexical token receiver.
 
 use super::*;
 
-pub(super) fn decode_lexical_tokens(
-    raw: &[RawLexicalToken],
+pub(super) fn decode_lexical_token(
+    token: &RawLexicalToken,
     files: &[File],
-    semantic_nodes: &[SemanticNode],
-) -> Result<Vec<LexicalToken>, SlangError> {
-    let semantic_ids: HashSet<_> = semantic_nodes.iter().map(|node| node.id).collect();
-    raw.iter()
-        .map(|token| {
-            if token.reserved != 0 || token.flags & !0b1_1111 != 0 {
-                return Err(invalid_native("lexical token has unknown flags"));
-            }
-            let semantic_id = (token.semantic_id != INVALID_ID).then_some(token.semantic_id);
-            if semantic_id.is_some_and(|id| !semantic_ids.contains(&id)) {
-                return Err(invalid_native("lexical token semantic id does not exist"));
-            }
-            Ok(LexicalToken {
-                range: decode_range(token.range, files)?,
-                kind: decode_lexical_kind(token.kind)?,
-                role: match token.role {
-                    0 => LexicalRole::None,
-                    1 => LexicalRole::Declaration,
-                    2 => LexicalRole::Reference,
-                    3 => LexicalRole::ConnectionLabel,
-                    4 => LexicalRole::Keyword,
-                    5 => LexicalRole::ConnectionActual,
-                    _ => return Err(invalid_native("lexical token has an unknown role")),
-                },
-                is_missing: token.flags & 1 != 0,
-                is_skipped: token.flags & 2 != 0,
-                is_macro_expansion: token.flags & 4 != 0,
-                is_directive: token.flags & 8 != 0,
-                is_unit_forward_reference: token.flags & 16 != 0,
-                semantic_id,
-                // SAFETY: native strings borrow from the live snapshot.
-                text: unsafe { copy_string(token.text, "lexical token text")? },
-            })
-        })
-        .collect()
+    semantic_node_count: usize,
+) -> Result<LexicalToken, SlangError> {
+    if token.reserved != 0 || token.flags & !0b1_1111 != 0 {
+        return Err(invalid_native("lexical token has unknown flags"));
+    }
+    let semantic_id = (token.semantic_id != INVALID_ID).then_some(token.semantic_id);
+    if semantic_id
+        .is_some_and(|id| usize::try_from(id).map_or(true, |id| id >= semantic_node_count))
+    {
+        return Err(invalid_native("lexical token semantic id does not exist"));
+    }
+    Ok(LexicalToken {
+        range: decode_range(token.range, files)?,
+        kind: decode_lexical_kind(token.kind)?,
+        role: match token.role {
+            0 => LexicalRole::None,
+            1 => LexicalRole::Declaration,
+            2 => LexicalRole::Reference,
+            3 => LexicalRole::ConnectionLabel,
+            4 => LexicalRole::Keyword,
+            5 => LexicalRole::ConnectionActual,
+            _ => return Err(invalid_native("lexical token has an unknown role")),
+        },
+        is_missing: token.flags & 1 != 0,
+        is_skipped: token.flags & 2 != 0,
+        is_macro_expansion: token.flags & 4 != 0,
+        is_directive: token.flags & 8 != 0,
+        is_unit_forward_reference: token.flags & 16 != 0,
+        semantic_id,
+        // SAFETY: stream records and their strings are valid for the callback
+        // that delivered them.
+        text: unsafe { copy_string(token.text, "lexical token text")? },
+    })
 }
 
 fn decode_lexical_kind(raw: u32) -> Result<LexicalKind, SlangError> {
@@ -92,19 +90,23 @@ mod tests {
             semantic_id: INVALID_ID,
             text: empty_raw_string(),
         };
-        let tokens = decode_lexical_tokens(&[token], &[], &[]).expect("directive token");
-        assert!(tokens[0].is_directive);
-        assert!(!tokens[0].is_macro_expansion);
+        let token_out = decode_lexical_token(&token, &[], 0).expect("directive token");
+        assert!(token_out.is_directive);
+        assert!(!token_out.is_macro_expansion);
         token.flags = 4;
-        let tokens = decode_lexical_tokens(&[token], &[], &[]).expect("expanded token");
-        assert!(!tokens[0].is_directive);
-        assert!(tokens[0].is_macro_expansion);
+        let token_out = decode_lexical_token(&token, &[], 0).expect("expanded token");
+        assert!(!token_out.is_directive);
+        assert!(token_out.is_macro_expansion);
         token.flags = 16;
-        assert!(decode_lexical_tokens(&[token], &[], &[]).unwrap()[0].is_unit_forward_reference);
+        assert!(
+            decode_lexical_token(&token, &[], 0)
+                .unwrap()
+                .is_unit_forward_reference
+        );
         token.flags = 32;
-        assert!(decode_lexical_tokens(&[token], &[], &[]).is_err());
+        assert!(decode_lexical_token(&token, &[], 0).is_err());
         token.flags = 8;
         token.reserved = 1;
-        assert!(decode_lexical_tokens(&[token], &[], &[]).is_err());
+        assert!(decode_lexical_token(&token, &[], 0).is_err());
     }
 }

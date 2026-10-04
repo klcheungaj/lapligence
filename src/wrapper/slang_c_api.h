@@ -2,8 +2,10 @@
  * Narrow C ABI for the vendored Slang frontend.
  *
  * The caller owns all input memory for the duration of llg_slang_compile().
- * A successful snapshot owns all exported memory; views borrow from the snapshot
- * and remain valid until llg_slang_snapshot_destroy(). Destruction accepts NULL.
+ * The captured design is delivered to the caller's LlgSlangSink during that
+ * call (see "Capture stream" below); no native snapshot outlives it. A
+ * returned error owner is released with llg_slang_error_destroy(), which
+ * accepts NULL.
  */
 #pragma once
 
@@ -13,10 +15,9 @@
 extern "C" {
 #endif
 
-#define LLG_SLANG_ABI_VERSION 10u
+#define LLG_SLANG_ABI_VERSION 11u
 #define LLG_SLANG_INVALID_ID UINT64_MAX
 
-typedef struct LlgSlangSnapshot LlgSlangSnapshot;
 typedef struct LlgSlangError LlgSlangError;
 
 typedef struct {
@@ -133,7 +134,8 @@ enum {
   LLG_SLANG_STATUS_INVALID_ARGUMENT = 1,
   LLG_SLANG_STATUS_LIMIT_EXCEEDED = 2,
   LLG_SLANG_STATUS_FRONTEND_ERROR = 3,
-  LLG_SLANG_STATUS_INTERNAL_ERROR = 4
+  LLG_SLANG_STATUS_INTERNAL_ERROR = 4,
+  LLG_SLANG_STATUS_SINK_ABORTED = 5
 };
 
 enum {
@@ -984,44 +986,95 @@ typedef struct {
   LlgSlangString logical_file;
 } LlgSlangLineDirective;
 
+/* Capture stream (ABI v11).
+ *
+ * llg_slang_compile() does not return a snapshot owner. After Slang has
+ * elaborated, analysed and been captured, the bridge destroys the Slang
+ * compilation and then delivers every captured table to the caller's sink,
+ * one bounded batch at a time, releasing each native table (or node chunk)
+ * once it has been delivered. Nothing native outlives the call.
+ *
+ * Order: begin() once, then the record tables in the order of the
+ * LlgSlangStreamHeader count fields (a table may arrive as several batches,
+ * an empty table is skipped), then end() once. Child tables precede the
+ * parents whose *_start/*_count windows index them, so windows always refer to
+ * complete tables; IDs of types, instances and semantic nodes are their dense
+ * table indices, so a forward reference is checked against the announced
+ * count.
+ *
+ * Every record and string view passed to a callback is borrowed only for that
+ * call; the receiver copies what it keeps. Callbacks run synchronously on the
+ * calling thread and must not unwind or throw. They return
+ * LLG_SLANG_SINK_CONTINUE or LLG_SLANG_SINK_ABORT; on abort the bridge stops
+ * streaming, releases all native state and llg_slang_compile() returns
+ * LLG_SLANG_STATUS_SINK_ABORTED, leaving the receiver's own recorded error
+ * authoritative. Every callback pointer is required. */
+enum {
+  LLG_SLANG_SINK_CONTINUE = 0,
+  LLG_SLANG_SINK_ABORT = 1
+};
+
 typedef struct {
   uint32_t abi_version;
-  uint32_t flags;
-  const LlgSlangFile* files;
+  uint32_t flags; /* LLG_SLANG_SNAPSHOT_* */
   uint64_t file_count;
-  const LlgSlangDiagnostic* diagnostics;
-  uint64_t diagnostic_count;
-  const LlgSlangRelatedDiagnostic* related_diagnostics;
   uint64_t related_diagnostic_count;
-  const LlgSlangInstance* instances;
-  uint64_t instance_count;
-  const LlgSlangParameter* parameters;
-  uint64_t parameter_count;
-  const LlgSlangType* types;
-  uint64_t type_count;
-  const LlgSlangConstant* constants;
-  uint64_t constant_count;
-  const uint64_t* value_words;
+  uint64_t diagnostic_count;
   uint64_t value_word_count;
-  const LlgSlangSemanticNode* semantic_nodes;
-  uint64_t semantic_node_count;
-  const LlgSlangSemanticEdge* semantic_edges;
-  uint64_t semantic_edge_count;
-  const LlgSlangLexicalToken* lexical_tokens;
-  uint64_t lexical_token_count;
-  const LlgSlangTypeRange* type_ranges;
+  uint64_t constant_count;
   uint64_t type_range_count;
-  const LlgSlangTypeMember* type_members;
   uint64_t type_member_count;
-  const LlgSlangUdpTable* udp_tables;
-  uint64_t udp_table_count;
-  const LlgSlangUdpRow* udp_rows;
+  uint64_t type_count;
+  uint64_t parameter_count;
+  uint64_t instance_count;
+  uint64_t semantic_edge_count;
+  uint64_t semantic_node_count;
   uint64_t udp_row_count;
-  const LlgSlangSourceLibrary* source_libraries;
+  uint64_t udp_table_count;
+  uint64_t lexical_token_count;
   uint64_t source_library_count;
-  const LlgSlangLineDirective* line_directives;
   uint64_t line_directive_count;
-} LlgSlangSnapshotView;
+} LlgSlangStreamHeader;
+
+typedef struct {
+  void* context;
+  uint32_t (*begin)(void* context, const LlgSlangStreamHeader* header);
+  uint32_t (*files)(void* context, const LlgSlangFile* records, uint64_t count);
+  uint32_t (*related_diagnostics)(void* context,
+                                  const LlgSlangRelatedDiagnostic* records,
+                                  uint64_t count);
+  uint32_t (*diagnostics)(void* context, const LlgSlangDiagnostic* records,
+                          uint64_t count);
+  uint32_t (*value_words)(void* context, const uint64_t* records, uint64_t count);
+  uint32_t (*constants)(void* context, const LlgSlangConstant* records,
+                        uint64_t count);
+  uint32_t (*type_ranges)(void* context, const LlgSlangTypeRange* records,
+                          uint64_t count);
+  uint32_t (*type_members)(void* context, const LlgSlangTypeMember* records,
+                           uint64_t count);
+  uint32_t (*types)(void* context, const LlgSlangType* records, uint64_t count);
+  uint32_t (*parameters)(void* context, const LlgSlangParameter* records,
+                         uint64_t count);
+  uint32_t (*instances)(void* context, const LlgSlangInstance* records,
+                        uint64_t count);
+  uint32_t (*semantic_edges)(void* context, const LlgSlangSemanticEdge* records,
+                             uint64_t count);
+  uint32_t (*semantic_nodes)(void* context, const LlgSlangSemanticNode* records,
+                             uint64_t count);
+  uint32_t (*udp_rows)(void* context, const LlgSlangUdpRow* records,
+                       uint64_t count);
+  uint32_t (*udp_tables)(void* context, const LlgSlangUdpTable* records,
+                         uint64_t count);
+  uint32_t (*lexical_tokens)(void* context, const LlgSlangLexicalToken* records,
+                             uint64_t count);
+  uint32_t (*source_libraries)(void* context,
+                               const LlgSlangSourceLibrary* records,
+                               uint64_t count);
+  uint32_t (*line_directives)(void* context,
+                              const LlgSlangLineDirective* records,
+                              uint64_t count);
+  uint32_t (*end)(void* context);
+} LlgSlangSink;
 
 typedef struct {
   uint32_t status;
@@ -1029,17 +1082,15 @@ typedef struct {
   LlgSlangString message;
 } LlgSlangErrorView;
 
-/* Semantic errors are represented in a successful snapshot. A non-OK return
- * means argument, resource, setup, or bridge failure and sets out_error. */
+/* Semantic errors are represented in the streamed records of a successful
+ * compile (LLG_SLANG_SNAPSHOT_HAS_ERRORS in the header flags). A non-OK return
+ * means argument, resource, setup, bridge or sink failure and sets out_error;
+ * the sink may then have received a partial stream without its end(). */
 uint32_t llg_slang_compile(const LlgSlangCompileRequest* request,
-                           LlgSlangSnapshot** out_snapshot,
+                           const LlgSlangSink* sink,
                            LlgSlangError** out_error);
-uint32_t llg_slang_snapshot_view(const LlgSlangSnapshot* snapshot,
-                                 LlgSlangSnapshotView* out_view,
-                                 LlgSlangError** out_error);
 uint32_t llg_slang_error_view(const LlgSlangError* error,
                               LlgSlangErrorView* out_view);
-void llg_slang_snapshot_destroy(LlgSlangSnapshot* snapshot);
 void llg_slang_error_destroy(LlgSlangError* error);
 
 #ifdef __cplusplus
