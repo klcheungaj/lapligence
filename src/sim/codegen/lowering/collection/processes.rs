@@ -449,7 +449,7 @@ impl<'a> Codegen<'a> {
             format!("continuous assignment in `{path}` has no string or native record target")
         })?;
         let fn_name = self.new_fn_name(path, "ca");
-        let sigs = self.collect_read_signals(path, rhs)?;
+        let sigs = self.continuous_assignment_reads(path, lhs, rhs)?;
         let body = self.wrap_continuous_self_feedback(ca, lhs, &sigs, vec![statement])?;
         let shape = if sigs.is_empty() {
             IrShape::RunOnce
