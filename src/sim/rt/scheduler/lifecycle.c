@@ -310,6 +310,10 @@ void llg_rt_cleanup(void) {
         free(llg_dependency_bindings);
         llg_dependency_bindings = next;
     }
+    free(llg_dependency_buckets);
+    llg_dependency_buckets = NULL;
+    llg_dependency_bucket_count = 0;
+    llg_dependency_binding_count = 0;
     llg_rt_co_cache_release();
 }
 

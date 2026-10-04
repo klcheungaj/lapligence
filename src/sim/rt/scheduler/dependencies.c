@@ -9,22 +9,79 @@ static void sig_write(sv4_t* target, sv4_t value);
 static void fixed_array_changed(sv4_t* target);
 static int pca_real_active(double* target);
 
+enum { LLG_DEPENDENCY_INITIAL_BUCKETS = 64u };
+
+static size_t dependency_bucket(const void* target) {
+    uint64_t hash = (uint64_t)(uintptr_t)target;
+    hash ^= hash >> 30;
+    hash *= UINT64_C(0xbf58476d1ce4e5b9);
+    hash ^= hash >> 27;
+    hash *= UINT64_C(0x94d049bb133111eb);
+    hash ^= hash >> 31;
+    return (size_t)hash & (llg_dependency_bucket_count - 1);
+}
+
+static const void* dependency_key(const llg_dependency_binding_t* binding) {
+    return binding->target ? (const void*)binding->target
+                           : (const void*)binding->real_target;
+}
+
+static llg_dependency_binding_t* dependency_bucket_head(const void* target) {
+    return llg_dependency_bucket_count
+        ? llg_dependency_buckets[dependency_bucket(target)] : NULL;
+}
+
+/* Keep the load factor at most one; growth rehashes from the owning list. */
+static void dependency_index_reserve(void) {
+    if (llg_dependency_binding_count < llg_dependency_bucket_count) return;
+    size_t count = llg_dependency_bucket_count
+        ? llg_dependency_bucket_count : LLG_DEPENDENCY_INITIAL_BUCKETS;
+    while (count <= llg_dependency_binding_count) {
+        if (count > SIZE_MAX / 2)
+            llg_fatal_allocation("dependency binding index", count, 2);
+        count *= 2;
+    }
+    llg_dependency_binding_t** buckets = (llg_dependency_binding_t**)llg_checked_calloc(
+        count, sizeof(*buckets), "dependency binding index");
+    free(llg_dependency_buckets);
+    llg_dependency_buckets = buckets;
+    llg_dependency_bucket_count = count;
+    for (llg_dependency_binding_t* binding = llg_dependency_bindings;
+         binding; binding = binding->next) {
+        size_t bucket = dependency_bucket(dependency_key(binding));
+        binding->bucket_next = buckets[bucket];
+        buckets[bucket] = binding;
+    }
+}
+
+static void dependency_bind(sv4_t* target, double* real_target, sv4_t* dependency,
+                            const char* what) {
+    const void* key = target ? (const void*)target : (const void*)real_target;
+    for (llg_dependency_binding_t* binding = dependency_bucket_head(key);
+         binding; binding = binding->bucket_next) {
+        if (binding->target == target && binding->real_target == real_target &&
+            binding->dependency == dependency) return;
+    }
+    dependency_index_reserve();
+    llg_dependency_binding_t* binding = (llg_dependency_binding_t*)llg_checked_malloc(
+        1, sizeof(*binding), what);
+    binding->target = target;
+    binding->real_target = real_target;
+    binding->dependency = dependency;
+    binding->next = llg_dependency_bindings;
+    llg_dependency_bindings = binding;
+    size_t bucket = dependency_bucket(key);
+    binding->bucket_next = llg_dependency_buckets[bucket];
+    llg_dependency_buckets[bucket] = binding;
+    ++llg_dependency_binding_count;
+}
+
 void llg_dependency_bind(sv4_t* target, sv4_t* dependency) {
     if (!target || !dependency) {
         fprintf(stderr, "llg: invalid dependency binding\n");
         abort();
     }
-    for (llg_dependency_binding_t* binding = llg_dependency_bindings;
-         binding; binding = binding->next) {
-        if (binding->target == target && binding->real_target == NULL && binding->dependency == dependency) return;
-    }
-    llg_dependency_binding_t* binding = (llg_dependency_binding_t*)llg_checked_malloc(
-        1, sizeof(*binding), "dependency binding");
-    binding->target = target;
-    binding->real_target = NULL;
-    binding->dependency = dependency;
-    binding->next = llg_dependency_bindings;
-    llg_dependency_bindings = binding;
+    dependency_bind(target, NULL, dependency, "dependency binding");
 }
 
 void llg_dependency_bind_real(double* target, sv4_t* dependency) {
@@ -32,17 +89,7 @@ void llg_dependency_bind_real(double* target, sv4_t* dependency) {
         fprintf(stderr, "llg: invalid real dependency binding\n");
         abort();
     }
-    for (llg_dependency_binding_t* binding = llg_dependency_bindings;
-         binding; binding = binding->next) {
-        if (binding->real_target == target && binding->dependency == dependency) return;
-    }
-    llg_dependency_binding_t* binding = (llg_dependency_binding_t*)llg_checked_malloc(
-        1, sizeof(*binding), "real dependency binding");
-    binding->target = NULL;
-    binding->real_target = target;
-    binding->dependency = dependency;
-    binding->next = llg_dependency_bindings;
-    llg_dependency_bindings = binding;
+    dependency_bind(NULL, target, dependency, "real dependency binding");
 }
 
 void llg_dependency_changed(sv4_t* dependency) {
@@ -649,8 +696,8 @@ static void sig_publish_changed(sv4_t* target, sv4_t old, sv4_t value,
     }
     if (source) wait_subscription_unlink(&cursor);
     deferred_trigger_source_change(target, NULL);
-    for (llg_dependency_binding_t* binding = llg_dependency_bindings;
-         binding; binding = binding->next) {
+    for (llg_dependency_binding_t* binding = dependency_bucket_head(target);
+         binding; binding = binding->bucket_next) {
         if (binding->target == target) llg_dependency_changed(binding->dependency);
     }
     fixed_array_changed(target);
@@ -785,8 +832,8 @@ static void real_write(double* target, double value) {
     }
     if (source) wait_subscription_unlink(&cursor);
     deferred_trigger_source_change(NULL, target);
-    for (llg_dependency_binding_t* binding = llg_dependency_bindings;
-         binding; binding = binding->next) {
+    for (llg_dependency_binding_t* binding = dependency_bucket_head(target);
+         binding; binding = binding->bucket_next) {
         if (binding->real_target == target) llg_dependency_changed(binding->dependency);
     }
     force_dependency_changed(NULL, target, 1);
