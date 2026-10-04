@@ -15,7 +15,7 @@
 extern "C" {
 #endif
 
-#define LLG_SLANG_ABI_VERSION 11u
+#define LLG_SLANG_ABI_VERSION 12u
 #define LLG_SLANG_INVALID_ID UINT64_MAX
 
 typedef struct LlgSlangError LlgSlangError;
@@ -986,7 +986,7 @@ typedef struct {
   LlgSlangString logical_file;
 } LlgSlangLineDirective;
 
-/* Capture stream (ABI v11).
+/* Capture stream (ABI v12).
  *
  * llg_slang_compile() does not return a snapshot owner. After Slang has
  * elaborated, analysed and been captured, the bridge destroys the Slang

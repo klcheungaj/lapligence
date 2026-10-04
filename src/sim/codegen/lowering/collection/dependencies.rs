@@ -341,6 +341,9 @@ impl<'a> Codegen<'a> {
                 neg,
             }) => (*base, vec![], Some((*base_expr, *width_expr, Some(*neg)))),
             _ => {
+                if let Some(expression) = self.modport_expression_target(node) {
+                    return self.packed_storage_prefix_bound(expression, bindings);
+                }
                 let target = match self.kind(node) {
                     NodeKind::Expr(ExprKind::Ref {
                         target: Some(target),
@@ -937,6 +940,10 @@ impl<'a> Codegen<'a> {
         writes: &mut HashSet<IrDependency>,
         bindings: &HashMap<NodeId, IrDependency>,
     ) {
+        if let Some(expression) = self.modport_expression_target(lhs) {
+            self.add_process_lhs_write_bound(expression, writes, bindings);
+            return;
+        }
         // A string store publishes the same marker its readers wait on, so it
         // is both a writer identity and a combinational read exclusion.
         if let Some(object) = self.object_of("", lhs).filter(|object| {
@@ -1224,6 +1231,17 @@ impl<'a> Codegen<'a> {
         include_function_bodies: bool,
         bindings: &HashMap<NodeId, IrDependency>,
     ) -> Result<(), String> {
+        if let Some(expression) = self.modport_expression_target(node) {
+            return self.walk_read_signals_bound(
+                scope_path,
+                expression,
+                seen,
+                visited,
+                out,
+                include_function_bodies,
+                bindings,
+            );
+        }
         if let NodeKind::Expr(ExprKind::Ref {
             target: Some(target),
         }) = self.kind(node)
@@ -1803,6 +1821,30 @@ impl<'a> Codegen<'a> {
         include_function_bodies: bool,
         bindings: &HashMap<NodeId, IrDependency>,
     ) -> Result<(), String> {
+        if let Some(expression) = self.modport_expression_target(lhs) {
+            // The port expression's own selectors are reads of the writer;
+            // a concatenation target selects through each operand.
+            let parts = match self.kind(expression) {
+                NodeKind::Expr(ExprKind::Operation {
+                    op: Operation::Concat,
+                    operands,
+                    ..
+                }) => operands.clone(),
+                _ => vec![expression],
+            };
+            for part in parts {
+                self.walk_lhs_select_reads_bound(
+                    scope_path,
+                    part,
+                    seen,
+                    visited,
+                    out,
+                    include_function_bodies,
+                    bindings,
+                )?;
+            }
+            return Ok(());
+        }
         if let NodeKind::Expr(
             ExprKind::BitSelect { base, .. }
             | ExprKind::ArraySelect { base, .. }
