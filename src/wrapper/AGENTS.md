@@ -1,15 +1,19 @@
 # C++ capture and C ABI
 
-The wrapper exports bounded, owned Slang snapshots through a documented C ABI.
+The wrapper exports bounded Slang captures through a documented C ABI: after
+capture completes and the compilation is destroyed, it streams every table to
+the caller's `LlgSlangSink` in header order (bounded batches), releasing each
+table once delivered. Keep record layouts, table order and the stream header in
+sync with [FFI](../ffi/AGENTS.md); bump `LLG_SLANG_ABI_VERSION` on both sides.
 Export `extern "C"` functions only: no C++ templates/exceptions or Rust
 panics/generics cross the ABI. Match the CMake-configured C++ standard, existing
 naming/formatting and the C++ coding guide. Minimize includes/public-header
 implementation details; prefer RAII, smart pointers and references to raw owners.
 Do not introduce exceptions unless existing code uses them. Document ownership
-at every function and clarify uncertain assumptions. Snapshot-owned strings are
+at every function and clarify uncertain assumptions. Capture-owned strings are
 interned stable borrowed views, never individually freed. Charge every occurrence
-against the logical export budget even when its bytes are shared; snapshots
-outlive temporary compilation.
+against the logical export budget even when its bytes are shared; captures
+outlive temporary compilation and live until the stream ends.
 Keep [FFI](../ffi/AGENTS.md) layouts/errors/budgets aligned. `mimalloc_shim.c`
 redirects C malloc/free through GNU/LLD wrapping on musl.
 
@@ -18,8 +22,11 @@ and 1M constants. Hard ceilings are 16 GiB export, 64M nodes, 256M edges and
 16M constants; reject edge requests above the ceiling before UDP work. Charge
 export records and strings before storing them, and name the effective exhausted
 budget in diagnostics. A larger export budget does not bound total Slang/Rust RSS.
-On glibc, a successful compile calls `malloc_trim(0)` after compilation teardown
-so freed frontend pages are not resident while Rust copies the snapshot.
+On glibc, a compile calls `malloc_trim(0)` after compilation teardown and
+before streaming, so freed frontend pages are not resident while Rust builds its
+owned copy. Semantic nodes live in a chunked table: growth never moves records
+(references stay valid across appends) and each chunk is freed after delivery.
+A sink abort throws `SinkAborted`, caught only at the C entry.
 
 Capture's ordered pending edge vectors remain authoritative. Build role/index and
 child-target indexes only for parents with at least 64 charged edges. Keep cache

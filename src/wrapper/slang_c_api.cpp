@@ -233,6 +233,41 @@ struct LlgSlangError {
   bool is_static = false;
 };
 
+// Records per semantic-node chunk; also the stream batch for that table.
+constexpr size_t kSemanticNodeChunkRecords = 4096;
+
+// Append-only table stored in fixed-size chunks. Growth never moves
+// records, so capture has no reallocation copy spike and references stay
+// valid across push_back; the stream releases each chunk once delivered.
+template<typename T, size_t ChunkRecords>
+class ChunkedVector {
+public:
+  size_t size() const { return count; }
+  T& operator[](size_t index) {
+    return chunks[index / ChunkRecords][index % ChunkRecords];
+  }
+  const T& operator[](size_t index) const {
+    return chunks[index / ChunkRecords][index % ChunkRecords];
+  }
+  void push_back(const T& value) {
+    if (count % ChunkRecords == 0)
+      chunks.emplace_back(new T[ChunkRecords]);
+    chunks.back()[count % ChunkRecords] = value;
+    count++;
+  }
+  size_t chunkCount() const { return chunks.size(); }
+  const T* chunkData(size_t chunk) const { return chunks[chunk].get(); }
+  size_t chunkSize(size_t chunk) const {
+    return chunk + 1 < chunks.size() ? ChunkRecords : count - chunk * ChunkRecords;
+  }
+  // Frees one chunk; the table must not be indexed afterwards.
+  void releaseChunk(size_t chunk) { chunks[chunk].reset(); }
+
+private:
+  std::vector<std::unique_ptr<T[]>> chunks;
+  size_t count = 0;
+};
+
 struct SnapshotStringHash {
   using is_transparent = void;
   size_t operator()(std::string_view value) const noexcept {
@@ -240,7 +275,7 @@ struct SnapshotStringHash {
   }
 };
 
-struct LlgSlangSnapshot {
+struct CaptureOutput {
   uint32_t flags = 0;
   uint64_t output_bytes = 0;
   uint64_t output_byte_limit = kDefaultMaxOutputBytes;
@@ -253,7 +288,7 @@ struct LlgSlangSnapshot {
   std::vector<LlgSlangType> types;
   std::vector<LlgSlangConstant> constants;
   std::vector<uint64_t> value_words;
-  std::vector<LlgSlangSemanticNode> semantic_nodes;
+  ChunkedVector<LlgSlangSemanticNode, kSemanticNodeChunkRecords> semantic_nodes;
   std::vector<LlgSlangSemanticEdge> semantic_edges;
   std::vector<LlgSlangLexicalToken> lexical_tokens;
   std::vector<LlgSlangTypeRange> type_ranges;
@@ -281,7 +316,7 @@ LlgSlangError* makeError(uint32_t status, std::string_view message) noexcept {
   }
 }
 
-LlgSlangString storeString(LlgSlangSnapshot& snapshot, std::string_view value) {
+LlgSlangString storeString(CaptureOutput& snapshot, std::string_view value) {
   if (value.empty())
     return {nullptr, 0};
   addChecked(snapshot.output_bytes, value.size(), snapshot.output_byte_limit,
@@ -294,7 +329,7 @@ LlgSlangString storeString(LlgSlangSnapshot& snapshot, std::string_view value) {
           static_cast<uint64_t>(stored.size())};
 }
 
-void chargeRecord(LlgSlangSnapshot& snapshot, uint64_t bytes) {
+void chargeRecord(CaptureOutput& snapshot, uint64_t bytes) {
   if (bytes > snapshot.output_byte_limit ||
       snapshot.output_bytes > snapshot.output_byte_limit - bytes) {
     throw BridgeFailure(LLG_SLANG_STATUS_LIMIT_EXCEEDED,
@@ -365,7 +400,7 @@ struct Capture {
     uint64_t semantic_id;
   };
 
-  LlgSlangSnapshot& output;
+  CaptureOutput& output;
   const SourceManager& sourceManager;
   const LlgSlangLimits& limits;
   std::vector<std::pair<BufferID, uint64_t>> fileIds;
@@ -405,7 +440,7 @@ struct Capture {
   uint64_t semanticEdgeCount = 0;
   bool declarationOnly = false;
 
-  Capture(LlgSlangSnapshot& output, const SourceManager& sourceManager,
+  Capture(CaptureOutput& output, const SourceManager& sourceManager,
           const LlgSlangLimits& limits, bool declarationOnly = false)
       : output(output), sourceManager(sourceManager), limits(limits),
         declarationOnly(declarationOnly) {}
@@ -4145,7 +4180,9 @@ public:
         it->second = binding;
       }
     }
-    for (const auto& node : capture.output.semantic_nodes) {
+    for (size_t nodeIndex = 0; nodeIndex < capture.output.semantic_nodes.size();
+         nodeIndex++) {
+      const auto& node = capture.output.semantic_nodes[nodeIndex];
       if (node.range.file_id == LLG_SLANG_INVALID_ID)
         continue;
       const uint64_t lexicalTarget =
@@ -4493,7 +4530,7 @@ void captureNavigation(Compilation& compilation, Capture& capture) {
   visitor.bindSourceConnections(compilation, sourceInstances);
 }
 
-std::unique_ptr<LlgSlangSnapshot> compileImpl(const LlgSlangCompileRequest& request) {
+std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request) {
   if (request.abi_version != LLG_SLANG_ABI_VERSION)
     throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT,
                         "unsupported Slang ABI version");
@@ -4918,7 +4955,7 @@ std::unique_ptr<LlgSlangSnapshot> compileImpl(const LlgSlangCompileRequest& requ
                         "at least one compilation unit source is required");
 
   parseStage.finish();
-  auto output = std::make_unique<LlgSlangSnapshot>();
+  auto output = std::make_unique<CaptureOutput>();
   output->flags |= edition.snapshotFlag;
   if ((request.flags & LLG_SLANG_COMPILE_MERGED_COMPILATION_UNITS) != 0)
     output->flags |= LLG_SLANG_SNAPSHOT_MERGED_COMPILATION_UNITS;
@@ -5031,37 +5068,122 @@ std::unique_ptr<LlgSlangSnapshot> compileImpl(const LlgSlangCompileRequest& requ
   return output;
 }
 
-template<typename T>
-const T* dataOrNull(const std::vector<T>& values) {
-  return values.empty() ? nullptr : values.data();
+// Records delivered to the sink per callback. Bounds the borrowed batch, not
+// memory: each table is released as a whole after delivery, semantic nodes
+// chunk by chunk.
+constexpr size_t kStreamBatchRecords = 4096;
+
+// Thrown when the sink asks to stop; the receiver owns the actual error.
+class SinkAborted final : public std::exception {
+public:
+  const char* what() const noexcept override {
+    return "capture sink rejected the stream";
+  }
+};
+
+bool sinkComplete(const LlgSlangSink& sink) {
+  return sink.begin && sink.files && sink.related_diagnostics &&
+         sink.diagnostics && sink.value_words && sink.constants &&
+         sink.type_ranges && sink.type_members && sink.types &&
+         sink.parameters && sink.instances && sink.semantic_edges &&
+         sink.semantic_nodes && sink.udp_rows && sink.udp_tables &&
+         sink.lexical_tokens && sink.source_libraries &&
+         sink.line_directives && sink.end;
+}
+
+void checkSink(uint32_t status) {
+  if (status != LLG_SLANG_SINK_CONTINUE)
+    throw SinkAborted();
+}
+
+template<typename T, typename Callback>
+void streamTable(const LlgSlangSink& sink, Callback callback, std::vector<T>& table) {
+  for (size_t start = 0; start < table.size(); start += kStreamBatchRecords) {
+    const size_t count = std::min(kStreamBatchRecords, table.size() - start);
+    checkSink(callback(sink.context, table.data() + start, static_cast<uint64_t>(count)));
+  }
+  std::vector<T>().swap(table);
+}
+
+// Deliver a finished capture and release it table by table. The Slang
+// compilation is already destroyed; only the interned strings stay alive
+// until the last record that may borrow them has been delivered.
+void streamCapture(CaptureOutput& output, const LlgSlangSink& sink) {
+  ProfileStage stage("wrapper.stream");
+  const LlgSlangStreamHeader header{
+      LLG_SLANG_ABI_VERSION,
+      output.flags,
+      output.files.size(),
+      output.related.size(),
+      output.diagnostics.size(),
+      output.value_words.size(),
+      output.constants.size(),
+      output.type_ranges.size(),
+      output.type_members.size(),
+      output.types.size(),
+      output.parameters.size(),
+      output.instances.size(),
+      output.semantic_edges.size(),
+      output.semantic_nodes.size(),
+      output.udp_rows.size(),
+      output.udp_tables.size(),
+      output.lexical_tokens.size(),
+      output.source_libraries.size(),
+      output.line_directives.size(),
+  };
+  checkSink(sink.begin(sink.context, &header));
+  streamTable(sink, sink.files, output.files);
+  streamTable(sink, sink.related_diagnostics, output.related);
+  streamTable(sink, sink.diagnostics, output.diagnostics);
+  streamTable(sink, sink.value_words, output.value_words);
+  streamTable(sink, sink.constants, output.constants);
+  streamTable(sink, sink.type_ranges, output.type_ranges);
+  streamTable(sink, sink.type_members, output.type_members);
+  streamTable(sink, sink.types, output.types);
+  streamTable(sink, sink.parameters, output.parameters);
+  streamTable(sink, sink.instances, output.instances);
+  streamTable(sink, sink.semantic_edges, output.semantic_edges);
+  for (size_t chunk = 0; chunk < output.semantic_nodes.chunkCount(); chunk++) {
+    checkSink(sink.semantic_nodes(sink.context, output.semantic_nodes.chunkData(chunk),
+                                  output.semantic_nodes.chunkSize(chunk)));
+    output.semantic_nodes.releaseChunk(chunk);
+  }
+  streamTable(sink, sink.udp_rows, output.udp_rows);
+  streamTable(sink, sink.udp_tables, output.udp_tables);
+  streamTable(sink, sink.lexical_tokens, output.lexical_tokens);
+  streamTable(sink, sink.source_libraries, output.source_libraries);
+  streamTable(sink, sink.line_directives, output.line_directives);
+  checkSink(sink.end(sink.context));
 }
 
 } // namespace
 
 extern "C" uint32_t llg_slang_compile(const LlgSlangCompileRequest* request,
-                                       LlgSlangSnapshot** out_snapshot,
+                                       const LlgSlangSink* sink,
                                        LlgSlangError** out_error) {
-  if (out_snapshot)
-    *out_snapshot = nullptr;
   if (out_error)
     *out_error = nullptr;
-  if (!request || !out_snapshot || !out_error) {
+  if (!request || !sink || !out_error || !sinkComplete(*sink)) {
     if (out_error)
       *out_error = makeError(LLG_SLANG_STATUS_INVALID_ARGUMENT,
-                             "request and output pointers are required");
+                             "request, sink callbacks and error output are required");
     return LLG_SLANG_STATUS_INVALID_ARGUMENT;
   }
 
   try {
-    *out_snapshot = compileImpl(*request).release();
+    auto output = compileImpl(*request);
 #if defined(__GLIBC__)
     // The compilation, syntax trees and capture indexes are destroyed by
-    // now. glibc keeps their freed pages resident inside its heap, where the
-    // caller's subsequent large owned copy of the snapshot cannot reuse
-    // them; return them to the system before that copy is made.
+    // now. glibc keeps their freed pages resident inside its heap; return
+    // them to the system before the receiver builds its owned copy.
     malloc_trim(0);
 #endif
+    streamCapture(*output, *sink);
     return LLG_SLANG_STATUS_OK;
+  }
+  catch (const SinkAborted& error) {
+    *out_error = makeError(LLG_SLANG_STATUS_SINK_ABORTED, error.what());
+    return LLG_SLANG_STATUS_SINK_ABORTED;
   }
   catch (const BridgeFailure& error) {
     *out_error = makeError(error.status, error.what());
@@ -5078,51 +5200,6 @@ extern "C" uint32_t llg_slang_compile(const LlgSlangCompileRequest* request,
   }
 }
 
-extern "C" uint32_t llg_slang_snapshot_view(const LlgSlangSnapshot* snapshot,
-                                             LlgSlangSnapshotView* out_view,
-                                             LlgSlangError** out_error) {
-  if (out_error)
-    *out_error = nullptr;
-  if (!snapshot || !out_view || !out_error) {
-    if (out_error)
-      *out_error = makeError(LLG_SLANG_STATUS_INVALID_ARGUMENT,
-                             "snapshot and output pointers are required");
-    return LLG_SLANG_STATUS_INVALID_ARGUMENT;
-  }
-
-  *out_view = {
-      LLG_SLANG_ABI_VERSION,
-      snapshot->flags,
-      dataOrNull(snapshot->files), static_cast<uint64_t>(snapshot->files.size()),
-      dataOrNull(snapshot->diagnostics), static_cast<uint64_t>(snapshot->diagnostics.size()),
-      dataOrNull(snapshot->related), static_cast<uint64_t>(snapshot->related.size()),
-      dataOrNull(snapshot->instances), static_cast<uint64_t>(snapshot->instances.size()),
-      dataOrNull(snapshot->parameters), static_cast<uint64_t>(snapshot->parameters.size()),
-      dataOrNull(snapshot->types), static_cast<uint64_t>(snapshot->types.size()),
-      dataOrNull(snapshot->constants), static_cast<uint64_t>(snapshot->constants.size()),
-      dataOrNull(snapshot->value_words), static_cast<uint64_t>(snapshot->value_words.size()),
-      dataOrNull(snapshot->semantic_nodes),
-      static_cast<uint64_t>(snapshot->semantic_nodes.size()),
-      dataOrNull(snapshot->semantic_edges),
-      static_cast<uint64_t>(snapshot->semantic_edges.size()),
-      dataOrNull(snapshot->lexical_tokens),
-      static_cast<uint64_t>(snapshot->lexical_tokens.size()),
-      dataOrNull(snapshot->type_ranges),
-      static_cast<uint64_t>(snapshot->type_ranges.size()),
-      dataOrNull(snapshot->type_members),
-      static_cast<uint64_t>(snapshot->type_members.size()),
-      dataOrNull(snapshot->udp_tables),
-      static_cast<uint64_t>(snapshot->udp_tables.size()),
-      dataOrNull(snapshot->udp_rows),
-      static_cast<uint64_t>(snapshot->udp_rows.size()),
-      dataOrNull(snapshot->source_libraries),
-      static_cast<uint64_t>(snapshot->source_libraries.size()),
-      dataOrNull(snapshot->line_directives),
-      static_cast<uint64_t>(snapshot->line_directives.size()),
-  };
-  return LLG_SLANG_STATUS_OK;
-}
-
 extern "C" uint32_t llg_slang_error_view(const LlgSlangError* error,
                                           LlgSlangErrorView* out_view) {
   if (!error || !out_view)
@@ -5134,10 +5211,6 @@ extern "C" uint32_t llg_slang_error_view(const LlgSlangError* error,
       : LlgSlangString{reinterpret_cast<const uint8_t*>(error->message.data()),
                        static_cast<uint64_t>(error->message.size())};
   return LLG_SLANG_STATUS_OK;
-}
-
-extern "C" void llg_slang_snapshot_destroy(LlgSlangSnapshot* snapshot) {
-  delete snapshot;
 }
 
 extern "C" void llg_slang_error_destroy(LlgSlangError* error) {

@@ -5,13 +5,16 @@ owned APIs to the rest of the library.
 
 | Component | Responsibility |
 | --- | --- |
-| `slang.rs` and `slang/` | C ABI v10 requests, bounded snapshot/error owners, layout/tag validation, exact value/text copies and RAII destruction. |
+| `slang.rs` and `slang/` | C ABI v11 requests, the capture-stream receivers (`slang/stream.rs`), bounded error owners, layout/tag validation, exact value/text copies and RAII destruction. |
 | `process_memory.rs` | Platform process-memory counters and native resource limits. |
 | `secure_fs` | Handle-relative filesystem admission and identity/race protection. |
 
-Semantic node IDs are checked as contiguous arena indices before range-based
-reference validation. Decoded node and edge arenas reserve the validated record
-counts exactly; native ownership ends after all payloads have been copied.
+The wrapper streams its finished capture table by table into one
+`StreamBuilder` (design in `slang/stream.rs`). Type, instance and semantic-node
+IDs must be their dense table indices; references to later tables are checked
+against the header's announced counts and window ownership is checked when each
+table closes. Owned tables reserve the validated counts exactly, and each
+native table is released once delivered.
 
 Snapshot data includes source/lexical provenance, typed semantic edges, UDP tables,
 sequence metadata and aggregate defaults. No native pointer or borrowed buffer

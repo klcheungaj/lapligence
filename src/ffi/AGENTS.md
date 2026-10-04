@@ -7,13 +7,13 @@ Each module denies `clippy::undocumented_unsafe_blocks` and
 and ownership at every unsafe operation. No panic may cross C. Native owners
 remain on the calling thread; do not implement `Send` or `Sync`.
 
-## Slang snapshot ABI
+## Slang capture-stream ABI
 
 - Mirror `slang_c_api.h` layouts with `#[repr(C)]`. Validate ABI version, tags,
   known flags, reserved fields, pointer/length pairs, IDs, ranges and table windows.
   Use module error types, preserving native status/message; malformed output is
   `InvalidNativeData`, distinct from valid unsupported HDL.
-- ABI v10 `CompileRequest` borrows sources/options until blocking
+- ABI v11 `CompileRequest` borrows sources/options until blocking
   `llg_slang_compile` returns, distinguishing units from include-only buffers.
   Library-unit recovery uses the same buffers/limits; reject unknown request flags.
   Cache keys are lexically normalized; include directories are lookup prefixes,
@@ -32,12 +32,18 @@ remain on the calling thread; do not implement `Send` or `Sync`.
   as several buffers), rejecting disagreeing ones.
 - Bound defines, tops, includes, parameter overrides, source bytes, diagnostics,
   value bits, output bytes, semantic records/edges and tokens on both ABI sides
-  before/during allocation. OK transfers one unique snapshot owner; non-OK an
-  error owner. Destroy unexpected snapshots on failure; both destructors accept
-  null. HDL errors set snapshot `has_errors`; argument/resource/setup/exception/
-  bridge failures return `SlangError`. Validate and copy snapshot/error views
-  before RAII destruction, including early returns. Expose no native pointer
-  or native-storage lifetime.
+  before/during allocation. The capture arrives through the `LlgSlangSink`
+  stream (`slang/stream.rs` documents catalogue, order, ownership and error
+  flow): header counts are limit- and budget-checked before reservation,
+  strings are charged on receipt, tables must arrive in header order with
+  exactly the announced counts, and type/instance/node IDs must equal their
+  dense indices. Records are borrowed only for the callback; copy what is kept.
+  Trampolines catch panics, record only the first error and return
+  `LLG_SLANG_SINK_ABORT`; the bridge then returns status 5 and the receiver's
+  error wins. Non-OK returns an error owner (destructor accepts null). HDL
+  errors set the header's `has_errors`; argument/resource/setup/exception/
+  bridge failures return `SlangError`. Expose no native pointer or
+  native-storage lifetime.
 - Preserve paired value/unknown limbs, distinct real/shortreal widths and
   arbitrary-byte SystemVerilog strings; every other ABI string is UTF-8.
   Source ranges use admitted file IDs and zero-based half-open byte offsets;
