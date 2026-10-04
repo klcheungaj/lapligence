@@ -178,6 +178,15 @@ warnings. `alias_identity`
 also parses its VCD. Negatives cover uwire drivers, pass switches and inout
 formals and the alias legality rules.
 
+SIM-001's region and procedural-time fixtures use
+`-E 'binary(sim_feature_completion) & test(sim_001::)'` with
+`binary(runtime_regions)` for the native region-callback probe. Every executed fixture
+runs in both optimizer modes on both backends (set `LLG_TEST_GMP_ROOT` for the GMP
+lane). `sim_cli::run_case_checked_matrix` hands each output to a checker, so the
+region litmus is compared as a line multiset plus the orders the §4.5 reference
+algorithm fixes, races accept every permitted outcome, and tick-limit failures
+compare the output printed before the diagnostic.
+
 RTL-012's strength and `unconnected_drive` fixtures use
 `-E 'binary(sim_feature_completion) & test(rtl_012::)'`. The scalar matrix and
 the 70-bit composition compare against the exhaustive outcome oracle in
