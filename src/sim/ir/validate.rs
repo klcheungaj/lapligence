@@ -17,6 +17,7 @@ mod fixed_array_reductions;
 mod fixed_values;
 mod initialization;
 mod lvalues;
+mod native_values;
 mod statements;
 mod tables;
 mod udp;
@@ -183,6 +184,8 @@ struct Validator<'model> {
     /// Lexical bindings introduced by fixed-array method maps, innermost last.
     reduction_bindings: RefCell<Vec<(String, u32, bool)>>,
     fixed_activations: RefCell<Vec<HashSet<usize>>>,
+    /// Lexically declared activation native values, innermost scope last.
+    native_activations: RefCell<Vec<HashSet<usize>>>,
     /// None outside a C function; otherwise whether that function returns chandle.
     chandle_return: Cell<Option<bool>>,
     string_return: Cell<Option<bool>>,

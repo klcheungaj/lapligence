@@ -28,6 +28,7 @@ impl<'a> Codegen<'a> {
                 }
                 let automatic = *automatic;
                 self.prepare_fixed_function(*c, automatic)?;
+                self.prepare_native_function(inst, *c, automatic)?;
                 let dpi = self.db.dpi_import(*c).cloned();
                 let (is_task_f, function_ret, formals) = if dpi.is_some() {
                     let is_task = match self.kind(*c) {
@@ -73,12 +74,17 @@ impl<'a> Codegen<'a> {
                                     is_out: *is_out,
                                     mode,
                                     fixed_array: self.fixed_formal_array(*io),
-                                    fixed_shape: if self.fixed_formal_array(*io).is_some() {
+                                    native_value: self.native_formal_storage(inst, *io),
+                                    fixed_shape: if self.fixed_formal_array(*io).is_some()
+                                        || self.is_native_declaration(*io)
+                                    {
                                         None
                                     } else {
                                         self.fixed_formal_shape(*io)?
                                     },
-                                    fixed_default: if self.fixed_formal_array(*io).is_some() {
+                                    fixed_default: if self.fixed_formal_array(*io).is_some()
+                                        || self.is_native_declaration(*io)
+                                    {
                                         None
                                     } else {
                                         self.fixed_default_literal(*io)
@@ -86,6 +92,7 @@ impl<'a> Codegen<'a> {
                                     const_ref: *const_ref,
                                     ref_static: *ref_static,
                                     width: if self.fixed_formal_array(*io).is_some()
+                                        || self.is_native_declaration(*io)
                                         || is_handle_kind(&ty.kind)
                                         || is_real_kind(&ty.kind)
                                     {
@@ -129,10 +136,26 @@ impl<'a> Codegen<'a> {
                     formal.fixed_array = Some(array);
                     formals_ir.push(formal);
                 }
+                if let Some(value) = self
+                    .native_return(*c)
+                    .then(|| self.native_formal_storage(inst, *c))
+                    .flatten()
+                {
+                    // A native result is a trailing output formal, like a
+                    // descriptor-array result.
+                    let mut formal =
+                        IrFormal::new(true, 1, false).map_err(|error| error.to_string())?;
+                    formal.width = 0;
+                    formal.native_value = Some(value);
+                    formals_ir.push(formal);
+                }
                 let has_wait = *is_task && dpi.is_none() && self.task_has_wait(*c, inst);
                 if !automatic && dpi.is_none() {
                     for (idx, ((io, _), formal)) in formals.iter().zip(&formals_ir).enumerate() {
-                        if formal.is_ref() || formal.fixed_array.is_some() {
+                        if formal.is_ref()
+                            || formal.fixed_array.is_some()
+                            || formal.native_value.is_some()
+                        {
                             continue;
                         }
                         if formal.chandle || formal.event {
@@ -642,7 +665,7 @@ impl<'a> Codegen<'a> {
             .find(|child| matches!(self.kind(*child), NodeKind::Var { .. }))
             .is_some_and(|return_var| self.db.is_two_state_type(return_var));
         let ret = match ret {
-            Some(_) if self.nonflatten_function(ft) => None,
+            Some(_) if self.nonflatten_function(ft) || self.native_return(ft) => None,
             Some(ty) if matches!(ty.kind.as_str(), "chandle" | "class" | "string") => None,
             Some(ty) => {
                 if is_real_kind(&ty.kind) {

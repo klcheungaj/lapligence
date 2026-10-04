@@ -325,6 +325,44 @@ the complete image is committed. Callback-side allocation can still fail after
 that commit; allocation failure is fatal, so no partial image is observed.
 
 
+## Native record values outside by-value subroutine storage
+
+**Status:** open; SIM-003 implements descriptor-backed native records for
+subroutine formals, results and locals.
+
+### Symptom
+
+Unpacked records with string, real or chandle leaves copy, compare and cross
+input/output/inout formals and results as runtime values. These legal forms
+still reject with explicit diagnostics: module-level unpacked arrays and
+queue/dynamic/associative containers of native records or strings, their
+slices, a run-time index into a native member array of an automatic record, `ref`
+formals of native record type, nonblocking writes of native records or their
+string/chandle members, fork-join_none capture of automatic native records,
+`f(...).member` selects on a native result, conditional operators with native
+record operands (an unknown predicate needs a member-wise merge), and native
+outputs bound inside an expression (call them as a statement instead). A packed member select of a
+module-level native record (`h.p.hi`) and event controls on string members are
+also not lowered.
+
+### Cause
+
+A native value is one rooted `llg_value_t` tree; leaves are addressed by
+constant item paths resolved at lowering time. Module-level native records keep
+their per-member lowering, so whole-value transfers between the two
+representations go leaf by leaf, and element-indexed native storage would need
+run-time item addressing plus per-element change records.
+
+### Intended direction
+
+Run-time item paths and element change records (SIM-007), native ref aliases
+(SIM-008), deferred native writes (SIM-004), fork capture pins (SIM-010) and
+container formals/locals (SIM-006) reuse the same descriptors and root registry.
+
+### Reproduce
+
+`tests/fixtures/sim/feature_completion/sim_003/neg_native_*.sv`.
+
 ## Streaming `with` targets outside the direct assignment path
 
 **Status:** open; RTL-015 represents runtime and partly out-of-bounds fixed

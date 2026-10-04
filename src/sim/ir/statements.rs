@@ -271,6 +271,14 @@ pub enum IrStmt {
     },
     /// Create lexical non-flattened fixed storage with registered cleanup.
     FixedArrayDeclare(usize),
+    /// Default-construct lexical native value storage with registered cleanup.
+    NativeValueDeclare(usize),
+    /// Replace one native value with a deep copy of another of the same type.
+    /// Strings and nested values copy independently; handles keep identity.
+    NativeValueCopy {
+        dst: usize,
+        src: usize,
+    },
     /// Descriptor evaluation precedes destination capture and atomic copy publication.
     FixedValueAssign {
         dst: IrMemoryView,

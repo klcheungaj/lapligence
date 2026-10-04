@@ -81,6 +81,15 @@ impl Codegen<'_> {
             let mut out_args = Vec::new();
             let mut in_args = Vec::new();
             for (idx, (io, is_out)) in formals.iter().enumerate() {
+                if self.is_native_declaration(*io) {
+                    let argument = self.native_expression_argument(path, *io, bound[idx].expr)?;
+                    if *is_out {
+                        out_args.push(argument);
+                    } else {
+                        in_args.push(argument);
+                    }
+                    continue;
+                }
                 let is_ref = matches!(
                     self.kind(*io),
                     NodeKind::FuncArg {
@@ -159,6 +168,8 @@ impl Codegen<'_> {
                         | IrCallArg::StringOutAddr(_)
                         | IrCallArg::StringRefAddr { .. }
                         | IrCallArg::StringOutTemp { .. }
+                        | IrCallArg::NativeValue(_)
+                        | IrCallArg::NativeLeaves { .. }
                 )
             });
             if !typed {

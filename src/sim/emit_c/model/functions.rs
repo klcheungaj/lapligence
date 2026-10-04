@@ -58,7 +58,9 @@ pub(super) fn frame_param_fields(f: &IrFunc) -> Vec<(String, String)> {
         params.push(("void *".to_owned(), "_this".to_owned()));
     }
     for (idx, form) in f.formals.iter().enumerate() {
-        if form.fixed_array.is_some() && form.is_address() {
+        if form.native_value.is_some() && form.is_address() {
+            params.push(("llg_value_t*".to_owned(), format!("o{idx}")));
+        } else if form.fixed_array.is_some() && form.is_address() {
             params.push((
                 "llg_fixed_array_t*".to_owned(),
                 format!("{}{idx}", if form.is_ref() { "r" } else { "o" }),
@@ -99,7 +101,9 @@ pub(super) fn frame_param_fields(f: &IrFunc) -> Vec<(String, String)> {
     for (idx, form) in f.formals.iter().enumerate() {
         if !form.is_address() {
             params.push((
-                (if form.fixed_array.is_some() {
+                (if form.native_value.is_some() {
+                    "llg_value_t*"
+                } else if form.fixed_array.is_some() {
                     "llg_fixed_array_t*"
                 } else if form.string {
                     "llg_string_t"

@@ -118,7 +118,9 @@ impl<'a> Codegen<'a> {
         let has_ret = ret.is_some() || ret_chandle || ret_string;
         // Slang binds an assignment to the function name directly to the
         // subroutine symbol; that symbol is the return-storage identity.
-        let ret_var = (has_ret || self.nonflatten_function(ft)).then_some(ft);
+        let ret_var =
+            (has_ret || self.nonflatten_function(ft) || self.native_return(ft)).then_some(ft);
+        self.bind_native_function(inst, ft);
         let body = self
             .func_body(ft)
             .ok_or_else(|| format!("function `{}` without a body", self.node(ft).name))?;
@@ -426,7 +428,7 @@ impl<'a> Codegen<'a> {
             }
         }
         for (idx, (io, is_out)) in formals.iter().enumerate() {
-            if self.fixed_formal_array(*io).is_some() {
+            if self.fixed_formal_array(*io).is_some() || self.is_native_declaration(*io) {
                 continue;
             }
             if matches!(self.kind(*io), NodeKind::FuncArg { ty, .. } if ty.kind == "event") {
@@ -1074,6 +1076,11 @@ impl<'a> Codegen<'a> {
             return Ok(());
         }
         if let NodeKind::Var { ty } | NodeKind::Array { ty } = self.kind(node) {
+            if self.is_native_declaration(node) {
+                // Native record locals are descriptor-backed values declared
+                // by `NativeValueDeclare` (see `native_values`).
+                return Ok(());
+            }
             if self
                 .array_globals
                 .get(&node)

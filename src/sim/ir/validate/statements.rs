@@ -177,6 +177,30 @@ impl Validator<'_> {
                     return self.fail(path, "incompatible descriptor assignment shape or lifetime");
                 }
             }
+            IrStmt::NativeValueDeclare(index) => {
+                if self
+                    .model
+                    .native_values
+                    .get(*index)
+                    .is_none_or(|value| !value.activation)
+                {
+                    return self.fail(path, "invalid activation native value declaration");
+                }
+                let mut scopes = self.native_activations.borrow_mut();
+                let scope = scopes.last_mut().ok_or_else(|| {
+                    IrValidationError::new(path, "native declaration requires a lexical scope")
+                })?;
+                if !scope.insert(*index) {
+                    return self.fail(path, "duplicate native activation declaration");
+                }
+            }
+            IrStmt::NativeValueCopy { dst, src } => {
+                self.validate_native_value_use(*dst, path)?;
+                self.validate_native_value_use(*src, path)?;
+                if self.model.native_values[*dst].ty != self.model.native_values[*src].ty {
+                    return self.fail(path, "native value copy between different types");
+                }
+            }
             IrStmt::FixedArrayDeclare(index) => {
                 if self
                     .model

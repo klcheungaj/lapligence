@@ -300,6 +300,8 @@ pub(in crate::sim::emit_c) fn storage_lifecycle(
     initialize.push_str(&native_init);
     initialize.push_str(&std::mem::take(&mut fixed_defaults));
     destroy.push_str(&native_destroy);
+    initialize.push_str(&super::super::native_values::native_type_tables(model)?.1);
+    destroy.push_str(&super::super::native_values::native_value_teardown(model));
     for array in model.arrays.iter().filter(|array| !array.activation) {
         defaults(
             &mut initialize,

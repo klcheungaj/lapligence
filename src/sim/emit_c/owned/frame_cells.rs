@@ -180,6 +180,20 @@ impl CellEligibility {
                 IrCallArg::EventVal(
                     IrEventRef::Static(_) | IrEventRef::Null | IrEventRef::Formal(_),
                 ) => {}
+                // The callee receives a fresh native value; no caller cell
+                // address crosses the call.
+                IrCallArg::NativeValue(_) => {}
+                IrCallArg::NativeLeaves { leaves, .. } => {
+                    for leaf in leaves {
+                        match &leaf.value {
+                            IrNativeLeafExpr::Packed(value) | IrNativeLeafExpr::Real(value) => {
+                                self.expression(ctx, value)
+                            }
+                            IrNativeLeafExpr::String(value) => self.string(ctx, value),
+                            IrNativeLeafExpr::Chandle(_) => self.proven = false,
+                        }
+                    }
+                }
                 _ => self.proven = false,
             }
         }

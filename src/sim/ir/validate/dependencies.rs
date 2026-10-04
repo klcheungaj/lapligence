@@ -9,6 +9,7 @@ impl Validator<'_> {
             max_width: Cell::new(0),
             reduction_bindings: RefCell::new(Vec::new()),
             fixed_activations: RefCell::new(Vec::new()),
+            native_activations: RefCell::new(Vec::new()),
             chandle_return: Cell::new(None),
             string_return: Cell::new(None),
             function: Cell::new(None),

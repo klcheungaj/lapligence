@@ -180,6 +180,12 @@ impl EmitCtx<'_, '_> {
                     self.path
                 ));
             }
+            if self.cg.native_target(lhs) {
+                return Err(format!(
+                    "nonblocking assignment to native record subroutine storage in `{}` is not supported",
+                    self.path
+                ));
+            }
             if self.cg.subroutine_auto_target(lhs) {
                 return Err(format!(
                     "nonblocking assignment to automatic subroutine storage in `{}` is not supported because the update can outlive its activation",

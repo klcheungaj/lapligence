@@ -95,6 +95,24 @@ own container/object descriptors and must not be routed through
 wider than the packed limit has no descriptor form yet (see
 [known issues](../../../docs/known_issues.md#remaining-non-flattened-fixed-value-contexts)).
 
+## Descriptor-backed native values (SIM-003)
+
+Native records live next to, not inside, the fixed-value contract.
+`IrModel::native_types` holds bounded `IrContainerElement` record/fixed-array
+shapes whose leaves are packed, real, string or chandle
+(`native_values::validate_native_type`: depth and per-level item limits,
+nonzero nominal ids, no unions, events, classes or containers).
+`IrModel::native_values` names each storage root: persistent roots carry a
+unique C name; activation roots are declared lexically by
+`IrStmt::NativeValueDeclare` or bound by an `IrFormal::native_value`, and the
+validator rejects uses outside that scope. `NativeValueCopy` copies between
+roots of one type. Calls pass `IrCallArg::NativeValue` (a root),
+`NativeLeaves` (a fresh root built from leaf expressions) or `NativeCall`
+(a fresh root filled by a nested native-result call). Leaves are read and
+written through `IrNativeAccessKind::ValueItem` accesses with a constant
+`item_path` and the existing local/string/chandle statement forms, so effects,
+optimization and stack sizing see ordinary named reads and writes.
+
 ## Bounded packed selection chains
 
 `IrElemSel::PackedChain(Vec<IrPackedSelect>)` stores successive fixed-array-element

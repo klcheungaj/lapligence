@@ -383,6 +383,13 @@ for `sparse()` storage and oversized values, never a per-cell expansion; new
 writers of fixed storage must register cell intervals for the single-writer
 rule; and new net-array driver forms must be added to the `net_cells.rs`
 classification inventory.
+Native records (string/real/chandle leaves, no packed width) in subroutine
+formals, results and locals use `collection/native_values.rs`: one
+`IrNativeValue` root per storage, leaf accesses by constant item path, and
+endpoint transfers that capture every source leaf before the first write.
+Module-level native records keep per-member lowering; reject run-time native
+indices, native ref formals, NBAs and fork capture explicitly rather than
+flattening or copying shallowly.
 
 An invalid index reads the element type's uninitialized default (SV 7.4.6), not
 an all-X payload: mixed-state aggregate elements keep two-state leaves at zero

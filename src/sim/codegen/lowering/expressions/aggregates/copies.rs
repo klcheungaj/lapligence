@@ -1,11 +1,12 @@
 //! Selected aggregate copies keep type identity separate from root storage.
 use super::*;
 
-pub(super) struct AggregateSelection {
-    pub(super) root: NodeId,
-    pub(super) prefix: Vec<AggregatePathPart>,
-    pub(super) descriptor: TypeDescriptor,
-    pub(super) storage: UnpackedAggregateInfo,
+#[derive(Clone)]
+pub(in crate::sim::codegen::lowering) struct AggregateSelection {
+    pub(in crate::sim::codegen::lowering) root: NodeId,
+    pub(in crate::sim::codegen::lowering) prefix: Vec<AggregatePathPart>,
+    pub(in crate::sim::codegen::lowering) descriptor: TypeDescriptor,
+    pub(in crate::sim::codegen::lowering) storage: UnpackedAggregateInfo,
 }
 
 /// Check the recursive shape used by the leaf-copy ABI. Unpacked aggregates
@@ -65,7 +66,10 @@ pub(super) fn equivalent_copy_shape(left: &TypeDescriptor, right: &TypeDescripto
 }
 
 impl Codegen<'_> {
-    pub(super) fn resolve_unpacked_aggregate(&self, node: NodeId) -> Option<AggregateSelection> {
+    pub(in crate::sim::codegen::lowering) fn resolve_unpacked_aggregate(
+        &self,
+        node: NodeId,
+    ) -> Option<AggregateSelection> {
         let (root, prefix, storage) =
             if let Some((root, storage)) = self.unpacked_aggregate_info(node) {
                 (root, Vec::new(), storage)

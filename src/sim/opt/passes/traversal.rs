@@ -35,6 +35,12 @@ fn walk_call_args_mut(args: &mut [IrCallArg], f: &mut impl FnMut(&mut IrExpr)) {
             IrCallArg::StringVal(value) => {
                 value.expressions_mut(&mut |child| walk_expr_mut(child, f));
             }
+            IrCallArg::NativeLeaves { leaves, .. } => {
+                for leaf in leaves {
+                    leaf.expressions_mut(&mut |child| walk_expr_mut(child, f));
+                }
+            }
+            IrCallArg::NativeCall { call, .. } => walk_call_args_mut(&mut call.args, f),
             IrCallArg::OutTemp {
                 init,
                 writeback,
@@ -80,7 +86,7 @@ fn walk_call_args_mut(args: &mut [IrCallArg], f: &mut impl FnMut(&mut IrExpr)) {
             IrCallArg::FixedValue(value) => {
                 value.expressions_mut(&mut |child| walk_expr_mut(child, f))
             }
-            IrCallArg::FixedArray(_) | IrCallArg::EventVal(_) => {}
+            IrCallArg::FixedArray(_) | IrCallArg::NativeValue(_) | IrCallArg::EventVal(_) => {}
         }
     }
 }

@@ -272,9 +272,15 @@ Macros, includes and their edition-specific behavior are counted in §11.
   array slices and packed member selects retain owned layouts and declared
   bounds. Four-state packed records and recursive fixed unpacked records/arrays
   admit nets, selected continuous contributions and inout connections. Unpacked
-  union net members reject under SV §6.7. General native/resizable subroutine
-  layouts and native aggregate slices remain restricted.
-  SV §§6.7, 7.2–7.4 **[SV-2005]**.
+  union net members reject under SV §6.7. Native records (fixed unpacked
+  records with string/real/chandle leaves, nested records and constant-indexed
+  member arrays) are descriptor-backed values in subroutine formals, results
+  and automatic/static locals, registered as explicit runtime roots; copies are
+  deep except chandles, which stay borrowed foreign pointers
+  ([sim_003](../tests/fixtures/sim/feature_completion/sim_003/readme.md)).
+  Arrays of native records, native aggregate slices, run-time indices into
+  native member arrays, native ref formals, NBAs and fork capture remain
+  restricted. SV §§6.7, 7.2–7.4 **[SV-2005]**.
 - 🟨 **Tagged unions** — Packed and unpacked tagged unions with fixed payloads
   use one finite storage owner: the tag in the most significant bits and each
   member right-justified below it. Construction and checked member access
@@ -334,6 +340,29 @@ Macros, includes and their edition-specific behavior are counted in §11.
   expressions are language-illegal under SV §6.14, rather than implementation
   gaps. Other object sensitivity contexts remain partial.
   SV §6.14 **[SV-2005]**.
+
+<a id="native-record-capability-matrix"></a>
+
+**Native record capability matrix (SIM-003).** Native records are unpacked
+records with string, real or chandle leaves (§7.2). "yes" means executed by
+[sim_003](../tests/fixtures/sim/feature_completion/sim_003/readme.md) or the
+module-level fixtures cited above; a task id is the owner of a legal form that
+rejects with a diagnostic; "illegal" is an SV rule. Copies are deep, except
+chandles (borrowed, §6.14) and class/event handles (identity). Packed
+containment of strings/chandles and chandle arithmetic are illegal everywhere.
+
+| Context | Storage / default | Copy | `==`/`!=`, `===` | Member select | Reference | Destruction |
+| --- | --- | --- | --- | --- | --- | --- |
+| Module/static variable | yes | yes | yes | constant: yes; packed-member select SIM-007 | SIM-008 | model close |
+| Automatic/static subroutine local | yes (root) | yes | yes | constant: yes; run-time index SIM-007 | SIM-008 | scope exit, cancel, close |
+| Input/output/inout formal, result | yes (root) | yes, copy-in/out | yes | constant: yes; `f().m` SIM-007 | `ref` formal SIM-008 | scope exit, cancel, close |
+| NBA target or source | SIM-004 | SIM-004 | n/a | SIM-004 | n/a | n/a |
+| Fork-join_none capture | SIM-010 | SIM-010 | n/a | n/a | n/a | SIM-010 |
+| Unpacked array element, slice | SIM-007 | SIM-007 | SIM-007 | SIM-007 | SIM-008 | SIM-007 |
+| Queue/dynamic/associative element | SIM-006 | SIM-006 | SIM-006 | SIM-006 | SIM-008 | SIM-006 |
+| Class property | SIM-011 | SIM-011 | SIM-011 | SIM-011 | SIM-011 | SIM-018 |
+| DPI argument | SIM-040 | SIM-040 | n/a | n/a | n/a | n/a |
+| Process-block local, call initializer | SIM-022 | SIM-022 | SIM-022 | SIM-022 | n/a | SIM-022 |
 
 ## 3. Modules, ports, parameters, hierarchy
 
@@ -1002,7 +1031,10 @@ Macros, includes and their edition-specific behavior are counted in §11.
   and arrays beyond packed capacity (descriptor transport). Numeric and admitted
   native string/chandle signatures have separate paths. Static outputs retain
   formal storage; only inout copy-in overwrites it, while automatic outputs get
-  typed defaults. General native/resizable aggregates remain restricted.
+  typed defaults. Native records cross input/output/inout formals and results
+  by value, including nested calls, recursion, suspension and cancellation
+  (SIM-003). Resizable containers in subroutine storage, native ref formals and
+  arrays of native records remain restricted.
   V §§10.2–10.3; SV §§13.3–13.5 **[1995/2001/SV-2005]**.
 - 🟦 **Automatic/reentrant and finite zero-time calls** — Per-activation
   storage, finite recursion, local named-block exits, selected copy-out and
