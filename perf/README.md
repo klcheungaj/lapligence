@@ -368,5 +368,7 @@ The runner generates `many_processes_registers_config` with two edges at
 Use `--time <path>` when GNU time is installed elsewhere and `--sample-ms` to
 change sampling. Do not run concurrent 40k points on a shared host. Short stages
 can have no RSS sample; sampled RSS includes earlier retained data and allocator
-pages. Compare medians and retain individual runs because host contention affects
+pages. Frontend stages are `native` (Slang compilation and wrapper capture),
+`ffi.stream` (native tables delivered to and decoded by the Rust receiver, with
+the nested wrapper-side `wrapper.stream`) and `db.import`. Compare medians and retain individual runs because host contention affects
 wall time. See [known issues](../docs/known_issues.md) for remaining limits.

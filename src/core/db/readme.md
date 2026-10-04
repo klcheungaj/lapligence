@@ -1,6 +1,8 @@
 # Owned semantic database
 
-`Db::from_slang` validates and imports the flat owned Slang snapshot. The arena
+`Db::from_slang` validates and imports the flat owned Slang snapshot, which the
+FFI receiver builds from the wrapper's capture stream (node names and kind
+spellings arrive interned as shared `SemanticText`). The arena
 retains declaration identity, source text/ranges, types, constants, dimensions,
 lifetimes, initialization, bindings, timing and unsupported-node metadata.
 A validated builder supports frontend-independent tests.
