@@ -21,8 +21,6 @@ lsp = [
     "dep:tower-lsp",
     "dep:tokio",
     "dep:dashmap",
-    "dep:toml",
-    "dep:serde",
     "dep:tower",
 ]
 
@@ -53,10 +51,11 @@ dashmap = { version = "6", optional = true }
 # Service trait for the `exit` interceptor (see src/bin/llg_ls/main.rs).
 tower = { version = "0.4", default-features = false, optional = true }
 
-# `llg.toml` configuration parsing.  Optional (gated behind the `lsp`
-# feature) so lib-only builds (`--no-default-features`) stay lean.
-toml = { version = "0.8", optional = true }
-serde = { version = "1", features = ["derive"], optional = true }
+# `llg.toml` parsing (src/config), shared by the `llg` driver and `llg_ls`.
+# Regular dependencies: the simulator driver reads the file too, so the
+# schema cannot live behind the LSP-only feature.
+toml = "0.8"
+serde = { version = "1", features = ["derive"] }
 
 
 [target.'cfg(unix)'.dependencies]
