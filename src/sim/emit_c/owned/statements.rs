@@ -126,6 +126,7 @@ impl Frame<'_, '_> {
                 ));
             }
             IrStmt::FixedArrayOrder(order) => self.fixed_array_order(order)?,
+            IrStmt::RealArrayOrder(order) => self.real_array_order(order)?,
             IrStmt::FixedArrayFill { array, value, nba } => {
                 let address = self.fixed_array_address(*array)?;
                 let two_state = self.ctx.model.array(*array).two_state;

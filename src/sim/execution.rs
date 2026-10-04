@@ -686,6 +686,7 @@ fn collect_effects(
             )),
             IrStmt::FixedValueAssign { nba: false, .. }
             | IrStmt::FixedArrayOrder(_)
+            | IrStmt::RealArrayOrder(_)
             | IrStmt::FixedArrayDeclare(_)
             | IrStmt::FixedArrayFill { nba: false, .. }
             | IrStmt::FixedArrayCopy { nba: false, .. }
@@ -1039,6 +1040,9 @@ fn collect_statement_expression_effects(
             collect_expression_effects(ir, value, effects, visited_calls)
         }
         IrStmt::FixedArrayOrder(order) => order.expressions(&mut |child| {
+            collect_expression_effects(ir, child, effects, visited_calls)
+        }),
+        IrStmt::RealArrayOrder(order) => order.expressions(&mut |child| {
             collect_expression_effects(ir, child, effects, visited_calls)
         }),
         IrStmt::Assign { lhs, rhs, .. }

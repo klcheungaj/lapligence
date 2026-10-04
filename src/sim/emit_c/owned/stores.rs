@@ -61,7 +61,7 @@ impl<'a, 'm> Frame<'a, 'm> {
         Ok(pointer)
     }
 
-    /// A fresh, zero-filled (0.0) lexical `double` buffer for a real
+    /// A fresh lexical `double` buffer, every cell +0.0, for a real
     /// activation array. Its value scope owns the cells, so suspension keeps
     /// them alive and lexical exit or cancellation releases them.
     pub(super) fn new_real_array(&mut self, index: usize) -> String {
@@ -72,10 +72,7 @@ impl<'a, 'm> Frame<'a, 'm> {
                 "(double*)llg_value_scope_object(llg_value_scope_begin_object(sizeof(double) * {total}ULL, NULL))"
             ),
         );
-        let (cell, declaration) = self.loop_variable("uint64_t", "real_cell");
-        self.line(format!(
-            "for ({declaration} = 0; {cell} < {total}ULL; ++{cell}) {pointer}[{cell}] = 0.0;"
-        ));
+        // Value-scope objects are zero-filled, and all-zero bits are +0.0.
         pointer
     }
 

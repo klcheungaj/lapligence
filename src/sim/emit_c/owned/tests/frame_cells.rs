@@ -193,6 +193,7 @@ fn context_free_wait_evaluators_exclude_their_typed_reads_only() {
         )],
         context: None,
         item: false,
+        real_item: false,
     });
     let statement = IrStmt::WaitEvents {
         specs: vec![(

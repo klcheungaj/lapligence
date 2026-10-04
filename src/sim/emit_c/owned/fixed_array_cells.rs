@@ -158,6 +158,28 @@ impl Frame<'_, '_> {
         Ok(matched)
     }
 
+    /// One runtime call reorders real cells numerically in place; the cell
+    /// selectors are evaluated once and an invalid selection is a no-op.
+    pub(super) fn real_array_order(&mut self, order: &IrRealArrayOrder) -> Result<(), String> {
+        if self.read_only_callback {
+            return Err(pending(
+                "side-effect-capable evaluator expressions: real-array ordering writes visible state",
+            ));
+        }
+        let view = self.fixed_cells_view(&order.cells)?;
+        let base = self.real_array_base(order.cells.array)?;
+        let method = match order.method {
+            IrFixedArrayOrderMethod::Reverse => "LLG_CONTAINER_METHOD_REVERSE",
+            IrFixedArrayOrderMethod::Sort => "LLG_CONTAINER_METHOD_SORT",
+            IrFixedArrayOrderMethod::RSort => "LLG_CONTAINER_METHOD_RSORT",
+        };
+        self.line(format!(
+            "if ({}) llg_real_cells_order(({base}) + {}, {}ULL, {}ULL, {method});",
+            view.valid, view.base, view.shape.count, view.shape.element_cells
+        ));
+        Ok(())
+    }
+
     pub(super) fn fixed_array_order(&mut self, order: &IrFixedArrayOrder) -> Result<(), String> {
         if self.read_only_callback {
             return Err(pending(

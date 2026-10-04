@@ -7,6 +7,7 @@
 //! snapshot are rejected rather than evaluated more than once.
 use super::fixed_arrays::P30PatternSource;
 use super::*;
+use crate::sim::ir::{IrFixedArrayOrderMethod, IrRealArrayOrder};
 
 fn fixed_values_cell_count(dims: &[(i32, i32)]) -> Result<u64, String> {
     dims.iter().try_fold(1u64, |count, (left, right)| {
@@ -376,5 +377,41 @@ impl Codegen<'_> {
             values.push(IrExpr::new(IrExprKind::LocalRead(name), 0, false, None));
         }
         Ok(Some(values))
+    }
+
+    /// `reverse`, `sort` and `rsort` of stored real cells (a whole real
+    /// array or a selected row) as one in-place numeric reorder.
+    pub(in super::super) fn lower_real_array_order(
+        &mut self,
+        path: &str,
+        call: NodeId,
+        receiver: NodeId,
+        method: &str,
+    ) -> Result<Option<IrStmt>, String> {
+        if self.real_array_shape(receiver).is_none() {
+            return Ok(None);
+        }
+        let Some((_, cells)) = self.fixed_array_cells(path, receiver)? else {
+            return Err(format!(
+                "array method `{method}` in `{path}` requires stored real array cells"
+            ));
+        };
+        if !self.model.arrays[cells.array].real {
+            return Ok(None);
+        }
+        if self.db.method_call_has_with_clause(call) {
+            return Err(format!(
+                "array method `{method}` with a `with` clause over real elements in `{path}` is not supported"
+            ));
+        }
+        let method = match method {
+            "reverse" => IrFixedArrayOrderMethod::Reverse,
+            "sort" => IrFixedArrayOrderMethod::Sort,
+            _ => IrFixedArrayOrderMethod::RSort,
+        };
+        Ok(Some(IrStmt::RealArrayOrder(Box::new(IrRealArrayOrder {
+            cells,
+            method,
+        }))))
     }
 }

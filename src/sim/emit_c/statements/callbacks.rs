@@ -76,7 +76,11 @@ pub(in super::super) fn render_pre_fn_impl(
             args,
             context,
             item,
+            real_item,
         } => {
+            if *real_item {
+                return Err("real iterator callbacks require the ownership emitter".to_owned());
+            }
             let mut out = format!(
                 "static void {c_name}(sv4_t* out, {}void* context) {{\n    (void)out;\n    (void)context;\n",
                 if *item {

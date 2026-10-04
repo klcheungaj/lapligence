@@ -432,6 +432,9 @@ fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
         IrStmt::FixedArrayOrder(order) => {
             order.expressions_mut(&mut |child| walk_expr_mut(child, f))
         }
+        IrStmt::RealArrayOrder(order) => {
+            order.expressions_mut(&mut |child| walk_expr_mut(child, f))
+        }
         IrStmt::Assign { lhs, rhs, .. }
         | IrStmt::DelayedAssign { lhs, rhs, .. }
         | IrStmt::ClockingDrive { lhs, rhs, .. }

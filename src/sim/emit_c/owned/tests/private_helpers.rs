@@ -194,6 +194,7 @@ fn generated_private_composite_callback_preserves_event_values_and_cleanup() {
                 args: vec![call()],
                 context: None,
                 item: false,
+                real_item: false,
             }],
             vec![wait.clone(), display.clone(), wait, display],
         ));

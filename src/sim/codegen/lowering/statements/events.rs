@@ -682,6 +682,7 @@ impl EmitCtx<'_, '_> {
                 args: vec![value],
                 context,
                 item: false,
+                real_item: false,
             });
         }
         Ok((name, real))

@@ -221,6 +221,16 @@ impl Validator<'_> {
             IrStmt::FixedArrayOrder(order) => {
                 self.validate_fixed_array_order(order, formals, path)?;
             }
+            IrStmt::RealArrayOrder(order) => {
+                let shape = self.validate_fixed_array_cells(&order.cells, formals, path, true)?;
+                let array = &self.model.arrays[order.cells.array];
+                if !array.real
+                    || (order.method != IrFixedArrayOrderMethod::Reverse
+                        && shape.element_cells != 1)
+                {
+                    return self.fail(path, "real-array ordering needs real scalar elements");
+                }
+            }
             IrStmt::FixedArrayFill { array, value, nba } => {
                 self.validate_fixed_activation(*array, path)?;
                 let array = self

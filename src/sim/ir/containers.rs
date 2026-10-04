@@ -1061,13 +1061,38 @@ impl IrContainerStmt {
             } => {
                 let destination = container_kind(model, *dst, Some("queue"))?;
                 let source = container_kind(model, *src, None)?;
-                if !matches!(
-                    source.kind,
-                    IrContainerKind::Dynamic
-                        | IrContainerKind::Queue { .. }
-                        | IrContainerKind::Associative { .. }
-                ) || !destination.element.is_packed()
-                    || !source.element.is_packed()
+                // Real sources (resizable, unkeyed except for find*) return
+                // a real queue, or an integral queue for the *_index forms.
+                let index_result = matches!(
+                    method,
+                    IrContainerMethod::FindIndex
+                        | IrContainerMethod::FindFirstIndex
+                        | IrContainerMethod::FindLastIndex
+                        | IrContainerMethod::UniqueIndex
+                );
+                let real_source = source.element.is_real()
+                    && matches!(
+                        source.kind,
+                        IrContainerKind::Dynamic | IrContainerKind::Queue { .. }
+                    )
+                    && destination.element.is_packed() == index_result
+                    && (index_result || destination.element == source.element)
+                    && (callback.is_none()
+                        || !matches!(
+                            method,
+                            IrContainerMethod::Min
+                                | IrContainerMethod::Max
+                                | IrContainerMethod::Unique
+                                | IrContainerMethod::UniqueIndex
+                        ));
+                if !real_source
+                    && (!matches!(
+                        source.kind,
+                        IrContainerKind::Dynamic
+                            | IrContainerKind::Queue { .. }
+                            | IrContainerKind::Associative { .. }
+                    ) || !destination.element.is_packed()
+                        || !source.element.is_packed())
                 {
                     return Err(IrValidationError::new(
                         "container",
@@ -1143,7 +1168,9 @@ impl IrContainerStmt {
                 if !matches!(
                     container.kind,
                     IrContainerKind::Dynamic | IrContainerKind::Queue { .. }
-                ) || !container.element.is_packed()
+                ) || !(container.element.is_packed()
+                    || (callback.is_none()
+                        && matches!(container.element, IrContainerElement::Real { .. })))
                 {
                     return Err(IrValidationError::new(
                         "container",

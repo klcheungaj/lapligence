@@ -1698,6 +1698,12 @@ void llg_ref_nba_masked(llg_ref_t* ref, sv4_t value, sv4_t mask, uint64_t ticks)
 void llg_ref_write_bit(llg_ref_t* ref, uint64_t index, sv4_t value);
 void llg_nba_d(double* target, double value);
 void llg_ba_d(double* target, double value);
+// Reorder `count` elements of `element_cells` contiguous real cells in place
+// (LLG_CONTAINER_METHOD_REVERSE/SORT/RSORT; sorting needs one-cell elements).
+// Keys compare numerically and NaN keys keep their positions. The new order is
+// snapshotted first, then every cell publishes through llg_ba_d.
+void llg_real_cells_order(double* cells, uint64_t count, uint64_t element_cells,
+                          int method);
 
 // Procedural continuous assignments. Each generated assignment site has a
 // stable identity; executing a new site replaces the target's active binding.

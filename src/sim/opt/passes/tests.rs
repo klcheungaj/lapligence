@@ -1225,6 +1225,7 @@ fn opt_external_observation_keeps_foreign_and_callback_storage() {
         args: vec![IrExpr::new(IrExprKind::SigRead(2), 8, false, None)],
         context: None,
         item: false,
+        real_item: false,
     });
 
     run(&mut m, &storage_only());

@@ -108,7 +108,12 @@ impl Frame<'_, '_> {
                 if self.item_callback
                     && matches!(name.as_str(), "__llg_method_item" | "__llg_method_index") =>
             {
-                self.value(format!("sv4_clone(&{name})"), expr.width, expr.signed)
+                if expr.width == 0 {
+                    // A real iterator item is a by-value double parameter.
+                    self.value(name.clone(), 0, false)
+                } else {
+                    self.value(format!("sv4_clone(&{name})"), expr.width, expr.signed)
+                }
             }
             IrExprKind::LocalRead(name) => {
                 let binding = self.resolve_lookup(name)?;

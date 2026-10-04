@@ -288,6 +288,8 @@ pub enum IrStmt {
     /// Reverse or sort stored fixed-array cells in place, without a packed
     /// receiver value.
     FixedArrayOrder(Box<IrFixedArrayOrder>),
+    /// In-place ordering of real fixed-array cells.
+    RealArrayOrder(Box<IrRealArrayOrder>),
     /// Evaluate one default-pattern value and replace the complete array.
     FixedArrayFill {
         array: usize,

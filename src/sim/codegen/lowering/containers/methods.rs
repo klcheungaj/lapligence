@@ -20,6 +20,11 @@ impl<'a> Codegen<'a> {
             } => (name.clone(), *receiver),
             _ => return Ok(None),
         };
+        if matches!(name.as_str(), "sort" | "rsort" | "reverse") {
+            if let Some(statement) = self.lower_real_array_order(path, node, receiver, &name)? {
+                return Ok(Some(statement));
+            }
+        }
         if matches!(name.as_str(), "sort" | "rsort") {
             if let Some(statement) =
                 self.lower_fixed_array_sort(path, node, receiver, name == "rsort")?
@@ -172,9 +177,13 @@ impl<'a> Codegen<'a> {
                     self.model.containers[container.ir].kind,
                     IrContainerKind::Dynamic | IrContainerKind::Queue { .. }
                 ) || !self.model.containers[container.ir].element.is_packed()
+                    && !matches!(
+                        self.model.containers[container.ir].element,
+                        IrContainerElement::Real { .. }
+                    )
                 {
                     return Err(format!(
-                        "array method `{name}` in `{path}` currently requires a packed dynamic array or queue"
+                        "array method `{name}` in `{path}` currently requires a packed or real dynamic array or queue"
                     ));
                 }
                 IrContainerStmt::Method {
@@ -215,6 +224,10 @@ impl<'a> Codegen<'a> {
                     self.model.containers[container.ir].kind,
                     IrContainerKind::Dynamic | IrContainerKind::Queue { .. }
                 ) || !self.model.containers[container.ir].element.is_packed()
+                    && !matches!(
+                        self.model.containers[container.ir].element,
+                        IrContainerElement::Real { .. }
+                    )
                 {
                     return Err(format!(
                         "array method `reverse` in `{path}` currently requires a packed dynamic array or queue"
@@ -231,6 +244,10 @@ impl<'a> Codegen<'a> {
                     self.model.containers[container.ir].kind,
                     IrContainerKind::Dynamic | IrContainerKind::Queue { .. }
                 ) || !self.model.containers[container.ir].element.is_packed()
+                    && !matches!(
+                        self.model.containers[container.ir].element,
+                        IrContainerElement::Real { .. }
+                    )
                 {
                     return Err(format!(
                         "array method `shuffle` in `{path}` currently requires a packed dynamic array or queue"

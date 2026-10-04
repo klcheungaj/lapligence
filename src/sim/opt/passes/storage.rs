@@ -709,6 +709,9 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
         IrStmt::FixedArrayOrder(order) => {
             order.expressions(&mut |child| collect_expr_reads(child, model, rw))
         }
+        IrStmt::RealArrayOrder(order) => {
+            order.expressions(&mut |child| collect_expr_reads(child, model, rw))
+        }
         IrStmt::FixedValueAssign { dst, src, .. } => {
             src.expressions(&mut |child| collect_expr_reads(child, model, rw));
             // Descriptor operand calls can write through address formals.
