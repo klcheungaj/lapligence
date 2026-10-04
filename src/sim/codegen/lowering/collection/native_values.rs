@@ -739,13 +739,15 @@ impl Codegen<'_> {
         match (leaf, value) {
             (NativeEndpointLeaf::Value(native, leaf), LeafValue::String(value)) => {
                 let name = self.native_leaf_symbol(*native, leaf);
-                Ok(IrStmt::Object(IrObjectStmt::StringAssignLocal(name, value)))
+                Ok(IrStmt::Object(Box::new(IrObjectStmt::StringAssignLocal(
+                    name, value,
+                ))))
             }
             (NativeEndpointLeaf::Value(native, leaf), LeafValue::Chandle(value)) => {
                 let name = self.native_leaf_symbol(*native, leaf);
-                Ok(IrStmt::Object(IrObjectStmt::ChandleAssignLocal(
+                Ok(IrStmt::Object(Box::new(IrObjectStmt::ChandleAssignLocal(
                     name, value,
-                )))
+                ))))
             }
             (
                 NativeEndpointLeaf::Value(native, leaf),
@@ -761,12 +763,16 @@ impl Codegen<'_> {
             (NativeEndpointLeaf::Module(leaf), LeafValue::String(value)) => {
                 let object =
                     self.reference_object(leaf.object.ok_or("string leaf has no storage")?);
-                Ok(IrStmt::Object(IrObjectStmt::StringAssign(object, value)))
+                Ok(IrStmt::Object(Box::new(IrObjectStmt::StringAssign(
+                    object, value,
+                ))))
             }
             (NativeEndpointLeaf::Module(leaf), LeafValue::Chandle(value)) => {
                 let object =
                     self.reference_object(leaf.object.ok_or("chandle leaf has no storage")?);
-                Ok(IrStmt::Object(IrObjectStmt::ChandleAssign(object, value)))
+                Ok(IrStmt::Object(Box::new(IrObjectStmt::ChandleAssign(
+                    object, value,
+                ))))
             }
             (
                 NativeEndpointLeaf::Module(leaf),
@@ -839,10 +845,10 @@ impl Codegen<'_> {
                     LeafValue::String(IrStringExpr::LocalRead(name))
                 }
                 LeafValue::Chandle(value) => {
-                    captures.push(IrStmt::Object(IrObjectStmt::ChandleDeclareLocal(
+                    captures.push(IrStmt::Object(Box::new(IrObjectStmt::ChandleDeclareLocal(
                         name.clone(),
                         Some(value),
-                    )));
+                    ))));
                     LeafValue::Chandle(IrChandleExpr::LocalRead(name))
                 }
                 LeafValue::Packed(value) | LeafValue::Real(value) => {
@@ -942,10 +948,10 @@ impl Codegen<'_> {
                     LeafValue::String(IrStringExpr::LocalRead(name))
                 }
                 LeafValue::Chandle(source) => {
-                    captures.push(IrStmt::Object(IrObjectStmt::ChandleDeclareLocal(
+                    captures.push(IrStmt::Object(Box::new(IrObjectStmt::ChandleDeclareLocal(
                         name.clone(),
                         Some(source),
-                    )));
+                    ))));
                     LeafValue::Chandle(IrChandleExpr::LocalRead(name))
                 }
                 LeafValue::Packed(source) | LeafValue::Real(source) => {
@@ -1066,7 +1072,7 @@ impl Codegen<'_> {
             std::mem::replace(&mut self.native_call_prelude, saved).unwrap_or_default();
         let lowered = lowered?;
         statements.extend(prelude);
-        statements.push(IrStmt::Call(lowered));
+        statements.push(IrStmt::Call(Box::new(lowered)));
         statements.extend(epilogue);
         if direct.is_none() {
             statements.push(self.native_transfer(

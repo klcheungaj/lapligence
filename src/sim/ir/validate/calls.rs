@@ -196,8 +196,7 @@ impl Validator<'_> {
                     self.native_activations
                         .borrow_mut()
                         .push(HashSet::from([*value]));
-                    let valid =
-                        self.validate_stmt(&IrStmt::Call(*call.clone()), formals, &arg_path);
+                    let valid = self.validate_stmt(&IrStmt::Call(call.clone()), formals, &arg_path);
                     self.native_activations.borrow_mut().pop();
                     valid?;
                 }

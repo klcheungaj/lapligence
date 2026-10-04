@@ -245,7 +245,15 @@ fn native_call_operands_match_their_formals() {
     model
         .funcs
         .push(function(vec![], vec![native_formal(1, false)]));
-    let call = |args| IrStmt::Call(IrCall::new(0, args, IrDepth::PROC, Vec::new(), Vec::new()));
+    let call = |args| {
+        IrStmt::Call(Box::new(IrCall::new(
+            0,
+            args,
+            IrDepth::PROC,
+            Vec::new(),
+            Vec::new(),
+        )))
+    };
     let leaf = |items: Vec<u32>, value| IrNativeLeafValue { items, value };
     let string =
         |text: &str| IrNativeLeafExpr::String(IrStringExpr::Literal(text.as_bytes().to_vec()));
