@@ -244,7 +244,7 @@ fn mutating_later_operand_snapshots_the_earlier_read() {
     frame.discard(value);
     assert!(
         find_copy(frame.body(), "&G_value").unwrap()
-            < frame.body().find("llg_ba(&G_value").unwrap()
+            < frame.body().find("llg_ba_from(&G_value").unwrap()
     );
 }
 

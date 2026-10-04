@@ -54,7 +54,7 @@ fn semantic_tokens_cover_the_module_declaration_keyword() {
     use tower_lsp::lsp_types::SemanticTokenType;
 
     let _guards = analysis_guards();
-    let fixture = std::env::temp_dir().join(format!("llg_modkw_{}", std::process::id()));
+    let fixture = resolved_temp_dir(&format!("llg_modkw_{}", std::process::id()));
     let rtl = fixture.join("rtl");
     std::fs::create_dir_all(&rtl).expect("create fixture tree");
     let sv = rtl.join("modkw.sv");

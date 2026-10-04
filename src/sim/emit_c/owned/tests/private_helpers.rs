@@ -128,6 +128,7 @@ fn callback_composite_writes_release_owners_without_publication() {
         "do not erase qualified diagnostics"
     );
     assert!(!source.contains("llg_ba("));
+    assert!(!source.contains("llg_ba_from("));
     assert!(!source.contains("llg_net_write("));
     assert!(frame.slots.iter().all(|used| !used));
 }

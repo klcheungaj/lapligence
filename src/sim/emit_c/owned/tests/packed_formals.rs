@@ -89,6 +89,7 @@ fn callback_member_writes_and_nested_reads_use_private_owners() {
     assert_eq!(frame.body().matches("sv4_select_plan_set(").count(), 2);
     assert!(find_copy(frame.body(), "&a0").is_none());
     assert!(!frame.body().contains("llg_ba("));
+    assert!(!frame.body().contains("llg_ba_from("));
     assert!(frame.slots.iter().all(|used| !used));
 }
 

@@ -57,6 +57,7 @@ fn codegen_builds_ir_not_c_text() {
         for banned in [
             "llg_spawn(",
             "llg_ba(",
+            "llg_ba_from(",
             "llg_ba_d(",
             "llg_nba(",
             "llg_nba_d(",

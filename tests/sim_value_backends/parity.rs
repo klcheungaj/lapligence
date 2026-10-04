@@ -146,11 +146,18 @@ fn compact_parity_vpi_waveform() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let directory = sim_harness::TempDir::new("parity-vpi").expect("plugin directory");
     let plugin = directory.path().join("plugin.so");
+    let mut compiler = Command::new(std::env::var("CC").unwrap_or_else(|_| "cc".to_owned()));
+    compiler.args([
+        "-std=c11", "-Wall", "-Wextra", "-Werror", "-fPIC", "-shared",
+    ]);
+    // The vpi_* routines resolve from the loading model; Mach-O links need
+    // that stated explicitly.
+    if cfg!(target_os = "macos") {
+        compiler.args(["-undefined", "dynamic_lookup"]);
+    }
     let output = sim_harness::run_command(
-        Command::new(std::env::var("CC").unwrap_or_else(|_| "cc".to_owned()))
-            .args([
-                "-std=c11", "-Wall", "-Wextra", "-Werror", "-fPIC", "-shared", "-I",
-            ])
+        compiler
+            .arg("-I")
             .arg(root.join("src/sim/rt"))
             .arg(root.join("tests/fixtures/sim/vpi/vpi_partitioned_nets.c"))
             .arg("-o")

@@ -1,5 +1,7 @@
 //! Strict compile gates for the embedded stackless coroutine library.
 
+#[path = "support/c_compiler.rs"]
+mod c_compiler;
 #[path = "support/sim.rs"]
 mod sim_harness;
 
@@ -78,10 +80,11 @@ fn coroutine_library_is_strict_c11_on_gcc_and_clang() {
     )
     .expect("write include-only translation unit");
 
-    for (compiler, is_gcc) in [("gcc", true), ("clang", false)] {
+    for compiler in ["gcc", "clang"] {
         if !compiler_available(compiler) {
             continue;
         }
+        let is_gcc = c_compiler::is_gnu_gcc(compiler);
         for (variant, definitions) in [
             ("plain", &[][..]),
             ("debug", &["LLG_CO_DEBUG"][..]),
