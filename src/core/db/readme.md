@@ -12,6 +12,12 @@ cache. Queries scan at most one checkpoint interval and preserve byte columns
 and UTF-8 boundary validation, with memory bounded by source bytes plus a small
 fixed cache per queried file.
 
+Each node keeps its physical file, line and column, which remain the
+diagnostic identity. `SourceMap` keeps the `` `line`` mappings separately,
+per physical file name, built once from the snapshot's sorted records with one
+pass over each mapped file; `Db::logical_position` derives a node's logical
+file and line on demand. Files without a directive cost nothing per node.
+
 Projection normalizes implicit instance bodies and expands concrete instance-array
 entries without losing source indices or explicit statement scopes. Packed ranges
 use declaration IDs rather than names. Assignment-pattern nodes also retain their immediate packed element descriptor,

@@ -143,7 +143,7 @@
 //! display values, and unknown `$display`/`$monitor`/`$strobe` format
 //! specifiers.  Structural primitives outside the supported builtin
 //! set are rejected with explicit messages: switch/transistor primitives,
-//! UDP instances, primitive arrays, charge-strength specifications, illegal
+//! sequential UDP instances, charge-strength specifications, illegal
 //! vector continuous strengths, and unsupported dynamic resolved-net targets.
 //! Fixed-array elements and packed selected targets use the typed inertial
 //! lowering path, as do supported whole, selected, and multi-output
@@ -1112,6 +1112,9 @@ struct Codegen<'a> {
     /// protects the owned/lowered boundary when cloned declarations arrive
     /// through different semantic paths.
     dpi_signatures: HashMap<String, String>,
+    /// Interned combinational UDP definitions → `model.udp_tables` index, so
+    /// every instance of one definition shares a table without rescanning.
+    udp_table_indices: HashMap<crate::sim::ir::IrUdpTable, usize>,
     /// Persistent storage for every formal of static subroutines,
     /// keyed by (owning instance, formal declaration).
     static_formals: HashMap<(NodeId, NodeId), SignalInfo>,
@@ -1453,6 +1456,7 @@ impl<'a> Codegen<'a> {
             cur_fn_ir: None,
             func_meta: HashMap::new(),
             dpi_signatures: HashMap::new(),
+            udp_table_indices: HashMap::new(),
             static_formals: HashMap::new(),
             static_string_formals: HashMap::new(),
             static_chandle_formals: HashMap::new(),

@@ -41,7 +41,8 @@ module child #(parameter logic [7:0] OFF = 8'd0);
   function arr_t getm();
     return mem;
   endfunction
-  function void swap_rec(ref rec_t r);
+  // IEEE 1800-2009 13.5.2: a ref formal needs an automatic subroutine.
+  function automatic void swap_rec(ref rec_t r);
     logic [7:0] t;
     t = r.a;
     r.a = r.b + OFF;

@@ -100,7 +100,7 @@ fn db_owns_combinational_udp_rows() {
     assert_eq!(
         generated
             .model_c
-            .matches("static const uint8_t llg_udp_table_")
+            .matches("static const uint8_t llg_udp_index_")
             .count(),
         1
     );

@@ -423,9 +423,34 @@ Input-port links into a net-array formal and `unconnected_drive` pulls on one
 the packed width limit they keep the older per-element storage write, which
 bypasses the formal's internal drivers.
 
+Gate and UDP outputs on net-array cells use the same per-cell groups (RTL-020:
+a UDP driving one bit of a 200,000-cell `wire [7:0]` array generated 328 MB of
+`model.c` and did not finish compiling in 500 s); variable arrays connected to
+UDP inputs use descriptor storage and stay small.
+
 The intended direction is a descriptor-backed net-array cell table with a
 loop over a contiguous RHS view, keeping per-cell resolution state but not
 per-cell generated code.
+
+## Gate and UDP array elements emit one process function each
+
+**Status:** open; found by RTL-020.
+
+Each element of a gate or UDP instance array is lowered to its own
+continuous process, and each process gets its own C function because the
+elements read and write different constant bits, so exact body sharing does
+not merge them. A 4,096-element mux UDP array produces 9.8 MB of `model.c`
+(about 2.4 KB per element) after RTL-020's dense-index lookup, which already
+removed the per-evaluation input copies (15.8 MB before). Evaluation cost per
+element is constant; the cost is C size and compile time, linear in the
+element count.
+
+Reproduce with `mux3 m[4095:0] (y, sel, a, b);` over 4,096-bit vectors and
+`--gen-only`, then measure `model.c`.
+
+The intended direction is one shared process body per array declaration,
+parameterized by the element's bit offsets, like the table-driven
+procedural-continuous-assignment batches.
 
 ## Release does not restore a variable's continuous driver
 
@@ -494,3 +519,29 @@ pass the opposite operand's type as the expected type of relational operands.
 
 `tests/fixtures/sim/feature_completion/rtl_017/neg_postfix_value.sv` and
 `neg_target_side_effects.sv`.
+
+## Strict 2001 profile gates a listed set of keyword-free later forms
+
+The pinned frontend parses 1364-2001 sources with its 1364-2005/SystemVerilog
+grammar. [`editions.rs`](../src/core/compile/editions.rs) rejects later
+keywords, system names and the keyword-free forms listed in the
+[edition table](sim_features.md#target-language-editions), but not every
+1364-2005 or SystemVerilog-only production in Annex A. Forms found later stay
+admitted until a gate is added. Token-sequence rules (labels, `.name`, casts,
+`[size]` and similar) skip tokens produced by macro expansion, whose shared
+use-site range has no source order. Navigation snapshots have no subroutine
+bodies, so the body rules do not run there. The direction
+is a Slang parse option for the 1364-2001 grammar, kept as a tracked patch.
+Reproduce: compile a later form that is absent from that table, or an end
+label produced by a macro, with `--edition 2001`.
+
+## Frontend diagnostics do not show `` `line `` positions
+
+Simulator diagnostics, assertion messages and coroutine site locations append
+the `` `line ``-mapped position to the physical one. Slang diagnostics are
+printed from `compile::Diag`, which has only the physical file, line and
+column. Scope-based runtime locations (`$finish`, severity tasks) print a scope
+path, not a file, and stay physical. Adding a logical field to `Diag` would
+change its 57 struct-literal construction sites. Reproduce:
+`tests/fixtures/sim/feature_completion/rtl_019/macro_error.sv` with a
+`` `line `` directive before the macro use.

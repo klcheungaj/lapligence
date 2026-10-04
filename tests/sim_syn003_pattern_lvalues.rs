@@ -90,6 +90,6 @@ fn static_ref_pattern_lvalue_nba_is_rejected() {
     sim_cli::reject_case(
         "syn003_pattern_lvalues",
         "syn_003_static_ref_nba",
-        "reference formal",
+        "'ref' arguments can only be used in 'automatic' subroutines",
     );
 }

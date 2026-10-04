@@ -41,6 +41,7 @@
 #include "slang/ast/types/AllTypes.h"
 #include "slang/ast/types/Type.h"
 #include "slang/diagnostics/AnalysisDiags.h"
+#include "slang/diagnostics/DeclarationsDiags.h"
 #include "slang/diagnostics/DiagnosticEngine.h"
 #include "slang/diagnostics/DiagnosticClient.h"
 #include "slang/driver/UserDefinedSubroutine.h"
@@ -257,6 +258,7 @@ struct LlgSlangSnapshot {
   std::vector<LlgSlangUdpTable> udp_tables;
   std::vector<LlgSlangUdpRow> udp_rows;
   std::vector<LlgSlangSourceLibrary> source_libraries;
+  std::vector<LlgSlangLineDirective> line_directives;
 };
 
 namespace {
@@ -1565,6 +1567,60 @@ const Expression* unwrapImplicitConversions(const Expression& expression) {
     unwrapped = &conversion.operand();
   }
   return unwrapped;
+}
+
+std::optional<int32_t> literalIndex(const Expression& expression) {
+  if (expression.kind == ExpressionKind::IntegerLiteral)
+    return expression.as<IntegerLiteral>().getValue().as<int32_t>();
+  if (const ConstantValue* value = expression.getConstant();
+      value && value->isInteger())
+    return value->integer().as<int32_t>();
+  return std::nullopt;
+}
+
+// Instance-array connections (IEEE 1364-2001 7.1.5, 12.1.3.5; IEEE 1800-2009
+// 23.3.3.5, 28.3.6) are sliced per element as `X[l:r][i]` or `X[l:r][m:n]`.
+// Slang keeps the declared numbering in a constant slice's type, so constant
+// selects inside that slice address exactly `X[i]` or `X[m:n]`. Expose that
+// base so every consumer sees an ordinary select. An indexed slice with a
+// runtime base is renumbered from the value type's bound and stays a slice.
+const Expression& peelConstantSlices(const Expression& value, int32_t left,
+                                     int32_t right) {
+  const Expression* base = &value;
+  while (base->kind == ExpressionKind::RangeSelect) {
+    const auto& slice = base->as<RangeSelectExpression>();
+    const Type& sliceType = *slice.type;
+    const Type& valueType = *slice.value().type;
+    if (!sliceType.hasFixedRange() || !valueType.hasFixedRange())
+      break;
+    const ConstantRange sliceRange = sliceType.getFixedRange();
+    const ConstantRange valueRange = valueType.getFixedRange();
+    if (!sliceRange.containsPoint(left) || !sliceRange.containsPoint(right) ||
+        !valueRange.containsPoint(left) || !valueRange.containsPoint(right))
+      break;
+    if (slice.getSelectionKind() != RangeSelectionKind::Simple &&
+        !literalIndex(slice.left()))
+      break;
+    base = &slice.value();
+  }
+  return *base;
+}
+
+const Expression& elementSelectBase(const ElementSelectExpression& expression) {
+  const std::optional<int32_t> index = literalIndex(expression.selector());
+  if (!index)
+    return expression.value();
+  return peelConstantSlices(expression.value(), *index, *index);
+}
+
+const Expression& rangeSelectBase(const RangeSelectExpression& expression) {
+  if (expression.getSelectionKind() != RangeSelectionKind::Simple)
+    return expression.value();
+  const std::optional<int32_t> left = literalIndex(expression.left());
+  const std::optional<int32_t> right = literalIndex(expression.right());
+  if (!left || !right)
+    return expression.value();
+  return peelConstantSlices(expression.value(), *left, *right);
 }
 
 const Expression* compoundAssignmentSourceRhs(
@@ -3398,11 +3454,11 @@ private:
       capture.semanticRole(id, &expression.operand(), LLG_SLANG_EDGE_OPERAND);
     }
     else if constexpr (std::same_as<T, ElementSelectExpression>) {
-      capture.semanticRole(id, &expression.value(), LLG_SLANG_EDGE_BASE);
+      capture.semanticRole(id, &elementSelectBase(expression), LLG_SLANG_EDGE_BASE);
       capture.semanticRole(id, &expression.selector(), LLG_SLANG_EDGE_INDEX);
     }
     else if constexpr (std::same_as<T, RangeSelectExpression>) {
-      capture.semanticRole(id, &expression.value(), LLG_SLANG_EDGE_BASE);
+      capture.semanticRole(id, &rangeSelectBase(expression), LLG_SLANG_EDGE_BASE);
       capture.semanticRole(id, &expression.left(), LLG_SLANG_EDGE_LEFT);
       capture.semanticRole(id, &expression.right(), LLG_SLANG_EDGE_RIGHT);
     }
@@ -3983,6 +4039,16 @@ public:
     skippedDepth--;
   }
 
+  // Records the logical position that a `line directive gives the following
+  // physical line. The values are read back from the SourceManager, so they
+  // match the preprocessor's `__LINE__`/`__FILE__` exactly, including for a
+  // malformed directive that the preprocessor ignored. A directive on the last
+  // line maps nothing and records nothing.
+  void handle(const syntax::LineDirectiveSyntax& syntax) {
+    lineDirective(syntax.directive.location());
+    visitDefault(syntax);
+  }
+
   void visitToken(parsing::Token token) {
     for (const parsing::Trivia& trivia : token.trivia()) {
       for (parsing::Token skipped : trivia.getSkippedTokens())
@@ -4201,6 +4267,32 @@ public:
   }
 
 private:
+  void lineDirective(SourceLocation location) {
+    const SourceLocation physical = capture.physicalLocation(location);
+    if (!physical.valid())
+      return;
+    const uint64_t file = capture.findFile(physical.buffer());
+    if (file == LLG_SLANG_INVALID_ID)
+      return;
+    const std::string_view text =
+        capture.sourceManager.getSourceText(physical.buffer());
+    size_t next = text.find_first_of("\r\n", physical.offset());
+    if (next == std::string_view::npos)
+      return;
+    next += (text[next] == '\r' && next + 1 < text.size() && text[next + 1] == '\n')
+                ? 2
+                : 1;
+    // Slang buffers end in a NUL sentinel; a line must start before it.
+    if (next >= text.size() || text[next] == '\0')
+      return;
+    const SourceLocation mapped(physical.buffer(), next);
+    chargeRecord(capture.output, sizeof(LlgSlangLineDirective));
+    capture.output.line_directives.push_back(
+        {file, static_cast<uint64_t>(next),
+         static_cast<uint64_t>(capture.sourceManager.getLineNumber(mapped)),
+         storeString(capture.output, capture.sourceManager.getFileName(mapped))});
+  }
+
   Capture& capture;
   std::unordered_set<const syntax::SyntaxNode*> directives;
   uint32_t directiveDepth = 0;
@@ -4819,6 +4911,10 @@ std::unique_ptr<LlgSlangSnapshot> compileImpl(const LlgSlangCompileRequest& requ
   auto compilationClient = std::make_shared<CaptureClient>(
       capture, LLG_SLANG_DIAG_COMPILATION);
   engine.addClient(compilationClient);
+  // IEEE 1800-2009 13.5.2 makes a `ref` formal of a static subroutine
+  // illegal; the frontend only warns by default. Neither edition admits it
+  // (1364-2001 has no `ref`).
+  engine.setSeverity(diag::RefArgAutomaticFunc, DiagnosticSeverity::Error);
   Diagnostics pragmaDiagnostics = engine.setMappingsFromPragmas();
   for (const Diagnostic& diagnostic : pragmaDiagnostics)
     compilationClient->issue(engine, diagnostic);
@@ -4963,6 +5059,8 @@ extern "C" uint32_t llg_slang_snapshot_view(const LlgSlangSnapshot* snapshot,
       static_cast<uint64_t>(snapshot->udp_rows.size()),
       dataOrNull(snapshot->source_libraries),
       static_cast<uint64_t>(snapshot->source_libraries.size()),
+      dataOrNull(snapshot->line_directives),
+      static_cast<uint64_t>(snapshot->line_directives.size()),
   };
   return LLG_SLANG_STATUS_OK;
 }

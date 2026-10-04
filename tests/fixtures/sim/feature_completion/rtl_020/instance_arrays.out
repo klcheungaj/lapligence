@@ -1,0 +1,3 @@
+A d=0110 u=1001 wide=zz01zzzz q=10 r=10 s=00 t=00 v=10
+B d=0101 u=0101 wide=zz10zzzz q=10 r=01 s=01 t=00 v=00
+C d=xx10 u=xx10 wide=zzxxzzzz q=0x r=00 s=xx t=xx v=10

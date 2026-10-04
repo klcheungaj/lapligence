@@ -210,6 +210,14 @@ that view, so strength-only changes reach them without waking value readers. Rej
 including undriven arrays, and dynamic net selectors. Keep disjoint constant
 uwire selections legal; overlapping drivers reject.
 
+Combinational UDP instances lower scalar input expressions directly into
+`UdpEval` (no per-evaluation input locals) and intern each definition once per
+model through a hash of its typed rows. Terminals select from larger objects
+through the ordinary expression/lvalue paths; a bit select of a computed value
+(operator, conditional, cast or slice) is numbered by that value's own packed
+type, as Slang's instance-array slicing requires. Vector or aggregate terminals
+of a single instance reject.
+
 `collection/net_partition.rs` forms maximal affine runs of canonical electrical
 roots for fixed arrays and selected/aliased scalar or vector nets. Adjacent
 positions must have the same declared members, structural source/terminal sites,

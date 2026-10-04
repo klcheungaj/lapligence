@@ -7,6 +7,7 @@
 mod database;
 mod domain;
 mod slang_types;
+mod source_map;
 mod validate;
 
 pub use database::{
@@ -26,4 +27,5 @@ pub use domain::{
     AlwaysKind, CapturedSemanticKind, CaseKind, ConstantType, Direction, JoinKind, NetType,
     ObjectType, Operation, PrimitiveType, Strength, UnconnectedDrive, UniquePriorityCheck,
 };
+pub use source_map::{LogicalPosition, SourceMap};
 pub use validate::DbValidationError;
