@@ -87,7 +87,8 @@ wc -lc <dir>/sim/*/model.c
 ## High frontend memory use during Slang wrapper capture and import
 
 **Status:** open, narrowed; capture streams into Rust and C rendering now sets
-the generation peak for this corpus.
+the generation peak for this corpus (see
+[High generation memory use during C emission](#high-generation-memory-use-during-c-emission)).
 
 ### Symptom
 
@@ -145,8 +146,8 @@ budget, a record-count ceiling or available process memory.
 ### Intended direction
 
 Shrink the staged node further (flag bits, sentinel IDs) or import nodes
-incrementally; compact DB nodes further (side tables for rare kind payloads);
-and avoid holding rendered artifacts and the assembled model text together.
+incrementally; and compact DB nodes further (side tables for rare kind
+payloads). Rendering memory is tracked in the C emission entry below.
 Preserve checked C ABI ownership and the single owned DB import; consumers
 must not traverse native ASTs independently. Verify exact values, source
 identity and diagnostics as well as generated-model behavior.
@@ -172,6 +173,55 @@ least three runs per point, release binaries and medians. The Linux runner
 GNU time, stage markers, sampled RSS and generated-C hashes, running points
 serially. See [profiling](../perf/README.md#frontend-stage-scaling). The export
 budget counts captured data, not the bytes of generated `model.c`.
+
+## High generation memory use during C emission
+
+**Status:** open; C rendering sets the generation-process peak for the
+measured corpus.
+
+### Symptom
+
+After the frontend memory work in the preceding entry, rendering the generated
+C model is the highest-memory generation stage at every measured size. Linux
+x86-64 release, `many_processes_registers_config`, two clock edges, medians of
+three interleaved runs on 2026-10-04 (`cb15fb64`), sampled stage RSS:
+
+| Processes | Execution/optimization | C rendering | Rendering increase | Whole-run peak |
+| --- | --- | --- | --- | --- |
+| 5,000 | 143 MiB | 213 MiB | +70 MiB | 0.208 GiB |
+| 10,000 | 270 MiB | 409 MiB | +139 MiB | 0.399 GiB |
+| 20,000 | 526 MiB | 802 MiB | +276 MiB | 0.783 GiB |
+| 40,000 | 1,056 MiB | 1,596 MiB | +540 MiB | 1.558 GiB |
+
+The increase is linear in design size and exceeds the earlier stages'
+memory (native capture 1,246 MiB and DB import 1,552 MiB at 40k). These are
+generation-process peaks, not generated-simulator runtime memory. Generated
+`model.c` is byte-identical across the measurements.
+
+### Cause
+
+Rendering keeps the execution IR live while it builds rendered per-function
+artifacts and then assembles the whole model text in memory before writing
+it, so the execution IR, the rendered artifacts and the assembled text
+overlap. Exact sharing groups also retain rendered candidates until their
+group is resolved (see the [emitter guide](../src/sim/emit_c/AGENTS.md)).
+Sampled stage RSS includes allocator-retained pages and is not an exclusive
+allocation total for the stage.
+
+### Intended direction
+
+Stream rendered artifacts to the output files instead of assembling the whole
+model text in memory, release execution IR for functions once they are
+rendered, and keep the retained data for sharing groups compact (hashes and
+offsets rather than full text where possible). Generated `model.c` must stay
+byte-identical, including both optimizer modes and the exact sharing output.
+
+### Reproduce
+
+Use the command and runner in the
+[frontend memory entry](#high-frontend-memory-use-during-slang-wrapper-capture-and-import)
+and compare the `execution`/`optimization` and `render` stage RSS that
+`perf/scripts/frontend_scale.py` records.
 
 ## Frontend and C generation time grow superlinearly with design size
 
