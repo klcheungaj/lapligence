@@ -65,6 +65,19 @@ fn native_values_cross_ports_and_mixed_signatures_as_copies() {
 }
 
 #[test]
+fn continuous_assignments_drive_strings_and_string_records() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_004/native_continuous.out");
+    sim_cli::run_case_backend_parity(SUITE, "native_continuous", expected, &[], &[]);
+    sim_cli::run_case_after_db_drop(SUITE, "native_continuous", expected);
+}
+
+#[test]
+fn string_methods_keep_bounds_and_drop_zero_bytes() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_004/string_methods.out");
+    sim_cli::run_case_backend_parity(SUITE, "string_methods", expected, &[], &[]);
+}
+
+#[test]
 fn adopted_native_value_witnesses() {
     sim_cli::run_case(
         SUITE,
@@ -89,6 +102,13 @@ fn adopted_native_value_witnesses() {
     );
     sim_cli::run_case(
         SUITE,
+        "witness_string_continuous",
+        include_str!("../fixtures/sim/feature_completion/sim_004/witness_string_continuous.out"),
+        "",
+        &[],
+    );
+    sim_cli::run_case(
+        SUITE,
         "witness_string_record_nba",
         include_str!("../fixtures/sim/feature_completion/sim_004/witness_string_record_nba.out"),
         "",
@@ -97,7 +117,7 @@ fn adopted_native_value_witnesses() {
 }
 
 #[test]
-fn illegal_native_nba_targets_stay_rejected() {
+fn illegal_native_targets_stay_rejected() {
     sim_cli::reject_case(
         SUITE,
         "neg_string_element_nba",
@@ -128,13 +148,28 @@ fn illegal_native_nba_targets_stay_rejected() {
         "neg_chandle_port",
         "is not a valid type for a port because it contains type 'chandle'",
     );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_chandle_record_continuous",
+        "continuous assignment of a record with a chandle member in `tb` is illegal",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_string_continuous_conflict",
+        "has both a continuous assignment",
+    );
 }
 
 #[test]
-fn unsupported_native_nba_boundaries_are_explicit() {
+fn unsupported_native_boundaries_are_explicit() {
     sim_cli::reject_case(
         SUITE,
         "neg_static_native_record_nba",
         "nonblocking assignment to native record subroutine storage in `tb` is not supported",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_delayed_string_continuous",
+        "delayed continuous assignment to string or native record storage in `tb` is not supported",
     );
 }
