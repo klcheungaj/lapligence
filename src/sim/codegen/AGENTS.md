@@ -230,6 +230,11 @@ with a group-bit offset (the emitter renders consecutive bits as one run-length
 alias part); electrical width must never change an HDL storage shape.
 Whole net-array inout ports, rows and slices union each formal cell with its
 left-to-left actual cell (`net_array_inout_pairs`) in both storage and type plans.
+`collection/net_cells.rs` classifies cells before that: a cell joins the
+bit-level path only when a structural source, true alias, selected inout
+connection or force/release target reaches it or a whole-array inout peer of
+it; a new topology form must be added to its inventory too, and publication
+rejects a driver reaching an unclassified cell.
 Contribution projection gathers contiguous RHS runs with part selects and Z runs,
 then concatenates only disconnected runs. Conversion precedes projection. Array
 publication binds every bit to this partition and rejects a missing root.

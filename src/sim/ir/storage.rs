@@ -108,6 +108,16 @@ pub enum IrNetKind {
 }
 
 impl IrNetKind {
+    /// Packed fill state (0, 1 or 3 = Z) of a net of this kind with no
+    /// active driver: pull and supply nets hold their constant value.
+    pub const fn undriven_fill(self) -> u8 {
+        match self {
+            Self::Tri0 | Self::Supply0 => 0,
+            Self::Tri1 | Self::Supply1 => 1,
+            Self::Wire | Self::Wand | Self::Wor => 3,
+        }
+    }
+
     pub const fn c_value(self) -> &'static str {
         match self {
             Self::Wire => "LLG_RESOLVE_WIRE",
@@ -197,11 +207,32 @@ impl IrNetGroup {
     }
 }
 
+/// Consecutive net-array cells that no structural driver, alias, selected
+/// connection or force target reaches. Each cell (and every whole-array inout
+/// peer of it) is an undriven net of `kind`, so its value is the constant
+/// `kind.undriven_fill()` and it needs no electrical object or generated code.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct IrNetCellRun {
+    pub(in crate::sim) first: u64,
+    pub(in crate::sim) count: u64,
+    pub(in crate::sim) kind: IrNetKind,
+}
+
+/// Electrical layout of a net array. Every cell is either one entry of
+/// `IrArray::net_elements` or covered by exactly one of `constant_cells`.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct IrNetArray {
+    /// Ascending, disjoint runs of undriven cells.
+    pub(in crate::sim) constant_cells: Vec<IrNetCellRun>,
+}
+
 /// A lowered unpacked array: flat `sv4_t` storage plus linearization data.
 #[derive(Clone, Debug, PartialEq)]
 pub struct IrArray {
     /// Lexical activation storage, declared by `FixedArrayDeclare`.
     pub(in crate::sim) activation: bool,
+    /// Present for a net array (dense storage published from resolved nets).
+    pub(in crate::sim) net: Option<IrNetArray>,
     /// Array cells that observe a canonical resolved net signal.
     pub(in crate::sim) net_elements: Vec<(u64, usize)>,
     /// Typed default for a fixed aggregate element, before declaration initialization.
@@ -271,6 +302,7 @@ impl IrArray {
             c_name,
             hdl_name,
             activation: false,
+            net: None,
             net_elements: Vec::new(),
             element_default: None,
             element_uninitialized: None,
@@ -293,9 +325,15 @@ impl IrArray {
             .unwrap_or_else(|| IrConst::integral_default(self.elem_width, self.two_state))
     }
 
+    /// Net arrays keep dense storage: each published cell is the target of
+    /// its electrical view.
+    pub(in crate::sim) fn is_net(&self) -> bool {
+        self.net.is_some() || !self.net_elements.is_empty()
+    }
+
     pub(in crate::sim) fn sparse(&self) -> bool {
         !self.real
-            && self.net_elements.is_empty()
+            && !self.is_net()
             && (self.activation
                 || self.total > LLG_DENSE_FIXED_ARRAY_CELLS
                 || self

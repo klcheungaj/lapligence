@@ -113,6 +113,21 @@ impl Codegen<'_> {
         let Ok(bits) = self.alias_expression_bits(node, node) else {
             return Ok(None);
         };
+        // Undriven net-array cells have no electrical group until a strength
+        // consumer needs one.
+        let mut cells = bits
+            .iter()
+            .filter_map(|bit| match *bit {
+                AliasBit::Array { owner, element, .. } => {
+                    Some((self.array_globals.get(&owner)?.ir, element))
+                }
+                AliasBit::Net { .. } => None,
+            })
+            .collect::<Vec<_>>();
+        cells.dedup();
+        for (array, element) in cells {
+            self.materialize_undriven_net_cell(array, element)?;
+        }
         let Some(electrical) = bits
             .into_iter()
             .map(|bit| self.electrical_bit(bit))

@@ -34,6 +34,7 @@ mod locals;
 mod lvalues;
 mod names;
 mod net_arrays;
+mod net_cells;
 mod net_collapse;
 mod net_partition;
 mod nets;

@@ -6,7 +6,11 @@ type ElectricalRun = Vec<Vec<AliasBit>>;
 type Connections = HashMap<AliasBit, Vec<(NodeId, usize, u32)>>;
 
 impl Codegen<'_> {
-    fn partition_target_bits(&self, source: NodeId, target: NodeId) -> Option<Vec<AliasBit>> {
+    pub(super) fn partition_target_bits(
+        &self,
+        source: NodeId,
+        target: NodeId,
+    ) -> Option<Vec<AliasBit>> {
         if let Some((array, _)) = self.array_net_target_parts(target) {
             if array.is_net && self.array_net_endpoint(target).is_none() {
                 let owner = self
@@ -135,7 +139,7 @@ impl Codegen<'_> {
         Ok(runs)
     }
 
-    fn partition_opaque_owners(&self, target: NodeId, owners: &mut HashSet<NodeId>) {
+    pub(super) fn partition_opaque_owners(&self, target: NodeId, owners: &mut HashSet<NodeId>) {
         if let Some(signal) = self.signal_of(target) {
             if let Some(owner) = self.sig_global_for_ir(signal.ir) {
                 owners.insert(owner);
