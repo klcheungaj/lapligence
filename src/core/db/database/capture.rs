@@ -178,6 +178,43 @@ impl Db {
                 ))
             })
             .collect::<Result<HashMap<_, _>, DbError>>()?;
+        let mut declaration_time_scales = HashMap::new();
+        for (index, semantic) in snapshot.semantic_nodes.iter().enumerate() {
+            let namespace = |node: &crate::ffi::slang::SemanticNode| {
+                node.kind == SemanticKind::Package || node.detail == "CompilationUnit"
+            };
+            // A class takes the scale of the nearest enclosing module,
+            // package or compilation unit (Slang's `Scope::getTimeScale`).
+            let scale = if namespace(semantic) {
+                semantic.time_scale
+            } else if semantic.kind == SemanticKind::Class {
+                let mut ancestor = semantic.parent_id;
+                let mut scale = None;
+                while let Some(parent) =
+                    ancestor.and_then(|id| snapshot.semantic_nodes.get(id as usize))
+                {
+                    if namespace(parent)
+                        || matches!(
+                            parent.kind,
+                            SemanticKind::Instance | SemanticKind::Definition
+                        )
+                    {
+                        scale = parent.time_scale;
+                        break;
+                    }
+                    ancestor = parent.parent_id;
+                }
+                scale
+            } else {
+                continue;
+            };
+            if scale.is_some() {
+                declaration_time_scales.insert(
+                    NodeId::from_index(index),
+                    (time_exponent(scale, false)?, time_exponent(scale, true)?),
+                );
+            }
+        }
         let source_map = super::super::SourceMap::from_slang(snapshot)?;
         let unconnected_drives = snapshot
             .semantic_nodes
@@ -265,9 +302,9 @@ impl Db {
             .map(|semantic| {
                 let id = NodeId::from_index(semantic.id as usize);
                 let c_name = if semantic.definition_name.is_empty() {
-                    semantic.name.clone()
+                    semantic.name.to_string()
                 } else {
-                    semantic.definition_name.clone()
+                    semantic.definition_name.to_string()
                 };
                 (
                     id,
@@ -628,7 +665,7 @@ impl Db {
                             })
                             .members
                             .push(EnumMember {
-                                name: semantic.name.clone(),
+                                name: semantic.name.to_string(),
                                 value: Val::Bits(value),
                             });
                     }
@@ -828,7 +865,7 @@ impl Db {
                     .target_id
                     .and_then(|target| ids.get(&target))
                     .and_then(|target| snapshot.semantic_nodes.get(target.index()))
-                    .map(|target| target.name.clone())
+                    .map(|target| target.name.to_string())
                     .unwrap_or_default()
             };
             let name = if semantic.name.is_empty()
@@ -838,7 +875,7 @@ impl Db {
             {
                 target_name()
             } else {
-                semantic.name.clone()
+                semantic.name.to_string()
             };
             nodes.push(Node {
                 kind,
@@ -948,7 +985,7 @@ impl Db {
                 elaborated_type_ranges.push(type_projector.elaborated_ranges(
                     id,
                     instance,
-                    semantic.name.clone(),
+                    semantic.name.to_string(),
                     type_id,
                 )?);
             }
@@ -1015,6 +1052,7 @@ impl Db {
             program_instances,
             unconnected_drives,
             source_libraries,
+            declaration_time_scales,
             source_map,
             tops,
             flat_modules,

@@ -69,7 +69,7 @@ fn connection_label_tokens_index_as_references_and_highlight_as_labels() {
                 "W",
             ),
         ],
-        "/x/a.sv",
+        hp("/x/a.sv"),
     );
     let b_file = mk(
         vec![
@@ -97,7 +97,7 @@ fn connection_label_tokens_index_as_references_and_highlight_as_labels() {
                 "c",
             ),
         ],
-        "/x/b.sv",
+        hp("/x/b.sv"),
     );
 
     let ty = TypeInfo {
@@ -108,7 +108,7 @@ fn connection_label_tokens_index_as_references_and_highlight_as_labels() {
     };
     let module_m = ModuleDef {
         name: "m".to_owned(),
-        file: Some("/x/a.sv".to_owned()),
+        file: Some(hp("/x/a.sv").to_owned()),
         line: 1,
         col: 8,
         end_line: 2,
@@ -116,7 +116,7 @@ fn connection_label_tokens_index_as_references_and_highlight_as_labels() {
     };
     let module_top = ModuleDef {
         name: "top".to_owned(),
-        file: Some("/x/b.sv".to_owned()),
+        file: Some(hp("/x/b.sv").to_owned()),
         line: 1,
         col: 8,
         end_line: 4,
@@ -126,7 +126,7 @@ fn connection_label_tokens_index_as_references_and_highlight_as_labels() {
         name: "u0".to_owned(),
         def_name: "m".to_owned(),
         full_name: "top.u0".to_owned(),
-        file: Some("/x/b.sv".to_owned()),
+        file: Some(hp("/x/b.sv").to_owned()),
         line: 1,
         col: 24,
         ports: vec![PortModel {
@@ -149,7 +149,7 @@ fn connection_label_tokens_index_as_references_and_highlight_as_labels() {
         name: "top".to_owned(),
         def_name: "top".to_owned(),
         full_name: "top".to_owned(),
-        file: Some("/x/b.sv".to_owned()),
+        file: Some(hp("/x/b.sv").to_owned()),
         line: 1,
         col: 1,
         ports: Vec::new(),
@@ -180,7 +180,7 @@ fn connection_label_tokens_index_as_references_and_highlight_as_labels() {
 
     let pairs = vec![
         NamedPortConn {
-            file: "/x/b.sv".to_owned(),
+            file: hp("/x/b.sv").to_owned(),
             label: (1, 29),
             label_name: "clk".to_owned(),
             kind: ConnKind::Port,
@@ -189,7 +189,7 @@ fn connection_label_tokens_index_as_references_and_highlight_as_labels() {
             inst_type: Some("m".to_owned()),
         },
         NamedPortConn {
-            file: "/x/b.sv".to_owned(),
+            file: hp("/x/b.sv").to_owned(),
             label: (1, 18),
             label_name: "W".to_owned(),
             kind: ConnKind::Param,
@@ -216,32 +216,32 @@ fn connection_label_tokens_index_as_references_and_highlight_as_labels() {
     // Labels are REF entries, never declarations.
     let port_label_entry = a
         .index
-        .entry_at("/x/b.sv", 0, 28)
+        .entry_at(hp("/x/b.sv"), 0, 28)
         .expect("port label indexed");
     assert!(!port_label_entry.is_decl);
     let param_label_entry = a
         .index
-        .entry_at("/x/b.sv", 0, 17)
+        .entry_at(hp("/x/b.sv"), 0, 17)
         .expect("param override label indexed");
     assert!(!param_label_entry.is_decl);
 
     // Labels navigate to the CHILD module's declarations…
-    let loc = definition_at(&a, "/x/b.sv", 0, 28).expect("definition at .clk label");
-    assert_eq!(loc.uri, Url::from_file_path("/x/a.sv").unwrap());
+    let loc = definition_at(&a, hp("/x/b.sv"), 0, 28).expect("definition at .clk label");
+    assert_eq!(loc.uri, Url::from_file_path(hp("/x/a.sv")).unwrap());
     assert_eq!(loc.range.start, Position::new(0, 21));
-    let loc = definition_at(&a, "/x/b.sv", 0, 17).expect("definition at .W label");
-    assert_eq!(loc.uri, Url::from_file_path("/x/a.sv").unwrap());
+    let loc = definition_at(&a, hp("/x/b.sv"), 0, 17).expect("definition at .W label");
+    assert_eq!(loc.uri, Url::from_file_path(hp("/x/a.sv")).unwrap());
     assert_eq!(loc.range.start, Position::new(1, 16));
 
     // …while the connected signal / override RHS stay parent-scope.
-    let loc = definition_at(&a, "/x/b.sv", 0, 32).expect("definition at actual c");
-    assert_eq!(loc.uri, Url::from_file_path("/x/b.sv").unwrap());
-    let loc = definition_at(&a, "/x/b.sv", 0, 19).expect("definition at override RHS w");
-    assert_eq!(loc.uri, Url::from_file_path("/x/b.sv").unwrap());
+    let loc = definition_at(&a, hp("/x/b.sv"), 0, 32).expect("definition at actual c");
+    assert_eq!(loc.uri, Url::from_file_path(hp("/x/b.sv")).unwrap());
+    let loc = definition_at(&a, hp("/x/b.sv"), 0, 19).expect("definition at override RHS w");
+    assert_eq!(loc.uri, Url::from_file_path(hp("/x/b.sv")).unwrap());
 
     // Semantic surface: exactly the label rows carry `connectionLabel`.
     let legend = crate::semantic_tokens::legend();
-    let data = semantic_tokens_for(&a, "/x/b.sv").data;
+    let data = semantic_tokens_for(&a, hp("/x/b.sv")).data;
     let decode_sym = |want_line: u64, want_col: u64| -> String {
         let mut line = 0u64;
         let mut col = 0u64;
@@ -285,11 +285,11 @@ fn fallback_connection_bindings_survive_the_merge() {
         pairs: Vec::new(),
         fallback_bindings: [
             (
-                ("/x/tb.sv".to_owned(), 4, 12),
+                (hp("/x/tb.sv").to_owned(), 4, 12),
                 DeclTarget {
                     name: "clk".to_owned(),
                     kind: "port".to_owned(),
-                    file: "/x/child.sv".to_owned(),
+                    file: hp("/x/child.sv").to_owned(),
                     line0: 0,
                     col0: 23,
                     via_label: true,
@@ -297,11 +297,11 @@ fn fallback_connection_bindings_survive_the_merge() {
                 },
             ),
             (
-                ("/x/tb.sv".to_owned(), 4, 16),
+                (hp("/x/tb.sv").to_owned(), 4, 16),
                 DeclTarget {
                     name: "clk".to_owned(),
                     kind: "port".to_owned(),
-                    file: "/x/child.sv".to_owned(),
+                    file: hp("/x/child.sv").to_owned(),
                     line0: 0,
                     col0: 23,
                     via_label: false,
@@ -316,6 +316,6 @@ fn fallback_connection_bindings_survive_the_merge() {
     let index = SymbolIndex::default();
     let merged = merged_ref_bindings(&index, &empty_design(), HashMap::new(), &connections);
     assert_eq!(merged.len(), 2, "both fallback entries survive: {merged:?}");
-    assert!(merged[&("/x/tb.sv".to_owned(), 4, 12)].via_label);
-    assert!(merged[&("/x/tb.sv".to_owned(), 4, 16)].via_connection);
+    assert!(merged[&(hp("/x/tb.sv").to_owned(), 4, 12)].via_label);
+    assert!(merged[&(hp("/x/tb.sv").to_owned(), 4, 16)].via_connection);
 }

@@ -6,10 +6,10 @@ use super::*;
 fn shadow_path_round_trips_absolute_paths() {
     let base = process_shadow_base();
     for real in [
-        "/repo/rtl/top.sv",
+        hp("/repo/rtl/top.sv"),
         "/tmp/proj/sub dir/top.sv",
-        "/a/b/c/d.sv",
-        "/workspaces/llg/src/bin/llg/features.rs",
+        hp("/a/b/c/d.sv"),
+        hp("/workspaces/llg/src/bin/llg/features.rs"),
     ] {
         let shadow = shadow_path(Path::new(real), &base);
         assert!(
@@ -27,8 +27,8 @@ fn shadow_path_round_trips_absolute_paths() {
 #[test]
 fn real_path_rejects_paths_outside_shadow_tree() {
     let base = process_shadow_base();
-    assert_eq!(real_path(Path::new("/repo/rtl/top.sv"), &base), None);
-    assert_eq!(real_path(Path::new("/other/x.sv"), &base), None);
+    assert_eq!(real_path(Path::new(hp("/repo/rtl/top.sv")), &base), None);
+    assert_eq!(real_path(Path::new(hp("/other/x.sv")), &base), None);
     // The shadow tree root itself has no real path.
     assert_eq!(real_path(&base, &base), None);
 }

@@ -147,7 +147,10 @@ pub(super) fn semantic_file_matches(left: &str, right: &str) -> bool {
     if Path::new(left) == Path::new(right) {
         return true;
     }
-    match (std::fs::canonicalize(left), std::fs::canonicalize(right)) {
+    match (
+        llg::ffi::platform::canonicalize(left),
+        llg::ffi::platform::canonicalize(right),
+    ) {
         (Ok(left), Ok(right)) => left == right,
         _ => false,
     }

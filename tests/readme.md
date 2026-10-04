@@ -202,6 +202,12 @@ region litmus is compared as a line multiset plus the orders the §4.5 reference
 algorithm fixes, races accept every permitted outcome, and tick-limit failures
 compare the output printed before the diagnostic.
 
+SIM-002's time-reporting fixtures use
+`-E 'binary(sim_feature_completion) & test(sim_002::)'`. Executed fixtures run in
+both optimizer modes on both backends (set `LLG_TEST_GMP_ROOT` for the GMP lane);
+`.v` fixtures also run with `--edition 2001`, and the scope fixtures also run after
+the native snapshot and Db are dropped.
+
 RTL-012's strength and `unconnected_drive` fixtures use
 `-E 'binary(sim_feature_completion) & test(rtl_012::)'`. The scalar matrix and
 the 70-bit composition compare against the exhaustive outcome oracle in

@@ -1084,11 +1084,35 @@ impl EmitCtx<'_, '_> {
                 }])
             }
             "$printtimescale" => {
-                let ts = self.cg.timescale_of_node(h);
+                // Without an operand the current scope's module is reported;
+                // with one, the named instance or `$unit` (SV 20.4.1).
+                let scope = match args.as_slice() {
+                    [] => h,
+                    [argument] => match self.cg.kind(*argument) {
+                        NodeKind::Expr(ExprKind::ScopeRef { target }) => *target,
+                        _ => {
+                            return Err(format!(
+                                "$printtimescale argument must name a module instance in `{}`",
+                                self.path
+                            ))
+                        }
+                    },
+                    _ => {
+                        return Err(format!(
+                            "$printtimescale takes at most one argument in `{}`",
+                            self.path
+                        ))
+                    }
+                };
+                let ts = self.cg.timescale_of_node(scope);
+                let label = self
+                    .cg
+                    .timescale_scope_label(scope)
+                    .unwrap_or_else(|| self.path.clone());
                 Ok(vec![IrStmt::PrintTimescale {
                     unit_fs: ts.unit_fs,
                     precision_fs: ts.precision_fs,
-                    label: self.path.clone(),
+                    label,
                 }])
             }
             "$timeformat" => {

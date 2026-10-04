@@ -1250,7 +1250,7 @@ fn render_stmt_scoped(
             label,
         } => {
             format!(
-                "    printf(\"%s: timescale is {}/{}\\n\", {});\n",
+                "    printf(\"Time scale of (%s) is {} / {}\\n\", {});\n",
                 fs_to_timescale_str(*unit_fs),
                 fs_to_timescale_str(*precision_fs),
                 c_string_literal(label)

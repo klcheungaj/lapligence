@@ -51,3 +51,19 @@ Transition from the verified prior complete applied state or documented clean
 base, then run the preparer. Never mix old applied files with new manifests,
 relax full-file authentication, admit arbitrary intermediates, or discard unrelated
 vendor edits to satisfy preflight.
+
+## libfst
+
+`vendor/libfst` is a plain directory of pristine upstream files tracked by this
+repository (no submodule), so the preparer never rewrites it: it authenticates
+the tree against `libfst/files.sha256` (clean or fully applied, nothing else)
+and renders the patched copy into Cargo's `OUT_DIR/libfst` for the runtime.
+`retired-files.sha256` is empty. Standalone CMake probes render the same patch
+with `git apply` and check the applied digests
+(`tests/runtime_value_storage/libfst.cmake`).
+
+- Source: GTKWave libfst as shipped with Verilator 5.032 (`include/gtkwave/`)
+
+| Patch | Purpose |
+| --- | --- |
+| `libfst/libfst-local-changes.patch` | Bounded writer buffering: the 128 MiB block and 2 GiB growth ceiling become 1 MiB with a 256 KiB increment. `_GNU_SOURCE` on non-Windows hosts so strict `-std=c11` builds declare the POSIX calls libfst uses. MSVC: `fst_config.h` leaves `HAVE_ALLOCA_H`/`HAVE_FSEEKO` undefined, `fstapi.c` takes its MinGW Win32 paths (`FST_WIN32_API`: file mapping, temporary files, `_fseeki64`, unbuffered reads), and the varint readers size their check buffers with enum constants instead of `const int` arrays (VLAs, rejected by MSVC). |

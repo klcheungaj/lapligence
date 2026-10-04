@@ -60,7 +60,7 @@ pub(super) fn cross_file_analysis() -> Analysis {
             (2, 10, tokens::TOKEN_SLANG_IDENTIFIER, "o"),
             (2, 14, tokens::TOKEN_SLANG_IDENTIFIER, "clk"),
         ],
-        "/x/a.sv",
+        hp("/x/a.sv"),
     );
     let b_file = mk(
         vec![
@@ -82,12 +82,12 @@ pub(super) fn cross_file_analysis() -> Analysis {
             (1, 28, tokens::TOKEN_SLANG_PORT_CONNECTION_LABEL, "o"),
             (1, 30, tokens::TOKEN_SLANG_IDENTIFIER, "o"),
         ],
-        "/x/b.sv",
+        hp("/x/b.sv"),
     );
 
     let module_m = ModuleDef {
         name: "m".to_owned(),
-        file: Some("/x/a.sv".to_owned()),
+        file: Some(hp("/x/a.sv").to_owned()),
         line: 1,
         col: 8,
         end_line: 2,
@@ -107,7 +107,7 @@ pub(super) fn cross_file_analysis() -> Analysis {
         name: "u0".to_owned(),
         def_name: "m".to_owned(),
         full_name: "top.u0".to_owned(),
-        file: Some("/x/b.sv".to_owned()),
+        file: Some(hp("/x/b.sv").to_owned()),
         line: 1,
         col: 15,
         ports: vec![port("clk", Direction::Input), port("o", Direction::Output)],
@@ -121,7 +121,7 @@ pub(super) fn cross_file_analysis() -> Analysis {
         name: "top".to_owned(),
         def_name: "top".to_owned(),
         full_name: "top".to_owned(),
-        file: Some("/x/b.sv".to_owned()),
+        file: Some(hp("/x/b.sv").to_owned()),
         line: 1,
         col: 1,
         ports: vec![port("c", Direction::Input), port("o", Direction::Output)],
@@ -137,7 +137,7 @@ pub(super) fn cross_file_analysis() -> Analysis {
         modules: vec![module_m],
         packages: vec![PackageDef {
             name: "p".to_owned(),
-            file: Some("/x/a.sv".to_owned()),
+            file: Some(hp("/x/a.sv").to_owned()),
             line: 3,
             col: 1,
             params: Vec::new(),
@@ -158,7 +158,7 @@ fn module_type_instance_collision_analysis() -> Analysis {
     analysis.model.modules[0].name = "Bar".to_owned();
     analysis.model.modules.push(ModuleDef {
         name: "Foo".to_owned(),
-        file: Some("/x/b.sv".to_owned()),
+        file: Some(hp("/x/b.sv").to_owned()),
         line: 1,
         col: 8,
         end_line: 4,
@@ -185,13 +185,13 @@ fn module_type_instance_collision_analysis() -> Analysis {
 
     for file_tokens in &mut analysis.tokens {
         for node in &mut file_tokens.nodes {
-            if file_tokens.path == "/x/a.sv"
+            if file_tokens.path == hp("/x/a.sv")
                 && node.kind == tokens::TOKEN_SLANG_MODULE + tokens::TOKEN_DECLARATION_OFFSET
                 && node.name.as_deref() == Some("m")
             {
                 node.name = Some("Bar".to_owned());
             }
-            if file_tokens.path == "/x/b.sv" {
+            if file_tokens.path == hp("/x/b.sv") {
                 if node.kind == tokens::TOKEN_SLANG_MODULE + tokens::TOKEN_DECLARATION_OFFSET
                     && node.name.as_deref() == Some("top")
                 {
@@ -211,7 +211,7 @@ fn module_type_instance_collision_analysis() -> Analysis {
     let b_file = analysis
         .tokens
         .iter_mut()
-        .find(|file_tokens| file_tokens.path == "/x/b.sv")
+        .find(|file_tokens| file_tokens.path == hp("/x/b.sv"))
         .expect("collision fixture file");
     b_file.nodes.extend([
         TokenInfo {
@@ -221,7 +221,7 @@ fn module_type_instance_collision_analysis() -> Analysis {
             end_col: 6,
             kind: tokens::TOKEN_SLANG_MODULE,
             name: Some("Bar".to_owned()),
-            file: "/x/b.sv".to_owned(),
+            file: hp("/x/b.sv").to_owned(),
         },
         TokenInfo {
             line: 2,
@@ -230,7 +230,7 @@ fn module_type_instance_collision_analysis() -> Analysis {
             end_col: 12,
             kind: tokens::TOKEN_SLANG_IDENTIFIER + tokens::TOKEN_DECLARATION_OFFSET,
             name: Some("u_bar".to_owned()),
-            file: "/x/b.sv".to_owned(),
+            file: hp("/x/b.sv").to_owned(),
         },
     ]);
     analysis.index = SymbolIndex::build(&analysis);
@@ -243,13 +243,13 @@ fn module_type_definition_ignores_same_named_instance_in_scope() {
     let analysis = module_type_instance_collision_analysis();
 
     // Act
-    let first_type = definition_at(&analysis, "/x/b.sv", 0, 12);
-    let second_type = definition_at(&analysis, "/x/b.sv", 1, 2);
+    let first_type = definition_at(&analysis, hp("/x/b.sv"), 0, 12);
+    let second_type = definition_at(&analysis, hp("/x/b.sv"), 1, 2);
 
     // Assert
     for location in [first_type, second_type] {
         let location = location.expect("module type definition");
-        assert_eq!(location.uri, Url::from_file_path("/x/a.sv").unwrap());
+        assert_eq!(location.uri, Url::from_file_path(hp("/x/a.sv")).unwrap());
         assert_eq!(location.range.start, Position::new(0, 7));
     }
 }
@@ -260,13 +260,13 @@ fn instance_name_definition_still_resolves_when_name_matches_module_type() {
     let analysis = module_type_instance_collision_analysis();
 
     // Act
-    let colliding_instance = definition_at(&analysis, "/x/b.sv", 0, 14);
-    let ordinary_instance = definition_at(&analysis, "/x/b.sv", 1, 6);
+    let colliding_instance = definition_at(&analysis, hp("/x/b.sv"), 0, 14);
+    let ordinary_instance = definition_at(&analysis, hp("/x/b.sv"), 1, 6);
 
     // Assert
     for location in [colliding_instance, ordinary_instance] {
         let location = location.expect("instance definition");
-        assert_eq!(location.uri, Url::from_file_path("/x/a.sv").unwrap());
+        assert_eq!(location.uri, Url::from_file_path(hp("/x/a.sv")).unwrap());
         assert_eq!(location.range.start, Position::new(0, 7));
     }
 }
@@ -338,7 +338,7 @@ pub(super) fn multiline_port_analysis() -> Analysis {
             (2, 10, tokens::TOKEN_SLANG_IDENTIFIER, "o"),
             (2, 14, tokens::TOKEN_SLANG_IDENTIFIER, "clk"),
         ],
-        "/x/a.sv",
+        hp("/x/a.sv"),
     );
     let mut b_file = mk(
         vec![
@@ -360,7 +360,7 @@ pub(super) fn multiline_port_analysis() -> Analysis {
             // Decoy label at 0-based (10, 0), outside the instance span.
             (11, 1, tokens::TOKEN_SLANG_PORT_CONNECTION_LABEL, "clk"),
         ],
-        "/x/b.sv",
+        hp("/x/b.sv"),
     );
     // Nameless closing `);` at 0-based (3, 0) (1-based (4, 1)): included
     // for fixture fidelity; the index skips nameless tokens.
@@ -371,12 +371,12 @@ pub(super) fn multiline_port_analysis() -> Analysis {
         end_col: 2,
         kind: 0,
         name: None,
-        file: "/x/b.sv".to_owned(),
+        file: hp("/x/b.sv").to_owned(),
     });
 
     let module_m = ModuleDef {
         name: "m".to_owned(),
-        file: Some("/x/a.sv".to_owned()),
+        file: Some(hp("/x/a.sv").to_owned()),
         line: 1,
         col: 8,
         end_line: 2,
@@ -396,7 +396,7 @@ pub(super) fn multiline_port_analysis() -> Analysis {
         name: "u0".to_owned(),
         def_name: "m".to_owned(),
         full_name: "top.u0".to_owned(),
-        file: Some("/x/b.sv".to_owned()),
+        file: Some(hp("/x/b.sv").to_owned()),
         line: 1,
         col: 9,
         ports: vec![port("clk", Direction::Input), port("o", Direction::Output)],
@@ -410,7 +410,7 @@ pub(super) fn multiline_port_analysis() -> Analysis {
         name: "top".to_owned(),
         def_name: "top".to_owned(),
         full_name: "top".to_owned(),
-        file: Some("/x/b.sv".to_owned()),
+        file: Some(hp("/x/b.sv").to_owned()),
         line: 1,
         col: 1,
         ports: vec![port("c", Direction::Input), port("o", Direction::Output)],
@@ -437,21 +437,21 @@ fn port_label_multiline_definition_jumps_to_child_port_decl_across_files() {
     assert!(
         a.index
             .port_labels
-            .contains_key(&("/x/b.sv".to_owned(), 1, 3)),
+            .contains_key(&(hp("/x/b.sv").to_owned(), 1, 3)),
         "port_labels: {:?}",
         a.index.port_labels
     );
     assert!(
         a.index
             .port_labels
-            .contains_key(&("/x/b.sv".to_owned(), 2, 3)),
+            .contains_key(&(hp("/x/b.sv").to_owned(), 2, 3)),
         "port_labels: {:?}",
         a.index.port_labels
     );
     // `.clk` at 0-based (1, 3) in file B → m's clk port decl in file A
     // (0-based (0, 23)), not the enclosing scope's same-named object.
-    let loc = definition_at(&a, "/x/b.sv", 1, 3).expect("definition of .clk label");
-    assert_eq!(loc.uri, Url::from_file_path("/x/a.sv").unwrap());
+    let loc = definition_at(&a, hp("/x/b.sv"), 1, 3).expect("definition of .clk label");
+    assert_eq!(loc.uri, Url::from_file_path(hp("/x/a.sv")).unwrap());
     assert_eq!(loc.range.start, Position::new(0, 23), "loc: {loc:?}");
 }
 
@@ -459,7 +459,7 @@ fn port_label_multiline_definition_jumps_to_child_port_decl_across_files() {
 fn port_label_multiline_hover_shows_child_port() {
     let a = multiline_port_analysis();
     // `.o` label at 0-based (2, 3) in file B.
-    let hover = hover_at(&a, "/x/b.sv", 2, 3).expect("hover on .o label");
+    let hover = hover_at(&a, hp("/x/b.sv"), 2, 3).expect("hover on .o label");
     let value = match hover.contents {
         HoverContents::Markup(m) => m.value,
         _ => panic!("expected markup hover"),
@@ -478,19 +478,19 @@ fn port_label_multiline_decoy_at_column_zero_is_not_a_port_label() {
     assert!(
         !a.index
             .port_labels
-            .contains_key(&("/x/b.sv".to_owned(), 10, 0)),
+            .contains_key(&(hp("/x/b.sv").to_owned(), 10, 0)),
         "decoy must not be a port label: {:?}",
         a.index.port_labels
     );
-    let loc = definition_at(&a, "/x/b.sv", 10, 0).expect("decoy name-based resolution");
-    assert_eq!(loc.uri, Url::from_file_path("/x/a.sv").unwrap());
+    let loc = definition_at(&a, hp("/x/b.sv"), 10, 0).expect("decoy name-based resolution");
+    assert_eq!(loc.uri, Url::from_file_path(hp("/x/a.sv")).unwrap());
     assert_eq!(loc.range.start, Position::new(0, 23), "loc: {loc:?}");
 }
 
 #[test]
 fn entry_at_on_instance_returns_instance_decl() {
     let a = cross_file_analysis();
-    let e = a.index.entry_at("/x/b.sv", 0, 14).expect("entry at u0");
+    let e = a.index.entry_at(hp("/x/b.sv"), 0, 14).expect("entry at u0");
     assert_eq!(e.name, "u0");
     assert_eq!(e.kind, SymKind::Instance);
     assert!(e.is_decl);
@@ -500,8 +500,8 @@ fn entry_at_on_instance_returns_instance_decl() {
 #[test]
 fn definition_on_instance_jumps_to_module_def_across_files() {
     let a = cross_file_analysis();
-    let loc = definition_at(&a, "/x/b.sv", 0, 14).expect("definition of u0");
-    assert_eq!(loc.uri, Url::from_file_path("/x/a.sv").unwrap());
+    let loc = definition_at(&a, hp("/x/b.sv"), 0, 14).expect("definition of u0");
+    assert_eq!(loc.uri, Url::from_file_path(hp("/x/a.sv")).unwrap());
     assert_eq!(loc.range.start, Position::new(0, 7)); // module m at col 8 → 0-based 7
 }
 
@@ -509,24 +509,25 @@ fn definition_on_instance_jumps_to_module_def_across_files() {
 fn definition_on_module_type_ref_jumps_to_def_across_files() {
     let a = cross_file_analysis();
     // The `m` type name at the instantiation site in file B.
-    let loc = definition_at(&a, "/x/b.sv", 0, 12).expect("definition of m ref");
-    assert_eq!(loc.uri, Url::from_file_path("/x/a.sv").unwrap());
+    let loc = definition_at(&a, hp("/x/b.sv"), 0, 12).expect("definition of m ref");
+    assert_eq!(loc.uri, Url::from_file_path(hp("/x/a.sv")).unwrap());
     assert_eq!(loc.range.start, Position::new(0, 7));
 }
 
 #[test]
 fn references_on_module_decl_span_both_files() {
     let a = cross_file_analysis();
-    let refs = references_at(&a, "/x/a.sv", 0, 7); // module m decl
+    let refs = references_at(&a, hp("/x/a.sv"), 0, 7); // module m decl
     assert!(
         refs.iter().any(|l| {
-            l.uri == Url::from_file_path("/x/a.sv").unwrap() && l.range.start == Position::new(0, 7)
+            l.uri == Url::from_file_path(hp("/x/a.sv")).unwrap()
+                && l.range.start == Position::new(0, 7)
         }),
         "missing m decl in refs: {refs:?}"
     );
     assert!(
         refs.iter().any(|l| {
-            l.uri == Url::from_file_path("/x/b.sv").unwrap()
+            l.uri == Url::from_file_path(hp("/x/b.sv")).unwrap()
                 && l.range.start == Position::new(0, 12)
         }),
         "missing u0-site ref in refs: {refs:?}"
@@ -542,7 +543,7 @@ fn workspace_symbols_filters_by_query() {
     assert_eq!(syms[0].kind, SymbolKind::MODULE);
     assert_eq!(
         syms[0].location.uri,
-        Url::from_file_path("/x/a.sv").unwrap()
+        Url::from_file_path(hp("/x/a.sv")).unwrap()
     );
 
     let top_syms = workspace_symbols(&a, "TOP");
@@ -575,7 +576,7 @@ fn symbol_index_merge_unions_and_dedupes_shared_occurrences() {
         a.index.refs.len()
     );
     let e = merged
-        .entry_at("/x/a.sv", 0, 23)
+        .entry_at(hp("/x/a.sv"), 0, 23)
         .expect("entry at clk port after merge");
     assert_eq!(e.name, "clk");
     assert_eq!(e.kind, SymKind::Port);
@@ -587,7 +588,7 @@ fn entry_at_on_port_token_returns_port_decl() {
     let a = cross_file_analysis();
     let e = a
         .index
-        .entry_at("/x/a.sv", 0, 23)
+        .entry_at(hp("/x/a.sv"), 0, 23)
         .expect("entry at clk port");
     assert_eq!(e.name, "clk");
     assert_eq!(e.kind, SymKind::Port);
@@ -601,15 +602,15 @@ fn ref_inside_assign_resolves_to_port_decl() {
     // `clk` in `assign o = clk;` at (line 2, col 14) → 0-based (1, 13).
     let e = a
         .index
-        .entry_at("/x/a.sv", 1, 13)
+        .entry_at(hp("/x/a.sv"), 1, 13)
         .expect("entry at clk ref");
     assert!(!e.is_decl);
     let resolved = a.index.resolve(e);
     assert_eq!(resolved.len(), 1, "resolved: {resolved:?}");
     assert_eq!(resolved[0].kind, SymKind::Port);
-    assert_eq!(resolved[0].file, "/x/a.sv");
+    assert_eq!(resolved[0].file, hp("/x/a.sv"));
     assert_eq!((resolved[0].line, resolved[0].col), (0, 23));
-    let loc = definition_at(&a, "/x/a.sv", 1, 13).expect("definition of clk ref");
+    let loc = definition_at(&a, hp("/x/a.sv"), 1, 13).expect("definition of clk ref");
     assert_eq!(loc.range.start, Position::new(0, 23));
 }
 
@@ -618,7 +619,7 @@ fn port_references_span_both_files() {
     let a = cross_file_analysis();
     // All references of the `o` port (file A decl) include the assignment
     // site in file A and the named connection `.o(o)` in file B.
-    let o_decl = a.index.entry_at("/x/a.sv", 0, 46).expect("o port decl");
+    let o_decl = a.index.entry_at(hp("/x/a.sv"), 0, 46).expect("o port decl");
     assert_eq!(o_decl.name, "o");
     let refs = a.index.all_references(o_decl);
     let sites: Vec<(String, u32, u32)> = refs
@@ -626,19 +627,19 @@ fn port_references_span_both_files() {
         .map(|r| (r.file.clone(), r.line, r.col))
         .collect();
     assert!(
-        sites.contains(&("/x/a.sv".to_owned(), 0, 46)),
+        sites.contains(&(hp("/x/a.sv").to_owned(), 0, 46)),
         "missing o decl: {sites:?}"
     );
     assert!(
-        sites.contains(&("/x/a.sv".to_owned(), 1, 9)),
+        sites.contains(&(hp("/x/a.sv").to_owned(), 1, 9)),
         "missing assign o site: {sites:?}"
     );
     assert!(
-        sites.contains(&("/x/b.sv".to_owned(), 0, 27)),
+        sites.contains(&(hp("/x/b.sv").to_owned(), 0, 27)),
         "missing .o named connection: {sites:?}"
     );
     assert!(
-        sites.contains(&("/x/b.sv".to_owned(), 0, 29)),
+        sites.contains(&(hp("/x/b.sv").to_owned(), 0, 29)),
         "missing .o inner ref: {sites:?}"
     );
 }
@@ -649,8 +650,8 @@ fn port_label_definition_jumps_to_child_port_decl_across_files() {
     // `.clk` in `m u0(.clk(c), .o(o));` at 0-based (0, 18) in file B must
     // resolve to module m's `clk` port declaration in file A, not the
     // enclosing module's scope.
-    let loc = definition_at(&a, "/x/b.sv", 0, 18).expect("definition of .clk label");
-    assert_eq!(loc.uri, Url::from_file_path("/x/a.sv").unwrap());
+    let loc = definition_at(&a, hp("/x/b.sv"), 0, 18).expect("definition of .clk label");
+    assert_eq!(loc.uri, Url::from_file_path(hp("/x/a.sv")).unwrap());
     assert_eq!(loc.range.start, Position::new(0, 23)); // clk port decl in file A
 }
 
@@ -658,7 +659,7 @@ fn port_label_definition_jumps_to_child_port_decl_across_files() {
 fn port_label_hover_shows_child_port() {
     let a = cross_file_analysis();
     // `.o` label at 0-based (0, 27) in file B.
-    let hover = hover_at(&a, "/x/b.sv", 0, 27).expect("hover on .o label");
+    let hover = hover_at(&a, hp("/x/b.sv"), 0, 27).expect("hover on .o label");
     let value = match hover.contents {
         HoverContents::Markup(m) => m.value,
         _ => panic!("expected markup hover"),
@@ -672,10 +673,10 @@ fn references_on_port_decl_include_instantiation_labels() {
     let a = cross_file_analysis();
     // References of the `o` port decl in file A (0, 46) include the
     // instantiation-site `.o` label in file B.
-    let refs = references_at(&a, "/x/a.sv", 0, 46);
+    let refs = references_at(&a, hp("/x/a.sv"), 0, 46);
     assert!(
         refs.iter().any(|l| {
-            l.uri == Url::from_file_path("/x/b.sv").unwrap()
+            l.uri == Url::from_file_path(hp("/x/b.sv")).unwrap()
                 && l.range.start == Position::new(0, 27)
         }),
         "missing .o label site: {refs:?}"

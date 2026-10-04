@@ -370,7 +370,8 @@ impl<'db> SemanticModel<'db> {
             }
         }
         // A captured ArbitrarySymbol is not generally executable. Admit only
-        // typed interface actuals and $dumpvars scope/storage arguments, and
+        // typed interface actuals, $printtimescale scopes and $dumpvars
+        // scope/storage arguments, and
         // require every use of a shared expression node to be a metadata use.
         let mut metadata_use = vec![false; self.db.nodes().len()];
         let mut value_use = vec![false; self.db.nodes().len()];
@@ -822,6 +823,13 @@ fn scope_reference_is_metadata(db: &Db, owner: NodeId, reference: NodeId, target
                         | NodeKind::Stmt(StmtKind::Begin)
                         | NodeKind::Stmt(StmtKind::ConcurrentAssertion { .. })
                 )
+        }
+        NodeKind::SysCall { name } if name == "$printtimescale" => {
+            // The single optional operand names the instance or `$unit`
+            // whose time scale is printed (SV 20.4.1); it is never read.
+            owner_node.children().first() == Some(&reference)
+                && (matches!(db.node_kind(target), NodeKind::ModuleInst { .. })
+                    || db.semantic_detail(target) == Some("CompilationUnit"))
         }
         NodeKind::SysCall { name } if name == "$dumpvars" => {
             // The first argument is a depth expression, not a selection.

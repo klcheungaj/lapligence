@@ -1,0 +1,225 @@
+diff --git a/fst_config.h b/fst_config.h
+--- a/fst_config.h
++++ b/fst_config.h
+@@ -3,9 +3,11 @@
+ /* config.h.in.  Generated from configure.ac by autoheader.  */
+ 
+ /* Define to 1 if you have <alloca.h> and it should be used (not on Ultrix). */
+-#if !defined(__MINGW32__) && !defined(__FreeBSD__)
++#if !defined(__MINGW32__) && !defined(_MSC_VER) && !defined(__FreeBSD__)
+ # define HAVE_ALLOCA_H 1
+ #endif
+ 
+ /* Define to 1 if fseeko (and presumably ftello) exists and is declared. */
++#if !defined(_MSC_VER)
+ #define HAVE_FSEEKO 1
++#endif
+diff --git a/fstapi.c b/fstapi.c
+--- a/fstapi.c
++++ b/fstapi.c
+@@ -22,6 +22,10 @@
+  * SPDX-License-Identifier: MIT
+  */
+ 
++#if !defined(_WIN32) && !defined(_GNU_SOURCE)
++#define _GNU_SOURCE
++#endif
++
+ /*
+  * possible disables:
+  *
+@@ -56,7 +60,12 @@
+ #include <pthread.h>
+ #endif
+ 
+-#ifdef __MINGW32__
++#if defined(__MINGW32__) || defined(_MSC_VER)
++/* lapligence: MSVC builds use the MinGW Win32 code paths. */
++#define FST_WIN32_API
++#endif
++
++#ifdef FST_WIN32_API
+ #define WIN32_LEAN_AND_MEAN
+ #include <windows.h>
+ #endif
+@@ -114,9 +123,10 @@
+ /* these defines have a large impact on writer speed when a model has a */
+ /* huge number of symbols.  as a default, use 128MB and increment when  */
+ /* every 1M signals are defined.                                        */
+-#define FST_BREAK_SIZE                  (1UL << 27)
+-#define FST_BREAK_ADD_SIZE              (1UL << 22)
+-#define FST_BREAK_SIZE_MAX              (1UL << 31)
++/* Lapligence keeps the asynchronous writer's total buffering bounded. */
++#define FST_BREAK_SIZE                  (1UL << 20)
++#define FST_BREAK_ADD_SIZE              (1UL << 18)
++#define FST_BREAK_SIZE_MAX              (1UL << 20)
+ #define FST_ACTIVATE_HUGE_BREAK         (1000000)
+ #define FST_ACTIVATE_HUGE_INC           (1000000)
+ 
+@@ -137,7 +147,7 @@
+ #include <sys/sysctl.h>
+ #endif
+ 
+-#if defined(FST_MACOSX) || defined(__MINGW32__) || defined(__OpenBSD__) || defined(__FreeBSD__) || defined(__NetBSD__)
++#if defined(FST_MACOSX) || defined(FST_WIN32_API) || defined(__OpenBSD__) || defined(__FreeBSD__) || defined(__NetBSD__)
+ #define FST_UNBUFFERED_IO
+ #endif
+ 
+@@ -159,7 +169,7 @@
+ /***                 ***/
+ /***********************/
+ 
+-#ifdef __MINGW32__
++#ifdef FST_WIN32_API
+ #include <io.h>
+ #ifndef HAVE_FSEEKO
+ #define ftello _ftelli64
+@@ -211,7 +221,7 @@
+ /*
+  * system-specific temp file handling
+  */
+-#ifdef __MINGW32__
++#ifdef FST_WIN32_API
+ 
+ static FILE* tmpfile_open(char **nam)
+ {
+@@ -323,7 +333,7 @@
+ return(realpath(path, resolved_path));
+ 
+ #else
+-#ifdef __MINGW32__
++#ifdef FST_WIN32_API
+ if(!resolved_path)
+         {
+         resolved_path = (char *)malloc(PATH_MAX+1);
+@@ -341,7 +351,7 @@
+ /*
+  * mmap compatibility
+  */
+-#if defined __MINGW32__
++#if defined FST_WIN32_API
+ #include <limits.h>
+ #define fstMmap(__addr,__len,__prot,__flags,__fd,__off) fstMmap2((__len), (__fd), (__off))
+ #define fstMunmap(__addr,__len)                         UnmapViewOfFile((LPCVOID)__addr)
+@@ -550,7 +560,7 @@
+ 
+ static uint32_t fstReaderVarint32(FILE *f)
+ {
+-const int chk_len_max = 5; /* TALOS-2023-1783 */
++enum { chk_len_max = 5 }; /* TALOS-2023-1783; lapligence: constant, not a VLA, for MSVC */
+ int chk_len = chk_len_max;
+ unsigned char buf[chk_len_max];
+ unsigned char *mem = buf;
+@@ -583,7 +593,7 @@
+ 
+ static uint32_t fstReaderVarint32WithSkip(FILE *f, uint32_t *skiplen)
+ {
+-const int chk_len_max = 5; /* TALOS-2023-1783 */
++enum { chk_len_max = 5 }; /* TALOS-2023-1783; lapligence: constant, not a VLA, for MSVC */
+ int chk_len = chk_len_max;
+ unsigned char buf[chk_len_max];
+ unsigned char *mem = buf;
+@@ -617,7 +627,7 @@
+ 
+ static uint64_t fstReaderVarint64(FILE *f)
+ {
+-const int chk_len_max = 16; /* TALOS-2023-1783 */
++enum { chk_len_max = 16 }; /* TALOS-2023-1783; lapligence: constant, not a VLA, for MSVC */
+ int chk_len = chk_len_max;
+ unsigned char buf[chk_len_max];
+ unsigned char *mem = buf;
+@@ -993,7 +1003,7 @@
+   )
+ 	{
+ 	fprintf(stderr, "fstMmap() assigned to %s failed: errno: %d, file %s, line %d.\n", usage, errno, file, line);
+-#if !defined(__MINGW32__)
++#if !defined(FST_WIN32_API)
+ 	perror("Why");
+ #else
+ 	LPSTR mbuf = NULL;
+@@ -2068,7 +2078,7 @@
+                 gzFile zhandle;
+                 int zfd;
+                 int fourpack_duo = 0;
+-#ifndef __MINGW32__
++#ifndef FST_WIN32_API
+ 		int fnam_len = strlen(xc->filename) + 5 + 1;
+                 char *fnam = (char *)malloc(fnam_len);
+ #endif
+@@ -2159,7 +2169,7 @@
+                 fstWriterFseeko(xc, xc->handle, 0, SEEK_END);   /* move file pointer to end for any section adds */
+                 fflush(xc->handle);
+ 
+-#ifndef __MINGW32__
++#ifndef FST_WIN32_API
+                 snprintf(fnam, fnam_len, "%s.hier", xc->filename);
+                 unlink(fnam);
+                 free(fnam);
+@@ -2251,7 +2261,7 @@
+                         }
+                 }
+ 
+-#ifdef __MINGW32__
++#ifdef FST_WIN32_API
+         {
+         int flen = strlen(xc->filename);
+         char *hf = (char *)calloc(1, flen + 6);
+@@ -3952,14 +3962,14 @@
+         snprintf(fnam, fnam_len, "%s.hier_%d_%p", xc->filename, getpid(), (void *)xc);
+         fstReaderFseeko(xc, xc->f, xc->hier_pos, SEEK_SET);
+         uclen = fstReaderUint64(xc->f);
+-#ifndef __MINGW32__
++#ifndef FST_WIN32_API
+         fflush(xc->f);
+ #endif
+         if(htyp == FST_BL_HIER)
+                 {
+                 fstReaderFseeko(xc, xc->f, xc->hier_pos, SEEK_SET);
+                 uclen = fstReaderUint64(xc->f);
+-#ifndef __MINGW32__
++#ifndef FST_WIN32_API
+                 fflush(xc->f);
+ #endif
+                 zfd = dup(fileno(xc->f));
+@@ -3978,12 +3988,12 @@
+                 fstReaderFseeko(xc, xc->f, xc->hier_pos - 8, SEEK_SET); /* get section len */
+                 clen =  fstReaderUint64(xc->f) - 16;
+                 uclen = fstReaderUint64(xc->f);
+-#ifndef __MINGW32__
++#ifndef FST_WIN32_API
+                 fflush(xc->f);
+ #endif
+                 }
+ 
+-#ifndef __MINGW32__
++#ifndef FST_WIN32_API
+         xc->fh = fopen(fnam, "w+b");
+         if(!xc->fh)
+ #endif
+@@ -3998,7 +4008,7 @@
+                         }
+                 }
+ 
+-#ifndef __MINGW32__
++#ifndef FST_WIN32_API
+         if(fnam) unlink(fnam);
+ #endif
+ 
+@@ -4629,7 +4639,7 @@
+         setvbuf(fcomp, (char *)NULL, _IONBF, 0);   /* keeps gzip from acting weird in tandem with fopen */
+ #endif
+ 
+-#ifdef __MINGW32__
++#ifdef FST_WIN32_API
+         xc->filename_unpacked = hf;
+ #else
+         if(hf)
+@@ -4640,7 +4650,7 @@
+ #endif
+ 
+         fstReaderFseeko(xc, xc->f, FST_ZWRAPPER_HDR_SIZE, SEEK_SET);
+-#ifndef __MINGW32__
++#ifndef FST_WIN32_API
+         fflush(xc->f);
+ #else
+ 	/* Windows UCRT runtime library reads one byte ahead in the file

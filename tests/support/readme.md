@@ -13,6 +13,12 @@ creates a unique child directory and removes only that child on drop. See
 For concurrent worktrees, [the test runner](../readme.md#parallel-worktrees)
 sets these overrides and `TMPDIR` with per-run isolation and a shared runtime cache.
 
+Simulators keep the OS-native newline: on Windows the console and files opened
+in text mode end lines with CRLF. `sim.rs::run_command` therefore rewrites CRLF
+to LF in captured output on Windows only, and `read_text_output` does the same
+for text files the model wrote; expected outputs stay LF and other hosts stay
+byte-exact. Binary-mode files (`$fopen` with `b`, waveforms) are compared as bytes.
+
 `sim_cli.rs` runs checked-in `.sv` stems or explicit `.v`/`.sv` filenames through
 the public CLI in both HDL optimizer modes. `run_case_after_db_drop` supplements
 that acceptance with checked compilation, validated whole-model generation after

@@ -734,16 +734,10 @@ mod platform {
                 return Err(io::Error::last_os_error());
             }
             if (length as usize) < buffer.len() {
-                let mut path = OsString::from_wide(&buffer[..length as usize]);
-                let value = path.to_string_lossy();
-                if let Some(stripped) = value.strip_prefix("\\\\?\\") {
-                    path = if let Some(unc) = stripped.strip_prefix("UNC\\") {
-                        OsString::from(format!(r"\\{unc}"))
-                    } else {
-                        OsString::from(stripped)
-                    };
-                }
-                return Ok(PathBuf::from(path));
+                let path = OsString::from_wide(&buffer[..length as usize]);
+                return Ok(crate::ffi::platform::strip_verbatim_prefix(PathBuf::from(
+                    path,
+                )));
             }
             buffer.resize(buffer.len().saturating_mul(2), 0);
             if buffer.len() > 32 * 1024 {

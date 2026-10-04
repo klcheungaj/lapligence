@@ -216,7 +216,7 @@ impl Frame<'_, '_> {
                 precision_fs,
                 label,
             } => self.line(format!(
-                "printf(\"%s: timescale is {}/{}\\n\", {});",
+                "printf(\"Time scale of (%s) is {} / {}\\n\", {});",
                 super::super::constants::fs_to_timescale_str(*unit_fs),
                 super::super::constants::fs_to_timescale_str(*precision_fs),
                 c_string_literal(label)

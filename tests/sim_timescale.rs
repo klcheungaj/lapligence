@@ -153,7 +153,7 @@ fn timescale_cross_module_units() {
 /// (b) No timescale → default 1ns/1ps (TIMESCALEMOD): `#5` still produces a
 /// local `$time` of 5, while default `%t` is rendered in the 1ps design
 /// precision. Also exercises `$printtimescale`, which prints the calling
-/// module's unit/precision.
+/// module's unit/precision in the SV 20.4.1 format.
 ///
 /// Timescales: tb (no directive → default unit 1000 ps, precision 1 ps).
 /// Design precision = 1 ps → 1 tick = 1 ps.
@@ -165,7 +165,7 @@ fn timescale_cross_module_units() {
 ///   t=15 ns (15000 ticks): `%t` reports 15000; $finish.
 ///
 /// Expected stdout (exactly):
-///   tb: timescale is 1ns/1ps
+///   Time scale of (tb) is 1ns / 1ps
 ///   t=5000
 ///   t=15000
 #[test]
@@ -192,7 +192,7 @@ fn timescale_default_1ns_1ps() {
         )],
     )
     .expect("simulation should run");
-    assert_eq!(stdout, "tb: timescale is 1ns/1ps\nt=5000\nt=15000\n");
+    assert_eq!(stdout, "Time scale of (tb) is 1ns / 1ps\nt=5000\nt=15000\n");
 }
 
 /// (c) Sub-unit delays: `#3` with `timescale 10ns/1ns` (unit 10000 ps) in a

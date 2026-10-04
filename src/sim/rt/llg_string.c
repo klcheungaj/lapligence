@@ -142,7 +142,7 @@ llg_string_t llg_string_from_packed(sv4_t value) {
 }
 
 sv4_t llg_string_to_packed(llg_string_t value, uint32_t width, int is_signed) {
-    sv4_t result = sv4_from_u64(0, width, is_signed);
+    sv4_t result = sv4_from_u64(0, width, (int8_t)is_signed);
     size_t bytes = ((size_t)width + 7) / 8;
     if (bytes > value.len) bytes = value.len;
     for (size_t i = 0; i < bytes;) {

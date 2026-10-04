@@ -4638,6 +4638,7 @@ fn one_based_utf16_position(text: &str, offset: u64) -> (u32, u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ffi::platform::CanonicalPath as _;
     use std::io::Write;
     use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -4746,7 +4747,7 @@ mod tests {
         let path = temporary_path("library-name-budget");
         std::fs::write(&path, [0xff]).expect("write invalid source fixture");
         let path_name = path
-            .canonicalize()
+            .canonical()
             .expect("canonical source fixture")
             .to_string_lossy()
             .into_owned();
@@ -4785,7 +4786,7 @@ mod tests {
         let path = temporary_path("library-file-name-budget");
         std::fs::write(&path, [0xff]).expect("write invalid library source fixture");
         let path_name = path
-            .canonicalize()
+            .canonical()
             .expect("canonical library source fixture")
             .to_string_lossy()
             .into_owned();
@@ -4823,7 +4824,7 @@ mod tests {
         std::fs::write(&top, "module top; endmodule\n").expect("write top source");
         std::fs::write(&source, [0xff]).expect("write invalid mapped source");
         let source_name = source
-            .canonicalize()
+            .canonical()
             .expect("canonical mapped source")
             .to_string_lossy()
             .into_owned();
@@ -4831,12 +4832,12 @@ mod tests {
         let map_text = format!("library {library_name} mapped.sv;\n");
         std::fs::write(&map, &map_text).expect("write library map");
         let top_name = top
-            .canonicalize()
+            .canonical()
             .expect("canonical top source")
             .to_string_lossy()
             .into_owned();
         let map_name = map
-            .canonicalize()
+            .canonical()
             .expect("canonical library map")
             .to_string_lossy()
             .into_owned();
@@ -5276,13 +5277,19 @@ mod tests {
             .expect("ordinary files matched by an intermediate wildcard must be skipped");
         assert_eq!(
             matches,
-            vec![source.canonicalize().expect("canonical wildcard source")]
+            vec![source.canonical().expect("canonical wildcard source")]
         );
         std::fs::remove_dir_all(root).expect("remove wildcard file branch root");
     }
 
     #[test]
     fn filesystem_map_base_wildcards_are_literal() {
+        // A map directory can contain `*` only where the host allows it in
+        // file names; Windows rejects it, so no such base can exist there.
+        if !crate::ffi::platform::is_valid_file_name("a*b") {
+            eprintln!("SKIP: host file names cannot contain `*`");
+            return;
+        }
         let root = temporary_path("library-pattern-literal-base");
         let literal = root.join("a*b");
         let wildcard_match = root.join("axb");
@@ -5305,7 +5312,7 @@ mod tests {
         admit_library_maps(
             &CompileOpts {
                 library_map_files: vec![map
-                    .canonicalize()
+                    .canonical()
                     .expect("canonical literal-base map")
                     .to_string_lossy()
                     .into_owned()],
@@ -5322,7 +5329,7 @@ mod tests {
         assert_eq!(
             library_sources[0].name,
             literal_source
-                .canonicalize()
+                .canonical()
                 .expect("canonical literal source")
                 .to_string_lossy()
         );
@@ -5598,7 +5605,7 @@ mod tests {
         std::fs::write(&map, "include ./nested/../nested/child.map;\n").expect("write root map");
         let opts = CompileOpts {
             library_map_files: vec![map
-                .canonicalize()
+                .canonical()
                 .expect("canonical root map")
                 .to_string_lossy()
                 .into_owned()],
@@ -5622,7 +5629,7 @@ mod tests {
         assert_eq!(
             library_sources[0].name,
             source
-                .canonicalize()
+                .canonical()
                 .expect("canonical mapped source")
                 .to_string_lossy()
         );
@@ -5639,7 +5646,7 @@ mod tests {
         std::fs::write(&source, "module mapped; endmodule\n").expect("write Unicode source");
         std::fs::write(&map, "library L \"é.sv\";\n").expect("write Unicode map");
         let map_name = map
-            .canonicalize()
+            .canonical()
             .expect("canonical Unicode map")
             .to_string_lossy()
             .into_owned();
@@ -5665,7 +5672,7 @@ mod tests {
         assert_eq!(
             library_sources[0].name,
             source
-                .canonicalize()
+                .canonical()
                 .expect("canonical Unicode source")
                 .to_string_lossy()
         );
@@ -6073,10 +6080,7 @@ mod tests {
         let mut work = LibraryMapWorkBudget::new(MAX_LIBRARY_MAP_WORK);
         let matches = expand_library_pattern(&root, "**/*.sv", 8, &mut work)
             .expect("recursive pattern should terminate at symlink directories");
-        assert_eq!(
-            matches,
-            vec![source.canonicalize().expect("canonical source")]
-        );
+        assert_eq!(matches, vec![source.canonical().expect("canonical source")]);
         std::fs::remove_dir_all(root).expect("remove recursive library root");
     }
 }

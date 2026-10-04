@@ -7,9 +7,8 @@
 // and are destroyed after processing, including ignored/error-path events.
 // Mutexes and condition variables are used for full/empty and flush waits.
 
-#ifndef _WIN32
-#define _POSIX_C_SOURCE 200809L
-#endif
+#define LLG_PLATFORM_POSIX_2008 1
+#include "llg_platform.h"
 
 #include "llg_wave.h"
 #include "fstapi.h"
@@ -21,13 +20,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-#else
-#include <pthread.h>
-#include <stdatomic.h>
-#endif
+#include "llg_platform_native.h"
 
 #define LLG_WAVE_QUEUE_CAP 1024u
 #define LLG_WAVE_NO_REG UINT32_MAX
@@ -75,92 +68,6 @@ typedef struct {
     uint32_t first_reg;
 } map_entry_t;
 
-#ifdef _WIN32
-typedef HANDLE wave_thread_t;
-typedef CRITICAL_SECTION wave_mutex_t;
-typedef CONDITION_VARIABLE wave_cond_t;
-typedef DWORD wave_thread_id_t;
-typedef volatile LONG64 wave_atomic_u64_t;
-typedef volatile LONG wave_atomic_int_t;
-
-static void mutex_init(wave_mutex_t* m) { InitializeCriticalSection(m); }
-static void mutex_destroy(wave_mutex_t* m) { DeleteCriticalSection(m); }
-static void mutex_lock(wave_mutex_t* m) { EnterCriticalSection(m); }
-static void mutex_unlock(wave_mutex_t* m) { LeaveCriticalSection(m); }
-static void cond_init(wave_cond_t* c) { InitializeConditionVariable(c); }
-static void cond_destroy(wave_cond_t* c) { (void)c; }
-static void cond_wait(wave_cond_t* c, wave_mutex_t* m) {
-    SleepConditionVariableCS(c, m, INFINITE);
-}
-static void cond_signal(wave_cond_t* c) { WakeConditionVariable(c); }
-static void cond_broadcast(wave_cond_t* c) { WakeAllConditionVariable(c); }
-static wave_thread_id_t thread_self(void) { return GetCurrentThreadId(); }
-static int thread_equal(wave_thread_id_t a, wave_thread_id_t b) { return a == b; }
-static uint64_t atomic_u64_load(const wave_atomic_u64_t* p) {
-    return (uint64_t)InterlockedCompareExchange64((LONG64 volatile*)p, 0, 0);
-}
-static void atomic_u64_store(wave_atomic_u64_t* p, uint64_t v) {
-    InterlockedExchange64(p, (LONG64)v);
-}
-static int atomic_int_load(const wave_atomic_int_t* p) {
-    return (int)InterlockedCompareExchange((LONG volatile*)p, 0, 0);
-}
-static void atomic_int_store(wave_atomic_int_t* p, int v) {
-    InterlockedExchange(p, (LONG)v);
-}
-static int atomic_int_cas_zero(wave_atomic_int_t* p) {
-    return InterlockedCompareExchange(p, 1, 0) == 0;
-}
-// Every Interlocked store above is already a full barrier.
-static void store_load_fence(void) {}
-#define WAVE_THREAD_RETURN DWORD WINAPI
-#define WAVE_THREAD_RESULT 0
-#else
-typedef pthread_t wave_thread_t;
-typedef pthread_mutex_t wave_mutex_t;
-typedef pthread_cond_t wave_cond_t;
-typedef pthread_t wave_thread_id_t;
-typedef _Atomic uint64_t wave_atomic_u64_t;
-typedef _Atomic int wave_atomic_int_t;
-
-static void mutex_init(wave_mutex_t* m) { (void)pthread_mutex_init(m, NULL); }
-static void mutex_destroy(wave_mutex_t* m) { (void)pthread_mutex_destroy(m); }
-static void mutex_lock(wave_mutex_t* m) { (void)pthread_mutex_lock(m); }
-static void mutex_unlock(wave_mutex_t* m) { (void)pthread_mutex_unlock(m); }
-static void cond_init(wave_cond_t* c) { (void)pthread_cond_init(c, NULL); }
-static void cond_destroy(wave_cond_t* c) { (void)pthread_cond_destroy(c); }
-static void cond_wait(wave_cond_t* c, wave_mutex_t* m) {
-    (void)pthread_cond_wait(c, m);
-}
-static void cond_signal(wave_cond_t* c) { (void)pthread_cond_signal(c); }
-static void cond_broadcast(wave_cond_t* c) { (void)pthread_cond_broadcast(c); }
-static wave_thread_id_t thread_self(void) { return pthread_self(); }
-static int thread_equal(wave_thread_id_t a, wave_thread_id_t b) {
-    return pthread_equal(a, b);
-}
-static uint64_t atomic_u64_load(const wave_atomic_u64_t* p) {
-    return atomic_load_explicit(p, memory_order_acquire);
-}
-static void atomic_u64_store(wave_atomic_u64_t* p, uint64_t v) {
-    atomic_store_explicit(p, v, memory_order_release);
-}
-static int atomic_int_load(const wave_atomic_int_t* p) {
-    return atomic_load_explicit(p, memory_order_acquire);
-}
-static void atomic_int_store(wave_atomic_int_t* p, int v) {
-    atomic_store_explicit(p, v, memory_order_release);
-}
-static int atomic_int_cas_zero(wave_atomic_int_t* p) {
-    int expected = 0;
-    return atomic_compare_exchange_strong_explicit(
-        p, &expected, 1, memory_order_acq_rel, memory_order_acquire);
-}
-static void store_load_fence(void) {
-    atomic_thread_fence(memory_order_seq_cst);
-}
-#define WAVE_THREAD_RETURN void*
-#define WAVE_THREAD_RESULT NULL
-#endif
 
 typedef struct {
     FILE* file;
@@ -188,19 +95,19 @@ typedef struct {
     uint32_t map_cap;
     uint64_t precision_fs;
     wave_event_t queue[LLG_WAVE_QUEUE_CAP];
-    wave_atomic_u64_t head;
-    wave_atomic_u64_t tail;
-    wave_atomic_u64_t ack;
-    wave_atomic_int_t error;
-    wave_atomic_int_t worker_alive;
-    wave_atomic_int_t producer_waiting;
-    wave_atomic_int_t consumer_waiting;
-    wave_mutex_t mutex;
-    wave_cond_t not_empty;
-    wave_cond_t not_full;
-    wave_cond_t ack_changed;
-    wave_thread_t worker;
-    wave_thread_id_t producer;
+    llg_atomic_u64_t head;
+    llg_atomic_u64_t tail;
+    llg_atomic_u64_t ack;
+    llg_atomic_int_t error;
+    llg_atomic_int_t worker_alive;
+    llg_atomic_int_t producer_waiting;
+    llg_atomic_int_t consumer_waiting;
+    llg_mutex_t mutex;
+    llg_cond_t not_empty;
+    llg_cond_t not_full;
+    llg_cond_t ack_changed;
+    llg_thread_t worker;
+    llg_thread_id_t producer;
     int initialized;
     int worker_started;
     int producer_dumping;
@@ -220,7 +127,7 @@ static char* wave_strdup(const char* s) {
 }
 
 static void wave_error(const char* fmt, ...) {
-    if (!atomic_int_cas_zero(&g_wave.error)) return;
+    if (!llg_atomic_int_cas(&g_wave.error, 0, 1)) return;
     va_list ap;
     va_start(ap, fmt);
     fputs("llg: waveform: ", stderr);
@@ -235,7 +142,7 @@ static int require_producer(const char* operation) {
                 operation);
         return 0;
     }
-    if (!thread_equal(g_wave.producer, thread_self())) {
+    if (!llg_thread_equal(g_wave.producer, llg_thread_self())) {
         wave_error("%s called from a second producer thread", operation);
         return 0;
     }
@@ -311,58 +218,58 @@ static void event_move(wave_event_t* destination, wave_event_t* source) {
 // and then loads the other side's variable. Release/acquire alone lets both
 // loads observe stale values (x86 store buffering), so a parked thread could
 // miss the publication and its wakeup; a lost wakeup before close's join or a
-// flush acknowledgement wait deadlocks the model. store_load_fence after each
-// store guarantees that at least one side observes the other.
+// flush acknowledgement wait deadlocks the model. llg_atomic_store_load_fence
+// after each store guarantees that at least one side observes the other.
 
 // Consumes the event, including its snapshot allocation.
 static void queue_push(wave_event_t* event) {
-    uint64_t head = atomic_u64_load(&g_wave.head);
-    uint64_t tail = atomic_u64_load(&g_wave.tail);
+    uint64_t head = llg_atomic_u64_load(&g_wave.head);
+    uint64_t tail = llg_atomic_u64_load(&g_wave.tail);
     if (head - tail >= LLG_WAVE_QUEUE_CAP) {
-        mutex_lock(&g_wave.mutex);
-        atomic_int_store(&g_wave.producer_waiting, 1);
-        store_load_fence();
-        while (head - atomic_u64_load(&g_wave.tail) >= LLG_WAVE_QUEUE_CAP) {
-            cond_wait(&g_wave.not_full, &g_wave.mutex);
-            head = atomic_u64_load(&g_wave.head);
+        llg_mutex_lock(&g_wave.mutex);
+        llg_atomic_int_store(&g_wave.producer_waiting, 1);
+        llg_atomic_store_load_fence();
+        while (head - llg_atomic_u64_load(&g_wave.tail) >= LLG_WAVE_QUEUE_CAP) {
+            llg_cond_wait(&g_wave.not_full, &g_wave.mutex);
+            head = llg_atomic_u64_load(&g_wave.head);
         }
-        atomic_int_store(&g_wave.producer_waiting, 0);
-        mutex_unlock(&g_wave.mutex);
+        llg_atomic_int_store(&g_wave.producer_waiting, 0);
+        llg_mutex_unlock(&g_wave.mutex);
     }
 
     event_move(&g_wave.queue[head % LLG_WAVE_QUEUE_CAP], event);
-    atomic_u64_store(&g_wave.head, head + 1u);
-    store_load_fence();
-    if (atomic_int_load(&g_wave.consumer_waiting)) {
-        mutex_lock(&g_wave.mutex);
-        cond_signal(&g_wave.not_empty);
-        mutex_unlock(&g_wave.mutex);
+    llg_atomic_u64_store(&g_wave.head, head + 1u);
+    llg_atomic_store_load_fence();
+    if (llg_atomic_int_load(&g_wave.consumer_waiting)) {
+        llg_mutex_lock(&g_wave.mutex);
+        llg_cond_signal(&g_wave.not_empty);
+        llg_mutex_unlock(&g_wave.mutex);
     }
 }
 
 static wave_event_t queue_pop(void) {
-    uint64_t tail = atomic_u64_load(&g_wave.tail);
-    uint64_t head = atomic_u64_load(&g_wave.head);
+    uint64_t tail = llg_atomic_u64_load(&g_wave.tail);
+    uint64_t head = llg_atomic_u64_load(&g_wave.head);
     if (tail == head) {
-        mutex_lock(&g_wave.mutex);
-        atomic_int_store(&g_wave.consumer_waiting, 1);
-        store_load_fence();
-        while (tail == atomic_u64_load(&g_wave.head)) {
-            cond_wait(&g_wave.not_empty, &g_wave.mutex);
-            tail = atomic_u64_load(&g_wave.tail);
+        llg_mutex_lock(&g_wave.mutex);
+        llg_atomic_int_store(&g_wave.consumer_waiting, 1);
+        llg_atomic_store_load_fence();
+        while (tail == llg_atomic_u64_load(&g_wave.head)) {
+            llg_cond_wait(&g_wave.not_empty, &g_wave.mutex);
+            tail = llg_atomic_u64_load(&g_wave.tail);
         }
-        atomic_int_store(&g_wave.consumer_waiting, 0);
-        mutex_unlock(&g_wave.mutex);
+        llg_atomic_int_store(&g_wave.consumer_waiting, 0);
+        llg_mutex_unlock(&g_wave.mutex);
     }
 
     wave_event_t event = {0};
     event_move(&event, &g_wave.queue[tail % LLG_WAVE_QUEUE_CAP]);
-    atomic_u64_store(&g_wave.tail, tail + 1u);
-    store_load_fence();
-    if (atomic_int_load(&g_wave.producer_waiting)) {
-        mutex_lock(&g_wave.mutex);
-        cond_signal(&g_wave.not_full);
-        mutex_unlock(&g_wave.mutex);
+    llg_atomic_u64_store(&g_wave.tail, tail + 1u);
+    llg_atomic_store_load_fence();
+    if (llg_atomic_int_load(&g_wave.producer_waiting)) {
+        llg_mutex_lock(&g_wave.mutex);
+        llg_cond_signal(&g_wave.not_full);
+        llg_mutex_unlock(&g_wave.mutex);
     }
     return event;
 }
@@ -775,20 +682,11 @@ static void writer_close_file(writer_t* w) {
 
 static int writer_open_resolved(writer_t* w, const char* path);
 
-static int wave_path_is_absolute(const char* path) {
-#if defined(_WIN32)
-    return path[0] == '/' || path[0] == '\\' ||
-           (isalpha((unsigned char)path[0]) && path[1] == ':');
-#else
-    return path[0] == '/';
-#endif
-}
-
 // LLG_SIM_WAVE_FILE replaces the requested name; a relative result is placed
 // under LLG_SIM_OUT_DIR (created by runtime initialization).
 static char* wave_output_path(const char* requested) {
     const char* name = g_wave.file_override ? g_wave.file_override : requested;
-    if (!g_wave.out_dir || name[0] == '\0' || wave_path_is_absolute(name))
+    if (!g_wave.out_dir || name[0] == '\0' || llg_path_is_absolute(name))
         return wave_strdup(name);
     size_t dir_len = strlen(g_wave.out_dir);
     size_t name_len = strlen(name);
@@ -845,7 +743,7 @@ static int writer_open_resolved(writer_t* w, const char* path) {
             return 0;
         }
     }
-    return !atomic_int_load(&g_wave.error);
+    return !llg_atomic_int_load(&g_wave.error);
 }
 
 static int writer_write_header(writer_t* w) {
@@ -853,7 +751,7 @@ static int writer_write_header(writer_t* w) {
     if (w->format == FORMAT_VCD) vcd_header(w);
     else if (w->format == FORMAT_FST) fst_header(w);
     w->header_written = 1;
-    return !atomic_int_load(&g_wave.error);
+    return !llg_atomic_int_load(&g_wave.error);
 }
 
 static int ensure_writer_open(writer_t* w) {
@@ -861,10 +759,10 @@ static int ensure_writer_open(writer_t* w) {
 }
 
 static void acknowledge(uint64_t sequence) {
-    atomic_u64_store(&g_wave.ack, sequence);
-    mutex_lock(&g_wave.mutex);
-    cond_broadcast(&g_wave.ack_changed);
-    mutex_unlock(&g_wave.mutex);
+    llg_atomic_u64_store(&g_wave.ack, sequence);
+    llg_mutex_lock(&g_wave.mutex);
+    llg_cond_broadcast(&g_wave.ack_changed);
+    llg_mutex_unlock(&g_wave.mutex);
 }
 
 static void writer_time(writer_t* w, uint64_t now) {
@@ -938,10 +836,10 @@ static void vcd_off_values(writer_t* w) {
 
 static void process_event(writer_t* w, const wave_event_t* e) {
     if (e->kind == EV_FILE) {
-        if (!atomic_int_load(&g_wave.error)) (void)writer_open(w, e->payload.path);
+        if (!llg_atomic_int_load(&g_wave.error)) (void)writer_open(w, e->payload.path);
         return;
     }
-    if (atomic_int_load(&g_wave.error)) {
+    if (llg_atomic_int_load(&g_wave.error)) {
         if (e->kind == EV_FLUSH) acknowledge(e->arg);
         return;
     }
@@ -1023,7 +921,7 @@ static void process_event(writer_t* w, const wave_event_t* e) {
     }
 }
 
-static WAVE_THREAD_RETURN writer_thread(void* unused) {
+static LLG_THREAD_RETURN writer_thread(void* unused) {
     (void)unused;
     writer_t writer;
     memset(&writer, 0, sizeof(writer));
@@ -1046,47 +944,30 @@ static WAVE_THREAD_RETURN writer_thread(void* unused) {
         // disabled/unselected value; ownership ends here on every such path.
         event_destroy(&event);
     }
-    atomic_int_store(&g_wave.worker_alive, 0);
-    mutex_lock(&g_wave.mutex);
-    cond_broadcast(&g_wave.ack_changed);
-    cond_broadcast(&g_wave.not_full);
-    mutex_unlock(&g_wave.mutex);
-    return WAVE_THREAD_RESULT;
+    llg_atomic_int_store(&g_wave.worker_alive, 0);
+    llg_mutex_lock(&g_wave.mutex);
+    llg_cond_broadcast(&g_wave.ack_changed);
+    llg_cond_broadcast(&g_wave.not_full);
+    llg_mutex_unlock(&g_wave.mutex);
+    return LLG_THREAD_RESULT;
 }
 
 static int start_worker(void) {
     if (g_wave.worker_started) return 1;
-    if (atomic_int_load(&g_wave.error)) return 0;
+    if (llg_atomic_int_load(&g_wave.error)) return 0;
     if (!freeze_registrations()) return 0;
-    atomic_int_store(&g_wave.worker_alive, 1);
-#ifdef _WIN32
-    g_wave.worker = CreateThread(NULL, 0, writer_thread, NULL, 0, NULL);
-    if (!g_wave.worker) {
-        atomic_int_store(&g_wave.worker_alive, 0);
-        wave_error("cannot start writer thread (Win32 error %lu)",
-                   (unsigned long)GetLastError());
+    llg_atomic_int_store(&g_wave.worker_alive, 1);
+    char error[128];
+    if (llg_thread_start(&g_wave.worker, writer_thread, NULL, error, sizeof(error)) != 0) {
+        llg_atomic_int_store(&g_wave.worker_alive, 0);
+        wave_error("cannot start writer thread: %s", error);
         return 0;
     }
-#else
-    int rc = pthread_create(&g_wave.worker, NULL, writer_thread, NULL);
-    if (rc != 0) {
-        atomic_int_store(&g_wave.worker_alive, 0);
-        wave_error("cannot start writer thread: %s", strerror(rc));
-        return 0;
-    }
-#endif
     g_wave.worker_started = 1;
     return 1;
 }
 
-static void join_worker(void) {
-#ifdef _WIN32
-    (void)WaitForSingleObject(g_wave.worker, INFINITE);
-    CloseHandle(g_wave.worker);
-#else
-    (void)pthread_join(g_wave.worker, NULL);
-#endif
-}
+static void join_worker(void) { llg_thread_join(g_wave.worker); }
 
 static void enqueue_simple(event_kind_t kind, uint64_t now, uint64_t arg) {
     wave_event_t event = {0};
@@ -1135,10 +1016,10 @@ static void free_state(void) {
     for (uint32_t i = 0; i < g_wave.reg_count; i++) free(g_wave.regs[i].name);
     free(g_wave.regs);
     free(g_wave.map);
-    mutex_destroy(&g_wave.mutex);
-    cond_destroy(&g_wave.not_empty);
-    cond_destroy(&g_wave.not_full);
-    cond_destroy(&g_wave.ack_changed);
+    llg_mutex_destroy(&g_wave.mutex);
+    llg_cond_destroy(&g_wave.not_empty);
+    llg_cond_destroy(&g_wave.not_full);
+    llg_cond_destroy(&g_wave.ack_changed);
     free(g_wave.out_dir);
     free(g_wave.file_override);
     memset(&g_wave, 0, sizeof(g_wave));
@@ -1150,12 +1031,12 @@ int llg_wave_model_init(uint64_t precision_fs) {
         return -1;
     }
     memset(&g_wave, 0, sizeof(g_wave));
-    mutex_init(&g_wave.mutex);
-    cond_init(&g_wave.not_empty);
-    cond_init(&g_wave.not_full);
-    cond_init(&g_wave.ack_changed);
+    llg_mutex_init(&g_wave.mutex);
+    llg_cond_init(&g_wave.not_empty);
+    llg_cond_init(&g_wave.not_full);
+    llg_cond_init(&g_wave.ack_changed);
     g_wave.precision_fs = precision_fs ? precision_fs : 1u;
-    g_wave.producer = thread_self();
+    g_wave.producer = llg_thread_self();
     const char* out_dir = getenv("LLG_SIM_OUT_DIR");
     const char* file_override = getenv("LLG_SIM_WAVE_FILE");
     if (out_dir && out_dir[0]) g_wave.out_dir = wave_strdup(out_dir);
@@ -1273,13 +1154,13 @@ void llg_wave_dumpall(uint64_t now) {
 
 void llg_wave_flush(uint64_t now) {
     if (!require_producer("$dumpflush") || !start_worker()) return;
-    uint64_t sequence = atomic_u64_load(&g_wave.ack) + 1u;
+    uint64_t sequence = llg_atomic_u64_load(&g_wave.ack) + 1u;
     enqueue_simple(EV_FLUSH, now, sequence);
-    mutex_lock(&g_wave.mutex);
-    while (atomic_u64_load(&g_wave.ack) < sequence &&
-           atomic_int_load(&g_wave.worker_alive))
-        cond_wait(&g_wave.ack_changed, &g_wave.mutex);
-    mutex_unlock(&g_wave.mutex);
+    llg_mutex_lock(&g_wave.mutex);
+    while (llg_atomic_u64_load(&g_wave.ack) < sequence &&
+           llg_atomic_int_load(&g_wave.worker_alive))
+        llg_cond_wait(&g_wave.ack_changed, &g_wave.mutex);
+    llg_mutex_unlock(&g_wave.mutex);
 }
 
 void llg_wave_limit(uint64_t bytes, uint64_t now) {
@@ -1320,7 +1201,7 @@ int llg_wave_close(uint64_t now) {
         enqueue_simple(EV_CLOSE, now, 0);
         join_worker();
     }
-    int result = atomic_int_load(&g_wave.error) ? -1 : 0;
+    int result = llg_atomic_int_load(&g_wave.error) ? -1 : 0;
     free_state();
     return result;
 }

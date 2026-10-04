@@ -340,7 +340,7 @@ int llg_assertion_control(int kind, const sv4_t* args, int n_args,
         uint64_t control_type = values[0];
         if (control_type < 3 || control_type > 5)
             return assertion_control_failure("bounded $assertcontrol supports only ON, OFF, and KILL");
-        operation = control_type - 3;
+        operation = (int)(control_type - 3);
         if (n_args > 1) assertion_type = values[1];
         if (n_args > 2) directive_type = values[2];
         // The optional fourth argument is `levels`. This bounded registry

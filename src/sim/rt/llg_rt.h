@@ -47,6 +47,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "llg_compiler.h"
 #include "llg_value.h"
 #include "llg_string.h"
 #include "llg_rng.h"

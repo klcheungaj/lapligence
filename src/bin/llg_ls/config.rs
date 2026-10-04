@@ -1474,7 +1474,10 @@ mod tests {
             .warnings
             .iter()
             .any(|warning| warning.message.contains("include directory")
-                && warning.message.contains("vendor/inc")));
+                // Normalized with the host separator (`vendor\inc` on Windows).
+                && warning
+                    .message
+                    .contains(&Path::new("vendor").join("inc").display().to_string())));
         let _ = std::fs::remove_dir_all(root);
     }
 }

@@ -5,7 +5,7 @@ use super::*;
 #[test]
 fn hover_on_port_shows_direction_and_type() {
     let a = sample_analysis();
-    let hover = hover_at(&a, "/x/top.sv", 0, 4).expect("hover on port");
+    let hover = hover_at(&a, hp("/x/top.sv"), 0, 4).expect("hover on port");
     let value = match hover.contents {
         HoverContents::Markup(m) => m.value,
         _ => panic!("expected markup hover"),
@@ -17,7 +17,7 @@ fn hover_on_port_shows_direction_and_type() {
 #[test]
 fn hover_on_param_shows_value() {
     let a = sample_analysis();
-    let hover = hover_at(&a, "/x/top.sv", 1, 4).expect("hover on param");
+    let hover = hover_at(&a, hp("/x/top.sv"), 1, 4).expect("hover on param");
     let value = match hover.contents {
         HoverContents::Markup(m) => m.value,
         _ => panic!("expected markup hover"),
@@ -29,7 +29,7 @@ fn hover_on_param_shows_value() {
 #[test]
 fn hover_on_missing_position_is_none() {
     let a = sample_analysis();
-    assert!(hover_at(&a, "/x/top.sv", 9, 9).is_none());
+    assert!(hover_at(&a, hp("/x/top.sv"), 9, 9).is_none());
 }
 
 /// An [`Analysis`] carrying a macro table over one synthetic source:
@@ -46,7 +46,7 @@ fn macro_analysis() -> Analysis {
     let (model, tokens) = sample_parts();
     Analysis::new(Vec::new(), model, tokens, Vec::new()).with_macros(macros::build_table(
         &[],
-        &[("/x/top.sv", text)],
+        &[(hp("/x/top.sv"), text)],
         Some("llg.toml"),
     ))
 }
@@ -55,7 +55,7 @@ fn macro_analysis() -> Analysis {
 fn hover_on_macro_usage_shows_resolved_value() {
     let a = macro_analysis();
     // `` `WIDTH `` starts at 0-based col 4 on line 3; click mid-name.
-    let hover = hover_at(&a, "/x/top.sv", 3, 6).expect("hover on macro usage");
+    let hover = hover_at(&a, hp("/x/top.sv"), 3, 6).expect("hover on macro usage");
     let value = match hover.contents {
         HoverContents::Markup(m) => m.value,
         _ => panic!("expected markup hover"),
@@ -72,7 +72,7 @@ fn hover_on_macro_usage_shows_resolved_value() {
 #[test]
 fn hover_on_undefined_macro_names_the_config() {
     let a = macro_analysis();
-    let hover = hover_at(&a, "/x/top.sv", 4, 5).expect("hover on undefined macro");
+    let hover = hover_at(&a, hp("/x/top.sv"), 4, 5).expect("hover on undefined macro");
     let value = match hover.contents {
         HoverContents::Markup(m) => m.value,
         _ => panic!("expected markup hover"),
@@ -91,7 +91,7 @@ fn hover_on_undefined_macro_names_the_config() {
 fn hover_on_define_site_shows_the_same_value() {
     let a = macro_analysis();
     // The NAME identifier of `` `define WIDTH 8 `` (0-based col 8).
-    let hover = hover_at(&a, "/x/top.sv", 0, 9).expect("hover on define site");
+    let hover = hover_at(&a, hp("/x/top.sv"), 0, 9).expect("hover on define site");
     let value = match hover.contents {
         HoverContents::Markup(m) => m.value,
         _ => panic!("expected markup hover"),
@@ -105,10 +105,10 @@ fn hover_on_function_like_macro_renders_args() {
     let (model, tokens) = sample_parts();
     let a = Analysis::new(Vec::new(), model, tokens, Vec::new()).with_macros(macros::build_table(
         &[],
-        &[("/x/top.sv", text)],
+        &[(hp("/x/top.sv"), text)],
         None,
     ));
-    let hover = hover_at(&a, "/x/top.sv", 1, 5).expect("hover on function-like usage");
+    let hover = hover_at(&a, hp("/x/top.sv"), 1, 5).expect("hover on function-like usage");
     let value = match hover.contents {
         HoverContents::Markup(m) => m.value,
         _ => panic!("expected markup hover"),
@@ -126,7 +126,7 @@ fn hover_on_function_like_macro_renders_args() {
 fn hover_on_function_name_shows_signature_and_scope() {
     let a = sample_analysis();
     // `function int add(...)` at 1-based (4, 8) → 0-based (3, 7).
-    let hover = hover_at(&a, "/x/top.sv", 3, 7).expect("hover on function name");
+    let hover = hover_at(&a, hp("/x/top.sv"), 3, 7).expect("hover on function name");
     let value = match hover.contents {
         HoverContents::Markup(m) => m.value,
         _ => panic!("expected markup hover"),
@@ -146,7 +146,7 @@ fn hover_on_function_name_shows_signature_and_scope() {
 fn hover_on_task_name_shows_signature_and_static() {
     let a = sample_analysis();
     // `task run(...)` at 1-based (5, 8) → 0-based (4, 7).
-    let hover = hover_at(&a, "/x/top.sv", 4, 7).expect("hover on task name");
+    let hover = hover_at(&a, hp("/x/top.sv"), 4, 7).expect("hover on task name");
     let value = match hover.contents {
         HoverContents::Markup(m) => m.value,
         _ => panic!("expected markup hover"),
@@ -159,7 +159,7 @@ fn hover_on_task_name_shows_signature_and_static() {
 fn hover_on_param_decl_shows_elaborated_value_line() {
     let a = sample_analysis();
     // `parameter W` at 1-based (2, 5) → 0-based (1, 4).
-    let hover = hover_at(&a, "/x/top.sv", 1, 4).expect("hover on param decl");
+    let hover = hover_at(&a, hp("/x/top.sv"), 1, 4).expect("hover on param decl");
     let value = match hover.contents {
         HoverContents::Markup(m) => m.value,
         _ => panic!("expected markup hover"),
@@ -178,11 +178,11 @@ fn hover_on_bound_param_reference_shows_elaborated_value() {
     // in a different file than its declaration.
     let mut bindings: RefBindings = HashMap::new();
     bindings.insert(
-        ("/x/other.sv".to_owned(), 6, 2),
+        (hp("/x/other.sv").to_owned(), 6, 2),
         DeclTarget {
             name: "W".to_owned(),
             kind: "parameter".to_owned(),
-            file: "/x/top.sv".to_owned(),
+            file: hp("/x/top.sv").to_owned(),
             line0: 1,
             col0: 4,
             via_label: false,
@@ -190,7 +190,7 @@ fn hover_on_bound_param_reference_shows_elaborated_value() {
         },
     );
     let a = sample_analysis_with_bindings(bindings);
-    let hover = hover_at(&a, "/x/other.sv", 6, 2).expect("hover on bound W ref");
+    let hover = hover_at(&a, hp("/x/other.sv"), 6, 2).expect("hover on bound W ref");
     let value = match hover.contents {
         HoverContents::Markup(m) => m.value,
         _ => panic!("expected markup hover"),
@@ -215,9 +215,9 @@ fn unresolved_semantic_reference_does_not_fall_back_by_name() {
         end_col: 4,
         kind: tokens::TOKEN_SLANG_PARAMETER,
         name: Some("W".to_owned()),
-        file: "/x/top.sv".to_owned(),
+        file: hp("/x/top.sv").to_owned(),
     });
-    let key = ("/x/top.sv".to_owned(), 6, 2);
+    let key = (hp("/x/top.sv").to_owned(), 6, 2);
     let analysis = Analysis::new_with_outcome(
         AnalysisOutcome::Valid,
         Vec::new(),
@@ -231,9 +231,9 @@ fn unresolved_semantic_reference_does_not_fall_back_by_name() {
         },
     );
 
-    assert!(definition_at(&analysis, "/x/top.sv", 6, 2).is_none());
-    assert!(hover_at(&analysis, "/x/top.sv", 6, 2).is_none());
-    assert!(references_at(&analysis, "/x/top.sv", 6, 2).is_empty());
+    assert!(definition_at(&analysis, hp("/x/top.sv"), 6, 2).is_none());
+    assert!(hover_at(&analysis, hp("/x/top.sv"), 6, 2).is_none());
+    assert!(references_at(&analysis, hp("/x/top.sv"), 6, 2).is_empty());
 }
 
 #[test]
@@ -241,7 +241,7 @@ fn hover_on_unresolved_param_omits_the_value_line() {
     let (mut model, tokens) = sample_parts();
     model.top_instances[0].params[0].value = None;
     let a = Analysis::new(Vec::new(), model, tokens, Vec::new());
-    let hover = hover_at(&a, "/x/top.sv", 1, 4).expect("hover on unresolved param");
+    let hover = hover_at(&a, hp("/x/top.sv"), 1, 4).expect("hover on unresolved param");
     let value = match hover.contents {
         HoverContents::Markup(m) => m.value,
         _ => panic!("expected markup hover"),
@@ -257,7 +257,7 @@ fn hover_on_non_param_symbols_has_no_value_line() {
     let a = sample_analysis();
     for (line, col, what) in [(0u32, 4u32, "port clk"), (0, 19, "instance u0")] {
         let hover =
-            hover_at(&a, "/x/top.sv", line, col).unwrap_or_else(|| panic!("hover on {what}"));
+            hover_at(&a, hp("/x/top.sv"), line, col).unwrap_or_else(|| panic!("hover on {what}"));
         let value = match hover.contents {
             HoverContents::Markup(m) => m.value,
             _ => panic!("expected markup hover on {what}"),
@@ -303,9 +303,9 @@ fn param_elab_value_is_scoped_and_omits_divergent_overrides() {
     let a = Analysis::new(Vec::new(), model, tokens, Vec::new());
 
     // W diverges across clones → ambiguous at module granularity → None.
-    assert_eq!(param_elab_value(&a, "/x/top.sv", 1, "W"), None);
+    assert_eq!(param_elab_value(&a, hp("/x/top.sv"), 1, "W"), None);
     // BRANCH diverges across the clones' g_wide scopes → ambiguous too.
-    assert_eq!(param_elab_value(&a, "/x/top.sv", 2, "BRANCH"), None);
+    assert_eq!(param_elab_value(&a, hp("/x/top.sv"), 2, "BRANCH"), None);
 
     // Making both clones agree resolves the value even from a gen-scope.
     let (mut model, tokens) = sample_parts();
@@ -332,12 +332,12 @@ fn param_elab_value_is_scoped_and_omits_divergent_overrides() {
     model.top_instances[1].gen_scopes = model.top_instances[0].gen_scopes.clone();
     let a = Analysis::new(Vec::new(), model, tokens, Vec::new());
     assert_eq!(
-        param_elab_value(&a, "/x/top.sv", 1, "W"),
+        param_elab_value(&a, hp("/x/top.sv"), 1, "W"),
         Some(&bits(8)),
         "unanimous clones resolve to the shared value"
     );
     assert_eq!(
-        param_elab_value(&a, "/x/top.sv", 2, "BRANCH"),
+        param_elab_value(&a, hp("/x/top.sv"), 2, "BRANCH"),
         Some(&bits(8)),
         "generate-scope parameters resolve through their gen scopes"
     );
@@ -351,7 +351,7 @@ fn param_elab_value_is_scoped_and_omits_divergent_overrides() {
     u1.params[0].value = Some(bits(4));
     model.top_instances.push(u1);
     let a = Analysis::new(Vec::new(), model, tokens, Vec::new());
-    let hover = hover_at(&a, "/x/top.sv", 1, 4).expect("hover on ambiguous param");
+    let hover = hover_at(&a, hp("/x/top.sv"), 1, 4).expect("hover on ambiguous param");
     let value = match hover.contents {
         HoverContents::Markup(m) => m.value,
         _ => panic!("expected markup hover"),

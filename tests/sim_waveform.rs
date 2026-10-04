@@ -882,7 +882,7 @@ fn run_time_output_settings_redirect_one_built_model() {
         run(&first);
         let one = dir.path().join("runs/one");
         assert_eq!(
-            std::fs::read_to_string(one.join("note.txt")).unwrap(),
+            sim_harness::read_text_output(&one.join("note.txt")).unwrap(),
             "note a5\n"
         );
         let mem = std::fs::read_to_string(one.join("mem.hex")).unwrap();

@@ -138,7 +138,7 @@ class ExecutionTests(unittest.TestCase):
             self.assertEqual(failure["status"], "failed")
             self.assertEqual(missing["status"], "blocked")
             report = runner.save({"scope": "unit-test"})
-            self.assertEqual(len(json.loads(report.read_text())["checks"]), 3)
+            self.assertEqual(len(json.loads(report.read_text(encoding="utf-8"))["checks"]), 3)
             self.assertFalse(report.with_suffix(".tmp").exists())
 
     def test_timeout_is_not_a_pass(self):
@@ -165,10 +165,10 @@ class ExecutionTests(unittest.TestCase):
             root = Path(directory)
             with self.assertRaises(ValueError):
                 find_product(root, "Release", ["probe"])
-            (root / "probe").write_text("single")
+            (root / "probe").write_text("single", encoding="utf-8")
             self.assertEqual(find_product(root, "Release", ["probe"]), root / "probe")
             (root / "Release").mkdir()
-            (root / "Release/probe").write_text("stale")
+            (root / "Release/probe").write_text("stale", encoding="utf-8")
             with self.assertRaises(ValueError):
                 find_product(root, "Release", ["probe"])
 

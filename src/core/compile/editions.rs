@@ -1164,7 +1164,7 @@ pub(super) fn edition_diagnostics(
             && node.name.starts_with('$')
             && !system_name_allowed(&node.name, edition, &extensions)
         {
-            violations.push((node.range, node.name.clone()));
+            violations.push((node.range, node.name.to_string()));
         }
         // Auxiliary tags are kind-scoped: an expression's numeric subtype is
         // not an assertion-statement tag, nor a streaming slice a final flag.

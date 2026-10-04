@@ -1,0 +1,13 @@
+Time scale of (tb.c) is 1ns / 1ps
+Time scale of (tb) is 1us / 1ns
+Time scale of (tb) is 1us / 1ns
+Time scale of (tb.c) is 1ns / 1ps
+Time scale of (tb.arr[2]) is 10ns / 100ps
+Time scale of (tb.g.inner) is 10ns / 100ps
+Time scale of (tb.bus) is 100us / 10us
+Time scale of (tb.p) is 1ms / 1us
+Time scale of ($unit) is 100ps / 10ps
+Time scale of (tb.c) is 1ns / 1ps
+Time scale of (tb.bus) is 100us / 10us
+Time scale of (pkg) is 10fs / 1fs
+Time scale of ($unit) is 100ps / 10ps

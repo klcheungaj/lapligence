@@ -1,7 +1,8 @@
 //! Safe, owned Rust facade over the Slang C ABI.
 //!
-//! Native snapshots are borrowed only while being decoded. No Slang pointer or
-//! native allocation escapes [`compile`].
+//! [`compile`] receives the finished capture through the ABI v11 record
+//! stream (see the `stream` module) and owns every decoded record. No Slang
+//! pointer or native allocation escapes it.
 
 #![deny(clippy::undocumented_unsafe_blocks)]
 #![deny(unsafe_op_in_unsafe_fn)]
@@ -9,26 +10,31 @@
 #![allow(clippy::duplicated_attributes)]
 
 use std::collections::HashSet;
+use std::sync::Arc;
 use std::{fmt, ptr, slice, str};
 
-mod snapshot;
-use snapshot::decode_snapshot;
-#[cfg(test)]
-use snapshot::{decode_line_directives, decode_source_libraries};
+mod sources;
+use sources::{decode_line_directive, decode_source_library, finish_line_directives};
 mod semantics;
-use semantics::{decode_semantic_edges, decode_semantic_nodes, decode_udp_tables};
+use semantics::{
+    decode_semantic_edge, decode_semantic_node, decode_udp_row, decode_udp_table, PendingUdpRow,
+    SemanticNodeContext, TextInterner, UdpOverlapValidator, UdpTableContext,
+};
 #[cfg(test)]
 use semantics::{decode_semantic_operation, validate_semantic_subkind};
 mod tokens;
-use tokens::decode_lexical_tokens;
+use tokens::decode_lexical_token;
 mod diagnostics;
-use diagnostics::{decode_diagnostics, decode_related};
+use diagnostics::{decode_diagnostic, decode_related};
 mod values;
 use values::{
-    decode_constants, decode_instances, decode_parameters, decode_types, validate_parameter_windows,
+    decode_constant, decode_instance, decode_parameter, decode_type, decode_type_member,
+    decode_type_range,
 };
+mod stream;
+use stream::{sink_for, StreamBuilder};
 
-const ABI_VERSION: u32 = 10;
+const ABI_VERSION: u32 = 11;
 const INVALID_ID: u64 = u64::MAX;
 
 const STATUS_OK: u32 = 0;
@@ -36,6 +42,7 @@ const STATUS_INVALID_ARGUMENT: u32 = 1;
 const STATUS_LIMIT_EXCEEDED: u32 = 2;
 const STATUS_FRONTEND_ERROR: u32 = 3;
 const STATUS_INTERNAL_ERROR: u32 = 4;
+const STATUS_SINK_ABORTED: u32 = 5;
 
 const COMPILE_LIBRARY_UNITS: u32 = 1 << 0;
 const COMPILE_EDITION_VERILOG_2001: u32 = 1 << 1;
@@ -893,7 +900,8 @@ pub struct SemanticEdge {
     pub index: u32,
     pub target_id: u64,
     /// SequenceConcat delay metadata, when this edge is a sequence element.
-    pub sequence_delay: Option<SemanticSequenceRange>,
+    /// Boxed because it is rare: the edge table is one of the largest.
+    pub sequence_delay: Option<Box<SemanticSequenceRange>>,
 }
 
 /// A checked inclusive sequence cycle range. `None` for `max` means the
@@ -902,6 +910,106 @@ pub struct SemanticEdge {
 pub struct SemanticSequenceRange {
     pub min: u32,
     pub max: Option<u32>,
+}
+
+/// Immutable text shared by every semantic node with the same spelling.
+///
+/// A design repeats few distinct node names and Slang kind spellings across
+/// many nodes, so the capture receiver interns them: each node holds a
+/// reference-counted view instead of its own allocation. It reads like a
+/// `str` (`Deref`, comparisons with `str`/`String`, `Display`).
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct SemanticText(Arc<str>);
+
+impl SemanticText {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl Default for SemanticText {
+    fn default() -> Self {
+        Self(Arc::from(""))
+    }
+}
+
+impl std::ops::Deref for SemanticText {
+    type Target = str;
+    fn deref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl AsRef<str> for SemanticText {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::borrow::Borrow<str> for SemanticText {
+    fn borrow(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<&str> for SemanticText {
+    fn from(value: &str) -> Self {
+        Self(Arc::from(value))
+    }
+}
+
+impl From<String> for SemanticText {
+    fn from(value: String) -> Self {
+        Self(Arc::from(value))
+    }
+}
+
+impl PartialEq<str> for SemanticText {
+    fn eq(&self, other: &str) -> bool {
+        &*self.0 == other
+    }
+}
+
+impl PartialEq<&str> for SemanticText {
+    fn eq(&self, other: &&str) -> bool {
+        &*self.0 == *other
+    }
+}
+
+impl PartialEq<String> for SemanticText {
+    fn eq(&self, other: &String) -> bool {
+        *self.0 == **other
+    }
+}
+
+impl PartialEq<SemanticText> for str {
+    fn eq(&self, other: &SemanticText) -> bool {
+        self == &*other.0
+    }
+}
+
+impl PartialEq<SemanticText> for &str {
+    fn eq(&self, other: &SemanticText) -> bool {
+        *self == &*other.0
+    }
+}
+
+impl PartialEq<SemanticText> for String {
+    fn eq(&self, other: &SemanticText) -> bool {
+        **self == *other.0
+    }
+}
+
+impl fmt::Debug for SemanticText {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(&*self.0, formatter)
+    }
+}
+
+impl fmt::Display for SemanticText {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&*self.0, formatter)
+    }
 }
 
 /// One node in the bounded, owned elaborated semantic graph.
@@ -948,10 +1056,10 @@ pub struct SemanticNode {
     pub method_with_clause: bool,
     pub definition_kind: Option<SemanticDefinitionKind>,
     /// Symbol/expression name; a time literal carries its exact expanded token.
-    pub name: String,
+    pub name: SemanticText,
     /// Exact Slang kind spelling, retained for unsupported constructs.
-    pub detail: String,
-    pub definition_name: String,
+    pub detail: SemanticText,
+    pub definition_name: SemanticText,
     pub range: Option<SourceRange>,
     pub type_id: Option<u64>,
     pub constant_id: Option<u64>,
@@ -1416,44 +1524,55 @@ struct RawLexicalToken {
     text: RawString,
 }
 
+/// Mirrors `LlgSlangStreamHeader`.
 #[repr(C)]
-struct RawSnapshotView {
+struct RawStreamHeader {
     abi_version: u32,
     flags: u32,
-    files: *const RawFile,
     file_count: u64,
-    diagnostics: *const RawDiagnostic,
-    diagnostic_count: u64,
-    related_diagnostics: *const RawRelatedDiagnostic,
     related_diagnostic_count: u64,
-    instances: *const RawInstance,
-    instance_count: u64,
-    parameters: *const RawParameter,
-    parameter_count: u64,
-    types: *const RawType,
-    type_count: u64,
-    constants: *const RawConstant,
-    constant_count: u64,
-    value_words: *const u64,
+    diagnostic_count: u64,
     value_word_count: u64,
-    semantic_nodes: *const RawSemanticNode,
-    semantic_node_count: u64,
-    semantic_edges: *const RawSemanticEdge,
-    semantic_edge_count: u64,
-    lexical_tokens: *const RawLexicalToken,
-    lexical_token_count: u64,
-    type_ranges: *const RawTypeRange,
+    constant_count: u64,
     type_range_count: u64,
-    type_members: *const RawTypeMember,
     type_member_count: u64,
-    udp_tables: *const RawUdpTable,
-    udp_table_count: u64,
-    udp_rows: *const RawUdpRow,
+    type_count: u64,
+    parameter_count: u64,
+    instance_count: u64,
+    semantic_edge_count: u64,
+    semantic_node_count: u64,
     udp_row_count: u64,
-    source_libraries: *const RawSourceLibrary,
+    udp_table_count: u64,
+    lexical_token_count: u64,
     source_library_count: u64,
-    line_directives: *const RawLineDirective,
     line_directive_count: u64,
+}
+
+type RawBatch<T> = unsafe extern "C" fn(*mut std::ffi::c_void, *const T, u64) -> u32;
+
+/// Mirrors `LlgSlangSink`.
+#[repr(C)]
+struct RawSink {
+    context: *mut std::ffi::c_void,
+    begin: unsafe extern "C" fn(*mut std::ffi::c_void, *const RawStreamHeader) -> u32,
+    files: RawBatch<RawFile>,
+    related_diagnostics: RawBatch<RawRelatedDiagnostic>,
+    diagnostics: RawBatch<RawDiagnostic>,
+    value_words: RawBatch<u64>,
+    constants: RawBatch<RawConstant>,
+    type_ranges: RawBatch<RawTypeRange>,
+    type_members: RawBatch<RawTypeMember>,
+    types: RawBatch<RawType>,
+    parameters: RawBatch<RawParameter>,
+    instances: RawBatch<RawInstance>,
+    semantic_edges: RawBatch<RawSemanticEdge>,
+    semantic_nodes: RawBatch<RawSemanticNode>,
+    udp_rows: RawBatch<RawUdpRow>,
+    udp_tables: RawBatch<RawUdpTable>,
+    lexical_tokens: RawBatch<RawLexicalToken>,
+    source_libraries: RawBatch<RawSourceLibrary>,
+    line_directives: RawBatch<RawLineDirective>,
+    end: unsafe extern "C" fn(*mut std::ffi::c_void) -> u32,
 }
 
 #[repr(C)]
@@ -1463,38 +1582,23 @@ struct RawErrorView {
     message: RawString,
 }
 
-enum RawSnapshot {}
 enum RawError {}
 
-// SAFETY: declarations mirror `src/wrapper/slang_c_api.h`; inputs remain valid
-// for each blocking call, returned owners are destroyed by the matching shim
-// function, and borrowed views are copied before their owner is destroyed.
+// SAFETY: declarations mirror `src/wrapper/slang_c_api.h`; inputs and the
+// sink remain valid for each blocking call, the returned error owner is
+// destroyed by the matching shim function, and borrowed views are copied
+// before their owner is destroyed.
 #[link(name = "llg_slang_wrapper", kind = "static")]
 #[link(name = "svlang", kind = "static")]
 #[link(name = "fmt", kind = "static")]
 unsafe extern "C" {
     fn llg_slang_compile(
         request: *const RawCompileRequest,
-        out_snapshot: *mut *mut RawSnapshot,
-        out_error: *mut *mut RawError,
-    ) -> u32;
-    fn llg_slang_snapshot_view(
-        snapshot: *const RawSnapshot,
-        out_view: *mut RawSnapshotView,
+        sink: *const RawSink,
         out_error: *mut *mut RawError,
     ) -> u32;
     fn llg_slang_error_view(error: *const RawError, out_view: *mut RawErrorView) -> u32;
-    fn llg_slang_snapshot_destroy(snapshot: *mut RawSnapshot);
     fn llg_slang_error_destroy(error: *mut RawError);
-}
-
-struct SnapshotOwner(*mut RawSnapshot);
-
-impl Drop for SnapshotOwner {
-    fn drop(&mut self) {
-        // SAFETY: this pointer is null or the unique owner returned by the shim.
-        unsafe { llg_slang_snapshot_destroy(self.0) };
-    }
 }
 
 struct ErrorOwner(*mut RawError);
@@ -1506,10 +1610,62 @@ impl Drop for ErrorOwner {
     }
 }
 
-/// Compile admitted in-memory sources and copy the native snapshot into Rust.
+/// Compile admitted in-memory sources and receive the native capture stream
+/// into an owned [`Snapshot`].
 pub fn compile(request: &CompileRequest<'_>) -> Result<Snapshot, SlangError> {
     validate_request(request)?;
+    let mut builder = StreamBuilder::new(request.options.limits);
+    let sink = sink_for(&mut builder);
+    // The sink's context is `builder`, which is not otherwise used until the
+    // blocking call returns.
+    let (status, error) = call_native(request, &sink);
+    // A receiver's own error explains a sink abort better than the bridge's
+    // generic message.
+    if let Some(stream_error) = builder.take_error() {
+        return Err(stream_error);
+    }
+    if status != STATUS_OK {
+        return Err(take_native_error(status, error));
+    }
+    if !error.0.is_null() {
+        return Err(invalid_native(
+            "successful compile returned an unexpected error owner",
+        ));
+    }
+    let (mut decoded, _stream_stage) = builder.finish()?;
+    if decoded.edition != request.options.edition {
+        return Err(invalid_native(
+            "native snapshot language edition does not match the compile request",
+        ));
+    }
+    for file in &mut decoded.files {
+        let source_text = request
+            .sources
+            .iter()
+            .find(|source| source.name == file.name)
+            .map(|source| source.text)
+            .or_else(|| {
+                request
+                    .library_sources
+                    .iter()
+                    .find(|source| source.name == file.name)
+                    .map(|source| source.text)
+            })
+            .ok_or_else(|| invalid_native("snapshot file was not an admitted source"))?;
+        if source_text.len() as u64 != file.byte_len {
+            return Err(invalid_native(
+                "snapshot file length does not match admitted source",
+            ));
+        }
+        file.text = source_text.to_owned();
+    }
+    Ok(decoded)
+}
 
+/// Run one blocking native compile of a validated `request`, delivering the
+/// capture to `sink`. The caller keeps the sink's context exclusively
+/// reserved for the call.
+fn call_native(request: &CompileRequest<'_>, sink: &RawSink) -> (u32, ErrorOwner) {
     let raw_sources: Vec<_> = request
         .sources
         .iter()
@@ -1643,61 +1799,13 @@ pub fn compile(request: &CompileRequest<'_>) -> Result<Snapshot, SlangError> {
         },
     };
 
-    let mut snapshot = ptr::null_mut();
     let mut error = ptr::null_mut();
-    let native_stage = crate::profile::Stage::new("native");
     // SAFETY: all request pointers refer to live vectors or borrowed strings
-    // that remain valid for this blocking call; output pointers are writable.
-    let status = unsafe { llg_slang_compile(&raw_request, &mut snapshot, &mut error) };
-    if status != STATUS_OK {
-        let _unexpected_snapshot = SnapshotOwner(snapshot);
-        return Err(take_native_error(status, error));
-    }
-    let unexpected_error = ErrorOwner(error);
-    if !unexpected_error.0.is_null() {
-        let _snapshot = SnapshotOwner(snapshot);
-        return Err(invalid_native(
-            "successful compile returned an unexpected error owner",
-        ));
-    }
-    if snapshot.is_null() {
-        return Err(invalid_native("successful compile returned no snapshot"));
-    }
-    drop(native_stage);
-    let snapshot = SnapshotOwner(snapshot);
-    let decode_stage = crate::profile::Stage::new("ffi.decode");
-    let mut decoded = decode_snapshot(&snapshot, &limits)?;
-    if decoded.edition != request.options.edition {
-        return Err(invalid_native(
-            "native snapshot language edition does not match the compile request",
-        ));
-    }
-    for file in &mut decoded.files {
-        let source_text = request
-            .sources
-            .iter()
-            .find(|source| source.name == file.name)
-            .map(|source| source.text)
-            .or_else(|| {
-                request
-                    .library_sources
-                    .iter()
-                    .find(|source| source.name == file.name)
-                    .map(|source| source.text)
-            })
-            .ok_or_else(|| invalid_native("snapshot file was not an admitted source"))?;
-        if source_text.len() as u64 != file.byte_len {
-            return Err(invalid_native(
-                "snapshot file length does not match admitted source",
-            ));
-        }
-        file.text = source_text.to_owned();
-    }
-    drop(unexpected_error);
-    drop(decode_stage);
-    let _release_stage = crate::profile::Stage::new("ffi.release");
-    drop(snapshot);
-    Ok(decoded)
+    // that remain valid for this blocking call; the sink's callbacks match
+    // the header's signatures and its context is reserved by the caller; the
+    // error output pointer is writable.
+    let status = unsafe { llg_slang_compile(&raw_request, sink, &mut error) };
+    (status, ErrorOwner(error))
 }
 
 fn validate_request(request: &CompileRequest<'_>) -> Result<(), SlangError> {
@@ -2040,9 +2148,8 @@ fn charge_output_string(total: &mut u64, raw: RawString, limit: u64) -> Result<(
     Ok(())
 }
 
-fn take_native_error(status: u32, error: *mut RawError) -> SlangError {
+fn take_native_error(status: u32, owner: ErrorOwner) -> SlangError {
     let kind = status_kind(status);
-    let owner = ErrorOwner(error);
     if owner.0.is_null() {
         return SlangError::new(kind, format!("Slang failed with status {status}"));
     }
@@ -2073,7 +2180,7 @@ fn status_kind(status: u32) -> SlangErrorKind {
         STATUS_INVALID_ARGUMENT => SlangErrorKind::InvalidArgument,
         STATUS_LIMIT_EXCEEDED => SlangErrorKind::LimitExceeded,
         STATUS_FRONTEND_ERROR => SlangErrorKind::Frontend,
-        STATUS_INTERNAL_ERROR => SlangErrorKind::Internal,
+        STATUS_INTERNAL_ERROR | STATUS_SINK_ABORTED => SlangErrorKind::Internal,
         _ => SlangErrorKind::InvalidNativeData,
     }
 }

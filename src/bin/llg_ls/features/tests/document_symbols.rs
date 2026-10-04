@@ -5,7 +5,7 @@ use super::*;
 #[test]
 fn document_symbols_contain_module_with_port_child() {
     let a = sample_analysis();
-    let syms = document_symbols(&a, "/x/top.sv");
+    let syms = document_symbols(&a, hp("/x/top.sv"));
     let module = syms.iter().find(|s| s.name == "m").expect("module symbol");
     assert_eq!(module.kind, SymbolKind::MODULE);
     assert_eq!(module.range.start.line, 0);
@@ -25,7 +25,7 @@ fn document_symbols_contain_module_with_port_child() {
 #[test]
 fn document_symbols_include_functions_and_tasks() {
     let a = sample_analysis();
-    let syms = document_symbols(&a, "/x/top.sv");
+    let syms = document_symbols(&a, hp("/x/top.sv"));
     let add = syms
         .iter()
         .find(|s| s.name == "add")
@@ -48,7 +48,7 @@ fn document_symbol_children_carry_type_only_details() {
     // `parameter W: int = 32'sd8`); document-symbol children must render
     // the type text without the declared name.
     let a = sample_analysis();
-    let syms = document_symbols(&a, "/x/top.sv");
+    let syms = document_symbols(&a, hp("/x/top.sv"));
     let module = syms.iter().find(|s| s.name == "m").expect("module symbol");
     let children = module.children.as_ref().expect("children");
     let port = children
@@ -66,12 +66,12 @@ fn decl_details_drive_type_only_details() {
     // Keys are the 1-based declaration positions of `clk` and `W`.
     let mut snippets = HashMap::new();
     snippets.insert(
-        ("/x/top.sv".to_owned(), 1u32, 5u32),
+        (hp("/x/top.sv").to_owned(), 1u32, 5u32),
         "input logic [1:0] clk".to_owned(),
     );
-    snippets.insert(("/x/top.sv".to_owned(), 2u32, 5u32), "int W".to_owned());
+    snippets.insert((hp("/x/top.sv").to_owned(), 2u32, 5u32), "int W".to_owned());
     let a = a.with_decl_details(snippets);
-    let syms = document_symbols(&a, "/x/top.sv");
+    let syms = document_symbols(&a, hp("/x/top.sv"));
     let module = syms.iter().find(|s| s.name == "m").expect("module symbol");
     let children = module.children.as_ref().expect("children");
     let port = children
@@ -101,7 +101,7 @@ fn hierarchy_parts() -> (DesignModel, Vec<FileTokens>) {
         name: "u0".to_owned(),
         def_name: "m".to_owned(),
         full_name: "tb.u0".to_owned(),
-        file: Some("/x/top.sv".to_owned()),
+        file: Some(hp("/x/top.sv").to_owned()),
         line: 2,
         col: 9,
         ports: vec![leaf_port],
@@ -115,7 +115,7 @@ fn hierarchy_parts() -> (DesignModel, Vec<FileTokens>) {
         name: "tb".to_owned(),
         def_name: "top".to_owned(),
         full_name: "tb".to_owned(),
-        file: Some("/x/top.sv".to_owned()),
+        file: Some(hp("/x/top.sv").to_owned()),
         line: 6,
         col: 3,
         ports: Vec::new(),
@@ -131,7 +131,7 @@ fn hierarchy_parts() -> (DesignModel, Vec<FileTokens>) {
         modules: vec![
             ModuleDef {
                 name: "top".to_owned(),
-                file: Some("/x/top.sv".to_owned()),
+                file: Some(hp("/x/top.sv").to_owned()),
                 line: 5,
                 col: 8,
                 end_line: 7,
@@ -139,7 +139,7 @@ fn hierarchy_parts() -> (DesignModel, Vec<FileTokens>) {
             },
             ModuleDef {
                 name: "m".to_owned(),
-                file: Some("/x/top.sv".to_owned()),
+                file: Some(hp("/x/top.sv").to_owned()),
                 line: 1,
                 col: 8,
                 end_line: 3,
@@ -150,7 +150,7 @@ fn hierarchy_parts() -> (DesignModel, Vec<FileTokens>) {
         classes: Vec::new(),
     };
     let tokens = vec![FileTokens {
-        path: "/x/top.sv".to_owned(),
+        path: hp("/x/top.sv").to_owned(),
         nodes: vec![
             TokenInfo {
                 line: 2,
@@ -159,7 +159,7 @@ fn hierarchy_parts() -> (DesignModel, Vec<FileTokens>) {
                 end_col: 11,
                 kind: tokens::TOKEN_SLANG_IDENTIFIER + tokens::TOKEN_DECLARATION_OFFSET,
                 name: Some("u0".to_owned()),
-                file: "/x/top.sv".to_owned(),
+                file: hp("/x/top.sv").to_owned(),
             },
             TokenInfo {
                 line: 6,
@@ -168,7 +168,7 @@ fn hierarchy_parts() -> (DesignModel, Vec<FileTokens>) {
                 end_col: 5,
                 kind: tokens::TOKEN_SLANG_IDENTIFIER + tokens::TOKEN_DECLARATION_OFFSET,
                 name: Some("tb".to_owned()),
-                file: "/x/top.sv".to_owned(),
+                file: hp("/x/top.sv").to_owned(),
             },
         ],
     }];
@@ -179,7 +179,7 @@ fn hierarchy_parts() -> (DesignModel, Vec<FileTokens>) {
 fn document_symbols_attach_instance_children_with_type_detail() {
     let (model, tokens) = hierarchy_parts();
     let a = Analysis::new(Vec::new(), model, tokens, Vec::new());
-    let syms = document_symbols(&a, "/x/top.sv");
+    let syms = document_symbols(&a, hp("/x/top.sv"));
 
     // `top` instantiates `m` through `u0`: an Object-kind leaf whose
     // detail is the instantiated TYPE, ranged over the refined

@@ -54,10 +54,10 @@ fn test_build_directory_child() {
         return;
     };
     let expected = std::path::PathBuf::from(expected);
-    // TempDir resolves Unix paths (macOS temp_dir() is a /var symlink into
-    // /private/var), so compare against the resolved root.
-    #[cfg(unix)]
-    let expected = expected.canonicalize().unwrap_or(expected);
+    // TempDir resolves its path (macOS temp_dir() is a /var symlink into
+    // /private/var; Windows may spell it with 8.3 short names), so compare
+    // against the resolved root.
+    let expected = llg::ffi::platform::canonicalize(&expected).unwrap_or(expected);
     let error = std::env::var("LLG_TEST_BUILD_PROBE_ERROR").expect("probe error setting");
     if !error.is_empty() {
         let actual = sim_harness::TempDir::new("invalid-root")
@@ -175,4 +175,18 @@ fn nested_cwd_guards_restore_each_scope() {
             original
         );
     });
+}
+
+/// Windows console and text-mode file output keep the native CRLF newline;
+/// comparisons normalize exactly the CRLF pairs and nothing else.
+#[test]
+fn crlf_normalization_rewrites_only_crlf_pairs() {
+    assert_eq!(
+        sim_harness::crlf_to_lf(b"a\r\nb\r\n\r\nc\rd\n\r".to_vec()),
+        b"a\nb\n\nc\rd\n\r"
+    );
+    assert_eq!(sim_harness::crlf_to_lf(b"plain\n".to_vec()), b"plain\n");
+    let host = sim_harness::host_text_to_lf(b"x\r\n".to_vec());
+    let expected: &[u8] = if cfg!(windows) { b"x\n" } else { b"x\r\n" };
+    assert_eq!(host, expected);
 }

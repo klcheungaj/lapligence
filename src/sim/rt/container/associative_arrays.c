@@ -106,10 +106,10 @@ sv4_t llg_assoc_reduce_with(const llg_assoc_t* array, int operation,
         sv4_t value = llg_container_eval(
             eval, array->entries[i].value, index, context);
         sv4_replace(&value, llg_element_assign(value, result_width, result_signed,
-                                               result_two_state));
+                                               (uint8_t)result_two_state));
         sv4_replace(&result, llg_reduce_step(result, value, operation));
         sv4_replace(&result, llg_element_assign(result, result_width,
-                                               result_signed, result_two_state));
+                                               result_signed, (uint8_t)result_two_state));
         sv4_destroy(&value);
         sv4_destroy(&index);
     }

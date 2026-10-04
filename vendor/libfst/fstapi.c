@@ -22,10 +22,6 @@
  * SPDX-License-Identifier: MIT
  */
 
-#if !defined(_WIN32) && !defined(_GNU_SOURCE)
-#define _GNU_SOURCE
-#endif
-
 /*
  * possible disables:
  *
@@ -118,10 +114,9 @@ void **JenkinsIns(void *base_i, const unsigned char *mem, uint32_t length, uint3
 /* these defines have a large impact on writer speed when a model has a */
 /* huge number of symbols.  as a default, use 128MB and increment when  */
 /* every 1M signals are defined.                                        */
-/* Lapligence keeps the asynchronous writer's total buffering bounded. */
-#define FST_BREAK_SIZE                  (1UL << 20)
-#define FST_BREAK_ADD_SIZE              (1UL << 18)
-#define FST_BREAK_SIZE_MAX              (1UL << 20)
+#define FST_BREAK_SIZE                  (1UL << 27)
+#define FST_BREAK_ADD_SIZE              (1UL << 22)
+#define FST_BREAK_SIZE_MAX              (1UL << 31)
 #define FST_ACTIVATE_HUGE_BREAK         (1000000)
 #define FST_ACTIVATE_HUGE_INC           (1000000)
 

@@ -1,8 +1,11 @@
 # Slang C wrapper
 
-The C++ wrapper compiles admitted source buffers and exports an owned flat snapshot
-through C ABI v10. C++ lifetime management stays behind the boundary; Rust copies
-and validates the result before releasing its owner.
+The C++ wrapper compiles admitted source buffers and streams the captured flat
+tables through C ABI v11 into a caller-supplied sink (`LlgSlangSink`). Capture
+finishes while Slang's compilation is live; the compilation is then destroyed
+and each table is delivered in bounded batches and released as soon as it has
+been delivered (semantic nodes chunk by chunk). C++ lifetime management stays
+behind the boundary; nothing native outlives `llg_slang_compile`.
 
 Snapshot strings are interned in stable native storage. Export charging still
 counts every string view, so admission limits retain their logical byte contract.

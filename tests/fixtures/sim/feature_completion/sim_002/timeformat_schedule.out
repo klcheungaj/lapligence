@@ -1,0 +1,4 @@
+B time=3 realtime=2.500 t=0 s
+x=1 time=3 realtime=3.000 t=3000 ps
+A time=5 realtime=5.000
+C time=6 t=5500 ps
