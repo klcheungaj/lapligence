@@ -263,7 +263,10 @@ Macros, includes and their edition-specific behavior are counted in §11.
   formals alias real variables, locals, formals, record members and fixed-array
   elements (constant or run-time index) through nested calls, recursion and
   suspension, notifying the cell's waiters on every write; real fixed arrays
-  cross input/output/inout/ref formals and results. Real arrays sort, reverse
+  cross input/output/inout/ref formals and results. Output/inout actuals that
+  select a real fixed-array element freeze their selectors before the call and
+  copy back into that cell (an out-of-range index reads 0.0 and copies
+  nowhere; `real_element_copyout`). Real arrays sort, reverse
   and locate numerically (NaN keys keep their positions) and `$sampled`,
   `$past`, `$stable` and `$changed` keep real samples numeric
   ([sim_005](../tests/fixtures/sim/feature_completion/sim_005/readme.md)).
