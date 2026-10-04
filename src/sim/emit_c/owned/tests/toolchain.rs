@@ -59,11 +59,7 @@ pub(super) fn execute(binary: &Path) -> Output {
                     .wait_with_output()
                     .expect("collect emitted-model output");
                 // Expected outputs are LF; models keep the host's native newline.
-                return Output {
-                    status: output.status,
-                    stdout: crate::ffi::platform::native_text_to_lf(output.stdout),
-                    stderr: crate::ffi::platform::native_text_to_lf(output.stderr),
-                };
+                return crate::sim::build::model_output_to_lf(output);
             }
             Ok(None) if started.elapsed() < Duration::from_secs(60) => {
                 std::thread::sleep(Duration::from_millis(10));

@@ -2925,6 +2925,7 @@ mod tests {
             let output = Command::new(&executable)
                 .current_dir(&dir)
                 .output()
+                .map(crate::sim::build::model_output_to_lf)
                 .map_err(|error| format!("run {}: {error}", executable.display()))?;
             if !output.status.success() {
                 return Err(format!(
@@ -2932,8 +2933,7 @@ mod tests {
                     String::from_utf8_lossy(&output.stderr)
                 ));
             }
-            let stdout = crate::ffi::platform::native_text_to_lf(output.stdout);
-            let stdout = String::from_utf8_lossy(&stdout);
+            let stdout = String::from_utf8_lossy(&output.stdout);
             if stdout != "resume=3\n" {
                 return Err(format!("unexpected generated execution output: {stdout:?}"));
             }

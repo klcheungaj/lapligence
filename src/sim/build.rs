@@ -1308,6 +1308,20 @@ fn waveform_enabled(extra: &[(&str, &str)]) -> bool {
 /// Whether a usable cmake exists (`$LLG_CMAKE` or `cmake --version`).
 /// Probed once per process; lets test suites skip gracefully on hosts
 /// without cmake.
+/// Captured model output with the host's native newline rewritten to LF
+/// ([`crate::ffi::platform::native_text_to_lf`]), for unit tests that run
+/// generated models with their own process code and compare LF oracles.
+/// The emitter's tests reach the platform layer through this helper because
+/// `sim::emit_c` must not reference `crate::ffi`.
+#[cfg(test)]
+pub(crate) fn model_output_to_lf(output: std::process::Output) -> std::process::Output {
+    std::process::Output {
+        status: output.status,
+        stdout: crate::ffi::platform::native_text_to_lf(output.stdout),
+        stderr: crate::ffi::platform::native_text_to_lf(output.stderr),
+    }
+}
+
 pub fn cmake_available() -> bool {
     static AVAILABLE: OnceLock<bool> = OnceLock::new();
     *AVAILABLE.get_or_init(|| {
