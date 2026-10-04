@@ -390,6 +390,17 @@ static void force_evaluate_entry(llg_force_entry_t* entry) {
     entry->evaluating = 0;
 }
 
+int llg_force_source_active(const sv4_t* sig, const double* real) {
+    int is_real = real != NULL;
+    for (int i = 0; i < g.force_count; i++) {
+        const llg_force_entry_t* entry = &g.force_table[i];
+        if (entry->active &&
+            force_read_matches(entry, (sv4_t*)sig, (double*)real, is_real))
+            return 1;
+    }
+    return 0;
+}
+
 static void force_dependency_changed(sv4_t* sig, double* real, int is_real) {
     for (int i = 0; i < g.force_count; i++) {
         llg_force_entry_t* entry = &g.force_table[i];

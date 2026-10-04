@@ -29,6 +29,7 @@ static void event_trigger_object_unchecked(llg_event_object_t* ev) {
     ev->triggered = 1;
     ev->triggered_time = g.now;
     ev->triggered_generation = llg_event_generation;
+    ev->trigger_count++;
     clocking_drive_event_match(ev);
 
     // Snapshot and detach everyone first: wake_proc unlinks the waiter from
@@ -124,6 +125,10 @@ int llg_event_triggered(const llg_event_t* ev) {
         return 0;
     }
     return 1;
+}
+
+uint64_t llg_event_trigger_count(const llg_event_t* ev) {
+    return ev && ev->object ? ev->object->trigger_count : 0;
 }
 
 void llg_event_assign(llg_event_t* target, const llg_event_t* source) {

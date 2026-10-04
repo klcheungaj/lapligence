@@ -185,6 +185,7 @@ fn typed_strobe_callback_observes_the_nba_value() {
     model.processes[0].pre_fns.push(IrPreFn::DisplayEval {
         c_name: "print_current".to_owned(),
         time_unit_fs: 1,
+        private_effects: false,
         args: vec![IrDisplayArg::Packed(IrExpr::new(
             IrExprKind::SigRead(0),
             65,

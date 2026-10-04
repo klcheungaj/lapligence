@@ -307,9 +307,17 @@ zero-time helpers that only fail read-only proof (visible or persistent writes,
 unproved static results, descriptor-array formals/results): a blocking event
 control with such a helper becomes a process-evaluated loop (evaluate at arm,
 `WaitAny` on the union of read sets, re-evaluate every source, LSB edge tests,
-qualifier on detection). Named events and real values in that loop reject;
-force sources keep the callback-only contract. Callee activation arrays never
-enter dependency sets. Writes inside functions called by a continuous
+qualifier on detection; declared named events by trigger count, reals by IEEE
+bits). Its sensitivity (`collect_evaluator_sensitivity`) excludes storage
+declared in or written by the helpers (SV 9.2.2.2.1), so waits sharing a static
+helper cannot wake each other forever. `ProcessEventPlan` splits arming from
+waiting: intra-assignment NBA and `->>` controls arm at issue and wait in a
+`IrJoinKind::Detached` captured branch. Effectful force sources evaluate into a
+hidden per-site source signal, re-evaluated by a guard process gated by
+`IrRuntimeQuery::ForceSourceActive`. `$monitor`/`$strobe` helpers
+(`classify_postponed_expression`) may store only to storage they own
+(`DisplayEval.private_effects`); other writes reject (SV 4.4.2.9). Callee
+activation arrays never enter dependency sets. Writes inside functions called by a continuous
 assignment are procedural writers in the SV 6.5 conflict check; only its LHS
 is the continuous driver.
 

@@ -106,7 +106,11 @@ RTL-007's zero-time call and evaluator fixtures use
 `-E 'binary(sim_feature_completion) & test(rtl_007::)'`. Positive fixtures run in
 both optimizer modes on both backends (set `LLG_TEST_GMP_ROOT` for the GMP
 kernel lane); stateful event helpers assert the documented process-evaluation
-policy and check evaluation counters only as lower bounds.
+policy and check evaluation counters only as lower bounds. RTL-007b's effectful
+helpers in force sources, intra-assignment/NBA/`->>` controls, named-event and
+real lists and `$monitor`/`$strobe` use
+`-E 'binary(sim_feature_completion) & test(rtl_007b::)'` with the same lanes;
+the runtime queries are also covered by `sim_counter::sim_rt_selftest`.
 
 RTL-008's initialization, package/`$unit` and let fixtures use
 `-E 'binary(sim_feature_completion) & test(rtl_008::)'`. Single-file positives run

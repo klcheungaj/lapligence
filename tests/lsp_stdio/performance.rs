@@ -11,6 +11,11 @@ use super::*;
 // server's supported lifecycle-log interface (never stdout, which stays
 // pure framed JSON-RPC per this suite's contract).
 
+/// The server's recompile debounce (`RECOMPILE_DEBOUNCE` in the LSP handlers).
+const RECOMPILE_DEBOUNCE: Duration = Duration::from_millis(300);
+/// didChange notifications sent by the bursty-edit test.
+const STORM_EVENTS: usize = 51;
+
 /// Spawn the server with lifecycle logging redirected to `log_file`.
 fn spawn_with_log_file(cwd: &Path, log_file: &Path) -> LspProcess {
     LspProcess::spawn_configured(cwd, |command| {
@@ -58,6 +63,8 @@ fn lsp_stdio_bursty_edits_debounce_into_bounded_fresh_analyses() {
 
     // Wait for the initial (debounced) analysis to commit.
     wait_for_diagnostics(&mut client, &top_uri, has_no_severity_1);
+    // Start the interval before counting, so no run can start unobserved.
+    let storm_started = Instant::now();
     let baseline_compiling = count_log_lines(&log_file, "job compiling");
     assert!(baseline_compiling >= 1, "initial analysis must run once");
 
@@ -120,18 +127,26 @@ fn lsp_stdio_bursty_edits_debounce_into_bounded_fresh_analyses() {
     thread::sleep(Duration::from_millis(500));
 
     let total_compiling = count_log_lines(&log_file, "job compiling");
+    let elapsed = storm_started.elapsed();
     let superseded = count_log_lines(&log_file, "job superseded");
     assert_eq!(
         superseded, 0,
         "no analysis job may race another into supersession"
     );
-    // Bounded re-analyses: initial run + storms.  Every run costs at least
-    // one debounce window plus compile time, so sustained editing cannot
-    // produce anywhere near one-run-per-event (50 events would exceed 12
-    // under the old trigger-per-job scheduling).
+    // Bounded re-analyses. Every run starts only after a full debounce
+    // window armed after the previous run finished, so runs that start
+    // during the observed interval are at most one per window plus one
+    // already armed. Deriving the bound from the measured interval keeps it
+    // exact on slow or oversubscribed hosts, where the storm's sleeps
+    // stretch it; trigger-per-job scheduling would start one run per event.
+    let windows = elapsed.as_millis() / RECOMPILE_DEBOUNCE.as_millis();
+    let allowed = usize::try_from(windows)
+        .unwrap_or(usize::MAX)
+        .saturating_add(1);
     assert!(
-        total_compiling <= baseline_compiling + 12,
-        "runaway parsing: {} analyses for ~51 events (baseline {baseline_compiling})",
+        total_compiling - baseline_compiling <= allowed.min(STORM_EVENTS),
+        "runaway parsing: {} analyses for {STORM_EVENTS} events in {elapsed:?} \
+         (baseline {baseline_compiling}, at most {allowed} debounce windows)",
         total_compiling
     );
 

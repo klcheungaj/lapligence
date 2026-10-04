@@ -70,6 +70,18 @@ pub enum IrJoinKind {
     Join,
     None,
     Any,
+    /// Compiler-generated independent process (`llg_spawn_detached_with_frame`):
+    /// no fork group, so `wait fork`/`disable fork` and the issuer's lifetime
+    /// never observe it. Only [`IrStmt::CapturedFork`] uses it, and the
+    /// issuing process does not suspend.
+    Detached,
+}
+
+impl IrJoinKind {
+    /// Whether the forking process suspends until its join condition holds.
+    pub fn suspends(self) -> bool {
+        matches!(self, Self::Join | Self::Any)
+    }
 }
 
 /// Delay evaluated once in the issuing process, before any suspension.

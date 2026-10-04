@@ -1,5 +1,6 @@
 //! System tasks.
 
+use super::super::collection::PostponedEvaluation;
 use super::*;
 
 #[derive(Clone, Copy)]
@@ -839,11 +840,19 @@ impl EmitCtx<'_, '_> {
                     // displayed arguments each time the runtime prints (after an
                     // NBA commit for the monitor, at the end of the time step for
                     // $strobe).  Attached ahead of the enclosing function/process.
+                    let mut private_effects = false;
+                    for argument in display_args_source {
+                        private_effects |= self
+                            .cg
+                            .classify_postponed_expression(*argument, &self.path)?
+                            == PostponedEvaluation::PrivateEffects;
+                    }
                     let eval_name = self.cg.new_fn_name(&self.path, "mon");
                     self.pre_fns.push(crate::sim::ir::IrPreFn::DisplayEval {
                         c_name: eval_name.clone(),
                         args: display_args.clone(),
                         time_unit_fs: self.cg.timescale_of_node(h).unit_fs,
+                        private_effects,
                     });
                     return Ok(vec![IrStmt::MonitorSet {
                         strobe,

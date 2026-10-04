@@ -46,6 +46,18 @@ fn analysis_guards() -> (
     (cwd, shadow)
 }
 
+/// Create `name` under the system temporary directory, spelled the way
+/// path-mode compilation reports source files. Those names come from opened
+/// handles, so Unix symlinks are resolved (macOS `/var` is `/private/var`);
+/// Windows canonicalization would add a verbatim prefix handle paths omit.
+fn resolved_temp_dir(name: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(name);
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    #[cfg(unix)]
+    let dir = dir.canonicalize().expect("resolve temp dir");
+    dir
+}
+
 /// Restores the process CWD and removes the temp dir even when the body
 /// panics, so a failing test cannot strand other tests in a deleted CWD.
 struct TempDirGuard {

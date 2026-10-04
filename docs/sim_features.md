@@ -617,8 +617,10 @@ Macros, includes and their edition-specific behavior are counted in §11.
   the forced value unless a procedural continuous assignment resumes. Dynamic
   selects, automatic/array targets and unsupported indirect/hierarchical/net
   forms reject. Live RHS sources include fixed-array elements and whole arrays
-  (through their change markers). Live evaluators stay read-only runtime
-  callbacks: a helper with visible writes or persistent state rejects (§9).
+  (through their change markers). A helper with visible writes, persistent
+  state or descriptor formals is evaluated by the force statement and then, while
+  the force is in effect, by a per-site guard process into a hidden source the
+  read-only evaluator reads; release or replacement stops it (§9).
   V §9.3.2 **[1995]**.
 
 ## 6. Timing controls
@@ -643,14 +645,19 @@ Macros, includes and their edition-specific behavior are counted in §11.
   edges, trigger-time `iff`, numeric activation captures and atomic mixed named-event lists are represented. Sensitivity follows operands and eligible helpers,
   not unrelated body reads. Helpers with visible writes, persistent static state
   or descriptor-array formals are evaluated by the waiting process when the
-  control is reached and after each dependency change (§9). Real edge
-  descriptors, unsupported qualifiers/captures, real-valued or named-event
-  combinations with such helpers and helper forms outside §9 reject.
+  control is reached and after each dependency change (§9), including lists
+  with declared named events (trigger counts) and real values (IEEE bit
+  patterns). Real edge descriptors, unsupported qualifiers/captures, event
+  handles or array-reading helpers in such named-event lists and helper forms
+  outside §9 reject.
   V §§9.7.2–9.7.4 **[1995]**.
 - 🟨 **Intra-assignment controls** — Packed/real/shortreal RHS values are captured
   immediately. Blocking assignments suspend and use update-time selectors; NBAs
   continue with issue-time destinations. Explicit event/repeated-event controls
-  preserve order and normalize zero/X/Z/negative repeat counts. Nested repeat
+  preserve order and normalize zero/X/Z/negative repeat counts. Controls with
+  effectful helpers wait in the blocking process; NBA and `->>` forms arm at
+  issue and wait in a detached process outside `wait fork`/`disable fork`
+  (§9). Nested repeat
   timing, queued automatic real/string writes, reference-formal NBAs and
   unsupported storage forms remain restricted. V §9.7.7 **[1995]**.
 - 🟨 **Standalone repeated event waits** — `repeat(n) @ev;` is represented as a
@@ -1030,8 +1037,12 @@ Macros, includes and their edition-specific behavior are counted in §11.
   controls and in the evaluating process for continuous assignments, whose
   called-function writes are procedural (SV 6.5); event evaluation count is the
   owner policy of one evaluation at arm time and one per dependency change.
-  Force, monitor and other runtime-callback evaluators still reject them, as do
-  native/DPI dispatch, suspension and arbitrary shared/native captures.
+  Force sources, intra-assignment and NBA/`->>` event controls and named-event
+  or real event lists also evaluate them in processes (RTL-007b).
+  `$monitor`/`$strobe` arguments run them in Postponed only when their stores
+  target the helpers' own storage, applied without publication; a visible write
+  rejects (SV 4.4.2.9). Native/DPI dispatch, suspension and arbitrary
+  shared/native captures reject.
   Unique/priority diagnostics remain active; side-effect-free source alone does
   not establish eligibility.
 - ❌ **Unsupported or illegal call forms** — Recursive task calls requiring
@@ -1065,7 +1076,8 @@ Macros, includes and their edition-specific behavior are counted in §11.
   NBA iteration. One active monitor coalesces same-slot changes; registration and
   re-enable queue one report. Packed, real and string changes are supported;
   automatic monitor dependencies and aggregate/container formatting reject.
-  Read-only helper restrictions apply. V §§17.1.2–17.1.3 **[1995]**.
+  Helpers may keep their own static state or take descriptor arrays; visible
+  helper writes reject (§9). V §§17.1.2–17.1.3 **[1995]**.
 - 🟦 **String formatting** — `$sformat/$swrite` and radix variants write native
   strings or packed string-like destinations with normal padding/truncation.
   `$sformatf` returns an owned string. Dynamic/nested formats and arguments

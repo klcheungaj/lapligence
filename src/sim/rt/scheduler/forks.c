@@ -153,6 +153,44 @@ llg_proc_t* llg_fork_with_frame(const llg_co_desc_t* desc,
     return llg_fork_impl(desc, name, grp, frame);
 }
 
+llg_proc_t* llg_spawn_detached_with_frame(const llg_co_desc_t* desc,
+                                          const char* name,
+                                          llg_frame_t* frame) {
+    llg_proc_t* parent = llg_current();
+    if (!desc || !desc->fn || !parent || !region_can_mutate("detached process scheduling"))
+        return NULL;
+    if (desc->frame_size < sizeof(llg_co_frame_t) ||
+        desc->frame_size > SIZE_MAX - sizeof(llg_proc_t))
+        llg_rt_co_oom(desc->frame_size);
+    llg_proc_t* p = (llg_proc_t*)llg_checked_calloc(
+        1, sizeof(*p) + desc->frame_size,
+        "detached process and coroutine root frame");
+#ifdef LLG_CO_DEBUG
+    memset(LLG_CO_ROOT(&p->chain), LLG_CO_POISON_BYTE, desc->frame_size);
+#endif
+    p->name = name;
+    llg_co_start(&p->chain, desc, p);
+    p->frame = frame;
+    p->handle = process_handle_new(p);
+    p->status = LLG_PROCESS_RUNNING;
+    llg_frame_retain(frame);
+    llg_rng_state_child(&parent->rng, &p->rng);
+    // Like a fork descendant, the process keeps its origin for program
+    // cancellation but never extends that program's lifetime.
+    p->program = parent->program;
+    p->action_assertion = parent->action_assertion;
+    p->is_assertion_action = parent->is_assertion_action;
+    p->program_live = 0;
+    p->budget_time = g.now;
+    llg_region_t region = region_is_reactive(g.current_region)
+                              ? LLG_REGION_REACTIVE
+                              : LLG_REGION_ACTIVE;
+    p->region = region;
+    register_proc(p);
+    enqueue_region(p, region);
+    return p;
+}
+
 llg_co_arm_t llg_arm_join(llg_proc_t* self, llg_fork_group_t* grp) {
     llg_runtime_service_enter(self, "join");
     if (!grp || !region_can_mutate("fork wait scheduling"))

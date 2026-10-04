@@ -38,6 +38,7 @@ void llg_event_object_reset(llg_event_object_t* ev) {
     ev->triggered_waiters_capacity = 0;
     ev->triggered_time = 0;
     ev->triggered_generation = 0;
+    ev->trigger_count = 0;
     ev->triggered = 0;
 }
 

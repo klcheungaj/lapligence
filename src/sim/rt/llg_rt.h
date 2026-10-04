@@ -1267,6 +1267,17 @@ llg_proc_t* llg_fork(const llg_co_desc_t* desc, const char* name,
 llg_proc_t* llg_fork_with_frame(const llg_co_desc_t* desc,
                                 const char* name, llg_fork_group_t* grp,
                                 llg_frame_t* frame);
+// Spawn an independent process that is not a child of the caller: no fork
+// group tracks it, so `wait fork`, `disable fork` and the caller's completion
+// or cancellation never observe it. It inherits the caller's program origin
+// (without extending that program's lifetime), random state lineage and
+// Active/Reactive set, starts in the current time slot, and retains one
+// reference to `frame` exactly like llg_fork_with_frame. Used for
+// process-evaluated nonblocking event assignments, whose pending update must
+// outlive the issuing process like a runtime-owned NBA.
+llg_proc_t* llg_spawn_detached_with_frame(const llg_co_desc_t* desc,
+                                          const char* name,
+                                          llg_frame_t* frame);
 // Create and manage typed activation storage. Slots hold copied values by
 // default. Frame-to-frame aliases retain their source frame. Joined fork
 // aliases borrow a registered numeric cell in the suspended parent activation;
@@ -1395,6 +1406,10 @@ typedef struct {
     size_t triggered_waiters_capacity;
     uint64_t triggered_time;
     uint64_t triggered_generation;
+    // Monotonic count of triggers in this run. A process that evaluates its
+    // own event control compares counts to learn that the event fired while
+    // it was parked on a list that also names value sources.
+    uint64_t trigger_count;
     int triggered;
 } llg_event_object_t;
 
@@ -1428,6 +1443,9 @@ void llg_event_trigger(llg_event_t* ev);
 // Return whether the synchronization object was triggered in the current
 // simulation time slot. A null handle is never triggered.
 int llg_event_triggered(const llg_event_t* ev);
+// Number of triggers of the object `ev` currently names since the runtime was
+// initialized. A null handle reports zero. Read-only and allocation-free.
+uint64_t llg_event_trigger_count(const llg_event_t* ev);
 // Queue a nonblocking event trigger for the NBA region. The event pointer is
 // copied into runtime-owned queue state, so the issuing process may finish
 // before the trigger commits.
@@ -1635,6 +1653,10 @@ void llg_clocking_nba_net_sync_selected_after(
     llg_net_t* net, int slot, sv4_t value, sv4_select_plan_t plan, int reverse,
     uint64_t ticks, const llg_wait_src_t* specs, int n_specs);
 void llg_ba(sv4_t* target, sv4_t value);
+// llg_ba borrowing `value` by address. Generated stores use it so that
+// unoptimized AArch64 (and other ABIs passing large structs through a
+// caller-owned copy) do not reserve a separate stack copy per call site.
+void llg_ba_from(sv4_t* target, const sv4_t* value);
 // Commit a write through a canonical `ref` descriptor immediately. Selected
 // aliases update the original storage once, preserving normal wakeups and
 // force/continuous-assignment checks.
@@ -1709,6 +1731,11 @@ void llg_release_parts(const llg_force_part_t* parts, int n_parts,
                        uint32_t stream_slice, int stream_right_to_left);
 void llg_force_real(double* target, llg_force_real_eval_fn eval,
                     const llg_force_read_t* reads, int n_reads);
+// Whether a live force binding still reads `sig` (packed) or `real`. Exactly
+// one pointer is non-null. An effectful force site evaluates its RHS into a
+// hidden source in its guard process only while this holds, so the helper's
+// effects never run after release or replacement. Read-only.
+int llg_force_source_active(const sv4_t* sig, const double* real);
 void llg_release_real(double* target);
 
 // Legacy constant-value entry points retained for runtime self-tests and

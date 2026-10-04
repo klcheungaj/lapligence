@@ -54,8 +54,7 @@ fn analyze_full_pipeline_on_params() {
 #[test]
 fn analyze_full_pipeline_extracts_funcs() {
     let _guards = analysis_guards();
-    let dir = std::env::temp_dir().join(format!("llg_llg_bin_funcs_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("create temp dir");
+    let dir = resolved_temp_dir(&format!("llg_llg_bin_funcs_{}", std::process::id()));
     let orig_cwd = std::env::current_dir().expect("current dir");
     let _restore = TempDirGuard {
         dir: dir.clone(),
@@ -163,8 +162,7 @@ fn analyze_full_pipeline_extracts_funcs() {
 #[test]
 fn analyze_full_pipeline_reports_unused_signal_lint() {
     let _guards = analysis_guards();
-    let dir = std::env::temp_dir().join(format!("llg_llg_bin_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("create temp dir");
+    let dir = resolved_temp_dir(&format!("llg_llg_bin_{}", std::process::id()));
     let orig_cwd = std::env::current_dir().expect("current dir");
     let _restore = TempDirGuard {
         dir: dir.clone(),
@@ -221,8 +219,7 @@ fn analyze_full_pipeline_reports_unused_signal_lint() {
 #[test]
 fn analyze_syntax_broken_project_serves_parse_tree_declarations() {
     let _guards = analysis_guards();
-    let dir = std::env::temp_dir().join(format!("llg_llg_bin_pfb_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("create temp dir");
+    let dir = resolved_temp_dir(&format!("llg_llg_bin_pfb_{}", std::process::id()));
     let orig_cwd = std::env::current_dir().expect("current dir");
     let _restore = TempDirGuard {
         dir: dir.clone(),
@@ -351,8 +348,7 @@ pub(super) fn settings_obj(entries: Vec<(&str, LSPAny)>) -> LSPAny {
 #[test]
 fn analyze_with_config_disables_rule() {
     let _guards = analysis_guards();
-    let dir = std::env::temp_dir().join(format!("llg_llg_bin_cfg_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("create temp dir");
+    let dir = resolved_temp_dir(&format!("llg_llg_bin_cfg_{}", std::process::id()));
     let orig_cwd = std::env::current_dir().expect("current dir");
     let _restore = TempDirGuard {
         dir: dir.clone(),
@@ -400,8 +396,7 @@ fn analyze_with_config_disables_rule() {
 #[test]
 fn analyze_with_config_severity_override() {
     let _guards = analysis_guards();
-    let dir = std::env::temp_dir().join(format!("llg_llg_bin_sev_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("create temp dir");
+    let dir = resolved_temp_dir(&format!("llg_llg_bin_sev_{}", std::process::id()));
     let orig_cwd = std::env::current_dir().expect("current dir");
     let _restore = TempDirGuard {
         dir: dir.clone(),
@@ -452,7 +447,7 @@ fn analyze_with_config_severity_override() {
 #[test]
 fn analyze_leaves_source_tree_and_cwd_unchanged() {
     let _guards = analysis_guards();
-    let fixture = std::env::temp_dir().join(format!("llg_scratch_probe_{}", std::process::id()));
+    let fixture = resolved_temp_dir(&format!("llg_scratch_probe_{}", std::process::id()));
     let rtl = fixture.join("rtl");
     std::fs::create_dir_all(&rtl).expect("create fixture tree");
     let sv = rtl.join("top.sv");

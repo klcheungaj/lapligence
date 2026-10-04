@@ -398,8 +398,7 @@ fn package_document_symbol_stays_flat() {
 #[test]
 fn analyze_full_pipeline_package_items() {
     let _guards = analysis_guards();
-    let dir = std::env::temp_dir().join(format!("llg_llg_bin_pkg_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("create temp dir");
+    let dir = resolved_temp_dir(&format!("llg_llg_bin_pkg_{}", std::process::id()));
     let orig_cwd = std::env::current_dir().expect("current dir");
     let _restore = TempDirGuard {
         dir: dir.clone(),

@@ -197,7 +197,8 @@ void llg_fixed_array_destroy(void* object) {
 
 static void fixed_array_simple_stream_copy(llg_fixed_array_t* dst, const llg_fixed_array_t* src,
                           int two_state, int nba, uint32_t slice) {
-    if (!region_can_mutate("fixed array write")) return;
+    if (region_is_read_only_now(g.current_region) && !region_private_store("fixed array write"))
+        return;
     llg_value_scope_t* target_pin = value_target_pin(dst);
     if (dst->total != src->total) fixed_bad_state("fixed array copy shape mismatch");
     uint32_t width = llg_sv4_width(src->initial);
@@ -569,8 +570,9 @@ static void fixed_array_apply(llg_fixed_array_t* destination, const llg_fixed_ar
     dst->ranges = prepared->ranges; prepared->ranges = old_ranges;
     for (size_t i = 0; i < prepared->count; ++i)
         sv4_move(prepared->cells[i].target, &prepared->cells[i].replacement);
-    /* Observer callbacks run only after the complete image has been committed. */
-    for (size_t i = 0; i < prepared->count; ++i) {
+    /* Observer callbacks run only after the complete image has been committed.
+     * A private Postponed evaluation stores helper-owned cells unpublished. */
+    for (size_t i = 0; i < prepared->count && !g.private_evaluation; ++i) {
         struct fixed_publication* entry = &prepared->cells[i];
         if (!sv4_same(entry->old, entry->value)) sig_publish_changed(entry->target, entry->old, entry->value, entry->value);
     }
@@ -596,7 +598,8 @@ static void fixed_snapshot_publish(llg_fixed_array_t* dst, llg_fixed_array_t* sn
 }
 
 void llg_fixed_array_stream_segments(llg_fixed_array_t* dst, const llg_fixed_array_t* const* sources, size_t count, int two_state, int nba, uint32_t slice) {
-    if (!region_can_mutate("fixed array stream")) return;
+    if (region_is_read_only_now(g.current_region) && !region_private_store("fixed array stream"))
+        return;
     llg_value_scope_t* pin = value_target_pin(dst);
     llg_value_scope_t* scope = llg_value_scope_begin_object(sizeof(llg_fixed_array_t), llg_fixed_array_destroy);
     llg_fixed_array_t* snapshot = llg_value_scope_object(scope);

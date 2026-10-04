@@ -485,3 +485,7 @@ void llg_ba(sv4_t* target, sv4_t value) {
     if (llg_is_forced(target) || pca_active(target)) return;
     sig_write(target, value);
 }
+
+void llg_ba_from(sv4_t* target, const sv4_t* value) {
+    llg_ba(target, *value);
+}
