@@ -27,7 +27,8 @@ extents and products use checked arithmetic before allocation or C emission.
 Each direct rank-one reduction reads owned cells individually, while
 the RTL-002/RTL-002b integral-array profile uses lazy defaults, stable selected
 cells and descriptor views for whole and selected values, conditionals, patterns,
-streams and function formals/returns. Oversized records retain the packed payload
+streams and function formals/returns; arrays of unpacked records use the same
+views. A single record wider than the packed limit retains the packed payload
 limit; see
 [resource limits](sim_features.md#resource-limits) for the exact descriptor profile.
 Dynamic, resizable and unbounded aggregate values remain separately bounded. The executable

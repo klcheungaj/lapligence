@@ -175,7 +175,7 @@ supported.
 | --- | --- |
 | Packed element or value | 1–1,048,575 bits inclusive; `LLG_SUPPORTED_WIDTH_LIMIT = 1 << 20` is exclusive. Each packed cell uses its actual width. |
 | Generated fixed unpacked array | At most 16,777,216 cells in the product of all dimensions (`LLG_MAX_FIXED_ARRAY_CELLS`). Extents/products are checked before allocation; an over-limit declaration receives a resource diagnostic. |
-| Fixed array used as a value, formal or stream | Integral variable arrays use non-flattened descriptor transport: whole and selected-row copies, equality, conditionals (element-wise merge for an ambiguous selector), default fills, declaration initializers, array-valued pattern items, pattern-lvalue row scatter and multi-segment/unaligned streams, including constant in-bounds `with` ranges. Module, package, function-static and block-static declaration initializers run in the static schedule; automatic block and function arrays initialize per entry. Static, automatic and recursive functions pass such arrays through input, output, inout and ref formals and return them. Oversized records and arrays of records retain the 1,048,575-bit packed payload limit. Direct reductions read cells individually. |
+| Fixed array used as a value, formal or stream | Integral variable arrays use non-flattened descriptor transport: whole and selected-row copies, equality, conditionals (element-wise merge for an ambiguous selector), default fills, declaration initializers, array-valued pattern items, pattern-lvalue row scatter and multi-segment/unaligned streams, including constant in-bounds `with` ranges. Module, package, function-static and block-static declaration initializers run in the static schedule; automatic block and function arrays initialize per entry. Static, automatic and recursive functions pass such arrays through input, output, inout and ref formals and return them. Arrays of unpacked records whose elements fit the packed limit use the same transport ([RTL-099](../tests/sim_feature_completion/rtl_099.rs) executes 1,048,576 mixed-state records through copies, equality, ambiguous conditionals, function values and an NBA with a bounded model). A single record or tagged union wider than 1,048,575 bits keeps the packed payload limit as a value, and a record member array above the 4,096-cell dense threshold is expanded per cell ([known issue](known_issues.md#remaining-non-flattened-fixed-value-contexts)). Direct reductions read cells individually. |
 | Subroutine recursion | At most 256 active calls; a further call emits a recursion-limit diagnostic and returns the result type's default. Recursive calls, including through class virtual and virtual-interface dispatch, use heap frames, so their depth does not consume native stack; recursion re-entering through DPI C code does. |
 | Read-only helper inlining | At most 32 nested callback calls; deeper emission receives an explicit diagnostic. |
 | Scheduler region passes | Default 10,000,000 per time slot; `LLG_ZERO_LOOP_LIMIT` accepts a positive decimal `uint64`. Exhaustion diagnoses a zero-delay loop. |
@@ -231,9 +231,11 @@ Macros, includes and their edition-specific behavior are counted in §11.
   self-assignment retain logical coordinates. Whole-array values are SV-only;
   admitted fixed integral calls/ports, patterns and operators have the limits in
   §§3, 5, 7 and 9. Native/resizable elements, general real-array expressions,
-  and oversized records remain restricted. Integral arrays through
-  16,777,216 cells copy, compare, select rows, pass through formals and module
-  ports, and stream without packed flattening. Fixed integral record arrays also
+  and records wider than the packed limit remain restricted. Integral arrays
+  through 16,777,216 cells copy, compare, select rows, pass through formals and
+  module ports, and stream without packed flattening; arrays of unpacked
+  records beyond the packed limit copy, compare, merge, pass through function
+  values and publish NBAs the same way (RTL-099). Fixed integral record arrays also
   retain recursive member selections and constant-selected electrical net views.
   V §3.10; SV §§7.4, 7.6 **[1995/SV-2005]**.
 - 🟨 **Initialization and lifetimes** — Scalar, fixed integral composite and
@@ -491,8 +493,9 @@ Macros, includes and their edition-specific behavior are counted in §11.
   remain separate writers; overlapping procedural, called-function,
   hierarchical, ref-port, positional-pattern, output-port and continuous writes
   are diagnosed within admitted storage. Force/release and procedural
-  `assign`/`deassign` are overrides, not competing writers. Constant slices of
-  descriptor arrays bound to output ports are not registered as writers.
+  `assign`/`deassign` are overrides, not competing writers. Constant rows and
+  slices of descriptor arrays bound to output ports are one cell-interval
+  writer each ([RTL-099](../tests/sim_feature_completion/rtl_099.rs)).
   SV §9.2.2.4 **[SV-2005]**.
 - 🟦 **Final blocks** — Run once after scheduler exit (`$finish`, deadlock or no
   future events), observing committed values and end time. Timing controls,

@@ -694,10 +694,10 @@ impl<'a> Codegen<'a> {
     /// Storage an output port drives as an implied continuous assignment,
     /// for the multiple-driver rule (SV 6.5). A constant row or slice of a
     /// dense array drives only its cells; a runtime-selected actual drives
-    /// its longest static prefix, the whole array. A constant row of
-    /// descriptor storage is one cell interval; a constant slice of it has
-    /// no contiguous projection and is not registered rather than reported
-    /// as a false whole-array conflict.
+    /// its longest static prefix, the whole array. A constant row or
+    /// contiguous constant slice of descriptor storage is one cell interval;
+    /// a slice whose cells are not one interval is not registered rather
+    /// than reported as a false whole-array conflict.
     pub(super) fn output_port_continuous_writes(
         &self,
         actual: NodeId,
@@ -723,11 +723,13 @@ impl<'a> Codegen<'a> {
             )]));
         }
         if self.model.arrays[array.ir].sparse() {
-            // A constant row of descriptor storage is one cell interval; a
-            // constant slice has no contiguous projection and stays
-            // unregistered rather than a false whole-array conflict.
-            if selected.coordinates.is_some() {
-                return None;
+            // A constant row of descriptor storage is one cell interval. A
+            // constant slice fixes every outer index and spans every inner
+            // dimension, so its cells are also one flattened interval.
+            if let Some(coordinates) = &selected.coordinates {
+                let (first, count) = Self::slice_cell_interval(array, coordinates)?;
+                let slice = self.array_row_write(self.reference_array(array.ir), first, count)?;
+                return Some(HashSet::from([slice]));
             }
             let (first, count) = self.constant_row_cells(array, &selected.prefix)?;
             let row = self.array_row_write(self.reference_array(array.ir), first, count)?;
@@ -755,6 +757,24 @@ impl<'a> Codegen<'a> {
                 })
             })
             .collect()
+    }
+
+    /// Flattened `(first, count)` cells of a constant slice given by its
+    /// expanded coordinates. Returns `None` unless the cells form exactly one
+    /// contiguous interval, so a caller never registers cells the slice does
+    /// not drive.
+    fn slice_cell_interval(array: &ArrayInfo, coordinates: &[Vec<i32>]) -> Option<(u64, u64)> {
+        let linear = |coordinate: &Vec<i32>| {
+            let indices = coordinate
+                .iter()
+                .map(|index| lhs_integer_expr(i128::from(*index)))
+                .collect::<Vec<_>>();
+            Self::array_constant_linear_index(array, &indices)
+        };
+        let first = linear(coordinates.first()?)?;
+        let last = linear(coordinates.last()?)?;
+        let count = u64::try_from(coordinates.len()).ok()?;
+        (first.abs_diff(last).checked_add(1)? == count).then_some((first.min(last), count))
     }
 
     /// Cell pairs for an inout port whose formal is a fixed net array. Each

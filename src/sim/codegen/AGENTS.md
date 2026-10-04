@@ -160,8 +160,9 @@ writer-analysis `PackedRange` over `ArrayContents` that `ir_process_writes`
 widens before the IR), so the pairwise check costs one record per row.
 Output ports connected to variables are continuous drivers: constant rows of
 dense arrays drive their cells, runtime selects drive the longest static prefix,
-constant rows of descriptor storage drive one cell interval and constant
-descriptor slices are not registered (no contiguous projection); keep disjoint
+constant rows and contiguous constant slices of descriptor storage drive one
+cell interval (a slice whose cells are not one interval stays unregistered
+rather than a false whole-array conflict); keep disjoint
 writers legal and preserve original read sensitivities separately. Zero-delay
 continuous drivers of whole descriptor arrays or constant descriptor rows use
 the fixed-array assignment owner, never a flattened packed driver.
