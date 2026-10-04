@@ -1,3 +1,4 @@
+use super::host_platform;
 use std::path::{Path, PathBuf};
 
 /// Resolve an explicitly requested native cache; Unix sccache uses our socket-safe wrapper.
@@ -12,18 +13,14 @@ pub fn requested_launcher(
         "" | "0" | "off" | "false" => return Ok(None),
         _ => return Err("LLG_CCACHE must be 0, 1, ccache or sccache".to_owned()),
     };
-    let executable = if cfg!(windows) {
-        format!("{tool}.exe")
-    } else {
-        tool.to_owned()
-    };
+    let executable = host_platform::executable_name(tool);
     let found = std::env::split_paths(search_path)
         .map(|directory| directory.join(&executable))
-        .find(|path| is_executable(path));
+        .find(|path| host_platform::is_executable(path));
     let found = found.ok_or_else(|| {
         format!("LLG_CCACHE requested `{executable}` but it was not found executable on PATH")
     })?;
-    if tool == "sccache" && cfg!(unix) {
+    if tool == "sccache" && host_platform::sccache_needs_unix_wrapper() {
         Ok(Some(manifest_dir.join("scripts/sccache.sh")))
     } else {
         Ok(Some(found))
@@ -53,22 +50,4 @@ pub fn sync_launcher_state(build_dir: &Path, launcher: Option<&Path>) -> std::io
         std::fs::create_dir_all(parent)?;
     }
     std::fs::write(&marker, format!("{state}\n"))
-}
-
-fn is_executable(path: &Path) -> bool {
-    let Ok(metadata) = path.metadata() else {
-        return false;
-    };
-    if !metadata.is_file() {
-        return false;
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        metadata.permissions().mode() & 0o111 != 0
-    }
-    #[cfg(not(unix))]
-    {
-        true
-    }
 }

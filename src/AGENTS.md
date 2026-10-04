@@ -58,6 +58,24 @@ memory separately.
 - Update defaults, diagnostics, tests and owning guides together for any changed
   environment variable, configuration key, limit or fallback.
 
+## Platform layers
+
+Platform conditionals (`cfg(windows|unix)`, `target_os`, `_WIN32`, `_MSC_VER`,
+`__GLIBC__` and similar) live only in the platform layers; everything else calls
+their neutral interface:
+
+- Rust: `src/ffi/platform.rs` (path spellings such as verbatim-prefix removal
+  and `canonicalize`, file-name rules), `ffi/secure_fs.rs` (handle-based file
+  admission) and `ffi/process_memory.rs` (process limits).
+- Build scripts: `build_support/host_platform.rs`, included beside the other
+  build-support modules because build scripts cannot use the crate.
+- Generated-model C runtime: `src/sim/rt/llg_compiler.h`, `llg_platform.h` and
+  `llg_platform_native.h` (see [runtime](sim/rt/AGENTS.md#platform-layer)).
+
+Tests may branch on the platform only where they assert platform-specific
+behaviour (symlinks, permissions). Add a layer function instead of a new
+conditional elsewhere.
+
 ## Platform differences
 
 Observed in CI and native builds; keep code portable across all of them. Resolve

@@ -5,6 +5,8 @@
 
 use std::path::{Path, PathBuf};
 
+#[path = "build_support/host_platform.rs"]
+mod host_platform;
 #[path = "build_support/vendor_patches.rs"]
 mod vendor_patches;
 
@@ -37,6 +39,7 @@ fn emit_rerun_if_changed() {
         "src/wrapper/slang_c_api.h",
         "scripts/sccache.sh",
         "build_support/compiler_cache.rs",
+        "build_support/host_platform.rs",
         "vendor/slang/CMakeLists.txt",
         "vendor/slang/cmake",
         "vendor/slang/external",

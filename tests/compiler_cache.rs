@@ -1,5 +1,7 @@
 #[path = "../build_support/compiler_cache.rs"]
 mod compiler_cache;
+#[path = "../build_support/host_platform.rs"]
+mod host_platform;
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};

@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs;
-use std::io::{self, Read, Write};
+use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -12,14 +12,7 @@ use cap_fs_ext::{DirExt, FollowSymlinks, MetadataExt as CapMetadataExt, OpenOpti
 use cap_std::ambient_authority;
 use cap_std::fs::{Dir, OpenOptions as CapOpenOptions};
 
-#[cfg(target_os = "linux")]
-use cap_std::fs::OpenOptionsExt as CapOpenOptionsExt;
-
-#[cfg(windows)]
-use std::os::windows::fs::MetadataExt;
-
-#[cfg(windows)]
-use cap_std::fs::OpenOptionsExt as CapOpenOptionsExt;
+use super::host_platform::{self, hard_link_count, is_reparse_point, sync_directory, PublishError};
 
 const SLANG_BASE_REVISION: &str = "7ddf4059f79eff508dd486eb42fd650cdf320d52";
 const FILE_MANIFEST: &str = "files.sha256";
@@ -684,35 +677,6 @@ where
     result
 }
 
-#[cfg(unix)]
-fn sync_directory(directory: &Dir) -> io::Result<()> {
-    use rustix::fs::{fsync, openat, Mode, OFlags};
-
-    // cap-std uses O_PATH for directory capabilities on Linux. Re-open the
-    // directory through that capability with a normal directory descriptor so
-    // fsync is available, without resolving the path through ambient state.
-    let readable = openat(
-        directory,
-        ".",
-        OFlags::RDONLY | OFlags::DIRECTORY,
-        Mode::empty(),
-    )?;
-    Ok(fsync(&readable)?)
-}
-
-// FlushFileBuffers needs a writable handle, but cap-std opens directories
-// read-only. NTFS journals the rename itself and the staged contents were
-// flushed before it, so there is no separate directory flush on Windows.
-#[cfg(windows)]
-fn sync_directory(_directory: &Dir) -> io::Result<()> {
-    Ok(())
-}
-
-#[cfg(not(any(unix, windows)))]
-fn sync_directory(directory: &Dir) -> io::Result<()> {
-    directory.try_clone()?.into_std_file().sync_all()
-}
-
 fn temporary_name() -> PathBuf {
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -725,7 +689,6 @@ fn temporary_name() -> PathBuf {
     ))
 }
 
-#[cfg(target_os = "linux")]
 fn create_staged_file(
     parent: &Dir,
     label: &str,
@@ -733,59 +696,41 @@ fn create_staged_file(
 ) -> Result<StagedFile, PatchError> {
     let name = temporary_name();
 
-    // Linux's O_TMPFILE creates an inode without a directory entry. This is
-    // the only point at which the staged contents are written, so keeping the
-    // inode anonymous closes the hard-link window between an identity check
-    // and write(2). It is published later with linkat(AT_EMPTY_PATH) after
-    // the repository capabilities have been checked again.
-    use rustix::fs::OFlags;
-
-    let mut options = CapOpenOptions::new();
-    options
-        .read(true)
-        .write(true)
-        .follow(FollowSymlinks::No)
-        .custom_flags((OFlags::TMPFILE | OFlags::DIRECTORY).bits() as i32);
-    let file = parent.open_with(".", &options).map_err(|error| {
-        PatchError::new(format!(
-            "{label} cannot create an anonymous staging file for vendor patch {}: {error}; the filesystem must support anonymous temporary files",
-            patch_path.display()
-        ))
-    })?;
-    let metadata = file.metadata().map_err(|error| {
-        PatchError::new(format!(
-            "{label} cannot inspect anonymous staging file for vendor patch {}: {error}",
-            patch_path.display()
-        ))
-    })?;
-    if metadata.nlink() != 0 {
-        return Err(PatchError::new(format!(
-            "{label} anonymous staging file {} has an unexpected directory link; refusing to write",
-            name.display()
-        )));
+    // Where the host has anonymous files this is the only point at which the
+    // staged contents are written; see host_platform::open_anonymous_file.
+    if let Some(file) = host_platform::open_anonymous_file(parent) {
+        let file = file.map_err(|error| {
+            PatchError::new(format!(
+                "{label} cannot create an anonymous staging file for vendor patch {}: {error}; the filesystem must support anonymous temporary files",
+                patch_path.display()
+            ))
+        })?;
+        let metadata = file.metadata().map_err(|error| {
+            PatchError::new(format!(
+                "{label} cannot inspect anonymous staging file for vendor patch {}: {error}",
+                patch_path.display()
+            ))
+        })?;
+        if metadata.nlink() != 0 {
+            return Err(PatchError::new(format!(
+                "{label} anonymous staging file {} has an unexpected directory link; refusing to write",
+                name.display()
+            )));
+        }
+        return Ok(StagedFile {
+            file: Some(file),
+            name,
+            anonymous: true,
+        });
     }
-    Ok(StagedFile {
-        file: Some(file),
-        name,
-        anonymous: true,
-    })
-}
 
-#[cfg(not(target_os = "linux"))]
-fn create_staged_file(
-    parent: &Dir,
-    label: &str,
-    patch_path: &Path,
-) -> Result<StagedFile, PatchError> {
-    let name = temporary_name();
     let mut options = CapOpenOptions::new();
     options
         .read(true)
         .write(true)
         .create_new(true)
         .follow(FollowSymlinks::No);
-    #[cfg(windows)]
-    options.share_mode(0);
+    host_platform::lock_named_staging_file(&mut options);
     let file = parent.open_with(&name, &options).map_err(|error| {
         PatchError::new(format!(
             "{label} cannot stage vendor patch {} in {}: {error}",
@@ -821,57 +766,26 @@ fn ensure_anonymous_staging_file(
     Ok(())
 }
 
-#[cfg(unix)]
 fn publish_anonymous_staging_file(
     parent: &Dir,
     file: &cap_std::fs::File,
     name: &Path,
     label: &str,
 ) -> Result<(), PatchError> {
-    use std::os::fd::AsRawFd;
-
-    use rustix::fs::{linkat, AtFlags, CWD};
-
-    // Linux and the BSDs which expose AT_EMPTY_PATH can link the open inode
-    // directly. Some kernels/filesystems reject that form without the
-    // CAP_DAC_READ_SEARCH capability, so retain the descriptor-relative procfs
-    // form as a safe fallback.
-    #[cfg(any(target_os = "freebsd", target_os = "fuchsia", target_os = "linux"))]
-    match linkat(file, "", parent, name, AtFlags::EMPTY_PATH) {
-        Ok(()) => return Ok(()),
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-            return Err(PatchError::new(format!(
-                "{label} staging destination {} already exists; refusing to replace it",
-                name.display()
-            )))
-        }
-        Err(_) => {}
-    }
-
-    let descriptor_path = if cfg!(any(target_os = "macos", target_os = "ios")) {
-        PathBuf::from("/dev/fd").join(file.as_raw_fd().to_string())
-    } else {
-        PathBuf::from("/proc/self/fd").join(file.as_raw_fd().to_string())
-    };
-    linkat(CWD, &descriptor_path, parent, name, AtFlags::SYMLINK_FOLLOW).map_err(|error| {
-        PatchError::new(format!(
+    host_platform::publish_anonymous_file(parent, file, name).map_err(|error| match error {
+        PublishError::AlreadyExists => PatchError::new(format!(
+            "{label} staging destination {} already exists; refusing to replace it",
+            name.display()
+        )),
+        PublishError::Failed(error) => PatchError::new(format!(
             "{label} cannot publish detached staging file {}: {error}",
             name.display()
-        ))
+        )),
+        PublishError::Unsupported => PatchError::new(format!(
+            "{label} cannot publish anonymous staging file {}; platform does not provide a safe link operation",
+            name.display()
+        )),
     })
-}
-
-#[cfg(not(unix))]
-fn publish_anonymous_staging_file(
-    _parent: &Dir,
-    _file: &cap_std::fs::File,
-    name: &Path,
-    label: &str,
-) -> Result<(), PatchError> {
-    Err(PatchError::new(format!(
-        "{label} cannot publish anonymous staging file {}; platform does not provide a safe link operation",
-        name.display()
-    )))
 }
 
 fn ensure_published_staging_file(
@@ -1250,7 +1164,7 @@ fn ensure_private_staging_file(
     // other handle can be opened for data access or deletion, so the name
     // cannot be renamed or replaced. Re-opening it by path would itself fail
     // with a sharing violation.
-    if cfg!(windows) {
+    if host_platform::named_staging_file_is_locked() {
         return Ok(());
     }
     let observed = open_regular_file(directory, name, label, context)?;
@@ -1388,43 +1302,6 @@ fn reject_link_metadata(
         )));
     }
     Ok(())
-}
-
-fn is_reparse_point(metadata: &fs::Metadata) -> bool {
-    #[cfg(windows)]
-    {
-        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
-        metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = metadata;
-        false
-    }
-}
-
-fn hard_link_count(path: &Path, metadata: &fs::Metadata) -> Option<u64> {
-    #[cfg(unix)]
-    {
-        let _ = path;
-        Some(std::os::unix::fs::MetadataExt::nlink(metadata))
-    }
-    #[cfg(windows)]
-    {
-        // Path metadata carries no link count on Windows, and std's
-        // `number_of_links` is unstable (`windows_by_handle`). cap-std reads
-        // it from an open handle. An unopenable file reports no count here;
-        // the handle-relative replacement still rejects shared targets.
-        let _ = metadata;
-        let file = fs::File::open(path).ok()?;
-        let metadata = cap_std::fs::Metadata::from_file(&file).ok()?;
-        Some(CapMetadataExt::nlink(&metadata))
-    }
-    #[cfg(not(any(unix, windows)))]
-    {
-        let _ = (path, metadata);
-        None
-    }
 }
 
 fn validate_git_checkout(
