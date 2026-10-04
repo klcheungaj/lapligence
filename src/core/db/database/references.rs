@@ -285,7 +285,7 @@ pub(super) fn member_path_from_slang(
                 return Ok(None);
             };
             let target_semantic = &snapshot.semantic_nodes[target.index()];
-            (vec![target_semantic.name.clone()], vec![Some(target)])
+            (vec![target_semantic.name.to_string()], vec![Some(target)])
         } else if base_semantic.kind == SemanticKind::Expression && base_semantic.subkind == 73 {
             // A member access on an unpacked virtual-interface array is captured
             // as `ArraySelect` followed by `MemberAccess`. Keep the element-select
@@ -300,7 +300,7 @@ pub(super) fn member_path_from_slang(
             let Some(name) = snapshot
                 .semantic_nodes
                 .get(array.index())
-                .map(|array| array.name.clone())
+                .map(|array| array.name.to_string())
                 .filter(|name| !name.is_empty())
             else {
                 return Ok(None);
@@ -315,9 +315,9 @@ pub(super) fn member_path_from_slang(
         .transpose()?;
     let member_name = member
         .and_then(|id| snapshot.semantic_nodes.get(id.index()))
-        .map(|member| member.name.clone())
+        .map(|member| member.name.to_string())
         .filter(|name| !name.is_empty())
-        .or_else(|| (!node.name.is_empty()).then(|| node.name.clone()));
+        .or_else(|| (!node.name.is_empty()).then(|| node.name.to_string()));
     let Some(member_name) = member_name else {
         return Ok(None);
     };

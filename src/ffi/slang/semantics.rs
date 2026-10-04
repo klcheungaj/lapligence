@@ -66,9 +66,11 @@ pub(super) fn decode_semantic_edge(
         role,
         index: edge.index,
         target_id: edge.target_id,
-        sequence_delay: (edge.sequence_delay_valid != 0).then(|| SemanticSequenceRange {
-            min: edge.sequence_delay_min,
-            max: (edge.sequence_delay_max != u32::MAX).then_some(edge.sequence_delay_max),
+        sequence_delay: (edge.sequence_delay_valid != 0).then(|| {
+            Box::new(SemanticSequenceRange {
+                min: edge.sequence_delay_min,
+                max: (edge.sequence_delay_max != u32::MAX).then_some(edge.sequence_delay_max),
+            })
         }),
     })
 }
@@ -83,6 +85,39 @@ pub(super) struct SemanticNodeContext<'a> {
     pub(super) files: &'a [File],
     pub(super) type_count: usize,
     pub(super) constant_count: usize,
+    pub(super) texts: &'a mut TextInterner,
+}
+
+/// Interns node text for one stream; see [`SemanticText`].
+#[derive(Default)]
+pub(super) struct TextInterner {
+    texts: HashSet<SemanticText>,
+}
+
+impl TextInterner {
+    /// Validate `raw` as UTF-8 and return its shared spelling, allocating
+    /// only for a spelling not seen before in this stream.
+    ///
+    /// # Safety
+    /// For nonzero length, `raw.data` must reference that many initialized
+    /// bytes that remain valid for this call.
+    pub(super) unsafe fn intern(
+        &mut self,
+        raw: RawString,
+        label: &str,
+    ) -> Result<SemanticText, SlangError> {
+        // SAFETY: the caller guarantees the borrowed bytes; foreign_slice
+        // validates null and representable length.
+        let bytes = unsafe { foreign_slice(raw.data, raw.len, label)? };
+        let text = str::from_utf8(bytes)
+            .map_err(|_| invalid_native(format!("{label} is not valid UTF-8")))?;
+        if let Some(shared) = self.texts.get(text) {
+            return Ok(shared.clone());
+        }
+        let shared = SemanticText::from(text);
+        self.texts.insert(shared.clone());
+        Ok(shared)
+    }
 }
 
 /// Decode the semantic node at table position `index`, claiming its edge
@@ -222,14 +257,14 @@ pub(super) fn decode_semantic_node(
         },
         // SAFETY: stream records and their strings are valid for the
         // callback that delivered them.
-        name: unsafe { copy_string(node.name, "semantic node name")? },
-        // SAFETY: stream records and their strings are valid for the
-        // callback that delivered them.
-        detail: unsafe { copy_string(node.detail, "semantic node detail")? },
-        // SAFETY: stream records and their strings are valid for the
-        // callback that delivered them.
+        name: unsafe { context.texts.intern(node.name, "semantic node name")? },
+        // SAFETY: as above.
+        detail: unsafe { context.texts.intern(node.detail, "semantic node detail")? },
+        // SAFETY: as above.
         definition_name: unsafe {
-            copy_string(node.definition_name, "semantic node definition name")?
+            context
+                .texts
+                .intern(node.definition_name, "semantic node definition name")?
         },
         range: decode_range(node.range, context.files)?,
         type_id,

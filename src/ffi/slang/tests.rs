@@ -1157,3 +1157,43 @@ fn native_bridge_stops_on_sink_abort_and_keeps_the_receiver_error() {
         .iter()
         .any(|node| node.kind == SemanticKind::ContinuousAssign));
 }
+
+#[test]
+fn node_text_is_interned_per_stream_and_compares_as_str() {
+    let mut first = raw_semantic_node(0);
+    first.name = raw_string("clk");
+    first.detail = raw_string("NamedValue");
+    let mut second = first;
+    second.id = 1;
+    second.name = raw_string("rst");
+    let snapshot = stream(&nodes(vec![first, second])).expect("valid nodes");
+    let [a, b] = &snapshot.semantic_nodes[..] else {
+        panic!("two nodes");
+    };
+    assert!(Arc::ptr_eq(&a.detail.0, &b.detail.0));
+    assert!(!Arc::ptr_eq(&a.name.0, &b.name.0));
+    assert_eq!(a.name, "clk");
+    assert_eq!(b.name.as_str(), "rst");
+    assert_eq!(a.detail, String::from("NamedValue"));
+    assert!(a.definition_name.is_empty());
+    assert_eq!(format!("{} {:?}", a.name, b.name), "clk \"rst\"");
+
+    let mut boxed = edge(1, 0, 0);
+    boxed.sequence_delay_valid = 1;
+    boxed.sequence_delay_min = 2;
+    boxed.sequence_delay_max = u32::MAX;
+    let mut owner = raw_semantic_node(1);
+    owner.kind = 28;
+    let tables = Tables {
+        semantic_edges: vec![boxed],
+        semantic_nodes: vec![owner],
+        ..Tables::default()
+    };
+    let delay = stream(&tables).expect("sequence delay").semantic_edges[0]
+        .sequence_delay
+        .clone();
+    assert_eq!(
+        delay.as_deref(),
+        Some(&SemanticSequenceRange { min: 2, max: None })
+    );
+}

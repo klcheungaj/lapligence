@@ -33,7 +33,7 @@ pub(super) fn statement_from_slang(
                 cond: required(SemanticEdgeRole::Condition, "assertion condition")?,
                 if_true: first(SemanticEdgeRole::Then)?,
                 if_false: first(SemanticEdgeRole::Else)?,
-                label: node.name.clone(),
+                label: node.name.to_string(),
                 deferred: node.auxiliary & SEMANTIC_ASSERTION_DEFERRED != 0,
                 is_final: node.auxiliary & SEMANTIC_ASSERTION_FINAL != 0,
             }
@@ -52,7 +52,7 @@ pub(super) fn statement_from_slang(
             property: required(SemanticEdgeRole::PropertySpec, "assertion property")?,
             if_true: first(SemanticEdgeRole::Then)?,
             if_false: first(SemanticEdgeRole::Else)?,
-            label: node.name.clone(),
+            label: node.name.to_string(),
         },
         33 => {
             let predicate = predicate_from_slang(edges, ids)?;

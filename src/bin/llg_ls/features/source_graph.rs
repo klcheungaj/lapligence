@@ -180,7 +180,7 @@ pub(super) fn module_graph_from_slang(
         definition_keys.insert(node.id, id.clone());
         definitions.push(ModuleGraphDefinition {
             id,
-            name: node.name.clone(),
+            name: node.name.to_string(),
             file,
             line,
             col,
@@ -319,7 +319,7 @@ pub(super) fn module_graph_from_slang(
             })
             .unwrap_or((None, 0, 0));
         let child = ModuleGraphInstance {
-            name: node.name.clone(),
+            name: node.name.to_string(),
             module_type: clean_name(&node.definition_name).to_owned(),
             file,
             line,
@@ -420,7 +420,7 @@ pub(super) fn module_graph_from_slang(
                 location.file.clone(),
                 location.line,
                 location.col,
-                node.name.clone(),
+                node.name.to_string(),
             ))
             .cloned()
             .unwrap_or_default();
@@ -445,7 +445,7 @@ pub(super) fn module_graph_from_slang(
                         Direction::None
                     };
                     definition.ports.push(ModuleGraphPort {
-                        name: node.name.clone(),
+                        name: node.name.to_string(),
                         direction,
                         ty: source_type.clone(),
                         detail: detail.clone(),
@@ -461,7 +461,7 @@ pub(super) fn module_graph_from_slang(
                         continue;
                     }
                     definition.params.push(ModuleGraphParameter {
-                        name: node.name.clone(),
+                        name: node.name.to_string(),
                         ty: source_type.clone(),
                         local: node.is_local,
                         detail: detail.clone(),
@@ -477,7 +477,7 @@ pub(super) fn module_graph_from_slang(
                         continue;
                     }
                     definition.signals.push(ModuleGraphSignal {
-                        name: node.name.clone(),
+                        name: node.name.to_string(),
                         kind: if node.kind == SemanticKind::Net {
                             source_net_kind(node.subkind).to_owned()
                         } else if node.kind == SemanticKind::Array {
@@ -535,7 +535,7 @@ pub(super) fn module_graph_from_slang(
         }
         let item = ModuleGraphElaboratedType {
             instance: instance_names.join("."),
-            name: node.name.clone(),
+            name: node.name.to_string(),
             packed_ranges,
         };
         if !elaborated_types.contains(&item) {

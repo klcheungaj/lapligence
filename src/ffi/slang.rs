@@ -10,6 +10,7 @@
 #![allow(clippy::duplicated_attributes)]
 
 use std::collections::HashSet;
+use std::sync::Arc;
 use std::{fmt, ptr, slice, str};
 
 mod sources;
@@ -17,7 +18,7 @@ use sources::{decode_line_directive, decode_source_library, finish_line_directiv
 mod semantics;
 use semantics::{
     decode_semantic_edge, decode_semantic_node, decode_udp_row, decode_udp_table, PendingUdpRow,
-    SemanticNodeContext, UdpOverlapValidator, UdpTableContext,
+    SemanticNodeContext, TextInterner, UdpOverlapValidator, UdpTableContext,
 };
 #[cfg(test)]
 use semantics::{decode_semantic_operation, validate_semantic_subkind};
@@ -899,7 +900,8 @@ pub struct SemanticEdge {
     pub index: u32,
     pub target_id: u64,
     /// SequenceConcat delay metadata, when this edge is a sequence element.
-    pub sequence_delay: Option<SemanticSequenceRange>,
+    /// Boxed because it is rare: the edge table is one of the largest.
+    pub sequence_delay: Option<Box<SemanticSequenceRange>>,
 }
 
 /// A checked inclusive sequence cycle range. `None` for `max` means the
@@ -908,6 +910,106 @@ pub struct SemanticEdge {
 pub struct SemanticSequenceRange {
     pub min: u32,
     pub max: Option<u32>,
+}
+
+/// Immutable text shared by every semantic node with the same spelling.
+///
+/// A design repeats few distinct node names and Slang kind spellings across
+/// many nodes, so the capture receiver interns them: each node holds a
+/// reference-counted view instead of its own allocation. It reads like a
+/// `str` (`Deref`, comparisons with `str`/`String`, `Display`).
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct SemanticText(Arc<str>);
+
+impl SemanticText {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl Default for SemanticText {
+    fn default() -> Self {
+        Self(Arc::from(""))
+    }
+}
+
+impl std::ops::Deref for SemanticText {
+    type Target = str;
+    fn deref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl AsRef<str> for SemanticText {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::borrow::Borrow<str> for SemanticText {
+    fn borrow(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<&str> for SemanticText {
+    fn from(value: &str) -> Self {
+        Self(Arc::from(value))
+    }
+}
+
+impl From<String> for SemanticText {
+    fn from(value: String) -> Self {
+        Self(Arc::from(value))
+    }
+}
+
+impl PartialEq<str> for SemanticText {
+    fn eq(&self, other: &str) -> bool {
+        &*self.0 == other
+    }
+}
+
+impl PartialEq<&str> for SemanticText {
+    fn eq(&self, other: &&str) -> bool {
+        &*self.0 == *other
+    }
+}
+
+impl PartialEq<String> for SemanticText {
+    fn eq(&self, other: &String) -> bool {
+        *self.0 == **other
+    }
+}
+
+impl PartialEq<SemanticText> for str {
+    fn eq(&self, other: &SemanticText) -> bool {
+        self == &*other.0
+    }
+}
+
+impl PartialEq<SemanticText> for &str {
+    fn eq(&self, other: &SemanticText) -> bool {
+        *self == &*other.0
+    }
+}
+
+impl PartialEq<SemanticText> for String {
+    fn eq(&self, other: &SemanticText) -> bool {
+        **self == *other.0
+    }
+}
+
+impl fmt::Debug for SemanticText {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(&*self.0, formatter)
+    }
+}
+
+impl fmt::Display for SemanticText {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&*self.0, formatter)
+    }
 }
 
 /// One node in the bounded, owned elaborated semantic graph.
@@ -954,10 +1056,10 @@ pub struct SemanticNode {
     pub method_with_clause: bool,
     pub definition_kind: Option<SemanticDefinitionKind>,
     /// Symbol/expression name; a time literal carries its exact expanded token.
-    pub name: String,
+    pub name: SemanticText,
     /// Exact Slang kind spelling, retained for unsupported constructs.
-    pub detail: String,
-    pub definition_name: String,
+    pub detail: SemanticText,
+    pub definition_name: SemanticText,
     pub range: Option<SourceRange>,
     pub type_id: Option<u64>,
     pub constant_id: Option<u64>,

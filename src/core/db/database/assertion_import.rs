@@ -108,6 +108,7 @@ pub(super) fn assertion_expr_from_slang(
                 .iter()
                 .map(|edge| {
                     edge.sequence_delay
+                        .as_deref()
                         .map(|range| AssertionRange {
                             min: range.min,
                             max: range.max,

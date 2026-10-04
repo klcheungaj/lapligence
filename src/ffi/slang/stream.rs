@@ -193,6 +193,7 @@ pub(super) struct StreamBuilder {
     semantic_edges: Vec<SemanticEdge>,
     claimed_edges: Vec<bool>,
     edge_keys: HashSet<(SemanticEdgeRole, u32)>,
+    texts: TextInterner,
     semantic_nodes: Vec<SemanticNode>,
     udp_rows: Vec<PendingUdpRow>,
     claimed_rows: Vec<bool>,
@@ -234,6 +235,7 @@ impl StreamBuilder {
             semantic_edges: Vec::new(),
             claimed_edges: Vec::new(),
             edge_keys: HashSet::new(),
+            texts: TextInterner::default(),
             semantic_nodes: Vec::new(),
             udp_rows: Vec::new(),
             claimed_rows: Vec::new(),
@@ -543,6 +545,7 @@ impl StreamBuilder {
                 }
                 self.claimed_edges = Vec::new();
                 self.edge_keys = HashSet::new();
+                self.texts = TextInterner::default();
             }
             Table::UdpTables => {
                 if self.claimed_rows.iter().any(|claimed| !claimed) {
@@ -741,6 +744,7 @@ impl StreamBuilder {
                     files: &self.files,
                     type_count: self.types.len(),
                     constant_count: self.constants.len(),
+                    texts: &mut self.texts,
                 },
             )?;
             self.semantic_nodes.push(node);
