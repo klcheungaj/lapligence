@@ -183,6 +183,9 @@ pub struct Db {
     /// library), package and compilation unit, copied from the frontend's
     /// library binding so `%l` survives snapshot destruction.
     source_libraries: HashMap<NodeId, String>,
+    /// Logical `` `line`` positions, kept apart from the physical node
+    /// positions that remain the diagnostic identity.
+    source_map: super::SourceMap,
     tops: Vec<NodeId>,
     flat_modules: Vec<NodeId>,
     packages: Vec<NodeId>,
@@ -280,6 +283,7 @@ impl Db {
             program_instances: HashSet::new(),
             unconnected_drives: HashMap::new(),
             source_libraries: HashMap::new(),
+            source_map: super::SourceMap::default(),
             tops: Vec::new(),
             flat_modules: Vec::new(),
             packages: Vec::new(),
@@ -344,6 +348,7 @@ impl Db {
             program_instances: HashSet::new(),
             unconnected_drives: HashMap::new(),
             source_libraries: HashMap::new(),
+            source_map: super::SourceMap::default(),
             tops,
             flat_modules: Vec::new(),
             packages: Vec::new(),
@@ -459,6 +464,19 @@ impl Db {
     /// a package or compilation unit. Synthetic test databases have none.
     pub fn source_library(&self, id: NodeId) -> Option<&str> {
         self.source_libraries.get(&id).map(String::as_str)
+    }
+
+    /// Logical (`` `line``-mapped) positions of admitted source lines.
+    pub fn source_map(&self) -> &super::SourceMap {
+        &self.source_map
+    }
+
+    /// Logical file and line of a node's start, when a `` `line`` directive
+    /// maps it. Physical [`Node`] positions are unchanged by directives.
+    pub fn logical_position(&self, id: NodeId) -> Option<super::LogicalPosition<'_>> {
+        let node = self.nodes.get(id.index())?;
+        self.source_map
+            .logical_position(node.file.as_deref()?, node.line)
     }
 
     /// Return the definition-level pull value for omitted input ports on an

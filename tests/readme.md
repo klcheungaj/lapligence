@@ -140,6 +140,15 @@ compilation-unit modes on every backend (set `LLG_TEST_GMP_ROOT` for the GMP
 lane) and, through `sim_cli::run_compile_opts_after_db_drop`, after snapshot and
 Db destruction.
 
+RTL-019's source-mapping and edition-admission fixtures use
+`-E 'binary(sim_feature_completion) & test(rtl_019::)'`, with
+`binary(sim_edition)`, `binary(sim_syn017_directive_effects)` and the LSP
+binaries for shared source-map/edition changes. Mapped `__FILE__`/`__LINE__`
+values and runtime locations are counted by hand; the mapping and
+resumed-task fixtures run on every backend (set `LLG_TEST_GMP_ROOT` for the GMP
+lane) and after snapshot and Db destruction. Each `neg_2001_*.v` holds one
+later form that must reject under `--edition 2001` and compile under 2009.
+
 RTL-016's tagged-union, pattern and Q03 fixtures use
 `-E 'binary(sim_feature_completion) & test(rtl_016::)'`. Positive fixtures and
 the run-time error fixtures run in both optimizer modes on both backends (set

@@ -42,6 +42,12 @@ removal linear in that target's duplicates.
   separate mode, one per library in merged mode. Export the source library of
   each instance, package and compilation unit in the `source_libraries` table
   (at most one record per semantic node), never inferred from file names.
+- Export each `LineDirectiveSyntax` the lexical capture visits as a
+  `line_directives` record: the offset of the next physical line and the
+  SourceManager's `getLineNumber`/`getFileName` there, so the values match the
+  preprocessor's `` `__LINE__``/`` `__FILE__``. A directive on the last line
+  maps nothing. Promote `RefArgAutomaticFunc` (ref formal of a static
+  subroutine, IEEE 1800-2009 13.5.2) to an error before issuing diagnostics.
 - Snapshot ownership includes typed tables, lexical/source data and uninstantiated
   source-instance records. Bound all size-derived allocation/traversal before work.
   Preserve source spelling/coordinates without deriving semantics from text.

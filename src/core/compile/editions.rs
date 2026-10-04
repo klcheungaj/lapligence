@@ -12,7 +12,7 @@ use super::{
 };
 use crate::ffi::slang::{
     LexicalKind, LexicalRole, SemanticDefinitionKind, SemanticEdgeRole, SemanticKind, SemanticNode,
-    SemanticOperation, SourceRange, TypeKind, CLASS_INTERFACE, SEMANTIC_ASSERTION_FINAL,
+    SemanticOperation, SourceRange, Type, TypeKind, CLASS_INTERFACE, SEMANTIC_ASSERTION_FINAL,
     SEMANTIC_STMT_CONCURRENT_ASSERT, SEMANTIC_STMT_CONCURRENT_ASSUME,
     SEMANTIC_STMT_CONCURRENT_COVER, SEMANTIC_STMT_CONCURRENT_EXPECT, SEMANTIC_STMT_FOR,
     SEMANTIC_STMT_IMMEDIATE_ASSERT, SEMANTIC_STMT_IMMEDIATE_ASSUME, SEMANTIC_STMT_IMMEDIATE_COVER,
@@ -746,6 +746,360 @@ fn extension_name(prototype: &str) -> Option<&str> {
     (len > 1).then_some(&tail[..len])
 }
 
+/// Statements in a subroutine body, not counting the declarations that the
+/// frontend lists beside them. IEEE 1364-2001 A.2.6-A.2.7 give a task one
+/// `statement` and a function one `function_statement`; several statements
+/// without `begin`/`end`, or a null body, are later forms.
+fn subroutine_statement_count(
+    snapshot: &Snapshot,
+    nodes: &HashMap<u64, &SemanticNode>,
+    body: &SemanticNode,
+) -> usize {
+    match body.detail.as_str() {
+        "List" => semantic_edges(snapshot, body)
+            .iter()
+            .filter(|edge| edge.role == SemanticEdgeRole::Child)
+            .filter_map(|edge| nodes.get(&edge.target_id))
+            .filter(|statement| statement.detail != "VariableDeclaration")
+            .count(),
+        "Empty" => 0,
+        _ => 1,
+    }
+}
+
+/// IEEE 1364-2001 has fixed packed vectors and fixed unpacked memories only:
+/// one packed range per declaration (A.2.5) and no dynamic, associative or
+/// queue dimensions (A.2.1.3). Walk the declared type's element chain.
+fn later_type_form(types: &HashMap<u64, &Type>, type_id: Option<u64>) -> Option<&'static str> {
+    let mut current = type_id.and_then(|id| types.get(&id).copied());
+    let mut visited = HashSet::new();
+    while let Some(ty) = current {
+        if !visited.insert(ty.id) {
+            return None;
+        }
+        let element = ty.element_type_id.and_then(|id| types.get(&id).copied());
+        match ty.kind {
+            TypeKind::DynamicArray | TypeKind::AssociativeArray | TypeKind::Queue => {
+                return Some("dynamic, associative or queue array");
+            }
+            TypeKind::PackedArray
+                if element.is_some_and(|element| element.kind == TypeKind::PackedArray) =>
+            {
+                return Some("multiple packed dimensions");
+            }
+            TypeKind::PackedArray | TypeKind::FixedUnpackedArray => current = element,
+            _ => return None,
+        }
+    }
+    None
+}
+
+/// IEEE 1364-2001 grammar boundaries that the frontend's later grammar
+/// admits without a keyword: subroutine formals and bodies, block-local
+/// declarations and the vector/array type forms. Each rule reads typed owned
+/// semantic facts, so a later spelling cannot evade it and an ordinary 2001
+/// form cannot trip it.
+fn verilog_2001_semantic_violation(
+    snapshot: &Snapshot,
+    nodes: &HashMap<u64, &SemanticNode>,
+    types: &HashMap<u64, &Type>,
+    node: &SemanticNode,
+) -> Option<&'static str> {
+    let parent = node.parent_id.and_then(|parent| nodes.get(&parent));
+    match node.kind {
+        SemanticKind::Argument => {
+            if semantic_edges(snapshot, node)
+                .iter()
+                .any(|edge| edge.role == SemanticEdgeRole::DefaultValue)
+            {
+                return Some("default subroutine argument");
+            }
+            // A.2.6: function_port_list holds tf_input_declarations only.
+            if (node.is_output || node.is_inout || node.is_ref)
+                && parent.is_some_and(|parent| {
+                    parent.kind == SemanticKind::Subroutine && !parent.is_task
+                })
+            {
+                return Some("function output or inout argument");
+            }
+        }
+        SemanticKind::Subroutine => {
+            let edges = semantic_edges(snapshot, node);
+            // Prototypes and imports have no body and no 2001 form to check.
+            let body = edges
+                .iter()
+                .find(|edge| edge.role == SemanticEdgeRole::Body)
+                .and_then(|edge| nodes.get(&edge.target_id))?;
+            // 10.3.1(c): a function shall have at least one input argument.
+            if !node.is_task
+                && !edges
+                    .iter()
+                    .filter(|edge| edge.role == SemanticEdgeRole::Child)
+                    .filter_map(|edge| nodes.get(&edge.target_id))
+                    .any(|child| child.kind == SemanticKind::Argument && child.is_input)
+            {
+                return Some("function without an input argument");
+            }
+            match subroutine_statement_count(snapshot, nodes, body) {
+                0 => return Some("empty subroutine body"),
+                1 => {}
+                _ => return Some("multiple statements in a subroutine body"),
+            }
+        }
+        SemanticKind::Scope
+            if node.detail == "StatementBlock"
+                && node.name.is_empty()
+                && semantic_edges(snapshot, node).iter().any(|edge| {
+                    edge.role == SemanticEdgeRole::Child
+                        && nodes.get(&edge.target_id).is_some_and(|child| {
+                            matches!(
+                                child.kind,
+                                SemanticKind::Variable
+                                    | SemanticKind::Array
+                                    | SemanticKind::Parameter
+                                    | SemanticKind::NamedEvent
+                                    | SemanticKind::Net
+                            )
+                        })
+                }) =>
+        {
+            // A.6.3: block_item_declarations follow `begin : name` only.
+            return Some("declaration in an unnamed block");
+        }
+        _ => {}
+    }
+    if matches!(node.kind, SemanticKind::Variable | SemanticKind::Array)
+        && parent.is_some_and(|parent| {
+            parent.kind == SemanticKind::Subroutine
+                || (parent.kind == SemanticKind::Scope && parent.detail == "StatementBlock")
+        })
+        && semantic_edges(snapshot, node)
+            .iter()
+            .any(|edge| edge.role == SemanticEdgeRole::Initializer)
+    {
+        // A.2.1.3: block_variable_type has no declaration assignment.
+        return Some("procedural declaration initializer");
+    }
+    if matches!(
+        node.kind,
+        SemanticKind::Variable
+            | SemanticKind::Array
+            | SemanticKind::Net
+            | SemanticKind::Port
+            | SemanticKind::Argument
+            | SemanticKind::Parameter
+    ) {
+        return later_type_form(types, node.type_id);
+    }
+    None
+}
+
+/// Generate constructs outside `generate`/`endgenerate` are a 1364-2005
+/// form; 1364-2001 12.1.3 admits them only inside a generate region.
+fn generate_regions(tokens: &[&crate::ffi::slang::LexicalToken]) -> HashMap<u64, Vec<(u64, u64)>> {
+    let mut regions: HashMap<u64, Vec<(u64, u64)>> = HashMap::new();
+    let mut open: HashMap<u64, Vec<u64>> = HashMap::new();
+    for token in tokens {
+        let Some(range) = token.range else { continue };
+        if token.kind != LexicalKind::Keyword && token.role != LexicalRole::Keyword {
+            continue;
+        }
+        match token.text.as_str() {
+            "generate" => open.entry(range.file_id).or_default().push(range.start),
+            "endgenerate" => {
+                if let Some(start) = open.get_mut(&range.file_id).and_then(Vec::pop) {
+                    regions
+                        .entry(range.file_id)
+                        .or_default()
+                        .push((start, range.end));
+                }
+            }
+            _ => {}
+        }
+    }
+    regions
+}
+
+/// SystemVerilog time literals (IEEE 1800-2009 5.8) lex as one number token
+/// ending in a time unit; 1364-2001 has no such literal.
+fn is_time_literal(text: &str) -> bool {
+    let digits = text.trim_end_matches(|c: char| c.is_ascii_alphabetic());
+    let unit = &text[digits.len()..];
+    digits.starts_with(|c: char| c.is_ascii_digit())
+        && digits
+            .chars()
+            .all(|c| c.is_ascii_digit() || matches!(c, '.' | '_'))
+        && matches!(unit, "s" | "ms" | "us" | "ns" | "ps" | "fs")
+}
+
+fn is_keyword(token: &crate::ffi::slang::LexicalToken) -> bool {
+    token.kind == LexicalKind::Keyword || token.role == LexicalRole::Keyword
+}
+
+/// Token-sequence forms that 1364-2001 lacks but the frontend parses in its
+/// legacy profile: block/end labels, `edge` events, inline genvars, casts,
+/// C-style unpacked sizes, `.name` connections, empty subroutine argument
+/// lists and `localparam` parameter ports. `rest` starts at `next`.
+fn verilog_2001_sequence_violation(
+    nodes: &HashMap<u64, &SemanticNode>,
+    types: &HashMap<u64, &Type>,
+    previous: Option<&crate::ffi::slang::LexicalToken>,
+    token: &crate::ffi::slang::LexicalToken,
+    next: &crate::ffi::slang::LexicalToken,
+    after_next: Option<&crate::ffi::slang::LexicalToken>,
+    rest: &[&crate::ffi::slang::LexicalToken],
+) -> Option<&'static str> {
+    let keyword = is_keyword(token);
+    // A.1.3/A.2.6-A.2.7/A.6.3: no `: label` after any closing keyword.
+    if keyword
+        && next.text == ":"
+        && matches!(
+            token.text.as_str(),
+            "end"
+                | "join"
+                | "endmodule"
+                | "endtask"
+                | "endfunction"
+                | "endprimitive"
+                | "endgenerate"
+                | "endconfig"
+                | "endspecify"
+                | "endtable"
+                | "endcase"
+        )
+    {
+        return Some("end label");
+    }
+    // A.6.5 event_expression has only posedge/negedge; `edge` appears only
+    // as an edge_control_specifier `edge [ ... ]` in specify checks.
+    if keyword && token.text == "edge" && next.text != "[" {
+        return Some("edge event control");
+    }
+    // A.4.2 genvar_assignment names an already declared genvar.
+    if keyword && token.text == "genvar" && previous.is_some_and(|p| p.text == "(") {
+        return Some("genvar declaration in a generate loop");
+    }
+    // A.1.3 module_parameter_port_list holds `parameter` declarations only.
+    if keyword
+        && token.text == "localparam"
+        && previous.is_some_and(|p| matches!(p.text.as_str(), "(" | ","))
+    {
+        return Some("localparam in a parameter port list");
+    }
+    // `type'(`, `width'(` and `signed'(` casts (IEEE 1800-2009 6.24).
+    if token.kind == LexicalKind::Operator && token.text == "'" && next.text == "(" {
+        return Some("cast");
+    }
+    if token.role == LexicalRole::ConnectionLabel
+        && previous.is_some_and(|p| p.text == ".")
+        && next.text != "("
+    {
+        return Some("implicit named port connection");
+    }
+    if token.role == LexicalRole::Declaration {
+        // `label : statement` (IEEE 1800-2009 9.3.5). 1364-2001 names a block
+        // only after `begin :`/`fork :`, so a declaration never precedes `:`.
+        if next.text == ":"
+            && token
+                .semantic_id
+                .and_then(|id| nodes.get(&id))
+                .is_some_and(|node| node.kind == SemanticKind::Scope)
+        {
+            return Some("statement label");
+        }
+        // A.2.5 dimension ::= [ expr : expr ]; `[size]` is a later form.
+        // Queue, dynamic and associative dimensions have their own rule.
+        if next.text == "["
+            && token
+                .semantic_id
+                .and_then(|id| nodes.get(&id))
+                .and_then(|node| node.type_id)
+                .and_then(|id| types.get(&id))
+                .is_none_or(|ty| {
+                    !matches!(
+                        ty.kind,
+                        TypeKind::DynamicArray | TypeKind::AssociativeArray | TypeKind::Queue
+                    )
+                })
+        {
+            let mut depth = 0_usize;
+            let mut has_colon = false;
+            for bracket in rest {
+                match bracket.text.as_str() {
+                    "[" | "(" | "{" => depth += 1,
+                    "]" | ")" | "}" => {
+                        depth = depth.saturating_sub(1);
+                        if depth == 0 {
+                            if !has_colon {
+                                return Some("unpacked dimension size");
+                            }
+                            break;
+                        }
+                    }
+                    ":" if depth == 1 => has_colon = true,
+                    _ => {}
+                }
+            }
+        }
+    }
+    // A.2.6-A.2.7, A.6.9: user task/function declarations and calls have no
+    // empty `()` argument list; system task enables keep theirs.
+    if next.text == "("
+        && after_next.is_some_and(|after| after.text == ")")
+        && !token.text.starts_with('$')
+        && token
+            .semantic_id
+            .and_then(|id| nodes.get(&id))
+            .is_some_and(|node| {
+                matches!(
+                    node.kind,
+                    SemanticKind::Subroutine | SemanticKind::FunctionCall
+                )
+            })
+    {
+        return Some("empty subroutine argument list");
+    }
+    None
+}
+
+/// IEEE 1800-2009 A.2.11 coverage bins take `{ ranges }`, a transition list
+/// or `default` (cross bins a `binsof` select expression), with only an
+/// optional `iff`. Bins `with`/`matches` clauses and set-expression bins are
+/// 1800-2012 forms that the pinned frontend admits.
+fn covergroup_bins_violation(
+    token: &crate::ffi::slang::LexicalToken,
+    rest: &[&crate::ffi::slang::LexicalToken],
+) -> Option<&'static str> {
+    if !is_keyword(token) || !matches!(token.text.as_str(), "bins" | "illegal_bins" | "ignore_bins")
+    {
+        return None;
+    }
+    let mut depth = 0_usize;
+    let mut after_equals = false;
+    for item in rest {
+        if item.is_macro_expansion {
+            return None;
+        }
+        let text = item.text.as_str();
+        if std::mem::take(&mut after_equals)
+            && !matches!(text, "{" | "(" | "default" | "binsof" | "!")
+        {
+            return Some("covergroup set-expression bins");
+        }
+        match text {
+            "[" | "(" | "{" => depth += 1,
+            "]" | ")" | "}" => depth = depth.saturating_sub(1),
+            ";" if depth == 0 => return None,
+            "=" if depth == 0 => after_equals = true,
+            "with" | "matches" if depth == 0 && is_keyword(item) => {
+                return Some("covergroup bins with or matches clause");
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 fn immediate(subkind: u32) -> bool {
     matches!(
         subkind,
@@ -784,9 +1138,13 @@ pub(super) fn edition_diagnostics(
         .iter()
         .map(|node| (node.id, node))
         .collect();
+    let types: HashMap<_, _> = snapshot.types.iter().map(|ty| (ty.id, ty)).collect();
     let mut violations: Vec<(Option<SourceRange>, String)> = Vec::new();
     for node in &snapshot.semantic_nodes {
         if edition == LanguageEdition::Verilog2001 {
+            if let Some(label) = verilog_2001_semantic_violation(snapshot, &nodes, &types, node) {
+                violations.push((node.range, label.to_owned()));
+            }
             if node.kind == SemanticKind::Definition
                 && node.definition_kind == Some(SemanticDefinitionKind::Module)
                 && node.is_local
@@ -889,6 +1247,30 @@ pub(super) fn edition_diagnostics(
         .filter(|t| t.kind != LexicalKind::Macro || t.is_macro_expansion)
         .collect();
     tokens.sort_by_key(|t| t.range.map(|r| (r.file_id, r.start, r.end)));
+    if edition == LanguageEdition::Verilog2001 {
+        let regions = generate_regions(&tokens);
+        for node in &snapshot.semantic_nodes {
+            let top_level = node.kind == SemanticKind::GenerateScope
+                && !node
+                    .parent_id
+                    .and_then(|parent| nodes.get(&parent))
+                    .is_some_and(|parent| parent.kind == SemanticKind::GenerateScope);
+            let Some(range) = node.range.filter(|_| top_level) else {
+                continue;
+            };
+            let inside = regions.get(&range.file_id).is_some_and(|regions| {
+                regions
+                    .iter()
+                    .any(|(start, end)| *start <= range.start && range.start < *end)
+            });
+            if !inside {
+                violations.push((
+                    node.range,
+                    "generate construct outside a generate region".to_owned(),
+                ));
+            }
+        }
+    }
     for (i, token) in tokens.iter().enumerate() {
         let cross_buffer_forward_reference = matches!(
             token.role,
@@ -975,11 +1357,46 @@ pub(super) fn edition_diagnostics(
         {
             violations.push((token.range, token.text.clone()));
         }
+        if edition == LanguageEdition::Verilog2001
+            && token.kind == LexicalKind::Number
+            && is_time_literal(&token.text)
+        {
+            violations.push((token.range, "time literal".to_owned()));
+        }
         let Some(next) = tokens.get(i + 1) else {
             continue;
         };
         if token.range.map(|r| r.file_id) != next.range.map(|r| r.file_id) {
             continue;
+        }
+        // Tokens expanded from one macro share its use-site range, so their
+        // relative order is not source order. Sequence rules skip them.
+        let sequential = !token.is_macro_expansion && !next.is_macro_expansion;
+        if sequential && edition == LanguageEdition::Verilog2001 {
+            let previous =
+                i.checked_sub(1)
+                    .and_then(|index| tokens.get(index))
+                    .filter(|previous| {
+                        !previous.is_macro_expansion
+                            && previous.range.map(|r| r.file_id) == token.range.map(|r| r.file_id)
+                    });
+            let after_next = tokens.get(i + 2).filter(|after| !after.is_macro_expansion);
+            if let Some(label) = verilog_2001_sequence_violation(
+                &nodes,
+                &types,
+                previous.copied(),
+                token,
+                next,
+                after_next.copied(),
+                &tokens[i + 1..],
+            ) {
+                violations.push((token.range, label.to_owned()));
+            }
+        }
+        if sequential && edition == LanguageEdition::SystemVerilog2009 {
+            if let Some(label) = covergroup_bins_violation(token, &tokens[i + 1..]) {
+                violations.push((token.range, label.to_owned()));
+            }
         }
         let next_keyword = next.kind == LexicalKind::Keyword || next.role == LexicalRole::Keyword;
         if keyword && next_keyword {
@@ -1110,6 +1527,16 @@ mod tests {
             &extensions
         ));
         assert!(extension_name("task ordinary();").is_none());
+    }
+
+    #[test]
+    fn time_literals_need_a_leading_digit_and_a_time_unit() {
+        for literal in ["1ns", "10ps", "1.5us", "2s", "3ms", "7fs"] {
+            assert!(is_time_literal(literal), "{literal}");
+        }
+        for number in ["1", "4'hf", "8'd5s", "ns", "1e3", "12", "1step"] {
+            assert!(!is_time_literal(number), "{number}");
+        }
     }
 
     #[test]

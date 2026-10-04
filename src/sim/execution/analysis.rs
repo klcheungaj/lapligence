@@ -1083,6 +1083,7 @@ mod tests {
             column: 5,
             end_line: 3,
             end_column: 8,
+            logical: None,
         };
         let second = crate::sim::semantic::Origin::Source {
             path: "sites.sv".into(),
@@ -1090,6 +1091,7 @@ mod tests {
             column: 5,
             end_line: 7,
             end_column: 8,
+            logical: None,
         };
         let delay = || IrStmt::Delay {
             ticks: IrDelay::Constant(1),

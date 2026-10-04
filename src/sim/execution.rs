@@ -2372,6 +2372,7 @@ mod tests {
             column: 5,
             end_line: 14,
             end_column: 8,
+            logical: None,
         };
         let process = IrProcess::new_with_origin(
             "p0".into(),

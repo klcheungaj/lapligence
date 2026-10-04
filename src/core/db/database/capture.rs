@@ -173,6 +173,7 @@ impl Db {
                 ))
             })
             .collect::<Result<HashMap<_, _>, DbError>>()?;
+        let source_map = super::super::SourceMap::from_slang(snapshot)?;
         let unconnected_drives = snapshot
             .semantic_nodes
             .iter()
@@ -1000,6 +1001,7 @@ impl Db {
             program_instances,
             unconnected_drives,
             source_libraries,
+            source_map,
             tops,
             flat_modules,
             packages,
