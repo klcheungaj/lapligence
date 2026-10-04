@@ -204,11 +204,13 @@ impl Codegen<'_> {
                     });
                 }
                 P30PatternSource::Element { node, index, dims } => {
-                    if !items.contains_key(&node) {
-                        let item = self.real_array_values(path, node, &dims)?;
-                        items.insert(node, item);
-                    }
-                    values.push(items[&node].get(index).cloned().ok_or_else(|| {
+                    let item = match items.entry(node) {
+                        std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
+                        std::collections::hash_map::Entry::Vacant(entry) => {
+                            entry.insert(self.real_array_values(path, node, &dims)?)
+                        }
+                    };
+                    values.push(item.get(index).cloned().ok_or_else(|| {
                         format!("real-array pattern item is missing element {index} in `{path}`")
                     })?);
                 }

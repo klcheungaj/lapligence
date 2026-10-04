@@ -1443,6 +1443,11 @@ impl Validator<'_> {
                                 .get(*signal)
                                 .is_some_and(|signal| matches!(signal.ty, IrType::Real { .. })),
                             IrLhs::WholeRef { width, .. } => *width == 0,
+                            IrLhs::ArrayElem {
+                                arr,
+                                elem_sel: IrElemSel::Whole,
+                                ..
+                            } => self.model.arrays.get(*arr).is_some_and(|array| array.real),
                             _ => false,
                         };
                         if !is_real_target {

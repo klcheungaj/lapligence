@@ -13,6 +13,14 @@ fn real_refs_alias_the_selected_numeric_cell() {
 }
 
 #[test]
+fn real_element_output_and_inout_actuals_copy_back() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_005/real_element_copyout.out");
+    sim_cli::run_case_backend_parity(SUITE, "real_element_copyout", expected, &[], &[]);
+    sim_cli::run_case_after_db_drop(SUITE, "real_element_copyout", expected);
+}
+
+#[test]
 fn real_arrays_cross_subroutine_boundaries_by_value_and_reference() {
     let expected = include_str!("../fixtures/sim/feature_completion/sim_005/real_array_calls.out");
     sim_cli::run_case_backend_parity(SUITE, "real_array_calls", expected, &[], &[]);

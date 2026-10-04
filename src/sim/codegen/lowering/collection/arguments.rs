@@ -1026,9 +1026,12 @@ impl<'a> Codegen<'a> {
                     .arrays
                     .get(arr)
                     .ok_or_else(|| format!("subroutine actual array {arr} is out of bounds"))?;
-                if array.real {
+                // A real element is a whole `double` cell (width 0); the
+                // read and the copy-out use the ordinary real element path.
+                if array.real && !matches!(elem_sel, IrElemSel::Whole) {
                     return Err(
-                        "real unpacked-array output/inout actuals are not supported".to_string()
+                        "real unpacked-array output/inout actuals cannot select within an element"
+                            .to_string(),
                     );
                 }
                 let indices = indices
