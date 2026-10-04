@@ -80,6 +80,11 @@ or an analysis. Entry-level problems (a malformed `defines` entry, an invalid
 URI). Missing configured directories also warn. The file read is bounded to
 1 MiB.
 
+In the language server a rejected file produces one diagnostic per error on
+the TOML URI whose message is `invalid <path>: <error>` (key and line
+included); the previous valid configuration stays in effect on reload, and safe
+defaults apply until a valid file exists.
+
 ## Key reference
 
 Tool column: **both** = used by `llg` and `llg_ls`; **llg** = used by the
