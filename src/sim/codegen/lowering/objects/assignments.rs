@@ -153,10 +153,11 @@ impl Codegen<'_> {
             return Err("mailbox handle has no writable storage in this context".to_owned());
         }
         if !blocking {
-            return Err(
-                "nonblocking assignment to dynamic string/chandle storage is not supported"
-                    .to_owned(),
-            );
+            // Nonblocking object writes have no compound form, so `op` is a
+            // plain assignment here.
+            return self
+                .lower_native_nba(path, lhs, rhs, IrDelay::Constant(0))
+                .map(Some);
         }
         if op != Operation::Assignment {
             return Err("compound assignment to non-integral storage is unsupported".to_owned());
@@ -244,5 +245,167 @@ impl Codegen<'_> {
             }
         };
         Ok(Some(IrStmt::Object(Box::new(operation))))
+    }
+}
+
+/// A persistent native NBA destination: its storage C name and leaf kind.
+enum NativeNbaTarget {
+    String(String),
+    Chandle(String),
+}
+
+/// An already lowered native value queued by a nonblocking write.
+pub(in super::super) enum NativeNbaValue {
+    String(IrStringExpr),
+    Chandle(IrChandleExpr),
+}
+
+impl Codegen<'_> {
+    /// Resolve the destination of a nonblocking write to string or chandle
+    /// storage. Only whole persistent variables qualify: SV §6.21 and
+    /// §10.4.2 forbid nonblocking writes to automatic variables and to
+    /// members or elements of dynamic variables (class properties, string
+    /// bytes), and every other handle kind keeps its own assignment path.
+    fn native_nba_target(&mut self, path: &str, lhs: NodeId) -> Result<NativeNbaTarget, String> {
+        let lhs = match self.kind(lhs) {
+            NodeKind::Expr(ExprKind::Cast { operand, ty, .. })
+                if ty.kind == "string" || is_handle_kind(&ty.kind) =>
+            {
+                *operand
+            }
+            _ => lhs,
+        };
+        if let NodeKind::Expr(ExprKind::BitSelect { base, .. }) = self.kind(lhs) {
+            if self.is_string_expr(path, *base) {
+                return Err(format!(
+                    "nonblocking assignment to a string element in `{path}` is illegal: \
+                     elements of dynamically sized variables cannot be nonblocking targets (SV 6.21)"
+                ));
+            }
+        }
+        if self.class_field_target(lhs).is_some() {
+            return Err(format!(
+                "nonblocking assignment to a class property in `{path}` is illegal: \
+                 members of dynamic objects cannot be nonblocking targets (SV 6.21)"
+            ));
+        }
+        if self.is_mailbox_expr(path, lhs)
+            || self.is_process_expr(path, lhs)
+            || self.is_semaphore_expr(path, lhs)
+        {
+            return Err(format!(
+                "nonblocking assignment to a mailbox, process or semaphore handle in `{path}` is not supported"
+            ));
+        }
+        if self.native_target(lhs) {
+            return Err(if self.subroutine_auto_target(lhs) {
+                format!(
+                    "nonblocking assignment to an automatic native record in `{path}` is illegal (SV 6.21, 10.4.2)"
+                )
+            } else {
+                format!(
+                    "nonblocking assignment to static native record subroutine storage in `{path}` is not supported"
+                )
+            });
+        }
+        if let Some(index) = self.object_of(path, lhs) {
+            let object = &self.model.objects[index];
+            return match object.ty {
+                IrObjectType::String => Ok(NativeNbaTarget::String(object.c_name.clone())),
+                IrObjectType::Chandle => Ok(NativeNbaTarget::Chandle(object.c_name.clone())),
+                IrObjectType::Semaphore | IrObjectType::Process => Err(format!(
+                    "nonblocking assignment to a process or semaphore handle in `{path}` is not supported"
+                )),
+            };
+        }
+        if self.subroutine_auto_target(lhs) {
+            return Err(format!(
+                "nonblocking assignment to automatic subroutine storage in `{path}` is illegal: \
+                 the update can outlive its activation (SV 6.21, 10.4.2)"
+            ));
+        }
+        if self.proc_local_target(lhs).is_some() || self.lexical_proc_string_local(lhs).is_some() {
+            return Err(format!(
+                "nonblocking assignment to block-local native storage in `{path}` is not supported \
+                 because the update can outlive its lexical storage"
+            ));
+        }
+        // A static subroutine string local is hidden model storage with a
+        // fixed C name; formals and chandle locals have no persistent slot.
+        let target = match self.kind(lhs) {
+            NodeKind::Expr(ExprKind::Ref { target }) => *target,
+            _ => Some(lhs),
+        };
+        if let Some(name) = self.func.as_ref().and_then(|function| {
+            let target = target?;
+            function
+                .locals
+                .contains_key(&target)
+                .then(|| function.string_write.get(&target).cloned())
+                .flatten()
+        }) {
+            return Ok(NativeNbaTarget::String(name));
+        }
+        Err(format!(
+            "nonblocking assignment to this string/chandle storage in `{path}` is not supported: \
+             only persistent whole variables are nonblocking targets"
+        ))
+    }
+
+    /// Queue an untimed nonblocking write of `value` into the module record
+    /// leaf object `index`. Record leaves are persistent model objects.
+    pub(in super::super) fn object_leaf_nba(
+        &self,
+        path: &str,
+        index: usize,
+        value: NativeNbaValue,
+    ) -> Result<IrStmt, String> {
+        let object = &self.model.objects[index];
+        let ticks = IrDelay::Constant(0);
+        match (object.ty, value) {
+            (IrObjectType::String, NativeNbaValue::String(rhs)) => Ok(IrStmt::DelayedStringAssign {
+                target: object.c_name.clone(),
+                rhs,
+                ticks,
+            }),
+            (IrObjectType::Chandle, NativeNbaValue::Chandle(rhs)) => {
+                Ok(IrStmt::DelayedChandleAssign {
+                    target: object.c_name.clone(),
+                    rhs,
+                    ticks,
+                })
+            }
+            _ => Err(format!(
+                "nonblocking assignment to a record member of this handle type in `{path}` is not supported"
+            )),
+        }
+    }
+
+    /// Lower `lhs <= #ticks rhs` for persistent native storage. The RHS is
+    /// captured as an owned value at issue, so later source writes, source
+    /// activation exit or the issuing process's completion cannot change
+    /// the committed value; zero ticks is the ordinary untimed NBA.
+    pub(in super::super) fn lower_native_nba(
+        &mut self,
+        path: &str,
+        lhs: NodeId,
+        rhs: NodeId,
+        ticks: IrDelay,
+    ) -> Result<IrStmt, String> {
+        Ok(match self.native_nba_target(path, lhs)? {
+            NativeNbaTarget::String(target) => IrStmt::DelayedStringAssign {
+                target,
+                rhs: self.lower_string(path, rhs)?,
+                ticks,
+            },
+            NativeNbaTarget::Chandle(target) => {
+                self.validate_virtual_interface_assignment(lhs, rhs, path)?;
+                IrStmt::DelayedChandleAssign {
+                    target,
+                    rhs: self.lower_chandle(path, rhs)?,
+                    ticks,
+                }
+            }
+        })
     }
 }

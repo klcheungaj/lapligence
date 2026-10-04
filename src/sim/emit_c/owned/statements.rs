@@ -178,6 +178,18 @@ impl Frame<'_, '_> {
                 ));
                 self.native_discard(value);
             }
+            IrStmt::DelayedChandleAssign { target, rhs, ticks } => {
+                let binding = self.native_lookup(target, super::native::NativeKind::Chandle)?;
+                if binding.automatic {
+                    return Err(pending("delayed writes to automatic chandle storage"));
+                }
+                let value = self.chandle(rhs)?;
+                let ticks = self.delay(ticks)?;
+                self.line(format!(
+                    "llg_chandle_nba_after((void**)({}), {value}, {ticks});",
+                    binding.address
+                ));
+            }
             IrStmt::RandomSeed { seed } => {
                 let seed = self.expression(seed)?;
                 self.line(format!("llg_process_srandom({});", seed.code));

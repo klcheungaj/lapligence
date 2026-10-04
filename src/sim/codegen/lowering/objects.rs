@@ -7,6 +7,7 @@ use crate::sim::ir::{
 };
 
 mod assignments;
+pub(super) use assignments::NativeNbaValue;
 mod classes;
 mod classification;
 mod enumerations;

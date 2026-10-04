@@ -379,10 +379,10 @@ input/output/inout formals and results as runtime values. These legal forms
 still reject with explicit diagnostics: module-level unpacked arrays and
 queue/dynamic/associative containers of native records or strings, their
 slices, a run-time index into a native member array of an automatic record, `ref`
-formals of native record type, nonblocking writes of native records or their
-string/chandle members, fork-join_none capture of automatic native records,
-`f(...).member` selects on a native result, conditional operators with native
-record operands (an unknown predicate needs a member-wise merge), and native
+formals of native record type, nonblocking writes to a static subroutine
+native record (module records and persistent strings/chandles are queued since
+SIM-004), fork-join_none capture of automatic native records,
+`f(...).member` selects on a native result, and native
 outputs bound inside an expression (call them as a statement instead). A packed member select of a
 module-level native record (`h.p.hi`) and event controls on string members are
 also not lowered.
@@ -398,12 +398,15 @@ run-time item addressing plus per-element change records.
 ### Intended direction
 
 Run-time item paths and element change records (SIM-007), native ref aliases
-(SIM-008), deferred native writes (SIM-004), fork capture pins (SIM-010) and
+(SIM-008), a root-plus-item-path pending record for static native roots
+(a queued leaf pointer would dangle because a root replaces its leaves on
+assignment), fork capture pins (SIM-010) and
 container formals/locals (SIM-006) reuse the same descriptors and root registry.
 
 ### Reproduce
 
-`tests/fixtures/sim/feature_completion/sim_003/neg_native_*.sv`.
+`tests/fixtures/sim/feature_completion/sim_003/neg_native_*.sv` and
+`sim_004/neg_static_native_record_nba.sv`.
 
 ## Streaming `with` targets outside the direct assignment path
 
@@ -435,6 +438,36 @@ canonical storage cell. IEEE 1800-2009 §23.3.3.2 describes hierarchical referen
 binding, but the retained runtime-selector characterization has no adjudicated
 binding/rebinding oracle. Qualify that boundary before enabling runtime-selected
 connections. Static selected connections and nested packed projections execute.
+
+## Delayed and event-controlled native writes
+
+**Status:** open; SIM-004 queues untimed and `#delay` nonblocking writes and
+drives zero-delay continuous assignments of strings and string records.
+
+### Symptom
+
+These legal forms reject with explicit diagnostics: a delayed continuous
+assignment to a string or string record (`assign #1 s = t;`, SV 10.3.3), and
+event or repeat intra-assignment timing on a string target (`s <= @(e) t;`,
+`s = repeat (2) @(e) t;`). A blocking `#delay` assignment of a record with a
+conditional source also rejects.
+
+### Cause
+
+A delayed continuous driver keeps an inertial pending value per driver, and
+event-controlled NBAs run a detached waiter that captures the value. Both
+records hold packed (`sv4_t`) payloads only; neither owns a string.
+
+### Intended direction
+
+Give the inertial driver and the detached event waiter an owned native payload
+(string or chandle) next to the packed one, reusing the `llg_nba_t` native
+member layout and its destroy path.
+
+### Reproduce
+
+`tests/fixtures/sim/feature_completion/sim_004/neg_delayed_string_continuous.sv`;
+`module tb; string s; event e; initial begin s <= @(e) "x"; ->e; end endmodule`.
 
 ## `%l` in runtime-built format strings
 

@@ -6,6 +6,39 @@ impl Frame<'_, '_> {
     pub(super) fn string(&mut self, expression: &IrStringExpr) -> Result<NativeValue, String> {
         use IrStringExpr::*;
         Ok(match expression {
+            Conditional {
+                predicate,
+                then,
+                otherwise,
+            } => {
+                let selector = self.expression(predicate)?;
+                let result = self.native_value(NativeKind::String, "(llg_string_t){0}".to_owned());
+                self.line(format!("if ({}) {{", selector.truth()));
+                self.string_arm(&result, then)?;
+                if selector.width == 0 {
+                    self.line("} else {");
+                    self.string_arm(&result, otherwise)?;
+                } else {
+                    self.line(format!("}} else if (!{}) {{", selector.unknown_truth()));
+                    self.string_arm(&result, otherwise)?;
+                    self.line("} else {");
+                    // SV 11.4.11: an ambiguous predicate evaluates both arms;
+                    // unequal strings yield the empty default.
+                    let left = self.string(then)?;
+                    let right = self.string(otherwise)?;
+                    self.line(format!(
+                        "*({}) = llg_string_conditional_merge({}, {});",
+                        result.address,
+                        left.take_string(),
+                        right.take_string()
+                    ));
+                    self.native_discard(right);
+                    self.native_discard(left);
+                }
+                self.line("}");
+                self.discard(selector);
+                result
+            }
             Literal(bytes) => {
                 let literal = bytes
                     .iter()
@@ -340,5 +373,13 @@ impl Frame<'_, '_> {
         }
         self.native_discard(source);
         Ok(result)
+    }
+
+    /// Move one evaluated conditional arm into the reserved empty result.
+    fn string_arm(&mut self, result: &NativeValue, arm: &IrStringExpr) -> Result<(), String> {
+        let value = self.string(arm)?;
+        self.line(format!("*({}) = {};", result.address, value.take_string()));
+        self.native_discard(value);
+        Ok(())
     }
 }

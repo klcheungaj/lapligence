@@ -44,10 +44,12 @@ fn distinct_unpacked_record_identity_remains_a_frontend_error() {
 
 #[test]
 fn native_record_conditionals_remain_outside_the_fixed_integral_path() {
-    sim_cli::reject_case(
+    sim_cli::run_case(
         "syn012_fixed_layout",
         "native_record_rejected",
-        "conditional structure member has no supported fixed payload",
+        "xx 0.0\n",
+        "",
+        &[],
     );
 }
 

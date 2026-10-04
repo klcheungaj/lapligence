@@ -97,7 +97,7 @@ paths remain gated until their retention contracts are migrated.
 
 | Owner | Construction/capture | Release boundary |
 | --- | --- | --- |
-| NBA and clocking records | Deep-copy value/mask; retain scoped packed target descriptor when present | Commit, cancellation, cleanup/reinit |
+| NBA and clocking records | Deep-copy value/mask; retain scoped packed target descriptor when present. Native NBAs own a moved string or a borrowed chandle pointer for persistent targets only | Commit, cancellation, cleanup/reinit |
 | Signal write notification | Independent old-value snapshot | After notification returns, including unchanged paths |
 | Inertial drivers / force state | Deep-copy scheduled value/mask/current/baseline | Replacement, canceled update, commit, driver/force cleanup |
 | Waits and sampling history | Deep-copy snapshots | Wake/rearm, process cancellation, history expiry, cleanup |

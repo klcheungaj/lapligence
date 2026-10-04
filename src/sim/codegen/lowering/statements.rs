@@ -20,6 +20,7 @@ mod drivers;
 mod events;
 mod forks;
 mod formatting;
+mod native_delays;
 mod system_tasks;
 
 fn default_real_local_initializer(width: u32) -> Option<Box<IrExpr>> {

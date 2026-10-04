@@ -18,8 +18,7 @@ static llg_nba_t* new_nba_in_region(uint64_t ticks, llg_region_t region) {
     n->real_target = NULL;
     n->real_value = 0.0;
     n->is_string = 0;
-    n->string_target = NULL;
-    n->string_value = (llg_string_t){0};
+    n->is_chandle = 0;
     n->tag_view = NULL;
     n->time = g.now + ticks;
     n->sequence = g.nba_sequence++;
@@ -474,8 +473,17 @@ void llg_string_nba_after(llg_string_t* target, llg_string_t value,
         return;
     }
     n->is_string = 1;
-    n->string_target = target;
-    n->string_value = value;
+    n->native.string.target = target;
+    n->native.string.value = value;
+    enqueue_nba(n);
+}
+
+void llg_chandle_nba_after(void** target, void* value, uint64_t ticks) {
+    llg_nba_t* n = new_nba(ticks);
+    if (!n) return;
+    n->is_chandle = 1;
+    n->native.chandle.target = target;
+    n->native.chandle.value = value;
     enqueue_nba(n);
 }
 
