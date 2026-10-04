@@ -167,8 +167,8 @@ struct RetiredManifest {
 
 /// Emit Cargo dependencies for repository-owned patches. Directory dependencies
 /// cover additions/removals; individual patch files make the relevant inputs
-/// explicit in Cargo diagnostics. The tracked libfst tree is an input of its
-/// rendered copy, so its files are listed too.
+/// explicit in Cargo diagnostics. The libfst tree is patched in place and
+/// embedded by the runtime, so its files are listed too.
 pub fn emit_rerun_if_changed(manifest_dir: &Path) {
     for patches in ["patches/slang", LIBFST_PATCHES] {
         let directory = manifest_dir.join(patches);
@@ -198,36 +198,44 @@ fn emit_directory_files(directory: &Path, extension: Option<&str>) {
     }
 }
 
-/// Render the pristine upstream libfst snapshot in `vendor/libfst` with the
-/// tracked `patches/libfst` changes into `output`. The runtime embeds the
-/// rendered files; the tracked vendor files are never rewritten.
-pub fn render_libfst(manifest_dir: &Path, output: &Path) -> Result<(), PatchError> {
-    render_tracked_directory(
-        "libfst",
-        manifest_dir,
-        &manifest_dir.join(LIBFST_SOURCE),
-        &manifest_dir.join(LIBFST_PATCHES),
-        output,
-    )
-}
-
-/// Apply every repository-owned vendor patch, accepting only an entirely
-/// clean or entirely-applied submodule checkout.
+/// Apply every repository-owned vendor patch in place, accepting only an
+/// entirely clean or entirely-applied tree.
+///
+/// Slang is a submodule pinned at its documented base. libfst is a plain
+/// directory tracked by this repository, so its applied state appears as
+/// modified tracked files; it must never be committed (the
+/// `committed_libfst_blobs_are_pristine` test guards that).
 pub fn apply_all(manifest_dir: &Path) -> Result<(), PatchError> {
     apply_directory_with_base(
         "Slang",
         manifest_dir,
         &manifest_dir.join("vendor/slang"),
         &manifest_dir.join("patches/slang"),
-        Some(SLANG_BASE_REVISION),
+        VendorCheckout::Git {
+            expected_base: Some(SLANG_BASE_REVISION),
+        },
     )?;
-    Ok(())
+    apply_directory_with_base(
+        "libfst",
+        manifest_dir,
+        &manifest_dir.join(LIBFST_SOURCE),
+        &manifest_dir.join(LIBFST_PATCHES),
+        VendorCheckout::Tracked,
+    )
 }
 
 #[cfg(test)]
 fn apply_directory(label: &str, repository: &Path, patches_dir: &Path) -> Result<(), PatchError> {
     let project_root = repository.parent().unwrap_or(repository);
-    apply_directory_with_base(label, project_root, repository, patches_dir, None)
+    apply_directory_with_base(
+        label,
+        project_root,
+        repository,
+        patches_dir,
+        VendorCheckout::Git {
+            expected_base: None,
+        },
+    )
 }
 
 fn apply_directory_with_base(
@@ -235,15 +243,10 @@ fn apply_directory_with_base(
     project_root: &Path,
     repository: &Path,
     patches_dir: &Path,
-    expected_base: Option<&str>,
+    checkout: VendorCheckout<'_>,
 ) -> Result<(), PatchError> {
     let repository = canonical_repository(label, project_root, repository)?;
-    let plans = plan_directory(
-        label,
-        &repository,
-        patches_dir,
-        VendorCheckout::Git { expected_base },
-    )?;
+    let plans = plan_directory(label, &repository, patches_dir, checkout)?;
     if tree_state(label, &repository, &plans)? == PatchState::Applied {
         return Ok(());
     }
@@ -260,8 +263,9 @@ fn apply_directory_with_base(
 enum VendorCheckout<'a> {
     /// A Git submodule pinned at `expected_base` (when given).
     Git { expected_base: Option<&'a str> },
-    /// Plain files tracked by the parent repository. Every patch target is
-    /// still authenticated by its exact clean/applied digest.
+    /// Plain files tracked by the parent repository, so there is no vendor
+    /// repository to pin or inspect. Every patch target is still
+    /// authenticated by its exact clean/applied digest.
     Tracked,
 }
 
@@ -358,98 +362,6 @@ fn tree_state(
         "{label} vendor checkout {} is partially applied or mismatched ({states}); check out the documented base revision, or restore the complete applied state",
         repository.display()
     )))
-}
-
-/// Render a vendor tree tracked by this repository into `output` with its
-/// patches applied, leaving the tracked (pristine upstream) files untouched.
-///
-/// The tree's regular files are copied flat; patch targets come from the
-/// authenticated rendering. A tree that already carries the complete applied
-/// content is copied as is; a partial or mismatched tree is rejected. Files
-/// are rewritten only when their content changes, so unchanged inputs do not
-/// invalidate downstream builds.
-pub fn render_tracked_directory(
-    label: &str,
-    project_root: &Path,
-    source: &Path,
-    patches_dir: &Path,
-    output: &Path,
-) -> Result<(), PatchError> {
-    let source = canonical_repository(label, project_root, source)?;
-    let plans = plan_directory(label, &source, patches_dir, VendorCheckout::Tracked)?;
-    tree_state(label, &source, &plans)?;
-    let mut rendered = BTreeMap::new();
-    for plan in plans {
-        for write in plan.writes {
-            if canonical_digest(write.contents.as_bytes()) != write.applied {
-                return Err(PatchError::new(format!(
-                    "vendor patch {} rendered {} with a digest different from the authenticated applied manifest; the patch input was modified",
-                    plan.path.display(),
-                    write.relative.display()
-                )));
-            }
-            rendered.insert(write.relative, write.contents.into_bytes());
-        }
-    }
-    fs::create_dir_all(output).map_err(|error| {
-        PatchError::new(format!(
-            "cannot create {label} rendered source directory {}: {error}",
-            output.display()
-        ))
-    })?;
-    let entries = fs::read_dir(&source).map_err(|error| {
-        PatchError::new(format!(
-            "cannot read {label} vendor tree {}: {error}",
-            source.display()
-        ))
-    })?;
-    let mut names = entries
-        .filter_map(Result::ok)
-        .map(|entry| PathBuf::from(entry.file_name()))
-        .collect::<Vec<_>>();
-    names.sort();
-    for name in names {
-        let path = source.join(&name);
-        let metadata = fs::symlink_metadata(&path).map_err(|error| {
-            PatchError::new(format!(
-                "cannot inspect {label} vendor file {}: {error}",
-                path.display()
-            ))
-        })?;
-        if metadata.is_dir() {
-            continue;
-        }
-        let contents = match rendered.remove(&name) {
-            Some(contents) => contents,
-            None => {
-                let path = safe_vendor_target_path(label, &source, &name, "vendor file")?;
-                fs::read(&path).map_err(|error| {
-                    PatchError::new(format!(
-                        "cannot read {label} vendor file {}: {error}",
-                        path.display()
-                    ))
-                })?
-            }
-        };
-        let target = output.join(&name);
-        if fs::read(&target).ok().as_deref() == Some(contents.as_slice()) {
-            continue;
-        }
-        fs::write(&target, &contents).map_err(|error| {
-            PatchError::new(format!(
-                "cannot write rendered {label} source {}: {error}",
-                target.display()
-            ))
-        })?;
-    }
-    if let Some(missing) = rendered.keys().next() {
-        return Err(PatchError::new(format!(
-            "{label} patch target {} is not a file directly inside {}",
-            missing.display(),
-            source.display()
-        )));
-    }
-    Ok(())
 }
 
 fn expected_retired_entries(label: &str) -> Option<&'static [(&'static str, &'static str)]> {
@@ -2522,11 +2434,16 @@ mod tests {
         path
     }
 
+    fn digest_hex(digest: [u8; 32]) -> String {
+        digest.iter().map(|byte| format!("{byte:02x}")).collect()
+    }
+
+    fn digest_text_bytes(bytes: &[u8]) -> String {
+        digest_hex(canonical_digest(bytes))
+    }
+
     fn digest_text(text: &str) -> String {
-        canonical_digest(text.as_bytes())
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect()
+        digest_text_bytes(text.as_bytes())
     }
 
     #[test]
@@ -2758,7 +2675,9 @@ mod tests {
             &root,
             &repository,
             &patches,
-            Some("0000000000000000000000000000000000000000"),
+            VendorCheckout::Git {
+                expected_base: Some("0000000000000000000000000000000000000000"),
+            },
         )
         .expect_err("unreviewed clean commit should be rejected");
         let message = error.to_string();
@@ -3185,28 +3104,25 @@ mod tests {
     }
 
     #[test]
-    fn tracked_tree_renders_patched_copy_and_keeps_sources_pristine() {
+    fn tracked_tree_applies_in_place_and_is_idempotent() {
         for (alpha, beta) in [("one\nold\n", "before\n"), ("one\nnew\n", "after\n")] {
             let (root, source, patches) = tracked_tree(alpha, beta);
-            let output = root.join("out");
-            render_tracked_directory("test", &root, &source, &patches, &output)
-                .expect("clean or applied tree renders");
-            assert_eq!(
-                fs::read_to_string(output.join("alpha.txt")).unwrap(),
-                "one\nnew\n"
-            );
-            assert_eq!(
-                fs::read_to_string(output.join("beta.txt")).unwrap(),
-                "after\n"
-            );
-            assert_eq!(
-                fs::read_to_string(output.join("notes.md")).unwrap(),
-                "unpatched\n"
-            );
-            assert_eq!(fs::read_to_string(source.join("alpha.txt")).unwrap(), alpha);
-            assert_eq!(fs::read_to_string(source.join("beta.txt")).unwrap(), beta);
-            render_tracked_directory("test", &root, &source, &patches, &output)
-                .expect("rendering is repeatable");
+            for _ in 0..2 {
+                apply_tracked("test", &root, &source, &patches)
+                    .expect("clean or applied tree is accepted");
+                assert_eq!(
+                    fs::read_to_string(source.join("alpha.txt")).unwrap(),
+                    "one\nnew\n"
+                );
+                assert_eq!(
+                    fs::read_to_string(source.join("beta.txt")).unwrap(),
+                    "after\n"
+                );
+                assert_eq!(
+                    fs::read_to_string(source.join("notes.md")).unwrap(),
+                    "unpatched\n"
+                );
+            }
             fs::remove_dir_all(root).expect("remove temporary patch tree");
         }
     }
@@ -3222,23 +3138,30 @@ mod tests {
             ),
         ] {
             let (root, source, patches) = tracked_tree(alpha, beta);
-            let output = root.join("out");
-            let error = render_tracked_directory("test", &root, &source, &patches, &output)
+            let error = apply_tracked("test", &root, &source, &patches)
                 .expect_err("partial or mismatched tree must fail");
             assert!(error.to_string().contains(expected), "{error}");
-            assert!(!output.exists(), "nothing is rendered from a rejected tree");
+            assert_eq!(fs::read_to_string(source.join("alpha.txt")).unwrap(), alpha);
+            assert_eq!(fs::read_to_string(source.join("beta.txt")).unwrap(), beta);
             fs::remove_dir_all(root).expect("remove temporary patch tree");
         }
     }
 
-    /// The checked-in snapshot is pristine upstream and the tracked patch
-    /// renders the authenticated applied content, including the MSVC paths.
+    fn apply_tracked(
+        label: &str,
+        root: &Path,
+        source: &Path,
+        patches: &Path,
+    ) -> Result<(), PatchError> {
+        apply_directory_with_base(label, root, source, patches, VendorCheckout::Tracked)
+    }
+
+    /// The tracked libfst tree is either entirely pristine or entirely
+    /// applied. The build applies the patch in place, so both are legitimate
+    /// working-tree states.
     #[test]
-    fn repository_libfst_snapshot_is_clean_and_renders_the_tracked_patch() {
+    fn repository_libfst_tree_is_clean_or_applied() {
         let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let root = temporary_tree();
-        let output = root.join("libfst");
-        render_libfst(&manifest_dir, &output).expect("repository libfst renders");
         let source = manifest_dir.join(LIBFST_SOURCE);
         let plans = plan_directory(
             "libfst",
@@ -3247,23 +3170,48 @@ mod tests {
             VendorCheckout::Tracked,
         )
         .expect("libfst patches plan");
-        assert_eq!(
-            tree_state("libfst", &source, &plans).expect("libfst tree state"),
-            PatchState::Clean,
-            "vendor/libfst must hold the pristine upstream snapshot"
-        );
-        let fstapi = fs::read_to_string(output.join("fstapi.c")).expect("rendered fstapi.c");
-        assert!(fstapi.contains("#define FST_BREAK_SIZE_MAX              (1UL << 20)"));
-        assert!(fstapi.contains("defined(_MSC_VER)"));
-        for name in [
-            "fstapi.h",
-            "fastlz.c",
-            "lz4.c",
-            "fst_config.h",
-            "wavealloca.h",
-        ] {
-            assert!(output.join(name).is_file(), "{name} is rendered");
+        tree_state("libfst", &source, &plans).expect("libfst tree is clean or fully applied");
+    }
+
+    /// The applied state is a build product and must not be committed: the
+    /// commit (HEAD) and the index must hold the pristine upstream content of
+    /// every patched file. Skipped without a usable Git checkout of this
+    /// repository, for example in a source archive.
+    #[test]
+    fn committed_libfst_blobs_are_pristine() {
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        if !git_available() {
+            return;
         }
-        fs::remove_dir_all(root).expect("remove temporary patch tree");
+        let Some(top_level) = git_output(&manifest_dir, &["rev-parse", "--show-toplevel"]) else {
+            return;
+        };
+        if PathBuf::from(top_level.trim()).canonicalize().ok() != manifest_dir.canonicalize().ok() {
+            return;
+        }
+        let manifest = FileManifest::read(
+            &manifest_dir.join(LIBFST_PATCHES).join(FILE_MANIFEST),
+            "libfst",
+        )
+        .expect("libfst manifest");
+        assert!(!manifest.entries.is_empty());
+        for (relative, expectation) in &manifest.entries {
+            let path = format!("{LIBFST_SOURCE}/{}", relative.display());
+            for (place, spec) in [
+                ("HEAD", format!("HEAD:{path}")),
+                ("index", format!(":{path}")),
+            ] {
+                let Some(blob) = git_output_bytes(&manifest_dir, &["show", &spec]) else {
+                    continue;
+                };
+                assert_eq!(
+                    digest_text_bytes(&blob),
+                    digest_hex(expectation.base),
+                    "{path} in the {place} is not the pristine upstream snapshot: the in-place \
+                     libfst patch must not be committed or staged; restore it with \
+                     `git restore --staged --worktree -- {LIBFST_SOURCE}`"
+                );
+            }
+        }
     }
 }

@@ -255,7 +255,12 @@ and procedural, second-port and always_ff writers overlapping a slice reject.
 `vendor_patches.rs` checks clean/applied trees, no-Git archives (including archives
 inside another checkout), authenticated active/retired manifests, LF digest/CRLF
 rendering, and symlink/reparse/hardlink/stale/untracked-input rejection. Race probes
-cover ancestor/parent replacement and late staging hardlinks.
+cover ancestor/parent replacement and late staging hardlinks. The plain tracked
+`vendor/libfst` is patched in place by the same preparer, so its working tree is
+clean or applied; tests cover in-place application, idempotence, partial/mismatched
+rejection, and `committed_libfst_blobs_are_pristine`, which fails if HEAD or the
+index holds the applied state (restore with
+`git restore --staged --worktree -- vendor/libfst`).
 
 ```sh
 cargo test --locked --test vendor_patches -- --test-threads=1
