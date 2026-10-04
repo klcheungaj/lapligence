@@ -2356,6 +2356,7 @@ int main(int argc, char** argv) {
     sv4_destroy(&f_sig);
     sv4_destroy(&f_live_target);
     sv4_destroy(&f_live_source);
+    sv4_destroy(&f_other_source);
     sv4_destroy(&f_nba_sig);
     sv4_destroy(&f_wait_sig);
     sv4_destroy(&inertial_target);
