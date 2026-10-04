@@ -1,4 +1,5 @@
 //! Fixed net-array views bind to the shared electrical range partition.
+use super::super::packed_geometry::PackedSelectDim;
 use super::net_collapse::{NetCollapsePlan, NetPoint};
 use super::*;
 
@@ -219,6 +220,19 @@ impl Codegen<'_> {
         }
     }
 
+    /// The selected bits of a net-array selection's base and the geometry of
+    /// its outermost visible packed dimension.
+    fn array_net_select_dim(&self, base: NodeId) -> Result<(PackedSelectDim, Vec<u32>), String> {
+        let (_, bits) = self
+            .array_net_selection(base)?
+            .ok_or("net-array selection has no base")?;
+        let width = u32::try_from(bits.len()).map_err(|_| "net-array width overflow")?;
+        let range = self
+            .packed_ranges_for_base(base)
+            .and_then(|ranges| ranges.first().copied());
+        Ok((PackedSelectDim::new(width, range)?, bits))
+    }
+
     pub(super) fn array_net_selection(
         &self,
         node: NodeId,
@@ -322,26 +336,14 @@ impl Codegen<'_> {
                     })
                     .unwrap_or_default();
                 for (dimension, index) in indices.iter().skip(array.dims.len()).enumerate() {
-                    let range =
-                        ranges
-                            .get(dimension)
-                            .copied()
-                            .unwrap_or(crate::core::db::PackedRange {
-                                left: i128::try_from(bits.len())
-                                    .map_err(|_| "net-array width overflow")?
-                                    - 1,
-                                right: 0,
-                            });
-                    let extent = range.left.abs_diff(range.right) + 1;
-                    let stride = u32::try_from(bits.len() as u128 / extent)
-                        .map_err(|_| "net-array stride overflow")?;
+                    let width =
+                        u32::try_from(bits.len()).map_err(|_| "net-array width overflow")?;
+                    let dim = PackedSelectDim::new(width, ranges.get(dimension).copied())?;
                     let label = self.eval_bound_i128(*index)?;
-                    if label < range.left.min(range.right) || label > range.left.max(range.right) {
+                    let (lower, stride) = dim.element(label)?;
+                    if !(0..i128::from(width)).contains(&lower) {
                         return Err("net-array selection is out of bounds".into());
                     }
-                    let lower = i128::try_from(label.abs_diff(range.right))
-                        .map_err(|_| "net-array index overflow")?
-                        * i128::from(stride);
                     bits = select(bits, lower, stride)?;
                 }
                 bits
@@ -350,25 +352,15 @@ impl Codegen<'_> {
                 whole()
             }
             NodeKind::Expr(ExprKind::BitSelect { base, index }) => {
-                let (_, bits) = self
-                    .array_net_selection(*base)?
-                    .ok_or("net-array selection has no base")?;
-                let lower = self.packed_relative_bound(*base, self.eval_bound_i128(*index)?)?;
-                let width = self
-                    .query_descriptor(node)
-                    .and_then(|descriptor| descriptor.info.width)
-                    .unwrap_or(1);
-                select(bits, lower * i128::from(width), width)?
+                let (dim, bits) = self.array_net_select_dim(*base)?;
+                let (lower, width) = dim.element(self.eval_bound_i128(*index)?)?;
+                select(bits, lower, width)?
             }
             NodeKind::Expr(ExprKind::PartSelect { base, left, right }) => {
-                let (_, bits) = self
-                    .array_net_selection(*base)?
-                    .ok_or("net-array selection has no base")?;
-                let left = self.packed_relative_bound(*base, self.eval_bound_i128(*left)?)?;
-                let right = self.packed_relative_bound(*base, self.eval_bound_i128(*right)?)?;
-                let width = u32::try_from(left.abs_diff(right) + 1)
-                    .map_err(|_| "net-array selection width overflow")?;
-                select(bits, left.min(right), width)?
+                let (dim, bits) = self.array_net_select_dim(*base)?;
+                let (lower, width) =
+                    dim.part(self.eval_bound_i128(*left)?, self.eval_bound_i128(*right)?)?;
+                select(bits, lower, width)?
             }
             NodeKind::Expr(ExprKind::IndexedPartSelect {
                 base,
@@ -376,22 +368,13 @@ impl Codegen<'_> {
                 width_expr,
                 neg,
             }) => {
-                let (_, bits) = self
-                    .array_net_selection(*base)?
-                    .ok_or("net-array selection has no base")?;
-                let lower = self.packed_relative_bound(*base, self.eval_bound_i128(*base_expr)?)?;
-                let width = u32::try_from(self.eval_bound_i128(*width_expr)?)
-                    .map_err(|_| "net-array selection width overflow")?;
-                let negative = *neg ^ self.packed_range_ascending(*base);
-                select(
-                    bits,
-                    if negative {
-                        lower - i128::from(width) + 1
-                    } else {
-                        lower
-                    },
-                    width,
-                )?
+                let (dim, bits) = self.array_net_select_dim(*base)?;
+                let count = u32::try_from(self.eval_bound_i128(*width_expr)?)
+                    .ok()
+                    .filter(|count| *count != 0)
+                    .ok_or("net-array selection width overflow")?;
+                let (lower, width) = dim.indexed(self.eval_bound_i128(*base_expr)?, count, *neg)?;
+                select(bits, lower, width)?
             }
             _ => return Err("net-array connection has an unsupported selection shape".into()),
         };

@@ -708,18 +708,13 @@ impl Codegen<'_> {
                 (i128::from(left), i128::from(right), selected, true)
             }
             TypeShape::PackedAtom { ranges } => {
-                let range = ranges
-                    .first()
-                    .copied()
-                    .unwrap_or(crate::core::db::PackedRange {
-                        left: i128::from(parent_width - 1),
-                        right: 0,
-                    });
-                let count = range.left.abs_diff(range.right) + 1;
-                let width = u32::try_from(u128::from(parent_width) / count)
-                    .map_err(|_| "packed element width overflow")?;
+                let dim = super::super::packed_geometry::PackedSelectDim::new(
+                    parent_width,
+                    ranges.first().copied(),
+                )?;
+                let range = dim.range;
                 let mut element = projection.descriptor.clone();
-                element.info.width = Some(width);
+                element.info.width = Some(dim.stride);
                 element.info.signed = false;
                 element.shape = TypeShape::PackedAtom {
                     ranges: ranges.get(1..).unwrap_or(&[]).to_vec(),
@@ -734,7 +729,7 @@ impl Codegen<'_> {
             .eval_bound_i128(index)
             .is_ok_and(|index| (left.min(right)..=left.max(right)).contains(&index));
         let index = self.lower_expr(path, index)?;
-        let base = super::packed_elements::packed_lsb(
+        let base = super::super::packed_geometry::packed_lsb(
             index,
             crate::core::db::PackedRange { left, right },
             width,
