@@ -218,7 +218,9 @@ impl EmitCtx<'_, '_> {
         // The C signature orders all outputs first, then inputs — build the
         // argument list in that order, not by formal declaration index.
         let mut out_args: Vec<IrCallArg> = Vec::new();
-        let mut in_args: Vec<IrCallArg> = Vec::new();
+        // Inputs are gathered by two passes; the formal index keeps them in
+        // the callee's declaration order (the C parameter order).
+        let mut in_args: Vec<(usize, IrCallArg)> = Vec::new();
         let mut arg_irs: Vec<Option<IrExpr>> = vec![None; formals.len()];
         let mut before = Vec::new();
         let mut after = Vec::new();
@@ -234,7 +236,7 @@ impl EmitCtx<'_, '_> {
                 if *is_out {
                     out_args.push(argument);
                 } else {
-                    in_args.push(argument);
+                    in_args.push((idx, argument));
                 }
                 continue;
             }
@@ -253,7 +255,7 @@ impl EmitCtx<'_, '_> {
                 {
                     out_args.push(argument);
                 } else {
-                    in_args.push(argument);
+                    in_args.push((idx, argument));
                 }
                 continue;
             }
@@ -272,7 +274,7 @@ impl EmitCtx<'_, '_> {
                 {
                     out_args.push(argument);
                 } else {
-                    in_args.push(argument);
+                    in_args.push((idx, argument));
                 }
                 continue;
             }
@@ -297,8 +299,9 @@ impl EmitCtx<'_, '_> {
                         out_args.push(IrCallArg::ChandleAddr(address));
                     }
                 } else {
-                    in_args.push(IrCallArg::ChandleVal(
-                        self.cg.lower_chandle(&self.path, bound[idx].expr)?,
+                    in_args.push((
+                        idx,
+                        IrCallArg::ChandleVal(self.cg.lower_chandle(&self.path, bound[idx].expr)?),
                     ));
                 }
                 continue;
@@ -480,10 +483,11 @@ impl EmitCtx<'_, '_> {
                         })?;
                         self.cg.event_ref_of(&target, &self.path)?
                     };
-                    in_args.push(IrCallArg::EventVal(event));
+                    in_args.push((idx, IrCallArg::EventVal(event)));
                 } else if bound[idx].string {
-                    in_args.push(IrCallArg::StringVal(
-                        self.cg.lower_string(&self.path, bound[idx].expr)?,
+                    in_args.push((
+                        idx,
+                        IrCallArg::StringVal(self.cg.lower_string(&self.path, bound[idx].expr)?),
                     ));
                 } else {
                     let ir =
@@ -495,7 +499,7 @@ impl EmitCtx<'_, '_> {
                         ir.signed,
                         None,
                     ));
-                    in_args.push(IrCallArg::Val(ir));
+                    in_args.push((idx, IrCallArg::Val(ir)));
                 }
             }
         }
@@ -523,7 +527,8 @@ impl EmitCtx<'_, '_> {
             before.push(IrStmt::FixedArrayDeclare(temporary));
             out_args.push(IrCallArg::RealArray(temporary));
         }
-        out_args.extend(in_args);
+        in_args.sort_by_key(|(idx, _)| *idx);
+        out_args.extend(in_args.into_iter().map(|(_, argument)| argument));
         let depth = parse_depth(&self.depth_arg);
         let call = IrStmt::Call(Box::new(IrCall {
             f: fidx,

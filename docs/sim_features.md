@@ -289,9 +289,10 @@ Macros, includes and their edition-specific behavior are counted in §11.
   and automatic/static locals, registered as explicit runtime roots; copies are
   deep except chandles, which stay borrowed foreign pointers
   ([sim_003](../tests/fixtures/sim/feature_completion/sim_003/readme.md)).
-  Arrays of native records, native aggregate slices, run-time indices into
-  native member arrays, native ref formals, NBAs and fork capture remain
-  restricted. SV §§6.7, 7.2–7.4 **[SV-2005]**.
+  Module native records accept untimed/delayed NBAs, continuous assignments
+  and conditional merges (SIM-004). Arrays of native records, native aggregate
+  slices, run-time indices into native member arrays, native ref formals,
+  static subroutine-root NBAs and fork capture remain restricted. SV §§6.7, 7.2–7.4 **[SV-2005]**.
 - 🟨 **Tagged unions** — Packed and unpacked tagged unions with fixed payloads
   use one finite storage owner: the tag in the most significant bits and each
   member right-justified below it. Construction and checked member access
@@ -321,16 +322,17 @@ Macros, includes and their edition-specific behavior are counted in §11.
 - 🟨 **Strings** — Module/static/automatic byte strings support copies, casts,
   core methods, `atoreal/realtoa`, formatting, value/reference formals, copy-out,
   returns and collected input/output links. Contents changes feed sensitivity;
-  inputs/returns have independent ownership. Blocking delayed assignments and
-  delayed NBAs to persistent strings have an owned-value path, covered by the
-  [delayed-string regression](../tests/fixtures/sim/data_types_next/string_delayed_nba.sv).
-  **Ordinary untimed native-string NBAs still reject**, including persistent
-  targets: [object assignment lowering](../src/sim/codegen/lowering/objects/assignments.rs)
-  rejects nonblocking writes, whereas the
-  [delayed-assignment path](../src/sim/codegen/lowering/statements/assignments.rs)
-  handles `s <= #delay value` separately. Automatic delayed-NBA targets,
-  unsupported captures, automatic monitors and broader aggregate/continuous
-  combinations remain restricted. SV §6.16 **[SV-2005]**.
+  inputs/returns have independent ownership and string values never hold `"\0"`.
+  Untimed and `#delay` nonblocking writes to persistent strings (module, package,
+  static subroutine and module-record members) queue an owned issue-time copy
+  in issue order; continuous assignments and output ports driven by `assign`
+  re-run on operand changes; conditional operators keep equal values or yield
+  `""` for an ambiguous predicate
+  ([sim_004](../tests/fixtures/sim/feature_completion/sim_004/readme.md)).
+  String bytes and class properties are not nonblocking targets (SV §6.21).
+  Delayed continuous drivers, event/repeat-controlled string NBAs, block-local
+  string NBAs, automatic monitors and broader aggregate combinations remain
+  restricted. SV §6.16 **[SV-2005]**.
 - 🟨 **Events** — Scalar/fixed-array declarations, indexed/hierarchical access,
   null/default handles, reassignment and task aliases retain event identity.
   Dynamic/associative/queue event storage is unsupported. SV §6.17 **[SV-2005]**.
@@ -345,11 +347,14 @@ Macros, includes and their edition-specific behavior are counted in §11.
   SV §§7.5, 7.8, 7.10, 7.12 **[SV-2005]**.
 - 🟨 **Chandle** — Typed native-pointer null/copy/identity/Boolean operations,
   locals, admitted aggregate/class fields, mixed signatures, returns and
-  input/output/inout/ref/const-ref calls are present. Nonblocking object
-  assignment remains unsupported. Chandle ports (including ref ports), packed
-  containment, arithmetic, continuous assignments and sensitivity/event
-  expressions are language-illegal under SV §6.14, rather than implementation
-  gaps. Other object sensitivity contexts remain partial.
+  input/output/inout/ref/const-ref calls are present. Untimed and `#delay`
+  nonblocking writes to persistent chandles and module-record chandle members
+  store the issue-time pointer; an ambiguous conditional keeps equal pointers
+  or yields null. Chandle ports (including ref ports and records with chandle
+  members), packed containment, arithmetic, continuous assignments (including
+  of a record with a chandle member) and sensitivity/event expressions are
+  language-illegal under SV §6.14, rather than implementation gaps. Other
+  object sensitivity contexts remain partial.
   SV §6.14 **[SV-2005]**.
 
 <a id="native-record-capability-matrix"></a>
@@ -367,7 +372,7 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
 | Module/static variable | yes | yes | yes | constant: yes; packed-member select SIM-007 | SIM-008 | model close |
 | Automatic/static subroutine local | yes (root) | yes | yes | constant: yes; run-time index SIM-007 | SIM-008 | scope exit, cancel, close |
 | Input/output/inout formal, result | yes (root) | yes, copy-in/out | yes | constant: yes; `f().m` SIM-007 | `ref` formal SIM-008 | scope exit, cancel, close |
-| NBA target or source | SIM-004 | SIM-004 | n/a | SIM-004 | n/a | n/a |
+| NBA target or source | module record: yes (untimed and `#delay`); static subroutine root target: rejected ([known issue](known_issues.md#native-record-values-outside-by-value-subroutine-storage)); automatic: illegal | yes, issue-time copy | n/a | constant: yes | n/a | commit or cancellation |
 | Fork-join_none capture | SIM-010 | SIM-010 | n/a | n/a | n/a | SIM-010 |
 | Unpacked array element, slice | SIM-007 | SIM-007 | SIM-007 | SIM-007 | SIM-008 | SIM-007 |
 | Queue/dynamic/associative element | SIM-006 | SIM-006 | SIM-006 | SIM-006 | SIM-008 | SIM-006 |
@@ -403,8 +408,12 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   lexical package references remain distinct. SV §26 **[SV-2005]**.
 - 🟦 **Interfaces and modports** — Concrete storage, instance-local processes,
   parameterized interfaces, member references and modport views are represented.
-  `.name` and `.*` connection shorthands retain their resolved links. Runtime
-  virtual handles are covered in §12. SV §§23.3.2, 25.3, 25.5 **[SV-2005]**.
+  `.name` and `.*` connection shorthands retain their resolved links. Modport
+  expression ports `.p(expr)` read, write and wake through their expression
+  (part-selects, concatenation lvalues, constant and runtime element selects,
+  inout drivers of interface nets that resolve with other drivers); illegal
+  targets and writer conflicts reject. Runtime virtual handles are covered in
+  §12. SV §§23.3.2, 25.3, 25.5 **[SV-2005]**.
 - 🟦 **Extern and nested modules** — Parameterized declarations/matching bodies,
   same-scope enclosing parameter references, distinct enclosing-instance
   specializations and independently scoped same-named definitions work in both
@@ -425,6 +434,8 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   A variable output target with runtime selects is an implied continuous
   assignment: selector changes retarget it and unknown selectors write nothing.
   Descriptor-backed arrays (to 16M cells) cross ports as descriptor copies.
+  String and native-record value ports carry independent copies, including an
+  output driven by a child `assign` (SIM-004).
   Output targets also written procedurally or by another port, invalid output
   expressions, language-illegal chandle ports (SV §6.14), uncollected layouts
   and runtime-selected net or inout connections reject. V §12.3;
@@ -768,7 +779,11 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   unequal data becomes X and the two-state member becomes zero at commit.
   Constant folding and identical-arm simplification keep every reached arm's
   side effects. Descriptor-backed arrays merge cells without packed flattening.
-  Dynamic/native aggregate merges remain restricted.
+  String, chandle and native-record results follow the same immediate-boundary
+  rule: equal strings/pointers survive, otherwise `""`/null; native record
+  members merge as wholes, an integral member survives only when known equal,
+  and each reached arm (calls included) is evaluated once (SIM-004). Dynamic
+  aggregate merges remain restricted.
   V Table 28; SV Table 11-20, §11.4.11 **[2001/SV-2009]**.
 - 🟦 **Concatenation, replication and selection** — Preserve order and
   self-determined widths, including singleton-concatenation unsigned/fill
@@ -1381,7 +1396,8 @@ These are bounded implementations, not full verification-infrastructure support.
   class/formal/fixed-array and bounded dynamic/queue storage. Packed member access,
   delay-free methods, null/type checks and clocking-input samples are present.
   Timed tasks, event-formal dispatch, dynamic clocking output/inout dispatch,
-  associative/nested layouts and broader polymorphic/capture forms reject.
+  modport expression ports, associative/nested layouts and broader
+  polymorphic/capture forms reject.
   SV §§25.5, 25.7, 25.9–25.10 **[SV-2009]**.
 - 🟨 **Programs** — Initials launch in Reactive; `#0`/NBA stay in the reactive
   set. `$exit` cancels only its program-initial origin and is ignored outside

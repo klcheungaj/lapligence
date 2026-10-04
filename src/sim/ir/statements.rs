@@ -335,10 +335,18 @@ pub enum IrStmt {
         init: Option<IrStringExpr>,
     },
     /// Capture an owned string value now and commit it to persistent storage
-    /// in a future NBA region.
+    /// in the NBA region `ticks` from now. Untimed `s <= v` uses zero ticks,
+    /// so both forms share one pending-value record.
     DelayedStringAssign {
         target: String,
         rhs: IrStringExpr,
+        ticks: IrDelay,
+    },
+    /// Capture a chandle value now and store it into persistent chandle
+    /// storage in the NBA region `ticks` from now (zero for untimed `<=`).
+    DelayedChandleAssign {
+        target: String,
+        rhs: IrChandleExpr,
         ticks: IrDelay,
     },
     /// Capture a nonblocking update now and commit in a future NBA region.
@@ -846,6 +854,7 @@ impl IrStmt {
             | Self::DelayedAssign { ticks, .. }
             | Self::ClockingDrive { ticks, .. }
             | Self::DelayedStringAssign { ticks, .. }
+            | Self::DelayedChandleAssign { ticks, .. }
             | Self::NonblockingEventTrigger {
                 ticks: Some(ticks), ..
             } => ticks.expression(),

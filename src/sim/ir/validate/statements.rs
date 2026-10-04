@@ -63,7 +63,8 @@ impl Validator<'_> {
         if let IrStmt::Delay { ticks }
         | IrStmt::DelayedAssign { ticks, .. }
         | IrStmt::ClockingDrive { ticks, .. }
-        | IrStmt::DelayedStringAssign { ticks, .. } = stmt
+        | IrStmt::DelayedStringAssign { ticks, .. }
+        | IrStmt::DelayedChandleAssign { ticks, .. } = stmt
         {
             if let IrDelay::Runtime {
                 value,
@@ -581,6 +582,19 @@ impl Validator<'_> {
                     return self.fail(path, "delayed string target must not be empty");
                 }
                 rhs.validate(self.model, self.string_return.get())?;
+            }
+            IrStmt::DelayedChandleAssign { target, rhs, .. } => {
+                if target.is_empty() {
+                    return self.fail(path, "delayed chandle target must not be empty");
+                }
+                rhs.validate(self.model, formals, self.chandle_return.get())?;
+                let mut result = Ok(());
+                rhs.expressions(&mut |child| {
+                    result = result
+                        .clone()
+                        .and_then(|_| self.validate_expr(child, formals, path));
+                });
+                result?;
             }
             IrStmt::ClockingSample { source, sample, .. } => {
                 let Some(source_signal) = self.model.signals.get(*source) else {

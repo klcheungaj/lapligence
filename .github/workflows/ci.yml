@@ -608,6 +608,13 @@ jobs:
           curl -LsSf "https://get.nexte.st/latest/${{ matrix.nextest_platform }}" \
             | tar -xzf - -C "$RUNNER_TEMP/nextest-bin"
 
+      # The archive carries no build script run, so this fresh checkout still
+      # holds the pristine vendor/libfst; the standalone CMake probes need the
+      # patched sources the build script applies in place elsewhere.
+      - name: Apply the libfst patch
+        shell: bash
+        run: git apply --whitespace=nowarn --directory=vendor/libfst patches/libfst/libfst-local-changes.patch
+
       # Extracting into /workspace restores target/ at the build container's
       # compile-time paths.
       - name: Run release suite

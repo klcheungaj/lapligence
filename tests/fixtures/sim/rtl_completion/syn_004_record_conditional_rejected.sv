@@ -1,5 +1,7 @@
 // SYN-004 boundary: native record members remain outside the fixed payload
-// path. LRM: IEEE 1800-2009 7.2 and 11.4.11.
+// path; SIM-004 merges them member by member on the native record path.
+// LRM: IEEE 1800-2009 7.2 and 11.4.11. With an unknown selector the equal
+// real members (0.0) survive and the X data member takes its default X.
 module tb;
     typedef struct {
         real value;
@@ -19,6 +21,7 @@ module tb;
 
     initial begin
         data = consume(choose(selector, left, right));
+        $display("%h", data);
         $finish(0);
     end
 endmodule

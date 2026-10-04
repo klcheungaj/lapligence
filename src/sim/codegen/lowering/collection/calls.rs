@@ -133,7 +133,9 @@ impl<'a> Codegen<'a> {
         let (ret_w, ret_s, _, _) = ret_val.unwrap_or((1, false, false, false));
 
         let mut out_args: Vec<IrCallArg> = Vec::new();
-        let mut in_args: Vec<IrCallArg> = Vec::new();
+        // Inputs are gathered by two passes below; the formal index keeps
+        // them in the callee's declaration order (the C parameter order).
+        let mut in_args: Vec<(usize, IrCallArg)> = Vec::new();
         let mut arg_irs: Vec<Option<IrExpr>> = vec![None; formals.len()];
         for (idx, (io, is_out)) in formals.iter().enumerate() {
             if self.is_native_declaration(*io) {
@@ -141,7 +143,7 @@ impl<'a> Codegen<'a> {
                 if *is_out {
                     out_args.push(argument);
                 } else {
-                    in_args.push(argument);
+                    in_args.push((idx, argument));
                 }
                 continue;
             }
@@ -158,7 +160,7 @@ impl<'a> Codegen<'a> {
                 {
                     out_args.push(argument);
                 } else {
-                    in_args.push(argument);
+                    in_args.push((idx, argument));
                 }
                 continue;
             }
@@ -177,7 +179,7 @@ impl<'a> Codegen<'a> {
                 {
                     out_args.push(argument);
                 } else {
-                    in_args.push(argument);
+                    in_args.push((idx, argument));
                 }
                 continue;
             }
@@ -344,13 +346,15 @@ impl<'a> Codegen<'a> {
                 && !is_ref
                 && matches!(self.kind(*io), NodeKind::FuncArg { ty, .. } if is_handle_kind(&ty.kind))
             {
-                in_args.push(IrCallArg::ChandleVal(
-                    self.lower_chandle(scope_path, bound[idx].expr)?,
+                in_args.push((
+                    idx,
+                    IrCallArg::ChandleVal(self.lower_chandle(scope_path, bound[idx].expr)?),
                 ));
             } else if !*is_out && !is_ref {
                 if bound[idx].string {
-                    in_args.push(IrCallArg::StringVal(
-                        self.lower_string(scope_path, bound[idx].expr)?,
+                    in_args.push((
+                        idx,
+                        IrCallArg::StringVal(self.lower_string(scope_path, bound[idx].expr)?),
                     ));
                     continue;
                 }
@@ -361,10 +365,11 @@ impl<'a> Codegen<'a> {
                     ir.signed,
                     None,
                 ));
-                in_args.push(IrCallArg::Val(ir));
+                in_args.push((idx, IrCallArg::Val(ir)));
             }
         }
-        out_args.extend(in_args);
+        in_args.sort_by_key(|(idx, _)| *idx);
+        out_args.extend(in_args.into_iter().map(|(_, argument)| argument));
         // A class method written without an explicit receiver inside another
         // class method is represented as a plain function call by Slang. Bind
         // that call to the current `this` (or the object under construction).

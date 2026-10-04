@@ -11,6 +11,15 @@ impl Codegen<'_> {
         if let Some(target) = self.class_field_string_lvalue(path, node)? {
             return Ok(IrStringExpr::LocalRead(target));
         }
+        if let Some((predicate, then, otherwise)) =
+            self.lower_native_conditional_parts(path, node, &TypeShape::String)?
+        {
+            return Ok(IrStringExpr::Conditional {
+                predicate: Box::new(predicate),
+                then: Box::new(self.lower_string(path, then)?),
+                otherwise: Box::new(self.lower_string(path, otherwise)?),
+            });
+        }
         if let NodeKind::MethodCall {
             name,
             receiver: Some(receiver),
@@ -235,11 +244,11 @@ impl Codegen<'_> {
                 })?;
                 Ok(IrStringExpr::Literal(descriptor.name.as_bytes().to_vec()))
             }
-            NodeKind::Expr(ExprKind::Constant { const_type: ConstantType::String, value, .. }) => Ok(IrStringExpr::Literal(decoded_string_bytes(value)?)),
+            NodeKind::Expr(ExprKind::Constant { const_type: ConstantType::String, value, .. }) => Ok(string_literal(decoded_string_bytes(value)?)),
             NodeKind::Expr(ExprKind::Ref {target:Some(target)}) if matches!(self.kind(*target),NodeKind::Param {ty,..} if ty.kind=="string") => self.lower_string(path,*target),
             NodeKind::Param {ty,value,..} if ty.kind=="string" => {
                 match self.param_vals.get(&node).or(value.as_ref()) {
-                    Some(Val::Str(value))=>Ok(IrStringExpr::Literal(decode_verilog_string(value)?)),
+                    Some(Val::Str(value))=>Ok(string_literal(decode_verilog_string(value)?)),
                     _=>Err("string parameter has no captured string value".to_owned()),
                 }
             }
@@ -252,7 +261,7 @@ impl Codegen<'_> {
                     ..
                 }) = self.kind(operand)
                 {
-                    return Ok(IrStringExpr::Literal(decoded_string_bytes(value)?));
+                    return Ok(string_literal(decoded_string_bytes(value)?));
                 }
                 let value = self.lower_expr(path,operand)?;
                 if value.is_real() { return Err("real to string cast is unsupported".to_owned()); }
@@ -319,4 +328,12 @@ impl Codegen<'_> {
             IrDisplayArg::Packed(value)
         })
     }
+}
+
+/// A string-typed value of literal bytes. A string variable never contains
+/// "\0" (SV 6.16), so zero bytes of the literal are dropped, as they are by
+/// packed-to-string conversion.
+fn string_literal(mut bytes: Vec<u8>) -> IrStringExpr {
+    bytes.retain(|byte| *byte != 0);
+    IrStringExpr::Literal(bytes)
 }

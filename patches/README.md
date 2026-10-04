@@ -55,12 +55,29 @@ vendor edits to satisfy preflight.
 ## libfst
 
 `vendor/libfst` is a plain directory of pristine upstream files tracked by this
-repository (no submodule), so the preparer never rewrites it: it authenticates
-the tree against `libfst/files.sha256` (clean or fully applied, nothing else)
-and renders the patched copy into Cargo's `OUT_DIR/libfst` for the runtime.
-`retired-files.sha256` is empty. Standalone CMake probes render the same patch
-with `git apply` and check the applied digests
-(`tests/runtime_value_storage/libfst.cmake`).
+repository (no submodule). The same preparer that patches Slang applies
+`libfst/*.patch` in place there, with the same acceptance rules: a clean or a
+fully applied tree, partial or mismatched content rejected with the offending
+files named, nothing rewritten when already applied. Digests come from
+`libfst/files.sha256`; `retired-files.sha256` is empty. The runtime
+(`waveform_sources()`) and the standalone CMake probes read `vendor/libfst`
+directly; the probes only verify the applied digests
+(`tests/runtime_value_storage/libfst.cmake`) and ask for `cargo build` otherwise.
+CI jobs without a Rust build (`dynamic-owners`, the `linux-test` archive runs)
+apply the patch first with `git apply --whitespace=nowarn
+--directory=vendor/libfst patches/libfst/libfst-local-changes.patch` from the
+repository root, which yields the identical files.
+
+Because the files are tracked, a built tree shows them as modified in
+`git status`. **Never commit or stage the applied state.** The
+`vendor_patches` test `committed_libfst_blobs_are_pristine` fails when HEAD or
+the index holds anything but the pristine digests, so CI and any commit-time
+test run catch it. Undo a build with
+`git restore --staged --worktree -- vendor/libfst`; the next build re-applies
+the patch. Local reproducible-run scripts accept the authenticated applied
+state (`scripts/run-regression.sh`). A submodule would give a `dirty` marker
+like Slang's instead of tracked modifications, at the cost of a separate
+repository for nine files.
 
 - Source: GTKWave libfst as shipped with Verilator 5.032 (`include/gtkwave/`)
 

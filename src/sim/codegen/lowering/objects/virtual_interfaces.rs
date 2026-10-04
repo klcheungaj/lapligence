@@ -64,6 +64,7 @@ impl Codegen<'_> {
             .get(&identity)
             .copied()
             .ok_or_else(|| format!("virtual interface type `{identity}` has no descriptor"))?;
+        let mut view_port = false;
         if let Some(view) = Codegen::virtual_interface_view_from_spelling(&spelling) {
             let direction = self
                 .virtual_interface_views
@@ -75,6 +76,7 @@ impl Codegen<'_> {
                     "member `{member}` is not available through virtual interface view `{view}` in `{path}`"
                 ));
             };
+            view_port = true;
             if write && direction == DbDirection::Input {
                 return Err(format!(
                     "input modport member `{member}` cannot be written through view `{view}` in `{path}`"
@@ -86,9 +88,18 @@ impl Codegen<'_> {
             .get(&(descriptor, member.clone()))
             .copied()
             .ok_or_else(|| {
-                format!(
-                    "member `{member}` is not available through virtual interface view `{spelling}` in `{path}`"
-                )
+                // A view port without interface storage of its own is a
+                // modport expression port (SV 25.5.4); its expression is
+                // not evaluated per bound instance at run time.
+                if view_port {
+                    format!(
+                        "modport expression port `{member}` is not supported through virtual interface view `{spelling}` in `{path}`"
+                    )
+                } else {
+                    format!(
+                        "member `{member}` is not available through virtual interface view `{spelling}` in `{path}`"
+                    )
+                }
             })?;
         let metadata = self
             .model

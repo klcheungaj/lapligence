@@ -340,32 +340,6 @@ impl<'a> Codegen<'a> {
             })
         }
 
-        fn indexed_projection(
-            base: IrExpr,
-            width: u32,
-            negative: bool,
-        ) -> Result<IrPackedSelect, String> {
-            let base = if negative {
-                let offset = lhs_integer_expr(i128::from(width) - 1);
-                let arithmetic_width = base
-                    .width
-                    .max(offset.width)
-                    .checked_add(1)
-                    .filter(|width| *width <= LLG_MAX_WIDTH)
-                    .ok_or_else(|| {
-                        "reference selector arithmetic exceeds the supported limit".to_owned()
-                    })?;
-                bin_expr(
-                    IrBinOp::Sub,
-                    IrExpr::convert_to(base, arithmetic_width, true),
-                    IrExpr::convert_to(offset, arithmetic_width, true),
-                )
-            } else {
-                base
-            };
-            Ok(IrPackedSelect { base, width })
-        }
-
         fn compose_reference_bit(
             base: IrLhs,
             expression: IrExpr,
@@ -940,4 +914,32 @@ impl<'a> Codegen<'a> {
             }
         }
     }
+}
+
+/// Packed step for an indexed part-select `[base +: width]` or
+/// `[base -: width]` whose base is already a storage-relative bit offset.
+pub(super) fn indexed_projection(
+    base: IrExpr,
+    width: u32,
+    negative: bool,
+) -> Result<IrPackedSelect, String> {
+    let base = if negative {
+        let offset = lhs_integer_expr(i128::from(width) - 1);
+        let arithmetic_width = base
+            .width
+            .max(offset.width)
+            .checked_add(1)
+            .filter(|width| *width <= LLG_MAX_WIDTH)
+            .ok_or_else(|| {
+                "reference selector arithmetic exceeds the supported limit".to_owned()
+            })?;
+        bin_expr(
+            IrBinOp::Sub,
+            IrExpr::convert_to(base, arithmetic_width, true),
+            IrExpr::convert_to(offset, arithmetic_width, true),
+        )
+    } else {
+        base
+    };
+    Ok(IrPackedSelect { base, width })
 }

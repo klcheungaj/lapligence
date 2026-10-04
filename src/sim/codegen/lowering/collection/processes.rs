@@ -405,6 +405,69 @@ impl<'a> Codegen<'a> {
 
     // ── Continuous assignments ─────────────────────────────────────────────
 
+    /// A continuous assignment to a string variable or a record with string
+    /// or chandle leaves (SV 10.3.2). It has no packed driver value, so it
+    /// is a process that performs the owned procedural write at time zero
+    /// and again whenever an RHS dependency, including a string's content
+    /// marker, changes.
+    fn emit_native_cont_assign(
+        &mut self,
+        path: &str,
+        ca: NodeId,
+        lhs: NodeId,
+        rhs: NodeId,
+    ) -> Result<(), String> {
+        if matches!(self.kind(ca), NodeKind::ContAssign { delay: Some(_), .. }) {
+            return Err(format!(
+                "delayed continuous assignment to string or native record storage in `{path}` is not supported"
+            ));
+        }
+        // SV 6.14 forbids chandles in continuous assignments; a record
+        // member is assigned by the record's continuous assignment too.
+        let chandle_leaf = self
+            .resolve_unpacked_aggregate(lhs)
+            .is_some_and(|selection| {
+                selection.storage.leaves.iter().any(|leaf| {
+                    leaf.path.starts_with(&selection.prefix)
+                        && leaf.object.is_some_and(|object| {
+                            self.model.objects[self.reference_object(object)].ty
+                                == IrObjectType::Chandle
+                        })
+                })
+            });
+        if chandle_leaf {
+            return Err(format!(
+                "continuous assignment of a record with a chandle member in `{path}` is illegal (SV 6.14)"
+            ));
+        }
+        let statement = if self.is_string_expr(path, lhs) {
+            self.lower_object_assignment(path, lhs, rhs, true, Operation::Assignment)?
+        } else {
+            self.lower_unpacked_aggregate_assignment(path, lhs, rhs, false, Operation::Assignment)?
+        }
+        .ok_or_else(|| {
+            format!("continuous assignment in `{path}` has no string or native record target")
+        })?;
+        let fn_name = self.new_fn_name(path, "ca");
+        let sigs = self.collect_read_signals(path, rhs)?;
+        let body = self.wrap_continuous_self_feedback(ca, lhs, &sigs, vec![statement])?;
+        let shape = if sigs.is_empty() {
+            IrShape::RunOnce
+        } else {
+            IrShape::SensLoop { reads: sigs }
+        };
+        let origin = self.origin(ca);
+        self.model.processes.push(IrProcess::new_with_origin(
+            fn_name,
+            format!("{}.assign", self.source_path(path)),
+            shape,
+            Vec::new(),
+            body,
+            origin,
+        ));
+        Ok(())
+    }
+
     fn emit_cont_assign(&mut self, inst: NodeId, path: &str, ca: NodeId) -> Result<(), String> {
         let node = self.node(ca);
         if let NodeKind::ContAssign { net_decl: true, .. } = self.kind(ca) {
@@ -549,6 +612,12 @@ impl<'a> Codegen<'a> {
                 ));
                 return Ok(());
             }
+        }
+        if !has_structural_driver
+            && alias_bindings.is_none()
+            && (self.is_string_expr(path, lhs) || self.native_record_target(lhs))
+        {
+            return self.emit_native_cont_assign(path, ca, lhs, rhs);
         }
         let mut lh = self.lower_lhs(path, lhs)?;
         if has_structural_driver {
@@ -1501,6 +1570,9 @@ impl<'a> Codegen<'a> {
     }
 
     fn lhs_is_variable_storage(&self, node: NodeId) -> bool {
+        if let Some(expression) = self.modport_expression_target(node) {
+            return self.lhs_is_variable_storage(expression);
+        }
         if let Some(array) = self.array_of(node) {
             return !array.is_net;
         }

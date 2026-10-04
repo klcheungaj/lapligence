@@ -387,9 +387,14 @@ Native records (string/real/chandle leaves, no packed width) in subroutine
 formals, results and locals use `collection/native_values.rs`: one
 `IrNativeValue` root per storage, leaf accesses by constant item path, and
 endpoint transfers that capture every source leaf before the first write.
-Module-level native records keep per-member lowering; reject run-time native
-indices, native ref formals, NBAs and fork capture explicitly rather than
-flattening or copying shallowly.
+Module-level native records keep per-member lowering: NBAs, continuous
+assignments and conditional merges go leaf by leaf, capturing every source
+leaf first (`objects/assignments.rs`, `statements/native_delays.rs`,
+`native_values/conditionals.rs`). Reject run-time native indices, native ref
+formals, NBAs to native roots (their leaves move on replacement) and fork
+capture explicitly rather than flattening or copying shallowly. Native NBAs
+only target persistent whole variables or module record members; string bytes,
+class properties and automatic storage are illegal targets (SV 6.21).
 Reals stay numeric (SIM-005): real `ref` formals bind the actual's cell
 (`collection/arguments.rs`), real fixed-array formals/results/locals are real
 `IrArray` storage (`collection/real_arrays.rs`), and non-storage real-array

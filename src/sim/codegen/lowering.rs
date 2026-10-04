@@ -290,6 +290,7 @@ mod collection;
 mod containers;
 mod expressions;
 mod objects;
+use objects::NativeNbaValue;
 mod statements;
 
 /// The lowered computation of one builtin gate primitive
@@ -1649,6 +1650,16 @@ impl<'a> Codegen<'a> {
     /// modport declaration, whose parent is that instance body.
     fn modport_member(&self, port: NodeId) -> Option<NodeId> {
         self.db.modport_port_direction(port)?;
+        // An expression port that only renames a member, `.p(mem)`, views
+        // that member itself.
+        if let Some(expression) = self.db.modport_port_expression(port) {
+            return match self.kind(expression) {
+                NodeKind::Expr(ExprKind::Ref {
+                    target: Some(member),
+                }) => Some(*member),
+                _ => None,
+            };
+        }
         let name = &self.node(port).name;
         let interface = self.node(port).parent()?;
         let interface = self.node(interface).parent()?;
@@ -1663,6 +1674,19 @@ impl<'a> Codegen<'a> {
                         NodeKind::Array { .. } | NodeKind::Var { .. } | NodeKind::Net { .. }
                     )
             })
+    }
+
+    /// Port expression named by a reference to a modport expression port
+    /// `.p(expr)` (SV 25.5.4). The port has no storage of its own: reads,
+    /// writes and dependencies all go through the expression, which names
+    /// members of the concrete interface instance.
+    fn modport_expression_target(&self, node: NodeId) -> Option<NodeId> {
+        match self.kind(node) {
+            NodeKind::Expr(ExprKind::Ref {
+                target: Some(target),
+            }) => self.db.modport_port_expression(*target),
+            _ => None,
+        }
     }
 
     /// Collected array bound to a reference target, following a simple

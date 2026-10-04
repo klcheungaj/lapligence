@@ -32,6 +32,8 @@ use declaration IDs rather than names. Assignment-pattern nodes also retain thei
 including canonical identity and ranges, for type-key matching after snapshot
 destruction. Each `std::mailbox #(T)` specialization retains the descriptor of
 its `T`, resolved in the specializing scope, keyed by the class type identity.
+Modport expression ports `.p(expr)` keep their port expression in a side
+table (`Db::modport_port_expression`); references still target the port.
 Typed references distinguish subroutine
 bodies, indexed pattern keys, event qualifiers and ordered conditional clauses.
 Concrete loop-generate blocks use the array name and source index as one

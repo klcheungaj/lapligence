@@ -1642,8 +1642,11 @@ void llg_clocking_nba_net_sync_after(llg_net_t* net, int slot, sv4_t value,
 void llg_nba_d_after(double* target, double value, uint64_t ticks);
 void llg_clocking_nba_d_sync_after(double* target, double value, uint64_t ticks,
                                    const llg_wait_src_t* specs, int n_specs);
+// Native NBAs to persistent storage. The string value is consumed; the
+// chandle value is a borrowed foreign pointer stored as-is at commit.
 void llg_string_nba_after(llg_string_t* target, llg_string_t value,
                           uint64_t ticks);
+void llg_chandle_nba_after(void** target, void* value, uint64_t ticks);
 // Selected writes retain only the plan's valid contiguous slice. Ascending
 // declared part-selects set reverse so queued bits remain in storage order.
 void llg_nba_selected_after(sv4_t* target, sv4_t value,

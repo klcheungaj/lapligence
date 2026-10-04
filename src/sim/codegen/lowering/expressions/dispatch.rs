@@ -885,6 +885,18 @@ impl<'a> Codegen<'a> {
                 }
             }
             NodeKind::Expr(ExprKind::Ref { target }) => self.lower_ref_expr(scope_path, h, *target),
+            NodeKind::Expr(
+                ExprKind::BitSelect { .. }
+                | ExprKind::PartSelect { .. }
+                | ExprKind::IndexedPartSelect { .. }
+                | ExprKind::ArraySelect { .. },
+            ) if self.is_modport_select_root(h) => {
+                let (base, step) = self.modport_select_step(scope_path, h)?.ok_or_else(|| {
+                    format!("unsupported modport port selection in `{scope_path}`")
+                })?;
+                let value = self.lower_expr(scope_path, base)?;
+                Ok(packed_step_read(value, step))
+            }
             NodeKind::Expr(ExprKind::BitSelect { base, index }) => {
                 if let Some(value) =
                     self.packed_parameter_member_dynamic_select_read(scope_path, *base, &[*index])?
@@ -1715,6 +1727,9 @@ impl<'a> Codegen<'a> {
                 None,
             ));
         }
+        if let Some(expression) = target.and_then(|t| self.db.modport_port_expression(t)) {
+            return self.lower_expr(scope_path, expression);
+        }
         if let Some(t) = target {
             let t = self.canonical_func_target(t).unwrap_or(t);
             if let Some(binding) = self.capture_binding(t) {
@@ -2034,4 +2049,42 @@ impl<'a> Codegen<'a> {
         }
         Ok(width)
     }
+}
+
+/// Read one packed step of a value: a constant part-select when the step
+/// offset is constant, otherwise an indexed part-select from the LSB.
+fn packed_step_read(value: IrExpr, step: crate::sim::ir::IrPackedSelect) -> IrExpr {
+    let width = step.width;
+    if let IrExprKind::Const(offset) = &step.base.kind {
+        let known = !offset.signed
+            && offset.real.is_none()
+            && offset.x.iter().chain(&offset.z).all(|word| *word == 0)
+            && offset.bits.iter().skip(1).all(|word| *word == 0);
+        if let Some(right) = known
+            .then(|| offset.bits.first().copied().unwrap_or(0))
+            .and_then(|right| i64::try_from(right).ok())
+        {
+            return IrExpr::new(
+                IrExprKind::PartSel {
+                    base: Box::new(value),
+                    left: right + i64::from(width) - 1,
+                    right,
+                },
+                width,
+                false,
+                None,
+            );
+        }
+    }
+    IrExpr::new(
+        IrExprKind::IdxPartSel {
+            base: Box::new(value),
+            base_idx: Box::new(step.base),
+            width_expr: Box::new(lhs_integer_expr(i128::from(width))),
+            neg: false,
+        },
+        width,
+        false,
+        None,
+    )
 }

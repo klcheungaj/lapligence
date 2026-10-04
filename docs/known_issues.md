@@ -87,7 +87,8 @@ wc -lc <dir>/sim/*/model.c
 ## High frontend memory use during Slang wrapper capture and import
 
 **Status:** open, narrowed; capture streams into Rust and C rendering now sets
-the generation peak for this corpus.
+the generation peak for this corpus (see
+[High generation memory use during C emission](#high-generation-memory-use-during-c-emission)).
 
 ### Symptom
 
@@ -145,8 +146,8 @@ budget, a record-count ceiling or available process memory.
 ### Intended direction
 
 Shrink the staged node further (flag bits, sentinel IDs) or import nodes
-incrementally; compact DB nodes further (side tables for rare kind payloads);
-and avoid holding rendered artifacts and the assembled model text together.
+incrementally; and compact DB nodes further (side tables for rare kind
+payloads). Rendering memory is tracked in the C emission entry below.
 Preserve checked C ABI ownership and the single owned DB import; consumers
 must not traverse native ASTs independently. Verify exact values, source
 identity and diagnostics as well as generated-model behavior.
@@ -172,6 +173,55 @@ least three runs per point, release binaries and medians. The Linux runner
 GNU time, stage markers, sampled RSS and generated-C hashes, running points
 serially. See [profiling](../perf/README.md#frontend-stage-scaling). The export
 budget counts captured data, not the bytes of generated `model.c`.
+
+## High generation memory use during C emission
+
+**Status:** open; C rendering sets the generation-process peak for the
+measured corpus.
+
+### Symptom
+
+After the frontend memory work in the preceding entry, rendering the generated
+C model is the highest-memory generation stage at every measured size. Linux
+x86-64 release, `many_processes_registers_config`, two clock edges, medians of
+three interleaved runs on 2026-10-04 (`cb15fb64`), sampled stage RSS:
+
+| Processes | Execution/optimization | C rendering | Rendering increase | Whole-run peak |
+| --- | --- | --- | --- | --- |
+| 5,000 | 143 MiB | 213 MiB | +70 MiB | 0.208 GiB |
+| 10,000 | 270 MiB | 409 MiB | +139 MiB | 0.399 GiB |
+| 20,000 | 526 MiB | 802 MiB | +276 MiB | 0.783 GiB |
+| 40,000 | 1,056 MiB | 1,596 MiB | +540 MiB | 1.558 GiB |
+
+The increase is linear in design size and exceeds the earlier stages'
+memory (native capture 1,246 MiB and DB import 1,552 MiB at 40k). These are
+generation-process peaks, not generated-simulator runtime memory. Generated
+`model.c` is byte-identical across the measurements.
+
+### Cause
+
+Rendering keeps the execution IR live while it builds rendered per-function
+artifacts and then assembles the whole model text in memory before writing
+it, so the execution IR, the rendered artifacts and the assembled text
+overlap. Exact sharing groups also retain rendered candidates until their
+group is resolved (see the [emitter guide](../src/sim/emit_c/AGENTS.md)).
+Sampled stage RSS includes allocator-retained pages and is not an exclusive
+allocation total for the stage.
+
+### Intended direction
+
+Stream rendered artifacts to the output files instead of assembling the whole
+model text in memory, release execution IR for functions once they are
+rendered, and keep the retained data for sharing groups compact (hashes and
+offsets rather than full text where possible). Generated `model.c` must stay
+byte-identical, including both optimizer modes and the exact sharing output.
+
+### Reproduce
+
+Use the command and runner in the
+[frontend memory entry](#high-frontend-memory-use-during-slang-wrapper-capture-and-import)
+and compare the `execution`/`optimization` and `render` stage RSS that
+`perf/scripts/frontend_scale.py` records.
 
 ## Frontend and C generation time grow superlinearly with design size
 
@@ -329,10 +379,10 @@ input/output/inout formals and results as runtime values. These legal forms
 still reject with explicit diagnostics: module-level unpacked arrays and
 queue/dynamic/associative containers of native records or strings, their
 slices, a run-time index into a native member array of an automatic record, `ref`
-formals of native record type, nonblocking writes of native records or their
-string/chandle members, fork-join_none capture of automatic native records,
-`f(...).member` selects on a native result, conditional operators with native
-record operands (an unknown predicate needs a member-wise merge), and native
+formals of native record type, nonblocking writes to a static subroutine
+native record (module records and persistent strings/chandles are queued since
+SIM-004), fork-join_none capture of automatic native records,
+`f(...).member` selects on a native result, and native
 outputs bound inside an expression (call them as a statement instead). A packed member select of a
 module-level native record (`h.p.hi`) and event controls on string members are
 also not lowered.
@@ -348,12 +398,15 @@ run-time item addressing plus per-element change records.
 ### Intended direction
 
 Run-time item paths and element change records (SIM-007), native ref aliases
-(SIM-008), deferred native writes (SIM-004), fork capture pins (SIM-010) and
+(SIM-008), a root-plus-item-path pending record for static native roots
+(a queued leaf pointer would dangle because a root replaces its leaves on
+assignment), fork capture pins (SIM-010) and
 container formals/locals (SIM-006) reuse the same descriptors and root registry.
 
 ### Reproduce
 
-`tests/fixtures/sim/feature_completion/sim_003/neg_native_*.sv`.
+`tests/fixtures/sim/feature_completion/sim_003/neg_native_*.sv` and
+`sim_004/neg_static_native_record_nba.sv`.
 
 ## Real references and real-array expressions outside stable storage
 
@@ -422,6 +475,36 @@ canonical storage cell. IEEE 1800-2009 §23.3.3.2 describes hierarchical referen
 binding, but the retained runtime-selector characterization has no adjudicated
 binding/rebinding oracle. Qualify that boundary before enabling runtime-selected
 connections. Static selected connections and nested packed projections execute.
+
+## Delayed and event-controlled native writes
+
+**Status:** open; SIM-004 queues untimed and `#delay` nonblocking writes and
+drives zero-delay continuous assignments of strings and string records.
+
+### Symptom
+
+These legal forms reject with explicit diagnostics: a delayed continuous
+assignment to a string or string record (`assign #1 s = t;`, SV 10.3.3), and
+event or repeat intra-assignment timing on a string target (`s <= @(e) t;`,
+`s = repeat (2) @(e) t;`). A blocking `#delay` assignment of a record with a
+conditional source also rejects.
+
+### Cause
+
+A delayed continuous driver keeps an inertial pending value per driver, and
+event-controlled NBAs run a detached waiter that captures the value. Both
+records hold packed (`sv4_t`) payloads only; neither owns a string.
+
+### Intended direction
+
+Give the inertial driver and the detached event waiter an owned native payload
+(string or chandle) next to the packed one, reusing the `llg_nba_t` native
+member layout and its destroy path.
+
+### Reproduce
+
+`tests/fixtures/sim/feature_completion/sim_004/neg_delayed_string_continuous.sv`;
+`module tb; string s; event e; initial begin s <= @(e) "x"; ->e; end endmodule`.
 
 ## `%l` in runtime-built format strings
 
@@ -669,3 +752,30 @@ path, not a file, and stay physical. Adding a logical field to `Diag` would
 change its 57 struct-literal construction sites. Reproduce:
 `tests/fixtures/sim/feature_completion/rtl_019/macro_error.sv` with a
 `` `line `` directive before the macro use.
+
+## Modport expression ports through virtual interfaces
+
+**Status:** open (RTL-102 deferral).
+
+A modport expression port `.p(expr)` (SV 25.5.4) executes through static
+interface ports and hierarchical references, but a virtual interface handle
+has runtime member slots only for interface storage, so `vif.p` rejects with
+"modport expression port `p` is not supported through virtual interface view".
+Supporting it needs a per-descriptor evaluator (and, for outputs, a writer)
+for each expression port, selected by the bound instance at run time.
+
+Reproduce with `interface i; logic [7:0] a; modport m(input .p(a[3:0]));
+endinterface`, `virtual i.m v = inst;` and `$display("%h", v.p);`.
+
+## Range selects of multidimensional packed values select bits
+
+**Status:** open (found during RTL-102).
+
+A part-select across the outer dimension of a multidimensional packed value,
+such as `w[3:2]` for `logic [3:0][7:0] w`, selects bits 3..2 instead of the
+16-bit elements 3..2: reads return the wrong bits and writes update the wrong
+ones. Single-element selects (`w[2]`, `w[2][3:0]`) are correct. A modport
+expression port over such a range (`.p(w[3:2])`) inherits the error.
+
+Reproduce with `logic [3:0][7:0] w; logic [15:0] y;`, `w = 32'h44332211;
+y = w[3:2]; $display("%h", y);` (prints `0000`; the LRM result is `4433`).

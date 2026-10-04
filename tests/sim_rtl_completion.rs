@@ -106,11 +106,13 @@ fn unpacked_structure_conditionals_merge_immediate_members() {
 }
 
 #[test]
-fn unpacked_structure_conditionals_reject_native_members() {
-    sim_cli::reject_case_with_args(
+fn unpacked_structure_conditionals_merge_native_members() {
+    sim_cli::run_case_with_args(
         "rtl_completion",
         "syn_004_record_conditional_rejected",
-        "conditional structure member has no supported fixed payload",
+        "xx\n",
+        "",
+        &[],
         &["--edition", "2009"],
     );
 }

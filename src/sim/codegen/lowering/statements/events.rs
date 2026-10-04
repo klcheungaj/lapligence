@@ -752,6 +752,11 @@ impl EmitCtx<'_, '_> {
             ));
         }
         let expression = expression.ok_or_else(|| "event control has no expression".to_string())?;
+        // A modport expression port waits on its port expression (SV 25.5.4).
+        let expression = self
+            .cg
+            .modport_expression_target(expression)
+            .unwrap_or(expression);
         let simple = matches!(
             self.cg.kind(expression),
             NodeKind::Expr(ExprKind::Ref { .. } | ExprKind::HierPath { .. })

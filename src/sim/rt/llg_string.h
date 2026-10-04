@@ -23,6 +23,9 @@ void llg_string_destroy(llg_string_t *value);
 llg_string_t llg_string_take(llg_string_t *value);
 void llg_string_move(llg_string_t *target, llg_string_t value);
 llg_string_t llg_string_concat(llg_string_t a, llg_string_t b);
+/* Ambiguous conditional (SV 11.4.11): consume both arms; return a when the
+ * byte strings are equal, otherwise the empty default. */
+llg_string_t llg_string_conditional_merge(llg_string_t a, llg_string_t b);
 llg_string_t llg_string_repeat(llg_string_t value, sv4_t count);
 llg_string_t llg_string_case(llg_string_t value, int upper);
 llg_string_t llg_string_substr(llg_string_t value, sv4_t first, sv4_t last);

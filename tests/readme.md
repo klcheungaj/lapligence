@@ -127,6 +127,13 @@ destruction; descriptor ports also bound generated model size. Negatives cover
 assignability, ref shape, variable inout, runtime ref/net/inout selects and
 output-target writer conflicts.
 
+RTL-102's modport expression-port fixtures use
+`-E 'binary(sim_feature_completion) & test(rtl_102::)'`. Positive fixtures run in
+both optimizer modes on every backend (set `LLG_TEST_GMP_ROOT` for the GMP lane)
+and after Db destruction. Negatives cover non-lvalue outputs, input writes,
+non-constant selectors, writer conflicts through expression ports and the
+deferred virtual-interface access.
+
 RTL-015's bit-stream and streaming fixtures use
 `-E 'binary(sim_feature_completion) & test(rtl_015::)'`. Positive fixtures run in
 both optimizer modes on both backends (set `LLG_TEST_GMP_ROOT` for the GMP lane),
@@ -161,6 +168,12 @@ borrowed-chandle fixture builds its companion C file into a DPI library (Unix
 hosts). Component checks are `native_value_descriptors_probe.c` in
 `runtime_value_storage` and the `sim::ir::validate::tests::native_values` unit
 tests.
+
+SIM-004's native assignment, link and conditional fixtures use
+`-E 'binary(sim_feature_completion) & test(sim_004::)'`. Positive fixtures run in
+both optimizer modes on every backend (set `LLG_TEST_GMP_ROOT` for the GMP lane);
+single-file ones also run after Db destruction, and the chandle fixture builds
+its companion C file into a DPI library (Unix hosts).
 
 SIM-005's real reference, real-array and real-sampling fixtures use
 `-E 'binary(sim_feature_completion) & test(sim_005::)'`. Positive fixtures run
@@ -256,7 +269,12 @@ and procedural, second-port and always_ff writers overlapping a slice reject.
 `vendor_patches.rs` checks clean/applied trees, no-Git archives (including archives
 inside another checkout), authenticated active/retired manifests, LF digest/CRLF
 rendering, and symlink/reparse/hardlink/stale/untracked-input rejection. Race probes
-cover ancestor/parent replacement and late staging hardlinks.
+cover ancestor/parent replacement and late staging hardlinks. The plain tracked
+`vendor/libfst` is patched in place by the same preparer, so its working tree is
+clean or applied; tests cover in-place application, idempotence, partial/mismatched
+rejection, and `committed_libfst_blobs_are_pristine`, which fails if HEAD or the
+index holds the applied state (restore with
+`git restore --staged --worktree -- vendor/libfst`).
 
 ```sh
 cargo test --locked --test vendor_patches -- --test-threads=1
