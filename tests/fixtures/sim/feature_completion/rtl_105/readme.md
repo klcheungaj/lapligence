@@ -28,6 +28,13 @@ destruction.
   module whose output array links to the parent, generated drivers whose
   longest static prefixes are disjoint rows, and a procedural writer of a row
   outside the prefix.
+- `assign_runtime_select_retarget`: a delayed driver whose selector changes
+  while an update is pending. §10.3.3 makes the delay inertial but no clause
+  covers a selector-only change; lapligence re-evaluates the whole assignment,
+  so the newest evaluation's target and value replace the pending update and
+  the previously selected element keeps its value (`a[0]` stays `0`, `a[1]`
+  becomes `1` five units after the selector change; an interleaved value then
+  selector change on `v` writes only the last target).
 - Negatives: two drivers of a collapsed uwire formal (child and parent) or of a
   concatenated uwire bit, two drivers inside the module of an `inout uwire`
   formal, a uwire formal on a pass switch, a runtime select on a net and on a

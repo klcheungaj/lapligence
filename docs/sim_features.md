@@ -931,9 +931,10 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   may use runtime element, bit, indexed-part and member-element selects (SV
   §10.3, A.8.5, a local frontend patch): a selector change re-evaluates and
   retargets the write, the previous element keeps its value, an unknown or
-  out-of-range selector writes nothing, and the longest static prefix (SV
-  §11.5.3) is the written storage. Net targets and gate terminals keep constant
-  selects. V §6.1 **[1995]**.
+  out-of-range selector writes nothing, a pending delayed update is replaced by
+  the newest evaluation's target and value (the LRM is silent), and the longest
+  static prefix (SV §11.5.3) is the written storage. Net targets and gate
+  terminals keep constant selects. V §6.1 **[1995]**.
 - 🟨 **Fixed-array continuous assignments** — Whole/selected fixed values,
   slices, conditionals, patterns and function returns capture one RHS per
   activation. Net arrays retain per-cell/per-bit contribution slots. Each

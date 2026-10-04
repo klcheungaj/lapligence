@@ -72,6 +72,17 @@ fn runtime_selected_continuous_assignments_compose() {
     sim_cli::run_case_after_db_drop(SUITE, "assign_runtime_select_composition", expected);
 }
 
+/// The LRM leaves a pending delayed update whose selector changes first
+/// undefined; this pins the chosen behaviour (fixture readme).
+#[test]
+fn runtime_selected_delayed_update_follows_newest_evaluation() {
+    let expected = include_str!(
+        "../fixtures/sim/feature_completion/rtl_105/assign_runtime_select_retarget.out"
+    );
+    sim_cli::run_case(SUITE, "assign_runtime_select_retarget", expected, "", &[]);
+    sim_cli::run_case_backend_parity(SUITE, "assign_runtime_select_retarget", expected, &[], &[]);
+}
+
 #[test]
 fn neg_runtime_selected_continuous_assignments() {
     const CONSTANT: &str =
