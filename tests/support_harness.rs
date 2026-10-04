@@ -54,10 +54,10 @@ fn test_build_directory_child() {
         return;
     };
     let expected = std::path::PathBuf::from(expected);
-    // TempDir resolves Unix paths (macOS temp_dir() is a /var symlink into
-    // /private/var), so compare against the resolved root.
-    #[cfg(unix)]
-    let expected = expected.canonicalize().unwrap_or(expected);
+    // TempDir resolves its path (macOS temp_dir() is a /var symlink into
+    // /private/var; Windows may spell it with 8.3 short names), so compare
+    // against the resolved root.
+    let expected = llg::ffi::platform::canonicalize(&expected).unwrap_or(expected);
     let error = std::env::var("LLG_TEST_BUILD_PROBE_ERROR").expect("probe error setting");
     if !error.is_empty() {
         let actual = sim_harness::TempDir::new("invalid-root")

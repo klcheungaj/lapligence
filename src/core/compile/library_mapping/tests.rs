@@ -3,6 +3,7 @@ use crate::core::compile::{
     admit_in_memory_library_maps, admit_library_maps, admit_library_maps_with_targets,
     collect_in_memory_library_maps, CompileOpts, LanguageEdition, MAX_LIBRARY_MAP_WORK,
 };
+use crate::ffi::platform::CanonicalPath as _;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -155,10 +156,9 @@ impl Directory {
         std::fs::write(path.join("rtl/cell.sv"), "body").expect("source bytes");
         // Disk admission names files by their resolved handle path, while
         // in-memory maps resolve lexically; macOS reports /var/... as
-        // /private/var/..., so use the resolved spelling for both. Windows
-        // canonicalization adds a verbatim prefix that handle paths omit.
-        #[cfg(unix)]
-        let path = path.canonicalize().expect("canonical temporary directory");
+        // /private/var/... and Windows expands 8.3 short names, so use the
+        // resolved spelling for both.
+        let path = path.canonical().expect("canonical temporary directory");
         Self(path)
     }
 }
@@ -266,7 +266,7 @@ fn disk_and_logical_maps_resolve_one_joint_candidate_set() {
 #[test]
 fn disk_map_uses_existing_cli_source_bytes_instead_of_reading_again() {
     let directory = Directory::new();
-    let name = directory.0.join("rtl/cell.sv").canonicalize().unwrap();
+    let name = directory.0.join("rtl/cell.sv").canonical().unwrap();
     let map = directory.0.join("root.map");
     std::fs::write(&map, "library chosen rtl/*.sv;").unwrap();
     let opts = CompileOpts {

@@ -25,8 +25,38 @@ pub fn strip_verbatim_prefix(path: PathBuf) -> PathBuf {
 /// `std::fs::canonicalize` with the result in ordinary spelling (see
 /// [`strip_verbatim_prefix`]), so it compares equal to handle-derived paths
 /// and can be handed to CMake, compilers and LSP clients.
-pub fn canonicalize(path: &Path) -> io::Result<PathBuf> {
+pub fn canonicalize(path: impl AsRef<Path>) -> io::Result<PathBuf> {
     std::fs::canonicalize(path).map(strip_verbatim_prefix)
+}
+
+/// Method form of [`canonicalize`] for path chains:
+/// `dir.join("a.sv").canonical()`.
+pub trait CanonicalPath {
+    /// [`canonicalize`] applied to this path.
+    fn canonical(&self) -> io::Result<PathBuf>;
+}
+
+impl CanonicalPath for Path {
+    fn canonical(&self) -> io::Result<PathBuf> {
+        canonicalize(self)
+    }
+}
+
+/// A relative path that encodes absolute `path` one-to-one, for mirroring
+/// files under a private directory (`base.join(mirror_relative(p))`).
+///
+/// Unix drops the leading `/`. Windows turns the prefix into ordinary
+/// components (`C:\x` -> `C\x`, `\\server\share\x` -> `UNC\server\share\x`),
+/// so joining the result can never replace `base` the way joining an
+/// absolute Windows path does. [`mirror_absolute`] is the inverse.
+pub fn mirror_relative(path: &Path) -> PathBuf {
+    host::mirror_relative(path)
+}
+
+/// Inverse of [`mirror_relative`]; `None` when `relative` does not start
+/// with an encoded root.
+pub fn mirror_absolute(relative: &Path) -> Option<PathBuf> {
+    host::mirror_absolute(relative)
 }
 
 /// Whether the host accepts `name` as one file or directory name component.
@@ -71,7 +101,7 @@ pub fn resolves_symlinked_paths() -> bool {
 mod host {
     use std::ffi::OsString;
     use std::os::windows::ffi::{OsStrExt, OsStringExt};
-    use std::path::PathBuf;
+    use std::path::{Component, Path, PathBuf, Prefix};
 
     // Works on UTF-16 units so unpaired surrogates survive unchanged.
     pub(super) fn strip_verbatim_prefix(path: PathBuf) -> PathBuf {
@@ -87,14 +117,89 @@ mod host {
         };
         PathBuf::from(OsString::from_wide(&stripped))
     }
+
+    // Prefix encodings; drive letters are one character, so they cannot
+    // collide with these names.
+    const UNC: &str = "UNC";
+    const DEVICE: &str = "DEVICE";
+    const VERBATIM: &str = "VERBATIM";
+
+    pub(super) fn mirror_relative(path: &Path) -> PathBuf {
+        let mut relative = PathBuf::new();
+        for component in path.components() {
+            match component {
+                Component::Prefix(prefix) => match prefix.kind() {
+                    Prefix::Disk(letter) | Prefix::VerbatimDisk(letter) => {
+                        relative.push(char::from(letter).to_ascii_uppercase().to_string())
+                    }
+                    Prefix::UNC(server, share) | Prefix::VerbatimUNC(server, share) => {
+                        relative.push(UNC);
+                        relative.push(server);
+                        relative.push(share);
+                    }
+                    Prefix::DeviceNS(name) => {
+                        relative.push(DEVICE);
+                        relative.push(name);
+                    }
+                    Prefix::Verbatim(name) => {
+                        relative.push(VERBATIM);
+                        relative.push(name);
+                    }
+                },
+                Component::RootDir => {}
+                other => relative.push(other.as_os_str()),
+            }
+        }
+        relative
+    }
+
+    pub(super) fn mirror_absolute(relative: &Path) -> Option<PathBuf> {
+        let mut components = relative.components();
+        let Some(Component::Normal(first)) = components.next() else {
+            return None;
+        };
+        let first = first.to_str()?;
+        let mut root = match first {
+            UNC => {
+                let server = components.next()?.as_os_str().to_str()?.to_owned();
+                let share = components.next()?.as_os_str().to_str()?.to_owned();
+                PathBuf::from(format!(r"\\{server}\{share}\"))
+            }
+            DEVICE => {
+                let name = components.next()?.as_os_str().to_str()?.to_owned();
+                PathBuf::from(format!(r"\\.\{name}\"))
+            }
+            VERBATIM => {
+                let name = components.next()?.as_os_str().to_str()?.to_owned();
+                PathBuf::from(format!(r"\\?\{name}\"))
+            }
+            letter if letter.len() == 1 && letter.as_bytes()[0].is_ascii_alphabetic() => {
+                PathBuf::from(format!(r"{letter}:\"))
+            }
+            _ => return None,
+        };
+        root.push(components.as_path());
+        Some(root)
+    }
 }
 
 #[cfg(not(windows))]
 mod host {
-    use std::path::PathBuf;
+    use std::path::{Component, Path, PathBuf};
 
     pub(super) fn strip_verbatim_prefix(path: PathBuf) -> PathBuf {
         path
+    }
+
+    pub(super) fn mirror_relative(path: &Path) -> PathBuf {
+        path.strip_prefix("/").unwrap_or(path).to_path_buf()
+    }
+
+    pub(super) fn mirror_absolute(relative: &Path) -> Option<PathBuf> {
+        match relative.components().next() {
+            Some(Component::Normal(_)) => Some(Path::new("/").join(relative)),
+            _ => None,
+        }
     }
 }
 
@@ -132,6 +237,26 @@ mod tests {
             canonicalize(&path.join("Cargo.toml")).expect("canonical manifest"),
             path.join("Cargo.toml")
         );
+    }
+
+    #[test]
+    fn mirrored_paths_stay_relative_and_round_trip() {
+        let absolute = canonicalize(Path::new(env!("CARGO_MANIFEST_DIR")))
+            .expect("canonical root")
+            .join("src")
+            .join("lib.rs");
+        let relative = mirror_relative(&absolute);
+        assert!(relative.is_relative(), "{}", relative.display());
+        let base = Path::new("base");
+        assert!(base.join(&relative).starts_with(base));
+        assert_eq!(mirror_absolute(&relative), Some(absolute));
+        assert_eq!(mirror_absolute(Path::new("")), None);
+        if cfg!(unix) {
+            assert_eq!(
+                mirror_relative(Path::new("/x/top.sv")),
+                Path::new("x/top.sv")
+            );
+        }
     }
 
     #[test]

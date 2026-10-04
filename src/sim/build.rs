@@ -624,7 +624,7 @@ fn prune_stale_entries_for(
     waveform: bool,
     backend: super::value_backend::ValueBackend,
 ) {
-    let canonical = match out_dir.canonicalize() {
+    let canonical = match crate::ffi::platform::canonicalize(out_dir) {
         Ok(p) => p,
         Err(_) => return,
     };
@@ -768,12 +768,14 @@ fn canonical_dpi_library(path: &Path) -> Result<PathBuf, BuildError> {
             reason: "path is not a regular file".to_owned(),
         });
     }
-    let canonical = path
-        .canonicalize()
-        .map_err(|error| BuildError::InvalidDpiLibrary {
+    // Ordinary spelling: a Windows verbatim `\\?\` prefix would reach the
+    // CMake link line as `//?/C:/...`.
+    let canonical = crate::ffi::platform::canonicalize(path).map_err(|error| {
+        BuildError::InvalidDpiLibrary {
             path: path.to_path_buf(),
             reason: format!("cannot resolve path: {error}"),
-        })?;
+        }
+    })?;
     let Some(path_text) = canonical.to_str() else {
         return Err(BuildError::InvalidDpiLibrary {
             path: path.to_path_buf(),

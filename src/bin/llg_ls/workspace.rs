@@ -683,10 +683,10 @@ pub(crate) fn path_is_under(path: &Path, base: &Path) -> bool {
     }
     // The lexical prefix missed; canonicalize both sides so a symlinked base
     // (e.g. `TMPDIR` resolving through a symlink) is still recognized.
-    let Ok(canonical_base) = std::fs::canonicalize(base) else {
+    let Ok(canonical_base) = llg::ffi::platform::canonicalize(base) else {
         return false;
     };
-    let Ok(canonical_path) = std::fs::canonicalize(&normalized) else {
+    let Ok(canonical_path) = llg::ffi::platform::canonicalize(&normalized) else {
         return false;
     };
     canonical_path.starts_with(&canonical_base)
@@ -695,6 +695,7 @@ pub(crate) fn path_is_under(path: &Path, base: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_paths::host_path as hp;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     static TEMP_COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -786,17 +787,12 @@ mod tests {
             vec!["**/*.v", "**/*.sv"],
             vec![".git/**", "target/**"],
         );
+        // Compare paths, not strings: Windows joins `src/a.v` with a `/`
+        // that discovery reports as `\`.
         let units = discover_units(&descriptor).expect("discover units");
-        let paths: Vec<_> = units
-            .iter()
-            .map(|p| p.to_string_lossy().into_owned())
-            .collect();
         assert_eq!(
-            paths,
-            vec![
-                root.path().join("src/a.v").to_string_lossy().into_owned(),
-                root.path().join("src/z.sv").to_string_lossy().into_owned(),
-            ]
+            units,
+            vec![root.path().join("src/a.v"), root.path().join("src/z.sv")]
         );
     }
 
@@ -814,18 +810,7 @@ mod tests {
             vec!["**/generated/**"],
         );
         let units = discover_units(&descriptor).expect("discover units");
-        let paths: Vec<_> = units
-            .iter()
-            .map(|p| p.to_string_lossy().into_owned())
-            .collect();
-        assert_eq!(
-            paths,
-            vec![root
-                .path()
-                .join("src/kept.sv")
-                .to_string_lossy()
-                .into_owned()]
-        );
+        assert_eq!(units, vec![root.path().join("src/kept.sv")]);
     }
 
     #[test]
@@ -1025,7 +1010,7 @@ mod tests {
 
     #[test]
     fn root_config_predicate_ignores_discovery_filters() {
-        let root = Path::new("/workspace/project");
+        let root = Path::new(hp("/workspace/project"));
         let config_path = root.join(config::CONFIG_FILE);
 
         assert!(is_root_config_path(root, &config_path));
