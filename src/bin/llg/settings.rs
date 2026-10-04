@@ -813,8 +813,8 @@ files = ["a.sv"]
         let cfg = config(&dir, text);
         let discovered = [
             path_string(&dir.join("extra.sv")),
-            path_string(&dir.join("rtl/a.v")),
-            path_string(&dir.join("rtl/b.sv")),
+            path_string(&dir.join("rtl").join("a.v")),
+            path_string(&dir.join("rtl").join("b.sv")),
         ];
         let options = resolve_no_env(cli(&[]), Some(&cfg)).unwrap();
         assert_eq!(options.files, discovered);
