@@ -56,7 +56,7 @@ References: **V** = IEEE 1364-2001; **SV** = IEEE 1800-2009. Revision tags retai
 | 1. Lexical/literals | 4 | 0 | 0 | 0 | 0 | 4 |
 | 2. Data types | 3 | 10 | 0 | 0 | 0 | 13 |
 | 3. Modules/ports/elaboration | 4 | 5 | 0 | 0 | 0 | 9 |
-| 4. Scheduling/processes | 4 | 4 | 0 | 0 | 0 | 8 |
+| 4. Scheduling/processes | 4 | 3 | 0 | 0 | 1 | 8 |
 | 5. Procedural statements | 5 | 8 | 0 | 0 | 0 | 13 |
 | 6. Timing controls | 0 | 7 | 0 | 0 | 0 | 7 |
 | 7. Expressions/operators | 4 | 13 | 0 | 0 | 0 | 17 |
@@ -65,11 +65,12 @@ References: **V** = IEEE 1364-2001; **SV** = IEEE 1800-2009. Revision tags retai
 | 10. System tasks/functions | 9 | 11 | 3 | 0 | 0 | 23 |
 | 11. Compiler directives | 5 | 2 | 0 | 0 | 0 | 7 |
 | 12. Verification/foreign interfaces | 1 | 12 | 0 | 3 | 0 | 16 |
-| **Total** | **43** | **83** | **7** | **3** | **0** | **136** |
+| **Total** | **43** | **82** | **7** | **3** | **1** | **136** |
 
-**126 rows have some source implementation; 83 of those remain partial.**
-Zero accepted rows means no row-level acceptance promotion in this review,
-not that the project has no historical passing tests.
+**126 rows have some source implementation; 82 of those remain partial and one
+is accepted.** The accepted row (`always_ff` and writer rules) carries
+post-change HDL execution evidence from RTL-013 and RTL-099; other rows have no
+row-level acceptance promotion yet, which does not mean they lack passing tests.
 
 These are **grouped capability rows**, not individual grammar productions or a
 language-support percentage. A partial row can contain both substantial working
@@ -484,7 +485,7 @@ Macros, includes and their edition-specific behavior are counted in §11.
   timing and forks reject; delayed NBAs are not rejected merely for their delay.
   Non-string object and dynamic/native aggregate contexts remain partial
   (SIM-013). SV §§9.2.2.2–9.2.2.3 **[SV-2005]**.
-- 🟨 **`always_ff` and writer rules** — Requires one event control and rejects
+- ✅ **`always_ff` and writer rules** — Requires one event control and rejects
   blocking timing (also in called tasks), forks and extra overlapping writers.
   Blocking data assignments, timing-free calls, delayed NBAs, event triggers and
   force/release are legal. Data changes alone do not wake it, including `iff`
