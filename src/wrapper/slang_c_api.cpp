@@ -5179,6 +5179,13 @@ extern "C" uint32_t llg_slang_compile(const LlgSlangCompileRequest* request,
     malloc_trim(0);
 #endif
     streamCapture(*output, *sink);
+    output.reset();
+#if defined(__GLIBC__)
+    // Delivered node chunks and the interned strings were freed while the
+    // receiver allocated its copy between them; return the free pages
+    // inside the heap before the caller's import allocates more.
+    malloc_trim(0);
+#endif
     return LLG_SLANG_STATUS_OK;
   }
   catch (const SinkAborted& error) {
