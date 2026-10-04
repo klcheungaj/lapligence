@@ -127,10 +127,10 @@ static sv4_t llg_reduce_values_with(const sv4_t* values, size_t count,
         sv4_t index = sv4_from_u64((uint64_t)i, 32, 1);
         sv4_t value = llg_container_eval(eval, values[i], index, context);
         sv4_replace(&value, llg_element_assign(value, result_width,
-                                               result_signed, result_two_state));
+                                               result_signed, (uint8_t)result_two_state));
         sv4_replace(&result, llg_reduce_step(result, value, operation));
         sv4_replace(&result, llg_element_assign(result, result_width,
-                                                result_signed, result_two_state));
+                                                result_signed, (uint8_t)result_two_state));
         sv4_destroy(&value);
         sv4_destroy(&index);
     }
@@ -303,7 +303,7 @@ int64_t llg_fixed_stream_index_at(int64_t left, int64_t right, size_t offset) {
 sv4_t llg_stream_to_fixed(sv4_t value, uint32_t width, int is_signed) {
     if (llg_sv4_width(value) > width)
         llg_container_fatal("streaming concatenation is larger than its fixed-size target");
-    sv4_t result = sv4_zero(width, is_signed);
+    sv4_t result = sv4_zero(width, (int8_t)is_signed);
     if (llg_sv4_width(value))
         sv4_part_select_set(&result, (int64_t)width - 1,
                             (int64_t)(width - llg_sv4_width(value)), value);

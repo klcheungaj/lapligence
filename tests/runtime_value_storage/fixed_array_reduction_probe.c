@@ -16,7 +16,7 @@ static sv4_t combine(unsigned operation, sv4_t left, sv4_t right) {
 }
 
 static sv4_t fold(const sv4_t* cells, const sv4_t* payload, uint64_t count,
-                  uint32_t element_width, uint32_t result_width, int is_signed,
+                  uint32_t element_width, uint32_t result_width, int8_t is_signed,
                   unsigned operation, int map_kind, int32_t left, int descending) {
     CHECK(count != 0 && (cells != NULL) != (payload != NULL));
     sv4_t result = SV4_EMPTY;

@@ -44,8 +44,8 @@ static void resolver_values(void) {
                 };
                 for (int a = 0; a < 4; ++a) {
                     for (int b = 0; b < 4; ++b) {
-                        sv4_t av = sv4_fill(a, widths[w], 0);
-                        sv4_t bv = sv4_fill(b, widths[w], 0);
+                        sv4_t av = sv4_fill((uint8_t)a, widths[w], 0);
+                        sv4_t bv = sv4_fill((uint8_t)b, widths[w], 0);
                         llg_net_write(&net, 0, av);
                         llg_net_write(&net, 1, bv);
                         sv4_destroy(&av);
