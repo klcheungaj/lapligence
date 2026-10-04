@@ -41,7 +41,7 @@
       "line": 1,
       "module": "m_a",
       "role": "DECL",
-      "sym": "namespace/declaration",
+      "sym": "class/declaration",
       "tokenKind": "module-declaration"
     },
     {
@@ -149,7 +149,7 @@
       "line": 1,
       "module": "m_b",
       "role": "DECL",
-      "sym": "namespace/declaration",
+      "sym": "class/declaration",
       "tokenKind": "module-declaration"
     },
     {
@@ -225,7 +225,7 @@
       "line": 1,
       "module": "tb",
       "role": "DECL",
-      "sym": "namespace/declaration",
+      "sym": "class/declaration",
       "tokenKind": "module-declaration"
     },
     {
@@ -281,7 +281,7 @@
       "line": 6,
       "module": "tb",
       "role": "REF",
-      "sym": "namespace",
+      "sym": "class",
       "tokenKind": "module"
     },
     {
@@ -401,7 +401,7 @@
       "line": 7,
       "module": "tb",
       "role": "REF",
-      "sym": "namespace",
+      "sym": "class",
       "tokenKind": "module"
     },
     {

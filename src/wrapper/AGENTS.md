@@ -59,6 +59,11 @@ removal linear in that target's duplicates.
   lose operands, never across unrelated scopes. Actuals bind in their enclosing
   module/generate scope even when isolated analysis lacks the child; labels bind
   to child ports. Recovery is navigation-only under unchanged input/output limits.
+- Lexical kinds for typedef names come from Slang's resolved symbol kind. Cast
+  targets and `$bits`/`type()` operands bind to the alias their expression type
+  resolved, only when the spelling matches it. An instantiation type name whose
+  definition is outside the compilation keeps the module kind with no role, so
+  no navigation target is implied; a resolved binding for the token wins.
 - Instance-array names retain every source index, including negative/nonzero and
   nested dimensions. Do not substitute flattened ordinals for HDL indices.
 - Slang slices instance-array connections as `X[l:r][i]`/`X[l:r][m:n]`. A

@@ -2419,6 +2419,7 @@ public:
                                    LLG_SLANG_LEXICAL_ROLE_REFERENCE);
         }
       }
+      captureTypeNameReference(expression);
       visitDefault(expression);
       return;
     }
@@ -2574,6 +2575,7 @@ public:
       capture.output.semantic_nodes[static_cast<size_t>(id)].target_id = targetId;
       capture.semanticEdge(id, LLG_SLANG_EDGE_REFERENCE, targetId);
     }
+    captureTypeNameReference(expression);
     if constexpr (std::same_as<T, HierarchicalValueExpression>) {
       if (expression.syntax) {
         const parsing::Token firstToken = expression.syntax->getFirstToken();
@@ -2953,6 +2955,34 @@ public:
   }
 
 private:
+  // A typedef named as a cast target (`t'(x)`) or as a type operand (`$bits(t)`,
+  // `type(t)`) is not a value reference, so no NamedValue expression carries it.
+  // Slang's resolved type is the exact alias symbol; the name token is bound to
+  // it only when the spelling matches that alias.
+  void captureTypeNameReference(const Expression& expression) {
+    if (!expression.syntax || !expression.type)
+      return;
+    const Type* named = expression.type;
+    const syntax::SyntaxNode* spelling = nullptr;
+    if (expression.syntax->kind == syntax::SyntaxKind::CastExpression) {
+      spelling = expression.syntax->template as<syntax::CastExpressionSyntax>().left;
+    }
+    else if (expression.kind == ExpressionKind::DataType) {
+      spelling = expression.syntax;
+    }
+    else if (expression.kind == ExpressionKind::TypeReference &&
+             expression.syntax->kind == syntax::SyntaxKind::TypeReference) {
+      named = &expression.template as<TypeReferenceExpression>().targetType;
+      spelling = expression.syntax->template as<syntax::TypeReferenceSyntax>().expr;
+    }
+    if (!spelling || !named->isAlias())
+      return;
+    const auto token = spelling->getLastToken();
+    if (token.valueText() == named->name)
+      capture.lexicalBinding(token, captureReferenceTarget(*named),
+                             LLG_SLANG_LEXICAL_ROLE_REFERENCE);
+  }
+
   void captureNames(const syntax::SyntaxNode& syntaxNode, const ASTContext& context) {
     auto visitor = syntax::makeSyntaxVisitor(
         [&](auto&, const syntax::NameSyntax& name) {
@@ -3981,6 +4011,10 @@ uint32_t lexicalKindForSemantic(const LlgSlangSemanticNode& node) {
       reinterpret_cast<const char*>(node.detail.data), node.detail.len);
   if (detail == "Genvar")
     return LLG_SLANG_LEXICAL_GENVAR;
+  // Typedef names have no dedicated semantic kind; Slang's symbol-kind name is
+  // the exact discriminator, as for genvars above.
+  if (detail == "TypeAlias")
+    return LLG_SLANG_LEXICAL_TYPE_ALIAS;
   switch (node.kind) {
     case LLG_SLANG_SEMANTIC_DEFINITION:
       if (node.flags & LLG_SLANG_SEMANTIC_INTERFACE)
@@ -4009,6 +4043,17 @@ public:
     capture.lexicalBinding(syntax.name, LLG_SLANG_INVALID_ID,
                            LLG_SLANG_LEXICAL_ROLE_CONNECTION_LABEL,
                            LLG_SLANG_LEXICAL_PORT);
+    visitDefault(syntax);
+  }
+
+  // A definition that is not part of this compilation (an isolated buffer
+  // that instantiates a module from another file) leaves the type name
+  // unbound. Give it the module kind without a role so no navigation target is
+  // implied; a resolved binding for the same token takes precedence.
+  void handle(const syntax::HierarchyInstantiationSyntax& syntax) {
+    capture.lexicalBinding(syntax.type, LLG_SLANG_INVALID_ID,
+                           LLG_SLANG_LEXICAL_ROLE_NONE,
+                           LLG_SLANG_LEXICAL_MODULE);
     visitDefault(syntax);
   }
 
@@ -4256,6 +4301,9 @@ public:
         token.role = role;
         if (boundKind != LLG_SLANG_LEXICAL_UNKNOWN)
           token.kind = boundKind;
+      }
+      else if (boundKind != LLG_SLANG_LEXICAL_UNKNOWN) {
+        token.kind = boundKind;
       }
       if (semanticId != LLG_SLANG_INVALID_ID &&
           semanticId < capture.output.semantic_nodes.size()) {
