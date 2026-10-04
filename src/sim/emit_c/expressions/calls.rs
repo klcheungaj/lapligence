@@ -90,6 +90,7 @@ pub(super) fn render_call_expr(
             | IrCallArg::FixedArray(_)
             | IrCallArg::NativeValue(_)
             | IrCallArg::NativeLeaves { .. }
+            | IrCallArg::NativeCall { .. }
             | IrCallArg::EventVal(_) => {
                 return Err("event argument requires the ownership emitter".to_owned());
             }

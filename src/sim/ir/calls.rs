@@ -21,6 +21,14 @@ pub enum IrCallArg {
         ty: usize,
         leaves: Vec<super::IrNativeLeafValue>,
     },
+    /// Input native-value formal fed by a native-result call evaluated at
+    /// this operand. `value` is the lexical result storage the inner call
+    /// writes through its trailing `NativeValue(value)` operand; it is
+    /// declared by this operand and handed to the outer callee.
+    NativeCall {
+        value: usize,
+        call: Box<IrCall>,
+    },
     /// Input formal value, captured once before the next input is evaluated.
     /// Later defaults can read its call-local binding from `call_argument_name`.
     Val(IrExpr),
@@ -332,6 +340,16 @@ impl IrCallArg {
                     value.expressions(visit);
                 }
             }
+            Self::NativeLeaves { leaves, .. } => {
+                for leaf in leaves {
+                    leaf.expressions(visit);
+                }
+            }
+            Self::NativeCall { call, .. } => {
+                for argument in &call.args {
+                    argument.expressions(visit);
+                }
+            }
             _ => {}
         }
     }
@@ -375,6 +393,16 @@ impl IrCallArg {
                 }
                 if let Some(value) = storage_read {
                     value.expressions_mut(visit);
+                }
+            }
+            Self::NativeLeaves { leaves, .. } => {
+                for leaf in leaves {
+                    leaf.expressions_mut(visit);
+                }
+            }
+            Self::NativeCall { call, .. } => {
+                for argument in &mut call.args {
+                    argument.expressions_mut(visit);
                 }
             }
             _ => {}

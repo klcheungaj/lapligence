@@ -169,12 +169,38 @@ impl Validator<'_> {
             if formal.native_value.is_some()
                 != matches!(
                     arg,
-                    IrCallArg::NativeValue(_) | IrCallArg::NativeLeaves { .. }
+                    IrCallArg::NativeValue(_)
+                        | IrCallArg::NativeLeaves { .. }
+                        | IrCallArg::NativeCall { .. }
                 )
             {
                 return self.fail(&arg_path, "native-value formal and operand must match");
             }
             match arg {
+                IrCallArg::NativeCall { value, call } => {
+                    let expected = formal
+                        .native_value
+                        .and_then(|value| self.model.native_values.get(value));
+                    let result = self.model.native_values.get(*value);
+                    if formal.is_address()
+                        || result.is_none_or(|result| {
+                            !result.activation || expected.is_none_or(|expected| expected.ty != result.ty)
+                        })
+                        || !call
+                            .args
+                            .iter()
+                            .any(|argument| matches!(argument, IrCallArg::NativeValue(index) if index == value))
+                    {
+                        return self.fail(&arg_path, "native call operand requires an owned result");
+                    }
+                    self.native_activations
+                        .borrow_mut()
+                        .push(HashSet::from([*value]));
+                    let valid =
+                        self.validate_stmt(&IrStmt::Call(*call.clone()), formals, &arg_path);
+                    self.native_activations.borrow_mut().pop();
+                    valid?;
+                }
                 IrCallArg::NativeLeaves { ty, leaves } => {
                     let expected = formal
                         .native_value

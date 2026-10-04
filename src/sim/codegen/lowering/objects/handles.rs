@@ -297,6 +297,16 @@ impl Codegen<'_> {
             let mut in_args = Vec::new();
             let mut arg_irs = vec![None; meta.formals.len()];
             for (idx, (formal, is_out)) in meta.formals.iter().enumerate() {
+                if self.is_native_declaration(*formal) {
+                    let argument =
+                        self.native_expression_argument(path, *formal, bound[idx].expr)?;
+                    if *is_out {
+                        out_args.push(argument);
+                    } else {
+                        in_args.push(argument);
+                    }
+                    continue;
+                }
                 let is_chandle = matches!(
                     self.kind(*formal),
                     NodeKind::FuncArg { ty, .. } if is_handle_kind(&ty.kind)

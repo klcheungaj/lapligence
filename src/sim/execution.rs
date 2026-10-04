@@ -1321,6 +1321,13 @@ fn collect_argument_effects(
             collect_fixed_value_effects(ir, value, effects, visited_calls)
         }
         IrCallArg::FixedArray(_) | IrCallArg::NativeValue(_) | IrCallArg::EventVal(_) => {}
+        IrCallArg::NativeCall { call, .. } => {
+            for argument in &call.args {
+                collect_argument_effects(ir, argument, effects, visited_calls);
+            }
+            visited_calls.record(CallTarget::of_call(call.function_index(), false, None));
+            collect_callee_effects(ir, call.function_index(), false, effects, visited_calls)
+        }
         IrCallArg::NativeLeaves { leaves, .. } => {
             for leaf in leaves {
                 match &leaf.value {

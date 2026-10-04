@@ -146,6 +146,9 @@ fn ident_children(e: &mut IrExpr) {
                             leaf.expressions_mut(&mut |child| ident_expr(child));
                         }
                     }
+                    IrCallArg::NativeCall { .. } => {
+                        arg.expressions_mut(&mut |child| ident_expr(child));
+                    }
                     IrCallArg::OutTemp {
                         init,
                         writeback,

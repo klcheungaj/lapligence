@@ -651,14 +651,17 @@ impl Codegen<'_> {
     ) -> Result<Option<(NativeEndpoint, TypeDescriptor)>, String> {
         if let Some((value, prefix)) = self.native_path_of(node)? {
             let layout = self.native_layout_of_value(value)?;
-            let descriptor = Self::descriptor_at_path(&layout.descriptor, &prefix)
-                .ok_or("native record selection has no type")?;
-            if !matches!(
-                descriptor.shape,
-                TypeShape::Aggregate(_) | TypeShape::FixedArray { .. }
-            ) {
+            // Only selections above the leaves are record values; a packed
+            // struct or packed array member is one scalar leaf.
+            if !layout
+                .leaves
+                .iter()
+                .any(|leaf| leaf.path.len() > prefix.len() && leaf.path.starts_with(&prefix))
+            {
                 return Ok(None);
             }
+            let descriptor = Self::descriptor_at_path(&layout.descriptor, &prefix)
+                .ok_or("native record selection has no type")?;
             return Ok(Some((NativeEndpoint::Value { value, prefix }, descriptor)));
         }
         Ok(self.resolve_unpacked_aggregate(node).map(|selection| {
@@ -971,14 +974,11 @@ impl Codegen<'_> {
         Ok(Some(IrStmt::Block(captures)))
     }
 
-    /// Store a call to a native-result function into `target`. A whole
-    /// native value of the result type receives the result directly.
-    fn native_call_into(
-        &mut self,
-        path: &str,
+    /// The native-result function a (possibly cast) call node invokes.
+    fn native_result_callee(
+        &self,
         rhs: NodeId,
-        target: &NativeEndpoint,
-    ) -> Result<Option<IrStmt>, String> {
+    ) -> Result<Option<(NodeId, String, Option<NodeId>, NodeId)>, String> {
         let call = self.p30_unwrap_cast(rhs);
         let (name, callee) = match self.kind(call) {
             NodeKind::FuncCall { name, callee, .. } | NodeKind::MethodCall { name, callee, .. } => {
@@ -995,9 +995,50 @@ impl Codegen<'_> {
                 None => return Ok(None),
             },
         };
-        if !self.native_return(function) {
+        Ok(self
+            .native_return(function)
+            .then_some((call, name, callee, function)))
+    }
+
+    /// The typed statement call of a native-result function writing its
+    /// result into `result` through the trailing output operand.
+    fn native_result_call(
+        &mut self,
+        path: &str,
+        call: NodeId,
+        name: &str,
+        callee: Option<NodeId>,
+        result: usize,
+    ) -> Result<IrCall, String> {
+        let expression = self.lower_func_call_expr(path, call, name, callee)?;
+        let IrExprKind::CallFn(expression) = expression.kind else {
+            return Err("native result call did not lower to a typed call".into());
+        };
+        let mut args = expression.args;
+        let outputs = self.model.funcs[expression.f]
+            .formals
+            .iter()
+            .filter(|formal| formal.is_address())
+            .count();
+        args.insert(outputs - 1, IrCallArg::NativeValue(result));
+        let mut lowered = IrCall::new(expression.f, args, expression.depth, Vec::new(), Vec::new());
+        lowered.receiver = expression.receiver;
+        lowered.virtual_dispatch = expression.virtual_dispatch;
+        lowered.virtual_call = expression.virtual_call;
+        Ok(lowered)
+    }
+
+    /// Store a call to a native-result function into `target`. A whole
+    /// native value of the result type receives the result directly.
+    fn native_call_into(
+        &mut self,
+        path: &str,
+        rhs: NodeId,
+        target: &NativeEndpoint,
+    ) -> Result<Option<IrStmt>, String> {
+        let Some((call, name, callee, function)) = self.native_result_callee(rhs)? else {
             return Ok(None);
-        }
+        };
         let mut statements = Vec::new();
         let result_type = self
             .native_layout(function)?
@@ -1020,26 +1061,12 @@ impl Codegen<'_> {
             }
         };
         let saved = self.native_call_prelude.replace((Vec::new(), Vec::new()));
-        let expression = self.lower_func_call_expr(path, call, &name, callee);
+        let lowered = self.native_result_call(path, call, &name, callee, result);
         let (prelude, epilogue) =
             std::mem::replace(&mut self.native_call_prelude, saved).unwrap_or_default();
-        let expression = expression?;
-        let IrExprKind::CallFn(expression) = expression.kind else {
-            return Err("native result call did not lower to a typed call".into());
-        };
-        let mut args = expression.args;
-        let outputs = self.model.funcs[expression.f]
-            .formals
-            .iter()
-            .filter(|formal| formal.is_address())
-            .count();
-        args.insert(outputs - 1, IrCallArg::NativeValue(result));
-        let mut call = IrCall::new(expression.f, args, expression.depth, Vec::new(), Vec::new());
-        call.receiver = expression.receiver;
-        call.virtual_dispatch = expression.virtual_dispatch;
-        call.virtual_call = expression.virtual_call;
+        let lowered = lowered?;
         statements.extend(prelude);
-        statements.push(IrStmt::Call(call));
+        statements.push(IrStmt::Call(lowered));
         statements.extend(epilogue);
         if direct.is_none() {
             statements.push(self.native_transfer(
@@ -1052,6 +1079,32 @@ impl Codegen<'_> {
             )?);
         }
         Ok(Some(IrStmt::Block(statements)))
+    }
+
+    /// An input operand evaluated by a native-result call at the operand
+    /// itself, valid in any expression context.
+    fn native_call_operand(
+        &mut self,
+        path: &str,
+        layout: &NativeLayout,
+        actual: NodeId,
+    ) -> Result<Option<IrCallArg>, String> {
+        let Some((call, name, callee, function)) = self.native_result_callee(actual)? else {
+            return Ok(None);
+        };
+        let result = self.native_temporary(function)?;
+        if self.model.native_values[result].ty != layout.ty {
+            return Err(format!(
+                "native record argument in `{path}` has a different record type"
+            ));
+        }
+        let saved = self.native_call_prelude.take();
+        let lowered = self.native_result_call(path, call, &name, callee, result);
+        self.native_call_prelude = saved;
+        Ok(Some(IrCallArg::NativeCall {
+            value: result,
+            call: Box::new(lowered?),
+        }))
     }
 
     /// Assign any legal source to a native or module record endpoint.
@@ -1157,6 +1210,9 @@ impl Codegen<'_> {
             }
         }
         if direction == DbDirection::Input {
+            if let Some(argument) = self.native_call_operand(path, &layout, actual)? {
+                return Ok(argument);
+            }
             if let Some(leaves) = self.native_input_leaves(path, &layout, actual)? {
                 return Ok(IrCallArg::NativeLeaves {
                     ty: layout.ty,
@@ -1410,6 +1466,9 @@ impl Codegen<'_> {
                     ..
                 }
             ) {
+                if let Some(argument) = self.native_call_operand(path, &layout, actual)? {
+                    return Ok(argument);
+                }
                 if let Some(leaves) = self.native_input_leaves(path, &layout, actual)? {
                     return Ok(IrCallArg::NativeLeaves {
                         ty: layout.ty,

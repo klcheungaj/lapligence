@@ -40,6 +40,7 @@ fn walk_call_args_mut(args: &mut [IrCallArg], f: &mut impl FnMut(&mut IrExpr)) {
                     leaf.expressions_mut(&mut |child| walk_expr_mut(child, f));
                 }
             }
+            IrCallArg::NativeCall { call, .. } => walk_call_args_mut(&mut call.args, f),
             IrCallArg::OutTemp {
                 init,
                 writeback,

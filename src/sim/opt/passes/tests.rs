@@ -162,6 +162,8 @@ fn model_with(body: Vec<IrStmt>, signals: Vec<IrSignal>) -> IrModel {
         objects: Vec::new(),
         classes: Vec::new(),
         native_accesses: Vec::new(),
+        native_types: Vec::new(),
+        native_values: Vec::new(),
         class_allocations: Vec::new(),
         containers: Vec::new(),
         udp_tables: Vec::new(),

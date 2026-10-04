@@ -313,10 +313,29 @@ impl Frame<'_, '_> {
                     }
                 }
                 IrCallArg::NativeValue(value) => {
-                    // Every native formal gets a fresh callee value: inputs
-                    // and inouts copy the actual in, outputs and results are
-                    // copied back after the callee returns.
                     let actual = self.native_value_address(*value)?;
+                    // A function cannot suspend or be disabled by another
+                    // process, and an activation value is private to its
+                    // frame: an output or result written in place is then
+                    // indistinguishable from copy-out at return, unless the
+                    // same value is another operand of this call.
+                    if formal.is_out
+                        && !function.is_task
+                        && self.ctx.model.native_values[*value].activation
+                        && args
+                            .iter()
+                            .filter(
+                                |other| matches!(other, IrCallArg::NativeValue(v) if v == value),
+                            )
+                            .count()
+                            == 1
+                    {
+                        parameters.push(actual);
+                        continue;
+                    }
+                    // Otherwise the callee gets a fresh value: inputs and
+                    // inouts copy the actual in, outputs and results are
+                    // copied back after the callee returns.
                     let callee = formal
                         .native_value
                         .ok_or("native operand requires a native-value formal")?;
@@ -327,6 +346,14 @@ impl Frame<'_, '_> {
                     if formal.is_out {
                         native_copyouts.push((actual, storage.clone()));
                     }
+                    parameters.push(storage);
+                }
+                IrCallArg::NativeCall { value, call } => {
+                    // The inner result is a fresh temporary that only this
+                    // operand references, so the callee may own it directly.
+                    let storage = self.new_native_value(self.ctx.model.native_values[*value].ty);
+                    self.native_values.insert(*value, storage.clone());
+                    self.call_statement(call)?;
                     parameters.push(storage);
                 }
                 IrCallArg::NativeLeaves { ty, leaves } => {
