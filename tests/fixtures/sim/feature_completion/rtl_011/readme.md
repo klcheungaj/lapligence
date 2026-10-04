@@ -20,10 +20,12 @@ fixture `alias_identity`, also run after snapshot/Db destruction.
   collapsed cell competes with the child's driver.
 - `uwire_inout` adopts FND-002's L-F08-04-02 witness. `uwire_collapse` covers a
   three-level single driver, a reader-only child, disjoint selected drivers on
-  both sides of a port and a uwire external that dominates a wand formal. The
-  negatives keep §6.6.2: two drivers of one collapsed bit (net and net-array
-  cell), FND-002's two-driver and pass-switch witnesses, and an `inout uwire`
-  formal, which the frontend still rejects (retained boundary).
+  both sides of a port and a uwire external that dominates a wand formal.
+  `uwire_inout_formal` is an `inout uwire` formal with its only driver inside
+  the child; RTL-011 retained it as a frontend rejection and RTL-105 admits it
+  (more cases in [RTL-105](../rtl_105/readme.md)). The negatives keep §6.6.2:
+  two drivers of one collapsed bit (net and net-array cell) and FND-002's
+  two-driver and pass-switch witnesses.
 - `alias_member` adopts FND-002's L-F08-05-02/03 witness. `alias_projections`
   aliases ascending `+:`/`-:` selections, packed-array elements, net-array
   cells, packed members of net-array cells and members of an
