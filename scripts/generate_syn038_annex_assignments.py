@@ -11,8 +11,8 @@ ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("annex", ROOT / "scripts/syn038_annex_inventory.py")
 annex = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(annex)
-ledger = (ROOT / "tests/syn038_coverage_ledger.md").read_text()
-addendum = (ROOT / "docs/specification/spec-reference-annex-a.md").read_text()
+ledger = (ROOT / "tests/syn038_coverage_ledger.md").read_text(encoding="utf-8")
+addendum = (ROOT / "docs/specification/spec-reference-annex-a.md").read_text(encoding="utf-8")
 addendum_rows = annex.inventory(addendum, ledger)
 family = defaultdict(set)
 for section, name, *_ in addendum_rows:
@@ -526,7 +526,7 @@ for index, entry in enumerate(output["assignments"]):
     comma = "," if index < len(output["assignments"]) - 1 else ""
     lines.append(f"    {json.dumps(entry, sort_keys=True)}{comma}")
 lines += ["  ]", "}"]
-(ROOT / "tests/syn038_annex_assignments.json").write_text("\n".join(lines) + "\n")
+(ROOT / "tests/syn038_annex_assignments.json").write_text("\n".join(lines) + "\n", encoding="utf-8")
 from collections import Counter
 print(len(names), Counter(x["disposition"] for x in assignments.values()))
 print("OPEN", [x for x in sorted(names) if assignments[x]["disposition"] == "OPEN"])

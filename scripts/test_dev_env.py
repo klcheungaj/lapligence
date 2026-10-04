@@ -25,7 +25,7 @@ class DevEnvTests(unittest.TestCase):
 
     def tool(self, name, body):
         path = self.bin / name
-        path.write_text("#!/bin/sh\n" + body + "\n")
+        path.write_text("#!/bin/sh\n" + body + "\n", encoding="utf-8")
         path.chmod(0o755)
 
     def source(self, settings=None):
