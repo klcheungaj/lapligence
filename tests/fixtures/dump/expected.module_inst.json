@@ -17,7 +17,7 @@
       "line": 1,
       "module": "adder",
       "role": "DECL",
-      "sym": "namespace/declaration",
+      "sym": "class/declaration",
       "tokenKind": "module-declaration"
     },
     {
@@ -177,7 +177,7 @@
       "line": 17,
       "module": "top",
       "role": "DECL",
-      "sym": "namespace/declaration",
+      "sym": "class/declaration",
       "tokenKind": "module-declaration"
     },
     {
@@ -233,7 +233,7 @@
       "line": 24,
       "module": "top",
       "role": "REF",
-      "sym": "namespace",
+      "sym": "class",
       "tokenKind": "module"
     },
     {
