@@ -8,14 +8,17 @@ with Verilator 5.032 (`/usr/share/verilator/include/gtkwave/`):
 - `lz4.c`, `lz4.h`
 - `fst_config.h`, `fst_win_unistd.h`, `wavealloca.h`
 
-Do not edit these files. Lapligence's changes are the tracked patch in
-[`patches/libfst`](../../patches/libfst), authenticated by exact clean and
-applied digests. The root build script renders the patched copy into
-`OUT_DIR/libfst`; `sim::rt::waveform_sources()` embeds that rendering and
-writes it into waveform models only. A tree that is entirely clean or entirely
-applied is accepted; a partial or mismatched tree fails the build.
-`tests/runtime_value_storage/libfst.cmake` renders the same sources for the
-standalone CMake probes.
+Do not edit these files and do not commit them patched. Lapligence's changes are
+the tracked patch in [`patches/libfst`](../../patches/libfst), authenticated by
+exact clean and applied digests. The root build script applies it in place, so
+a built working tree shows these files as modified; `sim::rt::waveform_sources()`
+embeds them and writes them into waveform models only. A tree that is entirely
+clean or entirely applied is accepted; a partial or mismatched tree fails the
+build. The standalone CMake probes (`tests/runtime_value_storage/libfst.cmake`)
+verify the applied state. The `vendor_patches` test
+`committed_libfst_blobs_are_pristine` rejects a HEAD or index that holds
+patched content; restore with
+`git restore --staged --worktree -- vendor/libfst` before committing.
 
 The upstream copyright and license headers are preserved in every source (see
 `THIRD_PARTY_NOTICES`). The libfst API and FastLZ portions are MIT licensed;

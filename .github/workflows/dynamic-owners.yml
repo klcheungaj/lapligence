@@ -55,6 +55,11 @@ jobs:
       - name: macOS prerequisites
         if: runner.os == 'macOS'
         run: brew install cmake
+      # No Rust build runs in this job, so patch vendor/libfst (pristine in the
+      # checkout) the way the build script does for the waveform probes.
+      - name: Apply the libfst patch
+        shell: bash
+        run: git apply --whitespace=nowarn --directory=vendor/libfst patches/libfst/libfst-local-changes.patch
       - name: Validate the requested host components
         run: >-
           python tests/runtime_value_storage/validate.py

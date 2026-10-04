@@ -265,13 +265,13 @@ macro_rules! zlib_source {
     };
 }
 
-/// libfst files rendered by the build script: the pristine upstream snapshot
-/// in `vendor/libfst` with the tracked `patches/libfst` changes applied.
+/// libfst files from `vendor/libfst`, which the build script has patched in
+/// place with `patches/libfst` (the repository holds the pristine snapshot).
 macro_rules! libfst_source {
     ($name:literal) => {
         (
             $name,
-            include_str!(concat!(env!("OUT_DIR"), "/libfst/", $name)),
+            include_str!(concat!("../../../vendor/libfst/", $name)),
         )
     };
 }
