@@ -1789,11 +1789,7 @@ impl Codegen<'_> {
         }
         let mut pre_fns = std::mem::take(&mut ctx.pre_fns);
         pre_fns.extend(std::mem::take(&mut self.pending_container_pre_fns));
-        let mut writes: Vec<IrDependency> = self
-            .collect_process_writes(statement)?
-            .into_iter()
-            .collect();
-        writes.sort_by_key(|dependency| self.dependency_sort_key(dependency));
+        let writes = self.ir_process_writes(self.collect_process_writes(statement)?);
         let name = self.new_fn_name(&action_path, "assert_action");
         self.model
             .processes

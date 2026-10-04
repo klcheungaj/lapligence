@@ -3,14 +3,27 @@
 use super::*;
 
 /// Widest constant array row whose cells are recorded individually in
-/// writer-conflict analysis. Wider rows are conservatively whole-array writes
-/// so the pairwise writer check stays bounded.
+/// writer analysis. A wider row is one flattened cell interval (see
+/// [`Codegen::array_row_write`]), so every row costs one record regardless of
+/// its width while bounded rows keep per-cell read exclusion.
 const PRECISE_ROW_WRITE_CELLS: u64 = 256;
+
+/// Largest array whose whole-contents read an always_comb/always_latch
+/// process re-expresses as per-cell reads to exclude cells it writes itself.
+/// Larger (including descriptor-backed) arrays keep the one contents marker:
+/// only this process may write those cells, and its own blocking writes
+/// complete before it waits again, so the coarser set wakes on the same
+/// external changes without one generated dependency per cell (a nonblocking
+/// self-write can cause one extra re-evaluation).
+const PRECISE_EXCLUSION_CELLS: u64 = 256;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ProcessWriteMode {
     Sensitivity,
     ContinuousConflict,
+    /// SV 9.2.2.2-9.2.2.4 single-writer ownership: ordinary assignments,
+    /// not force/release/assign/deassign overrides.
+    Ownership,
 }
 
 impl<'a> Codegen<'a> {
@@ -320,12 +333,20 @@ impl<'a> Codegen<'a> {
         writes: &HashSet<IrDependency>,
     ) -> Vec<IrDependency> {
         if let IrDependency::ArrayContents(array) = &read {
-            let whole_write = writes.contains(&read);
+            let total = self.model.arrays[*array].total();
+            let whole_write = writes.contains(&read)
+                || writes.iter().any(|write| {
+                    Self::is_array_row_write(write)
+                        && self.array_cell_interval(write) == Some((*array, 0, total))
+                });
             if whole_write {
                 return vec![];
             }
             if writes.iter().any(|write| self.same_storage(&read, write)) {
-                return (0..self.model.arrays[*array].total())
+                if total > PRECISE_EXCLUSION_CELLS || self.model.arrays[*array].sparse() {
+                    return vec![read];
+                }
+                return (0..total)
                     .flat_map(|index| {
                         self.exclude_written_prefixes(
                             IrDependency::ArrayElement {
@@ -337,6 +358,13 @@ impl<'a> Codegen<'a> {
                     })
                     .collect();
             }
+        }
+        // A cell inside a written row interval is written storage.
+        if writes
+            .iter()
+            .any(|write| Self::is_array_row_write(write) && self.same_storage(&read, write))
+        {
+            return vec![];
         }
         let Some((storage, lsb, width)) = self.dependency_span(&read) else {
             return if writes.iter().any(|write| self.same_storage(&read, write)) {
@@ -383,7 +411,88 @@ impl<'a> Codegen<'a> {
             .collect()
     }
 
+    /// Writer-analysis key for the flattened cells `first .. first + count`
+    /// of one array. It is a `PackedRange` over `ArrayContents` whose bit
+    /// coordinates are cell coordinates; it never reaches the IR
+    /// (`ir_process_writes` widens it to the array contents).
+    pub(super) fn array_row_write(
+        &self,
+        array: usize,
+        first: u64,
+        count: u64,
+    ) -> Option<IrDependency> {
+        Some(IrDependency::PackedRange {
+            storage: Box::new(IrDependency::ArrayContents(array)),
+            lsb: u32::try_from(first).ok()?,
+            width: u32::try_from(count).ok().filter(|count| *count != 0)?,
+        })
+    }
+
+    fn is_array_row_write(dependency: &IrDependency) -> bool {
+        matches!(
+            dependency,
+            IrDependency::PackedRange { storage, .. }
+                if matches!(storage.as_ref(), IrDependency::ArrayContents(_))
+        )
+    }
+
+    /// Flattened `(array, first cell, count)` covered by an array storage key.
+    fn array_cell_interval(&self, dependency: &IrDependency) -> Option<(usize, u64, u64)> {
+        match dependency {
+            IrDependency::ArrayElement { array, index } => Some((*array, *index, 1)),
+            IrDependency::ArrayContents(array) => {
+                Some((*array, 0, self.model.arrays.get(*array)?.total()))
+            }
+            IrDependency::PackedRange {
+                storage,
+                lsb,
+                width,
+            } => match storage.as_ref() {
+                IrDependency::ArrayContents(array) => {
+                    Some((*array, u64::from(*lsb), u64::from(*width)))
+                }
+                IrDependency::ArrayElement { array, index } => Some((*array, *index, 1)),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// Process writes as IR storage keys: writer-analysis row intervals widen
+    /// to their array contents, sorted by the deterministic storage key.
+    pub(in super::super) fn ir_process_writes(
+        &self,
+        writes: HashSet<IrDependency>,
+    ) -> Vec<IrDependency> {
+        let mut writes = writes
+            .into_iter()
+            .map(|write| match write {
+                IrDependency::PackedRange { storage, .. }
+                    if matches!(storage.as_ref(), IrDependency::ArrayContents(_)) =>
+                {
+                    *storage
+                }
+                write => write,
+            })
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        writes.sort_by_key(|dependency| self.dependency_sort_key(dependency));
+        writes
+    }
+
     pub(super) fn same_storage(&self, read: &IrDependency, write: &IrDependency) -> bool {
+        if Self::is_array_row_write(read) || Self::is_array_row_write(write) {
+            return match (
+                self.array_cell_interval(read),
+                self.array_cell_interval(write),
+            ) {
+                (Some((a, x, n)), Some((b, y, m))) => {
+                    a == b && x < y.saturating_add(m) && y < x.saturating_add(n)
+                }
+                _ => false,
+            };
+        }
         if matches!(read, IrDependency::PackedRange { .. })
             || matches!(write, IrDependency::PackedRange { .. })
         {
@@ -477,6 +586,25 @@ impl<'a> Codegen<'a> {
             .any(|read| writes.iter().any(|write| self.same_storage(read, write))))
     }
 
+    /// Storage a process owns under the always_comb/always_latch/always_ff
+    /// single-writer rule. Overrides (force, release and procedural
+    /// continuous assignments) are not ordinary assignments and stay legal
+    /// on storage another process owns; their operands still count.
+    pub(super) fn collect_ownership_writes(
+        &self,
+        root: NodeId,
+    ) -> Result<HashSet<IrDependency>, String> {
+        let mut writes = HashSet::new();
+        self.walk_process_writes_bound(
+            root,
+            &mut writes,
+            &mut HashSet::new(),
+            &HashMap::new(),
+            ProcessWriteMode::Ownership,
+        )?;
+        Ok(writes)
+    }
+
     /// Ordinary procedural assignments conflict with a continuous variable
     /// driver. Force/release are overrides, not competing assignments (SV 6.5).
     pub(super) fn collect_continuous_conflict_writes(
@@ -519,7 +647,7 @@ impl<'a> Codegen<'a> {
         }
         match self.kind(node) {
             NodeKind::Stmt(StmtKind::Force { lhs, rhs })
-                if mode == ProcessWriteMode::ContinuousConflict =>
+                if mode != ProcessWriteMode::Sensitivity =>
             {
                 // The generic children can also contain Slang's assignment
                 // wrapper. Visit only the typed operands so that wrapper does
@@ -529,9 +657,23 @@ impl<'a> Codegen<'a> {
                 return Ok(());
             }
             NodeKind::Stmt(StmtKind::Release { lhs } | StmtKind::Deassign { lhs })
-                if mode == ProcessWriteMode::ContinuousConflict =>
+                if mode != ProcessWriteMode::Sensitivity =>
             {
                 self.walk_process_writes_bound(*lhs, writes, visited_functions, bindings, mode)?;
+                return Ok(());
+            }
+            NodeKind::Stmt(StmtKind::ProcContAssign { .. })
+                if mode == ProcessWriteMode::Ownership =>
+            {
+                for child in self.node(node).children.iter().skip(1) {
+                    self.walk_process_writes_bound(
+                        *child,
+                        writes,
+                        visited_functions,
+                        bindings,
+                        mode,
+                    )?;
+                }
                 return Ok(());
             }
             NodeKind::Stmt(StmtKind::Assign { .. })
@@ -697,6 +839,14 @@ impl<'a> Codegen<'a> {
         writes: &mut HashSet<IrDependency>,
         bindings: &HashMap<NodeId, IrDependency>,
     ) {
+        // A string store publishes the same marker its readers wait on, so it
+        // is both a writer identity and a combinational read exclusion.
+        if let Some(object) = self.object_of("", lhs).filter(|object| {
+            self.model.objects.get(*object).map(|o| o.ty) == Some(IrObjectType::String)
+        }) {
+            writes.insert(IrDependency::Object(object));
+            return;
+        }
         if let Some(dependencies) = self.unpacked_storage_dependencies(lhs) {
             writes.extend(dependencies);
             return;
@@ -797,16 +947,20 @@ impl<'a> Codegen<'a> {
     ) {
         // A constant row is its longest static prefix (SV 6.5): it writes
         // only its own cells. Bounded rows record those cells so disjoint row
-        // writers do not conflict; wider rows stay whole-array conservative.
+        // writers do not conflict; wider rows record one cell interval.
         if let Some((first, count)) = self.constant_row_cells(array, indices) {
+            let reference = self.reference_array(array.ir);
             if count <= PRECISE_ROW_WRITE_CELLS {
-                let reference = self.reference_array(array.ir);
                 writes.extend(
                     (first..first + count).map(|index| IrDependency::ArrayElement {
                         array: reference,
                         index,
                     }),
                 );
+                return;
+            }
+            if let Some(row) = self.array_row_write(reference, first, count) {
+                writes.insert(row);
                 return;
             }
         }
@@ -818,7 +972,11 @@ impl<'a> Codegen<'a> {
 
     /// Flattened `(first, count)` cells of a constant row/slab select that
     /// names fewer indices than the array has dimensions.
-    fn constant_row_cells(&self, array: &ArrayInfo, indices: &[NodeId]) -> Option<(u64, u64)> {
+    pub(super) fn constant_row_cells(
+        &self,
+        array: &ArrayInfo,
+        indices: &[NodeId],
+    ) -> Option<(u64, u64)> {
         if indices.is_empty() || indices.len() >= array.dims.len() {
             return None;
         }
@@ -1008,8 +1166,16 @@ impl<'a> Codegen<'a> {
             }
             return Ok(());
         }
-        if self.object_of(scope_path, node).is_some() {
-            return Err(format!("string/chandle changes cannot yet be used in sensitivity or wait expressions in `{scope_path}`"));
+        if let Some(object) = self.object_of(scope_path, node) {
+            // Native strings publish a change marker on every changed store,
+            // including record members with their own string owner. Other
+            // native objects have no change marker.
+            if self.model.objects.get(object).map(|object| object.ty) == Some(IrObjectType::String)
+            {
+                self.add_dependency(IrDependency::Object(object), seen, out);
+                return Ok(());
+            }
+            return Err(format!("chandle/handle changes cannot yet be used in sensitivity or wait expressions in `{scope_path}`"));
         }
         if matches!(
             self.kind(node),

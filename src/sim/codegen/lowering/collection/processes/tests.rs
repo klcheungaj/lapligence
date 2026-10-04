@@ -541,3 +541,109 @@ fn component_constant_rows_are_precise_writer_projections() {
         }
     }
 }
+
+/// Statement of every always_comb process, in design order.
+fn comb_statements(cg: &Codegen<'_>) -> Vec<NodeId> {
+    cg.design_nodes()
+        .into_iter()
+        .filter(|node| {
+            matches!(
+                cg.kind(*node),
+                NodeKind::Process {
+                    kind: ProcessKind::Always {
+                        always_type: AlwaysKind::Comb,
+                    },
+                }
+            )
+        })
+        .filter_map(|node| cg.node(node).children.first().copied())
+        .collect()
+}
+
+#[test]
+fn component_wide_rows_are_single_interval_writers() {
+    // A 65,537-cell row is one writer record, whatever its width, and is
+    // disjoint from cells of other rows but not from its own cells.
+    let header = "module tb; logic [7:0] two [3][65537]; logic [7:0] src [65537];\n\
+                  logic [7:0] d; logic c; always_comb two[0] = src;\n";
+    for (tail, conflict) in [
+        ("always_ff @(posedge c) two[1][5] <= d; endmodule", false),
+        ("always_ff @(posedge c) two[0][65536] <= d; endmodule", true),
+        ("assign two[2] = src; endmodule", false),
+    ] {
+        let database = diagnostic_database(&format!("{header}{tail}"));
+        let semantic = crate::sim::semantic::SemanticModel::from_db(&database);
+        let mut cg = Codegen::new(&semantic);
+        cg.collect_design().unwrap();
+        cg.bind_reference_ports().unwrap();
+        cg.collect_timescales();
+        cg.build_net_groups().unwrap();
+        let statement = comb_statements(&cg)[0];
+        cg.inst = cg.owning_inst(statement).unwrap();
+        let writes = cg.collect_process_writes(statement).unwrap();
+        assert_eq!(writes.len(), 1, "{writes:?}");
+        // The IR keeps only array-level storage keys.
+        assert!(matches!(
+            cg.ir_process_writes(writes).as_slice(),
+            [IrDependency::ArrayContents(_)]
+        ));
+        let result = cg.validate_process_semantics();
+        if conflict {
+            let error = result.unwrap_err();
+            assert!(
+                error.contains("`tb.two[0][0] through tb.two[0][65536]`"),
+                "{error}"
+            );
+        } else {
+            result.unwrap();
+        }
+    }
+}
+
+#[test]
+fn component_comb_exclusion_is_precise_only_for_small_arrays() {
+    // An always_comb that writes one element and reads the array by a
+    // runtime index excludes the written cell per element for a small
+    // array, but keeps the one contents marker for a descriptor array.
+    let database = diagnostic_database(
+        "module tb; logic [7:0] big [65537]; logic [7:0] sm [16];\n\
+         logic [16:0] i; logic [3:0] j; logic [7:0] x, y, z;\n\
+         always_comb begin big[0] = x; y = big[i]; end\n\
+         always_comb begin sm[0] = x; z = sm[j]; end endmodule",
+    );
+    let semantic = crate::sim::semantic::SemanticModel::from_db(&database);
+    let mut cg = Codegen::new(&semantic);
+    cg.collect_design().unwrap();
+    cg.bind_reference_ports().unwrap();
+    cg.collect_timescales();
+    cg.build_net_groups().unwrap();
+    let statements = comb_statements(&cg);
+    cg.inst = cg.owning_inst(statements[0]).unwrap();
+    let path = cg.instance_path_of(cg.inst);
+    let big = cg
+        .collect_process_sensitivity(&path, statements[0], Some(AlwaysKind::Comb))
+        .unwrap();
+    assert_eq!(
+        big.iter()
+            .filter(|read| matches!(read, IrDependency::ArrayContents(_)))
+            .count(),
+        1,
+        "{big:?}"
+    );
+    assert!(
+        !big.iter()
+            .any(|read| matches!(read, IrDependency::ArrayElement { .. })),
+        "{big:?}"
+    );
+    let small = cg
+        .collect_process_sensitivity(&path, statements[1], Some(AlwaysKind::Comb))
+        .unwrap();
+    let cells = small
+        .iter()
+        .filter_map(|read| match read {
+            IrDependency::ArrayElement { index, .. } => Some(*index),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(cells, (1..16).collect::<Vec<_>>(), "{small:?}");
+}

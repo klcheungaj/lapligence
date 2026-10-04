@@ -122,6 +122,18 @@ impl<'a> Codegen<'a> {
                 lsb,
                 width,
             } => {
+                // A writer-analysis row interval names flattened cells.
+                if let IrDependency::ArrayContents(array) = storage.as_ref() {
+                    let cell = |index: u64| {
+                        self.dependency_label(&IrDependency::ArrayElement {
+                            array: *array,
+                            index,
+                        })
+                    };
+                    let first = u64::from(*lsb);
+                    let last = first + u64::from(*width).saturating_sub(1);
+                    return format!("{} through {}", cell(first), cell(last));
+                }
                 let ranges = match storage.as_ref() {
                     IrDependency::Scalar(name) => self
                         .model

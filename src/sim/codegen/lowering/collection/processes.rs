@@ -513,6 +513,43 @@ impl<'a> Codegen<'a> {
             ));
             return Ok(());
         }
+        // A zero-delay continuous driver of descriptor-backed variable storage
+        // (the whole array or a constant row) uses the procedural fixed-array
+        // owner, like a descriptor port link; flattening it would generate
+        // code proportional to the logical extent.
+        let descriptor_target = !has_structural_driver
+            && alias_bindings.is_none()
+            && matches!(self.kind(ca), NodeKind::ContAssign { delay: None, .. })
+            && self.lhs_is_variable_storage(lhs)
+            && self
+                .array_net_target_parts(lhs)
+                .is_some_and(|(array, indices)| {
+                    indices.len() < array.dims.len() && self.model.arrays[array.ir].sparse()
+                });
+        if descriptor_target {
+            if let Some(statement) =
+                self.lower_p30_fixed_array_assignment(path, lhs, rhs, true, Operation::Assignment)?
+            {
+                let fn_name = self.new_fn_name(path, "ca");
+                let sigs = self.collect_read_signals(path, rhs)?;
+                let body = self.wrap_continuous_self_feedback(ca, lhs, &sigs, vec![statement])?;
+                let shape = if sigs.is_empty() {
+                    IrShape::RunOnce
+                } else {
+                    IrShape::SensLoop { reads: sigs }
+                };
+                let origin = self.origin(ca);
+                self.model.processes.push(IrProcess::new_with_origin(
+                    fn_name,
+                    format!("{}.assign", self.source_path(path)),
+                    shape,
+                    Vec::new(),
+                    body,
+                    origin,
+                ));
+                return Ok(());
+            }
+        }
         let mut lh = self.lower_lhs(path, lhs)?;
         if has_structural_driver {
             if let Some(group) = self.unmapped_structural_group(&lh, ca) {
@@ -1009,7 +1046,7 @@ impl<'a> Codegen<'a> {
             })?;
             let path = self.instance_path_of(inst);
             self.validate_process_contract(&path, stmt, always_type)?;
-            let writes = self.collect_process_writes(stmt)?;
+            let writes = self.collect_ownership_writes(stmt)?;
             let label = self.process_kind_label(always_type);
             writers.push(ProcessWriter {
                 node: process,
@@ -1553,18 +1590,6 @@ impl<'a> Codegen<'a> {
                     self.source_location(*node)
                 ));
             }
-            if let Some(node) = scan.event_triggers.first() {
-                return Err(format!(
-                    "semantic error: always_ff process `{path}` cannot trigger an event at {}",
-                    self.source_location(*node)
-                ));
-            }
-            if let Some(node) = scan.disallowed_assignments.first() {
-                return Err(format!(
-                    "semantic error: always_ff process `{path}` contains an unsupported procedural assignment at {}",
-                    self.source_location(*node)
-                ));
-            }
         }
         Ok(())
     }
@@ -1623,15 +1648,9 @@ impl<'a> Codegen<'a> {
                     scan.blocking_timing_controls.push(node);
                 }
             }
-            NodeKind::Stmt(
-                StmtKind::ProcContAssign { .. }
-                | StmtKind::Force { .. }
-                | StmtKind::Release { .. }
-                | StmtKind::Deassign { .. },
-            ) => scan.disallowed_assignments.push(node),
-            NodeKind::Stmt(StmtKind::EventTrigger { .. }) => {
-                scan.event_triggers.push(node);
-            }
+            // SV 9.2.2.4 restricts always_ff to one event control and no
+            // blocking timing; event triggers and procedural continuous
+            // assignments are neither, so they execute like any procedure.
             NodeKind::FuncCall {
                 name,
                 is_task,
@@ -1755,9 +1774,7 @@ impl<'a> Codegen<'a> {
                 always_type: AlwaysKind::Unsupported,
             } => IrProcessKind::Always,
         };
-        let mut writes: Vec<IrDependency> =
-            self.collect_process_writes(stmt)?.into_iter().collect();
-        writes.sort_by_key(|dependency| self.dependency_sort_key(dependency));
+        let writes = self.ir_process_writes(self.collect_process_writes(stmt)?);
         let fn_name = self.new_fn_name(path, "proc");
         let pattern_decls = self
             .conditional_pattern_targets(stmt)

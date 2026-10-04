@@ -68,7 +68,8 @@
 //!   scope/modport connection metadata is consumed during elaboration, not
 //!   executed as a value expression or copied through per-port storage;
 //! - `main()` initializes the runtime, spawns every process in a deterministic
-//!   order (comb, links, then always/initial), registers every final block,
+//!   order (continuous drivers, links, always/initial, then
+//!   always_comb/always_latch), registers every final block,
 //!   runs the scheduler, then executes the finals phase (`llg_rt_run_finals`)
 //!   after the scheduler exits ($finish / deadlock / no future events).
 //!
@@ -553,10 +554,21 @@ fn lower_model(db: &Db) -> Result<LoweredModel, String> {
     // t=0.
     let final_names = std::mem::take(&mut cg.final_procs);
     let assertion_action_procs = std::mem::take(&mut cg.assertion_action_procs);
+    // SV 9.2.2.2.1: always_comb/always_latch evaluate once at time zero
+    // after every initial and always procedure has started, so a reader
+    // already waiting on their outputs observes that first result.
+    let deferred = |process: &&crate::sim::ir::IrProcess| {
+        matches!(
+            process.kind,
+            crate::sim::ir::IrProcessKind::Comb | crate::sim::ir::IrProcessKind::Latch
+        )
+    };
     model.spawns = startup_spawns(
         model
             .processes
             .iter()
+            .filter(|process| !deferred(process))
+            .chain(model.processes.iter().filter(deferred))
             .map(|process| process.c_name.as_str()),
         &final_names,
         &assertion_action_procs,
