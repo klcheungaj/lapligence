@@ -935,6 +935,51 @@ impl<'a> Codegen<'a> {
             ));
         }
 
+        let gathered_width = u64::from(child_array.elem_width) * values.len() as u64;
+        if child_array.is_net && gathered_width <= u64::from(crate::sim::emit_c::LLG_MAX_WIDTH) {
+            if let Some(bindings) = self.alias_lvalue_bindings(port, internal)? {
+                // A net-array formal resolves each cell; the link is the
+                // port's contribution beside the formal's internal drivers.
+                // Cells are concatenated in declared order, first cell most
+                // significant, as the bindings number them.
+                let parts = values
+                    .into_iter()
+                    .map(|value| {
+                        let value = if actual_shape.two_state {
+                            IrExpr::to_two_state(value)
+                        } else {
+                            value
+                        };
+                        IrExpr::convert_to(value, child_array.elem_width, false)
+                    })
+                    .collect::<Vec<_>>();
+                let width = child_array
+                    .elem_width
+                    .checked_mul(
+                        u32::try_from(parts.len()).map_err(|_| "net-array port is too wide")?,
+                    )
+                    .ok_or("net-array port is too wide")?;
+                let value = IrExpr::new(IrExprKind::Concat { parts }, width, false, None);
+                for (driver, rhs) in
+                    self.alias_driver_assignments(port, &bindings, &value, |_| 0)?
+                {
+                    captures.push(IrStmt::Assign {
+                        lhs: IrLhs::Whole(driver),
+                        rhs,
+                        nba: false,
+                    });
+                }
+                let reads = self.collect_read_signals(parent_path, actual)?;
+                self.emit_link_process(
+                    parent_path,
+                    child_path,
+                    port,
+                    reads,
+                    IrStmt::Block(captures),
+                );
+                return Ok(true);
+            }
+        }
         let target_array = self.reference_array(child_array.ir);
         let mut assignments = Vec::with_capacity(values.len());
         for (indices, value) in target_indices.into_iter().zip(values) {
@@ -1592,27 +1637,13 @@ impl<'a> Codegen<'a> {
                             let Some(internal) = low else {
                                 continue;
                             };
-                            let (_, child_info) = self.resolve_signal_id(&child_path, internal)?;
-                            let lhs = IrLhs::Whole(child_info.ir);
-                            let rhs = apply_lhs_assignment_context(
-                                &self.model,
-                                &lhs,
-                                unconnected_drive_expr(drive, child_info.width)?,
-                            );
-                            let fn_name = self.new_fn_name(parent_path, "unconnected");
-                            let origin = self.origin(port);
-                            self.model.processes.push(IrProcess::new_with_origin(
-                                fn_name,
-                                format!("{child_path}.unconnected"),
-                                IrShape::RunOnce,
-                                Vec::new(),
-                                vec![IrStmt::Assign {
-                                    lhs,
-                                    rhs,
-                                    nba: false,
-                                }],
-                                origin,
-                            ));
+                            self.emit_unconnected_drive(
+                                parent_path,
+                                &child_path,
+                                port,
+                                internal,
+                                drive,
+                            )?;
                         }
                     }
                 }
@@ -1764,6 +1795,126 @@ impl<'a> Codegen<'a> {
                 origin,
             ));
         }
+        Ok(())
+    }
+}
+
+impl Codegen<'_> {
+    /// An omitted input under `` `unconnected_drive`` (IEEE 1364-2001 19.9)
+    /// is pulled like a `pullup`/`pulldown` on the formal: a net formal gets
+    /// a pull-strength contribution in its own driver slot, so it competes
+    /// with internal drivers and the formal's net type by the strength
+    /// tables. A variable formal has no strength and receives the value.
+    fn emit_unconnected_drive(
+        &mut self,
+        parent_path: &str,
+        child_path: &str,
+        port: NodeId,
+        internal: NodeId,
+        drive: UnconnectedDrive,
+    ) -> Result<(), String> {
+        if let Some(array) = self.array_of(internal).cloned() {
+            if array.real {
+                return Ok(());
+            }
+            let gathered_width = u64::from(array.elem_width) * self.model.arrays[array.ir].total;
+            if array.is_net && gathered_width <= u64::from(crate::sim::emit_c::LLG_MAX_WIDTH) {
+                if let Some(bindings) = self.alias_lvalue_bindings(port, internal)? {
+                    let width = bindings.len();
+                    let value = unconnected_drive_expr(
+                        drive,
+                        u32::try_from(width).map_err(|_| "net-array port is too wide")?,
+                    )?;
+                    let body = self
+                        .alias_driver_assignments(port, &bindings, &value, |_| 0)?
+                        .into_iter()
+                        .map(|(driver, rhs)| IrStmt::Assign {
+                            lhs: IrLhs::Whole(driver),
+                            rhs,
+                            nba: false,
+                        })
+                        .collect();
+                    return self.push_unconnected_process(parent_path, child_path, port, body);
+                }
+            }
+            let value = unconnected_drive_expr(drive, array.elem_width)?;
+            let target = self.reference_array(array.ir);
+            let body = if self.model.arrays[array.ir].sparse() {
+                vec![IrStmt::FixedArrayFill {
+                    array: target,
+                    value: IrExpr::convert_to(value, array.elem_width, array.signed),
+                    nba: false,
+                }]
+            } else {
+                // Net arrays are dense: each element write publishes through
+                // the element's own resolved cell, as a connected link does.
+                port_array_index_vectors(&array.dims)
+                    .iter()
+                    .map(|indices| {
+                        let lhs = IrLhs::ArrayElem {
+                            arr: target,
+                            indices: indices
+                                .iter()
+                                .map(|index| lhs_integer_expr(i128::from(*index)))
+                                .collect(),
+                            elem_sel: IrElemSel::Whole,
+                        };
+                        IrStmt::Assign {
+                            rhs: apply_lhs_assignment_context(&self.model, &lhs, value.clone()),
+                            lhs,
+                            nba: false,
+                        }
+                    })
+                    .collect()
+            };
+            return self.push_unconnected_process(parent_path, child_path, port, body);
+        }
+        let (_, child_info) = self.resolve_signal_id(child_path, internal)?;
+        let value = unconnected_drive_expr(drive, child_info.width)?;
+        let body = if let Some(bindings) = self.alias_lvalue_bindings(port, internal)? {
+            self.alias_driver_assignments(port, &bindings, &value, |_| 0)?
+                .into_iter()
+                .map(|(driver, rhs)| IrStmt::Assign {
+                    lhs: IrLhs::Whole(driver),
+                    rhs,
+                    nba: false,
+                })
+                .collect()
+        } else {
+            let lhs = self.remap_structural_lhs(IrLhs::Whole(child_info.ir), port);
+            if let Some(group) = self.unmapped_structural_group(&lhs, port) {
+                return Err(format!(
+                    "unconnected input port `{}` has no structural driver mapping for resolved net group {group}",
+                    self.display_name(port),
+                ));
+            }
+            let rhs = apply_lhs_assignment_context(&self.model, &lhs, value);
+            vec![IrStmt::Assign {
+                lhs,
+                rhs,
+                nba: false,
+            }]
+        };
+        self.push_unconnected_process(parent_path, child_path, port, body)
+    }
+
+    fn push_unconnected_process(
+        &mut self,
+        parent_path: &str,
+        child_path: &str,
+        port: NodeId,
+        body: Vec<IrStmt>,
+    ) -> Result<(), String> {
+        let fn_name = self.new_fn_name(parent_path, "unconnected");
+        let origin = self.origin(port);
+        self.model.processes.push(IrProcess::new_with_origin(
+            fn_name,
+            format!("{child_path}.unconnected"),
+            IrShape::RunOnce,
+            Vec::new(),
+            body,
+            origin,
+        ));
         Ok(())
     }
 }

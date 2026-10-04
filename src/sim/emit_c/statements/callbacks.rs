@@ -196,6 +196,12 @@ pub(in super::super) fn render_pre_fn_impl(
                             "    out[{i}].kind = LLG_FMT_PACKED; out[{i}].time_unit_fs = {time_unit_fs}ULL; out[{i}].value.packed = {rendered};\n"
                         ));
                     }
+                    IrDisplayArg::Strength(value) => {
+                        let rendered = render_expr(ctx, value)?.code;
+                        out.push_str(&format!(
+                            "    out[{i}].kind = LLG_FMT_STRENGTH; out[{i}].value.packed = {rendered};\n"
+                        ));
+                    }
                     IrDisplayArg::Real(value) => {
                         let rendered = render_expr(ctx, value)?.code;
                         out.push_str(&format!(

@@ -197,7 +197,16 @@ strength endpoints of X; a known drive wins only when stronger than every opposi
 possibility. High-Z adds no drive. Wired-AND 0 and wired-OR 1 dominate X; all-Z
 sources resolve Z unless a default source applies. Pull/supply defaults are
 strength-bearing, not unconditional values. Preserve scalar strengths; explicit
-vector continuous strengths reject. Reject trireg before storage collection,
+vector (including selected-bit) and supply-net continuous strengths reject; gate
+instance-array strengths stay legal. Undelayed enable gates split into a
+strength0-only and a strength1-only slot so an unknown enable drives L/H; delayed
+ones keep one slot (X) so each transition keeps a single delay. An omitted input
+under `unconnected_drive` is a pull-strength slot of its port on every net or
+net-array formal (variables receive the value only); input net-array links and
+gate outputs on net-array cells publish through their port/gate cell slots.
+`%v` on a net, its constant projections, aliases or net-array cells reads a lazily
+created strength-view signal (`collection/strength_views.rs`); monitors depend on
+that view, so strength-only changes reach them without waking value readers. Reject trireg before storage collection,
 including undriven arrays, and dynamic net selectors. Keep disjoint constant
 uwire selections legal; overlapping drivers reject.
 

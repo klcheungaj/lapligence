@@ -369,7 +369,9 @@ original position. Each net's contribution cells occupy one exact-size `__cells`
 array; the unchanged driver pointer table points into it. Net defaults, driver
 reset/destruction, index reset and alias-list cleanup use a single immutable
 net/fill descriptor table and fixed-size loops, independent of net count, driver
-count, width and resolution kind. Strength/index/scratch storage remains
+count, width and resolution kind; the same loop resets an optional strength
+view (`.strength`, NULL unless a `%v` reads the net) and `IrDisplayArg::Strength`
+formats with `LLG_FMT_STRENGTH`. Strength/index/scratch storage remains
 exact-size; only mutable index state needs resetting. Scalar aliases copy all
 visible owners before binding; array aliases copy and bind in original array/
 element order through one pointer table. Array initialization refreshes only its

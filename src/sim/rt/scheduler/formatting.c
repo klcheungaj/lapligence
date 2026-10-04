@@ -100,7 +100,8 @@ static void llg_fmt_args_destroy(llg_fmt_arg_t* args, int n) {
     if (!args) return;
     for (int i = 0; i < n; i++) {
         if (args[i].kind == LLG_FMT_STRING) llg_string_destroy(&args[i].value.string);
-        else if (args[i].kind == LLG_FMT_PACKED) sv4_destroy(&args[i].value.packed);
+        else if (args[i].kind == LLG_FMT_PACKED || args[i].kind == LLG_FMT_STRENGTH)
+            sv4_destroy(&args[i].value.packed);
         memset(&args[i], 0, sizeof(args[i]));
     }
 }
@@ -109,7 +110,7 @@ static llg_fmt_arg_t llg_fmt_arg_clone(const llg_fmt_arg_t* value) {
     llg_fmt_arg_t result = *value;
     if (value->kind == LLG_FMT_STRING)
         result.value.string = llg_string_clone(&value->value.string);
-    else if (value->kind == LLG_FMT_PACKED)
+    else if (value->kind == LLG_FMT_PACKED || value->kind == LLG_FMT_STRENGTH)
         result.value.packed = sv4_clone(&value->value.packed);
     return result;
 }
@@ -389,6 +390,67 @@ static size_t llg_format_strength(sv4_t value, char* raw, size_t cap) {
     return len;
 }
 
+// Format a net strength view (llg_net_t.strength) with IEEE 1364-2001
+// 17.1.1.5 / Tables 69-71: a mnemonic for one level, otherwise two digits
+// (max then min strength for 0/1; strength0 then strength1 for X). L and H
+// always use the mnemonic of their driven level.
+static void llg_format_strength_byte(uint8_t code, char text[4]) {
+    static const char* const names[8] = {"Hi", "Sm", "Me", "We", "La", "Pu", "St", "Su"};
+    int lo = (int)(code & 0x0fu) - 7;
+    int hi = (int)(code >> 4) - 7;
+    if (lo < -7 || hi > 7 || lo > hi) {
+        lo = -LLG_STRENGTH_STRONG;
+        hi = LLG_STRENGTH_STRONG;
+    }
+    char value;
+    int first;
+    int second;
+    if (hi < 0) {
+        value = '0';
+        first = -lo;
+        second = -hi;
+    } else if (lo > 0) {
+        value = '1';
+        first = hi;
+        second = lo;
+    } else if (lo == 0 && hi == 0) {
+        memcpy(text, "HiZ", 4);
+        return;
+    } else if (hi == 0) {
+        value = 'L';
+        first = second = -lo;
+    } else if (lo == 0) {
+        value = 'H';
+        first = second = hi;
+    } else {
+        value = 'X';
+        first = -lo;
+        second = hi;
+    }
+    if (first == second) {
+        memcpy(text, names[first], 2);
+    } else {
+        text[0] = (char)('0' + first);
+        text[1] = (char)('0' + second);
+    }
+    text[2] = value;
+    text[3] = 0;
+}
+
+static size_t llg_format_strength_view(sv4_t view, char* raw, size_t cap) {
+    size_t len = 0;
+    uint32_t bits = llg_sv4_width(view) / 8u;
+    for (uint32_t bit = bits; bit > 0; bit--) {
+        uint32_t index = (bit - 1u) * 8u;
+        uint64_t word = llg_sv4_word(view, index / 64u, LLG_SV4_BITS);
+        char text[4];
+        llg_format_strength_byte((uint8_t)(word >> (index % 64u)), text);
+        llg_append_text(raw, cap, &len, text, 3);
+        if (bit != 1) llg_append(raw, cap, &len, ' ');
+    }
+    return len;
+}
+
 static size_t llg_format_char(sv4_t value, char* raw, size_t cap) {
     if (cap == 0 || llg_sv4_width(value) == 0) return 0;
     uint64_t unknown = llg_sv4_word(value, 0, LLG_SV4_X) | llg_sv4_word(value, 0, LLG_SV4_Z);
@@ -565,7 +627,8 @@ static size_t llg_format_typed(char* out, size_t cap, const char* fmt,
         }
         const llg_fmt_arg_t* arg = &args[argi++];
         size_t payload = 0;
-        if (arg->kind == LLG_FMT_PACKED) payload = (size_t)llg_sv4_width(arg->value.packed) * 4u;
+        if (arg->kind == LLG_FMT_PACKED || arg->kind == LLG_FMT_STRENGTH)
+            payload = (size_t)llg_sv4_width(arg->value.packed) * 4u;
         else if (arg->kind == LLG_FMT_STRING) {
             if (arg->value.string.len > SIZE_MAX / 8u)
                 llg_fatal_allocation("string display", arg->value.string.len, 8u);
@@ -610,6 +673,8 @@ static size_t llg_format_typed(char* out, size_t cap, const char* fmt,
             raw_len = llg_format_raw4(arg->value.packed, raw, raw_cap);
         } else if (conversion == 'v' && arg->kind == LLG_FMT_PACKED) {
             raw_len = llg_format_strength(arg->value.packed, raw, raw_cap);
+        } else if (conversion == 'v' && arg->kind == LLG_FMT_STRENGTH) {
+            raw_len = llg_format_strength_view(arg->value.packed, raw, raw_cap);
         } else if (conversion == 'p' && arg->kind == LLG_FMT_PACKED) {
             // Aggregate pattern formatting is rejected by lowering until the
             // owned aggregate representation is available.  A packed scalar

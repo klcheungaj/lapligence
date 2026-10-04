@@ -214,6 +214,144 @@ static void llg_net_alias_refresh_all(llg_net_t* net) {
         llg_net_alias_refresh(net->aliases[i]);
 }
 
+
+// ── Strength views ───────────────────────────────────────────────────────────
+//
+// Only nets with a strength consumer carry a view, so ordinary resolution
+// keeps its value-only word-parallel path. Every driver contributes one
+// strength interval per bit on the signed scale (-7 = Su0 .. 7 = Su1): a
+// known value is a point, X spans [-strength0, strength1], and a highz
+// endpoint leaves only the other side, which models L/H. The resolved range
+// is the hull of the outcomes of every level choice inside those intervals
+// (IEEE 1364-2001 7.10.1-7.10.4): the strongest level wins, equal opposite
+// levels give X on a wire and the wired value on wand/wor. Only the strongest
+// definite and possible levels of each value decide that hull.
+
+static int llg_net_top_level(const uint64_t* levels, uint64_t bit) {
+    for (int level = LLG_STRENGTH_SUPPLY; level > LLG_STRENGTH_HIGHZ; level--)
+        if (levels[level] & bit) return level;
+    return -1;
+}
+
+static uint8_t llg_net_strength_code(int lo, int hi) {
+    return (uint8_t)(((hi + 7) << 4) | (lo + 7));
+}
+
+static uint8_t llg_net_strength_hull(int mode, int k0, int k1, int p0, int p1) {
+    int hi;
+    int lo;
+    if (mode == LLG_RESOLVE_WAND) {
+        hi = p1 >= 0 && p1 > k0 ? p1 : k0 >= 0 ? -k0 : 0;
+        lo = p0 >= 0 && p0 >= k1 ? -p0 : k1 >= 0 ? k1 : 0;
+    } else if (mode == LLG_RESOLVE_WOR) {
+        hi = p1 >= 0 && p1 >= k0 ? p1 : k0 >= 0 ? -k0 : 0;
+        lo = p0 >= 0 && p0 > k1 ? -p0 : k1 >= 0 ? k1 : 0;
+    } else {
+        hi = p1 >= 0 && p1 >= k0 ? p1 : k0 >= 0 ? -k0 : 0;
+        lo = p0 >= 0 && p0 >= k1 ? -p0 : k1 >= 0 ? k1 : 0;
+    }
+    return llg_net_strength_code(lo, hi);
+}
+
+static uint8_t llg_net_forced_strength(const sv4_t* resolved, uint64_t bit) {
+    switch (llg_sv4_state(*resolved, bit)) {
+    case 0: return llg_net_strength_code(-LLG_STRENGTH_STRONG, -LLG_STRENGTH_STRONG);
+    case 1: return llg_net_strength_code(LLG_STRENGTH_STRONG, LLG_STRENGTH_STRONG);
+    case 2: return llg_net_strength_code(-LLG_STRENGTH_STRONG, LLG_STRENGTH_STRONG);
+    default: return llg_net_strength_code(0, 0);
+    }
+}
+
+static sv4_t llg_net_strength_levels(llg_net_t* net) {
+    uint32_t width = net->width;
+    size_t words = ((size_t)width + 63u) / 64u;
+    size_t out_words = ((size_t)width * 8u + 63u) / 64u;
+    uint64_t* out = (uint64_t*)llg_checked_calloc(out_words, sizeof(uint64_t),
+                                                  "net strength view");
+    int forced = llg_is_forced(&net->resolved);
+    int mode = net->resolution;
+    int implicit = -1;
+    int implicit_strength = LLG_STRENGTH_PULL;
+    if (mode == LLG_RESOLVE_TRI0 || mode == LLG_RESOLVE_SUPPLY0) implicit = 0;
+    if (mode == LLG_RESOLVE_TRI1 || mode == LLG_RESOLVE_SUPPLY1) implicit = 1;
+    if (mode == LLG_RESOLVE_SUPPLY0 || mode == LLG_RESOLVE_SUPPLY1)
+        implicit_strength = LLG_STRENGTH_SUPPLY;
+    for (size_t word = 0; word < words; word++) {
+        uint32_t remaining = width - (uint32_t)(word * 64u);
+        uint64_t m = remaining >= 64u ? UINT64_MAX
+                                      : (UINT64_C(1) << remaining) - UINT64_C(1);
+        uint64_t known0[8] = {0};
+        uint64_t known1[8] = {0};
+        uint64_t possible0[8] = {0};
+        uint64_t possible1[8] = {0};
+        if (implicit == 0) known0[implicit_strength] = possible0[implicit_strength] = m;
+        if (implicit == 1) known1[implicit_strength] = possible1[implicit_strength] = m;
+        for (int d = 0; d < net->n_drivers; d++) {
+            const sv4_t* v = net->drivers[d];
+            if (!v) continue;
+            uint8_t s0 = net->strength0 ? net->strength0[d] : LLG_STRENGTH_STRONG;
+            uint8_t s1 = net->strength1 ? net->strength1[d] : LLG_STRENGTH_STRONG;
+            if (s0 > LLG_STRENGTH_SUPPLY || s1 > LLG_STRENGTH_SUPPLY) {
+                fputs("llg runtime fatal: invalid net drive strength\n", stderr);
+                abort();
+            }
+            uint64_t valid = word < llg_sv4_words(*v)
+                ? (llg_sv4_width(*v) - (uint32_t)(word * 64u) >= 64u
+                       ? UINT64_MAX
+                       : (UINT64_C(1) << (llg_sv4_width(*v) - (uint32_t)(word * 64u))) -
+                             UINT64_C(1))
+                : 0;
+            uint64_t x = llg_sv4_word(*v, word, LLG_SV4_X) & valid & m;
+            uint64_t z = (llg_sv4_word(*v, word, LLG_SV4_Z) | ~valid) & m;
+            uint64_t bits = llg_sv4_word(*v, word, LLG_SV4_BITS);
+            uint64_t k0 = ~bits & ~(x | z) & m;
+            uint64_t k1 = bits & ~(x | z) & m;
+            if (s0 != LLG_STRENGTH_HIGHZ) {
+                known0[s0] |= k0;
+                possible0[s0] |= k0 | x;
+            }
+            if (s1 != LLG_STRENGTH_HIGHZ) {
+                known1[s1] |= k1;
+                possible1[s1] |= k1 | x;
+            }
+        }
+        uint64_t forced_bits = forced ? force_mask_word(&net->resolved, word) : 0;
+        for (uint32_t offset = 0; offset < 64u && offset < remaining; offset++) {
+            uint64_t bit = UINT64_C(1) << offset;
+            uint64_t net_bit = (uint64_t)word * 64u + offset;
+            uint8_t code = forced_bits & bit
+                ? llg_net_forced_strength(&net->resolved, net_bit)
+                : llg_net_strength_hull(mode, llg_net_top_level(known0, bit),
+                                        llg_net_top_level(known1, bit),
+                                        llg_net_top_level(possible0, bit),
+                                        llg_net_top_level(possible1, bit));
+            out[net_bit / 8u] |= (uint64_t)code << ((net_bit % 8u) * 8u);
+        }
+    }
+    sv4_t view = sv4_from_limbs(out, NULL, NULL, width * 8u, 0);
+    free(out);
+    return view;
+}
+
+// Publish the strength view after the value. Unchanged strengths are not
+// rewritten, so only a real strength change wakes `%v` monitors. A pending
+// net propagation delay publishes the view with the delayed value instead.
+static void llg_net_strength_publish(llg_net_t* net) {
+    if (!net || !net->strength) return;
+    if (net->propagation && net->propagation->pending) return;
+    llg_value_scope_t* scope = llg_value_scope_begin(1);
+    sv4_t* owned = llg_value_scope_values(scope);
+    sv4_replace(&owned[0], llg_net_strength_levels(net));
+    sig_write(net->strength, owned[0]);
+    llg_value_scope_end(scope);
+}
+
+// Startup: initialize the view from the all-Z drivers without waking readers.
+void llg_net_strength_reset(llg_net_t* net) {
+    if (!net || !net->strength) return;
+    sv4_replace(net->strength, llg_net_strength_levels(net));
+}
+
 static void llg_net_publish(llg_net_t* net, sv4_t resolved) {
     if (net->propagation_enabled) {
         llg_inertial_assign(&net->propagation, &net->resolved, resolved,
@@ -251,6 +389,7 @@ void llg_net_resolve(llg_net_t* net) {
         llg_net_publish(net, owned[0]);
         llg_value_scope_end(scope);
     }
+    llg_net_strength_publish(net);
 }
 
 void llg_net_write(llg_net_t* net, int idx, sv4_t value) {
@@ -298,6 +437,7 @@ void llg_net_write(llg_net_t* net, int idx, sv4_t value) {
     sv4_replace(owned, llg_net_compute_range(net, low, high - low + 1u));
     llg_net_publish_range(net, low, owned[0]);
     llg_value_scope_end(scope);
+    llg_net_strength_publish(net);
 }
 
 static int llg_net_range_same(const sv4_t* target, uint32_t offset,
@@ -365,6 +505,7 @@ static void llg_net_write_slice(llg_net_t* net, int idx, sv4_t selected,
             net, new_low, new_high - new_low + 1u));
         llg_net_publish_ranges(net, old_low, owned[0], new_low, owned[1]);
         llg_value_scope_end(scope);
+        llg_net_strength_publish(net);
         return;
     }
     uint32_t low = old_active ? old_low : new_low;
@@ -378,6 +519,7 @@ static void llg_net_write_slice(llg_net_t* net, int idx, sv4_t selected,
     sv4_replace(owned, llg_net_compute_range(net, low, high - low + 1u));
     llg_net_publish_range(net, low, owned[0]);
     llg_value_scope_end(scope);
+    llg_net_strength_publish(net);
 }
 
 void llg_net_write_selected(llg_net_t* net, int idx, sv4_t value,
@@ -738,7 +880,10 @@ static void commit_inertial(llg_region_t region) {
         sv4_copy(&driver->current, &value);
         llg_ba(driver->target, value);
     }
-    if (publication_net) llg_net_alias_refresh_all(publication_net);
+    if (publication_net) {
+        llg_net_alias_refresh_all(publication_net);
+        llg_net_strength_publish(publication_net);
+    }
     sv4_destroy(&mask);
     sv4_destroy(&value);
 }

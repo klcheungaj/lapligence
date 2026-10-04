@@ -60,12 +60,14 @@ impl EmitCtx<'_, '_> {
     ) -> Result<(String, Vec<crate::sim::ir::IrDisplayArg>), String> {
         let mut fmt_arg: Option<String> = None;
         let mut display_args = Vec::new();
+        let mut display_nodes = Vec::new();
         for a in args {
             let is_fmt = self.literal_string(*a, name)?.is_some() && fmt_arg.is_none();
             if is_fmt && fmt_arg.is_none() {
                 fmt_arg = self.literal_string(*a, name)?;
             } else {
                 display_args.push(self.lower_display_arg(*a)?);
+                display_nodes.push(*a);
             }
         }
         let Some(fmt) = fmt_arg else {
@@ -75,7 +77,8 @@ impl EmitCtx<'_, '_> {
                 c_fmt.push(match arg {
                     crate::sim::ir::IrDisplayArg::Real(_) => 'f',
                     crate::sim::ir::IrDisplayArg::String(_) => 's',
-                    crate::sim::ir::IrDisplayArg::Packed(_) => default_radix.specifier(),
+                    crate::sim::ir::IrDisplayArg::Packed(_)
+                    | crate::sim::ir::IrDisplayArg::Strength(_) => default_radix.specifier(),
                 });
             }
             c_fmt.push('"');
@@ -149,6 +152,9 @@ impl EmitCtx<'_, '_> {
                             "{name} format `%{conv}` requires a packed argument in `{}`",
                             self.path
                         ));
+                    }
+                    if conversion == 'v' {
+                        self.use_strength_view(&mut display_args[arg_idx], display_nodes[arg_idx])?;
                     }
                     arg_idx += 1;
                     c_fmt.push_str(&spec[..spec.len() - conv.len_utf8()]);
@@ -265,7 +271,8 @@ impl EmitCtx<'_, '_> {
             c_fmt.push(match &display_args[arg_idx] {
                 crate::sim::ir::IrDisplayArg::Real(_) => 'f',
                 crate::sim::ir::IrDisplayArg::String(_) => 's',
-                crate::sim::ir::IrDisplayArg::Packed(_) => default_radix.specifier(),
+                crate::sim::ir::IrDisplayArg::Packed(_)
+                | crate::sim::ir::IrDisplayArg::Strength(_) => default_radix.specifier(),
             });
             arg_idx += 1;
         }
@@ -283,7 +290,7 @@ impl EmitCtx<'_, '_> {
         args: &[NodeId],
         default_radix: IrDisplayRadix,
     ) -> Result<IrStringExpr, String> {
-        let lowered = args
+        let mut lowered = args
             .iter()
             .map(|value| self.lower_display_arg(*value))
             .collect::<Result<Vec<_>, _>>()?;
@@ -292,9 +299,15 @@ impl EmitCtx<'_, '_> {
         let mut source_idx = 0usize;
         while source_idx < args.len() {
             if let Some(text) = self.literal_string(args[source_idx], name)? {
-                let remaining = &lowered[source_idx + 1..];
-                let (segment, consumed) =
-                    self.parse_format_text(name, &text, remaining, default_radix, false)?;
+                let remaining = &mut lowered[source_idx + 1..];
+                let (segment, consumed) = self.parse_format_text(
+                    name,
+                    &text,
+                    remaining,
+                    &args[source_idx + 1..],
+                    default_radix,
+                    false,
+                )?;
                 format.push_str(&segment);
                 values.extend(remaining.iter().take(consumed).cloned());
                 source_idx += consumed + 1;
@@ -304,7 +317,8 @@ impl EmitCtx<'_, '_> {
                 format.push(match value {
                     crate::sim::ir::IrDisplayArg::Real(_) => 'f',
                     crate::sim::ir::IrDisplayArg::String(_) => 's',
-                    crate::sim::ir::IrDisplayArg::Packed(_) => default_radix.specifier(),
+                    crate::sim::ir::IrDisplayArg::Packed(_)
+                    | crate::sim::ir::IrDisplayArg::Strength(_) => default_radix.specifier(),
                 });
                 values.push(value.clone());
                 source_idx += 1;
@@ -327,15 +341,22 @@ impl EmitCtx<'_, '_> {
         format_node: NodeId,
         args: &[NodeId],
     ) -> Result<IrStringExpr, String> {
-        let values = args
+        let mut values = args
             .iter()
             .map(|value| self.lower_display_arg(*value))
             .collect::<Result<Vec<_>, _>>()?;
         let format = if let Some(text) = self.literal_string(format_node, name)? {
             IrStringExpr::Literal(
-                self.parse_format_text(name, &text, &values, IrDisplayRadix::Decimal, true)?
-                    .0
-                    .into_bytes(),
+                self.parse_format_text(
+                    name,
+                    &text,
+                    &mut values,
+                    args,
+                    IrDisplayRadix::Decimal,
+                    true,
+                )?
+                .0
+                .into_bytes(),
             )
         } else {
             self.cg.lower_string(&self.path, format_node)?
@@ -409,10 +430,11 @@ impl EmitCtx<'_, '_> {
     /// Validate a literal format and return the normalized formatter text
     /// consumed by both display-family tasks and string-producing calls.
     fn parse_format_text(
-        &self,
+        &mut self,
         name: &str,
         fmt: &str,
-        display_args: &[crate::sim::ir::IrDisplayArg],
+        display_args: &mut [crate::sim::ir::IrDisplayArg],
+        display_nodes: &[NodeId],
         default_radix: IrDisplayRadix,
         append_extras: bool,
     ) -> Result<(String, usize), String> {
@@ -448,6 +470,9 @@ impl EmitCtx<'_, '_> {
                 }
                 'u' | 'z' | 'v' | 't' => {
                     self.require_format_arg(name, conversion, arg_idx, display_args, false)?;
+                    if lower == 'v' {
+                        self.use_strength_view(&mut display_args[arg_idx], display_nodes[arg_idx])?;
+                    }
                 }
                 's' => {
                     // A packed argument is a sequence of 8-bit ASCII codes
@@ -488,7 +513,8 @@ impl EmitCtx<'_, '_> {
                 normalized.push(match &display_args[arg_idx] {
                     crate::sim::ir::IrDisplayArg::Real(_) => 'f',
                     crate::sim::ir::IrDisplayArg::String(_) => 's',
-                    crate::sim::ir::IrDisplayArg::Packed(_) => default_radix.specifier(),
+                    crate::sim::ir::IrDisplayArg::Packed(_)
+                    | crate::sim::ir::IrDisplayArg::Strength(_) => default_radix.specifier(),
                 });
                 arg_idx += 1;
             }
@@ -517,6 +543,21 @@ impl EmitCtx<'_, '_> {
                 "{name} format `%{conversion}` has an incompatible argument in `{}`",
                 self.path
             ));
+        }
+        Ok(())
+    }
+
+    /// `%v` on a resolved net reports its strength view instead of the
+    /// strong-only value formatting used for variables and expressions.
+    fn use_strength_view(
+        &mut self,
+        arg: &mut crate::sim::ir::IrDisplayArg,
+        node: NodeId,
+    ) -> Result<(), String> {
+        if matches!(arg, crate::sim::ir::IrDisplayArg::Packed(_)) {
+            if let Some(view) = self.cg.strength_display_arg(node)? {
+                *arg = view;
+            }
         }
         Ok(())
     }

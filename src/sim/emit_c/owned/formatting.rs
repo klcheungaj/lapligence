@@ -14,9 +14,9 @@ impl Frame<'_, '_> {
         let mut values = Vec::new();
         for arg in args {
             values.push(match arg {
-                IrDisplayArg::Packed(expr) | IrDisplayArg::Real(expr) => {
-                    Prepared::Numeric(self.expression(expr)?)
-                }
+                IrDisplayArg::Packed(expr)
+                | IrDisplayArg::Real(expr)
+                | IrDisplayArg::Strength(expr) => Prepared::Numeric(self.expression(expr)?),
                 IrDisplayArg::String(text) => Prepared::Text(self.string(text)?),
             });
         }
@@ -31,6 +31,14 @@ impl Frame<'_, '_> {
             match (arg, value) {
                 (IrDisplayArg::Packed(_), Prepared::Numeric(value)) => {
                     self.line(format!("{array}[{index}].kind = LLG_FMT_PACKED;"));
+                    self.line(format!(
+                        "sv4_move(&{array}[{index}].value.packed, &{});",
+                        value.code
+                    ));
+                    self.discard(value);
+                }
+                (IrDisplayArg::Strength(_), Prepared::Numeric(value)) => {
+                    self.line(format!("{array}[{index}].kind = LLG_FMT_STRENGTH;"));
                     self.line(format!(
                         "sv4_move(&{array}[{index}].value.packed, &{});",
                         value.code

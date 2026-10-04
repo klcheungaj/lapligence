@@ -176,7 +176,7 @@ fn net_storage_lifecycle(
     tables.source.push_str("};\n");
     let each = table_loop("llg_net_storage");
     initialize.push_str(&format!(
-        "    {each} {{\n        llg_net_t* net = llg_net_storage[_llg_n].net;\n        for (int slot = 0; slot < net->n_drivers; ++slot)\n            sv4_fill_to(net->drivers[slot], 3, net->width, net->is_signed);\n        llg_net_index_reset(net);\n        sv4_fill_to(&net->resolved, llg_net_storage[_llg_n].fill, net->width, net->is_signed);\n        net->n_aliases = 0;\n    }}\n"
+        "    {each} {{\n        llg_net_t* net = llg_net_storage[_llg_n].net;\n        for (int slot = 0; slot < net->n_drivers; ++slot)\n            sv4_fill_to(net->drivers[slot], 3, net->width, net->is_signed);\n        llg_net_index_reset(net);\n        sv4_fill_to(&net->resolved, llg_net_storage[_llg_n].fill, net->width, net->is_signed);\n        net->n_aliases = 0;\n        llg_net_strength_reset(net);\n    }}\n"
     ));
     destroy.push_str(&format!(
         "    {each} {{\n        llg_net_t* net = llg_net_storage[_llg_n].net;\n        for (int slot = 0; slot < net->n_drivers; ++slot)\n            sv4_destroy(net->drivers[slot]);\n        sv4_destroy(&net->resolved);\n        net->propagation = NULL;\n    }}\n"

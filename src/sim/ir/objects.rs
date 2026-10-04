@@ -182,6 +182,9 @@ pub enum IrDisplayArg {
     Packed(IrExpr),
     Real(IrExpr),
     String(IrStringExpr),
+    /// A net strength view read for `%v`: eight two-state bits per net bit,
+    /// in the `llg_net_t.strength` encoding.
+    Strength(IrExpr),
 }
 
 impl IrDisplayArg {
@@ -202,6 +205,15 @@ impl IrDisplayArg {
                 let _ = (model, path);
                 Ok(())
             }
+            Self::Strength(value) => {
+                if value.is_real() || value.width == 0 || value.width % 8 != 0 {
+                    return Err(super::IrValidationError::new(
+                        path,
+                        "display strength argument needs eight packed bits per net bit",
+                    ));
+                }
+                Ok(())
+            }
             Self::Real(value) => {
                 if !value.is_real() {
                     return Err(super::IrValidationError::new(
@@ -218,14 +230,14 @@ impl IrDisplayArg {
 
     pub(in crate::sim) fn expressions(&self, visit: &mut impl FnMut(&IrExpr)) {
         match self {
-            Self::Packed(value) | Self::Real(value) => visit(value),
+            Self::Packed(value) | Self::Real(value) | Self::Strength(value) => visit(value),
             Self::String(value) => value.expressions(visit),
         }
     }
 
     pub(in crate::sim) fn expressions_mut(&mut self, visit: &mut impl FnMut(&mut IrExpr)) {
         match self {
-            Self::Packed(value) | Self::Real(value) => visit(value),
+            Self::Packed(value) | Self::Real(value) | Self::Strength(value) => visit(value),
             Self::String(value) => value.expressions_mut(visit),
         }
     }

@@ -316,6 +316,19 @@ impl Validator<'_> {
                     "net driver strength is outside the IEEE 1800 strength scale",
                 );
             }
+            if let Some(view) = group.strength_view {
+                let valid = self.model.signals.get(view).is_some_and(|signal| {
+                    signal.net_driver.is_none()
+                        && signal.ty.two_state()
+                        && u64::from(signal.ty.width()) == u64::from(group.width) * 8
+                });
+                if !valid {
+                    return self.fail(
+                        format!("{path}.strength_view"),
+                        "net strength view must be a two-state signal of eight bits per net bit",
+                    );
+                }
+            }
         }
 
         for (idx, assertion) in self.model.assertions.iter().enumerate() {

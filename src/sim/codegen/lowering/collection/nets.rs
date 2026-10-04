@@ -1516,6 +1516,7 @@ impl<'a> Codegen<'a> {
                 n_drivers: members.len(),
                 driver_strengths: vec![(6, 6); members.len()],
                 propagation_delay,
+                strength_view: None,
             });
             for (group_bit, bit) in run
                 .iter()
@@ -1735,6 +1736,7 @@ impl<'a> Codegen<'a> {
                 n_drivers: members.len(),
                 driver_strengths: vec![(6, 6); members.len()],
                 propagation_delay,
+                strength_view: None,
             });
             for member in members {
                 let Some(signal) = self.sig_globals.get(member).map(|info| info.ir) else {
@@ -2054,6 +2056,27 @@ impl<'a> Codegen<'a> {
         explicit1: Strength,
         low: Option<NodeId>,
     ) -> Result<(u8, u8), String> {
+        // An omitted input under `unconnected_drive` is a pull source on the
+        // formal (IEEE 1364-2001 19.9): pull strength for its value only.
+        if let NodeKind::Port {
+            direction: DbDirection::Input,
+            high: None,
+            high_expr: None,
+            ..
+        } = self.kind(port)
+        {
+            let drive = self
+                .node(port)
+                .parent
+                .map_or(UnconnectedDrive::None, |instance| {
+                    self.db.unconnected_drive(instance)
+                });
+            match drive {
+                UnconnectedDrive::Pull0 => return Ok((5, 0)),
+                UnconnectedDrive::Pull1 => return Ok((0, 5)),
+                UnconnectedDrive::None | UnconnectedDrive::Unsupported => {}
+            }
+        }
         let (strength0, strength1) =
             if explicit0 == Strength::Unspecified && explicit1 == Strength::Unspecified {
                 match low.map(|id| self.kind(id)) {
@@ -2068,6 +2091,42 @@ impl<'a> Codegen<'a> {
                 (explicit0, explicit1)
             };
         port_driver_strengths(strength0, strength1, &self.display_name(port))
+    }
+
+    /// IEEE 1364-2001 6.1.4 lists the net types that accept a continuous
+    /// assignment drive strength and IEEE 1800-2009 10.3.4 excludes supply0
+    /// and supply1: a supply net already carries supply strength.
+    fn reject_supply_drive_strength(
+        &self,
+        assignment: NodeId,
+        net: NodeId,
+        strength0: Strength,
+        strength1: Strength,
+    ) -> Result<(), String> {
+        // A vector net reports the scalar-only rule instead (10.3.4).
+        if (strength0 == Strength::Unspecified && strength1 == Strength::Unspecified)
+            || self
+                .sig_globals
+                .get(&net)
+                .is_some_and(|info| info.width != 1)
+        {
+            return Ok(());
+        }
+        if let NodeKind::Net {
+            net_type: NetType::Supply0 | NetType::Supply1,
+            ..
+        } = self.kind(net)
+        {
+            let node = self.node(assignment);
+            return Err(format!(
+                "drive strength on continuous assignment to supply net `{}` is not permitted (IEEE 1364-2001 6.1.4, IEEE 1800-2009 10.3.4) at {}:{}:{}",
+                self.display_name(net),
+                node.file.as_deref().unwrap_or("<unknown>"),
+                node.line,
+                node.col,
+            ));
+        }
+        Ok(())
     }
 
     #[allow(clippy::type_complexity)]
@@ -2087,7 +2146,8 @@ impl<'a> Codegen<'a> {
                     let Some(lhs) = self.node(id).children.first().copied() else {
                         continue;
                     };
-                    if self.nested_member_target(lhs, &member_set).is_some() {
+                    if let Some(member) = self.nested_member_target(lhs, &member_set) {
+                        self.reject_supply_drive_strength(id, member, *strength0, *strength1)?;
                         let width = self
                             .query_descriptor(lhs)
                             .and_then(|descriptor| descriptor.info.width)
@@ -2236,6 +2296,9 @@ impl<'a> Codegen<'a> {
                         let Some(lhs) = self.node(*id).children.first().copied() else {
                             continue;
                         };
+                        if self.nested_member_target(lhs, &member_set).is_some() {
+                            self.reject_supply_drive_strength(*id, net, *strength0, *strength1)?;
+                        }
                         // A hierarchical LHS that the owned database resolved to
                         // this net is a real driver identity and is admitted
                         // through the HierPath site below. The source-text
@@ -2425,6 +2488,7 @@ impl<'a> Codegen<'a> {
                 n_drivers: initial_drivers,
                 driver_strengths: vec![(6, 6); initial_drivers],
                 propagation_delay,
+                strength_view: None,
             });
 
             let old_global = info.global;
