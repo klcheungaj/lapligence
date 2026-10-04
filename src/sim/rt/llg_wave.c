@@ -111,6 +111,8 @@ static void atomic_int_store(wave_atomic_int_t* p, int v) {
 static int atomic_int_cas_zero(wave_atomic_int_t* p) {
     return InterlockedCompareExchange(p, 1, 0) == 0;
 }
+// Every Interlocked store above is already a full barrier.
+static void store_load_fence(void) {}
 #define WAVE_THREAD_RETURN DWORD WINAPI
 #define WAVE_THREAD_RESULT 0
 #else
@@ -152,6 +154,9 @@ static int atomic_int_cas_zero(wave_atomic_int_t* p) {
     int expected = 0;
     return atomic_compare_exchange_strong_explicit(
         p, &expected, 1, memory_order_acq_rel, memory_order_acquire);
+}
+static void store_load_fence(void) {
+    atomic_thread_fence(memory_order_seq_cst);
 }
 #define WAVE_THREAD_RETURN void*
 #define WAVE_THREAD_RESULT NULL
@@ -302,6 +307,13 @@ static void event_move(wave_event_t* destination, wave_event_t* source) {
     *source = (wave_event_t){0};
 }
 
+// The waiting flags form a Dekker handshake: each side stores (index or flag)
+// and then loads the other side's variable. Release/acquire alone lets both
+// loads observe stale values (x86 store buffering), so a parked thread could
+// miss the publication and its wakeup; a lost wakeup before close's join or a
+// flush acknowledgement wait deadlocks the model. store_load_fence after each
+// store guarantees that at least one side observes the other.
+
 // Consumes the event, including its snapshot allocation.
 static void queue_push(wave_event_t* event) {
     uint64_t head = atomic_u64_load(&g_wave.head);
@@ -309,6 +321,7 @@ static void queue_push(wave_event_t* event) {
     if (head - tail >= LLG_WAVE_QUEUE_CAP) {
         mutex_lock(&g_wave.mutex);
         atomic_int_store(&g_wave.producer_waiting, 1);
+        store_load_fence();
         while (head - atomic_u64_load(&g_wave.tail) >= LLG_WAVE_QUEUE_CAP) {
             cond_wait(&g_wave.not_full, &g_wave.mutex);
             head = atomic_u64_load(&g_wave.head);
@@ -319,6 +332,7 @@ static void queue_push(wave_event_t* event) {
 
     event_move(&g_wave.queue[head % LLG_WAVE_QUEUE_CAP], event);
     atomic_u64_store(&g_wave.head, head + 1u);
+    store_load_fence();
     if (atomic_int_load(&g_wave.consumer_waiting)) {
         mutex_lock(&g_wave.mutex);
         cond_signal(&g_wave.not_empty);
@@ -332,6 +346,7 @@ static wave_event_t queue_pop(void) {
     if (tail == head) {
         mutex_lock(&g_wave.mutex);
         atomic_int_store(&g_wave.consumer_waiting, 1);
+        store_load_fence();
         while (tail == atomic_u64_load(&g_wave.head)) {
             cond_wait(&g_wave.not_empty, &g_wave.mutex);
             tail = atomic_u64_load(&g_wave.tail);
@@ -343,6 +358,7 @@ static wave_event_t queue_pop(void) {
     wave_event_t event = {0};
     event_move(&event, &g_wave.queue[tail % LLG_WAVE_QUEUE_CAP]);
     atomic_u64_store(&g_wave.tail, tail + 1u);
+    store_load_fence();
     if (atomic_int_load(&g_wave.producer_waiting)) {
         mutex_lock(&g_wave.mutex);
         cond_signal(&g_wave.not_full);

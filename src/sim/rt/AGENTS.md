@@ -335,7 +335,9 @@ Tear down VPI/runtime queues before model storage.
 Waveforms use one simulation-thread producer and one POSIX/Win32 writer owning the
 file. Ring events own values; release/acquire publication, condition-variable
 backpressure, acknowledged FIFO dumpflush and in-band close followed by join are
-required. A second producer needs a separate ring or changed concurrency design.
+required. Each ring-index or waiting-flag store is followed by a sequentially
+consistent fence before reading the peer's flag or index; release/acquire alone
+loses wakeups and deadlocks close/dumpflush. A second producer needs a separate ring or changed concurrency design.
 Separate hierarchy components with ASCII 0x1f and reversibly encode punctuation to
 avoid escaped-name collisions. Keep libfst internal parallel mode disabled;
 waveform builds require `Threads::Threads`, not C11 threads as the Windows
