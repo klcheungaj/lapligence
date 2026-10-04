@@ -219,7 +219,7 @@ Common options:
 - `--cmake <program>`: CMake program (default `cmake`).
 - `--generator <name>`: choose a CMake generator, such as `Ninja`.
 - `--launcher <program>`: optionally set CMake's C compiler launcher, such as
-  `ccache` or `sccache`; no launcher is selected by default.
+  `ccache` or `sccache` (default `$LLG_C_LAUNCHER`, then `build.launcher`; none when all are unset).
 - `--`: pass the remaining arguments to the generated simulator for
   `$test$plusargs`/`$value$plusargs` (for example, `llg tb.sv -- +mode=fast`).
 
@@ -292,6 +292,7 @@ Model build (`llg`):
 | `LLG_RUNTIME_CACHE_DIR` | Runtime cache when `--runtime-cache` is not given. |
 | `LLG_CC`, then `CC` | C compiler when `--cc` is not given. |
 | `LLG_CFLAGS` | Extra C flags when `--cflags` is not given. |
+| `LLG_C_LAUNCHER` | C compiler launcher (for example `ccache`) when `--launcher` is not given (it beats `build.launcher`); `LLG_CC` must stay a single program. Empty means unset. |
 | `LLG_CMAKE` | CMake program when `--cmake` is not given. |
 | `CMAKE_GENERATOR` | CMake generator when `--generator` is not given. |
 

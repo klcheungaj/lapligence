@@ -545,6 +545,159 @@ fn explicit_launcher_build_and_run() {
     );
 }
 
+/// `$LLG_C_LAUNCHER` selects the compiler launcher when the option is unset,
+/// reaching the runtime archive and the model compile; an explicit option wins
+/// and an explicit empty option suppresses the variable. Recording shell
+/// scripts stand in for `ccache` and forward to the real compiler.
+#[cfg(unix)]
+#[test]
+fn launcher_environment_variable_and_option_precedence() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let _guard = TEST_LOCK.lock().unwrap();
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let dir = fresh_dir("launcher-env");
+    let recorder = |name: &str| {
+        let log = dir.path().join(format!("{name}.log"));
+        let script = dir.path().join(format!("{name}.sh"));
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexec \"$@\"\n",
+                log.display()
+            ),
+        )
+        .expect("write launcher");
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
+            .expect("mark launcher executable");
+        (script.to_string_lossy().into_owned(), log)
+    };
+    let (from_env, env_log) = recorder("from-env");
+    let (from_option, option_log) = recorder("from-option");
+    let build = |name: &str, launcher: Option<String>| {
+        let model_dir = dir.path().join(name);
+        std::fs::create_dir(&model_dir).expect("create model directory");
+        sim_harness::with_cwd(dir.path(), || {
+            let generated = compile_counter(&model_dir)?;
+            let opts = sim::build::CmakeBuildOpts {
+                launcher,
+                runtime_cache_dir: Some(dir.path().join(format!("{name}-runtime-cache"))),
+                ..Default::default()
+            };
+            sim::build::build_model_cmake_with_opts(
+                &model_dir,
+                &[("model.c", generated.model_c.as_str())],
+                &opts,
+            )
+            .map_err(|error| format!("cmake build: {error}"))
+        })
+        .expect("launcher build should succeed")
+    };
+    let logged = |log: &std::path::Path| std::fs::read_to_string(log).unwrap_or_default();
+
+    let _env = EnvVarGuard::set("LLG_C_LAUNCHER", &from_env);
+    let executable = build("env-only", None);
+    assert_eq!(run_sim(&executable).unwrap(), EXPECTED_STDOUT);
+    let env_calls = logged(&env_log);
+    assert!(env_calls.contains("model.c"), "model compile: {env_calls}");
+    assert!(
+        env_calls.contains("llg_runtime") || env_calls.contains("llg_rt"),
+        "runtime archive compile: {env_calls}"
+    );
+
+    let calls_before = env_calls.lines().count();
+    build("option-wins", Some(from_option));
+    assert!(logged(&option_log).contains("model.c"));
+    assert_eq!(logged(&env_log).lines().count(), calls_before);
+
+    build("empty-option", Some(String::new()));
+    assert_eq!(logged(&env_log).lines().count(), calls_before);
+}
+
+/// The driver ranks the launcher as `--launcher` > `$LLG_C_LAUNCHER` >
+/// `build.launcher` (the shared command line > environment > config rule).
+/// Each case uses a fresh out directory and runtime cache so its compiles run.
+#[cfg(unix)]
+#[test]
+fn driver_launcher_precedence_is_cli_then_environment_then_config() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let _guard = TEST_LOCK.lock().unwrap();
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let dir = fresh_dir("driver-launcher");
+    std::fs::write(dir.path().join("counter.sv"), COUNTER_SV).expect("write source");
+    let recorder = |name: &str| {
+        let log = dir.path().join(format!("{name}.log"));
+        let script = dir.path().join(format!("{name}.sh"));
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexec \"$@\"\n",
+                log.display()
+            ),
+        )
+        .expect("write launcher");
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
+            .expect("mark launcher executable");
+        (script.to_string_lossy().into_owned(), log)
+    };
+    let (from_config, config_log) = recorder("from-config");
+    let (from_env, env_log) = recorder("from-env");
+    let (from_cli, cli_log) = recorder("from-cli");
+    std::fs::write(
+        dir.path().join("llg.toml"),
+        format!("schema_version = 1\n[build]\nlauncher = \"{from_config}\"\n"),
+    )
+    .expect("write config");
+    let run = |name: &str, environment: Option<&str>, cli_launcher: Option<&str>| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_llg"));
+        command
+            .args(["--config", "llg.toml", "--top", "tb", "--out-dir", name])
+            .arg("--runtime-cache")
+            .arg(dir.path().join(format!("{name}-runtime-cache")));
+        if let Some(launcher) = cli_launcher {
+            command.args(["--launcher", launcher]);
+        }
+        command
+            .arg("counter.sv")
+            .env_remove(sim::build::C_LAUNCHER_ENV)
+            .current_dir(dir.path());
+        if let Some(launcher) = environment {
+            command.env(sim::build::C_LAUNCHER_ENV, launcher);
+        }
+        let output = sim_harness::run_command(&mut command, Duration::from_secs(120))
+            .expect("llg should start");
+        assert!(
+            output.status.success(),
+            "{name}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&output.stdout), EXPECTED_STDOUT);
+    };
+    let used = |log: &std::path::Path| log.is_file();
+
+    run("config-only", None, None);
+    assert!(used(&config_log) && !used(&env_log) && !used(&cli_log));
+    std::fs::remove_file(&config_log).unwrap();
+
+    run("env-over-config", Some(&from_env), None);
+    assert!(used(&env_log) && !used(&config_log) && !used(&cli_log));
+    std::fs::remove_file(&env_log).unwrap();
+
+    run("cli-over-env", Some(&from_env), Some(&from_cli));
+    assert!(used(&cli_log) && !used(&env_log) && !used(&config_log));
+    std::fs::remove_file(&cli_log).unwrap();
+
+    run("empty-env-is-unset", Some(""), None);
+    assert!(used(&config_log) && !used(&env_log) && !used(&cli_log));
+}
+
 /// Both `cmake --build` invocations (runtime archive and model) must carry
 /// `--parallel <N>`. A recording wrapper stands in for the cmake program and
 /// forwards to the real one.

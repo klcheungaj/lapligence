@@ -3,7 +3,7 @@
 //! defaults.
 //!
 //! Precedence, highest first: command line, environment (`$LLG_CC`,
-//! `$LLG_CFLAGS`, ...), `llg.toml`, built-in default. [`layered`] is the one
+//! `$LLG_CFLAGS`, `$LLG_C_LAUNCHER`, ...), `llg.toml`, built-in default. [`layered`] is the one
 //! place that expresses this order; every option that has an environment
 //! variable goes through it. `llg` reads a config file only when `--config`
 //! names it; it never discovers `llg.toml` in the current directory.
@@ -86,6 +86,8 @@ pub(crate) struct Env {
     pub cmake: Option<String>,
     /// `$CMAKE_GENERATOR`; empty counts as unset.
     pub generator: Option<String>,
+    /// `$LLG_C_LAUNCHER`; empty counts as unset.
+    pub launcher: Option<String>,
     /// `$CMAKE_BUILD_PARALLEL_LEVEL` when it is a positive integer.
     pub build_jobs: Option<usize>,
     /// `$LLG_RUNTIME_CACHE_DIR`; empty counts as unset.
@@ -104,6 +106,7 @@ impl Env {
             cflags: get("LLG_CFLAGS"),
             cmake: non_empty("LLG_CMAKE"),
             generator: non_empty("CMAKE_GENERATOR"),
+            launcher: non_empty(sim::build::C_LAUNCHER_ENV).map(|value| value.trim().to_owned()),
             build_jobs: get(sim::build::BUILD_PARALLEL_LEVEL_ENV)
                 .and_then(|value| value.trim().parse::<usize>().ok())
                 .filter(|jobs| *jobs > 0),
@@ -390,7 +393,11 @@ pub(crate) fn resolve(
             config.build.generator.clone(),
         ),
         dpi_libraries,
-        launcher: cli.launcher.or_else(|| config.build.launcher.clone()),
+        launcher: layered(
+            cli.launcher,
+            env.launcher.clone(),
+            config.build.launcher.clone(),
+        ),
         cc: layered(cli.cc, env.cc.clone(), config.build.cc.clone()),
         cflags: layered(cli.cflags, env.cflags.clone(), config.build.cflags.clone()),
         model_opt_level: cli
@@ -934,6 +941,7 @@ files = ["a.sv"]
     const ENV_CONFIG: &str = r#"schema_version = 1
 [build]
 generator = "CfgGen"
+launcher = "cfglauncher"
 cc = "cfgcc"
 cmake = "cfgcmake"
 cflags = "-DCFG"
@@ -948,19 +956,21 @@ runtime_cache = "cfgcache"
             cflags: Some("-DENV".to_owned()),
             cmake: Some("envcmake".to_owned()),
             generator: Some("EnvGen".to_owned()),
+            launcher: Some("envlauncher".to_owned()),
             build_jobs: Some(3),
             runtime_cache: Some(PathBuf::from("envcache")),
         }
     }
 
-    /// The env-backed options of a run: cc, cflags, cmake, generator, jobs,
-    /// runtime cache.
-    fn env_backed(options: &DriverOptions) -> [String; 6] {
+    /// The env-backed options of a run: cc, cflags, cmake, generator,
+    /// launcher, jobs, runtime cache.
+    fn env_backed(options: &DriverOptions) -> [String; 7] {
         [
             format!("{:?}", options.cc),
             format!("{:?}", options.cflags),
             format!("{:?}", options.cmake),
             format!("{:?}", options.generator),
+            format!("{:?}", options.launcher),
             format!("{:?}", options.build_jobs),
             format!("{:?}", options.runtime_cache),
         ]
@@ -976,7 +986,7 @@ runtime_cache = "cfgcache"
         let options = resolve(cli(&["x.sv"]), &Env::default(), None).unwrap();
         assert_eq!(
             env_backed(&options),
-            ["None", "None", "None", "None", "None", "None"].map(str::to_owned)
+            ["None", "None", "None", "None", "None", "None", "None"].map(str::to_owned)
         );
 
         // Config only.
@@ -985,6 +995,7 @@ runtime_cache = "cfgcache"
         assert_eq!(options.cflags.as_deref(), Some("-DCFG"));
         assert_eq!(options.cmake.as_deref(), Some("cfgcmake"));
         assert_eq!(options.generator.as_deref(), Some("CfgGen"));
+        assert_eq!(options.launcher.as_deref(), Some("cfglauncher"));
         assert_eq!(options.build_jobs, Some(2));
         assert_eq!(options.runtime_cache, Some(dir.join("cfgcache")));
 
@@ -994,6 +1005,7 @@ runtime_cache = "cfgcache"
         assert_eq!(options.cflags.as_deref(), Some("-DENV"));
         assert_eq!(options.cmake.as_deref(), Some("envcmake"));
         assert_eq!(options.generator.as_deref(), Some("EnvGen"));
+        assert_eq!(options.launcher.as_deref(), Some("envlauncher"));
         assert_eq!(options.build_jobs, Some(3));
         assert_eq!(options.runtime_cache, Some(PathBuf::from("envcache")));
         // ... and also applies without a config file.
@@ -1011,6 +1023,8 @@ runtime_cache = "cfgcache"
                 "clicmake",
                 "--generator",
                 "CliGen",
+                "--launcher",
+                "clilauncher",
                 "--build-jobs",
                 "4",
                 "--runtime-cache",
@@ -1025,6 +1039,7 @@ runtime_cache = "cfgcache"
         assert_eq!(options.cflags.as_deref(), Some(""));
         assert_eq!(options.cmake.as_deref(), Some("clicmake"));
         assert_eq!(options.generator.as_deref(), Some("CliGen"));
+        assert_eq!(options.launcher.as_deref(), Some("clilauncher"));
         assert_eq!(options.build_jobs, Some(4));
         assert_eq!(options.runtime_cache, Some(PathBuf::from("clicache")));
         let _ = std::fs::remove_dir_all(dir);
@@ -1038,11 +1053,12 @@ runtime_cache = "cfgcache"
         let with_config =
             env_backed(&resolve(cli(&["x.sv"]), &Env::default(), Some(&cfg)).unwrap());
         let with_env = env_backed(&resolve(cli(&["x.sv"]), &env, Some(&cfg)).unwrap());
-        let options: [(&str, &str); 6] = [
+        let options: [(&str, &str); 7] = [
             ("--cc", "clicc"),
             ("--cflags", "-DCLI"),
             ("--cmake", "clicmake"),
             ("--generator", "CliGen"),
+            ("--launcher", "clilauncher"),
             ("--build-jobs", "9"),
             ("--runtime-cache", "clicache"),
         ];
@@ -1087,8 +1103,14 @@ runtime_cache = "cfgcache"
         assert_eq!(env.cc.as_deref(), Some("gcc"), "an empty $LLG_CC is unset");
         let env = vars(&[("LLG_CFLAGS", "")]);
         assert_eq!(env.cflags.as_deref(), Some(""), "empty flags are a value");
-        let env = vars(&[("LLG_CMAKE", ""), ("CMAKE_GENERATOR", "")]);
-        assert_eq!((env.cmake, env.generator), (None, None));
+        let env = vars(&[
+            ("LLG_CMAKE", ""),
+            ("CMAKE_GENERATOR", ""),
+            ("LLG_C_LAUNCHER", ""),
+        ]);
+        assert_eq!((env.cmake, env.generator, env.launcher), (None, None, None));
+        let env = vars(&[("LLG_C_LAUNCHER", " ccache ")]);
+        assert_eq!(env.launcher.as_deref(), Some("ccache"));
         for (text, jobs) in [("6", Some(6)), (" 4 ", Some(4)), ("0", None), ("x", None)] {
             let env = Env::from_lookup(|name| {
                 (name == "CMAKE_BUILD_PARALLEL_LEVEL").then(|| text.to_owned())
@@ -1101,23 +1123,15 @@ runtime_cache = "cfgcache"
 
     #[test]
     fn non_environment_options_do_not_read_the_environment() {
-        // Launcher, model optimization level and the stop policy have no
+        // The model optimization level and the stop policy have no
         // environment fallback: command line, config, default only.
         let dir = temp("no_env_options");
         let cfg = config(
             &dir,
-            "schema_version = 1\n[build]\nlauncher = \"cfglauncher\"\nmodel_opt_level = \"O1\"\n",
+            "schema_version = 1\n[build]\nmodel_opt_level = \"O1\"\n",
         );
         let options = resolve(cli(&["x.sv"]), &env_all(), Some(&cfg)).unwrap();
-        assert_eq!(options.launcher.as_deref(), Some("cfglauncher"));
         assert_eq!(options.model_opt_level, sim::build::ModelOptLevel::O1);
-        let options = resolve(
-            cli(&["--launcher", "ccache", "x.sv"]),
-            &env_all(),
-            Some(&cfg),
-        )
-        .unwrap();
-        assert_eq!(options.launcher.as_deref(), Some("ccache"));
         let _ = std::fs::remove_dir_all(dir);
     }
 

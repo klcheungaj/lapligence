@@ -42,14 +42,15 @@ option that has an environment variable follows it:
 | C flags | `--cflags` | `$LLG_CFLAGS` | `build.cflags` | none |
 | CMake program | `--cmake` | `$LLG_CMAKE` | `build.cmake` | `cmake` |
 | CMake generator | `--generator` | `$CMAKE_GENERATOR` | `build.generator` | CMake's own |
+| C compiler launcher | `--launcher` | `$LLG_C_LAUNCHER` | `build.launcher` | none |
 | Build jobs | `--build-jobs` | `$CMAKE_BUILD_PARALLEL_LEVEL` | `build.jobs` | available CPUs |
 | Runtime cache | `--runtime-cache` | `$LLG_RUNTIME_CACHE_DIR` | `output.runtime_cache` | `<out-dir>/llg-runtime-cache` |
 
-An empty `$LLG_CC`, `$CC`, `$LLG_CMAKE`, `$CMAKE_GENERATOR` or
+An empty `$LLG_CC`, `$CC`, `$LLG_CMAKE`, `$CMAKE_GENERATOR`, `$LLG_C_LAUNCHER` or
 `$LLG_RUNTIME_CACHE_DIR` counts as unset, and so does a
 `$CMAKE_BUILD_PARALLEL_LEVEL` that is not a positive integer. An empty
 `$LLG_CFLAGS` is a value (no extra flags) and beats `build.cflags`; the same
-holds for `--cflags ""`. All other options (the launcher, `--model-opt-level`,
+holds for `--cflags ""`. All other options (`--model-opt-level`,
 `--stop-policy`, ...) have no environment variable: command line, config,
 default. `LLG_MEMORY_LIMIT_MB` is an environment-only process guard with no
 option or key, so no precedence applies to it.

@@ -1,0 +1,60 @@
+name: Generated-model compiler cache (setup)
+description: >-
+  Restore the ccache directory, install a pinned ccache and export
+  LLG_C_LAUNCHER (plus CCACHE_* settings) for later steps. The launcher only
+  affects generated-model C compiles: it is not a PATH compiler wrapper and
+  never reaches the Slang/fmt/wrapper build, so repository code is not cached.
+  If ccache cannot be installed or fails its self-check, the job runs uncached.
+
+inputs:
+  key:
+    description: Cache name that identifies the job, target and compiler image.
+    required: true
+  max-size:
+    description: ccache size limit (also the worst-case size of the saved entry).
+    default: 300M
+  python:
+    description: Python command available on this runner.
+    default: python3
+  activate:
+    description: >-
+      'false' only downloads ccache and restores the cache; the caller then
+      activates it where the tests run (for example inside a container).
+    default: "true"
+
+outputs:
+  cache-hit:
+    description: "'true' when the exact (this week's) cache entry was restored."
+    value: ${{ steps.restore.outputs.cache-hit }}
+  key:
+    description: The exact cache key a finish step saves under.
+    value: ${{ steps.restore.outputs.cache-primary-key }}
+
+runs:
+  using: composite
+  steps:
+    # One entry per job and ISO week bounds how many multi-hundred-megabyte
+    # entries accumulate; the previous week's entry seeds a new one.
+    - id: period
+      shell: bash
+      run: echo "week=$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
+
+    - id: restore
+      uses: actions/cache/restore@v6
+      with:
+        path: ${{ runner.temp }}/ccache
+        key: ccache-v1-${{ inputs.key }}-${{ steps.period.outputs.week }}
+        restore-keys: |
+          ccache-v1-${{ inputs.key }}-
+
+    - id: activate
+      shell: bash
+      env:
+        CI_PYTHON: ${{ inputs.python }}
+        CI_CCACHE_MAX_SIZE: ${{ inputs.max-size }}
+        CI_CCACHE_INSTALL_ONLY: ${{ inputs.activate != 'true' }}
+      run: |
+        flags=()
+        if [ "$CI_CCACHE_INSTALL_ONLY" = "true" ]; then flags+=(--install-only); fi
+        "$CI_PYTHON" scripts/ci_ccache.py activate --max-size "$CI_CCACHE_MAX_SIZE" \
+          --env-file "$GITHUB_ENV" "${flags[@]}"
