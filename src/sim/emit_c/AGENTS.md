@@ -193,13 +193,19 @@ the lowering proof of independence from prior calls; ordinary static calls retai
 persistent return storage. Static output temporaries retain prior values unless
 inout initialization supplies a value; automatic ones receive typed defaults.
 
-`UdpEval` references one typed model-level definition. `owned/udp.rs` emits
-one immutable row-major mask table per definition, shared by scalar and array
-instances, and one synchronous borrowed evaluator call per gate evaluation.
-Evaluate input expressions in order before building the pointer literal; release
-their owners after the call. Gate lowering keeps its existing input locals,
-selected output indices, sensitivity, strengths and inertial publication. Table
-row count affects only data size, never the executable gate body.
+`UdpEval` references one typed model-level definition. `owned/udp.rs` emits one
+immutable table per definition, shared by scalar and array instances. Up to
+`UDP_DENSE_INDEX_MAX_INPUTS` (10, the IEEE 1364-2001 8.1.4 minimum) inputs it is a
+dense `3^n` output index built from the rows at generation (first match wins,
+unmatched X); an evaluation reads each input's bit-0 state with `llg_sv4_state`
+(Z folds to X in `llg_udp_digit`) and makes one `sv4_fill` of the loaded state.
+Inputs are read in order; they are borrowed in place only when every input is a
+stable expression, and a constant bit or one-bit part-select of a borrowed base
+reads that bit directly, so no input owner or copy exists. Wider definitions keep
+the row-major masks and one `sv4_udp_eval` scan. Gate lowering passes plain
+scalar input expressions and keeps selected output indices, sensitivity,
+strengths and inertial publication. Row count affects only table data, never the
+executable gate body.
 
 ArrayMux uses immediate-element defaults; StructMux uses immediate-member plans.
 Evaluate each branch once and preserve its self-determined shape; an enclosing cast

@@ -236,8 +236,12 @@ pub(super) fn array_select_from_slang(
         indices.push(index);
         return Ok(Some((base, indices)));
     }
-    let base = resolved_edge_target(snapshot, ids, edges, SemanticEdgeRole::Base)?
-        .ok_or_else(|| DbError::InvalidSnapshot("element select base is missing".into()))?;
+    // A select of a computed value (for example an instance-array slice of a
+    // literal or operator terminal) has no declaration to resolve; it is an
+    // ordinary bit select of that expression.
+    let Some(base) = resolved_edge_target(snapshot, ids, edges, SemanticEdgeRole::Base)? else {
+        return Ok(None);
+    };
     if is_array_semantic(snapshot, base) {
         return Ok(Some((base, vec![index])));
     }

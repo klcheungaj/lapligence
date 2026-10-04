@@ -965,6 +965,16 @@ impl<'a> Codegen<'a> {
                     .unwrap_or(base);
                 self.db.packed_dimensions(target).map(ToOwned::to_owned)
             }
+            // A computed value is numbered by its own type, e.g. `~v[3:2]`
+            // keeps `[3:2]`. Instance-array terminals select from such
+            // values (IEEE 1800-2009 23.3.3.5, 28.3.6).
+            NodeKind::Expr(
+                ExprKind::Operation { .. }
+                | ExprKind::Conditional { .. }
+                | ExprKind::Cast { .. }
+                | ExprKind::PartSelect { .. }
+                | ExprKind::IndexedPartSelect { .. },
+            ) => self.db.packed_dimensions(base).map(ToOwned::to_owned),
             _ => None,
         }
     }

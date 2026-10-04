@@ -1556,6 +1556,60 @@ const Expression* unwrapImplicitConversions(const Expression& expression) {
   return unwrapped;
 }
 
+std::optional<int32_t> literalIndex(const Expression& expression) {
+  if (expression.kind == ExpressionKind::IntegerLiteral)
+    return expression.as<IntegerLiteral>().getValue().as<int32_t>();
+  if (const ConstantValue* value = expression.getConstant();
+      value && value->isInteger())
+    return value->integer().as<int32_t>();
+  return std::nullopt;
+}
+
+// Instance-array connections (IEEE 1364-2001 7.1.5, 12.1.3.5; IEEE 1800-2009
+// 23.3.3.5, 28.3.6) are sliced per element as `X[l:r][i]` or `X[l:r][m:n]`.
+// Slang keeps the declared numbering in a constant slice's type, so constant
+// selects inside that slice address exactly `X[i]` or `X[m:n]`. Expose that
+// base so every consumer sees an ordinary select. An indexed slice with a
+// runtime base is renumbered from the value type's bound and stays a slice.
+const Expression& peelConstantSlices(const Expression& value, int32_t left,
+                                     int32_t right) {
+  const Expression* base = &value;
+  while (base->kind == ExpressionKind::RangeSelect) {
+    const auto& slice = base->as<RangeSelectExpression>();
+    const Type& sliceType = *slice.type;
+    const Type& valueType = *slice.value().type;
+    if (!sliceType.hasFixedRange() || !valueType.hasFixedRange())
+      break;
+    const ConstantRange sliceRange = sliceType.getFixedRange();
+    const ConstantRange valueRange = valueType.getFixedRange();
+    if (!sliceRange.containsPoint(left) || !sliceRange.containsPoint(right) ||
+        !valueRange.containsPoint(left) || !valueRange.containsPoint(right))
+      break;
+    if (slice.getSelectionKind() != RangeSelectionKind::Simple &&
+        !literalIndex(slice.left()))
+      break;
+    base = &slice.value();
+  }
+  return *base;
+}
+
+const Expression& elementSelectBase(const ElementSelectExpression& expression) {
+  const std::optional<int32_t> index = literalIndex(expression.selector());
+  if (!index)
+    return expression.value();
+  return peelConstantSlices(expression.value(), *index, *index);
+}
+
+const Expression& rangeSelectBase(const RangeSelectExpression& expression) {
+  if (expression.getSelectionKind() != RangeSelectionKind::Simple)
+    return expression.value();
+  const std::optional<int32_t> left = literalIndex(expression.left());
+  const std::optional<int32_t> right = literalIndex(expression.right());
+  if (!left || !right)
+    return expression.value();
+  return peelConstantSlices(expression.value(), *left, *right);
+}
+
 const Expression* compoundAssignmentSourceRhs(
     const AssignmentExpression& expression) {
   if (!expression.op)
@@ -3384,11 +3438,11 @@ private:
       capture.semanticRole(id, &expression.operand(), LLG_SLANG_EDGE_OPERAND);
     }
     else if constexpr (std::same_as<T, ElementSelectExpression>) {
-      capture.semanticRole(id, &expression.value(), LLG_SLANG_EDGE_BASE);
+      capture.semanticRole(id, &elementSelectBase(expression), LLG_SLANG_EDGE_BASE);
       capture.semanticRole(id, &expression.selector(), LLG_SLANG_EDGE_INDEX);
     }
     else if constexpr (std::same_as<T, RangeSelectExpression>) {
-      capture.semanticRole(id, &expression.value(), LLG_SLANG_EDGE_BASE);
+      capture.semanticRole(id, &rangeSelectBase(expression), LLG_SLANG_EDGE_BASE);
       capture.semanticRole(id, &expression.left(), LLG_SLANG_EDGE_LEFT);
       capture.semanticRole(id, &expression.right(), LLG_SLANG_EDGE_RIGHT);
     }

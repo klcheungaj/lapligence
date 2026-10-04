@@ -70,6 +70,7 @@ against code whose size, and compile time, grows with the element count.
 | --- | --- | --- | --- |
 | Net storage setup and teardown | One cell array per net; descriptor tables | `many-registers-10k` build 86 → 4 s | Startup only; corpus within noise |
 | Combinational UDP | One truth table per primitive, evaluated by `sv4_udp_eval` | UDP model GCC 32 → 0.2 s; 1.7 MB → 50 kB of C | 15% faster |
+| Combinational UDP lookup | Dense `3^n` output index per definition up to 10 inputs; inputs read in place | 4,096-instance mux array: 15.8 → 9.8 MB of C | 2,000 input steps: legacy about 24 → 13 s, compact 9.2 → 5.5 s (shared host) |
 | Repeated identical concatenation operands | Loop from `REPEAT_VALUE_MIN_COUNT` (4) repeats | deep-defaults GCC 43 → 4 s | 2.7 → 1.9 ms |
 | Runs of same-shape procedural continuous `assign`s | Row table and one helper per shape, from `PCA_BATCH_MIN_ASSIGNMENTS` (4) rows | Capacity model build 14.8 → 2.3 s | 135.6 → 136.7 ms (noise) |
 
