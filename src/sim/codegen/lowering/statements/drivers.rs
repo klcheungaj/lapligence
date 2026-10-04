@@ -186,7 +186,7 @@ impl EmitCtx<'_, '_> {
             fixed_default: None,
             c_name: format!("llg_force_src_{source}"),
             hdl_name: None,
-            ty: ty.clone(),
+            ty,
             net_driver: None,
             net_alias: Vec::new(),
             alias: None,

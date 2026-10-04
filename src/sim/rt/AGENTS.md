@@ -223,6 +223,12 @@ zero and changed NaN payloads. `iff` executes at trigger. Event lists register
 atomically, not as sequential waits. Wake/disable/teardown unregister every event
 and free captures. Empty-dependency waits suspend without polling. Selected-prefix
 wait masks ignore unrelated bits; evaluated callbacks remain read-only/effect-free.
+Postponed display evaluators run with `private_evaluation`: packed, real and
+fixed-array stores (lowering admits only helper-owned storage) apply without
+publication; any other read-only-region write still fails. Event objects keep a
+monotonic `trigger_count`; `llg_force_source_active` and
+`llg_spawn_detached_with_frame` (no fork group, inherits origin) serve
+process-evaluated effectful helpers.
 
 `LLG_ZERO_LOOP_LIMIT` bounds region passes; `LLG_PROCESS_STEP_LIMIT` bounds generated
 back-edges, with `LLG_NONCONVERGENCE_LIMIT` alias. Defaults are 10 million; explicitly
