@@ -1,0 +1,7 @@
+y=7,10,117 totals=10,100
+top work.tb SCALE=3
+lane rtl.rtl018_lane GAIN=3
+lane rtl.rtl018_lane GAIN=4
+lane gate.rtl018_lane GAIN=6
+tap work.rtl018_tap ID=1 v=7 edge=4
+tap work.rtl018_tap ID=2 v=117 edge=4

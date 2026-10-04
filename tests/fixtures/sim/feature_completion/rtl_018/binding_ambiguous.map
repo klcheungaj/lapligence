@@ -1,0 +1,3 @@
+// RTL-018 A02 negative: two libraries claim the same file at equal rank.
+library rtl lib/pick_rtl.sv;
+library gate lib/pick_rtl.sv;

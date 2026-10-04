@@ -13,6 +13,8 @@ use std::{fmt, ptr, slice, str};
 
 mod snapshot;
 use snapshot::decode_snapshot;
+#[cfg(test)]
+use snapshot::decode_source_libraries;
 mod semantics;
 use semantics::{decode_semantic_edges, decode_semantic_nodes, decode_udp_tables};
 #[cfg(test)]

@@ -578,3 +578,41 @@ fn dense_semantic_decode_rejects_malformed_ids_and_references() {
         assert!(decode_semantic_edges(&[edge], &[node]).is_err());
     }
 }
+
+#[test]
+fn source_library_records_require_known_unique_nodes_and_names() {
+    let name = b"rtl";
+    let library = |semantic_id| RawSourceLibrary {
+        semantic_id,
+        library: RawString {
+            data: name.as_ptr(),
+            len: name.len() as u64,
+        },
+    };
+    let decoded = decode_source_libraries(&[library(1), library(0)], 2).expect("valid records");
+    assert_eq!(
+        decoded,
+        vec![
+            SourceLibraryBinding {
+                semantic_id: 1,
+                library: "rtl".to_owned(),
+            },
+            SourceLibraryBinding {
+                semantic_id: 0,
+                library: "rtl".to_owned(),
+            },
+        ]
+    );
+    for records in [vec![library(2)], vec![library(0), library(0)]] {
+        let error = decode_source_libraries(&records, 2).expect_err("invalid node");
+        assert!(error
+            .to_string()
+            .contains("invalid or repeated semantic node"));
+    }
+    let empty = RawSourceLibrary {
+        semantic_id: 0,
+        library: empty_raw_string(),
+    };
+    let error = decode_source_libraries(&[empty], 1).expect_err("empty name");
+    assert!(error.to_string().contains("empty name"));
+}

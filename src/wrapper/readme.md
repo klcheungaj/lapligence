@@ -1,7 +1,7 @@
 # Slang C wrapper
 
 The C++ wrapper compiles admitted source buffers and exports an owned flat snapshot
-through C ABI v8. C++ lifetime management stays behind the boundary; Rust copies
+through C ABI v9. C++ lifetime management stays behind the boundary; Rust copies
 and validates the result before releasing its owner.
 
 Snapshot strings are interned in stable native storage. Export charging still

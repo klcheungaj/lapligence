@@ -320,6 +320,16 @@ binding, but the retained runtime-selector characterization has no adjudicated
 binding/rebinding oracle. Qualify that boundary before enabling runtime-selected
 connections. Static selected connections and nested packed projections execute.
 
+## `%l` in runtime-built format strings
+
+Lowering replaces `%l`/`%L` with the scope's static `library.cell` binding in
+every literal format (V §13.6; SV §33.7). A `$sformat`/`$sformatf` whose format
+is a string value built at run time is interpreted by the runtime formatter,
+which has no library table and still prints `work.<scope>`. Fixing it means
+passing the binding next to the scope string through the runtime formatting
+entry points. Reproduce with `string f = "%l"; $display("%s", $sformatf(f));`
+inside a cell bound from a non-`work` library.
+
 ## Effectful helpers in runtime-callback evaluators
 
 **Status:** open; RTL-007 admits them in blocking event controls and continuous

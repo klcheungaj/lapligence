@@ -38,6 +38,10 @@ removal linear in that target's duplicates.
   every selected header must already be in the cache-only source set.
 - Parse flagged map buffers with `SyntaxTree::fromLibraryMapBuffer` before
   compilation so configuration symbols retain native macro-use locations.
+- Library sources follow the compilation-unit mode: one syntax tree per file in
+  separate mode, one per library in merged mode. Export the source library of
+  each instance, package and compilation unit in the `source_libraries` table
+  (at most one record per semantic node), never inferred from file names.
 - Snapshot ownership includes typed tables, lexical/source data and uninstantiated
   source-instance records. Bound all size-derived allocation/traversal before work.
   Preserve source spelling/coordinates without deriving semantics from text.

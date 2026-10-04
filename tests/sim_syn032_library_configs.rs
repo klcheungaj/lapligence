@@ -1261,3 +1261,25 @@ fn library_incdir_symlink_escape_is_rejected_before_compilation() {
         );
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn library_pattern_symlink_escape_is_rejected_before_compilation() {
+    use std::os::unix::fs::symlink;
+
+    let map_dir = sim_harness::TempDir::new("pattern_map").expect("map directory");
+    let outside = sim_harness::TempDir::new("pattern_outside").expect("outside directory");
+    std::fs::copy(fixture("incdir_rtl.sv"), outside.path().join("rtl.sv")).expect("outside source");
+    symlink(outside.path(), map_dir.path().join("escape")).expect("escape link");
+    let map = map_dir.path().join("root.map");
+    std::fs::write(&map, "library rtl escape/rtl.sv;\n").expect("map");
+    let map = map.to_string_lossy().into_owned();
+    for edition in ["2001", "2009"] {
+        sim_cli::reject_case_with_args(
+            SUITE,
+            "incdir_top",
+            "escapes admitted root",
+            &["--edition", edition, "--libmap", &map],
+        );
+    }
+}

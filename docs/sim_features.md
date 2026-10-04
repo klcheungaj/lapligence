@@ -158,7 +158,8 @@ exceptions; they were not rerun here. Complete Annex A coverage is not claimed.
 
 `--compilation-units separate|merged` defaults to `separate`. Separate mode gives
 each source its own preprocessor and `$unit` scope; merged mode shares them in
-caller order while preserving file identities. Included buffers belong to their
+caller order while preserving file identities. Library sources follow the same
+mode, merged per library rather than with work sources. Included buffers belong to their
 including source. Repeated `--include-dir`/`-I` and `--define`/`-D` options are
 supported.
 
@@ -394,7 +395,16 @@ Macros, includes and their edition-specific behavior are counted in §11.
 - 🟨 **Libraries and configurations** — Explicit `--libmap`, repeatable
   `--libfile [library=]path`, `--library-order`, `--default-library`, top
   `module:config`, default `liblist`, cell/instance `use`, nested configurations
-  and parameter propagation use ordinary elaboration. Included maps and
+  and parameter propagation use ordinary elaboration, including configuration
+  `use #(...)` overrides and resets (SV §33.4.3) of cells selected inside
+  generate scopes, composed with binds, interface memories and descriptor-sized
+  fixed memories crossing configured and bound ports. `%l` prints the bound
+  `library.cell` (or `library.$unit` outside a design element) for literal
+  formats (V §13.6; SV §33.7); a runtime-built `$sformatf` format still
+  prints `work.<scope>`. Without a configuration, the declared library order
+  resolves same-named cells, an implementation-defined tie. Library sources follow
+  `--compilation-units`: separate mode preprocesses each file alone, merged mode
+  shares one preprocessor and `$unit` per library in admission order. Included maps and
   `*`/`?`/`**` patterns expand in sorted order. Matching precedence is explicit
   filename > wildcard filename > trailing-separator directory; explicit library
   assignments override maps. Relative parent paths resolve from the map directory.
@@ -406,9 +416,10 @@ Macros, includes and their edition-specific behavior are counted in §11.
   directories and then library directories. This precedence is the pinned Slang
   default where V §13.2 and SV §33.3 do not prescribe a tie rule.
   All include content is admitted before cache-only native compilation;
-  invalid or missing directories reject at map admission. In-memory maps need
-  admitted buffers below each selected logical include directory; empty logical
-  directories have no representation. V §13.2; SV §33.3.
+  invalid or missing directories reject at map admission. In-memory maps select
+  logical include directories that hold admitted buffers or are listed in
+  `CompileOpts::logical_directories`, which represents an empty directory.
+  V §13.2; SV §33.3.
   V ch.13; SV ch.33 **[2001]**.
 
   Literal and macro-generated `library`, `include`, and `config ... endconfig`
@@ -425,9 +436,14 @@ Macros, includes and their edition-specific behavior are counted in §11.
 - 🟨 **Structural bind** — Finite module-type/selected-instance and
   interface-to-interface binds preserve parameters, target-local ports and
   instance identity after frontend snapshot destruction. Selected generate-for/if
-  instance paths execute in both optimizer modes. Unknown/primitive targets,
-  duplicate bound instance names and port actuals outside the target scope reject;
-  module injection into an interface is illegal.
+  instance paths execute in both optimizer modes, as do interfaces bound into
+  module targets and binds into configuration-selected library cells.
+  Unknown/primitive/package/class/generate-block targets, port actuals outside the
+  target scope and duplicate bound instance names reject; a name repeated across
+  module-type and instance binds (which the frontend only warns about) is a
+  lowering error. Module injection into an interface or program is illegal. A
+  module-type bind target names the definition its own library search resolves,
+  an implementation-defined choice when several libraries define that name.
   Checker/program/coverage injection is outside the selected scope.
   SV §23.11 **[SV-2005]**.
 

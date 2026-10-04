@@ -38,6 +38,7 @@ pub(crate) fn run_case_after_db_drop(suite: &str, fixture: &str, expected: &str)
             ..Default::default()
         },
         expected,
+        "",
     );
 }
 
@@ -49,6 +50,7 @@ pub(crate) fn run_compile_opts_after_db_drop(
     fixture: &str,
     opts: llg::core::compile::CompileOpts,
     expected: &str,
+    expected_stderr: &str,
 ) {
     use llg::core::{compile, db::Db};
     use llg::sim::{build, codegen, opt::OptConfig};
@@ -120,7 +122,7 @@ pub(crate) fn run_compile_opts_after_db_drop(
                 sim_harness::run_executable_output(&executable).expect("execute owned model");
             let label =
                 format!("{suite}/{fixture}, Db dropped, optimized={optimized}, native={level:?}");
-            assert_case_output(output, &label, expected, "", &[]);
+            assert_case_output(output, &label, expected, expected_stderr, &[]);
         }
     }
 }
