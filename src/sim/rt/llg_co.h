@@ -184,6 +184,7 @@ struct llg_co_desc {
  * to a diagnostic naming the C function `fn` (a string); it must not return. */
 #ifndef LLG_CO_BAD_STATE
 #define LLG_CO_BAD_STATE(co, fn) llg_co_bad_state((co), (fn))
+#define LLG_CO_BAD_STATE_DEFAULT_ 1
 #endif
 
 /* Poison only dead storage, after registered owners have been drained. Fresh
@@ -409,10 +410,21 @@ size_t llg_co_backtrace(const llg_co_chain_t* ch, llg_co_visit_fn visit,
 #define LLG_CO_RESUME_CASE(n) \
     case (n):                 \
         goto llg_co_resume_##n;
+/* LLG_CO_BAD_STATE must not return, but the dispatch still returns after it
+ * so a runtime override without a noreturn attribute can never fall through
+ * into resume code. Only the default handler on MSVC omits that return: it is
+ * __declspec(noreturn), so MSVC reports the return as unreachable (C4702 at
+ * /W4). Overrides keep the return; a noreturn override compiled by MSVC at /W4
+ * may therefore see C4702, which generated models (built at /W3) do not. */
+#if defined(_MSC_VER) && !defined(__clang__) && defined(LLG_CO_BAD_STATE_DEFAULT_)
+#define LLG_CO_BAD_STATE_RETURN_
+#else
+#define LLG_CO_BAD_STATE_RETURN_ return LLG_CO_EXIT;
+#endif
 #define LLG_CO_DISPATCH_END(co)         \
     default:                            \
         LLG_CO_BAD_STATE(co, __func__); \
-        return LLG_CO_EXIT;             \
+        LLG_CO_BAD_STATE_RETURN_        \
         }
 
 /* Unconditional suspension (the caller already registered its waiter). */
