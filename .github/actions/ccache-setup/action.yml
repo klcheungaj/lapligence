@@ -12,7 +12,7 @@ inputs:
     required: true
   max-size:
     description: ccache size limit (also the worst-case size of the saved entry).
-    default: 500M
+    default: 300M
   python:
     description: Python command available on this runner.
     default: python3

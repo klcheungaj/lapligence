@@ -273,7 +273,7 @@ def main(argv=None):
     act.add_argument("--ccache", help="use this executable instead of downloading one")
     act.add_argument("--install-dir", help="download target (default $RUNNER_TEMP/ccache-bin)")
     act.add_argument("--ccache-dir", help="cache directory (default $RUNNER_TEMP/ccache)")
-    act.add_argument("--max-size", default="500M")
+    act.add_argument("--max-size", default="300M")
     act.add_argument("--base-dir", help="common parent of model directories (default: temp dir)")
     act.add_argument("--compiler", help="C compiler for the self-check (default LLG_CC, CC, cc)")
     act.add_argument("--env-file", help="append NAME=VALUE lines here (for GITHUB_ENV)")

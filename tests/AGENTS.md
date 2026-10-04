@@ -249,7 +249,7 @@ executable, nextest archive or runtime cache is saved.
   Compiled dependencies are about 0.3 GB per entry.
 - Generated models: `.github/actions/ccache-setup` downloads a pinned,
   checksum-verified ccache (`scripts/ci_ccache.py`), restores its directory with
-  `actions/cache` (key per job/target/distro and ISO week, 500 MB limit), proves a
+  `actions/cache` (key per job/target/distro and ISO week, 300 MB limit; a full local suite needs about 110 MB), proves a
   cross-directory hit with the compiler and generator the tests use, then exports
   `LLG_C_LAUNCHER` and `CCACHE_*` (`CCACHE_BASEDIR` = temp dir, `CCACHE_NOHASHDIR`).
   A failed install or self-check leaves the launcher unset (uncached run, warning).
@@ -263,7 +263,7 @@ packages, retained one day; pushes/manual builds upload none. Retention does not
 cap the documented account-wide 500 MB artifact allowance across concurrent runs/
 repositories. Runner disk is a separate resource. The repository's 10 GB cache
 budget holds about nine Cargo entries (about 0.3 GB) plus nine ccache entries (at
-most 500 MB each, usually less); Python tests for the scripts run in `lint`
+most 300 MB each, about 0.1 GB measured); Python tests for the scripts run in `lint`
 (`scripts/test_ci_cache.py`).
 
 Matrix: Linux x86_64/arm64, Windows x86_64/arm64, macOS arm64. Audit architecture,
