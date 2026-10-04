@@ -1070,6 +1070,14 @@ fn supports_conditional_pattern(db: &Db, pattern: NodeId) -> bool {
     visit(db, pattern, &mut std::collections::HashSet::new())
 }
 
+/// Whether a block member is a declaration with no executable content of its
+/// own, such as a block-local typedef or operator overload declaration.
+pub(crate) fn is_declaration_only_member(db: &Db, id: NodeId) -> bool {
+    matches!(db.node(id).kind(), NodeKind::Other)
+        && db.semantic_kind(id) == Some(CapturedSemanticKind::Unsupported)
+        && is_declaration_only_unknown(db.semantic_detail(id))
+}
+
 fn is_declaration_only_unknown(detail: Option<&str>) -> bool {
     matches!(
         detail,
@@ -1090,6 +1098,8 @@ fn is_declaration_only_unknown(detail: Option<&str>) -> bool {
                 | "Export"
                 | "Import"
                 | "LetDecl"
+                // Overload uses are captured as ordinary calls (SV 11.11).
+                | "OperatorOverload"
                 | "TypeAlias"
                 | "TransparentMember"
                 | "WildcardImport"
