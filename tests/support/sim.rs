@@ -238,6 +238,17 @@ pub(crate) fn run_command(command: &mut Command, timeout: Duration) -> Result<Ou
 /// other hosts stay byte-exact.
 pub(crate) use llg::ffi::platform::native_text_to_lf as host_text_to_lf;
 
+/// The spelling diagnostics and runtime reports use for an input file: its
+/// resolved native path, because sources are admitted through handles.
+/// Expected messages use this rather than a joined fixture path, whose `/`
+/// separators stay literal on Windows (`C:\repo\tests/fixtures/...`).
+pub(crate) fn source_display(path: &Path) -> String {
+    llg::ffi::platform::canonicalize(path)
+        .unwrap_or_else(|error| panic!("resolve source {}: {error}", path.display()))
+        .display()
+        .to_string()
+}
+
 /// Read a file the simulation wrote in text mode (`$fopen` without `b`,
 /// `$writemem`), with the host's native newlines normalized to LF.
 pub(crate) fn read_text_output(path: &Path) -> Result<String, String> {

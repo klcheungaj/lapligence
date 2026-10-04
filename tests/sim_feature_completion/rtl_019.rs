@@ -122,7 +122,7 @@ fn line_locations_stderr() -> String {
          llg: severity error: tb.u1:4:3: late 2\n\
          llg: severity error: tb:16:5: resumed 3\n\
          llg: $finish at time 6000 at tb:22:8\n",
-        fixture("line_locations.sv")
+        super::sim_harness::source_display(Path::new(&fixture("line_locations.sv")))
     )
 }
 

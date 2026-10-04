@@ -11,7 +11,7 @@ fn qualifier_counts_filtered_items_and_preserves_first_body() {
     let warning = |line, qualifier, reason| {
         format!(
             "{qualifier} violation at {}:{line}:9: {reason}",
-            source.display()
+            sim_harness::source_display(&source)
         )
     };
     let warnings = [

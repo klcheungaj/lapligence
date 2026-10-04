@@ -261,7 +261,7 @@ fn assert_public_cli_output(optimized: bool) {
     assert_eq!(output.stdout, EXPECTED_STDOUT.as_bytes());
     let expected_stderr = format!(
         "Warning: {}:{}:21 {WARNING}\n",
-        source.display(),
+        sim_harness::source_display(&source),
         source_line("capture_ref(source);")
     );
     assert_eq!(

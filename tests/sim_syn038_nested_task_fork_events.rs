@@ -71,7 +71,7 @@ fn joined_task_forks_share_persistent_events_and_automatic_outputs() {
                 .map(|(line, column)| {
                     format!(
                         "Warning: {}:{line}:{column} 'tb' is an upward hierarchical name reference\n",
-                        fixture.display()
+                        sim_harness::source_display(&fixture)
                     )
                 })
                 .collect::<String>();

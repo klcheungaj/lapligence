@@ -166,7 +166,7 @@ fn syn_025_pattern_case_items_filters_and_qualifiers() {
         .join("tests/fixtures/sim/sequential_predicates/syn_025_pattern_case.sv");
     let warning = format!(
         "unique violation at {}:111:9: multiple matching items",
-        source.display()
+        sim_harness::source_display(&source)
     );
     sim_cli::run_case_with_args(
         "sequential_predicates",
