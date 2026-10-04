@@ -435,14 +435,14 @@ impl EmitCtx<'_, '_> {
                 IrStmt::Delay {
                     ticks: scaled_ticks,
                 },
-                IrStmt::Object(IrObjectStmt::StringAssignLocal(
+                IrStmt::Object(Box::new(IrObjectStmt::StringAssignLocal(
                     target,
                     IrStringExpr::LocalRead(tmp.clone()),
-                )),
-                IrStmt::Object(IrObjectStmt::StringAssignLocal(
+                ))),
+                IrStmt::Object(Box::new(IrObjectStmt::StringAssignLocal(
                     tmp,
                     IrStringExpr::Literal(Vec::new()),
-                )),
+                ))),
             ])]);
         }
         let lh = self.cg.lower_lhs(&self.path, lhs)?;
@@ -607,9 +607,9 @@ impl EmitCtx<'_, '_> {
         });
         Ok(vec![IrStmt::NonblockingEventAssignWhen {
             lhs: lhs_capture,
-            rhs: rhs_capture,
+            rhs: Box::new(rhs_capture),
             specs,
-            repeat,
+            repeat: repeat.map(Box::new),
             action,
             frame,
             captures,
@@ -920,14 +920,14 @@ impl EmitCtx<'_, '_> {
             },
             IrLhs::Bit(index, select, two_state) => IrLhs::Bit(
                 index,
-                self.capture_event_assignment_expr(frame, captures, select),
+                Box::new(self.capture_event_assignment_expr(frame, captures, *select)),
                 two_state,
             ),
             IrLhs::IdxPart(index, base, width, selected_width, negative, two_state) => {
                 IrLhs::IdxPart(
                     index,
-                    self.capture_event_assignment_expr(frame, captures, base),
-                    self.capture_event_assignment_expr(frame, captures, width),
+                    Box::new(self.capture_event_assignment_expr(frame, captures, *base)),
+                    Box::new(self.capture_event_assignment_expr(frame, captures, *width)),
                     selected_width,
                     negative,
                     two_state,
@@ -1028,13 +1028,13 @@ impl EmitCtx<'_, '_> {
                     two_state,
                 },
                 IrLhs::Bit(index, select, two_state) => {
-                    IrLhs::Bit(index, selector(h, slots, select), two_state)
+                    IrLhs::Bit(index, Box::new(selector(h, slots, *select)), two_state)
                 }
                 IrLhs::IdxPart(index, base, width, selected_width, negative, two_state) => {
                     IrLhs::IdxPart(
                         index,
-                        selector(h, slots, base),
-                        selector(h, slots, width),
+                        Box::new(selector(h, slots, *base)),
+                        Box::new(selector(h, slots, *width)),
                         selected_width,
                         negative,
                         two_state,

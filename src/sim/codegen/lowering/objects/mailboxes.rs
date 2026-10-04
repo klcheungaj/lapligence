@@ -351,6 +351,6 @@ impl Codegen<'_> {
             }
             _ => return Err(format!("unsupported mailbox statement method: {name}")),
         };
-        Ok(IrStmt::Object(operation))
+        Ok(IrStmt::Object(Box::new(operation)))
     }
 }

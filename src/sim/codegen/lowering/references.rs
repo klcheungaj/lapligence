@@ -112,7 +112,7 @@ impl<'a> Codegen<'a> {
                 }
                 IrLhs::Bit(index, expression, two_state) => {
                     let base = resolve(cg, IrLhs::Whole(index), seen)?;
-                    compose_reference_bit(base, expression, two_state)
+                    compose_reference_bit(base, *expression, two_state)
                 }
                 IrLhs::Part(index, left, right, two_state) => {
                     let base = resolve(cg, IrLhs::Whole(index), seen)?;
@@ -127,7 +127,7 @@ impl<'a> Codegen<'a> {
                             two_state: state,
                             ..
                         } => {
-                            let base = indexed_projection(base, selected_width, negative)?.base;
+                            let base = indexed_projection(*base, selected_width, negative)?.base;
                             steps.push(crate::sim::ir::IrPackedSelect {
                                 base,
                                 width: selected_width,
@@ -146,7 +146,7 @@ impl<'a> Codegen<'a> {
                             location,
                             ..
                         } => {
-                            let base = indexed_projection(base, selected_width, negative)?.base;
+                            let base = indexed_projection(*base, selected_width, negative)?.base;
                             steps.push(crate::sim::ir::IrTaggedSelectStep {
                                 selection: crate::sim::ir::IrPackedSelect {
                                     base,
@@ -179,7 +179,7 @@ impl<'a> Codegen<'a> {
                             arr,
                             indices,
                             elem_sel: IrElemSel::Indexed {
-                                base: Box::new(base),
+                                base: base,
                                 width: selected_width,
                                 negative,
                             },
@@ -216,7 +216,7 @@ impl<'a> Codegen<'a> {
                         {
                             return Ok(match elem_sel {
                                 IrElemSel::Whole => IrLhs::Whole(*signal),
-                                IrElemSel::Bit(index) => IrLhs::Bit(*signal, *index, false),
+                                IrElemSel::Bit(index) => IrLhs::Bit(*signal, index, false),
                                 IrElemSel::Part(left, right) => {
                                     IrLhs::Part(*signal, left, right, false)
                                 }
@@ -226,8 +226,8 @@ impl<'a> Codegen<'a> {
                                     negative,
                                 } => IrLhs::IdxPart(
                                     *signal,
-                                    *base,
-                                    lhs_integer_expr(i128::from(width)),
+                                    base,
+                                    Box::new(lhs_integer_expr(i128::from(width))),
                                     width,
                                     negative,
                                     false,
@@ -269,7 +269,10 @@ impl<'a> Codegen<'a> {
             let (target, steps, two_state) = match lhs {
                 IrLhs::Bit(index, base, two_state) => (
                     IrLhs::Whole(index),
-                    vec![IrPackedSelect { base, width: 1 }],
+                    vec![IrPackedSelect {
+                        base: *base,
+                        width: 1,
+                    }],
                     two_state,
                 ),
                 IrLhs::Part(index, left, right, two_state) => (
@@ -283,7 +286,7 @@ impl<'a> Codegen<'a> {
                 ),
                 IrLhs::IdxPart(index, base, _, width, negative, two_state) => (
                     IrLhs::Whole(index),
-                    vec![indexed_projection(base, width, negative)?],
+                    vec![indexed_projection(*base, width, negative)?],
                     two_state,
                 ),
                 IrLhs::ArrayElem {
@@ -409,7 +412,7 @@ impl<'a> Codegen<'a> {
                         location,
                     })
                 }
-                IrLhs::Whole(index) => Ok(IrLhs::Bit(index, expression, two_state)),
+                IrLhs::Whole(index) => Ok(IrLhs::Bit(index, Box::new(expression), two_state)),
                 IrLhs::ArrayElem {
                     arr,
                     indices,
@@ -773,7 +776,7 @@ impl<'a> Codegen<'a> {
             IrLhs::Bit(index, expression, _) => Ok(IrExpr::new(
                 IrExprKind::BitSel {
                     base: Box::new(read_signal(index)),
-                    idx: Box::new(expression),
+                    idx: expression,
                 },
                 1,
                 false,
@@ -792,8 +795,8 @@ impl<'a> Codegen<'a> {
             IrLhs::IdxPart(index, base, width, selected_width, negative, _) => Ok(IrExpr::new(
                 IrExprKind::IdxPartSel {
                     base: Box::new(read_signal(index)),
-                    base_idx: Box::new(base),
-                    width_expr: Box::new(width),
+                    base_idx: base,
+                    width_expr: width,
                     neg: negative,
                 },
                 selected_width,

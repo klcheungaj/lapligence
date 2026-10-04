@@ -282,12 +282,12 @@ fn sampled_expression_uses_snapshot_reads_then_restores_live_reads() {
     let mut frame = Frame::new(&ctx);
     let read = IrExpr::new(IrExprKind::SigRead(0), 65, false, None);
     let sampled = IrExpr::new(
-        IrExprKind::SysFunc(IrSysFunc::Sampled(IrSampledCall::new(
+        IrExprKind::SysFunc(Box::new(IrSysFunc::Sampled(IrSampledCall::new(
             IrSampledFunc::Sampled,
             read.clone(),
             None,
             0,
-        ))),
+        )))),
         65,
         false,
         None,

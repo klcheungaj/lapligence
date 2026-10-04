@@ -454,7 +454,7 @@ impl EmitCtx<'_, '_> {
         }
         out_args.extend(in_args);
         let depth = parse_depth(&self.depth_arg);
-        let call = IrStmt::Call(IrCall {
+        let call = IrStmt::Call(Box::new(IrCall {
             f: fidx,
             args: out_args,
             depth,
@@ -463,7 +463,7 @@ impl EmitCtx<'_, '_> {
             virtual_call: call_receiver.virtual_interface,
             temps,
             copyouts,
-        });
+        }));
         if before.is_empty() && after.is_empty() {
             Ok(call)
         } else {
@@ -642,10 +642,10 @@ impl EmitCtx<'_, '_> {
                 } else {
                     let cname = format!("_il{}_{}", h.0, idx);
                     let value = self.cg.lower_chandle(&self.path, b.expr)?;
-                    before.push(IrStmt::Object(IrObjectStmt::ChandleDeclareLocal(
+                    before.push(IrStmt::Object(Box::new(IrObjectStmt::ChandleDeclareLocal(
                         cname.clone(),
                         Some(value),
-                    )));
+                    ))));
                     chandle_read.insert(*io, IrChandleExpr::LocalRead(cname.clone()));
                     chandle_write.insert(*io, ChandleTarget::Local(cname));
                 }
@@ -699,10 +699,10 @@ impl EmitCtx<'_, '_> {
                             }
                         )
                     {
-                        before.push(IrStmt::Object(IrObjectStmt::StringAssign(
+                        before.push(IrStmt::Object(Box::new(IrObjectStmt::StringAssign(
                             object,
                             self.cg.lower_string(&self.path, b.expr)?,
-                        )));
+                        ))));
                     }
                     if *is_out {
                         self.cg.ensure_string_actual_writable(&self.path, b.expr)?;
@@ -711,10 +711,10 @@ impl EmitCtx<'_, '_> {
                             .lower_string_actual_address(&self.path, b.expr)?
                             .trim_start_matches('&')
                             .to_owned();
-                        after.push(IrStmt::Object(IrObjectStmt::StringAssignLocal(
+                        after.push(IrStmt::Object(Box::new(IrObjectStmt::StringAssignLocal(
                             actual,
                             IrStringExpr::Read(object),
-                        )));
+                        ))));
                     }
                 } else if *is_out {
                     self.cg.ensure_string_actual_writable(&self.path, b.expr)?;
@@ -742,10 +742,10 @@ impl EmitCtx<'_, '_> {
                     string_read.insert(*io, IrStringExpr::LocalRead(cname.clone()));
                     string_write.insert(*io, cname.clone());
                     string_addr.insert(*io, cname.clone());
-                    after.push(IrStmt::Object(IrObjectStmt::StringAssignLocal(
+                    after.push(IrStmt::Object(Box::new(IrObjectStmt::StringAssignLocal(
                         actual,
                         IrStringExpr::LocalRead(cname.clone()),
-                    )));
+                    ))));
                     string_cleanups.push(cname);
                 } else {
                     let cname = format!("_il{}_{}", h.0, idx);
@@ -1237,10 +1237,10 @@ impl EmitCtx<'_, '_> {
             body: task_body,
         });
         for cname in string_cleanups {
-            stmts.push(IrStmt::Object(IrObjectStmt::StringAssignLocal(
+            stmts.push(IrStmt::Object(Box::new(IrObjectStmt::StringAssignLocal(
                 cname,
                 IrStringExpr::Literal(Vec::new()),
-            )));
+            ))));
         }
 
         self.cg.func = saved_cg.0;
@@ -1328,10 +1328,10 @@ impl EmitCtx<'_, '_> {
         if returns_string {
             return match value {
                 Some(value) => Ok(IrStmt::Block(vec![
-                    IrStmt::Object(crate::sim::ir::IrObjectStmt::StringAssignLocal(
+                    IrStmt::Object(Box::new(crate::sim::ir::IrObjectStmt::StringAssignLocal(
                         "_ret".to_string(),
                         self.cg.lower_string(&self.path, value)?,
-                    )),
+                    ))),
                     IrStmt::Return { value: None },
                 ])),
                 None => Ok(IrStmt::Return { value: None }),
@@ -1346,10 +1346,10 @@ impl EmitCtx<'_, '_> {
         if returns_chandle {
             return match value {
                 Some(value) => Ok(IrStmt::Block(vec![
-                    IrStmt::Object(IrObjectStmt::ChandleAssignLocal(
+                    IrStmt::Object(Box::new(IrObjectStmt::ChandleAssignLocal(
                         "_ret".to_owned(),
                         self.cg.lower_chandle(&self.path, value)?,
-                    )),
+                    ))),
                     IrStmt::Return { value: None },
                 ])),
                 None => Ok(IrStmt::Return { value: None }),

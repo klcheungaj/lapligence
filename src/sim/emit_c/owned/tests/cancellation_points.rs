@@ -36,7 +36,13 @@ fn void_function(name: &str, body: Vec<IrStmt>) -> IrFunc {
 }
 
 fn call(function: usize) -> IrStmt {
-    IrStmt::Call(IrCall::new(function, vec![], IrDepth::PROC, vec![], vec![]))
+    IrStmt::Call(Box::new(IrCall::new(
+        function,
+        vec![],
+        IrDepth::PROC,
+        vec![],
+        vec![],
+    )))
 }
 
 #[test]

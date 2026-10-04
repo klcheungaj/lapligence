@@ -259,7 +259,7 @@ pub(super) fn render_lhs_value(
                         signal.ty.signed(),
                         None,
                     )),
-                    idx: Box::new(select.clone()),
+                    idx: select.clone(),
                 },
                 1,
                 false,
@@ -294,8 +294,8 @@ pub(super) fn render_lhs_value(
                         signal.ty.signed(),
                         None,
                     )),
-                    base_idx: Box::new(base.clone()),
-                    width_expr: Box::new(width_expr.clone()),
+                    base_idx: base.clone(),
+                    width_expr: width_expr.clone(),
                     neg: *neg,
                 },
                 *selected_width,
@@ -388,11 +388,11 @@ pub(super) fn capture_lhs_indices_with_prefix(
                 **index = capture(ctx, index, declarations, next, index_prefix)?;
             }
             IrLhs::Bit(_, index, _) => {
-                *index = capture(ctx, index, declarations, next, index_prefix)?;
+                *index = Box::new(capture(ctx, index, declarations, next, index_prefix)?);
             }
             IrLhs::IdxPart(_, base, width_expr, _, _, _) => {
-                *base = capture(ctx, base, declarations, next, index_prefix)?;
-                *width_expr = capture(ctx, width_expr, declarations, next, index_prefix)?;
+                *base = Box::new(capture(ctx, base, declarations, next, index_prefix)?);
+                *width_expr = Box::new(capture(ctx, width_expr, declarations, next, index_prefix)?);
             }
             IrLhs::ArrayElem {
                 indices, elem_sel, ..

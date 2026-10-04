@@ -78,13 +78,13 @@ fn disabled_timed_call_does_not_copy_out_its_staged_value() {
         IrStmt::ActivationScope {
             target,
             exit: "call_exit".to_owned(),
-            body: vec![IrStmt::Call(IrCall::new(
+            body: vec![IrStmt::Call(Box::new(IrCall::new(
                 0,
                 vec![IrCallArg::OutAddr("&result".to_owned())],
                 IrDepth::PROC,
                 vec![("result".to_owned(), 0, None)],
                 vec![(IrLhs::Whole(0), "result".to_owned(), 65, false)],
-            ))],
+            )))],
         },
         display_value(),
     ];
@@ -237,7 +237,7 @@ fn force_evaluator_owns_its_result_and_release_keeps_variable_value() {
         },
         IrStmt::Force {
             lhs: IrLhs::Whole(0),
-            value: number(42, 65),
+            value: Box::new(number(42, 65)),
             eval: "force_value".to_owned(),
             reads: vec![],
             dependencies: vec![],

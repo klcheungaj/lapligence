@@ -51,7 +51,10 @@ fn class_objects_have_exact_field_storage_and_explicit_teardown() {
         IrShape::RunOnce,
         vec![],
         vec![
-            IrStmt::Object(IrObjectStmt::ChandleAssign(0, IrChandleExpr::Construct(0))),
+            IrStmt::Object(Box::new(IrObjectStmt::ChandleAssign(
+                0,
+                IrChandleExpr::Construct(0),
+            ))),
             IrStmt::Assign {
                 lhs: IrLhs::WholeRef {
                     addr: "&_llg_access_0".to_owned(),
@@ -133,9 +136,11 @@ fn semaphore_creation_and_queries_never_request_legacy_fragments() {
     };
     let mut frame = Frame::new(&ctx);
     frame
-        .statement(&IrStmt::Object(IrObjectStmt::ChandleDeclareLocal(
-            "sem".to_owned(),
-            Some(IrChandleExpr::SemaphoreNew(Box::new(number(3, 32)))),
+        .statement(&IrStmt::Object(Box::new(
+            IrObjectStmt::ChandleDeclareLocal(
+                "sem".to_owned(),
+                Some(IrChandleExpr::SemaphoreNew(Box::new(number(3, 32)))),
+            ),
         )))
         .unwrap();
     let query =
