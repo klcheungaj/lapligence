@@ -13,6 +13,11 @@ libfst API and FastLZ portions are MIT licensed; LZ4 carries its upstream BSD
 2-Clause license. `fstapi.c` has one local buffering change: its 128 MiB
 writer block and growth ceiling are reduced to 1 MiB (with a 256 KiB growth
 increment), and the translation unit enables GNU/POSIX declarations on Unix
-when the compiler has not already done so. Lapligence also selects zlib
+when the compiler has not already done so. For MSVC, `fst_config.h` leaves `HAVE_ALLOCA_H` and `HAVE_FSEEKO` undefined,
+`fstapi.c` takes its MinGW Win32 paths (`FST_WIN32_API`: file mapping, temp
+files, `_fseeki64`, unbuffered reads) when `_MSC_VER` is defined, and its
+varint readers size their check buffers with enum constants instead of
+`const int` arrays, which C treats as VLAs that MSVC rejects.
+Lapligence also selects zlib
 packing and disables libfst parallel mode, because its own bounded SPSC worker
 owns all writer calls.
