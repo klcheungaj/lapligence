@@ -127,4 +127,9 @@ fn unsupported_native_record_boundaries_are_explicit() {
         "neg_native_nba",
         "nonblocking assignment to object aggregate member `s` is not supported",
     );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_native_conditional",
+        "native record conditional in `tb` is not supported",
+    );
 }

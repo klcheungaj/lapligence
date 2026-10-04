@@ -28,6 +28,7 @@ registered as explicit native roots; see `src/sim/rt/value/ownership.md`.
 | `neg_chandle_arithmetic` | §6.14: chandles admit only equality, inequality and boolean tests (Slang). |
 | `neg_native_ref_formal` | Legal by §13.5.2; native ref formals are SIM-008 work and rejected explicitly. |
 | `neg_native_fork_capture` | Legal by §9.3.2; capture of automatic native storage by a forked process is SIM-010 work. |
+| `neg_native_conditional` | Legal by §11.4.11; an unknown predicate needs a member-wise merge with no fixed payload for native leaves, so a conditional native record operand is rejected explicitly (the SYN-004/SYN-012 boundary fixtures keep the same diagnostic). |
 | `neg_native_runtime_index` | Legal by §7.4.6; a run-time index into a native array member needs per-element addressing (SIM-007). |
 | `neg_native_nba` | Legal by §10.4.2; nonblocking writes of native records are SIM-004 work. |
 

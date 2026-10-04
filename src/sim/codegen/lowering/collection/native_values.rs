@@ -1132,6 +1132,21 @@ impl Codegen<'_> {
             }
         }
         let source = self.p30_unwrap_cast(rhs);
+        // An unknown predicate merges the operands member by member (§11.4.11)
+        // and native leaves have no fixed payload for that merge, so keep the
+        // conditional's own diagnostic instead of a missing record source.
+        if matches!(
+            self.kind(source),
+            NodeKind::Expr(ExprKind::Conditional { .. })
+                | NodeKind::Expr(ExprKind::Operation {
+                    op: Operation::Conditional,
+                    ..
+                })
+        ) {
+            return Err(format!(
+                "native record conditional in `{path}` is not supported: conditional structure member has no supported fixed payload"
+            ));
+        }
         let (source, _) = self
             .native_endpoint(source)?
             .ok_or_else(|| format!("native record assignment in `{path}` has no record source"))?;

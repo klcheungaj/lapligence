@@ -339,8 +339,9 @@ queue/dynamic/associative containers of native records or strings, their
 slices, a run-time index into a native member array of an automatic record, `ref`
 formals of native record type, nonblocking writes of native records or their
 string/chandle members, fork-join_none capture of automatic native records,
-`f(...).member` selects on a native result, and native outputs bound inside an
-expression (call them as a statement instead). A packed member select of a
+`f(...).member` selects on a native result, conditional operators with native
+record operands (an unknown predicate needs a member-wise merge), and native
+outputs bound inside an expression (call them as a statement instead). A packed member select of a
 module-level native record (`h.p.hi`) and event controls on string members are
 also not lowered.
 
