@@ -2,6 +2,107 @@
 
 use super::super::collection::EventEvaluation;
 use super::*;
+use crate::sim::ir::IrRuntimeQuery;
+
+/// One value evaluated when a process-evaluated event control is armed.
+pub(super) struct ProcessEventArm {
+    /// Local that holds the armed value while the process waits.
+    pub(super) local: String,
+    pub(super) width: u32,
+    pub(super) signed: bool,
+    pub(super) value: IrExpr,
+}
+
+/// An event control that the waiting process evaluates itself instead of a
+/// read-only runtime callback, because a helper it calls has effects (see
+/// [`EventEvaluation`]). Arming and waiting are separate so a nonblocking
+/// assignment can arm in its issuing process and wait in a detached one.
+pub(super) struct ProcessEventPlan {
+    /// Values of every source when the control is armed, in source order.
+    pub(super) arm: Vec<ProcessEventArm>,
+    /// Two-state flag set once a source detects its event.
+    hit: String,
+    /// Re-evaluate every source, set `hit` on a detected event and advance
+    /// the armed values.
+    iteration: Vec<IrStmt>,
+    /// The single atomic suspension between iterations.
+    wait: IrStmt,
+    /// Unsigned one-bit zero that clears `hit`.
+    zero: IrExpr,
+}
+
+impl ProcessEventPlan {
+    fn hit_declaration(&self) -> IrStmt {
+        IrStmt::DeclLocal {
+            name: self.hit.clone(),
+            width: 1,
+            signed: false,
+            init: Some(Box::new(self.zero.clone())),
+            two_state: true,
+        }
+    }
+
+    fn wait_loop(&self) -> IrStmt {
+        IrStmt::While {
+            cond: IrExpr::new(
+                IrExprKind::Un {
+                    op: IrUnOp::LogNot,
+                    a: Box::new(IrExpr::new(
+                        IrExprKind::LocalRead(self.hit.clone()),
+                        1,
+                        false,
+                        None,
+                    )),
+                },
+                1,
+                false,
+                None,
+            ),
+            body: vec![self.wait.clone(), IrStmt::Block(self.iteration.clone())],
+        }
+    }
+
+    /// Arm and wait in the current process.
+    pub(super) fn blocking(self) -> IrStmt {
+        let mut block = self
+            .arm
+            .iter()
+            .map(|arm| IrStmt::DeclLocal {
+                name: arm.local.clone(),
+                width: arm.width,
+                signed: arm.signed,
+                init: Some(Box::new(arm.value.clone())),
+                two_state: false,
+            })
+            .collect::<Vec<_>>();
+        block.push(self.hit_declaration());
+        block.push(self.wait_loop());
+        IrStmt::Block(block)
+    }
+
+    /// Wait in a process that did not arm the control. `armed` reads each
+    /// armed value, in [`Self::arm`] order, from wherever the arming process
+    /// left it. The first iteration runs before any suspension, so a change
+    /// between arming and the first run of this process is still detected.
+    pub(super) fn resumed(self, armed: Vec<IrExpr>) -> Vec<IrStmt> {
+        let mut block = self
+            .arm
+            .iter()
+            .zip(armed)
+            .map(|(arm, value)| IrStmt::DeclLocal {
+                name: arm.local.clone(),
+                width: arm.width,
+                signed: arm.signed,
+                init: Some(Box::new(value)),
+                two_state: false,
+            })
+            .collect::<Vec<_>>();
+        block.push(self.hit_declaration());
+        block.push(IrStmt::Block(self.iteration.clone()));
+        block.push(self.wait_loop());
+        vec![IrStmt::Block(block)]
+    }
+}
 
 impl EmitCtx<'_, '_> {
     /// Lower `@(…)`: explicit edge/any specs become ONE atomic
@@ -87,7 +188,7 @@ impl EmitCtx<'_, '_> {
     /// zero-time function but not a read-only runtime callback. Expressions
     /// that fail classification outright keep the ordinary path, which
     /// reports the same diagnostic.
-    fn event_specs_need_process(&self, specs: &[EventSpec]) -> bool {
+    pub(super) fn event_specs_need_process(&self, specs: &[EventSpec]) -> bool {
         specs.iter().any(|spec| match spec {
             EventSpec::Qualified { event, condition } => {
                 self.event_specs_need_process(std::slice::from_ref(event))
@@ -108,53 +209,70 @@ impl EmitCtx<'_, '_> {
     }
 
     /// Lower `@(…)` whose expression needs process evaluation (see
-    /// [`EventEvaluation`]). The waiting process evaluates every source once
-    /// when the control is reached, then suspends on the union of their read
-    /// sets; after each wake it re-evaluates every source and resumes only
-    /// when one detects its change (SV 9.4.2: a changed operand with an
-    /// unchanged result is no event; edges use the least significant bit).
-    /// Qualifiers are evaluated only for a detected change. The number of
-    /// helper evaluations is unspecified by the language; this form performs
-    /// one per source at arm time and one per source per wake.
+    /// [`EventEvaluation`]) into one block that arms and waits in the current
+    /// process (see [`ProcessEventPlan`]).
     fn lower_process_evaluated_event(
         &mut self,
         h: NodeId,
         specs: &[EventSpec],
     ) -> Result<Vec<IrStmt>, String> {
+        Ok(vec![self.process_event_plan(h, specs)?.blocking()])
+    }
+
+    /// Plan an event control that the waiting process evaluates itself. Every
+    /// value source is evaluated once when the control is armed; the process
+    /// then suspends on the union of the sources' read sets and of the named
+    /// events in the list. After each wake it re-evaluates every value source
+    /// and resumes only when one detects its change (SV 9.4.2: a changed
+    /// operand with an unchanged result is no event; packed edges use the
+    /// least significant bit; real values compare IEEE bit patterns) or a named
+    /// event's trigger count moved. Qualifiers run only for a detected source.
+    /// The language leaves the number of helper evaluations unspecified; this
+    /// form performs one per value source at arm time and one per value source
+    /// per wake.
+    pub(super) fn process_event_plan(
+        &mut self,
+        h: NodeId,
+        specs: &[EventSpec],
+    ) -> Result<ProcessEventPlan, String> {
+        enum Source {
+            Value(NodeId, IrEdge),
+            Named(NodeId),
+        }
         fn flatten(
+            cg: &Codegen<'_>,
             spec: &EventSpec,
             condition: Option<NodeId>,
-            out: &mut Vec<(NodeId, IrEdge, Option<NodeId>)>,
-        ) -> Result<(), ()> {
+            out: &mut Vec<(Source, Option<NodeId>)>,
+        ) {
             match spec {
-                EventSpec::Qualified { event, condition } => flatten(event, Some(*condition), out),
-                EventSpec::Named(_) => Err(()),
-                EventSpec::AnyChange { sig } => {
-                    out.push((*sig, IrEdge::Any, condition));
-                    Ok(())
+                EventSpec::Qualified { event, condition } => {
+                    flatten(cg, event, Some(*condition), out)
                 }
-                EventSpec::Edge { sig, posedge } => {
-                    out.push((
+                EventSpec::Named(event) => out.push((Source::Named(*event), condition)),
+                EventSpec::AnyChange { sig } if cg.event_target_of(*sig).is_some() => {
+                    out.push((Source::Named(*sig), condition))
+                }
+                EventSpec::AnyChange { sig } => {
+                    out.push((Source::Value(*sig, IrEdge::Any), condition))
+                }
+                EventSpec::Edge { sig, posedge } => out.push((
+                    Source::Value(
                         *sig,
                         if *posedge {
                             IrEdge::Posedge
                         } else {
                             IrEdge::Negedge
                         },
-                        condition,
-                    ));
-                    Ok(())
-                }
+                    ),
+                    condition,
+                )),
             }
         }
         let path = self.cg.source_path(&self.path);
         let mut sources = Vec::new();
         for spec in specs {
-            flatten(spec, None, &mut sources).map_err(|()| {
-                format!(
-                    "named events cannot share an event control with a process-evaluated helper expression in `{path}`"
-                )
-            })?;
+            flatten(self.cg, spec, None, &mut sources);
         }
         let bit = |value: u64, x: u64, z: u64| -> Result<IrExpr, String> {
             let constant = IrConst::packed(vec![value], vec![x], vec![z], 1, false, None)
@@ -187,41 +305,104 @@ impl EmitCtx<'_, '_> {
         };
         let hit = format!("_llg_evh{}", h.0);
         let mut sens = Vec::new();
+        let mut events = Vec::new();
         let mut arm = Vec::new();
         let mut current = Vec::new();
         let mut detect = Vec::new();
         let mut advance = Vec::new();
-        for (index, (expression, edge, condition)) in sources.into_iter().enumerate() {
-            if self.cg.event_target_of(expression).is_some() {
-                return Err(format!(
-                    "named events cannot share an event control with a process-evaluated helper expression in `{path}`"
-                ));
-            }
-            let value = self.cg.lower_expr(&self.path, expression)?;
-            if value.is_real() {
-                return Err(format!(
-                    "real-valued event expressions with process-evaluated helpers are not supported in `{path}`"
-                ));
-            }
-            let value = if edge == IrEdge::Any {
-                value
-            } else {
-                IrExpr::convert_to(value, 1, false)
-            };
-            let (width, signed) = (value.width, value.signed);
-            for dependency in self.cg.collect_read_signals(&self.path, expression)? {
-                if !sens.contains(&dependency) {
-                    sens.push(dependency);
-                }
-            }
+        for (index, (source, condition)) in sources.into_iter().enumerate() {
             let last = format!("_llg_evl{}_{index}", h.0);
             let next = format!("_llg_evn{}_{index}", h.0);
-            arm.push(IrStmt::DeclLocal {
-                name: last.clone(),
+            let (value, changed) = match source {
+                Source::Named(event) => {
+                    let target = self.cg.event_target_of(event).ok_or_else(|| {
+                        format!("event control has an unresolved named event in `{path}`")
+                    })?;
+                    let IrEventRef::Static(event) = self.cg.event_ref_of(&target, &self.path)?
+                    else {
+                        return Err(format!(
+                            "an event handle other than a declared named event cannot share an event control with a process-evaluated helper expression in `{path}`"
+                        ));
+                    };
+                    events.push((IrWaitSrc::Event(IrEventRef::Static(event)), IrEdge::Any));
+                    let count = IrExpr::new(
+                        IrExprKind::RuntimeQuery(IrRuntimeQuery::EventTriggerCount(event)),
+                        64,
+                        false,
+                        None,
+                    );
+                    let changed = binary(
+                        IrBinOp::CaseNeq,
+                        local(&last, 64, false),
+                        local(&next, 64, false),
+                    );
+                    (count, changed)
+                }
+                Source::Value(expression, edge) => {
+                    let value = self.cg.lower_expr(&self.path, expression)?;
+                    let value = if value.is_real() {
+                        if edge != IrEdge::Any {
+                            return Err(format!(
+                                "edge control on real-valued expressions is not supported in `{path}`"
+                            ));
+                        }
+                        // Real any-change compares IEEE bit patterns, as the
+                        // runtime's real waits do: signed zeros differ and a
+                        // repeated NaN payload is no change.
+                        IrExpr::new(
+                            IrExprKind::SysFunc(IrSysFunc::RealToBits(Box::new(value))),
+                            64,
+                            false,
+                            None,
+                        )
+                    } else if edge == IrEdge::Any {
+                        value
+                    } else {
+                        IrExpr::convert_to(value, 1, false)
+                    };
+                    for dependency in self
+                        .cg
+                        .collect_evaluator_sensitivity(&self.path, expression)?
+                    {
+                        if !sens.contains(&dependency) {
+                            sens.push(dependency);
+                        }
+                    }
+                    let (width, signed) = (value.width, value.signed);
+                    let (old, new) = (local(&last, width, signed), local(&next, width, signed));
+                    let changed = match edge {
+                        IrEdge::Any => binary(IrBinOp::CaseNeq, old, new),
+                        IrEdge::Posedge | IrEdge::Negedge => {
+                            let (from, to) = if edge == IrEdge::Posedge {
+                                (zero.clone(), one.clone())
+                            } else {
+                                (one.clone(), zero.clone())
+                            };
+                            let unknown = binary(
+                                IrBinOp::LogOr,
+                                binary(IrBinOp::CaseEq, old.clone(), unknown_x.clone()),
+                                binary(IrBinOp::CaseEq, old.clone(), unknown_z.clone()),
+                            );
+                            binary(
+                                IrBinOp::LogOr,
+                                binary(
+                                    IrBinOp::LogAnd,
+                                    binary(IrBinOp::CaseEq, old, from.clone()),
+                                    binary(IrBinOp::CaseNeq, new.clone(), from),
+                                ),
+                                binary(IrBinOp::LogAnd, unknown, binary(IrBinOp::CaseEq, new, to)),
+                            )
+                        }
+                    };
+                    (value, changed)
+                }
+            };
+            let (width, signed) = (value.width, value.signed);
+            arm.push(ProcessEventArm {
+                local: last.clone(),
                 width,
                 signed,
-                init: Some(Box::new(value.clone())),
-                two_state: false,
+                value: value.clone(),
             });
             current.push(IrStmt::DeclLocal {
                 name: next.clone(),
@@ -230,43 +411,26 @@ impl EmitCtx<'_, '_> {
                 init: Some(Box::new(value)),
                 two_state: false,
             });
-            let (old, new) = (local(&last, width, signed), local(&next, width, signed));
-            let changed = match edge {
-                IrEdge::Any => binary(IrBinOp::CaseNeq, old, new),
-                IrEdge::Posedge | IrEdge::Negedge => {
-                    let (from, to) = if edge == IrEdge::Posedge {
-                        (zero.clone(), one.clone())
-                    } else {
-                        (one.clone(), zero.clone())
-                    };
-                    let unknown = binary(
-                        IrBinOp::LogOr,
-                        binary(IrBinOp::CaseEq, old.clone(), unknown_x.clone()),
-                        binary(IrBinOp::CaseEq, old.clone(), unknown_z.clone()),
-                    );
-                    binary(
-                        IrBinOp::LogOr,
-                        binary(
-                            IrBinOp::LogAnd,
-                            binary(IrBinOp::CaseEq, old, from.clone()),
-                            binary(IrBinOp::CaseNeq, new.clone(), from),
-                        ),
-                        binary(IrBinOp::LogAnd, unknown, binary(IrBinOp::CaseEq, new, to)),
-                    )
-                }
-            };
             let found = IrStmt::Assign {
                 lhs: target(&hit, 1, false, true),
                 rhs: one.clone(),
                 nba: false,
             };
             let then_ = match condition {
-                Some(condition) => vec![IrStmt::If {
-                    cond: self.cg.lower_expr(&self.path, condition)?,
-                    then_: vec![found],
-                    els: None,
-                    check: IrUniquePriorityCheck::None,
-                }],
+                Some(condition) => {
+                    let condition = self.cg.lower_expr(&self.path, condition)?;
+                    if condition.is_real() {
+                        return Err(format!(
+                            "real-valued event qualifiers are not supported in `{path}`"
+                        ));
+                    }
+                    vec![IrStmt::If {
+                        cond: condition,
+                        then_: vec![found],
+                        els: None,
+                        check: IrUniquePriorityCheck::None,
+                    }]
+                }
                 None => vec![found],
             };
             detect.push(IrStmt::If {
@@ -281,29 +445,42 @@ impl EmitCtx<'_, '_> {
                 nba: false,
             });
         }
-        arm.push(IrStmt::DeclLocal {
-            name: hit.clone(),
-            width: 1,
-            signed: false,
-            init: Some(Box::new(zero)),
-            two_state: true,
-        });
+        let wait = if events.is_empty() {
+            IrStmt::WaitAny { sens }
+        } else {
+            // One atomic wait covers the named events and every value
+            // source's dependencies, so no trigger is lost between waits.
+            // A selected-bit dependency waits on its whole storage: an
+            // unrelated change only costs one re-evaluation.
+            let mut specs = events;
+            for dependency in sens {
+                let source = match &dependency {
+                    IrDependency::Real(name) => IrWaitSrc::Real(name.clone()),
+                    other => match other.scalar_name() {
+                        Some(name) => IrWaitSrc::Sig(name.to_owned()),
+                        None => {
+                            return Err(format!(
+                                "a named event cannot share an event control with a process-evaluated helper that reads array, container or string storage in `{path}`"
+                            ))
+                        }
+                    },
+                };
+                if !specs.iter().any(|(existing, _)| *existing == source) {
+                    specs.push((source, IrEdge::Any));
+                }
+            }
+            IrStmt::WaitEvents { specs }
+        };
         let mut iteration = current;
         iteration.extend(detect);
         iteration.extend(advance);
-        arm.push(IrStmt::While {
-            cond: IrExpr::new(
-                IrExprKind::Un {
-                    op: IrUnOp::LogNot,
-                    a: Box::new(local(&hit, 1, false)),
-                },
-                1,
-                false,
-                None,
-            ),
-            body: vec![IrStmt::WaitAny { sens }, IrStmt::Block(iteration)],
-        });
-        Ok(vec![IrStmt::Block(arm)])
+        Ok(ProcessEventPlan {
+            arm,
+            hit,
+            iteration,
+            wait,
+            zero,
+        })
     }
 
     pub(super) fn wait_body(&mut self, h: NodeId) -> Result<Vec<IrStmt>, String> {
@@ -391,6 +568,9 @@ impl EmitCtx<'_, '_> {
                     ticks: Some(ticks),
                 }])
             }
+            EventTriggerTiming::Event { specs, .. } if self.event_specs_need_process(specs) => {
+                self.process_evaluated_event_trigger(statement, event, specs, None)
+            }
             EventTriggerTiming::Event { specs, .. } => {
                 Ok(vec![IrStmt::NonblockingEventTriggerWhen {
                     ev: event,
@@ -416,6 +596,14 @@ impl EmitCtx<'_, '_> {
                         "repeat nonblocking event triggers require a packed count",
                     ));
                 }
+                if self.event_specs_need_process(specs) {
+                    return self.process_evaluated_event_trigger(
+                        statement,
+                        event,
+                        specs,
+                        Some(repeat),
+                    );
+                }
                 Ok(vec![IrStmt::NonblockingEventTriggerWhen {
                     ev: event,
                     specs: self.lower_event_specs(specs)?,
@@ -427,6 +615,38 @@ impl EmitCtx<'_, '_> {
                 "unsupported nonblocking event-trigger timing",
             )),
         }
+    }
+
+    /// `->> @(...) ev` whose control calls a helper with effects: like the
+    /// runtime's detached waiter, a detached process waits for the control
+    /// (armed at issue) and then queues the trigger in NBA (SV 15.5.2).
+    fn process_evaluated_event_trigger(
+        &mut self,
+        statement: NodeId,
+        event: IrEventRef,
+        specs: &[EventSpec],
+        repeat: Option<IrExpr>,
+    ) -> Result<Vec<IrStmt>, String> {
+        if !matches!(event, IrEventRef::Static(_)) {
+            return Err(format!(
+                "a nonblocking trigger of an event handle cannot use a process-evaluated event control in `{}`",
+                self.cg.source_path(&self.path)
+            ));
+        }
+        let frame = self.cg.new_frame_id()?;
+        let action = vec![IrStmt::NonblockingEventTrigger {
+            ev: event,
+            ticks: None,
+        }];
+        Ok(vec![self.spawn_process_evaluated_action(
+            statement,
+            specs,
+            repeat,
+            frame,
+            Vec::new(),
+            action,
+            "event_trigger",
+        )?])
     }
 
     /// Resolve the captured event specs into atomic wait sources: signal

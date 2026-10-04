@@ -38,6 +38,15 @@ static void region_violation(const char* action, llg_region_t region) {
     g.finish = 1;
 }
 
+// A packed or real store in a read-only region: applied silently inside a
+// Postponed display evaluator's private evaluation (see `private_evaluation`),
+// otherwise reported. Returns whether the caller should store unpublished.
+static int region_private_store(const char* action) {
+    if (g.private_evaluation && g.current_region == LLG_REGION_POSTPONED) return 1;
+    region_violation(action, g.current_region);
+    return 0;
+}
+
 static int region_can_mutate(const char* action) {
     if (region_is_read_only_now(g.current_region)) {
         region_violation(action, g.current_region);

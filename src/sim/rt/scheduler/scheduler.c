@@ -281,9 +281,10 @@ static int run_pre_postponed_set(void) {
 static int run_postponed_set(void) {
     if (!run_region_queue(LLG_REGION_POSTPONED)) return 0;
     g.current_region = LLG_REGION_POSTPONED;
+    g.private_evaluation = 1;
     flush_strobes();
-    if (g.finish) return 0;
-    check_monitor();
+    if (!g.finish) check_monitor();
+    g.private_evaluation = 0;
     if (g.finish) return 0;
     return run_region_queue(LLG_REGION_POSTPONED_PLI);
 }

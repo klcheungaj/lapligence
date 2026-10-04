@@ -658,7 +658,10 @@ static void sig_publish_changed(sv4_t* target, sv4_t old, sv4_t value,
 }
 
 static void sig_write(sv4_t* target, sv4_t value) {
-    if (!region_can_mutate("signal write")) return;
+    if (region_is_read_only_now(g.current_region)) {
+        if (region_private_store("signal write")) sv4_copy(target, &value);
+        return;
+    }
     if (llg_sv4_width(*target) == llg_sv4_width(value) && sv4_same(*target, value)) return;
     // Callbacks can finish/disable the writer without returning through here.
     // Heap-backed registered owners survive both suspension and stack discard.
@@ -692,7 +695,11 @@ static int sig_write_ranges(sv4_t* target,
                             uint32_t first_offset, sv4_t first,
                             uint32_t second_offset, sv4_t second,
                             int has_second) {
-    if (!region_can_mutate("signal write")) return 0;
+    int private_store = 0;
+    if (region_is_read_only_now(g.current_region)) {
+        if (!region_private_store("signal write")) return 0;
+        private_store = 1;
+    }
     if (!llg_sv4_width(first) || first_offset > llg_sv4_width(*target) ||
         llg_sv4_width(first) > llg_sv4_width(*target) - first_offset ||
         (has_second &&
@@ -705,6 +712,11 @@ static int sig_write_ranges(sv4_t* target,
     int second_changed = has_second &&
         !sig_range_same(target, second_offset, &second);
     if (!first_changed && !second_changed) return 0;
+    if (private_store) {
+        if (first_changed) sig_range_copy(target, first_offset, &first);
+        if (second_changed) sig_range_copy(target, second_offset, &second);
+        return 0;
+    }
     llg_value_scope_t* target_pin = value_target_pin(target);
     llg_value_scope_t* snapshots = llg_value_scope_begin(
 #ifdef LLG_WAVEFORM
@@ -740,7 +752,10 @@ static int sig_write_range(sv4_t* target, uint32_t offset, sv4_t value) {
 // Real equality is bitwise: repeated NaNs with the same payload are
 // suppressed, while changes in NaN payload and signed zero are observable.
 static void real_write(double* target, double value) {
-    if (!region_can_mutate("real write")) return;
+    if (region_is_read_only_now(g.current_region)) {
+        if (region_private_store("real write")) *target = value;
+        return;
+    }
     double old = *target;
     if (real_same(old, value)) return;
     /* Real locals have stable native owner slots, just like packed descriptors.

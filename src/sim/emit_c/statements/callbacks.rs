@@ -184,7 +184,13 @@ pub(in super::super) fn render_pre_fn_impl(
             c_name,
             args,
             time_unit_fs,
+            private_effects,
         } => {
+            if *private_effects {
+                return Err(
+                    "private-effect display evaluators require the owned emitter".to_owned(),
+                );
+            }
             let mut out = format!(
                 "static void {c_name}(llg_fmt_arg_t* out, void* context) {{\n    (void)context;\n"
             );

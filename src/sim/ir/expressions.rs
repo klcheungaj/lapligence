@@ -75,6 +75,21 @@ impl IrEnumQuery {
     }
 }
 
+/// Scheduler state read by generated process code. Each query is read-only,
+/// has no dependencies of its own and never suspends.
+#[derive(Clone, Debug, PartialEq)]
+pub enum IrRuntimeQuery {
+    /// Number of times the static named event has been triggered in this run
+    /// (64-bit unsigned two-state). A process that evaluates an event control
+    /// itself compares counts to learn whether the event fired while it was
+    /// suspended on a list that also names value sources.
+    EventTriggerCount(usize),
+    /// Whether a live force binding still reads the hidden source signal of an
+    /// effectful force site (1-bit unsigned two-state). The site's guard
+    /// process re-evaluates the source only while this holds.
+    ForceSourceActive(usize),
+}
+
 /// Structural expression kinds.  The self-determined width/signedness/fill of
 /// the whole expression lives on the enclosing [`IrExpr`].
 #[derive(Clone, Debug, PartialEq)]
@@ -119,6 +134,9 @@ pub enum IrExprKind {
     /// object. The object is resolved from the canonical event handle at the
     /// point where the expression executes.
     EventTriggered(IrEventRef),
+    /// A read-only scheduler fact consulted by process-evaluated event
+    /// controls and force sources (see [`IrRuntimeQuery`]).
+    RuntimeQuery(IrRuntimeQuery),
     /// A blocking assignment-like expression. The target descriptor is
     /// evaluated once by the emitter, `value` computes the value to commit
     /// (using `_llg_mut_current` for compound/inc-dec forms), and the result

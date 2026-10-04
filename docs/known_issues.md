@@ -343,20 +343,19 @@ inside a cell bound from a non-`work` library.
 
 ## Effectful helpers in runtime-callback evaluators
 
-**Status:** open; RTL-007 admits them in blocking event controls and continuous
-assignments.
+**Status:** narrowed by RTL-007b; two list forms remain.
 
-A legal zero-time helper with visible writes, persistent static state or
-descriptor-array formals is evaluated by the waiting process for a blocking
-`@(...)`, which keeps the runtime's change-time callbacks read-only. Force
-sources, monitor/strobe arguments, intra-assignment and nonblocking event
-controls are evaluated by the runtime inside another write, so such a helper
-there still rejects (`force RHS ... is not a read-only evaluator`). An event
-control that combines such a helper with a named event, or whose value is real,
-also rejects: a process-side loop cannot observe which named event fired, and
-real changes would need bitwise comparison IR. The intended direction is a
-deferred-publication evaluator context (queue the helper's writes until the
-outer publication finishes) rather than per-site special cases.
+Legal helpers with visible writes, persistent static state or descriptor-array
+formals now run in processes for blocking, intra-assignment, nonblocking and
+`->>` event controls, force sources and named-event/real event lists, and in a
+private Postponed evaluation for `$monitor`/`$strobe` (writes outside the
+helper reject there by SV 4.4.2.9). Still rejected: a named event in the same
+list as such a helper whose sensitivity includes unpacked-array, container or
+string storage (the atomic mixed wait has no source form for those markers),
+and event handles other than declared named events in such a list or as the
+target of such a `->>`. Stores a `$monitor`/`$strobe` helper makes to its own
+static storage publish no event, so a hierarchical wait on that storage does
+not wake.
 
 ## Native stack frames grow with a statement's format-argument count
 

@@ -38,6 +38,16 @@ pub(in super::super) enum EventEvaluation {
     Process(String),
 }
 
+/// How a `$monitor`/`$strobe` argument is evaluated in the Postponed region.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in super::super) enum PostponedEvaluation {
+    /// Read-only callback (private inlined helpers only).
+    Callback,
+    /// Ordinary calls whose only stores are to the helpers' own storage;
+    /// the runtime applies them without publication.
+    PrivateEffects,
+}
+
 impl<'a> Codegen<'a> {
     pub(in super::super) fn check_event_expression_effects(
         &self,
@@ -59,13 +69,61 @@ impl<'a> Codegen<'a> {
         expression: NodeId,
         scope_path: &str,
     ) -> Result<EventEvaluation, String> {
+        Ok(
+            match self.event_expression_effects(expression, scope_path)?.0 {
+                Some(reason) => EventEvaluation::Process(reason),
+                None => EventEvaluation::Callback,
+            },
+        )
+    }
+
+    /// Classify a `$monitor`/`$strobe` argument, which the runtime evaluates
+    /// in the Postponed region. SV 4.4.2.9 makes writing any net or variable
+    /// there illegal, so a helper that writes storage outside itself is
+    /// rejected. A helper whose only effects are its own static state
+    /// (formals, locals, result) or descriptor transport is evaluated with
+    /// ordinary call semantics; those private stores publish no event.
+    pub(in super::super) fn classify_postponed_expression(
+        &self,
+        expression: NodeId,
+        scope_path: &str,
+    ) -> Result<PostponedEvaluation, String> {
+        // Forms without a zero-time effect summary (system and method calls,
+        // timing) keep the callback path and its own diagnostics.
+        let Ok((process, external)) = self.event_expression_effects(expression, scope_path) else {
+            return Ok(PostponedEvaluation::Callback);
+        };
+        if let Some(reason) = external {
+            return Err(format!(
+                "{reason}: `$monitor`/`$strobe` arguments are evaluated in the read-only Postponed region (IEEE 1800-2009 4.4.2.9)"
+            ));
+        }
+        Ok(if process.is_some() {
+            PostponedEvaluation::PrivateEffects
+        } else {
+            PostponedEvaluation::Callback
+        })
+    }
+
+    /// `(process, external)`: why the expression cannot be a read-only
+    /// callback, and why it writes storage its helpers do not own.
+    fn event_expression_effects(
+        &self,
+        expression: NodeId,
+        scope_path: &str,
+    ) -> Result<(Option<String>, Option<String>), String> {
         let mut visited = HashSet::new();
         let mut process = None;
-        self.check_event_node(expression, scope_path, &mut visited, None, &mut process)?;
-        Ok(match process {
-            Some(reason) => EventEvaluation::Process(reason),
-            None => EventEvaluation::Callback,
-        })
+        let mut external = None;
+        self.check_event_node(
+            expression,
+            scope_path,
+            &mut visited,
+            None,
+            &mut process,
+            &mut external,
+        )?;
+        Ok((process, external))
     }
 
     fn check_event_node(
@@ -75,6 +133,7 @@ impl<'a> Codegen<'a> {
         visited_functions: &mut HashSet<NodeId>,
         function: Option<NodeId>,
         process: &mut Option<String>,
+        external: &mut Option<String>,
     ) -> Result<(), String> {
         let rejected = |reason: &str| {
             Err(format!(
@@ -156,7 +215,14 @@ impl<'a> Codegen<'a> {
                             "descriptor-transported fixed-array formals or result",
                         );
                     }
-                    self.check_event_node(body, scope_path, visited_functions, Some(ft), process)?;
+                    self.check_event_node(
+                        body,
+                        scope_path,
+                        visited_functions,
+                        Some(ft),
+                        process,
+                        external,
+                    )?;
                 }
             }
             NodeKind::SysCall { name } => {
@@ -204,6 +270,11 @@ impl<'a> Codegen<'a> {
                         process,
                         "function body writes external or persistent storage",
                     );
+                    if !self.event_owned_write(function, lhs) {
+                        external.get_or_insert_with(|| {
+                            format!("a helper in `{scope_path}` writes storage it does not own")
+                        });
+                    }
                 }
             }
             NodeKind::Expr(ExprKind::Operation {
@@ -231,12 +302,24 @@ impl<'a> Codegen<'a> {
                         process,
                         "function body writes external or persistent storage",
                     );
+                    if !self.event_owned_write(function, lhs) {
+                        external.get_or_insert_with(|| {
+                            format!("a helper in `{scope_path}` writes storage it does not own")
+                        });
+                    }
                 }
             }
             _ => {}
         }
         for child in &self.node(node).children {
-            self.check_event_node(*child, scope_path, visited_functions, function, process)?;
+            self.check_event_node(
+                *child,
+                scope_path,
+                visited_functions,
+                function,
+                process,
+                external,
+            )?;
         }
         Ok(())
     }
@@ -370,6 +453,54 @@ impl<'a> Codegen<'a> {
         }
 
         visit(self, root, function, Access::Read)
+    }
+
+    /// Whether every leaf of an assignment target is storage the called
+    /// function owns: its result, or a formal or local declared inside it,
+    /// static or automatic.
+    fn event_owned_write(&self, function: Option<NodeId>, lhs: NodeId) -> bool {
+        let Some(function) = function else {
+            return false;
+        };
+        let pattern = self.p30_unwrap_cast(lhs);
+        match self.kind(pattern) {
+            NodeKind::Expr(ExprKind::Operation {
+                op: Operation::Concat,
+                operands,
+                ..
+            }) => {
+                return !operands.is_empty()
+                    && operands
+                        .iter()
+                        .all(|operand| self.event_owned_write(Some(function), *operand));
+            }
+            NodeKind::Expr(ExprKind::Operation {
+                op: Operation::AssignmentPattern,
+                operands,
+                ..
+            }) => {
+                return !operands.is_empty()
+                    && operands.iter().all(|operand| {
+                        self.p30_pattern_lvalue_operand("callback", *operand)
+                            .is_ok_and(|target| self.event_owned_write(Some(function), target))
+                    });
+            }
+            _ => {}
+        }
+        let Some(target) = self.assignment_storage_root(lhs) else {
+            return false;
+        };
+        let target = self.canonical_func_target(target).unwrap_or(target);
+        target == function
+            || (self.node_is_within(target, function)
+                && matches!(
+                    self.kind(target),
+                    NodeKind::FuncArg {
+                        direction: DbDirection::Input,
+                        ..
+                    } | NodeKind::Var { .. }
+                        | NodeKind::Array { .. }
+                ))
     }
 
     fn event_local_write_allowed(&self, function: Option<NodeId>, lhs: NodeId) -> bool {
