@@ -418,10 +418,5 @@ fn main() {
     vendor_patches::emit_rerun_if_changed(&manifest_dir);
     vendor_patches::apply_all(&manifest_dir)
         .unwrap_or_else(|error| panic!("vendor patch preparation failed: {error}"));
-    let out_dir = PathBuf::from(
-        std::env::var_os("OUT_DIR").expect("Cargo must set OUT_DIR for the build script"),
-    );
-    vendor_patches::render_libfst(&manifest_dir, &out_dir.join("libfst"))
-        .unwrap_or_else(|error| panic!("libfst patch preparation failed: {error}"));
     build_slang(&manifest_dir);
 }

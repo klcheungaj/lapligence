@@ -9,7 +9,8 @@
 # The default gate is intentionally serialized. Each phase has a durable log,
 # while metadata.tsv and summary.tsv remain easy to consume from shell tooling.
 # A clean tracked checkout and clean submodules are required unless the caller
-# opts into an explicitly marked local run with the allow-dirty flags.
+# opts into an explicitly marked local run with the allow-dirty flags. An
+# authenticated applied vendor/libfst (patched in place by the build) is not dirty.
 
 set -Eeuo pipefail
 
@@ -153,10 +154,46 @@ record_hashes() {
     fi
     local path
     for path in Cargo.toml Cargo.lock .gitmodules rust-toolchain.toml .cargo/config.toml \
-        patches/slang/slang-cache-only-source-reads.patch; do
+        patches/slang/slang-cache-only-source-reads.patch patches/libfst/libfst-local-changes.patch; do
         [[ -f $path ]] || die "required reproducibility input is missing: $path"
         record "sha256.$path" "$("${hash_tool[@]}" "$path")"
     done
+}
+
+# `patches/libfst` is applied in place in the tracked `vendor/libfst`, so a
+# built tree has those files modified. Authenticate each manifest file as
+# exactly clean or exactly applied (never a mix) and collect the pathspec
+# excludes for the applied ones in `libfst_excludes`, so only unexpected
+# changes count as root edits.
+libfst_excludes=()
+authenticate_libfst() {
+    local manifest=patches/libfst/files.sha256
+    [[ -f $manifest ]] || die "required reproducibility input is missing: $manifest"
+    local -a hash_tool
+    if command -v sha256sum >/dev/null 2>&1; then
+        hash_tool=(sha256sum)
+    elif command -v shasum >/dev/null 2>&1; then
+        hash_tool=(shasum -a 256)
+    else
+        die 'sha256sum or shasum is required to authenticate vendor/libfst'
+    fi
+    local path base applied actual applied_count=0 clean_count=0
+    while read -r path base applied; do
+        [[ -z $path || $path == \#* ]] && continue
+        actual=$("${hash_tool[@]}" "vendor/libfst/$path" | awk '{print $1}')
+        if [[ $actual == "$applied" ]]; then
+            applied_count=$((applied_count + 1))
+            libfst_excludes+=(":(exclude)vendor/libfst/$path")
+        elif [[ $actual == "$base" ]]; then
+            clean_count=$((clean_count + 1))
+        else
+            die "vendor/libfst/$path matches neither the pristine nor the patched digest in $manifest"
+        fi
+    done <"$manifest"
+    if ((applied_count > 0 && clean_count > 0)); then
+        die 'vendor/libfst is partially patched; run git restore --staged --worktree -- vendor/libfst and rebuild'
+    fi
+    record libfst.state "$([[ $applied_count -gt 0 ]] && echo applied || echo clean)"
 }
 
 record_git_state() {
@@ -167,8 +204,9 @@ record_git_state() {
     record root.status "$(git status --porcelain=v1 --untracked-files=all)"
     record root.submodule_status "$(git submodule status --recursive)"
 
+    authenticate_libfst
     local tracked_root_changes
-    tracked_root_changes=$(git diff --name-status --ignore-submodules=all)
+    tracked_root_changes=$(git diff --name-status --ignore-submodules=all -- . ${libfst_excludes[@]+"${libfst_excludes[@]}"})
     tracked_root_changes+=$'\n'
     tracked_root_changes+=$(git diff --cached --name-status --ignore-submodules=all)
     if [[ -n ${tracked_root_changes//$'\n'/} ]]; then

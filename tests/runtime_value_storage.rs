@@ -58,11 +58,7 @@ fn run_storage_tests(label: &str, options: &[String]) {
         .arg(dir.path())
         .arg("-DCMAKE_BUILD_TYPE=Debug")
         // The waveform probes compile the libfst sources the runtime embeds:
-        // the build script's rendering of vendor/libfst with patches/libfst.
-        .arg(format!(
-            "-DLLG_FST_SOURCE_DIR={}",
-            Path::new(env!("OUT_DIR")).join("libfst").display()
-        ))
+        // vendor/libfst, patched in place by the build script.
         .args(options);
     if let Ok(compiler) = std::env::var("LLG_CC").or_else(|_| std::env::var("CC")) {
         configure.arg(format!("-DCMAKE_C_COMPILER={compiler}"));
