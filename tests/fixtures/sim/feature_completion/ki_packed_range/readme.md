@@ -61,6 +61,10 @@ derived by hand below; none were captured from `llg`.
     - `mon = 7788` and `pick = w[1] = 88`.
   - Forcing `nw[2:1] = f00d` gives `66f00d11` (and `mid = f00d`).
     Releasing it restores the drivers.
+- `event_controls`: `@(w[3:2])` wakes for writes of `w[2]` and `w[3]` only,
+  `@(w[1 -: 2])` for `w[1:0]` (including the runtime write `w[1] = 07`), and
+  `@(a[0:1])` of ascending `a` for `a[0]` but not `a[3]`. Each line shows the
+  whole value after the waking write.
 - `modport_ranges`: `.p(w[3:2])` is numbered `[3:2]` (§25.5.4) and
   `.lane(w[2])` is one element. From `w = 44332211`, the writer applies, in
   order:

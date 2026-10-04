@@ -20,6 +20,14 @@ fn continuous_port_alias_force_and_sensitivity_views() {
 }
 
 #[test]
+fn event_controls_wake_only_for_their_elements() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/ki_packed_range/event_controls.out");
+    sim_cli::run_case(SUITE, "event_controls", expected, "", &[]);
+    sim_cli::run_case_backend_parity(SUITE, "event_controls", expected, &[], &[]);
+}
+
+#[test]
 fn modport_expression_port_over_an_element_range() {
     let expected =
         include_str!("../fixtures/sim/feature_completion/ki_packed_range/modport_ranges.out");
