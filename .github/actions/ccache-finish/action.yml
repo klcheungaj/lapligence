@@ -1,0 +1,46 @@
+name: Generated-model compiler cache (finish)
+description: >-
+  Print ccache statistics and, on the default branch only, save the cache
+  directory when this week's entry did not exist yet.
+
+inputs:
+  key:
+    description: The `key` output of ccache-setup.
+    required: true
+  cache-hit:
+    description: The `cache-hit` output of ccache-setup.
+    required: true
+  stats:
+    description: "'false' when the caller already printed statistics (containers)."
+    default: "true"
+  python:
+    description: Python command available on this runner.
+    default: python3
+
+runs:
+  using: composite
+  steps:
+    - if: ${{ always() && inputs.stats == 'true' }}
+      shell: bash
+      env:
+        CI_PYTHON: ${{ inputs.python }}
+      run: '"$CI_PYTHON" scripts/ci_ccache.py stats'
+
+    # An empty directory means activation failed (uncached run): saving it
+    # would occupy this week's key with nothing in it.
+    - id: populated
+      if: ${{ !cancelled() }}
+      shell: bash
+      env:
+        CI_PYTHON: ${{ inputs.python }}
+      run: >-
+        "$CI_PYTHON" -c "import os, pathlib;
+        d = pathlib.Path(os.environ['RUNNER_TEMP'], 'ccache');
+        print('present=' + str(d.is_dir() and any(d.iterdir())).lower())" >> "$GITHUB_OUTPUT"
+
+    # Pull requests and releases only read the cache.
+    - if: ${{ !cancelled() && github.ref == 'refs/heads/master' && inputs.cache-hit != 'true' && steps.populated.outputs.present == 'true' }}
+      uses: actions/cache/save@v6
+      with:
+        path: ${{ runner.temp }}/ccache
+        key: ${{ inputs.key }}

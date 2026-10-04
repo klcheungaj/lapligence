@@ -89,6 +89,17 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.98.0
         with:
           components: rustfmt
+      # Compiled registry dependencies only (about 0.3 GB, key full-host-debug).
+      # The components job above runs no Rust build, so it has no cache. See
+      # ci.yml for the caching policy: nothing built from this repository is
+      # saved, and only master pushes save (this workflow's runs only restore).
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: deps-v1
+          shared-key: full-host-debug
+          cache-targets: "true"
+          cache-bin: "false"
+          save-if: ${{ github.ref == 'refs/heads/master' }}
       - name: Native prerequisites
         run: |
           sudo apt-get update
@@ -104,3 +115,6 @@ jobs:
           print(p.read_text(encoding='utf-8') if p.is_file() else 'No report was created');
           [print('\n'+str(p)+'\n'+p.read_text(encoding='utf-8', errors='replace'))
           for p in sorted(Path('target/p07-full-host/logs').glob('*.log'))]"
+      - name: Keep only third-party dependencies in target/
+        if: always()
+        run: python3 scripts/ci_prune_cargo_cache.py --target-dir target

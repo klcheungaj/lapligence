@@ -230,11 +230,41 @@ sim_procedural_assign with GCC ASan/UBSan; this is not LSP admission coverage.
 The 15-minute dependency-audit runs cargo audit on those triggers and Mondays
 04:17 UTC. Reports stay in workflow logs, not uploaded artifacts.
 
-Cache Cargo downloads only, excluding compiled targets/installed binaries, within
-the repository's documented 10 GB cache budget. Only release events upload Actions
+Caching (binding user rule): CI caches compiled third-party Cargo dependencies and
+the C of generated test models, never anything built from this repository. No
+sccache/ccache wraps llg or the native Slang/fmt/wrapper build (leave `LLG_CCACHE`
+and `CMAKE_C_COMPILER_LAUNCHER` unset in CI), and no llg, `target/slang`, test
+executable, nextest archive or runtime cache is saved.
+- Rust jobs (lint, sanitizers, `build` matrix, manual full-host) use
+  `Swatinem/rust-cache@v2` with `cache-targets: "true"`, `prefix-key: deps-v1`, a
+  distinct `shared-key` per job/target/profile and `save-if` master. The musl
+  `linux-build` has no such action: it restores/saves `target` and the mounted Cargo
+  registry with `actions/cache/{restore,save}` keyed on target, image and
+  `Cargo.lock`/toolchain/config hashes. Every Rust job ends with
+  `scripts/ci_prune_cargo_cache.py` (`sudo` for the root-owned container tree)
+  before the save: it keeps only artifacts of Cargo.lock packages that have a
+  registry/git source, so the workspace crate, its build-script output,
+  `target/slang`, test executables and archives never persist (the rust-cache pass
+  alone would leave an empty Slang tree and does not cover the musl job).
+  Compiled dependencies are about 0.3 GB per entry.
+- Generated models: `.github/actions/ccache-setup` downloads a pinned,
+  checksum-verified ccache (`scripts/ci_ccache.py`), restores its directory with
+  `actions/cache` (key per job/target/distro and ISO week, 500 MB limit), proves a
+  cross-directory hit with the compiler and generator the tests use, then exports
+  `LLG_C_LAUNCHER` and `CCACHE_*` (`CCACHE_BASEDIR` = temp dir, `CCACHE_NOHASHDIR`).
+  A failed install or self-check leaves the launcher unset (uncached run, warning).
+  Used by lint, sanitizers (flags are in the hash), Windows/macOS `test` and
+  `linux-test` (installed on the runner, activated inside the container).
+  `ccache-finish` prints `ccache -sv` and, on master only, saves when the week's
+  key is new. Hit rates are in each job's statistics step. `release`, `build`,
+  `linux-build` and dependency-audit run no generated models.
+Only release events upload Actions
 packages, retained one day; pushes/manual builds upload none. Retention does not
 cap the documented account-wide 500 MB artifact allowance across concurrent runs/
-repositories. Runner disk is a separate resource.
+repositories. Runner disk is a separate resource. The repository's 10 GB cache
+budget holds about nine Cargo entries (about 0.3 GB) plus nine ccache entries (at
+most 500 MB each, usually less); Python tests for the scripts run in `lint`
+(`scripts/test_ci_cache.py`).
 
 Matrix: Linux x86_64/arm64, Windows x86_64/arm64, macOS arm64. Audit architecture,
 static Linux/static Windows CRT linkage, system-only Windows/macOS imports and

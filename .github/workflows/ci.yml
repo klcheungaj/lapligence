@@ -7,6 +7,16 @@
 # is expensive on every platform. This development gate therefore runs against
 # glibc Ubuntu; the five release targets and their linkage audits remain the
 # job of the build matrix below.
+#
+# CACHING POLICY (user rule, binding): compiled third-party Cargo dependencies
+# are cached; nothing built from this repository is. That means no sccache or
+# ccache around the workspace crate or the native Slang/fmt/wrapper build
+# (root build.rs; its LLG_CCACHE launcher stays unset here), and
+# scripts/ci_prune_cargo_cache.py removes llg, target/slang, test executables
+# and archives from every target directory before it is saved. ccache is used
+# only for the C of generated test models, through LLG_C_LAUNCHER (see
+# .github/actions/ccache-setup). Caches are saved by pushes to master only;
+# releases, manual runs elsewhere and other branches restore them.
 name: CI and Release
 
 on:
@@ -54,8 +64,10 @@ jobs:
           python3 scripts/check_sim_fixture_integrity.py --tracked
           python3 -m unittest discover -s scripts -p test_sim_fixture_integrity.py
 
-      - name: Check parallel test runner
-        run: python3 -m unittest discover -s scripts -p test_run_tests.py
+      - name: Check parallel test runner and CI cache scripts
+        run: |
+          python3 -m unittest discover -s scripts -p test_run_tests.py
+          python3 -m unittest discover -s scripts -p test_ci_cache.py
 
       - uses: dtolnay/rust-toolchain@1.98.0
         with:
@@ -63,12 +75,16 @@ jobs:
 
       - uses: taiki-e/install-action@nextest
 
+      # Compiled registry dependencies of target/debug (check, clippy and the
+      # test profile share them), about 0.3 GB. Workspace artifacts are pruned
+      # by the action and again by the last step of this job.
       - uses: Swatinem/rust-cache@v2
         with:
-          # Keep native archives and test executables out of the 10 GB cache budget.
-          prefix-key: registry-only-v1
-          cache-targets: "false"
+          prefix-key: deps-v1
+          shared-key: lint-debug
+          cache-targets: "true"
           cache-bin: "false"
+          save-if: ${{ github.ref == 'refs/heads/master' }}
 
       # Slang's generated headers require Python. build.rs needs CMake and a
       # C++20 compiler; vendor patches are applied by Rust.
@@ -89,6 +105,14 @@ jobs:
 
       - name: cargo clippy (-D warnings)
         run: cargo clippy --locked --all-targets --all-features -- -D warnings
+
+      # Generated models compile through ccache from here on (tests and the
+      # frame gate); the cargo builds above ran without it.
+      - name: Set up the generated-model compiler cache
+        id: ccache
+        uses: ./.github/actions/ccache-setup
+        with:
+          key: lint-ubuntu-22.04
 
       - name: Generated C coroutine-frame and jump-initialization gate
         run: cargo nextest run --locked --all-features --test generated_c_frame_lint
@@ -111,6 +135,19 @@ jobs:
           df -h
           free -h
           du -sh target || true
+
+      - name: Compiler cache statistics and save
+        if: always()
+        uses: ./.github/actions/ccache-finish
+        with:
+          key: ${{ steps.ccache.outputs.key }}
+          cache-hit: ${{ steps.ccache.outputs.cache-hit }}
+
+      # Last step: the cache is saved after the job, so nothing of llg or
+      # Slang (target/slang is outside Cargo's layout) may be left in target/.
+      - name: Keep only third-party dependencies in target/
+        if: always()
+        run: python3 scripts/ci_prune_cargo_cache.py --target-dir target
 
   generated-runtime-sanitizers:
     name: generated runtime / ASan + UBSan (ubuntu)
@@ -143,14 +180,24 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          prefix-key: registry-only-v1
-          cache-targets: "false"
+          prefix-key: deps-v1
+          shared-key: sanitizers-debug
+          cache-targets: "true"
           cache-bin: "false"
+          save-if: ${{ github.ref == 'refs/heads/master' }}
 
       - name: Install native build prerequisites
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake g++ python3
+
+      # The sanitizer flags in LLG_CFLAGS are part of every ccache hash, so
+      # sanitized and plain objects never mix (and this job has its own cache).
+      - name: Set up the generated-model compiler cache
+        id: ccache
+        uses: ./.github/actions/ccache-setup
+        with:
+          key: sanitizers-ubuntu-22.04
 
       - name: Run generated runtime and model probes under sanitizers
         run: >-
@@ -174,6 +221,17 @@ jobs:
           df -h
           free -h
           du -sh target || true
+
+      - name: Compiler cache statistics and save
+        if: always()
+        uses: ./.github/actions/ccache-finish
+        with:
+          key: ${{ steps.ccache.outputs.key }}
+          cache-hit: ${{ steps.ccache.outputs.cache-hit }}
+
+      - name: Keep only third-party dependencies in target/
+        if: always()
+        run: python3 scripts/ci_prune_cargo_cache.py --target-dir target
 
   dependency-audit:
     name: dependency security audit
@@ -238,13 +296,16 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      # Compiled registry dependencies for target/<triple>/release plus the
+      # host build-script/proc-macro artifacts, about 0.1 to 0.4 GB per target
+      # (the nextest archive builds dev-dependencies too). One entry per target.
       - uses: Swatinem/rust-cache@v2
         with:
+          prefix-key: deps-v1
           shared-key: release-${{ matrix.target }}
-          # Native build trees across the matrix can exceed the cache budget.
-          prefix-key: registry-only-v1
-          cache-targets: "false"
+          cache-targets: "true"
           cache-bin: "false"
+          save-if: ${{ github.ref == 'refs/heads/master' }}
 
       # Slang's syntax and diagnostic generators execute during its CMake build.
       - uses: actions/setup-python@v7
@@ -428,6 +489,13 @@ jobs:
             dist/*.zip
             dist/*.sha256
 
+      # Last step, after every step that reads target/: drop llg, target/slang,
+      # the nextest archive and test executables before the cache is saved.
+      - name: Keep only third-party dependencies in target/
+        if: always()
+        shell: bash
+        run: python scripts/ci_prune_cargo_cache.py --target-dir target
+
   # The full release-profile suite for each Windows/macOS target runs from the
   # archive built above on a fresh runner of the same kind, so the build job
   # does not hold its runner while tests run and a test failure leaves the
@@ -492,6 +560,17 @@ jobs:
         with:
           arch: ${{ matrix.msvc_arch }}
 
+      # Generated-model C compiles go through ccache (LLG_C_LAUNCHER). The
+      # setup runs after the MSVC environment because it self-checks with the
+      # compiler and generator the tests will use (CMAKE_GENERATOR=Ninja, the
+      # compiler on PATH) and silently disables itself if that does not hit.
+      - name: Set up the generated-model compiler cache
+        id: ccache
+        uses: ./.github/actions/ccache-setup
+        with:
+          key: test-${{ matrix.target }}
+          python: python
+
       # The archive carries no build script run, so this fresh checkout still
       # holds the pristine vendor/libfst; the standalone CMake probes need the
       # patched sources the build script applies in place elsewhere.
@@ -514,6 +593,14 @@ jobs:
         run: |
           echo "logical CPUs: $(getconf _NPROCESSORS_ONLN 2>/dev/null || echo "$NUMBER_OF_PROCESSORS")"
           df -h
+
+      - name: Compiler cache statistics and save
+        if: always()
+        uses: ./.github/actions/ccache-finish
+        with:
+          key: ${{ steps.ccache.outputs.key }}
+          cache-hit: ${{ steps.ccache.outputs.cache-hit }}
+          python: python
 
   linux-build:
     if: github.event_name != 'schedule'
@@ -542,6 +629,22 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y binutils file
+
+      # Compiled registry dependencies of the container build (target/<triple>
+      # release plus the host build-script artifacts, about 0.2 to 0.4 GB) and
+      # the Cargo registry mounted into it. There is no rust-cache here, so
+      # this restores explicitly and saves after the pruning step below. The
+      # key names the toolchain image because compiled artifacts depend on it.
+      - name: Restore compiled dependencies
+        id: cargo-deps
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            target
+            ${{ runner.temp }}/cargo-registry
+          key: cargo-deps-v1-${{ matrix.target }}-release-rust1.98.0-alpine-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'rust-toolchain.toml', '.cargo/config.toml') }}
+          restore-keys: |
+            cargo-deps-v1-${{ matrix.target }}-release-rust1.98.0-alpine-
 
       - name: Phase 1 llg_co compile gate with GCC and Clang
         shell: bash
@@ -656,6 +759,24 @@ jobs:
             dist/*.tar.gz
             dist/*.sha256
 
+      # After every step that reads target/: keep only third-party dependency
+      # artifacts (no llg, no target/slang, no test executables or archives).
+      # The container ran as root, so the files need sudo to delete.
+      - name: Keep only third-party dependencies in target/
+        if: always()
+        shell: bash
+        run: sudo python3 scripts/ci_prune_cargo_cache.py --target-dir target
+
+      # Only the default branch saves; a successful build is required.
+      - name: Save compiled dependencies
+        if: ${{ success() && github.ref == 'refs/heads/master' && steps.cargo-deps.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            target
+            ${{ runner.temp }}/cargo-registry
+          key: ${{ steps.cargo-deps.outputs.cache-primary-key }}
+
   # Each distribution runs the full release-profile suite from the static musl
   # test archive on its own runner, in parallel with the other distribution
   # and the other platform builds. Neither needs a Rust toolchain; the release
@@ -711,6 +832,16 @@ jobs:
           curl -LsSf "https://get.nexte.st/latest/${{ matrix.nextest_platform }}" \
             | tar -xzf - -C "$RUNNER_TEMP/nextest-bin"
 
+      # Downloads and verifies the pinned static ccache on the runner (the
+      # minimal containers have no CA bundle guarantee) and restores the cache
+      # directory; the container activates it below, where the compiler is.
+      - name: Download ccache and restore its cache
+        id: ccache
+        uses: ./.github/actions/ccache-setup
+        with:
+          key: linux-${{ matrix.arch }}-${{ matrix.distro }}
+          activate: "false"
+
       # The archive carries no build script run, so this fresh checkout still
       # holds the pristine vendor/libfst; the standalone CMake probes need the
       # patched sources the build script applies in place elsewhere.
@@ -719,22 +850,36 @@ jobs:
         run: git apply --whitespace=nowarn --directory=vendor/libfst patches/libfst/libfst-local-changes.patch
 
       # Extracting into /workspace restores target/ at the build container's
-      # compile-time paths.
+      # compile-time paths. ccache activation self-checks with the container's
+      # cc and degrades to an uncached run on failure; statistics print at the
+      # end whatever the suite's status was.
       - name: Run release suite
         shell: bash
         run: |
+          mkdir -p "$RUNNER_TEMP/ccache" "$RUNNER_TEMP/ccache-bin"
           docker run --rm \
             --volume "$GITHUB_WORKSPACE:/workspace" \
             --volume "$RUNNER_TEMP/nextest-archive:/nextest-archive:ro" \
             --volume "$RUNNER_TEMP/nextest-bin:/nextest-bin:ro" \
+            --volume "$RUNNER_TEMP/ccache:/ccache" \
+            --volume "$RUNNER_TEMP/ccache-bin:/ccache-bin:ro" \
             --workdir /workspace \
             --env NEXTEST_PROFILE \
             --env LLG_INSTALL="${{ matrix.install }}" \
             "${{ matrix.image }}" sh -euxc '
               eval "$LLG_INSTALL"
+              touch /tmp/llg-ccache.env
+              python3 scripts/ci_ccache.py activate --ccache /ccache-bin/ccache \
+                --ccache-dir /ccache --env-format shell --env-file /tmp/llg-ccache.env
+              set -a
+              . /tmp/llg-ccache.env
+              set +a
+              status=0
               /nextest-bin/cargo-nextest nextest run --no-fail-fast \
                 --archive-file /nextest-archive/nextest-archive.tar.zst \
-                --workspace-remap /workspace --extract-to /workspace
+                --workspace-remap /workspace --extract-to /workspace || status=$?
+              python3 scripts/ci_ccache.py stats
+              exit $status
             '
 
       - name: Report runner resources
@@ -744,6 +889,14 @@ jobs:
           echo "logical CPUs: $(nproc)"
           df -h
           free -h
+
+      - name: Save the compiler cache
+        if: always()
+        uses: ./.github/actions/ccache-finish
+        with:
+          key: ${{ steps.ccache.outputs.key }}
+          cache-hit: ${{ steps.ccache.outputs.cache-hit }}
+          stats: "false"
 
   release:
     name: Attach packages to GitHub release
