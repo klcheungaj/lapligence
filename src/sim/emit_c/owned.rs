@@ -64,6 +64,17 @@ struct Value {
 }
 
 impl Value {
+    /// Address of a packed value: the borrowed source pointer when there is
+    /// one, otherwise the address of the owned lvalue.
+    fn address(&self) -> String {
+        if let Some(address) = &self.borrowed_address {
+            address.clone()
+        } else if self.slot.is_some() {
+            format!("&{}", self.code)
+        } else {
+            format!("&({})", self.code)
+        }
+    }
     fn real(&self) -> String {
         if self.width == 0 {
             self.code.clone()

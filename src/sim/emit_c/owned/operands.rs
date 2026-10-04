@@ -65,11 +65,7 @@ impl Frame<'_, '_> {
         if value.width == 0 || value.slot.is_some() {
             return value;
         }
-        let address = value
-            .borrowed_address
-            .as_ref()
-            .cloned()
-            .unwrap_or_else(|| format!("&({})", value.code));
+        let address = value.address();
         let mut owned = self.value(format!("sv4_clone({address})"), value.width, value.signed);
         owned.fill = value.fill;
         owned

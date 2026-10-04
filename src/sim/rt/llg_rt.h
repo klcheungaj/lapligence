@@ -1635,6 +1635,10 @@ void llg_clocking_nba_net_sync_selected_after(
     llg_net_t* net, int slot, sv4_t value, sv4_select_plan_t plan, int reverse,
     uint64_t ticks, const llg_wait_src_t* specs, int n_specs);
 void llg_ba(sv4_t* target, sv4_t value);
+// llg_ba borrowing `value` by address. Generated stores use it so that
+// unoptimized AArch64 (and other ABIs passing large structs through a
+// caller-owned copy) do not reserve a separate stack copy per call site.
+void llg_ba_from(sv4_t* target, const sv4_t* value);
 // Commit a write through a canonical `ref` descriptor immediately. Selected
 // aliases update the original storage once, preserving normal wakeups and
 // force/continuous-assignment checks.

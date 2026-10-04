@@ -196,6 +196,7 @@ fn reference_calls_register_descriptors_and_do_not_copy_back() {
     assert!(source.contains(".kind = LLG_REF_WHOLE"));
     assert!(!source.contains("not_executable_C"));
     assert!(!source.contains("llg_ba("));
+    assert!(!source.contains("llg_ba_from("));
     assert!(
         source.find("f_reference(").unwrap() < source.find("llg_value_scopes_end_since").unwrap()
     );
@@ -248,6 +249,7 @@ fn const_ref_callback_reads_are_live_and_not_writable_calls() {
     assert!(find_copy(frame.body(), "&G_value").is_some());
     assert!(!frame.body().contains("f_read("));
     assert!(!frame.body().contains("llg_ba("));
+    assert!(!frame.body().contains("llg_ba_from("));
 }
 
 #[test]
@@ -335,7 +337,7 @@ fn mixed_stream_publishes_each_component_before_selecting_the_next() {
         source.find("llg_queue_unstream_assign(").unwrap()
             < source.rfind("sv4_part_select_to(").unwrap()
     );
-    assert!(source.contains("llg_ba("));
+    assert!(source.contains("llg_ba_from("));
     assert!(frame.slots.iter().all(|slot| !slot));
 }
 
