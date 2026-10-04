@@ -89,6 +89,19 @@ pub fn portable_file_name(name: &str) -> String {
         .collect()
 }
 
+/// `path` spelled for a glob pattern (LSP `GlobPattern`, file watchers):
+/// `/` separates components on every host, because glob syntax reserves `\`
+/// as an escape. Windows separators are rewritten; `None` when the path is
+/// not valid Unicode. Glob metacharacters inside names are not escaped.
+pub fn glob_spelling(path: &Path) -> Option<String> {
+    let text = path.to_str()?;
+    Some(if cfg!(windows) {
+        text.replace('\\', "/")
+    } else {
+        text.to_owned()
+    })
+}
+
 /// Whether paths should be resolved through symlinks before they are compared
 /// with handle-derived spellings. POSIX temporary directories may be symlinks
 /// (macOS `/var` -> `/private/var`); Windows handle paths keep the requested
@@ -237,6 +250,21 @@ mod tests {
             canonicalize(&path.join("Cargo.toml")).expect("canonical manifest"),
             path.join("Cargo.toml")
         );
+    }
+
+    #[test]
+    fn glob_spellings_use_forward_slashes() {
+        assert_eq!(
+            glob_spelling(Path::new("rtl/top.sv")).as_deref(),
+            Some("rtl/top.sv")
+        );
+        let windows = glob_spelling(Path::new(r"C:\work\llg.toml")).expect("unicode path");
+        if cfg!(windows) {
+            assert_eq!(windows, "C:/work/llg.toml");
+        } else {
+            // A backslash is an ordinary name character on POSIX hosts.
+            assert_eq!(windows, r"C:\work\llg.toml");
+        }
     }
 
     #[test]

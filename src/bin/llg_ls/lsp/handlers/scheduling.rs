@@ -353,24 +353,26 @@ pub(super) fn watcher_options_from_state(state: &BackendState) -> LSPAny {
         object.insert("globPattern".to_owned(), LSPAny::String(pattern.to_owned()));
         LSPAny::Object(object)
     };
+    // Glob patterns separate components with `/` on every host.
+    let glob = llg::ffi::platform::glob_spelling;
     let mut watchers: Vec<LSPAny> = Vec::new();
     for root in state.roots.values() {
         // The effective config file (exact path).
-        if let Some(path) = root.descriptor.config_path.to_str() {
-            watchers.push(watcher(path));
+        if let Some(path) = glob(&root.descriptor.config_path) {
+            watchers.push(watcher(&path));
         }
         // `.v`/`.sv` units under each configured source directory.
         let cfg = root.descriptor.effective_config();
         for dir in &cfg.sources.directories {
-            if let Some(dir) = dir.to_str() {
+            if let Some(dir) = glob(dir) {
                 watchers.push(watcher(&format!("{dir}/**/*.v")));
                 watchers.push(watcher(&format!("{dir}/**/*.sv")));
             }
         }
         // Exact resolved include dependencies, regardless of extension.
         for dep in &root.include_deps {
-            if let Some(dep) = dep.to_str() {
-                watchers.push(watcher(dep));
+            if let Some(dep) = glob(dep) {
+                watchers.push(watcher(&dep));
             }
         }
     }

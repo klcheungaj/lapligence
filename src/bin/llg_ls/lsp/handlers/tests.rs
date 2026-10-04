@@ -2144,9 +2144,11 @@ fn watcher_options_cover_config_sources_and_include_deps() {
     );
     let options = watcher_options_from_state(&state);
     let text = options.to_string();
-    assert!(text.contains(&root.join(config::CONFIG_FILE).display().to_string()));
+    let config_glob =
+        llg::ffi::platform::glob_spelling(&root.join(config::CONFIG_FILE)).expect("unicode root");
+    assert!(text.contains(&format!("\"{config_glob}\"")), "{text}");
     assert!(text.contains("**/*.v"));
-    assert!(text.contains("defs.inc"));
+    assert!(text.contains("shared/defs.inc"), "{text}");
 }
 
 #[test]
