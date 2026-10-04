@@ -59,8 +59,9 @@ pub use expressions::{
     IrBinOp, IrBitQuery, IrConditionalMember, IrDynamicCast, IrEnumMember, IrEnumMethod,
     IrEnumQuery, IrExpr, IrExprKind, IrFileInput, IrFileInputTarget, IrFileReadTarget, IrMathFunc,
     IrMutationExpr, IrPatternCheck, IrPatternExpr, IrPatternMatchKind, IrPlusArgTarget,
-    IrPlusArgText, IrRandomFunc, IrRealBinOp, IrRealUnOp, IrSampledCall, IrSampledDomain,
-    IrSampledFunc, IrSysFunc, IrTaggedMemberGuard, IrTaggedSelectStep, IrTimeKind, IrUnOp,
+    IrPlusArgText, IrRandomFunc, IrRealBinOp, IrRealUnOp, IrRuntimeQuery, IrSampledCall,
+    IrSampledDomain, IrSampledFunc, IrSysFunc, IrTaggedMemberGuard, IrTaggedSelectStep, IrTimeKind,
+    IrUnOp,
 };
 mod lvalues;
 pub use lvalues::{

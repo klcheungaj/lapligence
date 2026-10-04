@@ -286,10 +286,27 @@ impl Frame<'_, '_> {
             );
         }
         let join_kind = kind;
+        if join_kind == IrJoinKind::Detached {
+            if target.is_some() {
+                return Err("a detached process has no disable target".to_owned());
+            }
+            for (branch, values) in branches.iter().zip(prepared) {
+                let frame = self.name("capture_frame");
+                let frame = self.publish_captures(&frame, values);
+                self.line(format!(
+                    "llg_spawn_detached_with_frame(&{}_desc, {}, {frame});",
+                    branch.c_name(),
+                    c_string_literal(branch.label())
+                ));
+                self.line(format!("llg_frame_release({frame});"));
+            }
+            return Ok(());
+        }
         let kind = match join_kind {
             IrJoinKind::Join => "LLG_JOIN",
             IrJoinKind::Any => "LLG_JOIN_ANY",
             IrJoinKind::None => "LLG_JOIN_NONE",
+            IrJoinKind::Detached => unreachable!("detached spawns returned above"),
         };
         let group = self.fork_group(kind, target);
         for (branch, values) in branches.iter().zip(prepared) {

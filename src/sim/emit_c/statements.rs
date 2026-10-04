@@ -900,6 +900,9 @@ fn render_stmt_scoped(
                 IrJoinKind::Join => "LLG_JOIN",
                 IrJoinKind::None => "LLG_JOIN_NONE",
                 IrJoinKind::Any => "LLG_JOIN_ANY",
+                IrJoinKind::Detached => {
+                    return Err("detached processes require the owned emitter".to_owned())
+                }
             };
             let mut out = String::from("{\n");
             if let Some(target) = target {
@@ -931,6 +934,9 @@ fn render_stmt_scoped(
                 IrJoinKind::Join => "LLG_JOIN",
                 IrJoinKind::None => "LLG_JOIN_NONE",
                 IrJoinKind::Any => "LLG_JOIN_ANY",
+                IrJoinKind::Detached => {
+                    return Err("detached processes require the owned emitter".to_owned())
+                }
             };
             let mut out = String::from("{\n");
             if let Some(target) = target {

@@ -590,6 +590,9 @@ impl Frame<'_, '_> {
                     IrJoinKind::Join => "LLG_JOIN",
                     IrJoinKind::Any => "LLG_JOIN_ANY",
                     IrJoinKind::None => "LLG_JOIN_NONE",
+                    IrJoinKind::Detached => {
+                        return Err("a detached process needs a captured frame".to_owned())
+                    }
                 };
                 let group = self.fork_group(kind, *target);
                 for (function, label) in branches {
@@ -598,7 +601,7 @@ impl Frame<'_, '_> {
                         c_string_literal(label)
                     ));
                 }
-                if !branches.is_empty() && *join_kind != IrJoinKind::None {
+                if !branches.is_empty() && join_kind.suspends() {
                     self.await_arm(
                         SuspensionOperation::ForkJoin,
                         format!("llg_arm_join(self, {group})"),

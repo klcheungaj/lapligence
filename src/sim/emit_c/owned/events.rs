@@ -187,3 +187,38 @@ impl Frame<'_, '_> {
         self.cancellation_check_covering(cancellation_mark)
     }
 }
+
+impl Frame<'_, '_> {
+    /// Emit a read-only scheduler query. Both queries are plain runtime reads
+    /// with no ownership transfer, so they are legal wherever a value is.
+    pub(super) fn runtime_query(&mut self, query: &IrRuntimeQuery) -> Result<Value, String> {
+        Ok(match query {
+            IrRuntimeQuery::EventTriggerCount(event) => {
+                let event = self.event_address(&IrEventRef::Static(*event))?;
+                self.value(
+                    format!("sv4_from_u64(llg_event_trigger_count({event}), 64, 0)"),
+                    64,
+                    false,
+                )
+            }
+            IrRuntimeQuery::ForceSourceActive(index) => {
+                let signal = self.ctx.model.signal(*index);
+                if !signal.net_alias.is_empty() {
+                    return Err("a force source cannot be a net alias".to_owned());
+                }
+                let arguments = if matches!(signal.ty, IrType::Real { .. }) {
+                    format!("NULL, &{}", signal.c_name)
+                } else {
+                    format!("&{}, NULL", signal.c_name)
+                };
+                self.value(
+                    format!(
+                        "sv4_from_u64(llg_force_source_active({arguments}) ? 1ULL : 0ULL, 1, 0)"
+                    ),
+                    1,
+                    false,
+                )
+            }
+        })
+    }
+}

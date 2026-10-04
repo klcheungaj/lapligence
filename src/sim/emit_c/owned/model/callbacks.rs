@@ -128,8 +128,13 @@ fn render_with_frame(
             c_name,
             args,
             time_unit_fs,
+            private_effects,
         } => {
-            frame.read_only_callback = true;
+            // Lowering proved that a private-effect helper stores only to its
+            // own storage. The runtime evaluates display callbacks in a
+            // private-evaluation context that applies those Postponed stores
+            // without publication (SV 4.4.2.9 forbids any visible write).
+            frame.read_only_callback = !*private_effects;
             frame.line("(void)out; (void)context;");
             frame.line("{");
             let values = frame.formatted_arguments(args, *time_unit_fs)?;

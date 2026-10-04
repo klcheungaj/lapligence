@@ -1056,9 +1056,14 @@ static void test_event_triggered_lifecycle(void) {
     llg_rt_run();
     CHECK(lifecycle_triggered_inside_run);
     CHECK(!llg_event_triggered(&lifecycle_event));
+    // The trigger count survives the time slot but not reinitialization.
+    CHECK(llg_event_trigger_count(&lifecycle_event) == 1);
+    CHECK(llg_event_trigger_count(NULL) == 0);
 
     llg_rt_init();
     CHECK(!llg_event_triggered(&lifecycle_event));
+    llg_event_object_reset(&lifecycle_event_object);
+    CHECK(llg_event_trigger_count(&lifecycle_event) == 0);
     llg_rt_cleanup();
 }
 
@@ -1691,6 +1696,33 @@ static void test_force_live_expression(void) {
     CHECK(u(f_live_target) == 0);
 }
 
+static sv4_t f_other_source = SV4_EMPTY;
+
+static void f_other_eval(sv4_t* out) {
+    sv4_copy(out, &f_other_source);
+}
+
+static void test_force_source_active(void) {
+    // An effectful force site's guard evaluates only while some live binding
+    // still reads its hidden source: release and replacement both end it.
+    llg_rt_init();
+    sv4_replace(&f_live_target, SV4_C(0, 1));
+    sv4_replace(&f_live_source, SV4_C(1, 1));
+    sv4_replace(&f_other_source, SV4_C(0, 1));
+    llg_force_read_t reads[] = {{&f_live_source, NULL, 0}};
+    llg_force_read_t other_reads[] = {{&f_other_source, NULL, 0}};
+    llg_force_part_t part = {&f_live_target, NULL, 0, 0, 1, 0, 0};
+    CHECK(!llg_force_source_active(&f_live_source, NULL));
+    llg_force_expr_parts(&part, 1, 0, 0, f_live_eval, reads, 1);
+    CHECK(llg_force_source_active(&f_live_source, NULL));
+    CHECK(!llg_force_source_active(&f_other_source, NULL));
+    llg_force_expr_parts(&part, 1, 0, 0, f_other_eval, other_reads, 1);
+    CHECK(!llg_force_source_active(&f_live_source, NULL));
+    CHECK(llg_force_source_active(&f_other_source, NULL));
+    llg_release_parts(&part, 1, 0, 0);
+    CHECK(!llg_force_source_active(&f_other_source, NULL));
+}
+
 static void test_force_release(void) {
     // A procedural variable retains the currently forced value on release.
     llg_rt_init();
@@ -2255,6 +2287,7 @@ static int run_selftests(int argc, char** argv) {
     test_fork_join();
     test_clear_temporaries();
     test_force_release();
+    test_force_source_active();
     test_clear_temporaries();
     test_force_live_expression();
     test_clear_temporaries();

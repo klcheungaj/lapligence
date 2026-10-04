@@ -1496,3 +1496,55 @@ fn force_dependencies_must_name_persistent_fixed_arrays() {
         assert_eq!(error.path(), "processes[0].body[0].dependencies[0]");
     }
 }
+
+#[test]
+fn runtime_queries_name_existing_storage_with_their_fixed_shape() {
+    let model_with = |query: IrRuntimeQuery, width: u32| {
+        let mut model = valid_model();
+        model
+            .events
+            .push(crate::sim::ir::IrEvent::new("ev".to_string()));
+        model.processes.push(IrProcess {
+            c_name: "proc".to_string(),
+            label: "top.initial".to_string(),
+            kind: IrProcessKind::Synthetic,
+            shape: IrShape::RunOnce,
+            writes: Vec::new(),
+            pre_fns: Vec::new(),
+            body: vec![IrStmt::DeclLocal {
+                name: "probe".to_string(),
+                width,
+                signed: false,
+                init: Some(Box::new(IrExpr::new(
+                    IrExprKind::RuntimeQuery(query),
+                    width,
+                    false,
+                    None,
+                ))),
+                two_state: true,
+            }],
+            program: None,
+            origin: crate::sim::semantic::Origin::Synthetic {
+                reason: "validation fixture".to_owned(),
+            },
+        });
+        model.spawns.push("proc".to_string());
+        model
+    };
+    model_with(IrRuntimeQuery::EventTriggerCount(0), 64)
+        .validate()
+        .expect("a static event's trigger count is 64 bits");
+    model_with(IrRuntimeQuery::ForceSourceActive(0), 1)
+        .validate()
+        .expect("a force-source query is one bit");
+    for (query, width) in [
+        (IrRuntimeQuery::EventTriggerCount(0), 32),
+        (IrRuntimeQuery::EventTriggerCount(1), 64),
+        (IrRuntimeQuery::ForceSourceActive(0), 2),
+        (IrRuntimeQuery::ForceSourceActive(1), 1),
+    ] {
+        model_with(query.clone(), width)
+            .validate()
+            .expect_err("a runtime query must name storage and keep its shape");
+    }
+}

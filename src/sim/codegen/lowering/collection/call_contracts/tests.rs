@@ -198,6 +198,108 @@ endmodule
 }
 
 #[test]
+fn postponed_helpers_may_only_store_to_their_own_storage() {
+    let source = r#"
+module tb;
+    int a, calls;
+    function int counted(input int v);
+        static int seen = 0;
+        seen++;
+        return v;
+    endfunction
+    function int visible(input int v);
+        calls++;
+        return v;
+    endfunction
+    function automatic int clean(input int v);
+        int t;
+        t = v + 1;
+        return t;
+    endfunction
+    function int nested(input int v);
+        return counted(v) + clean(v);
+    endfunction
+    initial begin
+        $strobe("%0d", counted(a));
+        $strobe("%0d", visible(a));
+        $strobe("%0d", clean(a));
+        $strobe("%0d", nested(a));
+        $strobe("%0d", $time);
+    end
+endmodule
+"#;
+    let database = {
+        let output = crate::core::compile::compile_sources_checked(
+            &[crate::core::compile::OwnedSource::compilation_unit(
+                "postponed.sv",
+                source,
+            )],
+            &crate::core::compile::CompileOpts {
+                top: Some("tb".to_owned()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        Db::from_slang(&output.snapshot).unwrap()
+    };
+    let semantic = crate::sim::semantic::SemanticModel::from_db(&database);
+    let mut cg = Codegen::new(&semantic);
+    let tops = cg.collect_design().unwrap();
+    cg.bind_reference_ports().unwrap();
+    for top in tops {
+        cg.emit_func_prototypes(top).unwrap();
+    }
+    // The call site in the initial block, not a nested call in a body.
+    let call = |cg: &Codegen<'_>, name: &str| {
+        let in_function = |mut node: NodeId| {
+            while let Some(parent) = cg.node(node).parent() {
+                if matches!(cg.kind(parent), NodeKind::FuncTask { .. }) {
+                    return true;
+                }
+                node = parent;
+            }
+            false
+        };
+        database
+            .node_ids()
+            .find(|node| {
+                matches!(cg.kind(*node), NodeKind::FuncCall { name: callee, .. } if callee == name)
+                    && !in_function(*node)
+            })
+            .unwrap()
+    };
+    let counted = call(&cg, "counted");
+    if let Some(instance) = cg.owning_inst(counted) {
+        cg.inst = instance;
+    }
+    assert_eq!(
+        cg.classify_postponed_expression(counted, "tb").unwrap(),
+        PostponedEvaluation::PrivateEffects
+    );
+    assert!(cg
+        .classify_postponed_expression(call(&cg, "visible"), "tb")
+        .unwrap_err()
+        .contains("4.4.2.9"));
+    assert_eq!(
+        cg.classify_postponed_expression(call(&cg, "clean"), "tb")
+            .unwrap(),
+        PostponedEvaluation::Callback
+    );
+    assert_eq!(
+        cg.classify_postponed_expression(call(&cg, "nested"), "tb")
+            .unwrap(),
+        PostponedEvaluation::PrivateEffects
+    );
+    // A helper's own formal, static local and result never enter the
+    // sensitivity of a process-evaluated expression; the actual does.
+    let sensitivity = cg
+        .collect_evaluator_sensitivity("tb", call(&cg, "nested"))
+        .unwrap();
+    assert_eq!(sensitivity.len(), 1, "{sensitivity:?}");
+    assert!(sensitivity[0].scalar_name().unwrap().contains('a'));
+}
+
+#[test]
 fn only_subroutine_scoped_event_reads_and_non_input_event_formals_force_expansion() {
     let source = r#"
 module tb;

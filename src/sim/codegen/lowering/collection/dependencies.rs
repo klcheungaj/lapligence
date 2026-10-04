@@ -116,6 +116,97 @@ impl<'a> Codegen<'a> {
         Ok(reads)
     }
 
+    /// Sensitivity of an expression that a process evaluates for an event
+    /// control or an effectful force source. Like always_comb's implicit
+    /// sensitivity (SV 9.2.2.2.1), it holds every storage read, including
+    /// reads inside called functions, except storage declared within those
+    /// functions (formals, locals, static result) and storage they write.
+    /// Without these exclusions a helper's own stores would re-trigger its
+    /// evaluation, and two such waits sharing a static helper or a counter
+    /// would wake each other forever.
+    pub(in super::super) fn collect_evaluator_sensitivity(
+        &self,
+        scope_path: &str,
+        expression: NodeId,
+    ) -> Result<Vec<IrDependency>, String> {
+        let writes = self.collect_process_writes(expression)?;
+        let mut owned = HashSet::new();
+        let mut owned_arrays = HashSet::new();
+        let mut visited = HashSet::new();
+        self.collect_callee_storage(expression, &mut visited, &mut owned, &mut owned_arrays)?;
+        let owned_storage = |dependency: &IrDependency| {
+            let storage = match dependency {
+                IrDependency::PackedRange { storage, .. } => storage.as_ref(),
+                other => other,
+            };
+            match storage {
+                IrDependency::ArrayContents(array) | IrDependency::ArrayElement { array, .. } => {
+                    owned_arrays.contains(array)
+                }
+                other => owned.contains(other),
+            }
+        };
+        Ok(self
+            .collect_read_signals(scope_path, expression)?
+            .into_iter()
+            .filter(|read| !owned_storage(read))
+            .flat_map(|read| {
+                if writes.is_empty() {
+                    vec![read]
+                } else {
+                    self.exclude_written_prefixes(read, &writes)
+                }
+            })
+            .collect())
+    }
+
+    /// Storage declared inside every function `root` calls, transitively.
+    fn collect_callee_storage(
+        &self,
+        root: NodeId,
+        visited: &mut HashSet<NodeId>,
+        owned: &mut HashSet<IrDependency>,
+        owned_arrays: &mut HashSet<usize>,
+    ) -> Result<(), String> {
+        if let NodeKind::FuncCall {
+            name,
+            is_task,
+            callee,
+            ..
+        } = self.kind(root)
+        {
+            let (function, _) = self.resolve_callee_env(self.inst, name, *is_task, *callee)?;
+            if visited.insert(function) {
+                let mut declarations = vec![function];
+                while let Some(node) = declarations.pop() {
+                    declarations.extend(self.node(node).children.iter().copied());
+                    if !matches!(
+                        self.kind(node),
+                        NodeKind::FuncArg { .. } | NodeKind::Var { .. } | NodeKind::Array { .. }
+                    ) {
+                        continue;
+                    }
+                    if let Some(info) = self
+                        .signal_of(node)
+                        .or_else(|| self.static_proc_local_signal(node))
+                    {
+                        owned.insert(self.signal_dependency(info));
+                    }
+                    if let Some(array) = self.array_of(node) {
+                        owned_arrays.insert(self.reference_array(array.ir));
+                    }
+                }
+                if let Some(body) = self.func_body(function) {
+                    self.collect_callee_storage(body, visited, owned, owned_arrays)?;
+                }
+            }
+        }
+        for child in &self.node(root).children {
+            self.collect_callee_storage(*child, visited, owned, owned_arrays)?;
+        }
+        Ok(())
+    }
+
     fn dependency_width(&self, dependency: &IrDependency) -> Option<u32> {
         match dependency {
             IrDependency::Scalar(name) => self

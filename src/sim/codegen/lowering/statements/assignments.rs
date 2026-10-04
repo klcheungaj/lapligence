@@ -546,6 +546,9 @@ impl EmitCtx<'_, '_> {
                 self.path
             ));
         }
+        if let Some((specs, count)) = self.process_evaluated_intra_event(timing) {
+            return self.lower_process_event_assignment(h, blocking, lhs, rhs, op, &specs, count);
+        }
         let (specs, repeat) = self.lower_intra_event_timing(timing)?;
         let lh = self.cg.lower_lhs(&self.path, lhs)?;
         let rhs_ir = self.lower_assignment_rhs(lhs, rhs, op, &lh)?;
@@ -613,6 +616,195 @@ impl EmitCtx<'_, '_> {
         }])
     }
 
+    /// The event specs and optional repeat count of an intra-assignment
+    /// event control whose helper needs process evaluation (see
+    /// [`super::super::collection::EventEvaluation`]). Other forms keep the
+    /// runtime-callback path and its diagnostics.
+    fn process_evaluated_intra_event(
+        &self,
+        timing: &IntraControl,
+    ) -> Option<(Vec<EventSpec>, Option<NodeId>)> {
+        match timing {
+            IntraControl::Event {
+                specs, implicit, ..
+            } if !*implicit && self.event_specs_need_process(specs) => Some((specs.clone(), None)),
+            IntraControl::Repeat { count, event, .. } => match event.as_ref() {
+                IntraControl::Event {
+                    specs, implicit, ..
+                } if !*implicit && self.event_specs_need_process(specs) => {
+                    Some((specs.clone(), Some(*count)))
+                }
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// Lower an intra-assignment event control whose helper has effects. The
+    /// RHS (and an NBA's destination selectors) are evaluated first, then the
+    /// control is armed (SV 9.4.5). A blocking assignment waits in its own
+    /// process. A nonblocking assignment must not block its issuer, so its
+    /// captured values and armed event state move to a detached process that
+    /// waits, then issues the NBA (SV 9.4.5, 10.4.2). That process is not a
+    /// child of the issuer, so `wait fork`/`disable fork` never observe it,
+    /// just as they never observe a runtime-owned pending NBA.
+    #[allow(clippy::too_many_arguments)]
+    fn lower_process_event_assignment(
+        &mut self,
+        h: NodeId,
+        blocking: bool,
+        lhs: NodeId,
+        rhs: NodeId,
+        op: Operation,
+        specs: &[EventSpec],
+        count: Option<NodeId>,
+    ) -> Result<Vec<IrStmt>, String> {
+        let count = count
+            .map(|count| {
+                let count = self.cg.lower_expr(&self.path, count)?;
+                if count.is_real() {
+                    return Err(format!(
+                        "real-valued repeat event count in `{}` is not supported",
+                        self.path
+                    ));
+                }
+                Ok(count)
+            })
+            .transpose()?;
+        let lh = self.cg.lower_lhs(&self.path, lhs)?;
+        let rhs_ir = self.lower_assignment_rhs(lhs, rhs, op, &lh)?;
+        let rhs_ir = apply_lhs_assignment_context(&self.cg.model, &lh, rhs_ir);
+        if blocking {
+            let tmp = format!("_event_rhs_{}", h.0);
+            let (width, signed) = (rhs_ir.width, rhs_ir.signed);
+            let wait = self.process_event_plan(h, specs)?.blocking();
+            let wait = match count {
+                Some(count) => IrStmt::Repeat {
+                    count,
+                    body: vec![wait],
+                },
+                None => wait,
+            };
+            self.saw_wait = true;
+            return Ok(vec![IrStmt::Block(vec![
+                IrStmt::DeclLocal {
+                    name: tmp.clone(),
+                    width,
+                    signed,
+                    two_state: false,
+                    init: Some(Box::new(rhs_ir)),
+                },
+                wait,
+                IrStmt::Assign {
+                    lhs: lh,
+                    rhs: IrExpr::new(IrExprKind::LocalRead(tmp), width, signed, None),
+                    nba: false,
+                },
+            ])]);
+        }
+        if self.cg.proc_local_target(lhs).is_some()
+            || self.cg.subroutine_auto_target(lhs)
+            || lh.has_activation_root()
+        {
+            return Err(
+                "nonblocking event/repeat intra-assignment timing requires persistent target storage"
+                    .to_owned(),
+            );
+        }
+        let frame = self.cg.new_frame_id()?;
+        let mut captures = Vec::new();
+        let rhs_capture = self.capture_event_assignment_expr(frame, &mut captures, rhs_ir);
+        let lhs_capture = self.capture_event_assignment_lhs(frame, &mut captures, lh)?;
+        let action = vec![IrStmt::Assign {
+            lhs: lhs_capture,
+            rhs: rhs_capture,
+            nba: true,
+        }];
+        Ok(vec![self.spawn_process_evaluated_action(
+            h,
+            specs,
+            count,
+            frame,
+            captures,
+            action,
+            "event_nba",
+        )?])
+    }
+
+    /// Arm a process-evaluated event control in the issuing process and
+    /// return the statement that spawns the detached process which waits for
+    /// it (repeated `count` times) and then runs `action`. `captures` already
+    /// holds the issue-time values `action` reads; the repeat count and the
+    /// armed event state are appended. The detached process sees only module,
+    /// package and static storage plus its captured frame.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn spawn_process_evaluated_action(
+        &mut self,
+        h: NodeId,
+        specs: &[EventSpec],
+        count: Option<IrExpr>,
+        frame: FrameId,
+        mut captures: Vec<IrCapture>,
+        action: Vec<IrStmt>,
+        kind: &str,
+    ) -> Result<IrStmt, String> {
+        fn expressions(spec: &EventSpec, out: &mut Vec<NodeId>) {
+            match spec {
+                EventSpec::Qualified { event, condition } => {
+                    out.push(*condition);
+                    expressions(event, out);
+                }
+                EventSpec::Named(event) => out.push(*event),
+                EventSpec::AnyChange { sig } | EventSpec::Edge { sig, .. } => out.push(*sig),
+            }
+        }
+        let mut nodes = Vec::new();
+        for spec in specs {
+            expressions(spec, &mut nodes);
+        }
+        for node in nodes {
+            if let Some(target) = self
+                .cg
+                .nested_proc_local_ref(node)
+                .or_else(|| self.cg.nested_capture_ref(node))
+                .or_else(|| self.nested_subroutine_auto_ref(node))
+            {
+                return Err(format!(
+                    "nonblocking event control with a process-evaluated helper in `{}` cannot read automatic storage `{}`",
+                    self.cg.source_path(&self.path),
+                    self.cg.node(target).name
+                ));
+            }
+        }
+        let count =
+            count.map(|count| self.capture_event_assignment_expr(frame, &mut captures, count));
+        let plan = self.process_event_plan(h, specs)?;
+        let armed = plan
+            .arm
+            .iter()
+            .map(|arm| self.capture_event_assignment_expr(frame, &mut captures, arm.value.clone()))
+            .collect();
+        let wait = plan.resumed(armed);
+        let mut body = match count {
+            Some(count) => vec![IrStmt::Repeat { count, body: wait }],
+            None => wait,
+        };
+        body.extend(action);
+        let name = self.cg.new_fn_name(&self.path, kind);
+        let label = format!("{}.{kind}", self.cg.source_path(&self.path));
+        self.pre_fns.push(crate::sim::ir::IrPreFn::CapturedBranch {
+            c_name: name.clone(),
+            frame,
+            captures: captures.clone(),
+            body,
+        });
+        Ok(IrStmt::CapturedFork {
+            join_kind: IrJoinKind::Detached,
+            branches: vec![IrCapturedBranch::new(name, label, frame, captures)],
+            target: None,
+        })
+    }
+
     #[allow(clippy::type_complexity)]
     fn lower_intra_event_timing(
         &mut self,
@@ -674,7 +866,7 @@ impl EmitCtx<'_, '_> {
         }
     }
 
-    fn capture_event_assignment_expr(
+    pub(super) fn capture_event_assignment_expr(
         &self,
         frame: FrameId,
         captures: &mut Vec<IrCapture>,

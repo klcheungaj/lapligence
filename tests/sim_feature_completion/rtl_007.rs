@@ -223,24 +223,3 @@ fn neg_continuous_called_conflict() {
         "has both a continuous assignment",
     );
 }
-
-#[test]
-fn neg_force_stateful() {
-    // Unsupported boundary, not a language rule: force evaluators stay
-    // read-only runtime callbacks.
-    sim_cli::reject_case(
-        SUITE,
-        "neg_force_stateful",
-        "is not a read-only evaluator: function body writes external or persistent storage",
-    );
-}
-
-#[test]
-fn neg_named_event_mix() {
-    // Unsupported boundary, not a language rule.
-    sim_cli::reject_case(
-        SUITE,
-        "neg_named_event_mix",
-        "named events cannot share an event control with a process-evaluated helper expression",
-    );
-}

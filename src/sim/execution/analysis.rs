@@ -29,7 +29,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 
-use crate::sim::ir::{IrJoinKind, IrModel, IrObjectStmt, IrPreFn, IrProcessControl, IrStmt};
+use crate::sim::ir::{IrModel, IrObjectStmt, IrPreFn, IrProcessControl, IrStmt};
 
 use super::recursion::RecursionAnalysis;
 use super::{
@@ -667,16 +667,12 @@ fn suspension_operation(
             join_kind,
             branches,
             ..
-        } if !branches.is_empty() && *join_kind != IrJoinKind::None => {
-            SuspensionOperation::ForkJoin
-        }
+        } if !branches.is_empty() && join_kind.suspends() => SuspensionOperation::ForkJoin,
         IrStmt::CapturedFork {
             join_kind,
             branches,
             ..
-        } if !branches.is_empty() && *join_kind != IrJoinKind::None => {
-            SuspensionOperation::ForkJoin
-        }
+        } if !branches.is_empty() && join_kind.suspends() => SuspensionOperation::ForkJoin,
         IrStmt::WaitFork => SuspensionOperation::WaitFork,
         IrStmt::Expect { .. } => SuspensionOperation::Expect,
         IrStmt::StopControl { .. } => SuspensionOperation::Stop,
@@ -956,7 +952,7 @@ mod tests {
     use crate::sim::execution::ExecutionModel;
     use crate::sim::ir::{
         FrameId, IrCall, IrCapturedBranch, IrChandleExpr, IrConst, IrDelay, IrDepth, IrExpr,
-        IrExprKind, IrFunc, IrMailboxTarget, IrMailboxValue, IrModelParts, IrProcess,
+        IrExprKind, IrFunc, IrJoinKind, IrMailboxTarget, IrMailboxValue, IrModelParts, IrProcess,
         IrProcessExpr, IrShape,
     };
 

@@ -347,6 +347,7 @@ impl Frame<'_, '_> {
                     false,
                 )
             }
+            IrExprKind::RuntimeQuery(query) => self.runtime_query(query)?,
             IrExprKind::FixedStream { array, selector } => {
                 self.fixed_stream_source(*array, selector, expr)?
             }

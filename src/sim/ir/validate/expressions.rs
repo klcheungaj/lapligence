@@ -328,6 +328,24 @@ impl Validator<'_> {
                     );
                 }
             }
+            IrExprKind::RuntimeQuery(query) => {
+                let width = match query {
+                    IrRuntimeQuery::EventTriggerCount(event) => {
+                        self.validate_event_ref(&IrEventRef::Static(*event), formals, path)?;
+                        64
+                    }
+                    IrRuntimeQuery::ForceSourceActive(signal) => {
+                        if self.model.signals.get(*signal).is_none() {
+                            return self
+                                .fail(path, format!("signal index {signal} is out of bounds"));
+                        }
+                        1
+                    }
+                };
+                if expr.width != width || expr.signed || expr.fill.is_some() {
+                    return self.fail(path, "runtime query has an invalid result shape");
+                }
+            }
             IrExprKind::Mutation(mutation) => {
                 self.validate_lhs(&mutation.lhs, formals, &format!("{path}.lhs"))?;
                 self.validate_expr(&mutation.value, formals, &format!("{path}.value"))?;

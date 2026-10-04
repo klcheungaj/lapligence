@@ -371,6 +371,10 @@ typedef struct {
     llg_deferred_assertion_report_t* deferred_assertion_tail;
     uint64_t next_process_identity;
     int in_deferred_action;
+    // Set while Postponed display evaluators run. Lowering admits only
+    // helpers whose stores target their own static storage (SV 4.4.2.9
+    // forbids visible writes there); those stores apply without publication.
+    int private_evaluation;
     int running;
     int finish;
     int suspended;

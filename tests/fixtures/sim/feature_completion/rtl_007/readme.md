@@ -47,8 +47,8 @@ destruction at native O0/O3.
   task calls in functions, output/ref formals in continuous and event
   contexts, and a variable with both a continuous driver and a procedural
   write made by a continuously called function.
-- Negatives (unsupported boundaries, not language rules): a force source whose
-  helper writes visible state, and a named event in the same event control as
-  a process-evaluated helper.
+- Force sources, monitor/strobe arguments, intra-assignment and nonblocking
+  event controls and named-event or real lists with such helpers are covered
+  by RTL-007b (`../rtl_007b/`).
 
 All `.out` files are hand-derived from the clauses above.

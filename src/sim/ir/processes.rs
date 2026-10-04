@@ -48,6 +48,11 @@ pub enum IrPreFn {
         args: Vec<IrDisplayArg>,
         /// Physical unit of the deferred arguments' owning scope for `%t`.
         time_unit_fs: u64,
+        /// An argument calls a helper whose only effects are stores to its own
+        /// static storage or descriptor transport. The evaluator then makes
+        /// ordinary calls inside a runtime private-evaluation bracket, which
+        /// applies those Postponed-region stores without publication.
+        private_effects: bool,
     },
     /// `static void c_name(double* out, void* context) { *out = value; }` for
     /// real event expressions. The callback is side-effect free and

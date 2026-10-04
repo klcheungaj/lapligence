@@ -17,9 +17,9 @@ use std::collections::{BTreeSet, HashSet};
 
 use crate::sim::ir::{
     IrArrayQueryTarget, IrCallArg, IrChandleExpr, IrContainerExpr, IrDependency, IrDisplayArg,
-    IrExpr, IrExprKind, IrInsideItem, IrJoinKind, IrLhs, IrMailboxExpr, IrMailboxValue, IrModel,
-    IrObjectQuery, IrObjectStmt, IrShape, IrStmt, IrStochasticStmt, IrStreamSelector,
-    IrStreamTarget, IrStringExpr, IrStringInsideItem, IrSysFunc, IrValidationError,
+    IrExpr, IrExprKind, IrInsideItem, IrLhs, IrMailboxExpr, IrMailboxValue, IrModel, IrObjectQuery,
+    IrObjectStmt, IrShape, IrStmt, IrStochasticStmt, IrStreamSelector, IrStreamTarget,
+    IrStringExpr, IrStringInsideItem, IrSysFunc, IrValidationError,
 };
 use crate::sim::semantic::{ExtensionRef, Origin};
 
@@ -759,7 +759,7 @@ fn collect_effects(
                 ..
             } => {
                 effects.push(ExecutionEffect::Spawn);
-                if !branches.is_empty() && *join_kind != IrJoinKind::None {
+                if !branches.is_empty() && join_kind.suspends() {
                     effects.push(ExecutionEffect::Suspend);
                 }
             }
@@ -769,7 +769,7 @@ fn collect_effects(
                 ..
             } => {
                 effects.push(ExecutionEffect::Spawn);
-                if !branches.is_empty() && *join_kind != IrJoinKind::None {
+                if !branches.is_empty() && join_kind.suspends() {
                     effects.push(ExecutionEffect::Suspend);
                 }
             }
@@ -1800,6 +1800,7 @@ fn collect_expression_effects(
         | IrExprKind::FormalRead(_)
         | IrExprKind::Fill(_)
         | IrExprKind::EventTriggered(_)
+        | IrExprKind::RuntimeQuery(_)
         | IrExprKind::FixedArrayCompare { .. }
         | IrExprKind::Verbatim { .. } => {}
     }

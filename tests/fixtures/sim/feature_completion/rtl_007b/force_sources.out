@@ -1,0 +1,15 @@
+t0 y=2 cnt_ok=1
+t2 y=6
+t4 y=106 cnt=0 other_ok=1
+t6 y=106 other_cnt=0
+t7 w=8
+t8 w=7
+t10 z=3
+t11 z=9
+t12 hi=7 lo=248 last=7
+t13 hi=2 lo=253 last=2
+t14 hi=3 lo=253
+t16 ry=1.50 rcnt_ok=1
+t17 q=11
+t18 q=14
+t19 q=4
