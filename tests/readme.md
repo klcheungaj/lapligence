@@ -155,6 +155,14 @@ warnings. `alias_identity`
 also parses its VCD. Negatives cover uwire drivers, pass switches and inout
 formals and the alias legality rules.
 
+RTL-012's strength and `unconnected_drive` fixtures use
+`-E 'binary(sim_feature_completion) & test(rtl_012::)'`. The scalar matrix and
+the 70-bit composition compare against the exhaustive outcome oracle in
+`sim_feature_completion/rtl_012/oracle.rs`; positives run in both optimizer
+modes on both backends (set `LLG_TEST_GMP_ROOT` for the GMP lane), the matrix
+and tristate fixtures in both editions. Negatives cover supply-net, selected
+vector-bit, highz-pair and pullup-strength0 forms.
+
 ### Vendor patch preparation
 
 `vendor_patches.rs` checks clean/applied trees, no-Git archives (including archives

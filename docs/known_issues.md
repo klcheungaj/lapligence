@@ -418,6 +418,28 @@ measurement): linear, never flattened into one packed value, but still one
 electrical group per cell, because the partitioner extends runs only within
 one cell.
 
+Input-port links into a net-array formal and `unconnected_drive` pulls on one
+(RTL-012) gather the cells into one packed contribution the same way. Above
+the packed width limit they keep the older per-element storage write, which
+bypasses the formal's internal drivers.
+
 The intended direction is a descriptor-backed net-array cell table with a
 loop over a contiguous RHS view, keeping per-cell resolution state but not
 per-cell generated code.
+
+## Delayed enable gates drive X instead of L/H
+
+**Status:** open (RTL-012 deferral).
+
+An undelayed `bufif0/1` or `notif0/1` output is split into a strength0-only and
+a strength1-only contribution, so an unknown enable drives L or H (IEEE
+1364-2001 7.4, 7.10.2) and, for example, `bufif1 (w, 1'b0, 1'bx)` with a
+`pulldown (w)` resolves to `650`/0. A gate with a delay keeps one contribution:
+splitting would turn a 0-to-1 output into a turn-off of one slot and a rise of
+the other, so the net could pass through Z and use the wrong transition delay.
+The delayed gate therefore drives X (StX) for an unknown enable, and the same
+pulldown example resolves to x. Supporting it needs one inertial handle that
+publishes both halves with the transition delay of the combined output.
+
+Reproduce with `bufif1 #1 (w, d, e); pulldown (w);`, `d = 0; e = 1'bx;` and
+`#2 $display("%v", w);` (prints `StX`; the LRM result is `650`).

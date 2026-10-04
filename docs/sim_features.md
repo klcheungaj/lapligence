@@ -826,11 +826,19 @@ Macros, includes and their edition-specific behavior are counted in §11.
   hierarchical/fixed-array drivers retain independent contributions. `wire/tri`,
   `wand/triand` and `wor/trior` use their resolution rules; Z is neutral and
   equal-strength wired ties use AND/OR. Supply/strong/pull/weak/high-Z endpoints
-  and X uncertainty are retained. `tri0/tri1` pull only all-Z bits; supplies
-  dominate ordinary drivers. Changed resolution wakes readers, unchanged results
-  do not. Explicit vector continuous strengths are prohibited; general aggregate,
-  function/task-output driver and charge/resistive contexts remain restricted.
-  V §§3.4, 3.7, 6.1, 7.9–7.13; SV §10.3.4 **[1995]**.
+  and X uncertainty are retained; a highz endpoint gives one-sided X, and
+  undelayed `bufif`/`notif` gates with an unknown enable drive L/H. `tri0/tri1`
+  and supplies are pull/supply sources, not post-resolution defaults. `%v`
+  reports the resolved strength range (mnemonic, two-digit range, L/H) of nets,
+  their constant selects, aliases and net-array cells; strength-only changes
+  reach `%v` monitors while value readers wake only on value changes. The
+  [RTL-012 matrix](../tests/fixtures/sim/feature_completion/rtl_012/readme.md)
+  checks every source pair against an exhaustive outcome oracle in both
+  editions. Explicit continuous strengths on vectors, selected vector bits and
+  supply nets reject; gate instance arrays keep per-instance strengths. Delayed
+  enable gates still drive X for an unknown enable; VPI strength values,
+  charge/resistive contexts (ADV-005/006) remain outside this row.
+  V §§3.4, 3.7, 6.1, 7.9–7.13, 17.1.1.5; SV §§10.3.4, 21.2.1.5 **[1995]**.
 - 🟨 **Dissimilar inout collapse** — Admitted whole/selected/concatenated packed
   and fixed net-array row/cell connections use the directional port-type table
   through any depth. The winning declaration supplies resolver, default and
@@ -1182,9 +1190,13 @@ Macros, includes and their edition-specific behavior are counted in §11.
   `vectored/scalared` and standard attributes are accepted as simulation-neutral
   metadata, with packed values unchanged. V §§2.8, 3.3.2, 19.1;
   SV §22.11 **[1995/SV-2009]**.
-- 🟨 **`` `unconnected_drive `` / `` `nounconnected_drive ``** — Omitted scalar/
-  packed inputs receive pull0/pull1/Z. Strength conflicts and aggregate/resizable
-  formals remain outside the qualified boundary. V §19.9 **[1995]**.
+- 🟨 **`` `unconnected_drive `` / `` `nounconnected_drive ``** — An omitted
+  input net formal, including a net-array formal, receives a pull0/pull1
+  contribution that competes with the formal's internal drivers and net type
+  (tri0/tri1, wired and supply nets); variable formals receive the value without
+  strength. Includes, `` `resetall ``, generated and arrayed instances and
+  separate/merged compilation units are covered. Resizable (dynamic) formals
+  remain outside the qualified boundary. V §19.9; SV §22.9 **[1995]**.
 - 🟨 **Source mapping** — `` `line ``, `` `__FILE__ `` and `` `__LINE__ `` expose
   mapped values in 2009; 2001 admits `` `line `` without the later predefined
   macros. Diagnostics retain physical source ranges.
