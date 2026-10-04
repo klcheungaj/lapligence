@@ -493,6 +493,11 @@ support; the corresponding execution tests must also pass.
   relative values from its own CWD.
 - Nextest defaults to 8 concurrent tests; `--profile max-threads` opts into 32.
   CI sets `NEXTEST_PROFILE=ci`, which runs one test per available logical CPU.
+  Release-target CI builds a `cargo nextest archive` per platform and runs it in
+  separate `test`/`linux-test` jobs; the equivalent local form is
+  `cargo nextest archive --locked --all-features --cargo-profile release --archive-file F`
+  then `cargo nextest run --archive-file F --workspace-remap ROOT --extract-to ROOT`
+  with ROOT the absolute checkout path used for the build.
   Preserve suite-specific skips: `sim_cmake` may skip absent CMake; native DPI
   shared-library tests need Unix/CMake/compiler. These are not blanket skips.
 
