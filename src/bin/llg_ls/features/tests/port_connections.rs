@@ -14,6 +14,9 @@ fn analyze_full_pipeline_named_ports_resolve_to_child() {
     if !path.exists() {
         return;
     }
+    // Path-mode compiles name files by their resolved native spelling; the
+    // joined path keeps a literal `/` on Windows and would match nothing.
+    let path = llg::ffi::platform::canonicalize(&path).expect("resolve fixture path");
     let path_str = path.to_string_lossy().into_owned();
     let opts = CompileOpts {
         files: vec![path_str.clone()],

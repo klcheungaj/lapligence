@@ -5,6 +5,13 @@ use crate::features::{
     ModuleGraphParameter, ModuleGraphPort, ModuleGraphSignal,
 };
 use crate::test_paths::host_path as hp;
+
+/// The `file:` URI of a Unix-style test path made host-absolute by [`hp`].
+fn file_uri(path: &'static str) -> String {
+    tower_lsp::lsp_types::Url::from_file_path(hp(path))
+        .expect("absolute test path")
+        .to_string()
+}
 use llg::core::elab::Value;
 
 fn ty(kind: &str, width: Option<u32>) -> TypeInfo {
@@ -247,7 +254,7 @@ fn snapshot_keeps_multiple_tops_and_recursive_stable_ids() {
     assert_eq!(top_root.children[0].module_type, "child");
     assert_eq!(top_root.children[0].ports[0].ty.width, Some(1));
     assert_eq!(top_root.children[0].signals[0].ty.width, Some(8));
-    assert!(top_root.id.contains("/workspace:top"));
+    assert!(top_root.id.contains(&format!("{}:top", hp("/workspace"))));
 }
 
 #[test]
@@ -1667,7 +1674,7 @@ fn declaration_fallback_emits_typed_contents_and_filters_port_backing_signals() 
             .location
             .as_ref()
             .map(|location| location.uri.as_str()),
-        Some("file:///workspace/decl.sv")
+        Some(file_uri("/workspace/decl.sv").as_str())
     );
     assert_eq!(
         root.ports[0]
@@ -1908,7 +1915,7 @@ fn elaborated_types_resolve_parameters_for_nested_instances() {
             .location
             .as_ref()
             .map(|location| location.uri.as_str()),
-        Some("file:///workspace/child.sv")
+        Some(file_uri("/workspace/child.sv").as_str())
     );
     let leaf_node = &child_node.children[0];
     assert_eq!(
