@@ -2,7 +2,7 @@
 //!
 //! The parser records only what the command line said (`None`/empty means
 //! "not given"), so `settings` can apply the documented precedence: command
-//! line, then `llg.toml`, then environment fallbacks and built-in defaults.
+//! line, then environment, then `llg.toml`, then built-in defaults.
 
 use std::path::PathBuf;
 
@@ -13,19 +13,81 @@ use llg::sim;
 
 pub(crate) const MIB: u64 = 1024 * 1024;
 
-/// Usage printed when `llg` is run without arguments and without a
-/// discovered `llg.toml`.
+/// Usage printed when `llg` is run without arguments. `llg` never discovers
+/// `llg.toml`, so there is nothing else to run from.
 pub(crate) const USAGE: &str = "usage: llg [generate options] [build options] <file.sv>... [-- <plusargs>...]
-generate: --config <file>  --top <module[:config]>  --edition <2001|2009>  --compilation-units <separate|merged>  --include-dir <path>  --define <NAME[=VALUE]>  --param-override <NAME=VALUE>  --define-system-task <prototype>  --libmap <file>  --libfile [<library>=]<file>  --library-order <library>[,<library>...]  --default-library <library>  --lint  --no-lint  --lint-json [<path>]  --lint-config <file>  --gen-only  --no-gen-only  --no-opt  --opt  --max-export-mib <MiB>
+generate: --config <file>  --clear <list>  --top <module[:config]>  --edition <2001|2009>  --compilation-units <separate|merged>  --include-dir <path>  --define <NAME[=VALUE]>  --param-override <NAME=VALUE>  --define-system-task <prototype>  --libmap <file>  --libfile [<library>=]<file>  --library-order <library>[,<library>...]  --default-library <library>  --lint  --no-lint  --lint-json [<path>]  --lint-config <file>  --gen-only  --no-gen-only  --no-opt  --opt  --max-export-mib <MiB>
 build:    --generator <backend>  --launcher <program>  --dpi-lib <path>...  --cc <program>  --cflags <flags>  --model-opt-level <O0|O1|O2|O3|Os>  --cmake <program>  --build-jobs <N>
 output:   --out-dir <dir>  --runtime-cache <dir>
 stop:     --stop-policy <resume|exit>  # `$stop` handling (default: resume)
-config:   llg.toml in the current directory is read when present (see docs/config.md)";
+config:   llg.toml is read only when named with --config (see docs/config.md)";
+
+/// A repeatable option's list, as named by `--clear`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ListKey {
+    /// `sources.files` and the `sources.directories` discovery.
+    Sources,
+    IncludeDirs,
+    Defines,
+    ParamOverrides,
+    SystemTasks,
+    LibMaps,
+    LibFiles,
+    LibraryOrder,
+    DpiLibs,
+    Plusargs,
+}
+
+impl ListKey {
+    const ALL: [(&'static str, ListKey); 10] = [
+        ("sources", ListKey::Sources),
+        ("include-dirs", ListKey::IncludeDirs),
+        ("defines", ListKey::Defines),
+        ("param-overrides", ListKey::ParamOverrides),
+        ("system-tasks", ListKey::SystemTasks),
+        ("libmaps", ListKey::LibMaps),
+        ("libfiles", ListKey::LibFiles),
+        ("library-order", ListKey::LibraryOrder),
+        ("dpi-libs", ListKey::DpiLibs),
+        ("plusargs", ListKey::Plusargs),
+    ];
+
+    fn parse(name: &str) -> Option<Self> {
+        Self::ALL
+            .iter()
+            .find(|(candidate, _)| *candidate == name)
+            .map(|(_, key)| *key)
+    }
+
+    fn join(keys: &[(&str, ListKey)]) -> String {
+        keys.iter()
+            .map(|(name, _)| *name)
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
+    fn names() -> String {
+        Self::join(&Self::ALL)
+    }
+
+    /// The names on two lines for the indented `--help` column.
+    fn names_wrapped() -> String {
+        let (first, second) = Self::ALL.split_at(Self::ALL.len() / 2);
+        format!(
+            "{},\n                              {}",
+            Self::join(first),
+            Self::join(second)
+        )
+    }
+}
 
 /// The command line as given. Options absent from it stay `None`/empty.
 #[derive(Debug, Default)]
 pub(crate) struct Cli {
     pub config_path: Option<PathBuf>,
+    /// Lists named by `--clear`; their configured values are discarded before
+    /// the command-line values apply.
+    pub clear: Vec<ListKey>,
     pub top: Option<String>,
     pub edition: Option<compile::LanguageEdition>,
     pub compilation_unit_mode: Option<compile::CompilationUnitMode>,
@@ -75,6 +137,7 @@ pub(crate) fn parse_args(args: Vec<String>) -> Result<Cli, i32> {
     let mut files: Vec<String> = Vec::new();
     let mut runtime_args: Option<Vec<String>> = None;
     let mut config_path: Option<PathBuf> = None;
+    let mut clear: Vec<ListKey> = Vec::new();
     let mut lint_mode: Option<bool> = None;
     let mut lint_json_mode: Option<bool> = None;
     let mut lint_json_path: Option<PathBuf> = None;
@@ -106,17 +169,20 @@ pub(crate) fn parse_args(args: Vec<String>) -> Result<Cli, i32> {
 
 Usage: llg [OPTIONS] [<file.sv>...] [-- <plusargs>...]
 
-Options and sources may also come from llg.toml (docs/config.md): ./llg.toml is
-read when present, or the file given with --config. Command-line values
-override the file; a repeatable option given on the command line replaces the
-whole list from the file. Files named on the command line replace the file's
-sources.
+Options and sources may also come from an llg.toml (docs/config.md), read only
+when named with --config. Precedence: command line, then environment, then the
+file, then built-in defaults. A repeatable option (-I, -D, -G, -v, -L, --libmap,
+--define-system-task, --dpi-lib, <file.sv>, plusargs after --) appends to the
+file's list; --clear <list> discards the file's list first. A later NAME=VALUE
+replaces an earlier one for the same NAME.
 
 Options:
   -h, --help                 Print help and exit
   -V, --version              Print the package version and exit
-      --config <file>        Read this llg.toml instead of ./llg.toml
-                              (an explicit file that is missing is an error)
+      --config <file>        Read this llg.toml (a missing file is an error)
+      --clear <list>         Drop the llg.toml values of a repeatable list
+                              (repeatable; commas allowed), one of:
+                              {clear_lists}
       --top <module[:config]> Select the top module or configured design
       --edition <2001|2009> Select the language edition (default: 2009)
       --compilation-units <separate|merged>
@@ -163,6 +229,7 @@ Options:
                               (default: build)
       --runtime-cache <dir>  Runtime archive cache (default: $LLG_RUNTIME_CACHE_DIR,
                               <out-dir>/llg-runtime-cache)",
+                    clear_lists = ListKey::names_wrapped(),
                     model_opt_default = sim::build::DEFAULT_MODEL_OPT_LEVEL
                         .gnu_flag()
                         .trim_start_matches('-'),
@@ -266,6 +333,26 @@ Options:
                 Some(path) if !path.is_empty() => config_path = Some(PathBuf::from(path)),
                 _ => {
                     eprintln!("llg: --config requires a file path");
+                    return Err(2);
+                }
+            },
+            "--clear" => match it.next() {
+                Some(value) => {
+                    for name in value.split(',') {
+                        match ListKey::parse(name) {
+                            Some(key) => clear.push(key),
+                            None => {
+                                eprintln!(
+                                    "llg: --clear: unknown list `{name}` (one of: {})",
+                                    ListKey::names()
+                                );
+                                return Err(2);
+                            }
+                        }
+                    }
+                }
+                None => {
+                    eprintln!("llg: --clear requires a list name ({})", ListKey::names());
                     return Err(2);
                 }
             },
@@ -405,6 +492,7 @@ Options:
     }
     Ok(Cli {
         config_path,
+        clear,
         top,
         edition,
         compilation_unit_mode,

@@ -104,10 +104,11 @@ native build trees. Feature work need not wait for the entire GMP track.
 
 One schema (`llg::config`) serves `llg` and `llg_ls`. Library `config::tests` own
 schema, path-resolution, unknown-key and error-context cases; `llg` `settings::tests`
-own command line > config > environment precedence (scalars replace, repeatable
-lists replace, files replace sources, boolean opposites); `llg_config_cli` runs the
-public driver against `fixtures/config_cli` for discovery, `--config`, missing/bad
-files and per-kind overrides; `dump_tokens`/`lsp_stdio` prove the server accepts
+own command line > environment > config precedence (scalars replace, repeatable
+lists append, `--clear` resets a list, defines override by name, boolean
+opposites); `llg_config_cli` runs the public driver against `fixtures/config_cli`
+for the absence of discovery, `--config`, missing/bad files, append/clear and
+environment overrides; `dump_tokens`/`lsp_stdio` prove the server accepts
 driver-only keys and rejects unknown ones atomically. A new key needs coverage in
 each layer it touches.
 
