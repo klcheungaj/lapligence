@@ -144,6 +144,15 @@ and after Db destruction; descriptor scatter also bounds generated model size.
 Negatives cover overlapping variable writers, runtime pattern-leaf selects and
 zero-time nonconvergence; delayed pattern drivers remain ADV-002's boundary.
 
+RTL-013's sensitivity and always-writer fixtures use
+`-E 'binary(sim_feature_completion) & test(rtl_013::)'`. Positive fixtures run in
+both optimizer modes on both backends (set `LLG_TEST_GMP_ROOT` for the GMP lane),
+most also after Db destruction; wake counters compare changes after the first
+sample, and descriptor processes also bound generated model size. Negatives
+cover timing, forks and event-control counts in always_comb/always_latch/
+always_ff and overlapping member, cell, wide-row, ref-port, hierarchical and
+called-function writers.
+
 ### Vendor patch preparation
 
 `vendor_patches.rs` checks clean/applied trees, no-Git archives (including archives
