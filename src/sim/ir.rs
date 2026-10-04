@@ -94,7 +94,9 @@ pub use functions::{IrDpiImport, IrFormal, IrFormalMode, IrFunc, IrLocal};
 mod initialization;
 pub use initialization::{IrInitPhase, IrInitStep, IrInitTarget, IrInitialization};
 mod storage;
-pub use storage::{IrArray, IrNetAliasBinding, IrNetGroup, IrNetKind, IrSignal};
+pub use storage::{
+    IrArray, IrNetAliasBinding, IrNetArray, IrNetCellRun, IrNetGroup, IrNetKind, IrSignal,
+};
 mod vpi;
 pub use vpi::{IrVpiCompileArg, IrVpiCompileCall, IrVpiObject, IrVpiObjectKind};
 

@@ -7,8 +7,10 @@ reproduce it. Remove an entry when the fix lands.
 ## Declared net views retain per-bit lowering bindings
 
 **Status:** electrical groups, continuous writes and generated declared-view
-descriptors are range-based; the lowering-side alias graph and binding list
-are still per bit. RTL-011 judged the full fix out of its scope (see Cause).
+descriptors are range-based, and undriven net-array cells skip every per-bit
+structure (KI-NET-INTERVAL); for connected bits the lowering-side alias graph
+and binding list are still per bit. RTL-011 judged the full fix out of its
+scope (see Cause).
 
 ### Symptom
 
@@ -64,7 +66,15 @@ number of bits: RTL-011's same-depth collapse batches are linear in edges.
 
 Carry range bindings through partitioning and the IR so lowering work is
 proportional to connected ranges, preserving exact bit correspondence, source
-names and observation/dependency behavior.
+names and observation/dependency behavior. The undriven-cell classification in
+[`collection/net_cells.rs`](../src/sim/codegen/lowering/collection/net_cells.rs)
+already works on cells and shape classes; the remaining steps are, in order:
+(1) an interval union-find over `(owner, element range, bit range)` replacing
+the `AliasBit` maps for connected cells, split only where member mappings,
+driver ranges, force targets or types differ; (2) a type plan and partitioner
+over those intervals; (3) `IrNetAliasBinding` runs and a net-array publication
+table that names a cell range per electrical group, with an emitter loop over
+it; (4) range-aware alias driver mapping, `%v`, force, VPI and waveform views.
 
 ### Reproduce
 
@@ -264,9 +274,14 @@ Integral variable arrays copy, compare, select rows, merge conditionals, stream
 (including multiple segments and unaligned slices), initialize and pass through
 input/output/inout/ref formals and returns of static, automatic and recursive
 functions without becoming one packed value. Array-valued pattern items and
-pattern-lvalue row scatter use the same views. Oversized unpacked records,
-arrays of records and finite tagged unions still have no descriptor layout and
-retain the packed payload limit; so does the source of a whole-value `matches`
+pattern-lvalue row scatter use the same views, and so do arrays of unpacked
+records whose elements fit the packed limit (RTL-099 qualifies 1,048,576
+records). A single unpacked record or finite tagged union wider than the packed
+limit still has no descriptor layout and retains the packed payload limit as a
+value (formal, return, conditional); a record member array above the 4,096-cell
+dense threshold is expanded per cell (a 65,537-cell member generates about
+79 MB of C, and a whole-record pattern over such members fails to resolve the
+member array). So does the source of a whole-value `matches`
 wildcard or binding, which rejects with its size (RTL-016). Descriptor pattern items and scatter targets whose rows are small dense
 arrays inside an oversized source, dense arrays and runtime `with` ranges as parts
 of an oversized stream, and nested oversized streams reject with explicit
@@ -405,41 +420,53 @@ of the generated process function, for instance with `-fstack-usage` or
 `-Wframe-larger-than=`. The frame is about 159 KiB; halving `argc` roughly
 halves it.
 
-## Oversized net arrays emit per-cell electrical code
+## Driven net-array cells emit per-cell electrical code
 
-**Status:** open; RTL-010 removed the quadratic net-array driver discovery.
+**Status:** open for driven cells. RTL-010 removed the quadratic net-array
+driver discovery; KI-NET-INTERVAL removed all per-cell cost of undriven cells.
 
-Net arrays are not descriptor-backed: every cell owns an electrical group, a
-declared-view alias row and an observation cell, and a whole-array continuous
-driver gathers its RHS cells into one packed value with one element read per
-cell. Generated `model.c` therefore grows by about 2.4 KB per cell (19.8 MB for
-an 8,192-cell `wire [7:0] n[8192]; assign n = src;`, 39.8 MB at 16,384 cells),
-and a 65,537-cell net array is impractical to compile. Lowering is now linear
-in the cell count: driver sources are indexed by the cells they drive once,
-instead of rescanning every source for every cell (4,096 cells: 9.2 s to
-0.04 s of publication time on a quick build).
+Lowering first classifies net-array cells by interval
+([`collection/net_cells.rs`](../src/sim/codegen/lowering/collection/net_cells.rs)).
+A cell that no structural driver, true alias, selected inout connection or
+force/release target reaches, together with every whole-array inout peer of
+it, is undriven: its value is the constant of its effective (collapsed) net
+type, so it becomes part of a typed `IrNetCellRun` and gets no electrical
+group, declared view, bit-level alias/type-plan entry or generated C. Only one
+representative class per connection shape enters the port type plan. A `%v`
+read of an undriven cell materializes just that cell's group. The runtime
+indexes dependency bindings by target, so dense net arrays no longer make
+startup binding quadratic or every signal write linear in the cell count.
 
-A whole net-array inout port behaves the same way. For
-`child u(n)` with `inout wire [7:0] c [0:N-1]` and one driver on each side,
-`--gen-only` on a quick build took 1.8 s / 8.6 MB of `model.c` at 4,096 cells,
-7.2 s / 34.8 MB at 16,384 and 28.0 s / 140.5 MB at 65,537 (RTL-011
-measurement): linear, never flattened into one packed value, but still one
-electrical group per cell, because the partitioner extends runs only within
-one cell.
+Measured on a quick build (`--gen-only`; whole-array inout with one driver on
+each side, and one UDP output bit in a `wire [7:0]` array):
+
+| Fixture | Before | After |
+| --- | ---: | ---: |
+| inout, 4,096 cells | 2.1 s / 8.7 MB | 0.06 s / 31 KB |
+| inout, 65,537 cells | 28.0 s / 140.5 MB | 0.57 s / 31 KB (37 MB RSS) |
+| UDP, 4,096 cells | 1.1 s / 6.6 MB | 0.04 s / 21 KB |
+| UDP, 200,000 cells | > 500 s / 328 MB | 0.36 s / 21 KB (39 MB RSS) |
+
+The 200,000-cell model then ran in 217 s before the dependency index and
+0.14 s after. [`sim_net_interval`](../tests/sim_net_interval.rs) caps both
+large fixtures' `model.c` at 1 MiB and codegen at 20 s per optimizer mode.
+
+Driven cells still cost about 2.4 KB of C each: every driven cell owns an
+electrical group, a declared-view alias row and an observation cell, and a
+whole-array continuous driver gathers its RHS cells into one packed value with
+one element read per cell (19.8 MB for an 8,192-cell
+`wire [7:0] n[8192]; assign n = src;`). Lowering is linear in the cell count:
+driver sources are indexed by the cells they drive once.
 
 Input-port links into a net-array formal and `unconnected_drive` pulls on one
 (RTL-012) gather the cells into one packed contribution the same way. Above
 the packed width limit they keep the older per-element storage write, which
 bypasses the formal's internal drivers.
 
-Gate and UDP outputs on net-array cells use the same per-cell groups (RTL-020:
-a UDP driving one bit of a 200,000-cell `wire [7:0]` array generated 328 MB of
-`model.c` and did not finish compiling in 500 s); variable arrays connected to
-UDP inputs use descriptor storage and stay small.
-
-The intended direction is a descriptor-backed net-array cell table with a
-loop over a contiguous RHS view, keeping per-cell resolution state but not
-per-cell generated code.
+The intended direction for driven cells is a descriptor-backed net-array cell
+table with a loop over a contiguous RHS view, keeping per-cell resolution
+state but not per-cell generated code; see the remaining steps in
+"Declared net views retain per-bit lowering bindings".
 
 ## Gate and UDP array elements emit one process function each
 

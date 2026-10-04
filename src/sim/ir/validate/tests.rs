@@ -73,6 +73,31 @@ fn resolved_array_elements_require_matching_net_storage() {
 }
 
 #[test]
+fn undriven_net_cell_runs_cover_each_cell_exactly_once() {
+    use crate::sim::ir::{IrNetArray, IrNetCellRun, IrNetKind};
+    let run = |first, count| IrNetCellRun {
+        first,
+        count,
+        kind: IrNetKind::Tri1,
+    };
+    let check = |runs: Vec<IrNetCellRun>| {
+        let mut model = valid_model();
+        let mut array = IrArray::new("a".into(), "a".into(), 4, false, vec![(0, 5)]).unwrap();
+        array.net = Some(IrNetArray {
+            constant_cells: runs,
+        });
+        model.arrays.push(array);
+        model.validate()
+    };
+    assert!(check(vec![run(0, 2), run(2, 4)]).is_ok());
+    // Uncovered, overlapping, empty and out-of-range runs are all rejected.
+    assert!(check(vec![run(0, 5)]).is_err());
+    assert!(check(vec![run(0, 3), run(2, 4)]).is_err());
+    assert!(check(vec![run(0, 6), run(6, 0)]).is_err());
+    assert!(check(vec![run(1, 6)]).is_err());
+}
+
+#[test]
 fn selected_const_references_cannot_hide_a_writable_binding() {
     let mut model = valid_model();
     let mut formal = IrFormal::new(false, 1, false).unwrap();
@@ -198,6 +223,7 @@ fn rejects_array_total_that_disagrees_with_dimensions() {
     let mut model = valid_model();
     model.arrays.push(IrArray {
         activation: false,
+        net: None,
         net_elements: Vec::new(),
         element_default: None,
         element_uninitialized: None,
@@ -222,6 +248,7 @@ fn rejects_array_storage_above_selected_cell_limit() {
     let mut model = valid_model();
     model.arrays.push(IrArray {
         activation: false,
+        net: None,
         net_elements: Vec::new(),
         element_default: None,
         element_uninitialized: None,
@@ -1287,6 +1314,7 @@ fn descriptor_value_assignment_requires_matching_descriptor_shape() {
     let mut model = valid_model();
     let rows = |c_name: &str, dims: Vec<(i32, i32)>, total: u64| IrArray {
         activation: false,
+        net: None,
         net_elements: Vec::new(),
         element_default: None,
         element_uninitialized: None,
@@ -1361,6 +1389,7 @@ fn descriptor_cast_requires_equal_size_lexical_shape() {
             .product();
         IrArray {
             activation,
+            net: None,
             net_elements: Vec::new(),
             element_default: None,
             element_uninitialized: None,
@@ -1431,6 +1460,7 @@ fn rejects_invalid_index_default_with_wrong_width() {
     let mut model = valid_model();
     model.arrays.push(IrArray {
         activation: false,
+        net: None,
         net_elements: Vec::new(),
         element_default: None,
         element_uninitialized: Some(
@@ -1456,6 +1486,7 @@ fn rejects_invalid_index_default_with_wrong_width() {
 fn force_dependencies_must_name_persistent_fixed_arrays() {
     let array = |activation| IrArray {
         activation,
+        net: None,
         net_elements: Vec::new(),
         element_default: None,
         element_uninitialized: None,

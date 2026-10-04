@@ -160,8 +160,9 @@ writer-analysis `PackedRange` over `ArrayContents` that `ir_process_writes`
 widens before the IR), so the pairwise check costs one record per row.
 Output ports connected to variables are continuous drivers: constant rows of
 dense arrays drive their cells, runtime selects drive the longest static prefix,
-constant rows of descriptor storage drive one cell interval and constant
-descriptor slices are not registered (no contiguous projection); keep disjoint
+constant rows and contiguous constant slices of descriptor storage drive one
+cell interval (a slice whose cells are not one interval stays unregistered
+rather than a false whole-array conflict); keep disjoint
 writers legal and preserve original read sensitivities separately. Zero-delay
 continuous drivers of whole descriptor arrays or constant descriptor rows use
 the fixed-array assignment owner, never a flattened packed driver.
@@ -230,6 +231,11 @@ with a group-bit offset (the emitter renders consecutive bits as one run-length
 alias part); electrical width must never change an HDL storage shape.
 Whole net-array inout ports, rows and slices union each formal cell with its
 left-to-left actual cell (`net_array_inout_pairs`) in both storage and type plans.
+`collection/net_cells.rs` classifies cells before that: a cell joins the
+bit-level path only when a structural source, true alias, selected inout
+connection or force/release target reaches it or a whole-array inout peer of
+it; a new topology form must be added to its inventory too, and publication
+rejects a driver reaching an unclassified cell.
 Contribution projection gathers contiguous RHS runs with part selects and Z runs,
 then concatenates only disconnected runs. Conversion precedes projection. Array
 publication binds every bit to this partition and rejects a missing root.
@@ -368,6 +374,15 @@ snapshots before writes. Never look through a cast that reshapes cells or enters
 a two-state element domain: it is an `IrFixedValue::Convert` into a lexical shape.
 Equality whose operands are all descriptor values also uses descriptor compare
 below packed capacity rather than flattening each cell.
+The fixed-value/view/projection IR is frozen at the RTL-099 gate
+([contract](../ir/readme.md#frozen-fixed-value-view-and-projection-contract-rtl-099)).
+SIM-wave migration notes: native/resizable aggregates get their own typed
+descriptors next to it rather than new `IrFixedValue` element domains; a
+consumer that newly accepts a fixed aggregate must take the descriptor path
+for `sparse()` storage and oversized values, never a per-cell expansion; new
+writers of fixed storage must register cell intervals for the single-writer
+rule; and new net-array driver forms must be added to the `net_cells.rs`
+classification inventory.
 
 An invalid index reads the element type's uninitialized default (SV 7.4.6), not
 an all-X payload: mixed-state aggregate elements keep two-state leaves at zero

@@ -124,7 +124,7 @@ impl Codegen<'_> {
             ));
         }
         let storage = &self.model.arrays[cells.array];
-        if array.real || !storage.net_elements.is_empty() {
+        if array.real || storage.is_net() {
             return Ok(None);
         }
         let Some(shape) = cells.shape(&self.model) else {

@@ -29,7 +29,12 @@ Open-document semantic tokens compile the exact admitted unsaved buffer in
 isolation; syntax errors return an authoritative empty stream. Unopened documents
 use committed tokens. Cache keys include applicable buffer, defines, URI, request
 arguments and analysis epoch. Parameters/localparams use `property.readonly`;
-data/net types and port directions use `type`; control/module words remain `keyword`.
+data/net types, port directions, typedef names (declaration and every type use,
+including casts and `$bits`/`type()` operands) and the `parameter`/`localparam`/
+`specparam` keywords use `type`; module and program names (declaration and
+instantiation, even when the definition is outside the compiled buffer) use
+`class`, interfaces `interface`, packages `namespace`; control/module words and
+`defparam` remain `keyword`.
 
 ## Source and serving rules
 

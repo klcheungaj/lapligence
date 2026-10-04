@@ -1,5 +1,6 @@
 //! Owned-declaration type/delay selection for whole and selected inout networks.
 
+use super::net_cells::NetCellPlan;
 use super::net_collapse::{
     canonical_net_type, port_choice, CollapseWarning, NetCollapsePlan, NetPoint,
 };
@@ -47,6 +48,7 @@ impl Codegen<'_> {
         low: NodeId,
         actual: Option<NodeId>,
         bit_nets: &HashSet<NodeId>,
+        cells: &NetCellPlan,
     ) -> Result<Vec<(NetPoint, NetPoint)>, String> {
         if let Some(pairs) = actual
             .map(|actual| self.net_array_inout_pairs(port, actual, low))
@@ -55,6 +57,11 @@ impl Codegen<'_> {
         {
             return Ok(pairs
                 .into_iter()
+                .filter(|((formal, formal_cell, _), _)| {
+                    self.array_globals
+                        .get(formal)
+                        .is_none_or(|info| cells.in_type_plan(info.ir, *formal_cell))
+                })
                 .flat_map(|((formal, formal_cell, width), (actual, actual_cell))| {
                     (0..width).map(move |bit| {
                         (
@@ -128,8 +135,20 @@ impl Codegen<'_> {
         nodes: &[NodeId],
         bit_nets: &HashSet<NodeId>,
         alias_bits: &HashSet<AliasBit>,
+        cells: &NetCellPlan,
     ) -> Result<NetCollapsePlan, String> {
         let mut plan = NetCollapsePlan::default();
+        // One representative per undriven net-array class shape.
+        for (owner, element) in cells.representative_points() {
+            self.insert_collapse_point(
+                &mut plan,
+                NetPoint::ArrayBit {
+                    owner,
+                    element,
+                    bit: 0,
+                },
+            )?;
+        }
         // Include unconnected bits of a partially collapsed vector as singleton
         // declarations. They must keep their own type/default and delay.
         for owner in sorted_node_set(bit_nets) {
@@ -220,7 +239,8 @@ impl Codegen<'_> {
                 else {
                     return Err("inout type plan lost its port endpoints".into());
                 };
-                let points = self.inout_type_points(port, *high, *low, *high_expr, bit_nets)?;
+                let points =
+                    self.inout_type_points(port, *high, *low, *high_expr, bit_nets, cells)?;
                 for (internal, external) in points {
                     self.insert_collapse_point(&mut plan, internal)?;
                     self.insert_collapse_point(&mut plan, external)?;

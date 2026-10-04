@@ -214,6 +214,12 @@ exhaustive table sweep compares with the all-matching-rows oracle in
 row widths, conflicting rows, terminal counts, empty terminals, mis-sized array
 connections and vector or aggregate terminals of single instances.
 
+RTL-099's gate fixtures use `-E 'binary(sim_feature_completion) & test(rtl_099::)'`.
+They pin the output-port writer rule for constant slices of descriptor-backed
+arrays: disjoint procedural writers execute in both optimizer modes on both
+backends (set `LLG_TEST_GMP_ROOT` for the GMP lane) and after Db destruction,
+and procedural, second-port and always_ff writers overlapping a slice reject.
+
 ### Vendor patch preparation
 
 `vendor_patches.rs` checks clean/applied trees, no-Git archives (including archives
@@ -234,7 +240,7 @@ requirements above apply without repeating them for each suite.
 | --- | --- |
 | Frontend and owned models | `slang_frontend`, `slang_semantics`, `model_tests`: safe capture, diagnostics, types, bindings, initialization, complete delays and ownership after snapshot destruction. |
 | Datatypes | `sim_data_types`, `sim_data_types_extended`, `sim_data_type_edges`, `sim_data_types_next`, `sim_data_types_completion`; [mixed-type/net matrix](fixtures/sim/type_conformance/readme.md) for independent arithmetic, conversion and resolution oracles. |
-| Ports and nets | `sim_port_net_types`, `sim_net_resolution`, `sim_net_defaults`, `sim_net_decl`, `sim_inout`: directional collapse, independent drivers, strengths/defaults, aliases, selections and delayed publication. [Electrical ranges](fixtures/sim/net_partition/readme.md), `sim_net_partition` and `generated_c_frame_lint::electrical_net_partition_fixtures` cover electrical runs across 1/7/64/65/129 bits, independent value oracles, delayed descriptor loops and declared shapes; `sim_waveform`/`sim_vpi` have generated-model net-view probes. Port-type unit tests cover all 81 cells; frontend tests cover 49 resolved pairs. |
+| Ports and nets | `sim_port_net_types`, `sim_net_resolution`, `sim_net_defaults`, `sim_net_decl`, `sim_inout`: directional collapse, independent drivers, strengths/defaults, aliases, selections and delayed publication. [Electrical ranges](fixtures/sim/net_partition/readme.md), `sim_net_partition` and `generated_c_frame_lint::electrical_net_partition_fixtures` cover electrical runs across 1/7/64/65/129 bits, independent value oracles, delayed descriptor loops and declared shapes; [undriven cells](fixtures/sim/net_interval/readme.md) and `sim_net_interval` cover typed undriven net-array cells on every value backend plus `model.c`/codegen-time caps for 65,537- and 200,000-cell arrays; `sim_waveform`/`sim_vpi` have generated-model net-view probes. Port-type unit tests cover all 81 cells; frontend tests cover 49 resolved pairs. |
 | Structural UDPs | `sim_udp`, [SYN-031 matrix](fixtures/sim/syn031_combinational_udp/readme.md): Verilog-2001 and SystemVerilog-2009 mux/parity tables, four-state inputs, `?`/`b`, unmatched rows, instance arrays, independent net drivers, delays, invalid port/row-width diagnostics and sequential/edge rejections in both optimizer modes. |
 | Practical RTL | [RTL composition](fixtures/sim/rtl_completion/readme.md), `sim_rtl_completion`: initialization, fixed values/references/unions, ports and array/interface/inout composition. |
 | Arrays and projections | `sim_fixed_array_reductions`, `sim_syn026_iterator_indices`, `sim_array_conditional_assignments`, `sim_fixed_ordering_review`, `sim_syn027_fixed_reverse`, `sim_syn028_fixed_sort`, `sim_group1_repairs`, `sim_group1_formal_repairs`: [reductions](fixtures/sim/fixed_array_reductions/readme.md), [iterator indices](fixtures/sim/syn026_iterator_indices/readme.md), [conditional assignments](fixtures/sim/array_conditional_assignments/readme.md), [fixed reverse](fixtures/sim/syn027_fixed_reverse/readme.md), fixed sort/rsort maps and permutation, activation isolation, signed member conversion, captured outputs and const/NBA negatives. |

@@ -684,7 +684,7 @@ impl<'a> Codegen<'a> {
             // electrical net storage (net arrays are not descriptor-backed).
             IrStmt::FixedValueAssign {
                 dst, nba: false, ..
-            } if self.model.arrays[dst.array].net_elements.is_empty() => {
+            } if !self.model.arrays[dst.array].is_net() => {
                 remap.next_leaf += 1;
                 Ok(())
             }

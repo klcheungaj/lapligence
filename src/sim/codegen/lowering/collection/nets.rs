@@ -1088,6 +1088,8 @@ impl<'a> Codegen<'a> {
         let mut array_ports = HashSet::new();
         let mut array_formals = HashSet::new();
         let mut array_endpoints: HashMap<(usize, u64), Vec<Option<AliasBit>>> = HashMap::new();
+        // Undriven net-array cells never enter the bit-level graph below.
+        let cell_plan = self.plan_net_cells(&nodes)?;
         for node in sorted_node_ids(&self.array_globals) {
             let info = &self.array_globals[&node];
             // Every fixed net-array cell needs a canonical alias view.  The
@@ -1102,6 +1104,9 @@ impl<'a> Codegen<'a> {
                 .is_some()
             {
                 for element in 0..self.model.arrays[info.ir].total {
+                    if !cell_plan.connected(info.ir, element) {
+                        continue;
+                    }
                     array_endpoints
                         .entry((info.ir, element))
                         .or_insert_with(|| vec![None; info.elem_width as usize]);
@@ -1187,6 +1192,14 @@ impl<'a> Codegen<'a> {
                         // formal cell with its left-to-left actual cell; the
                         // range partitioner then groups identical runs.
                         for (formal, actual) in pairs {
+                            // Undriven peers are closed under these pairs.
+                            if !self
+                                .array_globals
+                                .get(&formal.0)
+                                .is_none_or(|info| cell_plan.connected(info.ir, formal.1))
+                            {
+                                continue;
+                            }
                             for bit in 0..formal.2 {
                                 let formal = AliasBit::Array {
                                     owner: formal.0,
@@ -1408,7 +1421,9 @@ impl<'a> Codegen<'a> {
                 }
             }
         }
-        let type_plan = self.build_port_net_type_plan(&nodes, &alias_nets, &alias_bits)?;
+        let type_plan =
+            self.build_port_net_type_plan(&nodes, &alias_nets, &alias_bits, &cell_plan)?;
+        self.publish_undriven_net_cells(&cell_plan, &type_plan)?;
         let mut uwire_drivers: HashMap<usize, std::collections::BTreeMap<usize, NodeId>> =
             HashMap::new();
 
@@ -1876,7 +1891,7 @@ impl<'a> Codegen<'a> {
     }
 
     /// LHS/terminal expressions through which a structural source drives.
-    fn structural_source_targets(&self, source: NodeId) -> Vec<NodeId> {
+    pub(super) fn structural_source_targets(&self, source: NodeId) -> Vec<NodeId> {
         match self.kind(source) {
             NodeKind::ContAssign { .. } => self
                 .node(source)

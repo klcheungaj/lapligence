@@ -56,7 +56,7 @@ References: **V** = IEEE 1364-2001; **SV** = IEEE 1800-2009. Revision tags retai
 | 1. Lexical/literals | 4 | 0 | 0 | 0 | 0 | 4 |
 | 2. Data types | 3 | 10 | 0 | 0 | 0 | 13 |
 | 3. Modules/ports/elaboration | 4 | 5 | 0 | 0 | 0 | 9 |
-| 4. Scheduling/processes | 4 | 4 | 0 | 0 | 0 | 8 |
+| 4. Scheduling/processes | 4 | 3 | 0 | 0 | 1 | 8 |
 | 5. Procedural statements | 5 | 8 | 0 | 0 | 0 | 13 |
 | 6. Timing controls | 0 | 7 | 0 | 0 | 0 | 7 |
 | 7. Expressions/operators | 4 | 13 | 0 | 0 | 0 | 17 |
@@ -65,11 +65,12 @@ References: **V** = IEEE 1364-2001; **SV** = IEEE 1800-2009. Revision tags retai
 | 10. System tasks/functions | 9 | 11 | 3 | 0 | 0 | 23 |
 | 11. Compiler directives | 5 | 2 | 0 | 0 | 0 | 7 |
 | 12. Verification/foreign interfaces | 1 | 12 | 0 | 3 | 0 | 16 |
-| **Total** | **43** | **83** | **7** | **3** | **0** | **136** |
+| **Total** | **43** | **82** | **7** | **3** | **1** | **136** |
 
-**126 rows have some source implementation; 83 of those remain partial.**
-Zero accepted rows means no row-level acceptance promotion in this review,
-not that the project has no historical passing tests.
+**126 rows have some source implementation; 82 of those remain partial and one
+is accepted.** The accepted row (`always_ff` and writer rules) carries
+post-change HDL execution evidence from RTL-013 and RTL-099; other rows have no
+row-level acceptance promotion yet, which does not mean they lack passing tests.
 
 These are **grouped capability rows**, not individual grammar productions or a
 language-support percentage. A partial row can contain both substantial working
@@ -175,7 +176,7 @@ supported.
 | --- | --- |
 | Packed element or value | 1–1,048,575 bits inclusive; `LLG_SUPPORTED_WIDTH_LIMIT = 1 << 20` is exclusive. Each packed cell uses its actual width. |
 | Generated fixed unpacked array | At most 16,777,216 cells in the product of all dimensions (`LLG_MAX_FIXED_ARRAY_CELLS`). Extents/products are checked before allocation; an over-limit declaration receives a resource diagnostic. |
-| Fixed array used as a value, formal or stream | Integral variable arrays use non-flattened descriptor transport: whole and selected-row copies, equality, conditionals (element-wise merge for an ambiguous selector), default fills, declaration initializers, array-valued pattern items, pattern-lvalue row scatter and multi-segment/unaligned streams, including constant in-bounds `with` ranges. Module, package, function-static and block-static declaration initializers run in the static schedule; automatic block and function arrays initialize per entry. Static, automatic and recursive functions pass such arrays through input, output, inout and ref formals and return them. Oversized records and arrays of records retain the 1,048,575-bit packed payload limit. Direct reductions read cells individually. |
+| Fixed array used as a value, formal or stream | Integral variable arrays use non-flattened descriptor transport: whole and selected-row copies, equality, conditionals (element-wise merge for an ambiguous selector), default fills, declaration initializers, array-valued pattern items, pattern-lvalue row scatter and multi-segment/unaligned streams, including constant in-bounds `with` ranges. Module, package, function-static and block-static declaration initializers run in the static schedule; automatic block and function arrays initialize per entry. Static, automatic and recursive functions pass such arrays through input, output, inout and ref formals and return them. Arrays of unpacked records whose elements fit the packed limit use the same transport ([RTL-099](../tests/sim_feature_completion/rtl_099.rs) executes 1,048,576 mixed-state records through copies, equality, ambiguous conditionals, function values and an NBA with a bounded model). A single record or tagged union wider than 1,048,575 bits keeps the packed payload limit as a value, and a record member array above the 4,096-cell dense threshold is expanded per cell ([known issue](known_issues.md#remaining-non-flattened-fixed-value-contexts)). Direct reductions read cells individually. |
 | Subroutine recursion | At most 256 active calls; a further call emits a recursion-limit diagnostic and returns the result type's default. Recursive calls, including through class virtual and virtual-interface dispatch, use heap frames, so their depth does not consume native stack; recursion re-entering through DPI C code does. |
 | Read-only helper inlining | At most 32 nested callback calls; deeper emission receives an explicit diagnostic. |
 | Scheduler region passes | Default 10,000,000 per time slot; `LLG_ZERO_LOOP_LIMIT` accepts a positive decimal `uint64`. Exhaustion diagnoses a zero-delay loop. |
@@ -231,9 +232,11 @@ Macros, includes and their edition-specific behavior are counted in §11.
   self-assignment retain logical coordinates. Whole-array values are SV-only;
   admitted fixed integral calls/ports, patterns and operators have the limits in
   §§3, 5, 7 and 9. Native/resizable elements, general real-array expressions,
-  and oversized records remain restricted. Integral arrays through
-  16,777,216 cells copy, compare, select rows, pass through formals and module
-  ports, and stream without packed flattening. Fixed integral record arrays also
+  and records wider than the packed limit remain restricted. Integral arrays
+  through 16,777,216 cells copy, compare, select rows, pass through formals and
+  module ports, and stream without packed flattening; arrays of unpacked
+  records beyond the packed limit copy, compare, merge, pass through function
+  values and publish NBAs the same way (RTL-099). Fixed integral record arrays also
   retain recursive member selections and constant-selected electrical net views.
   V §3.10; SV §§7.4, 7.6 **[1995/SV-2005]**.
 - 🟨 **Initialization and lifetimes** — Scalar, fixed integral composite and
@@ -482,7 +485,7 @@ Macros, includes and their edition-specific behavior are counted in §11.
   timing and forks reject; delayed NBAs are not rejected merely for their delay.
   Non-string object and dynamic/native aggregate contexts remain partial
   (SIM-013). SV §§9.2.2.2–9.2.2.3 **[SV-2005]**.
-- 🟨 **`always_ff` and writer rules** — Requires one event control and rejects
+- ✅ **`always_ff` and writer rules** — Requires one event control and rejects
   blocking timing (also in called tasks), forks and extra overlapping writers.
   Blocking data assignments, timing-free calls, delayed NBAs, event triggers and
   force/release are legal. Data changes alone do not wake it, including `iff`
@@ -491,8 +494,9 @@ Macros, includes and their edition-specific behavior are counted in §11.
   remain separate writers; overlapping procedural, called-function,
   hierarchical, ref-port, positional-pattern, output-port and continuous writes
   are diagnosed within admitted storage. Force/release and procedural
-  `assign`/`deassign` are overrides, not competing writers. Constant slices of
-  descriptor arrays bound to output ports are not registered as writers.
+  `assign`/`deassign` are overrides, not competing writers. Constant rows and
+  slices of descriptor arrays bound to output ports are one cell-interval
+  writer each ([RTL-099](../tests/sim_feature_completion/rtl_099.rs)).
   SV §9.2.2.4 **[SV-2005]**.
 - 🟦 **Final blocks** — Run once after scheduler exit (`$finish`, deadlock or no
   future events), observing committed values and end time. Timing controls,
@@ -960,8 +964,9 @@ Macros, includes and their edition-specific behavior are counted in §11.
   The SYN-031 and RTL-020 matrices run both editions, both optimizer modes and
   both value backends. Invalid port lists, row widths, terminal counts and
   vector/aggregate terminals are diagnostic boundaries (scalar-only by
-  definition). Outputs on net arrays above a few thousand cells share the
-  per-cell code cost of oversized net arrays ([known issue](known_issues.md#oversized-net-arrays-emit-per-cell-electrical-code)).
+  definition). An output on one cell of a large net array costs only that
+  cell (200,000 cells: 21 KB of `model.c`); thousands of driven cells share
+  the per-cell code cost of driven net-array cells ([known issue](known_issues.md#driven-net-array-cells-emit-per-cell-electrical-code)).
   Sequential UDPs are a separate missing capability below.
   V §§8.1–8.2, 8.6; SV §§29.3–29.4, 29.8 **[1995/SV-2009]**.
 - ❌ **Sequential UDPs** — State-holding level/edge tables and UDP

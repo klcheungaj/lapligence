@@ -67,6 +67,34 @@ hold constant ticks or typed expressions with unit/precision scales, traversed
 by validation, effects, optimization, and stack sizing. Cancelable inertial
 updates capture packed values and require persistent whole-driver storage.
 
+## Frozen fixed-value, view and projection contract (RTL-099)
+
+The fixed RTL gate freezes these IR shapes; the SIM wave extends them only
+additively (new variants, new fields with defaults), never by changing the
+meaning of an existing variant:
+
+- Fixed storage: `IrArray` dense cells or descriptor storage (`sparse()`, above
+  the 4,096-cell dense threshold), `IrArray::element_uninitialized` defaults,
+  and `IrNetArray`/`IrNetCellRun` constant runs for undriven net-array cells.
+- Values above packed capacity: `IrFixedValue` (`Array(IrMemoryView)`, `Call`,
+  `Conditional` with `element_cells`, `Stream`, `Convert`), assigned by
+  `IrStmt::FixedValueAssign` and compared by `IrExprKind::FixedValueCompare`;
+  whole arrays also use `FixedArrayCopy`, `FixedArrayDeclare`,
+  `FixedArrayFill`, `FixedArrayOrder` and `FixedArrayReduce`.
+- Calls: `IrCallArg::FixedArray`/`FixedValue` and `IrFormal::fixed_array`; a
+  descriptor return is a trailing output formal; `ref` passes the view.
+- Projections: `IrElemSel::PackedChain` steps and checked selected reference
+  views keep every intermediate boundary; writer analysis uses
+  `PackedRange`-over-`ArrayContents` cell intervals that never reach the IR.
+
+The matching runtime entry points are the `llg_fixed_array_*` functions in
+`rt/llg_rt.h`; value payloads stay behind the `sv4_*` facade. Native, real,
+string and resizable payloads are not part of this contract: they keep their
+own container/object descriptors and must not be routed through
+`IrFixedValue` by widening its element domain. A single record or tagged union
+wider than the packed limit has no descriptor form yet (see
+[known issues](../../../docs/known_issues.md#remaining-non-flattened-fixed-value-contexts)).
+
 ## Bounded packed selection chains
 
 `IrElemSel::PackedChain(Vec<IrPackedSelect>)` stores successive fixed-array-element
