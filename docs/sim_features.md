@@ -59,15 +59,15 @@ References: **V** = IEEE 1364-2001; **SV** = IEEE 1800-2009. Revision tags retai
 | 4. Scheduling/processes | 4 | 4 | 0 | 0 | 0 | 8 |
 | 5. Procedural statements | 5 | 8 | 0 | 0 | 0 | 13 |
 | 6. Timing controls | 0 | 7 | 0 | 0 | 0 | 7 |
-| 7. Expressions/operators | 4 | 12 | 1 | 0 | 0 | 17 |
+| 7. Expressions/operators | 4 | 13 | 0 | 0 | 0 | 17 |
 | 8. Continuous/structural | 3 | 6 | 3 | 0 | 0 | 12 |
 | 9. Functions/tasks | 1 | 5 | 1 | 0 | 0 | 7 |
 | 10. System tasks/functions | 9 | 11 | 3 | 0 | 0 | 23 |
 | 11. Compiler directives | 5 | 2 | 0 | 0 | 0 | 7 |
 | 12. Verification/foreign interfaces | 1 | 12 | 0 | 3 | 0 | 16 |
-| **Total** | **43** | **82** | **8** | **3** | **0** | **136** |
+| **Total** | **43** | **83** | **7** | **3** | **0** | **136** |
 
-**125 rows have some source implementation; 82 of those remain partial.**
+**126 rows have some source implementation; 83 of those remain partial.**
 Zero accepted rows means no row-level acceptance promotion in this review,
 not that the project has no historical passing tests.
 
@@ -807,9 +807,22 @@ Macros, includes and their edition-specific behavior are counted in §11.
   rejects the syntax. Recursive lets reject. Expanded assertion and native
   bodies still need an admitted consumer representation.
   SV §11.13 **[SV-2009]**.
-- ❌ **Operator overloading** — No dedicated simulator contract for
-  operator-overloading declarations. Parsing or ordinary built-in operator
-  evaluation does not establish overload execution. SV §11.11 **[SV-2005]**.
+- 🟨 **Operator overloading** — `bind <op> function` declarations in module,
+  interface, program, package, compilation-unit, generate, block and
+  subroutine scopes resolve `+ - * / % **`, unary `+ -`, `++ --`,
+  `== != < <= > >=` and `=` where the built-in operator is illegal for the
+  operand types; legal built-in operations keep their meaning. A resolved use
+  is an ordinary call to the function found from the use's scope, so oversized
+  fixed arrays cross it by descriptor. Exact formal matches win, with the
+  integral implicit-cast exception; result types are selected by assignment,
+  argument, port, return and cast contexts, and remaining ambiguity requires a
+  cast. Declarations are visible after declaration and inner ones shadow outer
+  ones; compound assignments build `A = op(A, B)` and increments
+  `A = f(A)`, rejecting targets with side effects. A postfix increment's value
+  and a prefix one used inside a larger aggregate expression, expected types
+  from relational operands, and package declarations seen through imports are
+  not admitted; V2001 rejects the syntax. Native/non-integral extensions are
+  SIM-021. SV §11.11 **[SV-2005]**.
 
 ## 8. Continuous assignments & structural
 

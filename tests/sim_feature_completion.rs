@@ -53,6 +53,9 @@ mod rtl_015;
 #[path = "sim_feature_completion/rtl_016.rs"]
 mod rtl_016;
 
+#[path = "sim_feature_completion/rtl_017.rs"]
+mod rtl_017;
+
 #[test]
 fn component_fixture_integrity() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));

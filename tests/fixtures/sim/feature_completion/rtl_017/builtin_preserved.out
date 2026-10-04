@@ -1,0 +1,8 @@
+add 5
+mul 12
+eq 0 0
+copy 1
+real 3.5
+conv 3
+inc 4
+lt 1
