@@ -177,9 +177,9 @@ void llg_fixed_array_destroy(void* object) {
         llg_clocking_forget_signal(&cell->value);
         sv4_destroy(&cell->value);
         while (cell->inertial) {
-            struct llg_fixed_inertial* next = cell->inertial->next;
+            struct llg_fixed_inertial* inertial_next = cell->inertial->next;
             free(cell->inertial);
-            cell->inertial = next;
+            cell->inertial = inertial_next;
         }
         free(cell);
         cell = next;

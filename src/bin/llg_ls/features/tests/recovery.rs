@@ -124,7 +124,10 @@ fn export_limit_recovers_declaration_level_workspace_features() {
         .is_empty());
     let definition = definition_at(&analysis, hp("/virtual/top.sv"), 0, 12)
         .expect("definition of the leaf module reference");
-    assert_eq!(definition.uri.path(), hp("/virtual/leaf.sv"));
+    assert_eq!(
+        uri_file_path(&definition.uri),
+        std::path::Path::new(hp("/virtual/leaf.sv"))
+    );
 
     let explorer = crate::module_explorer::snapshot_analysis("workspace", &analysis, |path| {
         Some(path.to_owned())

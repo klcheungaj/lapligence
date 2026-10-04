@@ -62,7 +62,10 @@ fn hover_on_macro_usage_shows_resolved_value() {
     };
     assert_eq!(
         value,
-        "```systemverilog\nmacro WIDTH = 8\n\ndefined at /x/top.sv:1\n```"
+        format!(
+            "```systemverilog\nmacro WIDTH = 8\n\ndefined at {}:1\n```",
+            hp("/x/top.sv")
+        )
     );
     let range = hover.range.expect("hover range");
     assert_eq!(range.start, Position::new(3, 4));
@@ -115,9 +118,9 @@ fn hover_on_function_like_macro_renders_args() {
     };
     assert_eq!(
         value,
-        concat!(
-            "```systemverilog\nmacro MAX(a, b) = ((a) > (b)) ? (a) : (b)\n",
-            "\ndefined at /x/top.sv:1\n```"
+        format!(
+            "```systemverilog\nmacro MAX(a, b) = ((a) > (b)) ? (a) : (b)\n\ndefined at {}:1\n```",
+            hp("/x/top.sv")
         )
     );
 }

@@ -77,8 +77,8 @@ fn module_initializer_reads_bound_interface_storage_in_both_modes() {
     let expected_stderr = format!(
         "Warning: {}:{}:{} initializer for static variable 'same_scope_copy' refers to 'local_seed' which will not have a value at initialization time\n\
 Warning: {}:{}:{} initializer for static variable 'copy' refers to 'value' which will not have a value at initialization time\n",
-        fixture_path.display(), control_line.0, control_column,
-        fixture_path.display(), warning_line.0, warning_column
+        sim_harness::source_display(&fixture_path), control_line.0, control_column,
+        sim_harness::source_display(&fixture_path), warning_line.0, warning_column
     );
 
     for optimized in [false, true] {

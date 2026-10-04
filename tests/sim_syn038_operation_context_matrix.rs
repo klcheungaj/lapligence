@@ -280,7 +280,7 @@ fn typed_operation_contexts_keep_source_and_use_site_in_both_cli_modes() {
             assert!(negative_output.stdout.is_empty(), "{negative_label}");
             let expected_negative_stderr = format!(
                 "Error: {}:{line}:{column} {CONST_REF_EXPRESSION_DIAGNOSTIC}\nllg: Slang reported errors; aborting\n",
-                negative_path.display()
+                sim_harness::source_display(&negative_path)
             );
             assert_eq!(
                 negative_output.stderr.as_slice(),

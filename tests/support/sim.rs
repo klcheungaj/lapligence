@@ -232,31 +232,21 @@ pub(crate) fn run_command(command: &mut Command, timeout: Duration) -> Result<Ou
     })
 }
 
-/// Rewrite every CRLF pair as LF; a lone CR is kept.
-pub(crate) fn crlf_to_lf(bytes: Vec<u8>) -> Vec<u8> {
-    if !bytes.windows(2).any(|pair| pair == b"\r\n") {
-        return bytes;
-    }
-    let mut normalized = Vec::with_capacity(bytes.len());
-    let mut iter = bytes.iter().copied().peekable();
-    while let Some(byte) = iter.next() {
-        if byte == b'\r' && iter.peek() == Some(&b'\n') {
-            continue;
-        }
-        normalized.push(byte);
-    }
-    normalized
-}
-
 /// Simulators keep the OS-native newline: on Windows the console and files
 /// opened in text mode end lines with CRLF. Expected outputs are written with
-/// LF, so text captured on Windows is normalized; other hosts stay byte-exact.
-pub(crate) fn host_text_to_lf(bytes: Vec<u8>) -> Vec<u8> {
-    if cfg!(windows) {
-        crlf_to_lf(bytes)
-    } else {
-        bytes
-    }
+/// LF, so captured text goes through the platform layer's normalization;
+/// other hosts stay byte-exact.
+pub(crate) use llg::ffi::platform::native_text_to_lf as host_text_to_lf;
+
+/// The spelling diagnostics and runtime reports use for an input file: its
+/// resolved native path, because sources are admitted through handles.
+/// Expected messages use this rather than a joined fixture path, whose `/`
+/// separators stay literal on Windows (`C:\repo\tests/fixtures/...`).
+pub(crate) fn source_display(path: &Path) -> String {
+    llg::ffi::platform::canonicalize(path)
+        .unwrap_or_else(|error| panic!("resolve source {}: {error}", path.display()))
+        .display()
+        .to_string()
 }
 
 /// Read a file the simulation wrote in text mode (`$fopen` without `b`,

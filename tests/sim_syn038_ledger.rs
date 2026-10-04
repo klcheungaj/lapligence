@@ -459,7 +459,7 @@ fn assert_static_return_continuous_cli_contract(
     for required in [
         "let source = fixture_path();",
         "Warning: {}:10:27 non-void function 'f' does not return a value\\n",
-        "source.display()",
+        "sim_harness::source_display(&source)",
         "assert_exact_cli(None, 0, \"result=1\\n\", &expected_stderr);",
     ] {
         assert!(
@@ -766,8 +766,8 @@ fn assert_interface_runtime_initializer_cli_contract(
         "line.contains(\"logic [7:0] copy = bus.value;\")",
         ".find(\"local_seed\")",
         ".find(\"bus.value\")",
-        "fixture_path.display(), control_line.0, control_column,",
-        "fixture_path.display(), warning_line.0, warning_column",
+        "sim_harness::source_display(&fixture_path), control_line.0, control_column,",
+        "sim_harness::source_display(&fixture_path), warning_line.0, warning_column",
     ] {
         assert!(
             owner_body.contains(required),
@@ -851,7 +851,7 @@ fn storage_write_remainders_warning_oracle_matches(
             "Warning: {}:101:33 non-void function 'hier_result' does not return a value\\n",
         )
         && test_source.contains("llg: $finish at time 4000 at tb:153:9\\n")
-        && test_source.contains("source.display()")
+        && test_source.contains("sim_harness::source_display(&source)")
 }
 
 fn assert_static_return_ref_actual_cli_contract(root: &Path, owner_body: &str, owner: &str) {
@@ -1088,8 +1088,8 @@ fn interface_runtime_initializer_warning_oracle_matches(
         && test_source.contains(
             "Warning: {}:{}:{} initializer for static variable 'copy' refers to 'value' which will not have a value at initialization time\\n",
         )
-        && test_source.contains("fixture_path.display(), control_line.0, control_column,")
-        && test_source.contains("fixture_path.display(), warning_line.0, warning_column")
+        && test_source.contains("sim_harness::source_display(&fixture_path), control_line.0, control_column,")
+        && test_source.contains("sim_harness::source_display(&fixture_path), warning_line.0, warning_column")
 }
 
 fn static_return_continuous_path_oracle_matches(row_id: &str, expected: &str) -> bool {

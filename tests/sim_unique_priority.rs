@@ -11,7 +11,7 @@ fn unique_case_reports_overlapping_items_but_keeps_first_branch() {
         .join("tests/fixtures/sim/unique_priority/overlap.sv");
     let warning = format!(
         "unique violation at {}:6:9: multiple matching items",
-        source.display()
+        sim_harness::source_display(&source)
     );
     sim_cli::run_case(
         "unique_priority",
@@ -28,7 +28,7 @@ fn unique0_case_reports_overlapping_items_without_no_match_warning() {
         .join("tests/fixtures/sim/unique_priority/unique0_overlap.sv");
     let warning = format!(
         "unique0 violation at {}:6:9: multiple matching items",
-        source.display()
+        sim_harness::source_display(&source)
     );
     sim_cli::run_case(
         "unique_priority",
@@ -45,19 +45,19 @@ fn qualifiers_distinguish_no_match_and_default_or_else_suppression() {
         .join("tests/fixtures/sim/unique_priority/no_match.sv");
     let unique_case = format!(
         "unique violation at {}:7:9: no matching item",
-        source.display()
+        sim_harness::source_display(&source)
     );
     let priority_case = format!(
         "priority violation at {}:13:9: no matching item",
-        source.display()
+        sim_harness::source_display(&source)
     );
     let unique_if = format!(
         "unique violation at {}:21:9: no matching item",
-        source.display()
+        sim_harness::source_display(&source)
     );
     let priority_if = format!(
         "priority violation at {}:25:9: no matching item",
-        source.display()
+        sim_harness::source_display(&source)
     );
     sim_cli::run_case(
         "unique_priority",
@@ -79,7 +79,7 @@ fn case_flavors_keep_four_state_matching_for_qualifier_checks() {
         .join("tests/fixtures/sim/unique_priority/wildcards.sv");
     let exact = format!(
         "unique violation at {}:6:9: no matching item",
-        source.display()
+        sim_harness::source_display(&source)
     );
     sim_cli::run_case(
         "unique_priority",
@@ -96,7 +96,7 @@ fn qualified_if_ladder_reports_when_every_condition_is_false_or_unknown() {
         .join("tests/fixtures/sim/unique_priority/ladder.sv");
     let warning = format!(
         "unique violation at {}:8:9: no matching item",
-        source.display()
+        sim_harness::source_display(&source)
     );
     sim_cli::run_case(
         "unique_priority",
@@ -113,7 +113,7 @@ fn qualified_if_ladder_reports_multiple_true_conditions() {
         .join("tests/fixtures/sim/unique_priority/if_overlap.sv");
     let warning = format!(
         "unique violation at {}:8:9: multiple matching items",
-        source.display()
+        sim_harness::source_display(&source)
     );
     sim_cli::run_case(
         "unique_priority",
@@ -130,7 +130,7 @@ fn qualified_real_case_reports_overlaps_after_capturing_selector() {
         .join("tests/fixtures/sim/unique_priority/real_case.sv");
     let warning = format!(
         "unique violation at {}:6:9: multiple matching items",
-        source.display()
+        sim_harness::source_display(&source)
     );
     sim_cli::run_case(
         "unique_priority",
@@ -147,7 +147,7 @@ fn qualified_case_inside_counts_overlapping_membership_groups() {
         .join("tests/fixtures/sim/unique_priority/inside.sv");
     let warning = format!(
         "unique violation at {}:6:9: multiple matching items",
-        source.display()
+        sim_harness::source_display(&source)
     );
     sim_cli::run_case(
         "unique_priority",
