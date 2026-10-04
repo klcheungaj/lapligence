@@ -659,18 +659,22 @@ static size_t llg_real_method_select(const llg_value_t* data, size_t count,
     }
     // unique/unique_index: the first occurrence of every numerically distinct
     // value, in source order, in O(n log n). NaN never equals itself.
-    double* keys = llg_alloc_items(count ? count : 1, sizeof(*keys));
-    size_t* positions = llg_alloc_items(count ? count : 1, sizeof(*positions));
-    size_t* order = llg_alloc_items(count ? count : 1, 2 * sizeof(*order));
-    unsigned char* keep = llg_alloc_items(count ? count : 1, sizeof(*keep));
+    if (!count) return 0;
+    double* keys = llg_alloc_items(count, sizeof(*keys));
+    size_t* positions = llg_alloc_items(count, sizeof(*positions));
+    size_t* order = llg_alloc_items(count, 2 * sizeof(*order));
+    unsigned char* keep = llg_alloc_items(count, sizeof(*keep));
     size_t known = 0;
+    // Branch-free compaction: every iteration stores, and a NaN slot is
+    // overwritten by the next known value. Conditional stores here made GCC
+    // -O2 report the keys as maybe-uninitialized at the sort call.
     for (size_t index = 0; index < count; ++index) {
         double value = data[index].value.real;
-        keep[index] = value != value;
-        if (value == value) {
-            keys[known] = value;
-            positions[known++] = index;
-        }
+        int is_nan = value != value;
+        keep[index] = (unsigned char)is_nan;
+        keys[known] = value;
+        positions[known] = index;
+        known += !is_nan;
     }
     (void)llg_real_sort_order(keys, known, 0, order);
     for (size_t rank = 0; rank < known; ++rank)
