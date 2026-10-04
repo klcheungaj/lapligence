@@ -66,7 +66,13 @@ while map-local defines stay in that map's source order and scope.
 Admit unquoted per-library `-incdir` directories with the containing map as
 relative base. Keep declaration order and library scope through Rust include
 preflight and cache-only native lookup. Missing or inadmissible directories
-reject at map admission; quoted `"-incdir"` remains a literal file pattern.
+reject at map admission; quoted `"-incdir"` remains a literal file pattern. In-memory
+maps select logical directories that contain admitted buffers or are listed in
+`logical_directories`, the representation of an empty logical directory.
+Library sources follow the compilation-unit mode: separate gives each file its
+own preprocessor; merged shares one per library, in admission order, in Rust
+include preflight and in the wrapper alike. `Db::source_library` retains each
+instance's bound library (and each package's/unit's) for `%l`.
 
 Edition checks use classified tokens and owned semantic edges shared by execution
 and navigation. Explicit `system_subroutines` prototypes distinguish extensions

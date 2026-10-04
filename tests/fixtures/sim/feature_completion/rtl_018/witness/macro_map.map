@@ -1,0 +1,2 @@
+`define LIB aux
+library `LIB cell_display.v;

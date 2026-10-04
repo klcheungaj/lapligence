@@ -5,7 +5,7 @@ owned APIs to the rest of the library.
 
 | Component | Responsibility |
 | --- | --- |
-| `slang.rs` and `slang/` | C ABI v8 requests, bounded snapshot/error owners, layout/tag validation, exact value/text copies and RAII destruction. |
+| `slang.rs` and `slang/` | C ABI v9 requests, bounded snapshot/error owners, layout/tag validation, exact value/text copies and RAII destruction. |
 | `process_memory.rs` | Platform process-memory counters and native resource limits. |
 | `secure_fs` | Handle-relative filesystem admission and identity/race protection. |
 

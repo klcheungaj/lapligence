@@ -163,6 +163,16 @@ impl Db {
             })
             .map(|(index, _)| NodeId::from_index(index))
             .collect();
+        let source_libraries = snapshot
+            .source_libraries
+            .iter()
+            .map(|binding| {
+                Ok((
+                    semantic_id(&ids, binding.semantic_id)?,
+                    binding.library.clone(),
+                ))
+            })
+            .collect::<Result<HashMap<_, _>, DbError>>()?;
         let unconnected_drives = snapshot
             .semantic_nodes
             .iter()
@@ -989,6 +999,7 @@ impl Db {
             conditional_pattern_fields,
             program_instances,
             unconnected_drives,
+            source_libraries,
             tops,
             flat_modules,
             packages,

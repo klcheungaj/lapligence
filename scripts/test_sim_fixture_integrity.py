@@ -51,6 +51,19 @@ class FixtureIntegrityTests(unittest.TestCase):
             "tests/fixtures/sim/undefined_behavior/q03_control.sv",
         })
 
+    def test_companion_inputs_are_references(self) -> None:
+        source = ('const SUITE: &str = "feature_completion/rtl_018";\n'
+                  'const MAP: &str = "root.map";\n'
+                  'sim_cli::run_case_with_inputs(SUITE, "top", &["lib/rtl.sv", MAP], "ok", "", &[], &[]);\n'
+                  'sim_cli::reject_case_with_inputs(SUITE, "bad.v", &["cfg.sv"], "error", &[]);')
+        self.assertEqual(self.paths(source), {
+            "tests/fixtures/sim/feature_completion/rtl_018/top.sv",
+            "tests/fixtures/sim/feature_completion/rtl_018/lib/rtl.sv",
+            "tests/fixtures/sim/feature_completion/rtl_018/root.map",
+            "tests/fixtures/sim/feature_completion/rtl_018/bad.v",
+            "tests/fixtures/sim/feature_completion/rtl_018/cfg.sv",
+        })
+
     def test_comments_are_not_discovered_and_lines_are_preserved(self) -> None:
         source = '// sim_cli::run_case("absent", "one", "", "", &[]);\n'
         source += '/* nested /* comment */ sim_cli::run_case("absent", "two", "", "", &[]); */\n'
@@ -118,6 +131,15 @@ class FeatureCompletionTests(unittest.TestCase):
         self.fixture.unlink()
         self.fixture.parent.rmdir()
         self.assertIn("has no fixture directory", self.errors()[0])
+
+    def test_companion_input_counts_as_feature_reference(self) -> None:
+        library = self.fixture.with_name("library.sv")
+        library.write_text("module leaf; endmodule\n", encoding="ascii")
+        self.assertIn("not referenced by a declared feature test", self.errors()[0])
+        self.module.write_text(self.active.replace(
+            'sim_cli::run_case(SUITE, "copy.v", "ok\\n", "", &[]);',
+            'sim_cli::run_case_with_inputs(SUITE, "copy.v", &["library.sv"], "ok\\n", "", &[], &[]);'))
+        self.assertEqual(self.errors(), [])
 
     def test_missing_and_unreferenced_inputs_fail(self) -> None:
         self.fixture.unlink()

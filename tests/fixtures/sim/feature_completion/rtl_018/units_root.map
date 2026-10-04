@@ -1,0 +1,3 @@
+// Root map: its local macro must not reach design sources or the included map.
+`define RTL018_MAP_ONLY 1
+include units/child.map;

@@ -130,6 +130,16 @@ most also after Db destruction; expectations are independent bit-string
 derivations. `target_bounds` prints its results to stderr, compared exactly with
 the run-time bounds reports.
 
+RTL-018's library, configuration and bind fixtures use
+`-E 'binary(sim_feature_completion) & test(rtl_018::)'`, with
+`binary(sim_syn032_library_configs)` and `binary(sim_syn033_structural_bind)`.
+Companion maps, library sources and configurations are named through
+`sim_cli::run_case_with_inputs`/`reject_case_with_inputs`, whose input lists
+the fixture checker treats as references. The composition runs in both
+compilation-unit modes on every backend (set `LLG_TEST_GMP_ROOT` for the GMP
+lane) and, through `sim_cli::run_compile_opts_after_db_drop`, after snapshot and
+Db destruction.
+
 RTL-016's tagged-union, pattern and Q03 fixtures use
 `-E 'binary(sim_feature_completion) & test(rtl_016::)'`. Positive fixtures and
 the run-time error fixtures run in both optimizer modes on both backends (set

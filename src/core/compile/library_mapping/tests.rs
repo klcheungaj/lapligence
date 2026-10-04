@@ -248,6 +248,7 @@ fn disk_and_logical_maps_resolve_one_joint_candidate_set() {
         &logical_maps,
         &[],
         LanguageEdition::SystemVerilog2009,
+        &[],
         &mut Vec::new(),
         &mut buffers,
         count,

@@ -1303,6 +1303,9 @@ struct Codegen<'a> {
     c_paths: HashMap<String, Vec<String>>,
     instance_paths: HashMap<NodeId, String>,
     display_paths: HashMap<String, String>,
+    /// Instance, runtime-environment and generate-scope node for each
+    /// lowering path; resolves `%l` for formats lowered by path alone.
+    scope_nodes: HashMap<String, NodeId>,
     /// Current function/task body context while emitting one (`None` in
     /// process and continuous-assignment contexts).  Expression and LHS
     /// resolution consult it to map formals, locals and the return variable;
@@ -1519,6 +1522,7 @@ impl<'a> Codegen<'a> {
             c_paths: HashMap::new(),
             instance_paths: HashMap::new(),
             display_paths: HashMap::new(),
+            scope_nodes: HashMap::new(),
             func: None,
             depth_arg: "0".to_string(),
             inst: NodeId(0),
