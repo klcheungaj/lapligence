@@ -149,6 +149,7 @@ Options:
       --                    Pass remaining arguments to the generated simulator
       --generator <backend>  Select the CMake generator
       --launcher <program>   Select the CMake C compiler launcher
+                              (default: $LLG_C_LAUNCHER, none)
       --dpi-lib <path>       Link one explicit DPI-C library (repeatable)
       --cc <program>         C compiler for the model (default: $LLG_CC, $CC, cc)
       --cflags <flags>       Extra C compiler flags (default: $LLG_CFLAGS)

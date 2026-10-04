@@ -37,7 +37,7 @@ once, in the library (`llg::config`), and both binaries use it.
 Highest first: **command line, `llg.toml`, environment fallbacks, built-in
 defaults.** The file supplies defaults for the command-line options, so it
 ranks exactly where the option would: above `$LLG_CC`, `$LLG_CFLAGS`,
-`$LLG_CMAKE`, `$LLG_RUNTIME_CACHE_DIR`, `$CMAKE_BUILD_PARALLEL_LEVEL` and
+`$LLG_C_LAUNCHER`, `$LLG_CMAKE`, `$LLG_RUNTIME_CACHE_DIR`, `$CMAKE_BUILD_PARALLEL_LEVEL` and
 `$CMAKE_GENERATOR` (use the option or an unset key to let the environment
 decide).
 
@@ -118,7 +118,7 @@ server, accepted and ignored by `llg`.
 | `simulator.optimize` | bool | llg | `--no-opt` is `optimize = false` |
 | `simulator.plusargs` | strings | llg | arguments after `--` |
 | `build.gen_only` | bool | llg | `--gen-only` |
-| `build.generator`, `build.launcher`, `build.cc`, `build.cmake` | strings | llg | `--generator`, `--launcher`, `--cc`, `--cmake` |
+| `build.generator`, `build.launcher`, `build.cc`, `build.cmake` | strings | llg | `--generator`, `--launcher`, `--cc`, `--cmake` (`build.launcher` falls back to `$LLG_C_LAUNCHER`) |
 | `build.cflags` | string | llg | `--cflags` (empty clears `$LLG_CFLAGS`) |
 | `build.model_opt_level` | `O0` `O1` `O2` `O3` `Os` | llg | `--model-opt-level` |
 | `build.jobs` | positive integer | llg | `--build-jobs` |
@@ -304,7 +304,8 @@ severity = "error"
 - `gen_only` (bool) — emit the model sources without building (`--gen-only`).
 - `generator`, `launcher`, `cc`, `cmake` (strings) — CMake generator, C compiler
   launcher, C compiler and CMake program. Programs are looked up by name, not
-  resolved against the config directory.
+  resolved against the config directory. An unset launcher falls back to
+  `$LLG_C_LAUNCHER`.
 - `cflags` (string) — extra C compiler flags (`--cflags`); an empty string
   clears `$LLG_CFLAGS`.
 - `model_opt_level` (`"O0"`, `"O1"`, `"O2"`, `"O3"`, `"Os"`) — model/runtime C
