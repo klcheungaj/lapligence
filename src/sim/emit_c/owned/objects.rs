@@ -6,6 +6,36 @@ mod queries;
 impl Frame<'_, '_> {
     pub(super) fn chandle(&mut self, value: &IrChandleExpr) -> Result<String, String> {
         let code = match value {
+            IrChandleExpr::Conditional {
+                predicate,
+                then,
+                otherwise,
+            } => {
+                let selector = self.expression(predicate)?;
+                let result = self.scalar("void*", "NULL".to_owned());
+                self.line(format!("if ({}) {{", selector.truth()));
+                let left = self.chandle(then)?;
+                self.line(format!("{result} = {left};"));
+                if selector.width == 0 {
+                    self.line("} else {");
+                    let right = self.chandle(otherwise)?;
+                    self.line(format!("{result} = {right};"));
+                } else {
+                    self.line(format!("}} else if (!{}) {{", selector.unknown_truth()));
+                    let right = self.chandle(otherwise)?;
+                    self.line(format!("{result} = {right};"));
+                    self.line("} else {");
+                    // SV 11.4.11: both arms are evaluated; unequal chandles
+                    // yield null, the type's default-uninitialized value.
+                    let left = self.chandle(then)?;
+                    let left = self.scalar("void*", left);
+                    let right = self.chandle(otherwise)?;
+                    self.line(format!("{result} = {left} == ({right}) ? {left} : NULL;"));
+                }
+                self.line("}");
+                self.discard(selector);
+                return Ok(result);
+            }
             IrChandleExpr::SemaphoreNew(keys) => {
                 if self.read_only_callback {
                     return Err(pending("semaphore construction in read-only callbacks"));

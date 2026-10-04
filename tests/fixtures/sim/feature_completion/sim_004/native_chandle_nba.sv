@@ -1,6 +1,6 @@
 // SIM-004: nonblocking and delayed writes to persistent chandles and to
 // records with chandle and string leaves. IEEE 1800-2009 6.14 (chandles are
-// foreign pointers copied by identity), 10.4.1-10.4.2 and 4.9.4.
+// foreign pointers copied by identity), 10.4.1-10.4.2, 4.9.4 and 11.4.11.
 import "DPI-C" function chandle foreign_make(int value);
 import "DPI-C" function int foreign_value(chandle handle);
 import "DPI-C" function void foreign_release(chandle handle);
@@ -11,6 +11,7 @@ module tb;
   typedef struct {chandle h; string tag; int n;} rec_t;
   chandle h1, h2, cur, a, b;
   rec_t ra, rb, rc;
+  logic sel;
 
   task automatic issue(input chandle h);
     cur <= h;
@@ -57,9 +58,22 @@ module tb;
     rc = #2 ra;
     $display("11 %0d %s %0d", foreign_value(rc.h), rc.tag, rc.n);
 
+    // 11.4.11: an ambiguous predicate keeps equal chandles, otherwise null.
+    sel = 1'bx;
+    cur = sel ? h1 : h2;
+    $display("12 %0d", cur == null);
+    cur = sel ? h2 : h2;
+    $display("13 %0d", foreign_value(cur));
+    sel = 0;
+    cur = sel ? h1 : h2;
+    $display("14 %0d", foreign_value(cur));
+    sel = 1;
+    cur = sel ? h1 : h2;
+    $display("15 %0d", foreign_value(cur));
+
     foreign_release(h1);
     foreign_release(h2);
-    $display("12 %0d %0d", foreign_live(), foreign_bad());
+    $display("16 %0d %0d", foreign_live(), foreign_bad());
     $finish(0);
   end
 endmodule

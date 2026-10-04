@@ -63,6 +63,14 @@ void llg_string_move(llg_string_t *target, llg_string_t value) {
     if (changed) string_notify(target);
 }
 
+llg_string_t llg_string_conditional_merge(llg_string_t a, llg_string_t b) {
+    int same = string_same(&a, &b);
+    llg_string_destroy(&b);
+    if (same) return a;
+    llg_string_destroy(&a);
+    return (llg_string_t){0};
+}
+
 llg_string_t llg_string_concat(llg_string_t a, llg_string_t b) {
     if (b.len > SIZE_MAX - a.len) string_fail("concatenation size overflow");
     llg_string_t value = string_alloc(a.len + b.len);

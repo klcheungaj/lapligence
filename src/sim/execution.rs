@@ -2022,6 +2022,15 @@ fn collect_string_effects(
     visited_calls: &mut CallVisits,
 ) {
     match value {
+        IrStringExpr::Conditional {
+            predicate,
+            then,
+            otherwise,
+        } => {
+            collect_expression_effects(ir, predicate, effects, visited_calls);
+            collect_string_effects(ir, then, effects, visited_calls);
+            collect_string_effects(ir, otherwise, effects, visited_calls);
+        }
         IrStringExpr::Call {
             function,
             args,
@@ -2121,6 +2130,15 @@ fn collect_chandle_effects(
     visited_calls: &mut CallVisits,
 ) {
     match value {
+        IrChandleExpr::Conditional {
+            predicate,
+            then,
+            otherwise,
+        } => {
+            collect_expression_effects(ir, predicate, effects, visited_calls);
+            collect_chandle_effects(ir, then, effects, visited_calls);
+            collect_chandle_effects(ir, otherwise, effects, visited_calls);
+        }
         IrChandleExpr::Construct(index) => {
             // Constructor bodies are separately typed; allocation remains an
             // observable runtime operation even when its handle is discarded.

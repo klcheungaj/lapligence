@@ -11,6 +11,15 @@ impl Codegen<'_> {
         if let Some(target) = self.class_field_string_lvalue(path, node)? {
             return Ok(IrStringExpr::LocalRead(target));
         }
+        if let Some((predicate, then, otherwise)) =
+            self.lower_native_conditional_parts(path, node, &TypeShape::String)?
+        {
+            return Ok(IrStringExpr::Conditional {
+                predicate: Box::new(predicate),
+                then: Box::new(self.lower_string(path, then)?),
+                otherwise: Box::new(self.lower_string(path, otherwise)?),
+            });
+        }
         if let NodeKind::MethodCall {
             name,
             receiver: Some(receiver),

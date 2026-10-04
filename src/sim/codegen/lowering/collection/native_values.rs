@@ -13,6 +13,8 @@ use crate::sim::ir::{
     IrNativeLeafValue, IrNativeValue, IrObjectQuery,
 };
 
+mod conditionals;
+
 /// Largest number of leaves of one native record. Leaf-wise transfers to and
 /// from flattened module storage emit one operation per leaf, so larger
 /// records are rejected rather than expanded.
@@ -34,6 +36,7 @@ pub(in super::super) enum NativeEndpoint {
 }
 
 /// One captured leaf value of a transfer.
+#[derive(Clone)]
 enum LeafValue {
     Packed(IrExpr),
     Real(IrExpr),
@@ -48,6 +51,42 @@ impl LeafValue {
             LeafValue::Real(value) => IrNativeLeafExpr::Real(value),
             LeafValue::String(value) => IrNativeLeafExpr::String(value),
             LeafValue::Chandle(value) => IrNativeLeafExpr::Chandle(value),
+        }
+    }
+}
+
+/// Evaluate `value` once into the local `name` and return its read.
+fn capture_leaf(value: LeafValue, name: String, captures: &mut Vec<IrStmt>) -> LeafValue {
+    match value {
+        LeafValue::String(value) => {
+            captures.push(IrStmt::DeclString {
+                name: name.clone(),
+                init: Some(value),
+            });
+            LeafValue::String(IrStringExpr::LocalRead(name))
+        }
+        LeafValue::Chandle(value) => {
+            captures.push(IrStmt::Object(Box::new(IrObjectStmt::ChandleDeclareLocal(
+                name.clone(),
+                Some(value),
+            ))));
+            LeafValue::Chandle(IrChandleExpr::LocalRead(name))
+        }
+        LeafValue::Packed(value) | LeafValue::Real(value) => {
+            let (width, signed) = (value.width, value.signed);
+            captures.push(IrStmt::DeclLocal {
+                name: name.clone(),
+                width,
+                signed,
+                two_state: false,
+                init: Some(Box::new(value)),
+            });
+            let read = IrExpr::new(IrExprKind::LocalRead(name), width, signed, None);
+            if width == 0 {
+                LeafValue::Real(read)
+            } else {
+                LeafValue::Packed(read)
+            }
         }
     }
 }
@@ -888,38 +927,7 @@ impl Codegen<'_> {
         for (position, ((_, target), (_, source))) in targets.iter().zip(&sources).enumerate() {
             let value = self.endpoint_leaf_read(source)?;
             let name = format!("_llg_native_copy_{}_{position}", self.native_copy_sequence);
-            let captured = match value {
-                LeafValue::String(value) => {
-                    captures.push(IrStmt::DeclString {
-                        name: name.clone(),
-                        init: Some(value),
-                    });
-                    LeafValue::String(IrStringExpr::LocalRead(name))
-                }
-                LeafValue::Chandle(value) => {
-                    captures.push(IrStmt::Object(Box::new(IrObjectStmt::ChandleDeclareLocal(
-                        name.clone(),
-                        Some(value),
-                    ))));
-                    LeafValue::Chandle(IrChandleExpr::LocalRead(name))
-                }
-                LeafValue::Packed(value) | LeafValue::Real(value) => {
-                    let (width, signed) = (value.width, value.signed);
-                    captures.push(IrStmt::DeclLocal {
-                        name: name.clone(),
-                        width,
-                        signed,
-                        two_state: false,
-                        init: Some(Box::new(value)),
-                    });
-                    let read = IrExpr::new(IrExprKind::LocalRead(name), width, signed, None);
-                    if width == 0 {
-                        LeafValue::Real(read)
-                    } else {
-                        LeafValue::Packed(read)
-                    }
-                }
-            };
+            let captured = capture_leaf(value, name, &mut captures);
             writes.push(self.endpoint_leaf_write(path, target, captured, nba)?);
         }
         self.native_copy_sequence += 1;
@@ -1189,20 +1197,8 @@ impl Codegen<'_> {
             }
         }
         let source = self.p30_unwrap_cast(rhs);
-        // An unknown predicate merges the operands member by member (§11.4.11)
-        // and native leaves have no fixed payload for that merge, so keep the
-        // conditional's own diagnostic instead of a missing record source.
-        if matches!(
-            self.kind(source),
-            NodeKind::Expr(ExprKind::Conditional { .. })
-                | NodeKind::Expr(ExprKind::Operation {
-                    op: Operation::Conditional,
-                    ..
-                })
-        ) {
-            return Err(format!(
-                "native record conditional in `{path}` is not supported: conditional structure member has no supported fixed payload"
-            ));
+        if self.native_record_conditional(source) {
+            return self.native_conditional_into(path, target, descriptor, source, nba);
         }
         let (source, _) = self
             .native_endpoint(source)?
@@ -1241,7 +1237,8 @@ impl Codegen<'_> {
             .ok()
             .flatten()
             .is_some()
-            || self.native_call_node(rhs);
+            || self.native_call_node(rhs)
+            || self.native_record_conditional(self.p30_unwrap_cast(rhs));
         if !lhs_native && !rhs_native {
             return Ok(None);
         }

@@ -50,7 +50,22 @@ fn chandle_nbas_keep_borrowed_foreign_pointers() {
 }
 
 #[test]
-fn adopted_native_nba_witnesses() {
+fn native_conditionals_merge_immediate_members() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_004/native_conditional.out");
+    sim_cli::run_case_backend_parity(SUITE, "native_conditional", expected, &[], &[]);
+    sim_cli::run_case_after_db_drop(SUITE, "native_conditional", expected);
+}
+
+#[test]
+fn native_values_cross_ports_and_mixed_signatures_as_copies() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_004/native_links.out");
+    sim_cli::run_case_backend_parity(SUITE, "native_links", expected, &[], &[]);
+    sim_cli::run_case_after_db_drop(SUITE, "native_links", expected);
+}
+
+#[test]
+fn adopted_native_value_witnesses() {
     sim_cli::run_case(
         SUITE,
         "witness_string_nba",
@@ -62,6 +77,13 @@ fn adopted_native_nba_witnesses() {
         SUITE,
         "witness_chandle_nba",
         include_str!("../fixtures/sim/feature_completion/sim_004/witness_chandle_nba.out"),
+        "",
+        &[],
+    );
+    sim_cli::run_case(
+        SUITE,
+        "witness_native_conditional",
+        include_str!("../fixtures/sim/feature_completion/sim_004/witness_native_conditional.out"),
         "",
         &[],
     );
