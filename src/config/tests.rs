@@ -4,6 +4,14 @@ use super::*;
 use std::io;
 use std::path::{Path, PathBuf};
 
+/// `base` joined with a `/`-separated relative path, one component at a time,
+/// so the result has the native separators the resolver produces.
+fn native(base: &Path, relative: &str) -> PathBuf {
+    relative
+        .split('/')
+        .fold(base.to_path_buf(), |path, part| path.join(part))
+}
+
 fn write_and_load(root: &Path, text: &str) -> ConfigLoad {
     let dir = root.join("proj");
     std::fs::create_dir_all(&dir).expect("create config root");
@@ -603,8 +611,8 @@ runtime_cache = "../cache"
     assert_eq!(
         config.sources.files,
         vec![
-            base.join("rtl/top.sv"),
-            base.parent().unwrap().join("shared/pkg.sv")
+            native(&base, "rtl/top.sv"),
+            native(base.parent().unwrap(), "shared/pkg.sv")
         ]
     );
     assert!(!config.sources.directories_configured);
@@ -614,12 +622,15 @@ runtime_cache = "../cache"
         Some(CompilationUnitMode::Merged)
     );
     assert_eq!(config.compile.system_tasks, vec!["$my_task(input int)"]);
-    assert_eq!(config.libraries.map_files, vec![base.join("libs/lib.map")]);
+    assert_eq!(
+        config.libraries.map_files,
+        vec![native(&base, "libs/lib.map")]
+    );
     assert_eq!(
         config.libraries.files,
         vec![
-            format!("lib_a={}", base.join("libs/a.sv").display()),
-            base.join("libs/b.sv").to_string_lossy().into_owned()
+            format!("lib_a={}", native(&base, "libs/a.sv").display()),
+            native(&base, "libs/b.sv").to_string_lossy().into_owned()
         ],
         "only the path part of library=path is resolved"
     );
@@ -627,7 +638,10 @@ runtime_cache = "../cache"
     assert_eq!(config.libraries.default.as_deref(), Some("work"));
     assert_eq!(config.lint_run.run, Some(true));
     assert_eq!(config.lint_run.json, Some(true));
-    assert_eq!(config.lint_run.json_file, Some(base.join("out/lint.json")));
+    assert_eq!(
+        config.lint_run.json_file,
+        Some(native(&base, "out/lint.json"))
+    );
     assert_eq!(config.simulator.stop_policy, Some(StopPolicy::Exit));
     assert_eq!(config.simulator.max_export_mib, Some(64));
     assert_eq!(config.simulator.optimize, Some(false));
@@ -641,7 +655,7 @@ runtime_cache = "../cache"
     );
     assert_eq!(config.build.model_opt_level, Some(ModelOptLevel::O2));
     assert_eq!(config.build.jobs, Some(3));
-    assert_eq!(config.build.dpi_libs, vec![base.join("dpi/libx.so")]);
+    assert_eq!(config.build.dpi_libs, vec![native(&base, "dpi/libx.so")]);
     assert_eq!(config.output.out_dir, Some(base.join("out")));
     assert_eq!(
         config.output.runtime_cache,
@@ -775,9 +789,9 @@ fn discover_sources_walks_every_directory_with_filters() {
     assert_eq!(
         units,
         vec![
-            root.join("rtl/a.sv"),
-            root.join("rtl/b.v"),
-            root.join("tb/t.sv")
+            native(&root, "rtl/a.sv"),
+            native(&root, "rtl/b.v"),
+            native(&root, "tb/t.sv")
         ],
         "sorted, headers and excluded files omitted"
     );

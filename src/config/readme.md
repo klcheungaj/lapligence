@@ -20,7 +20,7 @@ Design notes:
   ignored there, so one file serves editor and simulator and a misspelled key
   rejects the whole file atomically in either.
 - Optional driver settings stay `None` when unset, so the driver can apply
-  command line > config > environment/built-in precedence (see `src/bin/llg/settings.rs`).
+  command line > environment > config > built-in precedence (see `src/bin/llg/settings.rs`).
 - `toml` and `serde` are regular dependencies; the schema is not behind the
   `lsp` feature because the simulator driver needs it too.
 - This module may depend on `core` and `sim` (for validated enums such as

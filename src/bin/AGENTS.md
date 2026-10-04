@@ -52,15 +52,19 @@ Keep reusable processing in the library. Bins import `llg::config`, `llg::core`,
 
 ## Configuration (`llg.toml`)
 
-`llg` reads `--config <file>` (must exist) or `./llg.toml` when present (no
-parent search; missing default is not an error). Parsing, validation and path
-resolution live in `llg::config`, shared with `llg_ls`; never parse TOML in a
-bin. `cli.rs` records only what was given; `settings.rs` resolves command line >
-config > environment/built-in. Scalars replace; a repeatable option given on the
-command line replaces the config list (never appends); command-line files replace
-`sources.files` and `sources.directories`; booleans have `--no-X` opposites
-(`--no-gen-only`, `--opt`, `--no-lint`). `--config` and `--lint-config` are
-command-line only. A config error exits 1 naming file and key; entry-level
+`llg` reads a config file only from `--config <file>` (must exist); it never
+discovers `llg.toml` (`llg_ls` keeps its per-root discovery). Parsing,
+validation and path resolution live in `llg::config`, shared with `llg_ls`;
+never parse TOML in a bin. `cli.rs` records only what was given; `settings.rs`
+resolves command line > environment > config > built-in, and `settings::layered`
+is the single place that states that order: every option with an environment
+variable goes through it (add new env-backed options there and to the `Env`
+reader, not to `sim::build`). Scalars replace; a repeatable option given on the
+command line appends to the config list and `--clear <list>` discards the config
+list first (a later `NAME=VALUE` define/override replaces an earlier one;
+other lists keep the first identical entry); booleans have `--no-X` opposites
+(`--no-gen-only`, `--opt`, `--no-lint`). `--config`, `--clear` and
+`--lint-config` are command-line only. A config error exits 1 naming file and key; entry-level
 warnings go to stderr. Add a new option to `cli.rs`, the config schema,
 `docs/config.md` and the resolve/precedence tests together.
 

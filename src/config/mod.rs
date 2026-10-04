@@ -107,7 +107,7 @@ impl StopPolicy {
 /// A validated, resolved `llg.toml`.
 ///
 /// Optional fields are `None` when the file did not set them, so the driver
-/// can apply command-line > config > environment/built-in precedence.
+/// can apply command-line > environment > config > built-in precedence.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LlgConfig {
     pub schema_version: u32,

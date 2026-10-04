@@ -10,13 +10,11 @@ once, in the library (`llg::config`), and both binaries use it.
 
 ## Discovery and paths
 
-- **`llg`**: `--config <path>` names the file explicitly (relative to the
-  current directory); a missing explicit file is an error. Otherwise
-  `llg.toml` in the **current directory** is read when present; a missing
-  default file is not an error. There is no search through parent directories:
-  the driver acts on the directory it is started in, so the file that applies
-  is always the visible one. With no arguments and no `llg.toml`, `llg` prints
-  usage and exits 2.
+- **`llg`**: reads a config file **only** when `--config <path>` names it
+  (relative to the current directory); a missing explicit file is an error.
+  `llg` never discovers `llg.toml`: a file in the current directory (or any
+  parent) is ignored unless passed explicitly, so a run never depends on an
+  invisible file. With no arguments, `llg` prints usage and exits 2.
 - **`llg_ls`**: every workspace root is an independent analysis root with its
   own effective `llg.toml`, loaded from the root directory unless the client
   overrides the path via `initializationOptions`
@@ -34,28 +32,55 @@ once, in the library (`llg::config`), and both binaries use it.
 
 ## Precedence in `llg`
 
-Highest first: **command line, `llg.toml`, environment fallbacks, built-in
-defaults.** The file supplies defaults for the command-line options, so it
-ranks exactly where the option would: above `$LLG_CC`, `$LLG_CFLAGS`,
-`$LLG_CMAKE`, `$LLG_RUNTIME_CACHE_DIR`, `$CMAKE_BUILD_PARALLEL_LEVEL` and
-`$CMAKE_GENERATOR` (use the option or an unset key to let the environment
-decide).
+Highest first: **command line, environment, `llg.toml`, built-in default.**
+The merge code expresses the order in one place (`settings::layered`). Every
+option that has an environment variable follows it:
 
-- A scalar given on the command line replaces the file's value.
-- A **repeatable option given on the command line replaces the file's whole
-  list** for that option; it never appends. (`-I`, `-D`, `--param-override`,
+| Option | Command line | Environment | Config key | Default |
+|---|---|---|---|---|
+| C compiler | `--cc` | `$LLG_CC`, then `$CC` | `build.cc` | `cc` |
+| C flags | `--cflags` | `$LLG_CFLAGS` | `build.cflags` | none |
+| CMake program | `--cmake` | `$LLG_CMAKE` | `build.cmake` | `cmake` |
+| CMake generator | `--generator` | `$CMAKE_GENERATOR` | `build.generator` | CMake's own |
+| Build jobs | `--build-jobs` | `$CMAKE_BUILD_PARALLEL_LEVEL` | `build.jobs` | available CPUs |
+| Runtime cache | `--runtime-cache` | `$LLG_RUNTIME_CACHE_DIR` | `output.runtime_cache` | `<out-dir>/llg-runtime-cache` |
+
+An empty `$LLG_CC`, `$CC`, `$LLG_CMAKE`, `$CMAKE_GENERATOR` or
+`$LLG_RUNTIME_CACHE_DIR` counts as unset, and so does a
+`$CMAKE_BUILD_PARALLEL_LEVEL` that is not a positive integer. An empty
+`$LLG_CFLAGS` is a value (no extra flags) and beats `build.cflags`; the same
+holds for `--cflags ""`. All other options (the launcher, `--model-opt-level`,
+`--stop-policy`, ...) have no environment variable: command line, config,
+default. `LLG_MEMORY_LIMIT_MB` is an environment-only process guard with no
+option or key, so no precedence applies to it.
+
+- A scalar from a higher layer replaces the lower one.
+- **Repeatable options append.** Values given on the command line follow the
+  values of the config list (`-I`, `-D`, `--param-override`,
   `--define-system-task`, `--libmap`, `--libfile`, `--library-order`,
-  `--dpi-lib`, the plusargs after `--`.) An explicit `--` with nothing after it
-  clears the file's `simulator.plusargs`.
-- Source files named on the command line replace **all** of the file's
-  sources (`sources.files` and the `sources.directories` discovery); the
-  source directories then also stop being include directories. Without
-  command-line files, the sources are `sources.files` plus every `.v`/`.sv`
+  `--dpi-lib`, source files, and the plusargs after `--`). No list has an
+  environment variable, so only the config supplies the lower layer.
+- **`--clear <list>` replaces.** It discards the config values of that list
+  before the command-line values apply, wherever it appears on the command
+  line; use it alone to empty a list. It is repeatable and accepts a comma
+  list (`--clear defines,include-dirs`). The lists: `sources`
+  (`sources.files` and the `sources.directories` discovery, which also stops
+  those directories being include directories), `include-dirs`, `defines`,
+  `param-overrides`, `system-tasks`, `libmaps`, `libfiles`, `library-order`,
+  `dpi-libs`, `plusargs`. An unknown name exits 2 and lists the valid ones.
+- **Duplicates.** A define (`NAME` or `NAME=VALUE`) or parameter override
+  given later replaces an earlier one with the same `NAME`, so a command-line
+  `-D LEVEL=2` overrides the file's `LEVEL=1`, and the last of repeated
+  command-line values wins. Every other list keeps the first occurrence of an
+  identical entry (include directories and library names compare as text,
+  source files by canonical path). Plusargs are never deduplicated.
+- Sources: the config contributes `sources.files` plus every `.v`/`.sv`
   found under `sources.directories` (only when the file names directories
   explicitly; the language server's implicit `["."]` default does not make
-  `llg` scan the directory) with `sources.include`/`exclude`. Source
-  directories are include-search directories, as in the language server;
-  `-I` replaces only `compile.include_dirs`.
+  `llg` scan the directory) with `sources.include`/`exclude`; files named on
+  the command line follow. Source directories are include-search directories,
+  as in the language server; `--clear include-dirs` resets only
+  `compile.include_dirs`.
 - Booleans have explicit opposites so the command line can override either
   value: `--gen-only`/`--no-gen-only`, `--no-opt`/`--opt`, `--lint`/`--no-lint`.
   `--no-lint` also cancels `lint.json`. `--lint-json [<path>]` chooses its own
@@ -63,8 +88,8 @@ decide).
 - `--lint-config <file>` (the legacy `llg-lint.toml` rule file) replaces the
   `[lint]` rule settings of `llg.toml`; without it, the `[lint]` rules
   (`enabled`, `rules.<id>`) of `llg.toml` apply to `llg --lint`.
-- `--help` and `--version` act before any file is read. `--config` and
-  `--lint-config` are command-line only.
+- `--help` and `--version` act before any file is read. `--config`,
+  `--clear` and `--lint-config` are command-line only.
 
 ## Errors
 
@@ -116,17 +141,17 @@ server, accepted and ignored by `llg`.
 | `simulator.stop_policy` | `"resume"` \| `"exit"` | llg | `--stop-policy` |
 | `simulator.max_export_mib` | 1 to 16384 | llg | `--max-export-mib` |
 | `simulator.optimize` | bool | llg | `--no-opt` is `optimize = false` |
-| `simulator.plusargs` | strings | llg | arguments after `--` |
+| `simulator.plusargs` | strings | llg | arguments after `--` (command-line ones append) |
 | `build.gen_only` | bool | llg | `--gen-only` |
 | `build.generator`, `build.launcher`, `build.cc`, `build.cmake` | strings | llg | `--generator`, `--launcher`, `--cc`, `--cmake` |
-| `build.cflags` | string | llg | `--cflags` (empty clears `$LLG_CFLAGS`) |
+| `build.cflags` | string | llg | `--cflags` (an empty value means no flags) |
 | `build.model_opt_level` | `O0` `O1` `O2` `O3` `Os` | llg | `--model-opt-level` |
 | `build.jobs` | positive integer | llg | `--build-jobs` |
 | `build.dpi_libs` | strings | llg | `--dpi-lib` |
 | `output.out_dir` | string | llg | `--out-dir` |
 | `output.runtime_cache` | string | llg | `--runtime-cache` |
 
-Command-line-only: `--config`, `--lint-config`, `--help`, `--version`, and the
+Command-line-only: `--config`, `--clear`, `--lint-config`, `--help`, `--version`, and the
 negations `--no-gen-only`, `--opt`, `--no-lint`.
 
 ```toml

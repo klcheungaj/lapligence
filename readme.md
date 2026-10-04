@@ -172,16 +172,19 @@ for native C/C++ caching, platform limits, and thread controls.
 llg [options] [<file.sv>...] [-- <plusargs>...]
 ```
 
-Options can also come from an `llg.toml`: `./llg.toml` is read when present, or
-the file named by `--config <file>` (which must exist). The same file configures
-`llg_ls`. Command-line values override the file, a repeatable option on the
-command line replaces the file's whole list, and files named on the command line
-replace the file's sources; see [configuration](docs/config.md) for every key
-and the precedence. Config errors name the file and key and exit 1.
+Options can also come from an `llg.toml`, read only when named with
+`--config <file>` (which must exist); `llg` never discovers one. The same file
+configures `llg_ls`. Precedence is command line, then environment, then the
+file, then built-in defaults. A repeatable option on the command line appends to
+the file's list and `--clear <list>` discards the file's list first; see
+[configuration](docs/config.md) for every key and the precedence. Config errors
+name the file and key and exit 1.
 
 Common options:
 
-- `--config <file>`: read this `llg.toml` instead of `./llg.toml`.
+- `--config <file>`: read this `llg.toml` (must exist; there is no discovery).
+- `--clear <list>`: drop the config file's values of a repeatable list
+  (`sources`, `include-dirs`, `defines`, ...) before the command-line values apply.
 - `--param-override <NAME=VALUE>` / `-G`: override a top-level parameter.
 - `--no-lint`, `--no-gen-only`, `--opt`: undo `lint.run`, `build.gen_only` and
   `simulator.optimize = false` from the config file.
@@ -204,7 +207,7 @@ Common options:
   `<dir>/sim/<design>`; its executable is `<dir>/sim/<design>/build/bin/sim`.
 - `--runtime-cache <dir>`: runtime archive cache (default
   `<out-dir>/llg-runtime-cache`).
-- `--cc <program>`: C compiler for the model (default `cc`).
+- `--cc <program>`: C compiler for the model (default `$LLG_CC`, `$CC`, `build.cc`, then `cc`).
 - `--model-opt-level <O0|O1|O2|O3|Os>`: model and runtime C optimization
   (default O3, retained with `--gen-only`). MSVC maps O0 to `/Od`, O1/Os to
   `/O1`, and O2/O3 to `/O2`.
