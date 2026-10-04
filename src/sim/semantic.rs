@@ -32,10 +32,44 @@ pub enum Origin {
         column: u32,
         end_line: u32,
         end_column: u32,
+        /// Logical position from a `` `line`` directive, kept apart from the
+        /// physical identity above. Boxed because most sources have none.
+        logical: Option<Box<LogicalLine>>,
     },
     Synthetic {
         reason: String,
     },
+}
+
+/// Logical file and line that a `` `line`` directive assigns to a source.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LogicalLine {
+    pub path: String,
+    pub line: u64,
+}
+
+impl Origin {
+    /// Physical `path:line:column`, followed by the `` `line``-mapped
+    /// position when a directive maps it. The physical position stays first
+    /// so diagnostics keep one stable identity.
+    pub fn location(&self) -> String {
+        match self {
+            Origin::Source {
+                path,
+                line,
+                column,
+                logical,
+                ..
+            } => match logical {
+                Some(logical) => format!(
+                    "{path}:{line}:{column} (`line {}:{})",
+                    logical.path, logical.line
+                ),
+                None => format!("{path}:{line}:{column}"),
+            },
+            Origin::Synthetic { reason } => format!("<synthetic: {reason}>"),
+        }
+    }
 }
 
 /// Opaque metadata owned by a future consumer. The simulator preserves the
@@ -89,13 +123,9 @@ impl SimulationIssue {
     /// Render a source-located diagnostic while retaining truthful synthetic
     /// origins for elaborated objects without a physical source span.
     pub fn diagnostic(&self, model: &SemanticModel<'_>) -> String {
-        let location = match model.origin(self.origin) {
-            Some(Origin::Source {
-                path, line, column, ..
-            }) => format!("{path}:{line}:{column}"),
-            Some(Origin::Synthetic { reason }) => format!("<synthetic: {reason}>"),
-            None => "<unknown source>".to_owned(),
-        };
+        let location = model
+            .origin(self.origin)
+            .map_or_else(|| "<unknown source>".to_owned(), Origin::location);
         let path = model.db.node(self.node).full_name();
         if path.is_empty() {
             format!(
@@ -113,22 +143,30 @@ impl SimulationIssue {
 
 impl<'db> SemanticModel<'db> {
     pub fn from_db(db: &'db Db) -> Self {
-        let origins = db
-            .nodes()
-            .iter()
-            .map(|node| match node.file() {
-                Some(path) => Origin::Source {
-                    path: path.to_owned(),
-                    line: node.line(),
-                    column: node.column(),
-                    end_line: node.end_line(),
-                    end_column: node.end_column(),
-                },
-                None => Origin::Synthetic {
-                    reason: format!("elaborated {}", node.full_name()),
-                },
-            })
-            .collect();
+        let origins =
+            db.nodes()
+                .iter()
+                .map(|node| match node.file() {
+                    Some(path) => Origin::Source {
+                        path: path.to_owned(),
+                        line: node.line(),
+                        column: node.column(),
+                        end_line: node.end_line(),
+                        end_column: node.end_column(),
+                        logical: db.source_map().logical_position(path, node.line()).map(
+                            |logical| {
+                                Box::new(LogicalLine {
+                                    path: logical.file.to_owned(),
+                                    line: logical.line,
+                                })
+                            },
+                        ),
+                    },
+                    None => Origin::Synthetic {
+                        reason: format!("elaborated {}", node.full_name()),
+                    },
+                })
+                .collect();
         Self { db, origins }
     }
 

@@ -41,6 +41,8 @@ pub(super) fn decode_snapshot(
         udp_row_count: 0,
         source_libraries: ptr::null(),
         source_library_count: 0,
+        line_directives: ptr::null(),
+        line_directive_count: 0,
     };
     let mut error = ptr::null_mut();
     // SAFETY: owner contains a live snapshot and output pointers are writable.
@@ -151,6 +153,10 @@ pub(super) fn decode_snapshot(
             view.source_library_count,
             std::mem::size_of::<RawSourceLibrary>(),
         ),
+        (
+            view.line_directive_count,
+            std::mem::size_of::<RawLineDirective>(),
+        ),
     ] {
         let bytes = count
             .checked_mul(size as u64)
@@ -232,6 +238,14 @@ pub(super) fn decode_snapshot(
     // SAFETY: same snapshot-view contract as above.
     let raw_udp_rows = unsafe { foreign_slice(view.udp_rows, view.udp_row_count, "UDP rows")? };
     // SAFETY: same snapshot-view contract as above.
+    let raw_line_directives = unsafe {
+        foreign_slice(
+            view.line_directives,
+            view.line_directive_count,
+            "line directive records",
+        )?
+    };
+    // SAFETY: same snapshot-view contract as above.
     let raw_source_libraries = unsafe {
         foreign_slice(
             view.source_libraries,
@@ -289,6 +303,13 @@ pub(super) fn decode_snapshot(
     for item in raw_source_libraries {
         charge_output_string(&mut output_bytes, item.library, limits.max_output_bytes)?;
     }
+    for item in raw_line_directives {
+        charge_output_string(
+            &mut output_bytes,
+            item.logical_file,
+            limits.max_output_bytes,
+        )?;
+    }
 
     let mut file_ids = HashSet::with_capacity(raw_files.len());
     let mut files = Vec::with_capacity(raw_files.len());
@@ -341,6 +362,7 @@ pub(super) fn decode_snapshot(
     )?;
     let lexical_tokens = decode_lexical_tokens(raw_lexical_tokens, &files, &semantic_nodes)?;
     let source_libraries = decode_source_libraries(raw_source_libraries, semantic_nodes.len())?;
+    let line_directives = decode_line_directives(raw_line_directives, &files)?;
 
     drop(unexpected_error);
     Ok(Snapshot {
@@ -360,6 +382,7 @@ pub(super) fn decode_snapshot(
         type_members,
         udp_tables,
         source_libraries,
+        line_directives,
     })
 }
 
@@ -389,4 +412,53 @@ pub(super) fn decode_source_libraries(
         });
     }
     Ok(bindings)
+}
+
+/// Copy `` `line`` mappings, rejecting unknown files and offsets outside the
+/// file. Repeated records for one line start (an include admitted as several
+/// buffers) must agree and collapse to one; the result is sorted by file and
+/// offset so consumers can binary-search it.
+pub(super) fn decode_line_directives(
+    raw: &[RawLineDirective],
+    files: &[File],
+) -> Result<Vec<LineDirective>, SlangError> {
+    let mut directives = Vec::with_capacity(raw.len());
+    for item in raw {
+        let file = files
+            .iter()
+            .find(|file| file.id == item.file_id)
+            .ok_or_else(|| invalid_native("line directive refers to an unknown file"))?;
+        if item.physical_offset >= file.byte_len {
+            return Err(invalid_native(
+                "line directive offset lies outside its file",
+            ));
+        }
+        directives.push(LineDirective {
+            file_id: item.file_id,
+            physical_offset: item.physical_offset,
+            logical_line: item.logical_line,
+            // SAFETY: native strings borrow from the live snapshot.
+            logical_file: unsafe { copy_string(item.logical_file, "line directive file")? },
+        });
+    }
+    directives.sort_by(|left, right| {
+        (left.file_id, left.physical_offset).cmp(&(right.file_id, right.physical_offset))
+    });
+    let mut unique: Vec<LineDirective> = Vec::with_capacity(directives.len());
+    for directive in directives {
+        match unique.last() {
+            Some(last)
+                if last.file_id == directive.file_id
+                    && last.physical_offset == directive.physical_offset =>
+            {
+                if *last != directive {
+                    return Err(invalid_native(
+                        "line directive records disagree for one mapped line",
+                    ));
+                }
+            }
+            _ => unique.push(directive),
+        }
+    }
+    Ok(unique)
 }

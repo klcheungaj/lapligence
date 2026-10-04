@@ -44,9 +44,9 @@ module tb;
     task add_one(input integer value, output integer result,
                  inout integer echoed);
         integer temporary;
-        temporary = value + 1;
+        begin temporary = value + 1;
         result = temporary;
-        echoed = echoed + 2;
+        echoed = echoed + 2; end
     endtask
 
     genvar g;

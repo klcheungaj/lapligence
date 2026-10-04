@@ -10,7 +10,7 @@ module tb;
     endtask
 
     initial begin
-        put();
+        put;
         #1;
         $display("legacy=%h", put.data[0]);
         $finish(0);

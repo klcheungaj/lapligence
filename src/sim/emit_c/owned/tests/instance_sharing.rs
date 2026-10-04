@@ -207,6 +207,7 @@ fn compatible_pca_sites_share_across_distinct_source_locations() {
             column: 1,
             end_line: index as u32 + 1,
             end_column: 10,
+            logical: None,
         };
         process.shape = IrShape::Loop;
         process.body = vec![

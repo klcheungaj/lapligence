@@ -1594,14 +1594,20 @@ impl<'a> Codegen<'a> {
         Ok(())
     }
 
-    pub(in super::super) fn source_location(&self, node: NodeId) -> String {
-        let node = self.node(node);
-        format!(
+    /// Physical `file:line:col` of a node; a `` `line``-mapped position, when
+    /// one applies, follows it and never replaces it.
+    pub(in super::super) fn source_location(&self, id: NodeId) -> String {
+        let node = self.node(id);
+        let physical = format!(
             "{}:{}:{}",
             node.file.as_deref().unwrap_or("<unknown>"),
             node.line,
             node.col
-        )
+        );
+        match self.db.logical_position(id) {
+            Some(logical) => format!("{physical} (`line {}:{})", logical.file, logical.line),
+            None => physical,
+        }
     }
 
     fn scan_process_contract(

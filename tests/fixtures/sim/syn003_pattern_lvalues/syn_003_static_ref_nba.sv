@@ -1,5 +1,6 @@
 // llg-test-fixture: SYN-003 static reference-formal NBA target rejection.
-// LRM: IEEE 1800-2009 10.9.
+// LRM: IEEE 1800-2009 10.9; the static task already rejects because
+// IEEE 1800-2009 13.5.2 forbids ref formals in static subroutines.
 module tb;
   typedef logic [7:0] U [0:1];
   U values;

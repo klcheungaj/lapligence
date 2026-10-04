@@ -616,3 +616,73 @@ fn source_library_records_require_known_unique_nodes_and_names() {
     let error = decode_source_libraries(&[empty], 1).expect_err("empty name");
     assert!(error.to_string().contains("empty name"));
 }
+
+#[test]
+fn line_directive_records_are_bounded_sorted_and_deduplicated() {
+    let files = vec![
+        File {
+            id: 0,
+            name: "a.sv".to_owned(),
+            byte_len: 40,
+            text: String::new(),
+        },
+        File {
+            id: 1,
+            name: "b.svh".to_owned(),
+            byte_len: 10,
+            text: String::new(),
+        },
+    ];
+    let mapped = b"orig.sv";
+    let other = b"other.sv";
+    let record = |file_id, physical_offset, logical_line, name: &'static [u8]| RawLineDirective {
+        file_id,
+        physical_offset,
+        logical_line,
+        logical_file: RawString {
+            data: name.as_ptr(),
+            len: name.len() as u64,
+        },
+    };
+    let decoded = decode_line_directives(
+        &[
+            record(1, 4, 9, mapped),
+            record(0, 30, 70, other),
+            record(0, 12, 40, mapped),
+            // An include reached twice reports the same mapping twice.
+            record(0, 12, 40, mapped),
+        ],
+        &files,
+    )
+    .expect("valid records");
+    let summary: Vec<_> = decoded
+        .iter()
+        .map(|d| {
+            (
+                d.file_id,
+                d.physical_offset,
+                d.logical_line,
+                d.logical_file.as_str(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        summary,
+        vec![
+            (0, 12, 40, "orig.sv"),
+            (0, 30, 70, "other.sv"),
+            (1, 4, 9, "orig.sv")
+        ]
+    );
+    for (records, message) in [
+        (vec![record(2, 0, 1, mapped)], "unknown file"),
+        (vec![record(1, 10, 1, mapped)], "outside its file"),
+        (
+            vec![record(0, 12, 40, mapped), record(0, 12, 41, mapped)],
+            "disagree",
+        ),
+    ] {
+        let error = decode_line_directives(&records, &files).expect_err("invalid record");
+        assert!(error.to_string().contains(message), "{error}");
+    }
+}

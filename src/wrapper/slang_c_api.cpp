@@ -41,6 +41,7 @@
 #include "slang/ast/types/AllTypes.h"
 #include "slang/ast/types/Type.h"
 #include "slang/diagnostics/AnalysisDiags.h"
+#include "slang/diagnostics/DeclarationsDiags.h"
 #include "slang/diagnostics/DiagnosticEngine.h"
 #include "slang/diagnostics/DiagnosticClient.h"
 #include "slang/driver/UserDefinedSubroutine.h"
@@ -257,6 +258,7 @@ struct LlgSlangSnapshot {
   std::vector<LlgSlangUdpTable> udp_tables;
   std::vector<LlgSlangUdpRow> udp_rows;
   std::vector<LlgSlangSourceLibrary> source_libraries;
+  std::vector<LlgSlangLineDirective> line_directives;
 };
 
 namespace {
@@ -3983,6 +3985,16 @@ public:
     skippedDepth--;
   }
 
+  // Records the logical position that a `line directive gives the following
+  // physical line. The values are read back from the SourceManager, so they
+  // match the preprocessor's `__LINE__`/`__FILE__` exactly, including for a
+  // malformed directive that the preprocessor ignored. A directive on the last
+  // line maps nothing and records nothing.
+  void handle(const syntax::LineDirectiveSyntax& syntax) {
+    lineDirective(syntax.directive.location());
+    visitDefault(syntax);
+  }
+
   void visitToken(parsing::Token token) {
     for (const parsing::Trivia& trivia : token.trivia()) {
       for (parsing::Token skipped : trivia.getSkippedTokens())
@@ -4201,6 +4213,32 @@ public:
   }
 
 private:
+  void lineDirective(SourceLocation location) {
+    const SourceLocation physical = capture.physicalLocation(location);
+    if (!physical.valid())
+      return;
+    const uint64_t file = capture.findFile(physical.buffer());
+    if (file == LLG_SLANG_INVALID_ID)
+      return;
+    const std::string_view text =
+        capture.sourceManager.getSourceText(physical.buffer());
+    size_t next = text.find_first_of("\r\n", physical.offset());
+    if (next == std::string_view::npos)
+      return;
+    next += (text[next] == '\r' && next + 1 < text.size() && text[next + 1] == '\n')
+                ? 2
+                : 1;
+    // Slang buffers end in a NUL sentinel; a line must start before it.
+    if (next >= text.size() || text[next] == '\0')
+      return;
+    const SourceLocation mapped(physical.buffer(), next);
+    chargeRecord(capture.output, sizeof(LlgSlangLineDirective));
+    capture.output.line_directives.push_back(
+        {file, static_cast<uint64_t>(next),
+         static_cast<uint64_t>(capture.sourceManager.getLineNumber(mapped)),
+         storeString(capture.output, capture.sourceManager.getFileName(mapped))});
+  }
+
   Capture& capture;
   std::unordered_set<const syntax::SyntaxNode*> directives;
   uint32_t directiveDepth = 0;
@@ -4819,6 +4857,10 @@ std::unique_ptr<LlgSlangSnapshot> compileImpl(const LlgSlangCompileRequest& requ
   auto compilationClient = std::make_shared<CaptureClient>(
       capture, LLG_SLANG_DIAG_COMPILATION);
   engine.addClient(compilationClient);
+  // IEEE 1800-2009 13.5.2 makes a `ref` formal of a static subroutine
+  // illegal; the frontend only warns by default. Neither edition admits it
+  // (1364-2001 has no `ref`).
+  engine.setSeverity(diag::RefArgAutomaticFunc, DiagnosticSeverity::Error);
   Diagnostics pragmaDiagnostics = engine.setMappingsFromPragmas();
   for (const Diagnostic& diagnostic : pragmaDiagnostics)
     compilationClient->issue(engine, diagnostic);
@@ -4963,6 +5005,8 @@ extern "C" uint32_t llg_slang_snapshot_view(const LlgSlangSnapshot* snapshot,
       static_cast<uint64_t>(snapshot->udp_rows.size()),
       dataOrNull(snapshot->source_libraries),
       static_cast<uint64_t>(snapshot->source_libraries.size()),
+      dataOrNull(snapshot->line_directives),
+      static_cast<uint64_t>(snapshot->line_directives.size()),
   };
   return LLG_SLANG_STATUS_OK;
 }

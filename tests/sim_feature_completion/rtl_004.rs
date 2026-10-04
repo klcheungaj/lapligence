@@ -130,7 +130,12 @@ fn neg_default_lvalue() {
 
 #[test]
 fn neg_ref_nba() {
-    sim_cli::reject_case(SUITE, "neg_ref_nba", "reference");
+    // IEEE 1800-2009 13.5.2: the static task's ref formal rejects first.
+    sim_cli::reject_case(
+        SUITE,
+        "neg_ref_nba",
+        "'ref' arguments can only be used in 'automatic' subroutines",
+    );
 }
 
 #[test]
