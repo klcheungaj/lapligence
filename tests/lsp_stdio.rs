@@ -320,11 +320,15 @@ fn is_shadow_uri(uri: &str) -> bool {
     // The process shadow base is `<tmp>/llg-<pid>-<rand>/...`, distinct from
     // the fixture dir `<tmp>/llg-lsp-stdio-<pid>-<id>/...`.  Detect a path
     // component shaped like the shadow base (`llg-` + digits + `-` + digits).
-    let Some(path) = Path::new(uri.trim_start_matches("file://")).to_str() else {
+    let Some(path) = support::lsp::uri_path(uri) else {
         return false;
     };
-    path.split(std::path::MAIN_SEPARATOR).any(|component| {
-        let Some(rest) = component.strip_prefix("llg-") else {
+    path.components().any(|component| {
+        let Some(rest) = component
+            .as_os_str()
+            .to_str()
+            .and_then(|c| c.strip_prefix("llg-"))
+        else {
             return false;
         };
         let Some((first, second)) = rest.split_once('-') else {

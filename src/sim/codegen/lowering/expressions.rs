@@ -12,6 +12,7 @@ use crate::sim::ir::{
 };
 
 mod aggregates;
+pub(super) use aggregates::AggregateSelection;
 mod array_queries;
 mod casts;
 mod conditionals;

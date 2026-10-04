@@ -6,14 +6,14 @@ use super::*;
 fn slang_diagnostics_preserve_location_and_message() {
     let raw = Diag {
         severity: Severity::Syntax,
-        file: Some("/x/debug_TEMPLATE.v".to_owned()),
+        file: Some(hp("/x/debug_TEMPLATE.v").to_owned()),
         line: 2,
         col: 22,
         message: "expected a statement".to_owned(),
     };
     let a = Analysis::new(vec![raw.clone()], empty_design(), Vec::new(), Vec::new());
     let map = lsp_diagnostics(&a);
-    let diagnostics = &map["/x/debug_TEMPLATE.v"];
+    let diagnostics = &map[hp("/x/debug_TEMPLATE.v")];
     assert_eq!(diagnostics.len(), 1);
     assert_eq!(diagnostics[0].message, raw.message);
     assert_eq!(diagnostics[0].severity, Some(DiagnosticSeverity::ERROR));
@@ -28,28 +28,28 @@ fn diagnostics_severity_mapping() {
         vec![
             Diag {
                 severity: Severity::Error,
-                file: Some("/x/a.sv".to_owned()),
+                file: Some(hp("/x/a.sv").to_owned()),
                 line: 3,
                 col: 5,
                 message: "bad".to_owned(),
             },
             Diag {
                 severity: Severity::Warning,
-                file: Some("/x/a.sv".to_owned()),
+                file: Some(hp("/x/a.sv").to_owned()),
                 line: 4,
                 col: 1,
                 message: "warn".to_owned(),
             },
             Diag {
                 severity: Severity::Note,
-                file: Some("/x/a.sv".to_owned()),
+                file: Some(hp("/x/a.sv").to_owned()),
                 line: 0,
                 col: 0,
                 message: "note".to_owned(),
             },
             Diag {
                 severity: Severity::Info,
-                file: Some("/x/a.sv".to_owned()),
+                file: Some(hp("/x/a.sv").to_owned()),
                 line: 6,
                 col: 2,
                 message: "info".to_owned(),
@@ -60,7 +60,7 @@ fn diagnostics_severity_mapping() {
         Vec::new(),
     );
     let map = lsp_diagnostics(&a);
-    let diags = map.get("/x/a.sv").expect("diags for a.sv");
+    let diags = map.get(hp("/x/a.sv")).expect("diags for a.sv");
     assert_eq!(diags.len(), 4);
     assert_eq!(diags[0].severity, Some(DiagnosticSeverity::ERROR));
     assert_eq!(diags[0].range.start.line, 2); // 1-based → 0-based
@@ -81,8 +81,8 @@ fn fileless_synthetic_diagnostic_uses_supplied_fallback_path() {
         Vec::new(),
     );
 
-    let map = lsp_diagnostics_with_fallback(&a, Some(Path::new("/x/top.sv")));
-    let diagnostics = map.get("/x/top.sv").expect("fallback-file diagnostics");
+    let map = lsp_diagnostics_with_fallback(&a, Some(Path::new(hp("/x/top.sv"))));
+    let diagnostics = map.get(hp("/x/top.sv")).expect("fallback-file diagnostics");
     assert_eq!(diagnostics.len(), 1);
     assert_eq!(diagnostics[0].message, message);
     assert_eq!(diagnostics[0].severity, Some(DiagnosticSeverity::ERROR));
@@ -94,7 +94,7 @@ fn lint_diagnostics_mapping() {
     let a = Analysis::new(
         vec![Diag {
             severity: Severity::Error,
-            file: Some("/x/a.sv".to_owned()),
+            file: Some(hp("/x/a.sv").to_owned()),
             line: 1,
             col: 1,
             message: "compile error".to_owned(),
@@ -105,7 +105,7 @@ fn lint_diagnostics_mapping() {
             LintDiag {
                 rule: "unused-signal".to_owned(),
                 severity: LintSeverity::Error,
-                file: Some("/x/a.sv".to_owned()),
+                file: Some(hp("/x/a.sv").to_owned()),
                 line: 3,
                 col: 5,
                 message: "signal `x` in `m` is never used".to_owned(),
@@ -113,7 +113,7 @@ fn lint_diagnostics_mapping() {
             LintDiag {
                 rule: "width-mismatch".to_owned(),
                 severity: LintSeverity::Warning,
-                file: Some("/x/a.sv".to_owned()),
+                file: Some(hp("/x/a.sv").to_owned()),
                 line: 4,
                 col: 1,
                 message: "truncation".to_owned(),
@@ -121,7 +121,7 @@ fn lint_diagnostics_mapping() {
             LintDiag {
                 rule: "multi-driver".to_owned(),
                 severity: LintSeverity::Info,
-                file: Some("/x/b.sv".to_owned()),
+                file: Some(hp("/x/b.sv").to_owned()),
                 line: 0,
                 col: 0,
                 message: "multiple drivers".to_owned(),
@@ -129,7 +129,7 @@ fn lint_diagnostics_mapping() {
         ],
     );
     let map = lsp_diagnostics(&a);
-    let a_diags = map.get("/x/a.sv").expect("diags for a.sv");
+    let a_diags = map.get(hp("/x/a.sv")).expect("diags for a.sv");
     assert_eq!(a_diags.len(), 3, "frontend + two lint diags: {a_diags:?}");
     let lint: Vec<&LspDiagnostic> = a_diags
         .iter()
@@ -152,7 +152,7 @@ fn lint_diagnostics_mapping() {
     assert_eq!(lint[1].range.start.line, 3);
     assert_eq!(lint[1].range.start.character, 0);
     // /x/b.sv has only a lint finding; it must still get a map entry.
-    let b_diags = map.get("/x/b.sv").expect("diags for b.sv");
+    let b_diags = map.get(hp("/x/b.sv")).expect("diags for b.sv");
     assert_eq!(b_diags.len(), 1);
     assert_eq!(b_diags[0].source.as_deref(), Some("llg-lint"));
     assert_eq!(b_diags[0].severity, Some(DiagnosticSeverity::INFORMATION));

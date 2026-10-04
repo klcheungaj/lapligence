@@ -943,6 +943,23 @@ enum AggregatePathPart {
     Index(i32),
 }
 
+/// One leaf of a descriptor-backed native record: its member/index path,
+/// runtime item path and scalar type.
+#[derive(Clone, Debug, PartialEq)]
+struct NativeLeaf {
+    path: Vec<AggregatePathPart>,
+    items: Vec<u32>,
+    ty: crate::sim::ir::IrClassFieldType,
+}
+
+/// Interned native record type and its declaration-order leaves.
+#[derive(Clone)]
+struct NativeLayout {
+    ty: usize,
+    descriptor: TypeDescriptor,
+    leaves: Vec<NativeLeaf>,
+}
+
 #[derive(Clone)]
 struct UnpackedAggregateInfo {
     kind: AggregateKind,
@@ -1186,6 +1203,21 @@ struct Codegen<'a> {
     /// key uses declaration identity and canonical member/index path, never a
     /// display spelling or frontend pointer.
     aggregate_objects: HashMap<(NodeId, String), usize>,
+    /// Native record declarations (formals, results, locals) → type layout.
+    native_layouts: HashMap<NodeId, NativeLayout>,
+    /// `(instance, declaration)` → native value storage.
+    native_storage: HashMap<(NodeId, NodeId), usize>,
+    /// Native value → declaration whose layout describes it.
+    native_value_layouts: HashMap<usize, NodeId>,
+    /// Native declarations of the subroutine instance being lowered.
+    native_roots: HashMap<NodeId, usize>,
+    /// Shared access names of native leaves, by value and item path.
+    native_leaf_symbols: HashMap<(usize, Vec<u32>), String>,
+    /// Distinguishes the capture locals of successive native transfers.
+    native_copy_sequence: usize,
+    /// Statements before/after a statement-level call that needs native
+    /// argument temporaries; `None` in plain expression contexts.
+    native_call_prelude: Option<(Vec<IrStmt>, Vec<IrStmt>)>,
     /// Procedural declaration node → automatic C local or hidden static signal.
     /// Procedural declaration node -> automatic C local or hidden static
     /// signal for the currently lowered process context.
@@ -1485,6 +1517,13 @@ impl<'a> Codegen<'a> {
             class_init_receiver: None,
             unpacked_aggregates: HashMap::new(),
             aggregate_objects: HashMap::new(),
+            native_layouts: HashMap::new(),
+            native_storage: HashMap::new(),
+            native_value_layouts: HashMap::new(),
+            native_roots: HashMap::new(),
+            native_leaf_symbols: HashMap::new(),
+            native_copy_sequence: 0,
+            native_call_prelude: None,
             proc_locals: HashMap::new(),
             proc_string_locals: HashMap::new(),
             proc_mailbox_locals: HashMap::new(),

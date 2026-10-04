@@ -803,6 +803,7 @@ impl Validator<'_> {
             }
         }
 
+        self.validate_native_tables()?;
         for (index, access) in self.model.native_accesses.iter().enumerate() {
             let path = format!("native_accesses[{index}]");
             if access.name != format!("_llg_access_{index}") {
@@ -810,6 +811,11 @@ impl Validator<'_> {
                     &path,
                     "native access identity does not match its table index",
                 );
+            }
+            if !access.item_path.is_empty()
+                && !matches!(access.kind, IrNativeAccessKind::ValueItem { .. })
+            {
+                return self.fail(&path, "only native value items carry an item path");
             }
             match access.kind {
                 IrNativeAccessKind::ClassField { class, field } => {
@@ -830,6 +836,12 @@ impl Validator<'_> {
                         .is_some_and(|interface| member < interface.members.len())
                     {
                         return self.fail(&path, "interface member reference is out of bounds");
+                    }
+                }
+                IrNativeAccessKind::ValueItem { value, ty } => {
+                    self.validate_native_leaf(value, &access.item_path, ty, &path)?;
+                    if access.receiver != IrChandleExpr::Null {
+                        return self.fail(&path, "native value item has no receiver");
                     }
                 }
             }
@@ -967,6 +979,7 @@ impl Validator<'_> {
                     );
                 }
                 if formal.fixed_array.is_none()
+                    && formal.native_value.is_none()
                     && !formal.chandle
                     && !formal.event
                     && !formal.real

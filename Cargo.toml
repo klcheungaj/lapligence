@@ -40,7 +40,10 @@ path = "tests/sim_feature_completion.rs"
 # The `override` feature stays disabled to avoid exporting replacement C++
 # allocation symbols. On musl, build.rs separately wraps C malloc/free in all
 # Rust binaries and their linked native frontend with mimalloc_shim.c.
-mimalloc = { version = "0.1", default-features = false }
+# 0.1.51 (libmimalloc-sys 0.1.48) is the first release that compiles mimalloc
+# as C++ under MSVC; earlier v3 releases compiled it as C, whose MSVC atomics
+# path corrupts the heap on aarch64-pc-windows-msvc (0xc0000005).
+mimalloc = { version = "0.1.51", default-features = false }
 
 # LSP framework (optional; enabled via the `lsp` feature)
 tower-lsp = { version = "0.20", optional = true }

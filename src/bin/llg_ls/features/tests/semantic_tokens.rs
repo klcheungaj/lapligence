@@ -5,8 +5,10 @@ use super::*;
 #[test]
 fn semantic_tokens_require_exact_source_identity() {
     let a = sample_analysis();
-    assert!(semantic_tokens_for(&a, "/symlink/top.sv").data.is_empty());
-    assert!(!semantic_tokens_for(&a, "/x/top.sv").data.is_empty());
+    assert!(semantic_tokens_for(&a, hp("/symlink/top.sv"))
+        .data
+        .is_empty());
+    assert!(!semantic_tokens_for(&a, hp("/x/top.sv")).data.is_empty());
 }
 
 #[test]
@@ -15,14 +17,14 @@ fn semantic_tokens_are_empty_for_a_file_with_a_syntax_error() {
     let mut analysis = sample_analysis();
     analysis.diagnostics.push(Diag {
         severity: Severity::Syntax,
-        file: Some("/x/top.sv".to_owned()),
+        file: Some(hp("/x/top.sv").to_owned()),
         line: 1,
         col: 1,
         message: "incomplete module".to_owned(),
     });
 
     // Act
-    let tokens = semantic_tokens_for(&analysis, "/x/top.sv");
+    let tokens = semantic_tokens_for(&analysis, hp("/x/top.sv"));
 
     // Assert
     assert!(tokens.data.is_empty());
@@ -34,14 +36,14 @@ fn semantic_tokens_remain_available_when_another_file_has_a_syntax_error() {
     let mut analysis = sample_analysis();
     analysis.diagnostics.push(Diag {
         severity: Severity::Syntax,
-        file: Some("/other/top.sv".to_owned()),
+        file: Some(hp("/other/top.sv").to_owned()),
         line: 1,
         col: 1,
         message: "incomplete module".to_owned(),
     });
 
     // Act
-    let tokens = semantic_tokens_for(&analysis, "/x/top.sv");
+    let tokens = semantic_tokens_for(&analysis, hp("/x/top.sv"));
 
     // Assert
     assert!(!tokens.data.is_empty());
@@ -138,8 +140,9 @@ fn decode_named(tokens: &SemanticTokens) -> Vec<(u32, u32, u32, String)> {
 #[test]
 fn semantic_tokens_color_module_typedef_and_parameter_words_like_cpp() {
     let _guards = analysis_guards();
-    let fixture = std::env::temp_dir().join(format!("llg_cpptypes_{}", std::process::id()));
-    std::fs::create_dir_all(&fixture).expect("create fixture tree");
+    // Path-mode compile names sources by their resolved path (macOS `/var` is
+    // `/private/var`), so the request must use the resolved spelling too.
+    let fixture = resolved_temp_dir(&format!("llg_cpptypes_{}", std::process::id()));
     let sv = fixture.join("cpp_types.sv");
     let source = "package pkg;\n  typedef logic [7:0] byte_t;\nendpackage\nmodule leaf #(parameter int W = 1)(input pkg::byte_t a);\nendmodule\nmodule top;\n  localparam int L = 2;\n  typedef logic [3:0] nib_t;\n  nib_t n;\n  leaf u0 (.a(8'd0));\n  leaf #(.W(L)) u1 (.a(nib_t'(1)));\n  defparam u0.W = 3;\nendmodule\n";
     std::fs::write(&sv, source).expect("write design");

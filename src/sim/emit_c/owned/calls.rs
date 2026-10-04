@@ -260,6 +260,7 @@ impl Frame<'_, '_> {
         let mut copyouts = Vec::new();
         let mut native_owners = Vec::new();
         let mut fixed_copyouts = Vec::new();
+        let mut native_copyouts = Vec::new();
         let mut string_copyouts = Vec::new();
         // The IR stores arguments in the C ABI order (addresses, inputs).
         // Evaluate this explicit order, never nested C argument expressions.
@@ -310,6 +311,55 @@ impl Frame<'_, '_> {
                         }
                         parameters.push(storage);
                     }
+                }
+                IrCallArg::NativeValue(value) => {
+                    let actual = self.native_value_address(*value)?;
+                    // A function cannot suspend or be disabled by another
+                    // process, and an activation value is private to its
+                    // frame: an output or result written in place is then
+                    // indistinguishable from copy-out at return, unless the
+                    // same value is another operand of this call.
+                    if formal.is_out
+                        && !function.is_task
+                        && self.ctx.model.native_values[*value].activation
+                        && args
+                            .iter()
+                            .filter(
+                                |other| matches!(other, IrCallArg::NativeValue(v) if v == value),
+                            )
+                            .count()
+                            == 1
+                    {
+                        parameters.push(actual);
+                        continue;
+                    }
+                    // Otherwise the callee gets a fresh value: inputs and
+                    // inouts copy the actual in, outputs and results are
+                    // copied back after the callee returns.
+                    let callee = formal
+                        .native_value
+                        .ok_or("native operand requires a native-value formal")?;
+                    let storage = self.new_native_value(self.ctx.model.native_values[callee].ty);
+                    if matches!(formal.mode, IrFormalMode::Input | IrFormalMode::Inout) {
+                        self.line(format!("llg_native_value_copy({storage}, {actual});"));
+                    }
+                    if formal.is_out {
+                        native_copyouts.push((actual, storage.clone()));
+                    }
+                    parameters.push(storage);
+                }
+                IrCallArg::NativeCall { value, call } => {
+                    // The inner result is a fresh temporary that only this
+                    // operand references, so the callee may own it directly.
+                    let storage = self.new_native_value(self.ctx.model.native_values[*value].ty);
+                    self.native_values.insert(*value, storage.clone());
+                    self.call_statement(call)?;
+                    parameters.push(storage);
+                }
+                IrCallArg::NativeLeaves { ty, leaves } => {
+                    let storage = self.new_native_value(*ty);
+                    self.native_leaves_into(&storage, *ty, leaves)?;
+                    parameters.push(storage);
                 }
                 IrCallArg::FixedArray(array) => {
                     let actual = self.fixed_array_address(*array)?;
@@ -553,6 +603,9 @@ impl Frame<'_, '_> {
                 "llg_fixed_array_copy({target}, {storage}, {}, 0);",
                 u8::from(two_state)
             ));
+        }
+        for (target, storage) in native_copyouts {
+            self.line(format!("llg_native_value_copy({target}, {storage});"));
         }
         for (target, storage) in string_copyouts {
             self.line(format!(

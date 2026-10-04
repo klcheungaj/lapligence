@@ -204,6 +204,20 @@ pub fn value_backend_sources(
     }
 }
 
+/// The platform layer: `llg_compiler.h` (compiler attributes, safe for
+/// generated models) and the runtime-private `llg_platform.h` /
+/// `llg_platform_native.h`, which own every operating-system conditional.
+pub fn platform_headers() -> &'static [(&'static str, &'static str)] {
+    &[
+        ("llg_compiler.h", include_str!("llg_compiler.h")),
+        ("llg_platform.h", include_str!("llg_platform.h")),
+        (
+            "llg_platform_native.h",
+            include_str!("llg_platform_native.h"),
+        ),
+    ]
+}
+
 /// Scheduler-independent legacy `$random` and `$dist_*` implementations.
 /// Compile together with generated models or as a standalone C11 module.
 pub fn random_sources() -> (&'static str, &'static str) {
@@ -251,6 +265,17 @@ macro_rules! zlib_source {
     };
 }
 
+/// libfst files rendered by the build script: the pristine upstream snapshot
+/// in `vendor/libfst` with the tracked `patches/libfst` changes applied.
+macro_rules! libfst_source {
+    ($name:literal) => {
+        (
+            $name,
+            include_str!(concat!(env!("OUT_DIR"), "/libfst/", $name)),
+        )
+    };
+}
+
 /// Optional waveform runtime, the official GTKWave libfst writer snapshot and
 /// the bundled zlib it uses. These are written and compiled only for models
 /// containing `#define LLG_WAVEFORM 1`.
@@ -258,15 +283,15 @@ pub fn waveform_sources() -> &'static [(&'static str, &'static str)] {
     &[
         ("llg_wave.h", include_str!("llg_wave.h")),
         ("llg_wave.c", include_str!("llg_wave.c")),
-        ("fstapi.c", include_str!("gtkwave/fstapi.c")),
-        ("fstapi.h", include_str!("gtkwave/fstapi.h")),
-        ("fastlz.c", include_str!("gtkwave/fastlz.c")),
-        ("fastlz.h", include_str!("gtkwave/fastlz.h")),
-        ("lz4.c", include_str!("gtkwave/lz4.c")),
-        ("lz4.h", include_str!("gtkwave/lz4.h")),
-        ("fst_config.h", include_str!("gtkwave/fst_config.h")),
-        ("fst_win_unistd.h", include_str!("gtkwave/fst_win_unistd.h")),
-        ("wavealloca.h", include_str!("gtkwave/wavealloca.h")),
+        libfst_source!("fstapi.c"),
+        libfst_source!("fstapi.h"),
+        libfst_source!("fastlz.c"),
+        libfst_source!("fastlz.h"),
+        libfst_source!("lz4.c"),
+        libfst_source!("lz4.h"),
+        libfst_source!("fst_config.h"),
+        libfst_source!("fst_win_unistd.h"),
+        libfst_source!("wavealloca.h"),
         zlib_source!("zlib.h"),
         zlib_source!("zconf.h"),
         zlib_source!("zutil.h"),

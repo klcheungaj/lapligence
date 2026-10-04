@@ -102,6 +102,7 @@ paths remain gated until their retention contracts are migrated.
 | Inertial drivers / force state | Deep-copy scheduled value/mask/current/baseline | Replacement, canceled update, commit, driver/force cleanup |
 | Waits and sampling history | Deep-copy snapshots | Wake/rearm, process cancellation, history expiry, cleanup |
 | Activation frame / registered value scope | Owned initialized cells or explicit reference aliases | Frame release, lexical scope end, completion/cancellation/cleanup |
+| Native record roots (`llg_native_root_t`) | Default construction or deep copy from a descriptor; chandles borrowed | Activation: registered scope object (lexical end, cancellation, cleanup). Persistent: model close |
 | Sequence attempts, tokens, endpoints | Deep-copy inherited local values | Dedup/discard, attempt/endpoint destruction |
 | Mailboxes | Tagged payload construction/transfer | Consume, failed/canceled put, mailbox/runtime destruction |
 | Dynamic arrays, queues and associative entries | Deep-copy packed/recursive elements, keys/defaults | Replacement, resize/delete/pop, container destruction |
@@ -162,6 +163,35 @@ Reference writes, scanner tokens/values and dependency-marker updates may span
 callbacks and therefore use registered owners. File line buffers and plusarg format
 pieces are freed before destination publication. A nonreturning callback must never
 be the only reason a runtime-local owner is abandoned without cleanup.
+
+## Descriptor-backed native values and roots
+
+Native records (SIM-003) are `llg_value_t` trees described by static
+`llg_value_desc_t` tables. `llg_value_desc_copy_policy` gives each kind's
+storage identity: packed, real, string, aggregate, fixed-array and container
+values copy DEEP into independent owners; event and opaque handles (class,
+process, semaphore, mailbox, virtual interface) copy their IDENTITY; chandles
+are BORROWED foreign pointers that copies share and the value runtime never
+frees. `llg_value_trace` visits only identity slots, so a future collector
+(SIM-018) can treat them as edges without scanning payloads.
+
+Generated models check every emitted root descriptor once at startup with
+`llg_value_desc_check` (known kinds, nonzero nominal identity, consistent
+counts, widths below the supported limit, no cycle or nesting beyond
+`LLG_VALUE_DESC_MAX_DEPTH`). `llg_native_value_try_copy` and the
+`llg_value_try_*` constructors build the complete copy before replacing the
+destination: an item-array allocation failure returns 0, releases the partial
+copy and leaves the destination unchanged. The non-`try` forms report that
+failure as fatal; leaf payload allocators keep their own fatal policy.
+
+Every live native value is one `llg_native_root_t` linked into a per-process
+registry. Activation storage (formals, locals, results and call temporaries)
+is a registered value-scope object whose destructor is
+`llg_native_root_destroy`, so lexical exit, disable/kill and model close
+unlink it. Persistent (static subroutine) storage is a model global initialized
+at start and destroyed at close. A model with native values reports a nonzero
+`llg_native_roots_count()` at close as a leak and fails. Leaf pointers into a
+root are borrowed and must not be retained across a write of the same root.
 
 ## Addressable real locals and exact native destination pins
 

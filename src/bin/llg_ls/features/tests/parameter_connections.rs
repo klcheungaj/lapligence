@@ -235,12 +235,12 @@ fn unresolved_param_override_label_yields_no_definition() {
         end_col: col + name.len() as u32,
         kind: t,
         name: Some(name.to_owned()),
-        file: "/x/b.sv".to_owned(),
+        file: hp("/x/b.sv").to_owned(),
     };
     // Two identical views make (1,6) a genuine `localparam W` DECL entry;
     // the single-view token at (2,14) is the dropped-looking LABEL ref.
     let b_file = FileTokens {
-        path: "/x/b.sv".to_owned(),
+        path: hp("/x/b.sv").to_owned(),
         nodes: vec![
             node(
                 1,
@@ -267,7 +267,7 @@ fn unresolved_param_override_label_yields_no_definition() {
         name: "u0".to_owned(),
         def_name: "m".to_owned(),
         full_name: "top.u0".to_owned(),
-        file: Some("/x/b.sv".to_owned()),
+        file: Some(hp("/x/b.sv").to_owned()),
         line: 3,
         col: 10,
         ports: Vec::new(),
@@ -295,7 +295,7 @@ fn unresolved_param_override_label_yields_no_definition() {
         name: "top".to_owned(),
         def_name: "top".to_owned(),
         full_name: "top".to_owned(),
-        file: Some("/x/b.sv".to_owned()),
+        file: Some(hp("/x/b.sv").to_owned()),
         line: 1,
         col: 1,
         ports: Vec::new(),
@@ -313,7 +313,7 @@ fn unresolved_param_override_label_yields_no_definition() {
         classes: Vec::new(),
     };
     let pairs = vec![NamedPortConn {
-        file: "/x/b.sv".to_owned(),
+        file: hp("/x/b.sv").to_owned(),
         label: (3, 15),
         label_name: "W".to_owned(),
         actual: None,
@@ -336,15 +336,15 @@ fn unresolved_param_override_label_yields_no_definition() {
         },
     );
     // Sanity: the label is indexed as a REF and known-unresolved.
-    let entry = a.index.entry_at("/x/b.sv", 2, 14).expect("label entry");
+    let entry = a.index.entry_at(hp("/x/b.sv"), 2, 14).expect("label entry");
     assert!(!entry.is_decl);
     assert!(
-        a.index.is_unresolved_param_label("/x/b.sv", 2, 14),
+        a.index.is_unresolved_param_label(hp("/x/b.sv"), 2, 14),
         "label must be recorded unresolved"
     );
     // NO definition — especially not the decoy localparam at (1,5).
     assert!(
-        definition_at(&a, "/x/b.sv", 2, 14).is_none(),
+        definition_at(&a, hp("/x/b.sv"), 2, 14).is_none(),
         "unresolvable override label must yield no result"
     );
 }
@@ -365,38 +365,38 @@ fn resolved_param_override_synthesizes_missing_child_decl() {
         file: file.to_owned(),
     };
     let a_file = FileTokens {
-        path: "/x/a.sv".to_owned(),
+        path: hp("/x/a.sv").to_owned(),
         nodes: vec![node(
             1,
             8,
             tokens::TOKEN_SLANG_MODULE + tokens::TOKEN_DECLARATION_OFFSET,
             "m",
-            "/x/a.sv",
+            hp("/x/a.sv"),
         )],
     };
     let b_file = FileTokens {
-        path: "/x/b.sv".to_owned(),
+        path: hp("/x/b.sv").to_owned(),
         nodes: vec![
-            node(1, 13, tokens::TOKEN_SLANG_MODULE, "m", "/x/b.sv"),
+            node(1, 13, tokens::TOKEN_SLANG_MODULE, "m", hp("/x/b.sv")),
             node(
                 1,
                 15,
                 tokens::TOKEN_SLANG_IDENTIFIER + tokens::TOKEN_DECLARATION_OFFSET,
                 "u0",
-                "/x/b.sv",
+                hp("/x/b.sv"),
             ),
             node(
                 1,
                 20,
                 tokens::TOKEN_SLANG_PARAMETER_CONNECTION_LABEL,
                 "W",
-                "/x/b.sv",
+                hp("/x/b.sv"),
             ),
         ],
     };
     let module_m = ModuleDef {
         name: "m".to_owned(),
-        file: Some("/x/a.sv".to_owned()),
+        file: Some(hp("/x/a.sv").to_owned()),
         line: 1,
         col: 8,
         end_line: 1,
@@ -406,7 +406,7 @@ fn resolved_param_override_synthesizes_missing_child_decl() {
         name: "u0".to_owned(),
         def_name: "m".to_owned(),
         full_name: "top.u0".to_owned(),
-        file: Some("/x/b.sv".to_owned()),
+        file: Some(hp("/x/b.sv").to_owned()),
         line: 1,
         col: 15,
         ports: Vec::new(),
@@ -430,7 +430,7 @@ fn resolved_param_override_synthesizes_missing_child_decl() {
         name: "top".to_owned(),
         def_name: "top".to_owned(),
         full_name: "top".to_owned(),
-        file: Some("/x/b.sv".to_owned()),
+        file: Some(hp("/x/b.sv").to_owned()),
         line: 1,
         col: 1,
         ports: Vec::new(),
@@ -448,7 +448,7 @@ fn resolved_param_override_synthesizes_missing_child_decl() {
         classes: Vec::new(),
     };
     let pairs = vec![NamedPortConn {
-        file: "/x/b.sv".to_owned(),
+        file: hp("/x/b.sv").to_owned(),
         label: (1, 20),
         label_name: "W".to_owned(),
         actual: None,
@@ -470,13 +470,13 @@ fn resolved_param_override_synthesizes_missing_child_decl() {
             ..ConnectionInputs::default()
         },
     );
-    let loc = definition_at(&a, "/x/b.sv", 0, 19).expect("definition of .W label");
-    assert_eq!(loc.uri, Url::from_file_path("/x/a.sv").unwrap());
+    let loc = definition_at(&a, hp("/x/b.sv"), 0, 19).expect("definition of .W label");
+    assert_eq!(loc.uri, Url::from_file_path(hp("/x/a.sv")).unwrap());
     // Synthesized anchor: header col 7 + name len 1 + stride 64 + idx 0.
     assert_eq!(loc.range.start, Position::new(0, 72), "loc: {loc:?}");
     let bound = a
         .ref_bindings
-        .get(&("/x/b.sv".to_owned(), 0, 19))
+        .get(&(hp("/x/b.sv").to_owned(), 0, 19))
         .expect("label binding folded into ref_bindings");
     assert_eq!(bound.kind, "parameter");
     assert!(bound.via_label);

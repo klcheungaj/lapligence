@@ -629,7 +629,10 @@ pub(super) fn cached_semantic_file_matches(left: &str, right: &str) -> bool {
     if Path::new(left) == Path::new(right) {
         return true;
     }
-    match (std::fs::canonicalize(left), std::fs::canonicalize(right)) {
+    match (
+        llg::ffi::platform::canonicalize(left),
+        llg::ffi::platform::canonicalize(right),
+    ) {
         (Ok(left), Ok(right)) => left == right,
         _ => false,
     }
@@ -1009,11 +1012,11 @@ pub(super) fn canonical_include_target(
 
     let canonical_allowed: Vec<PathBuf> = allowed
         .iter()
-        .map(|dir| std::fs::canonicalize(dir).unwrap_or_else(|_| dir.clone()))
+        .map(|dir| llg::ffi::platform::canonicalize(dir).unwrap_or_else(|_| dir.clone()))
         .collect();
     match std::fs::symlink_metadata(resolved) {
         Ok(_) => {
-            let canonical = std::fs::canonicalize(resolved).map_err(|_| ())?;
+            let canonical = llg::ffi::platform::canonicalize(resolved).map_err(|_| ())?;
             if is_under_any(&canonical_allowed, &canonical) {
                 Ok(Some(canonical))
             } else {
@@ -1025,7 +1028,7 @@ pub(super) fn canonical_include_target(
             // existing symlinked parent must not hide an outside resolution.
             let mut parent = resolved.parent();
             while let Some(candidate) = parent {
-                if let Ok(canonical) = std::fs::canonicalize(candidate) {
+                if let Ok(canonical) = llg::ffi::platform::canonicalize(candidate) {
                     if !is_under_any(&canonical_allowed, &canonical) {
                         return Err(());
                     }
@@ -1049,7 +1052,7 @@ pub(super) fn open_document_value<'a>(
     open_documents: &'a OpenDocuments,
 ) -> Option<&'a SharedText> {
     open_documents.get(path).or_else(|| {
-        std::fs::canonicalize(path)
+        llg::ffi::platform::canonicalize(path)
             .ok()
             .and_then(|canonical| open_documents.get(&canonical))
     })
@@ -1072,7 +1075,7 @@ pub(super) fn measured_input_bytes(path: &Path, open_documents: &OpenDocuments) 
 }
 
 pub(super) fn input_identity(path: &Path) -> PathBuf {
-    std::fs::canonicalize(path)
+    llg::ffi::platform::canonicalize(path)
         .ok()
         .or_else(|| workspace::normalize_absolute_path(path))
         .unwrap_or_else(|| path.to_path_buf())
@@ -1392,7 +1395,7 @@ pub(super) fn stage_include_tree(
     let mut visited = HashSet::new();
     let mut deps = BTreeSet::new();
     while let Some(source) = pending.pop() {
-        let identity = std::fs::canonicalize(&source).unwrap_or_else(|_| source.clone());
+        let identity = llg::ffi::platform::canonicalize(&source).unwrap_or_else(|_| source.clone());
         if !visited.insert(identity) {
             continue;
         }
@@ -1483,7 +1486,7 @@ pub(super) fn preflight_include_isolation(
         .collect();
     let mut visited = HashSet::new();
     while let Some((source, diagnostic_file)) = pending.pop() {
-        let identity = std::fs::canonicalize(&source).unwrap_or_else(|_| source.clone());
+        let identity = llg::ffi::platform::canonicalize(&source).unwrap_or_else(|_| source.clone());
         if !visited.insert(identity) {
             continue;
         }

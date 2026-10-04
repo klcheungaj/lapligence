@@ -96,7 +96,7 @@ def main() -> None:
     parser.add_argument("--ledger", type=Path, default=Path("tests/syn038_coverage_ledger.md"))
     parser.add_argument("--pdf-root", type=Path)
     args = parser.parse_args()
-    rows = pdf_inventory(args.pdf_root, args.ledger.read_text()) if args.pdf_root else inventory(args.source.read_text(), args.ledger.read_text())
+    rows = pdf_inventory(args.pdf_root, args.ledger.read_text(encoding="utf-8")) if args.pdf_root else inventory(args.source.read_text(encoding="utf-8"), args.ledger.read_text(encoding="utf-8"))
     writer = csv.writer(sys.stdout, delimiter="\t", lineterminator="\n")
     writer.writerow(("edition_or_section", "production", "core_rows", "boundary_rows", "exclusion_rows"))
     writer.writerows(rows)

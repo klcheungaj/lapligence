@@ -153,6 +153,15 @@ resumed-task fixtures run on every backend (set `LLG_TEST_GMP_ROOT` for the GMP
 lane) and after snapshot and Db destruction. Each `neg_2001_*.v` holds one
 later form that must reject under `--edition 2001` and compile under 2009.
 
+SIM-003's native record fixtures use
+`-E 'binary(sim_feature_completion) & test(sim_003::)'`. Positive call,
+lifetime and sensitivity fixtures run in both optimizer modes on every backend
+(set `LLG_TEST_GMP_ROOT` for the GMP lane) and after Db destruction; the
+borrowed-chandle fixture builds its companion C file into a DPI library (Unix
+hosts). Component checks are `native_value_descriptors_probe.c` in
+`runtime_value_storage` and the `sim::ir::validate::tests::native_values` unit
+tests.
+
 RTL-016's tagged-union, pattern and Q03 fixtures use
 `-E 'binary(sim_feature_completion) & test(rtl_016::)'`. Positive fixtures and
 the run-time error fixtures run in both optimizer modes on both backends (set
@@ -186,6 +195,12 @@ lane). `sim_cli::run_case_checked_matrix` hands each output to a checker, so the
 region litmus is compared as a line multiset plus the orders the §4.5 reference
 algorithm fixes, races accept every permitted outcome, and tick-limit failures
 compare the output printed before the diagnostic.
+
+SIM-002's time-reporting fixtures use
+`-E 'binary(sim_feature_completion) & test(sim_002::)'`. Executed fixtures run in
+both optimizer modes on both backends (set `LLG_TEST_GMP_ROOT` for the GMP lane);
+`.v` fixtures also run with `--edition 2001`, and the scope fixtures also run after
+the native snapshot and Db are dropped.
 
 RTL-012's strength and `unconnected_drive` fixtures use
 `-E 'binary(sim_feature_completion) & test(rtl_012::)'`. The scalar matrix and

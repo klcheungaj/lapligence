@@ -761,7 +761,13 @@ fn render_model(
     out.push_str("#include \"llg_container.h\"\n");
     out.push_str("#include \"llg_string.h\"\n");
     if model.funcs.iter().any(|func| func.dpi_import().is_some()) {
-        out.push_str("#include \"svdpi.h\"\n");
+        // DPI code is linked into the simulator executable, never imported
+        // from a DLL; without these svdpi.h marks its declarations
+        // __declspec(dllimport) on Windows toolchains, which GCC and MSVC
+        // report as ignored on its typedefs.
+        out.push_str(
+            "#define DPI_PROTOTYPES\n#define XXTERN DPI_EXTERN\n#define EETERN DPI_EXTERN\n#include \"svdpi.h\"\n",
+        );
     }
     if model.waveform {
         out.push_str("#include \"llg_wave.h\"\n");
@@ -769,9 +775,6 @@ fn render_model(
     out.push_str(
         "\n#include <stdio.h>\n#include <stdlib.h>\n#include <math.h>\n#include <string.h>\n\n",
     );
-    if !sharing.bodies.is_empty() || !pca_tables.operands.is_empty() {
-        out.push_str("#if defined(__GNUC__) && !defined(__clang__)\n#define LLG_MODEL_SHARED __attribute__((noipa))\n#elif defined(__clang__)\n#define LLG_MODEL_SHARED __attribute__((noinline))\n#elif defined(_MSC_VER)\n#define LLG_MODEL_SHARED __declspec(noinline)\n#else\n#define LLG_MODEL_SHARED\n#endif\n");
-    }
     let constant_declarations_at = out.len();
     let mut entries = BTreeSet::new();
     for artifact in coroutine_functions
@@ -856,6 +859,7 @@ fn render_model(
     for container in &model.containers {
         out.push_str(&super::containers::declaration_and_init(container)?.0);
     }
+    out.push_str(&super::owned::native_values::native_type_tables(model)?.0);
     for object in &model.objects {
         if object.ty == crate::sim::ir::IrObjectType::String {
             out.push_str(&format!(

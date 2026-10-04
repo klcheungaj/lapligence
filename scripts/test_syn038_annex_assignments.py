@@ -13,8 +13,8 @@ ROOT = Path(__file__).resolve().parents[1]
 class AnnexAssignmentCheckerTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.manifest = json.loads((ROOT / "tests/syn038_annex_assignments.json").read_text())
-        cls.ledger = (ROOT / "tests/syn038_coverage_ledger.md").read_text()
+        cls.manifest = json.loads((ROOT / "tests/syn038_annex_assignments.json").read_text(encoding="utf-8"))
+        cls.ledger = (ROOT / "tests/syn038_coverage_ledger.md").read_text(encoding="utf-8")
         cls.inventory = checker.load_inventory_module()
 
     def check_rejects(self, manifest, fragment):

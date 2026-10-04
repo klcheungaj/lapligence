@@ -143,7 +143,9 @@ fn unavailable_include_is_rejected_in_both_editions() {
         sim_cli::reject_case_with_args(
             SUITE,
             "missing_include",
-            "No such file or directory",
+            // The reason after the name is the host C++ library's text
+            // ("No such file..." on glibc, "no such file..." on MSVC).
+            "'missing_syn017.svh': ",
             &args,
         );
     }

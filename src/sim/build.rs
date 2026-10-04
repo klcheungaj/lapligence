@@ -465,7 +465,8 @@ pub fn build_model_cmake(out_dir: &Path, extra: &[(&str, &str)]) -> Result<PathB
 }
 
 /// Build the simulation model in `out_dir` with CMake and per-call options;
-/// returns the path of the resulting executable (`<out_dir>/build/bin/sim`).
+/// returns the path of the resulting executable (`<out_dir>/build/bin/sim`,
+/// with the host executable suffix).
 pub fn build_model_cmake_with_opts(
     out_dir: &Path,
     extra: &[(&str, &str)],
@@ -584,7 +585,7 @@ pub fn generate_model_sources_with_opts(
 
 /// File names [`super::write_sim_sources`] always writes (must mirror its
 /// fixed list there) plus this module's own `CMakeLists.txt`.
-const FIXED_SOURCE_NAMES: [&str; 20] = [
+const FIXED_SOURCE_NAMES: [&str; 23] = [
     "llg_rt.h",
     "llg_rt.c",
     "llg_value.h",
@@ -603,6 +604,9 @@ const FIXED_SOURCE_NAMES: [&str; 20] = [
     "llg_string.h",
     "llg_string.c",
     "svdpi.h",
+    "llg_compiler.h",
+    "llg_platform.h",
+    "llg_platform_native.h",
     "CMakeLists.txt",
     "llg_value_build.h",
 ];
@@ -620,7 +624,7 @@ fn prune_stale_entries_for(
     waveform: bool,
     backend: super::value_backend::ValueBackend,
 ) {
-    let canonical = match out_dir.canonicalize() {
+    let canonical = match crate::ffi::platform::canonicalize(out_dir) {
         Ok(p) => p,
         Err(_) => return,
     };
@@ -764,12 +768,14 @@ fn canonical_dpi_library(path: &Path) -> Result<PathBuf, BuildError> {
             reason: "path is not a regular file".to_owned(),
         });
     }
-    let canonical = path
-        .canonicalize()
-        .map_err(|error| BuildError::InvalidDpiLibrary {
+    // Ordinary spelling: a Windows verbatim `\\?\` prefix would reach the
+    // CMake link line as `//?/C:/...`.
+    let canonical = crate::ffi::platform::canonicalize(path).map_err(|error| {
+        BuildError::InvalidDpiLibrary {
             path: path.to_path_buf(),
             reason: format!("cannot resolve path: {error}"),
-        })?;
+        }
+    })?;
     let Some(path_text) = canonical.to_str() else {
         return Err(BuildError::InvalidDpiLibrary {
             path: path.to_path_buf(),
@@ -1077,7 +1083,10 @@ fn runtime_cache_key_with_compiler(
             hash = hash.wrapping_mul(0x100000001b3);
         }
     }
-    for (name, source) in super::rt::value_backend_sources(opts.value_config.backend) {
+    for (name, source) in super::rt::platform_headers()
+        .iter()
+        .chain(super::rt::value_backend_sources(opts.value_config.backend))
+    {
         for byte in name.bytes().chain(source.bytes()) {
             hash = (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3);
         }
@@ -1379,16 +1388,23 @@ fn output_tail(output: &std::process::Output) -> String {
     joined
 }
 
+/// File name of the generated executable. CMake builds the model for the host
+/// running llg, so the host suffix applies (`sim.exe` on Windows).
+fn sim_exe_name() -> String {
+    format!("sim{}", std::env::consts::EXE_SUFFIX)
+}
+
 /// Locate the built executable: `<build>/bin/sim` first, then a recursive
 /// search under `<build>/bin/` (multi-config generators may add per-config
 /// subdirectories).  Deterministic order on all paths.
 fn find_sim_exe(bin_dir: &Path) -> Result<PathBuf, BuildError> {
-    let direct = bin_dir.join("sim");
+    let name = sim_exe_name();
+    let direct = bin_dir.join(&name);
     if direct.is_file() {
         return Ok(direct);
     }
     let mut found = Vec::new();
-    collect_named_files(bin_dir, "sim", &mut found);
+    collect_named_files(bin_dir, &name, &mut found);
     if let Some(path) = found.first() {
         return Ok(path.clone());
     }
@@ -1768,6 +1784,30 @@ mod tests {
         assert!(lock_path.is_file());
 
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn sim_executable_lookup_uses_the_host_executable_suffix() {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let unique = NEXT.fetch_add(1, Ordering::Relaxed);
+        let bin =
+            std::env::temp_dir().join(format!("llg-find-sim-exe-{}-{unique}", std::process::id()));
+        let name = format!("sim{}", std::env::consts::EXE_SUFFIX);
+        // Multi-config generators place the executable in a configuration
+        // directory; a same-stem file with another extension is not it.
+        std::fs::create_dir_all(bin.join("Release")).unwrap();
+        std::fs::write(bin.join("Release").join(&name), b"").unwrap();
+        std::fs::write(bin.join("sim.pdb"), b"").unwrap();
+        assert_eq!(find_sim_exe(&bin).unwrap(), bin.join("Release").join(&name));
+
+        std::fs::write(bin.join(&name), b"").unwrap();
+        assert_eq!(find_sim_exe(&bin).unwrap(), bin.join(&name));
+
+        std::fs::remove_dir_all(&bin).unwrap();
+        assert!(matches!(
+            find_sim_exe(&bin),
+            Err(BuildError::ExecutableNotFound { .. })
+        ));
     }
 
     #[test]

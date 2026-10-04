@@ -33,6 +33,7 @@ mod initialization;
 mod locals;
 mod lvalues;
 mod names;
+pub(super) mod native_values;
 mod net_arrays;
 mod net_cells;
 mod net_collapse;

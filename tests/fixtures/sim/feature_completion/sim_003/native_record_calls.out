@@ -1,0 +1,9 @@
+alpha null 6.00 4 05 xx 53 5 BUSY [alpha0||alpha2] 0
+0.1000000015
+8 alpha []
+10 4
+2 9 updated alpha! alpha
+2 2 x 5 xy
+x 0 1
+0 1 0
+pat- alpha-

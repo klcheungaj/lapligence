@@ -86,6 +86,80 @@ struct llg_value_t {
     } value;
 };
 
+/* Descriptor contract (SIM-003). A value descriptor is immutable static data
+ * describing one recursive value type. Its storage identity decides copying:
+ * DEEP values (packed, real, string, aggregate, fixed array, container) copy
+ * into independent owners; IDENTITY handles (event, class/process/semaphore/
+ * mailbox/virtual-interface opaque handles) share the referenced object and
+ * are reported by llg_value_trace; BORROWED chandles copy the foreign pointer
+ * and are neither traced nor freed by the value runtime. */
+enum {
+    LLG_VALUE_COPY_DEEP = 0,
+    LLG_VALUE_COPY_IDENTITY = 1,
+    LLG_VALUE_COPY_BORROWED = 2,
+};
+
+/* Maximum descriptor nesting accepted by validation; deeper (or cyclic)
+ * descriptors are rejected rather than recursed into. */
+#define LLG_VALUE_DESC_MAX_DEPTH 64
+
+/* Return the LLG_VALUE_COPY_* policy of `desc`, or -1 for an invalid kind. */
+int llg_value_desc_copy_policy(const llg_value_desc_t* desc);
+/* Structural validation: known kinds, nonzero nominal aggregate identities,
+ * member/item counts that agree and fit host allocation, packed widths below
+ * LLG_SUPPORTED_WIDTH_LIMIT, and no cycle or nesting beyond
+ * LLG_VALUE_DESC_MAX_DEPTH. Returns 1 when valid; has no side effects. */
+int llg_value_desc_valid(const llg_value_desc_t* desc);
+/* Fatal diagnostic naming `label` when `desc` is invalid. Generated models
+ * check each emitted root descriptor once at startup. */
+void llg_value_desc_check(const llg_value_desc_t* desc, const char* label);
+
+/* Visit every non-null identity-handle slot reachable from `value`
+ * (aggregate members, fixed-array items and nested dynamic-array elements).
+ * Borrowed chandles and value payloads are not visited. The slot pointer is
+ * borrowed for the callback, which must not mutate the traversed value. */
+typedef void (*llg_value_visit_fn)(void* const* slot,
+                                   const llg_value_desc_t* desc,
+                                   void* context);
+void llg_value_trace(const llg_value_t* value, llg_value_visit_fn visit,
+                     void* context);
+
+/* Descriptor-backed native aggregate storage (subroutine formals, results and
+ * locals). `init` default-constructs an empty (zeroed) value: packed leaves
+ * take their state-domain default, strings are empty and handles null.
+ * `destroy` releases a value constructed by init/copy and leaves it empty; its
+ * `void*` signature matches registered value-scope object destructors.
+ * `copy` replaces `dst` with a converted deep copy of `src` (which may alias
+ * `dst`); `try_copy` returns 0 on an item allocation failure and then leaves
+ * `dst` unchanged and releases the partial copy, while `copy` reports it as a
+ * fatal error. Leaf payload allocators keep their own fatal OOM policy. */
+void llg_native_value_init(llg_value_t* value, const llg_value_desc_t* desc);
+void llg_native_value_destroy(void* value);
+int llg_native_value_try_copy(llg_value_t* dst, const llg_value_t* src);
+void llg_native_value_copy(llg_value_t* dst, const llg_value_t* src);
+
+/* Explicit native roots. Every live descriptor-backed value owned by model
+ * storage, an activation scope or a call temporary is one registered root, so
+ * a collector can enumerate the identity handles they keep reachable without
+ * scanning C stacks. `value` is the first member: a root is addressed by its
+ * value. init default-constructs and links the root; destroy releases the
+ * value and unlinks it (registered value-scope objects use it as their
+ * destructor, so lexical exit, cancellation and model close all unregister).
+ * Destroying an unlinked root is a no-op. The registry is per process and
+ * single-threaded, like the scheduler. */
+typedef struct llg_native_root_t {
+    llg_value_t value;
+    struct llg_native_root_t* prev;
+    struct llg_native_root_t* next;
+} llg_native_root_t;
+
+void llg_native_root_init(llg_native_root_t* root, const llg_value_desc_t* desc);
+void llg_native_root_destroy(void* root);
+/* Number of live roots; zero after a model closes without native leaks. */
+size_t llg_native_roots_count(void);
+/* Trace the identity handles of every live root (see llg_value_trace). */
+void llg_native_roots_trace(llg_value_visit_fn visit, void* context);
+
 struct llg_dyn_value_array_t {
     llg_value_t* data;
     size_t size;

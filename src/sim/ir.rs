@@ -25,6 +25,9 @@
 mod containers;
 mod native_access;
 pub use native_access::{IrClassAllocation, IrNativeAccess, IrNativeAccessKind};
+mod native_values;
+pub(in crate::sim) use native_values::{native_item_count, native_leaf_type, validate_native_type};
+pub use native_values::{IrNativeLeafExpr, IrNativeLeafValue, IrNativeValue};
 mod objects;
 mod validate;
 pub use containers::{
@@ -411,6 +414,10 @@ pub struct IrModel {
     pub(in crate::sim) classes: Vec<IrClass>,
     /// Typed dynamic member lvalues, resolved at each use rather than C fragments.
     pub(in crate::sim) native_accesses: Vec<IrNativeAccess>,
+    /// Recursive types of descriptor-backed native values, emitted once each.
+    pub(in crate::sim) native_types: Vec<IrContainerElement>,
+    /// Descriptor-backed native aggregate storage (formals, results, locals).
+    pub(in crate::sim) native_values: Vec<IrNativeValue>,
     pub(in crate::sim) class_allocations: Vec<IrClassAllocation>,
     /// Virtual-interface descriptors and their concrete instance bindings.
     pub(in crate::sim) virtual_interfaces: Vec<IrVirtualInterface>,
@@ -501,6 +508,8 @@ impl IrModel {
             objects: parts.objects,
             classes: parts.classes,
             native_accesses: parts.native_accesses,
+            native_types: Vec::new(),
+            native_values: Vec::new(),
             class_allocations: parts.class_allocations,
             virtual_interfaces: parts.virtual_interfaces,
             udp_tables: parts.udp_tables,

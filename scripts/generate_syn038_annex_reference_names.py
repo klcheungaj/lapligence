@@ -14,7 +14,7 @@ OUTPUT = ROOT / "tests/syn038_annex_reference_names.json"
 def main() -> None:
     content = SOURCE.read_bytes()
     names = {}
-    for section, name, *_ in inventory(content.decode(), LEDGER.read_text()):
+    for section, name, *_ in inventory(content.decode(), LEDGER.read_text(encoding="utf-8")):
         names.setdefault(name, set()).add(section)
     snapshot = {
         "schema": "syn038-annex-reference-names/v1",
@@ -23,7 +23,7 @@ def main() -> None:
         "generator": "python3 scripts/generate_syn038_annex_reference_names.py",
         "sections_by_name": {name: sorted(sections) for name, sections in sorted(names.items())},
     }
-    OUTPUT.write_text(json.dumps(snapshot, indent=2) + "\n")
+    OUTPUT.write_text(json.dumps(snapshot, indent=2) + "\n", encoding="utf-8")
 
 
 if __name__ == "__main__":

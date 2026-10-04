@@ -10,6 +10,25 @@ pub enum IrCallArg {
     /// Fixed descriptor operand; passing mode belongs to the callee formal.
     FixedArray(usize),
     FixedValue(Box<IrFixedValue>),
+    /// Caller-owned native value passed by address to a native-value formal.
+    /// Inputs receive a fresh caller copy; outputs and results are written
+    /// in place and copied back by the caller after return.
+    NativeValue(usize),
+    /// Input native-value formal of type `ty` (index into the model's native
+    /// types) built from leaf values evaluated in order at the call; leaves
+    /// not listed keep their typed default.
+    NativeLeaves {
+        ty: usize,
+        leaves: Vec<super::IrNativeLeafValue>,
+    },
+    /// Input native-value formal fed by a native-result call evaluated at
+    /// this operand. `value` is the lexical result storage the inner call
+    /// writes through its trailing `NativeValue(value)` operand; it is
+    /// declared by this operand and handed to the outer callee.
+    NativeCall {
+        value: usize,
+        call: Box<IrCall>,
+    },
     /// Input formal value, captured once before the next input is evaluated.
     /// Later defaults can read its call-local binding from `call_argument_name`.
     Val(IrExpr),
@@ -321,6 +340,16 @@ impl IrCallArg {
                     value.expressions(visit);
                 }
             }
+            Self::NativeLeaves { leaves, .. } => {
+                for leaf in leaves {
+                    leaf.expressions(visit);
+                }
+            }
+            Self::NativeCall { call, .. } => {
+                for argument in &call.args {
+                    argument.expressions(visit);
+                }
+            }
             _ => {}
         }
     }
@@ -364,6 +393,16 @@ impl IrCallArg {
                 }
                 if let Some(value) = storage_read {
                     value.expressions_mut(visit);
+                }
+            }
+            Self::NativeLeaves { leaves, .. } => {
+                for leaf in leaves {
+                    leaf.expressions_mut(visit);
+                }
+            }
+            Self::NativeCall { call, .. } => {
+                for argument in &mut call.args {
+                    argument.expressions_mut(visit);
                 }
             }
             _ => {}

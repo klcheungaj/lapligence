@@ -186,6 +186,12 @@ pub struct Db {
     /// library), package and compilation unit, copied from the frontend's
     /// library binding so `%l` survives snapshot destruction.
     source_libraries: HashMap<NodeId, String>,
+    /// Resolved `(unit, precision)` power-of-ten exponents of packages,
+    /// compilation units and classes (a class inherits its declaring scope's
+    /// scale; class nodes have no owned parent). Module instances carry
+    /// theirs in [`NodeKind::ModuleInst`]; a scope without a captured scale
+    /// uses the compilation default.
+    declaration_time_scales: HashMap<NodeId, (i32, i32)>,
     /// Logical `` `line`` positions, kept apart from the physical node
     /// positions that remain the diagnostic identity.
     source_map: super::SourceMap,
@@ -287,6 +293,7 @@ impl Db {
             program_instances: HashSet::new(),
             unconnected_drives: HashMap::new(),
             source_libraries: HashMap::new(),
+            declaration_time_scales: HashMap::new(),
             source_map: super::SourceMap::default(),
             tops: Vec::new(),
             flat_modules: Vec::new(),
@@ -352,6 +359,7 @@ impl Db {
             program_instances: HashSet::new(),
             unconnected_drives: HashMap::new(),
             source_libraries: HashMap::new(),
+            declaration_time_scales: HashMap::new(),
             source_map: super::SourceMap::default(),
             tops,
             flat_modules: Vec::new(),
@@ -468,6 +476,13 @@ impl Db {
     /// a package or compilation unit. Synthetic test databases have none.
     pub fn source_library(&self, id: NodeId) -> Option<&str> {
         self.source_libraries.get(&id).map(String::as_str)
+    }
+
+    /// Resolved `(unit, precision)` power-of-ten exponents of a package,
+    /// compilation unit or class declaration, when the frontend recorded one
+    /// for it or for the scope that declares the class.
+    pub fn declaration_time_scale(&self, id: NodeId) -> Option<(i32, i32)> {
+        self.declaration_time_scales.get(&id).copied()
     }
 
     /// Logical (`` `line``-mapped) positions of admitted source lines.

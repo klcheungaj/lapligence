@@ -383,6 +383,13 @@ for `sparse()` storage and oversized values, never a per-cell expansion; new
 writers of fixed storage must register cell intervals for the single-writer
 rule; and new net-array driver forms must be added to the `net_cells.rs`
 classification inventory.
+Native records (string/real/chandle leaves, no packed width) in subroutine
+formals, results and locals use `collection/native_values.rs`: one
+`IrNativeValue` root per storage, leaf accesses by constant item path, and
+endpoint transfers that capture every source leaf before the first write.
+Module-level native records keep per-member lowering; reject run-time native
+indices, native ref formals, NBAs and fork capture explicitly rather than
+flattening or copying shallowly.
 
 An invalid index reads the element type's uninitialized default (SV 7.4.6), not
 an all-X payload: mixed-state aggregate elements keep two-state leaves at zero
@@ -411,14 +418,17 @@ are evaluated/disposed but their values are ignored; memory bounds remain active
 
 ## Time, output and native services
 
-Use owned nearest-module units/precision and typed `IrDelay`; round complete real
+Use the owned units/precision of the nearest module instance, package, `$unit` or
+class-declaring scope (`Db::declaration_time_scale`) and typed `IrDelay`; round complete real
 delays once locally before checked scaling. Packed X/Z delay becomes zero, negative
 packed values convert to unsigned 64-bit time, and finite negative real delays
 convert after local rounding (constants take the runtime conversion); reject
 nonfinite real delays and tick overflow. `timescale.rs` owns tick representation; keep the runtime timescale-
 agnostic. `$time`/`$stime` round to calling units with halves upward; `$realtime`
 keeps fractions. `%t` carries physical units through runtime `$timeformat`;
-`$printtimescale` uses caller metadata. Frontend owns inheritance.
+`$printtimescale` reports its instance/`$unit` operand, or the scope containing
+the call, in the SV 20.4.1 format. Code-bearing packages and `$unit` join the
+design tick. Frontend owns inheritance.
 
 Real/shortreal use typed doubles and f32 rounding at shortreal writes. Real-to-packed
 rounds nearest, ties away; packed-to-real zeroes X/Z positions at actual width.

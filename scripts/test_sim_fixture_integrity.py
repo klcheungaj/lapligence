@@ -105,12 +105,12 @@ class FeatureCompletionTests(unittest.TestCase):
         self.fixture = self.root / "tests/fixtures/sim/feature_completion/rtl_001/copy.v"
         self.module.parent.mkdir(parents=True)
         self.fixture.parent.mkdir(parents=True)
-        self.facade.write_text('#[path = "sim_feature_completion/rtl_001.rs"] mod rtl_001;')
+        self.facade.write_text('#[path = "sim_feature_completion/rtl_001.rs"] mod rtl_001;', encoding="utf-8")
         self.fixture.write_text("module tb; endmodule\n", encoding="ascii")
         self.active = ('const SUITE: &str = "feature_completion/rtl_001";\n'
                        '#[test]\nfn copy() {\n'
                        'sim_cli::run_case(SUITE, "copy.v", "ok\\n", "", &[]);\n}\n')
-        self.module.write_text(self.active)
+        self.module.write_text(self.active, encoding="utf-8")
 
     def errors(self) -> list[str]:
         return feature_completion_errors(self.root)
@@ -125,9 +125,9 @@ class FeatureCompletionTests(unittest.TestCase):
         self.assertIn("missing declared feature suite", self.errors()[0])
 
     def test_missing_declaration_and_directory_fail(self) -> None:
-        self.facade.write_text("")
+        self.facade.write_text("", encoding="utf-8")
         self.assertTrue(self.errors())
-        self.facade.write_text('#[path = "sim_feature_completion/rtl_001.rs"] mod rtl_001;')
+        self.facade.write_text('#[path = "sim_feature_completion/rtl_001.rs"] mod rtl_001;', encoding="utf-8")
         self.fixture.unlink()
         self.fixture.parent.rmdir()
         self.assertIn("has no fixture directory", self.errors()[0])
@@ -138,7 +138,7 @@ class FeatureCompletionTests(unittest.TestCase):
         self.assertIn("not referenced by a declared feature test", self.errors()[0])
         self.module.write_text(self.active.replace(
             'sim_cli::run_case(SUITE, "copy.v", "ok\\n", "", &[]);',
-            'sim_cli::run_case_with_inputs(SUITE, "copy.v", &["library.sv"], "ok\\n", "", &[], &[]);'))
+            'sim_cli::run_case_with_inputs(SUITE, "copy.v", &["library.sv"], "ok\\n", "", &[], &[]);'), encoding="utf-8")
         self.assertEqual(self.errors(), [])
 
     def test_missing_and_unreferenced_inputs_fail(self) -> None:
@@ -146,35 +146,35 @@ class FeatureCompletionTests(unittest.TestCase):
         refs = source_references(self.active, "tests/sim_feature_completion/rtl_001.rs")
         self.assertTrue(missing(self.root, refs))
         self.assertIn("zero HDL fixtures", self.errors()[0])
-        self.fixture.write_text("module tb; endmodule\n")
-        self.fixture.with_name("unused.sv").write_text("module tb; endmodule\n")
+        self.fixture.write_text("module tb; endmodule\n", encoding="utf-8")
+        self.fixture.with_name("unused.sv").write_text("module tb; endmodule\n", encoding="utf-8")
         self.assertIn("not referenced by a declared feature test", self.errors()[0])
 
     def test_ignored_and_conditional_tests_fail(self) -> None:
         for attribute in ['#[ignore]', '#[cfg(unix)]', '#[cfg_attr(unix, ignore)]']:
             with self.subTest(attribute=attribute):
-                self.module.write_text(self.active.replace('#[test]', attribute + '\n#[test]'))
+                self.module.write_text(self.active.replace('#[test]', attribute + '\n#[test]'), encoding="utf-8")
                 self.assertIn("must not be disabled", self.errors()[0])
-        self.facade.write_text('#[cfg(unix)]\n#[path = "sim_feature_completion/rtl_001.rs"] mod rtl_001;')
+        self.facade.write_text('#[cfg(unix)]\n#[path = "sim_feature_completion/rtl_001.rs"] mod rtl_001;', encoding="utf-8")
         self.assertTrue(self.errors())
 
     def test_zero_tests_and_helper_only_references_fail(self) -> None:
-        self.module.write_text(self.active.replace('#[test]', ''))
+        self.module.write_text(self.active.replace('#[test]', ''), encoding="utf-8")
         self.assertIn("zero declared feature tests", self.errors()[0])
-        self.module.write_text(self.active.replace('#[test]', '') + '#[test]\nfn unrelated() {}\n')
+        self.module.write_text(self.active.replace('#[test]', '') + '#[test]\nfn unrelated() {}\n', encoding="utf-8")
         self.assertIn("not referenced by a declared feature test", self.errors()[0])
 
     def test_component_or_owned_helper_alone_cannot_accept_a_feature(self) -> None:
-        self.module.write_text(self.active.replace("run_case(", "run_case_after_db_drop("))
+        self.module.write_text(self.active.replace("run_case(", "run_case_after_db_drop("), encoding="utf-8")
         self.assertIn("through public sim_cli", self.errors()[0])
         self.module.write_text('#[test]\nfn component() {\n'
-                               'p.join("tests/fixtures/sim/feature_completion/rtl_001/copy.v");\n}\n')
+                               'p.join("tests/fixtures/sim/feature_completion/rtl_001/copy.v");\n}\n', encoding="utf-8")
         self.assertIn("through public sim_cli", self.errors()[0])
 
     def test_commented_test_and_string_with_braces_do_not_hide_failures(self) -> None:
-        self.module.write_text('/*' + self.active + '*/')
+        self.module.write_text('/*' + self.active + '*/', encoding="utf-8")
         self.assertTrue(self.errors())
-        self.module.write_text(self.active.replace('"ok\\n"', '"} {\\n"'))
+        self.module.write_text(self.active.replace('"ok\\n"', '"} {\\n"'), encoding="utf-8")
         self.assertEqual(self.errors(), [])
 
     def test_untracked_suite_or_module_fail(self) -> None:
@@ -187,12 +187,12 @@ class FeatureCompletionTests(unittest.TestCase):
         for source in [self.active, self.active.replace('#[test]', '#[ignore]\n#[test]'),
                        self.active.replace('#[test]', '')]:
             with self.subTest(source=source):
-                self.module.write_text(source)
+                self.module.write_text(source, encoding="utf-8")
                 result = subprocess.run([sys.executable, str(checker), "--root", str(self.root)],
                                         capture_output=True, text=True, check=False)
                 self.assertEqual(result.returncode, 0 if source == self.active else 1,
                                  result.stdout + result.stderr)
-        self.module.write_text(self.active)
+        self.module.write_text(self.active, encoding="utf-8")
         self.fixture.unlink()
         result = subprocess.run([sys.executable, str(checker), "--root", str(self.root)],
                                 capture_output=True, text=True, check=False)

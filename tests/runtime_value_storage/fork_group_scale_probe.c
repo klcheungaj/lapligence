@@ -4,7 +4,22 @@
 #include "probe_co.h"
 
 #define GROUP_COUNT 100000u
-#define SCALE_REPEATS 3u
+/* Removal alone finishes in ~10 ms at GROUP_COUNT, where scheduler jitter is a
+ * large fraction of the sample, so it runs on a proportionally larger
+ * population. */
+#define REMOVAL_COUNT (4u * GROUP_COUNT)
+/* Doubling the population may cost at most this factor in CPU time. Linear
+ * scaling measures about 2-3 (cache growth included); quadratic list walks
+ * give about 4. */
+#define SCALE_LIMIT 3.6
+/* The minima over interleaved small/large measurements only improve as rounds
+ * accumulate. A case passes as soon as its minima satisfy the limit after
+ * SCALE_MIN_ROUNDS; contention noise is rejected by re-measuring up to
+ * SCALE_MAX_ROUNDS or SCALE_BUDGET_SECONDS of measured CPU time, and only a
+ * ratio that stays at or above the limit fails. */
+#define SCALE_MIN_ROUNDS 3u
+#define SCALE_MAX_ROUNDS 16u
+#define SCALE_BUDGET_SECONDS 20.0
 
 static unsigned count;
 static unsigned started;
@@ -89,14 +104,20 @@ LLG_PROBE_PROCESS(scale_parent, parent_frame_t, 4) {
     LLG_PROBE_DONE();
 }
 
-static double run(unsigned n, int cancel, int single) {
+typedef struct {
+    int cancel;
+    int single;
+} fork_mode_t;
+
+static double run(unsigned n, fork_mode_t mode) {
+    int cancel = mode.cancel;
     count = n;
     started = completed = quick_completed = 0;
     mixed_completion = cancel == 4;
     cancel_children = mixed_completion ? 0 : cancel;
     finish_parked = cancel == 2 || cancel == 3;
     staggered = cancel == 3;
-    one_group = single;
+    one_group = mode.single;
     clock_t begin = clock();
     llg_rt_init();
     llg_event_object_reset(&park_object);
@@ -110,7 +131,8 @@ static double run(unsigned n, int cancel, int single) {
     return (double)(clock() - begin) / CLOCKS_PER_SEC;
 }
 
-static double removal_order(unsigned n) {
+static double removal_order(unsigned n, fork_mode_t unused) {
+    (void)unused;
     clock_t begin = clock();
     llg_rt_init();
     llg_proc_t* parent = llg_spawn(&scale_parent_desc, "unlink parent");
@@ -171,24 +193,46 @@ static void event_positions(void) {
     llg_event_object_reset(&park_object);
 }
 
+/* Measures `measure` at n and 2n, alternating which size goes first so a
+ * burst of load does not systematically hit one of them. Returns whether the
+ * minima stay below SCALE_LIMIT; *small and *large receive the minima. */
+static int scales_linearly(double (*measure)(unsigned, fork_mode_t), unsigned n,
+                           fork_mode_t mode, double* small, double* large, unsigned* rounds) {
+    double spent = 0;
+    *small = *large = 1e30;
+    for (*rounds = 0; *rounds < SCALE_MAX_ROUNDS && spent < SCALE_BUDGET_SECONDS;) {
+        double a, b;
+        if (*rounds % 2) {
+            b = measure(2u * n, mode);
+            a = measure(n, mode);
+        } else {
+            a = measure(n, mode);
+            b = measure(2u * n, mode);
+        }
+        ++*rounds;
+        spent += a + b;
+        if (a < *small) *small = a;
+        if (b < *large) *large = b;
+        if (*rounds >= SCALE_MIN_ROUNDS && *small > 0 && *large < SCALE_LIMIT * *small)
+            return 1;
+    }
+    return 0;
+}
+
 int main(void) {
     event_positions();
-    double a = removal_order(GROUP_COUNT);
-    double b = removal_order(2u * GROUP_COUNT);
-    printf("reverse removal N=%.6f 2N=%.6f ratio=%.3f\n", a, b, b / a);
-    CHECK(a > 0 && b < 3.6 * a);
+    double small, large;
+    unsigned rounds;
+    int ok = scales_linearly(removal_order, REMOVAL_COUNT, (fork_mode_t){0, 0}, &small, &large, &rounds);
+    printf("reverse removal N=%u cpu=%.6f 2N=%.6f ratio=%.3f rounds=%u\n",
+           REMOVAL_COUNT, small, large, large / small, rounds);
+    CHECK(ok);
     for (int mode = 0; mode < 6; mode++) {
-        double small = 1e30;
-        double large = 1e30;
-        for (unsigned repeat = 0; repeat < SCALE_REPEATS; repeat++) {
-            double a = run(GROUP_COUNT, mode >= 3 ? mode - 1 : mode != 0, mode == 2);
-            double b = run(2u * GROUP_COUNT, mode >= 3 ? mode - 1 : mode != 0, mode == 2);
-            if (a < small) small = a;
-            if (b < large) large = b;
-        }
-        printf("fork scale mode=%d N=%u cpu=%.6f 2N=%.6f ratio=%.3f\n",
-               mode, GROUP_COUNT, small, large, large / small);
-        CHECK(small > 0 && large < 3.6 * small);
+        fork_mode_t shape = {mode >= 3 ? mode - 1 : mode != 0, mode == 2};
+        ok = scales_linearly(run, GROUP_COUNT, shape, &small, &large, &rounds);
+        printf("fork scale mode=%d N=%u cpu=%.6f 2N=%.6f ratio=%.3f rounds=%u\n",
+               mode, GROUP_COUNT, small, large, large / small, rounds);
+        CHECK(ok);
     }
     return 0;
 }

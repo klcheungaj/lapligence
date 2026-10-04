@@ -1,4 +1,5 @@
 use super::*;
+use crate::test_paths::host_path as hp;
 use std::sync::atomic::AtomicUsize;
 
 /// The process-global shadow base is shared by every test in this binary.
@@ -162,7 +163,7 @@ fn document_admission_rejects_before_storage_and_reuses_shared_text() {
 
 #[test]
 fn admitted_snapshot_indexes_share_the_same_text_allocation() {
-    let path = PathBuf::from("/tmp/llg-shared-snapshot.sv");
+    let path = PathBuf::from(hp("/tmp/llg-shared-snapshot.sv"));
     let text = Arc::new("module m; endmodule\n".to_owned());
     let mut snapshots = InputSnapshots::default();
     snapshots.insert(&path, Arc::clone(&text));
@@ -210,8 +211,8 @@ fn open_token_cache_key_tracks_text_and_defines() {
 #[test]
 fn cached_semantic_tokens_syntax_error_blocks_real_shadow_alias_fallbacks() {
     // Arrange
-    let real = PathBuf::from("/tmp/llg-lsp-token-alias/src/thing.sv");
-    let shadow = PathBuf::from("/tmp/llg-lsp-token-alias-shadow/src/thing.sv");
+    let real = PathBuf::from(hp("/tmp/llg-lsp-token-alias/src/thing.sv"));
+    let shadow = PathBuf::from(hp("/tmp/llg-lsp-token-alias-shadow/src/thing.sv"));
     let paths = vec![
         shadow.to_string_lossy().into_owned(),
         real.to_string_lossy().into_owned(),
@@ -276,8 +277,8 @@ fn cached_semantic_tokens_checks_canonical_aliases_before_fallback() {
 #[test]
 fn cached_semantic_tokens_isolates_same_basename_files_and_preserves_closed_fallbacks() {
     // Arrange
-    let left = PathBuf::from("/tmp/llg-lsp-token-left/dup.sv");
-    let right = PathBuf::from("/tmp/llg-lsp-token-right/dup.sv");
+    let left = PathBuf::from(hp("/tmp/llg-lsp-token-left/dup.sv"));
+    let right = PathBuf::from(hp("/tmp/llg-lsp-token-right/dup.sv"));
     let mut analysis = features::empty_analysis();
     analysis.tokens.push(semantic_token_file(&left, 2));
     analysis.tokens.push(semantic_token_file(&right, 20));
@@ -309,7 +310,7 @@ fn cached_semantic_tokens_isolates_same_basename_files_and_preserves_closed_fall
     // file.  The closed/project compatibility path retains the historic
     // basename lookup when no exact entry exists.
     analysis.diagnostics.clear();
-    let missing = PathBuf::from("/tmp/llg-lsp-token-missing/dup.sv");
+    let missing = PathBuf::from(hp("/tmp/llg-lsp-token-missing/dup.sv"));
     let open_fallback = cached_semantic_tokens(
         Some(&analysis),
         &[missing.to_string_lossy().into_owned()],
@@ -332,7 +333,7 @@ fn source_limit_guidance_distinguishes_sizes_from_unreadable_files() {
         InputSizeLimitKind::Unreadable,
     ] {
         let limit = InputSizeLimit {
-            path: PathBuf::from("/virtual/top.sv"),
+            path: PathBuf::from(hp("/virtual/top.sv")),
             measured_bytes: 5,
             configured_limit: 4,
             total_bytes: Some(5),
@@ -347,7 +348,7 @@ fn source_limit_guidance_distinguishes_sizes_from_unreadable_files() {
 
 #[test]
 fn oversized_open_token_buffer_is_rejected_before_flight_admission() {
-    let path = PathBuf::from("/tmp/llg-open-too-large.sv");
+    let path = PathBuf::from(hp("/tmp/llg-open-too-large.sv"));
     let open_document = (path.clone(), Arc::new("12345".to_owned()), Vec::new());
     let limit = open_token_size_limit(Some(&open_document), Some(4)).expect("over-limit buffer");
     assert_eq!(limit.measured_bytes, 5);
@@ -1084,7 +1085,7 @@ fn include_preflight_rejects_outside_symlink_targets() {
 fn commit_job_publishes_fileless_diagnostics_on_an_open_compiled_file() {
     use llg::core::compile::{Diag, Severity};
 
-    let root_path = PathBuf::from("/tmp/llg_lsp_fileless_diagnostic");
+    let root_path = PathBuf::from(hp("/tmp/llg_lsp_fileless_diagnostic"));
     let real = root_path.join("top.sv");
     let compiled = real.to_string_lossy().into_owned();
     let uri = Url::from_file_path(&real).expect("real document URI");
@@ -1167,7 +1168,7 @@ fn commit_job_serves_features_from_partial_analyses() {
             top_instances: Vec::new(),
             modules: vec![ModuleDef {
                 name: "m".to_owned(),
-                file: Some("/tmp/llg_lsp_partial_feature/top.sv".to_owned()),
+                file: Some(hp("/tmp/llg_lsp_partial_feature/top.sv").to_owned()),
                 line: 1,
                 col: 8,
                 end_line: 1,
@@ -1191,7 +1192,7 @@ fn commit_job_serves_features_from_partial_analyses() {
         state.roots.get(root).expect("root").last_good.is_some()
     }
 
-    let root_path = PathBuf::from("/tmp/llg_lsp_partial_feature");
+    let root_path = PathBuf::from(hp("/tmp/llg_lsp_partial_feature"));
     let real = root_path.join("top.sv");
     let descriptor = RootDescriptor::from_absolute(&root_path).expect("root descriptor");
     let mut roots = BTreeMap::new();
@@ -1345,7 +1346,7 @@ async fn module_explorer_task_failure_uses_error_outcome_and_empty_snapshot() {
 fn commit_job_publishes_closed_files_and_suppresses_unchanged_payloads() {
     use llg::core::compile::{Diag, Severity};
 
-    let root_path = PathBuf::from("/tmp/llg_lsp_project_wide_diagnostics");
+    let root_path = PathBuf::from(hp("/tmp/llg_lsp_project_wide_diagnostics"));
     let open_real = root_path.join("open.sv");
     let closed_real = root_path.join("closed.sv");
     let open_uri = Url::from_file_path(&open_real).expect("open document URI");
@@ -1636,7 +1637,7 @@ fn shadow_paths_stage_and_round_trip() {
 #[test]
 fn related_diagnostic_uris_do_not_leak_shadow_paths() {
     let shadow = ShadowPaths::new();
-    let real = PathBuf::from("/tmp/llg-related-note.sv");
+    let real = PathBuf::from(hp("/tmp/llg-related-note.sv"));
     let staged = shadow.shadow_path(&real).expect("shadow path");
     let mut diagnostics = vec![Diagnostic {
         range: Range::new(Position::new(0, 0), Position::new(0, 1)),
@@ -2078,7 +2079,7 @@ fn client_init_parses_default_and_overridden_config_paths() {
     );
     config_file.insert(
         "path".to_owned(),
-        LSPAny::String("/project-a/custom.toml".to_owned()),
+        LSPAny::String(hp("/project-a/custom.toml").to_owned()),
     );
     let mut llg = LSPObject::new();
     llg.insert("protocolVersion".to_owned(), LSPAny::Number(number_one));
@@ -2093,7 +2094,7 @@ fn client_init_parses_default_and_overridden_config_paths() {
     assert_eq!(init.config_files.len(), 1);
     assert_eq!(
         init.config_files[0].path,
-        PathBuf::from("/project-a/custom.toml")
+        PathBuf::from(hp("/project-a/custom.toml"))
     );
 }
 
@@ -2143,9 +2144,11 @@ fn watcher_options_cover_config_sources_and_include_deps() {
     );
     let options = watcher_options_from_state(&state);
     let text = options.to_string();
-    assert!(text.contains(&root.join(config::CONFIG_FILE).display().to_string()));
+    let config_glob =
+        llg::ffi::platform::glob_spelling(&root.join(config::CONFIG_FILE)).expect("unicode root");
+    assert!(text.contains(&format!("\"{config_glob}\"")), "{text}");
     assert!(text.contains("**/*.v"));
-    assert!(text.contains("defs.inc"));
+    assert!(text.contains("shared/defs.inc"), "{text}");
 }
 
 #[test]
@@ -2284,10 +2287,10 @@ fn client_init_warns_on_missing_or_invalid_protocol_version() {
 
 #[test]
 fn dep_dependents_maps_every_dependent_root() {
-    let root_a = PathBuf::from("/tmp/dep_map_a");
-    let root_b = PathBuf::from("/tmp/dep_map_b");
-    let shared = PathBuf::from("/tmp/shared/defs.svh");
-    let only_a = PathBuf::from("/tmp/a/only.inc");
+    let root_a = PathBuf::from(hp("/tmp/dep_map_a"));
+    let root_b = PathBuf::from(hp("/tmp/dep_map_b"));
+    let shared = PathBuf::from(hp("/tmp/shared/defs.svh"));
+    let only_a = PathBuf::from(hp("/tmp/a/only.inc"));
     let mut state = BackendState {
         roots: BTreeMap::new(),
         documents: BTreeMap::new(),
@@ -2358,7 +2361,7 @@ fn dep_dependents_maps_every_dependent_root() {
     );
     assert!(!state
         .dep_dependents
-        .contains_key(Path::new("/tmp/untracked.sv")));
+        .contains_key(Path::new(hp("/tmp/untracked.sv"))));
 }
 
 fn labeled_diagnostic(range_start: (u32, u32), severity: u8, message: &str) -> Diagnostic {
@@ -2386,11 +2389,11 @@ fn labeled_diagnostic(range_start: (u32, u32), severity: u8, message: &str) -> D
 #[test]
 fn shared_diagnostics_dedupe_exact_and_label_conflicts() {
     let names = BTreeMap::from([
-        (PathBuf::from("/w/root-b"), "root-b".to_owned()),
-        (PathBuf::from("/w/root-a"), "root-a".to_owned()),
+        (PathBuf::from(hp("/w/root-b")), "root-b".to_owned()),
+        (PathBuf::from(hp("/w/root-a")), "root-a".to_owned()),
     ]);
-    let owner_key = PathBuf::from("/w/root-b");
-    let non_owner_key = PathBuf::from("/w/root-a");
+    let owner_key = PathBuf::from(hp("/w/root-b"));
+    let non_owner_key = PathBuf::from(hp("/w/root-a"));
 
     // Identical finding from both roots: appears exactly ONCE, unlabeled.
     // Differing severity at the same location: both survive, the
@@ -2489,8 +2492,8 @@ fn two_root_state_with_shared_file(
     diag_a: Diagnostic,
     diag_b: Diagnostic,
 ) -> BackendState {
-    let root_a = PathBuf::from("/tmp/llg_agg_a");
-    let root_b = PathBuf::from("/tmp/llg_agg_b");
+    let root_a = PathBuf::from(hp("/tmp/llg_agg_a"));
+    let root_b = PathBuf::from(hp("/tmp/llg_agg_b"));
     let descriptor = |path: &Path| RootDescriptor::from_absolute(path).expect("descriptor");
     let mut state = BackendState {
         roots: BTreeMap::new(),
@@ -2559,7 +2562,7 @@ fn two_root_state_with_shared_file(
 /// clear).
 #[test]
 fn aggregate_republishes_surviving_root_after_folder_removal() {
-    let shared = PathBuf::from("/tmp/llg_agg_a/src/shared.svh");
+    let shared = PathBuf::from(hp("/tmp/llg_agg_a/src/shared.svh"));
     let shared_uri = Url::from_file_path(&shared).expect("shared uri");
     let distinct_b = labeled_diagnostic((9, 0), 2, "width mismatch b");
     let mut state = two_root_state_with_shared_file(
@@ -2580,7 +2583,7 @@ fn aggregate_republishes_surviving_root_after_folder_removal() {
     // Folder removal: root-b disappears; only root-a still tracks the
     // file.  The union is stale now and must be replaced by the
     // survivor's view.
-    state.roots.remove(&PathBuf::from("/tmp/llg_agg_b"));
+    state.roots.remove(&PathBuf::from(hp("/tmp/llg_agg_b")));
     rebuild_dep_dependents(&mut state);
     let second = aggregate_shared_publications(&mut state, &BTreeSet::new());
     let survivor: Vec<_> = second
@@ -2606,7 +2609,7 @@ fn aggregate_republishes_surviving_root_after_folder_removal() {
 /// digest.
 #[test]
 fn aggregate_clears_stale_union_when_diagnostics_vanish_everywhere() {
-    let shared = PathBuf::from("/tmp/llg_agg_a/src/shared.svh");
+    let shared = PathBuf::from(hp("/tmp/llg_agg_a/src/shared.svh"));
     let shared_uri = Url::from_file_path(&shared).expect("shared uri");
     let mut state = two_root_state_with_shared_file(
         &shared,

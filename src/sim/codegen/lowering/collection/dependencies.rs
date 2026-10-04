@@ -41,6 +41,13 @@ impl<'a> Codegen<'a> {
                 continue;
             }
             let Some(signal) = &leaf.signal else {
+                // A string member publishes its own change marker; other
+                // native members have none (see `walk_read_signals_bound`).
+                if let Some(object) = leaf.object.map(|object| self.reference_object(object)) {
+                    if self.model.objects[object].ty == IrObjectType::String {
+                        dependencies.push(IrDependency::Object(object));
+                    }
+                }
                 continue;
             };
             let dependency = self.signal_dependency(signal);

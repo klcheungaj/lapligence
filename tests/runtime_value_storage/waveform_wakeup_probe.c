@@ -47,20 +47,20 @@ int main(void) {
     unsigned long published = 0, parked = 0;
     const double start = seconds_now();
     while (published < WAKEUP_MAX_PUBLICATIONS && seconds_now() - start < WAKEUP_PROBE_SECONDS) {
-        uint64_t head = atomic_u64_load(&g_wave.head);
+        uint64_t head = llg_atomic_u64_load(&g_wave.head);
         double waited = seconds_now();
-        while (atomic_u64_load(&g_wave.tail) != head) {
+        while (llg_atomic_u64_load(&g_wave.tail) != head) {
             if (seconds_now() - waited > WAKEUP_STALL_SECONDS) {
                 fprintf(stderr,
                         "lost writer wakeup after %lu publications: head=%llu tail=%llu "
                         "writer_waiting=%d\n",
                         published, (unsigned long long)head,
-                        (unsigned long long)atomic_u64_load(&g_wave.tail),
-                        atomic_int_load(&g_wave.consumer_waiting));
+                        (unsigned long long)llg_atomic_u64_load(&g_wave.tail),
+                        llg_atomic_int_load(&g_wave.consumer_waiting));
                 exit(2);
             }
         }
-        if (atomic_int_load(&g_wave.consumer_waiting)) parked++;
+        if (llg_atomic_int_load(&g_wave.consumer_waiting)) parked++;
         seed = seed * 1103515245u + 12345u;
         unsigned range = delay_ranges[(published >> 10) % 4u];
         for (volatile unsigned delay = (seed >> 8) % range; delay; delay--) {

@@ -1,0 +1,3 @@
+/workspaces/agent_workspace/lapligence-wt/sim-002/tests/fixtures/sim/feature_completion/sim_002/build/sim/tb/build/CMakeFiles/sim.dir
+/workspaces/agent_workspace/lapligence-wt/sim-002/tests/fixtures/sim/feature_completion/sim_002/build/sim/tb/build/CMakeFiles/edit_cache.dir
+/workspaces/agent_workspace/lapligence-wt/sim-002/tests/fixtures/sim/feature_completion/sim_002/build/sim/tb/build/CMakeFiles/rebuild_cache.dir

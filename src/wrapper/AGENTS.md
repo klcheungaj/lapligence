@@ -22,11 +22,13 @@ and 1M constants. Hard ceilings are 16 GiB export, 64M nodes, 256M edges and
 16M constants; reject edge requests above the ceiling before UDP work. Charge
 export records and strings before storing them, and name the effective exhausted
 budget in diagnostics. A larger export budget does not bound total Slang/Rust RSS.
-On glibc, a compile calls `malloc_trim(0)` after compilation teardown and
-before streaming, so freed frontend pages are not resident while Rust builds its
-owned copy. Semantic nodes live in a chunked table: growth never moves records
-(references stay valid across appends) and each chunk is freed after delivery.
-A sink abort throws `SinkAborted`, caught only at the C entry.
+On glibc, a compile releases freed heap pages after compilation teardown and
+again after streaming, so freed frontend pages are not resident while Rust
+builds its owned copy and imports it. Semantic nodes live in a chunked table:
+growth never moves records (references stay valid across appends) and each
+chunk is freed after delivery. A sink abort throws `SinkAborted`, caught only
+at the C entry. Platform conditionals live only in `slang_platform.hpp/.cpp`;
+the C ABI file calls its neutral functions.
 
 Capture's ordered pending edge vectors remain authoritative. Build role/index and
 child-target indexes only for parents with at least 64 charged edges. Keep cache

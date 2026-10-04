@@ -1,6 +1,7 @@
 //! Cross-module regression tests for the feature facade.
 
 use super::*;
+use crate::test_paths::host_path as hp;
 use llg::core::elab::{Val, Value};
 use llg::core::model::{GenScopeModel, TypeInfo};
 use llg::core::tokens;
@@ -48,14 +49,12 @@ fn analysis_guards() -> (
 
 /// Create `name` under the system temporary directory, spelled the way
 /// path-mode compilation reports source files. Those names come from opened
-/// handles, so Unix symlinks are resolved (macOS `/var` is `/private/var`);
-/// Windows canonicalization would add a verbatim prefix handle paths omit.
+/// handles, so symlinks are resolved (macOS `/var` is `/private/var`) and
+/// Windows 8.3 short names are expanded.
 fn resolved_temp_dir(name: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(name);
     std::fs::create_dir_all(&dir).expect("create temp dir");
-    #[cfg(unix)]
-    let dir = dir.canonicalize().expect("resolve temp dir");
-    dir
+    llg::ffi::platform::canonicalize(&dir).expect("resolve temp dir")
 }
 
 /// Restores the process CWD and removes the temp dir even when the body
@@ -84,7 +83,7 @@ impl Drop for TempDirGuard {
 fn sample_parts() -> (DesignModel, Vec<FileTokens>) {
     let module = ModuleDef {
         name: "m".to_owned(),
-        file: Some("/x/top.sv".to_owned()),
+        file: Some(hp("/x/top.sv").to_owned()),
         line: 1,
         col: 8,
         end_line: 3,
@@ -121,7 +120,7 @@ fn sample_parts() -> (DesignModel, Vec<FileTokens>) {
         name: "add".to_owned(),
         is_task: false,
         automatic: true,
-        file: Some("/x/top.sv".to_owned()),
+        file: Some(hp("/x/top.sv").to_owned()),
         line: 4,
         col: 8,
         ret: Some(int_ty()),
@@ -150,7 +149,7 @@ fn sample_parts() -> (DesignModel, Vec<FileTokens>) {
         name: "run".to_owned(),
         is_task: true,
         automatic: false,
-        file: Some("/x/top.sv".to_owned()),
+        file: Some(hp("/x/top.sv").to_owned()),
         line: 5,
         col: 8,
         ret: None,
@@ -169,7 +168,7 @@ fn sample_parts() -> (DesignModel, Vec<FileTokens>) {
         name: "u0".to_owned(),
         def_name: "m".to_owned(),
         full_name: "top.u0".to_owned(),
-        file: Some("/x/top.sv".to_owned()),
+        file: Some(hp("/x/top.sv").to_owned()),
         line: 1,
         col: 20,
         ports: vec![port],
@@ -185,7 +184,7 @@ fn sample_parts() -> (DesignModel, Vec<FileTokens>) {
         modules: vec![module],
         packages: vec![PackageDef {
             name: "p".to_owned(),
-            file: Some("/x/top.sv".to_owned()),
+            file: Some(hp("/x/top.sv").to_owned()),
             line: 5,
             col: 1,
             params: Vec::new(),
@@ -194,7 +193,7 @@ fn sample_parts() -> (DesignModel, Vec<FileTokens>) {
         classes: Vec::new(),
     };
     let tokens = vec![FileTokens {
-        path: "/x/top.sv".to_owned(),
+        path: hp("/x/top.sv").to_owned(),
         nodes: vec![
             TokenInfo {
                 line: 1,
@@ -204,7 +203,7 @@ fn sample_parts() -> (DesignModel, Vec<FileTokens>) {
                 kind: llg::core::tokens::TOKEN_SLANG_MODULE
                     + llg::core::tokens::TOKEN_DECLARATION_OFFSET,
                 name: Some("m".to_owned()),
-                file: "/x/top.sv".to_owned(),
+                file: hp("/x/top.sv").to_owned(),
             },
             TokenInfo {
                 line: 1,
@@ -214,7 +213,7 @@ fn sample_parts() -> (DesignModel, Vec<FileTokens>) {
                 kind: llg::core::tokens::TOKEN_SLANG_PORT
                     + llg::core::tokens::TOKEN_DECLARATION_OFFSET,
                 name: Some("clk".to_owned()),
-                file: "/x/top.sv".to_owned(),
+                file: hp("/x/top.sv").to_owned(),
             },
             TokenInfo {
                 line: 1,
@@ -224,7 +223,7 @@ fn sample_parts() -> (DesignModel, Vec<FileTokens>) {
                 kind: llg::core::tokens::TOKEN_SLANG_IDENTIFIER
                     + llg::core::tokens::TOKEN_DECLARATION_OFFSET,
                 name: Some("u0".to_owned()),
-                file: "/x/top.sv".to_owned(),
+                file: hp("/x/top.sv").to_owned(),
             },
             // This fixture repeats a declaration site to ensure the index
             // deduplicates explicit declarations.
@@ -236,7 +235,7 @@ fn sample_parts() -> (DesignModel, Vec<FileTokens>) {
                 kind: llg::core::tokens::TOKEN_SLANG_PARAMETER
                     + llg::core::tokens::TOKEN_DECLARATION_OFFSET,
                 name: Some("W".to_owned()),
-                file: "/x/top.sv".to_owned(),
+                file: hp("/x/top.sv").to_owned(),
             },
             TokenInfo {
                 line: 2,
@@ -246,7 +245,7 @@ fn sample_parts() -> (DesignModel, Vec<FileTokens>) {
                 kind: llg::core::tokens::TOKEN_SLANG_PARAMETER
                     + llg::core::tokens::TOKEN_DECLARATION_OFFSET,
                 name: Some("W".to_owned()),
-                file: "/x/top.sv".to_owned(),
+                file: hp("/x/top.sv").to_owned(),
             },
             TokenInfo {
                 line: 2,
@@ -256,7 +255,7 @@ fn sample_parts() -> (DesignModel, Vec<FileTokens>) {
                 kind: llg::core::tokens::TOKEN_SLANG_PARAMETER
                     + llg::core::tokens::TOKEN_DECLARATION_OFFSET,
                 name: Some("W".to_owned()),
-                file: "/x/top.sv".to_owned(),
+                file: hp("/x/top.sv").to_owned(),
             },
             TokenInfo {
                 line: 4,
@@ -266,7 +265,7 @@ fn sample_parts() -> (DesignModel, Vec<FileTokens>) {
                 kind: llg::core::tokens::TOKEN_SLANG_FUNCTION
                     + llg::core::tokens::TOKEN_DECLARATION_OFFSET,
                 name: Some("add".to_owned()),
-                file: "/x/top.sv".to_owned(),
+                file: hp("/x/top.sv").to_owned(),
             },
             TokenInfo {
                 line: 5,
@@ -276,7 +275,7 @@ fn sample_parts() -> (DesignModel, Vec<FileTokens>) {
                 kind: llg::core::tokens::TOKEN_SLANG_TASK
                     + llg::core::tokens::TOKEN_DECLARATION_OFFSET,
                 name: Some("run".to_owned()),
-                file: "/x/top.sv".to_owned(),
+                file: hp("/x/top.sv").to_owned(),
             },
         ],
     }];

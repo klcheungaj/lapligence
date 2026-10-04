@@ -22,6 +22,9 @@ pub struct IrFormal {
     /// Recursive fixed-value shape; its declaration-order payload uses `width` bits.
     /// Descriptor storage for a fixed value that exceeds packed transport.
     pub(in crate::sim) fixed_array: Option<usize>,
+    /// Descriptor-backed native value bound to this formal in the callee
+    /// (`llg_value_t*`); index into [`super::IrModel::native_values`].
+    pub(in crate::sim) native_value: Option<usize>,
     pub(in crate::sim) fixed_shape: Option<IrContainerElement>,
     /// Default fixed payload, preserving each unpacked leaf's state domain.
     pub(in crate::sim) fixed_default: Option<IrConst>,
@@ -88,6 +91,7 @@ impl IrFormal {
             const_ref: false,
             ref_static: false,
             fixed_array: None,
+            native_value: None,
             fixed_shape: None,
             fixed_default: None,
             width,
@@ -109,6 +113,9 @@ impl IrFormal {
     }
     pub fn is_ref(&self) -> bool {
         self.mode == IrFormalMode::Ref
+    }
+    pub fn native_value(&self) -> Option<usize> {
+        self.native_value
     }
     pub fn is_const_ref(&self) -> bool {
         self.is_ref() && self.const_ref

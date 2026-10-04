@@ -9,3 +9,8 @@ For `[3:0]` start 2/count 2, addresses 2 then 3 print in declaration order as
 `34,12,xx,xx`. Its native companion is
 `runtime_value_storage/file_input_isolation_probe.c`; native coverage is not HDL
 execution.
+
+`file_modes.sv` checks that `$fopen` passes the requested mode to the C library:
+IEEE 1800-2009 §21.3.1 keeps `b` to distinguish binary from text files on hosts
+that map line ends. Text files use the host's native newline (CRLF on Windows),
+binary files are byte-exact everywhere.

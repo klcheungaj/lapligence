@@ -86,7 +86,12 @@ pub(super) fn render_call_expr(
             IrCallArg::ChandleVal(value) => {
                 call_args.push(super::super::objects::chandle(ctx, value)?);
             }
-            IrCallArg::FixedValue(_) | IrCallArg::FixedArray(_) | IrCallArg::EventVal(_) => {
+            IrCallArg::FixedValue(_)
+            | IrCallArg::FixedArray(_)
+            | IrCallArg::NativeValue(_)
+            | IrCallArg::NativeLeaves { .. }
+            | IrCallArg::NativeCall { .. }
+            | IrCallArg::EventVal(_) => {
                 return Err("event argument requires the ownership emitter".to_owned());
             }
             IrCallArg::ChandleAddr(addr) | IrCallArg::ChandleRefAddr(addr) => {

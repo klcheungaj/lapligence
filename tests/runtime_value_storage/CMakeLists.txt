@@ -105,12 +105,13 @@ if(LLG_STORAGE_TEST_WAVEFORMS)
   set(LLG_ZLIB_SOURCES adler32.c compress.c crc32.c deflate.c gzclose.c gzlib.c
     gzread.c gzwrite.c inffast.c inflate.c inftrees.c trees.c uncompr.c zutil.c)
   list(TRANSFORM LLG_ZLIB_SOURCES PREPEND "${LLG_ZLIB}/")
+  include("${CMAKE_CURRENT_SOURCE_DIR}/libfst.cmake")
   add_library(storage_probe_fst STATIC
-    "${LLG_RT}/gtkwave/fstapi.c"
-    "${LLG_RT}/gtkwave/fastlz.c"
-    "${LLG_RT}/gtkwave/lz4.c"
+    "${LLG_FST}/fstapi.c"
+    "${LLG_FST}/fastlz.c"
+    "${LLG_FST}/lz4.c"
     ${LLG_ZLIB_SOURCES})
-  target_include_directories(storage_probe_fst PUBLIC "${LLG_RT}/gtkwave" "${LLG_ZLIB}")
+  target_include_directories(storage_probe_fst PUBLIC "${LLG_FST}" "${LLG_ZLIB}")
   target_compile_definitions(storage_probe_fst PRIVATE FST_CONFIG_INCLUDE="fst_config.h")
   target_compile_definitions(storage_probe_fst PUBLIC Z_PREFIX)
   if(NOT WIN32)
@@ -278,7 +279,7 @@ foreach(mode IN ITEMS short multi-short negative-remaining plus-overflow minus-o
   set_tests_properties(stream_reject_${mode} PROPERTIES TIMEOUT 60)
 endforeach()
 
-foreach(probe IN ITEMS value_ownership container_ownership four_state udp)
+foreach(probe IN ITEMS value_ownership container_ownership native_value_descriptors four_state udp)
   add_executable(${probe}_probe ${probe}_probe.c)
   target_link_libraries(${probe}_probe PRIVATE tracked_value)
   strict_c(${probe}_probe)

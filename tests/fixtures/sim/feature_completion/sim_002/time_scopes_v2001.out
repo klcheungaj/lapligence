@@ -1,0 +1,5 @@
+tb time=2 stime=2 realtime=2.300 t=20000
+child time=23 stime=23 realtime=23.000 t=23000
+tb time=3 realtime=2.500 t=               25000
+child time=25 stime=25 realtime=25.000 t=25000
+Time scale of (tb.c) is 1ns / 1ps

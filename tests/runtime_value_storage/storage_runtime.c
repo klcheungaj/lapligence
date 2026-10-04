@@ -3,38 +3,38 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdatomic.h>
+#include "llg_platform.h"
 
-static atomic_size_t allocated;
-static atomic_size_t released;
+static llg_atomic_u64_t allocated;
+static llg_atomic_u64_t released;
 
 // Model owners are released by the producer while snapshot owners may be
 // released concurrently by the writer. Counters are therefore atomic.
-size_t storage_test_allocated(void) { return atomic_load(&allocated); }
-size_t storage_test_released(void) { return atomic_load(&released); }
+size_t storage_test_allocated(void) { return (size_t)llg_atomic_u64_load(&allocated); }
+size_t storage_test_released(void) { return (size_t)llg_atomic_u64_load(&released); }
 
 static void* snapshot_malloc(size_t bytes) {
     void* pointer = malloc(bytes);
-    if (pointer) atomic_fetch_add(&allocated, 1);
+    if (pointer) llg_atomic_u64_fetch_add(&allocated, 1);
     return pointer;
 }
 
 static void snapshot_free(void* pointer) {
-    if (pointer) atomic_fetch_add(&released, 1);
+    if (pointer) llg_atomic_u64_fetch_add(&released, 1);
     free(pointer);
 }
 
 #if LLG_SV4_USE_GMP
 static void* snapshot_calloc(size_t count, size_t bytes) {
     void* pointer = calloc(count, bytes);
-    if (pointer) atomic_fetch_add(&allocated, 1);
+    if (pointer) llg_atomic_u64_fetch_add(&allocated, 1);
     return pointer;
 }
 
 // A reallocation keeps one live owner allocation; only a fresh block counts.
 static void* snapshot_realloc(void* pointer, size_t bytes) {
     void* moved = realloc(pointer, bytes);
-    if (moved && !pointer) atomic_fetch_add(&allocated, 1);
+    if (moved && !pointer) llg_atomic_u64_fetch_add(&allocated, 1);
     return moved;
 }
 

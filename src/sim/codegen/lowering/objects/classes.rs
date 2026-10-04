@@ -154,6 +154,7 @@ impl Codegen<'_> {
                 receiver,
                 kind,
                 site,
+                item_path: Vec::new(),
                 function: self.cur_fn_ir,
             });
         name
@@ -258,7 +259,7 @@ impl Codegen<'_> {
         node: NodeId,
     ) -> Result<Option<IrExpr>, String> {
         let Some(field) = self.class_field_target(node) else {
-            return Ok(None);
+            return self.native_leaf_expr(node);
         };
         if let Some(info) = self.class_static_signals.get(&field).cloned() {
             return Ok(Some(self.signal_read_expr(&info)?));
@@ -299,7 +300,7 @@ impl Codegen<'_> {
         node: NodeId,
     ) -> Result<Option<IrLhs>, String> {
         let Some(field) = self.class_field_target(node) else {
-            return Ok(None);
+            return self.native_leaf_target(node);
         };
         if let Some(info) = self.class_static_signals.get(&field).cloned() {
             return Ok(Some(IrLhs::Whole(info.ir)));
@@ -339,7 +340,7 @@ impl Codegen<'_> {
         node: NodeId,
     ) -> Result<Option<String>, String> {
         let Some(field) = self.class_field_target(node) else {
-            return Ok(None);
+            return self.native_object_leaf(node, false);
         };
         if !matches!(self.kind(field), NodeKind::Var { ty } if is_handle_kind(&ty.kind)) {
             return Ok(None);
@@ -363,7 +364,7 @@ impl Codegen<'_> {
         node: NodeId,
     ) -> Result<Option<String>, String> {
         let Some(field) = self.class_field_target(node) else {
-            return Ok(None);
+            return self.native_object_leaf(node, true);
         };
         if !matches!(self.kind(field), NodeKind::Var { ty } if ty.kind == "string") {
             return Ok(None);

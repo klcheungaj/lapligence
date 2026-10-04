@@ -254,6 +254,7 @@ pub(super) fn runtime_identifiers() -> &'static std::collections::BTreeSet<&'sta
         std::sync::OnceLock::new();
     NAMES.get_or_init(|| {
         [
+            include_str!("../rt/llg_compiler.h"),
             include_str!("../rt/llg_rt.h"),
             include_str!("../rt/llg_value.h"),
             include_str!("../rt/value/backend.h"),

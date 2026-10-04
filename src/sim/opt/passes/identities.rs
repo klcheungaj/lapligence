@@ -141,6 +141,14 @@ fn ident_children(e: &mut IrExpr) {
                     IrCallArg::StringVal(value) => {
                         value.expressions_mut(&mut |child| ident_expr(child));
                     }
+                    IrCallArg::NativeLeaves { leaves, .. } => {
+                        for leaf in leaves {
+                            leaf.expressions_mut(&mut |child| ident_expr(child));
+                        }
+                    }
+                    IrCallArg::NativeCall { .. } => {
+                        arg.expressions_mut(&mut |child| ident_expr(child));
+                    }
                     IrCallArg::OutTemp {
                         init,
                         writeback,
@@ -168,6 +176,7 @@ fn ident_children(e: &mut IrExpr) {
                     | IrCallArg::StringRefAddr { .. }
                     | IrCallArg::ChandleVal(_)
                     | IrCallArg::FixedArray(_)
+                    | IrCallArg::NativeValue(_)
                     | IrCallArg::EventVal(_)
                     | IrCallArg::ChandleAddr(_)
                     | IrCallArg::ChandleRefAddr(_) => {}

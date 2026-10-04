@@ -1272,23 +1272,20 @@ pub(super) fn parse_severity(value: &str) -> Option<LintSeverity> {
 ///
 /// The mirror keeps the full absolute layout under the private per-process
 /// shadow base (a directory under the OS temp dir): `<base>/<real minus
-/// leading slash>`.  `real` must be absolute (the LSP only feeds
-/// `Url::to_file_path` results).  The mapping is a bijection over any absolute
-/// path — workspace or external — so [`real_path`] always recovers the
-/// original path.
+/// its root>`, with a Windows drive or share encoded as leading directories
+/// (see `ffi::platform::mirror_relative`).  `real` must be absolute (the LSP
+/// only feeds `Url::to_file_path` results).  The mapping is a bijection over
+/// any absolute path — workspace or external — so [`real_path`] always
+/// recovers the original path, and a shadow never aliases its real file.
 pub fn shadow_path(real: &Path, base: &Path) -> PathBuf {
-    let relative = real.strip_prefix("/").unwrap_or(real);
-    base.join(relative)
+    base.join(llg::ffi::platform::mirror_relative(real))
 }
 
 /// Reverse of [`shadow_path`]: recover the real absolute path from a shadow
 /// path.  Returns `None` when `shadow` is not under `base`.
 pub fn real_path(shadow: &Path, base: &Path) -> Option<PathBuf> {
     let relative = shadow.strip_prefix(base).ok()?;
-    if relative.as_os_str().is_empty() {
-        return None;
-    }
-    Some(PathBuf::from("/").join(relative))
+    llg::ffi::platform::mirror_absolute(relative)
 }
 
 static STAGING_ROOT: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();

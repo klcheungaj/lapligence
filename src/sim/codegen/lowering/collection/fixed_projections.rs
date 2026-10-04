@@ -398,7 +398,49 @@ impl Codegen<'_> {
         }))
     }
 
+    /// A packed leaf of a native record value roots member, bit and part
+    /// projections exactly like packed activation storage.
+    fn native_leaf_projection(&mut self, node: NodeId) -> Result<Option<Projection>, String> {
+        let Some((value, leaf, remaining, descriptor)) = self.native_packed_leaf_prefix(node)?
+        else {
+            return Ok(None);
+        };
+        if remaining
+            .iter()
+            .any(|part| matches!(part, AggregatePathPart::Index(_)))
+        {
+            return Ok(None);
+        }
+        let IrClassFieldType::Packed { width, signed, .. } = leaf.ty else {
+            return Ok(None);
+        };
+        let target = self.native_leaf_target_of(value, &leaf);
+        let read = IrExpr::new(
+            IrExprKind::LocalRead(self.native_leaf_symbol(value, &leaf)),
+            width,
+            signed,
+            None,
+        );
+        let mut projection = Projection {
+            root: FixedRoot::Cell { read, target },
+            signed: descriptor.info.signed,
+            descriptor,
+            steps: Vec::new(),
+            element_states: Vec::new(),
+            ref_legal: false,
+        };
+        for part in remaining {
+            if let AggregatePathPart::Member(name) = part {
+                Self::fixed_member(&mut projection, &name)?;
+            }
+        }
+        Ok(Some(projection))
+    }
+
     fn fixed_projection(&mut self, path: &str, node: NodeId) -> Result<Option<Projection>, String> {
+        if let Some(root) = self.native_leaf_projection(node)? {
+            return Ok(Some(root));
+        }
         if let Some(root) = self.fixed_root(path, node)? {
             return Ok(Some(root));
         }

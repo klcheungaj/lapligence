@@ -271,6 +271,14 @@ pub enum IrStmt {
     },
     /// Create lexical non-flattened fixed storage with registered cleanup.
     FixedArrayDeclare(usize),
+    /// Default-construct lexical native value storage with registered cleanup.
+    NativeValueDeclare(usize),
+    /// Replace one native value with a deep copy of another of the same type.
+    /// Strings and nested values copy independently; handles keep identity.
+    NativeValueCopy {
+        dst: usize,
+        src: usize,
+    },
     /// Descriptor evaluation precedes destination capture and atomic copy publication.
     FixedValueAssign {
         dst: IrMemoryView,
@@ -710,8 +718,8 @@ pub enum IrStmt {
         verbosity: u8,
         location: String,
     },
-    /// `$printtimescale` for a module whose unit/precision and instance path
-    /// label were captured at lowering.
+    /// `$printtimescale` for the instance, package or `$unit` whose
+    /// unit/precision and hierarchical label were resolved at lowering.
     PrintTimescale {
         unit_fs: u64,
         precision_fs: u64,

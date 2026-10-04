@@ -1156,6 +1156,13 @@ pub(super) fn string_adapters() -> &'static str {
      }\n\n"
 }
 
+/// Runtime nominal identity of a frontend type id; zero is reserved.
+fn nominal_type_id(type_id: u64, label: &str) -> Result<u64, String> {
+    type_id
+        .checked_add(1)
+        .ok_or_else(|| format!("value descriptor type identity of {label} is not representable"))
+}
+
 #[derive(Clone)]
 struct ValueDescriptorNode {
     element: IrContainerElement,
@@ -1191,9 +1198,24 @@ fn collect_value_descriptor(
 }
 
 fn value_descriptor(container: &crate::sim::ir::IrContainer) -> Result<(String, String), String> {
+    value_descriptor_tables(
+        &container.element,
+        &format!("{}_llg_value", container.c_name),
+        &container.c_name,
+    )
+}
+
+/// Static `llg_value_desc_t` tables for one recursive value type, named from
+/// `prefix`; returns the declarations and the root descriptor name. Nominal
+/// identities are offset by one because the runtime reserves zero.
+pub(super) fn value_descriptor_tables(
+    element: &IrContainerElement,
+    prefix: &str,
+    label: &str,
+) -> Result<(String, String), String> {
     let mut nodes = Vec::new();
-    let root = collect_value_descriptor(&container.element, &mut nodes);
-    let prefix = format!("{}_llg_value", container.c_name);
+    let root = collect_value_descriptor(element, &mut nodes);
+    let container_name = label;
     let names = (0..nodes.len())
         .map(|index| format!("{prefix}_desc_{index}"))
         .collect::<Vec<_>>();
@@ -1244,9 +1266,15 @@ fn value_descriptor(container: &crate::sim::ir::IrContainer) -> Result<(String, 
                     "unpacked unions in resizable containers require overlay storage".into(),
                 );
             }
-            IrContainerElement::Aggregate { type_id, members } => {
-                ("LLG_VALUE_AGGREGATE", *type_id, 0, 0, 0, 0, members.len())
-            }
+            IrContainerElement::Aggregate { type_id, members } => (
+                "LLG_VALUE_AGGREGATE",
+                nominal_type_id(*type_id, container_name)?,
+                0,
+                0,
+                0,
+                0,
+                members.len(),
+            ),
             IrContainerElement::FixedArray { dimensions, .. } => {
                 let count = dimensions
                     .iter()
@@ -1259,23 +1287,35 @@ fn value_descriptor(container: &crate::sim::ir::IrContainer) -> Result<(String, 
                     .ok_or_else(|| {
                         format!(
                             "container {} fixed element count overflows C size_t",
-                            container.c_name
+                            container_name
                         )
                     })?;
                 let count = usize::try_from(count).map_err(|_| {
                     format!(
                         "container {} fixed element count is not host-representable",
-                        container.c_name
+                        container_name
                     )
                 })?;
                 ("LLG_VALUE_FIXED_ARRAY", 0, 0, 0, 0, 0, count)
             }
-            IrContainerElement::Container { type_id, .. } => {
-                ("LLG_VALUE_CONTAINER", *type_id, 0, 0, 0, 0, 0)
-            }
-            IrContainerElement::Opaque { type_id, .. } => {
-                ("LLG_VALUE_OPAQUE", *type_id, 0, 0, 0, 0, 0)
-            }
+            IrContainerElement::Container { type_id, .. } => (
+                "LLG_VALUE_CONTAINER",
+                nominal_type_id(*type_id, container_name)?,
+                0,
+                0,
+                0,
+                0,
+                0,
+            ),
+            IrContainerElement::Opaque { type_id, .. } => (
+                "LLG_VALUE_OPAQUE",
+                nominal_type_id(*type_id, container_name)?,
+                0,
+                0,
+                0,
+                0,
+                0,
+            ),
         };
         let child = node
             .child
@@ -1284,7 +1324,7 @@ fn value_descriptor(container: &crate::sim::ir::IrContainer) -> Result<(String, 
         let members = if node.members.is_empty() {
             "NULL".to_owned()
         } else {
-            format!("&{}", member_names[index])
+            member_names[index].clone()
         };
         out.push_str(&format!(
             "static const llg_value_desc_t {} = {{ {}, UINT64_C({}), {}, {}, {}, {}, {}, {}, {}, {} }};\n",
@@ -1363,9 +1403,10 @@ pub(super) fn declaration_and_init(
             }
         };
         let init = format!(
-            "{init}    {}.contents_dependency = &{}_llg_contents_dep;\n\
+            "    llg_value_desc_check(&{root}, {});\n{init}    {}.contents_dependency = &{}_llg_contents_dep;\n\
              {}.shape_dependency = &{}_llg_shape_dep;\n\
              {}.notify = llg_dependency_notify;\n",
+            super::constants::c_string_literal(&container.c_name),
             container.c_name,
             container.c_name,
             container.c_name,

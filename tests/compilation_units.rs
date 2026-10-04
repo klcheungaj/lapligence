@@ -304,7 +304,7 @@ fn macro_expanded_includes_follow_unit_mode_in_2009() {
         .snapshot
         .files
         .iter()
-        .any(|file| file.name.ends_with("include/header.svh")));
+        .any(|file| std::path::Path::new(&file.name).ends_with("include/header.svh")));
 
     let separate_root = compile_p52_files(
         &root,
@@ -492,7 +492,7 @@ fn command_line_define_admits_a_macro_include_from_an_explicit_root() {
             .snapshot
             .files
             .iter()
-            .any(|file| file.name.ends_with("include/selected.svh")));
+            .any(|file| std::path::Path::new(&file.name).ends_with("include/selected.svh")));
     }
     fs::remove_dir_all(root).expect("remove P52 command-line fixture");
 }
@@ -525,12 +525,12 @@ fn include_cycles_are_admitted_once_and_left_to_frontend_diagnostics() {
         .snapshot
         .files
         .iter()
-        .any(|file| file.name.ends_with("include/a.svh")));
+        .any(|file| std::path::Path::new(&file.name).ends_with("include/a.svh")));
     assert!(out
         .snapshot
         .files
         .iter()
-        .any(|file| file.name.ends_with("include/b.svh")));
+        .any(|file| std::path::Path::new(&file.name).ends_with("include/b.svh")));
     fs::remove_dir_all(root).expect("remove P52 cycle fixture");
 }
 
@@ -544,8 +544,10 @@ fn include_admission_enforces_the_shared_source_byte_budget() {
         "`include \"header.svh\"\nmodule top; wire [`WIDTH-1:0] data; endmodule\n",
     )
     .expect("write limited source");
-    let source = fs::canonicalize(root.join("top.sv")).expect("canonical source path");
-    let header = fs::canonicalize(root.join("include/header.svh")).expect("canonical header path");
+    let source =
+        llg::ffi::platform::canonicalize(root.join("top.sv")).expect("canonical source path");
+    let header = llg::ffi::platform::canonicalize(root.join("include/header.svh"))
+        .expect("canonical header path");
     let required = source.to_string_lossy().len() as u64
         + fs::read_to_string(&source)
             .expect("read limited source")

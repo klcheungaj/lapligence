@@ -62,12 +62,12 @@ References: **V** = IEEE 1364-2001; **SV** = IEEE 1800-2009. Revision tags retai
 | 7. Expressions/operators | 4 | 13 | 0 | 0 | 0 | 17 |
 | 8. Continuous/structural | 3 | 6 | 3 | 0 | 0 | 12 |
 | 9. Functions/tasks | 1 | 5 | 1 | 0 | 0 | 7 |
-| 10. System tasks/functions | 9 | 11 | 3 | 0 | 0 | 23 |
+| 10. System tasks/functions | 10 | 10 | 3 | 0 | 0 | 23 |
 | 11. Compiler directives | 5 | 2 | 0 | 0 | 0 | 7 |
 | 12. Verification/foreign interfaces | 1 | 12 | 0 | 3 | 0 | 16 |
-| **Total** | **43** | **82** | **7** | **3** | **1** | **136** |
+| **Total** | **44** | **81** | **7** | **3** | **1** | **136** |
 
-**126 rows have some source implementation; 82 of those remain partial and one
+**126 rows have some source implementation; 81 of those remain partial and one
 is accepted.** The accepted row (`always_ff` and writer rules) carries
 post-change HDL execution evidence from RTL-013 and RTL-099; other rows have no
 row-level acceptance promotion yet, which does not mean they lack passing tests.
@@ -272,9 +272,15 @@ Macros, includes and their edition-specific behavior are counted in §11.
   array slices and packed member selects retain owned layouts and declared
   bounds. Four-state packed records and recursive fixed unpacked records/arrays
   admit nets, selected continuous contributions and inout connections. Unpacked
-  union net members reject under SV §6.7. General native/resizable subroutine
-  layouts and native aggregate slices remain restricted.
-  SV §§6.7, 7.2–7.4 **[SV-2005]**.
+  union net members reject under SV §6.7. Native records (fixed unpacked
+  records with string/real/chandle leaves, nested records and constant-indexed
+  member arrays) are descriptor-backed values in subroutine formals, results
+  and automatic/static locals, registered as explicit runtime roots; copies are
+  deep except chandles, which stay borrowed foreign pointers
+  ([sim_003](../tests/fixtures/sim/feature_completion/sim_003/readme.md)).
+  Arrays of native records, native aggregate slices, run-time indices into
+  native member arrays, native ref formals, NBAs and fork capture remain
+  restricted. SV §§6.7, 7.2–7.4 **[SV-2005]**.
 - 🟨 **Tagged unions** — Packed and unpacked tagged unions with fixed payloads
   use one finite storage owner: the tag in the most significant bits and each
   member right-justified below it. Construction and checked member access
@@ -334,6 +340,29 @@ Macros, includes and their edition-specific behavior are counted in §11.
   expressions are language-illegal under SV §6.14, rather than implementation
   gaps. Other object sensitivity contexts remain partial.
   SV §6.14 **[SV-2005]**.
+
+<a id="native-record-capability-matrix"></a>
+
+**Native record capability matrix (SIM-003).** Native records are unpacked
+records with string, real or chandle leaves (§7.2). "yes" means executed by
+[sim_003](../tests/fixtures/sim/feature_completion/sim_003/readme.md) or the
+module-level fixtures cited above; a task id is the owner of a legal form that
+rejects with a diagnostic; "illegal" is an SV rule. Copies are deep, except
+chandles (borrowed, §6.14) and class/event handles (identity). Packed
+containment of strings/chandles and chandle arithmetic are illegal everywhere.
+
+| Context | Storage / default | Copy | `==`/`!=`, `===` | Member select | Reference | Destruction |
+| --- | --- | --- | --- | --- | --- | --- |
+| Module/static variable | yes | yes | yes | constant: yes; packed-member select SIM-007 | SIM-008 | model close |
+| Automatic/static subroutine local | yes (root) | yes | yes | constant: yes; run-time index SIM-007 | SIM-008 | scope exit, cancel, close |
+| Input/output/inout formal, result | yes (root) | yes, copy-in/out | yes | constant: yes; `f().m` SIM-007 | `ref` formal SIM-008 | scope exit, cancel, close |
+| NBA target or source | SIM-004 | SIM-004 | n/a | SIM-004 | n/a | n/a |
+| Fork-join_none capture | SIM-010 | SIM-010 | n/a | n/a | n/a | SIM-010 |
+| Unpacked array element, slice | SIM-007 | SIM-007 | SIM-007 | SIM-007 | SIM-008 | SIM-007 |
+| Queue/dynamic/associative element | SIM-006 | SIM-006 | SIM-006 | SIM-006 | SIM-008 | SIM-006 |
+| Class property | SIM-011 | SIM-011 | SIM-011 | SIM-011 | SIM-011 | SIM-018 |
+| DPI argument | SIM-040 | SIM-040 | n/a | n/a | n/a | n/a |
+| Process-block local, call initializer | SIM-022 | SIM-022 | SIM-022 | SIM-022 | n/a | SIM-022 |
 
 ## 3. Modules, ports, parameters, hierarchy
 
@@ -1002,7 +1031,10 @@ Macros, includes and their edition-specific behavior are counted in §11.
   and arrays beyond packed capacity (descriptor transport). Numeric and admitted
   native string/chandle signatures have separate paths. Static outputs retain
   formal storage; only inout copy-in overwrites it, while automatic outputs get
-  typed defaults. General native/resizable aggregates remain restricted.
+  typed defaults. Native records cross input/output/inout formals and results
+  by value, including nested calls, recursion, suspension and cancellation
+  (SIM-003). Resizable containers in subroutine storage, native ref formals and
+  arrays of native records remain restricted.
   V §§10.2–10.3; SV §§13.3–13.5 **[1995/2001/SV-2005]**.
 - 🟦 **Automatic/reentrant and finite zero-time calls** — Per-activation
   storage, finite recursion, local named-block exits, selected copy-out and
@@ -1171,20 +1203,25 @@ Macros, includes and their edition-specific behavior are counted in §11.
 
 ### Time, control and utility services
 
-- 🟨 **Time reporting** — `$time` rounds to the calling module's unit (exact
-  halves upward); `$stime` then returns its low 32 bits; `$realtime` retains
-  fractions. Design-wide `$timeformat` units/precision/suffix/minimum width and
-  `%t` integral/real conversions are represented. **`$printtimescale(scope)`
-  does not honor its scope operand**: the
-  [system-task lowerer](../src/sim/codegen/lowering/statements/system_tasks.rs)
-  emits the caller's timescale and label without reading that operand. Only the
-  no-argument caller-scope behavior is represented correctly by this path.
-  `$timeformat` accepts the documented zero-or-four-argument syntax
-  (V §17.3.2, Syntax 17-10; SV §20.4.2, Syntax 20-4). Intermediate arities
-  would be a convenience extension, not a required missing feature.
-  The [timescale regressions](../tests/sim_timescale.rs) contain a no-argument
-  witness, not proof of explicit-scope behavior.
-  V §§17.3, 17.7; SV §20.4 **[1995/SV-2009]**.
+- 🟦 **Time reporting** — `$time` rounds to the unit of the scope containing
+  the call (exact halves upward); `$stime` then returns its low 32 bits;
+  `$realtime` retains fractions. That scope is the module, interface or program
+  instance, package, `$unit` or class-declaring scope, never the caller of a
+  subroutine; package and `$unit` code also contributes its precision to the
+  design tick. `$printtimescale` prints `Time scale of (name) is unit /
+  precision` for the named module, interface or program instance (including
+  instance-array elements) or `$unit`, and without an operand for the
+  module, package or `$unit` containing the call. A `$root` operand is
+  rejected. `$timeformat` accepts the documented zero-or-four-argument syntax
+  (V §17.3.2, Syntax 17-10; SV §20.4.2, Syntax 20-4); arguments are evaluated
+  when the call runs, the suffix is copied, the zero-argument form restores the
+  Table 20-3 defaults, and out-of-range units fail at run time. Intermediate
+  arities are an extension, not a required missing feature, and stay
+  rejected. `%t` converts integral values exactly (beyond 64 bits) and real
+  values in double precision; formatting never moves scheduled events.
+  Interactive delay units are not modeled (no interactive mode). See the
+  [SIM-002 fixtures](../tests/fixtures/sim/feature_completion/sim_002/readme.md).
+  V §§17.3, 17.7; SV §§20.3–20.4 **[1995/SV-2009]**.
 - 🟦 **Finish and severity** — `$finish` is nonreturning with default diagnostic
   level 1; `$fatal/$error/$warning/$info` format messages once in source order
   with source/scope context. Fatal terminates through the final-block handoff;
@@ -1274,8 +1311,8 @@ Macros, includes and their edition-specific behavior are counted in §11.
   within admitted source/include roots. Missing, dynamic and unauthorized paths
   fail admission. V §§19.3–19.5; SV §§22.4–22.6,
   22.11, 22.13–22.14 **[2001/SV-2009]**.
-- 🟦 **`` `timescale ``** — Resolved module/declaration inheritance scales delays
-  and time reporting; local `timeunit/timeprecision` and rounding are covered in
+- 🟦 **`` `timescale ``** — Resolved module, package, `$unit` and class
+  declaration inheritance scales delays and time reporting; local `timeunit/timeprecision` and rounding are covered in
   §§1 and 6. V §19.8 **[1995]**.
 - 🟦 **`` `default_nettype `` / `` `resetall ``** — Control implicit-net admission
   and reset later directive state; `none` rejects undeclared nets, `wire`

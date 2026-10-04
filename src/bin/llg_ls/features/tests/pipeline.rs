@@ -493,7 +493,7 @@ fn analyze_leaves_source_tree_and_cwd_unchanged() {
     assert_eq!(listing(&fixture), before, "fixture tree gained entries");
     assert_eq!(
         std::env::current_dir().expect("cwd after analysis"),
-        std::fs::canonicalize(&rtl).unwrap_or(rtl.clone())
+        llg::ffi::platform::canonicalize(&rtl).unwrap_or(rtl.clone())
     );
 
     let _ = std::fs::remove_dir_all(fixture);
