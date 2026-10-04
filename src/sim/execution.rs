@@ -1186,7 +1186,9 @@ fn collect_statement_expression_effects(
             }
             for argument in args {
                 match argument {
-                    IrDisplayArg::Packed(expression) | IrDisplayArg::Real(expression) => {
+                    IrDisplayArg::Packed(expression)
+                    | IrDisplayArg::Real(expression)
+                    | IrDisplayArg::Strength(expression) => {
                         collect_expression_effects(ir, expression, effects, visited_calls)
                     }
                     IrDisplayArg::String(value) => {
@@ -1198,7 +1200,9 @@ fn collect_statement_expression_effects(
         IrStmt::Severity { args, .. } => {
             for argument in args {
                 match argument {
-                    IrDisplayArg::Packed(expression) | IrDisplayArg::Real(expression) => {
+                    IrDisplayArg::Packed(expression)
+                    | IrDisplayArg::Real(expression)
+                    | IrDisplayArg::Strength(expression) => {
                         collect_expression_effects(ir, expression, effects, visited_calls)
                     }
                     IrDisplayArg::String(value) => {
@@ -2057,7 +2061,8 @@ fn collect_string_effects(
             for arg in args {
                 match arg {
                     crate::sim::ir::IrDisplayArg::Packed(value)
-                    | crate::sim::ir::IrDisplayArg::Real(value) => {
+                    | crate::sim::ir::IrDisplayArg::Real(value)
+                    | crate::sim::ir::IrDisplayArg::Strength(value) => {
                         collect_expression_effects(ir, value, effects, visited_calls)
                     }
                     crate::sim::ir::IrDisplayArg::String(value) => {

@@ -138,6 +138,9 @@ pub struct IrNetGroup {
     pub(in crate::sim) driver_strengths: Vec<(u8, u8)>,
     /// Optional propagation delay applied after all driver slots resolve.
     pub(in crate::sim) propagation_delay: Option<IrTransitionDelay>,
+    /// Two-state signal holding the resolved strength view (eight bits per
+    /// net bit), present only when a `%v` consumer reads this net.
+    pub(in crate::sim) strength_view: Option<usize>,
 }
 
 impl IrNetGroup {
@@ -169,6 +172,7 @@ impl IrNetGroup {
             n_drivers,
             driver_strengths: vec![(6, 6); n_drivers],
             propagation_delay: None,
+            strength_view: None,
         })
     }
 

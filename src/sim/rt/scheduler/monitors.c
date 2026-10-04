@@ -1,7 +1,8 @@
 
 static int llg_fmt_arg_same(const llg_fmt_arg_t* a, const llg_fmt_arg_t* b) {
     if (a->kind != b->kind) return 0;
-    if (a->kind == LLG_FMT_PACKED) return sv4_same(a->value.packed, b->value.packed);
+    if (a->kind == LLG_FMT_PACKED || a->kind == LLG_FMT_STRENGTH)
+        return sv4_same(a->value.packed, b->value.packed);
     if (a->kind == LLG_FMT_REAL) return real_same(a->value.real, b->value.real);
     return a->value.string.len == b->value.string.len &&
            (!a->value.string.len ||

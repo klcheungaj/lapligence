@@ -59,7 +59,11 @@ X/Z distinction, actual-width arithmetic/conversions and partial-select X fill.
 Array-conditional helpers borrow inputs and return independent owners with
 immediate-element defaults. Strength resolution retains both X endpoints, strict
 opposite-endpoint dominance, neutral Z and wired-AND/OR tie rules; pull/supply
-biases are sources. Query counts ignore X/Z except isunknown. Numeric/time
+biases are sources. A highz endpoint makes an X contribution one-sided (L/H).
+`llg_net_t.strength` (scheduler `nets.c`) is an optional per-bit strength view
+for `%v`: the hull of every level choice, published after the value (with a
+pending net delay, at the delayed commit), forced bits at strong; nets without
+it pay one NULL test per resolution. Query counts ignore X/Z except isunknown. Numeric/time
 conversion rules belong to lowering/value APIs, not host int/long assumptions.
 `llg_random` uses modulo-2^32 seed arithmetic and checked/clamped distribution
 conversions following Annex N. Process/object RNG streams consume one parent draw

@@ -412,22 +412,40 @@ impl Codegen<'_> {
         // source per cell made whole-array drivers quadratic in the cell count.
         let mut cell_sources: HashMap<(usize, u64), Vec<CellSource>> = HashMap::new();
         for source in nodes {
-            let target = match self.kind(*source) {
+            let targets = match self.kind(*source) {
                 NodeKind::ContAssign { .. } => {
                     let Some(target) = self.node(*source).children.first().copied() else {
                         continue;
                     };
-                    target
+                    vec![target]
                 }
                 NodeKind::Port {
                     direction: DbDirection::Output,
                     high_expr: Some(target),
                     ..
-                } => *target,
+                } => vec![*target],
+                // An input formal net array is driven by its port: either the
+                // link from the actual or an `unconnected_drive` pull.
+                NodeKind::Port {
+                    direction: DbDirection::Input,
+                    low: Some(target),
+                    ..
+                } => vec![*target],
+                // Gate outputs, including pullup/pulldown, drive cells or
+                // selected cell bits like any other structural source.
+                NodeKind::Gate { terms, .. } => terms
+                    .iter()
+                    .filter(|term| {
+                        matches!(term.direction, DbDirection::Output | DbDirection::Inout)
+                    })
+                    .map(|term| term.expr)
+                    .collect(),
                 _ => continue,
             };
             let mut cells = Vec::new();
-            self.continuous_net_array_cells(target, &mut cells)?;
+            for target in targets {
+                self.continuous_net_array_cells(target, &mut cells)?;
+            }
             cells.sort_unstable();
             cells.dedup();
             for cell in cells {
@@ -451,6 +469,17 @@ impl Codegen<'_> {
                     } => {
                         self.effective_port_driver_strengths(*source, *strength0, *strength1, *low)?
                     }
+                    NodeKind::Gate {
+                        prim_type,
+                        strength0,
+                        strength1,
+                        ..
+                    } => gate_driver_strengths(
+                        *prim_type,
+                        *strength0,
+                        *strength1,
+                        &self.display_name(*source),
+                    )?,
                     _ => unreachable!("structural source classified above"),
                 };
                 cell_sources

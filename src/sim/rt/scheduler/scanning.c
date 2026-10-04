@@ -546,7 +546,7 @@ static char* llg_typed_line_alloc(const char* fmt, llg_fmt_arg_t* args, int n,
     size_t cap = strlen(fmt) + (scope ? strlen(scope) : 0) + 64u;
     for (int i = 0; i < n; i++) {
         size_t extra = 64u;
-        if (args[i].kind == LLG_FMT_PACKED) {
+        if (args[i].kind == LLG_FMT_PACKED || args[i].kind == LLG_FMT_STRENGTH) {
             if (llg_sv4_width(args[i].value.packed) > (SIZE_MAX - extra) / 8u)
                 llg_fatal_allocation("typed formatted line", 1, SIZE_MAX);
             extra += (size_t)llg_sv4_width(args[i].value.packed) * 8u;

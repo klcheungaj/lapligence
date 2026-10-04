@@ -192,6 +192,9 @@ enum {
     LLG_FMT_PACKED = 0,
     LLG_FMT_REAL = 1,
     LLG_FMT_STRING = 2,
+    // A net's strength view (see llg_net_t.strength): one byte per bit,
+    // formatted only by `%v`.
+    LLG_FMT_STRENGTH = 3,
 };
 
 enum {
@@ -292,6 +295,13 @@ struct llg_net {
     int n_aliases;
     int alias_capacity;
     llg_net_alias_t** aliases;
+    /* Optional strength view, emitted only for nets with a strength consumer
+     * (`%v`). Each net bit owns one two-state byte: the high nibble is
+     * hi + 7 and the low nibble lo + 7, where [lo, hi] is the resolved
+     * strength range on the signed scale (-7 = Su0 .. 0 = HiZ .. 7 = Su1).
+     * It is published after every resolution, so strength-only changes wake
+     * its readers while ordinary value readers stay asleep. */
+    sv4_t* strength;
 };
 
 /* One contiguous run: view bits [signal_bit, signal_bit + bit_count) map to
@@ -324,6 +334,7 @@ void llg_net_write(llg_net_t* net, int idx, sv4_t value);
 void llg_net_write_selected(llg_net_t* net, int idx, sv4_t value,
                             sv4_select_plan_t plan, int reverse);
 void llg_net_index_reset(llg_net_t* net);
+void llg_net_strength_reset(llg_net_t* net); /* startup view, no wakeups */
 void llg_net_alias_bind(llg_net_alias_t* alias);
 void llg_net_alias_clear(llg_net_t* net); /* release a model net's alias list */
 sv4_t llg_net_alias_read(llg_net_alias_t* alias);

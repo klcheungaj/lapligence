@@ -208,6 +208,10 @@ fn render_string_format(
                 "_llg_format_args[{index}].kind = LLG_FMT_PACKED;\n        _llg_format_args[{index}].value.packed = {};",
                 render_expr_impl(ctx, value)?.code
             ),
+            IrDisplayArg::Strength(value) => format!(
+                "_llg_format_args[{index}].kind = LLG_FMT_STRENGTH;\n        _llg_format_args[{index}].value.packed = {};",
+                render_expr_impl(ctx, value)?.code
+            ),
             IrDisplayArg::Real(value) => format!(
                 "_llg_format_args[{index}].kind = LLG_FMT_REAL;\n        _llg_format_args[{index}].value.real = {};",
                 render_expr_impl(ctx, value)?.code

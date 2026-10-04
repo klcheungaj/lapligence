@@ -176,6 +176,7 @@ fn waveform_model_emits_controls_hierarchy_and_final_time_close() {
         n_drivers: 1,
         driver_strengths: vec![(6, 6)],
         propagation_delay: None,
+        strength_view: None,
     }];
     model.arrays = vec![IrArray {
         activation: false,
@@ -280,4 +281,57 @@ fn sparse_array_reads_fail_closed_in_legacy_fragments() {
         .err()
         .expect("descriptor fragment must reject");
     assert!(error.to_string().contains("owned whole-model"));
+}
+
+#[test]
+fn component_strength_view_descriptor_is_validated_and_emitted() {
+    let signal = |c_name: &str, width: u32, two_state: bool, net_driver| IrSignal {
+        fixed_default: None,
+        c_name: c_name.to_string(),
+        hdl_name: None,
+        ty: IrType::Packed {
+            width,
+            signed: false,
+            two_state,
+        },
+        net_driver,
+        net_alias: Vec::new(),
+        alias: None,
+        omit: false,
+    };
+    let model_with = |view: IrSignal| {
+        let mut model = IrModel::new("top".to_string(), 1).unwrap();
+        model.signals = vec![signal("g_net_0.resolved", 2, false, Some((0, 0))), view];
+        model.net_groups = vec![crate::sim::ir::IrNetGroup {
+            c_name: "g_net_0".to_string(),
+            width: 2,
+            signed: false,
+            kind: crate::sim::ir::IrNetKind::Wire,
+            n_drivers: 1,
+            driver_strengths: vec![(6, 6)],
+            propagation_delay: None,
+            strength_view: Some(1),
+        }];
+        model
+    };
+    let model = model_with(signal("g_net_0__strength", 16, true, None));
+    model.validate().unwrap();
+    let c = render(&ExecutionModel::lower(model).unwrap()).unwrap();
+    assert!(c.contains(".strength = &g_net_0__strength }"));
+    assert!(c.contains("llg_net_strength_reset(net);"));
+    for invalid in [
+        signal("g_net_0__strength", 16, false, None),
+        signal("g_net_0__strength", 8, true, None),
+    ] {
+        let error = model_with(invalid).validate().unwrap_err();
+        assert!(error.to_string().contains("strength_view"), "{error}");
+    }
+    assert!(
+        model_with(signal("g_net_0__strength", 16, true, Some((0, 0))))
+            .validate()
+            .is_err()
+    );
+    let mut dangling = model_with(signal("g_net_0__strength", 16, true, None));
+    dangling.net_groups[0].strength_view = Some(9);
+    assert!(dangling.validate().is_err());
 }

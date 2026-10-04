@@ -45,6 +45,7 @@ mod ports;
 mod processes;
 mod return_flow;
 mod signatures;
+mod strength_views;
 mod virtual_interfaces;
 
 type VirtualInterfaceMemberEntries = Vec<(String, SignalInfo)>;

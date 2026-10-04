@@ -3,6 +3,7 @@ static sv4_t llg_net_compute(llg_net_t* net);
 static void force_recompute_target(sv4_t* target, llg_net_t* net);
 static void llg_net_alias_refresh_all(llg_net_t* net);
 static void inertial_unlink_pending(llg_inertial_t* driver);
+static void llg_net_strength_publish(llg_net_t* net);
 
 // Grow one live-binding table to hold at least `needed` entries. The grown copy
 // is completed before it replaces the old table, so an allocation failure
@@ -298,6 +299,23 @@ static void force_apply_part(sv4_t* target, const llg_force_part_t* part,
     sv4_destroy(&selected);
 }
 
+// Union of the active packed force masks on one target for one 64-bit word.
+// Strength views report forced bits at strong strength.
+static uint64_t force_mask_word(sv4_t* target, size_t word) {
+    uint64_t forced = 0;
+    for (int i = 0; i < g.force_count; i++) {
+        llg_force_entry_t* entry = &g.force_table[i];
+        if (!entry->active || entry->is_real) continue;
+        for (int j = 0; j < entry->n_parts; j++) {
+            if (entry->parts[j].target != target) continue;
+            forced |= llg_sv4_word(entry->masks[j], word, LLG_SV4_BITS) &
+                ~(llg_sv4_word(entry->masks[j], word, LLG_SV4_X) |
+                  llg_sv4_word(entry->masks[j], word, LLG_SV4_Z));
+        }
+    }
+    return forced;
+}
+
 static llg_net_t* force_net_for_target(sv4_t* target, llg_net_t* fallback) {
     if (fallback) return fallback;
     for (int i = 0; i < g.force_count; i++) {
@@ -336,7 +354,10 @@ static void force_recompute_target(sv4_t* target, llg_net_t* net) {
         sv4_destroy(&streamed);
     }
     sig_write(target, *value);
-    if (net) llg_net_alias_refresh_all(net);
+    if (net) {
+        llg_net_alias_refresh_all(net);
+        llg_net_strength_publish(net);
+    }
     llg_value_scope_end(scope);
 }
 
