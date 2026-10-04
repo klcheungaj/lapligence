@@ -374,6 +374,15 @@ snapshots before writes. Never look through a cast that reshapes cells or enters
 a two-state element domain: it is an `IrFixedValue::Convert` into a lexical shape.
 Equality whose operands are all descriptor values also uses descriptor compare
 below packed capacity rather than flattening each cell.
+The fixed-value/view/projection IR is frozen at the RTL-099 gate
+([contract](../ir/readme.md#frozen-fixed-value-view-and-projection-contract-rtl-099)).
+SIM-wave migration notes: native/resizable aggregates get their own typed
+descriptors next to it rather than new `IrFixedValue` element domains; a
+consumer that newly accepts a fixed aggregate must take the descriptor path
+for `sparse()` storage and oversized values, never a per-cell expansion; new
+writers of fixed storage must register cell intervals for the single-writer
+rule; and new net-array driver forms must be added to the `net_cells.rs`
+classification inventory.
 
 An invalid index reads the element type's uninitialized default (SV 7.4.6), not
 an all-X payload: mixed-state aggregate elements keep two-state leaves at zero
