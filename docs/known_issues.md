@@ -324,9 +324,9 @@ subroutine formals, results and locals.
 
 Unpacked records with string, real or chandle leaves copy, compare and cross
 input/output/inout formals and results as runtime values. These legal forms
-still reject with explicit diagnostics: arrays of native records and their
-slices (including module-level `string` arrays passed or returned whole), a
-run-time index into a native member array of an automatic record, `ref`
+still reject with explicit diagnostics: module-level unpacked arrays and
+queue/dynamic/associative containers of native records or strings, their
+slices, a run-time index into a native member array of an automatic record, `ref`
 formals of native record type, nonblocking writes of native records or their
 string/chandle members, fork-join_none capture of automatic native records,
 `f(...).member` selects on a native result, and native outputs bound inside an
