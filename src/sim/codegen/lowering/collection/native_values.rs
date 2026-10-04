@@ -13,6 +13,8 @@ use crate::sim::ir::{
     IrNativeLeafValue, IrNativeValue, IrObjectQuery,
 };
 
+mod conditionals;
+
 /// Largest number of leaves of one native record. Leaf-wise transfers to and
 /// from flattened module storage emit one operation per leaf, so larger
 /// records are rejected rather than expanded.
@@ -34,6 +36,7 @@ pub(in super::super) enum NativeEndpoint {
 }
 
 /// One captured leaf value of a transfer.
+#[derive(Clone)]
 enum LeafValue {
     Packed(IrExpr),
     Real(IrExpr),
@@ -48,6 +51,42 @@ impl LeafValue {
             LeafValue::Real(value) => IrNativeLeafExpr::Real(value),
             LeafValue::String(value) => IrNativeLeafExpr::String(value),
             LeafValue::Chandle(value) => IrNativeLeafExpr::Chandle(value),
+        }
+    }
+}
+
+/// Evaluate `value` once into the local `name` and return its read.
+fn capture_leaf(value: LeafValue, name: String, captures: &mut Vec<IrStmt>) -> LeafValue {
+    match value {
+        LeafValue::String(value) => {
+            captures.push(IrStmt::DeclString {
+                name: name.clone(),
+                init: Some(value),
+            });
+            LeafValue::String(IrStringExpr::LocalRead(name))
+        }
+        LeafValue::Chandle(value) => {
+            captures.push(IrStmt::Object(Box::new(IrObjectStmt::ChandleDeclareLocal(
+                name.clone(),
+                Some(value),
+            ))));
+            LeafValue::Chandle(IrChandleExpr::LocalRead(name))
+        }
+        LeafValue::Packed(value) | LeafValue::Real(value) => {
+            let (width, signed) = (value.width, value.signed);
+            captures.push(IrStmt::DeclLocal {
+                name: name.clone(),
+                width,
+                signed,
+                two_state: false,
+                init: Some(Box::new(value)),
+            });
+            let read = IrExpr::new(IrExprKind::LocalRead(name), width, signed, None);
+            if width == 0 {
+                LeafValue::Real(read)
+            } else {
+                LeafValue::Packed(read)
+            }
         }
     }
 }
@@ -645,6 +684,23 @@ impl Codegen<'_> {
         matches!(self.native_path_of(node), Ok(Some(_)) | Err(_))
     }
 
+    /// Whether an lvalue is a record (or record selection) with string or
+    /// chandle leaves: a native root or a module record whose leaves are
+    /// separate model objects rather than one packed signal.
+    pub(in super::super) fn native_record_target(&self, node: NodeId) -> bool {
+        if matches!(self.native_path_of(node), Ok(Some(_))) {
+            return true;
+        }
+        self.resolve_unpacked_aggregate(node)
+            .is_some_and(|selection| {
+                selection
+                    .storage
+                    .leaves
+                    .iter()
+                    .any(|leaf| leaf.path.starts_with(&selection.prefix) && leaf.object.is_some())
+            })
+    }
+
     // ── Whole-value transfers ───────────────────────────────────────────
 
     /// A whole native value or native/module record selection.
@@ -731,11 +787,44 @@ impl Codegen<'_> {
         }
     }
 
+    /// Write one captured leaf. A nonblocking write queues the leaf; only
+    /// module record leaves (persistent model storage) are nonblocking
+    /// targets, because a native root's leaves move when the root is
+    /// replaced.
     fn endpoint_leaf_write(
         &mut self,
+        path: &str,
         leaf: &NativeEndpointLeaf,
         value: LeafValue,
+        nba: bool,
     ) -> Result<IrStmt, String> {
+        if nba {
+            let NativeEndpointLeaf::Module(leaf) = leaf else {
+                return Err(format!(
+                    "nonblocking assignment to native record subroutine storage in `{path}` is not supported"
+                ));
+            };
+            return match value {
+                LeafValue::String(value) => self.object_leaf_nba(
+                    path,
+                    self.reference_object(leaf.object.ok_or("string leaf has no storage")?),
+                    NativeNbaValue::String(value),
+                ),
+                LeafValue::Chandle(value) => self.object_leaf_nba(
+                    path,
+                    self.reference_object(leaf.object.ok_or("chandle leaf has no storage")?),
+                    NativeNbaValue::Chandle(value),
+                ),
+                LeafValue::Packed(value) | LeafValue::Real(value) => {
+                    let lhs = self.aggregate_leaf_lhs(leaf)?;
+                    Ok(IrStmt::Assign {
+                        rhs: apply_lhs_assignment_context(&self.model, &lhs, value),
+                        lhs,
+                        nba: true,
+                    })
+                }
+            };
+        }
         match (leaf, value) {
             (NativeEndpointLeaf::Value(native, leaf), LeafValue::String(value)) => {
                 let name = self.native_leaf_symbol(*native, leaf);
@@ -796,6 +885,7 @@ impl Codegen<'_> {
         path: &str,
         target: &NativeEndpoint,
         source: &NativeEndpoint,
+        nba: bool,
     ) -> Result<IrStmt, String> {
         if let (
             NativeEndpoint::Value {
@@ -808,7 +898,8 @@ impl Codegen<'_> {
             },
         ) = (target, source)
         {
-            if dst_prefix.is_empty()
+            if !nba
+                && dst_prefix.is_empty()
                 && src_prefix.is_empty()
                 && self.model.native_values[*dst].ty == self.model.native_values[*src].ty
             {
@@ -836,39 +927,8 @@ impl Codegen<'_> {
         for (position, ((_, target), (_, source))) in targets.iter().zip(&sources).enumerate() {
             let value = self.endpoint_leaf_read(source)?;
             let name = format!("_llg_native_copy_{}_{position}", self.native_copy_sequence);
-            let captured = match value {
-                LeafValue::String(value) => {
-                    captures.push(IrStmt::DeclString {
-                        name: name.clone(),
-                        init: Some(value),
-                    });
-                    LeafValue::String(IrStringExpr::LocalRead(name))
-                }
-                LeafValue::Chandle(value) => {
-                    captures.push(IrStmt::Object(Box::new(IrObjectStmt::ChandleDeclareLocal(
-                        name.clone(),
-                        Some(value),
-                    ))));
-                    LeafValue::Chandle(IrChandleExpr::LocalRead(name))
-                }
-                LeafValue::Packed(value) | LeafValue::Real(value) => {
-                    let (width, signed) = (value.width, value.signed);
-                    captures.push(IrStmt::DeclLocal {
-                        name: name.clone(),
-                        width,
-                        signed,
-                        two_state: false,
-                        init: Some(Box::new(value)),
-                    });
-                    let read = IrExpr::new(IrExprKind::LocalRead(name), width, signed, None);
-                    if width == 0 {
-                        LeafValue::Real(read)
-                    } else {
-                        LeafValue::Packed(read)
-                    }
-                }
-            };
-            writes.push(self.endpoint_leaf_write(target, captured)?);
+            let captured = capture_leaf(value, name, &mut captures);
+            writes.push(self.endpoint_leaf_write(path, target, captured, nba)?);
         }
         self.native_copy_sequence += 1;
         captures.extend(writes);
@@ -931,7 +991,7 @@ impl Codegen<'_> {
                     value,
                     prefix: member_path,
                 };
-                writes.push(self.native_transfer(path, &target, &source)?);
+                writes.push(self.native_transfer(path, &target, &source, false)?);
                 continue;
             };
             let source = self.native_leaf_source(path, leaf.ty, node)?;
@@ -971,12 +1031,12 @@ impl Codegen<'_> {
                     }
                 }
             };
-            writes.push(
-                self.endpoint_leaf_write(
-                    &NativeEndpointLeaf::Value(value, leaf.clone()),
-                    captured,
-                )?,
-            );
+            writes.push(self.endpoint_leaf_write(
+                path,
+                &NativeEndpointLeaf::Value(value, leaf.clone()),
+                captured,
+                false,
+            )?);
         }
         self.native_copy_sequence += 1;
         captures.extend(writes);
@@ -1041,6 +1101,7 @@ impl Codegen<'_> {
         path: &str,
         rhs: NodeId,
         target: &NativeEndpoint,
+        nba: bool,
     ) -> Result<Option<IrStmt>, String> {
         let Some((call, name, callee, function)) = self.native_result_callee(rhs)? else {
             return Ok(None);
@@ -1052,7 +1113,9 @@ impl Codegen<'_> {
             .ty;
         let direct = match target {
             NativeEndpoint::Value { value, prefix }
-                if prefix.is_empty() && self.model.native_values[*value].ty == result_type =>
+                if !nba
+                    && prefix.is_empty()
+                    && self.model.native_values[*value].ty == result_type =>
             {
                 Some(*value)
             }
@@ -1082,6 +1145,7 @@ impl Codegen<'_> {
                     value: result,
                     prefix: Vec::new(),
                 },
+                nba,
             )?);
         }
         Ok(Some(IrStmt::Block(statements)))
@@ -1120,11 +1184,12 @@ impl Codegen<'_> {
         target: &NativeEndpoint,
         descriptor: &TypeDescriptor,
         rhs: NodeId,
+        nba: bool,
     ) -> Result<IrStmt, String> {
-        if let Some(statement) = self.native_call_into(path, rhs, target)? {
+        if let Some(statement) = self.native_call_into(path, rhs, target, nba)? {
             return Ok(statement);
         }
-        if let NativeEndpoint::Value { value, prefix } = target {
+        if let (false, NativeEndpoint::Value { value, prefix }) = (nba, target) {
             if let Some(statement) =
                 self.native_pattern_into(path, *value, prefix, descriptor, rhs)?
             {
@@ -1132,25 +1197,13 @@ impl Codegen<'_> {
             }
         }
         let source = self.p30_unwrap_cast(rhs);
-        // An unknown predicate merges the operands member by member (§11.4.11)
-        // and native leaves have no fixed payload for that merge, so keep the
-        // conditional's own diagnostic instead of a missing record source.
-        if matches!(
-            self.kind(source),
-            NodeKind::Expr(ExprKind::Conditional { .. })
-                | NodeKind::Expr(ExprKind::Operation {
-                    op: Operation::Conditional,
-                    ..
-                })
-        ) {
-            return Err(format!(
-                "native record conditional in `{path}` is not supported: conditional structure member has no supported fixed payload"
-            ));
+        if self.native_record_conditional(source) {
+            return self.native_conditional_into(path, target, descriptor, source, nba);
         }
         let (source, _) = self
             .native_endpoint(source)?
             .ok_or_else(|| format!("native record assignment in `{path}` has no record source"))?;
-        self.native_transfer(path, target, &source)
+        self.native_transfer(path, target, &source, nba)
     }
 
     /// Whether `node` is a call whose result is a native record.
@@ -1184,24 +1237,33 @@ impl Codegen<'_> {
             .ok()
             .flatten()
             .is_some()
-            || self.native_call_node(rhs);
+            || self.native_call_node(rhs)
+            || self.native_record_conditional(self.p30_unwrap_cast(rhs));
         if !lhs_native && !rhs_native {
             return Ok(None);
         }
         let Some((target, descriptor)) = self.native_endpoint(lhs)? else {
             return Ok(None);
         };
-        if nba {
-            return Err(format!(
-                "nonblocking assignment of a native record value in `{path}` is not supported"
-            ));
+        // Only module record targets are persistent leaf objects; native
+        // roots are subroutine storage whose leaves move on replacement.
+        if nba && lhs_native {
+            return Err(if self.subroutine_auto_target(lhs) {
+                format!(
+                    "nonblocking assignment to an automatic native record in `{path}` is illegal (SV 6.21, 10.4.2)"
+                )
+            } else {
+                format!(
+                    "nonblocking assignment to static native record subroutine storage in `{path}` is not supported"
+                )
+            });
         }
         if op != Operation::Assignment {
             return Err(format!(
                 "compound assignment of a native record value in `{path}` is not supported"
             ));
         }
-        self.native_assign_into(path, &target, &descriptor, rhs)
+        self.native_assign_into(path, &target, &descriptor, rhs, nba)
             .map(Some)
     }
 
@@ -1248,7 +1310,13 @@ impl Codegen<'_> {
         };
         before.push(IrStmt::NativeValueDeclare(temporary));
         if matches!(direction, DbDirection::Input | DbDirection::Inout) {
-            before.push(self.native_assign_into(path, &endpoint, &layout.descriptor, actual)?);
+            before.push(self.native_assign_into(
+                path,
+                &endpoint,
+                &layout.descriptor,
+                actual,
+                false,
+            )?);
         }
         if matches!(direction, DbDirection::Output | DbDirection::Inout) {
             let (target, _) = self.native_endpoint(actual)?.ok_or_else(|| {
@@ -1257,7 +1325,7 @@ impl Codegen<'_> {
                     self.node(formal).name
                 )
             })?;
-            after.push(self.native_transfer(path, &target, &endpoint)?);
+            after.push(self.native_transfer(path, &target, &endpoint, false)?);
         }
         Ok(IrCallArg::NativeValue(temporary))
     }

@@ -30,10 +30,15 @@ static void apply_nba(llg_nba_t* next) {
     } else if (next->is_event) {
         event_trigger_object(next->event_target);
     } else if (next->is_string) {
-        if (next->string_target) {
-            llg_string_move(next->string_target, next->string_value);
-            next->string_value = (llg_string_t){0};
+        if (next->native.string.target) {
+            llg_string_move(next->native.string.target, next->native.string.value);
+            next->native.string.value = (llg_string_t){0};
         }
+    } else if (next->is_chandle) {
+        // Chandles are borrowed foreign pointers with no change notification,
+        // matching a blocking chandle write.
+        if (next->native.chandle.target)
+            *next->native.chandle.target = next->native.chandle.value;
     } else if (next->is_real) {
         if (!llg_is_real_forced(next->real_target) && !pca_real_active(next->real_target))
             real_write(next->real_target, next->real_value);

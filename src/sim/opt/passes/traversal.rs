@@ -494,6 +494,9 @@ fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
         IrStmt::DelayedStringAssign { rhs, .. } => {
             rhs.expressions_mut(&mut |expr| walk_expr_mut(expr, f));
         }
+        IrStmt::DelayedChandleAssign { rhs, .. } => {
+            rhs.expressions_mut(&mut |expr| walk_expr_mut(expr, f));
+        }
         IrStmt::PcaAssign { value, .. } | IrStmt::PcaDrive { value, .. } => {
             walk_expr_mut(value, f);
         }

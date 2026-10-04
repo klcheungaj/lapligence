@@ -152,12 +152,6 @@ impl Codegen<'_> {
             }
             let name = format!("_agg_copy_{}_{}_{}", lhs.root.0, rhs.root.0, position);
             if let (Some(lhs_object), Some(rhs_object)) = (left.object, right.object) {
-                if nba {
-                    return Err(format!(
-                        "nonblocking assignment to object aggregate member `{}` is not supported in `{path}`",
-                        aggregate_path_suffix(&left.path)
-                    ));
-                }
                 let lhs_object = self.reference_object(lhs_object);
                 let rhs_object = self.reference_object(rhs_object);
                 let operation = match self.model.objects[lhs_object].ty {
@@ -166,6 +160,14 @@ impl Codegen<'_> {
                             name: name.clone(),
                             init: Some(IrStringExpr::Read(rhs_object)),
                         });
+                        if nba {
+                            assignments.push(self.object_leaf_nba(
+                                path,
+                                lhs_object,
+                                NativeNbaValue::String(IrStringExpr::LocalRead(name)),
+                            )?);
+                            continue;
+                        }
                         IrObjectStmt::StringAssign(lhs_object, IrStringExpr::LocalRead(name))
                     }
                     IrObjectType::Chandle | IrObjectType::Semaphore => {
@@ -173,6 +175,14 @@ impl Codegen<'_> {
                             name.clone(),
                             Some(IrChandleExpr::Read(rhs_object)),
                         ))));
+                        if nba {
+                            assignments.push(self.object_leaf_nba(
+                                path,
+                                lhs_object,
+                                NativeNbaValue::Chandle(IrChandleExpr::LocalRead(name)),
+                            )?);
+                            continue;
+                        }
                         IrObjectStmt::ChandleAssign(lhs_object, IrChandleExpr::LocalRead(name))
                     }
                     IrObjectType::Process => {

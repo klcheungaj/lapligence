@@ -497,14 +497,19 @@ impl<'a> Codegen<'a> {
                     )
                 })?;
             if let (Some(lhs_object), Some(rhs_object)) = (left.object, right.object) {
-                if nba {
-                    return Err(format!(
-                        "nonblocking assignment to object aggregate member `{}` is not supported in `{path}`",
-                        aggregate_path_suffix(&left.path)
-                    ));
-                }
                 let lhs_object = self.reference_object(lhs_object);
                 let rhs_object = self.reference_object(rhs_object);
+                if nba {
+                    // Each queued leaf owns an issue-time copy of its source.
+                    let value = match self.model.objects[rhs_object].ty {
+                        IrObjectType::String => {
+                            NativeNbaValue::String(IrStringExpr::Read(rhs_object))
+                        }
+                        _ => NativeNbaValue::Chandle(IrChandleExpr::Read(rhs_object)),
+                    };
+                    assignments.push(self.object_leaf_nba(path, lhs_object, value)?);
+                    continue;
+                }
                 let operation = match self.model.objects[lhs_object].ty {
                     IrObjectType::String => {
                         IrObjectStmt::StringAssign(lhs_object, IrStringExpr::Read(rhs_object))
@@ -698,10 +703,14 @@ impl<'a> Codegen<'a> {
                 })?;
             if let Some(index) = left.object {
                 if nba {
-                    return Err(format!(
-                        "nonblocking assignment to object aggregate member `{}` is not supported in `{path}`",
-                        aggregate_path_suffix(&member_path)
-                    ));
+                    let value = match self.model.objects[index].ty {
+                        IrObjectType::String => {
+                            NativeNbaValue::String(self.lower_string(path, value_node)?)
+                        }
+                        _ => NativeNbaValue::Chandle(self.lower_chandle(path, value_node)?),
+                    };
+                    assignments.push(self.object_leaf_nba(path, index, value)?);
+                    continue;
                 }
                 let operation = match self.model.objects[index].ty {
                     IrObjectType::String => {

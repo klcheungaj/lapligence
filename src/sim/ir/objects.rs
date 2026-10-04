@@ -161,6 +161,15 @@ pub enum IrStringExpr {
     },
     Case(Box<IrStringExpr>, bool),
     Substr(Box<IrStringExpr>, Box<IrExpr>, Box<IrExpr>),
+    /// Conditional operator with a string result (SV 11.4.11). A known
+    /// predicate evaluates one arm; an ambiguous one evaluates both and
+    /// yields their common value when they are equal, otherwise the empty
+    /// string (the type's default-uninitialized value).
+    Conditional {
+        predicate: Box<IrExpr>,
+        then: Box<IrStringExpr>,
+        otherwise: Box<IrStringExpr>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -284,6 +293,14 @@ pub enum IrChandleExpr {
         /// without making a chandle look like an integer.
         args: Vec<IrCallArg>,
         depth: super::IrDepth,
+    },
+    /// Conditional operator with a chandle result (SV 11.4.11). An
+    /// ambiguous predicate evaluates both arms and yields their common
+    /// pointer when they are equal, otherwise null.
+    Conditional {
+        predicate: Box<IrExpr>,
+        then: Box<IrChandleExpr>,
+        otherwise: Box<IrChandleExpr>,
     },
 }
 
@@ -586,6 +603,20 @@ impl IrStringExpr {
                 Ok(())
             }
             Self::Read(index) => object_type(model, *index, IrObjectType::String),
+            Self::Conditional {
+                predicate,
+                then,
+                otherwise,
+            } => {
+                if predicate.is_real() {
+                    return Err(super::IrValidationError::new(
+                        "string conditional",
+                        "predicate must be integral",
+                    ));
+                }
+                then.validate(model, string_return)?;
+                otherwise.validate(model, string_return)
+            }
             Self::ContainerGet { container, index } => {
                 let Some(container) = model.containers.get(*container) else {
                     return Err(super::IrValidationError::new(
@@ -741,6 +772,15 @@ impl IrStringExpr {
                 visit(first);
                 visit(last);
             }
+            Self::Conditional {
+                predicate,
+                then,
+                otherwise,
+            } => {
+                visit(predicate);
+                then.expressions(visit);
+                otherwise.expressions(visit);
+            }
         }
     }
     pub(in crate::sim) fn expressions_mut(&mut self, visit: &mut impl FnMut(&mut IrExpr)) {
@@ -794,6 +834,15 @@ impl IrStringExpr {
                 value.expressions_mut(visit);
                 visit(first);
                 visit(last);
+            }
+            Self::Conditional {
+                predicate,
+                then,
+                otherwise,
+            } => {
+                visit(predicate);
+                then.expressions_mut(visit);
+                otherwise.expressions_mut(visit);
             }
         }
     }
@@ -1616,6 +1665,20 @@ impl IrChandleExpr {
                     ))
                 }
             }
+            Self::Conditional {
+                predicate,
+                then,
+                otherwise,
+            } => {
+                if predicate.is_real() {
+                    return Err(super::IrValidationError::new(
+                        "chandle conditional",
+                        "predicate must be integral",
+                    ));
+                }
+                then.validate(model, formals, chandle_return)?;
+                otherwise.validate(model, formals, chandle_return)
+            }
             Self::Null => Ok(()),
             Self::Verbatim(code) if !code.is_empty() => Ok(()),
             Self::Verbatim(_) => Err(super::IrValidationError::new(
@@ -1804,6 +1867,15 @@ impl IrChandleExpr {
 
     pub(in crate::sim) fn expressions(&self, visit: &mut impl FnMut(&IrExpr)) {
         match self {
+            Self::Conditional {
+                predicate,
+                then,
+                otherwise,
+            } => {
+                visit(predicate);
+                then.expressions(visit);
+                otherwise.expressions(visit);
+            }
             Self::AssociativeGet { key, .. } => key.expressions(visit),
             Self::SemaphoreNew(index) | Self::ContainerGet { index, .. } => visit(index),
             Self::ContainerGetNested { indices, .. } => indices.iter().for_each(visit),
@@ -1821,6 +1893,15 @@ impl IrChandleExpr {
 
     pub(in crate::sim) fn expressions_mut(&mut self, visit: &mut impl FnMut(&mut IrExpr)) {
         match self {
+            Self::Conditional {
+                predicate,
+                then,
+                otherwise,
+            } => {
+                visit(predicate);
+                then.expressions_mut(visit);
+                otherwise.expressions_mut(visit);
+            }
             Self::AssociativeGet { key, .. } => key.expressions_mut(visit),
             Self::SemaphoreNew(index) | Self::ContainerGet { index, .. } => visit(index),
             Self::ContainerGetNested { indices, .. } => indices.iter_mut().for_each(visit),
