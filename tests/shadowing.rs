@@ -124,8 +124,9 @@ fn assert_no_shadow_uris(value: &Value) {
                     uri.starts_with("file:"),
                     "LSP location is not a file URI: {uri}"
                 );
-                let path = uri.trim_start_matches("file://");
-                let leaked = Path::new(path).components().any(|component| {
+                let path = support::lsp::uri_path(uri)
+                    .unwrap_or_else(|| panic!("LSP location is not a local file URI: {uri}"));
+                let leaked = path.components().any(|component| {
                     let name = component.as_os_str().to_string_lossy();
                     name.starts_with("llg-")
                         && name.split('-').nth(1).is_some_and(|first| {
