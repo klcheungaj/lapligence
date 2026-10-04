@@ -31,6 +31,8 @@
 
 #if defined(_WIN32)
 #include <direct.h>
+#include <fcntl.h>
+#include <io.h>
 #include <sys/stat.h>
 #else
 #include <fcntl.h>
@@ -171,6 +173,21 @@ static inline int llg_path_is_dir(const char* dir) {
 #else
     struct stat info;
     return stat(dir, &info) == 0 && S_ISDIR(info.st_mode);
+#endif
+}
+
+// ── Standard streams ────────────────────────────────────────────────────────
+
+// Make stdout and stderr write "\n" unchanged. Windows text-mode streams
+// expand it to CRLF; the llg driver (Rust) never does, so this keeps the
+// simulator's console output byte-identical to the driver's and to other
+// hosts. Files the simulation opens keep their requested text/binary mode.
+static inline void llg_stdio_use_lf_newlines(void) {
+#if defined(_WIN32)
+    fflush(stdout);
+    fflush(stderr);
+    (void)_setmode(_fileno(stdout), _O_BINARY);
+    (void)_setmode(_fileno(stderr), _O_BINARY);
 #endif
 }
 

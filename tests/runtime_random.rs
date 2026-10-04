@@ -129,7 +129,11 @@ fn random_runtime_vectors_and_boundaries_are_stable_at_both_optimization_levels(
             "random runtime must compile at {optimization}: {}",
             String::from_utf8_lossy(&output.stderr)
         );
-        let output = sim_harness::run_executable(&executable).expect("run random probe");
+        // The standalone probe prints through a text-mode stdout, which Windows
+        // ends with CRLF; only generated models switch it to LF.
+        let output = sim_harness::run_executable(&executable)
+            .expect("run random probe")
+            .replace("\r\n", "\n");
         assert_eq!(output, "vector=0 boundaries=0\n", "{optimization}");
     }
 }

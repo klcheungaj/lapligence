@@ -184,6 +184,10 @@ fn random_runtime_compiles_and_runs_without_scheduler() {
         String::from_utf8_lossy(&compiled.stderr)
     );
 
-    let stdout = sim_harness::run_executable(&executable).expect("random probe should run");
+    // The standalone probe prints through a text-mode stdout, which Windows
+    // ends with CRLF; only generated models switch it to LF.
+    let stdout = sim_harness::run_executable(&executable)
+        .expect("random probe should run")
+        .replace("\r\n", "\n");
     assert_eq!(stdout, "runtime random streams ok\n");
 }

@@ -87,6 +87,7 @@ static const char* llg_output_env(const char* name) {
 }
 
 static int configure_output_files(void) {
+    llg_stdio_use_lf_newlines();
     free(llg_output_dir);
     llg_output_dir = NULL;
     const char* dir = llg_output_env("LLG_SIM_OUT_DIR");
