@@ -23,7 +23,7 @@ fn resource_limit_failures_log_errors_with_actionable_guidance() {
                 let analysis = analyze(&CompileOpts {
                     library_units: true,
                     sources: vec![compile::OwnedSource::compilation_unit(
-                        "/virtual/top.sv",
+                        hp("/virtual/top.sv"),
                         "module top; endmodule",
                     )],
                     limits,
@@ -91,10 +91,10 @@ fn export_limit_recovers_declaration_level_workspace_features() {
     let analysis = analyze(&CompileOpts {
         sources: vec![
             llg::core::compile::OwnedSource::compilation_unit(
-                "/virtual/leaf.sv",
+                hp("/virtual/leaf.sv"),
                 "module leaf; endmodule\n",
             ),
-            llg::core::compile::OwnedSource::compilation_unit("/virtual/top.sv", &top),
+            llg::core::compile::OwnedSource::compilation_unit(hp("/virtual/top.sv"), &top),
         ],
         limits,
         ..CompileOpts::default()
@@ -119,12 +119,12 @@ fn export_limit_recovers_declaration_level_workspace_features() {
     assert!(workspace_symbols(&analysis, "leaf")
         .iter()
         .any(|symbol| symbol.name == "leaf"));
-    assert!(!semantic_tokens_for(&analysis, "/virtual/top.sv")
+    assert!(!semantic_tokens_for(&analysis, hp("/virtual/top.sv"))
         .data
         .is_empty());
-    let definition = definition_at(&analysis, "/virtual/top.sv", 0, 12)
+    let definition = definition_at(&analysis, hp("/virtual/top.sv"), 0, 12)
         .expect("definition of the leaf module reference");
-    assert_eq!(definition.uri.path(), "/virtual/leaf.sv");
+    assert_eq!(definition.uri.path(), hp("/virtual/leaf.sv"));
 
     let explorer = crate::module_explorer::snapshot_analysis("workspace", &analysis, |path| {
         Some(path.to_owned())
@@ -145,7 +145,7 @@ fn single_unit_native_limit_recovers_navigation() {
     );
     let analysis = analyze(&CompileOpts {
         sources: vec![compile::OwnedSource::compilation_unit(
-            "/virtual/top.sv",
+            hp("/virtual/top.sv"),
             &source,
         )],
         limits: llg::ffi::slang::Limits {
@@ -213,7 +213,7 @@ fn served_feature_parts() -> (DesignModel, Vec<FileTokens>) {
         top_instances: Vec::new(),
         modules: vec![ModuleDef {
             name: "m".to_owned(),
-            file: Some("/x/top.sv".to_owned()),
+            file: Some(hp("/x/top.sv").to_owned()),
             line: 1,
             col: 8,
             end_line: 3,
@@ -223,7 +223,7 @@ fn served_feature_parts() -> (DesignModel, Vec<FileTokens>) {
         classes: Vec::new(),
     };
     let tokens = vec![FileTokens {
-        path: "/x/top.sv".to_owned(),
+        path: hp("/x/top.sv").to_owned(),
         nodes: vec![TokenInfo {
             line: 1,
             col: 8,
@@ -231,7 +231,7 @@ fn served_feature_parts() -> (DesignModel, Vec<FileTokens>) {
             end_col: 9,
             kind: tokens::TOKEN_SLANG_MODULE + tokens::TOKEN_DECLARATION_OFFSET,
             name: Some("m".to_owned()),
-            file: "/x/top.sv".to_owned(),
+            file: hp("/x/top.sv").to_owned(),
         }],
     }];
     (model, tokens)

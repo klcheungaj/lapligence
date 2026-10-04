@@ -5,7 +5,7 @@ use super::*;
 #[test]
 fn module_graph_from_slang_deduplicates_definitions_and_uses_utf16_columns() {
     let _guards = analysis_guards();
-    let name = "/virtual/module_graph.sv";
+    let name = hp("/virtual/module_graph.sv");
     let source = "/*😀*/ module top; endmodule\n";
     let opts = CompileOpts::default();
     let mut out = llg::core::compile::compile_sources(
@@ -42,15 +42,15 @@ fn slang_module_explorer_keeps_repeated_nested_instances_and_source_roots() {
     let _guards = analysis_guards();
     let sources = [
         llg::core::compile::OwnedSource::compilation_unit(
-            "/virtual/tb.sv",
+            hp("/virtual/tb.sv"),
             "module tb; top u_top(); endmodule\n",
         ),
         llg::core::compile::OwnedSource::compilation_unit(
-            "/virtual/top.sv",
+            hp("/virtual/top.sv"),
             "module top; child #(.WIDTH(8)) u_child(); child #(.WIDTH(16)) u_wide(); endmodule\n",
         ),
         llg::core::compile::OwnedSource::compilation_unit(
-            "/virtual/child.sv",
+            hp("/virtual/child.sv"),
             "module child #(parameter int WIDTH = 1); logic [WIDTH-1:0] value; endmodule\n",
         ),
     ];
@@ -112,8 +112,8 @@ fn navigation_capture_keeps_repeated_instance_labels_and_scoped_references() {
     let analysis = analyze(&CompileOpts {
         library_units: true,
         sources: vec![
-            compile::OwnedSource::compilation_unit("/virtual/leaf.sv", leaf),
-            compile::OwnedSource::compilation_unit("/virtual/top.sv", top),
+            compile::OwnedSource::compilation_unit(hp("/virtual/leaf.sv"), leaf),
+            compile::OwnedSource::compilation_unit(hp("/virtual/top.sv"), top),
         ],
         ..Default::default()
     });
@@ -122,16 +122,16 @@ fn navigation_capture_keeps_repeated_instance_labels_and_scoped_references() {
         let text = top.lines().nth(line).unwrap();
         let label = text.find(".clk").unwrap() as u32 + 1;
         let actual = text.find("(clk)").unwrap() as u32 + 1;
-        let target = definition_at(&analysis, "/virtual/top.sv", line as u32, label)
+        let target = definition_at(&analysis, hp("/virtual/top.sv"), line as u32, label)
             .expect("port label definition");
-        assert_eq!(target.uri.path(), "/virtual/leaf.sv");
-        let target = definition_at(&analysis, "/virtual/top.sv", line as u32, actual)
+        assert_eq!(target.uri.path(), hp("/virtual/leaf.sv"));
+        let target = definition_at(&analysis, hp("/virtual/top.sv"), line as u32, actual)
             .expect("actual definition");
-        assert_eq!(target.uri.path(), "/virtual/top.sv");
+        assert_eq!(target.uri.path(), hp("/virtual/top.sv"));
         assert_eq!(target.range.start.line, 0);
     }
     let reference = leaf.lines().nth(1).unwrap().find("= value").unwrap() as u32 + 2;
-    let target = definition_at(&analysis, "/virtual/leaf.sv", 1, reference)
+    let target = definition_at(&analysis, hp("/virtual/leaf.sv"), 1, reference)
         .expect("formal argument definition");
     assert_eq!(target.range.start.line, 1);
     assert_eq!(target.range.start.character, 25);
@@ -144,18 +144,21 @@ fn navigation_capture_keeps_duplicate_module_contents_in_their_own_files() {
         library_units: true,
         sources: vec![
             compile::OwnedSource::compilation_unit(
-                "/virtual/one.sv",
+                hp("/virtual/one.sv"),
                 "module debug_top(input logic left); endmodule",
             ),
             compile::OwnedSource::compilation_unit(
-                "/virtual/two.sv",
+                hp("/virtual/two.sv"),
                 "module debug_top(input logic right); endmodule",
             ),
         ],
         ..Default::default()
     });
     assert_eq!(analysis.module_graph.definitions.len(), 2);
-    for (file, port) in [("/virtual/one.sv", "left"), ("/virtual/two.sv", "right")] {
+    for (file, port) in [
+        (hp("/virtual/one.sv"), "left"),
+        (hp("/virtual/two.sv"), "right"),
+    ] {
         let definition = analysis
             .module_graph
             .definitions

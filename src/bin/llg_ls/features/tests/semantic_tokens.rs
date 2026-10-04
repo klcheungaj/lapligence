@@ -5,8 +5,10 @@ use super::*;
 #[test]
 fn semantic_tokens_require_exact_source_identity() {
     let a = sample_analysis();
-    assert!(semantic_tokens_for(&a, "/symlink/top.sv").data.is_empty());
-    assert!(!semantic_tokens_for(&a, "/x/top.sv").data.is_empty());
+    assert!(semantic_tokens_for(&a, hp("/symlink/top.sv"))
+        .data
+        .is_empty());
+    assert!(!semantic_tokens_for(&a, hp("/x/top.sv")).data.is_empty());
 }
 
 #[test]
@@ -15,14 +17,14 @@ fn semantic_tokens_are_empty_for_a_file_with_a_syntax_error() {
     let mut analysis = sample_analysis();
     analysis.diagnostics.push(Diag {
         severity: Severity::Syntax,
-        file: Some("/x/top.sv".to_owned()),
+        file: Some(hp("/x/top.sv").to_owned()),
         line: 1,
         col: 1,
         message: "incomplete module".to_owned(),
     });
 
     // Act
-    let tokens = semantic_tokens_for(&analysis, "/x/top.sv");
+    let tokens = semantic_tokens_for(&analysis, hp("/x/top.sv"));
 
     // Assert
     assert!(tokens.data.is_empty());
@@ -34,14 +36,14 @@ fn semantic_tokens_remain_available_when_another_file_has_a_syntax_error() {
     let mut analysis = sample_analysis();
     analysis.diagnostics.push(Diag {
         severity: Severity::Syntax,
-        file: Some("/other/top.sv".to_owned()),
+        file: Some(hp("/other/top.sv").to_owned()),
         line: 1,
         col: 1,
         message: "incomplete module".to_owned(),
     });
 
     // Act
-    let tokens = semantic_tokens_for(&analysis, "/x/top.sv");
+    let tokens = semantic_tokens_for(&analysis, hp("/x/top.sv"));
 
     // Assert
     assert!(!tokens.data.is_empty());
