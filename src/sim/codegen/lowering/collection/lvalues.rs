@@ -287,165 +287,53 @@ impl<'a> Codegen<'a> {
         }
     }
 
-    /// One packed selection applied to a value rooted at a modport expression
+    /// The packed selection applied to a value rooted at a modport expression
     /// port, e.g. `b.p[i]` for `.p(r[7:4])`. Selectors are numbered by the
     /// selected value's own packed type (the port takes its expression's
-    /// self-determined type, SV 25.5.4); the step is relative to that
-    /// value's least significant bit. Returns the selected base and the step.
+    /// self-determined type, SV 25.5.4); the steps are relative to that
+    /// value's least significant bit. Returns the selected base and the steps.
     pub(in super::super) fn modport_select_step(
         &mut self,
         path: &str,
         node: NodeId,
-    ) -> Result<Option<(NodeId, crate::sim::ir::IrPackedSelect)>, String> {
-        let base = match self.kind(node) {
-            NodeKind::Expr(
-                ExprKind::BitSelect { base, .. }
-                | ExprKind::PartSelect { base, .. }
-                | ExprKind::IndexedPartSelect { base, .. }
-                | ExprKind::ArraySelect { base, .. },
-            ) if self.is_modport_select_root(*base) => *base,
-            _ => return Ok(None),
-        };
-        let base_width = self.lower_expr(path, base)?.width;
-        let ranges = self.packed_ranges_for_base(base).unwrap_or_else(|| {
-            vec![crate::core::db::PackedRange {
-                left: i128::from(base_width) - 1,
-                right: 0,
-            }]
-        });
-        let invalid = || format!("invalid packed selection of a modport port in `{path}`");
-        let offset_expr = |offset: u128| -> Result<IrExpr, String> {
-            i128::try_from(offset)
-                .map(lhs_integer_expr)
-                .map_err(|_| "modport port select offset overflows".to_owned())
-        };
-        // Constant selectors walk the dimensions; each fixes one slot.
-        let mut lsb = 0u128;
-        let mut width = u128::from(base_width);
-        let mut dimension = 0usize;
-        let mut select_constant = |cg: &Self, index: NodeId| -> Result<(), String> {
-            let range = *ranges.get(dimension).ok_or_else(invalid)?;
-            let extent = range.left.abs_diff(range.right) + 1;
-            let stride = width / extent;
-            let value = cg.eval_bound_i128(index).map_err(|_| {
-                format!(
-                    "runtime selection of a multidimensional modport port in `{path}` is not supported"
-                )
-            })?;
-            let slot = cg.packed_range_slot(range, value, "port")?;
-            lsb += slot * stride;
-            width = stride;
-            dimension += 1;
-            Ok(())
-        };
-        // One runtime selector of a multidimensional value picks a whole
-        // element: scale its normalized slot by the element width.
-        let runtime_element = match self.kind(node) {
-            NodeKind::Expr(ExprKind::BitSelect { index, .. }) => Some(*index),
-            NodeKind::Expr(ExprKind::ArraySelect { indices, .. }) if indices.len() == 1 => {
-                Some(indices[0])
-            }
-            _ => None,
-        }
-        .filter(|index| ranges.len() > 1 && self.eval_bound_i128(*index).is_err());
-        if let Some(index) = runtime_element {
-            let range = ranges[0];
-            let stride = u32::try_from(width / (range.left.abs_diff(range.right) + 1))
-                .map_err(|_| invalid())?;
-            let index = self.lower_expr(path, index)?;
-            let right = lhs_integer_expr(range.right);
-            let multiply_bits = u32::BITS - stride.saturating_sub(1).leading_zeros();
-            let arithmetic_width = index
-                .width
-                .max(right.width)
-                .checked_add(2)
-                .and_then(|width| width.checked_add(multiply_bits))
-                .filter(|width| *width <= LLG_MAX_WIDTH)
-                .ok_or_else(|| {
-                    "packed selection index arithmetic exceeds the supported limit".to_owned()
-                })?;
-            let index = IrExpr::convert_to(index, arithmetic_width, true);
-            let right = IrExpr::convert_to(right, arithmetic_width, true);
-            let relative = if range.left < range.right {
-                bin_expr(IrBinOp::Sub, right, index)
-            } else {
-                bin_expr(IrBinOp::Sub, index, right)
-            };
-            let offset = bin_expr(
-                IrBinOp::Mul,
-                relative,
-                IrExpr::convert_to(lhs_integer_expr(i128::from(stride)), arithmetic_width, true),
-            );
-            return Ok(Some((
-                base,
-                crate::sim::ir::IrPackedSelect {
-                    base: offset,
-                    width: stride,
-                },
-            )));
-        }
-        let step = match self.kind(node) {
-            NodeKind::Expr(ExprKind::ArraySelect { indices, .. }) => {
-                for index in indices.clone() {
-                    select_constant(self, index)?;
-                }
-                crate::sim::ir::IrPackedSelect {
-                    base: offset_expr(lsb)?,
-                    width: u32::try_from(width).map_err(|_| invalid())?,
-                }
-            }
-            NodeKind::Expr(ExprKind::BitSelect { index, .. })
-                if ranges.len() == 1 || self.eval_bound_i128(*index).is_ok() =>
+    ) -> Result<Option<(NodeId, Vec<crate::sim::ir::IrPackedSelect>)>, String> {
+        let (base, select) = match self.kind(node) {
+            NodeKind::Expr(ExprKind::BitSelect { base, index })
+                if self.is_modport_select_root(*base) =>
             {
-                if ranges.len() == 1 {
-                    crate::sim::ir::IrPackedSelect {
-                        base: self.lower_packed_index(path, base, *index)?,
-                        width: 1,
-                    }
-                } else {
-                    select_constant(self, *index)?;
-                    crate::sim::ir::IrPackedSelect {
-                        base: offset_expr(lsb)?,
-                        width: u32::try_from(width).map_err(|_| invalid())?,
-                    }
-                }
+                (*base, Select::Elements(vec![*index]))
             }
-            NodeKind::Expr(ExprKind::PartSelect { left, right, .. }) => {
-                let range = *ranges.first().ok_or_else(invalid)?;
-                let stride = width / (range.left.abs_diff(range.right) + 1);
-                let left = self.packed_range_slot(range, self.eval_bound_i128(*left)?, "port")?;
-                let right = self.packed_range_slot(range, self.eval_bound_i128(*right)?, "port")?;
-                crate::sim::ir::IrPackedSelect {
-                    base: offset_expr(left.min(right) * stride)?,
-                    width: u32::try_from((left.abs_diff(right) + 1) * stride)
-                        .map_err(|_| invalid())?,
-                }
+            NodeKind::Expr(ExprKind::ArraySelect { base, indices })
+                if self.is_modport_select_root(*base) =>
+            {
+                (*base, Select::Elements(indices.clone()))
+            }
+            NodeKind::Expr(ExprKind::PartSelect { base, left, right })
+                if self.is_modport_select_root(*base) =>
+            {
+                (*base, Select::Part(*left, *right))
             }
             NodeKind::Expr(ExprKind::IndexedPartSelect {
+                base,
                 base_expr,
                 width_expr,
                 neg,
-                ..
-            }) if ranges.len() == 1 => {
-                let width = self.indexed_part_select_width(*width_expr, path)?;
-                let negative = *neg ^ self.packed_range_ascending(base);
-                let offset = self.lower_packed_index(path, base, *base_expr)?;
-                super::super::references::indexed_projection(offset, width, negative)?
+            }) if self.is_modport_select_root(*base) => {
+                (*base, Select::Indexed(*base_expr, *width_expr, *neg))
             }
-            _ => {
-                return Err(format!(
-                "runtime selection of a multidimensional modport port in `{path}` is not supported"
-            ))
-            }
+            _ => return Ok(None),
         };
-        Ok(Some((base, step)))
+        let mut width = self.lower_expr(path, base)?.width;
+        let mut steps = Vec::new();
+        self.packed_selection_steps(path, base, select, &mut width, &mut steps)?;
+        Ok(Some((base, steps)))
     }
 
     /// Canonical target of a selection written through a modport expression
     /// port: the step composes onto the port expression's own target, so
     /// selections of part-selects and concatenations reach their storage.
     fn modport_select_lhs(&mut self, path: &str, lhs: NodeId) -> Result<Option<IrLhs>, String> {
-        let Some((base, step)) = self.modport_select_step(path, lhs)? else {
+        let Some((base, steps)) = self.modport_select_step(path, lhs)? else {
             return Ok(None);
         };
         let target = match self.modport_expression_target(base) {
@@ -456,7 +344,7 @@ impl<'a> Codegen<'a> {
         };
         let selected = IrLhs::PackedSelect {
             target: Box::new(target),
-            steps: vec![step],
+            steps,
             signed: false,
             two_state: false,
         };
@@ -664,6 +552,9 @@ impl<'a> Codegen<'a> {
                 if let Some(lhs) = self.packed_element_lhs_ir(path, lhs)? {
                     return Ok(Lhs::Canonical(lhs));
                 }
+                if let Some(lhs) = self.packed_value_lhs(path, lhs)? {
+                    return Ok(lhs);
+                }
                 let target = match self.kind(*base) {
                     NodeKind::Expr(ExprKind::Ref {
                         target: Some(target),
@@ -760,6 +651,9 @@ impl<'a> Codegen<'a> {
             NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
                 if let Some(lhs) = self.packed_element_lhs_ir(path, lhs)? {
                     return Ok(Lhs::Canonical(lhs));
+                }
+                if let Some(lhs) = self.packed_value_lhs(path, lhs)? {
+                    return Ok(lhs);
                 }
                 if let Some((_target, _kind, member_info)) = self.unpacked_member_info(lhs) {
                     let member = member_info.member;
@@ -867,6 +761,9 @@ impl<'a> Codegen<'a> {
                 if let Some(lhs) = self.packed_element_lhs_ir(path, lhs)? {
                     return Ok(Lhs::Canonical(lhs));
                 }
+                if let Some(lhs) = self.packed_value_lhs(path, lhs)? {
+                    return Ok(lhs);
+                }
                 if let Some((info, member, lsb, width)) = self.packed_member_range_info(
                     *base,
                     self.eval_bound_i128(*left)?,
@@ -930,6 +827,9 @@ impl<'a> Codegen<'a> {
             }) => {
                 if let Some(lhs) = self.packed_element_lhs_ir(path, lhs)? {
                     return Ok(Lhs::Canonical(lhs));
+                }
+                if let Some(lhs) = self.packed_value_lhs(path, lhs)? {
+                    return Ok(lhs);
                 }
                 if let Some(mut element) = self.array_element_lhs(path, *base)? {
                     if element.arr.real {

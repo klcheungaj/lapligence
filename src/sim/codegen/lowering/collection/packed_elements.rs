@@ -1,7 +1,7 @@
 //! Packed selections of fixed-array elements, preserving each intermediate bound.
 
+use super::super::packed_geometry::PackedSelectDim;
 use super::*;
-use crate::core::db::PackedRange;
 use crate::sim::ir::IrPackedSelect;
 
 pub(in super::super) enum Select {
@@ -90,6 +90,190 @@ impl<'a> Codegen<'a> {
         }))
     }
 
+    /// Selectors of a chain rooted at a whole packed value: a signal, port,
+    /// local, formal or parameter, never an unpacked-array element, member,
+    /// container or modport expression port (each has its own projection).
+    fn packed_value_selectors(&self, node: NodeId) -> Option<(NodeId, Vec<(NodeId, Select)>)> {
+        let mut current = node;
+        let mut selectors = Vec::new();
+        loop {
+            let (base, select) = match self.kind(current) {
+                NodeKind::Expr(ExprKind::BitSelect { base, index }) => {
+                    (*base, Select::Elements(vec![*index]))
+                }
+                NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
+                    (*base, Select::Elements(indices.clone()))
+                }
+                NodeKind::Expr(ExprKind::PartSelect { base, left, right }) => {
+                    (*base, Select::Part(*left, *right))
+                }
+                NodeKind::Expr(ExprKind::IndexedPartSelect {
+                    base,
+                    base_expr,
+                    width_expr,
+                    neg,
+                }) => (*base, Select::Indexed(*base_expr, *width_expr, *neg)),
+                _ => break,
+            };
+            if self.array_of(base).is_some() || self.container_of(base).is_some() {
+                return None;
+            }
+            selectors.push((base, select));
+            current = base;
+        }
+        let root = current;
+        let admitted = !selectors.is_empty()
+            && matches!(
+                self.kind(root),
+                NodeKind::Net { .. }
+                    | NodeKind::Var { .. }
+                    | NodeKind::Expr(ExprKind::Ref { .. } | ExprKind::HierPath { .. })
+            )
+            && self.packed_member_info(root).is_none()
+            && self.packed_parameter_member_info(root).is_none()
+            && self.unpacked_member_info(root).is_none()
+            && self.unpacked_aggregate_info(root).is_none()
+            && !self.is_modport_select_root(root);
+        admitted.then(|| {
+            selectors.reverse();
+            (root, selectors)
+        })
+    }
+
+    /// Steps of a packed value chain whose outer dimension has elements wider
+    /// than one bit, or `None` for a one-dimensional bit vector, whose bit
+    /// coordinates the scalar select paths already use.
+    fn packed_value_steps(
+        &mut self,
+        path: &str,
+        root: NodeId,
+        selectors: Vec<(NodeId, Select)>,
+        root_width: u32,
+    ) -> Result<Option<Vec<IrPackedSelect>>, String> {
+        let Some(ranges) = self.packed_ranges_for_base(root) else {
+            return Ok(None);
+        };
+        let Some(outer) = ranges.first().copied() else {
+            return Ok(None);
+        };
+        let Ok(dim) = PackedSelectDim::new(root_width, Some(outer)) else {
+            return Ok(None);
+        };
+        if ranges.len() < 2 && dim.stride == 1 {
+            return Ok(None);
+        }
+        let mut width = root_width;
+        let mut steps = Vec::new();
+        for (base, select) in selectors {
+            self.packed_selection_steps(path, base, select, &mut width, &mut steps)?;
+        }
+        Ok(Some(steps))
+    }
+
+    /// Read a select chain over a multidimensional packed value, or a packed
+    /// array of structures, as whole elements (IEEE 1800-2009 7.4.5).
+    pub(in super::super) fn packed_value_read_ir(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<Option<IrExpr>, String> {
+        let Some((root, selectors)) = self.packed_value_selectors(node) else {
+            return Ok(None);
+        };
+        let value = self.lower_expr(path, root)?;
+        if value.is_real() {
+            return Ok(None);
+        }
+        let Some(steps) = self.packed_value_steps(path, root, selectors, value.width)? else {
+            return Ok(None);
+        };
+        if let Some((lsb, width)) = constant_packed_span(value.width, &steps) {
+            return Ok(Some(IrExpr::new(
+                IrExprKind::PartSel {
+                    base: Box::new(value),
+                    left: i64::from(lsb) + i64::from(width) - 1,
+                    right: i64::from(lsb),
+                },
+                width,
+                false,
+                None,
+            )));
+        }
+        let value = steps.into_iter().fold(value, |value, step| {
+            super::packed_formals::packed_step_read(value, step)
+        });
+        // Out-of-range and unknown selects of a two-state value read 0
+        // rather than X (IEEE 1800-2009 11.5.1).
+        Ok(Some(
+            if self
+                .query_descriptor(root)
+                .is_some_and(|descriptor| descriptor.two_state)
+            {
+                IrExpr::to_two_state(value)
+            } else {
+                value
+            },
+        ))
+    }
+
+    /// Write target of a select chain over a multidimensional packed value.
+    /// An in-range constant chain is one part-select of the root signal and
+    /// one runtime step is an indexed part-select, so nets, forces, NBAs and
+    /// writer analysis see ordinary bit ranges. Longer runtime chains keep
+    /// every intermediate bound as relative packed steps.
+    pub(in super::super) fn packed_value_lhs(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<Option<Lhs>, String> {
+        let Some((root, selectors)) = self.packed_value_selectors(node) else {
+            return Ok(None);
+        };
+        let target = self.analyze_lhs(path, root)?;
+        let (root_width, two_state) = match &target {
+            Lhs::Whole(info) if !info.real => (info.width, info.two_state),
+            Lhs::WholeRef {
+                width,
+                two_state,
+                shortreal: false,
+                ..
+            }
+            | Lhs::Ref {
+                width, two_state, ..
+            } => (*width, *two_state),
+            _ => return Ok(None),
+        };
+        let Some(steps) = self.packed_value_steps(path, root, selectors, root_width)? else {
+            return Ok(None);
+        };
+        if let Lhs::Whole(info) = &target {
+            if let Some((lsb, width)) = constant_packed_span(root_width, &steps) {
+                return Ok(Some(Lhs::Part(
+                    info.clone(),
+                    i128::from(lsb) + i128::from(width) - 1,
+                    i128::from(lsb),
+                    two_state,
+                )));
+            }
+            if let [step] = steps.as_slice() {
+                return Ok(Some(Lhs::IdxPart(
+                    info.clone(),
+                    step.base.clone(),
+                    lhs_integer_expr(i128::from(step.width)),
+                    step.width,
+                    false,
+                    two_state,
+                )));
+            }
+        }
+        Ok(Some(Lhs::Canonical(IrLhs::PackedSelect {
+            target: Box::new(self.lhs_to_ir(target)?),
+            steps,
+            signed: false,
+            two_state,
+        })))
+    }
+
     pub(in super::super) fn packed_selection_steps(
         &mut self,
         path: &str,
@@ -98,55 +282,59 @@ impl<'a> Codegen<'a> {
         parent_width: &mut u32,
         steps: &mut Vec<IrPackedSelect>,
     ) -> Result<(), String> {
-        let dimensions = self.db.packed_dimensions(base).unwrap_or(&[]).to_vec();
+        // A modport expression port is numbered by its expression's own type.
+        let dimensions = match self.db.packed_dimensions(base) {
+            Some(dimensions) if self.modport_expression_target(base).is_none() => {
+                dimensions.to_vec()
+            }
+            _ => self.packed_ranges_for_base(base).unwrap_or_default(),
+        };
         match select {
             Select::Elements(indices) => {
                 for (dimension, index) in indices.into_iter().enumerate() {
-                    let (range, stride) =
-                        packed_dimension(*parent_width, dimensions.get(dimension).copied())?;
-                    let index = self.lower_expr(path, index)?;
+                    let dim =
+                        PackedSelectDim::new(*parent_width, dimensions.get(dimension).copied())?;
+                    // A constant label folds to its offset; an X/Z or runtime
+                    // label keeps the arithmetic so its value propagates.
+                    let base = match self.eval_bound_i128(index) {
+                        Ok(label) => lhs_integer_expr(dim.element(label)?.0),
+                        Err(_) => {
+                            let index = self.lower_expr(path, index)?;
+                            dim.lsb_expr(index, 0)?
+                        }
+                    };
                     steps.push(IrPackedSelect {
-                        base: packed_lsb(index, range, stride, 0)?,
-                        width: stride,
+                        base,
+                        width: dim.stride,
                     });
-                    *parent_width = stride;
+                    *parent_width = dim.stride;
                 }
             }
             Select::Part(left, right) => {
-                let (range, stride) = packed_dimension(*parent_width, dimensions.first().copied())?;
+                let dim = PackedSelectDim::new(*parent_width, dimensions.first().copied())?;
                 let left = self.eval_bound_i128(left)?;
                 let right = self.eval_bound_i128(right)?;
-                if left != right && (left < right) != (range.left < range.right) {
-                    return Err(format!("reversed packed part-select in `{path}`"));
-                }
-                let count = left
-                    .abs_diff(right)
-                    .checked_add(1)
-                    .ok_or_else(|| format!("packed selection extent overflows in `{path}`"))?;
-                let width = packed_selection_width(count, stride)?;
+                let (lsb, width) = dim
+                    .part(left, right)
+                    .map_err(|error| format!("{error} in `{path}`"))?;
                 steps.push(IrPackedSelect {
-                    base: packed_lsb(lhs_integer_expr(right), range, stride, 0)?,
+                    base: lhs_integer_expr(lsb),
                     width,
                 });
                 *parent_width = width;
             }
             Select::Indexed(base, width, negative) => {
-                let (range, stride) = packed_dimension(*parent_width, dimensions.first().copied())?;
+                let dim = PackedSelectDim::new(*parent_width, dimensions.first().copied())?;
                 let count = self.indexed_part_select_width(width, path)?;
-                let width = packed_selection_width(u128::from(count), stride)?;
-                // For ascending declarations +: starts at the MSB; for
-                // descending declarations -: starts at the MSB. Translate to
-                // the LSB before multiplying by the remaining element stride.
-                let back = if negative ^ (range.left < range.right) {
-                    count - 1
-                } else {
-                    0
+                let width = dim.indexed_width(count)?;
+                let base = match self.eval_bound_i128(base) {
+                    Ok(label) => lhs_integer_expr(dim.indexed(label, count, negative)?.0),
+                    Err(_) => {
+                        let base = self.lower_expr(path, base)?;
+                        dim.lsb_expr(base, dim.indexed_back(count, negative))?
+                    }
                 };
-                let base = self.lower_expr(path, base)?;
-                steps.push(IrPackedSelect {
-                    base: packed_lsb(base, range, stride, back)?,
-                    width,
-                });
+                steps.push(IrPackedSelect { base, width });
                 *parent_width = width;
             }
         }
@@ -154,89 +342,29 @@ impl<'a> Codegen<'a> {
     }
 }
 
-fn packed_dimension(width: u32, range: Option<PackedRange>) -> Result<(PackedRange, u32), String> {
-    let range = match range {
-        Some(range) => range,
-        None if width > 1 => PackedRange {
-            left: i128::from(width - 1),
-            right: 0,
-        },
-        None => return Err("packed selection has no remaining dimension".to_owned()),
-    };
-    let extent = range
-        .left
-        .abs_diff(range.right)
-        .checked_add(1)
-        .and_then(|extent| u32::try_from(extent).ok())
-        .ok_or_else(|| "packed dimension extent overflows".to_owned())?;
-    if width == 0 || extent == 0 || !width.is_multiple_of(extent) {
-        return Err("packed dimension disagrees with its element width".to_owned());
+/// The LSB-relative span of a chain whose every step is a constant offset
+/// inside its parent value. Any other chain keeps its steps so out-of-range
+/// and unknown offsets clip at run time.
+fn constant_packed_span(root_width: u32, steps: &[IrPackedSelect]) -> Option<(u32, u32)> {
+    let mut parent = root_width;
+    let mut lsb = 0u32;
+    for step in steps {
+        let IrExprKind::Const(offset) = &step.base.kind else {
+            return None;
+        };
+        if offset.signed
+            || offset.real.is_some()
+            || offset.x.iter().chain(&offset.z).any(|word| *word != 0)
+            || offset.bits.iter().skip(1).any(|word| *word != 0)
+        {
+            return None;
+        }
+        let offset = u32::try_from(offset.bits.first().copied().unwrap_or(0)).ok()?;
+        if offset.checked_add(step.width)? > parent {
+            return None;
+        }
+        lsb = lsb.checked_add(offset)?;
+        parent = step.width;
     }
-    Ok((range, width / extent))
+    Some((lsb, parent))
 }
-
-fn packed_selection_width(count: u128, stride: u32) -> Result<u32, String> {
-    count
-        .checked_mul(u128::from(stride))
-        .and_then(|width| u32::try_from(width).ok())
-        .filter(|width| *width != 0 && *width <= LLG_MAX_WIDTH)
-        .ok_or_else(|| "packed selection width exceeds the supported limit".to_owned())
-}
-
-/// Widen before coordinate arithmetic, including multiplication. An unsigned
-/// high-bit index must not become negative or wrap into a valid lane. Selector
-/// literals are self-determined; an unbased '1 denotes one, not a widened fill.
-pub(super) fn packed_lsb(
-    mut index: IrExpr,
-    range: PackedRange,
-    stride: u32,
-    back: u32,
-) -> Result<IrExpr, String> {
-    if index.is_real() || stride == 0 {
-        return Err("packed selection requires an integral index and nonzero stride".to_owned());
-    }
-    if index.fill.is_some()
-        || matches!(&index.kind, IrExprKind::Fill(_))
-        || matches!(&index.kind, IrExprKind::Const(value) if value.fill.is_some())
-    {
-        // A one-item concatenation establishes a self-determined unsigned
-        // value in both the constant folder and the owned C emitter. Merely
-        // clearing IrExpr::fill leaves a constant's own fill marker active.
-        let width = index.width;
-        index = IrExpr::new(
-            IrExprKind::Concat { parts: vec![index] },
-            width,
-            false,
-            None,
-        );
-    }
-    let right = lhs_integer_expr(range.right);
-    let back = lhs_integer_expr(i128::from(back));
-    let multiply_bits = u32::BITS - (stride - 1).leading_zeros();
-    let width = index
-        .width
-        .max(right.width)
-        .max(back.width)
-        .checked_add(2)
-        .and_then(|width| width.checked_add(multiply_bits))
-        .filter(|width| *width <= LLG_MAX_WIDTH)
-        .ok_or_else(|| {
-            "packed selection index arithmetic exceeds the supported limit".to_owned()
-        })?;
-    let index = IrExpr::convert_to(index, width, true);
-    let right = IrExpr::convert_to(right, width, true);
-    let offset = if range.left < range.right {
-        bin_expr(IrBinOp::Sub, right, index)
-    } else {
-        bin_expr(IrBinOp::Sub, index, right)
-    };
-    let offset = bin_expr(IrBinOp::Sub, offset, IrExpr::convert_to(back, width, true));
-    Ok(bin_expr(
-        IrBinOp::Mul,
-        offset,
-        IrExpr::convert_to(lhs_integer_expr(i128::from(stride)), width, true),
-    ))
-}
-
-#[cfg(test)]
-mod tests;

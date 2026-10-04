@@ -1,5 +1,6 @@
 //! Dependencies.
 
+use super::super::packed_geometry::PackedSelectDim;
 use super::*;
 
 /// Widest constant array row whose cells are recorded individually in
@@ -383,6 +384,12 @@ impl<'a> Codegen<'a> {
                 right: 0,
             }],
         };
+        // A selected span outside its parent has no static storage bound.
+        let inside = |offset: i128, width: u32, parent: u32| {
+            u32::try_from(offset)
+                .ok()
+                .filter(|offset| offset.checked_add(width).is_some_and(|end| end <= parent))
+        };
         let mut lsb = offset;
         let mut width = base_width;
         if let Some((a, b, indexed)) = bounds {
@@ -392,37 +399,23 @@ impl<'a> Codegen<'a> {
             let Ok(b) = self.eval_bound_i128(b) else {
                 return Some(prefix);
             };
-            let (left, right) = match indexed {
-                None => (a, b),
-                Some(neg) => {
-                    let delta = b.checked_sub(1).filter(|delta| *delta >= 0)?;
-                    (
-                        a,
-                        if neg {
-                            a.checked_sub(delta)?
-                        } else {
-                            a.checked_add(delta)?
-                        },
-                    )
-                }
-            };
-            let range = ranges[0];
-            let stride =
-                u128::from(base_width) / (range.left.abs_diff(range.right).checked_add(1)?);
-            let x = self.packed_range_slot(range, left, "dependency").ok()?;
-            let y = self.packed_range_slot(range, right, "dependency").ok()?;
-            lsb = lsb.checked_add(u32::try_from(x.min(y).checked_mul(stride)?).ok()?)?;
-            width = u32::try_from(x.abs_diff(y).checked_add(1)?.checked_mul(stride)?).ok()?;
+            let dim = PackedSelectDim::new(base_width, ranges.first().copied()).ok()?;
+            let (offset, selected) = match indexed {
+                None => dim.part(a, b),
+                Some(neg) => dim.indexed(a, u32::try_from(b).ok()?, neg),
+            }
+            .ok()?;
+            lsb = lsb.checked_add(inside(offset, selected, base_width)?)?;
+            width = selected;
         } else {
             for (index, range) in indices.iter().zip(&ranges) {
                 let Ok(value) = self.eval_bound_i128(*index) else {
                     return Some(self.slice_dependency(storage, lsb, width));
                 };
-                let extent = range.left.abs_diff(range.right).checked_add(1)?;
-                let stride = u128::from(width) / extent;
-                let slot = self.packed_range_slot(*range, value, "dependency").ok()?;
-                lsb = lsb.checked_add(u32::try_from(slot.checked_mul(stride)?).ok()?)?;
-                width = u32::try_from(stride).ok()?;
+                let dim = PackedSelectDim::new(width, Some(*range)).ok()?;
+                let (offset, selected) = dim.element(value).ok()?;
+                lsb = lsb.checked_add(inside(offset, selected, width)?)?;
+                width = selected;
             }
         }
         (width != 0).then(|| self.slice_dependency(storage, lsb, width))

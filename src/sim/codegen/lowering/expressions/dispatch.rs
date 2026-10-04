@@ -891,11 +891,11 @@ impl<'a> Codegen<'a> {
                 | ExprKind::IndexedPartSelect { .. }
                 | ExprKind::ArraySelect { .. },
             ) if self.is_modport_select_root(h) => {
-                let (base, step) = self.modport_select_step(scope_path, h)?.ok_or_else(|| {
+                let (base, steps) = self.modport_select_step(scope_path, h)?.ok_or_else(|| {
                     format!("unsupported modport port selection in `{scope_path}`")
                 })?;
                 let value = self.lower_expr(scope_path, base)?;
-                Ok(packed_step_read(value, step))
+                Ok(steps.into_iter().fold(value, packed_step_read))
             }
             NodeKind::Expr(ExprKind::BitSelect { base, index }) => {
                 if let Some(value) =
@@ -904,6 +904,9 @@ impl<'a> Codegen<'a> {
                     return Ok(value);
                 }
                 if let Some(value) = self.packed_element_read_ir(scope_path, h)? {
+                    return Ok(value);
+                }
+                if let Some(value) = self.packed_value_read_ir(scope_path, h)? {
                     return Ok(value);
                 }
                 self.ensure_clocking_readable(*base)?;
@@ -994,6 +997,9 @@ impl<'a> Codegen<'a> {
                     return Ok(value);
                 }
                 if let Some(value) = self.packed_element_read_ir(scope_path, h)? {
+                    return Ok(value);
+                }
+                if let Some(value) = self.packed_value_read_ir(scope_path, h)? {
                     return Ok(value);
                 }
                 self.ensure_clocking_readable(*base)?;
@@ -1163,6 +1169,9 @@ impl<'a> Codegen<'a> {
                 if let Some(value) = self.packed_element_read_ir(scope_path, h)? {
                     return Ok(value);
                 }
+                if let Some(value) = self.packed_value_read_ir(scope_path, h)? {
+                    return Ok(value);
+                }
                 self.ensure_clocking_readable(*base)?;
                 let base_value = self.lower_expr(scope_path, *base)?;
                 if base_value.is_real() {
@@ -1227,6 +1236,9 @@ impl<'a> Codegen<'a> {
                 neg,
             }) => {
                 if let Some(value) = self.packed_element_read_ir(scope_path, h)? {
+                    return Ok(value);
+                }
+                if let Some(value) = self.packed_value_read_ir(scope_path, h)? {
                     return Ok(value);
                 }
                 self.ensure_clocking_readable(*base)?;
