@@ -313,3 +313,19 @@ impl PatternCaseItem {
         self.body
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The arena holds one `Node` per semantic record, so a single oversized
+    /// variant multiplies across every node of a large design. Rare large
+    /// payloads must stay boxed.
+    #[test]
+    #[cfg(target_pointer_width = "64")]
+    fn node_records_stay_compact() {
+        assert!(std::mem::size_of::<ExprKind>() <= 112);
+        assert!(std::mem::size_of::<NodeKind>() <= 112);
+        assert!(std::mem::size_of::<Node>() <= 232);
+    }
+}

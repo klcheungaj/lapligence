@@ -1399,7 +1399,7 @@ impl<'a> Codegen<'a> {
                     "array assignment pattern key `{key}` has no matching index or type in `{path}`"
                 ));
             };
-            type_values.push((key_type.clone(), value));
+            type_values.push(((**key_type).clone(), value));
         }
 
         let mut resolved = Vec::with_capacity(count);

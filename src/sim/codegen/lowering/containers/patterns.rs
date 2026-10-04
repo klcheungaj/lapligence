@@ -111,7 +111,7 @@ impl<'a> Codegen<'a> {
                     "resizable container assignment pattern key `{key}` has no matching index or type in `{path}`"
                 ));
             };
-            type_values.push((key_type.clone(), value));
+            type_values.push(((**key_type).clone(), value));
         }
         let Some(max_index) = explicit.iter().map(|(index, _)| *index).max() else {
             return Err(format!(

@@ -256,13 +256,13 @@ pub(super) fn expression_from_slang(
                     DbError::InvalidSnapshot("assignment pattern type key has no type".into())
                 })?;
                 let projection = type_projector.project(type_id)?;
-                Some(AssignmentPatternKeyType {
+                Some(Box::new(AssignmentPatternKeyType {
                     type_id: projection.descriptor.id,
                     descriptor: projection.descriptor,
                     ty: projection.type_info,
                     two_state: projection.two_state,
                     packed_ranges: projection.packed_dimensions,
-                })
+                }))
             } else {
                 None
             };
