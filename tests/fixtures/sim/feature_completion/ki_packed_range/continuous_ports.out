@@ -1,0 +1,4 @@
+init v=2211bbcc nw=66552211 mid=5522 slot=4433 mon=3322 pick=44
+update v=8811bb88 nw=66558811 mid=5588 slot=4477 mon=7788 pick=88
+force nw=66f00d11 mid=f00d
+release nw=66558811 mid=5588

@@ -336,26 +336,14 @@ impl Codegen<'_> {
                     })
                     .unwrap_or_default();
                 for (dimension, index) in indices.iter().skip(array.dims.len()).enumerate() {
-                    let range =
-                        ranges
-                            .get(dimension)
-                            .copied()
-                            .unwrap_or(crate::core::db::PackedRange {
-                                left: i128::try_from(bits.len())
-                                    .map_err(|_| "net-array width overflow")?
-                                    - 1,
-                                right: 0,
-                            });
-                    let extent = range.left.abs_diff(range.right) + 1;
-                    let stride = u32::try_from(bits.len() as u128 / extent)
-                        .map_err(|_| "net-array stride overflow")?;
+                    let width =
+                        u32::try_from(bits.len()).map_err(|_| "net-array width overflow")?;
+                    let dim = PackedSelectDim::new(width, ranges.get(dimension).copied())?;
                     let label = self.eval_bound_i128(*index)?;
-                    if label < range.left.min(range.right) || label > range.left.max(range.right) {
+                    let (lower, stride) = dim.element(label)?;
+                    if !(0..i128::from(width)).contains(&lower) {
                         return Err("net-array selection is out of bounds".into());
                     }
-                    let lower = i128::try_from(label.abs_diff(range.right))
-                        .map_err(|_| "net-array index overflow")?
-                        * i128::from(stride);
                     bits = select(bits, lower, stride)?;
                 }
                 bits

@@ -25,7 +25,7 @@ impl PackedSelectDim {
     pub(super) fn new(width: u32, range: Option<PackedRange>) -> Result<Self, String> {
         let range = match range {
             Some(range) => range,
-            None if width > 1 => PackedRange {
+            None if width > 0 => PackedRange {
                 left: i128::from(width - 1),
                 right: 0,
             },

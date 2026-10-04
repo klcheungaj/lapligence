@@ -165,7 +165,7 @@ impl<'a> Codegen<'a> {
         let mut width = root_width;
         let mut steps = Vec::new();
         for (base, select) in selectors {
-            self.packed_selection_steps(path, base, select, &mut width, &mut steps)?;
+            self.packed_selection_steps_folding(path, base, select, &mut width, &mut steps, true)?;
         }
         Ok(Some(steps))
     }
@@ -188,7 +188,7 @@ impl<'a> Codegen<'a> {
             return Ok(None);
         };
         if let Some((lsb, width)) = constant_packed_span(value.width, &steps) {
-            return Ok(Some(IrExpr::new(
+            let selected = IrExpr::new(
                 IrExprKind::PartSel {
                     base: Box::new(value),
                     left: i64::from(lsb) + i64::from(width) - 1,
@@ -197,23 +197,34 @@ impl<'a> Codegen<'a> {
                 width,
                 false,
                 None,
-            )));
+            );
+            return Ok(Some(self.packed_value_select_type(node, selected)));
         }
+        // A part-select that is out of range or unknown reads X for the
+        // missing bits (IEEE 1800-2009 11.5.1), as the scalar paths do.
         let value = steps.into_iter().fold(value, |value, step| {
             super::packed_formals::packed_step_read(value, step)
         });
-        // Out-of-range and unknown selects of a two-state value read 0
-        // rather than X (IEEE 1800-2009 11.5.1).
-        Ok(Some(
-            if self
-                .query_descriptor(root)
-                .is_some_and(|descriptor| descriptor.two_state)
-            {
-                IrExpr::to_two_state(value)
-            } else {
-                value
-            },
-        ))
+        Ok(Some(self.packed_value_select_type(node, value)))
+    }
+
+    /// An element select takes its element type's signedness (a select of
+    /// `logic signed [3:0]` elements is signed); a part-select is unsigned.
+    fn packed_value_select_type(&self, node: NodeId, value: IrExpr) -> IrExpr {
+        let element = matches!(
+            self.kind(node),
+            NodeKind::Expr(ExprKind::BitSelect { .. } | ExprKind::ArraySelect { .. })
+        );
+        let signed = element
+            && self
+                .query_descriptor(node)
+                .is_some_and(|descriptor| descriptor.info.signed);
+        if signed {
+            let width = value.width;
+            IrExpr::resize_to(value, width, true)
+        } else {
+            value
+        }
     }
 
     /// Write target of a select chain over a multidimensional packed value.
@@ -282,6 +293,23 @@ impl<'a> Codegen<'a> {
         parent_width: &mut u32,
         steps: &mut Vec<IrPackedSelect>,
     ) -> Result<(), String> {
+        self.packed_selection_steps_folding(path, base, select, parent_width, steps, false)
+    }
+
+    /// [`packed_selection_steps`](Self::packed_selection_steps), optionally
+    /// folding constant selectors to constant offsets. Existing projection
+    /// roots keep the offset arithmetic for their constant selectors: their
+    /// selected-reference dependencies treat a constant step over an already
+    /// selected actual as a nested slice.
+    fn packed_selection_steps_folding(
+        &mut self,
+        path: &str,
+        base: NodeId,
+        select: Select,
+        parent_width: &mut u32,
+        steps: &mut Vec<IrPackedSelect>,
+        fold: bool,
+    ) -> Result<(), String> {
         // A modport expression port is numbered by its expression's own type.
         let dimensions = match self.db.packed_dimensions(base) {
             Some(dimensions) if self.modport_expression_target(base).is_none() => {
@@ -297,8 +325,8 @@ impl<'a> Codegen<'a> {
                     // A constant label folds to its offset; an X/Z or runtime
                     // label keeps the arithmetic so its value propagates.
                     let base = match self.eval_bound_i128(index) {
-                        Ok(label) => lhs_integer_expr(dim.element(label)?.0),
-                        Err(_) => {
+                        Ok(label) if fold => lhs_integer_expr(dim.element(label)?.0),
+                        _ => {
                             let index = self.lower_expr(path, index)?;
                             dim.lsb_expr(index, 0)?
                         }
@@ -317,10 +345,12 @@ impl<'a> Codegen<'a> {
                 let (lsb, width) = dim
                     .part(left, right)
                     .map_err(|error| format!("{error} in `{path}`"))?;
-                steps.push(IrPackedSelect {
-                    base: lhs_integer_expr(lsb),
-                    width,
-                });
+                let base = if fold {
+                    lhs_integer_expr(lsb)
+                } else {
+                    dim.lsb_expr(lhs_integer_expr(right), 0)?
+                };
+                steps.push(IrPackedSelect { base, width });
                 *parent_width = width;
             }
             Select::Indexed(base, width, negative) => {
@@ -328,8 +358,8 @@ impl<'a> Codegen<'a> {
                 let count = self.indexed_part_select_width(width, path)?;
                 let width = dim.indexed_width(count)?;
                 let base = match self.eval_bound_i128(base) {
-                    Ok(label) => lhs_integer_expr(dim.indexed(label, count, negative)?.0),
-                    Err(_) => {
+                    Ok(label) if fold => lhs_integer_expr(dim.indexed(label, count, negative)?.0),
+                    _ => {
                         let base = self.lower_expr(path, base)?;
                         dim.lsb_expr(base, dim.indexed_back(count, negative))?
                     }

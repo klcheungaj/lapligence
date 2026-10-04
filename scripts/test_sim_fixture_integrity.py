@@ -118,6 +118,24 @@ class FeatureCompletionTests(unittest.TestCase):
     def test_declared_fixture_passes(self) -> None:
         self.assertEqual(self.errors(), [])
 
+    def test_known_issue_slug_passes_and_other_slugs_fail(self) -> None:
+        for task, accepted in [("ki_packed_range", True), ("ki_Packed", False),
+                               ("ki_", False), ("fix_001", False)]:
+            with self.subTest(task=task):
+                module = self.root / f"tests/sim_feature_completion/{task}.rs"
+                fixture = self.root / f"tests/fixtures/sim/feature_completion/{task}/copy.v"
+                fixture.parent.mkdir(parents=True)
+                fixture.write_text("module tb; endmodule\n", encoding="ascii")
+                module.write_text(self.active.replace("rtl_001", task), encoding="utf-8")
+                self.facade.write_text('#[path = "sim_feature_completion/rtl_001.rs"] mod rtl_001;\n'
+                                       f'#[path = "sim_feature_completion/{task}.rs"] mod {task};',
+                                       encoding="utf-8")
+                slug_errors = [error for error in self.errors() if "task slug" in error]
+                self.assertEqual(slug_errors == [], accepted, slug_errors)
+                module.unlink()
+                fixture.unlink()
+                fixture.parent.rmdir()
+
     def test_missing_suite_and_module_fail(self) -> None:
         self.module.unlink()
         self.assertTrue(self.errors())

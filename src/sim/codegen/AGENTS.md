@@ -43,6 +43,10 @@ diagnostic labels remain separate from C symbols. The
   coordinate arithmetic before subtraction/multiplication; unsigned high bits
   must not wrap into valid indices. Indexed widths/part bounds are static;
   bit/indexed bases may be runtime integral values. Missing metadata rejects.
+- A range, indexed or element select addresses whole elements of the outermost
+  packed dimension visible at its base; element width is the remaining
+  dimensions times the element type (so records count whole). Map labels to bits
+  only through `lowering/packed_geometry.rs`, never with per-site stride math.
 - `PackedChain` preserves each selection relative to its preceding result,
   including remaining packed-element stride, bounds, direction and right bound.
   Partial reads keep valid bits and fill missing bits with X; invalid writes do

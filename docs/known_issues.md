@@ -767,15 +767,20 @@ for each expression port, selected by the bound instance at run time.
 Reproduce with `interface i; logic [7:0] a; modport m(input .p(a[3:0]));
 endinterface`, `virtual i.m v = inst;` and `$display("%h", v.p);`.
 
-## Range selects of multidimensional packed values select bits
+## Member access through packed-array elements
 
-**Status:** open (found during RTL-102).
+**Status:** open (found while fixing multidimensional packed range selects).
 
-A part-select across the outer dimension of a multidimensional packed value,
-such as `w[3:2]` for `logic [3:0][7:0] w`, selects bits 3..2 instead of the
-16-bit elements 3..2: reads return the wrong bits and writes update the wrong
-ones. Single-element selects (`w[2]`, `w[2][3:0]`) are correct. A modport
-expression port over such a range (`.p(w[3:2])`) inherits the error.
+A member select of one element of a packed array of structures or unions,
+such as `ps[i].hi` for `pair_t [3:0] ps`, is not captured as a member path and
+rejects with ``unsupported executable node `MemberAccess` ``. Whole-element and
+range selects (`ps[i]`, `ps[2:1]`) and member selects of unpacked-array
+elements work. The cause is in Db capture: a member path is built over an
+element select only when the base is an unpacked array or has several packed
+dimensions, so this member access keeps no owned form. Capturing the element
+select as the path root, and lowering it through the packed member
+projection, would admit it. Until then, select the element into a structure
+variable first, or use the equivalent part-select.
 
-Reproduce with `logic [3:0][7:0] w; logic [15:0] y;`, `w = 32'h44332211;
-y = w[3:2]; $display("%h", y);` (prints `0000`; the LRM result is `4433`).
+Reproduce with `typedef struct packed { logic [3:0] hi, lo; } pair_t;
+pair_t [3:0] ps; initial $display("%h", ps[3].hi);`.

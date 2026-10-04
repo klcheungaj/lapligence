@@ -851,10 +851,14 @@ impl<'a> Codegen<'a> {
         match self.kind(base) {
             NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
                 let mut ranges = self.packed_ranges_for_base(*base)?;
-                if indices.len() > ranges.len() {
+                // An unpacked array's packed ranges are its element's; only
+                // the indices past its unpacked dimensions select packed ones.
+                let unpacked = self.array_of(*base).map_or(0, |array| array.dims.len());
+                let packed = indices.len().saturating_sub(unpacked);
+                if packed > ranges.len() {
                     return None;
                 }
-                ranges.drain(..indices.len());
+                ranges.drain(..packed);
                 Some(ranges)
             }
             NodeKind::Expr(ExprKind::HierPath { .. }) => self
@@ -909,18 +913,20 @@ impl<'a> Codegen<'a> {
             .is_some_and(|range| range.left < range.right)
     }
 
+    /// Bit offset of `index` in a one-dimensional packed value, whose
+    /// elements are single bits. Selects whose elements may be wider go
+    /// through [`PackedSelectDim`].
     pub(super) fn packed_relative_bound(&self, base: NodeId, index: i128) -> Result<i128, String> {
         let Some(range) = self.packed_range_for_base(base) else {
             return Ok(index);
         };
-        if range.left < range.right {
-            range.right.checked_sub(index)
-        } else {
-            index.checked_sub(range.right)
-        }
-        .ok_or_else(|| "packed select offset overflows".into())
+        PackedSelectDim { range, stride: 1 }
+            .element_offset(index)
+            .ok_or_else(|| "packed select offset overflows".into())
     }
 
+    /// Runtime bit offset of `index` in a one-dimensional packed value; see
+    /// [`packed_relative_bound`](Self::packed_relative_bound).
     pub(super) fn lower_packed_index(
         &mut self,
         path: &str,

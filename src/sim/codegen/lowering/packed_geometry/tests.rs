@@ -122,7 +122,9 @@ fn packed_dimensions_keep_residual_element_stride() {
     assert_eq!(inner.indexed_width(2).unwrap(), 16);
     let atom = PackedSelectDim::new(32, None).unwrap();
     assert_eq!((atom.range.left, atom.range.right, atom.stride), (31, 0, 1));
-    assert!(PackedSelectDim::new(1, None).is_err());
+    let bit = PackedSelectDim::new(1, None).unwrap();
+    assert_eq!((bit.range.left, bit.range.right, bit.stride), (0, 0, 1));
+    assert!(PackedSelectDim::new(0, None).is_err());
     assert!(PackedSelectDim::new(9, Some(PackedRange { left: 3, right: 0 })).is_err());
     assert!(inner.indexed_width(0).is_err());
     assert!(atom.indexed_width(LLG_MAX_WIDTH + 1).is_err());
