@@ -791,6 +791,61 @@ impl Codegen<'_> {
         self.lower_conditional_arms(scope_path, sel, if_true, if_false, array, structure)
     }
 
+    /// The selector and arms of a conditional operator whose result has the
+    /// native type `shape` (string or chandle). The selector is lowered with
+    /// the same predicate rules as packed conditionals.
+    pub(in super::super) fn lower_native_conditional_parts(
+        &mut self,
+        scope_path: &str,
+        node: NodeId,
+        shape: &TypeShape,
+    ) -> Result<Option<(IrExpr, NodeId, NodeId)>, String> {
+        if self
+            .query_descriptor(node)
+            .is_none_or(|descriptor| descriptor.shape != *shape)
+        {
+            return Ok(None);
+        }
+        match self.kind(node) {
+            NodeKind::Expr(ExprKind::Conditional {
+                predicate,
+                if_true,
+                if_false,
+            }) => {
+                let (if_true, if_false) = (*if_true, *if_false);
+                let predicate = predicate.clone();
+                let selector = self.lower_conditional_predicate(scope_path, &predicate)?;
+                Ok(Some((selector, if_true, if_false)))
+            }
+            NodeKind::Expr(ExprKind::Operation {
+                op: Operation::Conditional,
+                operands,
+                ..
+            }) if operands.len() == 3 => {
+                let (condition, if_true, if_false) = (operands[0], operands[1], operands[2]);
+                let selector = self.lower_boolean_expr(scope_path, condition)?;
+                Ok(Some((selector, if_true, if_false)))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    /// Whether `node` is a conditional operator with native result `shape`.
+    pub(in super::super) fn is_native_conditional(&self, node: NodeId, shape: &TypeShape) -> bool {
+        matches!(
+            self.kind(node),
+            NodeKind::Expr(
+                ExprKind::Conditional { .. }
+                    | ExprKind::Operation {
+                        op: Operation::Conditional,
+                        ..
+                    }
+            )
+        ) && self
+            .query_descriptor(node)
+            .is_some_and(|descriptor| descriptor.shape == *shape)
+    }
+
     fn lower_conditional_arms(
         &mut self,
         scope_path: &str,

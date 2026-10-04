@@ -121,6 +121,15 @@ impl Codegen<'_> {
         if let Some(value) = self.lower_container_chandle_query(path, node)? {
             return Ok(value);
         }
+        if let Some((predicate, then, otherwise)) =
+            self.lower_native_conditional_parts(path, node, &chandle_shape())?
+        {
+            return Ok(IrChandleExpr::Conditional {
+                predicate: Box::new(predicate),
+                then: Box::new(self.lower_chandle(path, then)?),
+                otherwise: Box::new(self.lower_chandle(path, otherwise)?),
+            });
+        }
         if let NodeKind::Expr(ExprKind::Cast { operand, ty, .. }) = self.kind(node) {
             if is_handle_kind(&ty.kind) {
                 return self.lower_chandle(path, *operand);
@@ -356,5 +365,12 @@ impl Codegen<'_> {
             self.kind(node),
             self.node(node).name
         ))
+    }
+}
+
+/// The frontend type shape of a chandle value.
+pub(in super::super) fn chandle_shape() -> TypeShape {
+    TypeShape::Opaque {
+        kind: "Chandle".to_owned(),
     }
 }

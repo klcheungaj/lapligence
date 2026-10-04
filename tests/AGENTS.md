@@ -47,6 +47,12 @@ including proof that checked compilation withholds blocking-error snapshots.
   generator, configure-error and stale-source checks. Native DPI shared-library
   cases skip on non-Unix or missing CMake/C compiler; do not generalize these
   exceptions to mandatory public conformance suites.
+- The build applies `patches/libfst` in place in the tracked `vendor/libfst`, so
+  working trees may show it modified. Tests accept the clean or fully applied
+  tree and reject partial ones; `vendor_patches` also fails when HEAD or the
+  index holds the applied state, so never commit it (see
+  [patch docs](../patches/README.md#libfst)). Clean-tree gates must tolerate or
+  restore it deliberately, as `scripts/run-regression.sh` does.
 - Preserve supplied imported sources/provenance. C VPI fragments are not standalone
   plugins; handwritten output-shape probes are not Rust-emitted C. Recreated
   missing inputs are replacement witnesses, not recovered historical evidence.

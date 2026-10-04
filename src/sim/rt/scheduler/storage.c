@@ -52,8 +52,19 @@ typedef struct llg_nba {
     double* real_target;
     double real_value;
     int is_string;
-    llg_string_t* string_target;
-    llg_string_t string_value;
+    int is_chandle;
+    // Persistent native destination and its owned issue-time value;
+    // is_string or is_chandle selects the member.
+    union {
+        struct {
+            llg_string_t* target;
+            llg_string_t value;
+        } string;
+        struct {
+            void** target;
+            void* value;
+        } chandle;
+    } native;
     // Owned copy of a tagged-member write's commit-time checks, or NULL.
     llg_ref_view_t* tag_view;
 } llg_nba_t;
@@ -77,7 +88,7 @@ static void nba_destroy(llg_nba_t* nba) {
     }
     sv4_destroy(&nba->value);
     sv4_destroy(&nba->mask);
-    if (nba->is_string) llg_string_destroy(&nba->string_value);
+    if (nba->is_string) llg_string_destroy(&nba->native.string.value);
     free(nba->tag_view);
     value_scope_release(nba->target_scope);
     free(nba);

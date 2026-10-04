@@ -113,6 +113,18 @@ written through `IrNativeAccessKind::ValueItem` accesses with a constant
 `item_path` and the existing local/string/chandle statement forms, so effects,
 optimization and stack sizing see ordinary named reads and writes.
 
+## Native nonblocking writes and conditionals (SIM-004)
+
+`IrStmt::DelayedStringAssign` and `DelayedChandleAssign` name persistent
+string/chandle storage by C name and queue an owned issue-time value; the
+untimed `<=` form is the same statement with `IrDelay::Constant(0)`. Module
+record NBAs lower to one such statement (or a packed `Assign`/`DelayedAssign`)
+per leaf. `IrStringExpr::Conditional` and `IrChandleExpr::Conditional` carry an
+integral predicate and two lazily evaluated arms; an ambiguous predicate keeps
+equal values and otherwise yields `""` or null. Native record conditionals
+lower to ordinary `If` statements over captured leaves, never to
+`IrFixedValue`.
+
 ## Bounded packed selection chains
 
 `IrElemSel::PackedChain(Vec<IrPackedSelect>)` stores successive fixed-array-element

@@ -290,6 +290,7 @@ mod collection;
 mod containers;
 mod expressions;
 mod objects;
+use objects::NativeNbaValue;
 mod statements;
 
 /// The lowered computation of one builtin gate primitive

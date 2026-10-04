@@ -299,7 +299,21 @@ impl<'a> Codegen<'a> {
     ) -> Result<Option<IrStringExpr>, String> {
         match args {
             [] => Ok(None),
-            [arg] => self.lower_string(scope_path, *arg).map(Some),
+            // A literal command keeps its raw bytes so the runtime can reject
+            // an embedded NUL; only string-typed values drop "\0" (SV 6.16).
+            [arg] => match self.kind(match self.kind(*arg) {
+                NodeKind::Expr(ExprKind::Cast { operand, ty, .. }) if ty.kind == "string" => {
+                    *operand
+                }
+                _ => *arg,
+            }) {
+                NodeKind::Expr(ExprKind::Constant {
+                    const_type: ConstantType::String,
+                    value,
+                    ..
+                }) => Ok(Some(IrStringExpr::Literal(decoded_string_bytes(value)?))),
+                _ => self.lower_string(scope_path, *arg).map(Some),
+            },
             _ => Err(format!(
                 "$system accepts at most one string argument in `{scope_path}`"
             )),

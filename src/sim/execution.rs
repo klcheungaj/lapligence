@@ -678,7 +678,8 @@ fn collect_effects(
             | IrStmt::StreamAssign { nba: true, .. }
             | IrStmt::Assign { nba: true, .. }
             | IrStmt::DelayedAssign { .. }
-            | IrStmt::DelayedStringAssign { .. } => effects.push(ExecutionEffect::EnqueueUpdate(
+            | IrStmt::DelayedStringAssign { .. }
+            | IrStmt::DelayedChandleAssign { .. } => effects.push(ExecutionEffect::EnqueueUpdate(
                 ScheduleRegion::NonblockingAssign,
             )),
             IrStmt::ClockingDrive { .. } => effects.push(ExecutionEffect::EnqueueUpdate(
@@ -1114,6 +1115,9 @@ fn collect_statement_expression_effects(
             rhs.expressions(&mut |expression| {
                 collect_expression_effects(ir, expression, effects, visited_calls)
             });
+        }
+        IrStmt::DelayedChandleAssign { rhs, .. } => {
+            collect_chandle_effects(ir, rhs, effects, visited_calls)
         }
         IrStmt::EventAssign { .. }
         | IrStmt::EventCapture { .. }
@@ -2018,6 +2022,15 @@ fn collect_string_effects(
     visited_calls: &mut CallVisits,
 ) {
     match value {
+        IrStringExpr::Conditional {
+            predicate,
+            then,
+            otherwise,
+        } => {
+            collect_expression_effects(ir, predicate, effects, visited_calls);
+            collect_string_effects(ir, then, effects, visited_calls);
+            collect_string_effects(ir, otherwise, effects, visited_calls);
+        }
         IrStringExpr::Call {
             function,
             args,
@@ -2117,6 +2130,15 @@ fn collect_chandle_effects(
     visited_calls: &mut CallVisits,
 ) {
     match value {
+        IrChandleExpr::Conditional {
+            predicate,
+            then,
+            otherwise,
+        } => {
+            collect_expression_effects(ir, predicate, effects, visited_calls);
+            collect_chandle_effects(ir, then, effects, visited_calls);
+            collect_chandle_effects(ir, otherwise, effects, visited_calls);
+        }
         IrChandleExpr::Construct(index) => {
             // Constructor bodies are separately typed; allocation remains an
             // observable runtime operation even when its handle is discarded.
