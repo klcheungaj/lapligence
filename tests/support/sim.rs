@@ -227,9 +227,44 @@ pub(crate) fn run_command(command: &mut Command, timeout: Duration) -> Result<Ou
         .map_err(|error| format!("read stderr: {error}"))?;
     Ok(Output {
         status,
-        stdout,
-        stderr,
+        stdout: host_text_to_lf(stdout),
+        stderr: host_text_to_lf(stderr),
     })
+}
+
+/// Rewrite every CRLF pair as LF; a lone CR is kept.
+pub(crate) fn crlf_to_lf(bytes: Vec<u8>) -> Vec<u8> {
+    if !bytes.windows(2).any(|pair| pair == b"\r\n") {
+        return bytes;
+    }
+    let mut normalized = Vec::with_capacity(bytes.len());
+    let mut iter = bytes.iter().copied().peekable();
+    while let Some(byte) = iter.next() {
+        if byte == b'\r' && iter.peek() == Some(&b'\n') {
+            continue;
+        }
+        normalized.push(byte);
+    }
+    normalized
+}
+
+/// Simulators keep the OS-native newline: on Windows the console and files
+/// opened in text mode end lines with CRLF. Expected outputs are written with
+/// LF, so text captured on Windows is normalized; other hosts stay byte-exact.
+pub(crate) fn host_text_to_lf(bytes: Vec<u8>) -> Vec<u8> {
+    if cfg!(windows) {
+        crlf_to_lf(bytes)
+    } else {
+        bytes
+    }
+}
+
+/// Read a file the simulation wrote in text mode (`$fopen` without `b`,
+/// `$writemem`), with the host's native newlines normalized to LF.
+pub(crate) fn read_text_output(path: &Path) -> Result<String, String> {
+    let bytes = std::fs::read(path).map_err(|error| format!("read {}: {error}", path.display()))?;
+    String::from_utf8(host_text_to_lf(bytes))
+        .map_err(|error| format!("{} is not UTF-8: {error}", path.display()))
 }
 
 pub(crate) fn run_executable(executable: &Path) -> Result<String, String> {

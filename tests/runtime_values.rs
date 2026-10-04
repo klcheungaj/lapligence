@@ -82,11 +82,7 @@ fn value_runtime_compiles_and_runs_without_scheduler() {
         String::from_utf8_lossy(&compiled.stderr)
     );
 
-    // The standalone probe prints through a text-mode stdout, which Windows
-    // ends with CRLF; only generated models switch it to LF.
-    let stdout = sim_harness::run_executable(&executable)
-        .expect("value probe should run")
-        .replace("\r\n", "\n");
+    let stdout = sim_harness::run_executable(&executable).expect("value probe should run");
     assert_eq!(stdout, "runtime value isolation ok\n");
 }
 
