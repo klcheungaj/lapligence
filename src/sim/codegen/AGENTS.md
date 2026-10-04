@@ -143,8 +143,11 @@ Interface/modport bodies use the actual Slang-bound instance; a simple modport
 port resolves to its same-named interface member. Connection indices must be
 elaborated constants (including genvars), except a variable output target: it is
 an implied continuous assignment (SV 23.3.3.2) whose link re-evaluates its
-selectors, and the local Slang patch admits only that form. Ref, net and inout
-connections keep constant selects. A ref actual that selects one leaf of a
+selectors. The local Slang patch admits runtime selects only there and on
+continuous assignments to variables (SV 10.3, A.8.5), whose process also waits
+on its target selectors (`continuous_assignment_reads`) and whose writer set is
+the longest static prefix (`add_continuous_lhs_write`). Ref, net, inout and gate
+terminal connections keep constant selects. A ref actual that selects one leaf of a
 record lowered as a concatenation binds to that leaf
 (`collapse_concat_reference`), never to an unnamed projection. Descriptor-backed fixed-array ports and
 nested member-array outputs reuse the procedural fixed-array assignment owner
@@ -185,7 +188,8 @@ first Table 23-1 column with a located warning, and every winning declaration
 of that type owns the delay. A uwire in a collapsed network keeps one
 structural driver per bit network (`note_uwire_drivers`, conservative for
 unmapped targets); the frontend patch stops counting the inout connection
-itself as a uwire driver.
+itself as a uwire driver, for each uwire operand of a concatenated actual and
+for the internal net of an `inout uwire` formal.
 Whole connections keep declaration-level metadata; selected connections map
 physical electrical bits. Reject incompatible/non-net members and unsupported
 resolution/sensitivity, never recover an unresolved driver from source text.

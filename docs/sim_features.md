@@ -223,9 +223,10 @@ Macros, includes and their edition-specific behavior are counted in §11.
 - 🟦 **Net declarations** — `wire`/`tri` share ordinary resolved-net behavior;
   declaration assignments are continuous drivers. `uwire` rejects overlapping
   drivers and supports whole/disjoint constant-selected drivers, undriven Z,
-  ordinary ports, same-type aliases and uwire actuals on inout ports, whose
-  collapsed net keeps one driver per bit. `inout uwire` formals and pass-switch
-  terminals reject. Wired/pull/supply nets and strengths are detailed in §8.
+  ordinary ports, same-type aliases, uwire actuals (also concatenated) on inout
+  ports and `inout uwire` formals, whose collapsed net keeps one driver per
+  bit. Pass-switch terminals reject. Wired/pull/supply nets and strengths are
+  detailed in §8.
   V §§3.6–3.7; SV §6.6 **[1995/SV-2005]**.
 - 🟨 **Memories and fixed unpacked arrays** — Multidimensional storage, signed or
   reversed bounds, element selections, rows, slices, whole copies and overlapping
@@ -926,7 +927,14 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
 - 🟦 **Continuous drivers** — Explicit, comma-form and net-declaration
   assignments evaluate from RHS dependencies; constant RHSs run once. Writes by
   functions called from the RHS are procedural (SV §6.5): they may share storage
-  with procedural writers but not with a continuous driver. V §6.1 **[1995]**.
+  with procedural writers but not with a continuous driver. A variable target
+  may use runtime element, bit, indexed-part and member-element selects (SV
+  §10.3, A.8.5, a local frontend patch): a selector change re-evaluates and
+  retargets the write, the previous element keeps its value, an unknown or
+  out-of-range selector writes nothing, a pending delayed update is replaced by
+  the newest evaluation's target and value (the LRM is silent), and the longest
+  static prefix (SV §11.5.3) is the written storage. Net targets and gate
+  terminals keep constant selects. V §6.1 **[1995]**.
 - 🟨 **Fixed-array continuous assignments** — Whole/selected fixed values,
   slices, conditionals, patterns and function returns capture one RHS per
   activation. Net arrays retain per-cell/per-bit contribution slots. Each
@@ -969,8 +977,8 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   each hierarchy depth is one batch independent of instance and port order:
   edge winners reduce to the types no other winner strictly dominates, and a
   same-depth warning-only tie selects the first in Table 23-1 column order with
-  a located warning. A uwire actual collapses with one driver per bit (SV
-  §6.6.2); `inout uwire` formals stay frontend-rejected. `trireg` (ADV-006),
+  a located warning. A uwire actual, concatenated uwire actual or `inout
+  uwire` formal collapses with one driver per bit (SV §6.6.2). `trireg` (ADV-006),
   pass switches (ADV-005) and net-array declaration delays (ADV-002) remain
   unsupported; oversized net arrays still expand per cell (known issue).
   V §12.3.10 / Table 45; SV §§23.3.3.6–23.3.3.7 / Table 23-1 **[1995]**.

@@ -89,10 +89,13 @@ fn uwire_actuals_collapse_with_one_driver() {
         &["dissimilar inout port `tb.u_wand.w`: internal Wand, external Uwire; table choice Uwire (IEEE 1800-2009 Table 23-1)"],
     );
     sim_cli::run_case_backend_parity(SUITE, "uwire_collapse", expected, &[], &[]);
+    let formal = include_str!("../fixtures/sim/feature_completion/rtl_011/uwire_inout_formal.out");
+    sim_cli::run_case(SUITE, "uwire_inout_formal", formal, "", &[]);
+    sim_cli::run_case_after_db_drop(SUITE, "uwire_inout_formal", formal);
 }
 
 #[test]
-fn neg_uwire_drivers_switches_and_inout_formals() {
+fn neg_uwire_drivers_and_switches() {
     const DRIVERS: &str = "a collapsed uwire net has 2 drivers";
     sim_cli::reject_case(SUITE, "neg_uwire_collapsed_drivers", DRIVERS);
     sim_cli::reject_case(SUITE, "neg_uwire_cell_drivers", DRIVERS);
@@ -105,11 +108,6 @@ fn neg_uwire_drivers_switches_and_inout_formals() {
         SUITE,
         "neg_uwire_pass_switch",
         "'uwire' net 'a' cannot be connected to 'inout' port",
-    );
-    sim_cli::reject_case(
-        SUITE,
-        "neg_uwire_inout_formal",
-        "'uwire' port 'p' cannot have direction 'inout'",
     );
 }
 

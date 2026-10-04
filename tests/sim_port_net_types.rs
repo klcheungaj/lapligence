@@ -180,11 +180,13 @@ fn port_net_type_sibling_tie_order_is_deterministic() {
 }
 
 #[test]
-fn port_net_type_preserves_frontend_uwire_port_rejection() {
+fn port_net_type_uwire_formal_keeps_one_collapsed_driver() {
+    // RTL-105 admits `inout uwire` formals; the collapsed net still allows
+    // one driver (IEEE 1800-2009 6.6.2).
     sim_cli::reject_case_with_args(
         "port_net_types",
         "bad_uwire",
-        "'uwire' port",
+        "a collapsed uwire net has 2 drivers",
         &["--edition", "2009"],
     );
 }

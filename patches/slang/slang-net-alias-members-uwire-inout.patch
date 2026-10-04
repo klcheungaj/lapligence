@@ -1,25 +1,84 @@
 diff --git a/source/analysis/DriverTracker.cpp b/source/analysis/DriverTracker.cpp
+index 7f109183a..7069c377a 100644
 --- a/source/analysis/DriverTracker.cpp
 +++ b/source/analysis/DriverTracker.cpp
-@@ -52,6 +52,17 @@ void DriverTracker::add(AnalysisContext& context, DriverAlloc& driverAlloc,
+@@ -20,6 +20,34 @@ namespace slang::analysis {
+ 
+ using namespace ast;
+ 
++static bool isUWireNet(const Symbol* sym) {
++    return sym && sym->kind == SymbolKind::Net &&
++           sym->as<NetSymbol>().netType.netKind == NetType::UWire;
++}
++
++// An inout connection collapses a uwire with the net on the other side of the
++// port instead of driving it (IEEE 1800-2009 23.3.3.6-23.3.3.7); the simulator
++// counts the drivers of the collapsed network for the 6.6.2 single-driver
++// rule. Concatenations are split so that only their uwire operands are exempt
++// and every other operand stays a driver.
++template<typename F>
++static void visitInOutDriven(const Expression& expr, F&& addOperand) {
++    const Expression* current = &expr;
++    while (current->kind == ExpressionKind::Conversion &&
++           current->as<ConversionExpression>().isImplicit()) {
++        current = &current->as<ConversionExpression>().operand();
++    }
++
++    if (current->kind == ExpressionKind::Concatenation) {
++        for (auto operand : current->as<ConcatenationExpression>().operands())
++            visitInOutDriven(*operand, addOperand);
++        return;
++    }
++
++    if (!isUWireNet(current->getSymbolReference()))
++        addOperand(*current);
++}
++
+ void DriverTracker::add(AnalysisContext& context, DriverAlloc& driverAlloc,
+                         const AnalyzedProcedure& procedure) {
+     add(context, driverAlloc, procedure.getDrivers());
+@@ -52,6 +80,14 @@ void DriverTracker::add(AnalysisContext& context, DriverAlloc& driverAlloc,
      if (expr->kind == ExpressionKind::Assignment)
          expr = &expr->as<AssignmentExpression>().left();
  
-+    // An inout connection collapses a uwire with the internal net instead of
-+    // driving it (IEEE 1800-2009 23.3.3.6-23.3.3.7); the simulator counts the
-+    // drivers of the collapsed network for the 6.6.2 single-driver rule.
 +    if (direction == ArgumentDirection::InOut) {
-+        auto sym = expr->getSymbolReference();
-+        if (sym && sym->kind == SymbolKind::Net &&
-+            sym->as<NetSymbol>().netType.netKind == NetType::UWire) {
-+            return;
-+        }
++        visitInOutDriven(*expr, [&](const Expression& operand) {
++            addDrivers(context, driverAlloc, operand, DriverKind::Continuous, flags,
++                       containingSymbol);
++        });
++        return;
 +    }
 +
      addDrivers(context, driverAlloc, *expr, DriverKind::Continuous, flags, containingSymbol);
  }
  
+@@ -68,9 +104,23 @@ void DriverTracker::add(AnalysisContext& context, DriverAlloc& driverAlloc,
+     SLANG_ASSERT(scope);
+ 
+     if (auto expr = symbol.getInternalExpr()) {
+-        addDrivers(context, driverAlloc, *expr, DriverKind::Continuous, flags, scope->asSymbol());
++        if (dir == ArgumentDirection::InOut) {
++            visitInOutDriven(*expr, [&](const Expression& operand) {
++                addDrivers(context, driverAlloc, operand, DriverKind::Continuous, flags,
++                           scope->asSymbol());
++            });
++        }
++        else {
++            addDrivers(context, driverAlloc, *expr, DriverKind::Continuous, flags,
++                       scope->asSymbol());
++        }
+     }
+     else if (auto is = symbol.internalSymbol) {
++        // The internal uwire of an inout port collapses with the external net
++        // (see visitInOutDriven) rather than being driven by the port.
++        if (dir == ArgumentDirection::InOut && isUWireNet(is))
++            return;
++
+         auto nve = context.alloc.emplace<NamedValueExpression>(
+             is->as<ValueSymbol>(), SourceRange{is->location, is->location + is->name.length()});
+         addDrivers(context, driverAlloc, *nve, DriverKind::Continuous, flags, scope->asSymbol());
 diff --git a/source/ast/expressions/MiscExpressions.cpp b/source/ast/expressions/MiscExpressions.cpp
+index 1feab96e6..cc7efe1af 100644
 --- a/source/ast/expressions/MiscExpressions.cpp
 +++ b/source/ast/expressions/MiscExpressions.cpp
 @@ -241,12 +241,10 @@ bool ValueExpressionBase::checkLValue(const ASTContext& context, const ValueSymb
@@ -40,9 +99,65 @@ diff --git a/source/ast/expressions/MiscExpressions.cpp b/source/ast/expressions
      else {
          // Nets can't be assigned in procedural contexts.
 diff --git a/source/ast/symbols/InstanceSymbols.cpp b/source/ast/symbols/InstanceSymbols.cpp
+index b6cf0f2f2..a1ae407fd 100644
 --- a/source/ast/symbols/InstanceSymbols.cpp
 +++ b/source/ast/symbols/InstanceSymbols.cpp
-@@ -1760,8 +1760,18 @@ std::span<const Expression* const> PrimitiveInstanceSymbol::getPortConnections()
+@@ -1665,6 +1665,42 @@ void PrimitiveInstanceSymbol::fromSyntax(const PrimitiveInstantiationSyntax& syn
+     createPrims(defResult, nullptr);
+ }
+ 
++// A gate or UDP output terminal is a net_lvalue (IEEE 1800-2009 A.3.3,
++// A.8.5) whose selects stay constant even when it names a variable; the
++// runtime variable_lvalue select of a module output port (23.3.3.2) does not
++// apply. Evaluating each selector reports a non-constant one.
++static bool requireConstantTerminalSelects(const Expression& expr, const ASTContext& context) {
++    switch (expr.kind) {
++        case ExpressionKind::Assignment:
++            return requireConstantTerminalSelects(expr.as<AssignmentExpression>().left(),
++                                                  context);
++        case ExpressionKind::Conversion:
++            return requireConstantTerminalSelects(expr.as<ConversionExpression>().operand(),
++                                                  context);
++        case ExpressionKind::Concatenation:
++            for (auto operand : expr.as<ConcatenationExpression>().operands()) {
++                if (!requireConstantTerminalSelects(*operand, context))
++                    return false;
++            }
++            return true;
++        case ExpressionKind::MemberAccess:
++            return requireConstantTerminalSelects(expr.as<MemberAccessExpression>().value(),
++                                                  context);
++        case ExpressionKind::ElementSelect: {
++            auto& select = expr.as<ElementSelectExpression>();
++            return requireConstantTerminalSelects(select.value(), context) &&
++                   context.eval(select.selector());
++        }
++        case ExpressionKind::RangeSelect: {
++            auto& select = expr.as<RangeSelectExpression>();
++            return requireConstantTerminalSelects(select.value(), context) &&
++                   context.eval(select.left()) && context.eval(select.right());
++        }
++        default:
++            return true;
++    }
++}
++
+ std::span<const Expression* const> PrimitiveInstanceSymbol::getPortConnections() const {
+     if (!ports) {
+         auto syntax = getSyntax();
+@@ -1721,7 +1757,10 @@ std::span<const Expression* const> PrimitiveInstanceSymbol::getPortConnections()
+                     dir = (i == conns.size() - 1) ? ArgumentDirection::In : ArgumentDirection::Out;
+ 
+                 SLANG_ASSERT(conns[i]);
+-                results.push_back(&Expression::bindArgument(logic_t, dir, {}, *conns[i], context));
++                auto& terminal = Expression::bindArgument(logic_t, dir, {}, *conns[i], context);
++                if (dir == ArgumentDirection::Out && !terminal.bad())
++                    requireConstantTerminalSelects(terminal, context);
++                results.push_back(&terminal);
+             }
+         }
+         else {
+@@ -1760,12 +1799,25 @@ std::span<const Expression* const> PrimitiveInstanceSymbol::getPortConnections()
                      ASTContext argCtx = context;
                      argCtx.flags &= ~ASTFlags::DisallowUDNT;
                      argCtx.flags |= ASTFlags::LAndRValue;
@@ -62,11 +177,31 @@ diff --git a/source/ast/symbols/InstanceSymbols.cpp b/source/ast/symbols/Instanc
 +                    results.push_back(&terminal);
                  }
                  else {
-                     results.push_back(
+-                    results.push_back(
+-                        &Expression::bindArgument(logic_t, dir, {}, *conns[i], context));
++                    auto& terminal = Expression::bindArgument(logic_t, dir, {}, *conns[i],
++                                                              context);
++                    if (dir == ArgumentDirection::Out && !terminal.bad())
++                        requireConstantTerminalSelects(terminal, context);
++                    results.push_back(&terminal);
+                 }
+             }
+ 
 diff --git a/source/ast/symbols/MemberSymbols.cpp b/source/ast/symbols/MemberSymbols.cpp
+index 76c3e526b..d708cb2c2 100644
 --- a/source/ast/symbols/MemberSymbols.cpp
 +++ b/source/ast/symbols/MemberSymbols.cpp
-@@ -2304,6 +2304,28 @@ struct NetAlias {
+@@ -468,7 +468,8 @@ const Expression& ContinuousAssignSymbol::getAssignment() const {
+     auto syntax = getSyntax();
+     SLANG_ASSERT(scope && syntax);
+ 
+-    ASTContext context(*scope, LookupLocation::after(*this), ASTFlags::NonProcedural);
++    ASTContext context(*scope, LookupLocation::after(*this),
++                       ASTFlags::NonProcedural | ASTFlags::ContinuousAssign);
+     assign = &Expression::bind(syntax->as<ExpressionSyntax>(), context,
+                                ASTFlags::AssignmentAllowed);
+ 
+@@ -2304,6 +2305,28 @@ struct NetAlias {
      Compilation::AliasBitRange bounds;
  };
  
@@ -95,7 +230,7 @@ diff --git a/source/ast/symbols/MemberSymbols.cpp b/source/ast/symbols/MemberSym
  struct NetAliasVisitor {
      const ASTContext& context;
      const NetType* commonNetType = nullptr;
-@@ -2322,7 +2344,14 @@ struct NetAliasVisitor {
+@@ -2322,7 +2345,14 @@ struct NetAliasVisitor {
                  case ExpressionKind::MemberAccess:
                  case ExpressionKind::ElementSelect:
                  case ExpressionKind::RangeSelect: {
@@ -111,3 +246,69 @@ diff --git a/source/ast/symbols/MemberSymbols.cpp b/source/ast/symbols/MemberSym
                          if (sym->kind != SymbolKind::Net) {
                              context.addDiag(diag::NetAliasNotANet, expr.sourceRange) << sym->name;
                          }
+diff --git a/tests/unittests/analysis/MultiAssignTests.cpp b/tests/unittests/analysis/MultiAssignTests.cpp
+index 849a9f74d..ba77fbfc4 100644
+--- a/tests/unittests/analysis/MultiAssignTests.cpp
++++ b/tests/unittests/analysis/MultiAssignTests.cpp
+@@ -1542,6 +1542,61 @@ endmodule
+     CHECK(diags[0].code == diag::MultipleAlwaysAssigns);
+ }
+ 
++TEST_CASE("uwire inout collapse is not a driver") {
++    // IEEE 1800-2009 23.3.3.6-23.3.3.7: an inout port collapses a uwire with
++    // the net on the other side instead of driving it, so neither an inout
++    // uwire formal nor a (concatenated) uwire actual counts as a driver. The
++    // simulator checks drivers of the collapsed network (6.6.2).
++    auto& code = R"(
++module drv(inout uwire p);
++    assign p = 1'b0;
++endmodule
++
++module pair(inout wire [1:0] p);
++    assign p[1] = 1'b1;
++endmodule
++
++module top;
++    wire w;
++    drv d(w);
++
++    uwire a, b;
++    pair u({a, b});
++    assign b = 1'b0;
++endmodule
++)";
++
++    Compilation compilation;
++    AnalysisManager analysisManager;
++
++    auto diags = analyze(code, compilation, analysisManager);
++    CHECK(std::ranges::none_of(diags, [](auto& d) {
++        return d.code == diag::MultipleUWireDrivers;
++    }));
++}
++
++TEST_CASE("uwire inout formal keeps local single driver") {
++    auto& code = R"(
++module drv(inout uwire p);
++    assign p = 1'b0;
++    assign p = 1'b1;
++endmodule
++
++module top;
++    wire w;
++    drv d(w);
++endmodule
++)";
++
++    Compilation compilation;
++    AnalysisManager analysisManager;
++
++    auto diags = analyze(code, compilation, analysisManager);
++    CHECK(std::ranges::count_if(diags, [](auto& d) {
++              return d.code == diag::MultipleUWireDrivers;
++          }) == 1);
++}
++
+ TEST_CASE("Multi-assign for static local variables") {
+     auto& code = R"(
+ module m(input a, int b);

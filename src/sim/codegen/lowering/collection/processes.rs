@@ -449,7 +449,7 @@ impl<'a> Codegen<'a> {
             format!("continuous assignment in `{path}` has no string or native record target")
         })?;
         let fn_name = self.new_fn_name(path, "ca");
-        let sigs = self.collect_read_signals(path, rhs)?;
+        let sigs = self.continuous_assignment_reads(path, lhs, rhs)?;
         let body = self.wrap_continuous_self_feedback(ca, lhs, &sigs, vec![statement])?;
         let shape = if sigs.is_empty() {
             IrShape::RunOnce
@@ -594,7 +594,7 @@ impl<'a> Codegen<'a> {
                 self.lower_p30_fixed_array_assignment(path, lhs, rhs, true, Operation::Assignment)?
             {
                 let fn_name = self.new_fn_name(path, "ca");
-                let sigs = self.collect_read_signals(path, rhs)?;
+                let sigs = self.continuous_assignment_reads(path, lhs, rhs)?;
                 let body = self.wrap_continuous_self_feedback(ca, lhs, &sigs, vec![statement])?;
                 let shape = if sigs.is_empty() {
                     IrShape::RunOnce
@@ -700,7 +700,7 @@ impl<'a> Codegen<'a> {
             }]
         };
         let fn_name = self.new_fn_name(path, "ca");
-        let sigs = self.collect_read_signals(path, rhs)?;
+        let sigs = self.continuous_assignment_reads(path, lhs, rhs)?;
         // A delayed driver publishes in a later event, after its wait is
         // armed, so only zero-delay drivers need the self-feedback loop.
         let body = if scaled_delay.is_none() {
@@ -725,6 +725,91 @@ impl<'a> Codegen<'a> {
             origin,
         ));
         Ok(())
+    }
+
+    /// Reads that re-evaluate a continuous assignment: the RHS operands and
+    /// the runtime selectors of a variable target. A variable_lvalue select
+    /// may be non-constant (IEEE 1800-2009 10.3, A.8.5); like a
+    /// runtime-selected variable output link (23.3.3.2), a selector change
+    /// retargets the write and an unknown selector writes nothing. Net
+    /// targets keep constant selects, so they add no reads here.
+    fn continuous_assignment_reads(
+        &self,
+        path: &str,
+        lhs: NodeId,
+        rhs: NodeId,
+    ) -> Result<Vec<IrDependency>, String> {
+        let mut reads = self.collect_read_signals(path, rhs)?;
+        let mut seen = reads.iter().cloned().collect::<HashSet<_>>();
+        let mut pending = vec![lhs];
+        while let Some(target) = pending.pop() {
+            match self.kind(target) {
+                NodeKind::Expr(ExprKind::Operation {
+                    op: Operation::Concat,
+                    operands,
+                    ..
+                }) => pending.extend(operands.iter().rev().copied()),
+                // A member target such as `s[i].lo` keeps its element select
+                // among the path references.
+                NodeKind::Expr(ExprKind::HierPath { refs, .. }) => pending.extend(
+                    refs.iter()
+                        .rev()
+                        .flatten()
+                        .copied()
+                        .filter(|reference| matches!(self.kind(*reference), NodeKind::Expr(_))),
+                ),
+                _ if !self.net_lvalue_selects_are_constant(target) => {
+                    self.walk_lhs_select_reads(
+                        path,
+                        target,
+                        &mut seen,
+                        &mut HashSet::new(),
+                        &mut reads,
+                    )?;
+                }
+                _ => {}
+            }
+        }
+        Ok(reads)
+    }
+
+    /// Storage a continuous assignment writes for the single-writer rule.
+    /// A variable target whose unpacked selects end in runtime indices
+    /// writes its longest static prefix (IEEE 1800-2009 6.5, 11.5.3): the
+    /// row named by the leading constant indices, so generated drivers of
+    /// disjoint rows stay legal. Other targets use the procedural write set.
+    fn add_continuous_lhs_write(&self, lhs: NodeId, writes: &mut HashSet<IrDependency>) {
+        if let NodeKind::Expr(ExprKind::Operation {
+            op: Operation::Concat,
+            operands,
+            ..
+        }) = self.kind(lhs)
+        {
+            for operand in operands {
+                self.add_continuous_lhs_write(*operand, writes);
+            }
+            return;
+        }
+        let row = self
+            .array_net_target_parts(lhs)
+            .filter(|(array, _)| !array.is_net)
+            .and_then(|(array, indices)| {
+                let constant = indices
+                    .iter()
+                    .take_while(|index| self.eval_bound_i128(**index).is_ok())
+                    .count();
+                if constant == 0 || constant == indices.len() {
+                    return None;
+                }
+                let (first, count) = self.constant_row_cells(&array, &indices[..constant])?;
+                self.array_row_write(self.reference_array(array.ir), first, count)
+            });
+        match row {
+            Some(row) => {
+                writes.insert(row);
+            }
+            None => self.add_process_lhs_write(lhs, writes),
+        }
     }
 
     fn remap_pattern_continuous_targets(
@@ -1265,7 +1350,7 @@ impl<'a> Codegen<'a> {
             let mut children = self.node(writer.node).children.iter().copied();
             let mut driven = HashSet::new();
             if let Some(lhs) = children.next() {
-                self.add_process_lhs_write(lhs, &mut driven);
+                self.add_continuous_lhs_write(lhs, &mut driven);
             }
             let mut called = HashSet::new();
             for rhs in children {
