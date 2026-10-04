@@ -57,6 +57,8 @@ impl Frame<'_, '_> {
                         IrSampledFunc::Fell => 1,
                         IrSampledFunc::Stable => 2,
                         IrSampledFunc::Changed => 3,
+                        IrSampledFunc::RealStable => 4,
+                        IrSampledFunc::RealChanged => 5,
                         _ => unreachable!("handled above"),
                     };
                     self.value(

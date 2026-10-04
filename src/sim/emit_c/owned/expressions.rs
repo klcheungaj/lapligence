@@ -84,7 +84,10 @@ impl Frame<'_, '_> {
                     return Ok(self.read_binding(&binding));
                 }
                 let signal = self.ctx.model.signal(*index);
-                if self.sampled_reads && signal.ty.width() != 0 {
+                if self.sampled_reads && matches!(signal.ty, IrType::Real { .. }) {
+                    // Real variables keep their own numeric Preponed snapshot.
+                    self.value(format!("llg_sampled_real(&{})", signal.c_name), 0, false)
+                } else if self.sampled_reads && signal.ty.width() != 0 {
                     let addr = if signal.net_alias.is_empty() {
                         format!("&{}", signal.c_name)
                     } else {

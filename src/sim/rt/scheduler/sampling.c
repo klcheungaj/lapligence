@@ -69,6 +69,37 @@ int llg_sampled_copy(const sv4_t* signal, sv4_t* out) {
     return 1;
 }
 
+void llg_sampled_register_real(double* signal) {
+    if (!signal) {
+        fprintf(stderr, "llg: cannot register a null sampled signal\n");
+        llg_last_failure = 1;
+        g.finish = 1;
+        return;
+    }
+    for (llg_sampled_real_t* item = g.sampled_reals; item; item = item->next) {
+        if (item->signal == signal) return;
+    }
+    llg_sampled_real_t* item = (llg_sampled_real_t*)llg_checked_malloc(
+        1, sizeof(*item), "sampled real value");
+    item->signal = signal;
+    item->value = *signal;
+    item->next = g.sampled_reals;
+    g.sampled_reals = item;
+}
+
+double llg_sampled_real(const double* signal) {
+    for (llg_sampled_real_t* item = g.sampled_reals; item; item = item->next) {
+        if (item->signal == signal) return item->value;
+    }
+    report_unregistered_sampled_signal();
+    return 0.0;
+}
+
+static int sampled_real_image_equal(sv4_t left, sv4_t right) {
+    if (llg_sv4_width(left) != 64 || llg_sv4_width(right) != 64) return 0;
+    return sv4_bitstoreal(left) == sv4_bitstoreal(right);
+}
+
 static llg_sampled_domain_t* find_sampled_domain(uint64_t identity) {
     for (llg_sampled_domain_t* domain = g.sampled_domains; domain;
          domain = domain->next) {
@@ -186,6 +217,8 @@ int llg_sampled_domain_status(uint64_t identity, int kind) {
         case 1: return sampled_domain_lsb_zero(current) && !sampled_domain_lsb_zero(previous);
         case 2: return sv4_same(current, previous);
         case 3: return !sv4_same(current, previous);
+        case 4: return sampled_real_image_equal(current, previous);
+        case 5: return !sampled_real_image_equal(current, previous);
         default:
             fprintf(stderr, "llg: invalid sampled-value status kind %d\n", kind);
             llg_last_failure = 1;
@@ -207,6 +240,8 @@ static void sample_preponed_values(void) {
     if (g.sampled_time_valid && g.sampled_time == g.now) return;
     g.sampled_time = g.now;
     g.sampled_time_valid = 1;
+    for (llg_sampled_real_t* item = g.sampled_reals; item; item = item->next)
+        item->value = *item->signal;
     for (llg_sampled_value_t* item = g.sampled; item; item = item->next) {
         sv4_copy(&item->value, item->signal);
         llg_sampled_history_t* last = item->history;

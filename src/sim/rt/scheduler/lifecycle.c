@@ -51,6 +51,11 @@ static void free_region_callbacks(void) {
 }
 
 static void free_sampled_values(void) {
+    while (g.sampled_reals) {
+        llg_sampled_real_t* next = g.sampled_reals->next;
+        free(g.sampled_reals);
+        g.sampled_reals = next;
+    }
     while (g.sampled) {
         llg_sampled_value_t* next = g.sampled->next;
         while (g.sampled->history) {
