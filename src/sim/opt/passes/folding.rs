@@ -118,9 +118,10 @@ pub(super) fn fold_expr(e: &mut IrExpr) {
         IrExprKind::RealUn { op, a } => real_of(a).map(|x| match op {
             IrRealUnOp::Neg => Folded::Real(-x),
         }),
-        IrExprKind::SysFunc(IrSysFunc::Clog2(a)) => {
-            as_packed_const(a).map(|va| Folded::Bits(elab::clog2(&va)))
-        }
+        IrExprKind::SysFunc(function) => match &**function {
+            IrSysFunc::Clog2(a) => as_packed_const(a).map(|va| Folded::Bits(elab::clog2(&va))),
+            _ => None,
+        },
         _ => None,
     };
     if let Some(folded) = folded {

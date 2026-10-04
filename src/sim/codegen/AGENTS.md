@@ -420,8 +420,9 @@ are evaluated/disposed but their values are ignored; memory bounds remain active
 
 Use owned nearest-module units/precision and typed `IrDelay`; round complete real
 delays once locally before checked scaling. Packed X/Z delay becomes zero, negative
-packed values convert to unsigned 64-bit time; reject nonfinite/negative real delays
-and overflow. `timescale.rs` owns tick representation; keep the runtime timescale-
+packed values convert to unsigned 64-bit time, and finite negative real delays
+convert after local rounding (constants take the runtime conversion); reject
+nonfinite real delays and tick overflow. `timescale.rs` owns tick representation; keep the runtime timescale-
 agnostic. `$time`/`$stime` round to calling units with halves upward; `$realtime`
 keeps fractions. `%t` carries physical units through runtime `$timeformat`;
 `$printtimescale` uses caller metadata. Frontend owns inheritance.

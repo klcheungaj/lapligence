@@ -139,7 +139,7 @@ fn selected_assignment_snapshots_rhs_before_calling_selector() {
     let mut frame = Frame::new(&ctx);
     frame
         .statement(&IrStmt::Assign {
-            lhs: IrLhs::Bit(0, selector, false),
+            lhs: IrLhs::Bit(0, Box::new(selector), false),
             rhs: read(),
             nba: false,
         })
@@ -289,13 +289,13 @@ fn suspending_call_keeps_its_input_snapshot_in_the_frame() {
     model.funcs[0].body = vec![IrStmt::Delay {
         ticks: IrDelay::Constant(1),
     }];
-    model.processes[0].body = vec![IrStmt::Call(IrCall::new(
+    model.processes[0].body = vec![IrStmt::Call(Box::new(IrCall::new(
         0,
         vec![IrCallArg::Val(read())],
         IrDepth::PROC,
         Vec::new(),
         Vec::new(),
-    ))];
+    )))];
     let source =
         super::super::super::model::render(&ExecutionModel::lower(model).unwrap()).unwrap();
     let read = find_copy(&source, "&G_value").unwrap();

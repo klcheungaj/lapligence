@@ -21,6 +21,9 @@ impl Db {
         }
 
         let mut nodes = Vec::with_capacity(snapshot.semantic_nodes.len());
+        // Placeholder until hierarchical names are assigned after the node
+        // loop; one shared value avoids a temporary allocation per node.
+        let unnamed: std::sync::Arc<str> = std::sync::Arc::from("");
         let overridden_parameters = snapshot
             .semantic_nodes
             .iter()
@@ -35,11 +38,13 @@ impl Db {
             .iter()
             .map(|semantic| semantic.kind.into())
             .collect();
-        let semantic_details = snapshot
-            .semantic_nodes
-            .iter()
-            .map(|semantic| semantic.detail.clone())
-            .collect();
+        let mut semantic_details = DenseSharedBuilder::new(snapshot.semantic_nodes.len());
+        for (index, semantic) in snapshot.semantic_nodes.iter().enumerate() {
+            semantic_details.assign(NodeId::from_index(index), semantic.detail.as_str(), || {
+                Box::from(semantic.detail.as_str())
+            })?;
+        }
+        let semantic_details = semantic_details.finish();
         let mut conditional_patterns = snapshot
             .semantic_nodes
             .iter()
@@ -238,7 +243,10 @@ impl Db {
         let mut method_call_iterators = HashMap::new();
         let mut packed_members = HashMap::new();
         let mut aggregate_layouts = HashMap::new();
-        let mut type_descriptors = HashMap::new();
+        let mut type_descriptors = DenseSharedBuilder::new(snapshot.semantic_nodes.len());
+        // A projection depends only on its frontend type record, so each
+        // distinct type is projected once and shared by every typed node.
+        let mut projections: HashMap<u64, std::rc::Rc<_>> = HashMap::new();
         let mut packed_pattern_elements = HashMap::new();
         let mailbox_elements = type_projector
             .mailbox_elements()
@@ -374,10 +382,17 @@ impl Db {
             }
             let mut seen_children = HashSet::new();
             children.retain(|child| seen_children.insert(*child));
-            let projection = semantic
-                .type_id
-                .map(|type_id| type_projector.project(type_id))
-                .transpose()?;
+            let projection = match semantic.type_id {
+                Some(type_id) => Some(match projections.get(&type_id) {
+                    Some(projection) => std::rc::Rc::clone(projection),
+                    None => {
+                        let projection = std::rc::Rc::new(type_projector.project(type_id)?);
+                        projections.insert(type_id, std::rc::Rc::clone(&projection));
+                        projection
+                    }
+                }),
+                None => None,
+            };
             let type_info = projection
                 .as_ref()
                 .map(|projection| projection.type_info.clone())
@@ -575,7 +590,9 @@ impl Db {
                 );
             }
             if let Some(projection) = &projection {
-                type_descriptors.insert(id, projection.descriptor.clone());
+                if let Some(type_id) = semantic.type_id {
+                    type_descriptors.assign(id, type_id, || projection.descriptor.clone())?;
+                }
                 if !projection.packed_dimensions.is_empty() {
                     packed_dimensions.insert(id, projection.packed_dimensions.clone());
                 }
@@ -828,7 +845,7 @@ impl Db {
                 children,
                 parent,
                 name,
-                full_name: String::new(),
+                full_name: std::sync::Arc::clone(&unnamed),
                 file,
                 line,
                 col,
@@ -893,10 +910,7 @@ impl Db {
             }
         }
 
-        for index in 0..nodes.len() {
-            let full_name = semantic_full_name(&nodes, NodeId::from_index(index))?;
-            nodes[index].full_name = full_name;
-        }
+        assign_semantic_full_names(&mut nodes)?;
         let mut elaborated_type_ranges = Vec::new();
         for (index, semantic) in snapshot.semantic_nodes.iter().enumerate() {
             let id = NodeId::from_index(index);
@@ -929,7 +943,7 @@ impl Db {
                 continue;
             }
             let instance = enclosing_scope_name(&nodes, id)
-                .unwrap_or_else(|| nodes[id.index()].full_name.clone());
+                .unwrap_or_else(|| nodes[id.index()].full_name.to_string());
             if !instance.is_empty() {
                 elaborated_type_ranges.push(type_projector.elaborated_ranges(
                     id,
@@ -1019,7 +1033,7 @@ impl Db {
             method_call_iterators,
             packed_members,
             aggregate_layouts,
-            type_descriptors,
+            type_descriptors: type_descriptors.finish(),
             packed_pattern_elements,
             mailbox_elements,
             enum_types,
@@ -1044,5 +1058,52 @@ impl Db {
         };
         db.validate().map_err(DbError::InvalidDatabase)?;
         Ok(db)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn owned_import_shares_type_descriptors_and_details_per_distinct_value() {
+        let source = "module top; for (genvar i = 0; i < 32; i++) begin : g \
+            logic [3:0] x = 4'bxz01; logic [3:0] y; assign y = x ^ 4'b0110; end endmodule";
+        let output = crate::core::compile::compile_sources_checked(
+            &[crate::core::compile::OwnedSource::compilation_unit(
+                "shared_metadata.sv",
+                source,
+            )],
+            &crate::core::compile::CompileOpts {
+                top: Some("top".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let snapshot = &output.snapshot;
+        let db = Db::from_slang(snapshot).unwrap();
+        let projector = SlangTypeProjector::new(snapshot).unwrap();
+        let mut by_type: HashMap<u64, *const TypeDescriptor> = HashMap::new();
+        let mut typed = 0;
+        for (index, semantic) in snapshot.semantic_nodes.iter().enumerate() {
+            let id = NodeId::from_index(index);
+            assert_eq!(db.semantic_detail(id), Some(semantic.detail.as_str()));
+            let Some(type_id) = semantic.type_id else {
+                assert!(db.type_descriptor(id).is_none());
+                continue;
+            };
+            typed += 1;
+            let descriptor = db.type_descriptor(id).unwrap();
+            assert_eq!(*descriptor, projector.project(type_id).unwrap().descriptor);
+            let shared = *by_type.entry(type_id).or_insert(descriptor);
+            assert!(std::ptr::eq(shared, descriptor));
+        }
+        assert_eq!(db.type_descriptors.value_count(), by_type.len());
+        assert!(by_type.len() < typed);
+        assert!(db.semantic_details.value_count() < snapshot.semantic_nodes.len());
+        assert_eq!(
+            db.semantic_details.slot_count(),
+            snapshot.semantic_nodes.len()
+        );
     }
 }

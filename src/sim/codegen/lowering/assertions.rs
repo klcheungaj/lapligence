@@ -1868,9 +1868,10 @@ pub(super) fn sampled_compatible(expression: &IrExpr) -> bool {
                 && sampled_compatible(width_expr)
         }
         IrExprKind::BitStreamCast { a, .. } => sampled_compatible(a),
-        IrExprKind::SysFunc(crate::sim::ir::IrSysFunc::Sampled(call)) => {
-            sampled_compatible(&call.argument)
-        }
+        IrExprKind::SysFunc(function) => match &**function {
+            crate::sim::ir::IrSysFunc::Sampled(call) => sampled_compatible(&call.argument),
+            _ => false,
+        },
         _ => false,
     }
 }

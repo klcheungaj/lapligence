@@ -2164,6 +2164,24 @@ static void region_timed_callback(void* data) {
     llg_rt_request_finish();
 }
 
+static int region_cancel_runs;
+static llg_region_callback_id_t region_cancel_ran_id;
+static llg_region_callback_id_t region_cancel_future_id;
+
+static void region_cancel_count_callback(void* data) {
+    (void)data;
+    region_cancel_runs++;
+}
+
+// Runs after the Active callback in the same slot: that one has already run,
+// while the timed callback is still queued and is removed unrun.
+static void region_cancel_late_callback(void* data) {
+    (void)data;
+    CHECK(llg_cancel_region_callback(region_cancel_ran_id) == 0);
+    CHECK(llg_cancel_region_callback(region_cancel_future_id) == 1);
+    CHECK(llg_cancel_region_callback(region_cancel_future_id) == 0);
+}
+
 static int run_region_probe(void) {
     llg_rt_init();
     sv4_replace(&region_sample_signal, SV4_C(0, 1));
@@ -2246,6 +2264,40 @@ static int run_region_probe(void) {
               LLG_REGION_OBSERVED, region_illegal_schedule_callback, NULL) == 1);
     llg_rt_run();
     CHECK(llg_rt_failed());
+
+    // Cancellation removes only queued callbacks of the current lifetime.
+    llg_rt_init();
+    region_cancel_runs = 0;
+    llg_region_callback_id_t cancelled = {0, 0};
+    CHECK(llg_schedule_region_callback_id(
+              LLG_REGION_ACTIVE, region_cancel_count_callback, NULL, 0,
+              &region_cancel_ran_id) == 1);
+    CHECK(llg_schedule_region_callback_id(
+              LLG_REGION_ACTIVE, region_cancel_count_callback, NULL, 0,
+              &cancelled) == 1);
+    CHECK(llg_schedule_region_callback_id(
+              LLG_REGION_ACTIVE, region_cancel_count_callback, NULL, 5,
+              &region_cancel_future_id) == 1);
+    CHECK(llg_schedule_region_callback(
+              LLG_REGION_POST_NBA_PLI, region_cancel_late_callback, NULL) == 1);
+    CHECK(llg_cancel_region_callback(cancelled) == 1);
+    CHECK(llg_cancel_region_callback(cancelled) == 0);
+    llg_rt_run();
+    CHECK(region_cancel_runs == 1);
+    CHECK(!llg_rt_failed());
+    // The next lifetime reuses sequence numbers; an old identity is stale.
+    llg_rt_init();
+    region_cancel_runs = 0;
+    llg_region_callback_id_t fresh = {0, 0};
+    CHECK(llg_schedule_region_callback_id(
+              LLG_REGION_ACTIVE, region_cancel_count_callback, NULL, 0,
+              &fresh) == 1);
+    CHECK(fresh.sequence == region_cancel_ran_id.sequence);
+    CHECK(fresh.generation != region_cancel_ran_id.generation);
+    CHECK(llg_cancel_region_callback(region_cancel_ran_id) == 0);
+    llg_rt_run();
+    CHECK(region_cancel_runs == 1);
+    CHECK(!llg_rt_failed());
     return failures == 0 ? 0 : 1;
 }
 

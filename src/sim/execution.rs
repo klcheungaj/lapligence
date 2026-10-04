@@ -716,7 +716,7 @@ fn collect_effects(
                 effects.push(ExecutionEffect::ImmediateStore);
                 effects.push(ExecutionEffect::RuntimeService);
                 if matches!(
-                    statement,
+                    &**statement,
                     IrObjectStmt::ProcessAwait(_)
                         | IrObjectStmt::SemaphoreGet(..)
                         | IrObjectStmt::ProcessControl {
@@ -1596,7 +1596,7 @@ fn collect_expression_effects(
                 collect_expression_effects(ir, index, effects, visited_calls)
             });
         }
-        IrExprKind::SysFunc(system) => match system {
+        IrExprKind::SysFunc(system) => match &**system {
             IrSysFunc::TestPlusArgs { pattern } => {
                 pattern.expressions(&mut |expression| {
                     collect_expression_effects(ir, expression, effects, visited_calls)
@@ -2488,9 +2488,9 @@ mod tests {
                     branches: vec![("branch".into(), "top.branch".into())],
                     target: None,
                 },
-                IrStmt::Object(IrObjectStmt::StringPrint(IrStringExpr::Literal(
+                IrStmt::Object(Box::new(IrObjectStmt::StringPrint(IrStringExpr::Literal(
                     b"message".to_vec(),
-                ))),
+                )))),
             ],
         );
 
@@ -2544,10 +2544,10 @@ mod tests {
                 fatal_finish_number: Some(0),
                 runtime_failure: false,
             },
-            IrStmt::Object(IrObjectStmt::ProcessControl {
+            IrStmt::Object(Box::new(IrObjectStmt::ProcessControl {
                 op: IrProcessControl::Kill,
                 target: IrProcessExpr::SelfHandle,
-            }),
+            })),
             IrStmt::DisableTarget {
                 target: IrActivationTarget::new(1, 1),
             },
@@ -2561,30 +2561,30 @@ mod tests {
                 args: vec![value.clone()],
                 scopes: vec![],
             },
-            IrStmt::Object(IrObjectStmt::MailboxPut(
+            IrStmt::Object(Box::new(IrObjectStmt::MailboxPut(
                 0,
                 IrChandleExpr::Null,
                 mailbox_value.clone(),
                 false,
-            )),
-            IrStmt::Object(IrObjectStmt::MailboxPutLocal(
+            ))),
+            IrStmt::Object(Box::new(IrObjectStmt::MailboxPutLocal(
                 "mailbox".into(),
                 IrChandleExpr::Null,
                 mailbox_value,
                 false,
-            )),
-            IrStmt::Object(IrObjectStmt::MailboxGet(
+            ))),
+            IrStmt::Object(Box::new(IrObjectStmt::MailboxGet(
                 0,
                 IrChandleExpr::Null,
                 mailbox_target.clone(),
                 false,
-            )),
-            IrStmt::Object(IrObjectStmt::MailboxGetLocal(
+            ))),
+            IrStmt::Object(Box::new(IrObjectStmt::MailboxGetLocal(
                 "mailbox".into(),
                 IrChandleExpr::Null,
                 mailbox_target,
                 true,
-            )),
+            ))),
             IrStmt::VpiCall {
                 site: 0,
                 name: "$opaque".into(),
@@ -2630,7 +2630,13 @@ mod tests {
                 IrStmt::Finish,
             ],
         ));
-        let statement = IrStmt::Call(IrCall::new(0, vec![], IrDepth::PROC, vec![], vec![]));
+        let statement = IrStmt::Call(Box::new(IrCall::new(
+            0,
+            vec![],
+            IrDepth::PROC,
+            vec![],
+            vec![],
+        )));
         let statement_effects = effects_for_statements(&ir, &[statement]);
         assert!(statement_effects.contains(&ExecutionEffect::Suspend));
         assert!(statement_effects.contains(&ExecutionEffect::Terminate));
@@ -2651,20 +2657,20 @@ mod tests {
         assert!(expression_effects.contains(&ExecutionEffect::Suspend));
         assert!(expression_effects.contains(&ExecutionEffect::Terminate));
 
-        let unknown = IrStmt::Call(IrCall::new(
+        let unknown = IrStmt::Call(Box::new(IrCall::new(
             usize::MAX,
             vec![],
             IrDepth::PROC,
             vec![],
             vec![],
-        ));
+        )));
         let unknown_effects = effects_for_statements(&ir, &[unknown]);
         assert!(unknown_effects.contains(&ExecutionEffect::Suspend));
         assert!(unknown_effects.contains(&ExecutionEffect::Terminate));
 
         let mut indirect = IrCall::new(0, vec![], IrDepth::PROC, vec![], vec![]);
         indirect.virtual_dispatch = true;
-        let indirect_effects = effects_for_statements(&ir, &[IrStmt::Call(indirect)]);
+        let indirect_effects = effects_for_statements(&ir, &[IrStmt::Call(Box::new(indirect))]);
         assert!(indirect_effects.contains(&ExecutionEffect::Suspend));
         assert!(indirect_effects.contains(&ExecutionEffect::Terminate));
 
@@ -2677,13 +2683,13 @@ mod tests {
         ir.funcs.push(dpi);
         let dpi_effects = effects_for_statements(
             &ir,
-            &[IrStmt::Call(IrCall::new(
+            &[IrStmt::Call(Box::new(IrCall::new(
                 1,
                 vec![],
                 IrDepth::PROC,
                 vec![],
                 vec![],
-            ))],
+            )))],
         );
         assert!(!dpi_effects.contains(&ExecutionEffect::Suspend));
         assert!(dpi_effects.contains(&ExecutionEffect::Terminate));
@@ -2840,11 +2846,11 @@ mod tests {
                     fmt: "\"resume=%0d\"".into(),
                     args: vec![(
                         IrExpr::try_new(
-                            IrExprKind::SysFunc(IrSysFunc::Time {
+                            IrExprKind::SysFunc(Box::new(IrSysFunc::Time {
                                 precision_fs: 1,
                                 unit_fs: 1,
                                 kind: IrTimeKind::Time,
-                            }),
+                            })),
                             64,
                             false,
                             None,

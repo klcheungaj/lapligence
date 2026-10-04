@@ -472,10 +472,10 @@ fn math_and_realtime_require_valid_shapes_and_units() {
     let model = valid_model();
     let math = |args, width| {
         IrExpr::new(
-            IrExprKind::SysFunc(IrSysFunc::Math {
+            IrExprKind::SysFunc(Box::new(IrSysFunc::Math {
                 kind: IrMathFunc::Pow,
                 args,
-            }),
+            })),
             width,
             true,
             None,
@@ -494,10 +494,10 @@ fn math_and_realtime_require_valid_shapes_and_units() {
         )
         .is_err());
     let time = IrExpr::new(
-        IrExprKind::SysFunc(IrSysFunc::Realtime {
+        IrExprKind::SysFunc(Box::new(IrSysFunc::Realtime {
             precision_fs: 1,
             unit_fs: 0,
-        }),
+        })),
         0,
         true,
         None,
@@ -621,8 +621,8 @@ fn indexed_lhs_selected_width_contributes_to_capacity() {
     let statement = IrStmt::Assign {
         lhs: IrLhs::IdxPart(
             0,
-            packed_const(0, 32),
-            packed_const(96, 32),
+            Box::new(packed_const(0, 32)),
+            Box::new(packed_const(96, 32)),
             96,
             false,
             false,
@@ -671,7 +671,14 @@ fn indexed_lhs_preserves_wide_base_expression_capacity() {
         None,
     );
     let statement = IrStmt::Assign {
-        lhs: IrLhs::IdxPart(0, base, packed_const(8, 32), 8, false, false),
+        lhs: IrLhs::IdxPart(
+            0,
+            Box::new(base),
+            Box::new(packed_const(8, 32)),
+            8,
+            false,
+            false,
+        ),
         rhs: packed_const(1, 1),
         nba: false,
     };
@@ -987,25 +994,31 @@ fn string_realtoa_requires_real_argument_and_string_storage() {
     let real = IrExpr::new(IrExprKind::Const(IrConst::real(1.5)), 0, false, None);
     model
         .validate_stmt(
-            &IrStmt::Object(IrObjectStmt::StringRealtoa(0, real.clone())),
+            &IrStmt::Object(Box::new(IrObjectStmt::StringRealtoa(0, real.clone()))),
             None,
         )
         .unwrap();
     assert!(model
         .validate_stmt(
-            &IrStmt::Object(IrObjectStmt::StringRealtoa(0, packed_const(1, 32))),
+            &IrStmt::Object(Box::new(IrObjectStmt::StringRealtoa(
+                0,
+                packed_const(1, 32)
+            ))),
             None
         )
         .is_err());
     assert!(model
         .validate_stmt(
-            &IrStmt::Object(IrObjectStmt::StringItoa(0, real.clone(), 10)),
+            &IrStmt::Object(Box::new(IrObjectStmt::StringItoa(0, real.clone(), 10))),
             None
         )
         .is_err());
     model.objects[0].ty = IrObjectType::Chandle;
     assert!(model
-        .validate_stmt(&IrStmt::Object(IrObjectStmt::StringRealtoa(0, real)), None)
+        .validate_stmt(
+            &IrStmt::Object(Box::new(IrObjectStmt::StringRealtoa(0, real))),
+            None
+        )
         .is_err());
 }
 
@@ -1013,7 +1026,10 @@ fn string_realtoa_requires_real_argument_and_string_storage() {
 fn string_return_storage_requires_its_function_context() {
     let model = valid_model();
     let value = IrStringExpr::LocalRead("_ret".to_owned());
-    let statement = IrStmt::Object(IrObjectStmt::StringAssignLocal("_ret".to_owned(), value));
+    let statement = IrStmt::Object(Box::new(IrObjectStmt::StringAssignLocal(
+        "_ret".to_owned(),
+        value,
+    )));
     assert!(model.validate_stmt(&statement, None).is_err());
     let mut function = IrFunc::new("string_fn".to_owned(), None, vec![], vec![], vec![], vec![]);
     assert!(model.validate_stmt(&statement, Some(&function)).is_err());
@@ -1040,13 +1056,13 @@ fn string_calls_validate_packed_arguments_and_depth_context() {
     function.ret_string = true;
     model.funcs.push(function.clone());
     let statement = |width, depth| {
-        IrStmt::Object(IrObjectStmt::StringPrint(IrStringExpr::Call {
+        IrStmt::Object(Box::new(IrObjectStmt::StringPrint(IrStringExpr::Call {
             receiver: None,
             virtual_dispatch: false,
             function: 0,
             args: vec![packed_const(1, width)],
             depth,
-        }))
+        })))
     };
     assert_eq!(
         model
@@ -1085,10 +1101,10 @@ fn ir_invalid_cross_reference_rejects_out_of_bounds_tables() {
     // An object statement that names an object outside the model table.
     let error = model
         .validate_stmt(
-            &IrStmt::Object(IrObjectStmt::StringAssign(
+            &IrStmt::Object(Box::new(IrObjectStmt::StringAssign(
                 9,
                 IrStringExpr::Literal(b"text".to_vec()),
-            )),
+            ))),
             None,
         )
         .unwrap_err();
@@ -1097,13 +1113,13 @@ fn ir_invalid_cross_reference_rejects_out_of_bounds_tables() {
     // A statement call that names a function outside the model table.
     let error = model
         .validate_stmt(
-            &IrStmt::Call(IrCall::new(
+            &IrStmt::Call(Box::new(IrCall::new(
                 9,
                 Vec::new(),
                 IrDepth::PROC,
                 Vec::new(),
                 Vec::new(),
-            )),
+            ))),
             None,
         )
         .unwrap_err();
@@ -1111,12 +1127,12 @@ fn ir_invalid_cross_reference_rejects_out_of_bounds_tables() {
 
     // A sampled `$past` that names a history domain outside the model table.
     let past = IrExpr::new(
-        IrExprKind::SysFunc(IrSysFunc::Sampled(IrSampledCall::new(
+        IrExprKind::SysFunc(Box::new(IrSysFunc::Sampled(IrSampledCall::new(
             IrSampledFunc::Past,
             packed_const(1, 8),
             Some(9),
             1,
-        ))),
+        )))),
         8,
         false,
         None,
@@ -1497,7 +1513,7 @@ fn force_dependencies_must_name_persistent_fixed_arrays() {
             pre_fns: Vec::new(),
             body: vec![IrStmt::Force {
                 lhs: IrLhs::Whole(0),
-                value: packed_const(1, 1),
+                value: Box::new(packed_const(1, 1)),
                 eval: "eval".to_string(),
                 reads: Vec::new(),
                 dependencies: vec![dependency],

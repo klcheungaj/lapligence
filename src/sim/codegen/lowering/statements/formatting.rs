@@ -402,9 +402,9 @@ impl EmitCtx<'_, '_> {
                 .lower_string_actual_address(&self.path, target)?
                 .trim_start_matches('&')
                 .to_owned();
-            return Ok(IrStmt::Object(IrObjectStmt::StringAssignLocal(
+            return Ok(IrStmt::Object(Box::new(IrObjectStmt::StringAssignLocal(
                 target, value,
-            )));
+            ))));
         }
         let lhs = self.cg.lower_lhs(&self.path, target).map_err(|error| {
             format!(

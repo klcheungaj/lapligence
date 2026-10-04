@@ -676,20 +676,24 @@ fn suspension_operation(
         IrStmt::WaitFork => SuspensionOperation::WaitFork,
         IrStmt::Expect { .. } => SuspensionOperation::Expect,
         IrStmt::StopControl { .. } => SuspensionOperation::Stop,
-        IrStmt::Object(IrObjectStmt::ProcessControl {
-            op: IrProcessControl::Suspend,
-            ..
-        }) => SuspensionOperation::ProcessSuspend,
-        IrStmt::Object(IrObjectStmt::ProcessAwait(_)) => SuspensionOperation::ProcessAwait,
-        IrStmt::Object(IrObjectStmt::SemaphoreGet(..)) => SuspensionOperation::SemaphoreGet,
-        IrStmt::Object(IrObjectStmt::MailboxPut(_, _, _, attempt))
-        | IrStmt::Object(IrObjectStmt::MailboxPutLocal(_, _, _, attempt))
-            if !*attempt =>
-        {
-            SuspensionOperation::MailboxPut
-        }
-        IrStmt::Object(IrObjectStmt::MailboxGet(..))
-        | IrStmt::Object(IrObjectStmt::MailboxGetLocal(..)) => SuspensionOperation::MailboxGet,
+        IrStmt::Object(object) => match &**object {
+            IrObjectStmt::ProcessControl {
+                op: IrProcessControl::Suspend,
+                ..
+            } => SuspensionOperation::ProcessSuspend,
+            IrObjectStmt::ProcessAwait(_) => SuspensionOperation::ProcessAwait,
+            IrObjectStmt::SemaphoreGet(..) => SuspensionOperation::SemaphoreGet,
+            IrObjectStmt::MailboxPut(_, _, _, attempt)
+            | IrObjectStmt::MailboxPutLocal(_, _, _, attempt)
+                if !*attempt =>
+            {
+                SuspensionOperation::MailboxPut
+            }
+            IrObjectStmt::MailboxGet(..) | IrObjectStmt::MailboxGetLocal(..) => {
+                SuspensionOperation::MailboxGet
+            }
+            _ => return None,
+        },
         IrStmt::Call(call) => {
             let indirect = call.virtual_dispatch || call.virtual_call.is_some();
             let callee = function_effects.get(call.function_index());
@@ -957,7 +961,7 @@ mod tests {
     };
 
     fn statement_call(callee: usize, depth: IrDepth) -> IrStmt {
-        IrStmt::Call(IrCall::new(callee, vec![], depth, vec![], vec![]))
+        IrStmt::Call(Box::new(IrCall::new(callee, vec![], depth, vec![], vec![])))
     }
 
     fn chain_model_with_limit(
@@ -1319,36 +1323,41 @@ mod tests {
                 verbosity: 0,
                 location: "test.sv:1".into(),
             },
-            IrStmt::Object(IrObjectStmt::ProcessControl {
+            IrStmt::Object(Box::new(IrObjectStmt::ProcessControl {
                 op: IrProcessControl::Suspend,
                 target: IrProcessExpr::SelfHandle,
-            }),
-            IrStmt::Object(IrObjectStmt::ProcessAwait(IrProcessExpr::SelfHandle)),
-            IrStmt::Object(IrObjectStmt::SemaphoreGet(IrChandleExpr::Null, one())),
-            IrStmt::Object(IrObjectStmt::MailboxPut(
+            })),
+            IrStmt::Object(Box::new(IrObjectStmt::ProcessAwait(
+                IrProcessExpr::SelfHandle,
+            ))),
+            IrStmt::Object(Box::new(IrObjectStmt::SemaphoreGet(
+                IrChandleExpr::Null,
+                one(),
+            ))),
+            IrStmt::Object(Box::new(IrObjectStmt::MailboxPut(
                 0,
                 IrChandleExpr::Null,
                 mailbox_value.clone(),
                 false,
-            )),
-            IrStmt::Object(IrObjectStmt::MailboxPutLocal(
+            ))),
+            IrStmt::Object(Box::new(IrObjectStmt::MailboxPutLocal(
                 "mailbox".into(),
                 IrChandleExpr::Null,
                 mailbox_value,
                 false,
-            )),
-            IrStmt::Object(IrObjectStmt::MailboxGet(
+            ))),
+            IrStmt::Object(Box::new(IrObjectStmt::MailboxGet(
                 0,
                 IrChandleExpr::Null,
                 mailbox_target.clone(),
                 false,
-            )),
-            IrStmt::Object(IrObjectStmt::MailboxGetLocal(
+            ))),
+            IrStmt::Object(Box::new(IrObjectStmt::MailboxGetLocal(
                 "mailbox".into(),
                 IrChandleExpr::Null,
                 mailbox_target,
                 true,
-            )),
+            ))),
             statement_call(0, IrDepth::PROC),
         ];
         let function_effects = vec![vec![ExecutionEffect::Suspend]];
@@ -1387,7 +1396,7 @@ mod tests {
         )
         .is_none());
         assert!(suspension_operation(
-            &IrStmt::Object(IrObjectStmt::MailboxPut(
+            &IrStmt::Object(Box::new(IrObjectStmt::MailboxPut(
                 0,
                 IrChandleExpr::Null,
                 IrMailboxValue::Packed {
@@ -1395,7 +1404,7 @@ mod tests {
                     two_state: false,
                 },
                 true,
-            )),
+            ))),
             &function_effects,
         )
         .is_none());

@@ -350,7 +350,7 @@ impl EmitCtx<'_, '_> {
                         // runtime's real waits do: signed zeros differ and a
                         // repeated NaN payload is no change.
                         IrExpr::new(
-                            IrExprKind::SysFunc(IrSysFunc::RealToBits(Box::new(value))),
+                            IrExprKind::SysFunc(Box::new(IrSysFunc::RealToBits(Box::new(value)))),
                             64,
                             false,
                             None,

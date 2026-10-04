@@ -169,10 +169,10 @@ impl Codegen<'_> {
                         IrObjectStmt::StringAssign(lhs_object, IrStringExpr::LocalRead(name))
                     }
                     IrObjectType::Chandle | IrObjectType::Semaphore => {
-                        captures.push(IrStmt::Object(IrObjectStmt::ChandleDeclareLocal(
+                        captures.push(IrStmt::Object(Box::new(IrObjectStmt::ChandleDeclareLocal(
                             name.clone(),
                             Some(IrChandleExpr::Read(rhs_object)),
-                        )));
+                        ))));
                         IrObjectStmt::ChandleAssign(lhs_object, IrChandleExpr::LocalRead(name))
                     }
                     IrObjectType::Process => {
@@ -181,7 +181,7 @@ impl Codegen<'_> {
                         ));
                     }
                 };
-                assignments.push(IrStmt::Object(operation));
+                assignments.push(IrStmt::Object(Box::new(operation)));
                 continue;
             }
             let target = self.aggregate_leaf_lhs(left)?;

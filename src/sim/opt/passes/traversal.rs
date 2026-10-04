@@ -245,7 +245,7 @@ fn walk_expr_mut(e: &mut IrExpr, f: &mut impl FnMut(&mut IrExpr)) {
                 walk_expr_mut(value, f);
             }
         }
-        IrExprKind::SysFunc(sf) => match sf {
+        IrExprKind::SysFunc(sf) => match &mut **sf {
             IrSysFunc::TestPlusArgs { pattern } => {
                 pattern.expressions_mut(&mut |expression| walk_expr_mut(expression, f))
             }

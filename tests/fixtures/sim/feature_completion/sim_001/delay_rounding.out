@@ -1,0 +1,16 @@
+const 1.25 1300
+const 1.24 2500
+const sub-precision 2500
+const half precision 2600
+literal 1.3ns 3900
+literal 250ps 4200
+literal 249ps 4400
+runtime 1.25 5700
+runtime sub-precision 5700
+runtime 2.75 8500
+runtime expr 0.6 9100
+x/z 9100
+changed d=3 12100
+changed d=6 18100
+changed d=9 27100
+call once evaluations=1 31100

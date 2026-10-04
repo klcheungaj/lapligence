@@ -67,13 +67,18 @@ impl LintRule for OutOfRangeSelectRule {
                 // parameterized instances can share a source location while
                 // having different elaborated bounds; those findings must
                 // remain visible to the caller.
-                if !diagnostics_seen.insert((node.file.clone(), line, col, message.clone())) {
+                if !diagnostics_seen.insert((
+                    node.file().map(str::to_owned),
+                    line,
+                    col,
+                    message.clone(),
+                )) {
                     continue;
                 }
                 out.push(LintDiag {
                     rule: "out-of-range-select".to_string(),
                     severity: LintSeverity::Warning,
-                    file: node.file.clone(),
+                    file: node.file().map(str::to_owned),
                     line,
                     col,
                     message,

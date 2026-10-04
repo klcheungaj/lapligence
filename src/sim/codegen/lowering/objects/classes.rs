@@ -571,16 +571,16 @@ impl Codegen<'_> {
                     IrClassFieldType::String => {
                         if let Some(initializer) = initializer {
                             let value = self.lower_string(path, initializer)?;
-                            statements.push(IrStmt::Object(IrObjectStmt::StringAssignLocal(
-                                target, value,
+                            statements.push(IrStmt::Object(Box::new(
+                                IrObjectStmt::StringAssignLocal(target, value),
                             )));
                         }
                     }
                     IrClassFieldType::Chandle => {
                         if let Some(initializer) = initializer {
                             let value = self.lower_chandle(path, initializer)?;
-                            statements.push(IrStmt::Object(IrObjectStmt::ChandleAssignLocal(
-                                target, value,
+                            statements.push(IrStmt::Object(Box::new(
+                                IrObjectStmt::ChandleAssignLocal(target, value),
                             )));
                         }
                     }

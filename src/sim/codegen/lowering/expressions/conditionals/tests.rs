@@ -188,7 +188,7 @@ fn predicate_database(first: ExprKind, second: ExprKind, left: ExprKind, right: 
             children: Vec::new(),
             parent: None,
             name: String::new(),
-            full_name: String::new(),
+            full_name: "".into(),
             file: None,
             line: 0,
             col: 0,

@@ -61,7 +61,7 @@ impl LintRule for DuplicateCaseItemRule {
                             earlier.col
                         );
                         if !diagnostics_seen.insert((
-                            later.file.clone(),
+                            later.file().map(str::to_owned),
                             line,
                             col,
                             message.clone(),
@@ -71,7 +71,7 @@ impl LintRule for DuplicateCaseItemRule {
                         out.push(LintDiag {
                             rule: "duplicate-case-item".to_string(),
                             severity: LintSeverity::Warning,
-                            file: later.file.clone(),
+                            file: later.file().map(str::to_owned),
                             line,
                             col,
                             message,

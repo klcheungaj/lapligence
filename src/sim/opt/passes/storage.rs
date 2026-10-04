@@ -1122,7 +1122,7 @@ fn collect_children_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
                     .expressions(&mut |child| collect_expr_reads(child, model, rw));
             }
         }
-        IrExprKind::SysFunc(sf) => match sf {
+        IrExprKind::SysFunc(sf) => match &**sf {
             IrSysFunc::TestPlusArgs { pattern } => {
                 pattern.expressions(&mut |expression| collect_expr_reads(expression, model, rw))
             }

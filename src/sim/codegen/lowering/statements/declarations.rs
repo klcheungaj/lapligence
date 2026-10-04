@@ -129,8 +129,8 @@ impl EmitCtx<'_, '_> {
                             .var_initializer(declaration)
                             .map(|initializer| self.cg.lower_process(&self.path, initializer))
                             .transpose()?;
-                        return Ok(vec![IrStmt::Object(IrObjectStmt::ProcessDeclareLocal(
-                            name, init,
+                        return Ok(vec![IrStmt::Object(Box::new(
+                            IrObjectStmt::ProcessDeclareLocal(name, init),
                         ))]);
                     }
                     if matches!(self.cg.kind(declaration), NodeKind::Var { ty } if ty.kind == "class")
@@ -162,12 +162,13 @@ impl EmitCtx<'_, '_> {
                                 )
                             })
                             .transpose()?;
-                        let mut statements = vec![IrStmt::Object(
+                        let mut statements = vec![IrStmt::Object(Box::new(
                             IrObjectStmt::ChandleDeclareLocal(name.clone(), None),
-                        )];
+                        ))];
                         if let Some(init) = init {
-                            statements
-                                .push(IrStmt::Object(IrObjectStmt::MailboxAssignLocal(name, init)));
+                            statements.push(IrStmt::Object(Box::new(
+                                IrObjectStmt::MailboxAssignLocal(name, init),
+                            )));
                         }
                         return Ok(statements);
                     }
@@ -193,8 +194,8 @@ impl EmitCtx<'_, '_> {
                             .var_initializer(declaration)
                             .map(|initializer| self.cg.lower_chandle(&self.path, initializer))
                             .transpose()?;
-                        return Ok(vec![IrStmt::Object(IrObjectStmt::ChandleDeclareLocal(
-                            name, init,
+                        return Ok(vec![IrStmt::Object(Box::new(
+                            IrObjectStmt::ChandleDeclareLocal(name, init),
                         ))]);
                     }
                     if matches!(self.cg.kind(declaration), NodeKind::Var { ty } if ty.kind == "string")
@@ -299,11 +300,15 @@ impl EmitCtx<'_, '_> {
                 .map(|initializer| self.cg.lower_process(&self.path, initializer))
                 .transpose()?;
             return Ok(match target {
-                ProcessTarget::Local(name) => vec![IrStmt::Object(
+                ProcessTarget::Local(name) => vec![IrStmt::Object(Box::new(
                     IrObjectStmt::ProcessDeclareLocal(name, init),
-                )],
+                ))],
                 ProcessTarget::Object(index) => init
-                    .map(|value| vec![IrStmt::Object(IrObjectStmt::ProcessAssign(index, value))])
+                    .map(|value| {
+                        vec![IrStmt::Object(Box::new(IrObjectStmt::ProcessAssign(
+                            index, value,
+                        )))]
+                    })
                     .unwrap_or_default(),
             });
         }
@@ -321,9 +326,9 @@ impl EmitCtx<'_, '_> {
                 .map(|initializer| self.cg.lower_chandle(&self.path, initializer))
                 .transpose()?;
             return Ok(match target {
-                ChandleTarget::Local(name) => vec![IrStmt::Object(
+                ChandleTarget::Local(name) => vec![IrStmt::Object(Box::new(
                     IrObjectStmt::ChandleDeclareLocal(name, init),
-                )],
+                ))],
                 ChandleTarget::Object(_) => Vec::new(),
             });
         }
@@ -347,12 +352,14 @@ impl EmitCtx<'_, '_> {
                     )
                 })
                 .transpose()?;
-            let mut statements = vec![IrStmt::Object(IrObjectStmt::ChandleDeclareLocal(
+            let mut statements = vec![IrStmt::Object(Box::new(IrObjectStmt::ChandleDeclareLocal(
                 name.clone(),
                 None,
-            ))];
+            )))];
             if let Some(init) = init {
-                statements.push(IrStmt::Object(IrObjectStmt::MailboxAssignLocal(name, init)));
+                statements.push(IrStmt::Object(Box::new(IrObjectStmt::MailboxAssignLocal(
+                    name, init,
+                ))));
             }
             return Ok(statements);
         }

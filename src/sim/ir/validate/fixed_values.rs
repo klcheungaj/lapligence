@@ -163,7 +163,8 @@ impl Validator<'_> {
                 self.fixed_activations
                     .borrow_mut()
                     .push(HashSet::from([*array]));
-                let valid = self.validate_stmt(&IrStmt::Call(*call.clone()), formals, path);
+                let valid =
+                    self.validate_stmt(&IrStmt::Call(Box::new(*call.clone())), formals, path);
                 self.fixed_activations.borrow_mut().pop();
                 valid?;
                 result

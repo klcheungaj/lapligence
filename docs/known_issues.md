@@ -86,61 +86,63 @@ wc -lc <dir>/sim/*/model.c
 
 ## High frontend memory use during Slang wrapper capture and import
 
-**Status:** open; retained representations reduced, large typed-lowering peak remains.
+**Status:** open; compacted owned records bring the 40k peak within 2.7× of
+the charged export.
 
 ### Symptom
 
-Large elaborated designs still require substantially more generation memory
-than their charged export data. Linux x86-64 release measurements on 2026-10-02–03
-use `many_processes_registers_config`, two clock edges and three runs per point.
-Before is `c260a74c` with diagnostic stage markers; after includes the retained-copy
-fixes. GNU time peak RSS medians:
+Large elaborated designs still require more generation memory than their
+charged export data. Linux x86-64 release measurements on 2026-10-04 use
+`many_processes_registers_config`, two clock edges and three interleaved runs
+per point. Before is `af5f1820`; after includes the record compaction below.
+GNU time peak RSS medians:
 
 | Processes | Before peak RSS | After peak RSS |
 | --- | --- | --- |
-| 5,000 | 0.88 GiB | 0.53 GiB |
-| 10,000 | 1.71 GiB | 1.04 GiB |
-| 20,000 | 3.40 GiB | 2.07 GiB |
-| 40,000 | 6.77 GiB | 4.12 GiB |
+| 5,000 | 0.52 GiB | 0.23 GiB |
+| 10,000 | 1.03 GiB | 0.42 GiB |
+| 20,000 | 2.04 GiB | 0.82 GiB |
+| 40,000 | 4.06 GiB | 1.60 GiB |
 
 At 20k/40k the logical export remains about 306/611 MiB (320,406,270 /
-640,766,270 charged bytes). Whole-process peak RSS falls about 39%; the peak
-moves from rendering to typed lowering. At 40k sampled rendering RSS falls from
-about 6.77 GiB to about 2.54 GiB. The earlier measurements of 3.28/6.54 GiB
-were from a different run and remain historical context, not a stage profile.
-These are generation-process peaks, not generated-simulator runtime memory.
-Export size is approximately linear for this corpus; other shapes can differ.
+640,766,270 charged bytes). Generated `model.c` is byte-identical. The stages
+are now balanced: at 40k the sampled RSS is about 1.36 GiB in native capture,
+1.58 GiB in FFI decode, 1.60 GiB in DB import, 1.49 GiB in typed lowering and
+1.55 GiB in C rendering (before: 1.36/1.75/3.13/4.06/2.46 GiB). The earlier
+2026-10-02–03 series (6.77 → 4.12 GiB at 40k) predates these changes. These
+are generation-process peaks, not generated-simulator runtime memory. Export
+size is approximately linear for this corpus; other shapes can differ.
 
 ### Cause
 
 The [C++ wrapper](../src/wrapper/slang_c_api.cpp) materializes a complete
-`LlgSlangSnapshot` while Slang's compilation is still live. Capture also uses
-identity maps, pending-edge tables and separately stored strings. For this
-corpus, each small register process contributes roughly 60 semantic nodes,
-90 edges and 12 constants: about 16 KB of charged export data. Charged bytes
-exclude container capacity, indexing overhead and Slang's own allocations.
+`LlgSlangSnapshot` while Slang's compilation is still live. For this corpus,
+each small register process contributes roughly 60 semantic nodes, 90 edges
+and 12 constants: about 16 KB of charged export data. Charged bytes exclude
+container capacity, indexing overhead and Slang's own allocations. On glibc the
+wrapper returns freed compilation pages after teardown, so they are no longer
+resident while Rust copies the snapshot.
 
-The [safe FFI decoder](../src/ffi/slang.rs) copies native snapshot data into
-owned Rust data before destroying the native owner. Dense semantic IDs now use
-checked arena lookups, and decoded node/edge vectors reserve their validated
-record counts exactly. Native strings share stable interned storage; logical
-export charging still counts each occurrence. Finalizing ordered edges releases
-their pending storage.
+The [safe FFI decoder](../src/ffi/slang.rs) copies the native snapshot into
+owned Rust records (272 bytes per semantic node plus strings) before
+destroying the native owner, so both copies overlap during decoding. The
+owned snapshot and the [DB](../src/core/db/readme.md) then overlap during the
+single owned import. DB nodes share type descriptors, native detail
+spellings, file names and unnamed nodes' hierarchical names, and box rare
+large payloads (216 bytes per node). The simulator's semantic origins share
+file names, and typed IR boxes rare payloads (`IrStmt` 224, `IrExpr` 104,
+`IrLhs` 64 bytes). The driver releases the snapshot after import; consuming
+generation releases the DB after typed lowering. Borrowing library generation
+APIs retain their caller's DB for reuse.
 
-The [driver](../src/bin/llg.rs) releases the decoded snapshot after the single
-owned DB import. Consuming generation releases the DB after typed lowering,
-and collection state ends once the typed model owns its data. The
-[renderer](../src/sim/emit_c/model.rs) borrows unchanged execution analysis and
-retains one normalized body/key per exact sharing group. These changes remove
-copies previously live throughout rendering. Borrowing library generation APIs
-retain their caller's DB for reuse.
-
-Typed lowering still overlaps the DB, semantic model, collection indexes and
-typed IR. Native compilation and snapshot overlap during capture, and native
-and Rust snapshots overlap during checked decoding. Owned strings, exact
-constant payloads and source/identity records remain substantial. Sampled
-stage RSS includes all live representations and allocator-retained pages;
-it is not an exclusive allocation total for that stage.
+Remaining overlap: Slang compilation and the native snapshot during capture;
+native and Rust snapshots during decoding; the Rust snapshot and DB during
+import; the DB, semantic origins and typed IR during lowering; execution IR,
+rendered artifacts and the assembled model text during rendering. Per-node
+records (snapshot node, DB node, origin and IR statements) remain the
+dominant cost. Sampled stage RSS includes all live representations and
+allocator-retained pages; it is not an exclusive allocation total for that
+stage.
 
 `export byte limit exceeded` originates in llg's wrapper capture budget.
 Raising that budget admits larger exports but does not reduce their memory
@@ -149,8 +151,10 @@ budget, a record-count ceiling or available process memory.
 
 ### Intended direction
 
-Reduce the remaining typed-lowering overlap and evaluate compact owned records,
-shared exact constant/string payloads and chunked capture/import.
+Compact the owned snapshot node (flag bits, shared strings) or import it
+incrementally so the Rust snapshot and DB overlap less; compact DB nodes
+further (side tables for rare kind payloads); and avoid holding rendered
+artifacts and the assembled model text together.
 Preserve checked C ABI ownership and the single owned DB import; consumers
 must not traverse native ASTs independently. Verify exact values, source
 identity and diagnostics as well as generated-model behavior.
@@ -214,6 +218,12 @@ analysis progression (about 1.17/4.46/17.83 seconds at 10k/20k/40k) and
 source/CPU sampling isolate quadratic driver overlap work. Repeat timing on an
 isolated host for a stable before/after speed comparison. The memory reduction
 in the preceding entry persists across the measured points.
+
+The 2026-10-04 record compaction (preceding entry) also shortens owned DB
+import and typed lowering. Interleaved three-run medians at 40k: import
+7.07 → 2.72 s, lowering 9.81 → 5.85 s, C rendering 11.47 → 12.47 s, whole
+generation 58.3 → 53.3 s wall (52.5 → 49.1 s user); Slang analysis still
+dominates and its time varies with host load.
 
 ### Cause
 
@@ -528,6 +538,27 @@ net recomputes its resolution immediately.
 Reproduce with `logic [7:0] r, src; assign r = src;`, a process that runs
 `force r = 8'haa;` and later `release r;`, and a `$display` of `r` after the
 release without changing `src`; the model prints `aa` instead of `src`.
+
+## Preponed sample history grows every time slot
+
+**Status:** open; found by SIM-001, owned by the clocking-input feature
+(SIM-033).
+
+`sample_preponed_values` (`src/sim/rt/scheduler/sampling.c`) appends one
+history node, with a cloned value, to every registered sampled signal in every
+time slot and never prunes it. Only `llg_clocking_sample_history` (clocking
+input skews) reads the history, and it scans the whole list. A design with one
+concurrent assertion on a free-running clock therefore grows by roughly 0.8 KiB
+per clock cycle even when no clocking block exists, and each skewed clocking
+sample costs time linear in elapsed slots. Bounding it needs the static
+lookback of each history consumer at registration (the largest input skew in
+ticks), so history is kept only for signals that have one and is pruned to that
+horizon, retaining the newest sample at or before it.
+
+Reproduce with a module holding `logic clk; logic [31:0] r;`, `always @(posedge
+clk) r <= r + 1;`, `assert property (@(posedge clk) r >= 0);` and a 10-tick clock:
+peak RSS is about 18 MiB after 20,000 cycles and 66 MiB after 80,000 (11 MiB
+either way without the assertion).
 
 ## Delayed enable gates drive X instead of L/H
 

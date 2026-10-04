@@ -36,9 +36,8 @@ impl Codegen<'_> {
                 let address = self
                     .class_field_chandle_lvalue(path, object_node)?
                     .ok_or_else(|| "class virtual interface field has no storage".to_owned())?;
-                return Ok(Some(IrStmt::Object(IrObjectStmt::ChandleAssignLocal(
-                    address,
-                    self.lower_chandle(path, rhs)?,
+                return Ok(Some(IrStmt::Object(Box::new(
+                    IrObjectStmt::ChandleAssignLocal(address, self.lower_chandle(path, rhs)?),
                 ))));
             }
         }
@@ -170,8 +169,10 @@ impl Codegen<'_> {
             let value =
                 self.lower_mailbox_expr(path, rhs, self.mailbox_element_for_decl(declaration))?;
             return Ok(Some(IrStmt::Object(match target {
-                ChandleTarget::Object(index) => IrObjectStmt::MailboxAssign(index, value),
-                ChandleTarget::Local(name) => IrObjectStmt::MailboxAssignLocal(name, value),
+                ChandleTarget::Object(index) => Box::new(IrObjectStmt::MailboxAssign(index, value)),
+                ChandleTarget::Local(name) => {
+                    Box::new(IrObjectStmt::MailboxAssignLocal(name, value))
+                }
             })));
         }
         if let Some((target, _)) = process_target {
@@ -183,7 +184,7 @@ impl Codegen<'_> {
                 ProcessTarget::Object(index) => IrObjectStmt::ProcessAssign(index, value),
                 ProcessTarget::Local(name) => IrObjectStmt::ProcessAssignLocal(name, value),
             };
-            return Ok(Some(IrStmt::Object(operation)));
+            return Ok(Some(IrStmt::Object(Box::new(operation))));
         }
         if let Some(target) = chandle_target {
             if indexed.is_some() {
@@ -192,21 +193,24 @@ impl Codegen<'_> {
             self.validate_virtual_interface_assignment(object_node, rhs, path)?;
             let value = self.lower_chandle(path, rhs)?;
             return Ok(Some(IrStmt::Object(match target {
-                ChandleTarget::Object(index) => IrObjectStmt::ChandleAssign(index, value),
-                ChandleTarget::Local(name) => IrObjectStmt::ChandleAssignLocal(name, value),
+                ChandleTarget::Object(index) => Box::new(IrObjectStmt::ChandleAssign(index, value)),
+                ChandleTarget::Local(name) => {
+                    Box::new(IrObjectStmt::ChandleAssignLocal(name, value))
+                }
             })));
         }
         if let Some(target) = string_target {
             if let Some((_, position)) = indexed {
-                return Ok(Some(IrStmt::Object(IrObjectStmt::StringPutcLocal(
-                    target,
-                    self.object_int_argument(path, position, 32)?,
-                    self.object_int_argument(path, rhs, 8)?,
+                return Ok(Some(IrStmt::Object(Box::new(
+                    IrObjectStmt::StringPutcLocal(
+                        target,
+                        self.object_int_argument(path, position, 32)?,
+                        self.object_int_argument(path, rhs, 8)?,
+                    ),
                 ))));
             }
-            return Ok(Some(IrStmt::Object(IrObjectStmt::StringAssignLocal(
-                target,
-                self.lower_string(path, rhs)?,
+            return Ok(Some(IrStmt::Object(Box::new(
+                IrObjectStmt::StringAssignLocal(target, self.lower_string(path, rhs)?),
             ))));
         }
         let index = index.expect("object target checked above");
@@ -239,6 +243,6 @@ impl Codegen<'_> {
                 IrObjectStmt::ProcessAssign(index, self.lower_process(path, rhs)?)
             }
         };
-        Ok(Some(IrStmt::Object(operation)))
+        Ok(Some(IrStmt::Object(Box::new(operation))))
     }
 }

@@ -110,7 +110,7 @@ impl LintRule for StyleRule {
                         (!(self.signal_ok)(&name)).then(|| {
                             diag(
                                 format!("signal name `{name}` does not match snake_case"),
-                                node.file.clone(),
+                                node.file().map(str::to_owned),
                                 node.line,
                                 node.col,
                             )
@@ -119,7 +119,7 @@ impl LintRule for StyleRule {
                     NodeKind::Port { .. } => (!(self.signal_ok)(&name)).then(|| {
                         diag(
                             format!("signal name `{name}` does not match snake_case"),
-                            node.file.clone(),
+                            node.file().map(str::to_owned),
                             node.line,
                             node.col,
                         )
@@ -127,7 +127,7 @@ impl LintRule for StyleRule {
                     NodeKind::Param { .. } => (!(self.param_ok)(&name)).then(|| {
                         diag(
                             format!("parameter name `{name}` does not match UPPER_SNAKE_CASE"),
-                            node.file.clone(),
+                            node.file().map(str::to_owned),
                             node.line,
                             node.col,
                         )

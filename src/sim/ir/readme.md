@@ -21,6 +21,12 @@ tables. Concurrent assertions remain in `IrModel::assertions`, with validated
 clock/disable sources, sampled predicates, overlap modes, labels, and Reactive
 action identities rather than ordinary procedural blocks.
 
+Large designs hold many statement vectors and expression trees at once, and
+every slot is sized by its enum's largest variant. Rare or optional payloads
+(system functions, lvalue selectors, container/object/call statements and
+optional expressions) are boxed; `ir_records_stay_compact` bounds `IrExpr`,
+`IrLhs` and `IrStmt`.
+
 `ir.rs` owns `IrModel` and re-exports expression, lvalue, call, statement, event,
 assertion, process, function, initialization, storage, and VPI domains. Containers
 and objects remain separate. `validate.rs` supplies the shared context for

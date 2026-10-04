@@ -197,7 +197,7 @@ fn ident_children(e: &mut IrExpr) {
                 }
             }
         }
-        IrExprKind::SysFunc(sf) => match sf {
+        IrExprKind::SysFunc(sf) => match &mut **sf {
             IrSysFunc::TestPlusArgs { pattern } => {
                 pattern.expressions_mut(&mut |expression| ident_expr(expression))
             }

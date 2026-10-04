@@ -15,7 +15,11 @@ impl<'a> Codegen<'a> {
                 value.to_u128().is_some()
                     && (!value.signed || value.to_i128().is_some_and(|value| value >= 0))
             }
-            Ok(Val::Real(_)) => true,
+            // A finite negative real is legal (V 9.7.1, SV 9.4.1) and becomes
+            // two's-complement unsigned time, which the runtime conversion
+            // shared with runtime-valued delays performs. Nonfinite constants
+            // stay on the constant path, which rejects them.
+            Ok(Val::Real(value)) => !value.is_finite() || *value >= 0.0,
             _ => false,
         };
         if constant_nonnegative {

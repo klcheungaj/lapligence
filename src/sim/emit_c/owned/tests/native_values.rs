@@ -54,10 +54,10 @@ fn string_formals_are_copied_into_registered_callee_owners() {
         vec![],
         vec![],
         vec![
-            IrStmt::Object(IrObjectStmt::StringAssignLocal(
+            IrStmt::Object(Box::new(IrObjectStmt::StringAssignLocal(
                 "_ret".to_owned(),
                 IrStringExpr::FormalRead(0),
-            )),
+            ))),
             IrStmt::Return { value: None },
         ],
     );

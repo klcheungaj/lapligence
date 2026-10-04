@@ -195,6 +195,7 @@ int llg_sampled_domain_status(uint64_t identity, int kind) {
 }
 
 static void sample_preponed_values(void) {
+    g.assertion_edges_pending = 0;
     for (llg_concurrent_assertion_t* assertion = g.assertions; assertion;
          assertion = assertion->next) {
         assertion->edge_pending = 0;

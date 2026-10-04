@@ -534,8 +534,13 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
 - 🟨 **SystemVerilog regions** — Preponed, Active/Inactive, Pre-NBA/NBA/Post-NBA,
   Pre-Observed/Observed/Post-Observed, Reactive/Re-Inactive/Re-NBA and
   Pre-Postponed/Postponed queues support fixed-point re-entry and immutable
-  observation. Clocking, program and assertion consumers are bounded by §12;
-  the full PLI/VPI region API is not implemented. SV §4.4 **[SV-2005]**.
+  observation. The reactive set (Reactive through Post-Re-NBA, including `#0`
+  Re-Inactive) drains before design work re-enters, and assertion clock edges
+  produced by reactive code are evaluated in a further Observed pass of the same
+  slot. Internal region callbacks are cancellable with lifetime-stamped
+  identities ([SIM-001](../tests/sim_feature_completion/sim_001.rs)). Clocking,
+  program and assertion consumers are bounded by §12; the full PLI/VPI region API
+  is not implemented. SV §§4.4–4.5 **[SV-2005]**.
 
 ## 5. Procedural statements
 
@@ -661,10 +666,14 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
 - 🟨 **Delays and precision** — Integer, fractional, scientific, unit-suffixed,
   parameter and runtime packed/real expressions, function results and task inputs
   are evaluated once for statement/intra-assignment delays. Local precision
-  rounding precedes checked 64-bit femtosecond scheduling (1fs–100s units).
-  Sub-precision delays round to zero; X/Z means zero. Negative packed values
-  convert to unsigned 64-bit time before scaling; negative/nonfinite reals and
-  tick overflow reject. Continuous/gate delays are separately bounded in §8.
+  rounding (halves away from zero) precedes checked 64-bit femtosecond
+  scheduling (1fs–100s units, all of which `%t` reports). Sub-precision delays
+  round to zero; X/Z means zero. Negative packed values convert to unsigned
+  64-bit time before scaling; finite negative reals, constant or runtime,
+  convert the same way after local rounding. Nonfinite reals reject, and a delay
+  past the 64-bit tick range fails before it is queued
+  ([SIM-001](../tests/sim_feature_completion/sim_001.rs)). Continuous/gate delays
+  are separately bounded in §8.
   V §9.7.1; SV §§3.14, 5.8 **[1995/SV-2005]**.
 - 🟨 **Implicit sensitivity** — `@*`/`@(*)` use call-site body reads, unlike
   `always_comb`'s transitive function reads. Fixed-array elements/contents

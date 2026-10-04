@@ -189,6 +189,7 @@ static void assertion_clock_signal_changed(sv4_t* signal, sv4_t old,
                                              order);
             else
                 assertion->edge_pending = 1;
+            g.assertion_edges_pending = 1;
             continue;
         }
         if (assertion->consequent_sequence &&
@@ -196,12 +197,14 @@ static void assertion_clock_signal_changed(sv4_t* signal, sv4_t old,
             assertion_sequence_uses_clock(assertion, signal, LLG_EV_POSEDGE)) {
             assertion_clock_event_append(assertion, signal, LLG_EV_POSEDGE,
                                          order);
+            g.assertion_edges_pending = 1;
         } else if (assertion->consequent_sequence &&
                    ev_matches(old, value, LLG_EV_NEGEDGE) &&
                    assertion_sequence_uses_clock(assertion, signal,
                                                  LLG_EV_NEGEDGE)) {
             assertion_clock_event_append(assertion, signal, LLG_EV_NEGEDGE,
                                          order);
+            g.assertion_edges_pending = 1;
         }
     }
 }
@@ -388,6 +391,7 @@ static void run_concurrent_assertion(llg_concurrent_assertion_t* assertion) {
 }
 
 static int run_concurrent_assertions(void) {
+    g.assertion_edges_pending = 0;
     for (llg_concurrent_assertion_t* assertion = g.assertions; assertion;
          assertion = assertion->next) {
         run_concurrent_assertion(assertion);

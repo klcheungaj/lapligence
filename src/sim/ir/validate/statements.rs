@@ -432,13 +432,13 @@ impl Validator<'_> {
                 operation.expressions(&mut |child| {
                     result = result.clone().and_then(|_| {
                         let string_value = matches!(
-                            operation,
+                            &**operation,
                             IrObjectStmt::StringPrint(..)
                                 | IrObjectStmt::StringAssign(..)
                                 | IrObjectStmt::StringAssignLocal(..)
                         );
                         let mailbox_value = matches!(
-                            operation,
+                            &**operation,
                             IrObjectStmt::MailboxPut(..)
                                 | IrObjectStmt::MailboxPutLocal(..)
                                 | IrObjectStmt::MailboxTryPut(..)
@@ -447,7 +447,7 @@ impl Validator<'_> {
                         if child.is_real()
                             && !string_value
                             && !mailbox_value
-                            && !matches!(operation, IrObjectStmt::StringRealtoa(..))
+                            && !matches!(&**operation, IrObjectStmt::StringRealtoa(..))
                         {
                             self.fail(path, "object statement requires packed operands")
                         } else {

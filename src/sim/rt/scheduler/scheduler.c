@@ -189,6 +189,18 @@ static int run_design_set(void) {
     }
 }
 
+// Observed work enabled after the design set reached its fixed point: an
+// assertion clock edge produced by the reactive set, or a queued Observed
+// process/callback.
+static int observed_pending(void) {
+    if (g.assertion_edges_pending) return 1;
+    for (llg_region_t region = LLG_REGION_PRE_OBSERVED_PLI;
+         region <= LLG_REGION_POST_OBSERVED_PLI; region++) {
+        if (region_pending(region)) return 1;
+    }
+    return 0;
+}
+
 static int run_observed_set(void) {
     if (!run_region_queue(LLG_REGION_PRE_OBSERVED_PLI)) return 0;
     if (!run_region_queue(LLG_REGION_PRE_OBSERVED)) return 0;
@@ -385,9 +397,13 @@ void llg_rt_run(void) {
             if (!run_design_set()) break;
             if (!run_observed_set()) break;
             if (!run_reactive_set()) break;
-            if (design_pending() || reactive_pending()) continue;
+            // Iterate the outer loop of SV 4.5 until Active through
+            // Post-Re-NBA, including Observed, are all empty.
+            if (design_pending() || observed_pending() || reactive_pending())
+                continue;
             if (!run_pre_postponed_set()) break;
-            if (design_pending() || reactive_pending()) continue;
+            if (design_pending() || observed_pending() || reactive_pending())
+                continue;
             break;
         }
         if (g.finish) break;

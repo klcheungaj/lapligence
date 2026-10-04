@@ -145,7 +145,7 @@ fn owned_memory_emitter_uses_enum_entry_count_for_c_array_bound() {
     let statement = IrStmt::Memory {
         write: false,
         path: IrStringExpr::Literal(b"enum.mem".to_vec()),
-        view: IrMemoryView {
+        view: Box::new(IrMemoryView {
             array: 0,
             origin: 0,
             selectors: Vec::new(),
@@ -153,7 +153,7 @@ fn owned_memory_emitter_uses_enum_entry_count_for_c_array_bound() {
             dims: vec![(0, 2)],
             strides: vec![1],
             total: 3,
-        },
+        }),
         radix: IrMemoryRadix::Hex,
         addressing: IrMemoryAddressingPolicy::SystemVerilog2009,
         enum_values: Some(wide_enum_values()),
