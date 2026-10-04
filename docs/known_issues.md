@@ -436,3 +436,40 @@ publishes both halves with the transition delay of the combined output.
 
 Reproduce with `bufif1 #1 (w, d, e); pulldown (w);`, `d = 0; e = 1'bx;` and
 `#2 $display("%v", w);` (prints `StX`; the LRM result is `650`).
+
+## Operator-overload increment values and expected types
+
+**Status:** RTL-017 executes fixed operator overloads (SV §11.11); these
+legal forms are rejected with specific diagnostics or remain unadmitted.
+
+### Symptom
+
+- `y = x++;` with an overloaded `++` reports "the value of an overloaded
+  postfix '++' cannot be used". Statement and `for`-step forms run.
+- `y = ++x;` on an unpacked operand fails in lowering with "assignment-like
+  expression to a streaming target", the existing limit for any unpacked
+  assignment used as a value (`y = (x = z);` fails the same way).
+- `arr[next()] += b;` with an overloaded `+` reports that the target "is read
+  and written separately and must not have side effects".
+- Overloads differing only in result type need a cast inside a relational
+  operand even when the other operand fixes the comparison type.
+- An overload declared in a package is not visible through `import`.
+
+### Cause
+
+The frontend builds `x = f(x)` for increments and `A = op(A, B)` for compound
+assignments from ordinary call and assignment nodes, re-binding the target as
+an operand. No owned node yields an old value or binds the target once for
+both uses. Expected types are threaded through assignment-like contexts only.
+Overload declarations are unnamed members, so wildcard imports cannot carry them.
+
+### Direction
+
+Add an owned mutation form whose value can be the pre-update aggregate and
+whose target selectors are frozen once, reuse it for compound overloads, and
+pass the opposite operand's type as the expected type of relational operands.
+
+### Reproduce
+
+`tests/fixtures/sim/feature_completion/rtl_017/neg_postfix_value.sv` and
+`neg_target_side_effects.sv`.
