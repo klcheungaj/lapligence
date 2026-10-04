@@ -18,6 +18,9 @@ use crate::sim::ir::{
 /// records are rejected rather than expanded.
 pub(in super::super) const NATIVE_VALUE_MAX_LEAVES: usize = 4096;
 
+/// A native-result call: call node, callee name, resolved callee and function.
+type NativeResultCallee = (NodeId, String, Option<NodeId>, NodeId);
+
 /// One side of a leaf-wise native transfer.
 #[derive(Clone)]
 pub(in super::super) enum NativeEndpoint {
@@ -27,7 +30,7 @@ pub(in super::super) enum NativeEndpoint {
         prefix: Vec<AggregatePathPart>,
     },
     /// Declaration-owned module record leaves below a path prefix.
-    Module(AggregateSelection),
+    Module(Box<AggregateSelection>),
 }
 
 /// One captured leaf value of a transfer.
@@ -666,7 +669,7 @@ impl Codegen<'_> {
         }
         Ok(self.resolve_unpacked_aggregate(node).map(|selection| {
             let descriptor = selection.descriptor.clone();
-            (NativeEndpoint::Module(selection), descriptor)
+            (NativeEndpoint::Module(Box::new(selection)), descriptor)
         }))
     }
 
@@ -695,7 +698,7 @@ impl Codegen<'_> {
                 .map(|leaf| {
                     (
                         leaf.path[selection.prefix.len()..].to_vec(),
-                        NativeEndpointLeaf::Module(leaf.clone()),
+                        NativeEndpointLeaf::Module(Box::new(leaf.clone())),
                     )
                 })
                 .collect()),
@@ -975,10 +978,7 @@ impl Codegen<'_> {
     }
 
     /// The native-result function a (possibly cast) call node invokes.
-    fn native_result_callee(
-        &self,
-        rhs: NodeId,
-    ) -> Result<Option<(NodeId, String, Option<NodeId>, NodeId)>, String> {
+    fn native_result_callee(&self, rhs: NodeId) -> Result<Option<NativeResultCallee>, String> {
         let call = self.p30_unwrap_cast(rhs);
         let (name, callee) = match self.kind(call) {
             NodeKind::FuncCall { name, callee, .. } | NodeKind::MethodCall { name, callee, .. } => {
@@ -1491,5 +1491,5 @@ impl Codegen<'_> {
 #[derive(Clone)]
 pub(in super::super) enum NativeEndpointLeaf {
     Value(usize, NativeLeaf),
-    Module(AggregateMemberInfo),
+    Module(Box<AggregateMemberInfo>),
 }
