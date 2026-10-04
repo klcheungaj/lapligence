@@ -264,9 +264,14 @@ Integral variable arrays copy, compare, select rows, merge conditionals, stream
 (including multiple segments and unaligned slices), initialize and pass through
 input/output/inout/ref formals and returns of static, automatic and recursive
 functions without becoming one packed value. Array-valued pattern items and
-pattern-lvalue row scatter use the same views. Oversized unpacked records,
-arrays of records and finite tagged unions still have no descriptor layout and
-retain the packed payload limit; so does the source of a whole-value `matches`
+pattern-lvalue row scatter use the same views, and so do arrays of unpacked
+records whose elements fit the packed limit (RTL-099 qualifies 1,048,576
+records). A single unpacked record or finite tagged union wider than the packed
+limit still has no descriptor layout and retains the packed payload limit as a
+value (formal, return, conditional); a record member array above the 4,096-cell
+dense threshold is expanded per cell (a 65,537-cell member generates about
+79 MB of C, and a whole-record pattern over such members fails to resolve the
+member array). So does the source of a whole-value `matches`
 wildcard or binding, which rejects with its size (RTL-016). Descriptor pattern items and scatter targets whose rows are small dense
 arrays inside an oversized source, dense arrays and runtime `with` ranges as parts
 of an oversized stream, and nested oversized streams reject with explicit

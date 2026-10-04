@@ -214,6 +214,12 @@ exhaustive table sweep compares with the all-matching-rows oracle in
 row widths, conflicting rows, terminal counts, empty terminals, mis-sized array
 connections and vector or aggregate terminals of single instances.
 
+RTL-099's gate fixtures use `-E 'binary(sim_feature_completion) & test(rtl_099::)'`.
+They pin the output-port writer rule for constant slices of descriptor-backed
+arrays: disjoint procedural writers execute in both optimizer modes on both
+backends (set `LLG_TEST_GMP_ROOT` for the GMP lane) and after Db destruction,
+and procedural, second-port and always_ff writers overlapping a slice reject.
+
 ### Vendor patch preparation
 
 `vendor_patches.rs` checks clean/applied trees, no-Git archives (including archives
