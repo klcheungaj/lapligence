@@ -194,8 +194,9 @@ jobs:
     if: github.event_name != 'schedule'
     name: ${{ matrix.name }} (${{ matrix.target }})
     runs-on: ${{ matrix.runner }}
-    # Release build plus the full release-profile nextest suite.
-    timeout-minutes: 360
+    # Release build, platform audits and the release-profile test archive; the
+    # suite itself runs in the parallel `test` job below.
+    timeout-minutes: 240
     strategy:
       fail-fast: false
       matrix:
@@ -351,13 +352,28 @@ jobs:
           set -e
           test "$status" -eq 2
 
-      # The whole suite runs against each release target in the release
-      # profile, reusing the release build above. --no-fail-fast reports every
-      # failing test in one run; any failure still blocks packaging.
-      - name: Run full nextest suite in release mode
+      # Compile every test executable in the release profile (reusing the
+      # release build above) and archive it for the `test` job, which runs the
+      # whole suite on a second runner of the same kind. The checkout path and
+      # target directory are identical on both runners, so compile-time paths
+      # embedded in the test binaries (CARGO_MANIFEST_DIR, CARGO_BIN_EXE_*)
+      # resolve after extraction.
+      - name: Archive release-profile test binaries
+        shell: bash
         run: >-
-          cargo nextest run --locked --all-features --cargo-profile release --no-fail-fast
+          cargo nextest archive --locked --all-features --cargo-profile release
           --target ${{ matrix.target }}
+          --archive-file target/nextest-archive.tar.zst
+
+      - name: Upload release test archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: nextest-archive-${{ matrix.target }}
+          if-no-files-found: error
+          # The archive is already zstd-compressed.
+          compression-level: 0
+          retention-days: 1
+          path: target/nextest-archive.tar.zst
 
       - name: Report runner resources
         if: always()
@@ -411,6 +427,93 @@ jobs:
             dist/*.tar.gz
             dist/*.zip
             dist/*.sha256
+
+  # The full release-profile suite for each Windows/macOS target runs from the
+  # archive built above on a fresh runner of the same kind, so the build job
+  # does not hold its runner while tests run and a test failure leaves the
+  # executable audits and packages unaffected. Any failure still blocks the
+  # release job. No Rust toolchain is needed to run an archive.
+  test:
+    if: github.event_name != 'schedule'
+    name: ${{ matrix.name }} test (${{ matrix.target }})
+    needs: build
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x86_64
+            runner: windows-2025
+            platform: windows
+            python_arch: x64
+            msvc_arch: amd64
+            target: x86_64-pc-windows-msvc
+          - name: Windows arm64
+            runner: windows-11-vs2026-arm
+            platform: windows
+            python_arch: arm64
+            msvc_arch: amd64_arm64
+            target: aarch64-pc-windows-msvc
+          - name: macOS arm64
+            runner: macos-15
+            platform: macos
+            python_arch: arm64
+            target: aarch64-apple-darwin
+
+    env:
+      # Generated-model tests configure CMake with this generator.
+      CMAKE_GENERATOR: Ninja
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Download release test archive
+        uses: actions/download-artifact@v4
+        with:
+          name: nextest-archive-${{ matrix.target }}
+          path: ${{ runner.temp }}/nextest-archive
+
+      # Tests run python3 helper scripts.
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          architecture: ${{ matrix.python_arch }}
+
+      - uses: taiki-e/install-action@nextest
+
+      # Generated models are compiled with the C compiler on PATH, as in the
+      # build job.
+      - name: Select MSVC target tools
+        if: matrix.platform == 'windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.msvc_arch }}
+
+      # The archive carries no build script run, so this fresh checkout still
+      # holds the pristine vendor/libfst; the standalone CMake probes need the
+      # patched sources the build script applies in place elsewhere.
+      - name: Apply the libfst patch
+        shell: bash
+        run: git apply --whitespace=nowarn --directory=vendor/libfst patches/libfst/libfst-local-changes.patch
+
+      # Extracting into the checkout restores target/ at the build job's
+      # compile-time paths.
+      - name: Run release suite
+        shell: bash
+        run: >-
+          cargo nextest run --no-fail-fast
+          --archive-file "$RUNNER_TEMP/nextest-archive/nextest-archive.tar.zst"
+          --workspace-remap "$GITHUB_WORKSPACE" --extract-to "$GITHUB_WORKSPACE"
+
+      - name: Report runner resources
+        if: always()
+        shell: bash
+        run: |
+          echo "logical CPUs: $(getconf _NPROCESSORS_ONLN 2>/dev/null || echo "$NUMBER_OF_PROCESSORS")"
+          df -h
 
   linux-build:
     if: github.event_name != 'schedule'
@@ -645,7 +748,7 @@ jobs:
   release:
     name: Attach packages to GitHub release
     if: github.event_name == 'release'
-    needs: [lint, generated-runtime-sanitizers, dependency-audit, build, linux-build, linux-test]
+    needs: [lint, generated-runtime-sanitizers, dependency-audit, build, test, linux-build, linux-test]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:

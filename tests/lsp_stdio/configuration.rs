@@ -386,6 +386,87 @@ fn lsp_stdio_config_reload_without_restart() {
     client.shutdown();
 }
 
+/// The same `llg.toml` also drives the `llg` driver: its keys are validated
+/// with the whole file but ignored by the server, and an unknown key in a
+/// driver table still rejects the entire file atomically.
+#[test]
+fn lsp_stdio_accepts_driver_keys_and_rejects_unknown_ones_atomically() {
+    let fixture = FixtureTree::new();
+    let root_a = fixture.root("root-a");
+    let path = root_a.join("lint").join("per_root.sv");
+    let uri = file_uri(&path);
+    let mut client = LspProcess::spawn(&fixture.root);
+    client
+        .initialize(&[("root-a", &root_a)], default_init_options())
+        .expect("initialize shared schema workspace");
+    client
+        .open(&path, &fs::read_to_string(&path).expect("read lint source"))
+        .expect("open lint source");
+    wait_for_diagnostics(&mut client, &uri, |p| !has_lint_rule(p, "unused-signal"));
+
+    let driver_keys = "[compile]\n\
+         edition = \"2001\"\n\
+         system_tasks = [\"$task()\"]\n\
+         [libraries]\n\
+         order = [\"work\"]\n\
+         [simulator]\n\
+         stop_policy = \"exit\"\n\
+         max_export_mib = 64\n\
+         [build]\n\
+         cc = \"cc\"\n\
+         jobs = 2\n\
+         [output]\n\
+         out_dir = \"out\"\n";
+    let config_path = root_a.join(CONFIG_FILE);
+    fs::write(
+        &config_path,
+        format!(
+            "schema_version = 1\n\
+             [lint.rules.unused-signal]\n\
+             severity = \"error\"\n\
+             {driver_keys}"
+        ),
+    )
+    .expect("write shared config");
+    client
+        .send_watch_event(&config_path, 2)
+        .expect("send shared config event");
+    let reloaded = wait_for_diagnostics(&mut client, &uri, |p| {
+        lint_severity(p, "unused-signal") == Some(1)
+    });
+    assert_eq!(lint_severity(&reloaded, "unused-signal"), Some(1));
+
+    // One misspelled driver key rejects the whole file, so the previously
+    // loaded policy stays in force and the TOML URI carries the error.
+    fs::write(
+        &config_path,
+        format!(
+            "schema_version = 1\n\
+             [lint.rules.unused-signal]\n\
+             enabled = false\n\
+             {driver_keys}\
+             bogus_key = 1\n"
+        ),
+    )
+    .expect("write config with unknown key");
+    client
+        .send_watch_event(&config_path, 2)
+        .expect("send unknown-key config event");
+    let config_uri = file_uri(&config_path);
+    wait_for_diagnostics(&mut client, &config_uri, |p| {
+        p.get("diagnostics")
+            .and_then(Value::as_array)
+            .is_some_and(|d| {
+                d.iter().any(|diag| {
+                    diag.get("message")
+                        .and_then(Value::as_str)
+                        .is_some_and(|m| m.contains("output.bogus_key"))
+                })
+            })
+    });
+    client.shutdown();
+}
+
 /// An override config reached through `initializationOptions.llg.configFiles`
 /// may carry ANY basename; editing it must reload that root without a restart
 /// exactly like `<root>/llg.toml` does (review B).

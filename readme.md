@@ -169,10 +169,22 @@ for native C/C++ caching, platform limits, and thread controls.
 ## Using `llg`
 
 ```text
-llg [options] <file.sv>... [-- <plusargs>...]
+llg [options] [<file.sv>...] [-- <plusargs>...]
 ```
 
+Options can also come from an `llg.toml`: `./llg.toml` is read when present, or
+the file named by `--config <file>` (which must exist). The same file configures
+`llg_ls`. Command-line values override the file, a repeatable option on the
+command line replaces the file's whole list, and files named on the command line
+replace the file's sources; see [configuration](docs/config.md) for every key
+and the precedence. Config errors name the file and key and exit 1.
+
 Common options:
+
+- `--config <file>`: read this `llg.toml` instead of `./llg.toml`.
+- `--param-override <NAME=VALUE>` / `-G`: override a top-level parameter.
+- `--no-lint`, `--no-gen-only`, `--opt`: undo `lint.run`, `build.gen_only` and
+  `simulator.optimize = false` from the config file.
 
 - `--top <module>`: select the top-level module.
 - `--edition <2001|2009>`: select the compilation language edition (default `2009`).
@@ -345,8 +357,10 @@ severity = "error"
 Options: `--stdio` (default mode), `--staging-dir <dir>`, `--dump-tokens <path>`
 (print token bindings for a file or directory and exit).
 
-See [LSP configuration](docs/config.md) for all source, compile, analysis, and
-lint settings.
+See [configuration](docs/config.md) for all source, compile, analysis, and
+lint settings. The file is shared with `llg`; keys only the simulator driver
+uses (`[build]`, `[simulator]`, `[output]`, `[libraries]`, ...) are accepted and
+ignored by the server.
 
 ## Running tests
 
