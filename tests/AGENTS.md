@@ -100,6 +100,17 @@ files and suite declarations. Coordinate the affected hunk with its owner and th
 integration orchestrator; keep changes additive and small, and use separate
 native build trees. Feature work need not wait for the entire GMP track.
 
+## `llg.toml` coverage
+
+One schema (`llg::config`) serves `llg` and `llg_ls`. Library `config::tests` own
+schema, path-resolution, unknown-key and error-context cases; `llg` `settings::tests`
+own command line > config > environment precedence (scalars replace, repeatable
+lists replace, files replace sources, boolean opposites); `llg_config_cli` runs the
+public driver against `fixtures/config_cli` for discovery, `--config`, missing/bad
+files and per-kind overrides; `dump_tokens`/`lsp_stdio` prove the server accepts
+driver-only keys and rejects unknown ones atomically. A new key needs coverage in
+each layer it touches.
+
 ## LSP acceptance and fixtures
 
 `lsp_stdio.rs` and its domain modules launch `llg_ls` over framed standard JSON-RPC,
@@ -189,13 +200,19 @@ leave them disabled unless requested and fail for missing requested tools.
 Run the complete [repository gate](readme.md#repository-gate), not fmt/check/clippy
 alone. [ci.yml](../.github/workflows/ci.yml) defines Ubuntu gates and five-platform
 builds on master pushes, manual dispatch and published Releases (including
-prereleases), not draft saves or standalone tag pushes. Each matrix target also
-runs the full `cargo nextest run --all-features --cargo-profile release` suite
-before release. Linux builds executables and a `cargo nextest archive` of the
-test binaries only in the static-musl Alpine container (`linux-build`); parallel
-`linux-test` jobs run that archive on Ubuntu 24.04 and Rocky Linux 9 containers
-per architecture, extracting it with the checkout at `/workspace` so
-compile-time paths resolve. CI selects the `ci` nextest profile (one test per
+prereleases), not draft saves or standalone tag pushes. Every platform splits
+building from testing: `build` jobs compile the executables, run the platform
+audits and package, and `cargo nextest archive` the release-profile test
+binaries; parallel `test` jobs (Windows/macOS) and `linux-test` jobs (Linux)
+download that archive and run the full suite with `cargo nextest run
+--archive-file` (`--no-fail-fast`) before release. Linux builds only in the
+static-musl Alpine container (`linux-build`); its `linux-test` jobs run the
+archive on Ubuntu 24.04 and Rocky Linux 9 containers per architecture. Windows
+and macOS test jobs run on the build job's runner kind with the checkout
+extracted over the same path, so compile-time paths (`CARGO_MANIFEST_DIR`,
+`CARGO_BIN_EXE_*`) resolve; they install nextest, Python and (Windows) the MSVC
+tools, apply the libfst patch to the fresh checkout, and need no Rust toolchain.
+Archives are retained one day. CI selects the `ci` nextest profile (one test per
 logical CPU). Observed platform
 differences and their portable fixes are in
 [shared source policies](../src/AGENTS.md#platform-differences).

@@ -265,23 +265,30 @@ impl Backend {
                 .filter_map(|root| {
                     let uri = Self::path_to_uri(&root.descriptor.config_path)?;
                     let diagnostics = if !root.config_errors.is_empty() {
-                        vec![Diagnostic {
-                            range: Range {
-                                start: Position::new(0, 0),
-                                end: Position::new(0, 1),
-                            },
-                            severity: Some(DiagnosticSeverity::ERROR),
-                            code: Some(NumberOrString::String("llg-config".to_owned())),
-                            code_description: None,
-                            source: Some("llg".to_owned()),
-                            message: format!(
-                                "invalid {}: see server log",
-                                root.descriptor.config_path.display()
-                            ),
-                            related_information: None,
-                            tags: None,
-                            data: None,
-                        }]
+                        // Each error already names its key and line; the
+                        // path identifies the file for clients that show the
+                        // message outside the editor buffer.
+                        root.config_errors
+                            .iter()
+                            .map(|error| Diagnostic {
+                                range: Range {
+                                    start: Position::new(0, 0),
+                                    end: Position::new(0, 1),
+                                },
+                                severity: Some(DiagnosticSeverity::ERROR),
+                                code: Some(NumberOrString::String("llg-config".to_owned())),
+                                code_description: None,
+                                source: Some("llg".to_owned()),
+                                message: format!(
+                                    "invalid {}: {}",
+                                    root.descriptor.config_path.display(),
+                                    error.message
+                                ),
+                                related_information: None,
+                                tags: None,
+                                data: None,
+                            })
+                            .collect()
                     } else {
                         root.config_warnings
                             .iter()

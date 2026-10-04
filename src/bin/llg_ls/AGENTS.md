@@ -15,6 +15,18 @@ Keep LSP dependencies in this binary behind default-on `lsp`. Serving stdout is
 JSON-RPC only; logs go to stderr/configured file. Help, version and token dumps
 print ordinary text without serving. Invalid CLI arguments exit 2 with stderr usage.
 
+## Configuration
+
+The schema and loader are the shared `llg::config` module (also used by the `llg`
+driver); `config.rs` only re-exports it and builds Slang options from a root's
+config. Add or change keys in the library, never here. The server uses
+`[sources]` directories/include/exclude, `[compile]` top/include_dirs/defines/
+param_overrides, `[lint]` enabled/rules and `[analysis]`; driver-only keys
+(`sources.files`, `compile.edition/compilation_units/system_tasks`, `[libraries]`,
+`lint.run/json/json_file`, `[simulator]`, `[build]`, `[output]`) are validated with
+the file and ignored. An unknown key anywhere rejects the whole file atomically in
+both the LSP and `--dump-tokens` paths.
+
 ## Frontend boundary
 
 Root jobs snapshot every unit/literal include within budgets. One blocking closure

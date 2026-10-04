@@ -38,12 +38,12 @@ admission.
 | Patch | Purpose |
 | --- | --- |
 | `slang/slang-cache-only-source-reads.patch` | Cache-only admitted-buffer reads and lexical path normalization. |
-| `slang/slang-ref-port-binding.patch` | Packed module-ref lvalue binding; subroutine refs retain separate rules. |
+| `slang/slang-ref-port-binding.patch` | Packed module-ref lvalue binding; subroutine refs retain separate rules. `inout uwire` formals are admitted (SV 6.6.2, 23.3.3.6–23.3.3.7); the simulator checks the collapsed net's drivers. |
 | `slang/slang-package-wildcard-export.patch` | Lazy finite wildcard re-exports, with ambiguous names diagnosed. |
 | `slang/slang-conditional-z-merge.patch` | Selected packed conditional policy: definite true selects one arm despite other X/Z predicate bits; unpacked constants retain matching immediate members and default mismatches by member type, not initializer. Nested members default whole. Local edition policy, not an upstream erratum. Because patches cannot overlap, it also carries the operator-overload hooks in `OperatorExpressions.cpp` (below). |
-| `slang/slang-output-port-runtime-select.patch` | Output ports connected to variables admit runtime selects as implied continuous assignments (SV 23.3.3.2); net and inout lvalues keep constant selects. |
+| `slang/slang-output-port-runtime-select.patch` | Output ports connected to variables (implied continuous assignments, SV 23.3.3.2) and continuous assignments to variables (SV 10.3, A.8.5 `variable_lvalue`) admit runtime selects; the written variable is the select's root. Net, inout and gate-terminal lvalues keep constant selects. |
 | `slang/slang-operator-overload.patch` | Operator overload declarations (SV 11.11, A.2.8): `OverloadDeclaration` syntax in module, package, compilation-unit, generate and block items, an unnamed `OperatorOverload` symbol, and resolution only where a built-in unary, binary, increment, compound, assignment or cast operation is illegal. A resolved use becomes an ordinary `CallExpression` to the function found from the use's scope; increments and compound assignments become `A = f(A, ...)` assignments. |
-| `slang/slang-net-alias-members-uwire-inout.patch` | Net aliases may name constant member selects of structure nets (SV 10.11, A.8.3/A.8.5). A uwire net may connect to a module inout port and that connection is not counted as a uwire driver (SV 6.6.2, 23.3.3.6–23.3.3.7); the simulator checks the collapsed net's drivers. Pass-switch terminals and `inout uwire` formals stay rejected. |
+| `slang/slang-net-alias-members-uwire-inout.patch` | Net aliases may name constant member selects of structure nets (SV 10.11, A.8.3/A.8.5). A uwire net may connect to a module inout port, also inside a concatenation, and neither that connection nor an `inout uwire` formal's port counts as a uwire driver (SV 6.6.2, 23.3.3.6–23.3.3.7); the simulator checks the collapsed net's drivers. Pass-switch terminals stay rejected. Gate and UDP output terminals (`net_lvalue`, A.3.3) keep constant selects on variables. |
 
 ## Updating patches
 

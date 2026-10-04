@@ -89,6 +89,9 @@ mod rtl_099;
 #[path = "sim_feature_completion/rtl_102.rs"]
 mod rtl_102;
 
+#[path = "sim_feature_completion/rtl_105.rs"]
+mod rtl_105;
+
 #[path = "sim_feature_completion/sim_001.rs"]
 mod sim_001;
 

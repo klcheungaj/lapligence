@@ -22,6 +22,7 @@ rather than duplicate. Use the [source map](docs/source_layout.md) to find domai
 | C ABI and C++ | [wrapper](src/wrapper/AGENTS.md) |
 | Simulator pipeline, lowering, emitter and runtime | [sim](src/sim/AGENTS.md) |
 | Drivers and allocators | [bin](src/bin/AGENTS.md) |
+| `llg.toml` schema (shared by `llg` and `llg_ls`) | [config](src/config/readme.md), [reference](docs/config.md) |
 | LSP backend and features | [llg_ls](src/bin/llg_ls/AGENTS.md) |
 | Lint API, configuration and rules | [lint](src/core/lint/AGENTS.md) |
 | Tests, safeguards, CI and release | [tests](tests/AGENTS.md) |
@@ -41,7 +42,7 @@ rather than duplicate. Use the [source map](docs/source_layout.md) to find domai
   and byte payloads. Safe APIs expose neither AST pointers nor borrowed native memory.
 - Keep tower-lsp/tokio/dashmap in `llg_ls`, behind default-on `lsp` and the bin's
   `required-features = ["lsp"]`. `cargo build --lib --no-default-features` must
-  work without them. Bins import `llg::core`, `llg::ffi` and `llg::sim`; no
+  work without them. Bins import `llg::config`, `llg::core`, `llg::ffi` and `llg::sim`; no
   `#[path]` includes. The C11 runtime, including `llg_co`, is packaged only with
   generated models, never linked into Rust binaries.
 

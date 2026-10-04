@@ -1,20 +1,127 @@
+diff --git a/include/slang/ast/ASTContext.h b/include/slang/ast/ASTContext.h
+index b00c007df..b64acd47a 100644
+--- a/include/slang/ast/ASTContext.h
++++ b/include/slang/ast/ASTContext.h
+@@ -184,8 +184,12 @@ enum class SLANG_EXPORT ASTFlags : uint64_t {
+ 
+     /// AST binding is for a wildcard port connection.
+     WildcardPortConn = 1ull << 42,
++
++    /// AST binding is for a continuous assignment statement, whose variable
++    /// targets admit runtime selects (IEEE 1800-2009 10.3, A.8.5).
++    ContinuousAssign = 1ull << 43,
+ };
+-SLANG_BITMASK(ASTFlags, WildcardPortConn)
++SLANG_BITMASK(ASTFlags, ContinuousAssign)
+ 
+ /// Various flags that can be applied to a constant expression evaluation.
+ enum class SLANG_EXPORT EvalFlags : uint8_t {
 diff --git a/source/ast/expressions/SelectExpressions.cpp b/source/ast/expressions/SelectExpressions.cpp
+index 412ab537a..75de5eb97 100644
 --- a/source/ast/expressions/SelectExpressions.cpp
 +++ b/source/ast/expressions/SelectExpressions.cpp
-@@ -111,7 +111,15 @@ bool requireLValueHelper(const T& expr, const ASTContext& context, SourceLocatio
+@@ -80,6 +80,33 @@ static void checkForVectoredSelect(const Expression& value, SourceRange range,
+     }
+ }
+ 
++// The declared net or variable that a chain of selects and member accesses
++// writes, or null when the chain does not end in a plain value reference
++// (for example a class handle member).
++static const Symbol* selectRootSymbol(const Expression& expr) {
++    const Expression* current = &expr;
++    while (true) {
++        switch (current->kind) {
++            case ExpressionKind::ElementSelect:
++                current = &current->as<ElementSelectExpression>().value();
++                break;
++            case ExpressionKind::RangeSelect:
++                current = &current->as<RangeSelectExpression>().value();
++                break;
++            case ExpressionKind::MemberAccess:
++                current = &current->as<MemberAccessExpression>().value();
++                if (current->type->isObjectHandleType())
++                    return nullptr;
++                break;
++            case ExpressionKind::NamedValue:
++            case ExpressionKind::HierarchicalValue:
++                return &current->as<ValueExpressionBase>().symbol;
++            default:
++                return nullptr;
++        }
++    }
++}
++
+ template<typename T>
+ bool requireLValueHelper(const T& expr, const ASTContext& context, SourceLocation location,
+                          bitmask<AssignFlags> flags) {
+@@ -111,7 +138,20 @@ bool requireLValueHelper(const T& expr, const ASTContext& context, SourceLocatio
          }
      }
  
 -    if (context.flags.has(ASTFlags::NonProcedural)) {
-+    // An output port connected to a variable is an implied continuous
-+    // assignment whose variable_lvalue admits runtime selects (IEEE 1800-2009
-+    // 23.3.3.2 and 6.5); the longest static prefix is the driven variable.
-+    // Net lvalues and inout connections keep their constant_select rule.
-+    auto root = expr.getSymbolReference();
-+    const bool runtimeVariableOutput = context.flags.has(ASTFlags::OutputArg) &&
++    // A continuous assignment to a variable (continuous_assign's
++    // variable_assignment, IEEE 1800-2009 10.3 and A.8.5) and an output port
++    // connected to a variable (an implied continuous assignment, 23.3.3.2)
++    // take a variable_lvalue whose select admits runtime expressions; the
++    // longest static prefix is the driven variable for the 6.5 single-writer
++    // rule (11.5.3). Net lvalues, primitive terminals and inout connections
++    // keep their constant_select rule, as do procedural assign and force.
++    auto root = selectRootSymbol(expr);
++    const bool variableAssignment = context.flags.has(ASTFlags::OutputArg) ||
++                                    context.flags.has(ASTFlags::ContinuousAssign);
++    const bool runtimeVariableSelect = variableAssignment &&
 +                                       !flags.has(AssignFlags::InOutPort) && root &&
-+                                       VariableSymbol::isKind(root->kind);
-+    if (context.flags.has(ASTFlags::NonProcedural) && !runtimeVariableOutput) {
++                                       root->kind == SymbolKind::Variable;
++    if (context.flags.has(ASTFlags::NonProcedural) && !runtimeVariableSelect) {
          if constexpr (std::is_same_v<T, RangeSelectExpression>) {
              if (!context.eval(expr.left()) || !context.eval(expr.right()))
                  return false;
+diff --git a/tests/unittests/ast/MemberTests.cpp b/tests/unittests/ast/MemberTests.cpp
+index a84550224..c12de195b 100644
+--- a/tests/unittests/ast/MemberTests.cpp
++++ b/tests/unittests/ast/MemberTests.cpp
+@@ -2313,6 +2313,44 @@ endmodule
+     NO_COMPILATION_ERRORS;
+ }
+ 
++TEST_CASE("Continuous assignment to a variable admits runtime selects") {
++    // continuous_assign's variable_assignment takes a variable_lvalue whose
++    // select is non-constant (IEEE 1800-2009 10.3, A.8.5); net lvalues and
++    // gate output terminals keep constant selects.
++    auto tree = SyntaxTree::fromText(R"(
++typedef struct packed { logic [3:0] hi; logic [3:0] lo; } pair_t;
++
++module m;
++    logic [7:0] a [0:3];
++    logic [7:0] v;
++    pair_t s [0:1];
++    logic [7:0] c [0:1];
++    logic [7:0] n;
++    logic [15:0] x;
++    int i;
++
++    assign a[i] = x[7:0];
++    assign v[i +: 2] = x[1:0];
++    assign s[i].lo = x[3:0];
++    assign {c[i], n} = x;
++
++    wire [7:0] w;
++    assign w[i] = x[0];
++
++    logic [1:0] g;
++    buf b(g[i], x[0]);
++endmodule
++)");
++
++    Compilation compilation;
++    compilation.addSyntaxTree(tree);
++
++    auto& diags = compilation.getAllDiagnostics();
++    REQUIRE(diags.size() == 2);
++    CHECK(diags[0].code == diag::ConstEvalNonConstVariable);
++    CHECK(diags[1].code == diag::ConstEvalNonConstVariable);
++}
++
+ TEST_CASE("Net alias infinite loop regress") {
+     auto tree = SyntaxTree::fromText(R"(
+ alias;

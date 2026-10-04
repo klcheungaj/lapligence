@@ -24,6 +24,7 @@ signal, not a reason to cut an algorithm or introduce a generic helper module.
 | [`emit_c/model.rs`](../src/sim/emit_c/model.rs) | [`model/`](../src/sim/emit_c/model/): interfaces, classes, assertions, storage, VPI, functions, DPI, processes, initialization | Render model declarations and process scaffolding from checked execution data. |
 | [`emit_c/statements.rs`](../src/sim/emit_c/statements.rs) | [`statements/`](../src/sim/emit_c/statements/): assertions, system tasks, events, formatting, callbacks, force | Render statement operations without database access or new semantic decisions. |
 | [`emit_c/expressions.rs`](../src/sim/emit_c/expressions.rs) | [`expressions/`](../src/sim/emit_c/expressions/): queries, system functions, input, lvalues, casts, assignments, calls | Render typed expressions and their recorded representation. |
+| [`config/`](../src/config/) | `paths.rs` (lexical paths, globs, discovery), `schema.rs` (raw serde tables), `resolve.rs` (validation, path resolution), `load.rs` (bounded reads, error context), `tests.rs` | `llg::config` owns the `llg.toml` schema shared by `llg` and `llg_ls`; `mod.rs` holds the resolved types and defaults. Binaries add no TOML parsing. |
 | [`llg_ls/module_explorer.rs`](../src/bin/llg_ls/module_explorer.rs) | [`module_explorer/`](../src/bin/llg_ls/module_explorer/): catalog, budget, content, hierarchy, compatibility, presentation, types | The facade coordinates owned feature data and keeps protocol entry points stable. |
 
 Children use the facade's shared types and narrowly scoped implementation

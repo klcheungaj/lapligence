@@ -8,6 +8,7 @@ Slang; only owned snapshots/indexes reach requests. Serving stdout is JSON-RPC o
 | --- | --- |
 | `main.rs`, `transport.rs` | Process setup, async runner, framed stdio and lifecycle. |
 | `features.rs`, `features/` | Navigation, symbols, tokens, hover, completion, references, rename and explorer projections. |
+| `config.rs` | LSP view of the shared `llg::config` schema: re-exports plus Slang option construction. |
 | `lsp.rs`, `lsp/` | Workspace/configuration state, scheduling, staging, diagnostics and handlers. |
 | `module_explorer.rs`, `module_explorer/` | Catalog, budgets, contents, hierarchy, compatibility, presentation and types. |
 
