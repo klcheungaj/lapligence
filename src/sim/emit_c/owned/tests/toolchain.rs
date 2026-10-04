@@ -55,9 +55,15 @@ pub(super) fn execute(binary: &Path) -> Output {
     loop {
         match child.try_wait() {
             Ok(Some(_)) => {
-                return child
+                let output = child
                     .wait_with_output()
-                    .expect("collect emitted-model output")
+                    .expect("collect emitted-model output");
+                // Expected outputs are LF; models keep the host's native newline.
+                return Output {
+                    status: output.status,
+                    stdout: crate::ffi::platform::native_text_to_lf(output.stdout),
+                    stderr: crate::ffi::platform::native_text_to_lf(output.stderr),
+                };
             }
             Ok(None) if started.elapsed() < Duration::from_secs(60) => {
                 std::thread::sleep(Duration::from_millis(10));

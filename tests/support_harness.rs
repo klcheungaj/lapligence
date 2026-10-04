@@ -182,10 +182,13 @@ fn nested_cwd_guards_restore_each_scope() {
 #[test]
 fn crlf_normalization_rewrites_only_crlf_pairs() {
     assert_eq!(
-        sim_harness::crlf_to_lf(b"a\r\nb\r\n\r\nc\rd\n\r".to_vec()),
+        llg::ffi::platform::crlf_to_lf(b"a\r\nb\r\n\r\nc\rd\n\r".to_vec()),
         b"a\nb\n\nc\rd\n\r"
     );
-    assert_eq!(sim_harness::crlf_to_lf(b"plain\n".to_vec()), b"plain\n");
+    assert_eq!(
+        llg::ffi::platform::crlf_to_lf(b"plain\n".to_vec()),
+        b"plain\n"
+    );
     let host = sim_harness::host_text_to_lf(b"x\r\n".to_vec());
     let expected: &[u8] = if cfg!(windows) { b"x\n" } else { b"x\r\n" };
     assert_eq!(host, expected);

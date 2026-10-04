@@ -2932,7 +2932,8 @@ mod tests {
                     String::from_utf8_lossy(&output.stderr)
                 ));
             }
-            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stdout = crate::ffi::platform::native_text_to_lf(output.stdout);
+            let stdout = String::from_utf8_lossy(&stdout);
             if stdout != "resume=3\n" {
                 return Err(format!("unexpected generated execution output: {stdout:?}"));
             }

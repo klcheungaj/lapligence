@@ -18,6 +18,9 @@ in text mode end lines with CRLF. `sim.rs::run_command` therefore rewrites CRLF
 to LF in captured output on Windows only, and `read_text_output` does the same
 for text files the model wrote; expected outputs stay LF and other hosts stay
 byte-exact. Binary-mode files (`$fopen` with `b`, waveforms) are compared as bytes.
+The rewrite is `llg::ffi::platform::native_text_to_lf`; library unit tests and
+suites with their own process runners (`lint_config_cli`, the owned-emitter
+and execution unit tests) call it on captured output too.
 
 `sim_cli.rs` runs checked-in `.sv` stems or explicit `.v`/`.sv` filenames through
 the public CLI in both HDL optimizer modes. `run_case_after_db_drop` supplements
