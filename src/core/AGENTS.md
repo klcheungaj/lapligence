@@ -24,6 +24,8 @@ arena or validated test builder, never native pointers or source rereads.
   windows, cycles and cross-table references during construction. Unsupported
   legal nodes stay typed `Unsupported`; executable uses must reject, not become
   empty statements or fabricated defaults.
+- Node positions are physical. `` `line`` mappings stay in the separate
+  `SourceMap`; consumers append, never substitute, the logical position.
 - Four-state `core::value` words are little-significance-first, with
   `(unknown, value)` planes: X=(1,0), Z=(1,1). Preserve arbitrary string bytes.
   `elab` supplies pure operations; `model`, `tokens`, `macros` and `lint` project
@@ -75,7 +77,14 @@ include preflight and in the wrapper alike. `Db::source_library` retains each
 instance's bound library (and each package's/unit's) for `%l`.
 
 Edition checks use classified tokens and owned semantic edges shared by execution
-and navigation. Explicit `system_subroutines` prototypes distinguish extensions
+and navigation. The 2001 profile also gates keyword-free later grammar: type
+shapes (queue/dynamic/associative, multiple packed ranges), subroutine formals
+and bodies, unnamed-block declarations and procedural initializers from semantic
+nodes; labels, `.name`, `edge`, casts, time literals, inline genvars, `[size]`,
+`localparam` ports and empty `()` from token sequences; generate constructs from
+`generate` regions. Sequence rules skip macro-expanded tokens, whose shared
+use-site range carries no order. The 2009 profile rejects 2012 covergroup bins
+forms. Body rules need executable capture; navigation snapshots skip them. Explicit `system_subroutines` prototypes distinguish extensions
 from standards. Directive bodies are ignored until expanded; executable for-loop
 header edges differ from navigation-only capture. Memory-storage exemptions are
 argument-specific (`$fread` and legacy PLA personality argument 0;

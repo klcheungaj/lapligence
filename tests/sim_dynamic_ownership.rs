@@ -122,7 +122,8 @@ fn nba_illegal_lifetime_stays_rejected() {
         assert!(!output.status.success(), "NBA through a ref was accepted");
         assert!(output.stdout.is_empty(), "{output:?}");
         assert!(
-            stderr.contains("nonblocking assignment to automatic")
+            stderr.contains("'ref' arguments can only be used in 'automatic' subroutines")
+                || stderr.contains("nonblocking assignment to automatic")
                 || stderr.contains("targets stack-backed input/formal/local storage")
                 || stderr.contains("nonblocking writes through reference formals")
                 || stderr.contains("nonblocking assignment requires persistent target storage"),

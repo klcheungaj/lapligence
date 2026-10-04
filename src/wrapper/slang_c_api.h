@@ -13,7 +13,7 @@
 extern "C" {
 #endif
 
-#define LLG_SLANG_ABI_VERSION 9u
+#define LLG_SLANG_ABI_VERSION 10u
 #define LLG_SLANG_INVALID_ID UINT64_MAX
 
 typedef struct LlgSlangSnapshot LlgSlangSnapshot;
@@ -971,6 +971,19 @@ typedef struct {
   LlgSlangString library;
 } LlgSlangSourceLibrary;
 
+/* Logical source position established by one `line directive (IEEE 1364-2001
+ * 19.7, IEEE 1800-2009 22.12). `physical_offset` is the byte offset in admitted
+ * file `file_id` of the first line the directive maps; from there the logical
+ * line advances with the physical line until the next record of that file.
+ * Values are the frontend's own mapped `__LINE__`/`__FILE__` values at that
+ * offset. Records are per directive occurrence and need not be sorted. */
+typedef struct {
+  uint64_t file_id;
+  uint64_t physical_offset;
+  uint64_t logical_line;
+  LlgSlangString logical_file;
+} LlgSlangLineDirective;
+
 typedef struct {
   uint32_t abi_version;
   uint32_t flags;
@@ -1006,6 +1019,8 @@ typedef struct {
   uint64_t udp_row_count;
   const LlgSlangSourceLibrary* source_libraries;
   uint64_t source_library_count;
+  const LlgSlangLineDirective* line_directives;
+  uint64_t line_directive_count;
 } LlgSlangSnapshotView;
 
 typedef struct {

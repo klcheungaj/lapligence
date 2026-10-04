@@ -2,7 +2,7 @@
 
 /// One UDP input field, represented as a mask over 0, 1 and X.
 /// Runtime Z inputs are normalized to X before matching.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum IrUdpInput {
     Zero = 1,
@@ -13,7 +13,7 @@ pub enum IrUdpInput {
 }
 
 /// A combinational UDP output; Z and state-retention symbols are excluded.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum IrUdpOutput {
     Zero = 0,
@@ -22,7 +22,7 @@ pub enum IrUdpOutput {
 }
 
 /// One source-order row in a combinational UDP definition.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct IrUdpRow {
     pub inputs: Vec<IrUdpInput>,
     pub output: IrUdpOutput,
@@ -30,7 +30,7 @@ pub struct IrUdpRow {
 
 /// An owned definition shared by all of its scalar and array instances.
 /// Rows retain source order: the first match wins and no match returns X.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct IrUdpTable {
     pub name: String,
     pub input_count: usize,

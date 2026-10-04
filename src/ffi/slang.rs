@@ -14,7 +14,7 @@ use std::{fmt, ptr, slice, str};
 mod snapshot;
 use snapshot::decode_snapshot;
 #[cfg(test)]
-use snapshot::decode_source_libraries;
+use snapshot::{decode_line_directives, decode_source_libraries};
 mod semantics;
 use semantics::{decode_semantic_edges, decode_semantic_nodes, decode_udp_tables};
 #[cfg(test)]
@@ -28,7 +28,7 @@ use values::{
     decode_constants, decode_instances, decode_parameters, decode_types, validate_parameter_windows,
 };
 
-const ABI_VERSION: u32 = 9;
+const ABI_VERSION: u32 = 10;
 const INVALID_ID: u64 = u64::MAX;
 
 const STATUS_OK: u32 = 0;
@@ -1069,6 +1069,19 @@ pub struct SourceLibraryBinding {
     pub library: String,
 }
 
+/// Logical position that one `` `line`` directive gives the physical lines
+/// of an admitted file, starting at `physical_offset` (the first mapped line)
+/// and advancing one logical line per physical line until the next record of
+/// the same file. The values are the frontend's own mapped `` `__LINE__`` /
+/// `` `__FILE__`` at that offset.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LineDirective {
+    pub file_id: u64,
+    pub physical_offset: u64,
+    pub logical_line: u64,
+    pub logical_file: String,
+}
+
 /// Fully owned observations from one Slang compilation.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Snapshot {
@@ -1091,6 +1104,9 @@ pub struct Snapshot {
     pub udp_tables: Vec<UdpTable>,
     /// At most one source library per semantic node, in capture order.
     pub source_libraries: Vec<SourceLibraryBinding>,
+    /// `` `line`` mappings sorted by file and physical offset, one per
+    /// distinct mapped line start.
+    pub line_directives: Vec<LineDirective>,
 }
 
 impl Snapshot {
@@ -1305,6 +1321,15 @@ struct RawSourceLibrary {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
+struct RawLineDirective {
+    file_id: u64,
+    physical_offset: u64,
+    logical_line: u64,
+    logical_file: RawString,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
 struct RawUdpRow {
     inputs: RawString,
     state: u32,
@@ -1427,6 +1452,8 @@ struct RawSnapshotView {
     udp_row_count: u64,
     source_libraries: *const RawSourceLibrary,
     source_library_count: u64,
+    line_directives: *const RawLineDirective,
+    line_directive_count: u64,
 }
 
 #[repr(C)]

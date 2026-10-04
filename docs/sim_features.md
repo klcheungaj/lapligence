@@ -147,14 +147,20 @@ later-form gates do not establish complete 2009 semantic conformance.
 | Whole unpacked-array values, assignments and ports | Rejected; memory declarations, indexed elements and admitted memory-I/O storage arguments remain legal | Admitted fixed forms |
 | Unbased-unsized literals and SV-only `for` headers | Rejected | Admitted |
 | `$clog2` | Rejected | Admitted |
-| Later `$countbits`, `assert final`, `$assertcontrol` forms | Rejected | Rejected; later internal paths do not override the selected edition |
+| Keyword-free later grammar: queue/dynamic/associative and `[size]` dimensions, multiple packed ranges, end and statement labels, `.name` connections, `edge` events, casts, time literals, inline/region-free generate loops, `localparam` ports, default/output function arguments, input-less functions, multi-statement or empty subroutine bodies, unnamed-block declarations, procedural declaration initializers, empty `()` on user subroutines | Rejected with a source-located strict-edition diagnostic | Admitted |
+| Later `$countbits`, `assert final`, `$assertcontrol`, covergroup bins `with`/`matches`/set-expression forms | Rejected | Rejected; later internal paths do not override the selected edition |
+| `ref` formal of a static subroutine (SV §13.5.2) | Rejected (`ref` is SV-only) | Rejected as an error, not a frontend warning |
 
 Unknown system names require explicit registration. The selected edition's
 standard-name allowlist is an **admission policy, not a built-in implementation
 list**: unimplemented standard routines can reach the VPI fallback and fail for
 lack of a registration (§10). [Edition regression sources](../tests/sim_edition.rs)
 include unbased literals, function/multiple-step `for` headers and memory-storage
-exceptions; they were not rerun here. Complete Annex A coverage is not claimed.
+exceptions; they were not rerun here. The [RTL-019 suite](../tests/sim_feature_completion/rtl_019.rs)
+executes every keyword-free later form under 2009 and rejects each one alone
+under 2001, and keeps the legal 2001 neighbours (including `$readmemh`/`$fread`
+storage arguments) executing in both editions. Complete Annex A coverage is not
+claimed: only the forms listed above are gated beyond keywords and system names.
 
 `--compilation-units separate|merged` defaults to `separate`. Separate mode gives
 each source its own preprocessor and `$unit` scope; merged mode shares them in
@@ -934,13 +940,22 @@ Macros, includes and their edition-specific behavior are counted in §11.
   X, drive Z when disabled and retain the gate's unknown-enable truth behavior.
   V §7.4 **[1995]**.
 - 🟨 **Combinational UDPs** — Scalar tables/instances and primitive arrays admit
-  `0/1/x/b/?`, treat input Z as X, return X for unmatched combinations and reject
-  conflicting overlapping rows. Independent drivers, optional legal strengths
-  and delays are represented. The paired Verilog-2001/SystemVerilog-2009
-  SYN-031 matrix checks mux/parity tables, repeated input changes, arrays,
-  resolved nets and delays in both optimizer modes. Invalid port lists and row
-  widths reject; vector/aggregate terminals remain unsupported. Sequential UDPs
-  are a separate missing capability below.
+  `0/1/x/X/b/B/?`, treat input Z as X, return X for unmatched combinations and
+  reject conflicting overlapping rows. Scalar terminals may select bits of
+  vectors, packed/unpacked array elements (including descriptor-backed arrays
+  above the packed limit), structure members, hierarchical names, constants and
+  expressions; outputs may drive selected bits, net-array cells and
+  hierarchical nets. Instance arrays slice whole vectors, part-selects,
+  concatenations, literals and expressions, including multidimensional and
+  unpacked-net-array connections. Independent drivers, legal strengths (`%v`)
+  and delay2 inertial delays are represented. Each definition of up to 10
+  inputs evaluates through one dense index lookup with inputs read in place.
+  The SYN-031 and RTL-020 matrices run both editions, both optimizer modes and
+  both value backends. Invalid port lists, row widths, terminal counts and
+  vector/aggregate terminals are diagnostic boundaries (scalar-only by
+  definition). Outputs on net arrays above a few thousand cells share the
+  per-cell code cost of oversized net arrays ([known issue](known_issues.md#oversized-net-arrays-emit-per-cell-electrical-code)).
+  Sequential UDPs are a separate missing capability below.
   V §§8.1–8.2, 8.6; SV §§29.3–29.4, 29.8 **[1995/SV-2009]**.
 - ❌ **Sequential UDPs** — State-holding level/edge tables and UDP
   state-initialization semantics are not implemented. The
@@ -1253,9 +1268,16 @@ Macros, includes and their edition-specific behavior are counted in §11.
   separate/merged compilation units are covered. Resizable (dynamic) formals
   remain outside the qualified boundary. V §19.9; SV §22.9 **[1995]**.
 - 🟨 **Source mapping** — `` `line ``, `` `__FILE__ `` and `` `__LINE__ `` expose
-  mapped values in 2009; 2001 admits `` `line `` without the later predefined
-  macros. Diagnostics retain physical source ranges.
-  V §19.7; SV §§22.12–22.13 **[2001/SV-2009]**.
+  mapped values in 2009 through nested includes, include restoration, macro
+  use sites and both compilation-unit modes; a directive maps only its own
+  file. 2001 admits `` `line `` without the later predefined macros. The owned
+  Db keeps each node's physical position and a separate per-file `` `line ``
+  map. Frontend diagnostics and scope-based runtime locations (`$finish`,
+  severity tasks) stay physical; file-based simulator diagnostics, assertion
+  messages and coroutine site locations append `` (`line file:line) ``.
+  Physical `` `__FILE__ `` is the opened file's base name. Frontend diagnostics
+  do not yet carry the mapped position. V §19.7; SV §§22.12–22.13
+  **[2001/SV-2009]**.
 - 🟦 **Keyword/macro state** — `` `begin_keywords `` / `` `end_keywords `` retain
   lexical tables without changing the edition; `` `undefineall `` clears macros.
   SV §§22.5.3, 22.14 **[SV-2005/SV-2009]**; keyword directives first appeared in

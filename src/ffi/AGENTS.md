@@ -13,7 +13,7 @@ remain on the calling thread; do not implement `Send` or `Sync`.
   known flags, reserved fields, pointer/length pairs, IDs, ranges and table windows.
   Use module error types, preserving native status/message; malformed output is
   `InvalidNativeData`, distinct from valid unsupported HDL.
-- ABI v9 `CompileRequest` borrows sources/options until blocking
+- ABI v10 `CompileRequest` borrows sources/options until blocking
   `llg_slang_compile` returns, distinguishing units from include-only buffers.
   Library-unit recovery uses the same buffers/limits; reject unknown request flags.
   Cache keys are lexically normalized; include directories are lookup prefixes,
@@ -25,6 +25,11 @@ remain on the calling thread; do not implement `Send` or `Sync`.
 - Snapshot `source_libraries` records (v9) name one semantic node each, are
   bounded by the semantic-node limit and charged to output bytes; reject unknown
   or repeated nodes and empty library names.
+- Snapshot `line_directives` records (v10) give a file id, the byte offset of
+  the first line a `` `line`` directive maps, and the frontend's own logical
+  line and file there. Reject unknown files and offsets outside the file;
+  sort by file and offset and collapse agreeing duplicates (one include read
+  as several buffers), rejecting disagreeing ones.
 - Bound defines, tops, includes, parameter overrides, source bytes, diagnostics,
   value bits, output bytes, semantic records/edges and tokens on both ABI sides
   before/during allocation. OK transfers one unique snapshot owner; non-OK an

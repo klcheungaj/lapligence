@@ -42,6 +42,12 @@ removal linear in that target's duplicates.
   separate mode, one per library in merged mode. Export the source library of
   each instance, package and compilation unit in the `source_libraries` table
   (at most one record per semantic node), never inferred from file names.
+- Export each `LineDirectiveSyntax` the lexical capture visits as a
+  `line_directives` record: the offset of the next physical line and the
+  SourceManager's `getLineNumber`/`getFileName` there, so the values match the
+  preprocessor's `` `__LINE__``/`` `__FILE__``. A directive on the last line
+  maps nothing. Promote `RefArgAutomaticFunc` (ref formal of a static
+  subroutine, IEEE 1800-2009 13.5.2) to an error before issuing diagnostics.
 - Snapshot ownership includes typed tables, lexical/source data and uninstantiated
   source-instance records. Bound all size-derived allocation/traversal before work.
   Preserve source spelling/coordinates without deriving semantics from text.
@@ -55,6 +61,9 @@ removal linear in that target's duplicates.
   to child ports. Recovery is navigation-only under unchanged input/output limits.
 - Instance-array names retain every source index, including negative/nonzero and
   nested dimensions. Do not substitute flattened ordinals for HDL indices.
+- Slang slices instance-array connections as `X[l:r][i]`/`X[l:r][m:n]`. A
+  constant select inside a constant slice exports `X` as its base, because the
+  slice type keeps `X`'s numbering; a slice with a run-time base stays.
 - `ConditionPattern` role 38 pairs with its indexed condition; true/false edges
   use explicit branch roles/index 0. Preserve matching syntax as typed patterns,
   not Boolean conditions. Tag extensions do not change ABI pointer/layout rules.

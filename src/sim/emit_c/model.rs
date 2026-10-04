@@ -194,13 +194,10 @@ struct CoroutineArtifact {
 type CoroutineArtifacts = BTreeMap<usize, CoroutineArtifact>;
 type CoroutineUpperBounds = BTreeMap<usize, usize>;
 
+/// Suspension-site location for coroutine backtraces: physical, with the
+/// `` `line``-mapped position appended when a directive maps it.
 fn origin_location(origin: &crate::sim::semantic::Origin) -> String {
-    match origin {
-        crate::sim::semantic::Origin::Source {
-            path, line, column, ..
-        } => format!("{path}:{line}:{column}"),
-        crate::sim::semantic::Origin::Synthetic { reason } => format!("<synthetic: {reason}>"),
-    }
+    origin.location()
 }
 
 fn render_coroutine_functions(
