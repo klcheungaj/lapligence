@@ -500,6 +500,11 @@ support; the corresponding execution tests must also pass.
   relative values from its own CWD.
 - Nextest defaults to 8 concurrent tests; `--profile max-threads` opts into 32.
   CI sets `NEXTEST_PROFILE=ci`, which runs one test per available logical CPU.
+  Release-target CI builds a `cargo nextest archive` per platform and runs it in
+  separate `test`/`linux-test` jobs; the equivalent local form is
+  `cargo nextest archive --locked --all-features --cargo-profile release --archive-file F`
+  then `cargo nextest run --archive-file F --workspace-remap ROOT --extract-to ROOT`
+  with ROOT the absolute checkout path used for the build.
   Preserve suite-specific skips: `sim_cmake` may skip absent CMake; native DPI
   shared-library tests need Unix/CMake/compiler. These are not blanket skips.
 
@@ -711,6 +716,24 @@ cargo nextest run --locked --test sim_physical_time --test sim_mailboxes
 cargo test --locked --lib core::compile::editions::tests -- --test-threads=1
 cargo test --locked --test sim_loops --test sim_edition --test sim_syn016_elaboration --test sim_file_io --test runtime_file_io -- --test-threads=1
 ```
+
+### `llg.toml` configuration
+
+```sh
+cargo nextest run --locked --lib config::
+cargo nextest run --locked --bin llg settings::
+cargo nextest run --locked --test llg_config_cli --test lint_config_cli
+cargo nextest run --locked --bin llg_ls config::
+cargo nextest run --locked --test dump_tokens dump_accepts_driver_only_config_keys
+cargo nextest run --locked --test lsp_stdio lsp_stdio_accepts_driver_keys
+```
+
+`llg_config_cli` copies `tests/fixtures/config_cli` into an isolated directory
+and runs the public `llg` from it with a written `llg.toml`: discovery, explicit
+and missing `--config`, command-line override of top, include directory, define
+and parameter override, replace-not-append lists, unknown keys and invalid
+values. `config::` and `settings::` cover schema parsing, path resolution and
+the precedence rules without a simulator build.
 
 ### One readable fixture
 

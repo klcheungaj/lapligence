@@ -1,12 +1,12 @@
 # Executables
 
-Keep reusable processing in the library. Bins import `llg::core`, `llg::ffi` and
+Keep reusable processing in the library. Bins import `llg::config`, `llg::core`, `llg::ffi` and
 `llg::sim`; no `#[path]` includes or `unsafe`. LSP-only dependencies stay in `llg_ls`.
 
 | Binary | Role |
 | --- | --- |
 | `llg_ls` | tower-lsp stdio server; [guide](llg_ls/AGENTS.md) |
-| `llg` | compile → lower/IR/opt/emit → CMake build → run |
+| `llg` | compile → lower/IR/opt/emit → CMake build → run; `llg/` holds `main.rs` (flow), `cli.rs` (parsing) and `settings.rs` (config + precedence) |
 | `elab_check` | Owned DB and resolved-hierarchy validation |
 | `helloslang`, `helloworld`, `llg_demo` | Owned snapshot demonstrations |
 
@@ -49,6 +49,20 @@ Keep reusable processing in the library. Bins import `llg::core`, `llg::ffi` and
 - Simulation builds one owned DB using the physical source inventory for bounded
   time-literal recovery and reuses it after lint. Report-only lint uses ordinary
   capture without new constant-source reads.
+
+## Configuration (`llg.toml`)
+
+`llg` reads `--config <file>` (must exist) or `./llg.toml` when present (no
+parent search; missing default is not an error). Parsing, validation and path
+resolution live in `llg::config`, shared with `llg_ls`; never parse TOML in a
+bin. `cli.rs` records only what was given; `settings.rs` resolves command line >
+config > environment/built-in. Scalars replace; a repeatable option given on the
+command line replaces the config list (never appends); command-line files replace
+`sources.files` and `sources.directories`; booleans have `--no-X` opposites
+(`--no-gen-only`, `--opt`, `--no-lint`). `--config` and `--lint-config` are
+command-line only. A config error exits 1 naming file and key; entry-level
+warnings go to stderr. Add a new option to `cli.rs`, the config schema,
+`docs/config.md` and the resolve/precedence tests together.
 
 ## Startup and process state
 

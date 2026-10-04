@@ -760,3 +760,54 @@ fn enclosing_scope_name(spans: &[ScopeSpan], line: u32) -> String {
         None => String::new(),
     }
 }
+
+/// The dump reads the same `llg.toml` as the `llg` driver: keys only the
+/// driver uses are accepted and ignored.
+#[test]
+fn dump_accepts_driver_only_config_keys() {
+    let root = materialize_fixture();
+    fs::write(
+        root.join("llg.toml"),
+        "schema_version = 1\n\
+         [sources]\n\
+         directories = [\".\"]\n\
+         files = [\"tb.sv\"]\n\
+         [compile]\n\
+         edition = \"2009\"\n\
+         [simulator]\n\
+         stop_policy = \"exit\"\n\
+         [build]\n\
+         cc = \"cc\"\n",
+    )
+    .expect("write config");
+    let output = Command::new(env!("CARGO_BIN_EXE_llg_ls"))
+        .arg("--dump-tokens")
+        .arg(&root)
+        .output()
+        .expect("launch llg --dump-tokens");
+    assert!(output.status.success(), "dump exited {:?}", output.status);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!stderr.contains("invalid"), "config rejected: {stderr}");
+    assert!(String::from_utf8_lossy(&output.stdout).contains("# analysis:"));
+    let _ = fs::remove_dir_all(root);
+}
+
+/// An unknown key in a driver table rejects the whole file, so the dump falls
+/// back to defaults and names the key.
+#[test]
+fn dump_reports_unknown_config_keys_by_name() {
+    let root = materialize_fixture();
+    fs::write(
+        root.join("llg.toml"),
+        "schema_version = 1\n[build]\nccc = \"cc\"\n",
+    )
+    .expect("write config");
+    let output = Command::new(env!("CARGO_BIN_EXE_llg_ls"))
+        .arg("--dump-tokens")
+        .arg(&root)
+        .output()
+        .expect("launch llg --dump-tokens");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("build.ccc"), "{stderr}");
+    let _ = fs::remove_dir_all(root);
+}
