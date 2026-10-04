@@ -492,6 +492,27 @@ Reproduce with `logic [7:0] r, src; assign r = src;`, a process that runs
 `force r = 8'haa;` and later `release r;`, and a `$display` of `r` after the
 release without changing `src`; the model prints `aa` instead of `src`.
 
+## Preponed sample history grows every time slot
+
+**Status:** open; found by SIM-001, owned by the clocking-input feature
+(SIM-033).
+
+`sample_preponed_values` (`src/sim/rt/scheduler/sampling.c`) appends one
+history node, with a cloned value, to every registered sampled signal in every
+time slot and never prunes it. Only `llg_clocking_sample_history` (clocking
+input skews) reads the history, and it scans the whole list. A design with one
+concurrent assertion on a free-running clock therefore grows by roughly 0.8 KiB
+per clock cycle even when no clocking block exists, and each skewed clocking
+sample costs time linear in elapsed slots. Bounding it needs the static
+lookback of each history consumer at registration (the largest input skew in
+ticks), so history is kept only for signals that have one and is pruned to that
+horizon, retaining the newest sample at or before it.
+
+Reproduce with a module holding `logic clk; logic [31:0] r;`, `always @(posedge
+clk) r <= r + 1;`, `assert property (@(posedge clk) r >= 0);` and a 10-tick clock:
+peak RSS is about 18 MiB after 20,000 cycles and 66 MiB after 80,000 (11 MiB
+either way without the assertion).
+
 ## Delayed enable gates drive X instead of L/H
 
 **Status:** open (RTL-012 deferral).
