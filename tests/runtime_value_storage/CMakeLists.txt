@@ -132,6 +132,18 @@ if(LLG_STORAGE_TEST_WAVEFORMS)
   add_test(NAME waveform_snapshot_lifecycle COMMAND sv4_waveform_probe)
   set_tests_properties(waveform_snapshot_lifecycle PROPERTIES
     WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/waveform-output")
+  add_executable(waveform_wakeup_probe waveform_wakeup_probe.c storage_runtime.c)
+  target_include_directories(waveform_wakeup_probe PRIVATE "${LLG_RT}")
+  target_link_libraries(waveform_wakeup_probe PRIVATE storage_probe_fst)
+  if(LLG_TEST_VALUE_COMPACT)
+    target_sources(waveform_wakeup_probe PRIVATE $<TARGET_OBJECTS:selected_value_units>)
+    target_link_libraries(waveform_wakeup_probe PRIVATE ${selected_value_libraries})
+  endif()
+  strict_c(waveform_wakeup_probe)
+  file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/waveform-wakeup-output")
+  add_test(NAME waveform_writer_wakeup COMMAND waveform_wakeup_probe)
+  set_tests_properties(waveform_writer_wakeup PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/waveform-wakeup-output")
 endif()
 
 get_property(all_tests DIRECTORY PROPERTY TESTS)
