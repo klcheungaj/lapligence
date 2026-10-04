@@ -159,8 +159,9 @@ pub enum IrLhs {
         /// value coordinates. A selected reference has width one and is unsigned.
         bit: Option<Box<IrExpr>>,
     },
-    /// Bit-select `[idx]` of a signal.
-    Bit(usize, IrExpr, bool),
+    /// Bit-select `[idx]` of a signal. Selector expressions are boxed so
+    /// common whole-signal targets do not pay for inline expressions.
+    Bit(usize, Box<IrExpr>, bool),
     /// Part-select `[left:right]` of a signal (constant bounds).
     Part(usize, i64, i64, bool),
     /// Indexed part-select `[base +: width]` / `[base -: width]`
@@ -168,7 +169,7 @@ pub enum IrLhs {
     /// descending form.  Keeping the selected width separate from the width
     /// expression's own type lets capacity analysis account for `[base +: N]`
     /// even when `N` is represented by a narrow integer expression.
-    IdxPart(usize, IrExpr, IrExpr, u32, bool, bool),
+    IdxPart(usize, Box<IrExpr>, Box<IrExpr>, u32, bool, bool),
     /// One unpacked-array element with an optional element-level select;
     /// emitted as a guarded statement (out-of-range/unknown indices no-op).
     ArrayElem {

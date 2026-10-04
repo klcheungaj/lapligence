@@ -1163,7 +1163,7 @@ fn unused_storage_counts_call_temp_inits_and_copyouts() {
     // INSIDE the Call node: the temp init reads s2, the copy-out writes
     // s3 (its bit index is also a read slot), and the Val/OutAddr args
     // read+write s4/s1.
-    let call = IrStmt::Call(IrCall {
+    let call = IrStmt::Call(Box::new(IrCall {
         f: 0,
         args: vec![
             IrCallArg::Val(IrExpr::new(IrExprKind::SigRead(4), 8, false, None)),
@@ -1179,12 +1179,12 @@ fn unused_storage_counts_call_temp_inits_and_copyouts() {
             Some(IrExpr::new(IrExprKind::SigRead(2), 8, false, None)),
         )],
         copyouts: vec![(
-            IrLhs::Bit(3, konst(0, 3), false),
+            IrLhs::Bit(3, Box::new(konst(0, 3)), false),
             "_a0".to_string(),
             8,
             false,
         )],
-    });
+    }));
     let mut m = model_with(vec![call], sigs(5));
     run(&mut m, &storage_only());
     assert!(!m.signals[1].omit, "OutAddr actual stays (read + write)");

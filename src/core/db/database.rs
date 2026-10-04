@@ -97,11 +97,13 @@ mod statement_import;
 use statement_import::{event_specs, is_named_event_expression, statement_from_slang};
 mod expression_import;
 use expression_import::{
-    enclosing_scope_name, expression_from_slang, semantic_full_name, source_position,
+    assign_semantic_full_names, enclosing_scope_name, expression_from_slang, source_position,
     SourcePositions,
 };
 
 mod capture;
+mod shared;
+use shared::{DenseShared, DenseSharedBuilder};
 
 /// Arena index of one [`Node`].
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -162,8 +164,9 @@ pub struct Db {
     /// frontend-neutral [`NodeKind`] intentionally has no direct variant.
     semantic_kinds: Vec<CapturedSemanticKind>,
     /// Native detail text retained alongside [`semantic_kinds`] for
-    /// source-located diagnostics about otherwise unsupported nodes.
-    semantic_details: Vec<String>,
+    /// source-located diagnostics about otherwise unsupported nodes. Nodes
+    /// share one copy of each distinct spelling.
+    semantic_details: DenseShared<Box<str>>,
     /// Pattern kind and declaration identity captured from Slang. Pattern
     /// syntax remains a separate side table because `NodeKind` intentionally
     /// does not expose native frontend pattern variants.
@@ -221,7 +224,8 @@ pub struct Db {
     /// Structure/union category and members keyed by the declared object.
     aggregate_layouts: HashMap<NodeId, AggregateLayout>,
     /// Complete recursive type descriptors keyed by the declared object.
-    type_descriptors: HashMap<NodeId, TypeDescriptor>,
+    /// Nodes of one frontend type share its single descriptor.
+    type_descriptors: DenseShared<TypeDescriptor>,
     packed_pattern_elements: HashMap<NodeId, TypeDescriptor>,
     /// Resolved `T` of each `std::mailbox #(T)` specialization, keyed by the
     /// class type identity.
@@ -277,7 +281,7 @@ impl Db {
             edition: LanguageEdition::SystemVerilog2009,
             overridden_parameters: HashSet::new(),
             semantic_kinds: Vec::new(),
-            semantic_details: Vec::new(),
+            semantic_details: DenseShared::default(),
             conditional_patterns: HashMap::new(),
             conditional_pattern_fields: HashMap::new(),
             program_instances: HashSet::new(),
@@ -301,7 +305,7 @@ impl Db {
             method_call_iterators: HashMap::new(),
             packed_members: HashMap::new(),
             aggregate_layouts: HashMap::new(),
-            type_descriptors: HashMap::new(),
+            type_descriptors: DenseShared::default(),
             packed_pattern_elements: HashMap::new(),
             mailbox_elements: HashMap::new(),
             enum_types: HashMap::new(),
@@ -342,7 +346,7 @@ impl Db {
             edition: LanguageEdition::SystemVerilog2009,
             overridden_parameters: HashSet::new(),
             semantic_kinds: Vec::new(),
-            semantic_details: Vec::new(),
+            semantic_details: DenseShared::default(),
             conditional_patterns: HashMap::new(),
             conditional_pattern_fields: HashMap::new(),
             program_instances: HashSet::new(),
@@ -366,7 +370,7 @@ impl Db {
             method_call_iterators: HashMap::new(),
             packed_members: HashMap::new(),
             aggregate_layouts: HashMap::new(),
-            type_descriptors: HashMap::new(),
+            type_descriptors: DenseShared::default(),
             packed_pattern_elements: HashMap::new(),
             mailbox_elements: HashMap::new(),
             enum_types: HashMap::new(),
@@ -423,7 +427,7 @@ impl Db {
 
     /// Native detail retained for diagnostics about a captured node.
     pub fn semantic_detail(&self, id: NodeId) -> Option<&str> {
-        self.semantic_details.get(id.index()).map(String::as_str)
+        self.semantic_details.get(id).map(|detail| &**detail)
     }
 
     /// Return owned conditional-pattern metadata, if `id` is a captured
@@ -489,7 +493,10 @@ impl Db {
     }
 
     pub(crate) fn semantic_metadata_lengths(&self) -> (usize, usize) {
-        (self.semantic_kinds.len(), self.semantic_details.len())
+        (
+            self.semantic_kinds.len(),
+            self.semantic_details.slot_count(),
+        )
     }
 
     pub fn tops(&self) -> &[NodeId] {
@@ -733,7 +740,7 @@ impl Db {
     /// Return the complete recursive type descriptor captured for a
     /// declaration, when Slang supplied a type record for it.
     pub fn type_descriptor(&self, id: NodeId) -> Option<&TypeDescriptor> {
-        self.type_descriptors.get(&id)
+        self.type_descriptors.get(id)
     }
 
     /// Immediate packed-array element type for an assignment pattern.

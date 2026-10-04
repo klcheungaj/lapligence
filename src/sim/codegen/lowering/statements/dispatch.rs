@@ -28,9 +28,8 @@ impl EmitCtx<'_, '_> {
                                     continue;
                                 }
                                 let name = self.cg.collect_mailbox_local(&self.path, *child)?;
-                                body.push(IrStmt::Object(IrObjectStmt::ChandleDeclareLocal(
-                                    name.clone(),
-                                    None,
+                                body.push(IrStmt::Object(Box::new(
+                                    IrObjectStmt::ChandleDeclareLocal(name.clone(), None),
                                 )));
                                 if let Some(initializer) = self.cg.db.var_initializer(*child) {
                                     let value = self.cg.lower_mailbox_expr(
@@ -38,8 +37,8 @@ impl EmitCtx<'_, '_> {
                                         initializer,
                                         self.cg.mailbox_element_for_decl(*child),
                                     )?;
-                                    body.push(IrStmt::Object(IrObjectStmt::MailboxAssignLocal(
-                                        name, value,
+                                    body.push(IrStmt::Object(Box::new(
+                                        IrObjectStmt::MailboxAssignLocal(name, value),
                                     )));
                                 }
                                 continue;
@@ -61,7 +60,7 @@ impl EmitCtx<'_, '_> {
                                     .transpose()?;
                                 match target {
                                     ChandleTarget::Local(name) => body.push(IrStmt::Object(
-                                        IrObjectStmt::ChandleDeclareLocal(name, init),
+                                        Box::new(IrObjectStmt::ChandleDeclareLocal(name, init)),
                                     )),
                                     ChandleTarget::Object(_) => {}
                                 }
@@ -75,7 +74,7 @@ impl EmitCtx<'_, '_> {
                             ) {
                                 match self.cg.collect_process_local(&self.path, *child)? {
                                     ProcessTarget::Local(name) => body.push(IrStmt::Object(
-                                        IrObjectStmt::ProcessDeclareLocal(name, None),
+                                        Box::new(IrObjectStmt::ProcessDeclareLocal(name, None)),
                                     )),
                                     ProcessTarget::Object(_) => {}
                                 }
@@ -688,16 +687,20 @@ fn locate_suspensions(statements: &mut [IrStmt], origin: &crate::sim::semantic::
                 | IrStmt::Expect { .. }
                 | IrStmt::StopControl { .. }
                 | IrStmt::Call(_)
-                | IrStmt::Object(IrObjectStmt::ProcessControl {
+        ) || matches!(
+            statement,
+            IrStmt::Object(object) if matches!(
+                **object,
+                IrObjectStmt::ProcessControl {
                     op: IrProcessControl::Suspend,
                     ..
-                })
-                | IrStmt::Object(IrObjectStmt::ProcessAwait(_))
-                | IrStmt::Object(IrObjectStmt::SemaphoreGet(..))
-                | IrStmt::Object(IrObjectStmt::MailboxPut(..))
-                | IrStmt::Object(IrObjectStmt::MailboxPutLocal(..))
-                | IrStmt::Object(IrObjectStmt::MailboxGet(..))
-                | IrStmt::Object(IrObjectStmt::MailboxGetLocal(..))
+                } | IrObjectStmt::ProcessAwait(_)
+                    | IrObjectStmt::SemaphoreGet(..)
+                    | IrObjectStmt::MailboxPut(..)
+                    | IrObjectStmt::MailboxPutLocal(..)
+                    | IrObjectStmt::MailboxGet(..)
+                    | IrObjectStmt::MailboxGetLocal(..)
+            )
         ) {
             *statement = std::mem::replace(statement, IrStmt::Nop).with_origin(origin.clone());
         }

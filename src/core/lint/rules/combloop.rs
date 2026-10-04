@@ -82,7 +82,7 @@ impl LintRule for CombinationalLoopRule {
             out.push(LintDiag {
                 rule: "combinational-loop".to_string(),
                 severity: LintSeverity::Error,
-                file: node.file.clone(),
+                file: node.file().map(str::to_owned),
                 line: node.line,
                 col: node.col,
                 message: format!("combinational loop involving signals: {listed}"),

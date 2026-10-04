@@ -24,12 +24,12 @@ impl<'a> Codegen<'a> {
                 ));
             }
             return Ok(IrExpr::new(
-                IrExprKind::SysFunc(IrSysFunc::Sampled(IrSampledCall::new(
+                IrExprKind::SysFunc(Box::new(IrSysFunc::Sampled(IrSampledCall::new(
                     IrSampledFunc::Sampled,
                     argument.clone(),
                     None,
                     0,
-                ))),
+                )))),
                 argument.width,
                 argument.signed,
                 None,
@@ -168,12 +168,12 @@ impl<'a> Codegen<'a> {
             (1, false)
         };
         Ok(IrExpr::new(
-            IrExprKind::SysFunc(IrSysFunc::Sampled(IrSampledCall::new(
+            IrExprKind::SysFunc(Box::new(IrSysFunc::Sampled(IrSampledCall::new(
                 kind,
                 argument,
                 Some(domain),
                 ticks,
-            ))),
+            )))),
             width,
             signed,
             None,
@@ -224,10 +224,10 @@ impl<'a> Codegen<'a> {
             }
             let status = self.lower_stochastic_output(scope_path, *status, "$q_full status")?;
             return Ok(IrExpr::new(
-                IrExprKind::SysFunc(IrSysFunc::QFull {
+                IrExprKind::SysFunc(Box::new(IrSysFunc::QFull {
                     q_id: Box::new(q_id),
                     status: Box::new(status),
-                }),
+                })),
                 32,
                 true,
                 None,
@@ -307,7 +307,7 @@ impl<'a> Codegen<'a> {
                 .map(|arg| self.lower_expr(scope_path, arg))
                 .collect::<Result<Vec<_>, _>>()?;
             return Ok(IrExpr::new(
-                IrExprKind::SysFunc(IrSysFunc::Math { kind, args }),
+                IrExprKind::SysFunc(Box::new(IrSysFunc::Math { kind, args })),
                 0,
                 true,
                 None,
@@ -334,9 +334,9 @@ impl<'a> Codegen<'a> {
                     })
                     .transpose()?;
                 Ok(IrExpr::new(
-                    IrExprKind::SysFunc(IrSysFunc::Urandom {
+                    IrExprKind::SysFunc(Box::new(IrSysFunc::Urandom {
                         seed: seed.map(Box::new),
-                    }),
+                    })),
                     32,
                     false,
                     None,
@@ -364,10 +364,10 @@ impl<'a> Codegen<'a> {
                     ));
                 }
                 Ok(IrExpr::new(
-                    IrExprKind::SysFunc(IrSysFunc::UrandomRange {
+                    IrExprKind::SysFunc(Box::new(IrSysFunc::UrandomRange {
                         max: Box::new(IrExpr::convert_to(max, 32, false)),
                         min: min.map(|value| Box::new(IrExpr::convert_to(value, 32, false))),
-                    }),
+                    })),
                     32,
                     false,
                     None,
@@ -376,9 +376,9 @@ impl<'a> Codegen<'a> {
             "$cast" => self.lower_dynamic_cast(scope_path, &args),
             "$test$plusargs" | "$value$plusargs" => self.lower_plusarg_expr(scope_path, name, call),
             "$system" => Ok(IrExpr::new(
-                IrExprKind::SysFunc(IrSysFunc::System(
+                IrExprKind::SysFunc(Box::new(IrSysFunc::System(
                     self.lower_system_command(scope_path, &args)?,
-                )),
+                ))),
                 32,
                 true,
                 None,
@@ -395,7 +395,7 @@ impl<'a> Codegen<'a> {
                     .map(|argument| self.lower_string(scope_path, *argument))
                     .transpose()?;
                 Ok(IrExpr::new(
-                    IrExprKind::SysFunc(IrSysFunc::FileOpen { path, mode }),
+                    IrExprKind::SysFunc(Box::new(IrSysFunc::FileOpen { path, mode })),
                     32,
                     true,
                     None,
@@ -424,7 +424,7 @@ impl<'a> Codegen<'a> {
                     (32, true)
                 };
                 Ok(IrExpr::new(
-                    IrExprKind::SysFunc(function),
+                    IrExprKind::SysFunc(Box::new(function)),
                     width,
                     signed,
                     None,
@@ -445,11 +445,11 @@ impl<'a> Codegen<'a> {
                     ));
                 }
                 Ok(IrExpr::new(
-                    IrExprKind::SysFunc(IrSysFunc::FileSeek {
+                    IrExprKind::SysFunc(Box::new(IrSysFunc::FileSeek {
                         descriptor: Box::new(descriptor),
                         offset: Box::new(offset),
                         operation: Box::new(operation),
-                    }),
+                    })),
                     32,
                     true,
                     None,
@@ -485,10 +485,10 @@ impl<'a> Codegen<'a> {
                     })
                     .transpose()?;
                 Ok(IrExpr::new(
-                    IrExprKind::SysFunc(IrSysFunc::FileError {
+                    IrExprKind::SysFunc(Box::new(IrSysFunc::FileError {
                         descriptor: Box::new(descriptor),
                         message,
-                    }),
+                    })),
                     32,
                     true,
                     None,
@@ -507,9 +507,9 @@ impl<'a> Codegen<'a> {
                     ));
                 }
                 Ok(IrExpr::new(
-                    IrExprKind::SysFunc(IrSysFunc::FileInput(IrFileInput::Getc {
+                    IrExprKind::SysFunc(Box::new(IrSysFunc::FileInput(IrFileInput::Getc {
                         descriptor: Box::new(descriptor),
-                    })),
+                    }))),
                     32,
                     true,
                     None,
@@ -529,10 +529,10 @@ impl<'a> Codegen<'a> {
                     ));
                 }
                 Ok(IrExpr::new(
-                    IrExprKind::SysFunc(IrSysFunc::FileInput(IrFileInput::Ungetc {
+                    IrExprKind::SysFunc(Box::new(IrSysFunc::FileInput(IrFileInput::Ungetc {
                         character: Box::new(character),
                         descriptor: Box::new(descriptor),
-                    })),
+                    }))),
                     32,
                     true,
                     None,
@@ -565,10 +565,10 @@ impl<'a> Codegen<'a> {
                     ));
                 }
                 Ok(IrExpr::new(
-                    IrExprKind::SysFunc(IrSysFunc::FileInput(IrFileInput::Gets {
+                    IrExprKind::SysFunc(Box::new(IrSysFunc::FileInput(IrFileInput::Gets {
                         descriptor: Box::new(descriptor),
                         target,
-                    })),
+                    }))),
                     32,
                     true,
                     None,
@@ -595,11 +595,11 @@ impl<'a> Codegen<'a> {
                     })
                     .collect::<Result<Vec<_>, _>>()?;
                 Ok(IrExpr::new(
-                    IrExprKind::SysFunc(IrSysFunc::FileInput(IrFileInput::ScanFile {
+                    IrExprKind::SysFunc(Box::new(IrSysFunc::FileInput(IrFileInput::ScanFile {
                         descriptor: Box::new(descriptor),
                         format,
                         targets,
-                    })),
+                    }))),
                     32,
                     true,
                     None,
@@ -621,11 +621,11 @@ impl<'a> Codegen<'a> {
                     })
                     .collect::<Result<Vec<_>, _>>()?;
                 Ok(IrExpr::new(
-                    IrExprKind::SysFunc(IrSysFunc::FileInput(IrFileInput::ScanString {
+                    IrExprKind::SysFunc(Box::new(IrSysFunc::FileInput(IrFileInput::ScanString {
                         source,
                         format,
                         targets,
-                    })),
+                    }))),
                     32,
                     true,
                     None,
@@ -667,12 +667,12 @@ impl<'a> Codegen<'a> {
                 // but ignore their values. The owned emitter already releases
                 // these argument temporaries without applying memory bounds.
                 Ok(IrExpr::new(
-                    IrExprKind::SysFunc(IrSysFunc::FileInput(IrFileInput::Read {
+                    IrExprKind::SysFunc(Box::new(IrSysFunc::FileInput(IrFileInput::Read {
                         descriptor: Box::new(descriptor),
                         target,
                         start: start.map(Box::new),
                         count: count.map(Box::new),
-                    })),
+                    }))),
                     32,
                     true,
                     None,
@@ -756,10 +756,10 @@ impl<'a> Codegen<'a> {
                 self.lower_array_query(scope_path, name, &args)
             }
             "$realtime" => Ok(IrExpr::new(
-                IrExprKind::SysFunc(IrSysFunc::Realtime {
+                IrExprKind::SysFunc(Box::new(IrSysFunc::Realtime {
                     precision_fs: self.design_precision_fs,
                     unit_fs: self.timescale_of_node(call).unit_fs,
-                }),
+                })),
                 0,
                 true,
                 None,
@@ -774,7 +774,7 @@ impl<'a> Codegen<'a> {
                 let arg = self.lower_expr(scope_path, *arg)?;
                 match name {
                     "$rtoi" => Ok(IrExpr::new(
-                        IrExprKind::SysFunc(IrSysFunc::Rtoi(Box::new(arg))),
+                        IrExprKind::SysFunc(Box::new(IrSysFunc::Rtoi(Box::new(arg)))),
                         32,
                         true,
                         None,
@@ -784,14 +784,14 @@ impl<'a> Codegen<'a> {
                             return Ok(arg);
                         }
                         Ok(IrExpr::new(
-                            IrExprKind::SysFunc(IrSysFunc::Itor(Box::new(arg))),
+                            IrExprKind::SysFunc(Box::new(IrSysFunc::Itor(Box::new(arg)))),
                             0,
                             true,
                             None,
                         ))
                     }
                     "$realtobits" => Ok(IrExpr::new(
-                        IrExprKind::SysFunc(IrSysFunc::RealToBits(Box::new(arg))),
+                        IrExprKind::SysFunc(Box::new(IrSysFunc::RealToBits(Box::new(arg)))),
                         64,
                         false,
                         None,
@@ -803,14 +803,14 @@ impl<'a> Codegen<'a> {
                             ));
                         }
                         Ok(IrExpr::new(
-                            IrExprKind::SysFunc(IrSysFunc::BitsToReal(Box::new(arg))),
+                            IrExprKind::SysFunc(Box::new(IrSysFunc::BitsToReal(Box::new(arg)))),
                             0,
                             true,
                             None,
                         ))
                     }
                     "$shortrealtobits" => Ok(IrExpr::new(
-                        IrExprKind::SysFunc(IrSysFunc::ShortRealToBits(Box::new(arg))),
+                        IrExprKind::SysFunc(Box::new(IrSysFunc::ShortRealToBits(Box::new(arg)))),
                         32,
                         false,
                         None,
@@ -822,7 +822,9 @@ impl<'a> Codegen<'a> {
                             ));
                         }
                         Ok(IrExpr::new(
-                            IrExprKind::SysFunc(IrSysFunc::BitsToShortReal(Box::new(arg))),
+                            IrExprKind::SysFunc(Box::new(IrSysFunc::BitsToShortReal(Box::new(
+                                arg,
+                            )))),
                             0,
                             true,
                             None,
@@ -850,10 +852,10 @@ impl<'a> Codegen<'a> {
                 };
                 let (width, signed) = kind.result_type();
                 Ok(IrExpr::new(
-                    IrExprKind::SysFunc(IrSysFunc::BitQuery {
+                    IrExprKind::SysFunc(Box::new(IrSysFunc::BitQuery {
                         kind,
                         arg: Box::new(arg),
-                    }),
+                    })),
                     width,
                     signed,
                     None,
@@ -871,7 +873,7 @@ impl<'a> Codegen<'a> {
                     ));
                 }
                 Ok(IrExpr::new(
-                    IrExprKind::SysFunc(IrSysFunc::Clog2(Box::new(a))),
+                    IrExprKind::SysFunc(Box::new(IrSysFunc::Clog2(Box::new(a)))),
                     32,
                     false,
                     None,
@@ -890,11 +892,11 @@ impl<'a> Codegen<'a> {
                 };
                 let width = kind.width();
                 Ok(IrExpr::new(
-                    IrExprKind::SysFunc(IrSysFunc::Time {
+                    IrExprKind::SysFunc(Box::new(IrSysFunc::Time {
                         precision_fs: self.design_precision_fs,
                         unit_fs,
                         kind,
-                    }),
+                    })),
                     width,
                     false,
                     None,
@@ -967,7 +969,7 @@ impl<'a> Codegen<'a> {
                     ));
                 }
                 Ok(IrExpr::new(
-                    IrExprKind::SysFunc(IrSysFunc::Bits(Box::new(a))),
+                    IrExprKind::SysFunc(Box::new(IrSysFunc::Bits(Box::new(a)))),
                     32,
                     true,
                     None,
@@ -1048,11 +1050,11 @@ impl<'a> Codegen<'a> {
                 self.model.vpi_compile_calls[site].time_unit_fs =
                     self.timescale_of_node(call).unit_fs;
                 Ok(IrExpr::new(
-                    IrExprKind::SysFunc(IrSysFunc::VpiCall {
+                    IrExprKind::SysFunc(Box::new(IrSysFunc::VpiCall {
                         site,
                         name: name.to_owned(),
                         args,
-                    }),
+                    })),
                     width,
                     signed,
                     None,
@@ -1216,11 +1218,11 @@ impl<'a> Codegen<'a> {
             parameters.push(parameter);
         }
         Ok(IrExpr::new(
-            IrExprKind::SysFunc(IrSysFunc::LegacyRandom {
+            IrExprKind::SysFunc(Box::new(IrSysFunc::LegacyRandom {
                 kind,
                 seed,
                 args: parameters,
-            }),
+            })),
             32,
             true,
             None,

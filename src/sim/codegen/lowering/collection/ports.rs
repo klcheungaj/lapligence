@@ -1498,10 +1498,10 @@ impl<'a> Codegen<'a> {
                 IrDependency::ContainerContents(source),
                 IrDependency::ContainerShape(source),
             ],
-            IrStmt::Container(IrContainerStmt::Copy {
+            IrStmt::Container(Box::new(IrContainerStmt::Copy {
                 dst: target,
                 src: source,
-            }),
+            })),
         );
         Ok(true)
     }
@@ -1545,10 +1545,10 @@ impl<'a> Codegen<'a> {
             child_path,
             port,
             vec![IrDependency::Object(source)],
-            IrStmt::Object(IrObjectStmt::StringAssign(
+            IrStmt::Object(Box::new(IrObjectStmt::StringAssign(
                 self.reference_object(target),
                 IrStringExpr::Read(self.reference_object(source)),
-            )),
+            ))),
         );
         Ok(true)
     }

@@ -93,7 +93,7 @@ impl EmitCtx<'_, '_> {
         }
         Ok(IrStmt::Force {
             lhs: lh,
-            value,
+            value: Box::new(value),
             eval,
             reads,
             dependencies,
@@ -244,7 +244,7 @@ impl EmitCtx<'_, '_> {
             evaluate,
             IrStmt::Force {
                 lhs,
-                value: read,
+                value: Box::new(read),
                 eval,
                 reads: vec![source],
                 dependencies: Vec::new(),

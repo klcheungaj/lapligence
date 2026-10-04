@@ -111,7 +111,7 @@ impl<'a> Codegen<'a> {
                     "resizable container assignment pattern key `{key}` has no matching index or type in `{path}`"
                 ));
             };
-            type_values.push((key_type.clone(), value));
+            type_values.push(((**key_type).clone(), value));
         }
         let Some(max_index) = explicit.iter().map(|(index, _)| *index).max() else {
             return Err(format!(
@@ -269,16 +269,18 @@ impl<'a> Codegen<'a> {
                     }
                     seen_string.push(bytes.clone());
                     writes.push(IrStmt::Container(match &element {
-                        IrContainerElement::Real { .. } => IrContainerStmt::SetStringReal {
+                        IrContainerElement::Real { .. } => {
+                            Box::new(IrContainerStmt::SetStringReal {
+                                container,
+                                key: IrStringExpr::Literal(bytes),
+                                value: lowered,
+                            })
+                        }
+                        _ => Box::new(IrContainerStmt::SetString {
                             container,
                             key: IrStringExpr::Literal(bytes),
                             value: lowered,
-                        },
-                        _ => IrContainerStmt::SetString {
-                            container,
-                            key: IrStringExpr::Literal(bytes),
-                            value: lowered,
-                        },
+                        }),
                     }));
                 }
                 IrContainerKind::Associative { key: assoc_key, .. } => {
@@ -305,16 +307,16 @@ impl<'a> Codegen<'a> {
                         IrAssocKey::String => unreachable!(),
                     };
                     writes.push(IrStmt::Container(match &element {
-                        IrContainerElement::Real { .. } => IrContainerStmt::SetReal {
+                        IrContainerElement::Real { .. } => Box::new(IrContainerStmt::SetReal {
                             container,
                             index: pattern_key_expr(index, width, signed, two_state),
                             value: lowered,
-                        },
-                        _ => IrContainerStmt::Set {
+                        }),
+                        _ => Box::new(IrContainerStmt::Set {
                             container,
                             index: pattern_key_expr(index, width, signed, two_state),
                             value: lowered,
-                        },
+                        }),
                     }));
                 }
                 _ => unreachable!(),
@@ -323,13 +325,17 @@ impl<'a> Codegen<'a> {
         // Assignment patterns replace an associative array.  Evaluate all
         // element expressions into temporaries before clearing the destination
         // so side effects and overlapping source reads retain one evaluation.
-        captures.push(IrStmt::Container(IrContainerStmt::Delete(container)));
-        captures.push(IrStmt::Container(IrContainerStmt::ResetDefault(container)));
+        captures.push(IrStmt::Container(Box::new(IrContainerStmt::Delete(
+            container,
+        ))));
+        captures.push(IrStmt::Container(Box::new(IrContainerStmt::ResetDefault(
+            container,
+        ))));
         if let Some(value) = default_value {
-            captures.push(IrStmt::Container(IrContainerStmt::SetDefault {
+            captures.push(IrStmt::Container(Box::new(IrContainerStmt::SetDefault {
                 container,
                 value,
-            }));
+            })));
         }
         captures.extend(writes);
         Ok(IrStmt::Block(captures))
@@ -442,22 +448,22 @@ impl<'a> Codegen<'a> {
                 }
                 _ => unreachable!(),
             };
-            writes.push(IrStmt::Container(operation));
+            writes.push(IrStmt::Container(Box::new(operation)));
         }
         let mut captures = vec![
-            IrStmt::Container(IrContainerStmt::Delete(container)),
-            IrStmt::Container(IrContainerStmt::ResetDefault(container)),
+            IrStmt::Container(Box::new(IrContainerStmt::Delete(container))),
+            IrStmt::Container(Box::new(IrContainerStmt::ResetDefault(container))),
         ];
         if let Some(value) = default {
             captures.push(IrStmt::Container(match &element {
-                IrContainerElement::String => IrContainerStmt::SetDefaultString {
+                IrContainerElement::String => Box::new(IrContainerStmt::SetDefaultString {
                     container,
                     value: self.lower_string(path, value)?,
-                },
-                IrContainerElement::Chandle => IrContainerStmt::SetDefaultChandle {
+                }),
+                IrContainerElement::Chandle => Box::new(IrContainerStmt::SetDefaultChandle {
                     container,
                     value: self.lower_chandle(path, value)?,
-                },
+                }),
                 _ => unreachable!(),
             }));
         }
@@ -497,10 +503,10 @@ impl<'a> Codegen<'a> {
                     };
                     rewritten.push(expression);
                 }
-                captures.push(IrStmt::Container(IrContainerStmt::AssignRealValues {
+                captures.push(IrStmt::Container(Box::new(IrContainerStmt::AssignRealValues {
                     container,
                     values: rewritten,
-                }));
+                })));
                 Ok(IrStmt::Block(captures))
             }
             IrContainerElement::String => {
@@ -508,20 +514,20 @@ impl<'a> Codegen<'a> {
                     .into_iter()
                     .map(|value| self.lower_string(path, value))
                     .collect::<Result<Vec<_>, _>>()?;
-                Ok(IrStmt::Container(IrContainerStmt::AssignStringValues {
+                Ok(IrStmt::Container(Box::new(IrContainerStmt::AssignStringValues {
                     container,
                     values,
-                }))
+                })))
             }
             IrContainerElement::Chandle => {
                 let values = source_values
                     .into_iter()
                     .map(|value| self.lower_chandle(path, value))
                     .collect::<Result<Vec<_>, _>>()?;
-                Ok(IrStmt::Container(IrContainerStmt::AssignChandleValues {
+                Ok(IrStmt::Container(Box::new(IrContainerStmt::AssignChandleValues {
                     container,
                     values,
-                }))
+                })))
             }
             _ => Err(format!(
                 "resizable container assignment pattern in `{path}` requires a directly represented scalar element"
@@ -557,10 +563,10 @@ impl<'a> Codegen<'a> {
             };
             rewritten.push(lowered);
         }
-        captures.push(IrStmt::Container(IrContainerStmt::AssignValues {
+        captures.push(IrStmt::Container(Box::new(IrContainerStmt::AssignValues {
             container,
             values: rewritten,
-        }));
+        })));
         Ok(IrStmt::Block(captures))
     }
 }

@@ -36,13 +36,18 @@ impl LintRule for CasexStatementRule {
             let col = node.col.max(1);
             let message =
                 "casex treats X and Z bits as wildcards; prefer case or casez".to_string();
-            if !diagnostics_seen.insert((node.file.clone(), line, col, message.clone())) {
+            if !diagnostics_seen.insert((
+                node.file().map(str::to_owned),
+                line,
+                col,
+                message.clone(),
+            )) {
                 continue;
             }
             out.push(LintDiag {
                 rule: self.id().to_string(),
                 severity: LintSeverity::Warning,
-                file: node.file.clone(),
+                file: node.file().map(str::to_owned),
                 line,
                 col,
                 message,

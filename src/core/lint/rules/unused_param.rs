@@ -61,7 +61,7 @@ impl LintRule for UnusedParameterRule {
                 out.push(LintDiag {
                     rule: "unused-parameter".to_string(),
                     severity: LintSeverity::Info,
-                    file: node.file.clone(),
+                    file: node.file().map(str::to_owned),
                     line: node.line,
                     col: node.col,
                     message: format!("parameter `{}` in `{}` is never read", node.name, path),

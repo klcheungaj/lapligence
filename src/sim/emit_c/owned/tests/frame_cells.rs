@@ -55,7 +55,7 @@ fn nba_and_local_waits_exclude_only_their_cells() {
 #[test]
 fn ref_and_output_call_actuals_keep_heap_identity() {
     let model = numeric_model();
-    let statements = vec![IrStmt::Call(IrCall::new(
+    let statements = vec![IrStmt::Call(Box::new(IrCall::new(
         0,
         vec![
             IrCallArg::RefAddr {
@@ -72,7 +72,7 @@ fn ref_and_output_call_actuals_keep_heap_identity() {
         IrDepth::PROC,
         Vec::new(),
         Vec::new(),
-    ))];
+    )))];
     let eligibility = policy(&model, &statements);
     assert!(!eligibility.permits("reference"));
     assert!(!eligibility.permits("output"));
@@ -125,7 +125,7 @@ fn callbacks_captures_clocking_and_foreign_operations_fail_closed() {
         },
         IrStmt::Force {
             lhs: target("forced"),
-            value: number(0, 65),
+            value: Box::new(number(0, 65)),
             eval: "eval".into(),
             reads: Vec::new(),
             dependencies: Vec::new(),
@@ -157,13 +157,13 @@ fn unknown_expression_cannot_silently_admit_a_cell() {
 #[test]
 fn even_pure_dpi_and_spawning_callees_are_unproven() {
     let mut model = numeric_model();
-    let call = IrStmt::Call(IrCall::new(
+    let call = IrStmt::Call(Box::new(IrCall::new(
         0,
         vec![IrCallArg::Val(number(1, 65))],
         IrDepth::PROC,
         Vec::new(),
         Vec::new(),
-    ));
+    )));
     assert!(policy(&model, std::slice::from_ref(&call)).permits("private"));
     model.funcs[0].dpi = Some(IrDpiImport {
         c_name: "foreign".into(),

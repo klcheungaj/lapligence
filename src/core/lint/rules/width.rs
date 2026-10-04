@@ -103,7 +103,7 @@ fn width_diag(
     Some(LintDiag {
         rule: "width-mismatch".to_string(),
         severity,
-        file: node.file.clone(),
+        file: node.file().map(str::to_owned),
         line: node.line,
         col: node.col,
         message: format!(

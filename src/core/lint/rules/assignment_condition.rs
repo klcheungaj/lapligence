@@ -65,13 +65,18 @@ impl LintRule for AssignmentInConditionRule {
             let message =
                 "assignment expression is used as a truth predicate; use an explicit comparison if intended"
                     .to_string();
-            if !diagnostics_seen.insert((node.file.clone(), line, col, message.clone())) {
+            if !diagnostics_seen.insert((
+                node.file().map(str::to_owned),
+                line,
+                col,
+                message.clone(),
+            )) {
                 continue;
             }
             out.push(LintDiag {
                 rule: self.id().to_string(),
                 severity: LintSeverity::Warning,
-                file: node.file.clone(),
+                file: node.file().map(str::to_owned),
                 line,
                 col,
                 message,

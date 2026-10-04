@@ -53,7 +53,7 @@ impl LintRule for UndrivenSignalRule {
             }
             let node = db.node(id);
             let key = (
-                node.file.clone(),
+                node.file().map(str::to_owned),
                 node.line.max(1),
                 node.col.max(1),
                 node.name.clone(),
@@ -64,7 +64,7 @@ impl LintRule for UndrivenSignalRule {
             out.push(LintDiag {
                 rule: "undriven-signal".to_string(),
                 severity: LintSeverity::Warning,
-                file: node.file.clone(),
+                file: node.file().map(str::to_owned),
                 line: node.line.max(1),
                 col: node.col.max(1),
                 message: format!(

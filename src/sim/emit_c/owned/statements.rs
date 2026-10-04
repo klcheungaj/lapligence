@@ -250,7 +250,7 @@ impl Frame<'_, '_> {
                 self.line(format!("llg_monitor_set({});", u8::from(*enabled)))
             }
             IrStmt::FileControl { op, descriptor } => {
-                self.file_control(*op, descriptor.as_ref())?
+                self.file_control(*op, descriptor.as_deref())?
             }
             IrStmt::Assign { lhs, rhs, nba } => {
                 let value = if matches!(lhs, IrLhs::Whole(_) | IrLhs::WholeRef { .. }) {
@@ -501,7 +501,7 @@ impl Frame<'_, '_> {
                 // selectors before evaluating the repeat/delay control.
                 let captures =
                     self.prepare_captures(captures.iter().map(|c| (c.storage(), c.initial())))?;
-                let count = self.event_repeat(repeat.as_ref())?;
+                let count = self.event_repeat(repeat.as_deref())?;
                 // Context expressions can exit nonlocally. Keep action values
                 // in registered slots until they, too, have finished.
                 let sources = self.event_specs(specs, false)?;

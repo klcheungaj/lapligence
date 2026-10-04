@@ -249,7 +249,7 @@ impl<'a> Codegen<'a> {
             }
             _ => return Ok(None),
         };
-        Ok(Some(IrStmt::Container(operation)))
+        Ok(Some(IrStmt::Container(Box::new(operation))))
     }
 
     fn lower_fixed_array_reverse(
