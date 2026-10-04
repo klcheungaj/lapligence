@@ -344,27 +344,17 @@ impl<'a> Codegen<'a> {
                 }
             }
 
-            let mut input_values = Vec::with_capacity(in_positions.len());
-            let mut udp_setup = Vec::new();
-            for i in &in_positions {
-                let expr = terminal_exprs[*i]
-                    .clone()
-                    .expect("gate input expression lowered above");
-                let expr = IrExpr::resize_to(expr, output_width, false);
-                if is_udp {
-                    let name = format!("_udp_gate_input_{}_{}_{}", g.index(), output_ordinal, i);
-                    udp_setup.push(IrStmt::DeclLocal {
-                        name: name.clone(),
-                        width: 1,
-                        signed: false,
-                        init: Some(Box::new(expr)),
-                        two_state: false,
-                    });
-                    input_values.push(IrExpr::new(IrExprKind::LocalRead(name), 1, false, None));
-                } else {
-                    input_values.push(expr);
-                }
-            }
+            // UDP inputs stay plain scalar expressions: the emitter reads each
+            // one's state in place, so no per-evaluation input cell exists.
+            let input_values = in_positions
+                .iter()
+                .map(|i| {
+                    let expr = terminal_exprs[*i]
+                        .clone()
+                        .expect("gate input expression lowered above");
+                    IrExpr::resize_to(expr, output_width, false)
+                })
+                .collect::<Vec<_>>();
             let mut enable_halves = None;
             let value = match op {
                 GateOp::Pull(ones) => const_bits_expr(output_width, ones),
@@ -463,15 +453,14 @@ impl<'a> Codegen<'a> {
                     }
                     enable_mux(data, const_z_expr(output_width))
                 }
-                GateOp::Udp => udp_value(
-                    &mut self.model,
+                GateOp::Udp => self.udp_value(
                     udp_table.as_ref().ok_or_else(|| {
                         format!("combinational UDP `{shown}` in `{path}` has no owned truth table")
                     })?,
-                    &input_values,
+                    input_values,
                 )?,
             };
-            let mut body = if let (Some(bindings), Some((zero_side, one_side))) =
+            let body = if let (Some(bindings), Some((zero_side, one_side))) =
                 (&alias_bindings, &enable_halves)
             {
                 let mut groups = bindings
@@ -567,10 +556,6 @@ impl<'a> Codegen<'a> {
                     nba: false,
                 }]
             };
-            if !udp_setup.is_empty() {
-                udp_setup.append(&mut body);
-                body = udp_setup;
-            }
             let shape = if sens.is_empty() {
                 IrShape::RunOnce
             } else {
@@ -620,9 +605,34 @@ impl<'a> Codegen<'a> {
 /// gates have one output, which always uses terminal 0.
 const ENABLE_ONE_SIDE_TERMINAL: usize = 1;
 
-/// Retain the definition once and evaluate its rows against captured scalar inputs.
-fn udp_value(model: &mut IrModel, table: &UdpTable, inputs: &[IrExpr]) -> Result<IrExpr, String> {
-    if inputs.len() != usize::try_from(table.input_count).unwrap_or(usize::MAX) {
+impl Codegen<'_> {
+    /// Retain the definition once and evaluate its rows against scalar inputs.
+    fn udp_value(&mut self, table: &UdpTable, inputs: Vec<IrExpr>) -> Result<IrExpr, String> {
+        let definition = udp_definition(table, inputs.len())?;
+        let index = match self.udp_table_indices.get(&definition) {
+            Some(index) => *index,
+            None => {
+                let index = self.model.udp_tables.len();
+                self.model.udp_tables.push(definition.clone());
+                self.udp_table_indices.insert(definition, index);
+                index
+            }
+        };
+        Ok(IrExpr::new(
+            IrExprKind::UdpEval {
+                table: index,
+                inputs,
+            },
+            1,
+            false,
+            None,
+        ))
+    }
+}
+
+/// Convert one owned definition into its typed row masks.
+fn udp_definition(table: &UdpTable, input_count: usize) -> Result<IrUdpTable, String> {
+    if input_count != usize::try_from(table.input_count).unwrap_or(usize::MAX) {
         return Err(format!(
             "UDP table `{}` input count does not match its instance terminals",
             table.name
@@ -632,7 +642,7 @@ fn udp_value(model: &mut IrModel, table: &UdpTable, inputs: &[IrExpr]) -> Result
         .rows
         .iter()
         .map(|row| {
-            if row.inputs.len() != inputs.len() {
+            if row.inputs.len() != input_count {
                 return Err(format!(
                     "UDP table `{}` contains a row with the wrong input width",
                     table.name
@@ -670,27 +680,9 @@ fn udp_value(model: &mut IrModel, table: &UdpTable, inputs: &[IrExpr]) -> Result
             })
         })
         .collect::<Result<Vec<_>, String>>()?;
-    let definition = IrUdpTable {
+    Ok(IrUdpTable {
         name: table.name.clone(),
-        input_count: inputs.len(),
+        input_count,
         rows,
-    };
-    let index = model
-        .udp_tables
-        .iter()
-        .position(|candidate| *candidate == definition)
-        .unwrap_or_else(|| {
-            let index = model.udp_tables.len();
-            model.udp_tables.push(definition);
-            index
-        });
-    Ok(IrExpr::new(
-        IrExprKind::UdpEval {
-            table: index,
-            inputs: inputs.to_vec(),
-        },
-        1,
-        false,
-        None,
-    ))
+    })
 }

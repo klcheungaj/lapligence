@@ -55,6 +55,9 @@ removal linear in that target's duplicates.
   to child ports. Recovery is navigation-only under unchanged input/output limits.
 - Instance-array names retain every source index, including negative/nonzero and
   nested dimensions. Do not substitute flattened ordinals for HDL indices.
+- Slang slices instance-array connections as `X[l:r][i]`/`X[l:r][m:n]`. A
+  constant select inside a constant slice exports `X` as its base, because the
+  slice type keeps `X`'s numbering; a slice with a run-time base stays.
 - `ConditionPattern` role 38 pairs with its indexed condition; true/false edges
   use explicit branch roles/index 0. Preserve matching syntax as typed patterns,
   not Boolean conditions. Tag extensions do not change ABI pointer/layout rules.

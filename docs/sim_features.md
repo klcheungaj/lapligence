@@ -934,13 +934,22 @@ Macros, includes and their edition-specific behavior are counted in §11.
   X, drive Z when disabled and retain the gate's unknown-enable truth behavior.
   V §7.4 **[1995]**.
 - 🟨 **Combinational UDPs** — Scalar tables/instances and primitive arrays admit
-  `0/1/x/b/?`, treat input Z as X, return X for unmatched combinations and reject
-  conflicting overlapping rows. Independent drivers, optional legal strengths
-  and delays are represented. The paired Verilog-2001/SystemVerilog-2009
-  SYN-031 matrix checks mux/parity tables, repeated input changes, arrays,
-  resolved nets and delays in both optimizer modes. Invalid port lists and row
-  widths reject; vector/aggregate terminals remain unsupported. Sequential UDPs
-  are a separate missing capability below.
+  `0/1/x/X/b/B/?`, treat input Z as X, return X for unmatched combinations and
+  reject conflicting overlapping rows. Scalar terminals may select bits of
+  vectors, packed/unpacked array elements (including descriptor-backed arrays
+  above the packed limit), structure members, hierarchical names, constants and
+  expressions; outputs may drive selected bits, net-array cells and
+  hierarchical nets. Instance arrays slice whole vectors, part-selects,
+  concatenations, literals and expressions, including multidimensional and
+  unpacked-net-array connections. Independent drivers, legal strengths (`%v`)
+  and delay2 inertial delays are represented. Each definition of up to 10
+  inputs evaluates through one dense index lookup with inputs read in place.
+  The SYN-031 and RTL-020 matrices run both editions, both optimizer modes and
+  both value backends. Invalid port lists, row widths, terminal counts and
+  vector/aggregate terminals are diagnostic boundaries (scalar-only by
+  definition). Outputs on net arrays above a few thousand cells share the
+  per-cell code cost of oversized net arrays ([known issue](known_issues.md#oversized-net-arrays-emit-per-cell-electrical-code)).
+  Sequential UDPs are a separate missing capability below.
   V §§8.1–8.2, 8.6; SV §§29.3–29.4, 29.8 **[1995/SV-2009]**.
 - ❌ **Sequential UDPs** — State-holding level/edge tables and UDP
   state-initialization semantics are not implemented. The

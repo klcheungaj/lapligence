@@ -191,6 +191,16 @@ cover timing, forks and event-control counts in always_comb/always_latch/
 always_ff and overlapping member, cell, wide-row, ref-port, hierarchical and
 called-function writers.
 
+RTL-020's combinational UDP fixtures use
+`-E 'binary(sim_feature_completion) & test(rtl_020::)'`, together with
+`binary(sim_udp)` and `test(emit_c::owned::tests::udp::)`. Positive fixtures run
+in both optimizer modes on both backends (set `LLG_TEST_GMP_ROOT` for the GMP
+lane), `.v` sources also as Verilog-2001, and three after Db destruction. The
+exhaustive table sweep compares with the all-matching-rows oracle in
+`sim_feature_completion/rtl_020.rs`. Negatives cover vector definition ports,
+row widths, conflicting rows, terminal counts, empty terminals, mis-sized array
+connections and vector or aggregate terminals of single instances.
+
 ### Vendor patch preparation
 
 `vendor_patches.rs` checks clean/applied trees, no-Git archives (including archives
