@@ -40,7 +40,7 @@ impl Validator<'_> {
     ) -> ValidationResult {
         let shape = self.validate_fixed_array_cells(&order.cells, formals, path, false)?;
         let array = &self.model.arrays[order.cells.array];
-        if !array.net_elements.is_empty() {
+        if array.is_net() {
             return self.fail(path, "fixed-array ordering cannot write resolved net cells");
         }
         if order.method == IrFixedArrayOrderMethod::Reverse {

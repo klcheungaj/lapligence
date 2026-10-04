@@ -139,7 +139,7 @@ impl Codegen<'_> {
     /// target. A positional assignment-pattern LHS is one driver site for
     /// every cell named by its leaves (SV 10.9.1), so each such cell needs a
     /// contribution slot for that source; other targets name one array.
-    fn continuous_net_array_cells(
+    pub(super) fn continuous_net_array_cells(
         &self,
         target: NodeId,
         cells: &mut Vec<(usize, u64)>,
@@ -491,6 +491,17 @@ impl Codegen<'_> {
         let mut owners = HashMap::new();
         for owner in sorted_node_ids(&self.array_globals) {
             owners.entry(self.array_globals[&owner].ir).or_insert(owner);
+        }
+        for (array, element) in cell_sources.keys() {
+            if !endpoints
+                .binary_search_by_key(&(*array, *element), |(key, _)| *key)
+                .is_ok()
+            {
+                return Err(format!(
+                    "structural driver reaches net-array cell {}[{element}] outside the electrical partition",
+                    self.model.arrays[*array].hdl_name
+                ));
+            }
         }
         for ((array, element), peers) in endpoints {
             let owner = *owners.get(&array).ok_or("net-array owner is missing")?;

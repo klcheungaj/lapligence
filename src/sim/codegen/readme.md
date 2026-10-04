@@ -11,7 +11,7 @@ It performs no native frontend calls, unsafe operations or C emission.
 | `lowering/collection/fixed_*` | Checked layouts, defaults, patterns, casts and activation/member projections. |
 | `lowering/expressions/conditionals.rs` | Array/structure merge plans before flattening loses immediate boundaries. |
 | `lowering/collection/packed_elements.rs` | Dimension-relative packed selection chains over fixed-array elements. |
-| `net_collapse.rs`, `port_net_types.rs`, `nets.rs`, `net_arrays.rs` | Directional net-type selection, canonical electrical identities, drivers and publication. |
+| `net_collapse.rs`, `port_net_types.rs`, `nets.rs`, `net_arrays.rs`, `net_cells.rs` | Directional net-type selection, undriven net-array cell runs, canonical electrical identities, drivers and publication. |
 
 Oversized whole integral array copies and supported streams lower to descriptor
 operations instead of coordinate expansion. `collection/fixed_calls.rs` creates

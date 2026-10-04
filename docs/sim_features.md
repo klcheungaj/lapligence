@@ -960,8 +960,9 @@ Macros, includes and their edition-specific behavior are counted in §11.
   The SYN-031 and RTL-020 matrices run both editions, both optimizer modes and
   both value backends. Invalid port lists, row widths, terminal counts and
   vector/aggregate terminals are diagnostic boundaries (scalar-only by
-  definition). Outputs on net arrays above a few thousand cells share the
-  per-cell code cost of oversized net arrays ([known issue](known_issues.md#oversized-net-arrays-emit-per-cell-electrical-code)).
+  definition). An output on one cell of a large net array costs only that
+  cell (200,000 cells: 21 KB of `model.c`); thousands of driven cells share
+  the per-cell code cost of driven net-array cells ([known issue](known_issues.md#driven-net-array-cells-emit-per-cell-electrical-code)).
   Sequential UDPs are a separate missing capability below.
   V §§8.1–8.2, 8.6; SV §§29.3–29.4, 29.8 **[1995/SV-2009]**.
 - ❌ **Sequential UDPs** — State-holding level/edge tables and UDP

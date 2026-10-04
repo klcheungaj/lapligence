@@ -554,12 +554,21 @@ static void llg_timeformat_defaults(uint64_t precision_fs) {
 
 typedef struct llg_dependency_binding {
     struct llg_dependency_binding* next;
+    /* Chain of bindings whose target hashes to the same bucket. */
+    struct llg_dependency_binding* bucket_next;
     sv4_t* target;
     double* real_target;
     sv4_t* dependency;
 } llg_dependency_binding_t;
 
+/* The list owns every binding; the bucket index borrows them. Each write
+ * consults only the written target's bucket, so dense arrays with one binding
+ * per cell keep both startup binding and per-write publication independent
+ * of the cell count. */
 static llg_dependency_binding_t* llg_dependency_bindings;
+static llg_dependency_binding_t** llg_dependency_buckets;
+static size_t llg_dependency_bucket_count;
+static size_t llg_dependency_binding_count;
 
 // Kept outside `g`: every completed run cleans the context, but callers need
 // to inspect whether that run stopped with a controlled runtime failure.

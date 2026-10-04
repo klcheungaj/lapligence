@@ -180,6 +180,7 @@ fn waveform_model_emits_controls_hierarchy_and_final_time_close() {
     }];
     model.arrays = vec![IrArray {
         activation: false,
+        net: None,
         net_elements: Vec::new(),
         element_default: None,
         element_uninitialized: None,

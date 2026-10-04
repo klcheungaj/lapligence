@@ -30,7 +30,11 @@ whole vector nets keep their existing wide storage. Declared shapes remain
 separate bit bindings, and contributions select contiguous RHS ranges before
 resolution. New net topology belongs in the partitioner's source inventory.
 Net-array cell sources are indexed once per lowering, so whole-array drivers
-stay linear in the cell count.
+stay linear in the cell count. `collection/net_cells.rs` runs first: cells that
+no driver, alias, selected inout connection or force target reaches (with their
+whole-array inout peers) become typed constant runs (`IrNetArray`) and never
+enter the bit-level graph; one representative per class shape enters the type
+plan.
 
 Continuous positional patterns publish each leaf as its own contribution,
 including leaves that name alias views, net-array cells or their selected bits.

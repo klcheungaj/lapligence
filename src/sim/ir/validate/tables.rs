@@ -697,6 +697,37 @@ impl Validator<'_> {
                     );
                 }
             }
+            if let Some(net) = &array.net {
+                let mut next = 0u64;
+                let mut covered = elements.len() as u64;
+                for run in &net.constant_cells {
+                    let end = run.first.checked_add(run.count);
+                    if array.real
+                        || array.two_state
+                        || run.count == 0
+                        || run.first < next
+                        || end.is_none_or(|end| end > array.total)
+                    {
+                        return self.fail("array.net", "invalid undriven net-cell run");
+                    }
+                    next = run.first + run.count;
+                    covered += run.count;
+                }
+                let in_run = |element: u64| {
+                    let position = net
+                        .constant_cells
+                        .partition_point(|run| run.first + run.count <= element);
+                    net.constant_cells
+                        .get(position)
+                        .is_some_and(|run| run.first <= element)
+                };
+                if covered != array.total || elements.iter().any(|element| in_run(*element)) {
+                    return self.fail(
+                        "array.net",
+                        "net-array cells must be published or undriven exactly once",
+                    );
+                }
+            }
 
             let path = format!("arrays[{idx}]");
             for value in array

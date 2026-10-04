@@ -574,6 +574,28 @@ fn initialization_step(frame: &mut Frame<'_, '_>, step: &IrInitStep) -> Result<(
                 frame.assign(&format!("&{}[_i]", array.c_name), &value);
             }
             frame.line("}");
+            // Undriven pull/supply cells hold their constant net value; Z
+            // runs are already filled above.
+            for run in array.net.iter().flat_map(|net| &net.constant_cells) {
+                let fill = run.kind.undriven_fill();
+                if fill == 3 {
+                    continue;
+                }
+                frame.line(format!(
+                    "for (uint64_t _i = {}ULL; _i < {}ULL; ++_i) {{",
+                    run.first,
+                    run.first + run.count
+                ));
+                frame.assign(
+                    &format!("&{}[_i]", array.c_name),
+                    &format!(
+                        "sv4_fill({fill}, {}, {})",
+                        array.elem_width,
+                        u8::from(array.signed)
+                    ),
+                );
+                frame.line("}");
+            }
             if !array.net_elements.is_empty() {
                 let offset = model.arrays[..*index]
                     .iter()
