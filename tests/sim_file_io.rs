@@ -188,7 +188,11 @@ fn fopen_text_and_binary_modes_keep_host_newline_semantics() {
                 .map_err(|error| error.to_string())?;
         let output =
             sim_harness::with_cwd(&output_dir, || sim_harness::run_executable(&executable))?;
-        let text_bytes: &[u8] = if cfg!(windows) { b"text\r\n" } else { b"text\n" };
+        let text_bytes: &[u8] = if cfg!(windows) {
+            b"text\r\n"
+        } else {
+            b"text\n"
+        };
         assert_eq!(
             fs::read(output_dir.join("text_mode.txt")).map_err(|error| error.to_string())?,
             text_bytes
