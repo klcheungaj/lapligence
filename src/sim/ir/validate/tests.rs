@@ -5,6 +5,7 @@ mod fixed_array_cells;
 mod fixed_array_reductions;
 mod fixed_streams;
 mod native_values;
+mod real_values;
 mod sequential_predicates;
 
 fn valid_model() -> IrModel {
