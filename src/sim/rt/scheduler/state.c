@@ -364,6 +364,10 @@ typedef struct {
     uint64_t sampled_time;
     int sampled_time_valid;
     llg_concurrent_assertion_t* assertions;
+    // Set when a clock edge reaches a concurrent assertion and cleared when
+    // the Observed region evaluates them. An edge enabled by the reactive
+    // set sends the time slot back around through Observed (SV 24.3.1).
+    int assertion_edges_pending;
     llg_concurrent_assertion_t* assertion_tail;
     llg_deferred_trigger_t* deferred_triggers;
     llg_deferred_trigger_t* deferred_trigger_tail;
@@ -526,19 +530,22 @@ static void llg_restore_final_timeformat(void) {
 // `$timeformat` units are decimal powers of seconds.  The runtime stores all
 // quantities as femtoseconds, so keep the finite standard range in one table
 // instead of relying on floating-point conversions.
+// Time units span 1fs (10^-15 s) to 100s (10^2 s), SV 3.14.2.1. `$timeformat`
+// separately restricts its display unit to 1fs..1s.
 static uint64_t llg_time_unit_from_exponent(int64_t exponent) {
     static const uint64_t units[] = {
         1ULL, 10ULL, 100ULL, 1000ULL, 10000ULL, 100000ULL,
         1000000ULL, 10000000ULL, 100000000ULL, 1000000000ULL,
         10000000000ULL, 100000000000ULL, 1000000000000ULL,
         10000000000000ULL, 100000000000000ULL, 1000000000000000ULL,
+        10000000000000000ULL, 100000000000000000ULL,
     };
-    if (exponent < -15 || exponent > 0) return 0;
+    if (exponent < -15 || exponent > 2) return 0;
     return units[(size_t)(exponent + 15)];
 }
 
 static int llg_time_unit_exponent(uint64_t unit_fs) {
-    for (int exponent = -15; exponent <= 0; ++exponent) {
+    for (int exponent = -15; exponent <= 2; ++exponent) {
         if (llg_time_unit_from_exponent(exponent) == unit_fs) return exponent;
     }
     return INT_MIN;

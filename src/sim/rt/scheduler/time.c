@@ -70,7 +70,7 @@ void llg_timeformat(sv4_t units, sv4_t precision, llg_string_t suffix,
     int64_t units_value = sv4_to_i64(units);
     int64_t precision_value = sv4_to_i64(precision);
     int64_t width_value = sv4_to_i64(minimum_field_width);
-    uint64_t unit_fs = llg_time_unit_from_exponent(units_value);
+    uint64_t unit_fs = units_value <= 0 ? llg_time_unit_from_exponent(units_value) : 0;
     if (!unit_fs) {
         llg_timeformat_error("units must be between -15 and 0", &suffix);
         return;

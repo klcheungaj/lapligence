@@ -163,14 +163,30 @@ endmodule
     .expect("scientific and real parameter delays");
 }
 
+/// A finite negative real delay is legal (IEEE 1364-2001 §9.7.1, IEEE
+/// 1800-2009 §9.4.1): it lowers to the runtime two's-complement conversion,
+/// whose execution `sim_feature_completion::sim_001` covers. A nonfinite
+/// constant remains a codegen error.
 #[test]
-fn sim_negative_real_parameter_delay_is_rejected() {
-    let source = r#"module tb;
+fn sim_negative_real_parameter_delay_lowers_and_nonfinite_rejects() {
+    let negative = r#"module tb;
     parameter real P = -0.25;
     initial #P $finish;
 endmodule
 "#;
-    let error = codegen_error(source, "negative-real-delay");
+    sim_harness::with_frontend_temp_cwd("negative-real-delay", |dir| {
+        let database = compile_database(dir, negative)?;
+        sim::codegen::generate_from_db_with_opts(&database, &OptConfig::default())
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    })
+    .expect("negative real delay lowers");
+    let nonfinite = r#"module tb;
+    parameter real P = 1.0e308 * 10.0;
+    initial #P $finish;
+endmodule
+"#;
+    let error = codegen_error(nonfinite, "nonfinite-real-delay");
     assert!(error.contains("finite and nonnegative"), "{error}");
 }
 

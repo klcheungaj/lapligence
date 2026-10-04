@@ -22,12 +22,22 @@ uint64_t llg_gmp_sv4_delay_ticks(g4_t value, uint64_t unit_ticks) {
     return checked_product(raw, unit_ticks);
 }
 uint64_t llg_gmp_sv4_real_delay_ticks(double value, uint64_t unit_ticks, uint64_t precision_ticks) {
-    if (!isfinite(value) || value < 0.0 || !unit_ticks || !precision_ticks)
-        llg_gmp_sv4_fail("real delay must be finite and nonnegative");
+    if (!isfinite(value) || !unit_ticks || !precision_ticks)
+        llg_gmp_sv4_fail("real delay must be finite");
+    // Same conversion as legacy: local-precision rounding, then a negative
+    // result as 64-bit two's-complement unsigned time.
     double rounded = round(value * ((double)unit_ticks / (double)precision_ticks));
-    if (!isfinite(rounded) || rounded >= 18446744073709551616.0)
-        llg_gmp_sv4_fail("delay exceeds the 64-bit tick range");
-    return checked_product((uint64_t)rounded, precision_ticks);
+    uint64_t local;
+    if (rounded >= 0.0) {
+        if (!isfinite(rounded) || rounded >= 18446744073709551616.0)
+            llg_gmp_sv4_fail("delay exceeds the 64-bit tick range");
+        local = (uint64_t)rounded;
+    } else {
+        if (!isfinite(rounded) || rounded < -9223372036854775808.0)
+            llg_gmp_sv4_fail("delay exceeds the 64-bit tick range");
+        local = UINT64_C(0) - (uint64_t)(-rounded);
+    }
+    return checked_product(local, precision_ticks);
 }
 
 double llg_gmp_sv4_to_real_wide(g4_t value) {

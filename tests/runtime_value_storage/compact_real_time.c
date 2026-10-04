@@ -103,6 +103,17 @@ static void delays(void) {
     CHECK(llg_gmp_sv4_real_delay_ticks(0.5, 1000, 1000) == 1000);
     CHECK(llg_gmp_sv4_real_delay_ticks(0.49, 1000, 1000) == 0);
     CHECK(llg_gmp_sv4_real_delay_ticks(-0.0, 1, 1) == 0);
+    // Negative delays are two's-complement unsigned time after rounding.
+    for (unsigned u = 0; u < 4; ++u)
+        for (unsigned i = 1; i < 100; ++i) {
+            double value = -(double)i / 4.0;
+            CHECK(sv4_real_delay_ticks(value, units[u], 1) ==
+                  llg_gmp_sv4_real_delay_ticks(value, units[u], 1));
+        }
+    CHECK(llg_gmp_sv4_real_delay_ticks(-0.4, 1, 1) == 0);
+    CHECK(llg_gmp_sv4_real_delay_ticks(-1.0, 1, 1) == UINT64_MAX);
+    CHECK(llg_gmp_sv4_real_delay_ticks(-0.25, 10, 1) == UINT64_MAX - 2u);
+    CHECK(llg_gmp_sv4_real_delay_ticks(-0x1p63, 1, 1) == UINT64_C(1) << 63);
     for (size_t w = 1; w < sizeof(adapter_widths) / sizeof(adapter_widths[0]); ++w) {
         g4_t value = llg_gmp_sv4_from_i64(-1, adapter_widths[w]);
         sv4_t old = sv4_from_i64(-1, adapter_widths[w]);
@@ -121,7 +132,7 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[1], "packed-scale"))
             (void)llg_gmp_sv4_delay_ticks(llg_gmp_sv4_zero(1, 0), 0);
         else if (!strcmp(argv[1], "real-negative"))
-            (void)llg_gmp_sv4_real_delay_ticks(-0.1, 1, 1);
+            (void)llg_gmp_sv4_real_delay_ticks(-0x1p64, 1, 1);
         else if (!strcmp(argv[1], "real-nan"))
             (void)llg_gmp_sv4_real_delay_ticks(NAN, 1, 1);
         else if (!strcmp(argv[1], "real-scale"))
